@@ -229,7 +229,7 @@ func (spm SentencePiece) Decode(ids []int32) (string, error) {
 		// so they are buffered correctly by the runner instead
 		// of being sent back to the api as "<0xEA>"
 		if len(data) == 6 && strings.HasPrefix(data, "<0x") && strings.HasSuffix(data, ">") {
-			byteVal, err := strconv.ParseUint(data[1:5], 0, 8)
+			byteVal, err := strconv.ParseUint(data[3:5], 16, 8)
 			if err != nil {
 				return "", fmt.Errorf("failed to parse hex byte: %v", err)
 			}
