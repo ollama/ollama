@@ -329,9 +329,6 @@ func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[st
 
 	first := true
 	for _, name := range keys {
-		if isSchemaStandardKey(name) {
-			continue
-		}
 		prop, ok := r.asSchemaMap(props[name])
 		if !ok {
 			continue
@@ -411,7 +408,13 @@ func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[st
 					addComma = true
 				}
 				sb.WriteString("properties:{")
-				r.writeSchemaProperties(sb, prop)
+				filtered := make(map[string]any, len(prop))
+				for k, v := range prop {
+					if !isSchemaStandardKey(k) {
+						filtered[k] = v
+					}
+				}
+				r.writeSchemaProperties(sb, filtered)
 				sb.WriteString("}")
 			}
 
