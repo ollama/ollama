@@ -29,6 +29,7 @@ type ChatWriter struct {
 	stream        bool
 	streamOptions *openai.StreamOptions
 	id            string
+	createdAt     int64
 	toolCallSent  bool
 	BaseWriter
 }
@@ -37,6 +38,7 @@ type CompleteWriter struct {
 	stream        bool
 	streamOptions *openai.StreamOptions
 	id            string
+	createdAt     int64
 	BaseWriter
 }
 
@@ -80,7 +82,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 
 	// chat chunk
 	if w.stream {
-		chunks := openai.ToChunks(w.id, chatResponse, w.toolCallSent)
+		chunks := openai.ToChunks(w.id, chatResponse, w.toolCallSent, w.createdAt)
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
 		for _, c := range chunks {
 			d, err := json.Marshal(c)
@@ -97,7 +99,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 		}
 
 		if chatResponse.Done {
-			c := openai.ToChunk(w.id, chatResponse, w.toolCallSent)
+			c := openai.ToChunk(w.id, chatResponse, w.toolCallSent, w.createdAt)
 			if len(chunks) > 0 {
 				c = chunks[len(chunks)-1]
 			} else {
@@ -153,7 +155,7 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 
 	// completion chunk
 	if w.stream {
-		c := openai.ToCompleteChunk(w.id, generateResponse)
+		c := openai.ToCompleteChunk(w.id, generateResponse, w.createdAt)
 		if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 			c.Usage = &openai.Usage{}
 		}
@@ -346,6 +348,7 @@ func CompletionsMiddleware() gin.HandlerFunc {
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
 			id:            fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			createdAt:     time.Now().Unix(),
 			streamOptions: req.StreamOptions,
 		}
 
@@ -438,6 +441,7 @@ func ChatMiddleware() gin.HandlerFunc {
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
 			id:            fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			createdAt:     time.Now().Unix(),
 			streamOptions: req.StreamOptions,
 		}
 
