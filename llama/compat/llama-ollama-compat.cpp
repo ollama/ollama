@@ -89,59 +89,46 @@ void handle_gemma3(const llama_model_loader * ml, gguf_context * meta, ggml_cont
 // qwen35moe (text side)
 // =========================================================================
 
-bool detect_ollama_qwen35moe(const gguf_context * meta, const ggml_context * ctx) {
-    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
-    if (arch_kid < 0) return false;
-    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "qwen35moe") != 0) return false;
-
-    // Any Ollama-ism. Upstream qwen35moe files have none of these — the
-    // vision KVs live in a separate mmproj, MTP tensors are dropped,
-    // head_count_kv is a scalar, and the extra rope / ssm / feed_forward
-    // KVs are either absent or stored differently.
-    return has_key(meta, "qwen35moe.vision.block_count")
-        || has_key(meta, "qwen35moe.image_token_id")
-        || has_key(meta, "qwen35moe.ssm.v_head_reordered")
-        || has_key(meta, "qwen35moe.feed_forward_length")
-        || has_key(meta, "qwen35moe.rope.mrope_interleaved")
-        || any_tensor_with_prefix(ctx, "mtp.")
-        || any_tensor_with_prefix(ctx, "v.");
-}
-
-void handle_qwen35moe(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
-    if (!detect_ollama_qwen35moe(meta, ctx)) return;
-
-    LLAMA_LOG_INFO("%s: detected Ollama-format qwen35moe GGUF; applying compatibility fixes\n", __func__);
+// Shared text-side fixes for Ollama-format qwen35 / qwen35moe GGUFs.
+// Both arches use the same SSM-hybrid + M-RoPE + MTP+vision-monolithic
+// converter quirks; only the arch name (and KV prefix) differs.
+void apply_qwen35_text_fixes(const llama_model_loader * ml, gguf_context * meta,
+                             ggml_context * ctx, const char * arch_prefix) {
+    auto kv = [arch_prefix](const char * suffix) {
+        return std::string(arch_prefix) + suffix;
+    };
 
     // 1. attention.head_count_kv — upstream expects UINT32; Ollama wrote
-    //    an array (one entry per layer, 0 for SSM layers, 2 for attention).
+    //    an array (one entry per layer, 0 for SSM layers, 2/4 for attention).
     //    Collapse to the max non-zero value.
     {
-        const int64_t kid = gguf_find_key(meta, "qwen35moe.attention.head_count_kv");
+        const std::string key = kv(".attention.head_count_kv");
+        const int64_t kid = gguf_find_key(meta, key.c_str());
         if (kid >= 0 && gguf_get_kv_type(meta, kid) == GGUF_TYPE_ARRAY) {
             const size_t n = gguf_get_arr_n(meta, kid);
             const auto * arr = static_cast<const uint32_t *>(gguf_get_arr_data(meta, kid));
             uint32_t max_kv = 0;
             for (size_t i = 0; i < n; ++i) if (arr[i] > max_kv) max_kv = arr[i];
             if (max_kv == 0) max_kv = 2; // safety fallback
-            gguf_remove_key  (meta, "qwen35moe.attention.head_count_kv");
-            gguf_set_val_u32 (meta, "qwen35moe.attention.head_count_kv", max_kv);
+            gguf_remove_key  (meta, key.c_str());
+            gguf_set_val_u32 (meta, key.c_str(), max_kv);
         }
     }
 
     // 2. rope.dimension_sections — upstream expects a 4-element array
     //    (M-RoPE convention); Ollama wrote 3 elements. Pad with a trailing 0.
     {
-        const int64_t kid = gguf_find_key(meta, "qwen35moe.rope.dimension_sections");
+        const std::string key = kv(".rope.dimension_sections");
+        const int64_t kid = gguf_find_key(meta, key.c_str());
         if (kid >= 0 && gguf_get_arr_n(meta, kid) == 3) {
             const auto * src = static_cast<const int32_t *>(gguf_get_arr_data(meta, kid));
             const int32_t padded[4] = { src[0], src[1], src[2], 0 };
-            gguf_set_arr_data(meta, "qwen35moe.rope.dimension_sections",
-                              GGUF_TYPE_INT32, padded, 4);
+            gguf_set_arr_data(meta, key.c_str(), GGUF_TYPE_INT32, padded, 4);
         }
     }
 
     // 3. Tensor rename: Ollama's `blk.N.ssm_dt` is upstream's
-    //    `blk.N.ssm_dt.bias` (same shape). 40 layers.
+    //    `blk.N.ssm_dt.bias` (same shape).
     {
         std::vector<std::string> targets;
         const int64_t n = gguf_get_n_tensors(meta);
@@ -163,6 +150,153 @@ void handle_qwen35moe(const llama_model_loader * ml, gguf_context * meta, ggml_c
     add_skip_prefix(ml, "v.");
     add_skip_prefix(ml, "mm.");
     add_skip_prefix(ml, "mtp.");
+}
+
+bool detect_ollama_qwen35moe(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "qwen35moe") != 0) return false;
+
+    // Any Ollama-ism. Upstream qwen35moe files have none of these — the
+    // vision KVs live in a separate mmproj, MTP tensors are dropped,
+    // head_count_kv is a scalar, and the extra rope / ssm / feed_forward
+    // KVs are either absent or stored differently.
+    return has_key(meta, "qwen35moe.vision.block_count")
+        || has_key(meta, "qwen35moe.image_token_id")
+        || has_key(meta, "qwen35moe.ssm.v_head_reordered")
+        || has_key(meta, "qwen35moe.feed_forward_length")
+        || has_key(meta, "qwen35moe.rope.mrope_interleaved")
+        || any_tensor_with_prefix(ctx, "mtp.")
+        || any_tensor_with_prefix(ctx, "v.");
+}
+
+void handle_qwen35moe(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_qwen35moe(meta, ctx)) return;
+    LLAMA_LOG_INFO("%s: detected Ollama-format qwen35moe GGUF; applying compatibility fixes\n", __func__);
+    apply_qwen35_text_fixes(ml, meta, ctx, "qwen35moe");
+}
+
+// =========================================================================
+// qwen35 (text side — non-MoE, e.g. qwen3.5:9b)
+// =========================================================================
+//
+// Same converter quirks as qwen35moe but the arch name has no "moe" suffix.
+// All the SSM-hybrid / M-RoPE / MTP / monolithic-vision fix-ups apply.
+
+bool detect_ollama_qwen35(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "qwen35") != 0) return false;
+    return has_key(meta, "qwen35.vision.block_count")
+        || has_key(meta, "qwen35.image_token_id")
+        || has_key(meta, "qwen35.ssm.v_head_reordered")
+        || has_key(meta, "qwen35.rope.mrope_interleaved")
+        || any_tensor_with_prefix(ctx, "mtp.")
+        || any_tensor_with_prefix(ctx, "v.");
+}
+
+void handle_qwen35(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_qwen35(meta, ctx)) return;
+    LLAMA_LOG_INFO("%s: detected Ollama-format qwen35 GGUF; applying compatibility fixes\n", __func__);
+    apply_qwen35_text_fixes(ml, meta, ctx, "qwen35");
+}
+
+// =========================================================================
+// gemma4 (text side)
+// =========================================================================
+//
+// Same arch name on both sides. Ollama publishes a monolithic GGUF that
+// embeds the vision encoder + audio encoder + projector inline. Text-side
+// KVs/tensor names match upstream verbatim — only fix is to hide the
+// `a.*` / `v.*` / `mm.*` tensors from the text loader so n_tensors lines up.
+
+bool detect_ollama_gemma4(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "gemma4") != 0) return false;
+    return any_tensor_with_prefix(ctx, "a.")
+        || any_tensor_with_prefix(ctx, "v.")
+        || any_tensor_with_prefix(ctx, "mm.");
+}
+
+void handle_gemma4(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_gemma4(meta, ctx)) return;
+    (void) meta;
+    (void) ctx;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format gemma4 GGUF; applying compatibility fixes\n", __func__);
+
+    // Hide embedded audio + vision + projector tensors from the text loader.
+    add_skip_prefix(ml, "a.");
+    add_skip_prefix(ml, "v.");
+    add_skip_prefix(ml, "mm.");
+}
+
+// =========================================================================
+// deepseek-ocr (text side)
+// =========================================================================
+//
+// Ollama uses arch name "deepseekocr" / KV prefix "deepseekocr.*".
+// Upstream uses "deepseek2-ocr" (with hyphen) / "deepseek2-ocr.*".
+//
+// Aside from the prefix rename:
+//   * Inject `expert_feed_forward_length` from the per-expert ffn_down_exps
+//     shape (Ollama omits it; the value is the inner FFN dim of one expert,
+//     896 for the 3B model).
+//   * Inject `expert_shared_count` from the ffn_down_shexp shape (Ollama
+//     omits it; the shared experts share their FFN dim with regular experts,
+//     so count = shexp_dim / expert_feed_forward_length).
+//   * Skip embedded vision (`v.*`), projector (`mm.*`), and the SAM encoder
+//     (`s.*`) tensors from the text loader.
+
+bool detect_ollama_deepseekocr(const gguf_context * meta) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    return std::strcmp(gguf_get_val_str(meta, arch_kid), "deepseekocr") == 0;
+}
+
+void handle_deepseekocr(const llama_model_loader * ml, gguf_context * meta,
+                        ggml_context * ctx, std::string & arch_name) {
+    if (!detect_ollama_deepseekocr(meta)) return;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format deepseekocr GGUF; applying compatibility fixes\n", __func__);
+
+    gguf_set_val_str(meta, "general.architecture", "deepseek2-ocr");
+    rename_kv_prefix(meta, "deepseekocr.", "deepseek2-ocr.");
+    arch_name = "deepseek2-ocr";
+
+    // Inject defaults Ollama omitted entirely.
+    inject_f32_if_missing(meta, "deepseek2-ocr.attention.layer_norm_rms_epsilon",
+                          1e-6f);
+
+    // Recover expert_feed_forward_length from blk.1 (first MoE block; blk.0
+    // is dense). ne[0] of ffn_down_exps is the per-expert inner dim.
+    if (!has_key(meta, "deepseek2-ocr.expert_feed_forward_length")) {
+        if (ggml_tensor * t = ggml_get_tensor(ctx, "blk.1.ffn_down_exps.weight")) {
+            gguf_set_val_u32(meta, "deepseek2-ocr.expert_feed_forward_length",
+                             (uint32_t) t->ne[0]);
+        }
+    }
+
+    // Recover expert_shared_count from blk.1.ffn_down_shexp shape.
+    // shape ne[0] = expert_shared_count * expert_feed_forward_length
+    if (!has_key(meta, "deepseek2-ocr.expert_shared_count")) {
+        ggml_tensor * shexp = ggml_get_tensor(ctx, "blk.1.ffn_down_shexp.weight");
+        const int64_t fflen_kid = gguf_find_key(meta, "deepseek2-ocr.expert_feed_forward_length");
+        if (shexp && fflen_kid >= 0) {
+            const uint32_t fflen = gguf_get_val_u32(meta, fflen_kid);
+            if (fflen > 0) {
+                gguf_set_val_u32(meta, "deepseek2-ocr.expert_shared_count",
+                                 (uint32_t)(shexp->ne[0] / fflen));
+            }
+        }
+    }
+
+    // Hide embedded SAM (`s.*`), vision (`v.*`), and projector (`mm.*`)
+    // tensors from the text loader.
+    add_skip_prefix(ml, "s.");
+    add_skip_prefix(ml, "v.");
+    add_skip_prefix(ml, "mm.");
 }
 
 // =========================================================================
@@ -511,6 +645,106 @@ void handle_qwen35moe_clip(gguf_context * meta, ggml_context * ctx) {
 }
 
 // =========================================================================
+// deepseek-ocr (clip side — SAM + CLIP + projector)
+// =========================================================================
+//
+// Ollama's monolithic deepseek-ocr GGUF embeds three vision components:
+//   * SAM encoder under the `s.*` prefix (12 blocks)
+//   * CLIP encoder under the `v.*` prefix (24 blocks)
+//   * MLP projector under `mm.*`
+// Upstream's PROJECTOR_TYPE_DEEPSEEKOCR loader expects:
+//   * SAM under `v.sam.*`
+//   * CLIP under `v.*` (different leaf names than Ollama)
+//   * Projector as `mm.model.fc.*` plus `v.image_newline` / `v.view_seperator`
+
+constexpr std::pair<const char *, const char *> kDeepseekocrClipRenames[] = {
+    // CLIP block leaf renames (also affects v.sam.* but those names don't overlap).
+    {".self_attn.out_proj", ".attn_out"},
+    {".self_attn.qkv_proj", ".attn_qkv"},
+    {".layer_norm1",        ".ln1"},
+    {".layer_norm2",        ".ln2"},
+    {".mlp.fc1",            ".ffn_up"},
+    {".mlp.fc2",            ".ffn_down"},
+    {"v.pre_layrnorm",      "v.pre_ln"}, // Ollama typo
+
+    // SAM block leaf renames (after `s.*` -> `v.sam.*` is applied).
+    {".attn.proj",          ".attn.out"},
+    {".attn.rel_pos_h",     ".attn.pos_h.weight"},
+    {".attn.rel_pos_w",     ".attn.pos_w.weight"},
+    {".norm1",              ".pre_ln"},
+    {".norm2",              ".post_ln"},
+
+    // Projector renames.
+    {"mm.layers",           "mm.model.fc"},
+    {"mm.image_newline",    "v.image_newline"},
+    {"mm.view_seperator",   "v.view_seperator"},
+};
+
+void handle_deepseekocr_clip(gguf_context * meta, ggml_context * ctx) {
+    LLAMA_LOG_INFO("%s: detected Ollama-format deepseekocr GGUF used as mmproj; translating\n", __func__);
+
+    // CLIP encoder hparams.
+    copy_u32_kv(meta, "deepseekocr.vision.block_count",      "clip.vision.block_count");
+    copy_u32_kv(meta, "deepseekocr.vision.embedding_length", "clip.vision.embedding_length");
+    copy_u32_kv(meta, "deepseekocr.vision.head_count",       "clip.vision.attention.head_count");
+    copy_u32_kv(meta, "deepseekocr.vision.image_size",       "clip.vision.image_size");
+    copy_u32_kv(meta, "deepseekocr.vision.patch_size",       "clip.vision.patch_size");
+
+    // SAM encoder hparams.
+    copy_u32_kv(meta, "deepseekocr.sam.block_count",         "clip.vision.sam.block_count");
+    copy_u32_kv(meta, "deepseekocr.sam.embedding_length",    "clip.vision.sam.embedding_length");
+    copy_u32_kv(meta, "deepseekocr.sam.head_count",          "clip.vision.sam.head_count");
+
+    // Defaults pulled from the upstream-converted reference mmproj.
+    inject_u32_if_missing(meta, "clip.vision.feed_forward_length",          64);
+    inject_u32_if_missing(meta, "clip.vision.projection_dim",               1280);
+    inject_u32_if_missing(meta, "clip.vision.projector.scale_factor",       1);
+    inject_u32_if_missing(meta, "clip.vision.window_size",                  14);
+    inject_f32_if_missing(meta, "clip.vision.attention.layer_norm_epsilon", 1e-6f);
+
+    static const float kHalfHalfHalf[3] = {0.5f, 0.5f, 0.5f};
+    inject_f32_arr_if_missing(meta, "clip.vision.image_mean", kHalfHalfHalf, 3);
+    inject_f32_arr_if_missing(meta, "clip.vision.image_std",  kHalfHalfHalf, 3);
+
+    inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
+    inject_bool_if_missing(meta, "clip.use_gelu",           true);
+    gguf_set_val_str(meta, "clip.projector_type",  "deepseekocr");
+    gguf_set_val_str(meta, "general.architecture", "clip");
+
+    // Step 1: rename SAM prefix `s.` -> `v.sam.` only at the start of names
+    // (substring rename would corrupt e.g. `mm.layers.weight` -> `mm.layerv.sam.weight`).
+    {
+        std::vector<std::string> sam_names;
+        const int64_t n = gguf_get_n_tensors(meta);
+        for (int64_t i = 0; i < n; ++i) {
+            std::string name(gguf_get_tensor_name(meta, i));
+            if (name.size() >= 2 && name[0] == 's' && name[1] == '.') {
+                sam_names.push_back(std::move(name));
+            }
+        }
+        for (const auto & old_name : sam_names) {
+            rename_tensor(meta, ctx, old_name.c_str(),
+                          ("v.sam." + old_name.substr(2)).c_str());
+        }
+    }
+
+    // Step 2: SAM `s.position_embd` (no `.weight` suffix) — handle exactly,
+    // since after the `s.` rename it lives at `v.sam.position_embd`.
+    rename_tensor(meta, ctx, "v.sam.position_embd", "v.sam.pos_embd.weight");
+
+    // Step 3: substring renames for CLIP, SAM block leaves, and projector.
+    for (const auto & [from, to] : kDeepseekocrClipRenames) {
+        rename_tensors_containing(meta, ctx, from, to);
+    }
+
+    // Metal IM2COL needs F32 patch_embd (same issue as gemma3 / mistral3).
+    promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
+    promote_tensor_to_f32(meta, ctx, "v.sam.patch_embd.weight");
+    // CLIP position embedding too — Ollama stores F16, upstream stores F32.
+    promote_tensor_to_f32(meta, ctx, "v.position_embd.weight");
+}
+
+// =========================================================================
 // mistral3 (clip side — pixtral projector)
 // =========================================================================
 //
@@ -688,10 +922,13 @@ void translate_metadata(const llama_model_loader * ml,
                         std::string & arch_name) {
     if (!meta) return;
     if (arch_name == "gemma3")    handle_gemma3   (ml, meta, ctx);
+    if (arch_name == "gemma4")    handle_gemma4   (ml, meta, ctx);
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
-    if (arch_name == "gptoss")    handle_gptoss   (ml, meta, ctx, arch_name);
-    if (arch_name == "lfm2")      handle_lfm2     (ml, meta, ctx);
-    if (arch_name == "mistral3")  handle_mistral3 (ml, meta, ctx);
+    if (arch_name == "qwen35")    handle_qwen35   (ml, meta, ctx);
+    if (arch_name == "gptoss")     handle_gptoss     (ml, meta, ctx, arch_name);
+    if (arch_name == "lfm2")       handle_lfm2       (ml, meta, ctx);
+    if (arch_name == "mistral3")   handle_mistral3   (ml, meta, ctx);
+    if (arch_name == "deepseekocr") handle_deepseekocr(ml, meta, ctx, arch_name);
     // Dispatch. Add more arches as they are wired up.
 }
 
@@ -710,6 +947,10 @@ void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     }
     if (detect_ollama_mistral3(meta, ctx)) {
         handle_mistral3_clip(meta, ctx);
+        return;
+    }
+    if (detect_ollama_deepseekocr(meta)) {
+        handle_deepseekocr_clip(meta, ctx);
         return;
     }
 }
