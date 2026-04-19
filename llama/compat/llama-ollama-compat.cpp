@@ -510,6 +510,92 @@ void handle_qwen35moe_clip(gguf_context * meta, ggml_context * ctx) {
     promote_tensor_to_f32(meta, ctx, "v.position_embd.weight");
 }
 
+// =========================================================================
+// mistral3 (clip side — pixtral projector)
+// =========================================================================
+//
+// Tensor renames Ollama → upstream pixtral:
+//   v.patch_conv                       -> v.patch_embd
+//   v.encoder_norm                     -> v.pre_ln
+//   v.blk.X.attn_output                -> v.blk.X.attn_out
+//   v.blk.X.attn_norm                  -> v.blk.X.ln1
+//   v.blk.X.ffn_norm                   -> v.blk.X.ln2
+//   mm.linear_1                        -> mm.1
+//   mm.linear_2                        -> mm.2
+//   mm.norm                            -> mm.input_norm
+//   mm.patch_merger.merging_layer      -> mm.patch_merger
+//
+// img_break: pixtral's loader requires `v.token_embd.img_break` (the
+// embedding row for the [IMG_BREAK] token, used as a row separator).
+// Ollama's monolithic blob doesn't ship it as a separate tensor; the
+// "ideal" value is row 12 of token_embd.weight, but token_embd is
+// quantized (Q4_K) and per-row dequant is heavyweight. Reclaim the
+// orphan output_norm.weight slot (already [n_embd] F32) and zero-fill
+// it — pixtral.cpp adds img_break to row separator embeddings, so a
+// zero embedding makes [IMG_BREAK] insertion a no-op without breaking
+// the rest of the vision graph.
+constexpr std::pair<const char *, const char *> kMistral3ClipRenames[] = {
+    {"v.patch_conv",                  "v.patch_embd"},
+    {"v.encoder_norm",                "v.pre_ln"},
+    {".attn_output",                  ".attn_out"},
+    {".attn_norm",                    ".ln1"},
+    {".ffn_norm",                     ".ln2"},
+    {"mm.linear_1",                   "mm.1"},
+    {"mm.linear_2",                   "mm.2"},
+    {"mm.patch_merger.merging_layer", "mm.patch_merger"},
+    {"mm.norm",                       "mm.input_norm"},
+};
+
+void handle_mistral3_clip(gguf_context * meta, ggml_context * ctx) {
+    LLAMA_LOG_INFO("%s: detected Ollama-format mistral3 GGUF used as mmproj; translating\n", __func__);
+
+    copy_u32_kv(meta, "mistral3.vision.block_count",            "clip.vision.block_count");
+    copy_u32_kv(meta, "mistral3.vision.embedding_length",       "clip.vision.embedding_length");
+    copy_u32_kv(meta, "mistral3.vision.feed_forward_length",    "clip.vision.feed_forward_length");
+    copy_u32_kv(meta, "mistral3.vision.attention.head_count",   "clip.vision.attention.head_count");
+    copy_u32_kv(meta, "mistral3.vision.image_size",             "clip.vision.image_size");
+    copy_u32_kv(meta, "mistral3.vision.patch_size",             "clip.vision.patch_size");
+    copy_u32_kv(meta, "mistral3.vision.num_channels",           "clip.vision.num_channels");
+    copy_u32_kv(meta, "mistral3.spatial_merge_size",            "clip.vision.spatial_merge_size");
+    copy_f32_kv(meta, "mistral3.vision.rope.freq_base",         "clip.rope.freq_base");
+    // projection_dim is required by the loader but pixtral derives the
+    // actual output dim from mm_2_w shape — any non-zero value works.
+    // Mirror the LM embedding length for diagnostics-friendliness.
+    copy_u32_kv(meta, "mistral3.embedding_length",              "clip.vision.projection_dim");
+
+    inject_f32_if_missing(meta, "clip.vision.attention.layer_norm_epsilon", 1e-5f);
+
+    // Pixtral image stats (CLIP-style means).
+    static const float kPixtralMean[3] = {0.48145467f, 0.45782750f, 0.40821072f};
+    static const float kPixtralStd [3] = {0.26862955f, 0.26130259f, 0.27577710f};
+    inject_f32_arr_if_missing(meta, "clip.vision.image_mean", kPixtralMean, 3);
+    inject_f32_arr_if_missing(meta, "clip.vision.image_std",  kPixtralStd,  3);
+
+    inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
+    inject_bool_if_missing(meta, "clip.use_silu",           true);
+    gguf_set_val_str(meta, "clip.projector_type",  "pixtral");
+    gguf_set_val_str(meta, "general.architecture", "clip");
+
+    // Reclaim output_norm.weight as v.token_embd.img_break (zero-filled).
+    const int64_t lm_embd_kid = gguf_find_key(meta, "mistral3.embedding_length");
+    const uint32_t lm_embd = lm_embd_kid >= 0 ? gguf_get_val_u32(meta, lm_embd_kid) : 0;
+    if (lm_embd > 0 && reclaim_slot_as(meta, ctx,
+                                       "output_norm.weight", "v.token_embd.img_break",
+                                       {(int64_t) lm_embd}, GGML_TYPE_F32)) {
+        register_load_op("v.token_embd.img_break", LoadOp{
+            [](const char *, void * dst, size_t dst_size) {
+                std::memset(dst, 0, dst_size);
+                return true;
+            },
+            "img_break zero-fill",
+        });
+    }
+
+    for (const auto & [from, to] : kMistral3ClipRenames) {
+        rename_tensors_containing(meta, ctx, from, to);
+    }
+}
+
 } // anonymous namespace
 
 // =========================================================================
@@ -540,6 +626,10 @@ void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     }
     if (detect_ollama_qwen35moe(meta, ctx)) {
         handle_qwen35moe_clip(meta, ctx);
+        return;
+    }
+    if (detect_ollama_mistral3(meta, ctx)) {
+        handle_mistral3_clip(meta, ctx);
         return;
     }
 }

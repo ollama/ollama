@@ -435,6 +435,7 @@ func NewLlamaServerRunner(
 	compatClipArches := map[string]bool{
 		"gemma3":    true,
 		"qwen35moe": true,
+		"mistral3":  true,
 		// Add entries as llama/compat grows clip handlers.
 	}
 	if len(projectors) == 0 &&

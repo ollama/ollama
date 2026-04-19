@@ -43,6 +43,7 @@ an immediate no-op.
 | `qwen35moe` | head_count_kv array → scalar, rope dimension_sections pad 3→4, `ssm_dt`→`ssm_dt.bias` rename, drop `v.*`/`mm.*`/`mtp.*` tensors | Arch rewrite to `clip`, KV synthesis (`clip.vision.*`, `clip.projector_type=qwen3vl_merger`), per-block QKV merge (concat at load time), patch_embed reshape + F16→F32 + slice-as-temporal-pair (reclaiming an orphan `v.blk.0.attn_k` slot for the second pair) |
 | `gptoss` | Arch rename `gptoss`→`gpt-oss` (incl. KV prefix), inject `gpt-oss.expert_feed_forward_length` from `ffn_gate_exps` shape, tensor renames (`attn_out`→`attn_output`, `attn_sinks`→`attn_sinks.weight`, `ffn_norm`→`post_attention_norm`) | n/a |
 | `lfm2` | Tensor rename `output_norm.weight`→`token_embd_norm.weight`, fix stale `lfm2.feed_forward_length` from `ffn_gate` shape | n/a |
+| `mistral3` | RoPE YaRN renames (`rope.scaling.beta_*`→`rope.scaling.yarn_beta_*`), `rope.scaling_beta`→`attention.temperature_scale`, drop `v.*`/`mm.*` tensors | Arch rewrite to `clip`, KV synthesis (`clip.vision.*`, `clip.projector_type=pixtral`), tensor renames (`v.patch_conv`→`v.patch_embd`, `v.encoder_norm`→`v.pre_ln`, `attn_output`→`attn_out`, `attn_norm`/`ffn_norm`→`ln1`/`ln2`, `mm.linear_{1,2}`→`mm.{1,2}`, `mm.norm`→`mm.input_norm`, `mm.patch_merger.merging_layer`→`mm.patch_merger`), zero-fill `v.token_embd.img_break` (reclaims `output_norm.weight` slot — Ollama's monolithic blob doesn't ship this tensor and per-row dequant of token_embd Q4_K is heavyweight; zero-fill makes [IMG_BREAK] insertion a no-op) |
 
 Usage:
 
