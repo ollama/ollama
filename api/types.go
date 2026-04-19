@@ -1298,3 +1298,36 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 
 	return out, nil
 }
+
+// TokenizeRequest describes a request to count tokens.
+type TokenizeRequest struct {
+	Model string `json:"model"`
+
+	// Messages for chat-style input (used if provided)
+	Messages []Message `json:"messages,omitempty"`
+
+	// Prompt for generate-style input (used if Messages is empty)
+	Prompt string `json:"prompt,omitempty"`
+
+	// AddSpecialTokens controls whether special tokens are added
+	AddSpecialTokens *bool `json:"add_special_tokens,omitempty"`
+}
+
+// TokenizeResponse is the response from tokenization.
+type TokenizeResponse struct {
+	Model       string `json:"model"`
+	Tokens      int    `json:"tokens"`
+	InputTokens int    `json:"input_tokens,omitempty"`
+
+	// OutputTokens is estimated from detokenization
+	OutputTokens int `json:"output_tokens,omitempty"`
+
+	// TokenDetails contains detailed tokenization info
+	TokenDetails *TokenizeDetail `json:"token_details,omitempty"`
+}
+
+// TokenizeDetail contains detailed token information
+type TokenizeDetail struct {
+	TokenIDs []int    `json:"token_ids,omitempty"`
+	Tokens   []string `json:"tokens,omitempty"`
+}

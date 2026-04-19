@@ -6,6 +6,37 @@ import { isImageFile } from "@/utils/imageUtils";
 import CopyButton from "./CopyButton";
 import React, { useState, useMemo, useRef } from "react";
 
+// Token stats component to display input/output tokens
+function TokenStats({ message }: { message: MessageType }) {
+  const metrics = (message as any).metrics;
+  if (!metrics) return null;
+
+  const promptTokens = metrics.prompt_eval_count ?? metrics.promptTokens ?? 0;
+  const outputTokens = metrics.eval_count ?? metrics.completionTokens ?? 0;
+  const totalTokens = promptTokens + outputTokens;
+
+  if (promptTokens === 0 && outputTokens === 0) return null;
+
+  return (
+    <div className="flex items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400 mt-2">
+      <span className="flex items-center gap-1">
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 2H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        {promptTokens} in
+      </span>
+      <span className="flex items-center gap-1">
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+        </svg>
+        {outputTokens} out
+      </span>
+      <span className="text-neutral-400">•</span>
+      <span>{totalTokens} total</span>
+    </div>
+  );
+}
+
 const Message = React.memo(
   ({
     message,
@@ -985,6 +1016,11 @@ function OtherRoleMessage({
             />
           </div>
         )}
+
+      {/* Token stats display */}
+      {!isStreaming && message.role === "assistant" && (
+        <TokenStats message={message} />
+      )}
     </div>
   );
 }
