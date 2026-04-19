@@ -124,6 +124,10 @@ print(response.message.content)
 
 ### JavaScript
 
+```
+npm i ollama
+```
+
 ```javascript
 import ollama from "ollama";
 
