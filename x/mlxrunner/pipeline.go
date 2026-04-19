@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -153,6 +154,16 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	var b bytes.Buffer
 
+	// segment-level loop detection
+	const loopWindow = 100
+	const loopDelims = "\n.!?:"
+	const loopTempBoost = float32(0.5)
+	const loopMinLength = 20
+	var loopCurSegment strings.Builder
+	var loopPastSegs []string
+	loopActive := false
+	baseTemp := request.Sampler.Temperature
+
 	final := CompletionResponse{Done: true, PromptEvalCount: len(inputs), EvalCount: request.Options.MaxTokens, DoneReason: 1}
 	for i := range request.Options.MaxTokens {
 		if err := ctx.Err(); err != nil {
@@ -177,11 +188,45 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			break
 		}
 
+		// loop detection: accumulate token text, check segments on delimiter
+		piece := r.Decode(output, &b)
+		loopCurSegment.WriteString(piece)
+		if strings.ContainsAny(piece, loopDelims) {
+			seg := strings.TrimSpace(loopCurSegment.String())
+			loopCurSegment.Reset()
+			if seg != "" && len(seg) >= loopMinLength {
+				found := false
+				for _, past := range loopPastSegs {
+					if past == seg {
+						found = true
+						break
+					}
+				}
+				wasActive := loopActive
+				loopActive = found
+				if found && !wasActive {
+					boostedTemp := baseTemp + loopTempBoost
+					if minTemp := loopTempBoost * 2; boostedTemp < minTemp {
+						boostedTemp = minTemp
+					}
+					slog.Debug("repeat-line loop DETECTED", "seg", seg, "base_temp", baseTemp, "effective_temp", boostedTemp)
+					request.Sampler.Temperature = boostedTemp
+				} else if !found && wasActive {
+					slog.Debug("repeat-line loop RESOLVED")
+					request.Sampler.Temperature = baseTemp
+				}
+				loopPastSegs = append(loopPastSegs, seg)
+				if len(loopPastSegs) > loopWindow {
+					loopPastSegs = loopPastSegs[1:]
+				}
+			}
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case request.Responses <- CompletionResponse{
-			Content: r.Decode(output, &b),
+			Content: piece,
 		}:
 		}
 
