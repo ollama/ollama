@@ -187,6 +187,12 @@ if [ -f /etc/nv_tegra_release ] ; then
 fi
 
 install_success() {
+    local exit_code=$?
+    trap - EXIT
+    if [ $exit_code -ne 0 ]; then
+        echo "${red}ERROR:${plain} Install failed. One or more critical steps did not complete successfully." >&2
+        exit $exit_code
+    fi
     status 'The Ollama API is now available at 127.0.0.1:11434.'
     status 'Install complete. Run "ollama" from the command line.'
 }
@@ -197,19 +203,19 @@ trap install_success EXIT
 configure_systemd() {
     if ! id ollama >/dev/null 2>&1; then
         status "Creating ollama user..."
-        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama || error "Failed to create ollama user. Is sudo working?"
     fi
     if getent group render >/dev/null 2>&1; then
         status "Adding ollama user to render group..."
-        $SUDO usermod -a -G render ollama
+        $SUDO usermod -a -G render ollama || error "Failed to add ollama user to render group."
     fi
     if getent group video >/dev/null 2>&1; then
         status "Adding ollama user to video group..."
-        $SUDO usermod -a -G video ollama
+        $SUDO usermod -a -G video ollama || error "Failed to add ollama user to video group."
     fi
 
     status "Adding current user to ollama group..."
-    $SUDO usermod -a -G ollama $(whoami)
+    $SUDO usermod -a -G ollama $(whoami) || error "Failed to add current user to ollama group."
 
     status "Creating ollama systemd service..."
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
@@ -228,14 +234,26 @@ Environment="PATH=$PATH"
 [Install]
 WantedBy=default.target
 EOF
+    if [ $? -ne 0 ]; then
+        error "Failed to write systemd service file."
+    fi
     SYSTEMCTL_RUNNING="$(systemctl is-system-running || true)"
     case $SYSTEMCTL_RUNNING in
         running|degraded)
             status "Enabling and starting ollama service..."
-            $SUDO systemctl daemon-reload
-            $SUDO systemctl enable ollama
+            $SUDO systemctl daemon-reload || error "Failed to reload systemd daemon."
+            $SUDO systemctl enable ollama || error "Failed to enable ollama service."
 
-            start_service() { $SUDO systemctl restart ollama; }
+            start_service() {
+                local exit_code=$?
+                trap - EXIT
+                if [ $exit_code -ne 0 ]; then
+                    echo "${red}ERROR:${plain} Install failed. One or more critical steps did not complete successfully." >&2
+                    exit $exit_code
+                fi
+                $SUDO systemctl restart ollama || error "Failed to start ollama service."
+                install_success
+            }
             trap start_service EXIT
             ;;
         *)
