@@ -35,6 +35,20 @@ if(DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
     message(STATUS "Using local llama.cpp source: ${_src}")
 endif()
 
+# Ollama-compat shim: overlays the fetched llama.cpp source with a tiny
+# in-memory translation layer that lets upstream llama-server load GGUFs
+# produced by older Ollama versions (e.g. existing ~/.ollama/models/blobs).
+# See llama/compat/README.md for details.
+#
+# The patch only runs when fetching from GitHub — if a local source override
+# is active, leave the developer's tree alone (they can apply by hand if
+# they want to iterate on the compat layer).
+set(_ollama_compat_patch_cmd "")
+if(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
+    include(${CMAKE_CURRENT_SOURCE_DIR}/../compat/compat.cmake)
+    set(_ollama_compat_patch_cmd PATCH_COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND})
+endif()
+
 # Configure upstream build options BEFORE FetchContent_MakeAvailable.
 # When included via FetchContent, llama.cpp sets LLAMA_STANDALONE=OFF
 # so all optional builds default to OFF. We explicitly enable what we need.
@@ -53,8 +67,26 @@ FetchContent_Declare(
     GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
     GIT_TAG ${LLAMA_CPP_GIT_TAG}
     GIT_SHALLOW TRUE
+    ${_ollama_compat_patch_cmd}
 )
 FetchContent_MakeAvailable(llama_cpp)
+
+# Link the Ollama-compat source files into the fetched llama target.
+# Kept separate from the upstream-edits patch so our .cpp/.h stay
+# on-disk in llama/compat/ rather than being copied into _deps/.
+if(DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
+    file(GLOB _compat_sources CONFIGURE_DEPENDS
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/*.cpp)
+    target_sources(llama PRIVATE ${_compat_sources})
+    target_include_directories(llama PRIVATE
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
+    # mtmd's clip.cpp #include's the compat header too — add the same dir
+    # to its PRIVATE include path (PRIVATE on llama doesn't propagate).
+    if(TARGET mtmd)
+        target_include_directories(mtmd PRIVATE
+            ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
+    endif()
+endif()
 
 # Find GPU toolkits for runtime dependency bundling.
 # The upstream llama.cpp build finds these internally, but we need the

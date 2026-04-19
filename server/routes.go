@@ -1084,9 +1084,6 @@ func getExistingName(n model.Name) (model.Name, error) {
 		}
 	}
 
-	// Redirect models that have been republished in a compatible format
-	n, _ = applyCompatRedirect(n)
-
 	return n, nil
 }
 
@@ -2117,10 +2114,7 @@ func (s *Server) PsHandler(c *gin.Context) {
 
 	for _, v := range s.sched.loaded {
 		m := v.model
-		// Show the user-facing name (pre-redirect) so ps output matches
-		// what the user originally requested.
-		// TODO: consider removing before merging — see reverseCompatRedirect comment
-		displayName := reverseCompatRedirect(model.ParseName(m.ShortName)).DisplayShortest()
+		displayName := model.ParseName(m.ShortName).DisplayShortest()
 		modelDetails := api.ModelDetails{
 			Format:            m.Config.ModelFormat,
 			Family:            m.Config.ModelFamily,
