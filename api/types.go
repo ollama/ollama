@@ -1314,15 +1314,23 @@ type TokenizeRequest struct {
 }
 
 // TokenizeResponse is the response from tokenization.
+//
+// Tokens is kept for backward compatibility and represents the same
+// input-token count as InputTokens. It does not include OutputTokens.
 type TokenizeResponse struct {
-	Model       string `json:"model"`
-	Tokens      int    `json:"tokens"`
-	InputTokens int    `json:"input_tokens,omitempty"`
+	Model string `json:"model"`
 
-	// OutputTokens is estimated from detokenization
+	// Tokens is a backward-compatible alias for InputTokens.
+	Tokens int `json:"tokens"`
+
+	// InputTokens is the number of tokens in the provided input.
+	InputTokens int `json:"input_tokens,omitempty"`
+
+	// OutputTokens is an estimated output-token count derived from detokenization.
+	// It is reported separately and is not included in Tokens or InputTokens.
 	OutputTokens int `json:"output_tokens,omitempty"`
 
-	// TokenDetails contains detailed tokenization info
+	// TokenDetails contains detailed tokenization info.
 	TokenDetails *TokenizeDetail `json:"token_details,omitempty"`
 }
 
