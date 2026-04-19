@@ -100,6 +100,57 @@ func (r *invalidReader) Read(p []byte) (int, error) {
 	return 0, os.ErrInvalid
 }
 
+type noNotifyFlusherWriter struct {
+	head http.Header
+	buf  []byte
+	code int
+}
+
+func (w *noNotifyFlusherWriter) Header() http.Header {
+	if w.head == nil {
+		w.head = make(http.Header)
+	}
+	return w.head
+}
+
+func (w *noNotifyFlusherWriter) Write(b []byte) (int, error) {
+	w.buf = append(w.buf, b...)
+	if w.code == 0 {
+		w.code = http.StatusOK
+	}
+	return len(b), nil
+}
+
+func (w *noNotifyFlusherWriter) WriteHeader(statusCode int) {
+	w.code = statusCode
+}
+
+func TestStatusCodeRecorderNoNotifyFlush(t *testing.T) {
+	w := &noNotifyFlusherWriter{}
+	r := &statusCodeRecorder{ResponseWriter: w}
+
+	// should not panic when underlying response writer does not support CloseNotifier/Flusher
+	assertNotPanic(t, func() { _ = r.CloseNotify() })
+	assertNotPanic(t, func() { r.Flush() })
+
+	ch := r.CloseNotify()
+	select {
+	case <-ch:
+		t.Fatal("close channel should not be signaled")
+	default:
+	}
+}
+
+func assertNotPanic(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("unexpected panic: %v", r)
+		}
+	}()
+	fn()
+}
+
 // captureLogs is a helper to capture logs from the server. It returns a
 // shallow copy of the server with a new logger and a bytesResetter for the
 // logs.
