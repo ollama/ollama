@@ -8,10 +8,15 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-// Temporary redirection logic to map incompatible library models to compatible versions
+// Temporary redirection logic to map incompatible library models to compatible versions.
+//
+// Architectures listed here are handled via republished blobs under the
+// dhiltgen/ namespace. Once llama/compat/ grows a handler for an arch, its
+// entry should be removed from this list — the compat layer translates the
+// original library/ blob in memory so no republish is needed.
 var compatModelRedirects = []struct{ from, to string }{
 	{"library/gpt-oss", "dhiltgen/gpt-oss"},
-	{"library/gemma3", "dhiltgen/gemma3"},
+	// library/gemma3 — handled by llama/compat (text + vision).
 	{"library/embeddinggemma", "dhiltgen/embeddinggemma"},
 	{"library/snowflake-arctic-embed2", "dhiltgen/snowflake-arctic-embed2"},
 	{"library/gemma3n", "dhiltgen/gemma3n"},

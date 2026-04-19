@@ -423,6 +423,15 @@ func NewLlamaServerRunner(
 	// Check if this is an embedding model
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 
+	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
+	// the main model file rather than in a separate projector layer. Detect
+	// this case and point --mmproj at the model itself — the in-process
+	// llama.cpp compat shim translates the same file into both a text-only
+	// view and a clip-mmproj view. See llama/compat/ for details.
+	if len(projectors) == 0 && len(f.Tensors().Items("v.")) > 0 {
+		projectors = []string{modelPath}
+	}
+
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
 
