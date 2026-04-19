@@ -792,3 +792,15 @@ func (g *Grammar) Accept(token int32) {
 
 	C.grammar_accept(g.c, C.llama_token(token))
 }
+
+func (g *Grammar) TokenToPiece(id uint32) string {
+    if g == nil {
+        return ""
+    }
+    g.mu.Lock()
+    defer g.mu.Unlock()
+    if g.c == nil {
+        return ""
+    }
+    return C.GoString(C.grammar_token_to_piece(g.c, C.uint32_t(id)))
+}

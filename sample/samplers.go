@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"slices"
+	"log/slog"
 
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/tokenizer"
@@ -50,7 +51,12 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 			s.grammar.Accept(top[0].id)
 			return top[0].id, nil
 		}
-
+		if err != nil {
+			return -1, err
+		}
+		// find token that is not accepted by grammar
+		retoken := s.grammar.grammar.TokenToPiece(uint32(top[0].id))
+		slog.Info("Resampling because token ", top[0].id , "does not meet grammar rules ", retoken)
 		// since .sample has side effects of modifying the tokens
 		// we need to reset them before applying the grammar and
 		// sampling again
