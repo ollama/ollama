@@ -221,10 +221,29 @@ bool detect_ollama_gemma4(const gguf_context * meta, const ggml_context * ctx) {
 
 void handle_gemma4(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
     if (!detect_ollama_gemma4(meta, ctx)) return;
-    (void) meta;
     (void) ctx;
 
     LLAMA_LOG_INFO("%s: detected Ollama-format gemma4 GGUF; applying compatibility fixes\n", __func__);
+
+    // Tokenizer fix: Ollama writes `tokenizer.ggml.model = 'llama'` (SPM) on
+    // gemma4 GGUFs, but gemma4 actually uses BPE — upstream-converted GGUFs
+    // use `'gemma4'` which selects LLAMA_VOCAB_TYPE_BPE in src/llama-vocab.cpp.
+    // With the wrong tokenizer type, gemma4's special tokens (e.g.
+    // `<|thought|>`, `<|turn>`, `<|channel>`) get split into multiple SPM
+    // subword pieces, so when the model emits them they come out as raw
+    // text instead of being recognized as control tokens.
+    //
+    // Ollama already supplies `tokenizer.ggml.merges` (needed for BPE) and
+    // `tokenizer.ggml.pre = 'gemma4'`, so flipping the model name is enough.
+    {
+        const int64_t kid = gguf_find_key(meta, "tokenizer.ggml.model");
+        if (kid >= 0) {
+            const char * cur = gguf_get_val_str(meta, kid);
+            if (cur && std::strcmp(cur, "llama") == 0) {
+                gguf_set_val_str(meta, "tokenizer.ggml.model", "gemma4");
+            }
+        }
+    }
 
     // Hide embedded audio + vision + projector tensors from the text loader.
     add_skip_prefix(ml, "a.");
