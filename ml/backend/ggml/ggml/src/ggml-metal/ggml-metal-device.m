@@ -23,6 +23,7 @@
 // overload of MTLGPUFamilyMetalX (not available in some environments)
 static const NSInteger MTLGPUFamilyMetal3_GGML = 5001;
 static const NSInteger MTLGPUFamilyMetal4_GGML = 5002;
+static const NSInteger MTLLanguageVersion4_0_GGML = (4 << 16) + 0;
 
 // virtual address for GPU memory allocations
 static atomic_uintptr_t g_addr_device = 0x000000400ULL;
@@ -104,6 +105,15 @@ struct ggml_metal_library {
 
     NSLock * lock;
 };
+
+static void ggml_metal_library_configure_compile_options(ggml_metal_device_t dev, MTLCompileOptions * options, NSDictionary * prep) {
+    options.preprocessorMacros = prep;
+
+    // metal_tensor / MetalPerformancePrimitives source compilation requires Metal 4.
+    if (ggml_metal_device_get_props(dev)->has_tensor) {
+        options.languageVersion = (MTLLanguageVersion) MTLLanguageVersion4_0_GGML;
+    }
+}
 
 ggml_metal_library_t ggml_metal_library_init(ggml_metal_device_t dev) {
     id<MTLLibrary> library = nil;
@@ -228,7 +238,7 @@ ggml_metal_library_t ggml_metal_library_init(ggml_metal_device_t dev) {
 #endif
 
                 MTLCompileOptions * options = [MTLCompileOptions new];
-                options.preprocessorMacros = prep;
+                ggml_metal_library_configure_compile_options(dev, options, prep);
 
                 //[options setFastMathEnabled:false];
 
@@ -285,7 +295,7 @@ ggml_metal_library_t ggml_metal_library_init_from_source(ggml_metal_device_t dev
         NSMutableDictionary * prep = [NSMutableDictionary dictionary];
 
         MTLCompileOptions * options = [MTLCompileOptions new];
-        options.preprocessorMacros = prep;
+        ggml_metal_library_configure_compile_options(dev, options, prep);
 
         library = [device newLibraryWithSource:src options:options error:&error];
         if (error) {
