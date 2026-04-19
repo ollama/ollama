@@ -528,7 +528,6 @@ try {
         cuda13
         rocm6
         vulkan
-        mlxCuda13
         ollama
         app
         deps
