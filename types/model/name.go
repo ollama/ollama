@@ -144,6 +144,7 @@ func ParseName(s string) Name {
 // ParseNameBare parses s as a name string and returns a Name. No merge with
 // [DefaultName] is performed.
 func ParseNameBare(s string) Name {
+	s = normalizeHyphens(s)
 	var n Name
 	var promised bool
 
@@ -373,6 +374,28 @@ func isValidPart(kind partKind, s string) bool {
 
 func isAlphanumericOrUnderscore(c byte) bool {
 	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_'
+}
+
+// normalizeHyphens replaces Unicode hyphen-like characters with an ASCII
+// hyphen-minus ('-') so that e.g. a non-breaking hyphen (U+2011) copy-pasted
+// from a browser or terminal works the same as a regular hyphen.
+func normalizeHyphens(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\u2010', // HYPHEN
+			'\u2011', // NON-BREAKING HYPHEN
+			'\u2012', // FIGURE DASH
+			'\u2013', // EN DASH
+			'\u2014', // EM DASH
+			'\u2015', // HORIZONTAL BAR
+			'\u2212', // MINUS SIGN
+			'\uFE58', // SMALL EM DASH
+			'\uFE63', // SMALL HYPHEN-MINUS
+			'\uFF0D': // FULLWIDTH HYPHEN-MINUS
+			return '-'
+		}
+		return r
+	}, s)
 }
 
 func cutLast(s, sep string) (before, after string, ok bool) {
