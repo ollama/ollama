@@ -168,7 +168,24 @@ fi
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
-download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
+
+# Fix conflict: Keep local bundle detection logic while reusing download_and_extract function
+LOCAL_BUNDLE="ollama-linux-${ARCH}.tgz"
+LOCAL_BUNDLE_ZST="ollama-linux-${ARCH}.tar.zst"
+if [ -f "$LOCAL_BUNDLE_ZST" ]; then
+    status "Found local file: $LOCAL_BUNDLE_ZST, installing from local"
+    # Check zstd tool availability
+    if ! available zstd; then
+        error "Local zst bundle requires zstd for extraction. Please install zstd first."
+    fi
+    zstd -d < "$LOCAL_BUNDLE_ZST" | $SUDO tar -xf - -C "$OLLAMA_INSTALL_DIR"
+elif [ -f "$LOCAL_BUNDLE" ]; then
+    status "Found local file: $LOCAL_BUNDLE, installing from local"
+    $SUDO tar -xzf "$LOCAL_BUNDLE" -C "$OLLAMA_INSTALL_DIR"
+else
+    # Call encapsulated download and extract function when no local bundle exists
+    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
+fi
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
