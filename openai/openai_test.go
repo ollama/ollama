@@ -234,6 +234,62 @@ func TestToToolCallsPreservesIDs(t *testing.T) {
 	}
 }
 
+// TestToToolCallsPreservesThoughtSignature verifies that the thought_signature
+// field (required by Gemini 3 cloud models) is passed through from api.ToolCall
+// to the OpenAI ToolCall format.
+func TestToToolCallsPreservesThoughtSignature(t *testing.T) {
+	sig := []byte("opaque-signature-bytes")
+	input := []api.ToolCall{
+		{
+			ID:               "call_abc",
+			ThoughtSignature: sig,
+			Function: api.ToolCallFunction{
+				Name:      "get_weather",
+				Arguments: testArgs(map[string]any{"location": "NYC"}),
+			},
+		},
+	}
+
+	got := ToToolCalls(input)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(got))
+	}
+	if string(got[0].ThoughtSignature) != string(sig) {
+		t.Errorf("ThoughtSignature not preserved: got %q, want %q", got[0].ThoughtSignature, sig)
+	}
+}
+
+// TestFromCompletionToolCallPreservesThoughtSignature verifies that thought_signature
+// round-trips back from OpenAI ToolCall format to api.ToolCall.
+func TestFromCompletionToolCallPreservesThoughtSignature(t *testing.T) {
+	sig := []byte("opaque-signature-bytes")
+	input := []ToolCall{
+		{
+			ID:               "call_abc",
+			Type:             "function",
+			ThoughtSignature: sig,
+			Function: struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			}{
+				Name:      "get_weather",
+				Arguments: `{"location":"NYC"}`,
+			},
+		},
+	}
+
+	got, err := FromCompletionToolCall(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 api.ToolCall, got %d", len(got))
+	}
+	if string(got[0].ThoughtSignature) != string(sig) {
+		t.Errorf("ThoughtSignature not preserved: got %q, want %q", got[0].ThoughtSignature, sig)
+	}
+}
+
 func TestFromChatRequest_WithLogprobs(t *testing.T) {
 	trueVal := true
 
