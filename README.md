@@ -180,6 +180,7 @@ console.log(response.message.content);
 - [Dify.AI](https://github.com/langgenius/dify) - LLM app development platform
 - [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm) - All-in-one AI app for Mac, Windows, and Linux
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid) - Cross-platform mobile and desktop client
+- [Cai](https://getcai.app) - AI actions on any text from your clipboard (macOS)
 - [Witsy](https://github.com/nbonamy/witsy) - AI desktop app for Mac, Windows, and Linux
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) - Multi-provider desktop client
 - [Ollama App](https://github.com/JHubi1/ollama-app) - Multi-platform client for desktop and mobile
