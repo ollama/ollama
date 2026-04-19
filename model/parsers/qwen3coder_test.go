@@ -1121,6 +1121,34 @@ func TestQwen3CoderParserToolCallIndexResetOnInit(t *testing.T) {
 	}
 }
 
+func TestQwen3CoderParserAngleBracketsInParameterValue(t *testing.T) {
+	tools := []api.Tool{tool("run_code", map[string]api.ToolProperty{
+		"source": {Type: api.PropertyType{"string"}},
+	})}
+	parser := Qwen3CoderParser{}
+	parser.Init(tools, nil, nil)
+
+	// Parameter value contains "<word=expr" — previously caused the tag regex to
+	// greedily match across newlines, consuming the real </parameter> closing tag
+	// and producing "element <parameter> closed by </function>" from xml.Unmarshal.
+	input := "<tool_call>\n<function=run_code>\n<parameter=source>\nIF C<1w=P-SQR(1-C)\nNEXT\n</parameter>\n</function>\n</tool_call>"
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	want := "IF C<1w=P-SQR(1-C)\nNEXT"
+	got, ok := calls[0].Function.Arguments.Get("source")
+	if !ok {
+		t.Fatal("missing source argument")
+	}
+	if got != want {
+		t.Errorf("source: got %q, want %q", got, want)
+	}
+}
+
 func TestQwenXMLTransform(t *testing.T) {
 	cases := []struct {
 		desc string
@@ -1180,6 +1208,41 @@ celsius
 		San Francisco &amp; San Jose
 		</parameter>
 		</function>`,
+		},
+		{
+			// qwenTagRegex must not match across newlines: a pattern like <1w=expr
+			// with no ">" on the same line should not greedily consume the real
+			// </parameter> and </function> closing tags that appear on later lines.
+			desc: "angle brackets in parameter values do not corrupt closing tags",
+			raw: `<function=run_code>
+<parameter=source>
+IF C<1w=P-SQR(1-C)
+NEXT
+</parameter>
+</function>`,
+			want: `<function name="run_code">
+<parameter name="source">
+IF C&lt;1w=P-SQR(1-C)
+NEXT
+</parameter>
+</function>`,
+		},
+		{
+			desc: "multiple angle-bracket patterns in same parameter value",
+			raw: `<function=run_code>
+<parameter=source>
+IF A<1x=FOO(A)
+IF B<2y=BAR(B)
+NEXT
+</parameter>
+</function>`,
+			want: `<function name="run_code">
+<parameter name="source">
+IF A&lt;1x=FOO(A)
+IF B&lt;2y=BAR(B)
+NEXT
+</parameter>
+</function>`,
 		},
 	}
 
