@@ -77,6 +77,13 @@ func writeModelRefParseError(c *gin.Context, err error, fallbackStatus int, fall
 	}
 }
 
+func shouldUseCommandR(model *Model) bool {
+	if model.Config.ModelFamily == "command-r" {
+		return true
+	}
+	return false
+}
+
 func shouldUseHarmony(model *Model) bool {
 	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
 		// heuristic to check whether the template expects to be parsed via harmony:
@@ -377,6 +384,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	var builtinParser parsers.Parser
 	if shouldUseHarmony(m) && m.Config.Parser == "" {
 		m.Config.Parser = "harmony"
+	}
+	if shouldUseCommandR(m) && m.Config.Parser == "" {
+		m.Config.Parser = "command-r"
 	}
 
 	if !req.Raw && m.Config.Parser != "" {
@@ -2322,6 +2332,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	if shouldUseHarmony(m) && m.Config.Parser == "" {
 		m.Config.Parser = "harmony"
+	}
+	if shouldUseCommandR(m) && m.Config.Parser == "" {
+		m.Config.Parser = "command-r"
 	}
 
 	var builtinParser parsers.Parser
