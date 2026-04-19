@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
 func TestOpenclawIntegration(t *testing.T) {
@@ -801,7 +802,7 @@ func TestOpenclawEdit_BackupCreated(t *testing.T) {
 	setTestHome(t, tmpDir)
 	configDir := filepath.Join(tmpDir, ".openclaw")
 	configPath := filepath.Join(configDir, "openclaw.json")
-	backupDir := filepath.Join(os.TempDir(), "ollama-backups")
+	backupDir := fileutil.BackupDir()
 
 	os.MkdirAll(configDir, 0o755)
 	uniqueMarker := fmt.Sprintf("test-marker-%d", os.Getpid())
