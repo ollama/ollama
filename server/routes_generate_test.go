@@ -2449,3 +2449,309 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 		t.Errorf("expected done=true")
 	}
 }
+
+func TestChatPromptEvalProgress(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Track the CompletionRequest to verify PromptEvalProgress is passed through
+	var capturedRequest llm.CompletionRequest
+	progressResponses := []llm.CompletionResponse{
+		{PromptEvalCompleted: 10, PromptEvalTotal: 100},
+		{PromptEvalCompleted: 50, PromptEvalTotal: 100},
+		{Content: "Hello!", Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 100, PromptEvalDuration: 1, EvalCount: 1, EvalDuration: 1},
+	}
+
+	mock := mockRunner{
+		CompletionFn: func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			capturedRequest = r
+			for _, resp := range progressResponses {
+				fn(resp)
+			}
+			return nil
+		},
+	}
+
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{llama: &mock}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test-progress",
+		Files:  map[string]string{"file.gguf": digest},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	t.Run("prompt_eval_progress passed to completion request", func(t *testing.T) {
+		streamTrue := true
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-progress",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			Stream:             &streamTrue,
+			PromptEvalProgress: 10,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify the PromptEvalProgress was passed through to the CompletionRequest
+		if capturedRequest.PromptEvalProgress != 10 {
+			t.Errorf("expected PromptEvalProgress=10 in CompletionRequest, got %d", capturedRequest.PromptEvalProgress)
+		}
+
+		// Parse all streaming responses
+		lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
+		var responses []api.ChatResponse
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			var resp api.ChatResponse
+			if err := json.Unmarshal([]byte(line), &resp); err != nil {
+				t.Fatalf("failed to parse response line %q: %v", line, err)
+			}
+			responses = append(responses, resp)
+		}
+
+		// Verify we got progress updates
+		if len(responses) < 3 {
+			t.Fatalf("expected at least 3 responses (2 progress + 1 final), got %d", len(responses))
+		}
+
+		// First response should have progress info
+		if responses[0].PromptEvalCompleted != 10 || responses[0].PromptEvalTotal != 100 {
+			t.Errorf("first response: expected PromptEvalCompleted=10, PromptEvalTotal=100, got PromptEvalCompleted=%d, PromptEvalTotal=%d",
+				responses[0].PromptEvalCompleted, responses[0].PromptEvalTotal)
+		}
+
+		// Second response should have more progress
+		if responses[1].PromptEvalCompleted != 50 || responses[1].PromptEvalTotal != 100 {
+			t.Errorf("second response: expected PromptEvalCompleted=50, PromptEvalTotal=100, got PromptEvalCompleted=%d, PromptEvalTotal=%d",
+				responses[1].PromptEvalCompleted, responses[1].PromptEvalTotal)
+		}
+
+		// Final response should be done
+		finalResp := responses[len(responses)-1]
+		if !finalResp.Done {
+			t.Errorf("expected final response to have Done=true")
+		}
+	})
+
+	t.Run("no progress when prompt_eval_progress is 0", func(t *testing.T) {
+		// Reset captured request
+		capturedRequest = llm.CompletionRequest{}
+
+		// Reset mock to not send progress updates
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			capturedRequest = r
+			fn(llm.CompletionResponse{Content: "Hi!", Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 1, PromptEvalDuration: 1, EvalCount: 1, EvalDuration: 1})
+			return nil
+		}
+
+		streamTrue := true
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-progress",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			Stream:             &streamTrue,
+			PromptEvalProgress: 0, // Disabled
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify PromptEvalProgress was passed as 0
+		if capturedRequest.PromptEvalProgress != 0 {
+			t.Errorf("expected PromptEvalProgress=0 in CompletionRequest, got %d", capturedRequest.PromptEvalProgress)
+		}
+	})
+}
+
+func TestGeneratePromptEvalProgress(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var capturedRequest llm.CompletionRequest
+	progressResponses := []llm.CompletionResponse{
+		{PromptEvalCompleted: 25, PromptEvalTotal: 200},
+		{PromptEvalCompleted: 100, PromptEvalTotal: 200},
+		{PromptEvalCompleted: 200, PromptEvalTotal: 200},
+		{Content: "Response text", Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 200, PromptEvalDuration: 1, EvalCount: 1, EvalDuration: 1},
+	}
+
+	mock := mockRunner{
+		CompletionFn: func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			capturedRequest = r
+			for _, resp := range progressResponses {
+				fn(resp)
+			}
+			return nil
+		},
+	}
+
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{llama: &mock}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test-gen-progress",
+		Files:  map[string]string{"file.gguf": digest},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	t.Run("prompt_eval_progress passed to completion request", func(t *testing.T) {
+		streamTrue := true
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:              "test-gen-progress",
+			Prompt:             "Tell me a story",
+			Stream:             &streamTrue,
+			PromptEvalProgress: 25,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify the PromptEvalProgress was passed through
+		if capturedRequest.PromptEvalProgress != 25 {
+			t.Errorf("expected PromptEvalProgress=25 in CompletionRequest, got %d", capturedRequest.PromptEvalProgress)
+		}
+
+		// Parse streaming responses
+		lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
+		var responses []api.GenerateResponse
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			var resp api.GenerateResponse
+			if err := json.Unmarshal([]byte(line), &resp); err != nil {
+				t.Fatalf("failed to parse response line %q: %v", line, err)
+			}
+			responses = append(responses, resp)
+		}
+
+		// Verify we got progress updates
+		if len(responses) < 4 {
+			t.Fatalf("expected at least 4 responses (3 progress + 1 final), got %d", len(responses))
+		}
+
+		// Check progress values in responses
+		if responses[0].PromptEvalCompleted != 25 || responses[0].PromptEvalTotal != 200 {
+			t.Errorf("first response: expected PromptEvalCompleted=25, PromptEvalTotal=200, got PromptEvalCompleted=%d, PromptEvalTotal=%d",
+				responses[0].PromptEvalCompleted, responses[0].PromptEvalTotal)
+		}
+
+		if responses[1].PromptEvalCompleted != 100 || responses[1].PromptEvalTotal != 200 {
+			t.Errorf("second response: expected PromptEvalCompleted=100, PromptEvalTotal=200, got PromptEvalCompleted=%d, PromptEvalTotal=%d",
+				responses[1].PromptEvalCompleted, responses[1].PromptEvalTotal)
+		}
+
+		if responses[2].PromptEvalCompleted != 200 || responses[2].PromptEvalTotal != 200 {
+			t.Errorf("third response: expected PromptEvalCompleted=200, PromptEvalTotal=200, got PromptEvalCompleted=%d, PromptEvalTotal=%d",
+				responses[2].PromptEvalCompleted, responses[2].PromptEvalTotal)
+		}
+
+		// Final response should be done with content
+		finalResp := responses[len(responses)-1]
+		if !finalResp.Done {
+			t.Errorf("expected final response to have Done=true")
+		}
+		if finalResp.Response != "Response text" {
+			t.Errorf("expected final response content 'Response text', got %q", finalResp.Response)
+		}
+	})
+}

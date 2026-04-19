@@ -44,8 +44,10 @@ import (
 
 // response contains a piece of generated text along with optional logprobs
 type response struct {
-	content  string
-	logprobs []llm.Logprob
+	content             string
+	logprobs            []llm.Logprob
+	promptEvalCompleted int // prompt eval progress: tokens processed so far
+	promptEvalTotal     int // prompt eval progress: total tokens to process
 }
 
 type Sequence struct {
@@ -113,18 +115,23 @@ type Sequence struct {
 	samplingDuration         time.Duration
 	numPredicted             int
 	numPromptInputs          int
+
+	// Prompt eval progress
+	promptEvalProgress int // interval for sending progress updates (0 = disabled)
+	lastProgressSent   int // number of tokens when last progress was sent
 }
 
 type NewSequenceParams struct {
-	numPredict  int
-	stop        []string
-	numKeep     int32
-	sampler     sample.Sampler
-	embedding   bool
-	shift       bool
-	truncate    bool
-	logprobs    bool
-	topLogprobs int
+	numPredict         int
+	stop               []string
+	numKeep            int32
+	sampler            sample.Sampler
+	embedding          bool
+	shift              bool
+	truncate           bool
+	logprobs           bool
+	topLogprobs        int
+	promptEvalProgress int
 }
 
 var errorInputTooLong = errors.New("the input length exceeds the context length")
@@ -191,22 +198,23 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	// TODO(jessegross): Ingest cached history for grammar
 
 	return &Sequence{
-		ctxs:             ctxs,
-		mmStore:          mmStore,
-		inputs:           inputs,
-		numPromptInputs:  len(inputs),
-		numPredict:       params.numPredict,
-		pendingResponses: make([]string, 0),
-		responses:        make(chan response, 100),
-		quit:             make(chan bool, 1),
-		embedding:        make(chan []float32, 1),
-		sampler:          params.sampler,
-		embeddingOnly:    params.embedding,
-		stop:             params.stop,
-		numKeep:          params.numKeep,
-		shift:            params.shift,
-		logprobs:         params.logprobs,
-		topLogprobs:      params.topLogprobs,
+		ctxs:               ctxs,
+		mmStore:            mmStore,
+		inputs:             inputs,
+		numPromptInputs:    len(inputs),
+		numPredict:         params.numPredict,
+		pendingResponses:   make([]string, 0),
+		responses:          make(chan response, 100),
+		quit:               make(chan bool, 1),
+		embedding:          make(chan []float32, 1),
+		sampler:            params.sampler,
+		embeddingOnly:      params.embedding,
+		stop:               params.stop,
+		numKeep:            params.numKeep,
+		shift:              params.shift,
+		logprobs:           params.logprobs,
+		topLogprobs:        params.topLogprobs,
+		promptEvalProgress: params.promptEvalProgress,
 	}, nil
 }
 
@@ -700,6 +708,22 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			if !s.cache.enabled {
 				panic("caching disabled but unable to fit entire input in a batch")
 			}
+
+			// Send progress update if interval is configured
+			if seq.promptEvalProgress > 0 {
+				processed := seq.numPromptInputs - len(seq.inputs)
+				if processed-seq.lastProgressSent >= seq.promptEvalProgress {
+					select {
+					case seq.responses <- response{
+						promptEvalCompleted: processed,
+						promptEvalTotal:     seq.numPromptInputs,
+					}:
+						seq.lastProgressSent = processed
+					case <-seq.quit:
+						continue
+					}
+				}
+			}
 			continue
 		}
 
@@ -897,15 +921,16 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
-		numPredict:  req.Options.NumPredict,
-		stop:        req.Options.Stop,
-		numKeep:     int32(req.Options.NumKeep),
-		sampler:     sampler,
-		embedding:   false,
-		shift:       req.Shift,
-		truncate:    req.Truncate,
-		logprobs:    req.Logprobs,
-		topLogprobs: req.TopLogprobs,
+		numPredict:         req.Options.NumPredict,
+		stop:               req.Options.Stop,
+		numKeep:            int32(req.Options.NumKeep),
+		sampler:            sampler,
+		embedding:          false,
+		shift:              req.Shift,
+		truncate:           req.Truncate,
+		logprobs:           req.Logprobs,
+		topLogprobs:        req.TopLogprobs,
+		promptEvalProgress: req.PromptEvalProgress,
 	})
 	if err != nil {
 		if errors.Is(err, errorInputTooLong) {
@@ -960,8 +985,10 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		case resp, ok := <-seq.responses:
 			if ok {
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
-					Content:  resp.content,
-					Logprobs: resp.logprobs,
+					Content:             resp.content,
+					Logprobs:            resp.logprobs,
+					PromptEvalCompleted: resp.promptEvalCompleted,
+					PromptEvalTotal:     resp.promptEvalTotal,
 				}); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
