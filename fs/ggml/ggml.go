@@ -288,6 +288,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"mllama",
 		"nemotron_h", "nemotron_h_moe",
 		"nomic-bert",
+		"nomic-bert-moe",
 		"olmo3",
 		"qwen25vl",
 		"qwen3", "qwen3moe",
