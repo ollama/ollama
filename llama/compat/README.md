@@ -78,3 +78,36 @@ llama.cpp's source in the Ollama tree (the old `llama/llama.cpp/` layout).
 This shim keeps upstream unmodified on disk and the Ollama-specific logic
 isolated in two files plus a small diff — upstream bumps are usually just
 `LLAMA_CPP_VERSION` changes.
+
+## Maintenance: non-public API dependencies
+
+The compat code is mostly written against stable public APIs (`gguf.h`,
+`ggml.h`, `ggml-backend.h`). There are three places where we lean on
+something that isn't strictly public:
+
+| Hack | Why | Escape hatch if upstream changes |
+|---|---|---|
+| Direct writes to `ggml_tensor::type` / `ne[]` / `nb[]` | No sanctioned mutator exists for post-creation tensor reshape/retype. Struct is public so this works today. | Ask upstream to expose `ggml_tensor_set_{type,shape}` helpers, or introduce them in our compat util and submit a PR. |
+| `const_cast<char *>(gguf_get_tensor_name(...))` in `rename_tensor` | Pointer aims into a mutable `char[GGML_MAX_NAME]` buffer inside a `std::vector` element; the const is API hygiene. Lets us rename gguf tensors without a new public helper. | Add `gguf_rename_tensor` to `gguf.h` (10 lines) and drop the `const_cast`. |
+| `llama_model_loader` forward-decl from `src/llama-model-loader.h` | Used only as an opaque pointer key for our skip-prefix registry. Never dereferenced. | Replace with `const void *` in our registry signatures. Zero behavioral change. |
+
+None of these have changed in years. If an upstream bump breaks any of
+them, each has a trivial workaround. See the top of
+`llama-ollama-compat-util.h` for the inline notes.
+
+## Documented hacks inside per-arch handlers
+
+- **`reclaim_slot_as` (qwen35moe patch_embed split)** — repurposes an
+  orphaned `v.blk.0.attn_k` slot (left over after the QKV merge) as a
+  newly-synthesized `v.patch_embd.weight.1`. Needed because clip.cpp's
+  `ctx_meta` is sized for exactly the original tensor count (no_alloc
+  branch of `gguf_init_from_file` uses `n_tensors * ggml_tensor_overhead()`
+  with zero slack). Comment in the helper and call site explains the
+  reasoning; replacement would be a 1-line upstream patch that adds small
+  slack to the ctx size.
+
+- **Load-op registry overrides `file_offset`** — `maybe_load_tensor` gets
+  passed the gguf offset by its caller but ignores it when a registered
+  op exists. Intentional: the ops capture their own source offsets at
+  translate time (before our renames invalidate them). Documented in the
+  op-registration helpers.

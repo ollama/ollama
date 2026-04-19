@@ -7,6 +7,32 @@
 // definitions live in llama-ollama-compat-util.cpp, which also owns the
 // registry globals (tensor skip list, load-op table) that need a single
 // translation unit.
+//
+// ---- Non-public API dependencies (see also README.md "Maintenance") ----
+//
+// Mostly public: gguf_* and ggml_* accessors from ggml/include/ are all
+// stable. `ggml_backend_*` and `ggml_fp16_to_fp32` are stable too.
+//
+// Three pieces we rely on that aren't strictly guaranteed public:
+//
+//  1. Direct writes to `ggml_tensor::type`, `ne[]`, `nb[]` — the struct is
+//     public and fields are spec'd, but there's no sanctioned mutator for
+//     them post-creation. Used in set_tensor_type / set_tensor_shape /
+//     reclaim_slot_as. Risk: upstream could in principle introduce an
+//     opaque-tensor mode; in practice it hasn't in years.
+//
+//  2. `const_cast<char *>(gguf_get_tensor_name(...))` in rename_tensor.
+//     The pointer returned points into a mutable char[GGML_MAX_NAME]
+//     buffer inside a std::vector element. Defined behavior as long as
+//     upstream keeps name storage in-line (has done so forever).
+//
+//  3. `llama_model_loader` forward decl from src/llama-model-loader.h
+//     (internal, not llama.h). Only used as an opaque pointer key for
+//     the skip-prefix registry — we never dereference it. Could swap for
+//     `const void *` if upstream ever moved that type around.
+//
+// All three are trivially replaceable if upstream changes out from under
+// us. See llama/compat/README.md for the escape hatches.
 
 #include <cstddef>
 #include <cstdint>
