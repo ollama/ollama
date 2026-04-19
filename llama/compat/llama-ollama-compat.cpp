@@ -351,6 +351,34 @@ void handle_nemotron_h_moe(const llama_model_loader * ml, gguf_context * meta, g
 }
 
 // =========================================================================
+// llama4 (text side)
+// =========================================================================
+//
+// Same arch name on both sides. Ollama publishes a monolithic GGUF that
+// embeds the vision encoder + projector inline. Text-side KVs/tensor
+// names match upstream verbatim — only fix is to hide `v.*`/`mm.*` from
+// the text loader so n_tensors lines up.
+
+bool detect_ollama_llama4(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "llama4") != 0) return false;
+    return any_tensor_with_prefix(ctx, "v.")
+        || any_tensor_with_prefix(ctx, "mm.");
+}
+
+void handle_llama4(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_llama4(meta, ctx)) return;
+    (void) meta;
+    (void) ctx;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format llama4 GGUF; applying compatibility fixes\n", __func__);
+
+    add_skip_prefix(ml, "v.");
+    add_skip_prefix(ml, "mm.");
+}
+
+// =========================================================================
 // gpt-oss (text only)
 // =========================================================================
 //
@@ -796,6 +824,72 @@ void handle_deepseekocr_clip(gguf_context * meta, ggml_context * ctx) {
 }
 
 // =========================================================================
+// llama4 (clip side)
+// =========================================================================
+//
+// Ollama's monolithic llama4 GGUF embeds the CLIP-style ViT and a 3-layer
+// projector (`mm.linear_1` + `v.vision_adapter.mlp.fc1/fc2`). Upstream's
+// PROJECTOR_TYPE_LLAMA4 expects the projector under `mm.model.fc` /
+// `mm.model.mlp.{1,2}` and standard CLIP block leaf names.
+
+constexpr std::pair<const char *, const char *> kLlama4ClipRenames[] = {
+    // Vision-adapter MLP -> upstream's MM-MLP slots. Run BEFORE the generic
+    // `.mlp.fc{1,2}` -> `.ffn_{up,down}` rename so the substring match stays
+    // pinned to the adapter prefix.
+    {"v.vision_adapter.mlp.fc1", "mm.model.mlp.1"},
+    {"v.vision_adapter.mlp.fc2", "mm.model.mlp.2"},
+
+    // Main projector.
+    {"mm.linear_1",              "mm.model.fc"},
+
+    // Vision tower non-blk.
+    {"v.class_embedding",        "v.class_embd"},
+    {"v.layernorm_post",         "v.post_ln"},
+    {"v.layernorm_pre",          "v.pre_ln"},
+    {"v.patch_embedding",        "v.patch_embd"},
+
+    // Vision-tower block leaves.
+    {".attn_output",             ".attn_out"},
+    {".attn_norm",               ".ln1"},
+    {".ffn_norm",                ".ln2"},
+    {".mlp.fc1",                 ".ffn_up"},
+    {".mlp.fc2",                 ".ffn_down"},
+};
+
+void handle_llama4_clip(gguf_context * meta, ggml_context * ctx) {
+    LLAMA_LOG_INFO("%s: detected Ollama-format llama4 GGUF used as mmproj; translating\n", __func__);
+
+    copy_u32_kv(meta, "llama4.vision.block_count",                    "clip.vision.block_count");
+    copy_u32_kv(meta, "llama4.vision.embedding_length",               "clip.vision.embedding_length");
+    copy_u32_kv(meta, "llama4.vision.feed_forward_length",            "clip.vision.feed_forward_length");
+    copy_u32_kv(meta, "llama4.vision.attention.head_count",           "clip.vision.attention.head_count");
+    copy_u32_kv(meta, "llama4.vision.image_size",                     "clip.vision.image_size");
+    copy_u32_kv(meta, "llama4.vision.patch_size",                     "clip.vision.patch_size");
+    copy_f32_kv(meta, "llama4.vision.layer_norm_epsilon",             "clip.vision.attention.layer_norm_epsilon");
+    // projection_dim = LM embedding length (= mm.model.fc output dim).
+    copy_u32_kv(meta, "llama4.embedding_length",                      "clip.vision.projection_dim");
+
+    // Defaults (match the upstream-converted reference mmproj).
+    inject_u32_if_missing(meta, "clip.vision.projector.scale_factor", 2);
+
+    static const float kHalfHalfHalf[3] = {0.5f, 0.5f, 0.5f};
+    inject_f32_arr_if_missing(meta, "clip.vision.image_mean", kHalfHalfHalf, 3);
+    inject_f32_arr_if_missing(meta, "clip.vision.image_std",  kHalfHalfHalf, 3);
+
+    inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
+    inject_bool_if_missing(meta, "clip.use_gelu",           true);
+    gguf_set_val_str(meta, "clip.projector_type",  "llama4");
+    gguf_set_val_str(meta, "general.architecture", "clip");
+
+    // Position embedding has no `.weight` suffix in Ollama; rename exactly.
+    rename_tensor(meta, ctx, "v.positional_embedding_vlm", "v.position_embd.weight");
+
+    for (const auto & [from, to] : kLlama4ClipRenames) {
+        rename_tensors_containing(meta, ctx, from, to);
+    }
+}
+
+// =========================================================================
 // mistral3 (clip side — pixtral projector)
 // =========================================================================
 //
@@ -981,6 +1075,7 @@ void translate_metadata(const llama_model_loader * ml,
     if (arch_name == "mistral3")      handle_mistral3      (ml, meta, ctx);
     if (arch_name == "deepseekocr")   handle_deepseekocr   (ml, meta, ctx, arch_name);
     if (arch_name == "nemotron_h_moe") handle_nemotron_h_moe(ml, meta, ctx);
+    if (arch_name == "llama4")        handle_llama4        (ml, meta, ctx);
     // Dispatch. Add more arches as they are wired up.
 }
 
@@ -1003,6 +1098,10 @@ void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     }
     if (detect_ollama_deepseekocr(meta)) {
         handle_deepseekocr_clip(meta, ctx);
+        return;
+    }
+    if (detect_ollama_llama4(meta, ctx)) {
+        handle_llama4_clip(meta, ctx);
         return;
     }
 }
