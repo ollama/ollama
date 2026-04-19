@@ -108,7 +108,7 @@ index 4ded484dd..7d3509c23 100644
  
      if (use_mmap_buffer) {
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
-index f0e8786b6..ec2a7d320 100644
+index f0e8786b6..1e6319ca0 100644
 --- a/tools/mtmd/clip.cpp
 +++ b/tools/mtmd/clip.cpp
 @@ -10,6 +10,8 @@
@@ -132,30 +132,11 @@ index f0e8786b6..ec2a7d320 100644
          const int n_tensors = gguf_get_n_tensors(ctx_gguf.get());
  
          // print gguf info
-@@ -2358,11 +2365,25 @@ struct clip_model_loader {
+@@ -2358,6 +2365,7 @@ struct clip_model_loader {
                  auto it_off = tensor_offset.find(t->name);
                  GGML_ASSERT(it_off != tensor_offset.end() && "no offset for tensor");
                  const size_t offset = it_off->second;
-+                size_t num_bytes = ggml_nbytes(cur);
-+
-+                // Ollama-compat: let the compat layer supply promoted tensor
-+                // data (e.g. F16→F32 for conv weights) instead of reading
-+                // bytes directly from the file.
-+                std::vector<uint8_t> compat_buf;
-+                if (llama_ollama_compat::supply_promoted_tensor_data(cur, fname.c_str(), offset, compat_buf)) {
-+                    if (ggml_backend_buft_is_host(buft)) {
-+                        std::memcpy(cur->data, compat_buf.data(), num_bytes);
-+                    } else {
-+                        ggml_backend_tensor_set(cur, compat_buf.data(), 0, num_bytes);
-+                    }
-+                    continue;
-+                }
-+
++                if (llama_ollama_compat::maybe_load_tensor(cur, fname.c_str(), offset, buft)) continue;
                  fin.seekg(offset, std::ios::beg);
                  if (!fin) {
                      throw std::runtime_error(string_format("%s: failed to seek for tensor %s\n", __func__, t->name));
-                 }
--                size_t num_bytes = ggml_nbytes(cur);
-                 if (ggml_backend_buft_is_host(buft)) {
-                     // for the CPU and Metal backend, we can read directly into the tensor
-                     fin.read(reinterpret_cast<char *>(cur->data), num_bytes);
