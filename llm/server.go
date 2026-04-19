@@ -381,6 +381,7 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	}
 
 	cmd = exec.Command(exe, params...)
+	cmd.Dir = os.TempDir()
 
 	cmd.Env = os.Environ()
 
