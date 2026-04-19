@@ -147,6 +147,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 						configPath, pErr := manifest.BlobsPath(mf.Config.Digest)
 						if pErr == nil {
 							if cfgFile, fErr := os.Open(configPath); fErr == nil {
+								defer cfgFile.Close()
 								var baseConfig model.ConfigV2
 								if decErr := json.NewDecoder(cfgFile).Decode(&baseConfig); decErr == nil {
 									if config.Renderer == "" {
@@ -165,7 +166,6 @@ func (s *Server) CreateHandler(c *gin.Context) {
 										config.Capabilities = baseConfig.Capabilities
 									}
 								}
-								cfgFile.Close()
 							}
 						}
 					}
