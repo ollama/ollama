@@ -425,6 +425,30 @@ func ReloadServerConfig() {
 	loadServerConfig()
 }
 
+// ResponseStoreTTL returns the TTL for stored responses used by previous_response_id.
+// Configurable via OLLAMA_RESPONSE_STORE_TTL. Default is 30 minutes.
+func ResponseStoreTTL() time.Duration {
+	ttl := 30 * time.Minute
+	if s := Var("OLLAMA_RESPONSE_STORE_TTL"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			ttl = d
+		}
+	}
+	return ttl
+}
+
+// ResponseStoreMaxResponses returns the maximum number of stored responses.
+// Configurable via OLLAMA_RESPONSE_STORE_MAX. Default is 1024.
+func ResponseStoreMaxResponses() int {
+	max := 1024
+	if s := Var("OLLAMA_RESPONSE_STORE_MAX"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			max = n
+		}
+	}
+	return max
+}
+
 // NoCloud returns true if Ollama cloud features are disabled,
 // checking both the OLLAMA_NO_CLOUD environment variable and
 // the disable_ollama_cloud field in ~/.ollama/server.json.

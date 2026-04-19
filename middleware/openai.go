@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"bytes"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -447,14 +449,37 @@ func ChatMiddleware() gin.HandlerFunc {
 	}
 }
 
+// ResponseStoreInterface is used to decouple middleware from the server package.
+// The concrete implementation lives in server.ResponseStore.
+type ResponseStoreInterface interface {
+	BuildHistory(id string) ([]api.Message, error)
+	Store(id, previousID, model, instructions string, input, output []api.Message)
+}
+
+// generateResponseID creates an ID matching the OpenAI format: "resp_" + 32 hex chars.
+func generateResponseID() string {
+	b := make([]byte, 16)
+	_, _ = cryptorand.Read(b)
+	return "resp_" + hex.EncodeToString(b)
+}
+
+// generateItemID creates a message item ID: "msg_" + 32 hex chars.
+func generateItemID() string {
+	b := make([]byte, 16)
+	_, _ = cryptorand.Read(b)
+	return "msg_" + hex.EncodeToString(b)
+}
+
 type ResponsesWriter struct {
 	BaseWriter
-	converter  *openai.ResponsesStreamConverter
-	model      string
-	stream     bool
-	responseID string
-	itemID     string
-	request    openai.ResponsesRequest
+	converter     *openai.ResponsesStreamConverter
+	model         string
+	stream        bool
+	responseID    string
+	itemID        string
+	request       openai.ResponsesRequest
+	store         ResponseStoreInterface
+	inputMessages []api.Message
 }
 
 func (w *ResponsesWriter) writeEvent(eventType string, data any) error {
@@ -487,6 +512,20 @@ func (w *ResponsesWriter) writeResponse(data []byte) (int, error) {
 				return 0, err
 			}
 		}
+
+		// Store on completion for future previous_response_id lookups
+		if w.store != nil && chatResponse.Done {
+			prevID := ""
+			if w.request.PreviousResponseID != nil {
+				prevID = *w.request.PreviousResponseID
+			}
+			w.store.Store(
+				w.responseID, prevID, w.model, w.request.Instructions,
+				w.inputMessages,
+				[]api.Message{chatResponse.Message},
+			)
+		}
+
 		return len(data), nil
 	}
 
@@ -495,6 +534,20 @@ func (w *ResponsesWriter) writeResponse(data []byte) (int, error) {
 	response := openai.ToResponse(w.model, w.responseID, w.itemID, chatResponse, w.request)
 	completedAt := time.Now().Unix()
 	response.CompletedAt = &completedAt
+
+	// Store the response for future previous_response_id lookups
+	if w.store != nil && chatResponse.Done {
+		prevID := ""
+		if w.request.PreviousResponseID != nil {
+			prevID = *w.request.PreviousResponseID
+		}
+		w.store.Store(
+			w.responseID, prevID, w.model, w.request.Instructions,
+			w.inputMessages,
+			[]api.Message{chatResponse.Message},
+		)
+	}
+
 	return len(data), json.NewEncoder(w.ResponseWriter).Encode(response)
 }
 
@@ -525,7 +578,28 @@ func ResponsesMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		chatReq, err := openai.FromResponsesRequest(req)
+		// Look up ResponseStore from gin context (set by server.setResponseStore middleware)
+		var store ResponseStoreInterface
+		if val, exists := c.Get("response_store"); exists {
+			store, _ = val.(ResponseStoreInterface)
+		}
+
+		// Build history from previous_response_id chain
+		var previousMessages []api.Message
+		if req.PreviousResponseID != nil && *req.PreviousResponseID != "" {
+			if store == nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, openai.NewError(http.StatusInternalServerError, "response store not available"))
+				return
+			}
+			history, err := store.BuildHistory(*req.PreviousResponseID)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusNotFound, openai.NewError(http.StatusNotFound, fmt.Sprintf("previous response not found: %v", err)))
+				return
+			}
+			previousMessages = history
+		}
+
+		chatReq, err := openai.FromResponsesRequest(req, previousMessages)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
@@ -545,17 +619,26 @@ func ResponsesMiddleware() gin.HandlerFunc {
 
 		c.Request.Body = io.NopCloser(&b)
 
-		responseID := fmt.Sprintf("resp_%d", rand.Intn(999999))
-		itemID := fmt.Sprintf("msg_%d", rand.Intn(999999))
+		responseID := generateResponseID()
+		itemID := generateItemID()
+
+		// Capture input messages for storing
+		inputMessages := chatReq.Messages
+		if len(previousMessages) > 0 {
+			// Only store the NEW input, not the history
+			inputMessages = chatReq.Messages[len(previousMessages):]
+		}
 
 		w := &ResponsesWriter{
-			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-			converter:  openai.NewResponsesStreamConverter(responseID, itemID, req.Model, req),
-			model:      req.Model,
-			stream:     streamRequested,
-			responseID: responseID,
-			itemID:     itemID,
-			request:    req,
+			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
+			converter:     openai.NewResponsesStreamConverter(responseID, itemID, req.Model, req),
+			model:         req.Model,
+			stream:        streamRequested,
+			responseID:    responseID,
+			itemID:        itemID,
+			request:       req,
+			store:         store,
+			inputMessages: inputMessages,
 		}
 
 		// Set headers based on streaming mode
