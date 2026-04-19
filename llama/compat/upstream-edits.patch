@@ -1,0 +1,161 @@
+diff --git a/ggml/include/gguf.h b/ggml/include/gguf.h
+index 02d5f221c..2f64264f4 100644
+--- a/ggml/include/gguf.h
++++ b/ggml/include/gguf.h
+@@ -162,6 +162,9 @@ extern "C" {
+     // assumes that at least gguf_get_tensor_size bytes can be read from data
+     GGML_API void gguf_set_tensor_data(struct gguf_context * ctx, const char * name, const void * data);
+ 
++    // rename a tensor. Returns false if old_name is not present.
++    GGML_API bool gguf_rename_tensor(struct gguf_context * ctx, const char * old_name, const char * new_name);
++
+     // writing gguf files can be done in 3 ways:
+     //
+     // - write the entire gguf_context to a binary file in a single pass:
+diff --git a/ggml/src/gguf.cpp b/ggml/src/gguf.cpp
+index ab3cc9748..e3d06c959 100644
+--- a/ggml/src/gguf.cpp
++++ b/ggml/src/gguf.cpp
+@@ -1280,6 +1280,16 @@ void gguf_set_tensor_data(struct gguf_context * ctx, const char * name, const vo
+     ctx->info[tensor_id].t.data = (void *)(uintptr_t)data; // double cast suppresses warning about casting away const
+ }
+ 
++bool gguf_rename_tensor(struct gguf_context * ctx, const char * old_name, const char * new_name) {
++    const int64_t tensor_id = gguf_find_tensor(ctx, old_name);
++    if (tensor_id < 0) {
++        return false;
++    }
++    // ggml_set_name truncates to GGML_MAX_NAME.
++    ggml_set_name(&ctx->info[tensor_id].t, new_name);
++    return true;
++}
++
+ struct gguf_writer_base {
+     size_t written_bytes {0u};
+ 
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 7b1fcfca0..155a819fa 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -32,6 +32,7 @@ add_library(llama
+             llama-model-loader.cpp
+             llama-model-saver.cpp
+             llama-model.cpp
++            llama-ollama-compat.cpp
+             llama-quant.cpp
+             llama-sampler.cpp
+             llama-vocab.cpp
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 4e65a45a5..75836c683 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -4,6 +4,7 @@
+ #include "ggml.h"
+ #include "gguf.h"
+ #include "llama-hparams.h"
++#include "llama-ollama-compat.h"
+ 
+ #include <algorithm>
+ #include <array>
+@@ -549,6 +550,7 @@ llama_model_loader::llama_model_loader(
+         }
+ 
+         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
++        llama_ollama_compat::translate_metadata(this, metadata, ctx, arch_name);
+         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
+ 
+         files.emplace_back(new llama_file(fname.c_str(), "rb", use_direct_io));
+@@ -573,6 +575,9 @@ llama_model_loader::llama_model_loader(
+         // so we build a unified tensors index for weights.
+         for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
+             std::string tensor_name = std::string(cur->name);
++            if (llama_ollama_compat::should_skip_tensor(this, tensor_name.c_str())) {
++                continue;
++            }
+             // make sure there is no duplicated tensor names
+             if (weights_map.find(tensor_name) != weights_map.end()) {
+                 throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
+@@ -683,6 +688,9 @@ llama_model_loader::llama_model_loader(
+         // Save tensors data offset info of the main file.
+         for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
+             std::string tensor_name = std::string(cur->name);
++            if (llama_ollama_compat::should_skip_tensor(this, tensor_name.c_str())) {
++                continue;
++            }
+             // make sure there is no duplicated tensor names
+             if (weights_map.find(tensor_name) != weights_map.end()) {
+                 throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 4ded484dd..7d3509c23 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -6,6 +6,7 @@
+ #include "llama-mmap.h"
+ #include "llama-cparams.h"
+ #include "llama-model-loader.h"
++#include "llama-ollama-compat.h"
+ 
+ #include "llama-kv-cache.h"
+ #include "llama-kv-cache-iswa.h"
+@@ -8023,6 +8024,9 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+         if (!ml.load_all_data(ctx, buf_map, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
+             return false;
+         }
++        // Apply any Ollama-format numerical fixups (e.g. gemma3 RMSNorm +1)
++        // while the data is in its final backend buffers.
++        llama_ollama_compat::apply_tensor_transforms(&ml, ctx);
+     }
+ 
+     if (use_mmap_buffer) {
+diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
+index f0e8786b6..ec2a7d320 100644
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -10,6 +10,8 @@
+ #include "ggml-backend.h"
+ #include "gguf.h"
+ 
++#include "src/llama-ollama-compat.h"
++
+ #include <algorithm>
+ #include <cassert>
+ #include <cmath>
+@@ -985,6 +987,11 @@ struct clip_model_loader {
+ 
+         ctx_meta.reset(meta);
+ 
++        // If this is an Ollama-format monolithic GGUF (text + embedded
++        // vision), translate its metadata and tensor names into the
++        // upstream mmproj shape so the rest of this loader runs unchanged.
++        llama_ollama_compat::translate_clip_metadata(ctx_gguf.get(), meta);
++
+         const int n_tensors = gguf_get_n_tensors(ctx_gguf.get());
+ 
+         // print gguf info
+@@ -2358,11 +2365,25 @@ struct clip_model_loader {
+                 auto it_off = tensor_offset.find(t->name);
+                 GGML_ASSERT(it_off != tensor_offset.end() && "no offset for tensor");
+                 const size_t offset = it_off->second;
++                size_t num_bytes = ggml_nbytes(cur);
++
++                // Ollama-compat: let the compat layer supply promoted tensor
++                // data (e.g. F16→F32 for conv weights) instead of reading
++                // bytes directly from the file.
++                std::vector<uint8_t> compat_buf;
++                if (llama_ollama_compat::supply_promoted_tensor_data(cur, fname.c_str(), offset, compat_buf)) {
++                    if (ggml_backend_buft_is_host(buft)) {
++                        std::memcpy(cur->data, compat_buf.data(), num_bytes);
++                    } else {
++                        ggml_backend_tensor_set(cur, compat_buf.data(), 0, num_bytes);
++                    }
++                    continue;
++                }
++
+                 fin.seekg(offset, std::ios::beg);
+                 if (!fin) {
+                     throw std::runtime_error(string_format("%s: failed to seek for tensor %s\n", __func__, t->name));
+                 }
+-                size_t num_bytes = ggml_nbytes(cur);
+                 if (ggml_backend_buft_is_host(buft)) {
+                     // for the CPU and Metal backend, we can read directly into the tensor
+                     fin.read(reinterpret_cast<char *>(cur->data), num_bytes);
