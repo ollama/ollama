@@ -362,7 +362,9 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, digest stri
 		for {
 			select {
 			case <-ticker.C:
-				spinner.SetMessage(fmt.Sprintf("copying file %s %d%%", digest, int(100*pw.n.Load()/fileSize)))
+				if fileSize > 0 {
+					spinner.SetMessage(fmt.Sprintf("copying file %s %d%%", digest, int(100*pw.n.Load()/fileSize)))
+				}
 			case <-done:
 				spinner.SetMessage(fmt.Sprintf("copying file %s 100%%", digest))
 				return
