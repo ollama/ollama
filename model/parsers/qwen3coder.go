@@ -392,7 +392,9 @@ func parseValue(raw string, paramType api.PropertyType) any {
 }
 
 var (
-	qwenTagRegex    = regexp.MustCompile(`<(\w+)=([^>]+)>`)
+	qwenTagRegex = regexp.MustCompile(`<(\w+)=([^>\r\n]+)>`)
+	// [^"] is safe here because xml.EscapeText has already encoded any literal
+	// newlines in attribute values as &#xA; before this regex runs.
 	qwenXMLTagRegex = regexp.MustCompile(`</?(?:function|parameter)(?:\s+name="[^"]*")?>`)
 )
 
