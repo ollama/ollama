@@ -104,19 +104,30 @@ void add_skip_prefix(const llama_model_loader * ml, std::string prefix) {
 
 // ---- gemma3 --------------------------------------------------------------
 
-// Returns true if this looks like an Ollama-format gemma3 blob.
+// Returns true if this looks like an Ollama-format gemma3 blob. We collect
+// several independent markers because different Ollama converter versions
+// produced different quirks (the 4B has embedded vision, the 1B has
+// non-standard rope key names, etc.) — any one marker flips detection on.
 bool detect_ollama_gemma3(const gguf_context * meta, const ggml_context * ctx) {
-    // Primary marker: Ollama writes the "mm.tokens_per_image" KV for
-    // vision-capable gemma3 blobs. Upstream never uses this key.
+    // Vision-capable gemma3 (4B/12B/27B): Ollama writes this key.
     if (has_key(meta, "gemma3.mm.tokens_per_image")) return true;
 
-    // Secondary marker: embedded vision tensors in the main file. Upstream
-    // llama.cpp stores vision in a separate mmproj file.
+    // Embedded vision tensors in the main file. Upstream stores vision in
+    // a separate mmproj file.
     if (any_tensor_with_prefix(ctx, "v.") ||
         any_tensor_with_prefix(ctx, "mm.")) return true;
 
-    // Tertiary marker: required KV missing. Upstream always writes
-    // layer_norm_rms_epsilon; Ollama's old converter did not.
+    // Non-standard rope key names. Ollama's 1B converter used
+    // `gemma3.rope.{global,local}.freq_base` instead of upstream's flat
+    // `gemma3.rope.freq_base` / `gemma3.rope.freq_base_swa`.
+    if (has_key(meta, "gemma3.rope.global.freq_base")) return true;
+    if (has_key(meta, "gemma3.rope.local.freq_base"))  return true;
+
+    // Tokenizer KVs Ollama writes but upstream doesn't.
+    if (has_key(meta, "tokenizer.ggml.add_padding_token")) return true;
+    if (has_key(meta, "tokenizer.ggml.add_unknown_token")) return true;
+
+    // Required KV upstream always writes — its absence is a strong marker.
     if (!has_key(meta, "gemma3.attention.layer_norm_rms_epsilon")) return true;
 
     return false;
@@ -130,9 +141,44 @@ void handle_gemma3(const llama_model_loader * ml, gguf_context * meta, ggml_cont
     // 1. Inject required KVs that Ollama's old converter omitted. Defaults
     //    are the gemma3 standard values; only injected if missing, so explicit
     //    values in a file take precedence.
+    //
+    //    Some older Ollama converters also used the non-standard keys
+    //    `gemma3.rope.global.freq_base` and `gemma3.rope.local.freq_base`.
+    //    llama.cpp reads only the flat names, so copy those over first so
+    //    the has_key checks below don't trample real values.
+    if (!has_key(meta, "gemma3.rope.freq_base")) {
+        const int64_t k = gguf_find_key(meta, "gemma3.rope.global.freq_base");
+        if (k >= 0) {
+            gguf_set_val_f32(meta, "gemma3.rope.freq_base", gguf_get_val_f32(meta, k));
+        }
+    }
+    if (!has_key(meta, "gemma3.rope.freq_base_swa")) {
+        const int64_t k = gguf_find_key(meta, "gemma3.rope.local.freq_base");
+        if (k >= 0) {
+            gguf_set_val_f32(meta, "gemma3.rope.freq_base_swa", gguf_get_val_f32(meta, k));
+        }
+    }
+
     set_f32_if_missing(meta, "gemma3.attention.layer_norm_rms_epsilon", 1e-6f);
     set_f32_if_missing(meta, "gemma3.rope.freq_base", 1000000.0f);
     set_f32_if_missing(meta, "gemma3.rope.freq_base_swa", 10000.0f);
+
+    // RoPE linear scaling: gemma3 4B/12B/27B ship with
+    //   rope_scaling = { type: "linear", factor: 8.0 }
+    // in their HF config. This extends the native ~16k trained context to
+    // the declared 131072 token context. Ollama's old converter didn't
+    // write these KVs; without them llama.cpp uses factor=1.0 which makes
+    // all positional embeddings subtly wrong (coherent but off-distribution
+    // output). The 1B variant has no rope_scaling — detect by context
+    // length.
+    {
+        const int64_t ctx_key = gguf_find_key(meta, "gemma3.context_length");
+        const uint32_t ctx_len = ctx_key >= 0 ? gguf_get_val_u32(meta, ctx_key) : 0;
+        if (ctx_len >= 131072 && !has_key(meta, "gemma3.rope.scaling.factor")) {
+            gguf_set_val_str(meta, "gemma3.rope.scaling.type", "linear");
+            gguf_set_val_f32(meta, "gemma3.rope.scaling.factor", 8.0f);
+        }
+    }
 
     // 2. Tokenizer vocab size vs. embedding dim mismatch. Ollama's old
     //    converter leaves special/multimodal tokens (e.g. <image_soft_token>)
