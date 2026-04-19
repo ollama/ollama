@@ -332,7 +332,71 @@ func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 		}
 	}
 
+	// Recover truncated JSON when braces never balanced (max_tokens cutoff)
+	if braces > 0 && start != -1 {
+		if recovered := recoverTruncatedJSON(buffer[start:]); recovered != nil {
+			if _, hasName := recovered["name"]; hasName {
+				if args, ok := recovered["arguments"].(map[string]any); ok {
+					return args, len(buffer) - 1
+				}
+				if args, ok := recovered["parameters"].(map[string]any); ok {
+					return args, len(buffer) - 1
+				}
+			}
+		}
+	}
+
 	return nil, 0
+}
+
+// recoverTruncatedJSON recovers partial key-value pairs from a JSON
+// object truncated by token limits.
+func recoverTruncatedJSON(buf []byte) map[string]any {
+	s := string(buf)
+	if len(s) == 0 || s[0] != '{' {
+		return nil
+	}
+	var check map[string]any
+	if json.Unmarshal(buf, &check) == nil {
+		return nil
+	}
+	for _, sep := range []string{`", "`, `","`} {
+		pos := strings.LastIndex(s, sep)
+		for pos > 0 {
+			prefix := s[:pos+1]
+			open, inStr, esc := 0, false, false
+			for _, c := range prefix {
+				if esc {
+					esc = false
+					continue
+				}
+				if c == '\\' && inStr {
+					esc = true
+					continue
+				}
+				if c == '"' {
+					inStr = !inStr
+					continue
+				}
+				if !inStr {
+					if c == '{' {
+						open++
+					} else if c == '}' {
+						open--
+					}
+				}
+			}
+			closers := strings.Repeat("}", open)
+			for _, suf := range []string{closers, `"` + closers} {
+				var data map[string]any
+				if json.Unmarshal([]byte(prefix+suf), &data) == nil {
+					return data
+				}
+			}
+			pos = strings.LastIndex(s[:pos], sep)
+		}
+	}
+	return nil
 }
 
 // done checks if the parser is done parsing by looking
