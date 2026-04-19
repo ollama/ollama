@@ -239,7 +239,7 @@ jobs:
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
           cmake --build --parallel ([Environment]::ProcessorCount) --preset "${{ matrix.preset }}"
           cmake --install build --component "${{ startsWith(matrix.preset, 'MLX ') && 'MLX' || startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || startsWith(matrix.preset, 'Vulkan') && 'Vulkan' || 'CPU' }}" --strip
-          Remove-Item -Path dist\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
+          Get-ChildItem -Path "dist\lib\ollama\rocm\rocblas\library\" -Filter "*gfx906*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
         env:
           CMAKE_GENERATOR: Ninja
       - name: Log build results
