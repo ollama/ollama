@@ -256,6 +256,57 @@ void handle_lfm2(const llama_model_loader * ml, gguf_context * meta, ggml_contex
 }
 
 // =========================================================================
+// mistral3 (text only — for now)
+// =========================================================================
+//
+// Same arch name on both sides. Ollama publishes a monolithic GGUF that
+// embeds the vision encoder + projector inline, similar to gemma3 and
+// qwen35moe. Differences this handler addresses:
+//
+//   * Embedded `v.*` / `mm.*` tensors must be hidden from the text
+//     loader (otherwise n_tensors mismatch).
+//   * RoPE YaRN parameters use unprefixed names: Ollama writes
+//     `rope.scaling.beta_fast`/`beta_slow`, upstream wants
+//     `rope.scaling.yarn_beta_fast`/`yarn_beta_slow`.
+//   * Attention temperature scale: Ollama writes `rope.scaling_beta`,
+//     upstream reads `attention.temperature_scale`. Same numeric value.
+//
+// Vision/clip translation is not implemented yet — the user has to skip
+// `--mmproj` until a clip handler lands.
+
+bool detect_ollama_mistral3(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "mistral3") != 0) return false;
+    // Marker: Ollama-style monolithic file embeds v.*/mm.* tensors;
+    // upstream HF mistral3 ships these in a separate mmproj.
+    return any_tensor_with_prefix(ctx, "v.")
+        || any_tensor_with_prefix(ctx, "mm.")
+        || has_key(meta, "mistral3.rope.scaling.beta_fast")
+        || has_key(meta, "mistral3.rope.scaling_beta");
+}
+
+void handle_mistral3(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_mistral3(meta, ctx)) return;
+    (void) ctx;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format mistral3 GGUF; applying compatibility fixes\n", __func__);
+
+    // RoPE YaRN parameter renames.
+    copy_kv(meta, "mistral3.rope.scaling.beta_fast",
+                  "mistral3.rope.scaling.yarn_beta_fast");
+    copy_kv(meta, "mistral3.rope.scaling.beta_slow",
+                  "mistral3.rope.scaling.yarn_beta_slow");
+    // Attention temperature scale: same value, different home.
+    copy_kv(meta, "mistral3.rope.scaling_beta",
+                  "mistral3.attention.temperature_scale");
+
+    // Hide embedded vision + projector tensors from the text loader.
+    add_skip_prefix(ml, "v.");
+    add_skip_prefix(ml, "mm.");
+}
+
+// =========================================================================
 // gemma3 (clip side)
 // =========================================================================
 
@@ -474,6 +525,7 @@ void translate_metadata(const llama_model_loader * ml,
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
     if (arch_name == "gptoss")    handle_gptoss   (ml, meta, ctx, arch_name);
     if (arch_name == "lfm2")      handle_lfm2     (ml, meta, ctx);
+    if (arch_name == "mistral3")  handle_mistral3 (ml, meta, ctx);
     // Dispatch. Add more arches as they are wired up.
 }
 
