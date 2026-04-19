@@ -546,6 +546,61 @@ constexpr std::pair<const char *, const char *> kMistral3ClipRenames[] = {
     {"mm.norm",                       "mm.input_norm"},
 };
 
+// Apply the LLaMA-style RoPE permutation to Ollama's vision Q/K weight.
+//
+// Ollama's mistral3 converter (convert/convert_mistral.go) only applies
+// its repack to TEXT-side attn_q/attn_k (the `if !HasPrefix(name, "v.")`
+// guard skips vision tensors). So vision Q/K leave the converter in raw
+// HF/PyTorch order. Upstream's HF→GGUF flow (convert_hf_to_gguf.py
+// Mistral3 path) DOES permute vision Q/K with the vision head count,
+// because pixtral's clip graph uses `ggml_rope_ext` in mode 0 which
+// expects the [n_head, head_dim/2, 2, ...] layout.
+//
+// To bridge the two: apply LlamaModel.permute equivalently — reshape
+// to [n_head, 2, head_dim/2, in], swap axes 1↔2, reshape back. The
+// permutation acts only on the output dim, which is ne[1] for ggml
+// weights stored as [in_dim, out_dim], so we shuffle whole rows.
+//
+// Permutation formula: oa = h*head_dim + dp*2 + half  (post-permute idx)
+//                      ob = h*head_dim + half*(head_dim/2) + dp  (HF idx)
+//                      copy row ob in src → row oa in dst.
+//
+// Only F16 Q/K rows handled (V is not RoPE'd; quantized rows would need
+// block-aware shuffling — Ollama keeps Q/K F16 for mistral3 8B).
+void register_mistral3_vision_qk_permute(gguf_context * meta, ggml_context * ctx,
+                                         const char * tensor_name, int n_head) {
+    ggml_tensor * t = ggml_get_tensor(ctx, tensor_name);
+    if (!t || t->type != GGML_TYPE_F16) return;
+
+    const int total_out = (int) t->ne[1];
+    if (total_out % n_head != 0) return;
+    const size_t row_bytes = ggml_row_size(t->type, t->ne[0]);
+    const size_t total_bytes = ggml_nbytes(t);
+    const size_t src_offset = tensor_file_offset(meta, tensor_name);
+
+    const int head_dim  = total_out / n_head;
+    const int head_dim2 = head_dim / 2;
+
+    register_load_op(tensor_name, LoadOp{
+        [=](const char * path, void * dst, size_t dst_size) {
+            if (dst_size != total_bytes) return false;
+            std::vector<uint8_t> src(total_bytes);
+            if (!read_at(path, src_offset, src.data(), total_bytes)) return false;
+            uint8_t * dp = static_cast<uint8_t *>(dst);
+            for (int oa = 0; oa < total_out; ++oa) {
+                const int h    = oa / head_dim;
+                const int dp_  = (oa % head_dim) / 2;
+                const int hf   = oa % 2;
+                const int ob   = h * head_dim + hf * head_dim2 + dp_;
+                std::memcpy(dp + (size_t) oa * row_bytes,
+                            src.data() + (size_t) ob * row_bytes, row_bytes);
+            }
+            return true;
+        },
+        "vision Q/K LLaMA permute",
+    });
+}
+
 void handle_mistral3_clip(gguf_context * meta, ggml_context * ctx) {
     LLAMA_LOG_INFO("%s: detected Ollama-format mistral3 GGUF used as mmproj; translating\n", __func__);
 
@@ -591,9 +646,34 @@ void handle_mistral3_clip(gguf_context * meta, ggml_context * ctx) {
         });
     }
 
+    // Apply LLaMA-style RoPE permutation to vision Q/K BEFORE renames
+    // (we capture offsets by current name). Ollama's converter only
+    // repacks TEXT-side q/k (skipping `v.*`), but pixtral's clip graph
+    // expects HF→GGUF's permuted layout for vision Q/K.
+    {
+        const int64_t v_hk    = gguf_find_key(meta, "mistral3.vision.attention.head_count");
+        const int64_t n_blk_k = gguf_find_key(meta, "mistral3.vision.block_count");
+        if (v_hk >= 0 && n_blk_k >= 0) {
+            const int n_head = (int) gguf_get_val_u32(meta, v_hk);
+            const uint32_t n_blocks = gguf_get_val_u32(meta, n_blk_k);
+            for (uint32_t b = 0; b < n_blocks; ++b) {
+                char qn[64], kn[64];
+                std::snprintf(qn, sizeof(qn), "v.blk.%u.attn_q.weight", b);
+                std::snprintf(kn, sizeof(kn), "v.blk.%u.attn_k.weight", b);
+                register_mistral3_vision_qk_permute(meta, ctx, qn, n_head);
+                register_mistral3_vision_qk_permute(meta, ctx, kn, n_head);
+            }
+        }
+    }
+
     for (const auto & [from, to] : kMistral3ClipRenames) {
         rename_tensors_containing(meta, ctx, from, to);
     }
+
+    // Upstream stores patch_embd as F32; Ollama stored F16. Metal's
+    // IM2COL convolution silently produces garbage with F16 weights
+    // (same issue as gemma3 — see handle_gemma3_clip). Promote to F32.
+    promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
 }
 
 } // anonymous namespace
