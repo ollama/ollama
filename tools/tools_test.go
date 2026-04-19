@@ -1057,6 +1057,7 @@ func TestFindArguments(t *testing.T) {
 		buffer []byte
 		want   map[string]any
 		tool   string
+		found  bool
 	}{
 		{
 			name:   "empty string",
@@ -1332,11 +1333,27 @@ func TestFindArguments(t *testing.T) {
 				"location": "San Francisco, CA",
 			},
 		},
+		{
+			name:   "omitted arguments",
+			buffer: []byte(`{"name": "get_conditions"}`),
+			want:   nil,
+			found:  true,
+		},
+		{
+			name:   "omitted arguments with empty object",
+			buffer: []byte(`{"name": "get_conditions", "arguments": {}}`),
+			want:   map[string]any{},
+			found:  true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, _ := findArguments(&api.Tool{Function: api.ToolFunction{Name: tt.tool}}, tt.buffer)
+			got, _, ok := findArguments(&api.Tool{Function: api.ToolFunction{Name: tt.tool}}, tt.buffer)
+
+			if tt.found && !ok {
+				t.Error("findArguments() expected tool call to be found, but it was not")
+			}
 
 			if diff := cmp.Diff(got, tt.want); diff != "" {
 				t.Errorf("findArguments() args mismatch (-got +want):\n%s", diff)
