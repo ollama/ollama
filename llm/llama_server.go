@@ -423,6 +423,33 @@ func NewLlamaServerRunner(
 	// Check if this is an embedding model
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 
+	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
+	// the main model file rather than in a separate projector layer. When
+	// the arch has a llama/compat clip handler, we can point --mmproj at
+	// the same file and the in-process shim translates the two views.
+	//
+	// If we auto-enable --mmproj for an arch whose clip handler doesn't
+	// exist yet, upstream's clip loader sees un-translated Ollama tensors
+	// and aborts model load. So gate on an explicit allowlist that mirrors
+	// the compat layer's clip-side coverage in llama/compat/.
+	compatClipArches := map[string]bool{
+		"gemma3":      true,
+		"gemma4":      true,
+		"qwen35moe":   true,
+		"qwen25vl":    true,
+		"qwen3vl":     true,
+		"mistral3":    true,
+		"deepseekocr": true,
+		"glmocr":      true,
+		"llama4":      true,
+		// Add entries as llama/compat grows clip handlers.
+	}
+	if len(projectors) == 0 &&
+		len(f.Tensors().Items("v.")) > 0 &&
+		compatClipArches[f.KV().Architecture()] {
+		projectors = []string{modelPath}
+	}
+
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
 
