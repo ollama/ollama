@@ -1,7 +1,9 @@
 package client
 
 import (
+	"encoding/binary"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +14,7 @@ import (
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 func TestModelfileConfig(t *testing.T) {
@@ -293,7 +296,7 @@ func TestCreateOptions_Defaults(t *testing.T) {
 	}
 }
 
-func TestInferSafetensorsCapabilities(t *testing.T) {
+func TestInferSafetensorsCapabilitiesFromDir(t *testing.T) {
 	tests := []struct {
 		name       string
 		configJSON string
@@ -352,8 +355,8 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got := inferSafetensorsCapabilities(dir); !slices.Equal(got, tt.want) {
-				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
+			if got := create.InferSafetensorsCapabilitiesFromDir(dir); !slices.Equal(got, tt.want) {
+				t.Fatalf("InferSafetensorsCapabilitiesFromDir() = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
@@ -437,6 +440,50 @@ func TestQuantizeSupported(t *testing.T) {
 	_ = supported
 }
 
+func TestQuantizeTempOutputPathIsPerOperation(t *testing.T) {
+	path1, cleanup1, err := quantizeTempOutputPath("combined.safetensors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup1()
+
+	path2, cleanup2, err := quantizeTempOutputPath("combined.safetensors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup2()
+
+	if path1 == path2 {
+		t.Fatalf("quantizeTempOutputPath returned the same path twice: %s", path1)
+	}
+
+	for _, path := range []string{path1, path2} {
+		info, err := os.Stat(filepath.Dir(path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o700 {
+			t.Fatalf("temp dir permissions = %o, want 700", got)
+		}
+	}
+}
+
+func TestReadSafetensorsHeaderRejectsHugeHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "huge-header.safetensors")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint64(safetensors.MaxHeaderSize+1)); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	if _, err := readSafetensorsHeader(path); err == nil {
+		t.Fatal("readSafetensorsHeader succeeded, want huge header error")
+	}
+}
+
 func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
@@ -518,11 +565,83 @@ func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
 	}
 }
 
-func TestSupportsThinking(t *testing.T) {
+type failingPackedReader struct{}
+
+func (failingPackedReader) Read([]byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+func TestNewPackedTensorLayerCreatorStreamsFileBackedTensors(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	sourceNames := []string{"source.0.weight", "source.1.weight"}
+	source := []*safetensors.TensorData{
+		safetensors.NewTensorDataFromBytes(sourceNames[0], "F32", []int32{2, 2}, []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}),
+		safetensors.NewTensorDataFromBytes(sourceNames[1], "F32", []int32{2, 2}, []byte{17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}),
+	}
+	sourceData, err := io.ReadAll(safetensors.BuildPackedSafetensorsReader(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "model.safetensors")
+	if err := os.WriteFile(path, sourceData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	extractor, err := safetensors.OpenForExtraction(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extractor.Close()
+
+	td0, err := extractor.GetTensor(sourceNames[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	td1, err := extractor.GetTensor(sourceNames[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	groupName := "model.layers.0.mlp.experts"
+	layer, err := newPackedTensorLayerCreator()(groupName, []create.PackedTensorInput{
+		{Name: groupName + ".0.gate_proj.weight", Dtype: td0.Dtype, Shape: td0.Shape, Reader: failingPackedReader{}, TensorData: td0},
+		{Name: groupName + ".1.gate_proj.weight", Dtype: td1.Dtype, Shape: td1.Shape, Reader: failingPackedReader{}, TensorData: td1},
+	})
+	if err != nil {
+		t.Fatalf("newPackedTensorLayerCreator failed: %v", err)
+	}
+
+	blobPath, err := manifest.BlobsPath(layer.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metas, err := safetensors.ReadBlobMetas(blobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotNames := make([]string, 0, len(metas))
+	for _, meta := range metas {
+		gotNames = append(gotNames, meta.Name)
+	}
+	slices.Sort(gotNames)
+	wantNames := []string{
+		groupName + ".0.gate_proj.weight",
+		groupName + ".1.gate_proj.weight",
+	}
+	if !slices.Equal(gotNames, wantNames) {
+		t.Fatalf("packed tensor names = %v, want %v", gotNames, wantNames)
+	}
+}
+
+func TestSupportsThinkingConfig(t *testing.T) {
 	tests := []struct {
 		name       string
 		configJSON string
 		want       bool
+		wantErr    bool
 	}{
 		{
 			name:       "qwen3 architecture",
@@ -562,25 +681,32 @@ func TestSupportsThinking(t *testing.T) {
 		{
 			name:       "invalid json",
 			configJSON: `not json`,
-			want:       false,
+			wantErr:    true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
-
-			if got := supportsThinking(dir); got != tt.want {
-				t.Errorf("supportsThinking() = %v, want %v", got, tt.want)
+			got, err := create.SupportsThinkingConfig([]byte(tt.configJSON))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("SupportsThinkingConfig() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestSupportsThinking_NoConfig(t *testing.T) {
-	if supportsThinking(t.TempDir()) {
-		t.Error("supportsThinking should return false for missing config.json")
+	if got := create.InferSafetensorsCapabilitiesFromDir(t.TempDir()); !slices.Equal(got, []string{"completion"}) {
+		t.Fatalf("InferSafetensorsCapabilitiesFromDir() = %#v, want completion fallback", got)
 	}
 }
 

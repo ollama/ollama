@@ -132,7 +132,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	if isSafetensors {
 		modelType = "safetensors model"
 		spinnerKey = "create"
-		capabilities = inferSafetensorsCapabilities(opts.ModelDir)
+		capabilities = create.InferSafetensorsCapabilitiesFromDir(opts.ModelDir)
 
 		// Set parser and renderer name based on architecture
 		parserName = getParserName(opts.ModelDir)
@@ -183,25 +183,6 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	return nil
 }
 
-func inferSafetensorsCapabilities(modelDir string) []string {
-	capabilities := []string{"completion"}
-
-	// Qwen3.5 multimodal checkpoints use ConditionalGeneration architectures.
-	if supportsVision(modelDir) {
-		capabilities = append(capabilities, "vision")
-	}
-
-	if supportsAudio(modelDir) {
-		capabilities = append(capabilities, "audio")
-	}
-
-	if supportsThinking(modelDir) {
-		capabilities = append(capabilities, "thinking")
-	}
-
-	return capabilities
-}
-
 // newLayerCreator returns a LayerCreator callback for creating config/JSON layers.
 func newLayerCreator() create.LayerCreator {
 	return func(r io.Reader, mediaType, name string) (create.LayerInfo, error) {
@@ -238,7 +219,7 @@ func createQuantizedLayers(r io.Reader, name, dtype string, shape []int32, quant
 	}
 
 	// Quantize the tensor into a single combined blob
-	blobData, err := quantizeTensor(r, name, dtype, shape, quantize)
+	blobData, err := QuantizeTensor(r, name, dtype, shape, quantize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to quantize %s: %w", name, err)
 	}
@@ -294,22 +275,33 @@ func newPackedTensorLayerCreator() create.PackedTensorLayerCreator {
 			if !QuantizeSupported() {
 				return create.LayerInfo{}, fmt.Errorf("quantization requires MLX support")
 			}
-			blobData, err := quantizePackedGroup(groupName, tensors)
+			blobData, err := QuantizePackedGroup(groupName, tensors)
 			if err != nil {
 				return create.LayerInfo{}, fmt.Errorf("failed to quantize packed group %s: %w", groupName, err)
 			}
 			blobReader = bytes.NewReader(blobData)
 		} else {
 			// Build unquantized packed blob using streaming reader
-			// Extract raw tensor data from safetensors-wrapped readers
 			var tds []*safetensors.TensorData
+			allFileBacked := true
 			for _, t := range tensors {
-				rawData, err := safetensors.ExtractRawFromSafetensors(t.Reader)
-				if err != nil {
-					return create.LayerInfo{}, fmt.Errorf("failed to extract tensor %s: %w", t.Name, err)
+				if t.TensorData == nil {
+					allFileBacked = false
+					break
 				}
-				td := safetensors.NewTensorDataFromBytes(t.Name, t.Dtype, t.Shape, rawData)
-				tds = append(tds, td)
+				tds = append(tds, t.TensorData.WithName(t.Name))
+			}
+
+			if !allFileBacked {
+				tds = nil
+				for _, t := range tensors {
+					rawData, err := safetensors.ExtractRawFromSafetensors(t.Reader)
+					if err != nil {
+						return create.LayerInfo{}, fmt.Errorf("failed to extract tensor %s: %w", t.Name, err)
+					}
+					td := safetensors.NewTensorDataFromBytes(t.Name, t.Dtype, t.Shape, rawData)
+					tds = append(tds, td)
+				}
 			}
 			blobReader = safetensors.BuildPackedSafetensorsReader(tds)
 		}
@@ -451,87 +443,6 @@ func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
 	}
 
 	return layers, nil
-}
-
-// supportsThinking checks if the model supports thinking mode based on its architecture.
-// This reads the config.json from the model directory and checks the architectures field.
-func supportsThinking(modelDir string) bool {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return false
-	}
-
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	// Check architectures that support thinking
-	thinkingArchitectures := []string{
-		"glm4moe",  // GLM-4 MoE models
-		"deepseek", // DeepSeek models
-		"qwen3",    // Qwen3 models
-	}
-
-	// Check the architecture list
-	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		for _, thinkArch := range thinkingArchitectures {
-			if strings.Contains(archLower, thinkArch) {
-				return true
-			}
-		}
-	}
-
-	// Also check model_type
-	if cfg.ModelType != "" {
-		typeLower := strings.ToLower(cfg.ModelType)
-		for _, thinkArch := range thinkingArchitectures {
-			if strings.Contains(typeLower, thinkArch) {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-// supportsVision checks if the model has a vision encoder by looking for
-// vision_config in config.json.
-func supportsVision(modelDir string) bool {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
-		return false
-	}
-
-	var cfg struct {
-		VisionConfig *map[string]any `json:"vision_config"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	return cfg.VisionConfig != nil
-}
-
-func supportsAudio(modelDir string) bool {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
-		return false
-	}
-
-	var cfg struct {
-		AudioConfig *map[string]any `json:"audio_config"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	return cfg.AudioConfig != nil
 }
 
 // getParserName returns the parser name for a model based on its architecture.

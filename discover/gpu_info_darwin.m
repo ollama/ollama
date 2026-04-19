@@ -27,9 +27,17 @@ uint64_t getFreeMemory() {
     return 0;
   }
 
-  uint64_t free_memory = (uint64_t)vm_stat.free_count * pagesize;
-  free_memory += (uint64_t)vm_stat.speculative_count * pagesize;
-  free_memory += (uint64_t)vm_stat.inactive_count * pagesize;
+  uint64_t used = (uint64_t)vm_stat.active_count * pagesize
+    + (uint64_t)vm_stat.inactive_count * pagesize
+    + (uint64_t)vm_stat.speculative_count * pagesize
+    + (uint64_t)vm_stat.wire_count * pagesize
+    + (uint64_t)vm_stat.compressor_page_count * pagesize
+    - (uint64_t)vm_stat.purgeable_count * pagesize
+    - (uint64_t)vm_stat.external_page_count * pagesize;
 
-  return free_memory;
+  uint64_t total_memory = [NSProcessInfo processInfo].physicalMemory;
+  if (used >= total_memory) {
+    return 0;
+  }
+  return total_memory - used;
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/ollama/ollama/x/create"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 // loadAndQuantizeArray writes a safetensors reader to a temp file, loads it with MLX,
@@ -28,9 +29,7 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, arrays map[string]
 		}
 	}
 
-	tmpDir := ensureTempDir()
-
-	tmpFile, err := os.CreateTemp(tmpDir, "quant-*.safetensors")
+	tmpFile, err := os.CreateTemp("", "ollama-quant-*.safetensors")
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -126,12 +125,15 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, arrays map[string]
 	return tmpPath, toEval, st, nil
 }
 
-// quantizeTensor loads a tensor from safetensors format, quantizes it,
+// QuantizeTensor loads a tensor from safetensors format, quantizes it,
 // and returns a single combined safetensors blob with the quantized weight, scale, and optional bias.
 // Tensor keys use the original tensor name: name, name.scale, name.bias.
 // The blob includes __metadata__ with quant_type and group_size.
 // Supported quantization types: "int4", "nvfp4", "mxfp4", "int8", "mxfp8".
-func quantizeTensor(r io.Reader, tensorName, dtype string, shape []int32, quantize string) (blobData []byte, err error) {
+//
+// This is called both from the local create path and server-side to quantize
+// individual tensor blobs uploaded by the client.
+func QuantizeTensor(r io.Reader, tensorName, dtype string, shape []int32, quantize string) (blobData []byte, err error) {
 	arrays := make(map[string]*mlx.Array)
 	tmpPath, toEval, st, err := loadAndQuantizeArray(r, tensorName, quantize, arrays)
 	if tmpPath != "" {
@@ -171,22 +173,24 @@ func quantizeTensor(r io.Reader, tensorName, dtype string, shape []int32, quanti
 		"group_size": strconv.Itoa(groupSize),
 	}
 
-	tmpDir := ensureTempDir()
-	outPath := filepath.Join(tmpDir, "combined.safetensors")
-	defer os.Remove(outPath)
+	outPath, cleanup, err := quantizeTempOutputPath("combined.safetensors")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 	if err := mlx.SaveSafetensorsWithMetadata(outPath, arrays, metadata); err != nil {
 		return nil, fmt.Errorf("failed to save combined blob: %w", err)
 	}
 	return os.ReadFile(outPath)
 }
 
-// quantizePackedGroup quantizes multiple tensors and saves them all into a single
+// QuantizePackedGroup quantizes multiple tensors and saves them all into a single
 // combined safetensors blob. Used for packing expert groups.
 // When the inputs are per-expert 2D tensors (e.g., experts.0.gate_proj.weight),
 // they are stacked into 3D switch_mlp tensors before quantization.
 // Each tensor may have a different quantization type (mixed-precision).
 // Returns the blob bytes.
-func quantizePackedGroup(groupName string, inputs []create.PackedTensorInput) ([]byte, error) {
+func QuantizePackedGroup(groupName string, inputs []create.PackedTensorInput) ([]byte, error) {
 	// Check if inputs are per-expert tensors that should be stacked into 3D
 	if projGroups, projQuantize := parsePerExpertInputs(groupName, inputs); projGroups != nil {
 		return stackAndQuantizeExpertGroup(groupName, projGroups, projQuantize)
@@ -264,9 +268,11 @@ func quantizePackedGroup(groupName string, inputs []create.PackedTensorInput) ([
 
 	// Save combined blob. Add global metadata only when every packed tensor uses
 	// the same quantization mode and group size.
-	tmpDir := ensureTempDir()
-	outPath := filepath.Join(tmpDir, "packed-combined.safetensors")
-	defer os.Remove(outPath)
+	outPath, cleanup, err := quantizeTempOutputPath("packed-combined.safetensors")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 	if err := mlx.SaveSafetensorsWithMetadata(outPath, allArrays, metadata); err != nil {
 		return nil, fmt.Errorf("failed to save packed blob: %w", err)
 	}
@@ -484,9 +490,11 @@ func stackAndQuantizeExpertGroup(groupName string, projGroups map[string][]exper
 
 	defer cleanup()
 
-	tmpDir := ensureTempDir()
-	outPath := filepath.Join(tmpDir, "stacked-combined.safetensors")
-	defer os.Remove(outPath)
+	outPath, cleanupOutput, err := quantizeTempOutputPath("stacked-combined.safetensors")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupOutput()
 	if err := mlx.SaveSafetensorsWithMetadata(outPath, allArrays, metadata); err != nil {
 		return nil, fmt.Errorf("failed to save stacked blob: %w", err)
 	}
@@ -503,11 +511,12 @@ func QuantizeSupported() bool {
 	return mlx.CheckInit() == nil
 }
 
-// ensureTempDir creates the temp directory for quantization if it doesn't exist
-func ensureTempDir() string {
-	tmpDir := filepath.Join(os.TempDir(), "ollama-quantize")
-	os.MkdirAll(tmpDir, 0755)
-	return tmpDir
+func quantizeTempOutputPath(name string) (string, func(), error) {
+	tmpDir, err := os.MkdirTemp("", "ollama-quantize-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create quantization temp dir: %w", err)
+	}
+	return filepath.Join(tmpDir, name), func() { os.RemoveAll(tmpDir) }, nil
 }
 
 type safetensorsHeaderEntry struct {
@@ -525,6 +534,16 @@ func readSafetensorsHeader(path string) (map[string]safetensorsHeaderEntry, erro
 	var headerSize uint64
 	if err := binary.Read(f, binary.LittleEndian, &headerSize); err != nil {
 		return nil, err
+	}
+	if headerSize > safetensors.MaxHeaderSize {
+		return nil, fmt.Errorf("safetensors header too large: %d bytes", headerSize)
+	}
+	if stat, err := f.Stat(); err != nil {
+		return nil, err
+	} else if stat.Size() < 8 {
+		return nil, fmt.Errorf("safetensors file is too small: %d bytes", stat.Size())
+	} else if headerSize > uint64(stat.Size()-8) {
+		return nil, fmt.Errorf("safetensors header size %d exceeds file size %d", headerSize, stat.Size())
 	}
 	headerBytes := make([]byte, headerSize)
 	if _, err := io.ReadFull(f, headerBytes); err != nil {

@@ -151,6 +151,7 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 	if (st.repacker == nil) &&
 		((st.dtype == "F32" && st.Kind() == tensorKindFP32) ||
 			(st.dtype == "F16" && st.Kind() == tensorKindFP16) ||
+			(st.dtype == "BF16" && st.Kind() == tensorKindBF16) ||
 			(st.dtype == "U8")) {
 		return io.CopyN(w, br, st.size)
 	}
