@@ -15,8 +15,9 @@ import (
 // entry should be removed from this list — the compat layer translates the
 // original library/ blob in memory so no republish is needed.
 var compatModelRedirects = []struct{ from, to string }{
-	{"library/gpt-oss", "dhiltgen/gpt-oss"},
+	// library/gpt-oss — handled by llama/compat (text only).
 	// library/gemma3 — handled by llama/compat (text + vision).
+	// library/lfm2.5-thinking — handled by llama/compat (text only).
 	{"library/embeddinggemma", "dhiltgen/embeddinggemma"},
 	{"library/snowflake-arctic-embed2", "dhiltgen/snowflake-arctic-embed2"},
 	{"library/gemma3n", "dhiltgen/gemma3n"},

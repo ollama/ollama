@@ -53,6 +53,15 @@ namespace llama_ollama_compat::detail {
 bool has_key(const gguf_context * meta, const char * key);
 void copy_u32_kv(gguf_context * meta, const char * src, const char * dst);
 void copy_f32_kv(gguf_context * meta, const char * src, const char * dst);
+// Generic copy that preserves the source's gguf_type. Skips if `src` is
+// missing or `dst` is already present. Arrays are copied verbatim
+// (including element type).
+void copy_kv(gguf_context * meta, const char * src, const char * dst);
+// Copy every KV whose key starts with `old_prefix` to a new key under
+// `new_prefix`. Old keys are left in place — harmless because the loader
+// looks up keys by exact name and only queries the new prefix.
+void rename_kv_prefix(gguf_context * meta, const char * old_prefix,
+                      const char * new_prefix);
 void inject_u32_if_missing (gguf_context * meta, const char * key, uint32_t v);
 void inject_f32_if_missing (gguf_context * meta, const char * key, float    v);
 void inject_str_if_missing (gguf_context * meta, const char * key, const char * v);

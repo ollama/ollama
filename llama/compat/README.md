@@ -40,6 +40,9 @@ an immediate no-op.
 | Arch | Text loader | Clip (mmproj) loader |
 |---|---|---|
 | `gemma3` | KV injection (`layer_norm_rms_epsilon`, `rope.freq_base`, `rope.freq_base_swa`), tokenizer vocab truncation, drop `v.*`/`mm.*` tensors | Arch rewrite to `clip`, KV synthesis (`clip.vision.*`, `clip.projector_type=gemma3`), tensor renames (`v.patch_embedding`→`v.patch_embd`, `mlp.fc{1,2}`→`ffn_{down,up}`, etc.), F16→F32 promotion for patch/position embeddings (Metal IM2COL requirement) |
+| `qwen35moe` | head_count_kv array → scalar, rope dimension_sections pad 3→4, `ssm_dt`→`ssm_dt.bias` rename, drop `v.*`/`mm.*`/`mtp.*` tensors | Arch rewrite to `clip`, KV synthesis (`clip.vision.*`, `clip.projector_type=qwen3vl_merger`), per-block QKV merge (concat at load time), patch_embed reshape + F16→F32 + slice-as-temporal-pair (reclaiming an orphan `v.blk.0.attn_k` slot for the second pair) |
+| `gptoss` | Arch rename `gptoss`→`gpt-oss` (incl. KV prefix), inject `gpt-oss.expert_feed_forward_length` from `ffn_gate_exps` shape, tensor renames (`attn_out`→`attn_output`, `attn_sinks`→`attn_sinks.weight`, `ffn_norm`→`post_attention_norm`) | n/a |
+| `lfm2` | Tensor rename `output_norm.weight`→`token_embd_norm.weight`, fix stale `lfm2.feed_forward_length` from `ffn_gate` shape | n/a |
 
 Usage:
 

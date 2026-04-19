@@ -166,6 +166,96 @@ void handle_qwen35moe(const llama_model_loader * ml, gguf_context * meta, ggml_c
 }
 
 // =========================================================================
+// gpt-oss (text only)
+// =========================================================================
+//
+// Ollama uses arch name "gptoss" (no hyphen) and KV prefix "gptoss.*".
+// Upstream uses "gpt-oss" / "gpt-oss.*". Same tensor layout otherwise,
+// except:
+//   * `blk.X.attn_sinks` -> `blk.X.attn_sinks.weight` (missing suffix)
+//   * `blk.X.ffn_norm.weight` -> `blk.X.post_attention_norm.weight`
+//     (the second-norm-per-block names differ between converters)
+
+bool detect_ollama_gptoss(const gguf_context * meta) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    return std::strcmp(gguf_get_val_str(meta, arch_kid), "gptoss") == 0;
+}
+
+// `arch_name` is mutated to "gpt-oss" so the caller's subsequent
+// LLM_KV lookups query the renamed prefix.
+void handle_gptoss(const llama_model_loader * ml, gguf_context * meta,
+                   ggml_context * ctx, std::string & arch_name) {
+    if (!detect_ollama_gptoss(meta)) return;
+    (void) ml;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format gpt-oss GGUF; applying compatibility fixes\n", __func__);
+
+    gguf_set_val_str(meta, "general.architecture", "gpt-oss");
+    rename_kv_prefix(meta, "gptoss.", "gpt-oss.");
+    arch_name = "gpt-oss";
+
+    // Upstream's gpt-oss loader requires `gpt-oss.expert_feed_forward_length`
+    // (n_ff_exp). Ollama omitted it; recover from the ffn_gate_exps tensor
+    // shape — for gpt-oss the tensor is created as {n_embd, n_ff_exp, n_expert}
+    // so ne[1] is the per-expert FFN dim.
+    if (!has_key(meta, "gpt-oss.expert_feed_forward_length")) {
+        if (ggml_tensor * t = ggml_get_tensor(ctx, "blk.0.ffn_gate_exps.weight")) {
+            gguf_set_val_u32(meta, "gpt-oss.expert_feed_forward_length", (uint32_t) t->ne[1]);
+        }
+    }
+
+    // Tensor renames. `rename_tensors_containing` does a substring replace
+    // on first occurrence — each needle below appears exactly once per
+    // tensor name and the needles don't overlap each other.
+    rename_tensors_containing(meta, ctx, ".attn_out",
+                              ".attn_output");      // wo: out -> output
+    rename_tensors_containing(meta, ctx, ".attn_sinks",
+                              ".attn_sinks.weight"); // add missing suffix
+    rename_tensors_containing(meta, ctx, ".ffn_norm",
+                              ".post_attention_norm");
+}
+
+// =========================================================================
+// lfm2 (text only)
+// =========================================================================
+//
+// Same arch name ("lfm2") on both sides. Only difference is the
+// pre-output-projection norm: Ollama writes `output_norm.weight`,
+// upstream writes `token_embd_norm.weight` (with the LFM2-specific
+// LLM_TENSOR_OUTPUT_NORM_LFM2 mapping). One tensor rename.
+
+bool detect_ollama_lfm2(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "lfm2") != 0) return false;
+    // Marker: Ollama-converted lfm2 has output_norm.weight, upstream has
+    // token_embd_norm.weight instead.
+    return ggml_get_tensor(const_cast<ggml_context *>(ctx), "output_norm.weight") != nullptr
+        && ggml_get_tensor(const_cast<ggml_context *>(ctx), "token_embd_norm.weight") == nullptr;
+}
+
+void handle_lfm2(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_lfm2(meta, ctx)) return;
+    (void) ml;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format lfm2 GGUF; applying compatibility fixes\n", __func__);
+
+    rename_tensor(meta, ctx, "output_norm.weight", "token_embd_norm.weight");
+
+    // Older Ollama converters wrote a stale `lfm2.feed_forward_length` that
+    // didn't match the actual ffn_gate tensor shape (e.g. claimed 12288 on
+    // a model whose ffn_gate is [2048, 8192]). Fix from the tensor shape.
+    if (ggml_tensor * t = ggml_get_tensor(ctx, "blk.0.ffn_gate.weight")) {
+        const uint32_t real_n_ff = (uint32_t) t->ne[1];
+        const int64_t kid = gguf_find_key(meta, "lfm2.feed_forward_length");
+        if (kid < 0 || gguf_get_val_u32(meta, kid) != real_n_ff) {
+            gguf_set_val_u32(meta, "lfm2.feed_forward_length", real_n_ff);
+        }
+    }
+}
+
+// =========================================================================
 // gemma3 (clip side)
 // =========================================================================
 
@@ -382,6 +472,8 @@ void translate_metadata(const llama_model_loader * ml,
     if (!meta) return;
     if (arch_name == "gemma3")    handle_gemma3   (ml, meta, ctx);
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
+    if (arch_name == "gptoss")    handle_gptoss   (ml, meta, ctx, arch_name);
+    if (arch_name == "lfm2")      handle_lfm2     (ml, meta, ctx);
     // Dispatch. Add more arches as they are wired up.
 }
 

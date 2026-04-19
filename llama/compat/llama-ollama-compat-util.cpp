@@ -32,6 +32,60 @@ void copy_f32_kv(gguf_context * meta, const char * src, const char * dst) {
     gguf_set_val_f32(meta, dst, gguf_get_val_f32(meta, k));
 }
 
+void copy_kv(gguf_context * meta, const char * src, const char * dst) {
+    if (has_key(meta, dst)) return;
+    const int64_t kid = gguf_find_key(meta, src);
+    if (kid < 0) return;
+    const enum gguf_type t = gguf_get_kv_type(meta, kid);
+    switch (t) {
+        case GGUF_TYPE_UINT8:   gguf_set_val_u8  (meta, dst, gguf_get_val_u8  (meta, kid)); break;
+        case GGUF_TYPE_INT8:    gguf_set_val_i8  (meta, dst, gguf_get_val_i8  (meta, kid)); break;
+        case GGUF_TYPE_UINT16:  gguf_set_val_u16 (meta, dst, gguf_get_val_u16 (meta, kid)); break;
+        case GGUF_TYPE_INT16:   gguf_set_val_i16 (meta, dst, gguf_get_val_i16 (meta, kid)); break;
+        case GGUF_TYPE_UINT32:  gguf_set_val_u32 (meta, dst, gguf_get_val_u32 (meta, kid)); break;
+        case GGUF_TYPE_INT32:   gguf_set_val_i32 (meta, dst, gguf_get_val_i32 (meta, kid)); break;
+        case GGUF_TYPE_FLOAT32: gguf_set_val_f32 (meta, dst, gguf_get_val_f32 (meta, kid)); break;
+        case GGUF_TYPE_BOOL:    gguf_set_val_bool(meta, dst, gguf_get_val_bool(meta, kid)); break;
+        case GGUF_TYPE_STRING:  gguf_set_val_str (meta, dst, gguf_get_val_str (meta, kid)); break;
+        case GGUF_TYPE_UINT64:  gguf_set_val_u64 (meta, dst, gguf_get_val_u64 (meta, kid)); break;
+        case GGUF_TYPE_INT64:   gguf_set_val_i64 (meta, dst, gguf_get_val_i64 (meta, kid)); break;
+        case GGUF_TYPE_FLOAT64: gguf_set_val_f64 (meta, dst, gguf_get_val_f64 (meta, kid)); break;
+        case GGUF_TYPE_ARRAY: {
+            const enum gguf_type et = gguf_get_arr_type(meta, kid);
+            const size_t n = gguf_get_arr_n(meta, kid);
+            if (et == GGUF_TYPE_STRING) {
+                std::vector<std::string> owned;
+                owned.reserve(n);
+                std::vector<const char *> ptrs;
+                ptrs.reserve(n);
+                for (size_t i = 0; i < n; ++i) owned.emplace_back(gguf_get_arr_str(meta, kid, i));
+                for (const auto & s : owned) ptrs.push_back(s.c_str());
+                gguf_set_arr_str(meta, dst, ptrs.data(), n);
+            } else {
+                gguf_set_arr_data(meta, dst, et, gguf_get_arr_data(meta, kid), n);
+            }
+            break;
+        }
+        default: break;
+    }
+}
+
+void rename_kv_prefix(gguf_context * meta, const char * old_prefix,
+                      const char * new_prefix) {
+    const size_t old_len = std::strlen(old_prefix);
+    // Snapshot keys first; copy_kv() invalidates the kv index by appending.
+    std::vector<std::string> matches;
+    const int64_t n = gguf_get_n_kv(meta);
+    for (int64_t i = 0; i < n; ++i) {
+        const char * k = gguf_get_key(meta, i);
+        if (std::strncmp(k, old_prefix, old_len) == 0) matches.emplace_back(k);
+    }
+    for (const auto & old_key : matches) {
+        copy_kv(meta, old_key.c_str(),
+                (std::string(new_prefix) + old_key.substr(old_len)).c_str());
+    }
+}
+
 void inject_u32_if_missing (gguf_context * meta, const char * key, uint32_t v) {
     if (!has_key(meta, key)) gguf_set_val_u32(meta, key, v);
 }
