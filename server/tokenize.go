@@ -93,7 +93,7 @@ func (s *Server) TokenizeHandler(c *gin.Context) {
 	// Schedule runner to get tokenizer
 	runner, _, _, err := s.scheduleRunner(c.Request.Context(), req.Model, nil, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		handleScheduleError(c, req.Model, err)
 		return
 	}
 	defer runner.Close()
