@@ -24,7 +24,8 @@ func (spm SentencePiece) Vocabulary() *Vocabulary {
 }
 
 func NewSentencePiece(vocab *Vocabulary) SentencePiece {
-	logutil.Trace("Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:5], "scores", vocab.Scores[:5], "types", vocab.Types[:5])
+	end := min(5, len(vocab.Values))
+	logutil.Trace("Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:end], "scores", vocab.Scores[:end], "types", vocab.Types[:end])
 
 	counter := map[int]int{}
 	var maxTokenLen int
@@ -91,11 +92,6 @@ func (spm SentencePiece) Encode(s string, addSpecial bool) ([]int32, error) {
 		}
 
 		text := strings.ReplaceAll(frag.value, " ", spmWhitespaceSep)
-
-		if id := spm.vocab.Encode(text); id >= 0 {
-			ids = append(ids, id)
-			continue
-		}
 
 		ids = append(ids, spm.tokenizeViterbi(text)...)
 	}
