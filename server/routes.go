@@ -33,6 +33,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
+	"github.com/ollama/ollama/autotune"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -1714,6 +1715,11 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 
+	// Autotune — hardware detection & performance profiles
+	r.GET("/api/autotune", autotune.HandleGetAutotune)
+	r.POST("/api/autotune", autotune.HandlePostAutotune)
+	r.GET("/api/autotune/profiles", autotune.HandleGetProfiles)
+
 	// Inference (OpenAI compatibility)
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud
 	// parents on v1 request families while preserving this explicit :cloud passthrough.
@@ -1749,6 +1755,16 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 func Serve(ln net.Listener) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
+	// ── Autotune: detect hardware and apply optimal defaults ──
+	if profileStr := envconfig.PerformanceProfile(); profileStr != "" {
+		hw := autotune.DetectHardware(nil) // GPUs discovered later by scheduler
+		plan := autotune.Tune(hw, autotune.ParseProfile(profileStr))
+		autotune.Apply(plan)
+		autotune.SetCurrentPlan(plan)
+		slog.Info("autotune applied", "profile", profileStr, "hardware", hw.Summary(),
+			"applied", len(plan.Recommendations))
+	}
+
 	slog.Info("server config", "env", envconfig.Values())
 	cloudDisabled, _ := internalcloud.Status()
 	slog.Info(fmt.Sprintf("Ollama cloud disabled: %t", cloudDisabled))
