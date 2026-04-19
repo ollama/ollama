@@ -636,6 +636,25 @@ func searchTool() []api.Tool {
 	}}
 }
 
+func reservedParamNamesTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "annotate",
+			Description: "Annotate",
+			Parameters: api.ToolFunctionParameters{
+				Type:     "object",
+				Required: []string{"propX", "description", "propY"},
+				Properties: testPropsOrdered([]orderedProp{
+					{Key: "propX", Value: api.ToolProperty{Type: api.PropertyType{"string"}, Description: "Prop X"}},
+					{Key: "description", Value: api.ToolProperty{Type: api.PropertyType{"string"}, Description: "The description"}},
+					{Key: "propY", Value: api.ToolProperty{Type: api.PropertyType{"string"}, Description: "Prop Y"}},
+				}),
+			},
+		},
+	}}
+}
+
 var (
 	bashSmallDeclRef      = `<|tool>declaration:bash{description:<|"|>Run<|"|>,parameters:{properties:{command:{description:<|"|>Cmd<|"|>,type:<|"|>STRING<|"|>}},required:[<|"|>command<|"|>],type:<|"|>OBJECT<|"|>}}<tool|>`
 	nestedDeclRef         = `<|tool>declaration:create{description:<|"|>Create item<|"|>,parameters:{properties:{config:{description:<|"|>Config<|"|>,properties:{enabled:{description:<|"|>On/off<|"|>,type:<|"|>BOOLEAN<|"|>}},type:<|"|>OBJECT<|"|>},name:{description:<|"|>Name<|"|>,type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
@@ -657,6 +676,8 @@ var (
 	calcDeclRef           = `<|tool>declaration:calc{description:<|"|>Calculate<|"|>,parameters:{properties:{value:{description:<|"|>Value<|"|>,type:<|"|>NUMBER<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
 	rawDeclRef            = `<|tool>declaration:raw{description:<|"|>Raw input<|"|>,parameters:{type:<|"|>OBJECT<|"|>}}<tool|>`
 	moveDeclRef           = `<|tool>declaration:move{description:<|"|>Move<|"|>,parameters:{properties:{x:{description:<|"|>X<|"|>,type:<|"|>NUMBER<|"|>},y:{description:<|"|>Y<|"|>,type:<|"|>NUMBER<|"|>}},required:[<|"|>x<|"|>,<|"|>y<|"|>],type:<|"|>OBJECT<|"|>}}<tool|>`
+	// #15670: reserved JSON Schema key names ("description", "type", etc.) are valid parameter names
+	reservedParamNamesDeclRef = `<|tool>declaration:annotate{description:<|"|>Annotate<|"|>,parameters:{properties:{description:{description:<|"|>The description<|"|>,type:<|"|>STRING<|"|>},propX:{description:<|"|>Prop X<|"|>,type:<|"|>STRING<|"|>},propY:{description:<|"|>Prop Y<|"|>,type:<|"|>STRING<|"|>}},required:[<|"|>propX<|"|>,<|"|>description<|"|>,<|"|>propY<|"|>],type:<|"|>OBJECT<|"|>}}<tool|>`
 )
 
 func TestGemma4RendererMatchesReference(t *testing.T) {
@@ -1133,6 +1154,14 @@ Hi<turn|>
 			tools:    countTool(),
 			expected: "<bos><|turn>system\n" + countDeclRef + "<turn|>\n" +
 				"<|turn>user\nCount<turn|>\n<|turn>model\n",
+		},
+		{
+			// Parameter named "description" must not be silently dropped (#15670)
+			name:     "reserved_schema_key_as_param_name",
+			messages: []api.Message{{Role: "user", Content: "Go"}},
+			tools:    reservedParamNamesTool(),
+			expected: "<bos><|turn>system\n" + reservedParamNamesDeclRef + "<turn|>\n" +
+				"<|turn>user\nGo<turn|>\n<|turn>model\n",
 		},
 		{
 			// System message with leading/trailing whitespace is trimmed
