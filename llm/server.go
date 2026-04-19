@@ -1516,6 +1516,8 @@ func (d DoneReason) String() string {
 type TokenLogprob struct {
 	Token   string  `json:"token"`
 	Logprob float64 `json:"logprob"`
+	// Bytes holds the raw token bytes, base64-encoded in JSON.
+	Bytes []byte `json:"bytes,omitempty"`
 }
 
 // Logprob contains log probability information for a generated token.
