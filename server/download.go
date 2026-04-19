@@ -265,6 +265,12 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 			if resp.StatusCode != http.StatusTemporaryRedirect && resp.StatusCode != http.StatusOK {
 				return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
 			}
+            
+			if resp.StatusCode == http.StatusOK {
+				// If the registry serves the blob directly, return the request URL instead of looking for a missing Location header
+				return resp.Request.URL, nil
+			}
+
 			return resp.Location()
 		}
 	}()
