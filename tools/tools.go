@@ -379,3 +379,84 @@ func (p *Parser) Content() string {
 
 	return ""
 }
+
+// RegisteredToolNames returns the names of all registered tools.
+func (p *Parser) RegisteredToolNames() []string {
+	names := make([]string, len(p.tools))
+	for i, t := range p.tools {
+		names[i] = t.Function.Name
+	}
+	return names
+}
+
+// UnmatchedToolNames scans the parser's buffer for JSON objects
+// containing a "name" field and returns any names that don't match
+// a registered tool. This is only meaningful after parsing is
+// complete with no successful tool calls (p.n == 0).
+func (p *Parser) UnmatchedToolNames() []string {
+	if p.n > 0 || len(p.buffer) == 0 {
+		return nil
+	}
+
+	registered := make(map[string]bool, len(p.tools))
+	for _, t := range p.tools {
+		registered[t.Function.Name] = true
+	}
+
+	var unmatched []string
+	seen := make(map[string]bool)
+
+	// scan for complete JSON objects and extract "name" fields
+	// only consider objects with both "name" and ("arguments" or "parameters")
+	var inString, escaped bool
+	var braces int
+	start := -1
+
+	for i := range p.buffer {
+		c := p.buffer[i]
+
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+
+		if c == '{' {
+			if braces == 0 {
+				start = i
+			}
+			braces++
+		} else if c == '}' {
+			braces--
+			if braces == 0 && start != -1 {
+				var obj map[string]any
+				if err := json.Unmarshal(p.buffer[start:i+1], &obj); err == nil {
+					if name, ok := obj["name"].(string); ok && name != "" {
+						// require both name and (arguments or parameters) to be a tool call
+						hasArgs := obj["arguments"] != nil || obj["parameters"] != nil
+						if hasArgs && !registered[name] && !seen[name] {
+							unmatched = append(unmatched, name)
+							seen[name] = true
+						}
+					}
+				}
+				start = -1
+			}
+			if braces < 0 {
+				braces = 0
+			}
+		}
+	}
+
+	return unmatched
+}

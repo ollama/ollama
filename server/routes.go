@@ -2520,6 +2520,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 						if r.Done {
 							res.Message.Content = toolParser.Content()
+							if unmatched := toolParser.UnmatchedToolNames(); len(unmatched) > 0 {
+								slog.Warn("model attempted tool calls that did not match any registered tools",
+									"attempted", unmatched,
+									"registered", toolParser.RegisteredToolNames(),
+								)
+							}
 							ch <- res
 						}
 						return
