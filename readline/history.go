@@ -138,10 +138,18 @@ func (h *History) Save() error {
 	buf := bufio.NewWriter(f)
 	for cnt := range h.Size() {
 		line, _ := h.Buf.Get(cnt)
-		fmt.Fprintln(buf, line)
+		if _, err := fmt.Fprintln(buf, line); err != nil {
+			f.Close()
+			return err
+		}
 	}
-	buf.Flush()
-	f.Close()
+	if err := buf.Flush(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
 
 	if err = os.Rename(tmpFile, h.Filename); err != nil {
 		return err
