@@ -31,7 +31,7 @@ func (s *Server) TokenizeHandler(c *gin.Context) {
 	if err != nil {
 		switch {
 		case c.GetBool("remote"):
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		default:
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		}
