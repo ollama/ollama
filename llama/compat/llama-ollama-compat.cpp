@@ -145,11 +145,21 @@ void promote_tensor_to_f32(ggml_context * ctx, const char * name) {
 // gemma3 (text side)
 // -------------------------------------------------------------------------
 
-// Returns true if this looks like an Ollama-format gemma3 blob. Different
-// Ollama converter versions produced different quirks (4B/12B/27B have
-// embedded vision + mm KVs; 1B uses non-standard rope key names; all of
-// them omit layer_norm_rms_epsilon). Any single marker trips detection.
+// Returns true if this looks like an Ollama-format gemma3 blob. Requires
+// the file to declare itself gemma3 (either via general.architecture or
+// by having at least one gemma3.* KV), AND to exhibit at least one Ollama
+// quirk. Different Ollama converter versions produced different quirks
+// (4B/12B/27B have embedded vision + mm KVs; 1B uses non-standard rope
+// key names; all of them omit layer_norm_rms_epsilon).
 bool detect_ollama_gemma3(const gguf_context * meta, const ggml_context * ctx) {
+    // Claim #1: the file is gemma3.
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "gemma3") != 0) return false;
+
+    // Claim #2: at least one Ollama-ism. An upstream-converted gemma3 would
+    // have none of these (except possibly the v./mm. prefixes, which upstream
+    // never ships in the text file — they live in a separate mmproj).
     return has_key(meta, "gemma3.mm.tokens_per_image")
         || any_tensor_with_prefix(ctx, "v.")
         || any_tensor_with_prefix(ctx, "mm.")
@@ -211,6 +221,87 @@ void handle_gemma3(const llama_model_loader * ml, gguf_context * meta, ggml_cont
 
     // Note: no RMSNorm weight shift needed. Ollama's published gemma3 blobs
     // already have the +1 shift baked in, same as upstream's convert_hf.
+}
+
+// -------------------------------------------------------------------------
+// qwen35moe (text side)
+// -------------------------------------------------------------------------
+
+bool detect_ollama_qwen35moe(const gguf_context * meta, const ggml_context * ctx) {
+    // Strongest markers: vision KVs live in-file (upstream splits to mmproj)
+    // or MTP tensors are present (upstream strips them).
+    if (has_key(meta, "qwen35moe.vision.block_count"))     return true;
+    if (has_key(meta, "qwen35moe.image_token_id"))         return true;
+    if (has_key(meta, "qwen35moe.ssm.v_head_reordered"))   return true;
+    if (has_key(meta, "qwen35moe.feed_forward_length"))    return true; // upstream omits (=0 stored)
+    if (has_key(meta, "qwen35moe.rope.mrope_interleaved")) return true;
+    if (any_tensor_with_prefix(ctx, "mtp."))               return true;
+    if (any_tensor_with_prefix(ctx, "v."))                 return true;
+
+    // Scalar-vs-array: upstream writes head_count_kv as UINT32; Ollama wrote
+    // it as a per-layer array. has_key alone can't tell us that, but a mismatch
+    // shows up as a type-mismatch crash downstream, which is worse than over-
+    // detecting. If any of the above markers fire we'll normalize it below.
+    return false;
+}
+
+void handle_qwen35moe(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_qwen35moe(meta, ctx)) return;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format qwen35moe GGUF; applying compatibility fixes\n", __func__);
+
+    // 1. attention.head_count_kv — upstream expects UINT32; Ollama wrote
+    //    an array (one entry per layer, 0 for SSM layers, 2 for attention
+    //    layers). Collapse to the max non-zero value.
+    {
+        const int64_t kid = gguf_find_key(meta, "qwen35moe.attention.head_count_kv");
+        if (kid >= 0 && gguf_get_kv_type(meta, kid) == GGUF_TYPE_ARRAY) {
+            const size_t n = gguf_get_arr_n(meta, kid);
+            const auto * arr = static_cast<const uint32_t *>(gguf_get_arr_data(meta, kid));
+            uint32_t max_kv = 0;
+            for (size_t i = 0; i < n; ++i) if (arr[i] > max_kv) max_kv = arr[i];
+            if (max_kv == 0) max_kv = 2; // safety fallback
+            gguf_remove_key(meta, "qwen35moe.attention.head_count_kv");
+            gguf_set_val_u32(meta, "qwen35moe.attention.head_count_kv", max_kv);
+        }
+    }
+
+    // 2. rope.dimension_sections — upstream expects a 4-element array
+    //    (M-RoPE convention); Ollama wrote 3 elements. Pad with a trailing 0.
+    {
+        const int64_t kid = gguf_find_key(meta, "qwen35moe.rope.dimension_sections");
+        if (kid >= 0 && gguf_get_arr_n(meta, kid) == 3) {
+            const auto * src = static_cast<const int32_t *>(gguf_get_arr_data(meta, kid));
+            const int32_t padded[4] = { src[0], src[1], src[2], 0 };
+            gguf_set_arr_data(meta, "qwen35moe.rope.dimension_sections",
+                              GGUF_TYPE_INT32, padded, 4);
+        }
+    }
+
+    // 3. Tensor rename: Ollama's `blk.N.ssm_dt` corresponds to upstream's
+    //    `blk.N.ssm_dt.bias` (same shape, F32 [32]). 40 layers.
+    {
+        std::vector<std::string> targets;
+        const int64_t n = gguf_get_n_tensors(meta);
+        static const char suffix[] = ".ssm_dt";
+        const size_t slen = sizeof(suffix) - 1;
+        for (int64_t i = 0; i < n; ++i) {
+            std::string name(gguf_get_tensor_name(meta, i));
+            if (name.size() >= slen
+                    && name.compare(name.size() - slen, slen, suffix) == 0) {
+                targets.push_back(std::move(name));
+            }
+        }
+        for (const auto & from : targets) {
+            rename_tensor(meta, ctx, from.c_str(), (from + ".bias").c_str());
+        }
+    }
+
+    // 4. Drop embedded vision + MTP + projector tensors from the text loader.
+    //    (vision goes to clip via --mmproj; MTP isn't used by upstream.)
+    add_skip_prefix(ml, "v.");
+    add_skip_prefix(ml, "mm.");
+    add_skip_prefix(ml, "mtp.");
 }
 
 // -------------------------------------------------------------------------
@@ -281,7 +372,8 @@ void translate_metadata(const llama_model_loader * ml,
                         ggml_context * ctx,
                         std::string & arch_name) {
     if (!meta) return;
-    if (arch_name == "gemma3") handle_gemma3(ml, meta, ctx);
+    if (arch_name == "gemma3")    handle_gemma3(ml, meta, ctx);
+    if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
     // Dispatch. Add more arches as they are wired up.
 }
 
