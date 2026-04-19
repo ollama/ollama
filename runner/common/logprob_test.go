@@ -496,3 +496,138 @@ func TestLogprobsWithStopSequences(t *testing.T) {
 		})
 	}
 }
+
+// TestCalculateLogprobsPartialUTF8Bytes verifies that partial UTF-8 sequences
+// are correctly preserved in the Bytes field. This tests the fix for issue #13497
+// where logprobs returned the replacement character bytes [239, 191, 189] instead
+// of the actual partial UTF-8 bytes.
+func TestCalculateLogprobsPartialUTF8Bytes(t *testing.T) {
+	// Simulate partial UTF-8 tokens for emoji 😊 (UTF-8: [0xF0, 0x9F, 0x98, 0x8A])
+	// When tokenized into partial bytes, each token is a single byte
+	tokens := map[int]string{
+		0: "\xF0", // First byte of 😊
+		1: "\x9F", // Second byte
+		2: "\x98", // Third byte
+		3: "\x8A", // Fourth byte
+	}
+	decoder := func(tokenID int) string {
+		return tokens[tokenID]
+	}
+
+	tests := []struct {
+		name          string
+		tokenID       int
+		expectedBytes []byte
+	}{
+		{
+			name:          "First partial UTF-8 byte",
+			tokenID:       0,
+			expectedBytes: []byte{0xF0},
+		},
+		{
+			name:          "Second partial UTF-8 byte",
+			tokenID:       1,
+			expectedBytes: []byte{0x9F},
+		},
+		{
+			name:          "Third partial UTF-8 byte",
+			tokenID:       2,
+			expectedBytes: []byte{0x98},
+		},
+		{
+			name:          "Fourth partial UTF-8 byte",
+			tokenID:       3,
+			expectedBytes: []byte{0x8A},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logits := []float32{1.0, 0.5, 0.3, 0.1}
+			result := CalculateLogprobs(logits, tt.tokenID, 0, decoder)
+
+			if len(result) != 1 {
+				t.Fatalf("Expected 1 result, got %d", len(result))
+			}
+
+			// Verify the Bytes field contains the correct raw bytes
+			if len(result[0].Bytes) != len(tt.expectedBytes) {
+				t.Errorf("Expected Bytes length %d, got %d", len(tt.expectedBytes), len(result[0].Bytes))
+			}
+
+			for i, b := range result[0].Bytes {
+				if i < len(tt.expectedBytes) && b != tt.expectedBytes[i] {
+					t.Errorf("Bytes[%d] = %d (0x%X), want %d (0x%X)",
+						i, b, b, tt.expectedBytes[i], tt.expectedBytes[i])
+				}
+			}
+
+			// Verify the bytes are NOT the replacement character bytes [239, 191, 189]
+			replacementBytes := []byte{239, 191, 189}
+			if len(result[0].Bytes) == len(replacementBytes) {
+				isReplacement := true
+				for i := range result[0].Bytes {
+					if result[0].Bytes[i] != replacementBytes[i] {
+						isReplacement = false
+						break
+					}
+				}
+				if isReplacement {
+					t.Errorf("Bytes field incorrectly contains replacement character bytes [239, 191, 189]")
+				}
+			}
+		})
+	}
+}
+
+// TestCalculateLogprobsBytesWithTopLogprobs verifies that partial UTF-8 bytes
+// are preserved in TopLogprobs as well.
+func TestCalculateLogprobsBytesWithTopLogprobs(t *testing.T) {
+	tokens := map[int]string{
+		0: "\xF0",     // Partial UTF-8
+		1: "hello",    // Normal ASCII
+		2: "\x9F",     // Another partial UTF-8
+		3: "\xE2\x82", // Partial multi-byte sequence
+	}
+	decoder := func(tokenID int) string {
+		return tokens[tokenID]
+	}
+
+	logits := []float32{2.0, 3.0, 1.0, 0.5}
+	result := CalculateLogprobs(logits, 0, 4, decoder)
+
+	if len(result) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(result))
+	}
+
+	// Verify selected token bytes
+	expectedSelectedBytes := []byte{0xF0}
+	if len(result[0].Bytes) != len(expectedSelectedBytes) {
+		t.Errorf("Selected token Bytes length = %d, want %d", len(result[0].Bytes), len(expectedSelectedBytes))
+	}
+
+	// Verify TopLogprobs have correct bytes
+	expectedTopBytes := [][]byte{
+		{0x68, 0x65, 0x6c, 0x6c, 0x6f}, // "hello"
+		{0xF0},                         // "\xF0"
+		{0x9F},                         // "\x9F"
+		{0xE2, 0x82},                   // "\xE2\x82"
+	}
+
+	if len(result[0].TopLogprobs) != 4 {
+		t.Fatalf("Expected 4 TopLogprobs, got %d", len(result[0].TopLogprobs))
+	}
+
+	for i, tlp := range result[0].TopLogprobs {
+		if len(tlp.Bytes) != len(expectedTopBytes[i]) {
+			t.Errorf("TopLogprobs[%d].Bytes length = %d, want %d", i, len(tlp.Bytes), len(expectedTopBytes[i]))
+			continue
+		}
+		for j, b := range tlp.Bytes {
+			if b != expectedTopBytes[i][j] {
+				t.Errorf("TopLogprobs[%d].Bytes[%d] = %d (0x%X), want %d (0x%X)",
+					i, j, b, b, expectedTopBytes[i][j], expectedTopBytes[i][j])
+			}
+		}
+	}
+}
