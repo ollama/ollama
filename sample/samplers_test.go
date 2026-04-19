@@ -60,6 +60,26 @@ func TestWeighted(t *testing.T) {
 	}
 }
 
+func TestGreedySamplerNoAllocation(t *testing.T) {
+	logits := []float32{-1, 3, 2, 4}
+	sampler := NewSampler(0, 0, 0, 0, -1, nil)
+
+	var got int32
+	var err error
+	allocs := testing.AllocsPerRun(1000, func() {
+		got, err = sampler.Sample(logits)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 3 {
+		t.Fatalf("index mismatch: want 3, got %d", got)
+	}
+	if allocs != 0 {
+		t.Fatalf("allocs = %v; want 0", allocs)
+	}
+}
+
 func modelHelper(t testing.TB) tokenizer.Tokenizer {
 	t.Helper()
 
