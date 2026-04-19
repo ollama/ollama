@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -73,9 +74,38 @@ func getCPUMemByCgroups(mem memInfo) memInfo {
 	}
 	used, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.current")
 	if err == nil {
-		mem.FreeMemory = mem.TotalMemory - used
+		// inactive_file is reclaimable page cache included in memory.current.
+		// Subtract it to match the kernel's MemAvailable semantics: page cache
+		// that has not been recently used can be instantly reclaimed and should
+		// not count against available memory.
+		inactiveFile, err := getNamedUint64FromStatFile("/sys/fs/cgroup/memory.stat", "inactive_file")
+		if err != nil || inactiveFile > used {
+			inactiveFile = 0
+		}
+		mem.FreeMemory = mem.TotalMemory - (used - inactiveFile)
 	}
 	return mem
+}
+
+func getNamedUint64FromStatFile(path, name string) (uint64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	return getNamedUint64FromStat(f, name)
+}
+
+func getNamedUint64FromStat(r io.Reader, name string) (uint64, error) {
+	s := bufio.NewScanner(r)
+	prefix := name + " "
+	for s.Scan() {
+		line := s.Text()
+		if strings.HasPrefix(line, prefix) {
+			return strconv.ParseUint(strings.TrimPrefix(line, prefix), 10, 64)
+		}
+	}
+	return 0, fmt.Errorf("%s not found in stat", name)
 }
 
 func getUint64ValueFromFile(path string) (uint64, error) {
