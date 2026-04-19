@@ -13,7 +13,7 @@ import (
 
 func TestWeighted(t *testing.T) {
 	logits := []float32{-10, 3, -10, -10}
-	sampler := NewSampler(0, 0, 0, 0, 0, nil)
+	sampler := NewSampler(0, 0, 0, 0, 1, 0, 0, 0, nil)
 	got, err := sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -25,7 +25,7 @@ func TestWeighted(t *testing.T) {
 	}
 
 	logits = []float32{-100, -10, 0, 10}
-	sampler = NewSampler(0, 0, 0, 0, 0, nil)
+	sampler = NewSampler(0, 0, 0, 0, 1, 0, 0, 0, nil)
 	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -39,7 +39,7 @@ func TestWeighted(t *testing.T) {
 	// Test very high p
 	logits = []float32{1.0, 0.9999999999999999, 0.5, 0.1}
 	// Use extremely small topP to filter out all tokens
-	sampler = NewSampler(1.0, 0, 1e-10, 0, 0, nil)
+	sampler = NewSampler(1.0, 0, 1e-10, 0, 1, 0, 0, 0, nil)
 	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -52,11 +52,58 @@ func TestWeighted(t *testing.T) {
 	}
 
 	logits = []float32{float32(math.NaN()), float32(math.NaN()), float32(math.NaN())}
-	sampler = NewSampler(1, 0, 0.95, 0.05, 0, nil)
+	sampler = NewSampler(1, 0, 0.95, 0.05, 1, 0, 0, 0, nil)
 	got, err = sampler.Sample(logits)
 	if err == nil {
 		t.Errorf("expected error, got %d", got)
 		return
+	}
+}
+
+func TestSamplerNoopPenaltiesSkipHistory(t *testing.T) {
+	sampler := NewSampler(0, 0, 1, 0, 1, 0, 0, -1, nil)
+	if sampler.PenalizesHistory() {
+		t.Fatal("expected no-op penalties to disable history tracking")
+	}
+
+	for range DefaultPenaltyLookback + 10 {
+		sampler.Accept(1)
+	}
+
+	if got := len(sampler.history); got != 0 {
+		t.Fatalf("unexpected history length: got %d want 0", got)
+	}
+
+	if got := len(sampler.counts); got != 0 {
+		t.Fatalf("unexpected counts length: got %d want 0", got)
+	}
+}
+
+func TestSamplerActivePenaltiesTrackLookback(t *testing.T) {
+	sampler := NewSampler(0, 0, 1, 0, 1.1, 0, 0, -1, nil)
+	if !sampler.PenalizesHistory() {
+		t.Fatal("expected non-default penalties to enable history tracking")
+	}
+
+	for range DefaultPenaltyLookback + 10 {
+		sampler.Accept(7)
+	}
+
+	if got := len(sampler.history); got != DefaultPenaltyLookback {
+		t.Fatalf("unexpected history length: got %d want %d", got, DefaultPenaltyLookback)
+	}
+
+	if got := sampler.counts[7]; got != DefaultPenaltyLookback {
+		t.Fatalf("unexpected count for token 7: got %d want %d", got, DefaultPenaltyLookback)
+	}
+
+	sampler.Reset()
+	if got := len(sampler.history); got != 0 {
+		t.Fatalf("unexpected history length after reset: got %d want 0", got)
+	}
+
+	if got := len(sampler.counts); got != 0 {
+		t.Fatalf("unexpected counts length after reset: got %d want 0", got)
 	}
 }
 
@@ -151,8 +198,8 @@ func TestGrammar(t *testing.T) {
 
 func BenchmarkSample(b *testing.B) {
 	samplers := map[string]Sampler{
-		"Greedy":   NewSampler(0, 0, 0, 0, 0, nil), // Use NewSampler with temp=0 for greedy
-		"Weighted": NewSampler(0.5, 10, 0.9, 0.2, -1, nil),
+		"Greedy":   NewSampler(0, 0, 0, 0, 1, 0, 0, 0, nil), // Use NewSampler with temp=0 for greedy
+		"Weighted": NewSampler(0.5, 10, 0.9, 0.2, 1, 0, 0, -1, nil),
 	}
 
 	// Generate random logits for benchmarking

@@ -22,7 +22,63 @@ type Sampler struct {
 	topP        float32
 	minP        float32
 	temperature float32
+	repeat      float32
+	presence    float32
+	frequency   float32
+	history     []int32
+	counts      map[int32]int
 	grammar     *GrammarSampler
+}
+
+const DefaultPenaltyLookback = 64
+
+func (s *Sampler) Reset() {
+	if s.counts == nil {
+		return
+	}
+
+	s.history = s.history[:0]
+	clear(s.counts)
+}
+
+func (s *Sampler) Accept(token int32) {
+	if s.counts == nil {
+		return
+	}
+
+	s.history = append(s.history, token)
+	s.counts[token]++
+	if len(s.history) <= DefaultPenaltyLookback {
+		return
+	}
+
+	oldest := s.history[0]
+	s.history = s.history[1:]
+
+	next := s.counts[oldest] - 1
+	if next <= 0 {
+		delete(s.counts, oldest)
+		return
+	}
+	s.counts[oldest] = next
+}
+
+func (s Sampler) PenalizesHistory() bool {
+	return s.counts != nil
+}
+
+func (s *Sampler) applyHistoryPenalties(tokens []token) {
+	if len(s.counts) == 0 {
+		return
+	}
+
+	for id, count := range s.counts {
+		if id < 0 || int(id) >= len(tokens) {
+			continue
+		}
+
+		tokens[id].value = applyPenalty(tokens[id].value, count, s.repeat, s.presence, s.frequency)
+	}
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
@@ -35,6 +91,7 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		tokens[i].id = int32(i)
 		tokens[i].value = logits[i]
 	}
+	s.applyHistoryPenalties(tokens)
 
 	t, err := s.sample(tokens)
 	if err != nil {
@@ -58,6 +115,7 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 			tokens[i].id = int32(i)
 			tokens[i].value = logits[i]
 		}
+		s.applyHistoryPenalties(tokens)
 		s.grammar.Apply(tokens)
 		t, err = s.sample(tokens)
 		if err != nil {
@@ -127,7 +185,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
-func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *GrammarSampler) Sampler {
+func NewSampler(temperature float32, topK int, topP float32, minP float32, repeatPenalty float32, presencePenalty float32, frequencyPenalty float32, seed int, grammar *GrammarSampler) Sampler {
 	var rng *rand.Rand
 	if seed != -1 {
 		// PCG requires two parameters: sequence and stream
@@ -154,12 +212,28 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		minP = 1.0
 	}
 
+	if repeatPenalty <= 0 {
+		repeatPenalty = 1.0
+	}
+
+	var history []int32
+	var counts map[int32]int
+	if repeatPenalty != 1.0 || presencePenalty != 0 || frequencyPenalty != 0 {
+		history = make([]int32, 0, DefaultPenaltyLookback)
+		counts = make(map[int32]int, DefaultPenaltyLookback)
+	}
+
 	return Sampler{
 		rng:         rng,
 		topK:        topK,
 		topP:        topP,
 		minP:        minP,
 		temperature: temperature,
+		repeat:      repeatPenalty,
+		presence:    presencePenalty,
+		frequency:   frequencyPenalty,
+		history:     history,
+		counts:      counts,
 		grammar:     grammar,
 	}
 }
