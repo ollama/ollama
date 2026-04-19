@@ -305,7 +305,12 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 
 			// Typical refresh on existing runner is ~500ms but allow longer if the system
 			// is under stress before giving up and using stale data.
-			ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			refreshTimeout := 3 * time.Second
+			if envconfig.HsaOverrideGfxVersion() != "" {
+				slog.Debug("HSA_OVERRIDE_GFX_VERSION detected, increasing existing runner refresh timeout")
+				refreshTimeout = 10 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(ctx, refreshTimeout)
 			defer cancel()
 			start := time.Now()
 			updatedDevices := runner.GetDeviceInfos(ctx)
@@ -329,7 +334,12 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 
 			// Bootstrapping may take longer in some cases (AMD windows), but we
 			// would rather use stale free data to get the model running sooner
-			ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			bootstrapTimeout := 3 * time.Second
+			if envconfig.HsaOverrideGfxVersion() != "" {
+				slog.Debug("HSA_OVERRIDE_GFX_VERSION detected, increasing bootstrap refresh timeout")
+				bootstrapTimeout = 10 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(ctx, bootstrapTimeout)
 			defer cancel()
 
 			// Apply any dev filters to avoid re-discovering unsupported devices, and get IDs correct
