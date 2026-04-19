@@ -284,7 +284,7 @@ func (c *Openclaw) gatewayInfo() (token string, port int) {
 			continue
 		}
 		var config map[string]any
-		if json.Unmarshal(data, &config) != nil {
+		if err := json.Unmarshal(data, &config); err != nil {
 			continue
 		}
 		gw, _ := config["gateway"].(map[string]any)
@@ -714,7 +714,7 @@ func clearSessionModelOverride(primary string) {
 		return
 	}
 	var sessions map[string]map[string]any
-	if json.Unmarshal(data, &sessions) != nil {
+	if err := json.Unmarshal(data, &sessions); err != nil {
 		return
 	}
 	changed := false
@@ -831,7 +831,7 @@ func registerWebSearchPlugin() {
 		return
 	}
 	var config map[string]any
-	if json.Unmarshal(data, &config) != nil {
+	if err := json.Unmarshal(data, &config); err != nil {
 		return
 	}
 
