@@ -300,6 +300,57 @@ void handle_deepseekocr(const llama_model_loader * ml, gguf_context * meta,
 }
 
 // =========================================================================
+// nemotron_h_moe (text only)
+// =========================================================================
+//
+// Same arch name on both sides. Most variants (e.g. nemotron-cascade-2)
+// load as-is. The latent-FFN variants (e.g. nemotron-3-super 120B-A12B)
+// rename `ffn_latent_in` / `ffn_latent_out` to `ffn_latent_down` /
+// `ffn_latent_up`, and need `moe_latent_size` injected (derived from
+// the latent tensor shape).
+
+bool detect_ollama_nemotron_h_moe(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "nemotron_h_moe") != 0) return false;
+    return any_tensor_with_prefix(ctx, "blk.1.ffn_latent_in")
+        || any_tensor_with_prefix(ctx, "blk.0.ffn_latent_in")
+        || any_tensor_with_prefix(ctx, "mtp.");
+}
+
+void handle_nemotron_h_moe(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_nemotron_h_moe(meta, ctx)) return;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format nemotron_h_moe GGUF; applying compatibility fixes\n", __func__);
+
+    // Inject moe_latent_size for latent-FFN variants (e.g. super 120B-A12B).
+    // Standard variants (e.g. cascade-2 30B-A3B) have no latent tensors and
+    // use n_embd as the MoE inner dim — leave the key absent.
+    if (!has_key(meta, "nemotron_h_moe.moe_latent_size")) {
+        for (uint32_t b = 0; b < 1024; ++b) {
+            char name[64];
+            std::snprintf(name, sizeof(name), "blk.%u.ffn_latent_in.weight", b);
+            if (ggml_tensor * t = ggml_get_tensor(ctx, name)) {
+                gguf_set_val_u32(meta, "nemotron_h_moe.moe_latent_size",
+                                 (uint32_t) t->ne[1]);
+                break;
+            }
+        }
+    }
+
+    // Rename the latent projection tensors to upstream's naming (no-op when
+    // the file has no latent tensors).
+    rename_tensors_containing(meta, ctx, ".ffn_latent_in",  ".ffn_latent_down");
+    rename_tensors_containing(meta, ctx, ".ffn_latent_out", ".ffn_latent_up");
+
+    // Drop MTP (Multi-Token Prediction) tensors — Ollama's converter emits
+    // them as one-tensor-per-expert (`mtp.layers.X.mixer.experts.Y.{up,down}_proj`)
+    // which upstream's nemotron_h_moe loader doesn't claim. Total: ~1040 extra
+    // tensors on super 120B.
+    add_skip_prefix(ml, "mtp.");
+}
+
+// =========================================================================
 // gpt-oss (text only)
 // =========================================================================
 //
@@ -925,10 +976,11 @@ void translate_metadata(const llama_model_loader * ml,
     if (arch_name == "gemma4")    handle_gemma4   (ml, meta, ctx);
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
     if (arch_name == "qwen35")    handle_qwen35   (ml, meta, ctx);
-    if (arch_name == "gptoss")     handle_gptoss     (ml, meta, ctx, arch_name);
-    if (arch_name == "lfm2")       handle_lfm2       (ml, meta, ctx);
-    if (arch_name == "mistral3")   handle_mistral3   (ml, meta, ctx);
-    if (arch_name == "deepseekocr") handle_deepseekocr(ml, meta, ctx, arch_name);
+    if (arch_name == "gptoss")        handle_gptoss        (ml, meta, ctx, arch_name);
+    if (arch_name == "lfm2")          handle_lfm2          (ml, meta, ctx);
+    if (arch_name == "mistral3")      handle_mistral3      (ml, meta, ctx);
+    if (arch_name == "deepseekocr")   handle_deepseekocr   (ml, meta, ctx, arch_name);
+    if (arch_name == "nemotron_h_moe") handle_nemotron_h_moe(ml, meta, ctx);
     // Dispatch. Add more arches as they are wired up.
 }
 
