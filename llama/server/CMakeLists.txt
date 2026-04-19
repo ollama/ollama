@@ -57,6 +57,22 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama_cpp)
 
+# Link the Ollama-compat source files into the fetched llama target.
+# Kept separate from the upstream-edits patch so our .cpp/.h stay
+# on-disk in llama/compat/ rather than being copied into _deps/.
+if(DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
+    target_sources(llama PRIVATE
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/llama-ollama-compat.cpp)
+    target_include_directories(llama PRIVATE
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
+    # mtmd's clip.cpp #include's the compat header too — add the same dir
+    # to its PRIVATE include path (PRIVATE on llama doesn't propagate).
+    if(TARGET mtmd)
+        target_include_directories(mtmd PRIVATE
+            ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
+    endif()
+endif()
+
 # Find GPU toolkits for runtime dependency bundling.
 # The upstream llama.cpp build finds these internally, but we need the
 # variables (CUDAToolkit_LIBRARY_DIR, etc.) in our install scope.

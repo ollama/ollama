@@ -224,9 +224,24 @@ namespace {
 
 // Rename a tensor in BOTH the gguf_context and the ggml_context so that all
 // name-based lookups — offset map, ggml_get_tensor, tensor.name — agree.
+//
+// The gguf_context side is a bit sneaky: gguf_get_tensor_name returns a
+// pointer into the embedded ggml_tensor's `name[GGML_MAX_NAME]` buffer.
+// That buffer is non-const storage inside a std::vector element; the const
+// on the return type is just API hygiene. Casting it away and strncpy'ing
+// a new name is well-defined and avoids needing to patch gguf's internals.
 void rename_tensor(gguf_context * meta, ggml_context * ctx,
                    const char * old_name, const char * new_name) {
-    if (!gguf_rename_tensor(meta, old_name, new_name)) return;
+    const int64_t id = gguf_find_tensor(meta, old_name);
+    if (id < 0) return;
+
+    // Update the gguf-side name (what gguf_get_tensor_name returns later).
+    if (char * name_ptr = const_cast<char *>(gguf_get_tensor_name(meta, id))) {
+        std::strncpy(name_ptr, new_name, GGML_MAX_NAME - 1);
+        name_ptr[GGML_MAX_NAME - 1] = '\0';
+    }
+
+    // Update the ggml-side name (what ggml_get_tensor looks up by).
     if (ggml_tensor * t = ggml_get_tensor(ctx, old_name)) {
         ggml_set_name(t, new_name);
     }

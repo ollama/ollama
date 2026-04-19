@@ -24,20 +24,25 @@
 set(_compat_dir ${CMAKE_CURRENT_LIST_DIR})
 
 # Expose a single variable the main CMakeLists passes into FetchContent's
-# PATCH_COMMAND. Uses CMake's own `-E copy` for cross-platform file copy.
-# The patch itself is applied via a small CMake script so the step is
-# idempotent — re-configuring or rebuilding won't fail with "already applied".
+# PATCH_COMMAND. The patch is applied via a small CMake script so the step
+# is idempotent — re-configuring or rebuilding won't fail with "already
+# applied".
+#
+# The compat source files (.h, .cpp) are NOT copied into the fetched tree.
+# Instead, llama/server/CMakeLists.txt does target_sources() on the llama
+# target after FetchContent_MakeAvailable. That keeps Ollama's code in
+# Ollama's tree and makes the patch pure call-site insertions.
 set(OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND
-    ${CMAKE_COMMAND} -E copy
-        "${_compat_dir}/llama-ollama-compat.h"
-        "src/llama-ollama-compat.h"
-    COMMAND ${CMAKE_COMMAND} -E copy
-        "${_compat_dir}/llama-ollama-compat.cpp"
-        "src/llama-ollama-compat.cpp"
-    COMMAND ${CMAKE_COMMAND}
+    ${CMAKE_COMMAND}
         -DPATCH_FILE=${_compat_dir}/upstream-edits.patch
         -P ${_compat_dir}/apply-patch.cmake
     CACHE INTERNAL "llama.cpp compat patch command for FetchContent")
+
+# Where the compat source files live, so the main CMakeLists can wire them
+# into the llama target.
+set(OLLAMA_LLAMA_CPP_COMPAT_DIR
+    "${_compat_dir}"
+    CACHE INTERNAL "Directory holding llama-ollama-compat.{h,cpp}")
 
 # Also export the individual paths in case callers want to do something
 # custom (e.g. emit a dependency on the patch so reconfigures re-apply).
