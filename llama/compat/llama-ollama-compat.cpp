@@ -977,28 +977,66 @@ void handle_deepseekocr_clip(gguf_context * meta, ggml_context * ctx) {
 void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
     LLAMA_LOG_INFO("%s: detected Ollama-format gemma4 GGUF used as mmproj; translating\n", __func__);
 
-    copy_u32_kv(meta, "gemma4.vision.block_count",                   "clip.vision.block_count");
-    copy_u32_kv(meta, "gemma4.vision.embedding_length",              "clip.vision.embedding_length");
-    copy_u32_kv(meta, "gemma4.vision.feed_forward_length",           "clip.vision.feed_forward_length");
-    copy_u32_kv(meta, "gemma4.vision.attention.head_count",          "clip.vision.attention.head_count");
-    copy_f32_kv(meta, "gemma4.vision.attention.layer_norm_epsilon",  "clip.vision.attention.layer_norm_epsilon");
-    copy_u32_kv(meta, "gemma4.vision.patch_size",                    "clip.vision.patch_size");
-    // gemma4 vision is fixed at 224x224 patches.
-    inject_u32_if_missing(meta, "clip.vision.image_size", 224);
-    // projection_dim = LM embedding length.
-    copy_u32_kv(meta, "gemma4.embedding_length",                     "clip.vision.projection_dim");
+    gguf_set_val_str(meta, "general.architecture", "clip");
 
-    static const float kZeros[3] = {0.0f, 0.0f, 0.0f};
-    static const float kOnes [3] = {1.0f, 1.0f, 1.0f};
-    inject_f32_arr_if_missing(meta, "clip.vision.image_mean", kZeros, 3);
-    inject_f32_arr_if_missing(meta, "clip.vision.image_std",  kOnes,  3);
+    const bool has_vision = any_tensor_with_prefix(ctx, "v.");
+    const bool has_audio  = any_tensor_with_prefix(ctx, "a.");
 
-    inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
-    gguf_set_val_str(meta, "clip.vision.projector_type", "gemma4v");
-    gguf_set_val_str(meta, "general.architecture",       "clip");
+    if (has_vision) {
+        copy_u32_kv(meta, "gemma4.vision.block_count",                   "clip.vision.block_count");
+        copy_u32_kv(meta, "gemma4.vision.embedding_length",              "clip.vision.embedding_length");
+        copy_u32_kv(meta, "gemma4.vision.feed_forward_length",           "clip.vision.feed_forward_length");
+        copy_u32_kv(meta, "gemma4.vision.attention.head_count",          "clip.vision.attention.head_count");
+        copy_f32_kv(meta, "gemma4.vision.attention.layer_norm_epsilon",  "clip.vision.attention.layer_norm_epsilon");
+        copy_u32_kv(meta, "gemma4.vision.patch_size",                    "clip.vision.patch_size");
+        // gemma4 vision is fixed at 224x224 patches.
+        inject_u32_if_missing(meta, "clip.vision.image_size", 224);
+        // projection_dim = LM embedding length.
+        copy_u32_kv(meta, "gemma4.embedding_length",                     "clip.vision.projection_dim");
 
-    // Metal IM2COL needs F32 patch_embd weights (same as other arches).
-    promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
+        static const float kZeros[3] = {0.0f, 0.0f, 0.0f};
+        static const float kOnes [3] = {1.0f, 1.0f, 1.0f};
+        inject_f32_arr_if_missing(meta, "clip.vision.image_mean", kZeros, 3);
+        inject_f32_arr_if_missing(meta, "clip.vision.image_std",  kOnes,  3);
+
+        inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
+        gguf_set_val_str(meta, "clip.vision.projector_type", "gemma4v");
+
+        // Metal IM2COL needs F32 patch_embd weights (same as other arches).
+        promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
+    }
+
+    if (has_audio) {
+        // Audio (gemma4a — conformer encoder + audio multimodal embedder).
+        copy_u32_kv(meta, "gemma4.audio.block_count",                   "clip.audio.block_count");
+        copy_u32_kv(meta, "gemma4.audio.embedding_length",              "clip.audio.embedding_length");
+        copy_u32_kv(meta, "gemma4.audio.feed_forward_length",           "clip.audio.feed_forward_length");
+        copy_u32_kv(meta, "gemma4.audio.attention.head_count",          "clip.audio.attention.head_count");
+        copy_f32_kv(meta, "gemma4.audio.attention.layer_norm_epsilon",  "clip.audio.attention.layer_norm_epsilon");
+        // Defaults from the upstream-converted reference E2B mmproj.
+        inject_u32_if_missing(meta, "clip.audio.num_mel_bins",   128);
+        inject_u32_if_missing(meta, "clip.audio.projection_dim", 1536);
+
+        inject_bool_if_missing(meta, "clip.has_audio_encoder", true);
+        gguf_set_val_str(meta, "clip.audio.projector_type", "gemma4a");
+
+        // Top-level tensor renames (see comment block above for the rationale —
+        // Ollama uses different leaf names for the SSCP input projection and the
+        // encoder output projection):
+        //   a.pre_encode.out.weight   →  a.input_projection.weight (REQUIRED)
+        //   mm.a.fc.{weight,bias}     →  a.pre_encode.out.{weight,bias}
+        //   mm.a.input_projection.weight already matches.
+        rename_tensor(meta, ctx, "a.pre_encode.out.weight", "a.input_projection.weight");
+        rename_tensor(meta, ctx, "mm.a.fc.weight",          "a.pre_encode.out.weight");
+        rename_tensor(meta, ctx, "mm.a.fc.bias",            "a.pre_encode.out.bias");
+
+        // Per-block leaf renames (substring — each name appears in every audio
+        // block, doesn't overlap with anything else):
+        //   .linear_pos       →  .attn_k_rel       (relative-position K projection)
+        //   .layer_pre_norm   →  .attn_post_norm   (post-attention norm)
+        rename_tensors_containing(meta, ctx, ".linear_pos",     ".attn_k_rel");
+        rename_tensors_containing(meta, ctx, ".layer_pre_norm", ".attn_post_norm");
+    }
 }
 
 // =========================================================================
