@@ -14,7 +14,7 @@ index 4e65a45a5..75836c683 100644
          }
 
          get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
-+        llama_ollama_compat::translate_metadata(this, metadata, ctx, arch_name, fname.c_str());
++        if (llama_ollama_compat::translate_metadata(this, metadata, ctx, arch_name, fname.c_str())) use_mmap = false;
          llm_kv = LLM_KV(llm_arch_from_string(arch_name));
  
          files.emplace_back(new llama_file(fname.c_str(), "rb", use_direct_io));

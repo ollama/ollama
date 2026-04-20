@@ -7,6 +7,7 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace llama_ollama_compat::detail {
 
@@ -228,6 +229,21 @@ bool should_skip_tensor_prefix(const llama_model_loader * ml, const char * name)
         if (std::strncmp(name, prefix.c_str(), prefix.size()) == 0) return true;
     }
     return false;
+}
+
+namespace {
+std::mutex g_no_mmap_mutex;
+std::unordered_set<const llama_model_loader *> g_no_mmap;
+} // anon
+
+void disable_mmap_for(const llama_model_loader * ml) {
+    std::lock_guard<std::mutex> lk(g_no_mmap_mutex);
+    g_no_mmap.insert(ml);
+}
+
+bool is_mmap_disabled_for(const llama_model_loader * ml) {
+    std::lock_guard<std::mutex> lk(g_no_mmap_mutex);
+    return g_no_mmap.count(ml) > 0;
 }
 
 // -------------------------------------------------------------------------

@@ -93,6 +93,15 @@ size_t tensor_file_offset(const gguf_context * meta, const char * name);
 void add_skip_prefix(const llama_model_loader * ml, std::string prefix);
 bool should_skip_tensor_prefix(const llama_model_loader * ml, const char * name);
 
+// -- Per-loader "needs no-mmap" flag --
+// Handlers that register a load_op which transforms a TEXT-side tensor's
+// bytes (e.g. concat reshape) must call disable_mmap_for(ml). With mmap
+// the upstream loader binds the tensor directly to the file region, so
+// our load_op has no writable buffer to fill. translate_metadata reads
+// this flag and returns it back to the patch site.
+void disable_mmap_for(const llama_model_loader * ml);
+bool is_mmap_disabled_for(const llama_model_loader * ml);
+
 // -- Load-time transform registry --
 struct LoadOp {
     std::function<bool(const char * src_file, void * dst, size_t dst_size)> apply;

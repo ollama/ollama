@@ -37,7 +37,15 @@ namespace llama_ollama_compat {
 // Called from llama_model_loader's constructor, right after the arch is read.
 // `fname` is the model file path, captured here so later load-time hooks
 // (maybe_load_text_tensor) can read raw bytes from it.
-void translate_metadata(const llama_model_loader * ml,
+//
+// Returns true if the caller must disable mmap for this loader. Some
+// handlers transform tensor data via load_op (e.g. glm-ocr's gate+up
+// FFN concat), which is incompatible with the default mmap path:
+// the upstream loader binds tensors directly to the mmap'd file region,
+// so there's nowhere to write the transformed bytes. Disabling mmap
+// makes the loader pre-allocate real backend buffers, after which our
+// load_op overrides land in writable memory.
+bool translate_metadata(const llama_model_loader * ml,
                         gguf_context * meta,
                         ggml_context * ctx,
                         std::string & arch_name,

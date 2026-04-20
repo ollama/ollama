@@ -610,6 +610,12 @@ void handle_glmocr(const llama_model_loader * ml, gguf_context * meta,
 
     // Fuse ffn_gate + ffn_up → ffn_up[:, 2*n_ff] for every block, then mark
     // the orphan ffn_gate tensors as skip so n_tensors lines up.
+    //
+    // The concat reshape grows ne[1] of ffn_up from N to 2N, so the file's
+    // mmap region for the original tensor is too small to back it. Force
+    // the loader off the mmap path so it pre-allocates real backend buffers
+    // that our register_concat_load can fill at load_all_data time.
+    disable_mmap_for(ml);
     {
         const int64_t n_blk_kid = gguf_find_key(meta, "glm4.block_count");
         const uint32_t n_blocks = n_blk_kid >= 0 ? gguf_get_val_u32(meta, n_blk_kid) : 16;
@@ -1874,12 +1880,12 @@ void handle_qwen3vl_clip(gguf_context * meta, ggml_context * ctx) {
 // Public entry points
 // =========================================================================
 
-void translate_metadata(const llama_model_loader * ml,
+bool translate_metadata(const llama_model_loader * ml,
                         gguf_context * meta,
                         ggml_context * ctx,
                         std::string & arch_name,
                         const char * fname) {
-    if (!meta) return;
+    if (!meta) return false;
     {
         std::lock_guard<std::mutex> lk(g_loader_path_mutex);
         g_loader_paths[ml] = fname ? fname : "";
@@ -1907,6 +1913,8 @@ void translate_metadata(const llama_model_loader * ml,
     if (arch_name == "llama4")        handle_llama4        (ml, meta, ctx);
     if (arch_name == "glmocr")        handle_glmocr        (ml, meta, ctx, arch_name);
     // Dispatch. Add more arches as they are wired up.
+
+    return is_mmap_disabled_for(ml);
 }
 
 void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
