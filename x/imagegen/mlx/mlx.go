@@ -203,7 +203,7 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 
 	// Handle structs
 	if v.Kind() == reflect.Struct {
-		for i := 0; i < v.NumField(); i++ {
+		for i := range v.NumField() {
 			field := v.Field(i)
 			if field.CanInterface() {
 				collect(field, arrays, seen)
@@ -214,7 +214,7 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 
 	// Handle slices
 	if v.Kind() == reflect.Slice {
-		for i := 0; i < v.Len(); i++ {
+		for i := range v.Len() {
 			collect(v.Index(i), arrays, seen)
 		}
 		return
@@ -314,7 +314,7 @@ func DebugArraysVerbose(topN int) {
 	}
 
 	// Sort by size descending
-	for i := 0; i < len(infos)-1; i++ {
+	for i := range len(infos) - 1 {
 		for j := i + 1; j < len(infos); j++ {
 			if infos[j].bytes > infos[i].bytes {
 				infos[i], infos[j] = infos[j], infos[i]
@@ -1012,7 +1012,7 @@ func Slice(a *Array, start, stop []int32) *Array {
 	cStart := make([]C.int, n)
 	cStop := make([]C.int, n)
 	cStrides := make([]C.int, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		cStart[i] = C.int(start[i])
 		cStop[i] = C.int(stop[i])
 		cStrides[i] = 1 // Default stride of 1
@@ -1233,7 +1233,7 @@ func (a *Array) Dim(axis int) int32 {
 func (a *Array) Shape() []int32 {
 	ndim := a.Ndim()
 	shape := make([]int32, ndim)
-	for i := 0; i < ndim; i++ {
+	for i := range ndim {
 		shape[i] = a.Dim(i)
 	}
 	return shape
@@ -1659,7 +1659,7 @@ func SliceUpdate(a, update *Array, start, stop []int32) *Array {
 	cStart := make([]C.int, n)
 	cStop := make([]C.int, n)
 	cStrides := make([]C.int, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		cStart[i] = C.int(start[i])
 		cStop[i] = C.int(stop[i])
 		cStrides[i] = 1 // Default stride of 1
@@ -2291,7 +2291,7 @@ func Pad(a *Array, paddings []int32) *Array {
 	// Convert to low/high pairs
 	lowPad := make([]C.int, numAxes)
 	highPad := make([]C.int, numAxes)
-	for i := 0; i < numAxes; i++ {
+	for i := range numAxes {
 		lowPad[i] = C.int(paddings[i*2])
 		highPad[i] = C.int(paddings[i*2+1])
 	}
@@ -2299,7 +2299,7 @@ func Pad(a *Array, paddings []int32) *Array {
 	res := C.mlx_array_new()
 	// mlx_pad takes axes, low, high arrays
 	axes := make([]C.int, numAxes)
-	for i := 0; i < numAxes; i++ {
+	for i := range numAxes {
 		axes[i] = C.int(i)
 	}
 	cMode := C.CString("constant")

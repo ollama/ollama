@@ -38,8 +38,8 @@ func ProcessImageData(img image.Image, imageSize int32) (*mlx.Array, error) {
 	// SigLIP normalization: (pixel / 255.0 - 0.5) / 0.5 = pixel / 127.5 - 1.0.
 	data := make([]float32, imageSize*imageSize*3)
 	idx := 0
-	for y := int32(0); y < imageSize; y++ {
-		for x := int32(0); x < imageSize; x++ {
+	for y := range imageSize {
+		for x := range imageSize {
 			r, g, b, _ := resized.At(int(x), int(y)).RGBA()
 			// RGBA returns 16-bit values, convert to 8-bit.
 			data[idx] = float32(r>>8)/127.5 - 1.0

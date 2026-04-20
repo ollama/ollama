@@ -11,6 +11,7 @@ extern int goClosureCallback(mlx_vector_array* res, mlx_vector_array input, void
 extern void goClosureDestructor(void* payload);
 */
 import "C"
+
 import (
 	"runtime/cgo"
 	"sync"
@@ -18,8 +19,10 @@ import (
 )
 
 // inClosureCallback is set to true during closure callback execution.
-var inClosureCallback bool
-var closureCallbackMu sync.Mutex
+var (
+	inClosureCallback bool
+	closureCallbackMu sync.Mutex
+)
 
 // InClosureCallback returns true if we're currently executing inside a closure callback.
 func InClosureCallback() bool {
@@ -68,7 +71,7 @@ func CompileShapeless(fn ClosureFunc, shapeless bool) *CompiledFunc {
 	// Create the closure from the Go callback
 	closure := C.mlx_closure_new_func_payload(
 		(*[0]byte)(C.goClosureCallback),
-		unsafe.Pointer(handle),
+		unsafe.Pointer(handle), //nolint:govet // cgo.Handle is passed back unchanged as an MLX C callback payload.
 		(*[0]byte)(C.goClosureDestructor),
 	)
 
@@ -98,7 +101,7 @@ func (cf *CompiledFunc) Call(inputs ...*Array) []*Array {
 	// Unpack outputs
 	numOutputs := int(C.mlx_vector_array_size(outputVec))
 	outputs := make([]*Array, numOutputs)
-	for i := 0; i < numOutputs; i++ {
+	for i := range numOutputs {
 		var arr C.mlx_array
 		C.mlx_vector_array_get(&arr, outputVec, C.size_t(i))
 		outputs[i] = newArray(arr)
@@ -146,7 +149,7 @@ func goClosureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payloa
 	// Convert input vector to Go slice - use borrowArray since MLX owns these
 	numInputs := int(C.mlx_vector_array_size(input))
 	inputs := make([]*Array, numInputs)
-	for i := 0; i < numInputs; i++ {
+	for i := range numInputs {
 		var arr C.mlx_array
 		C.mlx_vector_array_get(&arr, input, C.size_t(i))
 		inputs[i] = borrowArray(arr) // Don't set up cleanup - MLX owns these

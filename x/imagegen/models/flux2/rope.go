@@ -25,12 +25,12 @@ type RoPECache struct {
 // Returns: [seqLen, 4]
 func PrepareTextIDs(seqLen int32) *mlx.Array {
 	ids := make([]float32, seqLen*4)
-	for i := int32(0); i < seqLen; i++ {
+	for i := range seqLen {
 		idx := i * 4
-		ids[idx+0] = 0             // T = 0
-		ids[idx+1] = 0             // H = 0
-		ids[idx+2] = 0             // W = 0
-		ids[idx+3] = float32(i)    // L = sequence position
+		ids[idx+0] = 0          // T = 0
+		ids[idx+1] = 0          // H = 0
+		ids[idx+2] = 0          // W = 0
+		ids[idx+3] = float32(i) // L = sequence position
 	}
 	return mlx.NewArray(ids, []int32{seqLen, 4})
 }
@@ -43,12 +43,12 @@ func PrepareLatentIDs(height, width int32) *mlx.Array {
 	seqLen := height * width
 	ids := make([]float32, seqLen*4)
 	idx := 0
-	for h := int32(0); h < height; h++ {
-		for w := int32(0); w < width; w++ {
-			ids[idx*4+0] = 0           // T = 0
-			ids[idx*4+1] = float32(h)  // H = row
-			ids[idx*4+2] = float32(w)  // W = column
-			ids[idx*4+3] = 0           // L = 0
+	for h := range height {
+		for w := range width {
+			ids[idx*4+0] = 0          // T = 0
+			ids[idx*4+1] = float32(h) // H = row
+			ids[idx*4+2] = float32(w) // W = column
+			ids[idx*4+3] = 0          // L = 0
 			idx++
 		}
 	}
@@ -71,12 +71,12 @@ func PrepareImageIDs(imageHeights, imageWidths []int32, scale int32) *mlx.Array 
 	for imgIdx, h := range imageHeights {
 		w := imageWidths[imgIdx]
 		tValue := float32(scale * int32(imgIdx+1))
-		for hi := int32(0); hi < h; hi++ {
-			for wi := int32(0); wi < w; wi++ {
-				ids[idx*4+0] = tValue       // T = scale * (imgIdx + 1)
-				ids[idx*4+1] = float32(hi)  // H = row
-				ids[idx*4+2] = float32(wi)  // W = column
-				ids[idx*4+3] = 0            // L = 0
+		for hi := range h {
+			for wi := range w {
+				ids[idx*4+0] = tValue      // T = scale * (imgIdx + 1)
+				ids[idx*4+1] = float32(hi) // H = row
+				ids[idx*4+2] = float32(wi) // W = column
+				ids[idx*4+3] = 0           // L = 0
 				idx++
 			}
 		}
@@ -118,13 +118,13 @@ func ComputeRoPE(ids *mlx.Array, axesDims []int32, theta int32) (*mlx.Array, *ml
 		// Create frequency array for this axis: theta^(-2j/dim) for j=0..half-1
 		// This matches diffusers: 1.0 / (theta ** (torch.arange(0, dim, 2) / dim))
 		freqs := make([]float32, half)
-		for j := int32(0); j < half; j++ {
+		for j := range half {
 			freqs[j] = float32(math.Exp(float64(-logTheta * float32(2*j) / float32(axisDim))))
 		}
 		freqArr := mlx.NewArray(freqs, []int32{1, half})
 
 		// Compute pos * freq -> [L, half]
-		posExpanded := positions[i] // [L, 1]
+		posExpanded := positions[i]           // [L, 1]
 		args := mlx.Mul(posExpanded, freqArr) // [L, half]
 
 		// Compute cos and sin for this axis
@@ -133,9 +133,9 @@ func ComputeRoPE(ids *mlx.Array, axesDims []int32, theta int32) (*mlx.Array, *ml
 
 		// repeat_interleave(2): [c0, c1, ...] -> [c0, c0, c1, c1, ...]
 		// Reshape [L, half] -> [L, half, 1], tile to [L, half, 2], reshape to [L, axisDim]
-		cosAxis = mlx.ExpandDims(cosAxis, 2)                        // [L, half, 1]
-		cosAxis = mlx.Tile(cosAxis, []int32{1, 1, 2})               // [L, half, 2]
-		cosAxis = mlx.Reshape(cosAxis, seqLen, axisDim)             // [L, axisDim]
+		cosAxis = mlx.ExpandDims(cosAxis, 2)            // [L, half, 1]
+		cosAxis = mlx.Tile(cosAxis, []int32{1, 1, 2})   // [L, half, 2]
+		cosAxis = mlx.Reshape(cosAxis, seqLen, axisDim) // [L, axisDim]
 
 		sinAxis = mlx.ExpandDims(sinAxis, 2)
 		sinAxis = mlx.Tile(sinAxis, []int32{1, 1, 2})
@@ -181,8 +181,8 @@ func ApplyRoPE4D(x *mlx.Array, cos, sin *mlx.Array) *mlx.Array {
 	// x_rotated = stack([-x_imag, x_real], dim=-1).flatten(-2)
 	// This creates [-x_imag[0], x_real[0], -x_imag[1], x_real[1], ...]
 	negXImag := mlx.Neg(xImag)
-	negXImag = mlx.ExpandDims(negXImag, 4) // [B, L, nheads, half, 1]
-	xReal = mlx.ExpandDims(xReal, 4)       // [B, L, nheads, half, 1]
+	negXImag = mlx.ExpandDims(negXImag, 4)                        // [B, L, nheads, half, 1]
+	xReal = mlx.ExpandDims(xReal, 4)                              // [B, L, nheads, half, 1]
 	xRotated := mlx.Concatenate([]*mlx.Array{negXImag, xReal}, 4) // [B, L, nheads, half, 2]
 	xRotated = mlx.Reshape(xRotated, B, L, nheads, headDim)       // [B, L, nheads, headDim]
 

@@ -20,14 +20,14 @@ import (
 // GenerateConfig holds all options for image generation.
 type GenerateConfig struct {
 	Prompt        string
-	Width         int32                 // Image width (default: 1024)
-	Height        int32                 // Image height (default: 1024)
-	Steps         int                   // Denoising steps (default: 4 for Klein)
-	GuidanceScale float32               // Guidance scale (default: 1.0, Klein doesn't need CFG)
-	Seed          int64                 // Random seed
+	Width         int32                      // Image width (default: 1024)
+	Height        int32                      // Image height (default: 1024)
+	Steps         int                        // Denoising steps (default: 4 for Klein)
+	GuidanceScale float32                    // Guidance scale (default: 1.0, Klein doesn't need CFG)
+	Seed          int64                      // Random seed
 	Progress      func(step, totalSteps int) // Optional progress callback
-	CapturePath   string                // GPU capture path (debug)
-	InputImages   []image.Image         // Reference images for image conditioning (already loaded)
+	CapturePath   string                     // GPU capture path (debug)
+	InputImages   []image.Image              // Reference images for image conditioning (already loaded)
 }
 
 // Model represents a FLUX.2 Klein model.
@@ -238,11 +238,11 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	pixels := int(cfg.Width) * int(cfg.Height)
 	if pixels > MaxOutputPixels {
 		scale := math.Sqrt(float64(MaxOutputPixels) / float64(pixels))
-		cfg.Width = int32(math.Round(float64(cfg.Width) * scale / 16) * 16)
-		cfg.Height = int32(math.Round(float64(cfg.Height) * scale / 16) * 16)
+		cfg.Width = int32(math.Round(float64(cfg.Width)*scale/16) * 16)
+		cfg.Height = int32(math.Round(float64(cfg.Height)*scale/16) * 16)
 	}
-	cfg.Height = int32((cfg.Height + 8) / 16 * 16) // round to nearest 16
-	cfg.Width = int32((cfg.Width + 8) / 16 * 16)
+	cfg.Height = (cfg.Height + 8) / 16 * 16 // round to nearest 16
+	cfg.Width = (cfg.Width + 8) / 16 * 16
 	fmt.Printf("  Output: %dx%d\n", cfg.Width, cfg.Height)
 
 	tcfg := m.Transformer.TransformerConfig
@@ -314,7 +314,7 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 
 	// Pre-compute all timesteps before the loop to avoid per-step tensor creation
 	timesteps := make([]*mlx.Array, cfg.Steps)
-	for i := 0; i < cfg.Steps; i++ {
+	for i := range cfg.Steps {
 		tCurr := scheduler.Timesteps[i] / float32(m.SchedulerConfig.NumTrainTimesteps)
 		timesteps[i] = mlx.ToBFloat16(mlx.NewArray([]float32{tCurr}, []int32{1}))
 	}
@@ -340,7 +340,7 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	stepStart := time.Now()
 
 	// Denoising loop
-	for i := 0; i < cfg.Steps; i++ {
+	for i := range cfg.Steps {
 		// Check for cancellation
 		if ctx != nil {
 			select {
@@ -487,8 +487,8 @@ func ImageToTensor(img image.Image) *mlx.Array {
 	// Convert to float32 array in NCHW format [1, 3, H, W] with values in [-1, 1]
 	data := make([]float32, 3*h*w)
 
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			r, g, b, _ := img.At(x+bounds.Min.X, y+bounds.Min.Y).RGBA()
 			// RGBA returns 16-bit values, convert to [-1, 1]
 			data[0*h*w+y*w+x] = float32(r>>8)/127.5 - 1.0

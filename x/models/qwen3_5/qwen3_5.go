@@ -400,7 +400,7 @@ func NewModel(root *model.Root) (base.Model, error) {
 		tok:    tok,
 	}
 
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		m.Layers[i] = &Layer{IsLinear: layerIsLinear(&cfg, i)}
 	}
 
@@ -462,41 +462,6 @@ func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
 	cloned := t.Clone()
 	mlx.Eval(cloned)
 	return cloned
-}
-
-func describeMoEProjection(prefix string, w *stackedExpertWeights) string {
-	if w == nil {
-		return prefix + "=missing"
-	}
-	if w.Scales != nil {
-		return fmt.Sprintf("%s=qmm(mode=%s,bits=%d,gs=%d)", prefix, w.Mode, w.Bits, w.GroupSize)
-	}
-	if w.Bits > 0 || w.Mode != "" {
-		reason := "dequantized"
-		if !supportsGatherQMM(w.Mode, w.Bits) {
-			reason = "unsupported_gather_qmm"
-		}
-		return fmt.Sprintf("%s=%s(mode=%s,bits=%d,gs=%d)", prefix, reason, w.Mode, w.Bits, w.GroupSize)
-	}
-	return prefix + "=fp"
-}
-
-func summarizeMoEFallbackReason(gateW, upW, downW *stackedExpertWeights) string {
-	for _, w := range []*stackedExpertWeights{gateW, upW, downW} {
-		if w == nil {
-			return "missing_projection"
-		}
-		if w.Scales != nil {
-			continue
-		}
-		if w.Bits > 0 || w.Mode != "" {
-			if !supportsGatherQMM(w.Mode, w.Bits) {
-				return fmt.Sprintf("unsupported_gather_qmm(mode=%s,bits=%d)", w.Mode, w.Bits)
-			}
-			return "dequantized_quant_weights"
-		}
-	}
-	return "unquantized_weights"
 }
 
 func sliceStackedExpertAxis1(a *mlx.Array, start, stop int32) *mlx.Array {
@@ -570,7 +535,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	groupSize := 0
 	mode := cfg.QuantMode
 
-	for e := int32(0); e < numExperts; e++ {
+	for e := range numExperts {
 		base := fmt.Sprintf("%s.mlp.experts.%d.%s", layerPrefix, e, proj)
 		w, key := tensorByBase(tensors, base)
 		if w == nil {
@@ -870,9 +835,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			}
 		}
 	}
-	moeLoadSummaries := make([]string, 0)
-
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", modelPrefix, i)
 		layer := &Layer{IsLinear: layerIsLinear(cfg, i)}
 
@@ -1018,27 +981,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				switchMLP.GateWeight = transposeExpertWeightForGatherMM(gateW.Weight)
 				switchMLP.UpWeight = transposeExpertWeightForGatherMM(upW.Weight)
 				switchMLP.DownWeight = transposeExpertWeightForGatherMM(downW.Weight)
-				moeLoadSummaries = append(moeLoadSummaries,
-					fmt.Sprintf(
-						"layer=%d moe_fallback reason=%s %s %s %s",
-						i,
-						summarizeMoEFallbackReason(gateW, upW, downW),
-						describeMoEProjection("gate", gateW),
-						describeMoEProjection("up", upW),
-						describeMoEProjection("down", downW),
-					),
-				)
-			}
-			if switchMLP.UseQuantized {
-				moeLoadSummaries = append(moeLoadSummaries,
-					fmt.Sprintf(
-						"layer=%d moe_quantized %s %s %s",
-						i,
-						describeMoEProjection("gate", gateW),
-						describeMoEProjection("up", upW),
-						describeMoEProjection("down", downW),
-					),
-				)
 			}
 			moe.SwitchMLP = switchMLP
 

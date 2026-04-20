@@ -86,8 +86,8 @@ func ArrayToImage(arr *mlx.Array) (*image.RGBA, error) {
 	// Write directly to Pix slice (faster than SetRGBA)
 	goImg := image.NewRGBA(image.Rect(0, 0, W, H))
 	pix := goImg.Pix
-	for y := 0; y < H; y++ {
-		for x := 0; x < W; x++ {
+	for y := range H {
+		for x := range W {
 			srcIdx := (y*W + x) * C
 			dstIdx := (y*W + x) * 4
 			pix[dstIdx+0] = uint8(clampF(data[srcIdx+0]*255+0.5, 0, 255))

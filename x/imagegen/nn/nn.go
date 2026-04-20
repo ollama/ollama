@@ -18,8 +18,8 @@ type LinearLayer interface {
 // Linear applies an affine transformation: y = x @ W.T + b
 // Weight is stored as [out_features, in_features], matching PyTorch/MLX convention.
 type Linear struct {
-	Weight *mlx.Array `weight:"weight"`          // [out_features, in_features]
-	Bias   *mlx.Array `weight:"bias,optional"`   // [out_features] or nil
+	Weight *mlx.Array `weight:"weight"`        // [out_features, in_features]
+	Bias   *mlx.Array `weight:"bias,optional"` // [out_features] or nil
 }
 
 // NewLinear creates a linear layer.
