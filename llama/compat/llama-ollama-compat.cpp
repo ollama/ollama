@@ -94,6 +94,68 @@ void handle_gemma3(const llama_model_loader * ml, gguf_context * meta, ggml_cont
 }
 
 // =========================================================================
+// embeddinggemma (text side — sentence-transformer dense projection)
+// =========================================================================
+//
+// Ollama publishes embeddinggemma:300m with general.architecture=gemma3 and
+// two extra dense layers stored as `dense.0.weight` / `dense.1.weight`
+// (the sentence-transformers post-pooling projection that maps the 768-dim
+// pooled embedding through 768→3072→768 for the matryoshka head).
+//
+// Upstream loads this model under arch=gemma-embedding, which:
+//   * disables causal attention (embeddings are bidirectional)
+//   * loads `dense_2.weight` and `dense_3.weight` by name (with shapes
+//     derived from gemma-embedding.dense_2_feat_in/out etc.)
+//
+// Without that arch, the gemma3 loader leaves dense.0/dense.1 unrequested
+// and `done_getting_tensors` raises "wrong number of tensors" (2 unused).
+//
+// Detection: arch=gemma3 AND has dense.0.weight tensor (only embeddinggemma
+// ships these — regular gemma3 chat models do not).
+// Translation: switch arch_name to gemma-embedding, copy the gemma3.* KV
+// prefix to gemma-embedding.*, derive dense_*_feat_* from the actual tensor
+// shapes, and rename dense.0/dense.1 → dense_2/dense_3.
+
+bool detect_ollama_embeddinggemma(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "gemma3") != 0) return false;
+    return ggml_get_tensor(const_cast<ggml_context *>(ctx), "dense.0.weight") != nullptr;
+}
+
+void handle_embeddinggemma(const llama_model_loader * ml, gguf_context * meta,
+                           ggml_context * ctx, std::string & arch_name) {
+    (void) ml;
+    if (!detect_ollama_embeddinggemma(meta, ctx)) return;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format embeddinggemma; translating to gemma-embedding\n", __func__);
+
+    // Switch architecture so upstream loads the embedding-specific code path
+    // (no causal attention, dense_2/dense_3 loaded by name).
+    arch_name = "gemma-embedding";
+    gguf_set_val_str(meta, "general.architecture", "gemma-embedding");
+
+    // Mirror gemma3.* hparams under the new arch prefix. rename_kv_prefix
+    // copies (does not remove); the leftover gemma3.* keys are unused.
+    rename_kv_prefix(meta, "gemma3.", "gemma-embedding.");
+
+    // Derive dense feat dims from the actual tensor shapes.
+    //   dense.0.weight: [n_embd, dense_2_feat_out]
+    //   dense.1.weight: [dense_3_feat_in, n_embd]
+    ggml_tensor * d0 = ggml_get_tensor(ctx, "dense.0.weight");
+    ggml_tensor * d1 = ggml_get_tensor(ctx, "dense.1.weight");
+    if (d0 && d1) {
+        gguf_set_val_u32(meta, "gemma-embedding.dense_2_feat_in",  (uint32_t) d0->ne[0]);
+        gguf_set_val_u32(meta, "gemma-embedding.dense_2_feat_out", (uint32_t) d0->ne[1]);
+        gguf_set_val_u32(meta, "gemma-embedding.dense_3_feat_in",  (uint32_t) d1->ne[0]);
+        gguf_set_val_u32(meta, "gemma-embedding.dense_3_feat_out", (uint32_t) d1->ne[1]);
+    }
+
+    rename_tensor(meta, ctx, "dense.0.weight", "dense_2.weight");
+    rename_tensor(meta, ctx, "dense.1.weight", "dense_3.weight");
+}
+
+// =========================================================================
 // qwen35moe (text side)
 // =========================================================================
 
@@ -1364,6 +1426,10 @@ void translate_metadata(const llama_model_loader * ml,
         std::lock_guard<std::mutex> lk(g_loader_path_mutex);
         g_loader_paths[ml] = fname ? fname : "";
     }
+    // embeddinggemma must run before gemma3: it switches arch_name to
+    // "gemma-embedding", which is what later checks (and the loader's KV
+    // prefix) need to see.
+    if (arch_name == "gemma3")    handle_embeddinggemma(ml, meta, ctx, arch_name);
     if (arch_name == "gemma3")    handle_gemma3   (ml, meta, ctx);
     if (arch_name == "gemma4")    handle_gemma4   (ml, meta, ctx);
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
