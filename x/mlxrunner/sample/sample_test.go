@@ -71,6 +71,30 @@ func TestFrequencyPenaltyUsesTokenCounts(t *testing.T) {
 	}
 }
 
+func TestHistoryRingBufferWraps(t *testing.T) {
+	s := New(Options{RepeatLastN: 2, PresencePenalty: 10})
+	defer func() {
+		s.Free()
+		mlx.Sweep()
+	}()
+
+	s.ResetHistory(nil)
+	s.AppendToken(mlx.NewArrayInt32([]int32{1}, []int32{1}))
+	s.AppendToken(mlx.NewArrayInt32([]int32{2}, []int32{1}))
+	s.AppendToken(mlx.NewArrayInt32([]int32{3}, []int32{1}))
+
+	// After three appends the ring holds {3, 2}; token 1 has been overwritten
+	// and must not be penalized.
+	logits := mlx.FromValues([]float32{0, 1, 5, 5, 0}, 5)
+	got := s.Sample(logits).Token
+	mlx.Eval(got)
+
+	gotInt := got.Int()
+	if gotInt != 1 {
+		t.Fatalf("got %d, want 1 (token 1 should survive after wrap)", gotInt)
+	}
+}
+
 func TestMinPMasksTokensBelowThreshold(t *testing.T) {
 	s := New(Options{MinP: 0.5})
 	defer func() {
