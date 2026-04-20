@@ -419,7 +419,7 @@ func gatedDeltaFallback(q, k, v, g, beta, state *Array) (y, nextState *Array) {
 	}
 
 	outs := make([]*Array, 0, T)
-	for t := int32(0); t < T; t++ {
+	for t := range T {
 		qt := Squeeze(SliceStartStop(q, []int32{0, t, 0, 0}, []int32{B, t + 1, Hv, Dk}), 1)
 		kt := Squeeze(SliceStartStop(k, []int32{0, t, 0, 0}, []int32{B, t + 1, Hv, Dk}), 1)
 		vt := Squeeze(SliceStartStop(v, []int32{0, t, 0, 0}, []int32{B, t + 1, Hv, Dv}), 1)

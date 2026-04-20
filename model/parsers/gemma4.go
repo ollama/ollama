@@ -30,9 +30,7 @@ const (
 	gemma4StringDelimiter  = `<|"|>`
 )
 
-var (
-	gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
-)
+var gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
 
 type Gemma4Parser struct {
 	state                 Gemma4ParserState
