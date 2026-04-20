@@ -117,4 +117,14 @@ void promote_tensor_to_f32(gguf_context * meta, ggml_context * ctx, const char *
 void register_concat_load(const gguf_context * meta, std::string dest_name,
                           const std::vector<std::string> & src_names);
 
+// Mixed-type variant of register_concat_load: dequantizes each source to
+// F32 via its ggml_type_traits.to_float and concatenates the F32 arrays.
+// Use when sources differ in quantization (e.g. F16 q/k + Q8_0 v in some
+// Ollama vision blobs). Caller must set the destination tensor's type to
+// GGML_TYPE_F32 so dst_size matches the F32 concat size.
+void register_concat_load_to_f32(const gguf_context * meta,
+                                 const ggml_context * ctx,
+                                 std::string dest_name,
+                                 const std::vector<std::string> & src_names);
+
 } // namespace llama_ollama_compat::detail

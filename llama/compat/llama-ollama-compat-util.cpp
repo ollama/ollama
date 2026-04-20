@@ -319,4 +319,44 @@ void register_concat_load(const gguf_context * meta, std::string dest_name,
     });
 }
 
+void register_concat_load_to_f32(const gguf_context * meta,
+                                 const ggml_context * ctx,
+                                 std::string dest_name,
+                                 const std::vector<std::string> & src_names) {
+    struct Region { size_t offset; size_t size; ggml_type type; size_t n_elem; };
+    std::vector<Region> regions;
+    regions.reserve(src_names.size());
+    for (const auto & n : src_names) {
+        const int64_t id = gguf_find_tensor(meta, n.c_str());
+        if (id < 0) return;
+        const ggml_tensor * t = ggml_get_tensor(const_cast<ggml_context *>(ctx), n.c_str());
+        if (!t) return;
+        regions.push_back({
+            gguf_get_data_offset(meta) + gguf_get_tensor_offset(meta, id),
+            gguf_get_tensor_size(meta, id),
+            t->type,
+            (size_t) ggml_nelements(t),
+        });
+    }
+    register_load_op(std::move(dest_name), LoadOp{
+        [regions](const char * path, void * dst, size_t dst_size) {
+            size_t total_elems = 0;
+            for (auto & r : regions) total_elems += r.n_elem;
+            if (total_elems * sizeof(float) != dst_size) return false;
+
+            float * dp = static_cast<float *>(dst);
+            for (auto & r : regions) {
+                std::vector<uint8_t> src(r.size);
+                if (!read_at(path, r.offset, src.data(), r.size)) return false;
+                const auto * tt = ggml_get_type_traits(r.type);
+                if (!tt || !tt->to_float) return false;
+                tt->to_float(src.data(), dp, (int64_t) r.n_elem);
+                dp += r.n_elem;
+            }
+            return true;
+        },
+        "concat sources (mixed types -> F32)",
+    });
+}
+
 } // namespace llama_ollama_compat::detail

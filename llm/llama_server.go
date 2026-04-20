@@ -436,6 +436,8 @@ func NewLlamaServerRunner(
 		"gemma3":      true,
 		"gemma4":      true,
 		"qwen35moe":   true,
+		"qwen25vl":    true,
+		"qwen3vl":     true,
 		"mistral3":    true,
 		"deepseekocr": true,
 		"glmocr":      true,
