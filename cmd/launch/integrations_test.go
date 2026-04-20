@@ -302,8 +302,8 @@ func TestIsCloudModel(t *testing.T) {
 
 const testLaunchModelsJSON = `{"models":[
 	{"model":"kimi-k2.5:cloud","description":"Multimodal reasoning with subagents","context_length":262144,"max_output_tokens":262144,"vram":""},
-	{"model":"qwen3.5:cloud","description":"Reasoning, coding, and agentic tool use with vision","context_length":262144,"max_output_tokens":32768,"vram":""},
 	{"model":"glm-5.1:cloud","description":"Reasoning and code generation","context_length":202752,"max_output_tokens":131072,"vram":""},
+	{"model":"qwen3.5:cloud","description":"Reasoning, coding, and agentic tool use with vision","context_length":262144,"max_output_tokens":32768,"vram":""},
 	{"model":"minimax-m2.7:cloud","description":"Fast, efficient coding and real-world productivity","context_length":204800,"max_output_tokens":128000,"vram":""},
 	{"model":"gemma4","description":"Reasoning and code generation locally","context_length":0,"max_output_tokens":0,"vram":"~16GB"},
 	{"model":"qwen3.5","description":"Reasoning, coding, and visual understanding locally","context_length":0,"max_output_tokens":0,"vram":"~11GB"}
@@ -312,14 +312,7 @@ const testLaunchModelsJSON = `{"models":[
 // testRecommendedModels returns the full cloud+local recommended models list
 // for use in tests.
 func testRecommendedModels() []ModelItem {
-	return []ModelItem{
-		{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
-		{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
-		{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true},
-		{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
-		{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true, VRAM: "~16GB"},
-		{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true, VRAM: "~11GB"},
-	}
+	return slices.Clone(defaultRecommendedModels)
 }
 
 func names(items []ModelItem) []string {
@@ -333,7 +326,7 @@ func names(items []ModelItem) []string {
 func TestBuildModelList_NoExistingModels(t *testing.T) {
 	items, _, _, _ := buildModelList(nil, testRecommendedModels(), nil, "")
 
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5"}
+	want := []string{"kimi-k2.5:cloud", "glm-5.1:cloud", "qwen3.5:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5"}
 	if diff := cmp.Diff(want, names(items)); diff != "" {
 		t.Errorf("with no existing models, items should be recommended in order (-want +got):\n%s", diff)
 	}
@@ -378,7 +371,7 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	got := names(items)
 
 	// All recs pinned at top (cloud before local in mixed case), then non-recs
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2"}
+	want := []string{"kimi-k2.5:cloud", "glm-5.1:cloud", "qwen3.5:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud recs first in mixed case (-want +got):\n%s", diff)
 	}
@@ -469,7 +462,7 @@ func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	// gemma4 and glm-5.1:cloud are installed so they sort normally;
 	// kimi-k2.5:cloud, qwen3.5:cloud, and qwen3.5 are not installed so they go to the bottom
 	// All recs: cloud first in mixed case, then local, in rec order within each
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5"}
+	want := []string{"kimi-k2.5:cloud", "glm-5.1:cloud", "qwen3.5:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("all recs, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -487,7 +480,7 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 	// kimi-k2.5:cloud is installed so it sorts normally;
 	// the rest of the recommendations are not installed so they go to the bottom
 	// All recs pinned at top (cloud first in mixed case), then non-recs
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2"}
+	want := []string{"kimi-k2.5:cloud", "glm-5.1:cloud", "qwen3.5:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud first in mixed case (-want +got):\n%s", diff)
 	}

@@ -923,20 +923,6 @@ type UserResponse struct {
 	Plan      string    `json:"plan,omitempty"`
 }
 
-// LaunchModel describes a recommended model returned by the launch-models endpoint.
-type LaunchModel struct {
-	Model           string `json:"model"`
-	Description     string `json:"description"`
-	ContextLength   int    `json:"context_length"`
-	MaxOutputTokens int    `json:"max_output_tokens"`
-	VRAM            string `json:"vram"`
-}
-
-// LaunchModelsResponse is the response from the launch-models endpoint.
-type LaunchModelsResponse struct {
-	Models []LaunchModel `json:"models"`
-}
-
 // Tensor describes the metadata for a given tensor.
 type Tensor struct {
 	Name  string   `json:"name"`

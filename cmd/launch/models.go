@@ -2,16 +2,15 @@ package launch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -20,6 +19,7 @@ import (
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/version"
 )
 
 // cloudModelLimit holds context and output token limits for a cloud model.
@@ -27,9 +27,6 @@ type cloudModelLimit struct {
 	Context int
 	Output  int
 }
-
-// cloudModelLimitsMu guards concurrent access to cloudModelLimits.
-var cloudModelLimitsMu sync.RWMutex
 
 // cloudModelLimits maps cloud model base names to their token limits.
 // TODO(parthsareen): grab context/output limits from model info instead of hardcoding
@@ -60,42 +57,90 @@ var cloudModelLimits = map[string]cloudModelLimit{
 func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
 	base, stripped := modelref.StripCloudSourceTag(name)
 	if stripped {
-		cloudModelLimitsMu.RLock()
-		l, ok := cloudModelLimits[base]
-		cloudModelLimitsMu.RUnlock()
-		if ok {
+		if l, ok := cloudModelLimits[base]; ok {
 			return l, true
 		}
 	}
 	return cloudModelLimit{}, false
 }
 
-// defaultRecommendedModels is the client-side fallback used when the server
-// endpoint is unreachable (e.g. older server, network error).
+const launchModelsFetchTimeout = 2 * time.Second
+
+var (
+	// launchModelsURL        = "https://ollama.com/api/experimental/launch-models"
+	launchModelsURL        = "http://localhost:8080/api/experimental/launch-models"
+	launchModelsHTTPClient = http.DefaultClient
+)
+
+type launchModel struct {
+	Model           string `json:"model"`
+	Description     string `json:"description"`
+	ContextLength   int    `json:"context_length"`
+	MaxOutputTokens int    `json:"max_output_tokens"`
+	VRAM            string `json:"vram"`
+}
+
+type launchModelsResponse struct {
+	Models []launchModel `json:"models"`
+}
+
+// defaultRecommendedModels is the client-side fallback used when the remote
+// recommendation endpoint is unreachable or slow.
 var defaultRecommendedModels = []ModelItem{
+	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
+	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true},
+	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
+	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
 	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true, VRAM: "~16GB"},
 	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true, VRAM: "~11GB"},
 }
 
-// fetchRecommendedModels fetches the recommended models from the local Ollama
-// server's launch-models endpoint. The server caches models from the remote
-// registry and merges them with built-in local defaults, so this call is fast.
-// Falls back to a built-in default list if the server is unavailable.
-func fetchRecommendedModels(ctx context.Context, client *api.Client) []ModelItem {
-	resp, err := client.LaunchModels(ctx)
-	if err != nil {
-		slog.Warn("failed to load launch models from server, using defaults", "error", err)
+// fetchRecommendedModels fetches the recommended models from ollama.com.
+// Falls back silently to built-in recommendations if the request fails.
+func fetchRecommendedModels(ctx context.Context) []ModelItem {
+	if launchModelsURL == "" {
 		return defaultRecommendedModels
 	}
-	var items []ModelItem
-	cloudModelLimitsMu.Lock()
+
+	fetchCtx, cancel := context.WithTimeout(ctx, launchModelsFetchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, launchModelsURL, nil)
+	if err != nil {
+		return defaultRecommendedModels
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+
+	resp, err := launchModelsHTTPClient.Do(req)
+	if err != nil {
+		return defaultRecommendedModels
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return defaultRecommendedModels
+	}
+
+	var decoded launchModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return defaultRecommendedModels
+	}
+
+	items := recommendedModelsFromResponse(decoded)
+	if len(items) == 0 {
+		return defaultRecommendedModels
+	}
+	return items
+}
+
+func recommendedModelsFromResponse(resp launchModelsResponse) []ModelItem {
+	items := make([]ModelItem, 0, len(resp.Models))
 	for _, m := range resp.Models {
-		if m.ContextLength > 0 || m.MaxOutputTokens > 0 {
-			cloudModelLimits[m.Model] = cloudModelLimit{
-				Context: m.ContextLength,
-				Output:  m.MaxOutputTokens,
-			}
+		if m.Model == "" {
+			continue
 		}
+		updateCloudModelLimit(m)
 		items = append(items, ModelItem{
 			Name:        m.Model,
 			Description: m.Description,
@@ -103,8 +148,21 @@ func fetchRecommendedModels(ctx context.Context, client *api.Client) []ModelItem
 			VRAM:        m.VRAM,
 		})
 	}
-	cloudModelLimitsMu.Unlock()
 	return items
+}
+
+func updateCloudModelLimit(m launchModel) {
+	if m.ContextLength == 0 && m.MaxOutputTokens == 0 {
+		return
+	}
+	base, stripped := modelref.StripCloudSourceTag(m.Model)
+	if !stripped {
+		return
+	}
+	cloudModelLimits[base] = cloudModelLimit{
+		Context: m.ContextLength,
+		Output:  m.MaxOutputTokens,
+	}
 }
 
 // missingModelPolicy controls how model-not-found errors should be handled.
@@ -306,6 +364,10 @@ func confirmConfigEdit(runner Runner, paths []string) (bool, error) {
 
 // buildModelList merges existing models with recommendations for selection UIs.
 func buildModelList(existing []modelInfo, recs []ModelItem, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
+	if len(recs) == 0 {
+		recs = defaultRecommendedModels
+	}
+
 	existingModels = make(map[string]bool)
 	cloudModels = make(map[string]bool)
 	recommended := make(map[string]bool)

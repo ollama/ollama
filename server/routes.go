@@ -102,7 +102,6 @@ type Server struct {
 	sched         *Scheduler
 	defaultNumCtx int
 	requestLogger *inferenceRequestLogger
-	launchModels  atomic.Pointer[api.LaunchModelsResponse]
 }
 
 func init() {
@@ -1707,8 +1706,6 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/copy", s.CopyHandler)
 	r.POST("/api/experimental/web_search", s.WebSearchExperimentalHandler)
 	r.POST("/api/experimental/web_fetch", s.WebFetchExperimentalHandler)
-	r.GET("/api/x/launch-models", s.LaunchModelsHandler)
-
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
 	r.POST("/api/generate", s.withInferenceRequestLogging("/api/generate", s.GenerateHandler)...)
@@ -1805,10 +1802,6 @@ func Serve(ln net.Listener) error {
 	http.Handle("/", h)
 
 	ctx, done := context.WithCancel(context.Background())
-
-	if !envconfig.NoCloud() {
-		go s.refreshLaunchModels(ctx)
-	}
 
 	schedCtx, schedDone := context.WithCancel(ctx)
 	sched := InitScheduler(schedCtx)
@@ -2784,87 +2777,4 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 	if !isStreaming {
 		c.JSON(http.StatusOK, finalResponse)
 	}
-}
-
-const launchModelsURL = "https://ollama.com/api/x/launch-models"
-
-// defaultLaunchModels are local models that are always recommended.
-var defaultLaunchModels = api.LaunchModelsResponse{
-	Models: []api.LaunchModel{
-		{Model: "gemma4", Description: "Reasoning and code generation locally", VRAM: "~16GB"},
-		{Model: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", VRAM: "~11GB"},
-	},
-}
-
-// LaunchModelsHandler returns the cached recommended launch models.
-func (s *Server) LaunchModelsHandler(c *gin.Context) {
-	models := s.launchModels.Load()
-	if models == nil {
-		c.JSON(http.StatusOK, &defaultLaunchModels)
-		return
-	}
-	c.JSON(http.StatusOK, models)
-}
-
-// refreshLaunchModels fetches the recommended launch models from the remote
-// server on startup and then refreshes every 24 hours. It merges remote models
-// with the built-in local defaults before caching.
-func (s *Server) refreshLaunchModels(ctx context.Context) {
-	s.fetchLaunchModels(ctx)
-
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.fetchLaunchModels(ctx)
-		}
-	}
-}
-
-func (s *Server) fetchLaunchModels(ctx context.Context) {
-	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, launchModelsURL, nil)
-	if err != nil {
-		slog.Warn("failed to create launch models request", "error", err)
-		return
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		slog.Warn("failed to fetch launch models", "error", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		slog.Warn("unexpected status fetching launch models", "status", resp.StatusCode)
-		return
-	}
-
-	var remote api.LaunchModelsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&remote); err != nil {
-		slog.Warn("failed to decode launch models", "error", err)
-		return
-	}
-
-	// Merge: remote models first, then append any default local models
-	// not already present in the remote response.
-	remoteNames := make(map[string]bool, len(remote.Models))
-	for _, m := range remote.Models {
-		remoteNames[m.Model] = true
-	}
-	for _, m := range defaultLaunchModels.Models {
-		if !remoteNames[m.Model] {
-			remote.Models = append(remote.Models, m)
-		}
-	}
-
-	s.launchModels.Store(&remote)
-	slog.Info("cached launch models", "count", len(remote.Models))
 }

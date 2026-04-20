@@ -720,8 +720,11 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 		return nil, nil, err
 	}
 
-	recs := fetchRecommendedModels(ctx, c.apiClient)
 	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
+	recs := defaultRecommendedModels
+	if !cloudDisabled {
+		recs = fetchRecommendedModels(ctx)
+	}
 	items, orderedChecked, _, _ := buildModelList(c.modelInventory, recs, preChecked, current)
 	if cloudDisabled {
 		items = filterCloudItems(items)
