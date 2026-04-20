@@ -67,8 +67,7 @@ func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
 const launchModelsFetchTimeout = 2 * time.Second
 
 var (
-	// launchModelsURL        = "https://ollama.com/api/experimental/launch-models"
-	launchModelsURL        = "http://localhost:8080/api/experimental/launch-models"
+	launchModelsURL        = "https://ollama.com/api/experimental/launch-models"
 	launchModelsHTTPClient = http.DefaultClient
 )
 
