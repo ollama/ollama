@@ -166,7 +166,7 @@ func buildKimiInlineConfig(model string, maxContextSize int) (string, error) {
 		"providers": map[string]any{
 			kimiDefaultModelAlias: map[string]any{
 				"type":     "openai_legacy",
-				"base_url": envconfig.Host().String() + "/v1",
+				"base_url": envconfig.ConnectableHost().String() + "/v1",
 				"api_key":  "ollama",
 			},
 		},

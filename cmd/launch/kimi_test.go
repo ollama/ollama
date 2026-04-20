@@ -229,6 +229,33 @@ func TestBuildKimiInlineConfig(t *testing.T) {
 	}
 }
 
+func TestBuildKimiInlineConfig_UsesConnectableHostForUnspecifiedBind(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+
+	cfg, err := buildKimiInlineConfig("llama3.2", 65536)
+	if err != nil {
+		t.Fatalf("buildKimiInlineConfig() error = %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(cfg), &parsed); err != nil {
+		t.Fatalf("config is not valid JSON: %v", err)
+	}
+
+	providers, ok := parsed["providers"].(map[string]any)
+	if !ok {
+		t.Fatalf("providers missing or wrong type: %T", parsed["providers"])
+	}
+
+	ollamaProvider, ok := providers["ollama"].(map[string]any)
+	if !ok {
+		t.Fatalf("providers.ollama missing or wrong type: %T", providers["ollama"])
+	}
+	if got, _ := ollamaProvider["base_url"].(string); got != "http://127.0.0.1:11434/v1" {
+		t.Fatalf("provider base_url = %q, want %q", got, "http://127.0.0.1:11434/v1")
+	}
+}
+
 func TestResolveKimiMaxContextSize(t *testing.T) {
 	t.Run("uses cloud limit when known", func(t *testing.T) {
 		got := resolveKimiMaxContextSize("kimi-k2.5:cloud")
