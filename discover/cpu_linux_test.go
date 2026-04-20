@@ -2086,14 +2086,14 @@ power management:
 
 func TestGetCgroupMemStatInactiveFile(t *testing.T) {
 	tests := []struct {
-		name     string
-		content  string
-		key      string
-		wantVal  uint64
-		wantErr  bool
+		name    string
+		content string
+		key     string
+		wantVal uint64
+		wantErr bool
 	}{
 		{
-			name: "finds inactive_file",
+			name:    "finds inactive_file",
 			content: "anon 36884480\nfile 21266915328\ninactive_file 21189849088\nactive_file 77045760\n",
 			key:     "inactive_file",
 			wantVal: 21189849088,
