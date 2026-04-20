@@ -30,6 +30,10 @@ import (
 
 const maxRetries = 6
 
+// stallDuration is the no-progress window after which a part is declared
+// stalled. A package var (not a const) so tests can shorten it.
+var stallDuration = 30 * time.Second
+
 var (
 	errMaxRetriesExceeded   = errors.New("max retries exceeded")
 	errPartStalled          = errors.New("part stalled")
@@ -359,6 +363,13 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 	})
 
 	g.Go(func() error {
+		// Initialize at watchdog entry so the stall timer fires even when
+		// no bytes ever arrive from the server (otherwise lastUpdated stays
+		// zero and the stall check never triggers on that retry).
+		part.lastUpdatedMu.Lock()
+		part.lastUpdated = time.Now()
+		part.lastUpdatedMu.Unlock()
+
 		ticker := time.NewTicker(time.Second)
 		for {
 			select {
@@ -371,13 +382,9 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 				lastUpdated := part.lastUpdated
 				part.lastUpdatedMu.Unlock()
 
-				if !lastUpdated.IsZero() && time.Since(lastUpdated) > 30*time.Second {
+				if time.Since(lastUpdated) > stallDuration {
 					const msg = "%s part %d stalled; retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
 					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N))
-					// reset last updated
-					part.lastUpdatedMu.Lock()
-					part.lastUpdated = time.Time{}
-					part.lastUpdatedMu.Unlock()
 					return errPartStalled
 				}
 			case <-ctx.Done():
