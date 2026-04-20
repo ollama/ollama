@@ -1972,8 +1972,19 @@ bool maybe_load_tensor(ggml_tensor * cur,
         return false;
     }
 
-    if (ggml_backend_buft_is_host(buft)) std::memcpy(cur->data, dst.data(), dst_size);
-    else                                 ggml_backend_tensor_set(cur, dst.data(), 0, dst_size);
+    // buft can be null for tensors not yet bound to a backend buffer (e.g.
+    // tied output reusing token_embd's storage). In that case the tensor
+    // already has a host-side data pointer — write to it directly.
+    const bool is_host = !buft || ggml_backend_buft_is_host(buft);
+    if (is_host) {
+        if (!cur->data) {
+            LLAMA_LOG_ERROR("%s: no destination for %s (no buffer, no data)\n", __func__, ggml_get_name(cur));
+            return false;
+        }
+        std::memcpy(cur->data, dst.data(), dst_size);
+    } else {
+        ggml_backend_tensor_set(cur, dst.data(), 0, dst_size);
+    }
 
     LLAMA_LOG_INFO("%s: %s for %s (%zu bytes)\n", __func__, op.description, ggml_get_name(cur), dst_size);
     return true;
