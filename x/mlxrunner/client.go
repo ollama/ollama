@@ -158,13 +158,15 @@ type completionRequest struct {
 }
 
 type completionOpts struct {
-	Temperature     float32 `json:"temperature,omitempty"`
-	TopP            float32 `json:"top_p,omitempty"`
-	MinP            float32 `json:"min_p,omitempty"`
-	TopK            int     `json:"top_k,omitempty"`
-	RepeatLastN     int     `json:"repeat_last_n,omitempty"`
-	PresencePenalty float32 `json:"presence_penalty,omitempty"`
-	NumPredict      int     `json:"num_predict,omitempty"`
+	Temperature      float32 `json:"temperature,omitempty"`
+	TopP             float32 `json:"top_p,omitempty"`
+	MinP             float32 `json:"min_p,omitempty"`
+	TopK             int     `json:"top_k,omitempty"`
+	RepeatLastN      int     `json:"repeat_last_n,omitempty"`
+	RepeatPenalty    float32 `json:"repeat_penalty,omitempty"`
+	PresencePenalty  float32 `json:"presence_penalty,omitempty"`
+	FrequencyPenalty float32 `json:"frequency_penalty,omitempty"`
+	NumPredict       int     `json:"num_predict,omitempty"`
 }
 
 type CompletionResponse struct {
@@ -206,13 +208,15 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	}
 	if req.Options != nil {
 		creq.Options = &completionOpts{
-			Temperature:     req.Options.Temperature,
-			TopP:            req.Options.TopP,
-			MinP:            req.Options.MinP,
-			TopK:            req.Options.TopK,
-			RepeatLastN:     req.Options.RepeatLastN,
-			PresencePenalty: req.Options.PresencePenalty,
-			NumPredict:      req.Options.NumPredict,
+			Temperature:      req.Options.Temperature,
+			TopP:             req.Options.TopP,
+			MinP:             req.Options.MinP,
+			TopK:             req.Options.TopK,
+			RepeatLastN:      req.Options.RepeatLastN,
+			RepeatPenalty:    req.Options.RepeatPenalty,
+			PresencePenalty:  req.Options.PresencePenalty,
+			FrequencyPenalty: req.Options.FrequencyPenalty,
+			NumPredict:       req.Options.NumPredict,
 		}
 	}
 

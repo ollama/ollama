@@ -26,16 +26,16 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	mlx.ResetPeakMemory()
 	ctx := request.Ctx
 	var (
-		sample, logprobs         *mlx.Array
-		nextSample, nextLogprobs *mlx.Array
+		sample     *mlx.Array
+		nextSample *mlx.Array
 	)
 
 	defer func() {
 		if request.Sampler != nil {
 			request.Sampler.Free()
 		}
-		mlx.Unpin(sample, logprobs)
-		mlx.Unpin(nextSample, nextLogprobs)
+		mlx.Unpin(sample)
+		mlx.Unpin(nextSample)
 		mlx.Sweep()
 		mlx.ClearCache()
 
@@ -135,22 +135,21 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		mlx.ClearCache()
 	}
 
-	step := func(token *mlx.Array) (*mlx.Array, *mlx.Array) {
+	step := func(token *mlx.Array) *mlx.Array {
 		fwd := r.Model.Forward(token.ExpandDims(0), caches)
 		logits := r.Model.Unembed(fwd)
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 
-		logprobs := logits.Subtract(logits.Logsumexp(true))
-		sample := request.Sampler.Sample(logprobs)
+		sample := request.Sampler.Sample(logits)
 
-		mlx.Pin(sample, logprobs)
+		mlx.Pin(sample)
 		mlx.Sweep()
-		mlx.AsyncEval(sample, logprobs)
+		mlx.AsyncEval(sample)
 
-		return sample, logprobs
+		return sample
 	}
 
-	sample, logprobs = step(mlx.FromValues(tokens[processed:], total-processed))
+	sample = step(mlx.FromValues(tokens[processed:], total-processed))
 
 	var b bytes.Buffer
 
@@ -161,7 +160,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		}
 
 		request.Sampler.AppendToken(sample)
-		nextSample, nextLogprobs = step(sample)
+		nextSample = step(sample)
 
 		if i == 0 {
 			mlx.Eval(sample)
@@ -186,9 +185,9 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		}:
 		}
 
-		mlx.Unpin(sample, logprobs)
-		sample, logprobs = nextSample, nextLogprobs
-		nextSample, nextLogprobs = nil, nil
+		mlx.Unpin(sample)
+		sample = nextSample
+		nextSample = nil
 
 		if i%256 == 0 {
 			mlx.ClearCache()

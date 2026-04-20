@@ -9,30 +9,38 @@ import (
 type Transform func(*Sampler, *mlx.Array) *mlx.Array
 
 type Sampler struct {
-	Temperature     float32
-	TopP            float32
-	MinP            float32
-	TopK            int
-	RepeatLastN     int
-	PresencePenalty float32
+	Temperature      float32
+	TopP             float32
+	MinP             float32
+	TopK             int
+	RepeatLastN      int
+	RepeatPenalty    float32
+	PresencePenalty  float32
+	FrequencyPenalty float32
 
 	history    *mlx.Array
 	historyLen int
 	transforms []Transform
 }
 
-func New(temp, top_p, min_p float32, top_k, repeatLastN int, presencePenalty float32) *Sampler {
+func New(temp, top_p, min_p float32, top_k, repeatLastN int, repeatPenalty, presencePenalty, frequencyPenalty float32) *Sampler {
+	if repeatPenalty <= 0 {
+		repeatPenalty = 1
+	}
+
 	s := &Sampler{
-		Temperature:     temp,
-		TopP:            top_p,
-		MinP:            min_p,
-		TopK:            top_k,
-		RepeatLastN:     repeatLastN,
-		PresencePenalty: presencePenalty,
+		Temperature:      temp,
+		TopP:             top_p,
+		MinP:             min_p,
+		TopK:             top_k,
+		RepeatLastN:      repeatLastN,
+		RepeatPenalty:    repeatPenalty,
+		PresencePenalty:  presencePenalty,
+		FrequencyPenalty: frequencyPenalty,
 	}
 
 	var transforms []Transform
-	if presencePenalty != 0 {
+	if s.usesHistory() {
 		transforms = append(transforms, penalty)
 	}
 
@@ -59,7 +67,7 @@ func New(temp, top_p, min_p float32, top_k, repeatLastN int, presencePenalty flo
 }
 
 func (s *Sampler) usesHistory() bool {
-	return s.PresencePenalty != 0
+	return s.RepeatPenalty != 1 || s.PresencePenalty != 0 || s.FrequencyPenalty != 0
 }
 
 func (s *Sampler) setHistory(history *mlx.Array, historyLen int) {
@@ -130,60 +138,78 @@ func temperature(s *Sampler, logits *mlx.Array) *mlx.Array {
 	return mlx.DivScalar(logits, s.Temperature).Categorical(-1)
 }
 
-func topP(s *Sampler, logprobs *mlx.Array) *mlx.Array {
+func topP(s *Sampler, logits *mlx.Array) *mlx.Array {
 	if s.TopP <= 0 || s.TopP >= 1 {
-		return logprobs
+		return logits
 	}
 
-	order := logprobs.Negative().ArgsortAxis(-1)
-	sortedLogprobs := logprobs.TakeAlongAxis(order, -1)
-	sortedProbs := mlx.SoftmaxAxis(sortedLogprobs, -1, true)
+	order := logits.Negative().ArgsortAxis(-1)
+	sortedLogits := logits.TakeAlongAxis(order, -1)
+	sortedProbs := mlx.SoftmaxAxis(sortedLogits, -1, true)
 	prevCumProbs := sortedProbs.Cumsum(-1, false, true).Subtract(sortedProbs)
 	keep := prevCumProbs.Less(mlx.FromValue(s.TopP))
-	filtered := mlx.Where(keep, sortedLogprobs, mlx.FromValue(float32(math.Inf(-1))))
-	return logprobs.PutAlongAxis(order, filtered, -1)
+	filtered := mlx.Where(keep, sortedLogits, mlx.FromValue(float32(math.Inf(-1))))
+	return logits.PutAlongAxis(order, filtered, -1)
 }
 
-func minP(s *Sampler, logprobs *mlx.Array) *mlx.Array {
+func minP(s *Sampler, logits *mlx.Array) *mlx.Array {
 	if s.MinP <= 0 || s.MinP > 1 {
-		return logprobs
+		return logits
 	}
 
-	maxLogprobs := logprobs.TakeAlongAxis(logprobs.Argmax(-1, true), -1)
-	minLogprobs := mlx.AddScalar(maxLogprobs, float32(math.Log(float64(s.MinP))))
+	maxLogits := logits.TakeAlongAxis(logits.Argmax(-1, true), -1)
+	minLogits := mlx.AddScalar(maxLogits, float32(math.Log(float64(s.MinP))))
 
 	return mlx.Where(
-		logprobs.Less(minLogprobs),
+		logits.Less(minLogits),
 		mlx.FromValue(float32(math.Inf(-1))),
-		logprobs,
+		logits,
 	)
 }
 
-func topK(s *Sampler, logprobs *mlx.Array) *mlx.Array {
+func topK(s *Sampler, logits *mlx.Array) *mlx.Array {
 	if s.TopK <= 0 {
-		return logprobs
+		return logits
 	}
 
-	vocab := logprobs.Dim(logprobs.NumDims() - 1)
+	vocab := logits.Dim(logits.NumDims() - 1)
 	if s.TopK >= vocab {
-		return logprobs
+		return logits
 	}
 
-	mask := logprobs.Negative().ArgpartitionAxis(s.TopK-1, -1).Slice(mlx.Slice(), mlx.Slice(s.TopK, mlx.End))
-	return logprobs.PutAlongAxis(mask, mlx.FromValue(float32(math.Inf(-1))), -1)
+	mask := logits.Negative().ArgpartitionAxis(s.TopK-1, -1).Slice(mlx.Slice(), mlx.Slice(s.TopK, mlx.End))
+	return logits.PutAlongAxis(mask, mlx.FromValue(float32(math.Inf(-1))), -1)
 }
 
-func penalty(s *Sampler, logprobs *mlx.Array) *mlx.Array {
-	if s.history == nil || s.historyLen == 0 || s.PresencePenalty == 0 {
-		return logprobs
+func penalty(s *Sampler, logits *mlx.Array) *mlx.Array {
+	if s.historyLen == 0 {
+		return logits
 	}
 
 	tokenIndices := s.history
-	if logprobs.NumDims() > 1 {
+	if logits.NumDims() > 1 {
 		tokenIndices = tokenIndices.ExpandDims(0)
 	}
 
-	selected := logprobs.TakeAlongAxis(tokenIndices, -1)
-	adjusted := mlx.AddScalar(selected, -s.PresencePenalty)
-	return logprobs.PutAlongAxis(tokenIndices, adjusted, -1)
+	if s.RepeatPenalty != 1 || s.PresencePenalty != 0 {
+		adjusted := logits.TakeAlongAxis(tokenIndices, -1)
+		if s.RepeatPenalty != 1 {
+			factor := mlx.Where(
+				adjusted.Less(mlx.FromValue(float32(0))),
+				mlx.FromValue(s.RepeatPenalty),
+				mlx.FromValue(1/s.RepeatPenalty),
+			)
+			adjusted = adjusted.Multiply(factor)
+		}
+		if s.PresencePenalty != 0 {
+			adjusted = mlx.AddScalar(adjusted, -s.PresencePenalty)
+		}
+		logits = logits.PutAlongAxis(tokenIndices, adjusted, -1)
+	}
+
+	if s.FrequencyPenalty != 0 {
+		logits = logits.ScatterAddAxis(tokenIndices, mlx.FromValue(-s.FrequencyPenalty), -1)
+	}
+
+	return logits
 }
