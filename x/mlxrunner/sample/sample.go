@@ -27,6 +27,9 @@ type Options struct {
 type Sampler struct {
 	Options
 
+	// history is a ring buffer of the last RepeatLastN sampled tokens.
+	// historyLen counts total appends; the live slots are [0, historyLen)
+	// while filling and all of history once historyLen >= RepeatLastN.
 	history    *mlx.Array
 	historyLen int
 	transforms []Transform
@@ -57,6 +60,11 @@ func New(opts Options) *Sampler {
 
 	var transforms []Transform
 	if s.usesHistory() {
+		// Ring buffer needs a bounded capacity; fall back to a
+		// default when the caller hasn't configured one.
+		if s.RepeatLastN <= 0 {
+			s.RepeatLastN = 64
+		}
 		transforms = append(transforms, penalty)
 	}
 
@@ -91,57 +99,50 @@ func (s *Sampler) usesHistory() bool {
 	return s.RepeatPenalty != 1 || s.PresencePenalty != 0 || s.FrequencyPenalty != 0
 }
 
-func (s *Sampler) setHistory(history *mlx.Array, historyLen int) {
-	if history != nil {
-		mlx.Pin(history)
-	}
-	if s.history != nil {
-		mlx.Unpin(s.history)
-	}
-	s.history = history
-	s.historyLen = historyLen
-}
-
 func (s *Sampler) ResetHistory(history []int32) {
 	if !s.usesHistory() {
 		return
 	}
-	if s.RepeatLastN > 0 && len(history) > s.RepeatLastN {
+	if len(history) > s.RepeatLastN {
 		history = history[len(history)-s.RepeatLastN:]
 	}
-	if len(history) == 0 {
-		s.setHistory(nil, 0)
-		return
-	}
 
-	tokens := append([]int32(nil), history...)
-	s.setHistory(mlx.NewArrayInt32(tokens, []int32{int32(len(tokens))}), len(tokens))
+	var ring *mlx.Array
+	switch gap := s.RepeatLastN - len(history); {
+	case len(history) == 0:
+		ring = mlx.Zeros(mlx.DTypeInt32, s.RepeatLastN)
+	case gap == 0:
+		ring = mlx.NewArrayInt32(history, []int32{int32(len(history))})
+	default:
+		init := mlx.NewArrayInt32(history, []int32{int32(len(history))})
+		ring = init.Concatenate(0, mlx.Zeros(mlx.DTypeInt32, gap))
+	}
+	mlx.Pin(ring)
+	if s.history != nil {
+		mlx.Unpin(s.history)
+	}
+	s.history = ring
+	s.historyLen = len(history)
 }
 
+// AppendToken records token in the ring buffer. ResetHistory must have been
+// called first to allocate the buffer.
 func (s *Sampler) AppendToken(token *mlx.Array) {
 	if !s.usesHistory() || token == nil {
 		return
 	}
 
-	next := token.AsType(mlx.DTypeInt32)
-	nextLen := next.Size()
-
-	if s.history != nil && s.historyLen > 0 {
-		next = s.history.Concatenate(0, next)
-		nextLen += s.historyLen
-	}
-
-	if s.RepeatLastN > 0 && nextLen > s.RepeatLastN {
-		trim := nextLen - s.RepeatLastN
-		next = next.Slice(mlx.Slice(trim, nextLen))
-		nextLen = s.RepeatLastN
-	}
-
-	s.setHistory(next, nextLen)
+	writeIdx := s.historyLen % s.RepeatLastN
+	s.history.Set(s.history.SliceUpdate(token, mlx.Slice(writeIdx, writeIdx+1)))
+	s.historyLen++
 }
 
 func (s *Sampler) Free() {
-	s.setHistory(nil, 0)
+	if s.history != nil {
+		mlx.Unpin(s.history)
+	}
+	s.history = nil
+	s.historyLen = 0
 }
 
 // Sample runs the configured transform chain on the raw per-token logits
@@ -253,6 +254,10 @@ func penalty(s *Sampler, scores *mlx.Array) *mlx.Array {
 	}
 
 	tokenIndices := s.history
+	if s.historyLen < s.RepeatLastN {
+		tokenIndices = tokenIndices.Slice(mlx.Slice(0, s.historyLen))
+	}
+
 	if scores.NumDims() > 1 {
 		tokenIndices = tokenIndices.ExpandDims(0)
 	}
