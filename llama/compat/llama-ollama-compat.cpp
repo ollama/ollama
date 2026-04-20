@@ -996,6 +996,67 @@ void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
 }
 
 // =========================================================================
+// glm-ocr (clip side — glm4v projector)
+// =========================================================================
+//
+// Ollama stores the GLM4V vision tower with v.blk.X.* tensor names that
+// already match upstream's expectations (`attn_qkv`, `attn_out`,
+// `attn_q_norm`, `attn_k_norm`, `ln1`/`ln2`, `ffn_{gate,up,down}`).
+// Most of mm.* (mm.model.fc, mm.up/gate/down, mm.post_norm,
+// mm.patch_merger) is also already named correctly. The two diffs:
+//   * `v.patch_embd_0.weight` / `v.patch_embd_1.weight` → upstream's
+//     pixel-shuffle patch-embed pair `v.patch_embd.weight` /
+//     `v.patch_embd.weight.1`.
+//   * F32 promote of patch_embd weights (Metal IM2COL).
+
+void handle_glmocr_clip(gguf_context * meta, ggml_context * ctx) {
+    LLAMA_LOG_INFO("%s: detected Ollama-format glm-ocr GGUF used as mmproj; translating\n", __func__);
+
+    copy_u32_kv(meta, "glmocr.vision.block_count",                   "clip.vision.block_count");
+    copy_u32_kv(meta, "glmocr.vision.embedding_length",              "clip.vision.embedding_length");
+    copy_u32_kv(meta, "glmocr.vision.intermediate_size",             "clip.vision.feed_forward_length");
+    copy_u32_kv(meta, "glmocr.vision.attention.head_count",          "clip.vision.attention.head_count");
+    copy_f32_kv(meta, "glmocr.vision.attention.layer_norm_rms_epsilon", "clip.vision.attention.layer_norm_epsilon");
+    copy_u32_kv(meta, "glmocr.vision.image_size",                    "clip.vision.image_size");
+    copy_u32_kv(meta, "glmocr.vision.patch_size",                    "clip.vision.patch_size");
+    copy_u32_kv(meta, "glmocr.vision.spatial_merge_size",            "clip.vision.spatial_merge_size");
+    copy_u32_kv(meta, "glmocr.vision.out_hidden_size",               "clip.vision.projection_dim");
+
+    // Ollama already shipped image_mean / image_std under glmocr.vision.*;
+    // copy them through.
+    {
+        const int64_t kid = gguf_find_key(meta, "glmocr.vision.image_mean");
+        if (kid >= 0 && !has_key(meta, "clip.vision.image_mean")) {
+            const size_t n = gguf_get_arr_n(meta, kid);
+            gguf_set_arr_data(meta, "clip.vision.image_mean", GGUF_TYPE_FLOAT32,
+                              gguf_get_arr_data(meta, kid), n);
+        }
+    }
+    {
+        const int64_t kid = gguf_find_key(meta, "glmocr.vision.image_std");
+        if (kid >= 0 && !has_key(meta, "clip.vision.image_std")) {
+            const size_t n = gguf_get_arr_n(meta, kid);
+            gguf_set_arr_data(meta, "clip.vision.image_std", GGUF_TYPE_FLOAT32,
+                              gguf_get_arr_data(meta, kid), n);
+        }
+    }
+
+    inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
+    inject_bool_if_missing(meta, "clip.use_silu",           true);
+    gguf_set_val_str(meta, "clip.projector_type",  "glm4v");
+    gguf_set_val_str(meta, "general.architecture", "clip");
+
+    // Patch-embed temporal pair: Ollama uses _0/_1 suffixes, upstream uses
+    // unsuffixed/.1.
+    rename_tensor(meta, ctx, "v.patch_embd_0.weight", "v.patch_embd.weight");
+    rename_tensor(meta, ctx, "v.patch_embd_1.weight", "v.patch_embd.weight.1");
+
+    // F32 promote for IM2COL on Metal (same fix as gemma3 / mistral3).
+    promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
+    promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight.1");
+}
+
+// =========================================================================
 // llama4 (clip side)
 // =========================================================================
 //
@@ -1279,6 +1340,10 @@ void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     }
     if (detect_ollama_gemma4(meta, ctx)) {
         handle_gemma4_clip(meta, ctx);
+        return;
+    }
+    if (detect_ollama_glmocr(meta)) {
+        handle_glmocr_clip(meta, ctx);
         return;
     }
 }

@@ -438,6 +438,7 @@ func NewLlamaServerRunner(
 		"qwen35moe":   true,
 		"mistral3":    true,
 		"deepseekocr": true,
+		"glmocr":      true,
 		"llama4":      true,
 		// Add entries as llama/compat grows clip handlers.
 	}
