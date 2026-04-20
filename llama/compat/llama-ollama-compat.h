@@ -60,4 +60,15 @@ bool maybe_load_tensor(ggml_tensor * cur,
                        size_t file_offset,
                        ggml_backend_buffer_type_t buft);
 
+// Same as maybe_load_tensor but for the text-side llama_model_loader,
+// which doesn't have the clip loader's `fname` in scope at the read
+// site. Looks up the model's file path from a per-loader registry
+// populated by `set_loader_path` (called from the model loader's
+// constructor right after `fname` is in scope).
+bool maybe_load_text_tensor(const llama_model_loader * ml,
+                            ggml_tensor * cur,
+                            size_t file_offset,
+                            ggml_backend_buffer_type_t buft);
+void set_loader_path(const llama_model_loader * ml, const char * fname);
+
 } // namespace llama_ollama_compat

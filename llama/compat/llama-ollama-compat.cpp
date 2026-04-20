@@ -5,7 +5,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -393,6 +395,115 @@ void handle_llama4(const llama_model_loader * ml, gguf_context * meta, ggml_cont
 
     LLAMA_LOG_INFO("%s: detected Ollama-format llama4 GGUF; applying compatibility fixes\n", __func__);
 
+    add_skip_prefix(ml, "v.");
+    add_skip_prefix(ml, "mm.");
+}
+
+// =========================================================================
+// glm-ocr (text side)
+// =========================================================================
+//
+// Ollama uses arch name "glmocr" / KV prefix "glmocr.*" with 16 blocks.
+// Upstream uses "glm4" / "glm4.*" — the GLM-OCR variant of LLM_ARCH_GLM4
+// is identified by `n_layer = 17` (16 main + 1 nextn predict layer).
+// Ollama drops the nextn layer entirely, so we report n_layer = 16 and
+// leave `nextn_predict_layers` absent (defaults to 0 = no nextn path).
+//
+// Bigger surgery: GLM4 expects fused gate+up MLP weights stored at
+// `blk.X.ffn_up.weight` with shape `[n_embd, n_ff*2]`. Ollama writes
+// the gate and up halves as separate `ffn_gate.weight` / `ffn_up.weight`
+// tensors (each `[n_embd, n_ff]`). We register a concat load op that
+// reads gate+up bytes and stitches them into the fused upstream slot.
+
+// Per-block: register a concat load that fuses Ollama's separate
+// ffn_gate + ffn_up into upstream's single `blk.X.ffn_up.weight`
+// tensor with doubled out dim. Capture source file offsets BEFORE any
+// renames invalidate them (same pattern as qwen35moe QKV merge).
+void register_glm4_ffn_concat(gguf_context * meta, ggml_context * ctx, int block_idx) {
+    char gate_n[64], up_n[64];
+    std::snprintf(gate_n, sizeof(gate_n), "blk.%d.ffn_gate.weight", block_idx);
+    std::snprintf(up_n,   sizeof(up_n),   "blk.%d.ffn_up.weight",   block_idx);
+
+    if (!ggml_get_tensor(ctx, gate_n) || !ggml_get_tensor(ctx, up_n)) return;
+
+    // GLM4's fused ffn_up has gate as first half, up as second half
+    // (so ggml_swiglu's silu(first_half) * second_half gives silu(gate) * up).
+    register_concat_load(meta, up_n, {gate_n, up_n});
+
+    if (ggml_tensor * t = ggml_get_tensor(ctx, up_n)) {
+        set_tensor_shape(t, {t->ne[0], t->ne[1] * 2});
+    }
+}
+
+bool detect_ollama_glmocr(const gguf_context * meta) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    return std::strcmp(gguf_get_val_str(meta, arch_kid), "glmocr") == 0;
+}
+
+void handle_glmocr(const llama_model_loader * ml, gguf_context * meta,
+                   ggml_context * ctx, std::string & arch_name) {
+    if (!detect_ollama_glmocr(meta)) return;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format glmocr GGUF; applying compatibility fixes\n", __func__);
+
+    gguf_set_val_str(meta, "general.architecture", "glm4");
+    rename_kv_prefix(meta, "glmocr.", "glm4.");
+    arch_name = "glm4";
+
+    // M-RoPE: Ollama writes a 3-element `rope.mrope_section`, upstream expects
+    // a 4-element `rope.dimension_sections` (pad trailing 0).
+    {
+        const int64_t kid = gguf_find_key(meta, "glm4.rope.mrope_section");
+        if (kid >= 0 && gguf_get_arr_n(meta, kid) == 3) {
+            const auto * src = static_cast<const int32_t *>(gguf_get_arr_data(meta, kid));
+            const int32_t padded[4] = { src[0], src[1], src[2], 0 };
+            gguf_set_arr_data(meta, "glm4.rope.dimension_sections",
+                              GGUF_TYPE_INT32, padded, 4);
+        }
+    }
+    // Inject `rope.dimension_count` from key_length (used as the rope dim).
+    if (!has_key(meta, "glm4.rope.dimension_count")) {
+        const int64_t kid = gguf_find_key(meta, "glm4.attention.key_length");
+        if (kid >= 0) {
+            gguf_set_val_u32(meta, "glm4.rope.dimension_count",
+                             gguf_get_val_u32(meta, kid));
+        }
+    }
+
+    // Tokenizer pre-tokenizer: Ollama wrote `llama-bpe`, but glm-ocr uses
+    // `chatglm-bpe` (different regex split — wrong pre-tokenization can
+    // fragment GLM's special tokens).
+    {
+        const int64_t kid = gguf_find_key(meta, "tokenizer.ggml.pre");
+        if (kid >= 0) {
+            const char * cur = gguf_get_val_str(meta, kid);
+            if (cur && std::strcmp(cur, "chatglm-bpe") != 0) {
+                gguf_set_val_str(meta, "tokenizer.ggml.pre", "chatglm-bpe");
+            }
+        }
+    }
+
+    // Tensor renames (substring): each leaf appears once per block and
+    // doesn't overlap the others.
+    rename_tensors_containing(meta, ctx, ".attn_out",       ".attn_output");
+    rename_tensors_containing(meta, ctx, ".post_attn_norm", ".post_attention_norm");
+    rename_tensors_containing(meta, ctx, ".post_ffn_norm",  ".post_ffw_norm");
+
+    // Fuse ffn_gate + ffn_up → ffn_up[:, 2*n_ff] for every block, then mark
+    // the orphan ffn_gate tensors as skip so n_tensors lines up.
+    {
+        const int64_t n_blk_kid = gguf_find_key(meta, "glm4.block_count");
+        const uint32_t n_blocks = n_blk_kid >= 0 ? gguf_get_val_u32(meta, n_blk_kid) : 16;
+        for (uint32_t b = 0; b < n_blocks; ++b) {
+            register_glm4_ffn_concat(meta, ctx, (int) b);
+            char skip_pref[64];
+            std::snprintf(skip_pref, sizeof(skip_pref), "blk.%u.ffn_gate.", b);
+            add_skip_prefix(ml, skip_pref);
+        }
+    }
+
+    // Hide embedded vision + projector tensors from the text loader.
     add_skip_prefix(ml, "v.");
     add_skip_prefix(ml, "mm.");
 }
@@ -1137,6 +1248,7 @@ void translate_metadata(const llama_model_loader * ml,
     if (arch_name == "deepseekocr")   handle_deepseekocr   (ml, meta, ctx, arch_name);
     if (arch_name == "nemotron_h_moe") handle_nemotron_h_moe(ml, meta, ctx);
     if (arch_name == "llama4")        handle_llama4        (ml, meta, ctx);
+    if (arch_name == "glmocr")        handle_glmocr        (ml, meta, ctx, arch_name);
     // Dispatch. Add more arches as they are wired up.
 }
 
@@ -1196,6 +1308,30 @@ bool maybe_load_tensor(ggml_tensor * cur,
 
     LLAMA_LOG_INFO("%s: %s for %s (%zu bytes)\n", __func__, op.description, ggml_get_name(cur), dst_size);
     return true;
+}
+
+namespace {
+std::mutex g_loader_path_mutex;
+std::unordered_map<const llama_model_loader *, std::string> g_loader_paths;
+}
+
+void set_loader_path(const llama_model_loader * ml, const char * fname) {
+    std::lock_guard<std::mutex> lk(g_loader_path_mutex);
+    g_loader_paths[ml] = fname ? fname : "";
+}
+
+bool maybe_load_text_tensor(const llama_model_loader * ml,
+                            ggml_tensor * cur,
+                            size_t file_offset,
+                            ggml_backend_buffer_type_t buft) {
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lk(g_loader_path_mutex);
+        auto it = g_loader_paths.find(ml);
+        if (it == g_loader_paths.end() || it->second.empty()) return false;
+        path = it->second;
+    }
+    return maybe_load_tensor(cur, path.c_str(), file_offset, buft);
 }
 
 } // namespace llama_ollama_compat
