@@ -35,10 +35,13 @@ struct llama_model_loader;
 namespace llama_ollama_compat {
 
 // Called from llama_model_loader's constructor, right after the arch is read.
+// `fname` is the model file path, captured here so later load-time hooks
+// (maybe_load_text_tensor) can read raw bytes from it.
 void translate_metadata(const llama_model_loader * ml,
                         gguf_context * meta,
                         ggml_context * ctx,
-                        std::string & arch_name);
+                        std::string & arch_name,
+                        const char * fname);
 
 // Called from llama_model_loader's weights_map population loop. Returns
 // true to drop a tensor from the loader — used to hide embedded vision
@@ -60,15 +63,12 @@ bool maybe_load_tensor(ggml_tensor * cur,
                        size_t file_offset,
                        ggml_backend_buffer_type_t buft);
 
-// Same as maybe_load_tensor but for the text-side llama_model_loader,
-// which doesn't have the clip loader's `fname` in scope at the read
-// site. Looks up the model's file path from a per-loader registry
-// populated by `set_loader_path` (called from the model loader's
-// constructor right after `fname` is in scope).
+// Text-side counterpart to maybe_load_tensor. Self-contained: looks up
+// the model file path from the per-loader registry populated by
+// translate_metadata, and derives the buffer type from cur->buffer
+// internally — keeps the call site (and the upstream patch) to one line.
 bool maybe_load_text_tensor(const llama_model_loader * ml,
                             ggml_tensor * cur,
-                            size_t file_offset,
-                            ggml_backend_buffer_type_t buft);
-void set_loader_path(const llama_model_loader * ml, const char * fname);
+                            size_t file_offset);
 
 } // namespace llama_ollama_compat

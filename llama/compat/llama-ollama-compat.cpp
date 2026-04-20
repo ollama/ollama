@@ -17,6 +17,12 @@ using namespace llama_ollama_compat::detail; // pull detail:: helpers into scope
 
 namespace {
 
+// Per-loader file path registry — set by translate_metadata, read by
+// maybe_load_text_tensor so it can pass the path to load ops without a
+// separate patch insertion in the model loader's load_all_data path.
+std::mutex g_loader_path_mutex;
+std::unordered_map<const llama_model_loader *, std::string> g_loader_paths;
+
 // =========================================================================
 // gemma3 (text side)
 // =========================================================================
@@ -1297,8 +1303,13 @@ void handle_mistral3_clip(gguf_context * meta, ggml_context * ctx) {
 void translate_metadata(const llama_model_loader * ml,
                         gguf_context * meta,
                         ggml_context * ctx,
-                        std::string & arch_name) {
+                        std::string & arch_name,
+                        const char * fname) {
     if (!meta) return;
+    {
+        std::lock_guard<std::mutex> lk(g_loader_path_mutex);
+        g_loader_paths[ml] = fname ? fname : "";
+    }
     if (arch_name == "gemma3")    handle_gemma3   (ml, meta, ctx);
     if (arch_name == "gemma4")    handle_gemma4   (ml, meta, ctx);
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
@@ -1375,20 +1386,9 @@ bool maybe_load_tensor(ggml_tensor * cur,
     return true;
 }
 
-namespace {
-std::mutex g_loader_path_mutex;
-std::unordered_map<const llama_model_loader *, std::string> g_loader_paths;
-}
-
-void set_loader_path(const llama_model_loader * ml, const char * fname) {
-    std::lock_guard<std::mutex> lk(g_loader_path_mutex);
-    g_loader_paths[ml] = fname ? fname : "";
-}
-
 bool maybe_load_text_tensor(const llama_model_loader * ml,
                             ggml_tensor * cur,
-                            size_t file_offset,
-                            ggml_backend_buffer_type_t buft) {
+                            size_t file_offset) {
     std::string path;
     {
         std::lock_guard<std::mutex> lk(g_loader_path_mutex);
@@ -1396,6 +1396,9 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
         if (it == g_loader_paths.end() || it->second.empty()) return false;
         path = it->second;
     }
+    ggml_backend_buffer_type_t buft = cur->buffer
+        ? ggml_backend_buffer_get_type(cur->buffer)
+        : nullptr;
     return maybe_load_tensor(cur, path.c_str(), file_offset, buft);
 }
 

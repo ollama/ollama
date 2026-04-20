@@ -10,12 +10,11 @@ index 4e65a45a5..75836c683 100644
  
  #include <algorithm>
  #include <array>
-@@ -549,6 +550,8 @@ llama_model_loader::llama_model_loader(
+@@ -549,6 +550,7 @@ llama_model_loader::llama_model_loader(
          }
 
          get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
-+        llama_ollama_compat::set_loader_path(this, fname.c_str());
-+        llama_ollama_compat::translate_metadata(this, metadata, ctx, arch_name);
++        llama_ollama_compat::translate_metadata(this, metadata, ctx, arch_name, fname.c_str());
          llm_kv = LLM_KV(llm_arch_from_string(arch_name));
  
          files.emplace_back(new llama_file(fname.c_str(), "rb", use_direct_io));
@@ -39,12 +38,10 @@ index 4e65a45a5..75836c683 100644
              // make sure there is no duplicated tensor names
              if (weights_map.find(tensor_name) != weights_map.end()) {
                  throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
-@@ -1535,3 +1543,6 @@ bool llama_model_loader::load_all_data(
+@@ -1535,3 +1542,4 @@ bool llama_model_loader::load_all_data(
          size_t n_size = ggml_nbytes(cur);
 
-+        if (llama_ollama_compat::maybe_load_text_tensor(this, cur, weight->offs, cur->buffer ? ggml_backend_buffer_get_type(cur->buffer) : nullptr)) {
-+            continue;
-+        }
++        if (llama_ollama_compat::maybe_load_text_tensor(this, cur, weight->offs)) continue;
          if (use_mmap) {
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
 index f0e8786b6..35defa89d 100644
