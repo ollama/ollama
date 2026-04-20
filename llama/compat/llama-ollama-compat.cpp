@@ -1020,22 +1020,38 @@ void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
         inject_bool_if_missing(meta, "clip.has_audio_encoder", true);
         gguf_set_val_str(meta, "clip.audio.projector_type", "gemma4a");
 
-        // Top-level tensor renames (see comment block above for the rationale —
-        // Ollama uses different leaf names for the SSCP input projection and the
-        // encoder output projection):
-        //   a.pre_encode.out.weight   →  a.input_projection.weight (REQUIRED)
+        // Top-level tensor renames. Ollama uses different leaf names for the
+        // SSCP input projection and the encoder output projection:
+        //   a.pre_encode.out.weight   →  a.input_projection.weight (SSCP proj)
         //   mm.a.fc.{weight,bias}     →  a.pre_encode.out.{weight,bias}
         //   mm.a.input_projection.weight already matches.
         rename_tensor(meta, ctx, "a.pre_encode.out.weight", "a.input_projection.weight");
         rename_tensor(meta, ctx, "mm.a.fc.weight",          "a.pre_encode.out.weight");
         rename_tensor(meta, ctx, "mm.a.fc.bias",            "a.pre_encode.out.bias");
 
-        // Per-block leaf renames (substring — each name appears in every audio
-        // block, doesn't overlap with anything else):
-        //   .linear_pos       →  .attn_k_rel       (relative-position K projection)
-        //   .layer_pre_norm   →  .attn_post_norm   (post-attention norm)
-        rename_tensors_containing(meta, ctx, ".linear_pos",     ".attn_k_rel");
-        rename_tensors_containing(meta, ctx, ".layer_pre_norm", ".attn_post_norm");
+        // Per-block renames. Scoped to a.blk.* (NOT vision blocks, which also
+        // have ln1/ln2). Order matters: ln2 → attn_post_norm must run before
+        // layer_pre_norm → ln2 (otherwise the second rename collides).
+        //
+        // Semantic mapping (from Ollama's model_audio.go vs upstream gemma4a.cpp):
+        //   ln1            → attn_pre_norm    (pre-attention norm)
+        //   ln2            → attn_post_norm   (post-attention norm; NOT block out)
+        //   layer_pre_norm → ln2              (final block output norm)
+        //   linear_pos     → attn_k_rel       (relative-position K projection)
+        const int kid = gguf_find_key(meta, "gemma4.audio.block_count");
+        const uint32_t n_audio = (kid >= 0) ? gguf_get_val_u32(meta, kid) : 12;
+        for (uint32_t il = 0; il < n_audio; ++il) {
+            char from[GGML_MAX_NAME], to[GGML_MAX_NAME];
+            auto rn = [&](const char * a, const char * b) {
+                std::snprintf(from, sizeof(from), "a.blk.%u.%s.weight", il, a);
+                std::snprintf(to,   sizeof(to),   "a.blk.%u.%s.weight", il, b);
+                rename_tensor(meta, ctx, from, to);
+            };
+            rn("ln1",            "attn_pre_norm");
+            rn("ln2",            "attn_post_norm");
+            rn("layer_pre_norm", "ln2");
+            rn("linear_pos",     "attn_k_rel");
+        }
     }
 }
 
