@@ -33,6 +33,15 @@ type RopeParameters struct {
 	AttentionFactor               float32 `json:"attention_factor"`
 }
 
+type gatingMode string
+
+type ropeConfig struct {
+	flat    *RopeParameters
+	full    *RopeParameters
+	sliding *RopeParameters
+	nested  bool
+}
+
 type Config struct {
 	ModelType                   string          `json:"model_type"`
 	HiddenSize                  int32           `json:"hidden_size"`
@@ -159,9 +168,88 @@ type stackedExpertWeights struct {
 }
 
 func parseConfig(configData []byte) (Config, error) {
-	var cfg Config
-	if err := json.Unmarshal(configData, &cfg); err != nil {
+	type rawConfig struct {
+		ModelType                   string          `json:"model_type"`
+		HiddenSize                  int32           `json:"hidden_size"`
+		IntermediateSize            int32           `json:"intermediate_size"`
+		MoeIntermediateSize         int32           `json:"moe_intermediate_size"`
+		SharedExpertIntermediate    int32           `json:"shared_expert_intermediate_size"`
+		NumHiddenLayers             int32           `json:"num_hidden_layers"`
+		NumAttentionHeads           int32           `json:"num_attention_heads"`
+		NumAttentionHeadsPerLayer   []int32         `json:"num_attention_heads_per_layer"`
+		NumKeyValueHeads            int32           `json:"num_key_value_heads"`
+		HeadDim                     int32           `json:"head_dim"`
+		RMSNormEps                  float32         `json:"rms_norm_eps"`
+		VocabSize                   int32           `json:"vocab_size"`
+		MaxPositionEmbeddings       int32           `json:"max_position_embeddings"`
+		LayerTypes                  []string        `json:"layer_types"`
+		SlidingWindow               int32           `json:"sliding_window"`
+		MLPOnlyLayers               []int32         `json:"mlp_only_layers"`
+		MLPLayerTypes               []string        `json:"mlp_layer_types"`
+		DecoderSparseStep           int32           `json:"decoder_sparse_step"`
+		NumExperts                  int32           `json:"num_experts"`
+		NumExpertsPerTok            int32           `json:"num_experts_per_tok"`
+		NormTopKProb                *bool           `json:"norm_topk_prob"`
+		MoeRoutedScalingFactor      float32         `json:"moe_routed_scaling_factor"`
+		MoeApplyRouterWeightOnInput bool            `json:"moe_apply_router_weight_on_input"`
+		Gating                      gatingMode      `json:"gating"`
+		TieWordEmbeddings           bool            `json:"tie_word_embeddings"`
+		RopeTheta                   float32         `json:"rope_theta"`
+		PartialRotaryFactor         float32         `json:"partial_rotary_factor"`
+		RopeParameters              ropeConfig      `json:"rope_parameters"`
+		RopeScaling                 *RopeParameters `json:"rope_scaling"`
+		SWARopeParameters           *RopeParameters `json:"swa_rope_parameters"`
+	}
+
+	var raw rawConfig
+	if err := json.Unmarshal(configData, &raw); err != nil {
 		return Config{}, fmt.Errorf("parse config: %w", err)
+	}
+
+	mlpOnlyLayers, err := denseLayers(raw.MLPOnlyLayers, raw.MLPLayerTypes)
+	if err != nil {
+		return Config{}, err
+	}
+
+	fullRope := raw.RopeParameters.fullParams()
+	if fullRope == nil {
+		fullRope = raw.RopeScaling
+	}
+	swaRope := raw.SWARopeParameters
+	if nestedSwa := raw.RopeParameters.slidingParams(); nestedSwa != nil {
+		swaRope = nestedSwa
+	}
+
+	cfg := Config{
+		ModelType:                   raw.ModelType,
+		HiddenSize:                  raw.HiddenSize,
+		IntermediateSize:            raw.IntermediateSize,
+		MoeIntermediateSize:         raw.MoeIntermediateSize,
+		SharedExpertIntermediate:    raw.SharedExpertIntermediate,
+		NumHiddenLayers:             raw.NumHiddenLayers,
+		NumAttentionHeads:           raw.NumAttentionHeads,
+		NumAttentionHeadsPerLayer:   raw.NumAttentionHeadsPerLayer,
+		NumKeyValueHeads:            raw.NumKeyValueHeads,
+		HeadDim:                     raw.HeadDim,
+		RMSNormEps:                  raw.RMSNormEps,
+		VocabSize:                   raw.VocabSize,
+		MaxPositionEmbeddings:       raw.MaxPositionEmbeddings,
+		LayerTypes:                  raw.LayerTypes,
+		SlidingWindow:               raw.SlidingWindow,
+		MLPOnlyLayers:               mlpOnlyLayers,
+		DecoderSparseStep:           raw.DecoderSparseStep,
+		NumExperts:                  raw.NumExperts,
+		NumExpertsPerTok:            raw.NumExpertsPerTok,
+		NormTopKProb:                defaultBool(raw.NormTopKProb, true),
+		MoeRoutedScalingFactor:      raw.MoeRoutedScalingFactor,
+		MoeApplyRouterWeightOnInput: raw.MoeApplyRouterWeightOnInput,
+		Gating:                      raw.Gating.normalized(),
+		TieWordEmbeddings:           raw.TieWordEmbeddings,
+		RopeTheta:                   raw.RopeTheta,
+		PartialRotaryFactor:         raw.PartialRotaryFactor,
+		RopeParameters:              fullRope,
+		RopeScaling:                 raw.RopeScaling,
+		SWARopeParameters:           swaRope,
 	}
 
 	if cfg.HiddenSize <= 0 {
@@ -204,28 +292,28 @@ func parseConfig(configData []byte) (Config, error) {
 		cfg.MoeRoutedScalingFactor = 1
 	}
 
-	fullRope := cfg.RopeParameters
-	if fullRope == nil {
-		fullRope = cfg.RopeScaling
+	ropeParams := cfg.RopeParameters
+	if ropeParams == nil {
+		ropeParams = cfg.RopeScaling
 	}
 	cfg.FullRopeBase = cfg.RopeTheta
-	if cfg.FullRopeBase == 0 && fullRope != nil && fullRope.RopeTheta > 0 {
-		cfg.FullRopeBase = fullRope.RopeTheta
+	if cfg.FullRopeBase == 0 && ropeParams != nil && ropeParams.RopeTheta > 0 {
+		cfg.FullRopeBase = ropeParams.RopeTheta
 	}
 	if cfg.FullRopeBase == 0 {
 		cfg.FullRopeBase = 10000
 	}
 	fullPartial := cfg.PartialRotaryFactor
-	if fullPartial == 0 && fullRope != nil && fullRope.PartialRotaryFactor > 0 {
-		fullPartial = fullRope.PartialRotaryFactor
+	if fullPartial == 0 && ropeParams != nil && ropeParams.PartialRotaryFactor > 0 {
+		fullPartial = ropeParams.PartialRotaryFactor
 	}
 	if fullPartial == 0 {
 		fullPartial = 1
 	}
 	cfg.FullRopeDim = clampRopeDim(int(float32(cfg.HeadDim)*fullPartial), int(cfg.HeadDim))
 	cfg.FullRopeScale = 1
-	if fullRope != nil && strings.EqualFold(fullRope.ropeType(), "yarn") {
-		cfg.FullRopeFreqs, cfg.FullRopeScale = buildYarnRopeFreqs(cfg.FullRopeDim, cfg.FullRopeBase, fullRope)
+	if ropeParams != nil && strings.EqualFold(ropeParams.ropeType(), "yarn") {
+		cfg.FullRopeFreqs, cfg.FullRopeScale = buildYarnRopeFreqs(cfg.FullRopeDim, cfg.FullRopeBase, ropeParams)
 	}
 
 	cfg.SlidingRopeBase = cfg.FullRopeBase
@@ -242,6 +330,125 @@ func parseConfig(configData []byte) (Config, error) {
 	cfg.SlidingRopeScale = 1
 	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.HeadDim)))
 	return cfg, nil
+}
+
+func (g *gatingMode) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*g = gatingMode(s)
+		return nil
+	}
+
+	var enabled bool
+	if err := json.Unmarshal(b, &enabled); err == nil {
+		if enabled {
+			*g = "per-head"
+		} else {
+			*g = "false"
+		}
+		return nil
+	}
+
+	if string(b) == "null" {
+		return nil
+	}
+	return fmt.Errorf("unsupported Laguna gating JSON value %s", string(b))
+}
+
+func (g gatingMode) normalized() string {
+	if strings.EqualFold(string(g), "true") {
+		return "per-head"
+	}
+	return string(g)
+}
+
+func (r *ropeConfig) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(b, &probe); err != nil {
+		return err
+	}
+	if len(probe) == 0 {
+		return nil
+	}
+
+	if raw, ok := probe["full_attention"]; ok {
+		r.nested = true
+		r.full = &RopeParameters{}
+		if err := json.Unmarshal(raw, r.full); err != nil {
+			return err
+		}
+		if raw = probe["sliding_attention"]; raw != nil {
+			r.sliding = &RopeParameters{}
+			if err := json.Unmarshal(raw, r.sliding); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if raw, ok := probe["global_attention"]; ok {
+		r.nested = true
+		r.full = &RopeParameters{}
+		if err := json.Unmarshal(raw, r.full); err != nil {
+			return err
+		}
+		if raw = probe["sliding_attention"]; raw != nil {
+			r.sliding = &RopeParameters{}
+			if err := json.Unmarshal(raw, r.sliding); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	r.flat = &RopeParameters{}
+	return json.Unmarshal(b, r.flat)
+}
+
+func (r ropeConfig) fullParams() *RopeParameters {
+	if r.nested {
+		return r.full
+	}
+	return r.flat
+}
+
+func (r ropeConfig) slidingParams() *RopeParameters {
+	if !r.nested {
+		return nil
+	}
+	return r.sliding
+}
+
+func defaultBool(v *bool, fallback bool) bool {
+	if v == nil {
+		return fallback
+	}
+	return *v
+}
+
+func denseLayers(mlpOnlyLayers []int32, mlpLayerTypes []string) ([]int32, error) {
+	if len(mlpOnlyLayers) > 0 {
+		return mlpOnlyLayers, nil
+	}
+	if len(mlpLayerTypes) == 0 {
+		return nil, nil
+	}
+
+	dense := make([]int32, 0, len(mlpLayerTypes))
+	for i, layerType := range mlpLayerTypes {
+		switch {
+		case strings.EqualFold(layerType, "dense"):
+			dense = append(dense, int32(i))
+		case strings.EqualFold(layerType, "sparse"):
+		default:
+			return nil, fmt.Errorf("unsupported mlp_layer_types[%d]=%q", i, layerType)
+		}
+	}
+	return dense, nil
 }
 
 func (rp *RopeParameters) ropeType() string {
@@ -382,7 +589,7 @@ func NewModel(root *model.Root) (base.Model, error) {
 		Config: &cfg,
 		tok:    tok,
 	}
-	for i := range int32(cfg.NumHiddenLayers) {
+	for i := range cfg.NumHiddenLayers {
 		m.Layers[i] = &Layer{LayerIdx: i, IsSliding: layerIsSliding(&cfg, i)}
 	}
 	return m, nil
@@ -664,7 +871,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		}
 	}
 
-	for i := range int32(cfg.NumHiddenLayers) {
+	for i := range cfg.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", prefix, i)
 		layer := &Layer{
 			LayerIdx:  i,

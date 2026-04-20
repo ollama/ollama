@@ -534,6 +534,9 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 						}
 						r.Parameters["stop"] = []string{"<turn|>"}
 					}
+				case "laguna":
+					config.Renderer = cmp.Or(config.Renderer, "laguna")
+					config.Parser = cmp.Or(config.Parser, "laguna")
 				}
 			}
 		}

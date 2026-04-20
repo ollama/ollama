@@ -221,7 +221,7 @@ func TestLagunaParserThinkingThenTool(t *testing.T) {
 	parser := ParserForName("laguna")
 	parser.Init(lagunaTestTools(), nil, &api.ThinkValue{Value: true})
 
-	content, thinking, calls, err := parser.Add("<thought>Need current weather.</thought>\n<tool_call>get_weather\n<arg_key>location</arg_key>\n<arg_value>SF</arg_value>\n</tool_call>", true)
+	content, thinking, calls, err := parser.Add("<think>Need current weather.</think>\n<tool_call>get_weather\n<arg_key>location</arg_key>\n<arg_value>SF</arg_value>\n</tool_call>", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestLagunaParserUserTaggedNonToolContent(t *testing.T) {
 func TestLagunaParserThinkingDefaultsOn(t *testing.T) {
 	parser := ParserForName("laguna")
 	parser.Init(nil, nil, nil)
-	content, thinking, calls, err := parser.Add("<thought>Need to reason.</thought>\nDirect answer.", true)
+	content, thinking, calls, err := parser.Add("<think>Need to reason.</think>\nDirect answer.", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,29 +387,65 @@ func TestLagunaParserThinkingDefaultsOn(t *testing.T) {
 	}
 }
 
-func TestLagunaParserThinkingDefaultsOffWhenToolsPresent(t *testing.T) {
+func TestLagunaParserThinkingDefaultsOnWhenToolsPresent(t *testing.T) {
 	parser := ParserForName("laguna")
 	parser.Init(lagunaTestTools(), nil, nil)
-	content, thinking, calls, err := parser.Add("<thought>Need to reason.</thought>\n<tool_call>get_weather\n<arg_key>location</arg_key>\n<arg_value>Paris</arg_value>\n</tool_call>", true)
+	content, thinking, calls, err := parser.Add("<think>Need to reason.</think>\n<tool_call>get_weather\n<arg_key>location</arg_key>\n<arg_value>Paris</arg_value>\n</tool_call>", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if thinking != "" || len(calls) != 1 {
+	if thinking != "Need to reason." || len(calls) != 1 {
 		t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
 	}
-	if content != "<thought>Need to reason.</thought>" {
-		t.Fatalf("content=%q, want thought tags preserved in content when thinking is not requested", content)
+	if content != "" {
+		t.Fatalf("content=%q, want thinking block suppressed from content when default thinking is enabled", content)
 	}
 }
 
 func TestLagunaParserThinkingExplicitlyDisabled(t *testing.T) {
 	parser := ParserForName("laguna")
 	parser.Init(nil, nil, &api.ThinkValue{Value: false})
-	content, thinking, calls, err := parser.Add("<thought>Hidden?</thought>\nDirect answer.", true)
+	content, thinking, calls, err := parser.Add("<think>Hidden?</think>\nDirect answer.", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if content != "<thought>Hidden?</thought>\nDirect answer." || thinking != "" || len(calls) != 0 {
+	if content != "Direct answer." || thinking != "" || len(calls) != 0 {
+		t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
+	}
+}
+
+func TestLagunaParserThinkingExplicitlyDisabledDropsLeadingCloseTag(t *testing.T) {
+	parser := ParserForName("laguna")
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+	content, thinking, calls, err := parser.Add("</think>\nTokyo\n", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "Tokyo\n" || thinking != "" || len(calls) != 0 {
+		t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
+	}
+}
+
+func TestLagunaParserThinkingEnabledDropsLeadingCloseTag(t *testing.T) {
+	parser := ParserForName("laguna")
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+	content, thinking, calls, err := parser.Add("</think>\nTokyo\n", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "Tokyo\n" || thinking != "" || len(calls) != 0 {
+		t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
+	}
+}
+
+func TestLagunaParserThinkingDefaultOnDropsLeadingCloseTag(t *testing.T) {
+	parser := ParserForName("laguna")
+	parser.Init(nil, nil, nil)
+	content, thinking, calls, err := parser.Add("</think>\nTokyo\n", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "Tokyo\n" || thinking != "" || len(calls) != 0 {
 		t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
 	}
 }
@@ -430,7 +466,7 @@ func TestLagunaParserSplitToolTag(t *testing.T) {
 	parser := ParserForName("laguna")
 	parser.Init(lagunaTestTools(), nil, &api.ThinkValue{Value: true})
 
-	content, thinking, calls, err := parser.Add("<thought>Need lookup<tool_c", false)
+	content, thinking, calls, err := parser.Add("<think>Need lookup<tool_c", false)
 	if err != nil {
 		t.Fatal(err)
 	}

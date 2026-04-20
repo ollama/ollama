@@ -13,7 +13,7 @@ import (
 
 const (
 	lagunaDirectDirective = "You should respond directly without using chain-of-thought reasoning tags."
-	lagunaThinkDirective  = "You should use chain-of-thought reasoning. Put your reasoning inside <thought> </thought> tags before your response."
+	lagunaThinkDirective  = "You should use chain-of-thought reasoning. Put your reasoning inside <think> </think> tags before your response."
 )
 
 func TestLagunaRendererReferenceFlowCoverage(t *testing.T) {
@@ -113,14 +113,14 @@ func TestLagunaRendererReferenceFlowCoverage(t *testing.T) {
 				"<assistant>\n",
 		},
 		{
-			name: "tools_default_thinking_off_when_unspecified",
+			name: "tools_default_thinking_on_when_unspecified",
 			messages: []api.Message{
 				{Role: "user", Content: "Weather?"},
 			},
 			tools: weather,
 			want: "" +
 				"〈|EOS|〉<system>\n" +
-				lagunaDirectDirective +
+				lagunaThinkDirective +
 				"\n\n### Tools\n\n" +
 				"You may call functions to assist with the user query.\n" +
 				"All available function signatures are listed below:\n" +
@@ -161,7 +161,7 @@ func TestLagunaRendererReferenceFlowCoverage(t *testing.T) {
 				"\n</system>\n" +
 				"<user>\nAdd these.\n</user>\n" +
 				"<assistant>\n" +
-				"<thought>Need addition.</thought>\n" +
+				"<think>Need addition.</think>\n" +
 				"Calling the tool.\n" +
 				"<tool_call>add\n" +
 				"<arg_key>a</arg_key>\n<arg_value>2</arg_value>\n" +
@@ -256,8 +256,7 @@ func TestLagunaRendererMatchesLocalJinjaControlFlow(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, modelDir := range []string{
-				"/Users/daniel/Models/laguna-xs-drop-18-04-2026/laguna-xs-bf16-hf",
-				"/Users/daniel/Models/laguna-xs-drop-18-04-2026/laguna-xs-fp8-hf",
+				"/Users/daniel/Models/poolside/laguna-xs-23-04-2026",
 			} {
 				want := renderLagunaChatTemplate(t, python, modelDir, tt.messages, tt.think)
 				if diff := cmp.Diff(want, got); diff != "" {

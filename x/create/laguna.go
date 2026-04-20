@@ -22,10 +22,17 @@ func (lagunaImportTransform) transformTensor(td *safetensors.TensorData) ([]*saf
 }
 
 func (lagunaImportTransform) quantizationType(name string, shape []int32, quantize string) string {
+	if !lagunaIsHFRoutedExpertWeight(name) {
+		return ""
+	}
 	return GetTensorQuantization(name, shape, quantize)
 }
 
 func (lagunaImportTransform) sourceFP8TensorQuantization(name string, shape []int32, requested string, fallback string) string {
+	if !lagunaIsHFRoutedExpertWeight(name) {
+		return ""
+	}
+
 	switch normalizeQuantType(requested) {
 	case "nvfp4", "mxfp4":
 		if lagunaKeepSourceFP8TensorAtMXFP8(name, shape) {
@@ -45,4 +52,8 @@ func lagunaKeepSourceFP8TensorAtMXFP8(name string, shape []int32) bool {
 	}
 
 	return strings.Contains(name, "down_proj")
+}
+
+func lagunaIsHFRoutedExpertWeight(name string) bool {
+	return strings.HasSuffix(name, ".weight") && strings.Contains(name, ".mlp.experts.")
 }

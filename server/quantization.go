@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"unsafe"
 
@@ -111,6 +112,53 @@ func qwen3LinearAttnQuantType(name string) (fsggml.TensorType, bool) {
 	return 0, false
 }
 
+func isLagunaGGUFRoutedExpertWeight(name string) bool {
+	return strings.HasSuffix(name, ".weight") && (strings.Contains(name, "ffn_gate_exps") ||
+		strings.Contains(name, "ffn_up_exps") ||
+		strings.Contains(name, "ffn_down_exps"))
+}
+
+func lagunaGGUFBlockIndex(name string) (int, bool) {
+	if !strings.HasPrefix(name, "blk.") {
+		return 0, false
+	}
+
+	parts := strings.SplitN(strings.TrimPrefix(name, "blk."), ".", 2)
+	if len(parts) != 2 {
+		return 0, false
+	}
+
+	i, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, false
+	}
+
+	return i, true
+}
+
+func lagunaGGUFQuantization(name string, originalType, requestedType fsggml.TensorType, ftype fsggml.FileType, blockCount int) (fsggml.TensorType, bool) {
+	if !isLagunaGGUFRoutedExpertWeight(name) {
+		return originalType, false
+	}
+
+	if strings.HasSuffix(name, ".ffn_down_exps.weight") {
+		if i, ok := lagunaGGUFBlockIndex(name); ok && blockCount > 0 {
+			switch ftype {
+			case fsggml.FileTypeQ4_K_M:
+				if requestedType != fsggml.TensorTypeQ8_0 && useMoreBits(i, blockCount) {
+					return fsggml.TensorTypeQ6_K, true
+				}
+			case fsggml.FileTypeQ4_K_S:
+				if requestedType != fsggml.TensorTypeQ8_0 && i < blockCount/8 {
+					return fsggml.TensorTypeQ5_K, true
+				}
+			}
+		}
+	}
+
+	return requestedType, true
+}
+
 func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType, name string, shape []uint64, ftype fsggml.FileType) fsggml.TensorType {
 	// Ported from llama_tensor_get_type, removed unsupported quantization types
 	nExperts := max(1, kv.Uint("expert_count", 0))
@@ -161,6 +209,9 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 		// expert alphabetically, so dense increments the counter and expert uses counter-1.
 		var iLayer int
 		if strings.Contains(name, "_exps") {
+			if kv.Architecture() == "laguna" {
+				goto finalize
+			}
 			iLayer = max(0, qs.iFfnDown-1)
 		} else {
 			iLayer = qs.iFfnDown
@@ -186,6 +237,7 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 		}
 	}
 
+finalize:
 	if newType.IsQuantized() {
 		nx := shape[0]
 		qk_k := newType.BlockSize()
@@ -324,10 +376,20 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 			}
 		}
 
+		// TODO: Consider extracting architecture-specific GGUF quantization policy
+		// from server so different quantization backends can share one source of
+		// truth for model-family specializations.
 		// get more optimal quantization type based on the tensor shape, layer, etc.
 		if qs.preserveSourceQ4 {
 			if _, ok := qs.sourceFP8Tensors[name]; !ok {
 				defaultType = fsggml.TensorTypeQ8_0
+			}
+		}
+		if kv.Architecture() == "laguna" {
+			var ok bool
+			defaultType, ok = lagunaGGUFQuantization(name, newType, defaultType, ftype, int(kv.Uint("block_count", 0)))
+			if !ok {
+				return newType
 			}
 		}
 		newType = getTensorNewType(kv, qs, defaultType, t.Name, t.Shape, ftype)

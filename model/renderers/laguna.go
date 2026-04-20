@@ -8,8 +8,8 @@ import (
 
 const (
 	lagunaBOS          = "〈|EOS|〉"
-	lagunaThoughtOpen  = "<thought>"
-	lagunaThoughtClose = "</thought>"
+	lagunaThoughtOpen  = "<think>"
+	lagunaThoughtClose = "</think>"
 )
 
 type LagunaRenderer struct{}
@@ -18,10 +18,7 @@ func (r *LagunaRenderer) Render(messages []api.Message, tools []api.Tool, think 
 	var sb strings.Builder
 	sb.WriteString(lagunaBOS)
 
-	thinkingEnabled := think != nil && think.Bool()
-	if think == nil && len(tools) == 0 {
-		thinkingEnabled = true
-	}
+	thinkingEnabled := think == nil || think.Bool()
 	systemMessage := ""
 	firstMessageIsSystem := len(messages) > 0 && messages[0].Role == "system"
 	if firstMessageIsSystem {
@@ -30,7 +27,7 @@ func (r *LagunaRenderer) Render(messages []api.Message, tools []api.Tool, think 
 
 	sb.WriteString("<system>\n")
 	if thinkingEnabled {
-		sb.WriteString("You should use chain-of-thought reasoning. Put your reasoning inside <thought> </thought> tags before your response.")
+		sb.WriteString("You should use chain-of-thought reasoning. Put your reasoning inside <think> </think> tags before your response.")
 	} else {
 		sb.WriteString("You should respond directly without using chain-of-thought reasoning tags.")
 	}

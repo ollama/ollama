@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	lagunaThinkingOpenTag  = "<thought>"
-	lagunaThinkingCloseTag = "</thought>"
+	lagunaThinkingOpenTag  = "<think>"
+	lagunaThinkingCloseTag = "</think>"
 	lagunaToolCallOpenTag  = "<tool_call>"
 	lagunaToolCallCloseTag = "</tool_call>"
 	lagunaUserOpenTag      = "<user>"
@@ -33,6 +33,7 @@ type LagunaParser struct {
 	tools                 []api.Tool
 	callIndex             int
 	thinkingEnabled       bool
+	thinkingSuppressed    bool
 	allowLeadingThinkOpen bool
 }
 
@@ -48,10 +49,8 @@ func (p *LagunaParser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 	p.tools = tools
 	p.callIndex = 0
 	p.buffer.Reset()
-	p.thinkingEnabled = thinkValue != nil && thinkValue.Bool()
-	if thinkValue == nil && len(tools) == 0 {
-		p.thinkingEnabled = true
-	}
+	p.thinkingEnabled = thinkValue == nil || thinkValue.Bool()
+	p.thinkingSuppressed = thinkValue != nil && !thinkValue.Bool()
 	p.state = lagunaParserStateContent
 	p.allowLeadingThinkOpen = false
 	return tools
@@ -66,7 +65,9 @@ func (p *LagunaParser) Add(s string, done bool) (content string, thinking string
 		switch p.state {
 		case lagunaParserStateThinking:
 			progress, thinking = p.consumeThinking(done)
-			thinkingSB.WriteString(thinking)
+			if p.thinkingEnabled {
+				thinkingSB.WriteString(thinking)
+			}
 		case lagunaParserStateContent:
 			var parsedCalls []api.ToolCall
 			progress, content, parsedCalls, err = p.consumeContent(done)
@@ -145,7 +146,7 @@ func (p *LagunaParser) consumeThinking(done bool) (bool, string) {
 
 func (p *LagunaParser) consumeContent(done bool) (bool, string, []api.ToolCall, error) {
 	acc := p.buffer.String()
-	if p.thinkingEnabled {
+	if p.thinkingEnabled || p.thinkingSuppressed {
 		if idx := strings.Index(acc, lagunaThinkingOpenTag); idx != -1 {
 			content := acc[:idx]
 			after := strings.TrimLeftFunc(acc[idx+len(lagunaThinkingOpenTag):], unicode.IsSpace)
@@ -163,6 +164,28 @@ func (p *LagunaParser) consumeContent(done bool) (bool, string, []api.ToolCall, 
 				p.buffer.WriteString(acc[len(acc)-overlapLen:])
 				return content != "", content, nil, nil
 			}
+		}
+	}
+	if p.thinkingEnabled {
+		trimmed := strings.TrimLeftFunc(acc, unicode.IsSpace)
+		if strings.HasPrefix(trimmed, lagunaThinkingCloseTag) {
+			p.buffer.Reset()
+			p.buffer.WriteString(strings.TrimLeftFunc(strings.TrimPrefix(trimmed, lagunaThinkingCloseTag), unicode.IsSpace))
+			return true, "", nil, nil
+		}
+		if strings.HasPrefix(lagunaThinkingCloseTag, trimmed) && !done {
+			return false, "", nil, nil
+		}
+	}
+	if p.thinkingSuppressed {
+		trimmed := strings.TrimLeftFunc(acc, unicode.IsSpace)
+		if strings.HasPrefix(trimmed, lagunaThinkingCloseTag) {
+			p.buffer.Reset()
+			p.buffer.WriteString(strings.TrimLeftFunc(strings.TrimPrefix(trimmed, lagunaThinkingCloseTag), unicode.IsSpace))
+			return true, "", nil, nil
+		}
+		if strings.HasPrefix(lagunaThinkingCloseTag, trimmed) && !done {
+			return false, "", nil, nil
 		}
 	}
 	if idx := strings.Index(acc, lagunaToolCallOpenTag); idx != -1 {
@@ -209,8 +232,11 @@ func (p *LagunaParser) consumeContent(done bool) (bool, string, []api.ToolCall, 
 		return acc != "", acc, nil, nil
 	}
 	overlapLen := max(overlap(acc, lagunaToolCallOpenTag), overlap(acc, lagunaUserOpenTag))
-	if p.thinkingEnabled {
+	if p.thinkingEnabled || p.thinkingSuppressed {
 		overlapLen = max(overlapLen, overlap(acc, lagunaThinkingOpenTag))
+	}
+	if p.thinkingSuppressed {
+		overlapLen = max(overlapLen, overlap(acc, lagunaThinkingCloseTag))
 	}
 	trailingLen := trailingWhitespaceLen(acc)
 	keep := max(overlapLen, trailingLen)

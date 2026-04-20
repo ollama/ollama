@@ -505,10 +505,10 @@ func (st safetensor) decodeFP8E4M3(data []byte) ([]float32, error) {
 	}
 
 	f32s := make([]float32, len(data))
-	for r := 0; r < rows; r++ {
+	for r := range rows {
 		scaleRow := r / blockRows
 		rowOffset := r * cols
-		for c := 0; c < cols; c++ {
+		for c := range cols {
 			f32s[rowOffset+c] = decodeFloat8E4M3FN(data[rowOffset+c]) * scale[scaleRow*scaleCols+c/blockCols]
 		}
 	}

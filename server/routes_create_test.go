@@ -981,6 +981,59 @@ func TestCreateGemma4KeepsDynamicRendererAlias(t *testing.T) {
 	}
 }
 
+func TestCreateLagunaDetectsRendererParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":    "laguna",
+		"general.parameter_count": uint64(33_400_000_000),
+	}, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:   "test",
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("test"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if mf.Config.Digest == "" {
+		t.Fatalf("unexpected empty config digest for manifest")
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("config blob path: %v", err)
+	}
+
+	cfgFile, err := os.Open(configPath)
+	if err != nil {
+		t.Fatalf("open config blob: %v", err)
+	}
+	defer cfgFile.Close()
+
+	var cfg model.ConfigV2
+	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+
+	if cfg.Renderer != "laguna" {
+		t.Fatalf("expected renderer %q, got %q", "laguna", cfg.Renderer)
+	}
+	if cfg.Parser != "laguna" {
+		t.Fatalf("expected parser %q, got %q", "laguna", cfg.Parser)
+	}
+}
+
 func TestDetectModelTypeFromFiles(t *testing.T) {
 	t.Run("gguf file", func(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)

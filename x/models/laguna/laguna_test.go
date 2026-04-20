@@ -111,6 +111,77 @@ func TestParseConfigLagunaFP8RopeScaling(t *testing.T) {
 	}
 }
 
+func TestParseConfigLagunaGASchema(t *testing.T) {
+	cfg, err := parseConfig([]byte(`{
+		"model_type": "laguna",
+		"hidden_size": 2048,
+		"intermediate_size": 8192,
+		"moe_intermediate_size": 512,
+		"shared_expert_intermediate_size": 512,
+		"num_hidden_layers": 4,
+		"num_attention_heads": 48,
+		"num_attention_heads_per_layer": [48, 64, 64, 64],
+		"num_key_value_heads": 8,
+		"head_dim": 128,
+		"vocab_size": 100352,
+		"max_position_embeddings": 131072,
+		"layer_types": ["full_attention", "sliding_attention", "sliding_attention", "sliding_attention"],
+		"sliding_window": 512,
+		"mlp_layer_types": ["dense", "sparse", "sparse", "sparse"],
+		"num_experts": 256,
+		"num_experts_per_tok": 8,
+		"moe_routed_scaling_factor": 2.5,
+		"gating": true,
+		"rms_norm_eps": 1e-6,
+		"partial_rotary_factor": 0.5,
+		"rope_parameters": {
+			"full_attention": {
+				"rope_theta": 500000,
+				"rope_type": "yarn",
+				"factor": 32,
+				"original_max_position_embeddings": 4096,
+				"beta_fast": 64,
+				"beta_slow": 1,
+				"attention_factor": 1,
+				"partial_rotary_factor": 0.5
+			},
+			"sliding_attention": {
+				"rope_theta": 10000,
+				"rope_type": "default",
+				"partial_rotary_factor": 1.0
+			}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Gating != "per-head" {
+		t.Fatalf("Gating = %q, want per-head", cfg.Gating)
+	}
+	if !cfg.NormTopKProb {
+		t.Fatal("NormTopKProb should default true")
+	}
+	if cfg.FullRopeBase != 500000 {
+		t.Fatalf("FullRopeBase = %v, want 500000", cfg.FullRopeBase)
+	}
+	if cfg.SlidingRopeBase != 10000 {
+		t.Fatalf("SlidingRopeBase = %v, want 10000", cfg.SlidingRopeBase)
+	}
+	if cfg.FullRopeDim != 64 {
+		t.Fatalf("FullRopeDim = %d, want 64", cfg.FullRopeDim)
+	}
+	if cfg.SlidingRopeDim != 128 {
+		t.Fatalf("SlidingRopeDim = %d, want 128", cfg.SlidingRopeDim)
+	}
+	if layerUsesMoE(&cfg, 0) {
+		t.Fatal("layer 0 should be dense due to mlp_layer_types")
+	}
+	if !layerUsesMoE(&cfg, 1) {
+		t.Fatal("layer 1 should use MoE")
+	}
+}
+
 func TestTinyLagunaLoadAndForward(t *testing.T) {
 	cfg, err := parseConfig([]byte(`{
 		"model_type": "laguna",
@@ -168,7 +239,13 @@ func TestTinyLagunaLoadAndForward(t *testing.T) {
 
 	tokens := mlx.FromValues([]int32{1, 2, 3}, 1, 3)
 	caches := m.NewCaches()
-	defer freeCaches(caches)
+	defer func() {
+		for _, c := range caches {
+			if c != nil {
+				c.Free()
+			}
+		}
+	}()
 	hidden := m.Forward(tokens, caches)
 	mlx.Eval(hidden)
 	if got := hidden.Dims(); len(got) != 3 || got[0] != 1 || got[1] != 3 || got[2] != 8 {
@@ -287,7 +364,10 @@ func TestSwitchMLPFusedGateUpMatchesSeparate(t *testing.T) {
 	gotFused := fused.Forward(x, indices, cfg)
 	mlx.Eval(gotSeparate, gotFused)
 
-	assertFloatSlicesClose(t, gotFused.Floats(), gotSeparate.Floats(), 1e-5)
+	gotFusedF32 := gotFused.AsType(mlx.DTypeFloat32)
+	gotSeparateF32 := gotSeparate.AsType(mlx.DTypeFloat32)
+	mlx.Eval(gotFusedF32, gotSeparateF32)
+	assertFloatSlicesClose(t, gotFusedF32.Floats(), gotSeparateF32.Floats(), 1e-5)
 }
 
 func TestCombinedTensorGlobalScaleIgnoresInputGlobalScale(t *testing.T) {
