@@ -13,6 +13,14 @@ import (
 	"testing"
 )
 
+func assertKimiBinPath(t *testing.T, bin string) {
+	t.Helper()
+	base := strings.ToLower(filepath.Base(bin))
+	if !strings.HasPrefix(base, "kimi") {
+		t.Fatalf("bin = %q, want path to kimi executable", bin)
+	}
+}
+
 func TestKimiIntegration(t *testing.T) {
 	k := &Kimi{}
 
@@ -35,6 +43,107 @@ func TestKimiArgs(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("args() = %v, want %v", got, want)
 	}
+}
+
+func TestWindowsPathToWSL(t *testing.T) {
+	tests := []struct {
+		name  string
+		in    string
+		want  string
+		valid bool
+	}{
+		{
+			name:  "user profile path",
+			in:    `C:\Users\parth`,
+			want:  filepath.Join("/mnt", "c", "Users", "parth"),
+			valid: true,
+		},
+		{
+			name:  "path with trailing slash",
+			in:    `D:\tools\bin\`,
+			want:  filepath.Join("/mnt", "d", "tools", "bin"),
+			valid: true,
+		},
+		{
+			name:  "non windows path",
+			in:    "/home/parth",
+			valid: false,
+		},
+		{
+			name:  "empty",
+			in:    "",
+			valid: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := windowsPathToWSL(tt.in)
+			if !tt.valid {
+				if got != "" {
+					t.Fatalf("windowsPathToWSL(%q) = %q, want empty", tt.in, got)
+				}
+				return
+			}
+			if got != tt.want {
+				t.Fatalf("windowsPathToWSL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFindKimiBinaryFallbacks(t *testing.T) {
+	oldGOOS := kimiGOOS
+	t.Cleanup(func() { kimiGOOS = oldGOOS })
+
+	t.Run("linux/ubuntu uv tool path", func(t *testing.T) {
+		homeDir := t.TempDir()
+		setTestHome(t, homeDir)
+		t.Setenv("PATH", t.TempDir())
+		kimiGOOS = "linux"
+
+		target := filepath.Join(homeDir, ".local", "share", "uv", "tools", "kimi-cli", "bin", "kimi")
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("failed to create candidate dir: %v", err)
+		}
+		if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("failed to write kimi candidate: %v", err)
+		}
+
+		got, err := findKimiBinary()
+		if err != nil {
+			t.Fatalf("findKimiBinary() error = %v", err)
+		}
+		if got != target {
+			t.Fatalf("findKimiBinary() = %q, want %q", got, target)
+		}
+	})
+
+	t.Run("windows appdata uv bin", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
+		t.Setenv("PATH", t.TempDir())
+		kimiGOOS = "windows"
+
+		appDataDir := t.TempDir()
+		t.Setenv("APPDATA", appDataDir)
+		t.Setenv("LOCALAPPDATA", "")
+
+		target := filepath.Join(appDataDir, "uv", "bin", "kimi.cmd")
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("failed to create candidate dir: %v", err)
+		}
+		if err := os.WriteFile(target, []byte("@echo off\r\nexit /b 0\r\n"), 0o755); err != nil {
+			t.Fatalf("failed to write kimi candidate: %v", err)
+		}
+
+		got, err := findKimiBinary()
+		if err != nil {
+			t.Fatalf("findKimiBinary() error = %v", err)
+		}
+		if got != target {
+			t.Fatalf("findKimiBinary() = %q, want %q", got, target)
+		}
+	})
 }
 
 func TestValidateKimiPassthroughArgs_RejectsConflicts(t *testing.T) {
@@ -246,6 +355,7 @@ func TestEnsureKimiInstalled(t *testing.T) {
 	}
 
 	t.Run("already installed", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
 		tmpDir := t.TempDir()
 		t.Setenv("PATH", tmpDir)
 		writeFakeBinary(t, tmpDir, "kimi")
@@ -260,12 +370,11 @@ func TestEnsureKimiInstalled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ensureKimiInstalled() error = %v", err)
 		}
-		if bin != "kimi" {
-			t.Fatalf("bin = %q, want kimi", bin)
-		}
+		assertKimiBinPath(t, bin)
 	})
 
 	t.Run("missing dependencies", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
 		tmpDir := t.TempDir()
 		t.Setenv("PATH", tmpDir)
 		kimiGOOS = "linux"
@@ -282,6 +391,7 @@ func TestEnsureKimiInstalled(t *testing.T) {
 	})
 
 	t.Run("missing and user declines install", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
 		tmpDir := t.TempDir()
 		t.Setenv("PATH", tmpDir)
 		writeFakeBinary(t, tmpDir, "curl")
@@ -306,6 +416,7 @@ func TestEnsureKimiInstalled(t *testing.T) {
 			t.Skip("uses POSIX shell fake binaries")
 		}
 
+		setTestHome(t, t.TempDir())
 		tmpDir := t.TempDir()
 		t.Setenv("PATH", tmpDir)
 		kimiGOOS = "linux"
@@ -337,9 +448,7 @@ exit 0
 		if err != nil {
 			t.Fatalf("ensureKimiInstalled() error = %v", err)
 		}
-		if bin != "kimi" {
-			t.Fatalf("bin = %q, want kimi", bin)
-		}
+		assertKimiBinPath(t, bin)
 
 		logData, err := os.ReadFile(installLog)
 		if err != nil {
@@ -350,11 +459,54 @@ exit 0
 		}
 	})
 
+	t.Run("install succeeds and kimi is in home local bin without PATH update", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("uses POSIX shell fake binaries")
+		}
+
+		homeDir := t.TempDir()
+		setTestHome(t, homeDir)
+
+		tmpBin := t.TempDir()
+		t.Setenv("PATH", tmpBin)
+		kimiGOOS = "linux"
+		writeFakeBinary(t, tmpBin, "curl")
+
+		installedKimi := filepath.Join(homeDir, ".local", "bin", "kimi")
+		bashScript := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "-c" ]; then
+  /bin/mkdir -p %q
+  /bin/cat > %q <<'EOS'
+#!/bin/sh
+exit 0
+EOS
+  /bin/chmod +x %q
+fi
+exit 0
+`, filepath.Dir(installedKimi), installedKimi, installedKimi)
+		if err := os.WriteFile(filepath.Join(tmpBin, "bash"), []byte(bashScript), 0o755); err != nil {
+			t.Fatalf("failed to write fake bash: %v", err)
+		}
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			return true, nil
+		})
+
+		bin, err := ensureKimiInstalled()
+		if err != nil {
+			t.Fatalf("ensureKimiInstalled() error = %v", err)
+		}
+		if bin != installedKimi {
+			t.Fatalf("bin = %q, want %q", bin, installedKimi)
+		}
+	})
+
 	t.Run("install command fails", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("uses POSIX shell fake binaries")
 		}
 
+		setTestHome(t, t.TempDir())
 		tmpDir := t.TempDir()
 		t.Setenv("PATH", tmpDir)
 		kimiGOOS = "linux"
@@ -378,6 +530,7 @@ exit 0
 			t.Skip("uses POSIX shell fake binaries")
 		}
 
+		setTestHome(t, t.TempDir())
 		tmpDir := t.TempDir()
 		t.Setenv("PATH", tmpDir)
 		kimiGOOS = "linux"

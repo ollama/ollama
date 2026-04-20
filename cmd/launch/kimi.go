@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -58,6 +59,89 @@ func (k *Kimi) Run(model string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func findKimiBinary() (string, error) {
+	if path, err := exec.LookPath("kimi"); err == nil {
+		return path, nil
+	}
+
+	home, _ := os.UserHomeDir()
+
+	var candidates []string
+	switch kimiGOOS {
+	case "windows":
+		candidates = appendWindowsKimiCandidates(candidates, filepath.Join(home, ".local", "bin"))
+		candidates = appendWindowsKimiCandidates(candidates, filepath.Join(home, "bin"))
+
+		if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
+			candidates = appendWindowsKimiCandidates(candidates, filepath.Join(appData, "uv", "bin"))
+		}
+		if localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localAppData != "" {
+			candidates = appendWindowsKimiCandidates(candidates, filepath.Join(localAppData, "uv", "bin"))
+		}
+	default:
+		candidates = append(candidates,
+			filepath.Join(home, ".local", "bin", "kimi"),
+			filepath.Join(home, "bin", "kimi"),
+			filepath.Join(home, ".local", "share", "uv", "tools", "kimi-cli", "bin", "kimi"),
+			filepath.Join(home, ".local", "share", "uv", "tools", "kimi", "bin", "kimi"),
+		)
+
+		if xdgDataHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdgDataHome != "" {
+			candidates = append(candidates,
+				filepath.Join(xdgDataHome, "uv", "tools", "kimi-cli", "bin", "kimi"),
+				filepath.Join(xdgDataHome, "uv", "tools", "kimi", "bin", "kimi"),
+			)
+		}
+
+		// WSL users can inherit Windows env vars while launching from Linux shells.
+		if profile := windowsPathToWSL(os.Getenv("USERPROFILE")); profile != "" {
+			candidates = appendWindowsKimiCandidates(candidates, filepath.Join(profile, ".local", "bin"))
+		}
+		if appData := windowsPathToWSL(os.Getenv("APPDATA")); appData != "" {
+			candidates = appendWindowsKimiCandidates(candidates, filepath.Join(appData, "uv", "bin"))
+		}
+		if localAppData := windowsPathToWSL(os.Getenv("LOCALAPPDATA")); localAppData != "" {
+			candidates = appendWindowsKimiCandidates(candidates, filepath.Join(localAppData, "uv", "bin"))
+		}
+	}
+
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("kimi binary not found")
+}
+
+func appendWindowsKimiCandidates(candidates []string, dir string) []string {
+	if strings.TrimSpace(dir) == "" {
+		return candidates
+	}
+
+	return append(candidates,
+		filepath.Join(dir, "kimi.exe"),
+		filepath.Join(dir, "kimi.cmd"),
+		filepath.Join(dir, "kimi.bat"),
+	)
+}
+
+func windowsPathToWSL(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if len(trimmed) < 3 || trimmed[1] != ':' {
+		return ""
+	}
+
+	drive := strings.ToLower(string(trimmed[0]))
+	rest := strings.ReplaceAll(trimmed[2:], "\\", "/")
+	rest = strings.TrimPrefix(rest, "/")
+	if rest == "" {
+		return filepath.Join("/mnt", drive)
+	}
+
+	return filepath.Join("/mnt", drive, rest)
 }
 
 func validateKimiPassthroughArgs(args []string) error {
@@ -150,8 +234,8 @@ func modelInfoContextLength(modelInfo map[string]any) (int, bool) {
 }
 
 func ensureKimiInstalled() (string, error) {
-	if _, err := exec.LookPath("kimi"); err == nil {
-		return "kimi", nil
+	if path, err := findKimiBinary(); err == nil {
+		return path, nil
 	}
 
 	if err := checkKimiInstallerDependencies(); err != nil {
@@ -180,12 +264,13 @@ func ensureKimiInstalled() (string, error) {
 		return "", fmt.Errorf("failed to install kimi: %w", err)
 	}
 
-	if _, err := exec.LookPath("kimi"); err != nil {
+	path, err := findKimiBinary()
+	if err != nil {
 		return "", fmt.Errorf("kimi was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
 	}
 
 	fmt.Fprintf(os.Stderr, "%sKimi installed successfully%s\n\n", ansiGreen, ansiReset)
-	return "kimi", nil
+	return path, nil
 }
 
 func checkKimiInstallerDependencies() error {
