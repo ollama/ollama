@@ -201,6 +201,7 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [Spring AI Playground](https://github.com/spring-ai-community/spring-ai-playground) - Desktop app with MCP tool builder, RAG, and agentic chat
 
 #### Mobile
 
