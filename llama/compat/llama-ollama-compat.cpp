@@ -94,6 +94,56 @@ void handle_gemma3(const llama_model_loader * ml, gguf_context * meta, ggml_cont
 }
 
 // =========================================================================
+// gemma3n (text side — vocab mismatch between token_embd and per_layer_token_embd)
+// =========================================================================
+//
+// Ollama publishes gemma-3n with the multimodal vocab (262400 tokens) for
+// the main token_embd and tokenizer arrays, but the per-layer token embed
+// only has the text vocab (262144 tokens). Upstream's loader expects both
+// embedding tensors to have the same n_vocab, and reads n_vocab from the
+// tokenizer.tokens array length — so the larger value wins and per_layer
+// fails the dim check:
+//
+//   tensor 'per_layer_token_embd.weight' has wrong shape;
+//     expected 8960, 262400, got 8960, 262144
+//
+// Fix (mirroring handle_gemma3): truncate the tokenizer arrays AND the
+// token_embd tensor's vocab dim down to the per_layer count. The dropped
+// 256 entries are multimodal special tokens (image/audio markers); upstream
+// gemma3n is text-only, so they're unused anyway.
+//
+// Note: tensor data isn't read at this point — the loader reads ggml_nbytes
+// from the (newly-shrunk) tensor shape, so it just reads fewer rows from
+// the same file offset. No load_op needed.
+
+bool detect_ollama_gemma3n(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "gemma3n") != 0) return false;
+    ggml_tensor * te = ggml_get_tensor(const_cast<ggml_context *>(ctx), "token_embd.weight");
+    ggml_tensor * pe = ggml_get_tensor(const_cast<ggml_context *>(ctx), "per_layer_token_embd.weight");
+    return te && pe && te->ne[1] != pe->ne[1];
+}
+
+void handle_gemma3n(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
+    (void) ml;
+    if (!detect_ollama_gemma3n(meta, ctx)) return;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format gemma3n GGUF; truncating vocab to per_layer_token_embd size\n", __func__);
+
+    ggml_tensor * pe = ggml_get_tensor(ctx, "per_layer_token_embd.weight");
+    if (!pe) return;
+    const uint32_t target_vocab = (uint32_t) pe->ne[1];
+
+    if (ggml_tensor * t = ggml_get_tensor(ctx, "token_embd.weight")) {
+        set_tensor_shape(t, {t->ne[0], target_vocab});
+    }
+    truncate_str_arr (meta, "tokenizer.ggml.tokens",     target_vocab);
+    truncate_data_arr(meta, "tokenizer.ggml.scores",     GGUF_TYPE_FLOAT32, sizeof(float),   target_vocab);
+    truncate_data_arr(meta, "tokenizer.ggml.token_type", GGUF_TYPE_INT32,   sizeof(int32_t), target_vocab);
+}
+
+// =========================================================================
 // embeddinggemma (text side — sentence-transformer dense projection)
 // =========================================================================
 //
@@ -715,6 +765,91 @@ void handle_mistral3(const llama_model_loader * ml, gguf_context * meta, ggml_co
     // Hide embedded vision + projector tensors from the text loader.
     add_skip_prefix(ml, "v.");
     add_skip_prefix(ml, "mm.");
+}
+
+// =========================================================================
+// glm4moelite (text side — GLM-4.x-Flash, arch translation to deepseek2)
+// =========================================================================
+//
+// Ollama publishes GLM-4.7-Flash (and similar Flash variants) with
+// general.architecture=glm4moelite using DeepSeek-V2 style MLA attention,
+// but with the older convention of writing PER-HEAD key/value dims.
+// Upstream collapsed all of these into the deepseek2 arch with the
+// MLA-absorbed convention (head_count_kv=1, key/value dims = the
+// kv_lora_rank-relative absorbed sizes).
+//
+// Tensor structure is identical to deepseek2 (844 tensors, exact name
+// match including attn_kv_a_mqa, attn_k_b, attn_v_b, attn_q_a/b, etc.) —
+// only KV semantics differ.
+//
+// Translation:
+//   * arch_name: glm4moelite → deepseek2
+//   * KV prefix: glm4moelite.* → deepseek2.*
+//   * head_count_kv: original num_kv_heads (e.g. 20) → 1 (MLA absorbed)
+//   * key_length:   head_dim → kv_lora_rank + rope.dimension_count
+//                              (e.g. 256 → 512+64=576)
+//   * value_length: head_dim → kv_lora_rank
+//                              (e.g. 256 → 512)
+//   * key_length_mla / value_length_mla: were the absorbed dims (576/512);
+//                              upstream's _mla variants are per-head dims
+//                              (256/256). Swap to head_dim.
+//   * expert_group_count / expert_group_used_count: required by deepseek2
+//                              loader; default to 1 (no group routing).
+
+bool detect_ollama_glm4moelite(const gguf_context * meta) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    return std::strcmp(gguf_get_val_str(meta, arch_kid), "glm4moelite") == 0;
+}
+
+void handle_glm4moelite(const llama_model_loader * ml, gguf_context * meta,
+                        ggml_context * ctx, std::string & arch_name) {
+    (void) ml;
+    (void) ctx;
+    if (!detect_ollama_glm4moelite(meta)) return;
+
+    LLAMA_LOG_INFO("%s: detected Ollama-format glm4moelite GGUF; translating to deepseek2 (MLA conventions)\n", __func__);
+
+    arch_name = "deepseek2";
+    gguf_set_val_str(meta, "general.architecture", "deepseek2");
+
+    // Mirror glm4moelite.* hparams under deepseek2.* (rename copies; the
+    // original glm4moelite.* keys remain but are unread — only used as the
+    // "original head_dim" source below).
+    rename_kv_prefix(meta, "glm4moelite.", "deepseek2.");
+
+    // MLA absorbs all KV heads — upstream uses 1.
+    gguf_set_val_u32(meta, "deepseek2.attention.head_count_kv", 1);
+
+    // key/value lengths to MLA-absorbed dims, derived from kv_lora_rank
+    // and rope.dimension_count (both already mirrored under deepseek2.*).
+    {
+        const int64_t kv_lora_kid = gguf_find_key(meta, "deepseek2.attention.kv_lora_rank");
+        const int64_t rope_kid    = gguf_find_key(meta, "deepseek2.rope.dimension_count");
+        if (kv_lora_kid >= 0 && rope_kid >= 0) {
+            const uint32_t kv_lora = gguf_get_val_u32(meta, kv_lora_kid);
+            const uint32_t rope_d  = gguf_get_val_u32(meta, rope_kid);
+            gguf_set_val_u32(meta, "deepseek2.attention.key_length",   kv_lora + rope_d);
+            gguf_set_val_u32(meta, "deepseek2.attention.value_length", kv_lora);
+        }
+    }
+
+    // *_mla variants: upstream wants per-head dims (head_dim). Read original
+    // head_dim from the un-renamed glm4moelite.attention.key_length (which
+    // held the per-head dim in Ollama's convention).
+    {
+        const int64_t hd_kid = gguf_find_key(meta, "glm4moelite.attention.key_length");
+        if (hd_kid >= 0) {
+            const uint32_t head_dim = gguf_get_val_u32(meta, hd_kid);
+            gguf_set_val_u32(meta, "deepseek2.attention.key_length_mla",   head_dim);
+            gguf_set_val_u32(meta, "deepseek2.attention.value_length_mla", head_dim);
+        }
+    }
+
+    // DeepSeek-V3 expert grouping; GLM-4-MoE-Lite doesn't use it but the
+    // loader expects the keys to be present. Default to 1.
+    inject_u32_if_missing(meta, "deepseek2.expert_group_count",      1);
+    inject_u32_if_missing(meta, "deepseek2.expert_group_used_count", 1);
 }
 
 // =========================================================================
@@ -1754,6 +1889,7 @@ void translate_metadata(const llama_model_loader * ml,
     // prefix) need to see.
     if (arch_name == "gemma3")    handle_embeddinggemma(ml, meta, ctx, arch_name);
     if (arch_name == "gemma3")    handle_gemma3   (ml, meta, ctx);
+    if (arch_name == "gemma3n")   handle_gemma3n  (ml, meta, ctx);
     if (arch_name == "gemma4")    handle_gemma4   (ml, meta, ctx);
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
     if (arch_name == "qwen35")    handle_qwen35   (ml, meta, ctx);
@@ -1764,6 +1900,8 @@ void translate_metadata(const llama_model_loader * ml,
     // arch_name to "qwen2vl" so the loader uses qwen2vl.* keys.
     if (arch_name == "qwen25vl")      handle_qwen25vl      (ml, meta, ctx, arch_name);
     if (arch_name == "qwen3vl")       handle_qwen3vl       (ml, meta, ctx);
+    // glm4moelite switches arch_name to "deepseek2" — same pattern.
+    if (arch_name == "glm4moelite")   handle_glm4moelite   (ml, meta, ctx, arch_name);
     if (arch_name == "deepseekocr")   handle_deepseekocr   (ml, meta, ctx, arch_name);
     if (arch_name == "nemotron_h_moe") handle_nemotron_h_moe(ml, meta, ctx);
     if (arch_name == "llama4")        handle_llama4        (ml, meta, ctx);
