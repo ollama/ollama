@@ -387,6 +387,10 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 }
 
 func writeFile(f *os.File, kv KV, ts []*ggml.Tensor) error {
+	for k, v := range sourceTensorKV(ts) {
+		kv[k] = v
+	}
+
 	for i := range ts {
 		ts[i].Shape = slices.Clone(ts[i].Shape)
 		slices.Reverse(ts[i].Shape)

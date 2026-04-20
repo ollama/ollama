@@ -494,15 +494,18 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	for _, layer := range baseLayers {
 		if layer.GGML != nil {
 			quantType := strings.ToUpper(cmp.Or(r.Quantize, r.Quantization))
+			ft := layer.GGML.KV().FileType()
+			if quantType == "" && hasSourceFP8Tensors(layer.GGML.KV()) && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" && slices.Contains([]string{"F16", "BF16", "F32"}, ft.String()) {
+				quantType = "Q8_0"
+			}
 			if quantType != "" && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" {
 				want, err := ggml.ParseFileType(quantType)
 				if err != nil {
 					return err
 				}
 
-				ft := layer.GGML.KV().FileType()
-				if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
-					return errors.New("quantization is only supported for F16 and F32 models")
+				if !slices.Contains([]string{"F16", "BF16", "F32"}, ft.String()) {
+					return errors.New("quantization is only supported for F16, BF16 and F32 models")
 				} else if ft != want {
 					layer, err = quantizeLayer(layer, quantType, fn)
 					if err != nil {
@@ -604,6 +607,10 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	}
 
 	return nil
+}
+
+func hasSourceFP8Tensors(kv ggml.KV) bool {
+	return kv.String("source_quantization") == "hf_fp8" && len(kv.Strings("source_fp8_tensors")) > 0
 }
 
 func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.ProgressResponse)) (*layerGGML, error) {

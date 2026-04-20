@@ -51,11 +51,14 @@ func (q quantizer) WriteTo(w io.Writer) (int64, error) {
 }
 
 type quantizeState struct {
-	nAttnV    int  // Number of attn_*v* weight tensors
-	nFfnDown  int  // Number of ffn_down tensors
-	iAttnV    int  // Running counter of number of attn_v tensors that have been processed
-	iFfnDown  int  // Running counter of number of ffn_down tensors that have been processed
-	hasOutput bool // used to figure out if a model shares tok_embd with the output weight
+	nAttnV                int  // Number of attn_*v* weight tensors
+	nFfnDown              int  // Number of ffn_down tensors
+	iAttnV                int  // Running counter of number of attn_v tensors that have been processed
+	iFfnDown              int  // Running counter of number of ffn_down tensors that have been processed
+	hasOutput             bool // used to figure out if a model shares tok_embd with the output weight
+	preserveSourceFP8ToQ8 bool
+	preserveSourceQ4      bool
+	sourceFP8Tensors      map[string]struct{}
 }
 
 func useMoreBits(iLayer, nLayers int) bool {
@@ -120,10 +123,10 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 			newType = fsggml.TensorTypeQ6_K
 		}
 	} else if strings.Contains(name, "attn_v.weight") {
-		if (ftype == fsggml.FileTypeQ4_K_M) &&
+		if newType != fsggml.TensorTypeQ8_0 && (ftype == fsggml.FileTypeQ4_K_M) &&
 			useMoreBits(qs.iAttnV, qs.nAttnV) {
 			newType = fsggml.TensorTypeQ6_K
-		} else if ftype == fsggml.FileTypeQ4_K_S && qs.iAttnV < 4 {
+		} else if newType != fsggml.TensorTypeQ8_0 && ftype == fsggml.FileTypeQ4_K_S && qs.iAttnV < 4 {
 			newType = fsggml.TensorTypeQ5_K
 		}
 
@@ -164,21 +167,21 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 			qs.iFfnDown++
 		}
 		n_layer := qs.nFfnDown
-		if ftype == fsggml.FileTypeQ4_K_M {
+		if newType != fsggml.TensorTypeQ8_0 && ftype == fsggml.FileTypeQ4_K_M {
 			if useMoreBits(iLayer, n_layer) {
 				newType = fsggml.TensorTypeQ6_K
 			}
-		} else if ftype == fsggml.FileTypeQ4_K_S && iLayer < n_layer/8 {
+		} else if newType != fsggml.TensorTypeQ8_0 && ftype == fsggml.FileTypeQ4_K_S && iLayer < n_layer/8 {
 			newType = fsggml.TensorTypeQ5_K
 		}
 	} else if strings.Contains(name, "attn_output.weight") {
-		if nExperts == 8 {
+		if newType != fsggml.TensorTypeQ8_0 && nExperts == 8 {
 			if ftype == fsggml.FileTypeQ4_K_S || ftype == fsggml.FileTypeQ4_K_M {
 				newType = fsggml.TensorTypeQ5_K
 			}
 		}
 	} else if strings.Contains(name, "attn_qkv.weight") {
-		if ftype == fsggml.FileTypeQ4_K_M {
+		if newType != fsggml.TensorTypeQ8_0 && ftype == fsggml.FileTypeQ4_K_M {
 			newType = fsggml.TensorTypeQ5_K
 		}
 	}
@@ -218,7 +221,12 @@ func quantize(in, out *os.File, orig *fsggml.GGML, newFileType fsggml.FileType, 
 	kv := maps.Clone(orig.KV())
 	kv["general.file_type"] = newFileType
 	// kv["general.quantization_version"] = ggml.QuantizationVersion()
-	qs := &quantizeState{}
+	qs := &quantizeState{
+		sourceFP8Tensors: sourceFP8TensorSet(kv),
+	}
+	hasSourceFP8 := hasSourceFP8Tensors(kv)
+	qs.preserveSourceFP8ToQ8 = hasSourceFP8 && newFileType == fsggml.FileTypeQ8_0
+	qs.preserveSourceQ4 = hasSourceFP8 && slices.Contains([]fsggml.FileType{fsggml.FileTypeQ4_K_M, fsggml.FileTypeQ4_K_S}, newFileType)
 	// Build up the quantize state so newType can adjust types
 	layerCount := 0
 	for k, l := range orig.Tensors().GroupLayers() {
@@ -304,6 +312,12 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 
 	newType := fsggml.TensorType(t.Kind)
 	if quantize {
+		if qs.preserveSourceFP8ToQ8 {
+			if _, ok := qs.sourceFP8Tensors[name]; !ok {
+				return newType
+			}
+		}
+
 		if slices.Contains([]string{"qwen3next", "qwen35", "qwen35moe"}, kv.Architecture()) && (ftype == fsggml.FileTypeQ4_K_M || ftype == fsggml.FileTypeQ4_K_S) {
 			if qt, ok := qwen3LinearAttnQuantType(name); ok {
 				return qt
@@ -311,10 +325,28 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 		}
 
 		// get more optimal quantization type based on the tensor shape, layer, etc.
+		if qs.preserveSourceQ4 {
+			if _, ok := qs.sourceFP8Tensors[name]; !ok {
+				defaultType = fsggml.TensorTypeQ8_0
+			}
+		}
 		newType = getTensorNewType(kv, qs, defaultType, t.Name, t.Shape, ftype)
 		if newType != defaultType {
 			slog.Debug("tensor quantization adjusted for better quality", "name", t.Name, "requested", defaultType, "quantization", newType)
 		}
 	}
 	return newType
+}
+
+func sourceFP8TensorSet(kv fsggml.KV) map[string]struct{} {
+	names := kv.Strings("source_fp8_tensors")
+	if len(names) == 0 {
+		return nil
+	}
+
+	out := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		out[name] = struct{}{}
+	}
+	return out
 }
