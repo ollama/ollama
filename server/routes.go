@@ -2408,7 +2408,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// current approach uses the transition from parsed thinking content to
 			// parsed non-thinking content as the signal to turn constraining on
 
-			if req.Format != nil && structuredOutputsState == structuredOutputsState_None && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
+			// TODO(parthsareen): temporary fix for https://github.com/ollama/ollama/issues/15260.
+			// To revisit for other models and have a consistent pattern across models through parsers.
+			forceImmediate := m.Config.Parser == "gemma4" && req.Think != nil && !req.Think.Bool()
+			if req.Format != nil && structuredOutputsState == structuredOutputsState_None && !forceImmediate && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
 				currentFormat = nil
 			}
 
