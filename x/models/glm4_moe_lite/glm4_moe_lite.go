@@ -88,7 +88,7 @@ type MLAAttention struct {
 }
 
 // Forward computes absorbed MLA attention output.
-func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	q := a.QAProj.Forward(x)
 	q = a.QALayerNorm.Forward(q, cfg.RMSNormEps)
 	q = a.QBProj.Forward(q)
@@ -110,12 +110,8 @@ func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Con
 	kvLatent := a.KVALayerNorm.Forward(kvCompressed, cfg.RMSNormEps)
 	kvLatent = mlx.ExpandDims(kvLatent, 1)
 
-	offset := 0
-	if c != nil {
-		offset = c.Offset()
-	}
-	qPE = mlx.RoPEWithBase(qPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, offset)
-	kPE = mlx.RoPEWithBase(kPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, offset)
+	qPE = mlx.RoPEWithBase(qPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, positions)
+	kPE = mlx.RoPEWithBase(kPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, positions)
 
 	qLatent := a.EmbedQ.Forward(qNope)
 
@@ -310,11 +306,11 @@ type DenseBlock struct {
 }
 
 // Forward applies the dense block
-func (b *DenseBlock) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
-	r := b.Attention.Forward(b.InputLayerNorm.Forward(x, cfg.RMSNormEps), c, B, L, cfg)
+func (blk *DenseBlock) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+	r := blk.Attention.Forward(blk.InputLayerNorm.Forward(x, cfg.RMSNormEps), c, positions, B, L, cfg)
 	h := mlx.Add(x, r)
 
-	r = b.MLP.Forward(b.PostAttentionLayerNorm.Forward(h, cfg.RMSNormEps))
+	r = blk.MLP.Forward(blk.PostAttentionLayerNorm.Forward(h, cfg.RMSNormEps))
 	return mlx.Add(h, r)
 }
 
@@ -327,17 +323,17 @@ type MoEBlock struct {
 }
 
 // Forward applies the MoE block
-func (b *MoEBlock) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
-	r := b.Attention.Forward(b.InputLayerNorm.Forward(x, cfg.RMSNormEps), c, B, L, cfg)
+func (blk *MoEBlock) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+	r := blk.Attention.Forward(blk.InputLayerNorm.Forward(x, cfg.RMSNormEps), c, positions, B, L, cfg)
 	h := mlx.Add(x, r)
 
-	r = b.MoE.Forward(b.PostAttentionLayerNorm.Forward(h, cfg.RMSNormEps), cfg)
+	r = blk.MoE.Forward(blk.PostAttentionLayerNorm.Forward(h, cfg.RMSNormEps), cfg)
 	return mlx.Add(h, r)
 }
 
 // Block interface for both dense and MoE blocks
 type Block interface {
-	Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array
+	Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array
 }
 
 // Model represents the complete GLM4-MoE-Lite model
@@ -702,6 +698,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
+	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
 	h := m.EmbedTokens.Forward(b.InputIDs)
 
@@ -710,7 +707,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		if caches != nil {
 			c = caches[i]
 		}
-		h = layer.Forward(h, c, B, L, m.Config)
+		h = layer.Forward(h, c, positions, B, L, m.Config)
 	}
 
 	h = m.Norm.Forward(h, m.RMSNormEps)

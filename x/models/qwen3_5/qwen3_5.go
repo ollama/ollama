@@ -1127,7 +1127,7 @@ func splitQKVZBA(mixedQKVZ, mixedBA *mlx.Array, cfg *Config, B, L int32) (q, k, 
 	return q, k, v, z, b, a
 }
 
-func (a *FullAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (a *FullAttention) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	qg := a.QProj.Forward(x)
 	qg = mlx.Reshape(qg, B, L, cfg.NumAttentionHeads, cfg.HeadDim*2)
 	q := mlx.SliceStartStop(qg, []int32{0, 0, 0, 0}, []int32{B, L, cfg.NumAttentionHeads, cfg.HeadDim})
@@ -1146,12 +1146,8 @@ func (a *FullAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	offset := 0
-	if c != nil {
-		offset = c.Offset()
-	}
-	q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, offset)
-	k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, offset)
+	q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+	k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
 
 	if c != nil {
 		k, v = c.Update(k, v)
@@ -1333,13 +1329,13 @@ func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	return mlx.Reshape(y, B, L, cfg.HiddenSize)
 }
 
-func (l *Layer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	var r *mlx.Array
 	normed := l.InputNorm.Forward(x, cfg.RMSNormEps)
 	if l.IsLinear {
 		r = l.Linear.Forward(normed, c, B, L, cfg)
 	} else {
-		r = l.FullAttn.Forward(normed, c, B, L, cfg)
+		r = l.FullAttn.Forward(normed, c, positions, B, L, cfg)
 	}
 	h := mlx.Add(x, r)
 	r = l.MLP.Forward(l.PostAttentionNorm.Forward(h, cfg.RMSNormEps), cfg)
@@ -1349,6 +1345,7 @@ func (l *Layer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *m
 func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
+	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
 	h := m.EmbedTokens.Forward(b.InputIDs)
 	for i, layer := range m.Layers {
@@ -1356,7 +1353,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
-		h = layer.Forward(h, c, B, L, m.Config)
+		h = layer.Forward(h, c, positions, B, L, m.Config)
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
 	return out

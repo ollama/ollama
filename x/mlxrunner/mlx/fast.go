@@ -44,29 +44,3 @@ func (r *RMSNorm) Forward(x *Array, eps float32) *Array {
 	return out
 }
 
-type RoPE struct {
-	Dims        int
-	Traditional bool
-	Base        float32 `json:"rope_theta"`
-	Scale       float32
-}
-
-func (r RoPE) Forward(t *Array, offset int) *Array {
-	freqs := New("")
-	out := New("FAST_ROPE")
-	C.mlx_fast_rope(
-		&out.ctx,
-		t.ctx,
-		C.int(r.Dims),
-		C._Bool(r.Traditional),
-		C.mlx_optional_float{
-			value:     C.float(r.Base),
-			has_value: C._Bool(func() bool { return r.Base != 0 }()),
-		},
-		C.float(r.Scale),
-		C.int(offset),
-		freqs.ctx,
-		DefaultStream().ctx,
-	)
-	return out
-}

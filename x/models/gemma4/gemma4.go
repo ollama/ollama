@@ -90,8 +90,7 @@ type TextConfig struct {
 
 // sharedKVEntry stores cached KV state from a donor layer for KV sharing.
 type sharedKVEntry struct {
-	K, V   *mlx.Array
-	Offset int // RoPE offset from donor's cache
+	K, V *mlx.Array
 }
 
 // Attention implements Gemma 4 attention with Q/K normalization and v-norm.
@@ -1017,6 +1016,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
+	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 	h := m.EmbedTokens.Forward(b.InputIDs)
 	h = mlx.MulScalar(h, m.EmbedScale)
 
@@ -1063,7 +1063,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		}
 
 		var donorKV *sharedKVEntry
-		h, donorKV = layer.Forward(h, c, B, L, m.TextConfig, pleInput, donorEntry, smc)
+		h, donorKV = layer.Forward(h, c, positions, B, L, m.TextConfig, pleInput, donorEntry, smc)
 
 		// If this layer is a donor, store its cached KV for later shared layers.
 		if layer.IsDonor && donorKV != nil {
@@ -1189,9 +1189,9 @@ func sliceLayerDim(combined *mlx.Array, layerIdx, B, L, pleDim int32) *mlx.Array
 	return mlx.Squeeze(sliced, 2)
 }
 
-func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donorEntry *sharedKVEntry, slidingMaskCache *slidingMaskCache) (*mlx.Array, *sharedKVEntry) {
+func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donorEntry *sharedKVEntry, slidingMaskCache *slidingMaskCache) (*mlx.Array, *sharedKVEntry) {
 	normed := mlx.RMSNormFn(x, l.InputNormScaled, cfg.RMSNormEps)
-	attnOut, donorKV := l.Attention.Forward(normed, c, B, L, l.IsSliding, cfg, donorEntry, slidingMaskCache)
+	attnOut, donorKV := l.Attention.Forward(normed, c, positions, B, L, l.IsSliding, cfg, donorEntry, slidingMaskCache)
 	attnOut = mlx.RMSNormFn(attnOut, l.PostAttnNormScaled, cfg.RMSNormEps)
 	h := mlx.Add(x, attnOut)
 
@@ -1239,7 +1239,7 @@ func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Tex
 	return h, donorKV
 }
 
-func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding bool, cfg *TextConfig, donorEntry *sharedKVEntry, slidingMaskCache *slidingMaskCache) (*mlx.Array, *sharedKVEntry) {
+func (a *Attention) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, isSliding bool, cfg *TextConfig, donorEntry *sharedKVEntry, slidingMaskCache *slidingMaskCache) (*mlx.Array, *sharedKVEntry) {
 	// Determine head dim and scale based on layer type.
 	headDim := cfg.HeadDim
 	scale := cfg.SlidingScale
@@ -1259,18 +1259,11 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 	// Apply Q norm.
 	q = mlx.RMSNormFn(q, a.QNormScaled, cfg.RMSNormEps)
 
-	// RoPE offset: use cache offset for non-shared layers, donor offset for shared.
-	offset := 0
-	if donorEntry != nil {
-		offset = donorEntry.Offset - int(L)
-	} else if c != nil {
-		offset = c.Offset()
-	}
 	var ropeFreqs *mlx.Array
 	if !isSliding {
 		ropeFreqs = cfg.FullRopeFreqs
 	}
-	q = mlx.RoPEWithFreqs(q, ropeDims, false, ropeBase, 1.0, offset, ropeFreqs)
+	q = mlx.RoPEWithFreqs(q, ropeDims, false, ropeBase, 1.0, positions, ropeFreqs)
 
 	var k, v *mlx.Array
 	var donorKV *sharedKVEntry
@@ -1304,7 +1297,7 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 		k = mlx.RMSNormFn(k, a.KNormScaled, cfg.RMSNormEps)
 
 		// Apply RoPE to K.
-		k = mlx.RoPEWithFreqs(k, ropeDims, false, ropeBase, 1.0, offset, ropeFreqs)
+		k = mlx.RoPEWithFreqs(k, ropeDims, false, ropeBase, 1.0, positions, ropeFreqs)
 
 		// Apply V norm (no learnable weight, pure RMS normalization).
 		v = mlx.RMSNormFn(v, nil, cfg.RMSNormEps)
@@ -1312,7 +1305,7 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 		// Update cache.
 		if c != nil {
 			k, v = c.Update(k, v)
-			donorKV = &sharedKVEntry{K: k, V: v, Offset: c.Offset()}
+			donorKV = &sharedKVEntry{K: k, V: v}
 		}
 	}
 
