@@ -49,14 +49,15 @@ func (r *Runner) Prepare(request *Request) error {
 	return nil
 }
 
+// The runner serializes requests today so we just use a fixed slot ID.
+const pipelineSlot = 0
+
 func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) error {
 	mlx.ResetPeakMemory()
 	var sample, nextSample sampler.Result
 
 	defer func() {
-		if request.Sampler != nil {
-			request.Sampler.Free()
-		}
+		r.Sampler.Remove(pipelineSlot)
 		mlx.Unpin(sample.Arrays()...)
 		mlx.Unpin(nextSample.Arrays()...)
 		mlx.Sweep()
@@ -70,7 +71,6 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	}()
 
 	inputs := request.Tokens
-	request.Sampler.ResetHistory(inputs)
 
 	session := r.cache.begin(r.Model, inputs)
 	defer session.close()
@@ -122,7 +122,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			}
 		}
 
-		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
+		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], 1, n), caches)
 		mlx.Sweep()
 		materializeCaches()
 		processed += n
@@ -139,21 +139,28 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		mlx.ClearCache()
 	}
 
+	// Register the sampler after prefill completes.
+	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
+
 	step := func(token *mlx.Array) sampler.Result {
-		fwd := r.Model.Forward(token.ExpandDims(0), caches)
+		fwd := r.Model.Forward(token, caches)
 		logits := r.Model.Unembed(fwd)
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 
-		sample := request.Sampler.Sample(logits)
+		sample := r.Sampler.Sample([]int{pipelineSlot}, logits)
 		mlx.Pin(sample.Arrays()...)
 		mlx.Sweep()
 		mlx.AsyncEval(sample.Arrays()...)
 		return sample
 	}
 
-	sample = step(mlx.FromValues(tokens[processed:], total-processed))
+	sample = step(mlx.FromValues(tokens[processed:], 1, total-processed))
 
-	dec := decoder{tokenizer: r.Tokenizer}
+	dec := decoder{
+		tokenizer:       r.Tokenizer,
+		wantLogprobs:    request.SamplerOpts.Logprobs,
+		wantTopLogprobs: request.SamplerOpts.TopLogprobs,
+	}
 
 	final := CompletionResponse{Done: true, PromptEvalCount: len(inputs), EvalCount: request.Options.NumPredict, DoneReason: 1}
 	for i := range request.Options.NumPredict {
@@ -161,8 +168,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			return err
 		}
 
-		request.Sampler.AppendToken(sample.Token)
-		nextSample = step(sample.Token)
+		nextSample = step(sample.Token.ExpandDims(-1))
 
 		if i == 0 {
 			mlx.Eval(sample.Arrays()...)
@@ -209,15 +215,17 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 // with those bytes so Content and Logprobs stay aligned when a chunk does
 // flush.
 type decoder struct {
-	tokenizer *tokenizer.Tokenizer
-	buf       bytes.Buffer
-	logprobs  []llm.Logprob
+	tokenizer       *tokenizer.Tokenizer
+	buf             bytes.Buffer
+	logprobs        []llm.Logprob
+	wantLogprobs    bool
+	wantTopLogprobs int
 }
 
 func (d *decoder) decode(res sampler.Result) (CompletionResponse, bool) {
 	output := int32(res.Token.Int())
 	d.buf.WriteString(d.tokenizer.Decode([]int32{output}))
-	d.logprobs = append(d.logprobs, buildLogprob(res, d.tokenizer.Decode)...)
+	d.logprobs = append(d.logprobs, buildLogprob(res, d.wantLogprobs, d.wantTopLogprobs, d.tokenizer.Decode)...)
 
 	content := flushValidUTF8Prefix(&d.buf)
 	if content == "" {
@@ -228,8 +236,13 @@ func (d *decoder) decode(res sampler.Result) (CompletionResponse, bool) {
 	return resp, true
 }
 
-func buildLogprob(sample sampler.Result, decode func([]int32) string) []llm.Logprob {
-	if sample.Logprob == nil {
+// buildLogprob converts the sampler's logprob tensors into the wire-format
+// llm.Logprob entries the caller wants. The sampler populates its logprob
+// tensors whenever any registered slot requested them, so the caller must
+// gate emission on its own request config (wantLogprobs / wantTopLogprobs)
+// rather than on whether the tensors happen to be non-nil.
+func buildLogprob(sample sampler.Result, wantLogprobs bool, wantTopLogprobs int, decode func([]int32) string) []llm.Logprob {
+	if !wantLogprobs || sample.Logprob == nil {
 		return nil
 	}
 	tok := func(id int32) string { return decode([]int32{id}) }
@@ -241,7 +254,7 @@ func buildLogprob(sample sampler.Result, decode func([]int32) string) []llm.Logp
 		},
 	}
 
-	if sample.TopTokens != nil {
+	if wantTopLogprobs > 0 && sample.TopTokens != nil {
 		ids := sample.TopTokens.Ints()
 		vals := sample.TopLogprobs.Floats()
 		pairs := make([]llm.TokenLogprob, len(ids))
@@ -251,9 +264,14 @@ func buildLogprob(sample sampler.Result, decode func([]int32) string) []llm.Logp
 				Logprob: float64(vals[i]),
 			}
 		}
+		// The sampler emits the top maxK across registered slots via
+		// Argpartition, which leaves entries unsorted.
 		sort.Slice(pairs, func(i, j int) bool {
 			return pairs[i].Logprob > pairs[j].Logprob
 		})
+		if wantTopLogprobs < len(pairs) {
+			pairs = pairs[:wantTopLogprobs]
+		}
 		out.TopLogprobs = pairs
 	}
 	return []llm.Logprob{out}
