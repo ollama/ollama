@@ -407,15 +407,18 @@ func GatherMM(a, b *Array, lhsIndices, rhsIndices *Array, sortedIndices bool) *A
 	return a.GatherMM(b, lhsIndices, rhsIndices, sortedIndices)
 }
 
-func RoPEWithBase(x *Array, dims int, traditional bool, base, scale float32, offset int) *Array {
-	return RoPEWithFreqs(x, dims, traditional, base, scale, offset, nil)
+// RoPEWithBase applies rotary position embeddings to x. offsets is an
+// int32 array of shape [B] giving each batch row's starting position;
+// the kernel applies positions offsets[b] + 0..T-1 per row.
+func RoPEWithBase(x *Array, dims int, traditional bool, base, scale float32, offsets *Array) *Array {
+	return RoPEWithFreqs(x, dims, traditional, base, scale, offsets, nil)
 }
 
 // RoPEWithFreqs applies RoPE with optional custom frequencies.
 // When freqs is non-nil, it is used instead of computing from base.
 // Note: MLX takes reciprocal(freqs) internally to get inv_freq, so pass
 // the actual frequencies (base^(2i/dim)), not the inverse frequencies.
-func RoPEWithFreqs(x *Array, dims int, traditional bool, base, scale float32, offset int, freqs *Array) *Array {
+func RoPEWithFreqs(x *Array, dims int, traditional bool, base, scale float32, offsets *Array, freqs *Array) *Array {
 	var freqsCtx C.mlx_array
 	var optBase C.mlx_optional_float
 	if freqs != nil {
@@ -430,14 +433,14 @@ func RoPEWithFreqs(x *Array, dims int, traditional bool, base, scale float32, of
 		}
 	}
 	out := New("FAST_ROPE")
-	C.mlx_fast_rope(
+	C.mlx_fast_rope_dynamic(
 		&out.ctx,
 		x.ctx,
 		C.int(dims),
 		C.bool(traditional),
 		optBase,
 		C.float(scale),
-		C.int(offset),
+		offsets.ctx,
 		freqsCtx,
 		DefaultStream().ctx,
 	)
