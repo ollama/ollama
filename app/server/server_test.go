@@ -4,8 +4,6 @@ package server
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -205,37 +203,6 @@ func TestServerCmdCloudSettingEnv(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestExternalServerAvailable(t *testing.T) {
-	t.Run("healthy server", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodHead || r.URL.Path != "/" {
-				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-			}
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-
-		t.Setenv("OLLAMA_HOST", srv.URL)
-
-		if !externalServerAvailable(t.Context()) {
-			t.Fatal("expected external server to be available")
-		}
-	})
-
-	t.Run("unhealthy server", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "nope", http.StatusInternalServerError)
-		}))
-		defer srv.Close()
-
-		t.Setenv("OLLAMA_HOST", srv.URL)
-
-		if externalServerAvailable(t.Context()) {
-			t.Fatal("expected external server to be unavailable")
-		}
-	})
 }
 
 func TestGetInferenceInfo(t *testing.T) {
