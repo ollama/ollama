@@ -19,6 +19,12 @@ import (
 	"time"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
 // chunkedSession tracks accumulated PATCH body bytes for an upload session.
 // Tests that mock the registry use it to handle the GGUF-style POST → PATCH →
 // PUT-finalize flow without each test reimplementing the bookkeeping.
@@ -1602,6 +1608,38 @@ func TestManifestPush(t *testing.T) {
 	}
 
 	t.Logf("Manifest push test passed: received %d bytes at %s", len(manifestReceived), manifestPath)
+}
+
+func TestPushManifestContentType(t *testing.T) {
+	const mediaType = "application/vnd.ollama.manifest.list.v2+json"
+
+	var gotContentType, gotPath string
+	u := &uploader{
+		client: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				gotContentType = req.Header.Get("Content-Type")
+				gotPath = req.URL.Path
+				return &http.Response{
+					StatusCode: http.StatusCreated,
+					Body:       io.NopCloser(strings.NewReader("")),
+					Header:     make(http.Header),
+					Request:    req,
+				}, nil
+			}),
+		},
+		baseURL:   "https://example.com",
+		userAgent: "test",
+	}
+
+	if err := u.pushManifest(context.Background(), "library/test-model", "latest", []byte("{}"), mediaType); err != nil {
+		t.Fatal(err)
+	}
+	if gotContentType != mediaType {
+		t.Fatalf("content type = %q, want %q", gotContentType, mediaType)
+	}
+	if gotPath != "/v2/library/test-model/manifests/latest" {
+		t.Fatalf("path = %q", gotPath)
+	}
 }
 
 // ==================== Throughput Benchmarks ====================

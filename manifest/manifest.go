@@ -1,27 +1,143 @@
 package manifest
 
 import (
+	"bytes"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"sync"
 
 	"github.com/ollama/ollama/types/model"
 )
 
-type Manifest struct {
-	SchemaVersion int     `json:"schemaVersion"`
-	MediaType     string  `json:"mediaType"`
-	Config        Layer   `json:"config"`
-	Layers        []Layer `json:"layers"`
+var (
+	blobFilenamePattern = regexp.MustCompile(`^sha256-[0-9a-fA-F]{64}$`)
+	manifestStoreMu     sync.Mutex
 
-	filepath string
-	fi       os.FileInfo
-	digest   string
+	testBeforeManifestLinkReplace func()
+
+	// ErrNoCompatibleManifest is returned when a manifest list does not contain
+	// a child manifest for the requested runner.
+	ErrNoCompatibleManifest = errors.New("no compatible manifest found")
+)
+
+const (
+	MediaTypeManifest     = "application/vnd.docker.distribution.manifest.v2+json"
+	MediaTypeManifestList = "application/vnd.ollama.manifest.list.v2+json"
+
+	RunnerMLX      = "mlx"
+	RunnerGGML     = "ggml"
+	RunnerLlamaCPP = "llamacpp"
+
+	FormatSafetensors = "safetensors"
+	FormatGGUF        = "gguf"
+)
+
+type Manifest struct {
+	SchemaVersion int        `json:"schemaVersion"`
+	MediaType     string     `json:"mediaType"`
+	Config        Layer      `json:"config"`
+	Layers        []Layer    `json:"layers"`
+	Runner        string     `json:"runner,omitempty"`
+	Format        string     `json:"format,omitempty"`
+	Manifests     []Manifest `json:"manifests,omitempty"`
+
+	filepath       string
+	fi             os.FileInfo
+	digest         string
+	selectedDigest string
+	name           model.Name
+}
+
+func (m Manifest) isReference() bool {
+	return m.MediaType != MediaTypeManifestList && m.digest != "" && m.Config.Digest == "" && len(m.Layers) == 0
+}
+
+func (m Manifest) MarshalJSON() ([]byte, error) {
+	if m.MediaType == MediaTypeManifestList {
+		return json.Marshal(struct {
+			SchemaVersion int        `json:"schemaVersion"`
+			MediaType     string     `json:"mediaType"`
+			Manifests     []Manifest `json:"manifests"`
+		}{
+			SchemaVersion: m.SchemaVersion,
+			MediaType:     m.MediaType,
+			Manifests:     m.Manifests,
+		})
+	}
+
+	if m.isReference() {
+		return json.Marshal(struct {
+			MediaType string `json:"mediaType"`
+			Digest    string `json:"digest"`
+			Runner    string `json:"runner,omitempty"`
+			Format    string `json:"format,omitempty"`
+		}{
+			MediaType: m.MediaType,
+			Digest:    m.BlobDigest(),
+			Runner:    m.Runner,
+			Format:    m.Format,
+		})
+	}
+
+	return json.Marshal(struct {
+		SchemaVersion int     `json:"schemaVersion"`
+		MediaType     string  `json:"mediaType"`
+		Config        Layer   `json:"config"`
+		Layers        []Layer `json:"layers"`
+		Runner        string  `json:"runner,omitempty"`
+		Format        string  `json:"format,omitempty"`
+	}{
+		SchemaVersion: m.SchemaVersion,
+		MediaType:     m.MediaType,
+		Config:        m.Config,
+		Layers:        m.Layers,
+		Runner:        m.Runner,
+		Format:        m.Format,
+	})
+}
+
+func (m *Manifest) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		SchemaVersion int        `json:"schemaVersion"`
+		MediaType     string     `json:"mediaType"`
+		Config        Layer      `json:"config"`
+		Layers        []Layer    `json:"layers"`
+		Runner        string     `json:"runner,omitempty"`
+		Format        string     `json:"format,omitempty"`
+		Manifests     []Manifest `json:"manifests,omitempty"`
+		Digest        string     `json:"digest,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	*m = Manifest{
+		SchemaVersion: raw.SchemaVersion,
+		MediaType:     raw.MediaType,
+		Config:        raw.Config,
+		Layers:        raw.Layers,
+		Runner:        raw.Runner,
+		Format:        raw.Format,
+		Manifests:     raw.Manifests,
+	}
+	if raw.Digest != "" {
+		digest, err := canonicalBlobDigest(raw.Digest)
+		if err != nil {
+			return err
+		}
+		m.digest = strings.TrimPrefix(digest, "sha256:")
+	}
+
+	return nil
 }
 
 func (m *Manifest) Size() (size int64) {
@@ -32,8 +148,47 @@ func (m *Manifest) Size() (size int64) {
 	return
 }
 
+// TotalSizeForName returns the combined size of unique config and layer blobs
+// reachable from the named manifest object. Manifest blobs themselves are not
+// included in the total.
+func TotalSizeForName(n model.Name) (int64, error) {
+	if !n.IsFullyQualified() {
+		return 0, model.Unqualified(n)
+	}
+
+	p, root, err := resolveManifestPath(n)
+	if err != nil {
+		return 0, err
+	}
+
+	data, _, _, err := readVerifiedManifest(p, root)
+	if err != nil {
+		return 0, err
+	}
+
+	return totalSizeForManifestData(data)
+}
+
 func (m *Manifest) Digest() string {
 	return m.digest
+}
+
+// SelectedDigest returns the digest of the runnable manifest selected from a
+// manifest list. For non-list manifests, it is the same as Digest.
+func (m *Manifest) SelectedDigest() string {
+	if m.selectedDigest != "" {
+		return m.selectedDigest
+	}
+
+	return m.digest
+}
+
+func (m *Manifest) BlobDigest() string {
+	if m.digest == "" {
+		return ""
+	}
+
+	return "sha256:" + m.digest
 }
 
 func (m *Manifest) FileInfo() os.FileInfo {
@@ -58,144 +213,1289 @@ func (m *Manifest) ReadConfigJSON(configPath string, v any) error {
 	return fmt.Errorf("config %q not found in manifest", configPath)
 }
 
-func (m *Manifest) Remove() error {
-	if err := os.Remove(m.filepath); err != nil {
+// RemoveNamed removes a named manifest object and then removes any blobs that
+// were reachable only from that object.
+func RemoveNamed(n model.Name) error {
+	if digest, ok, err := ResolveDigestReferenceName(n); err != nil {
 		return err
+	} else if ok {
+		return removeDigestReference(digest)
 	}
 
-	manifests, err := Path()
+	candidates, err := ReferencedBlobDigestsForName(n)
 	if err != nil {
 		return err
 	}
 
-	return PruneDirectory(manifests)
+	if err := removeNamedManifestPaths(n); err != nil {
+		return err
+	}
+
+	_, err = RemoveUnreferencedBlobs(candidates...)
+	return err
 }
 
-func (m *Manifest) RemoveLayers() error {
-	ms, err := Manifests(true)
+func removeDigestReference(digest string) error {
+	data, err := readManifestBlob(digest)
 	if err != nil {
 		return err
 	}
 
-	// Build set of digests still in use by other manifests
-	inUse := make(map[string]struct{})
-	for _, other := range ms {
-		for _, layer := range append(other.Layers, other.Config) {
-			if layer.Digest != "" {
-				inUse[layer.Digest] = struct{}{}
-			}
-		}
+	digest, err = canonicalBlobDigest(digest)
+	if err != nil {
+		return err
 	}
 
-	// Remove layers not used by any other manifest
-	for _, layer := range append(m.Layers, m.Config) {
-		if layer.Digest == "" {
-			continue
-		}
-		if _, used := inUse[layer.Digest]; used {
-			continue
-		}
-		blob, err := BlobsPath(layer.Digest)
+	candidates, err := referencedBlobDigestsForData(digest, data)
+	if err != nil {
+		return err
+	}
+
+	extraCandidates, err := removeDigestFromManifestLists(digest)
+	if err != nil {
+		return err
+	}
+
+	if err := removeNamedManifestPathsForDigest(digest); err != nil {
+		return err
+	}
+
+	candidates = append(candidates, extraCandidates...)
+	_, err = RemoveUnreferencedBlobs(candidates...)
+	return err
+}
+
+func childManifestDigest(child Manifest) (string, error) {
+	if digest := child.BlobDigest(); digest != "" {
+		return digest, nil
+	}
+
+	data, err := json.Marshal(child)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("sha256:%x", sum), nil
+}
+
+func removeDigestFromManifestLists(digest string) ([]string, error) {
+	target := strings.TrimPrefix(digest, "sha256:")
+	refs, err := namedManifestRefs(true)
+	if err != nil {
+		return nil, err
+	}
+
+	var candidates []string
+	for n, ref := range refs {
+		data, _, parentDigest, err := readVerifiedManifest(ref.path, ref.root)
 		if err != nil {
-			return err
+			slog.Warn("bad manifest", "name", n, "error", err)
+			continue
 		}
-		if err := os.Remove(blob); os.IsNotExist(err) {
-			slog.Debug("layer does not exist", "digest", layer.Digest)
-		} else if err != nil {
+
+		parent, err := parseManifest(data)
+		if err != nil {
+			slog.Warn("bad manifest", "name", n, "error", err)
+			continue
+		}
+		if parent.MediaType != MediaTypeManifestList {
+			continue
+		}
+
+		kept := parent.Manifests[:0]
+		removed := false
+		for _, child := range parent.Manifests {
+			childDigest, err := childManifestDigest(child)
+			if err != nil {
+				return candidates, err
+			}
+			if strings.EqualFold(strings.TrimPrefix(childDigest, "sha256:"), target) {
+				removed = true
+				continue
+			}
+			kept = append(kept, child)
+		}
+		if !removed {
+			continue
+		}
+
+		candidates = append(candidates, blobDigest(parentDigest))
+		if len(kept) == 0 {
+			if err := removeNamedManifestPaths(n); err != nil {
+				return candidates, err
+			}
+			continue
+		}
+
+		parent.Manifests = kept
+		updated, err := json.Marshal(parent)
+		if err != nil {
+			return candidates, err
+		}
+		if err := WriteManifestData(n, updated); err != nil {
+			return candidates, err
+		}
+	}
+
+	return candidates, nil
+}
+
+func removeNamedManifestPathsForDigest(digest string) error {
+	digest, err := canonicalBlobDigest(digest)
+	if err != nil {
+		return err
+	}
+	target := strings.TrimPrefix(digest, "sha256:")
+
+	refs, err := namedManifestRefs(true)
+	if err != nil {
+		return err
+	}
+	for n, ref := range refs {
+		_, _, refDigest, err := readVerifiedManifest(ref.path, ref.root)
+		if err != nil {
+			slog.Warn("bad manifest", "name", n, "error", err)
+			continue
+		}
+		if !strings.EqualFold(refDigest, target) {
+			continue
+		}
+		if err := os.Remove(ref.path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
 
-	return nil
+	return pruneManifestRoots()
 }
 
-func ParseNamedManifest(n model.Name) (*Manifest, error) {
+// ReferencedBlobDigestsForName returns the blob digests reachable from the
+// named manifest object as stored on disk. Manifest lists include the parent
+// list blob, every child manifest blob, and each child's config and layer blobs.
+func ReferencedBlobDigestsForName(n model.Name) ([]string, error) {
 	if !n.IsFullyQualified() {
 		return nil, model.Unqualified(n)
 	}
 
-	manifests, err := Path()
+	p, root, err := resolveManifestPath(n)
 	if err != nil {
 		return nil, err
 	}
 
-	p := filepath.Join(manifests, n.Filepath())
+	data, _, digest, err := readVerifiedManifest(p, root)
+	if err != nil {
+		return nil, err
+	}
 
-	var m Manifest
-	f, err := os.Open(p)
+	return referencedBlobDigestsForData(digest, data)
+}
+
+// RetainedBlobDigests returns the complete set of blob digests reachable from
+// all named manifest objects in the local store.
+func RetainedBlobDigests() (map[string]struct{}, error) {
+	refs, err := namedManifestRefs(true)
+	if err != nil {
+		return nil, err
+	}
+
+	retained := make(map[string]struct{})
+	for n, ref := range refs {
+		data, _, digest, err := readVerifiedManifest(ref.path, ref.root)
+		if err != nil {
+			slog.Warn("bad manifest", "name", n, "error", err)
+			continue
+		}
+
+		digests, err := referencedBlobDigestsForData(digest, data)
+		if err != nil {
+			slog.Warn("bad manifest", "name", n, "error", err)
+			continue
+		}
+
+		for _, digest := range digests {
+			retained[digest] = struct{}{}
+		}
+	}
+
+	return retained, nil
+}
+
+func referencedBlobDigestsForData(manifestDigest string, data []byte) ([]string, error) {
+	var digests []string
+	seen := make(map[string]struct{})
+
+	add := func(digest string) error {
+		if digest == "" {
+			return nil
+		}
+
+		digest, err := canonicalBlobDigest(digest)
+		if err != nil {
+			return err
+		}
+		if _, ok := seen[digest]; ok {
+			return nil
+		}
+		seen[digest] = struct{}{}
+		digests = append(digests, digest)
+
+		return nil
+	}
+	addManifest := func(m *Manifest) error {
+		for _, layer := range append(m.Layers, m.Config) {
+			if err := add(layer.Digest); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	if err := add(blobDigest(manifestDigest)); err != nil {
+		return nil, err
+	}
+
+	m, err := parseManifest(data)
+	if err != nil {
+		return nil, err
+	}
+	if m.MediaType == MediaTypeManifestList {
+		for i := range m.Manifests {
+			child := &m.Manifests[i]
+			if err := add(child.BlobDigest()); err != nil {
+				return nil, err
+			}
+			if child.isReference() {
+				resolved, ok, err := parseManifestBlobIfExists(child.BlobDigest())
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					continue
+				}
+				child = resolved
+			}
+			if err := addManifest(child); err != nil {
+				return nil, err
+			}
+		}
+
+		return digests, nil
+	}
+
+	if err := addManifest(m); err != nil {
+		return nil, err
+	}
+
+	return digests, nil
+}
+
+func totalSizeForManifestData(data []byte) (int64, error) {
+	seen := make(map[string]struct{})
+
+	addLayer := func(layer Layer) (int64, error) {
+		if layer.Digest == "" {
+			return 0, nil
+		}
+
+		digest, err := canonicalBlobDigest(layer.Digest)
+		if err != nil {
+			return 0, err
+		}
+		if _, ok := seen[digest]; ok {
+			return 0, nil
+		}
+		seen[digest] = struct{}{}
+
+		return layer.Size, nil
+	}
+
+	addManifest := func(m *Manifest) (int64, error) {
+		var size int64
+		for _, layer := range append(m.Layers, m.Config) {
+			layerSize, err := addLayer(layer)
+			if err != nil {
+				return 0, err
+			}
+			size += layerSize
+		}
+
+		return size, nil
+	}
+
+	m, err := parseManifest(data)
+	if err != nil {
+		return 0, err
+	}
+	if m.MediaType == MediaTypeManifestList {
+		var size int64
+		for i := range m.Manifests {
+			child := &m.Manifests[i]
+			if child.isReference() {
+				resolved, ok, err := parseManifestBlobIfExists(child.BlobDigest())
+				if err != nil {
+					return 0, err
+				}
+				if !ok {
+					continue
+				}
+				child = resolved
+			}
+
+			childSize, err := addManifest(child)
+			if err != nil {
+				return 0, err
+			}
+			size += childSize
+		}
+
+		return size, nil
+	}
+
+	return addManifest(m)
+}
+
+// RemoveUnreferencedBlobs removes candidate blob digests that are not reachable
+// from any current manifest. It returns the number of blobs removed.
+func RemoveUnreferencedBlobs(candidates ...string) (int, error) {
+	manifestStoreMu.Lock()
+	defer manifestStoreMu.Unlock()
+
+	return removeUnreferencedBlobs(candidates...)
+}
+
+func removeUnreferencedBlobs(candidates ...string) (int, error) {
+	inUse, err := RetainedBlobDigests()
+	if err != nil {
+		return 0, err
+	}
+
+	var removed int
+	seen := make(map[string]struct{})
+	for _, digest := range candidates {
+		if digest == "" {
+			continue
+		}
+		digest, err = canonicalBlobDigest(digest)
+		if err != nil {
+			return removed, err
+		}
+		if _, ok := seen[digest]; ok {
+			continue
+		}
+		seen[digest] = struct{}{}
+		if _, used := inUse[digest]; used {
+			continue
+		}
+
+		blob, err := BlobsPath(digest)
+		if err != nil {
+			return removed, err
+		}
+		if err := os.Remove(blob); os.IsNotExist(err) {
+			slog.Debug("blob does not exist", "digest", digest)
+		} else if err != nil {
+			return removed, err
+		} else {
+			removed++
+		}
+	}
+
+	return removed, nil
+}
+
+func ParseNamedManifest(n model.Name) (*Manifest, error) {
+	return parseNamedManifest(n, runnerPreferences())
+}
+
+// ParseNamedManifestForRunner returns the named manifest selected for runner.
+// If the named object is a manifest list, runner must match one child entry.
+func ParseNamedManifestForRunner(n model.Name, runner string) (*Manifest, error) {
+	return parseNamedManifest(n, runnerPreferencesFor(runner))
+}
+
+func parseNamedManifest(n model.Name, preferences []string) (*Manifest, error) {
+	if !n.IsFullyQualified() {
+		return nil, model.Unqualified(n)
+	}
+
+	p, root, err := resolveManifestPath(n)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseManifestFile(normalizeLogicalName(n), p, root, preferences)
+}
+
+func ReadManifestData(n model.Name) ([]byte, error) {
+	if !n.IsFullyQualified() {
+		return nil, model.Unqualified(n)
+	}
+
+	p, root, err := resolveManifestPath(n)
+	if err != nil {
+		return nil, err
+	}
+
+	f, _, err := OpenVerifiedManifest(p, root)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	fi, err := f.Stat()
+	return io.ReadAll(f)
+}
+
+// ReadSelectedManifestData returns the runnable manifest bytes for a named
+// model. If the named object is a manifest list, it returns the selected child
+// manifest according to local runner preferences.
+func ReadSelectedManifestData(n model.Name) ([]byte, error) {
+	if !n.IsFullyQualified() {
+		return nil, model.Unqualified(n)
+	}
+
+	p, root, err := resolveManifestPath(n)
 	if err != nil {
 		return nil, err
 	}
 
-	sha256sum := sha256.New()
-	if err := json.NewDecoder(io.TeeReader(f, sha256sum)).Decode(&m); err != nil {
+	data, _, _, err := readVerifiedManifest(p, root)
+	if err != nil {
 		return nil, err
 	}
 
-	m.filepath = p
+	m, err := parseManifest(data)
+	if err != nil {
+		return nil, err
+	}
+	if m.MediaType == MediaTypeManifestList {
+		child, err := selectManifest(m.Manifests)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(child)
+	}
+
+	return data, nil
+}
+
+func parseManifestFile(name model.Name, path, root string, preferences []string) (*Manifest, error) {
+	data, fi, digest, err := readVerifiedManifest(path, root)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseManifestData(name, path, fi, digest, data, preferences)
+}
+
+func parseManifestData(name model.Name, path string, fi os.FileInfo, digest string, data []byte, preferences []string) (*Manifest, error) {
+	m, err := parseManifest(data)
+	if err != nil {
+		return nil, err
+	}
+	if m.MediaType == MediaTypeManifestList {
+		child, err := selectManifestWithPreferences(m.Manifests, preferences)
+		if err != nil {
+			return nil, err
+		}
+		selectedDigest := child.digest
+		child.filepath = path
+		child.fi = fi
+		child.digest = digest
+		child.selectedDigest = selectedDigest
+		child.name = name
+		return child, nil
+	}
+
+	if len(preferences) == 1 && m.Runner != "" && canonicalRunner(m.Runner) != canonicalRunner(preferences[0]) {
+		return nil, fmt.Errorf("%w for runners: %s", ErrNoCompatibleManifest, preferences[0])
+	}
+
+	m.Runner = canonicalRunner(m.Runner)
+	m.filepath = path
 	m.fi = fi
-	m.digest = hex.EncodeToString(sha256sum.Sum(nil))
+	m.digest = digest
+	m.name = name
+
+	return m, nil
+}
+
+func selectManifest(manifests []Manifest) (*Manifest, error) {
+	return selectManifestWithPreferences(manifests, runnerPreferences())
+}
+
+// SelectManifestReference returns the manifest-list child selected for the
+// current platform without resolving it from the local blob store.
+func SelectManifestReference(manifests []Manifest) (*Manifest, error) {
+	return selectManifestReferenceWithPreferences(manifests, runnerPreferences())
+}
+
+// SelectManifestReferenceForRunner returns the manifest-list child selected for runner
+// without resolving it from the local blob store.
+func SelectManifestReferenceForRunner(manifests []Manifest, runner string) (*Manifest, error) {
+	return selectManifestReferenceWithPreferences(manifests, runnerPreferencesFor(runner))
+}
+
+func selectManifestWithPreferences(manifests []Manifest, preferences []string) (*Manifest, error) {
+	for _, runner := range preferences {
+		child, err := selectManifestReferenceWithPreferences(manifests, []string{runner})
+		if err != nil {
+			if errors.Is(err, ErrNoCompatibleManifest) {
+				continue
+			}
+			return nil, err
+		}
+
+		resolved, ok, err := resolveLocalManifestReference(child)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return resolved, nil
+		}
+	}
+
+	return nil, fmt.Errorf("%w for runners: %s", ErrNoCompatibleManifest, strings.Join(preferences, ", "))
+}
+
+func resolveLocalManifestReference(child *Manifest) (*Manifest, bool, error) {
+	if child.isReference() {
+		childDigest := child.digest
+		resolved, ok, err := parseManifestBlobIfExists(child.BlobDigest())
+		if err != nil || !ok {
+			return nil, ok, err
+		}
+		if resolved.Runner == "" {
+			resolved.Runner = child.Runner
+		}
+		if resolved.Format == "" {
+			resolved.Format = child.Format
+		}
+		if resolved.digest == "" {
+			resolved.digest = childDigest
+		}
+		child = resolved
+	}
+	child.Runner = canonicalRunner(child.Runner)
+	return child, true, nil
+}
+
+func selectManifestReferenceWithPreferences(manifests []Manifest, preferences []string) (*Manifest, error) {
+	for _, runner := range preferences {
+		for i := range manifests {
+			if manifests[i].MediaType != "" && manifests[i].MediaType != MediaTypeManifest {
+				continue
+			}
+			if canonicalRunner(manifests[i].Runner) != "" && canonicalRunner(manifests[i].Runner) == canonicalRunner(runner) {
+				child := manifests[i]
+				if !child.isReference() && child.digest == "" {
+					canonical, err := json.Marshal(child)
+					if err != nil {
+						return nil, err
+					}
+					sum := sha256.Sum256(canonical)
+					child.digest = fmt.Sprintf("%x", sum)
+				}
+				child.Runner = canonicalRunner(child.Runner)
+				return &child, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("%w for runners: %s", ErrNoCompatibleManifest, strings.Join(preferences, ", "))
+}
+
+func runnerPreferences() []string {
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return []string{RunnerMLX, RunnerLlamaCPP, RunnerGGML}
+	}
+
+	return []string{RunnerLlamaCPP, RunnerGGML, RunnerMLX}
+}
+
+func runnerPreferencesFor(runner string) []string {
+	runner = canonicalRunner(runner)
+	if runner == "" {
+		return runnerPreferences()
+	}
+
+	return []string{runner}
+}
+
+func canonicalRunner(runner string) string {
+	return strings.ToLower(strings.TrimSpace(runner))
+}
+
+// MetadataForConfig returns the default manifest-list runner and weight format
+// for a model config. It is intentionally conservative: GGUF models created by
+// the legacy path are tagged ggml, while converted GGUF manifests can override
+// the runner to llamacpp when they are written.
+func MetadataForConfig(config model.ConfigV2) (runner, format string) {
+	switch strings.ToLower(config.ModelFormat) {
+	case FormatSafetensors:
+		return RunnerMLX, FormatSafetensors
+	case FormatGGUF, "ggml":
+		return RunnerGGML, FormatGGUF
+	default:
+		return "", strings.ToLower(config.ModelFormat)
+	}
+}
+
+// FillMetadataForConfig populates missing runner/format metadata using the
+// model config without overwriting explicit manifest-list child metadata.
+func FillMetadataForConfig(m *Manifest, config model.ConfigV2) {
+	runner, format := MetadataForConfig(config)
+	if m.Runner == "" {
+		m.Runner = runner
+	} else {
+		m.Runner = canonicalRunner(m.Runner)
+	}
+	if m.Format == "" {
+		m.Format = format
+	} else {
+		m.Format = strings.ToLower(strings.TrimSpace(m.Format))
+	}
+}
+
+func parseManifest(data []byte) (*Manifest, error) {
+	var m Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	if m.MediaType == MediaTypeManifestList {
+		for i := range m.Manifests {
+			if m.Manifests[i].MediaType == MediaTypeManifestList {
+				return nil, errors.New("nested manifest lists are not supported")
+			}
+			if m.Manifests[i].isReference() {
+				continue
+			}
+
+			canonical, err := json.Marshal(m.Manifests[i])
+			if err != nil {
+				return nil, err
+			}
+			sum := sha256.Sum256(canonical)
+			m.Manifests[i].digest = fmt.Sprintf("%x", sum)
+		}
+	}
 
 	return &m, nil
 }
 
-func WriteManifest(name model.Name, config Layer, layers []Layer) error {
-	manifests, err := Path()
-	if err != nil {
-		return err
-	}
-
-	p := filepath.Join(manifests, name.Filepath())
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
-	}
-
-	f, err := os.Create(p)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	m := Manifest{
-		SchemaVersion: 2,
-		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
-		Config:        config,
-		Layers:        layers,
-	}
-
-	return json.NewEncoder(f).Encode(m)
-}
-
-func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
-	manifests, err := Path()
+func readManifestBlob(digest string) ([]byte, error) {
+	digest, err := canonicalBlobDigest(digest)
 	if err != nil {
 		return nil, err
+	}
+
+	blobPath, err := BlobsPath(digest)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkBlobDigestReader(bytes.NewReader(data), digest); err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+func parseManifestBlobIfExists(digest string) (*Manifest, bool, error) {
+	data, err := readManifestBlob(digest)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	m, err := parseManifest(data)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return m, true, nil
+}
+
+func canonicalBlobDigest(digest string) (string, error) {
+	if _, err := BlobsPath(digest); err != nil {
+		return "", err
+	}
+
+	digest = strings.ToLower(strings.Replace(digest, "-", ":", 1))
+	return digest, nil
+}
+
+func blobDigest(digest string) string {
+	if digest == "" {
+		return ""
+	}
+
+	digest = strings.ToLower(digest)
+	if strings.HasPrefix(digest, "sha256:") || strings.HasPrefix(digest, "sha256-") {
+		return digest
+	}
+
+	return "sha256:" + digest
+}
+
+func WriteManifest(name model.Name, config Layer, layers []Layer) error {
+	return WriteManifestWithMetadata(name, config, layers, "", "")
+}
+
+// WriteManifestWithMetadata stores a single runnable manifest with optional
+// runner and weight format metadata.
+func WriteManifestWithMetadata(name model.Name, config Layer, layers []Layer, runner, format string) error {
+	m := Manifest{
+		SchemaVersion: 2,
+		MediaType:     MediaTypeManifest,
+		Config:        config,
+		Layers:        layers,
+		Runner:        canonicalRunner(runner),
+		Format:        format,
+	}
+
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(m); err != nil {
+		return err
+	}
+
+	return WriteManifestData(name, b.Bytes())
+}
+
+// NewManifestReference returns a manifest-list entry that points at an existing
+// child manifest blob.
+func NewManifestReference(digest, runner, format string) (Manifest, error) {
+	digest, err := canonicalBlobDigest(digest)
+	if err != nil {
+		return Manifest{}, err
+	}
+
+	return Manifest{
+		MediaType: MediaTypeManifest,
+		Runner:    canonicalRunner(runner),
+		Format:    format,
+		digest:    strings.TrimPrefix(digest, "sha256:"),
+	}, nil
+}
+
+// WriteManifestBlob stores raw manifest bytes as a content-addressed blob.
+func WriteManifestBlob(data []byte) (string, error) {
+	return writeManifestBlob(data)
+}
+
+// WriteManifestData stores raw manifest bytes as a content-addressed blob and
+// updates the v2 named manifest path to reference that blob. Any legacy named
+// manifest for the same model is removed after the v2 write succeeds.
+func WriteManifestData(name model.Name, data []byte) error {
+	return writeManifestData(name, data, true)
+}
+
+// WriteManifestDataPreserveLegacy updates the v2 named manifest path without
+// removing legacy manifest entries for the same model.
+func WriteManifestDataPreserveLegacy(name model.Name, data []byte) error {
+	return writeManifestData(name, data, false)
+}
+
+func writeManifestData(name model.Name, data []byte, removeLegacy bool) error {
+	if !name.IsFullyQualified() {
+		return model.Unqualified(name)
+	}
+
+	manifestStoreMu.Lock()
+	defer manifestStoreMu.Unlock()
+
+	digest, err := writeManifestBlob(data)
+	if err != nil {
+		return err
+	}
+
+	if err := linkManifest(name, digest); err != nil {
+		return err
+	}
+
+	if !removeLegacy {
+		return nil
+	}
+
+	return removeLegacyManifestPaths(name)
+}
+
+// WriteLegacyManifestData stores raw manifest bytes in the legacy named
+// manifest tree for compatibility with older Ollama releases.
+func WriteLegacyManifestData(name model.Name, data []byte) error {
+	if !name.IsFullyQualified() {
+		return model.Unqualified(name)
+	}
+
+	manifestStoreMu.Lock()
+	defer manifestStoreMu.Unlock()
+
+	name = normalizeLogicalName(name)
+	manifestPath, err := LegacyPathForName(name)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		return err
+	}
+
+	temp, err := os.CreateTemp(filepath.Dir(manifestPath), ".manifest-*")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tempName, 0o644); err != nil {
+		return err
+	}
+
+	return replaceManifestPath(tempName, manifestPath)
+}
+
+// LinkManifest updates the v2 named manifest path to reference an existing
+// manifest blob. It prefers symlinks, then hardlinks, then a byte-for-byte copy
+// for filesystems that do not support links.
+func LinkManifest(name model.Name, digest string) error {
+	if !name.IsFullyQualified() {
+		return model.Unqualified(name)
+	}
+
+	manifestStoreMu.Lock()
+	defer manifestStoreMu.Unlock()
+
+	return linkManifest(name, digest)
+}
+
+func linkManifest(name model.Name, digest string) error {
+	manifestPath, err := V2PathForName(name)
+	if err != nil {
+		return err
+	}
+	blobPath, err := BlobsPath(digest)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(blobPath); err != nil {
+		return err
+	}
+	if err := checkBlobDigest(blobPath, digest); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		return err
+	}
+
+	if rel, err := filepath.Rel(filepath.Dir(manifestPath), blobPath); err == nil {
+		tempName, err := tempManifestPath(filepath.Dir(manifestPath))
+		if err != nil {
+			return err
+		}
+		defer os.Remove(tempName)
+		if err := os.Symlink(rel, tempName); err == nil {
+			return replaceManifestPath(tempName, manifestPath)
+		}
+	}
+
+	tempName, err := tempManifestPath(filepath.Dir(manifestPath))
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tempName)
+	if err := os.Link(blobPath, tempName); err == nil {
+		return replaceManifestPath(tempName, manifestPath)
+	}
+
+	return copyManifestFile(blobPath, manifestPath)
+}
+
+func writeManifestBlob(data []byte) (string, error) {
+	sum := sha256.Sum256(data)
+	digest := fmt.Sprintf("sha256:%x", sum)
+
+	blobPath, err := BlobsPath(digest)
+	if err != nil {
+		return "", err
+	}
+	if existing, err := os.ReadFile(blobPath); err == nil && bytes.Equal(existing, data) {
+		return digest, nil
+	}
+
+	blobs, err := BlobsPath("")
+	if err != nil {
+		return "", err
+	}
+	temp, err := os.CreateTemp(blobs, "sha256-")
+	if err != nil {
+		return "", err
+	}
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return "", err
+	}
+	if err := temp.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(tempName, 0o644); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tempName, blobPath); err != nil {
+		if err := os.Remove(blobPath); err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		if err := os.Rename(tempName, blobPath); err != nil {
+			return "", err
+		}
+	}
+
+	return digest, nil
+}
+
+func copyManifestFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	temp, err := os.CreateTemp(filepath.Dir(dst), ".manifest-*")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+
+	if _, err := io.Copy(temp, in); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tempName, 0o644); err != nil {
+		return err
+	}
+
+	return replaceManifestPath(tempName, dst)
+}
+
+func tempManifestPath(dir string) (string, error) {
+	temp, err := os.CreateTemp(dir, ".manifest-*")
+	if err != nil {
+		return "", err
+	}
+	tempName := temp.Name()
+	if err := temp.Close(); err != nil {
+		os.Remove(tempName)
+		return "", err
+	}
+	if err := os.Remove(tempName); err != nil {
+		return "", err
+	}
+
+	return tempName, nil
+}
+
+func replaceManifestPath(tempName, dst string) error {
+	if testBeforeManifestLinkReplace != nil {
+		testBeforeManifestLinkReplace()
+	}
+
+	if err := os.Rename(tempName, dst); err == nil {
+		return nil
+	} else if runtime.GOOS != "windows" {
+		return err
+	}
+
+	// Windows does not replace an existing destination with Rename. The store
+	// mutex keeps this path safe within a process; callers still prepare the new
+	// ref before the old one is removed.
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	return os.Rename(tempName, dst)
+}
+
+// OpenVerifiedManifest opens a named manifest path rooted under root. Symlinks must resolve to a
+// blob whose basename is sha256-<hex> and whose bytes hash to that digest.
+// Regular-file manifests are treated as legacy/copy fallback manifests and are
+// opened without mutating the local store.
+func OpenVerifiedManifest(path, root string) (*os.File, string, error) {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, "", err
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, "", err
+	}
+
+	target, err := evalAbs(path)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		base := filepath.Base(target)
+		if !blobFilenamePattern.MatchString(base) {
+			return nil, "", fmt.Errorf("manifest symlink target %q is not a sha256 blob", target)
+		}
+
+		digest := strings.ToLower(strings.TrimPrefix(base, "sha256-"))
+		blobPath, err := BlobsPath("sha256:" + digest)
+		if err != nil {
+			return nil, "", err
+		}
+		if !sameFile(target, blobPath) {
+			return nil, "", fmt.Errorf("manifest symlink target %q does not match blob %q", target, blobPath)
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := checkBlobDigestReader(f, "sha256:"+digest); err != nil {
+			f.Close()
+			return nil, "", err
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			f.Close()
+			return nil, "", err
+		}
+
+		return f, digest, nil
+	}
+
+	if !pathWithin(target, resolvedRoot) {
+		return nil, "", fmt.Errorf("manifest path %q resolves outside manifest directory", path)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, "", err
+	}
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		f.Close()
+		return nil, "", err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		f.Close()
+		return nil, "", err
+	}
+	digest := fmt.Sprintf("%x", h.Sum(nil))
+
+	return f, digest, nil
+}
+
+// MigrateManifestLinks moves legacy named manifests into manifests-v2. This is currently unwired but
+// will be added in the future.
+func MigrateManifestLinks() (int, error) {
+	manifests, err := Path()
+	if err != nil {
+		return 0, err
 	}
 
 	// TODO(mxyng): use something less brittle
 	matches, err := filepath.Glob(filepath.Join(manifests, "*", "*", "*", "*"))
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	ms := make(map[model.Name]*Manifest)
+	var migrated int
 	for _, match := range matches {
 		fi, err := os.Stat(match)
 		if err != nil {
-			return nil, err
+			return migrated, err
+		}
+		if fi.IsDir() {
+			continue
+		}
+
+		rel, err := filepath.Rel(manifests, match)
+		if err != nil {
+			return migrated, fmt.Errorf("%s %w", match, err)
+		}
+
+		n := model.ParseNameFromFilepath(rel)
+		if !n.IsFullyQualified() {
+			slog.Warn("bad manifest name", "path", rel)
+			continue
+		}
+
+		data, err := readManifestPath(match, manifests)
+		if err != nil {
+			return migrated, err
+		}
+		if err := WriteManifestData(normalizeLogicalName(n), data); err != nil {
+			return migrated, err
+		}
+		migrated++
+	}
+
+	return migrated, nil
+}
+
+func readManifestPath(path, root string) ([]byte, error) {
+	data, _, _, err := readVerifiedManifest(path, root)
+	return data, err
+}
+
+func readVerifiedManifest(path, root string) ([]byte, os.FileInfo, string, error) {
+	f, digest, err := OpenVerifiedManifest(path, root)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	return data, fi, digest, nil
+}
+
+func pathWithin(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
+}
+
+func evalAbs(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
+
+func sameFile(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
+}
+
+func checkBlobDigest(path, digest string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	return checkBlobDigestReader(f, digest)
+}
+
+func checkBlobDigestReader(r io.Reader, digest string) error {
+	h := sha256.New()
+	if _, err := io.Copy(h, r); err != nil {
+		return err
+	}
+
+	got := fmt.Sprintf("sha256:%x", h.Sum(nil))
+	if got != strings.ToLower(strings.Replace(digest, "-", ":", 1)) {
+		return errors.New("digest mismatch")
+	}
+
+	return nil
+}
+
+func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
+	refs, err := namedManifestRefs(continueOnError)
+	if err != nil {
+		return nil, err
+	}
+
+	ms := make(map[model.Name]*Manifest, len(refs))
+	for n, ref := range refs {
+		m, err := parseManifestFile(n, ref.path, ref.root, runnerPreferences())
+		if err != nil {
+			if !continueOnError {
+				return nil, fmt.Errorf("%s %w", n, err)
+			}
+			slog.Warn("bad manifest", "name", n, "error", err)
+			continue
+		}
+
+		ms[n] = m
+	}
+	return ms, nil
+}
+
+type namedManifestRef struct {
+	path string
+	root string
+}
+
+func namedManifestRefs(continueOnError bool) (map[model.Name]namedManifestRef, error) {
+	refs := make(map[model.Name]namedManifestRef)
+
+	manifestsV2, err := V2Path()
+	if err != nil {
+		return nil, err
+	}
+	if err := collectManifestRefs(refs, manifestsV2, continueOnError); err != nil {
+		return nil, err
+	}
+
+	manifests, err := Path()
+	if err != nil {
+		return nil, err
+	}
+	if err := collectManifestRefs(refs, manifests, continueOnError); err != nil {
+		return nil, err
+	}
+
+	return refs, nil
+}
+
+func collectManifestRefs(refs map[model.Name]namedManifestRef, root string, continueOnError bool) error {
+	// TODO(mxyng): use something less brittle
+	matches, err := filepath.Glob(filepath.Join(root, "*", "*", "*", "*"))
+	if err != nil {
+		return err
+	}
+
+	for _, match := range matches {
+		fi, err := os.Lstat(match)
+		if err != nil {
+			return err
 		}
 
 		if !fi.IsDir() {
-			rel, err := filepath.Rel(manifests, match)
+			rel, err := filepath.Rel(root, match)
 			if err != nil {
 				if !continueOnError {
-					return nil, fmt.Errorf("%s %w", match, err)
+					return fmt.Errorf("%s %w", match, err)
 				}
 				slog.Warn("bad filepath", "path", match, "error", err)
 				continue
@@ -204,24 +1504,20 @@ func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
 			n := model.ParseNameFromFilepath(rel)
 			if !n.IsValid() {
 				if !continueOnError {
-					return nil, fmt.Errorf("%s %w", rel, err)
+					return fmt.Errorf("invalid manifest name: %s", rel)
 				}
 				slog.Warn("bad manifest name", "path", rel)
 				continue
 			}
 
-			m, err := ParseNamedManifest(n)
-			if err != nil {
-				if !continueOnError {
-					return nil, fmt.Errorf("%s %w", n, err)
-				}
-				slog.Warn("bad manifest", "name", n, "error", err)
+			n = normalizeLogicalName(n)
+			if _, ok := refs[n]; ok {
 				continue
 			}
 
-			ms[n] = m
+			refs[n] = namedManifestRef{path: match, root: root}
 		}
 	}
 
-	return ms, nil
+	return nil
 }

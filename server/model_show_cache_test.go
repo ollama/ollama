@@ -117,6 +117,69 @@ func TestModelShowCacheLocalVerboseVariantsAreSeparate(t *testing.T) {
 	}
 }
 
+func TestModelShowCacheLocalKeyUsesRunnerSelectionAndParentDigest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeShowManifestVariant(t, "show-cache-mlx", manifest.RunnerMLX, manifest.FormatSafetensors, modelpkg.ConfigV2{
+		ModelFormat:  manifest.FormatSafetensors,
+		Capabilities: []string{"completion"},
+	}, nil)
+	writeShowManifestVariant(t, "show-cache-ggml", manifest.RunnerGGML, manifest.FormatGGUF, modelpkg.ConfigV2{
+		ModelFormat:  manifest.FormatGGUF,
+		Capabilities: []string{"completion"},
+	}, map[string]any{"test.context_length": uint32(1024)})
+
+	mlxManifest, err := manifest.ParseNamedManifestForRunner(modelpkg.ParseName("show-cache-mlx"), manifest.RunnerMLX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlManifest, err := manifest.ParseNamedManifestForRunner(modelpkg.ParseName("show-cache-ggml"), manifest.RunnerGGML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mlxRef, err := manifest.NewManifestReference(mlxManifest.BlobDigest(), manifest.RunnerMLX, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlRef, err := manifest.NewManifestReference(ggmlManifest.BlobDigest(), manifest.RunnerGGML, manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{mlxRef, ggmlRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(modelpkg.ParseName("show-cache-list"), parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	key, digest, err := modelShowLocalKeyForRequest(api.ShowRequest{
+		Model:  "show-cache-list",
+		Runner: manifest.RunnerMLX,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.Runner != manifest.RunnerMLX {
+		t.Fatalf("runner = %q, want %q", key.Runner, manifest.RunnerMLX)
+	}
+	parent, err := manifest.ParseNamedManifestForRunner(modelpkg.ParseName("show-cache-list"), manifest.RunnerMLX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != parent.Digest() {
+		t.Fatalf("digest = %q, want parent manifest-list digest %q", digest, parent.Digest())
+	}
+	if digest == parent.SelectedDigest() {
+		t.Fatalf("digest = selected child digest %q; want parent digest so available-runners changes invalidate the cache", digest)
+	}
+}
+
 func TestModelShowCacheLocalHydrationSkipsUnchangedInMemory(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())

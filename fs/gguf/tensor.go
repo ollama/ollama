@@ -97,6 +97,7 @@ const (
 	tensorTypeIQ4_NL_4_4
 	tensorTypeIQ4_NL_4_8
 	tensorTypeIQ4_NL_8_8
+	TensorTypeMXFP4
 )
 
 func (tt TensorType) NumBytes() float64 {
@@ -163,6 +164,8 @@ func (tt TensorType) typeSize() int64 {
 		return tt.blockSize()/8 + tt.blockSize()/16 + tt.blockSize()/32
 	case TensorTypeBF16:
 		return 2
+	case 4, TensorTypeMXFP4:
+		return 1 + tt.blockSize()/2
 	default:
 		return 0
 	}
@@ -185,7 +188,8 @@ func (tt TensorType) blockSize() int64 {
 		TensorTypeQ5_1,
 		TensorTypeQ8_0,
 		TensorTypeQ8_1,
-		tensorTypeIQ4_NL:
+		tensorTypeIQ4_NL,
+		4, TensorTypeMXFP4:
 		return 32
 	default:
 		return 256
@@ -202,8 +206,6 @@ func (tt TensorType) String() string {
 		return "q4_0"
 	case TensorTypeQ4_1:
 		return "q4_1"
-	case tensorTypeQ4_2:
-		return "q4_2"
 	case tensorTypeQ4_3:
 		return "q4_3"
 	case TensorTypeQ5_0:
@@ -272,6 +274,8 @@ func (tt TensorType) String() string {
 		return "iq4_nl_4_8"
 	case tensorTypeIQ4_NL_8_8:
 		return "iq4_nl_8_8"
+	case 4, TensorTypeMXFP4:
+		return "mxfp4"
 	default:
 		return "unknown"
 	}

@@ -3,6 +3,8 @@ package convert
 import (
 	"cmp"
 	"fmt"
+	"io"
+	"slices"
 	"strings"
 
 	"github.com/pdevine/tensor"
@@ -60,9 +62,14 @@ type mistral3Model struct {
 	ProjectorHiddenAct      string `json:"projector_hidden_act"`
 }
 
+var _ MultimodalConverter = (*mistral3Model)(nil)
+
 func (p *mistral3Model) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "mistral3"
+	if kv["tokenizer.ggml.pre"] == "" || kv["tokenizer.ggml.pre"] == "default" {
+		kv["tokenizer.ggml.pre"] = "tekken"
+	}
 	kv["mistral3.vocab_size"] = p.TextModel.VocabSize
 
 	// Text configuration
@@ -117,6 +124,43 @@ func (p *mistral3Model) KV(t *Tokenizer) KV {
 	return kv
 }
 
+func (p *mistral3Model) TextKV(t *Tokenizer) KV {
+	kv := p.KV(t)
+	for key := range kv {
+		if strings.HasPrefix(key, "mistral3.vision.") || strings.HasPrefix(key, "mistral3.mm.") {
+			delete(kv, key)
+		}
+	}
+	delete(kv, "mistral3.image_token_index")
+	delete(kv, "mistral3.spatial_merge_size")
+	return kv
+}
+
+func (p *mistral3Model) ProjectorKV(*Tokenizer) KV {
+	return KV{
+		"general.architecture":                     "clip",
+		"general.type":                             "mmproj",
+		"general.file_type":                        uint32(1),
+		"general.quantization_version":             uint32(2),
+		"clip.has_vision_encoder":                  true,
+		"clip.projector_type":                      "pixtral",
+		"clip.vision.projection_dim":               p.TextModel.HiddenSize,
+		"clip.vision.image_size":                   p.VisionModel.ImageSize,
+		"clip.vision.patch_size":                   p.VisionModel.PatchSize,
+		"clip.vision.num_channels":                 p.VisionModel.NumChannels,
+		"clip.vision.embedding_length":             p.VisionModel.HiddenSize,
+		"clip.vision.feed_forward_length":          p.VisionModel.IntermediateSize,
+		"clip.vision.block_count":                  p.VisionModel.NumHiddenLayers,
+		"clip.vision.attention.head_count":         p.VisionModel.NumAttentionHeads,
+		"clip.vision.attention.layer_norm_epsilon": float32(1e-5),
+		"clip.vision.image_mean":                   []float32{0.48145466, 0.4578275, 0.40821073},
+		"clip.vision.image_std":                    []float32{0.26862954, 0.26130258, 0.27577711},
+		"clip.rope.freq_base":                      cmp.Or(p.VisionModel.RopeTheta, p.VisionModel.RopeParameters.RopeTheta),
+		"clip.use_silu":                            true,
+		"clip.vision.spatial_merge_size":           p.SpatialMergeSize,
+	}
+}
+
 func (p *mistral3Model) Tensors(ts []Tensor) []*ggml.Tensor {
 	var out []*ggml.Tensor
 
@@ -134,6 +178,51 @@ func (p *mistral3Model) Tensors(ts []Tensor) []*ggml.Tensor {
 			Shape:    t.Shape(),
 			WriterTo: t,
 		})
+	}
+
+	return out
+}
+
+func (p *mistral3Model) TextTensors(ts []Tensor, _ *Tokenizer) []*ggml.Tensor {
+	textOnly := slices.DeleteFunc(slices.Clone(ts), func(t Tensor) bool {
+		return mistral3VisionTensor(t.Name())
+	})
+	return p.Tensors(textOnly)
+}
+
+func (p *mistral3Model) ProjectorTensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
+	for _, t := range ts {
+		if t.Name() == "token_embd.weight" {
+			continue
+		}
+		if !mistral3VisionTensor(t.Name()) {
+			continue
+		}
+
+		name := mistral3ProjectorTensorName(t.Name())
+		kind := t.Kind()
+		var writer io.WriterTo = t
+
+		if name == "v.patch_embd.weight" {
+			kind = tensorKindFP32
+			writer = tensorFloat32Writer{tensor: t}
+		} else if mistral3VisionQKTensor(name) {
+			t.SetRepacker(func(name string, data []float32, shape []uint64) ([]float32, error) {
+				return mistral3RepackQK(name, data, shape, p.VisionModel.NumAttentionHeads)
+			})
+		}
+
+		out = append(out, &ggml.Tensor{
+			Name:     name,
+			Kind:     kind,
+			Shape:    slices.Clone(t.Shape()),
+			WriterTo: writer,
+		})
+	}
+
+	if imageBreak := mistral3ImageBreakTensor(p.TextModel.HiddenSize); imageBreak != nil {
+		out = append(out, imageBreak)
 	}
 
 	return out
@@ -173,11 +262,6 @@ func (p *mistral3Model) Replacements() []string {
 }
 
 func (p *mistral3Model) repack(name string, data []float32, shape []uint64) ([]float32, error) {
-	var dims []int
-	for _, dim := range shape {
-		dims = append(dims, int(dim))
-	}
-
 	var heads uint32
 	if strings.HasSuffix(name, ".attn_q.weight") {
 		heads = p.TextModel.NumAttentionHeads
@@ -185,6 +269,19 @@ func (p *mistral3Model) repack(name string, data []float32, shape []uint64) ([]f
 		heads = cmp.Or(p.TextModel.NumKeyValueHeads, p.TextModel.NumAttentionHeads)
 	} else {
 		return nil, fmt.Errorf("unknown tensor for repack: %s", name)
+	}
+
+	return mistral3RepackQK(name, data, shape, heads)
+}
+
+func mistral3RepackQK(name string, data []float32, shape []uint64, heads uint32) ([]float32, error) {
+	if heads == 0 {
+		return nil, fmt.Errorf("%s has zero attention heads", name)
+	}
+
+	var dims []int
+	for _, dim := range shape {
+		dims = append(dims, int(dim))
 	}
 
 	n := tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
@@ -215,4 +312,58 @@ func (p *mistral3Model) repack(name string, data []float32, shape []uint64) ([]f
 	}
 
 	return f32s, nil
+}
+
+func mistral3VisionTensor(name string) bool {
+	return strings.HasPrefix(name, "v.") || strings.HasPrefix(name, "mm.")
+}
+
+var mistral3ProjectorRenames = []struct{ from, to string }{
+	{"v.patch_conv", "v.patch_embd"},
+	{"v.encoder_norm", "v.pre_ln"},
+	{".attn_output", ".attn_out"},
+	{".attn_norm", ".ln1"},
+	{".ffn_norm", ".ln2"},
+	{"mm.linear_1", "mm.1"},
+	{"mm.linear_2", "mm.2"},
+	{"mm.patch_merger.merging_layer", "mm.patch_merger"},
+	{"mm.norm", "mm.input_norm"},
+}
+
+func mistral3ProjectorTensorName(name string) string {
+	for _, rename := range mistral3ProjectorRenames {
+		name = strings.Replace(name, rename.from, rename.to, 1)
+	}
+	return name
+}
+
+func mistral3VisionQKTensor(name string) bool {
+	return strings.HasPrefix(name, "v.blk.") &&
+		(strings.HasSuffix(name, ".attn_q.weight") || strings.HasSuffix(name, ".attn_k.weight"))
+}
+
+func mistral3ImageBreakTensor(hiddenSize uint32) *ggml.Tensor {
+	if hiddenSize == 0 {
+		return nil
+	}
+
+	return &ggml.Tensor{
+		Name:     "v.token_embd.img_break",
+		Kind:     tensorKindFP32,
+		Shape:    []uint64{uint64(hiddenSize)},
+		WriterTo: mistral3ZeroF32Writer{count: uint64(hiddenSize)},
+	}
+}
+
+type mistral3ZeroF32Writer struct {
+	count uint64
+}
+
+func (w mistral3ZeroF32Writer) WriteTo(dst io.Writer) (int64, error) {
+	buf := make([]byte, int(w.count*4))
+	n, err := dst.Write(buf)
+	if err == nil && n != len(buf) {
+		err = io.ErrShortWrite
+	}
+	return int64(n), err
 }

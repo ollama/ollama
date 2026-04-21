@@ -119,10 +119,13 @@ func (q *qwen3NextModel) parseMore(fsys fs.FS) error {
 	if q.TextConfig != nil {
 		q.qwen3NextTextConfig = *q.TextConfig
 	}
-	if q.NumNextNPredictLayers == 0 {
+	qwen3NextSource := q.isQwen3NextSource()
+	if qwen3NextSource {
+		q.NumNextNPredictLayers = 0
+	} else if q.NumNextNPredictLayers == 0 {
 		q.NumNextNPredictLayers = q.MTPNumHiddenLayers
 	}
-	if q.NumNextNPredictLayers == 0 {
+	if !qwen3NextSource && q.NumNextNPredictLayers == 0 {
 		nextn, err := qwen3NextInferNextNPredictLayers(fsys)
 		if err != nil {
 			return err
@@ -405,27 +408,37 @@ func (q *qwen3NextModel) ropeSections() []int32 {
 }
 
 func (q *qwen3NextModel) shouldReorderVHeads() bool {
-	modelType := strings.ToLower(q.ModelType)
-	if strings.Contains(modelType, "qwen3_next") || strings.Contains(modelType, "qwen3next") {
+	if q.isQwen3NextSource() {
 		return false
-	}
-
-	for _, arch := range q.Architectures {
-		arch = strings.ToLower(arch)
-		if strings.Contains(arch, "qwen3next") || strings.Contains(arch, "qwen3_next") {
-			return false
-		}
 	}
 
 	// Default to qwen3.5 layout for all other qwen3next-family imports.
 	return true
 }
 
+func (q *qwen3NextModel) isQwen3NextSource() bool {
+	modelType := strings.ToLower(q.ModelType)
+	if strings.Contains(modelType, "qwen3_next") || strings.Contains(modelType, "qwen3next") {
+		return true
+	}
+
+	for _, arch := range q.Architectures {
+		arch = strings.ToLower(arch)
+		if strings.Contains(arch, "qwen3next") || strings.Contains(arch, "qwen3_next") {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 	kv := q.ModelParameters.KV(t)
 
 	arch := "qwen35"
-	if q.NumExperts > 0 {
+	if q.isQwen3NextSource() {
+		arch = "qwen3next"
+	} else if q.NumExperts > 0 {
 		arch = "qwen35moe"
 	}
 	kv["general.architecture"] = arch
@@ -797,6 +810,33 @@ func (w tensorBF16Writer) WriteTo(dst io.Writer) (int64, error) {
 	return int64(len(u8s)), nil
 }
 
+type tensorFloat16Writer struct {
+	tensor   Tensor
+	repacker Repacker
+}
+
+func (w tensorFloat16Writer) WriteTo(dst io.Writer) (int64, error) {
+	data, err := tensorFloat32Data(w.tensor)
+	if err != nil {
+		return 0, err
+	}
+	if w.repacker != nil {
+		data, err = w.repacker(w.tensor.Name(), data, w.tensor.Shape())
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	f16s := make([]uint16, len(data))
+	for i := range data {
+		f16s[i] = float16.Fromfloat32(data[i]).Bits()
+	}
+	if err := binary.Write(dst, binary.LittleEndian, f16s); err != nil {
+		return 0, err
+	}
+	return int64(len(f16s) * 2), nil
+}
+
 type tensorFloat32Writer struct {
 	tensor   Tensor
 	repacker Repacker
@@ -934,7 +974,12 @@ func safetensorFloat32Data(st safetensor) ([]float32, error) {
 func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	var out []*ggml.Tensor
 
-	ts = q.renameMTPLayerTensors(ts)
+	if q.isQwen3NextSource() {
+		// llama.cpp qwen3next does not load NextN yet; keep creates base-only until it does.
+		ts = q.filterMTPTensors(ts)
+	} else {
+		ts = q.renameMTPLayerTensors(ts)
+	}
 
 	blockCount := q.NumHiddenLayers + q.NumNextNPredictLayers
 	merges := make([]merge, blockCount*3)
@@ -1066,6 +1111,12 @@ func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	}
 
 	return out
+}
+
+func (q *qwen3NextModel) filterMTPTensors(ts []Tensor) []Tensor {
+	return slices.DeleteFunc(slices.Clone(ts), func(t Tensor) bool {
+		return strings.HasPrefix(t.Name(), "mtp.")
+	})
 }
 
 func (q *qwen3NextModel) renameMTPLayerTensors(ts []Tensor) []Tensor {

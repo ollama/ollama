@@ -226,6 +226,26 @@ func TestRead(t *testing.T) {
 	}
 }
 
+func TestScanMetadata(t *testing.T) {
+	info, err := gguf.ScanMetadata(createBinFile(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.Architecture != "llama" {
+		t.Fatalf("architecture = %q, want llama", info.Architecture)
+	}
+	if info.EmbeddingLength != 3 {
+		t.Fatalf("embedding length = %d, want 3", info.EmbeddingLength)
+	}
+	if info.HasFileType {
+		t.Fatalf("has file type = true, want false: %+v", info)
+	}
+	if info.HasEmbedding || info.HasVision || info.HasAudio {
+		t.Fatalf("unexpected capability metadata: %+v", info)
+	}
+}
+
 func BenchmarkRead(b *testing.B) {
 	b.ReportAllocs()
 

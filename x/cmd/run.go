@@ -142,6 +142,7 @@ func waitForOllamaSignin(ctx context.Context) error {
 // RunOptions contains options for running an interactive agent session.
 type RunOptions struct {
 	Model        string
+	Runner       string
 	Messages     []api.Message
 	WordWrap     bool
 	Format       string
@@ -260,6 +261,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 	for {
 		req := &api.ChatRequest{
 			Model:    opts.Model,
+			Runner:   opts.Runner,
 			Messages: messages,
 			Format:   json.RawMessage(opts.Format),
 			Options:  opts.Options,
@@ -638,13 +640,13 @@ func renderToolCalls(toolCalls []api.ToolCall, plainText bool) string {
 }
 
 // checkModelCapabilities checks if the model supports tools.
-func checkModelCapabilities(ctx context.Context, modelName string) (supportsTools bool, err error) {
+func checkModelCapabilities(ctx context.Context, modelName, runner string) (supportsTools bool, err error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return false, err
 	}
 
-	resp, err := client.Show(ctx, &api.ShowRequest{Model: modelName})
+	resp, err := client.Show(ctx, &api.ShowRequest{Model: modelName, Runner: runner})
 	if err != nil {
 		return false, err
 	}
@@ -662,7 +664,7 @@ func checkModelCapabilities(ctx context.Context, modelName string) (supportsTool
 // This is called from cmd.go when --experimental flag is set.
 // If yoloMode is true, all tool approvals are skipped.
 // If enableWebsearch is true, the web search tool is registered.
-func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, keepAlive *api.Duration, yoloMode bool, enableWebsearch bool) error {
+func GenerateInteractive(cmd *cobra.Command, modelName, runner string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, keepAlive *api.Duration, yoloMode bool, enableWebsearch bool) error {
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
@@ -677,7 +679,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	defer fmt.Printf(readline.EndBracketedPaste)
 
 	// Check if model supports tools
-	supportsTools, err := checkModelCapabilities(cmd.Context(), modelName)
+	supportsTools, err := checkModelCapabilities(cmd.Context(), modelName, runner)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not check model capabilities: %v\n", err)
 		supportsTools = false
@@ -807,7 +809,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 					think = &thinkValue
 					// Check if model supports thinking
 					if client, err := api.ClientFromEnvironment(); err == nil {
-						if resp, err := client.Show(cmd.Context(), &api.ShowRequest{Model: modelName}); err == nil {
+						if resp, err := client.Show(cmd.Context(), &api.ShowRequest{Model: modelName, Runner: runner}); err == nil {
 							if !slices.Contains(resp.Capabilities, model.CapabilityThinking) {
 								fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", modelName)
 							}
@@ -822,7 +824,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 					think = &api.ThinkValue{Value: false}
 					// Check if model supports thinking
 					if client, err := api.ClientFromEnvironment(); err == nil {
-						if resp, err := client.Show(cmd.Context(), &api.ShowRequest{Model: modelName}); err == nil {
+						if resp, err := client.Show(cmd.Context(), &api.ShowRequest{Model: modelName, Runner: runner}); err == nil {
 							if !slices.Contains(resp.Capabilities, model.CapabilityThinking) {
 								fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", modelName)
 							}
@@ -884,6 +886,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 				}
 				req := &api.ShowRequest{
 					Name:    modelName,
+					Runner:  runner,
 					Options: options,
 				}
 				resp, err := client.Show(cmd.Context(), req)
@@ -981,7 +984,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			}
 
 			// Check if model exists and get its info
-			info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: newModelName})
+			info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: newModelName, Runner: runner})
 			if err != nil {
 				p.StopAndClear()
 				if strings.Contains(err.Error(), "not found") {
@@ -996,8 +999,9 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			if info.RemoteHost == "" {
 				// Preload the model by sending an empty generate request
 				req := &api.GenerateRequest{
-					Model: newModelName,
-					Think: think,
+					Model:  newModelName,
+					Runner: runner,
+					Think:  think,
 				}
 				err = client.Generate(cmd.Context(), req, func(r api.GenerateResponse) error {
 					return nil
@@ -1059,6 +1063,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 			verbose, _ := cmd.Flags().GetBool("verbose")
 			opts := RunOptions{
 				Model:        modelName,
+				Runner:       runner,
 				Messages:     messages,
 				WordWrap:     wordWrap,
 				Format:       format,

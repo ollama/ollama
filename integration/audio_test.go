@@ -91,7 +91,12 @@ func TestAudioTranscription(t *testing.T) {
 
 // TestAudioResponse tests that the model can respond to a spoken question.
 func TestAudioResponse(t *testing.T) {
-	for _, model := range testModels(defaultAudioModels) {
+	runAudioResponse(t, defaultAudioModels)
+}
+
+// runAudioResponse tests that the model can respond to a spoken question.
+func runAudioResponse(t *testing.T, models []string) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -99,33 +104,40 @@ func TestAudioResponse(t *testing.T) {
 			defer cleanup()
 
 			setupAudioModel(ctx, t, client, model)
-			audio := decodeTestAudio(t)
-			noThink := &api.ThinkValue{Value: false}
-
-			req := api.ChatRequest{
-				Model: model,
-				Think: noThink,
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "",
-						Images:  []api.ImageData{audio},
-					},
-				},
-				Stream: &stream,
-				Options: map[string]any{
-					"temperature": 0,
-					"seed":        123,
-					"num_predict": 200,
-				},
-			}
-
-			// The audio asks "Why is the sky blue?" — expect an answer about light/scattering.
-			DoChat(ctx, t, client, req, []string{
-				"scatter", "light", "blue", "atmosphere", "wavelength", "rayleigh",
-			}, 60*time.Second, 10*time.Second)
+			testAudioResponseForModel(t, ctx, client, model, 10*time.Second, 60*time.Second, 10*time.Second)
 		})
 	}
+}
+
+func testAudioResponseForModel(t *testing.T, ctx context.Context, client *api.Client, model string, keepAlive time.Duration, initialTimeout, streamTimeout time.Duration) {
+	t.Helper()
+
+	audio := decodeTestAudio(t)
+	noThink := &api.ThinkValue{Value: false}
+
+	req := api.ChatRequest{
+		Model: model,
+		Think: noThink,
+		Messages: []api.Message{
+			{
+				Role:    "user",
+				Content: "",
+				Images:  []api.ImageData{audio},
+			},
+		},
+		Stream:    &stream,
+		KeepAlive: &api.Duration{Duration: keepAlive},
+		Options: map[string]any{
+			"temperature": 0,
+			"seed":        123,
+			"num_predict": 200,
+		},
+	}
+
+	// The audio asks "Why is the sky blue?" — expect an answer about light/scattering.
+	DoChat(ctx, t, client, req, []string{
+		"scatter", "light", "blue", "atmosphere", "wavelength", "rayleigh",
+	}, initialTimeout, streamTimeout)
 }
 
 // TestOpenAIAudioTranscription tests the /v1/audio/transcriptions endpoint.
