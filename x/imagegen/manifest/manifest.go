@@ -51,7 +51,7 @@ func DefaultManifestDir() string {
 // LoadManifest loads a manifest for the given model name.
 // Model name format: "modelname" or "modelname:tag" or "host/namespace/name:tag"
 func LoadManifest(modelName string) (*ModelManifest, error) {
-	data, err := rootmanifest.ReadManifestData(model.ParseName(modelName))
+	data, err := rootmanifest.ReadSelectedManifestData(model.ParseName(modelName))
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}

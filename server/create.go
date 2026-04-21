@@ -102,7 +102,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			ch <- resp
 		}
 
-		oldManifest, _ := manifest.ParseNamedManifest(name)
+		oldManifestDigests, _ := manifest.ReferencedBlobDigestsForName(name)
 
 		var baseLayers []*layerGGML
 		var err error
@@ -265,8 +265,8 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			return
 		}
 
-		if !envconfig.NoPrune() && oldManifest != nil {
-			if err := oldManifest.RemoveLayers(); err != nil {
+		if !envconfig.NoPrune() && len(oldManifestDigests) > 0 {
+			if _, err := manifest.RemoveUnreferencedBlobs(oldManifestDigests...); err != nil {
 				ch <- gin.H{"error": err.Error()}
 			}
 		}

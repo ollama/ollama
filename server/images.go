@@ -419,43 +419,8 @@ func CopyModel(src, dst model.Name) error {
 	return manifest.WriteManifestData(dst, data)
 }
 
-func deleteUnusedLayers(deleteMap map[string]struct{}) error {
-	// Ignore corrupt manifests to avoid blocking deletion of layers that are freshly orphaned
-	manifests, err := manifest.Manifests(true)
-	if err != nil {
-		return err
-	}
-
-	for _, manifest := range manifests {
-		if manifest.BlobDigest() != "" {
-			delete(deleteMap, manifest.BlobDigest())
-		}
-
-		for _, layer := range manifest.Layers {
-			delete(deleteMap, layer.Digest)
-		}
-
-		delete(deleteMap, manifest.Config.Digest)
-	}
-
-	// only delete the files which are still in the deleteMap
-	for k := range deleteMap {
-		fp, err := manifest.BlobsPath(k)
-		if err != nil {
-			slog.Info(fmt.Sprintf("couldn't get file path for '%s': %v", k, err))
-			continue
-		}
-		if err := os.Remove(fp); err != nil {
-			slog.Info(fmt.Sprintf("couldn't remove file '%s': %v", fp, err))
-			continue
-		}
-	}
-
-	return nil
-}
-
 func PruneLayers() error {
-	deleteMap := make(map[string]struct{})
+	var candidates []string
 	p, err := manifest.BlobsPath("")
 	if err != nil {
 		return err
@@ -496,17 +461,18 @@ func PruneLayers() error {
 			continue
 		}
 
-		deleteMap[name] = struct{}{}
+		candidates = append(candidates, name)
 	}
 
-	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
+	slog.Info(fmt.Sprintf("total blobs: %d", len(candidates)))
 
-	if err := deleteUnusedLayers(deleteMap); err != nil {
+	removed, err := manifest.RemoveUnreferencedBlobs(candidates...)
+	if err != nil {
 		slog.Error(fmt.Sprintf("couldn't remove unused layers: %v", err))
 		return nil
 	}
 
-	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(deleteMap)))
+	slog.Info(fmt.Sprintf("total unused blobs removed: %d", removed))
 
 	return nil
 }
@@ -579,20 +545,13 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]struct{})
-	existingMf, err := manifest.ParseNamedManifest(n)
+	existingDigests, err := manifest.ReferencedBlobDigestsForName(n)
 	if errors.Is(err, os.ErrNotExist) {
 		// noop
 	} else if err != nil {
 		slog.Warn("pulling model with bad existing manifest", "name", name, "error", err)
 	} else {
-		for _, l := range existingMf.Layers {
-			deleteMap[l.Digest] = struct{}{}
-		}
-		if existingMf.Config.Digest != "" {
-			deleteMap[existingMf.Config.Digest] = struct{}{}
-		}
-		if existingMf.BlobDigest() != "" {
-			digest := existingMf.BlobDigest()
+		for _, digest := range existingDigests {
 			if blob, err := manifest.BlobsPath(digest); err == nil {
 				if _, err := os.Stat(blob); err == nil {
 					deleteMap[digest] = struct{}{}
@@ -677,7 +636,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {
 		fn(api.ProgressResponse{Status: "removing unused layers"})
-		if err := deleteUnusedLayers(deleteMap); err != nil {
+		if _, err := manifest.RemoveUnreferencedBlobs(candidateBlobDigests(deleteMap)...); err != nil {
 			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
 		}
 	}
@@ -695,6 +654,15 @@ func hasTensorLayers(layers []manifest.Layer) bool {
 		}
 	}
 	return false
+}
+
+func candidateBlobDigests(m map[string]struct{}) []string {
+	digests := make([]string, 0, len(m))
+	for digest := range m {
+		digests = append(digests, digest)
+	}
+
+	return digests
 }
 
 // pullWithTransfer uses the simplified x/transfer package for downloading blobs.

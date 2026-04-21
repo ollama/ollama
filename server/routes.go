@@ -1081,24 +1081,13 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		return
 	}
 
-	m, err := manifest.ParseNamedManifest(n)
-	if err != nil {
+	if err := manifest.RemoveNamed(n); err != nil {
 		switch {
 		case os.IsNotExist(err):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", cmp.Or(r.Model, r.Name))})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
-		return
-	}
-
-	if err := m.Remove(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := m.RemoveLayers(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 }

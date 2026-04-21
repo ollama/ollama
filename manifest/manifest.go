@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/ollama/ollama/types/model"
@@ -18,16 +19,61 @@ import (
 
 var blobFilenamePattern = regexp.MustCompile(`^sha256-[0-9a-fA-F]{64}$`)
 
+const (
+	MediaTypeManifest     = "application/vnd.docker.distribution.manifest.v2+json"
+	MediaTypeManifestList = "application/vnd.ollama.manifest.list.v2+json"
+
+	RunnerMLX      = "mlx"
+	RunnerOllama   = "ollama"
+	RunnerLlamaCPP = "llamacpp"
+
+	FormatSafetensors = "safetensors"
+	FormatGGUF        = "gguf"
+)
+
 type Manifest struct {
-	SchemaVersion int     `json:"schemaVersion"`
-	MediaType     string  `json:"mediaType"`
-	Config        Layer   `json:"config"`
-	Layers        []Layer `json:"layers"`
+	SchemaVersion int        `json:"schemaVersion"`
+	MediaType     string     `json:"mediaType"`
+	Config        Layer      `json:"config"`
+	Layers        []Layer    `json:"layers"`
+	Runner        string     `json:"runner,omitempty"`
+	Format        string     `json:"format,omitempty"`
+	Manifests     []Manifest `json:"manifests,omitempty"`
 
 	filepath string
 	fi       os.FileInfo
 	digest   string
 	name     model.Name
+}
+
+func (m Manifest) MarshalJSON() ([]byte, error) {
+	if m.MediaType == MediaTypeManifestList {
+		return json.Marshal(struct {
+			SchemaVersion int        `json:"schemaVersion"`
+			MediaType     string     `json:"mediaType"`
+			Manifests     []Manifest `json:"manifests"`
+		}{
+			SchemaVersion: m.SchemaVersion,
+			MediaType:     m.MediaType,
+			Manifests:     m.Manifests,
+		})
+	}
+
+	return json.Marshal(struct {
+		SchemaVersion int     `json:"schemaVersion"`
+		MediaType     string  `json:"mediaType"`
+		Config        Layer   `json:"config"`
+		Layers        []Layer `json:"layers"`
+		Runner        string  `json:"runner,omitempty"`
+		Format        string  `json:"format,omitempty"`
+	}{
+		SchemaVersion: m.SchemaVersion,
+		MediaType:     m.MediaType,
+		Config:        m.Config,
+		Layers:        m.Layers,
+		Runner:        m.Runner,
+		Format:        m.Format,
+	})
 }
 
 func (m *Manifest) Size() (size int64) {
@@ -72,56 +118,173 @@ func (m *Manifest) ReadConfigJSON(configPath string, v any) error {
 	return fmt.Errorf("config %q not found in manifest", configPath)
 }
 
-func (m *Manifest) Remove() error {
-	return removeNamedManifestPaths(m.name)
-}
-
-func (m *Manifest) RemoveLayers() error {
-	ms, err := Manifests(true)
+// RemoveNamed removes a named manifest object and then removes any blobs that
+// were reachable only from that object.
+func RemoveNamed(n model.Name) error {
+	candidates, err := ReferencedBlobDigestsForName(n)
 	if err != nil {
 		return err
 	}
 
-	// Build set of digests still in use by other manifests
-	inUse := make(map[string]struct{})
-	for _, other := range ms {
-		if other.BlobDigest() != "" {
-			inUse[other.BlobDigest()] = struct{}{}
+	if err := removeNamedManifestPaths(n); err != nil {
+		return err
+	}
+
+	_, err = RemoveUnreferencedBlobs(candidates...)
+	return err
+}
+
+// ReferencedBlobDigestsForName returns the blob digests reachable from the
+// named manifest object as stored on disk. Manifest lists include the parent
+// list blob, every child manifest blob, and each child's config and layer blobs.
+func ReferencedBlobDigestsForName(n model.Name) ([]string, error) {
+	if !n.IsFullyQualified() {
+		return nil, model.Unqualified(n)
+	}
+
+	p, root, err := resolveManifestPath(n)
+	if err != nil {
+		return nil, err
+	}
+
+	data, _, digest, err := readVerifiedManifest(p, root)
+	if err != nil {
+		return nil, err
+	}
+
+	return referencedBlobDigestsForData(digest, data)
+}
+
+// RetainedBlobDigests returns the complete set of blob digests reachable from
+// all named manifest objects in the local store.
+func RetainedBlobDigests() (map[string]struct{}, error) {
+	refs, err := namedManifestRefs(true)
+	if err != nil {
+		return nil, err
+	}
+
+	retained := make(map[string]struct{})
+	for n, ref := range refs {
+		data, _, digest, err := readVerifiedManifest(ref.path, ref.root)
+		if err != nil {
+			slog.Warn("bad manifest", "name", n, "error", err)
+			continue
 		}
-		for _, layer := range append(other.Layers, other.Config) {
-			if layer.Digest != "" {
-				inUse[layer.Digest] = struct{}{}
+
+		digests, err := referencedBlobDigestsForData(digest, data)
+		if err != nil {
+			slog.Warn("bad manifest", "name", n, "error", err)
+			continue
+		}
+
+		for _, digest := range digests {
+			retained[digest] = struct{}{}
+		}
+	}
+
+	return retained, nil
+}
+
+func referencedBlobDigestsForData(manifestDigest string, data []byte) ([]string, error) {
+	var digests []string
+	seen := make(map[string]struct{})
+
+	add := func(digest string) error {
+		if digest == "" {
+			return nil
+		}
+
+		digest, err := canonicalBlobDigest(digest)
+		if err != nil {
+			return err
+		}
+		if _, ok := seen[digest]; ok {
+			return nil
+		}
+		seen[digest] = struct{}{}
+		digests = append(digests, digest)
+
+		return nil
+	}
+	addManifest := func(m *Manifest) error {
+		for _, layer := range append(m.Layers, m.Config) {
+			if err := add(layer.Digest); err != nil {
+				return err
 			}
 		}
+
+		return nil
 	}
 
-	digests := make([]string, 0, len(m.Layers)+2)
-	digests = append(digests, m.BlobDigest())
-	for _, layer := range m.Layers {
-		digests = append(digests, layer.Digest)
+	if err := add(blobDigest(manifestDigest)); err != nil {
+		return nil, err
 	}
-	digests = append(digests, m.Config.Digest)
 
-	// Remove manifest and layer blobs not used by any other manifest
-	for _, digest := range digests {
+	m, err := parseManifest(data)
+	if err != nil {
+		return nil, err
+	}
+	if m.MediaType == MediaTypeManifestList {
+		for i := range m.Manifests {
+			child := &m.Manifests[i]
+			if err := add(child.BlobDigest()); err != nil {
+				return nil, err
+			}
+			if err := addManifest(child); err != nil {
+				return nil, err
+			}
+		}
+
+		return digests, nil
+	}
+
+	if err := addManifest(m); err != nil {
+		return nil, err
+	}
+
+	return digests, nil
+}
+
+// RemoveUnreferencedBlobs removes candidate blob digests that are not reachable
+// from any current manifest. It returns the number of blobs removed.
+func RemoveUnreferencedBlobs(candidates ...string) (int, error) {
+	inUse, err := RetainedBlobDigests()
+	if err != nil {
+		return 0, err
+	}
+
+	var removed int
+	seen := make(map[string]struct{})
+	for _, digest := range candidates {
 		if digest == "" {
 			continue
 		}
+		digest, err = canonicalBlobDigest(digest)
+		if err != nil {
+			return removed, err
+		}
+		if _, ok := seen[digest]; ok {
+			continue
+		}
+		seen[digest] = struct{}{}
 		if _, used := inUse[digest]; used {
 			continue
 		}
+
 		blob, err := BlobsPath(digest)
 		if err != nil {
-			return err
+			return removed, err
 		}
 		if err := os.Remove(blob); os.IsNotExist(err) {
 			slog.Debug("blob does not exist", "digest", digest)
 		} else if err != nil {
-			return err
+			return removed, err
+		} else {
+			removed++
 		}
 	}
 
-	return nil
+	return removed, nil
 }
 
 func ParseNamedManifest(n model.Name) (*Manifest, error) {
@@ -156,21 +319,63 @@ func ReadManifestData(n model.Name) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// ReadSelectedManifestData returns the runnable manifest bytes for a named
+// model. If the named object is a manifest list, it returns the selected child
+// manifest according to local runner preferences.
+func ReadSelectedManifestData(n model.Name) ([]byte, error) {
+	if !n.IsFullyQualified() {
+		return nil, model.Unqualified(n)
+	}
+
+	p, root, err := resolveManifestPath(n)
+	if err != nil {
+		return nil, err
+	}
+
+	data, _, _, err := readVerifiedManifest(p, root)
+	if err != nil {
+		return nil, err
+	}
+
+	m, err := parseManifest(data)
+	if err != nil {
+		return nil, err
+	}
+	if m.MediaType == MediaTypeManifestList {
+		child, err := selectManifest(m.Manifests)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(child)
+	}
+
+	return data, nil
+}
+
 func parseManifestFile(name model.Name, path, root string) (*Manifest, error) {
-	var m Manifest
-	f, digest, err := OpenVerifiedManifest(path, root)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	fi, err := f.Stat()
+	data, fi, digest, err := readVerifiedManifest(path, root)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := json.NewDecoder(f).Decode(&m); err != nil {
+	return parseManifestData(name, path, fi, digest, data)
+}
+
+func parseManifestData(name model.Name, path string, fi os.FileInfo, digest string, data []byte) (*Manifest, error) {
+	m, err := parseManifest(data)
+	if err != nil {
 		return nil, err
+	}
+	if m.MediaType == MediaTypeManifestList {
+		child, err := selectManifest(m.Manifests)
+		if err != nil {
+			return nil, err
+		}
+		child.filepath = path
+		child.fi = fi
+		child.digest = digest
+		child.name = name
+		return child, nil
 	}
 
 	m.filepath = path
@@ -178,13 +383,86 @@ func parseManifestFile(name model.Name, path, root string) (*Manifest, error) {
 	m.digest = digest
 	m.name = name
 
+	return m, nil
+}
+
+func selectManifest(manifests []Manifest) (*Manifest, error) {
+	return selectManifestWithPreferences(manifests, runnerPreferences())
+}
+
+func selectManifestWithPreferences(manifests []Manifest, preferences []string) (*Manifest, error) {
+	for _, runner := range preferences {
+		for i := range manifests {
+			if manifests[i].MediaType != "" && manifests[i].MediaType != MediaTypeManifest {
+				continue
+			}
+			if strings.EqualFold(manifests[i].Runner, runner) {
+				child := manifests[i]
+				return &child, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no compatible manifest found for runners: %s", strings.Join(preferences, ", "))
+}
+
+func runnerPreferences() []string {
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return []string{RunnerMLX, RunnerOllama, RunnerLlamaCPP}
+	}
+
+	return []string{RunnerOllama, RunnerLlamaCPP, RunnerMLX}
+}
+
+func parseManifest(data []byte) (*Manifest, error) {
+	var m Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	if m.MediaType == MediaTypeManifestList {
+		for i := range m.Manifests {
+			if m.Manifests[i].MediaType == MediaTypeManifestList {
+				return nil, errors.New("nested manifest lists are not supported")
+			}
+
+			canonical, err := json.Marshal(m.Manifests[i])
+			if err != nil {
+				return nil, err
+			}
+			sum := sha256.Sum256(canonical)
+			m.Manifests[i].digest = fmt.Sprintf("%x", sum)
+		}
+	}
+
 	return &m, nil
+}
+
+func canonicalBlobDigest(digest string) (string, error) {
+	if _, err := BlobsPath(digest); err != nil {
+		return "", err
+	}
+
+	digest = strings.ToLower(strings.Replace(digest, "-", ":", 1))
+	return digest, nil
+}
+
+func blobDigest(digest string) string {
+	if digest == "" {
+		return ""
+	}
+
+	digest = strings.ToLower(digest)
+	if strings.HasPrefix(digest, "sha256:") || strings.HasPrefix(digest, "sha256-") {
+		return digest
+	}
+
+	return "sha256:" + digest
 }
 
 func WriteManifest(name model.Name, config Layer, layers []Layer) error {
 	m := Manifest{
 		SchemaVersion: 2,
-		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+		MediaType:     MediaTypeManifest,
 		Config:        config,
 		Layers:        layers,
 	}
@@ -456,13 +734,28 @@ func MigrateManifestLinks() (int, error) {
 }
 
 func readManifestPath(path, root string) ([]byte, error) {
-	f, _, err := OpenVerifiedManifest(path, root)
+	data, _, _, err := readVerifiedManifest(path, root)
+	return data, err
+}
+
+func readVerifiedManifest(path, root string) ([]byte, os.FileInfo, string, error) {
+	f, digest, err := OpenVerifiedManifest(path, root)
 	if err != nil {
-		return nil, err
+		return nil, nil, "", err
 	}
 	defer f.Close()
 
-	return io.ReadAll(f)
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	return data, fi, digest, nil
 }
 
 func pathWithin(path, root string) bool {
@@ -515,13 +808,40 @@ func checkBlobDigestReader(r io.Reader, digest string) error {
 }
 
 func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
-	ms := make(map[model.Name]*Manifest)
+	refs, err := namedManifestRefs(continueOnError)
+	if err != nil {
+		return nil, err
+	}
+
+	ms := make(map[model.Name]*Manifest, len(refs))
+	for n, ref := range refs {
+		m, err := parseManifestFile(n, ref.path, ref.root)
+		if err != nil {
+			if !continueOnError {
+				return nil, fmt.Errorf("%s %w", n, err)
+			}
+			slog.Warn("bad manifest", "name", n, "error", err)
+			continue
+		}
+
+		ms[n] = m
+	}
+	return ms, nil
+}
+
+type namedManifestRef struct {
+	path string
+	root string
+}
+
+func namedManifestRefs(continueOnError bool) (map[model.Name]namedManifestRef, error) {
+	refs := make(map[model.Name]namedManifestRef)
 
 	manifestsV2, err := V2Path()
 	if err != nil {
 		return nil, err
 	}
-	if err := collectManifests(ms, manifestsV2, continueOnError); err != nil {
+	if err := collectManifestRefs(refs, manifestsV2, continueOnError); err != nil {
 		return nil, err
 	}
 
@@ -529,14 +849,14 @@ func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := collectManifests(ms, manifests, continueOnError); err != nil {
+	if err := collectManifestRefs(refs, manifests, continueOnError); err != nil {
 		return nil, err
 	}
 
-	return ms, nil
+	return refs, nil
 }
 
-func collectManifests(ms map[model.Name]*Manifest, root string, continueOnError bool) error {
+func collectManifestRefs(refs map[model.Name]namedManifestRef, root string, continueOnError bool) error {
 	// TODO(mxyng): use something less brittle
 	matches, err := filepath.Glob(filepath.Join(root, "*", "*", "*", "*"))
 	if err != nil {
@@ -569,20 +889,11 @@ func collectManifests(ms map[model.Name]*Manifest, root string, continueOnError 
 			}
 
 			n = normalizeLogicalName(n)
-			if _, ok := ms[n]; ok {
+			if _, ok := refs[n]; ok {
 				continue
 			}
 
-			m, err := parseManifestFile(n, match, root)
-			if err != nil {
-				if !continueOnError {
-					return fmt.Errorf("%s %w", n, err)
-				}
-				slog.Warn("bad manifest", "name", n, "error", err)
-				continue
-			}
-
-			ms[n] = m
+			refs[n] = namedManifestRef{path: match, root: root}
 		}
 	}
 

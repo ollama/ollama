@@ -123,25 +123,6 @@ func (l *Layer) Remove() error {
 		return nil
 	}
 
-	// Ignore corrupt manifests to avoid blocking deletion of layers that are freshly orphaned
-	ms, err := Manifests(true)
-	if err != nil {
-		return err
-	}
-
-	for _, m := range ms {
-		for _, layer := range append(m.Layers, m.Config) {
-			if layer.Digest == l.Digest {
-				// something is using this layer
-				return nil
-			}
-		}
-	}
-
-	blob, err := BlobsPath(l.Digest)
-	if err != nil {
-		return err
-	}
-
-	return os.Remove(blob)
+	_, err := RemoveUnreferencedBlobs(l.Digest)
+	return err
 }

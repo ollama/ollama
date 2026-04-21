@@ -38,6 +38,55 @@ func createManifest(t *testing.T, path, name string) {
 	createManifestAtRoot(t, path, "manifests", name)
 }
 
+func createManifestForTest(configDigest, layerDigest, runner string) Manifest {
+	return Manifest{
+		SchemaVersion: 2,
+		MediaType:     MediaTypeManifest,
+		Runner:        runner,
+		Format:        FormatGGUF,
+		Config: Layer{
+			MediaType: "application/vnd.docker.container.image.v1+json",
+			Digest:    configDigest,
+			Size:      12,
+		},
+		Layers: []Layer{
+			{
+				MediaType: "application/vnd.ollama.image.model",
+				Digest:    layerDigest,
+				Size:      34,
+			},
+		},
+	}
+}
+
+func createManifestListData(t *testing.T, manifests ...Manifest) []byte {
+	t.Helper()
+
+	ml := Manifest{
+		SchemaVersion: 2,
+		MediaType:     MediaTypeManifestList,
+		Manifests:     manifests,
+	}
+
+	data, err := json.Marshal(ml)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return data
+}
+
+func writeManifestBlobForTest(t *testing.T, data []byte) string {
+	t.Helper()
+
+	digest, err := writeManifestBlob(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return digest
+}
+
 func TestWriteManifestStoresManifestAsBlob(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
@@ -84,6 +133,98 @@ func TestWriteManifestStoresManifestAsBlob(t *testing.T) {
 	}
 	if got := m.BlobDigest(); got != digest {
 		t.Fatalf("blob digest = %q, want %q", got, digest)
+	}
+}
+
+func TestSelectManifestUsesRunnerPreference(t *testing.T) {
+	ml := Manifest{
+		SchemaVersion: 2,
+		MediaType:     MediaTypeManifestList,
+		Manifests: []Manifest{
+			createManifestForTest("sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), RunnerOllama),
+			createManifestForTest("sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64), RunnerLlamaCPP),
+		},
+	}
+
+	child, err := selectManifestWithPreferences(ml.Manifests, []string{RunnerLlamaCPP, RunnerOllama})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Runner != RunnerLlamaCPP {
+		t.Fatalf("runner = %q, want %q", child.Runner, RunnerLlamaCPP)
+	}
+}
+
+func TestParseNamedManifestResolvesManifestList(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	name := model.ParseName("example")
+
+	ollama := createManifestForTest("sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), RunnerOllama)
+	ollamaData, err := json.Marshal(ollama)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ollamaDigest := writeManifestBlobForTest(t, ollamaData)
+
+	llamacpp := createManifestForTest("sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64), RunnerLlamaCPP)
+	llamacppData, err := json.Marshal(llamacpp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	llamacppDigest := writeManifestBlobForTest(t, llamacppData)
+
+	parentData := createManifestListData(t, llamacpp, ollama)
+
+	if err := WriteManifestData(name, parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := ParseNamedManifest(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentSum := sha256.Sum256(parentData)
+	if got := m.Digest(); got != fmt.Sprintf("%x", parentSum) {
+		t.Fatalf("digest = %q, want %x", got, parentSum)
+	}
+	if got := m.BlobDigest(); got != fmt.Sprintf("sha256:%x", parentSum) {
+		t.Fatalf("blob digest = %q, want sha256:%x", got, parentSum)
+	}
+	if got := m.Runner; got != RunnerOllama {
+		t.Fatalf("runner = %q, want %q", got, RunnerOllama)
+	}
+	if got := m.Format; got != FormatGGUF {
+		t.Fatalf("format = %q, want %q", got, FormatGGUF)
+	}
+	if got := m.Config.Digest; got != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("config digest = %q, want selected child config", got)
+	}
+	referenced, err := ReferencedBlobDigestsForName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, digest := range []string{llamacppDigest, ollamaDigest} {
+		if !slices.Contains(referenced, digest) {
+			t.Fatalf("referenced blob digests missing child manifest %s", digest)
+		}
+	}
+
+	raw, err := ReadManifestData(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, parentData) {
+		t.Fatal("ReadManifestData did not return the parent manifest list")
+	}
+
+	selected, err := ReadSelectedManifestData(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(selected, ollamaData) {
+		t.Fatal("ReadSelectedManifestData did not return the selected child manifest")
 	}
 }
 
@@ -189,7 +330,7 @@ func TestMigrateManifestLinks(t *testing.T) {
 	}
 }
 
-func TestRemoveLayersRemovesUnreferencedManifestBlob(t *testing.T) {
+func TestRemoveNamedRemovesUnreferencedManifestBlob(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	name := model.ParseName("example")
@@ -209,15 +350,87 @@ func TestRemoveLayersRemovesUnreferencedManifestBlob(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := m.Remove(); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.RemoveLayers(); err != nil {
+	if err := RemoveNamed(name); err != nil {
 		t.Fatal(err)
 	}
 
 	if _, err := os.Stat(blobPath); !os.IsNotExist(err) {
 		t.Fatalf("manifest blob still exists: %v", err)
+	}
+}
+
+func TestRemoveNamedTracksManifestListChildBlobs(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	ollamaConfigDigest := writeManifestBlobForTest(t, []byte("ollama config"))
+	ollamaLayerDigest := writeManifestBlobForTest(t, []byte("ollama layer"))
+	ollama := createManifestForTest(ollamaConfigDigest, ollamaLayerDigest, RunnerOllama)
+	ollamaData, err := json.Marshal(ollama)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManifestBlobForTest(t, ollamaData)
+
+	llamacppConfigDigest := writeManifestBlobForTest(t, []byte("llamacpp config"))
+	llamacppLayerDigest := writeManifestBlobForTest(t, []byte("llamacpp layer"))
+	llamacpp := createManifestForTest(llamacppConfigDigest, llamacppLayerDigest, RunnerLlamaCPP)
+	llamacppData, err := json.Marshal(llamacpp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManifestBlobForTest(t, llamacppData)
+
+	parentData := createManifestListData(t, ollama, llamacpp)
+
+	nameA := model.ParseName("example-a")
+	nameB := model.ParseName("example-b")
+	if err := WriteManifestData(nameA, parentData); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteManifestData(nameB, parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	parentSum := sha256.Sum256(parentData)
+	parentPath, err := BlobsPath(fmt.Sprintf("sha256:%x", parentSum))
+	if err != nil {
+		t.Fatal(err)
+	}
+	referencedBlobs, err := ReferencedBlobDigestsForName(nameA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RemoveNamed(nameA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(parentPath); err != nil {
+		t.Fatalf("parent list blob was removed while another model uses it: %v", err)
+	}
+	for _, digest := range referencedBlobs {
+		blob, err := BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(blob); err != nil {
+			t.Fatalf("referenced blob %s was removed while another model uses it: %v", digest, err)
+		}
+	}
+
+	if err := RemoveNamed(nameB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(parentPath); !os.IsNotExist(err) {
+		t.Fatalf("parent list blob still exists after final remove: %v", err)
+	}
+	for _, digest := range referencedBlobs {
+		blob, err := BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(blob); !os.IsNotExist(err) {
+			t.Fatalf("referenced blob %s still exists after final remove: %v", digest, err)
+		}
 	}
 }
 
