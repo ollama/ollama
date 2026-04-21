@@ -501,6 +501,10 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 
 	var layers []manifest.Layer
 	for _, layer := range baseLayers {
+		// Track before per-iteration work: quantization can take hours, so
+		// layers processed early must be kept fresh by the keepalive loop
+		// rather than waiting on the batch trackLayers call below.
+		keepAlive.Track(layer.Layer.Digest)
 		if layer.GGML != nil {
 			quantType := strings.ToUpper(cmp.Or(r.Quantize, r.Quantization))
 			if quantType != "" && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" {
@@ -517,6 +521,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 					if err != nil {
 						return err
 					}
+					keepAlive.Track(layer.Layer.Digest)
 				}
 			}
 			config.ModelFormat = cmp.Or(config.ModelFormat, layer.GGML.Name())
