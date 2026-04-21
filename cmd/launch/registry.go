@@ -75,6 +75,23 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
+		Name:        "kimi",
+		Runner:      &Kimi{},
+		Description: "Moonshot's coding agent for terminal and IDEs",
+		Hidden:      true,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := exec.LookPath("kimi")
+				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureKimiInstalled()
+				return err
+			},
+			URL: "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
+		},
+	},
+	{
 		Name:        "copilot",
 		Runner:      &Copilot{},
 		Aliases:     []string{"copilot-cli"},

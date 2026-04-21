@@ -169,6 +169,12 @@ func (t *Array) PutAlongAxis(indices, values *Array, axis int) *Array {
 	return out
 }
 
+func (t *Array) ScatterAddAxis(indices, values *Array, axis int) *Array {
+	out := New("SCATTER_ADD_AXIS")
+	C.mlx_scatter_add_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) Reshape(axes ...int) *Array {
 	cAxes := make([]C.int, len(axes))
 	for i := range axes {
