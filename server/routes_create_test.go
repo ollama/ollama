@@ -109,10 +109,42 @@ func checkFileExists(t *testing.T, p string, expect []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.HasSuffix(filepath.ToSlash(p), "/blobs/*") {
+		actual = slices.DeleteFunc(actual, isManifestBlobForTest)
+	}
 
 	if diff := gocmp.Diff(expect, actual, gocmpopts.SortSlices(strings.Compare), gocmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("file exists mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func checkManifestFiles(t *testing.T, names ...string) {
+	t.Helper()
+
+	expect := make([]string, len(names))
+	for i, name := range names {
+		p, err := manifest.V2PathForName(model.ParseName(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expect[i] = p
+	}
+
+	checkFileExists(t, filepath.Join(envconfig.Models(), "manifests-v2", "*", "*", "*", "*"), expect)
+}
+
+func isManifestBlobForTest(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+
+	var m manifest.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+
+	return m.SchemaVersion != 0 && m.MediaType != "" && (m.Config.Digest != "" || len(m.Layers) > 0)
 }
 
 func TestCreateFromBin(t *testing.T) {
@@ -136,9 +168,7 @@ func TestCreateFromBin(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-6bcdb8859d417753645538d7bbfbd7ca91a3f0c191aef5379c53c05e86b669dd"),
@@ -196,9 +226,7 @@ func TestCreateFromModel(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:   "test2",
@@ -210,10 +238,7 @@ func TestCreateFromModel(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-6bcdb8859d417753645538d7bbfbd7ca91a3f0c191aef5379c53c05e86b669dd"),
@@ -306,9 +331,7 @@ func TestCreateRemovesLayers(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
@@ -327,9 +350,7 @@ func TestCreateRemovesLayers(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-136bf7c76bac2ec09d6617885507d37829e04b41acc47687d45e512b544e893a"),
@@ -357,9 +378,7 @@ func TestCreateUnsetsSystem(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-0a666d113e8e0a3d27e9c7bd136a0bdfb6241037db50729d81568451ebfdbde8"),
@@ -378,9 +397,7 @@ func TestCreateUnsetsSystem(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-6bcdb8859d417753645538d7bbfbd7ca91a3f0c191aef5379c53c05e86b669dd"),
@@ -411,9 +428,7 @@ func TestCreateMergeParameters(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-1d0ad71299d48c2fb7ae2b98e683643e771f8a5b72be34942af90d97a91c1e37"),
@@ -436,10 +451,7 @@ func TestCreateMergeParameters(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	// Display contents of each blob in the directory
 	blobDir := filepath.Join(p, "blobs")
@@ -495,10 +507,7 @@ func TestCreateMergeParameters(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-12f58bb75cb3042d69a7e013ab87fb3c3c7088f50ddc62f0c77bd332f0d44d35"),
@@ -555,9 +564,7 @@ func TestCreateReplacesMessages(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-298baeaf6928a60cf666d88d64a1ba606feb43a2865687c39e40652e407bffc4"),
@@ -589,10 +596,7 @@ func TestCreateReplacesMessages(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	// Old layers will not have been pruned
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
@@ -650,9 +654,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-0a04d979734167da3b80811a1874d734697f366a689f3912589b99d2e86e7ad1"),
@@ -850,9 +852,7 @@ func TestCreateLicenses(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-2af71558e438db0b73a20beab92dc278a94e1bbe974c00c1a33e3ab62d53a608"),

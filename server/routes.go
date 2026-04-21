@@ -1770,13 +1770,15 @@ func Serve(ln net.Listener) error {
 				return err
 			}
 
-			manifestsPath, err := manifest.Path()
-			if err != nil {
-				return err
-			}
+			for _, rootFn := range []func() (string, error){manifest.Path, manifest.V2Path} {
+				manifestsPath, err := rootFn()
+				if err != nil {
+					return err
+				}
 
-			if err := manifest.PruneDirectory(manifestsPath); err != nil {
-				return err
+				if err := manifest.PruneDirectory(manifestsPath); err != nil && !os.IsNotExist(err) {
+					return err
+				}
 			}
 		}
 	}

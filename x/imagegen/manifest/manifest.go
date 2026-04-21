@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
+	rootmanifest "github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 // ManifestLayer represents a layer in the manifest.
@@ -49,9 +51,7 @@ func DefaultManifestDir() string {
 // LoadManifest loads a manifest for the given model name.
 // Model name format: "modelname" or "modelname:tag" or "host/namespace/name:tag"
 func LoadManifest(modelName string) (*ModelManifest, error) {
-	manifestPath := resolveManifestPath(modelName)
-
-	data, err := os.ReadFile(manifestPath)
+	data, err := rootmanifest.ReadManifestData(model.ParseName(modelName))
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
@@ -65,36 +65,6 @@ func LoadManifest(modelName string) (*ModelManifest, error) {
 		Manifest: &manifest,
 		BlobDir:  DefaultBlobDir(),
 	}, nil
-}
-
-// resolveManifestPath converts a model name to a manifest file path.
-func resolveManifestPath(modelName string) string {
-	// Parse model name into components
-	// Default: registry.ollama.ai/library/<name>/<tag>
-	host := "registry.ollama.ai"
-	namespace := "library"
-	name := modelName
-	tag := "latest"
-
-	// Handle explicit tag
-	if idx := strings.LastIndex(name, ":"); idx != -1 {
-		tag = name[idx+1:]
-		name = name[:idx]
-	}
-
-	// Handle full path like "host/namespace/name"
-	parts := strings.Split(name, "/")
-	switch len(parts) {
-	case 3:
-		host = parts[0]
-		namespace = parts[1]
-		name = parts[2]
-	case 2:
-		namespace = parts[0]
-		name = parts[1]
-	}
-
-	return filepath.Join(DefaultManifestDir(), host, namespace, name, tag)
 }
 
 // BlobPath returns the full path to a blob given its digest.
