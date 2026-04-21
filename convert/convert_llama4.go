@@ -1,6 +1,8 @@
 package convert
 
 import (
+	"io"
+	"math"
 	"slices"
 	"strings"
 
@@ -34,6 +36,8 @@ type llama4Model struct {
 	} `json:"vision_config"`
 }
 
+var _ MultimodalConverter = (*llama4Model)(nil)
+
 // KV implements ModelConverter.
 func (p *llama4Model) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
@@ -66,6 +70,52 @@ func (p *llama4Model) KV(t *Tokenizer) KV {
 	return kv
 }
 
+func (p *llama4Model) TextKV(t *Tokenizer) KV {
+	kv := p.KV(t)
+	for key := range kv {
+		if strings.HasPrefix(key, "llama4.vision.") {
+			delete(kv, key)
+		}
+	}
+
+	return kv
+}
+
+func (p *llama4Model) ProjectorKV(*Tokenizer) KV {
+	return KV{
+		"general.architecture":                     "clip",
+		"general.type":                             "mmproj",
+		"general.file_type":                        uint32(1),
+		"general.quantization_version":             uint32(2),
+		"clip.has_vision_encoder":                  true,
+		"clip.projector_type":                      "llama4",
+		"clip.vision.projector_type":               "llama4",
+		"clip.vision.block_count":                  p.VisionModel.NumHiddenLayers,
+		"clip.vision.embedding_length":             p.VisionModel.HiddenSize,
+		"clip.vision.feed_forward_length":          p.VisionModel.IntermediateSize,
+		"clip.vision.attention.head_count":         p.VisionModel.NumAttentionHeads,
+		"clip.vision.attention.layer_norm_epsilon": p.VisionModel.NormEpsilon,
+		"clip.vision.image_size":                   p.VisionModel.ImageSize,
+		"clip.vision.patch_size":                   p.VisionModel.PatchSize,
+		"clip.vision.projection_dim":               p.TextModel.HiddenSize,
+		"clip.vision.projector.scale_factor":       p.projectorScale(),
+		"clip.vision.image_mean":                   []float32{0.5, 0.5, 0.5},
+		"clip.vision.image_std":                    []float32{0.5, 0.5, 0.5},
+		"clip.use_gelu":                            true,
+	}
+}
+
+func (p *llama4Model) projectorScale() uint32 {
+	scale := uint32(2)
+	if p.VisionModel.PixelShuffleRatio > 0 {
+		scale = uint32(math.Round(float64(1 / p.VisionModel.PixelShuffleRatio)))
+	}
+	if scale == 0 {
+		return 2
+	}
+	return scale
+}
+
 // Replacements implements ModelConverter.
 func (p *llama4Model) Replacements() []string {
 	return append(
@@ -87,13 +137,82 @@ func (p *llama4Model) Replacements() []string {
 	)
 }
 
+func llama4VisionTensor(name string) bool {
+	return strings.HasPrefix(name, "v.") || strings.HasPrefix(name, "mm.")
+}
+
+func llama4ProjectorTensorName(name string) string {
+	switch {
+	case name == "v.class_embedding":
+		return "v.class_embd"
+	case name == "v.positional_embedding_vlm":
+		return "v.position_embd.weight"
+	case strings.HasPrefix(name, "v.patch_embedding."):
+		return strings.Replace(name, "v.patch_embedding.", "v.patch_embd.", 1)
+	case strings.HasPrefix(name, "v.layernorm_pre."):
+		return strings.Replace(name, "v.layernorm_pre.", "v.pre_ln.", 1)
+	case strings.HasPrefix(name, "v.layernorm_post."):
+		return strings.Replace(name, "v.layernorm_post.", "v.post_ln.", 1)
+	case strings.HasPrefix(name, "v.vision_adapter.mlp.fc1."):
+		return strings.Replace(name, "v.vision_adapter.mlp.fc1.", "mm.model.mlp.1.", 1)
+	case strings.HasPrefix(name, "v.vision_adapter.mlp.fc2."):
+		return strings.Replace(name, "v.vision_adapter.mlp.fc2.", "mm.model.mlp.2.", 1)
+	case strings.HasPrefix(name, "mm.linear_1."):
+		return strings.Replace(name, "mm.linear_1.", "mm.model.fc.", 1)
+	}
+
+	name = strings.Replace(name, ".attn_output.", ".attn_out.", 1)
+	name = strings.Replace(name, ".attn_norm.", ".ln1.", 1)
+	name = strings.Replace(name, ".ffn_norm.", ".ln2.", 1)
+	name = strings.Replace(name, ".mlp.fc1.", ".ffn_up.", 1)
+	name = strings.Replace(name, ".mlp.fc2.", ".ffn_down.", 1)
+	return name
+}
+
+func (p *llama4Model) TextTensors(ts []Tensor, _ *Tokenizer) []*ggml.Tensor {
+	var textOnly []Tensor
+	for _, t := range ts {
+		if !llama4VisionTensor(t.Name()) {
+			textOnly = append(textOnly, t)
+		}
+	}
+
+	return p.Tensors(textOnly)
+}
+
+func (p *llama4Model) ProjectorTensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
+
+	for _, t := range ts {
+		if !llama4VisionTensor(t.Name()) {
+			continue
+		}
+
+		kind := t.Kind()
+		var writer io.WriterTo = t
+		if sourceDType(t) == "BF16" && kind == tensorKindFP16 {
+			kind = tensorKindBF16
+			writer = tensorBF16Writer{tensor: t}
+		}
+
+		out = append(out, &ggml.Tensor{
+			Name:     llama4ProjectorTensorName(t.Name()),
+			Kind:     kind,
+			Shape:    slices.Clone(t.Shape()),
+			WriterTo: writer,
+		})
+	}
+
+	return out
+}
+
 // Tensors implements ModelConverter.
 func (p *llama4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 	var out []*ggml.Tensor
 
 	var textTensors []Tensor
 	for _, t := range ts {
-		if strings.HasPrefix(t.Name(), "v.") || strings.HasPrefix(t.Name(), "mm.") {
+		if llama4VisionTensor(t.Name()) {
 			out = append(out, &ggml.Tensor{
 				Name:     t.Name(),
 				Kind:     t.Kind(),

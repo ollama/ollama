@@ -1,7 +1,11 @@
 package server
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/ollama/ollama/internal/modelref"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -39,6 +43,9 @@ func parseAndValidateModelRef(raw string) (parsedModelRef, error) {
 	parsed, err := modelref.ParseRef(raw)
 	if err != nil {
 		return zero, err
+	}
+	if ref, ok, err := parseDigestModelRef(parsed); ok || err != nil {
+		return ref, err
 	}
 
 	name := model.ParseName(parsed.Base)
@@ -78,4 +85,81 @@ func parseNormalizePullModelRef(raw string) (parsedModelRef, error) {
 		Name:     name,
 		Source:   parsedRef.Source,
 	}, nil
+}
+
+func parseDeleteModelRef(raw string) (parsedModelRef, error) {
+	parsedRef, err := modelref.ParseRef(raw)
+	if err != nil {
+		return parsedModelRef{}, err
+	}
+	if ref, ok, err := parseDigestModelRef(parsedRef); ok || err != nil {
+		return ref, err
+	}
+
+	return parseNormalizePullModelRef(raw)
+}
+
+func parseDigestModelRef(parsed modelref.ParsedRef) (parsedModelRef, bool, error) {
+	name, ok, err := digestModelName(parsed.Base)
+	if !ok || err != nil {
+		return parsedModelRef{}, ok, err
+	}
+	if parsed.Source == modelSourceCloud {
+		return parsedModelRef{}, true, fmt.Errorf("digest references are local: %s", parsed.Original)
+	}
+
+	return parsedModelRef{
+		Original: parsed.Original,
+		Base:     name.DisplayShortest(),
+		Name:     name,
+		Source:   parsed.Source,
+	}, true, nil
+}
+
+func digestModelName(ref string) (model.Name, bool, error) {
+	if runner, digestRef, ok := strings.Cut(ref, ":"); ok {
+		if normalized, err := normalizeRunner(runner); err == nil && normalized != "" {
+			digest, ok, err := manifest.ResolveDigestReference(digestRef)
+			if !ok || err != nil {
+				return model.Name{}, ok, err
+			}
+			name, err := runnerDigestModelName(digest, normalized)
+			return name, true, err
+		}
+	}
+
+	digest, ok, err := manifest.ResolveDigestReference(ref)
+	if !ok || err != nil {
+		return model.Name{}, ok, err
+	}
+	return digestReferenceName(digest), true, nil
+}
+
+func runnerDigestModelName(digest, runner string) (model.Name, error) {
+	name := digestReferenceName(digest)
+	m, err := manifest.ParseNamedManifestForRunner(name, runner)
+	if err != nil {
+		return model.Name{}, err
+	}
+	if selected := m.SelectedDigest(); selected != "" && !sameDigest(digest, selected) {
+		name = digestReferenceName(selected)
+	}
+	return name, nil
+}
+
+func digestReferenceName(digest string) model.Name {
+	digest = strings.ToLower(strings.Replace(digest, ":", "-", 1))
+	return model.ParseName(digest)
+}
+
+func sameDigest(a, b string) bool {
+	a = strings.ToLower(strings.Replace(a, "-", ":", 1))
+	b = strings.ToLower(strings.Replace(b, "-", ":", 1))
+	if !strings.HasPrefix(a, "sha256:") {
+		a = "sha256:" + a
+	}
+	if !strings.HasPrefix(b, "sha256:") {
+		b = "sha256:" + b
+	}
+	return a == b
 }

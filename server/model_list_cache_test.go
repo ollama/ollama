@@ -202,8 +202,8 @@ func TestModelListCacheSyncDropsStaleEntryOnRefreshFailure(t *testing.T) {
 	}
 
 	changeShowCacheManifest(t, "list-stale")
-	cache.build = func(model.Name, *manifest.Manifest) (modelListSummary, error) {
-		return modelListSummary{}, errors.New("refresh failed")
+	cache.build = func(model.Name, *manifest.Manifest) ([]modelListSummary, error) {
+		return nil, errors.New("refresh failed")
 	}
 
 	models, err := cache.List(context.Background())

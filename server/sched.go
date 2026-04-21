@@ -107,13 +107,17 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // schedulerModelKey returns the scheduler map key for a model.
 // GGUF-backed models use ModelPath; safetensors/image models without a
-// ModelPath use manifest digest so distinct models don't collide.
+// ModelPath use the selected manifest digest so distinct child manifests don't
+// collide.
 func schedulerModelKey(m *Model) string {
 	if m == nil {
 		return ""
 	}
 	if m.ModelPath != "" {
 		return m.ModelPath
+	}
+	if m.ManifestDigest != "" {
+		return "manifest:" + m.ManifestDigest
 	}
 	if m.Digest != "" {
 		return "digest:" + m.Digest
@@ -693,6 +697,12 @@ iGPUScan:
 		req.opts.NumCtx = effectiveNumCtx
 		req.contextShift = resolveContextShift(req.shift, effectiveNumCtx)
 	}
+	runnerName := req.model.Runner
+	if req.model.IsMLX() && runnerName == "" {
+		runnerName = "mlx"
+	} else if name := llm.RunnerName(llama); name != "" {
+		runnerName = name
+	}
 	runner := &runnerRef{
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
@@ -703,6 +713,7 @@ iGPUScan:
 		gpus:            gpuIDs,
 		discreteGPUs:    discreteGPUs,
 		isImagegen:      slices.Contains(req.model.Config.Capabilities, "image"),
+		runner:          runnerName,
 		totalSize:       totalSize,
 		vramSize:        vramSize,
 		loading:         true,
@@ -1346,6 +1357,7 @@ type runnerRef struct {
 	gpus         []ml.DeviceID // Recorded at time of provisioning
 	discreteGPUs bool          // True if all devices are discrete GPUs - used to skip VRAM recovery check for iGPUs
 	isImagegen   bool          // True if loaded via imagegen runner (vs mlxrunner)
+	runner       string
 	vramSize     uint64
 	totalSize    uint64
 
@@ -1720,10 +1732,21 @@ func (s *Scheduler) unloadAllRunners() {
 
 func (s *Scheduler) expireRunner(model *Model) {
 	modelKey := schedulerModelKey(model)
+	var runners []*runnerRef
+
 	s.loadedMu.Lock()
-	runner, ok := s.loaded[modelKey]
+	if runner, ok := s.loaded[modelKey]; ok {
+		runners = append(runners, runner)
+	} else if model != nil && model.Name != "" {
+		for _, runner := range s.loaded {
+			if runner.model != nil && runner.model.Name == model.Name {
+				runners = append(runners, runner)
+			}
+		}
+	}
 	s.loadedMu.Unlock()
-	if ok {
+
+	for _, runner := range runners {
 		runner.refMu.Lock()
 		runner.expiresAt = time.Now()
 		if runner.expireTimer != nil {

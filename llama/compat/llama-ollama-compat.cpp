@@ -472,7 +472,7 @@ void handle_snowflake_arctic_embed2(gguf_context * meta) {
     }
 
     gguf_set_arr_data(meta, key, GGUF_TYPE_UINT8, decoded.data(), decoded.size());
-    OLLAMA_COMPAT_LOG_INFO("%s: converted tokenizer precompiled charsmap to byte array\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format snowflake-arctic-embed2 GGUF; converted tokenizer precompiled charsmap to byte array\n", __func__);
 }
 
 // =========================================================================
@@ -2745,6 +2745,10 @@ void handle_llama4_clip(gguf_context * meta, ggml_context * ctx) {
     for (const auto & [from, to] : kLlama4ClipRenames) {
         rename_tensors_containing(meta, ctx, from, to);
     }
+
+    // Keep the live mmproj path aligned with converted llama.cpp projectors.
+    promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
+    promote_tensor_to_f32(meta, ctx, "v.position_embd.weight");
 }
 
 // =========================================================================
@@ -2958,6 +2962,7 @@ void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
             gguf_set_val_u32(meta, "clip.vision.n_wa_pattern", (uint32_t)(arr[0] + 1));
         }
     }
+    inject_u32_if_missing(meta, "clip.vision.n_wa_pattern", 8);
 
     // Default image_size = 560 (Qwen2VLVisionModel default, no image_size in HF config).
     inject_u32_if_missing(meta, "clip.vision.image_size", 560);
@@ -3188,7 +3193,7 @@ bool needs_default_llava_projector_type(const gguf_context * meta) {
 void handle_missing_llava_projector_type(gguf_context * meta) {
     if (!needs_default_llava_projector_type(meta)) return;
 
-    OLLAMA_COMPAT_LOG_INFO("%s: detected LLaVA/BakLLaVA projector without projector type; defaulting to mlp\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format LLaVA/BakLLaVA projector without projector type; defaulting to mlp\n", __func__);
     gguf_set_val_str(meta, "clip.projector_type", "mlp");
 }
 

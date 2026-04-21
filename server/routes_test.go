@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,168 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+func TestPsHandlerUsesRunningManifestAndRunner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	childDigest := strings.Repeat("a", 64)
+	s := Server{
+		sched: &Scheduler{
+			loaded: map[string]*runnerRef{
+				"test": {
+					model: &Model{
+						ShortName:      "test-model:latest",
+						Digest:         strings.Repeat("b", 64),
+						ManifestDigest: childDigest,
+						Runner:         manifest.RunnerMLX,
+						Config: model.ConfigV2{
+							ModelFormat: manifest.FormatSafetensors,
+						},
+					},
+					runner:          manifest.RunnerMLX,
+					totalSize:       1024,
+					vramSize:        1024,
+					expiresAt:       time.Now().Add(time.Hour),
+					sessionDuration: time.Hour,
+				},
+			},
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/ps", nil)
+
+	s.PsHandler(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp api.ProcessResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Models) != 1 {
+		t.Fatalf("model count = %d, want 1", len(resp.Models))
+	}
+	if resp.Models[0].Digest != childDigest {
+		t.Fatalf("digest = %q, want child digest %q", resp.Models[0].Digest, childDigest)
+	}
+	if resp.Models[0].Runner != manifest.RunnerMLX {
+		t.Fatalf("runner = %q, want %q", resp.Models[0].Runner, manifest.RunnerMLX)
+	}
+}
+
+func TestNormalizeRunner(t *testing.T) {
+	tests := []struct {
+		name    string
+		runner  string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty", runner: "", want: ""},
+		{name: "mlx", runner: "mlx", want: manifest.RunnerMLX},
+		{name: "mlxrunner alias", runner: "mlxrunner", want: manifest.RunnerMLX},
+		{name: "ggml", runner: "ggml", want: manifest.RunnerGGML},
+		{name: "llamacpp", runner: "llamacpp", want: manifest.RunnerLlamaCPP},
+		{name: "llama.cpp alias", runner: "llama.cpp", want: manifest.RunnerLlamaCPP},
+		{name: "llama-cpp alias", runner: "llama-cpp", want: manifest.RunnerLlamaCPP},
+		{name: "llama_cpp alias", runner: "llama_cpp", want: manifest.RunnerLlamaCPP},
+		{name: "trim and case fold", runner: "  MLXRunner  ", want: manifest.RunnerMLX},
+		{name: "unknown", runner: "bad", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeRunner(tt.runner)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("runner = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRouteHandlersRejectUnknownRunner(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler func(*Server) func(*gin.Context)
+		body    any
+	}{
+		{
+			name:    "generate",
+			handler: func(s *Server) func(*gin.Context) { return s.GenerateHandler },
+			body: api.GenerateRequest{
+				Model:  "test",
+				Runner: "bad",
+			},
+		},
+		{
+			name:    "chat",
+			handler: func(s *Server) func(*gin.Context) { return s.ChatHandler },
+			body: api.ChatRequest{
+				Model:  "test",
+				Runner: "bad",
+			},
+		},
+		{
+			name:    "pull",
+			handler: func(s *Server) func(*gin.Context) { return s.PullHandler },
+			body: api.PullRequest{
+				Name:   "test",
+				Runner: "bad",
+			},
+		},
+		{
+			name:    "show",
+			handler: func(s *Server) func(*gin.Context) { return s.ShowHandler },
+			body: api.ShowRequest{
+				Model:  "test",
+				Runner: "bad",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			var s Server
+
+			w := createRequest(t, tt.handler(&s), tt.body)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+			if got := strings.TrimSpace(w.Body.String()); got != `{"error":"unknown runner \"bad\""}` {
+				t.Fatalf("response = %s", got)
+			}
+		})
+	}
+}
+
+func TestHandleScheduleErrorNoCompatibleManifest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	handleScheduleError(c, "test", fmt.Errorf("%w for runners: mlx", manifest.ErrNoCompatibleManifest))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"no compatible manifest found for runners: mlx"}` {
+		t.Fatalf("response = %s", got)
+	}
+}
 
 func createTestFile(t *testing.T, name string) (string, string) {
 	t.Helper()
@@ -586,6 +749,41 @@ func TestGetModelInfo_SafetensorsUsesStoredFileType(t *testing.T) {
 	}
 }
 
+func TestGetModelInfoSafetensorsTensorInfoRequiresVerbose(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeShowManifestVariant(t, "show-safetensors-tensors", manifest.RunnerMLX, manifest.FormatSafetensors, model.ConfigV2{
+		ModelFormat:  manifest.FormatSafetensors,
+		Capabilities: []string{"completion"},
+	}, nil)
+
+	resp, err := GetModelInfo(api.ShowRequest{
+		Model:  "show-safetensors-tensors",
+		Runner: manifest.RunnerMLX,
+	})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+	if len(resp.Tensors) != 0 {
+		t.Fatalf("non-verbose tensor count = %d, want 0", len(resp.Tensors))
+	}
+
+	resp, err = GetModelInfo(api.ShowRequest{
+		Model:   "show-safetensors-tensors",
+		Runner:  manifest.RunnerMLX,
+		Verbose: true,
+	})
+	if err != nil {
+		t.Fatalf("GetModelInfo(verbose) error = %v", err)
+	}
+	if len(resp.Tensors) != 1 {
+		t.Fatalf("verbose tensor count = %d, want 1", len(resp.Tensors))
+	}
+	if resp.Tensors[0].Name != "show-safetensors-tensors.weight" {
+		t.Fatalf("tensor name = %q, want %q", resp.Tensors[0].Name, "show-safetensors-tensors.weight")
+	}
+}
+
 func TestGetModelInfoRepairsUnknownGGUFFileType(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
@@ -700,11 +898,14 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	checkManifestList := func() {
 		t.Helper()
 
-		mandir := filepath.Join(os.Getenv("OLLAMA_MODELS"), "manifests/")
+		mandir, err := manifest.V2Path()
+		if err != nil {
+			t.Fatalf("failed to resolve v2 manifest path: %v", err)
+		}
 		var entries []string
 		t.Logf("dir entries:")
 		fsys := os.DirFS(mandir)
-		err := fs.WalkDir(fsys, ".", func(path string, info fs.DirEntry, err error) error {
+		err = fs.WalkDir(fsys, ".", func(path string, info fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -727,7 +928,14 @@ func TestManifestCaseSensitivity(t *testing.T) {
 
 		g := entries[0] // raw path
 		g = filepath.ToSlash(g)
-		w := model.ParseName(wantStableName).Filepath()
+		wp, err := manifest.V2PathForName(model.ParseName(wantStableName))
+		if err != nil {
+			t.Fatalf("failed to resolve expected manifest path: %v", err)
+		}
+		w, err := filepath.Rel(mandir, wp)
+		if err != nil {
+			t.Fatalf("failed to make expected manifest path relative: %v", err)
+		}
 		w = filepath.ToSlash(w)
 		if g != w {
 			t.Errorf("\ngot:  %s\nwant: %s", g, w)
@@ -855,6 +1063,299 @@ func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
 	}
 	if resp.Template != chatTemplate {
 		t.Fatalf("template = %q, want selected chat_template %q", resp.Template, chatTemplate)
+	}
+}
+
+func createShowSafetensorsLayer(t *testing.T, tensorName string, shape []int64) manifest.Layer {
+	t.Helper()
+
+	header := map[string]any{
+		tensorName: map[string]any{
+			"dtype":        "F32",
+			"shape":        shape,
+			"data_offsets": []int64{0, 16},
+		},
+	}
+	headerData, err := json.Marshal(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerData))); err != nil {
+		t.Fatal(err)
+	}
+	buf.Write(headerData)
+
+	layer, err := manifest.NewLayer(bytes.NewReader(buf.Bytes()), manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layer.Name = tensorName
+
+	return layer
+}
+
+func writeShowManifestVariant(t *testing.T, name, runner, format string, cfg model.ConfigV2, kv map[string]any, extraLayers ...manifest.Layer) {
+	t.Helper()
+
+	configData, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(configData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layers := make([]manifest.Layer, 0, len(extraLayers)+1)
+	switch format {
+	case manifest.FormatGGUF:
+		_, digest := createBinFile(t, kv, nil)
+		modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		layers = append(layers, modelLayer)
+	case manifest.FormatSafetensors:
+		layers = append(layers, createShowSafetensorsLayer(t, name+".weight", []int64{2, 2}))
+	}
+
+	layers = append(layers, extraLayers...)
+	if err := manifest.WriteManifestWithMetadata(model.ParseName(name), configLayer, layers, runner, format); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShowAllManifestsNonListReturnsSingleManifest(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	_, digest := createBinFile(t, ggml.KV{"general.architecture": "test"}, nil)
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:  "show-model",
+		Files: map[string]string{"model.gguf": digest},
+	})
+
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:        "show-model",
+		AllManifests: true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowManifestsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Manifests) != 1 {
+		t.Fatalf("manifest count = %d, want 1", len(resp.Manifests))
+	}
+	if resp.Manifests[0].Runner != manifest.RunnerGGML {
+		t.Fatalf("runner = %q, want %q", resp.Manifests[0].Runner, manifest.RunnerGGML)
+	}
+	if resp.Manifests[0].Details.Format != manifest.FormatGGUF {
+		t.Fatalf("format = %q, want %q", resp.Manifests[0].Details.Format, manifest.FormatGGUF)
+	}
+	if resp.Manifests[0].ModelInfo["general.architecture"] != "test" {
+		t.Fatalf("architecture = %v, want %q", resp.Manifests[0].ModelInfo["general.architecture"], "test")
+	}
+}
+
+func TestShowAllManifestsManifestListDedupesLicenses(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	licenseLayer, err := manifest.NewLayer(bytes.NewReader([]byte("Apache-2.0")), "application/vnd.ollama.image.license")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeShowManifestVariant(t, "show-mlx", manifest.RunnerMLX, manifest.FormatSafetensors, model.ConfigV2{
+		ModelFormat:  manifest.FormatSafetensors,
+		ModelFamily:  "qwen3_5_moe",
+		ModelType:    "35.1B",
+		FileType:     "nvfp4",
+		Requires:     "0.19.0",
+		Capabilities: []string{"completion", "vision", "thinking", "tools"},
+	}, nil, licenseLayer)
+
+	writeShowManifestVariant(t, "show-ggml", manifest.RunnerGGML, manifest.FormatGGUF, model.ConfigV2{
+		ModelFormat:  manifest.FormatGGUF,
+		ModelFamily:  "qwen35moe",
+		ModelType:    "36.0B",
+		FileType:     "Q4_K_M",
+		Capabilities: []string{"completion", "vision", "thinking", "tools"},
+	}, ggml.KV{"general.architecture": "qwen35moe"}, licenseLayer)
+
+	mlxManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName("show-mlx"), manifest.RunnerMLX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName("show-ggml"), manifest.RunnerGGML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mlxRef, err := manifest.NewManifestReference(mlxManifest.BlobDigest(), manifest.RunnerMLX, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlRef, err := manifest.NewManifestReference(ggmlManifest.BlobDigest(), manifest.RunnerGGML, manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{mlxRef, ggmlRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(model.ParseName("show-list"), parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	var s Server
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:        "show-list",
+		AllManifests: true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowManifestsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Manifests) != 2 {
+		t.Fatalf("manifest count = %d, want 2", len(resp.Manifests))
+	}
+	if resp.Manifests[0].Runner != manifest.RunnerMLX || resp.Manifests[1].Runner != manifest.RunnerGGML {
+		t.Fatalf("runner order = [%q %q], want [%q %q]", resp.Manifests[0].Runner, resp.Manifests[1].Runner, manifest.RunnerMLX, manifest.RunnerGGML)
+	}
+	if resp.License != "Apache-2.0" {
+		t.Fatalf("license = %q, want %q", resp.License, "Apache-2.0")
+	}
+	if resp.Manifests[0].License != "Apache-2.0" || resp.Manifests[1].License != "Apache-2.0" {
+		t.Fatalf("child licenses = [%q %q], want both Apache-2.0", resp.Manifests[0].License, resp.Manifests[1].License)
+	}
+	if resp.Manifests[0].Requires != "0.19.0" {
+		t.Fatalf("mlx requires = %q, want %q", resp.Manifests[0].Requires, "0.19.0")
+	}
+	if len(resp.Manifests[0].Tensors) != 0 {
+		t.Fatalf("non-verbose mlx tensor count = %d, want 0", len(resp.Manifests[0].Tensors))
+	}
+
+	w = createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:        "show-list",
+		AllManifests: true,
+		Verbose:      true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected verbose status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+	resp = api.ShowManifestsResponse{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Manifests[0].Tensors) != 1 {
+		t.Fatalf("verbose mlx tensor count = %d, want 1", len(resp.Manifests[0].Tensors))
+	}
+	if resp.Manifests[0].Tensors[0].Name != "show-mlx.weight" {
+		t.Fatalf("mlx tensor name = %q, want %q", resp.Manifests[0].Tensors[0].Name, "show-mlx.weight")
+	}
+}
+
+func TestShowManifestListIncludesChildSummaries(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeShowManifestVariant(t, "show-mlx", manifest.RunnerMLX, manifest.FormatSafetensors, model.ConfigV2{
+		ModelFormat: manifest.FormatSafetensors,
+		ModelFamily: "qwen3_5_moe",
+		ModelType:   "35.1B",
+		FileType:    "nvfp4",
+	}, nil)
+
+	writeShowManifestVariant(t, "show-ggml", manifest.RunnerGGML, manifest.FormatGGUF, model.ConfigV2{
+		ModelFormat: manifest.FormatGGUF,
+		ModelFamily: "qwen35moe",
+		ModelType:   "36.0B",
+		FileType:    "Q4_K_M",
+	}, ggml.KV{"general.architecture": "qwen35moe"})
+
+	mlxManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName("show-mlx"), manifest.RunnerMLX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName("show-ggml"), manifest.RunnerGGML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mlxRef, err := manifest.NewManifestReference(mlxManifest.BlobDigest(), manifest.RunnerMLX, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlRef, err := manifest.NewManifestReference(ggmlManifest.BlobDigest(), manifest.RunnerGGML, manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{mlxRef, ggmlRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(model.ParseName("show-list"), parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	var s Server
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:  "show-list",
+		Runner: manifest.RunnerGGML,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Manifests) != 2 {
+		t.Fatalf("manifest summary count = %d, want 2", len(resp.Manifests))
+	}
+	if resp.Manifests[0].Digest != mlxManifest.BlobDigest() || resp.Manifests[0].Runner != manifest.RunnerMLX {
+		t.Fatalf("first summary = %#v, want mlx %s", resp.Manifests[0], mlxManifest.BlobDigest())
+	}
+	if resp.Manifests[1].Digest != ggmlManifest.BlobDigest() || resp.Manifests[1].Runner != manifest.RunnerGGML || !resp.Manifests[1].Selected {
+		t.Fatalf("second summary = %#v, want selected ggml %s", resp.Manifests[1], ggmlManifest.BlobDigest())
+	}
+}
+
+func TestShowAllManifestsRejectsRunnerSelection(t *testing.T) {
+	var s Server
+
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:        "show-model",
+		Runner:       manifest.RunnerMLX,
+		AllManifests: true,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status code 400, actual %d: %s", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"runner cannot be used with all_manifests"}` {
+		t.Fatalf("response = %s", got)
 	}
 }
 
