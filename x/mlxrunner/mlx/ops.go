@@ -72,6 +72,10 @@ func (t *Array) AsStrided(shape []int, strides []int, offset int) *Array {
 }
 
 func (t *Array) Concatenate(axis int, others ...*Array) *Array {
+	if len(others) == 0 {
+		return t.Clone()
+	}
+
 	vector := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(vector)
 
@@ -127,9 +131,9 @@ func (t *Array) GatherMM(other, lhs, rhs *Array, sorted bool) *Array {
 	return out
 }
 
-func (t *Array) Logsumexp(keepDims bool) *Array {
-	out := New("LOGSUMEXP")
-	C.mlx_logsumexp(&out.ctx, t.ctx, C.bool(keepDims), DefaultStream().ctx)
+func (t *Array) LogsumexpAxis(axis int, keepDims bool) *Array {
+	out := New("LOGSUMEXP_AXIS")
+	C.mlx_logsumexp_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
 	return out
 }
 
