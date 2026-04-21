@@ -11,6 +11,7 @@ import (
 
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 	"github.com/ollama/ollama/x/tokenizer"
@@ -122,7 +123,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			}
 		}
 
-		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], 1, n), caches)
+		r.Model.Forward(&batch.Batch{InputIDs: mlx.FromValues(tokens[processed:processed+n], 1, n)}, caches)
 		mlx.Sweep()
 		materializeCaches()
 		processed += n
@@ -143,7 +144,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
 
 	step := func(token *mlx.Array) sampler.Result {
-		fwd := r.Model.Forward(token, caches)
+		fwd := r.Model.Forward(&batch.Batch{InputIDs: token}, caches)
 		logits := r.Model.Unembed(fwd)
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 

@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
@@ -1345,11 +1346,11 @@ func (l *Layer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *m
 	return mlx.Add(h, r)
 }
 
-func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
-	dims := tokens.Dims()
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 
-	h := m.EmbedTokens.Forward(tokens)
+	h := m.EmbedTokens.Forward(b.InputIDs)
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
