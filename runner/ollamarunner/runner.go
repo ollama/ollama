@@ -335,6 +335,12 @@ type Server struct {
 	// loadMu prevents more than one load attempt from occurring at a time
 	loadMu sync.Mutex
 
+	// infoOnce ensures the dummy model used to service /info before a real
+	// model is loaded is initialized at most once.
+	infoOnce  sync.Once
+	infoModel model.Model
+	infoErr   error
+
 	// lastLoad is the load request from the previous load attempt. Used to
 	// detect if we can reuse an existing memory allocation.
 	lastLoad llm.LoadRequest
@@ -1362,15 +1368,37 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	m := s.model
+	m, err := s.infoModelLocked()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
+		return
+	}
+	startDevices := time.Now()
+	infos := m.Backend().BackendDevices()
+	slog.Debug("gathering device infos took", "duration", time.Since(startDevices))
+	if err := json.NewEncoder(w).Encode(&infos); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
 
-	if m == nil {
+func (s *Server) infoModelLocked() (model.Model, error) {
+	if s.model != nil {
+		return s.model, nil
+	}
+
+	s.infoOnce.Do(func() {
 		startLoad := time.Now()
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.infoErr = fmt.Errorf("panic during dummy backend initialization: %v", rec)
+			}
+		}()
 
-		// Dummy load to get the backend wired up
+		// Dummy load to get the backend wired up.
 		f, err := os.CreateTemp("", "*.bin")
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
+			s.infoErr = err
 			return
 		}
 		defer f.Close()
@@ -1380,24 +1408,26 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			"general.architecture": "llama",
 			"tokenizer.ggml.model": "gpt2",
 		}, nil); err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
+			s.infoErr = err
 			return
 		}
 
-		m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
+		s.infoModel, s.infoErr = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
+		if s.infoErr != nil {
 			return
 		}
+
 		slog.Debug("dummy model load took", "duration", time.Since(startLoad))
+	})
+
+	if s.infoErr != nil {
+		return nil, s.infoErr
+	}
+	if s.infoModel == nil {
+		return nil, fmt.Errorf("dummy backend initialization did not produce a model")
 	}
 
-	startDevices := time.Now()
-	infos := m.Backend().BackendDevices()
-	slog.Debug("gathering device infos took", "duration", time.Since(startDevices))
-	if err := json.NewEncoder(w).Encode(&infos); err != nil {
-		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
-	}
+	return s.infoModel, nil
 }
 
 func Execute(args []string) error {
