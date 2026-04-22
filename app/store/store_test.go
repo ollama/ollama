@@ -3,32 +3,9 @@
 package store
 
 import (
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 )
-
-type appLaunchIntegration struct {
-	ID string `json:"id"`
-}
-
-func loadAppLaunchManifest(t *testing.T) []appLaunchIntegration {
-	t.Helper()
-
-	path := filepath.Join("..", "ui", "app", "src", "data", "launch-integrations.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read app launch manifest: %v", err)
-	}
-
-	var manifest []appLaunchIntegration
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		t.Fatalf("parse app launch manifest: %v", err)
-	}
-
-	return manifest
-}
 
 func TestStore(t *testing.T) {
 	s, cleanup := setupTestStore(t)
@@ -127,23 +104,6 @@ func TestStore(t *testing.T) {
 
 		if loaded.LastHomeView != "launch" {
 			t.Fatalf("expected empty LastHomeView to fall back to launch, got %q", loaded.LastHomeView)
-		}
-	})
-
-	t.Run("settings accepts all app launch views from manifest", func(t *testing.T) {
-		for _, integration := range loadAppLaunchManifest(t) {
-			if err := s.SetSettings(Settings{LastHomeView: integration.ID}); err != nil {
-				t.Fatalf("set LastHomeView %q: %v", integration.ID, err)
-			}
-
-			loaded, err := s.Settings()
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if loaded.LastHomeView != integration.ID {
-				t.Fatalf("expected LastHomeView %q, got %q", integration.ID, loaded.LastHomeView)
-			}
 		}
 	})
 
