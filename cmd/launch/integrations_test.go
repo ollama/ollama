@@ -657,6 +657,20 @@ func TestBuildModelList_CheckedRecommendedDoesNotReshuffleRecommendedOrder(t *te
 	}
 }
 
+func TestBuildModelList_StaleSavedKimiK25DoesNotReshuffleRecommendedOrder(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "kimi-k2.5:cloud", Remote: true},
+	}
+
+	items, _, _, _ := buildModelList(existing, []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud"}, "kimi-k2.5:cloud")
+	got := names(items)
+
+	want := []string{"kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "kimi-k2.5:cloud"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("stale saved kimi-k2.5 should stay in More without reshuffling the fixed recommended order (-want +got):\n%s", diff)
+	}
+}
+
 func TestBuildModelList_CurrentPrefersExactLocalOverCloudPrefix(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "qwen3.5:cloud", Remote: true},
