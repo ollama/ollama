@@ -2368,7 +2368,7 @@ func NewCLI() *cobra.Command {
 }
 
 // If the user has explicitly set thinking options, either through the CLI or
-// through the `/set think` or `set nothink` interactive options, then we
+// through the `/set think` or `set nothing` interactive options, then we
 // respect them. Otherwise, we check model capabilities to see if the model
 // supports thinking. If the model does support thinking, we enable it.
 // Otherwise, we unset the thinking option (which is different than setting it

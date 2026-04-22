@@ -33,7 +33,7 @@ func GetCPUDetails() []CPU {
 		slog.Warn("failed to discover physical CPU details", "query", query, "error", err)
 	}
 	query = "hw.perflevel1.physicalcpu"
-	efficiencyCores, _ := syscall.SysctlUint32(query) // On x86 xeon this wont return data
+	efficiencyCores, _ := syscall.SysctlUint32(query) // On x86 xeon this won't return data
 
 	// Determine thread count
 	query = "hw.logicalcpu"
