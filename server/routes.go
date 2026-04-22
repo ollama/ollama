@@ -374,17 +374,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	var builtinParser parsers.Parser
 	if shouldUseHarmony(m) && m.Config.Parser == "" {
 		m.Config.Parser = "harmony"
-	}
-
-	if !req.Raw && m.Config.Parser != "" {
-		builtinParser = parsers.ParserForName(m.Config.Parser)
-		if builtinParser != nil {
-			// no tools or last message for generate endpoint
-			builtinParser.Init(nil, nil, req.Think)
-		}
 	}
 
 	caps := []model.Capability{model.CapabilityCompletion}
@@ -402,6 +393,18 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if req.Think != nil && req.Think.Bool() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
 			return
+		}
+	}
+
+	// Initialize the parser only after req.Think has been resolved, since
+	// parsers like gemma4 gate whether to surface thinking content on the
+	// value passed to Init. Matches the ordering used by ChatHandler.
+	var builtinParser parsers.Parser
+	if !req.Raw && m.Config.Parser != "" {
+		builtinParser = parsers.ParserForName(m.Config.Parser)
+		if builtinParser != nil {
+			// no tools or last message for generate endpoint
+			builtinParser.Init(nil, nil, req.Think)
 		}
 	}
 
@@ -1424,6 +1427,33 @@ func (s *Server) ListHandler(c *gin.Context) {
 			}
 		}
 
+		details := api.ModelDetails{
+			Format:            cf.ModelFormat,
+			Family:            cf.ModelFamily,
+			Families:          cf.ModelFamilies,
+			ParameterSize:     cf.ModelType,
+			QuantizationLevel: cf.FileType,
+		}
+
+		// Safetensors models do not populate ModelType/FileType on the
+		// manifest config, so mirror ShowHandler and derive the values from
+		// the safetensors headers. Keeps /api/tags consistent with /api/show.
+		if cf.ModelFormat == "safetensors" && slices.Contains(cf.Capabilities, "completion") {
+			if info, err := xserver.GetSafetensorsLLMInfo(n); err == nil {
+				if arch, ok := info["general.architecture"].(string); ok && arch != "" {
+					details.Family = arch
+				}
+				if paramCount, ok := info["general.parameter_count"].(int64); ok && paramCount > 0 {
+					details.ParameterSize = format.HumanNumber(uint64(paramCount))
+				}
+			}
+			if details.QuantizationLevel == "" {
+				if dtype, err := xserver.GetSafetensorsDtype(n); err == nil && dtype != "" {
+					details.QuantizationLevel = dtype
+				}
+			}
+		}
+
 		// tag should never be masked
 		models = append(models, api.ListModelResponse{
 			Model:       n.DisplayShortest(),
@@ -1433,13 +1463,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 			Size:        m.Size(),
 			Digest:      m.Digest(),
 			ModifiedAt:  m.FileInfo().ModTime(),
-			Details: api.ModelDetails{
-				Format:            cf.ModelFormat,
-				Family:            cf.ModelFamily,
-				Families:          cf.ModelFamilies,
-				ParameterSize:     cf.ModelType,
-				QuantizationLevel: cf.FileType,
-			},
+			Details:     details,
 		})
 	}
 
