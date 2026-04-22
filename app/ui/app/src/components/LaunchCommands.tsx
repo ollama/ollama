@@ -1,19 +1,10 @@
 import CopyButton from "@/components/CopyButton";
+import launchIntegrations, { type LaunchIntegration } from "@/data/launch-integrations";
 import { useSettings } from "@/hooks/useSettings";
-import launchIntegrations from "@/data/launch-integrations.json";
 
-interface LaunchCommand {
-  id: string;
-  name: string;
-  command: string;
-  description: string;
-  icon?: string;
-  darkIcon?: string;
-  iconClassName?: string;
-}
-const LAUNCH_COMMANDS: LaunchCommand[] = launchIntegrations;
+const LAUNCH_COMMANDS: LaunchIntegration[] = launchIntegrations;
 
-function LaunchIcon({ item }: { item: LaunchCommand }) {
+function LaunchIcon({ item }: { item: LaunchIntegration }) {
   if (item.icon) {
     if (item.darkIcon) {
       return (
@@ -47,7 +38,7 @@ export default function LaunchCommands() {
   const isWindows = navigator.platform.toLowerCase().includes("win");
   const { setSettings } = useSettings();
 
-  const renderCommandCard = (item: LaunchCommand) => (
+  const renderCommandCard = (item: LaunchIntegration) => (
     <div key={item.command} className="w-full text-left">
       <div className="flex items-start gap-4 sm:gap-5">
         <div

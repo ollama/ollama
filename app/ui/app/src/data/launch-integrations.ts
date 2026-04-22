@@ -1,4 +1,14 @@
-[
+export interface LaunchIntegration {
+  id: string;
+  name: string;
+  command: string;
+  description: string;
+  icon?: string;
+  darkIcon?: string;
+  iconClassName?: string;
+}
+
+const launchIntegrations = [
   {
     "id": "openclaw",
     "name": "OpenClaw",
@@ -63,4 +73,6 @@
     "darkIcon": "/launch-icons/pi-dark.svg",
     "iconClassName": "h-7 w-7"
   }
-]
+] satisfies LaunchIntegration[];
+
+export default launchIntegrations;
