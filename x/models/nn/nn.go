@@ -112,8 +112,8 @@ func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
 		// Double-scale nvfp4 (e.g., NVIDIA ModelOpt): standard quantized_matmul
 		// followed by global_scale multiply. The global_scale is a per-tensor
 		// F32 scalar (weight_scale_2 in NVIDIA's format).
-		// Note: QQMM would be the proper fused path but MLX's QQMatmul returns
-		// "NYI for the general case" on current builds.
+		// TODO: switch to a fused double-scale matmul once MLX has kernel
+		// coverage for this path.
 		out = mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true, ql.GroupSize, ql.Bits, ql.Mode)
 		out = mlx.Mul(out, ql.GlobalScale)
 	} else {

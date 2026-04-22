@@ -306,15 +306,16 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 }
 
 // GetSafetensorsDtype returns the quantization type for a safetensors model.
-// Reads quant_type from the first tensor blob's __metadata__.
-// Falls back to torch_dtype from config.json if no quant metadata.
+// Reads tensor headers until quantized weights are found.
+// Falls back to torch_dtype from config.json if no quant metadata exists.
 func GetSafetensorsDtype(name model.Name) (string, error) {
 	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return "", fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	// Check first tensor blob for quant_type metadata
+	// Mixed models can start with unquantized embeddings or heads, so scan until
+	// any tensor blob reports quantized weight metadata.
 	for _, layer := range mf.Layers {
 		if layer.MediaType != manifest.MediaTypeImageTensor {
 			continue
@@ -323,15 +324,20 @@ func GetSafetensorsDtype(name model.Name) (string, error) {
 		if err != nil {
 			continue
 		}
-		info, err := readSafetensorsHeader(blobPath)
+		f, err := os.Open(blobPath)
 		if err != nil {
 			continue
 		}
-		if quantType := canonicalQuantType(info.QuantType); quantType != "" {
-			return quantType, nil
+		infos, err := parseSafetensorsAllHeaders(f)
+		_ = f.Close()
+		if err != nil {
+			continue
 		}
-		// Only check the first tensor blob
-		break
+		for _, info := range infos {
+			if quantType := canonicalQuantType(info.QuantType); quantType != "" {
+				return quantType, nil
+			}
+		}
 	}
 
 	// Not quantized - return torch_dtype from config.json

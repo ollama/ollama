@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestBuildModelInfo(t *testing.T) {
@@ -1206,6 +1207,81 @@ func TestGetTensorInfoFromManifest_Packed(t *testing.T) {
 	}
 	if packedTypes["model.layers.0.mlp.experts.0.gate_proj.weight"] != "int4" {
 		t.Errorf("gate_proj.Type = %v, want int4", packedTypes["model.layers.0.mlp.experts.0.gate_proj.weight"])
+	}
+}
+
+func TestGetSafetensorsDtypeScansPastUnquantizedFirstBlob(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeSafetensorsLayer := func(t *testing.T, header map[string]any, name string) manifest.Layer {
+		t.Helper()
+
+		headerJSON, err := json.Marshal(header)
+		if err != nil {
+			t.Fatalf("failed to marshal header: %v", err)
+		}
+
+		var buf bytes.Buffer
+		if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
+			t.Fatalf("failed to write header size: %v", err)
+		}
+		buf.Write(headerJSON)
+
+		layer, err := manifest.NewLayer(&buf, manifest.MediaTypeImageTensor)
+		if err != nil {
+			t.Fatalf("failed to create tensor layer: %v", err)
+		}
+		layer.Name = name
+		return layer
+	}
+
+	configData, err := json.Marshal(map[string]any{
+		"model_format": "safetensors",
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+	configLayer, err := manifest.NewLayer(bytes.NewReader(configData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	unquantized := writeSafetensorsLayer(t, map[string]any{
+		"model.embed_tokens.weight": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{16, 8},
+			"data_offsets": []int64{0, 256},
+		},
+	}, "model.embed_tokens.weight")
+
+	quantized := writeSafetensorsLayer(t, map[string]any{
+		"__metadata__": map[string]string{
+			"quant_type": "mxfp8",
+			"group_size": "32",
+		},
+		"model.layers.0.mlp.down_proj.weight": map[string]any{
+			"dtype":        "U32",
+			"shape":        []int64{16, 4},
+			"data_offsets": []int64{0, 256},
+		},
+		"model.layers.0.mlp.down_proj.weight.scale": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{16, 1},
+			"data_offsets": []int64{256, 288},
+		},
+	}, "model.layers.0.mlp.down_proj.weight")
+
+	name := model.ParseName("mixed-fp8-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{unquantized, quantized}); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	got, err := GetSafetensorsDtype(name)
+	if err != nil {
+		t.Fatalf("GetSafetensorsDtype() error = %v", err)
+	}
+	if got != "mxfp8" {
+		t.Fatalf("GetSafetensorsDtype() = %q, want mxfp8", got)
 	}
 }
 
