@@ -50,7 +50,7 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     name: "Hermes Agent",
     command: "ollama launch hermes",
     description: "Self-improving AI agent built by Nous Research",
-    icon: "/launch-icons/hermes-agent.svg",
+    icon: "/launch-icons/hermes-agent.png",
     darkIcon: "/launch-icons/hermes-agent-dark.png",
     iconClassName: "h-7 w-7",
   },
@@ -138,11 +138,8 @@ export default function LaunchCommands() {
             Launch
           </h1>
           <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            External integrations from{" "}
-            <code className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs dark:bg-neutral-800">
-              ollama launch
-            </code>
-            , without the chat entry.</p>
+            Copy a command and run it in your terminal.
+          </p>
 
           <div className="mt-6 grid gap-7">
             {LAUNCH_COMMANDS.map(renderCommandCard)}
