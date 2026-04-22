@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -17,44 +16,18 @@ type appLaunchIntegration struct {
 func loadAppLaunchManifest(t *testing.T) []appLaunchIntegration {
 	t.Helper()
 
-	path := filepath.Join("..", "ui", "app", "src", "data", "launch-integrations.ts")
+	path := filepath.Join("..", "ui", "app", "src", "data", "launch-integrations.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read app launch manifest: %v", err)
 	}
 
-	jsonData := extractJSONArray(t, string(data))
-
 	var manifest []appLaunchIntegration
-	if err := json.Unmarshal([]byte(jsonData), &manifest); err != nil {
+	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("parse app launch manifest: %v", err)
 	}
 
 	return manifest
-}
-
-func extractJSONArray(t *testing.T, src string) string {
-	t.Helper()
-
-	assign := strings.Index(src, "= [")
-	if assign == -1 {
-		t.Fatal("launch manifest assignment not found")
-	}
-
-	start := strings.Index(src[assign:], "[")
-	end := strings.Index(src[assign:], "] satisfies")
-	if end != -1 {
-		end += assign
-	} else {
-		end = strings.LastIndex(src, "]")
-	}
-	if start == -1 || end == -1 || end < start {
-		t.Fatal("launch manifest array not found")
-	}
-
-	start += assign
-
-	return src[start : end+1]
 }
 
 func TestStore(t *testing.T) {
