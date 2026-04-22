@@ -9,13 +9,14 @@ export function SidebarLayout({
   collapsible?: boolean;
   chatId?: string;
 }>) {
-  const { settings, setSettings } = useSettings();
+  const { settings, isLoading, setSettings } = useSettings();
   const isWindows = navigator.platform.toLowerCase().includes("win");
+  const animate = !isLoading;
 
   return (
     <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
       <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
+        className={`absolute flex mx-2 py-2 z-20 items-center ${animate ? "transition-[left] duration-375" : ""} text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
       >
         <button
           onClick={() => setSettings({ SidebarOpen: !settings.sidebarOpen })}
@@ -57,7 +58,7 @@ export function SidebarLayout({
         </Link>
       </div>
       <div
-        className={`flex flex-col transition-[width] duration-300 max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
+        className={`flex flex-col ${animate ? "transition-[width] duration-300" : ""} max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
       >
         <div
           onDoubleClick={() => window.doubleClick && window.doubleClick()}

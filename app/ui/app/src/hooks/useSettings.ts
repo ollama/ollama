@@ -29,7 +29,7 @@ export function useSettings() {
   const queryClient = useQueryClient();
 
   // Fetch settings with useQuery
-  const { data: settingsData, error } = useQuery({
+  const { data: settingsData, error, isLoading } = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
   });
@@ -76,9 +76,10 @@ export function useSettings() {
     () => ({
       settings,
       settingsData: settingsData?.settings,
+      isLoading,
       error,
       setSettings,
     }),
-    [settings, settingsData?.settings, error, setSettings],
+    [settings, settingsData?.settings, isLoading, error, setSettings],
   );
 }
