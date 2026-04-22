@@ -493,35 +493,6 @@ func SoftmaxAxis(a *Array, axis int, precise bool) *Array {
 	return out
 }
 
-func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask bool) *Array {
-	mask := New("")
-	sinks := New("")
-	mode := ""
-	if causalMask {
-		mode = "causal"
-	}
-	cMode := C.CString(mode)
-	defer C.free(unsafe.Pointer(cMode))
-
-	out := New("FAST_SDPA")
-	C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), cMode, mask.ctx, sinks.ctx, DefaultStream().ctx)
-	return out
-}
-
-// ScaledDotProductAttentionMasked runs the fast SDPA kernel with an explicit
-// additive mask. The mask is broadcast to [B, H, Q, K] and added to scores
-// before softmax. Pass mode="array" so MLX actually consults mask_arr; the
-// empty string is "no mask" and silently ignores the array argument.
-func ScaledDotProductAttentionMasked(q, k, v *Array, scale float32, mask *Array) *Array {
-	sinks := New("")
-	cMode := C.CString("array")
-	defer C.free(unsafe.Pointer(cMode))
-
-	out := New("FAST_SDPA")
-	C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), cMode, mask.ctx, sinks.ctx, DefaultStream().ctx)
-	return out
-}
-
 func LayerNormFn(x, weight, bias *Array, eps float32) *Array {
 	out := New("FAST_LAYERNORM")
 	var w, b C.mlx_array

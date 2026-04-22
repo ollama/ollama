@@ -124,8 +124,9 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		}
 
 		r.Model.Forward(&batch.Batch{
-			InputIDs:   mlx.FromValues(tokens[processed:processed+n], 1, n),
-			SeqOffsets: []int32{int32(position)},
+			InputIDs:     mlx.FromValues(tokens[processed:processed+n], 1, n),
+			SeqOffsets:   []int32{int32(position)},
+			SeqQueryLens: []int32{int32(n)},
 		}, caches)
 		mlx.Sweep()
 		materializeCaches()
@@ -148,8 +149,9 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	step := func(token *mlx.Array) sampler.Result {
 		fwd := r.Model.Forward(&batch.Batch{
-			InputIDs:   token,
-			SeqOffsets: []int32{int32(position)},
+			InputIDs:     token,
+			SeqOffsets:   []int32{int32(position)},
+			SeqQueryLens: []int32{int32(token.Dim(1))},
 		}, caches)
 		position += token.Dim(1)
 		logits := r.Model.Unembed(fwd)

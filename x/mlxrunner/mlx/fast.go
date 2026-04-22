@@ -7,19 +7,21 @@ import (
 	"unsafe"
 )
 
-func ScaledDotProductAttention(query, key, value, mask *Array, scale float32) *Array {
-	if mask == nil {
-		mask = New("")
-	}
-
+func FastScaledDotProductAttention(q, k, v *Array, scale float32, mode string, mask *Array) *Array {
 	sinks := New("")
-
-	mode := "causal"
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 
+	var maskCtx C.mlx_array
+	if mask != nil {
+		maskCtx = mask.ctx
+	} else {
+		empty := New("")
+		maskCtx = empty.ctx
+	}
+
 	out := New("FAST_SDPA")
-	C.mlx_fast_scaled_dot_product_attention(&out.ctx, query.ctx, key.ctx, value.ctx, C.float(scale), cMode, mask.ctx, sinks.ctx, DefaultStream().ctx)
+	C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), cMode, maskCtx, sinks.ctx, DefaultStream().ctx)
 	return out
 }
 
@@ -43,4 +45,3 @@ func (r *RMSNorm) Forward(x *Array, eps float32) *Array {
 	C.mlx_fast_rms_norm(&out.ctx, x.ctx, r.Weight.ctx, C.float(eps), DefaultStream().ctx)
 	return out
 }
-
