@@ -2242,95 +2242,7 @@ func TestIntegrationOnboarded(t *testing.T) {
 	})
 }
 
-func TestVersionLessThan(t *testing.T) {
-	tests := []struct {
-		a, b string
-		want bool
-	}{
-		{"0.1.7", "0.2.1", true},
-		{"0.2.0", "0.2.1", true},
-		{"0.2.1", "0.2.1", false},
-		{"0.2.2", "0.2.1", false},
-		{"1.0.0", "0.2.1", false},
-		{"0.2.1", "1.0.0", true},
-		{"v0.1.7", "0.2.1", true},
-		{"0.2.1", "v0.2.1", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.a+"_vs_"+tt.b, func(t *testing.T) {
-			if got := versionLessThan(tt.a, tt.b); got != tt.want {
-				t.Errorf("versionLessThan(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestWebSearchPluginUpToDate(t *testing.T) {
-	t.Run("missing directory", func(t *testing.T) {
-		if webSearchPluginUpToDate(filepath.Join(t.TempDir(), "nonexistent")) {
-			t.Error("expected false for missing directory")
-		}
-	})
-
-	t.Run("missing package.json", func(t *testing.T) {
-		dir := t.TempDir()
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for missing package.json")
-		}
-	})
-
-	t.Run("old version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"0.1.7"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for old version 0.1.7")
-		}
-	})
-
-	t.Run("exact minimum version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"0.2.1"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if !webSearchPluginUpToDate(dir) {
-			t.Error("expected true for exact minimum version 0.2.1")
-		}
-	})
-
-	t.Run("newer version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"1.0.0"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if !webSearchPluginUpToDate(dir) {
-			t.Error("expected true for newer version 1.0.0")
-		}
-	})
-
-	t.Run("invalid json", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`not json`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for invalid json")
-		}
-	})
-
-	t.Run("empty version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":""}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for empty version")
-		}
-	})
-}
-
-func TestRegisterWebSearchPlugin(t *testing.T) {
+func TestConfigureOllamaWebSearch(t *testing.T) {
 	home := t.TempDir()
 	setTestHome(t, home)
 
@@ -2345,7 +2257,7 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registerWebSearchPlugin()
+		configureOllamaWebSearch()
 
 		data, err := os.ReadFile(configPath)
 		if err != nil {
@@ -2361,40 +2273,30 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal("plugins section missing")
 		}
 
-		// Check entries
 		entries, _ := plugins["entries"].(map[string]any)
-		entry, _ := entries["openclaw-web-search"].(map[string]any)
+		entry, _ := entries["ollama"].(map[string]any)
 		if enabled, _ := entry["enabled"].(bool); !enabled {
-			t.Error("expected entries.openclaw-web-search.enabled = true")
+			t.Error("expected entries.ollama.enabled = true")
+		}
+		if _, ok := entries["openclaw-web-search"]; ok {
+			t.Error("expected stale openclaw-web-search entry to be absent")
 		}
 
-		// Check allow list
-		allow, _ := plugins["allow"].([]any)
-		found := false
-		for _, v := range allow {
-			if s, ok := v.(string); ok && s == "openclaw-web-search" {
-				found = true
-			}
+		if _, ok := plugins["allow"]; ok {
+			t.Error("did not expect plugins.allow to be created when no allowlist exists")
 		}
-		if !found {
-			t.Error("expected plugins.allow to contain openclaw-web-search")
+		if _, ok := plugins["installs"]; ok {
+			t.Error("did not expect plugins.installs to be created")
 		}
 
-		// Check install provenance
-		installs, _ := plugins["installs"].(map[string]any)
-		record, _ := installs["openclaw-web-search"].(map[string]any)
-		if record == nil {
-			t.Fatal("expected plugins.installs.openclaw-web-search")
+		tools, _ := config["tools"].(map[string]any)
+		web, _ := tools["web"].(map[string]any)
+		search, _ := web["search"].(map[string]any)
+		if got, _ := search["provider"].(string); got != "ollama" {
+			t.Errorf("search provider = %q, want %q", got, "ollama")
 		}
-		if source, _ := record["source"].(string); source != "npm" {
-			t.Errorf("install source = %q, want %q", source, "npm")
-		}
-		if spec, _ := record["spec"].(string); spec != webSearchNpmPackage {
-			t.Errorf("install spec = %q, want %q", spec, webSearchNpmPackage)
-		}
-		expectedPath := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
-		if installPath, _ := record["installPath"].(string); installPath != expectedPath {
-			t.Errorf("installPath = %q, want %q", installPath, expectedPath)
+		if enabled, _ := search["enabled"].(bool); !enabled {
+			t.Error("expected tools.web.search.enabled = true")
 		}
 	})
 
@@ -2403,8 +2305,8 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registerWebSearchPlugin()
-		registerWebSearchPlugin()
+		configureOllamaWebSearch()
+		configureOllamaWebSearch()
 
 		data, err := os.ReadFile(configPath)
 		if err != nil {
@@ -2416,30 +2318,39 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 		}
 
 		plugins, _ := config["plugins"].(map[string]any)
-		allow, _ := plugins["allow"].([]any)
-		count := 0
-		for _, v := range allow {
-			if s, ok := v.(string); ok && s == "openclaw-web-search" {
-				count++
-			}
+		entries, _ := plugins["entries"].(map[string]any)
+		if len(entries) != 1 {
+			t.Fatalf("expected only bundled ollama entry, got %v", entries)
 		}
-		if count != 1 {
-			t.Errorf("expected exactly 1 openclaw-web-search in allow, got %d", count)
+		if _, ok := entries["ollama"]; !ok {
+			t.Fatalf("expected entries.ollama to exist, got %v", entries)
 		}
 	})
 
-	t.Run("preserves existing config", func(t *testing.T) {
+	t.Run("migrates stale plugin config and preserves unrelated settings", func(t *testing.T) {
 		initial := map[string]any{
 			"plugins": map[string]any{
-				"allow": []any{"some-other-plugin"},
+				"allow": []any{"some-other-plugin", "openclaw-web-search"},
 				"entries": map[string]any{
-					"some-other-plugin": map[string]any{"enabled": true},
+					"some-other-plugin":   map[string]any{"enabled": true},
+					"openclaw-web-search": map[string]any{"enabled": true},
 				},
 				"installs": map[string]any{
 					"some-other-plugin": map[string]any{
 						"source":      "npm",
 						"installPath": "/some/path",
 					},
+					"openclaw-web-search": map[string]any{
+						"source":      "npm",
+						"installPath": "/old/path",
+					},
+				},
+			},
+			"tools": map[string]any{
+				"alsoAllow": []any{"ollama_web_search", "ollama_web_fetch", "browser"},
+				"web": map[string]any{
+					"search": map[string]any{"enabled": false},
+					"fetch":  map[string]any{"enabled": false},
 				},
 			},
 			"customField": "preserved",
@@ -2449,7 +2360,7 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registerWebSearchPlugin()
+		configureOllamaWebSearch()
 
 		out, err := os.ReadFile(configPath)
 		if err != nil {
@@ -2469,28 +2380,61 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 		if entries["some-other-plugin"] == nil {
 			t.Error("existing plugin entry was lost")
 		}
+		if entries["openclaw-web-search"] != nil {
+			t.Error("stale openclaw-web-search entry should be removed")
+		}
+		if ollamaEntry, _ := entries["ollama"].(map[string]any); ollamaEntry == nil {
+			t.Fatal("expected bundled ollama entry to be enabled")
+		}
 
 		installs, _ := plugins["installs"].(map[string]any)
 		if installs["some-other-plugin"] == nil {
 			t.Error("existing install record was lost")
 		}
+		if installs["openclaw-web-search"] != nil {
+			t.Error("stale openclaw-web-search install record should be removed")
+		}
 
 		allow, _ := plugins["allow"].([]any)
-		hasOther, hasWebSearch := false, false
+		hasOther, hasStalePlugin, hasOllama := false, false, false
 		for _, v := range allow {
 			s, _ := v.(string)
 			if s == "some-other-plugin" {
 				hasOther = true
 			}
 			if s == "openclaw-web-search" {
-				hasWebSearch = true
+				hasStalePlugin = true
+			}
+			if s == "ollama" {
+				hasOllama = true
 			}
 		}
 		if !hasOther {
 			t.Error("existing allow entry was lost")
 		}
-		if !hasWebSearch {
-			t.Error("openclaw-web-search not added to allow")
+		if hasStalePlugin {
+			t.Error("stale openclaw-web-search allow entry should be removed")
+		}
+		if !hasOllama {
+			t.Error("expected plugins.allow to contain bundled ollama plugin")
+		}
+
+		tools, _ := config["tools"].(map[string]any)
+		alsoAllow, _ := tools["alsoAllow"].([]any)
+		if len(alsoAllow) != 1 || alsoAllow[0] != "browser" {
+			t.Errorf("expected stale custom web tools to be removed, got %v", alsoAllow)
+		}
+		web, _ := tools["web"].(map[string]any)
+		search, _ := web["search"].(map[string]any)
+		fetch, _ := web["fetch"].(map[string]any)
+		if got, _ := search["provider"].(string); got != "ollama" {
+			t.Errorf("search provider = %q, want %q", got, "ollama")
+		}
+		if enabled, _ := search["enabled"].(bool); !enabled {
+			t.Error("expected migrated tools.web.search.enabled = true")
+		}
+		if enabled, _ := fetch["enabled"].(bool); !enabled {
+			t.Error("expected migrated tools.web.fetch.enabled = true")
 		}
 	})
 }
