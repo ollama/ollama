@@ -88,7 +88,7 @@ type MLAAttention struct {
 }
 
 // Forward computes absorbed MLA attention output.
-func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (a *MLAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	q := a.QAProj.Forward(x)
 	q = a.QALayerNorm.Forward(q, cfg.RMSNormEps)
 	q = a.QBProj.Forward(q)
@@ -117,18 +117,24 @@ func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array
 
 	keys := mlx.Concatenate([]*mlx.Array{kvLatent, kPE}, 3)
 
-	cachedL := L
+	// MLA compresses K and V into a single tensor: the cache stores
+	// [kvLatent, kPE] concatenated along the last dim as its keys,
+	// and V is the kvLatent prefix (first KVLoraRank positions) of
+	// that same tensor. WithMLAHistory handles the slice on our
+	// behalf so the model never touches the history's K/V.
+	var kv nn.SDPAOption
 	if c != nil {
 		placeholderValues := mlx.ZerosF32([]int32{B, 1, L, 0})
-		keys, _ = c.Update(keys, placeholderValues)
-		cachedL = int32(keys.Dim(2))
+		history := c.(cache.Attention).Update(b, keys, placeholderValues)
+		kv = nn.WithMLAHistory(history, int(cfg.KVLoraRank))
+	} else {
+		values := mlx.SliceStartStop(keys, []int32{0, 0, 0, 0}, []int32{B, 1, L, cfg.KVLoraRank})
+		kv = nn.WithKV(keys, values, b.SeqQueryLens)
 	}
-
-	values := mlx.SliceStartStop(keys, []int32{0, 0, 0, 0}, []int32{B, 1, cachedL, cfg.KVLoraRank})
 
 	queries := mlx.Concatenate([]*mlx.Array{qLatent, qPE}, 3)
 
-	out := mlx.ScaledDotProductAttentionCausal(queries, keys, values, cfg.Scale, L > 1)
+	out := nn.ScaledDotProductAttention(b, queries, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
 	out = a.UnembedOut.Forward(out)
 
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.VHeadDim)
@@ -306,8 +312,8 @@ type DenseBlock struct {
 }
 
 // Forward applies the dense block
-func (blk *DenseBlock) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
-	r := blk.Attention.Forward(blk.InputLayerNorm.Forward(x, cfg.RMSNormEps), c, positions, B, L, cfg)
+func (blk *DenseBlock) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+	r := blk.Attention.Forward(blk.InputLayerNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, cfg)
 	h := mlx.Add(x, r)
 
 	r = blk.MLP.Forward(blk.PostAttentionLayerNorm.Forward(h, cfg.RMSNormEps))
@@ -323,8 +329,8 @@ type MoEBlock struct {
 }
 
 // Forward applies the MoE block
-func (blk *MoEBlock) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
-	r := blk.Attention.Forward(blk.InputLayerNorm.Forward(x, cfg.RMSNormEps), c, positions, B, L, cfg)
+func (blk *MoEBlock) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+	r := blk.Attention.Forward(blk.InputLayerNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, cfg)
 	h := mlx.Add(x, r)
 
 	r = blk.MoE.Forward(blk.PostAttentionLayerNorm.Forward(h, cfg.RMSNormEps), cfg)
@@ -333,7 +339,7 @@ func (blk *MoEBlock) Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, 
 
 // Block interface for both dense and MoE blocks
 type Block interface {
-	Forward(x *mlx.Array, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array
+	Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array
 }
 
 // Model represents the complete GLM4-MoE-Lite model
@@ -707,7 +713,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		if caches != nil {
 			c = caches[i]
 		}
-		h = layer.Forward(h, c, positions, B, L, m.Config)
+		h = layer.Forward(h, b, c, positions, B, L, m.Config)
 	}
 
 	h = m.Norm.Forward(h, m.RMSNormEps)
