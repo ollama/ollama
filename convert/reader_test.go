@@ -478,6 +478,17 @@ func TestSafetensorKind(t *testing.T) {
 			expected: tensorKindFP16,
 		},
 		{
+			name: "BF16 audio feature extractor constants should return FP32",
+			st: safetensor{
+				tensorBase: &tensorBase{
+					name:  "a.feature_extractor.fb",
+					shape: []uint64{1, 128, 257},
+				},
+				dtype: "BF16",
+			},
+			expected: tensorKindFP32,
+		},
+		{
 			name: "BF16 dtype with FP32 base kind should return FP32",
 			st: safetensor{
 				tensorBase: &tensorBase{
