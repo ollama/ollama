@@ -372,7 +372,7 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	}
 }
 
-func TestBuildModelList_PreCheckedFirst(t *testing.T) {
+func TestBuildModelList_PreCheckedNonRecommendedFirstInMore(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
@@ -381,8 +381,9 @@ func TestBuildModelList_PreCheckedFirst(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
 	got := names(items)
 
-	if got[0] != "llama3.2" {
-		t.Errorf("pre-checked model should be first, got %v", got)
+	want := []string{"kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("recommended block should stay fixed while checked non-recommended models lead More (-want +got):\n%s", diff)
 	}
 }
 
@@ -641,17 +642,18 @@ func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
 	}
 }
 
-func TestBuildModelList_CheckedBeforeRecs(t *testing.T) {
+func TestBuildModelList_CheckedRecommendedDoesNotReshuffleRecommendedOrder(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
+	items, _, _, _ := buildModelList(existing, []string{"qwen3.5:cloud", "glm-5.1:cloud"}, "")
 	got := names(items)
 
-	if got[0] != "llama3.2" {
-		t.Errorf("checked model should be first even before recs, got %v", got)
+	want := []string{"kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("checked recommended models should not reshuffle the fixed recommended order (-want +got):\n%s", diff)
 	}
 }
 
