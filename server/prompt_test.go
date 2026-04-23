@@ -376,6 +376,274 @@ func TestChatPromptRendererDoesNotRewriteMessageContent(t *testing.T) {
 	}
 }
 
+func TestToolBlockStartIndex(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: "before"},
+		{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{
+				{Function: api.ToolCallFunction{Name: "echo"}},
+			},
+		},
+		{Role: "tool", Content: "first"},
+		{Role: "tool", Content: "second"},
+		{Role: "user", Content: "after"},
+	}
+
+	if got := toolBlockStartIndex(msgs, 2); got != 1 {
+		t.Fatalf("toolBlockStartIndex(..., 2) = %d, want 1", got)
+	}
+	if got := toolBlockStartIndex(msgs, 3); got != 1 {
+		t.Fatalf("toolBlockStartIndex(..., 3) = %d, want 1", got)
+	}
+	if got := toolBlockStartIndex(msgs, 4); got != 4 {
+		t.Fatalf("toolBlockStartIndex(..., 4) = %d, want 4", got)
+	}
+}
+
+func TestChatPromptPreservesOrDropsToolBlockAsAUnit(t *testing.T) {
+	newModel := func() Model {
+		return Model{
+			Config: model.ConfigV2{Renderer: "qwen3.5"},
+		}
+	}
+
+	tokenize := func(_ context.Context, s string) ([]int, error) {
+		score := 0
+		if strings.Contains(s, "older_context") {
+			score += 100
+		}
+		if strings.Contains(s, "assistant_tool_turn") {
+			score += 100
+		}
+		if strings.Contains(s, "tool_result_payload") {
+			score += 100
+		}
+		if strings.Contains(s, "final_user_turn") {
+			score++
+		}
+
+		return make([]int, score), nil
+	}
+
+	msgs := []api.Message{
+		{Role: "user", Content: "older_context"},
+		{
+			Role:    "assistant",
+			Content: "assistant_tool_turn",
+			ToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "echo",
+						Arguments: testArgs(map[string]any{"payload": "payload"}),
+					},
+				},
+			},
+		},
+		{Role: "tool", Content: "tool_result_payload"},
+		{Role: "user", Content: "final_user_turn"},
+	}
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "echo",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: testPropsMap(map[string]api.ToolProperty{
+						"payload": {Type: api.PropertyType{"string"}},
+					}),
+				},
+			},
+		},
+	}
+
+	t.Run("preserves block when it fits after dropping older history", func(t *testing.T) {
+		model := newModel()
+		opts := api.Options{Runner: api.Runner{NumCtx: 250}}
+
+		prompt, _, err := chatPrompt(t.Context(), &model, tokenize, &opts, msgs, tools, &api.ThinkValue{Value: false}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !strings.Contains(prompt, "<tool_call>") || !strings.Contains(prompt, "<tool_response>") {
+			t.Fatalf("expected assistant tool-call turn and tool response block to survive together, got:\n%s", prompt)
+		}
+		if !strings.Contains(prompt, "assistant_tool_turn") || !strings.Contains(prompt, "tool_result_payload") {
+			t.Fatalf("expected preserved tool block contents, got:\n%s", prompt)
+		}
+		if strings.Contains(prompt, "older_context") {
+			t.Fatalf("expected older context to be truncated, got:\n%s", prompt)
+		}
+	})
+
+	t.Run("drops block when assistant turn cannot fit with its tool responses", func(t *testing.T) {
+		model := newModel()
+		opts := api.Options{Runner: api.Runner{NumCtx: 50}}
+
+		prompt, _, err := chatPrompt(t.Context(), &model, tokenize, &opts, msgs, tools, &api.ThinkValue{Value: false}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if strings.Contains(prompt, "assistant_tool_turn") || strings.Contains(prompt, "tool_result_payload") {
+			t.Fatalf("tool responses must not survive truncation without their preceding assistant tool-call turn, got:\n%s", prompt)
+		}
+		if !strings.Contains(prompt, "final_user_turn") {
+			t.Fatalf("expected final user turn to remain, got:\n%s", prompt)
+		}
+	})
+}
+
+func TestChatPromptPreservesContiguousMultiToolResponsesAsAUnit(t *testing.T) {
+	model := Model{
+		Config: model.ConfigV2{Renderer: "qwen3.5"},
+	}
+	tokenize := func(_ context.Context, s string) ([]int, error) {
+		score := 0
+		if strings.Contains(s, "older_context") {
+			score += 100
+		}
+		if strings.Contains(s, "assistant_tool_turn") {
+			score += 100
+		}
+		if strings.Contains(s, "tool_result_one") {
+			score += 100
+		}
+		if strings.Contains(s, "tool_result_two") {
+			score += 100
+		}
+		if strings.Contains(s, "final_user_turn") {
+			score++
+		}
+		return make([]int, score), nil
+	}
+
+	msgs := []api.Message{
+		{Role: "user", Content: "older_context"},
+		{
+			Role:    "assistant",
+			Content: "assistant_tool_turn",
+			ToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "echo",
+						Arguments: testArgs(map[string]any{"payload": "payload"}),
+					},
+				},
+			},
+		},
+		{Role: "tool", Content: "tool_result_one"},
+		{Role: "tool", Content: "tool_result_two"},
+		{Role: "user", Content: "final_user_turn"},
+	}
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "echo",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: testPropsMap(map[string]api.ToolProperty{
+						"payload": {Type: api.PropertyType{"string"}},
+					}),
+				},
+			},
+		},
+	}
+
+	opts := api.Options{Runner: api.Runner{NumCtx: 250}}
+	prompt, _, err := chatPrompt(t.Context(), &model, tokenize, &opts, msgs, tools, &api.ThinkValue{Value: false}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(prompt, "tool_result_one") || strings.Contains(prompt, "tool_result_two") {
+		t.Fatalf("expected contiguous tool-response block to be dropped as a unit when it does not fit, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "assistant_tool_turn") {
+		t.Fatalf("expected parent assistant tool-call turn to drop with its tool responses, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "final_user_turn") {
+		t.Fatalf("expected final user turn to remain, got:\n%s", prompt)
+	}
+}
+
+func TestChatPromptDoesNotAttachNonContiguousToolResponsesToEarlierToolBlock(t *testing.T) {
+	model := Model{
+		Config: model.ConfigV2{Renderer: "qwen3.5"},
+	}
+	tokenize := func(_ context.Context, s string) ([]int, error) {
+		score := 0
+		if strings.Contains(s, "assistant_tool_turn") {
+			score += 100
+		}
+		if strings.Contains(s, "tool_result_one") {
+			score += 100
+		}
+		if strings.Contains(s, "followup_assistant") {
+			score += 100
+		}
+		if strings.Contains(s, "tool_result_two") {
+			score += 100
+		}
+		if strings.Contains(s, "final_user_turn") {
+			score++
+		}
+		return make([]int, score), nil
+	}
+
+	msgs := []api.Message{
+		{
+			Role:    "assistant",
+			Content: "assistant_tool_turn",
+			ToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "echo",
+						Arguments: testArgs(map[string]any{"payload": "payload"}),
+					},
+				},
+			},
+		},
+		{Role: "tool", Content: "tool_result_one"},
+		{Role: "assistant", Content: "followup_assistant"},
+		{Role: "tool", Content: "tool_result_two"},
+		{Role: "user", Content: "final_user_turn"},
+	}
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "echo",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: testPropsMap(map[string]api.ToolProperty{
+						"payload": {Type: api.PropertyType{"string"}},
+					}),
+				},
+			},
+		},
+	}
+
+	opts := api.Options{Runner: api.Runner{NumCtx: 150}}
+	prompt, _, err := chatPrompt(t.Context(), &model, tokenize, &opts, msgs, tools, &api.ThinkValue{Value: false}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(prompt, "assistant_tool_turn") || strings.Contains(prompt, "tool_result_one") {
+		t.Fatalf("expected first contiguous tool block to drop together, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "tool_result_two") {
+		t.Fatalf("expected non-contiguous stray tool response to remain independent, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "final_user_turn") {
+		t.Fatalf("expected final user turn to remain, got:\n%s", prompt)
+	}
+}
+
 func TestChatPromptGLMOcrRendererAddsImageTags(t *testing.T) {
 	msgs := []api.Message{
 		{
