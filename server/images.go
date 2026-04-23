@@ -71,6 +71,8 @@ type Model struct {
 	System         string
 	License        []string
 	Digest         string
+	ManifestDigest string
+	Runner         string
 	Options        map[string]any
 	Messages       []api.Message
 
@@ -300,17 +302,30 @@ func (m *Model) String() string {
 }
 
 func GetModel(name string) (*Model, error) {
+	return GetModelForRunner(name, "")
+}
+
+// GetModelForRunner returns model metadata for name, selecting runner from a
+// manifest list when one is specified.
+func GetModelForRunner(name, runner string) (*Model, error) {
 	n := model.ParseName(name)
-	mf, err := manifest.ParseNamedManifest(n)
+	mf, err := manifest.ParseNamedManifestForRunner(n, runner)
 	if err != nil {
 		return nil, err
 	}
 
+	manifestDigest := mf.SelectedDigest()
+	if manifestDigest == "" {
+		manifestDigest = mf.Digest()
+	}
+
 	m := &Model{
-		Name:      n.String(),
-		ShortName: n.DisplayShortest(),
-		Digest:    mf.Digest(),
-		Template:  template.DefaultTemplate,
+		Name:           n.String(),
+		ShortName:      n.DisplayShortest(),
+		Digest:         mf.Digest(),
+		ManifestDigest: manifestDigest,
+		Runner:         mf.Runner,
+		Template:       template.DefaultTemplate,
 	}
 
 	if mf.Config.Digest != "" {

@@ -104,6 +104,23 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 		oldManifestDigests, _ := manifest.ReferencedBlobDigestsForName(name)
 
+		if len(r.List) > 0 {
+			if err := createManifestList(r, name, fn); err != nil {
+				ch <- gin.H{"error": err.Error()}
+				return
+			}
+
+			if !envconfig.NoPrune() && len(oldManifestDigests) > 0 {
+				if _, err := manifest.RemoveUnreferencedBlobs(oldManifestDigests...); err != nil {
+					ch <- gin.H{"error": err.Error()}
+					return
+				}
+			}
+
+			ch <- api.ProgressResponse{Status: "success"}
+			return
+		}
+
 		var baseLayers []*layerGGML
 		var err error
 		var remote bool
@@ -599,11 +616,160 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	}
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := manifest.WriteManifest(name, *configLayer, layers); err != nil {
+	runner, format := manifestMetadataForConfig(*config)
+	if err := manifest.WriteManifestWithMetadata(name, *configLayer, layers, runner, format); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func createManifestList(r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) error {
+	if err := validateCreateManifestListRequest(r); err != nil {
+		return err
+	}
+
+	manifests := make([]manifest.Manifest, 0, len(r.List))
+	for _, ref := range r.List {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return errors.New("manifest list contains an empty model")
+		}
+
+		fn(api.ProgressResponse{Status: fmt.Sprintf("reading manifest %s", ref)})
+
+		modelRef, err := parseAndValidateModelRef(ref)
+		if err != nil {
+			return err
+		}
+		if modelRef.Source == modelSourceCloud {
+			return fmt.Errorf("manifest list entries must be local models: %s", ref)
+		}
+
+		childName, err := getExistingName(modelRef.Name)
+		if err != nil {
+			return err
+		}
+
+		data, err := manifest.ReadManifestData(childName)
+		if err != nil {
+			return fmt.Errorf("read manifest %s: %w", ref, err)
+		}
+
+		var child manifest.Manifest
+		if err := json.Unmarshal(data, &child); err != nil {
+			return err
+		}
+		if child.MediaType == manifest.MediaTypeManifestList {
+			return fmt.Errorf("manifest list entry %s is already a manifest list", ref)
+		}
+
+		if err := fillManifestMetadata(&child); err != nil {
+			return fmt.Errorf("manifest list entry %s: %w", ref, err)
+		}
+
+		childData, err := json.Marshal(child)
+		if err != nil {
+			return err
+		}
+		childDigest, err := manifest.WriteManifestBlob(childData)
+		if err != nil {
+			return err
+		}
+
+		childRef, err := manifest.NewManifestReference(childDigest, child.Runner, child.Format)
+		if err != nil {
+			return err
+		}
+
+		manifests = append(manifests, childRef)
+	}
+
+	parent := manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     manifests,
+	}
+	data, err := json.Marshal(parent)
+	if err != nil {
+		return err
+	}
+
+	fn(api.ProgressResponse{Status: "writing manifest list"})
+	return manifest.WriteManifestData(name, data)
+}
+
+func validateCreateManifestListRequest(r api.CreateRequest) error {
+	if len(r.List) == 0 {
+		return errors.New("manifest list must contain at least one model")
+	}
+
+	switch {
+	case r.From != "", r.RemoteHost != "", len(r.Files) > 0, len(r.Adapters) > 0:
+		return errors.New("manifest list creation cannot be combined with model creation options")
+	case r.Template != "", r.System != "", r.License != nil, len(r.Parameters) > 0, len(r.Messages) > 0:
+		return errors.New("manifest list creation cannot be combined with model creation options")
+	case r.Renderer != "", r.Parser != "", r.Requires != "", len(r.Info) > 0:
+		return errors.New("manifest list creation cannot be combined with model creation options")
+	case r.Quantize != "", r.Quantization != "":
+		return errors.New("manifest list creation cannot be combined with model creation options")
+	default:
+		return nil
+	}
+}
+
+func fillManifestMetadata(m *manifest.Manifest) error {
+	if m.Runner != "" && m.Format != "" {
+		return nil
+	}
+
+	config, err := readManifestConfig(m.Config.Digest)
+	if err != nil {
+		return err
+	}
+
+	runner, format := manifestMetadataForConfig(config)
+	if m.Runner == "" {
+		m.Runner = runner
+	}
+	if m.Format == "" {
+		m.Format = format
+	}
+	if m.Runner == "" || m.Format == "" {
+		return errors.New("manifest is missing runner or format metadata")
+	}
+
+	return nil
+}
+
+func readManifestConfig(digest string) (model.ConfigV2, error) {
+	var config model.ConfigV2
+	if digest == "" {
+		return config, errors.New("manifest is missing config digest")
+	}
+
+	configPath, err := manifest.BlobsPath(digest)
+	if err != nil {
+		return config, err
+	}
+	configFile, err := os.Open(configPath)
+	if err != nil {
+		return config, err
+	}
+	defer configFile.Close()
+
+	return config, json.NewDecoder(configFile).Decode(&config)
+}
+
+func manifestMetadataForConfig(config model.ConfigV2) (runner, format string) {
+	switch strings.ToLower(config.ModelFormat) {
+	case manifest.FormatSafetensors:
+		return manifest.RunnerMLX, manifest.FormatSafetensors
+	case manifest.FormatGGUF, "ggml":
+		return manifest.RunnerOllama, manifest.FormatGGUF
+	default:
+		return "", strings.ToLower(config.ModelFormat)
+	}
 }
 
 func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.ProgressResponse)) (*layerGGML, error) {

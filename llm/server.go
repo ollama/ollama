@@ -120,6 +120,18 @@ type ollamaServer struct {
 	tokenizer tokenizer.Tokenizer // tokenizer handles text encoding/decoding
 }
 
+// RunnerName returns the runner implementation name for a LlamaServer.
+func RunnerName(s LlamaServer) string {
+	switch s.(type) {
+	case *ollamaServer:
+		return "ollama"
+	case *llamaServer:
+		return "llamacpp"
+	default:
+		return ""
+	}
+}
+
 // LoadModel will load a model from disk. The model must be in the GGML format.
 //
 // It collects array values for arrays with a size less than or equal to

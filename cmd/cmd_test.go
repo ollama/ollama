@@ -479,6 +479,143 @@ func TestRunEmbeddingModel(t *testing.T) {
 	}
 }
 
+func TestListRunningHandlerShowsRunner(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/ps" || r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+
+		if err := json.NewEncoder(w).Encode(api.ProcessResponse{
+			Models: []api.ProcessModelResponse{
+				{
+					Name:          "test-model:latest",
+					Model:         "test-model:latest",
+					Digest:        "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+					Size:          1024,
+					SizeVRAM:      1024,
+					ContextLength: 4096,
+					Runner:        "mlx",
+					ExpiresAt:     time.Now().Add(time.Hour),
+				},
+			},
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := ListRunningHandler(cmd, nil)
+	w.Close()
+	os.Stdout = oldStdout
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	for _, want := range []string{"CONTEXT", "RUNNER", "abcdef123456", "mlx"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRunHandlerRunnerFlag(t *testing.T) {
+	showReqCh := make(chan api.ShowRequest, 1)
+	generateReqCh := make(chan api.GenerateRequest, 1)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			var req api.ShowRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			showReqCh <- req
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+				ModelInfo:    map[string]any{},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			var req api.GenerateRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			generateReqCh <- req
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{
+				Model: "test-model",
+				Done:  true,
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("runner", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+	if err := cmd.Flags().Set("runner", "llamacpp"); err != nil {
+		t.Fatal(err)
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := RunHandler(cmd, []string{"test-model", "hello"})
+	w.Close()
+	os.Stdout = oldStdout
+	if _, readErr := io.ReadAll(r); readErr != nil {
+		t.Fatal(readErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case req := <-showReqCh:
+		if req.Runner != "llamacpp" {
+			t.Fatalf("show runner = %q, want %q", req.Runner, "llamacpp")
+		}
+	default:
+		t.Fatal("server did not receive show request")
+	}
+	select {
+	case req := <-generateReqCh:
+		if req.Runner != "llamacpp" {
+			t.Fatalf("generate runner = %q, want %q", req.Runner, "llamacpp")
+		}
+	default:
+		t.Fatal("server did not receive generate request")
+	}
+}
+
 func TestRunEmbeddingModelWithFlags(t *testing.T) {
 	reqCh := make(chan api.EmbedRequest, 1)
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1521,6 +1658,66 @@ func TestCreateHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCreateHandlerManifestList(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/create" {
+			t.Errorf("unexpected request to %s", r.URL.Path)
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", r.Method)
+		}
+
+		var req api.CreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Model != "parent" {
+			t.Errorf("model = %q, want %q", req.Model, "parent")
+		}
+		if !cmp.Equal(req.List, []string{"gguf", "safetensors"}) {
+			t.Errorf("list = %#v, want %#v", req.List, []string{"gguf", "safetensors"})
+		}
+		if req.From != "" || len(req.Files) > 0 {
+			t.Errorf("manifest list create sent normal create fields: from=%q files=%v", req.From, req.Files)
+		}
+
+		if err := json.NewEncoder(w).Encode(api.ProgressResponse{Status: "success"}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.(http.Flusher).Flush()
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("quantize", "", "")
+	cmd.Flags().Bool("experimental", false, "")
+	cmd.Flags().StringSlice("combine", nil, "")
+	cmd.SetContext(t.Context())
+	if err := cmd.Flags().Set("combine", "gguf,safetensors"); err != nil {
+		t.Fatal(err)
+	}
+
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	err := CreateHandler(cmd, []string{"parent"})
+	w.Close()
+	os.Stderr = oldStderr
+	if _, readErr := io.ReadAll(r); readErr != nil {
+		t.Fatal(readErr)
+	}
+
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -192,6 +192,9 @@ func TestParseNamedManifestResolvesManifestList(t *testing.T) {
 	if got := m.BlobDigest(); got != fmt.Sprintf("sha256:%x", parentSum) {
 		t.Fatalf("blob digest = %q, want sha256:%x", got, parentSum)
 	}
+	if got := m.SelectedDigest(); got != strings.TrimPrefix(ollamaDigest, "sha256:") {
+		t.Fatalf("selected digest = %q, want %q", got, strings.TrimPrefix(ollamaDigest, "sha256:"))
+	}
 	if got := m.Runner; got != RunnerOllama {
 		t.Fatalf("runner = %q, want %q", got, RunnerOllama)
 	}
@@ -201,6 +204,21 @@ func TestParseNamedManifestResolvesManifestList(t *testing.T) {
 	if got := m.Config.Digest; got != "sha256:"+strings.Repeat("a", 64) {
 		t.Fatalf("config digest = %q, want selected child config", got)
 	}
+
+	m, err = ParseNamedManifestForRunner(name, RunnerLlamaCPP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Runner; got != RunnerLlamaCPP {
+		t.Fatalf("runner = %q, want %q", got, RunnerLlamaCPP)
+	}
+	if got := m.SelectedDigest(); got != strings.TrimPrefix(llamacppDigest, "sha256:") {
+		t.Fatalf("selected digest = %q, want %q", got, strings.TrimPrefix(llamacppDigest, "sha256:"))
+	}
+	if got := m.Config.Digest; got != "sha256:"+strings.Repeat("c", 64) {
+		t.Fatalf("config digest = %q, want selected child config", got)
+	}
+
 	referenced, err := ReferencedBlobDigestsForName(name)
 	if err != nil {
 		t.Fatal(err)

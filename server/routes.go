@@ -141,14 +141,29 @@ func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Opt
 	return opts, nil
 }
 
+func normalizeRunner(runner string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(runner)) {
+	case "":
+		return "", nil
+	case manifest.RunnerMLX, "mlxrunner":
+		return manifest.RunnerMLX, nil
+	case manifest.RunnerOllama, "ggml":
+		return manifest.RunnerOllama, nil
+	case manifest.RunnerLlamaCPP, "llama.cpp", "llama-cpp", "llama_cpp":
+		return manifest.RunnerLlamaCPP, nil
+	default:
+		return "", fmt.Errorf("unknown runner %q", runner)
+	}
+}
+
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
 // It returns the allocated runner, model instance, and consolidated options if successful and error otherwise.
-func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, *Model, *api.Options, error) {
+func (s *Server) scheduleRunner(ctx context.Context, name, selectedRunner string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, *Model, *api.Options, error) {
 	if name == "" {
 		return nil, nil, nil, fmt.Errorf("model %w", errRequired)
 	}
 
-	model, err := GetModel(name)
+	model, err := GetModelForRunner(name, selectedRunner)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -207,6 +222,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	if runner, err := normalizeRunner(req.Runner); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} else {
+		req.Runner = runner
+	}
+
 	modelRef, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusNotFound, fmt.Sprintf("model '%s' not found", req.Model))
@@ -231,11 +253,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	m, err := GetModel(name.String())
+	m, err := GetModelForRunner(name.String(), req.Runner)
 	if err != nil {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		case errors.Is(err, manifest.ErrNoCompatibleManifest):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		case err.Error() == errtypes.InvalidModelNameErrMsg:
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		default:
@@ -405,7 +429,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), req.Runner, caps, req.Options, req.KeepAlive)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
 		return
@@ -727,7 +751,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), "", []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -882,7 +906,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	name := modelRef.Name
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), "", []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -1113,6 +1137,11 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		return
 	}
 
+	if req.Runner, err = normalizeRunner(req.Runner); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	modelRef, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusBadRequest, err.Error())
@@ -1133,6 +1162,8 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		switch {
 		case os.IsNotExist(err):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		case errors.Is(err, manifest.ErrNoCompatibleManifest):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		case errors.As(err, &statusErr):
 			c.JSON(statusErr.StatusCode, gin.H{"error": statusErr.ErrorMessage})
 		case err.Error() == errtypes.InvalidModelNameErrMsg:
@@ -1163,16 +1194,25 @@ func (s *Server) ShowHandler(c *gin.Context) {
 }
 
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
+	runner, err := normalizeRunner(req.Runner)
+	if err != nil {
+		return nil, api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: err.Error(),
+		}
+	}
+	req.Runner = runner
+
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
 		return nil, model.Unqualified(name)
 	}
-	name, err := getExistingName(name)
+	name, err = getExistingName(name)
 	if err != nil {
 		return nil, err
 	}
 
-	m, err := GetModel(name.String())
+	m, err := GetModelForRunner(name.String(), req.Runner)
 	if err != nil {
 		return nil, err
 	}
@@ -1231,7 +1271,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		msgs[i] = api.Message{Role: msg.Role, Content: msg.Content}
 	}
 
-	mf, err := manifest.ParseNamedManifest(name)
+	mf, err := manifest.ParseNamedManifestForRunner(name, req.Runner)
 	if err != nil {
 		return nil, err
 	}
@@ -2038,6 +2078,14 @@ func (s *Server) PsHandler(c *gin.Context) {
 
 	for _, v := range s.sched.loaded {
 		model := v.model
+		digest := model.ManifestDigest
+		if digest == "" {
+			digest = model.Digest
+		}
+		runner := v.runner
+		if runner == "" {
+			runner = model.Runner
+		}
 		modelDetails := api.ModelDetails{
 			Format:            model.Config.ModelFormat,
 			Family:            model.Config.ModelFamily,
@@ -2051,9 +2099,10 @@ func (s *Server) PsHandler(c *gin.Context) {
 			Name:      model.ShortName,
 			Size:      int64(v.totalSize),
 			SizeVRAM:  int64(v.vramSize),
-			Digest:    model.Digest,
+			Digest:    digest,
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,
+			Runner:    runner,
 		}
 		if v.llama != nil {
 			mr.ContextLength = v.llama.ContextLength()
@@ -2106,6 +2155,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	if runner, err := normalizeRunner(req.Runner); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} else {
+		req.Runner = runner
+	}
+
 	modelRef, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusBadRequest, "model is required")
@@ -2130,11 +2186,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	m, err := GetModel(name.String())
+	m, err := GetModelForRunner(name.String(), req.Runner)
 	if err != nil {
 		switch {
 		case os.IsNotExist(err):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		case errors.Is(err, manifest.ErrNoCompatibleManifest):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		case err.Error() == errtypes.InvalidModelNameErrMsg:
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		default:
@@ -2283,7 +2341,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), req.Runner, caps, req.Options, req.KeepAlive)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
 		return
@@ -2622,6 +2680,8 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 	switch {
 	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, manifest.ErrNoCompatibleManifest):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, context.Canceled):
 		c.JSON(499, gin.H{"error": "request canceled"})
 	case errors.Is(err, ErrMaxQueue):
@@ -2672,7 +2732,7 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 	}
 
 	// Schedule the runner for image generation
-	runner, _, _, err := s.scheduleRunner(c.Request.Context(), modelName, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive)
+	runner, _, _, err := s.scheduleRunner(c.Request.Context(), modelName, req.Runner, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return

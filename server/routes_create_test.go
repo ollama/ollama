@@ -359,6 +359,113 @@ func TestCreateRemovesLayers(t *testing.T) {
 	})
 }
 
+func writeManifestListVariant(t *testing.T, name, modelFormat string) {
+	t.Helper()
+
+	configData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  modelFormat,
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := manifest.NewLayer(bytes.NewReader(configData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelLayer, err := manifest.NewLayer(strings.NewReader(name+" layer"), "application/vnd.ollama.image.license")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manifest.WriteManifest(model.ParseName(name), configLayer, []manifest.Layer{modelLayer}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateManifestList(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	writeManifestListVariant(t, "test-gguf", manifest.FormatGGUF)
+	writeManifestListVariant(t, "test-safetensors", manifest.FormatSafetensors)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test-list",
+		List:   []string{"test-gguf", "test-safetensors"},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	data, err := manifest.ReadManifestData(model.ParseName("test-list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parent manifest.Manifest
+	if err := json.Unmarshal(data, &parent); err != nil {
+		t.Fatal(err)
+	}
+	if parent.MediaType != manifest.MediaTypeManifestList {
+		t.Fatalf("mediaType = %q, want %q", parent.MediaType, manifest.MediaTypeManifestList)
+	}
+	if len(parent.Manifests) != 2 {
+		t.Fatalf("manifest count = %d, want 2", len(parent.Manifests))
+	}
+
+	selected, err := manifest.ParseNamedManifest(model.ParseName("test-list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Config.Digest == "" {
+		t.Fatal("selected manifest is missing config")
+	}
+
+	mlxInfo, err := GetModelInfo(api.ShowRequest{Model: "test-list", Runner: manifest.RunnerMLX})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mlxInfo.Details.Format != manifest.FormatSafetensors {
+		t.Fatalf("mlx show format = %q, want %q", mlxInfo.Details.Format, manifest.FormatSafetensors)
+	}
+
+	want := map[string]string{
+		manifest.RunnerOllama: manifest.FormatGGUF,
+		manifest.RunnerMLX:    manifest.FormatSafetensors,
+	}
+	for _, child := range parent.Manifests {
+		if got := want[child.Runner]; got != child.Format {
+			t.Fatalf("child runner/format = %q/%q, want one of %v", child.Runner, child.Format, want)
+		}
+		if child.BlobDigest() == "" {
+			t.Fatal("child manifest reference is missing digest")
+		}
+		if child.Config.Digest != "" || len(child.Layers) != 0 {
+			t.Fatalf("child manifest reference embedded config/layers: config=%q layers=%d", child.Config.Digest, len(child.Layers))
+		}
+
+		childBlob, err := manifest.BlobsPath(child.BlobDigest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		childData, err := os.ReadFile(childBlob)
+		if err != nil {
+			t.Fatalf("child manifest blob missing: %v", err)
+		}
+		var resolved manifest.Manifest
+		if err := json.Unmarshal(childData, &resolved); err != nil {
+			t.Fatal(err)
+		}
+		if resolved.Config.Digest == "" || len(resolved.Layers) == 0 {
+			t.Fatalf("resolved child manifest missing config/layers: config=%q layers=%d", resolved.Config.Digest, len(resolved.Layers))
+		}
+	}
+}
+
 func TestCreateUnsetsSystem(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

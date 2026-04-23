@@ -64,6 +64,9 @@ type GenerateRequest struct {
 	// the library at https://ollama.com/library
 	Model string `json:"model"`
 
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
+
 	// Prompt is the textual prompt to send to the model.
 	Prompt string `json:"prompt"`
 
@@ -147,6 +150,9 @@ type GenerateRequest struct {
 type ChatRequest struct {
 	// Model is the model name, as in [GenerateRequest].
 	Model string `json:"model"`
+
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
 
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
@@ -675,6 +681,9 @@ type CreateRequest struct {
 	// From is the name of the model or file to use as the source.
 	From string `json:"from,omitempty"`
 
+	// List is the list of local model tags to include in a manifest list.
+	List []string `json:"list,omitempty"`
+
 	// RemoteHost is the URL of the upstream ollama API for the model (if any).
 	RemoteHost string `json:"remote_host,omitempty"`
 
@@ -725,6 +734,7 @@ type DeleteRequest struct {
 // ShowRequest is the request passed to [Client.Show].
 type ShowRequest struct {
 	Model  string `json:"model"`
+	Runner string `json:"runner,omitempty"`
 	System string `json:"system"`
 
 	// Template is deprecated
@@ -829,6 +839,7 @@ type ProcessModelResponse struct {
 	ExpiresAt     time.Time    `json:"expires_at"`
 	SizeVRAM      int64        `json:"size_vram"`
 	ContextLength int          `json:"context_length"`
+	Runner        string       `json:"runner,omitempty"`
 }
 
 type TokenResponse struct {

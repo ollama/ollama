@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,58 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+func TestPsHandlerUsesRunningManifestAndRunner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	childDigest := strings.Repeat("a", 64)
+	s := Server{
+		sched: &Scheduler{
+			loaded: map[string]*runnerRef{
+				"test": {
+					model: &Model{
+						ShortName:      "test-model:latest",
+						Digest:         strings.Repeat("b", 64),
+						ManifestDigest: childDigest,
+						Runner:         manifest.RunnerMLX,
+						Config: model.ConfigV2{
+							ModelFormat: manifest.FormatSafetensors,
+						},
+					},
+					runner:          manifest.RunnerMLX,
+					totalSize:       1024,
+					vramSize:        1024,
+					expiresAt:       time.Now().Add(time.Hour),
+					sessionDuration: time.Hour,
+				},
+			},
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/ps", nil)
+
+	s.PsHandler(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp api.ProcessResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Models) != 1 {
+		t.Fatalf("model count = %d, want 1", len(resp.Models))
+	}
+	if resp.Models[0].Digest != childDigest {
+		t.Fatalf("digest = %q, want child digest %q", resp.Models[0].Digest, childDigest)
+	}
+	if resp.Models[0].Runner != manifest.RunnerMLX {
+		t.Fatalf("runner = %q, want %q", resp.Models[0].Runner, manifest.RunnerMLX)
+	}
+}
 
 func createTestFile(t *testing.T, name string) (string, string) {
 	t.Helper()
