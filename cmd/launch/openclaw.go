@@ -74,17 +74,15 @@ func (c *Openclaw) Run(model string, args []string) error {
 			"--auth-choice", "ollama",
 			"--custom-base-url", envconfig.Host().String(),
 			"--custom-model-id", model,
+			// Launch owns the first real gateway startup immediately after onboarding,
+			// so don't let OpenClaw fail the whole first-run flow on a transient
+			// daemon health probe.
+			"--skip-health",
 			"--skip-channels",
 			"--skip-skills",
 		}
 		if canInstallDaemon() {
 			onboardArgs = append(onboardArgs, "--install-daemon")
-		} else {
-			// When we can't install a daemon (e.g. no systemd, sudo dropped
-			// XDG_RUNTIME_DIR, or container environment), skip the gateway
-			// health check so non-interactive onboarding completes. The
-			// gateway is started as a foreground child process after onboarding.
-			onboardArgs = append(onboardArgs, "--skip-health")
 		}
 		cmd := exec.Command(bin, onboardArgs...)
 		cmd.Env = openclawInstallEnv()
@@ -139,7 +137,19 @@ func (c *Openclaw) Run(model string, args []string) error {
 		}
 	}
 
-	// If the gateway isn't running, start it as a background child process.
+	// If the daemon is installed but not currently listening, try to bring it
+	// up before falling back to a foreground child process.
+	if !portOpen(addr) {
+		start := exec.Command(bin, "daemon", "start")
+		start.Env = openclawEnv()
+		if err := start.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s  Warning: daemon start failed: %v%s\n", ansiYellow, err, ansiReset)
+		} else if waitForPort(addr, 10*time.Second) {
+			goto gatewayReady
+		}
+	}
+
+	// If the gateway still isn't running, start it as a background child process.
 	if !portOpen(addr) {
 		gw := exec.Command(bin, "gateway", "run", "--force")
 		gw.Env = openclawEnv()
@@ -154,6 +164,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 		}()
 	}
 
+gatewayReady:
 	fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
 	if !waitForPort(addr, 30*time.Second) {
 		return windowsHint(fmt.Errorf("gateway did not start on %s", addr))

@@ -251,7 +251,7 @@ func TestOpenclawRun_SetupLaterContinuesToGatewayAndTUI(t *testing.T) {
 	}
 }
 
-func TestOpenclawRun_FirstLaunchOnboardUsesBundledPluginInstallEnv(t *testing.T) {
+func TestOpenclawRun_FirstLaunchOnboardUsesLaunchManagedHealthFlow(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell test binary")
 	}
@@ -307,6 +307,9 @@ exit 0
 	}
 	if onboardInvocation == "" {
 		t.Fatalf("expected onboard invocation, got %v", lines)
+	}
+	if !strings.Contains(onboardInvocation, "--skip-health") {
+		t.Fatalf("expected onboard invocation to include --skip-health, got %q", onboardInvocation)
 	}
 
 	envData, err := os.ReadFile(filepath.Join(tmpDir, "onboard-env.log"))
