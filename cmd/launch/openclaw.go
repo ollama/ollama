@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/mod/semver"
-
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
@@ -98,9 +96,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 		patchDeviceScopes()
 	}
 
-	if ensureWebSearchPlugin() {
-		registerWebSearchPlugin()
-	}
+	configureOllamaWebSearch()
 
 	// When extra args are passed through, run exactly what the user asked for
 	// after setup and skip the built-in gateway+TUI convenience flow.
@@ -738,89 +734,13 @@ func clearSessionModelOverride(primary string) {
 	_ = os.WriteFile(path, out, 0o600)
 }
 
-const (
-	webSearchNpmPackage = "@ollama/openclaw-web-search"
-	webSearchMinVersion = "0.2.1"
-)
-
-// ensureWebSearchPlugin installs the openclaw-web-search extension into the
-// user-level extensions directory (~/.openclaw/extensions/) if it isn't already
-// present, or re-installs if the installed version is older than webSearchMinVersion.
-// Returns true if the extension is available.
-func ensureWebSearchPlugin() bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-
-	pluginDir := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
-	if webSearchPluginUpToDate(pluginDir) {
-		return true
-	}
-
-	npmBin, err := exec.LookPath("npm")
-	if err != nil {
-		return false
-	}
-
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
-		return false
-	}
-
-	// Download the tarball via `npm pack`, extract it flat into the plugin dir.
-	pack := exec.Command(npmBin, "pack", webSearchNpmPackage, "--pack-destination", pluginDir)
-	out, err := pack.Output()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not download web search plugin: %v%s\n", ansiYellow, err, ansiReset)
-		return false
-	}
-
-	tgzName := strings.TrimSpace(string(out))
-	tgzPath := filepath.Join(pluginDir, tgzName)
-	defer os.Remove(tgzPath)
-
-	tar := exec.Command("tar", "xzf", tgzPath, "--strip-components=1", "-C", pluginDir)
-	if err := tar.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not extract web search plugin: %v%s\n", ansiYellow, err, ansiReset)
-		return false
-	}
-
-	fmt.Fprintf(os.Stderr, "%s  ✓ Installed Ollama web search %s\n", ansiGreen, ansiReset)
-	return true
-}
-
-// webSearchPluginUpToDate returns true if the plugin is installed and its
-// package.json version is >= webSearchMinVersion.
-func webSearchPluginUpToDate(pluginDir string) bool {
-	data, err := os.ReadFile(filepath.Join(pluginDir, "package.json"))
-	if err != nil {
-		return false
-	}
-	var pkg struct {
-		Version string `json:"version"`
-	}
-	if json.Unmarshal(data, &pkg) != nil || pkg.Version == "" {
-		return false
-	}
-	return !versionLessThan(pkg.Version, webSearchMinVersion)
-}
-
-// versionLessThan compares two semver version strings (major.minor.patch).
-// Inputs may omit the "v" prefix; it is added automatically for semver.Compare.
-func versionLessThan(a, b string) bool {
-	if !strings.HasPrefix(a, "v") {
-		a = "v" + a
-	}
-	if !strings.HasPrefix(b, "v") {
-		b = "v" + b
-	}
-	return semver.Compare(a, b) < 0
-}
-
-// registerWebSearchPlugin adds plugins.entries.openclaw-web-search to the OpenClaw
-// config so the gateway activates it on next start. Best-effort; silently returns
-// on any error.
-func registerWebSearchPlugin() {
+// configureOllamaWebSearch keeps launch-managed OpenClaw installs on the
+// bundled Ollama web_search provider. Older launch builds installed an
+// external openclaw-web-search plugin that added custom ollama_web_search and
+// ollama_web_fetch tools. Current OpenClaw versions ship Ollama web_search as
+// the bundled "ollama" plugin instead, so we migrate stale config and ensure
+// fresh installs select the bundled provider.
+func configureOllamaWebSearch() {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -835,6 +755,8 @@ func registerWebSearchPlugin() {
 		return
 	}
 
+	stalePluginConfigured := false
+
 	plugins, _ := config["plugins"].(map[string]any)
 	if plugins == nil {
 		plugins = make(map[string]any)
@@ -843,68 +765,100 @@ func registerWebSearchPlugin() {
 	if entries == nil {
 		entries = make(map[string]any)
 	}
-	entries["openclaw-web-search"] = map[string]any{"enabled": true}
-	plugins["entries"] = entries
-
-	// Pin trust so the gateway doesn't warn about untracked plugins.
-	allow, _ := plugins["allow"].([]any)
-	hasAllow := false
-	for _, v := range allow {
-		if s, ok := v.(string); ok && s == "openclaw-web-search" {
-			hasAllow = true
-			break
-		}
-	}
-	if !hasAllow {
-		allow = append(allow, "openclaw-web-search")
-	}
-	plugins["allow"] = allow
-
-	// Record install provenance so the loader can verify the plugin origin.
-	installs, _ := plugins["installs"].(map[string]any)
-	if installs == nil {
-		installs = make(map[string]any)
-	}
-	pluginDir := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
-	installs["openclaw-web-search"] = map[string]any{
-		"source":      "npm",
-		"spec":        webSearchNpmPackage,
-		"installPath": pluginDir,
-	}
-	plugins["installs"] = installs
-
-	config["plugins"] = plugins
-
-	// Add plugin tools to tools.alsoAllow so they survive the coding profile's
-	// policy pipeline (which has an explicit allow list of core tools only).
 	tools, _ := config["tools"].(map[string]any)
 	if tools == nil {
 		tools = make(map[string]any)
 	}
-
-	alsoAllow, _ := tools["alsoAllow"].([]any)
-	needed := []string{"ollama_web_search", "ollama_web_fetch"}
-	have := make(map[string]bool, len(alsoAllow))
-	for _, v := range alsoAllow {
-		if s, ok := v.(string); ok {
-			have[s] = true
-		}
-	}
-	for _, name := range needed {
-		if !have[name] {
-			alsoAllow = append(alsoAllow, name)
-		}
-	}
-	tools["alsoAllow"] = alsoAllow
-
-	// Disable built-in web search/fetch since our plugin replaces them.
 	web, _ := tools["web"].(map[string]any)
 	if web == nil {
 		web = make(map[string]any)
 	}
-	web["search"] = map[string]any{"enabled": false}
-	web["fetch"] = map[string]any{"enabled": false}
+	search, _ := web["search"].(map[string]any)
+	if search == nil {
+		search = make(map[string]any)
+	}
+	fetch, _ := web["fetch"].(map[string]any)
+	if fetch == nil {
+		fetch = make(map[string]any)
+	}
+
+	alsoAllow, _ := tools["alsoAllow"].([]any)
+	var filteredAlsoAllow []any
+	for _, v := range alsoAllow {
+		s, ok := v.(string)
+		if !ok {
+			filteredAlsoAllow = append(filteredAlsoAllow, v)
+			continue
+		}
+		if s == "ollama_web_search" || s == "ollama_web_fetch" {
+			stalePluginConfigured = true
+			continue
+		}
+		filteredAlsoAllow = append(filteredAlsoAllow, v)
+	}
+	if len(filteredAlsoAllow) > 0 {
+		tools["alsoAllow"] = filteredAlsoAllow
+	} else {
+		delete(tools, "alsoAllow")
+	}
+
+	if _, ok := entries["openclaw-web-search"]; ok {
+		delete(entries, "openclaw-web-search")
+		stalePluginConfigured = true
+	}
+	ollamaEntry, _ := entries["ollama"].(map[string]any)
+	if ollamaEntry == nil {
+		ollamaEntry = make(map[string]any)
+	}
+	ollamaEntry["enabled"] = true
+	entries["ollama"] = ollamaEntry
+	plugins["entries"] = entries
+
+	if allow, ok := plugins["allow"].([]any); ok {
+		var nextAllow []any
+		hasOllama := false
+		for _, v := range allow {
+			s, ok := v.(string)
+			if ok && s == "openclaw-web-search" {
+				stalePluginConfigured = true
+				continue
+			}
+			if ok && s == "ollama" {
+				hasOllama = true
+			}
+			nextAllow = append(nextAllow, v)
+		}
+		if !hasOllama {
+			nextAllow = append(nextAllow, "ollama")
+		}
+		plugins["allow"] = nextAllow
+	}
+
+	if installs, ok := plugins["installs"].(map[string]any); ok {
+		if _, exists := installs["openclaw-web-search"]; exists {
+			delete(installs, "openclaw-web-search")
+			stalePluginConfigured = true
+		}
+		if len(installs) > 0 {
+			plugins["installs"] = installs
+		} else {
+			delete(plugins, "installs")
+		}
+	}
+
+	if stalePluginConfigured || search["provider"] == nil {
+		search["provider"] = "ollama"
+	}
+	if stalePluginConfigured {
+		fetch["enabled"] = true
+	}
+	search["enabled"] = true
+	web["search"] = search
+	if len(fetch) > 0 {
+		web["fetch"] = fetch
+	}
 	tools["web"] = web
+	config["plugins"] = plugins
 	config["tools"] = tools
 
 	out, err := json.MarshalIndent(config, "", "  ")

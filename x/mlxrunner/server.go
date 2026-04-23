@@ -2,7 +2,6 @@ package mlxrunner
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -87,25 +86,30 @@ func Execute(args []string) error {
 	mux.HandleFunc("POST /v1/completions", func(w http.ResponseWriter, r *http.Request) {
 		request := Request{Responses: make(chan CompletionResponse)}
 
-		if err := json.NewDecoder(r.Body).Decode(&request.TextCompletionsRequest); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&request.CompletionRequest); err != nil {
 			slog.Error("Failed to decode request", "error", err)
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
 
-		request.Options.MaxTokens = cmp.Or(request.Options.MaxTokens, request.Options.NumPredict)
-
 		request.Pipeline = runner.TextGenerationPipeline
-		request.Sampler = sample.New(
-			request.Options.Temperature,
-			request.Options.TopP,
-			request.Options.MinP,
-			request.Options.TopK,
-			request.Options.RepeatLastN,
-			request.Options.RepeatPenalty,
-			request.Options.PresencePenalty,
-			request.Options.FrequencyPenalty,
-		)
+		request.Sampler = sample.New(sample.Options{
+			Temperature:      request.Options.Temperature,
+			TopP:             request.Options.TopP,
+			MinP:             request.Options.MinP,
+			TopK:             request.Options.TopK,
+			RepeatLastN:      request.Options.RepeatLastN,
+			RepeatPenalty:    request.Options.RepeatPenalty,
+			PresencePenalty:  request.Options.PresencePenalty,
+			FrequencyPenalty: request.Options.FrequencyPenalty,
+			Logprobs:         request.Logprobs,
+			TopLogprobs:      request.TopLogprobs,
+		})
+
+		if err := runner.Prepare(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		var cancel context.CancelFunc
 		request.Ctx, cancel = context.WithCancel(r.Context())

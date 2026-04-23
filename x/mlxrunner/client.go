@@ -151,22 +151,11 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 	}
 }
 
-// completionRequest is a properly-tagged version of llm.CompletionRequest for JSON serialization.
-type completionRequest struct {
-	Prompt  string          `json:"prompt"`
-	Options *completionOpts `json:"options,omitempty"`
-}
-
-type completionOpts struct {
-	Temperature      float32 `json:"temperature,omitempty"`
-	TopP             float32 `json:"top_p,omitempty"`
-	MinP             float32 `json:"min_p,omitempty"`
-	TopK             int     `json:"top_k,omitempty"`
-	RepeatLastN      int     `json:"repeat_last_n,omitempty"`
-	RepeatPenalty    float32 `json:"repeat_penalty,omitempty"`
-	PresencePenalty  float32 `json:"presence_penalty,omitempty"`
-	FrequencyPenalty float32 `json:"frequency_penalty,omitempty"`
-	NumPredict       int     `json:"num_predict,omitempty"`
+type CompletionRequest struct {
+	Prompt      string
+	Options     api.Options
+	Logprobs    bool
+	TopLogprobs int
 }
 
 type CompletionResponse struct {
@@ -178,6 +167,8 @@ type CompletionResponse struct {
 	PromptEvalDuration time.Duration
 	EvalCount          int
 	EvalDuration       time.Duration
+
+	Logprobs []llm.Logprob
 
 	Error *api.StatusError
 }
@@ -203,21 +194,13 @@ func (c *Client) Close() error {
 
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
-	creq := completionRequest{
-		Prompt: req.Prompt,
+	creq := CompletionRequest{
+		Prompt:      req.Prompt,
+		Logprobs:    req.Logprobs,
+		TopLogprobs: req.TopLogprobs,
 	}
 	if req.Options != nil {
-		creq.Options = &completionOpts{
-			Temperature:      req.Options.Temperature,
-			TopP:             req.Options.TopP,
-			MinP:             req.Options.MinP,
-			TopK:             req.Options.TopK,
-			RepeatLastN:      req.Options.RepeatLastN,
-			RepeatPenalty:    req.Options.RepeatPenalty,
-			PresencePenalty:  req.Options.PresencePenalty,
-			FrequencyPenalty: req.Options.FrequencyPenalty,
-			NumPredict:       req.Options.NumPredict,
-		}
+		creq.Options = *req.Options
 	}
 
 	body, err := json.Marshal(creq)
@@ -243,7 +226,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%s", strings.TrimSpace(string(respBody)))
+		return api.StatusError{StatusCode: resp.StatusCode, ErrorMessage: strings.TrimSpace(string(respBody))}
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -266,6 +249,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 			PromptEvalDuration: raw.PromptEvalDuration,
 			EvalCount:          raw.EvalCount,
 			EvalDuration:       raw.EvalDuration,
+			Logprobs:           raw.Logprobs,
 		}
 
 		fn(cresp)

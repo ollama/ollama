@@ -10,8 +10,7 @@ import (
 )
 
 func TestPresencePenaltyUsesAppendedTokenImmediately(t *testing.T) {
-	// RepeatLastN = 1, PresencePenalty = 6
-	s := New(0, 0, 0, 0, 1, 1, 6, 0)
+	s := New(Options{RepeatLastN: 1, PresencePenalty: 6})
 	defer func() {
 		s.Free()
 		mlx.Sweep()
@@ -21,7 +20,7 @@ func TestPresencePenaltyUsesAppendedTokenImmediately(t *testing.T) {
 	s.AppendToken(mlx.NewArrayInt32([]int32{1}, []int32{1}))
 
 	logits := mlx.FromValues([]float32{0, 5, 4}, 3)
-	got := s.Sample(logits)
+	got := s.Sample(logits).Token
 	mlx.Eval(got)
 
 	// logits will be [0, -1, 4] after the penalty
@@ -33,7 +32,7 @@ func TestPresencePenaltyUsesAppendedTokenImmediately(t *testing.T) {
 }
 
 func TestRepeatPenaltyUsesHistoryWithoutPresencePenalty(t *testing.T) {
-	s := New(0, 0, 0, 0, 1, 2, 0, 0)
+	s := New(Options{RepeatLastN: 1, RepeatPenalty: 2})
 	defer func() {
 		s.Free()
 		mlx.Sweep()
@@ -42,7 +41,7 @@ func TestRepeatPenaltyUsesHistoryWithoutPresencePenalty(t *testing.T) {
 	s.ResetHistory([]int32{1})
 
 	logits := mlx.FromValues([]float32{0, 5, 4}, 3)
-	got := s.Sample(logits)
+	got := s.Sample(logits).Token
 	mlx.Eval(got)
 
 	// token 1 is repeated and positive, so 5 / 2 falls below token 2.
@@ -53,7 +52,7 @@ func TestRepeatPenaltyUsesHistoryWithoutPresencePenalty(t *testing.T) {
 }
 
 func TestFrequencyPenaltyUsesTokenCounts(t *testing.T) {
-	s := New(0, 0, 0, 0, 4, 1, 0, 2)
+	s := New(Options{RepeatLastN: 4, FrequencyPenalty: 2})
 	defer func() {
 		s.Free()
 		mlx.Sweep()
@@ -62,7 +61,7 @@ func TestFrequencyPenaltyUsesTokenCounts(t *testing.T) {
 	s.ResetHistory([]int32{1, 1})
 
 	logits := mlx.FromValues([]float32{0, 5, 4}, 3)
-	got := s.Sample(logits)
+	got := s.Sample(logits).Token
 	mlx.Eval(got)
 
 	// token 1 appears twice, so 5 - (2 * 2) falls below token 2.
@@ -73,7 +72,7 @@ func TestFrequencyPenaltyUsesTokenCounts(t *testing.T) {
 }
 
 func TestMinPMasksTokensBelowThreshold(t *testing.T) {
-	s := New(0, 0, 0.5, 0, 0, 1, 0, 0)
+	s := New(Options{MinP: 0.5})
 	defer func() {
 		s.Free()
 		mlx.Sweep()

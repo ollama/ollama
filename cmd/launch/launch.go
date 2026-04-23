@@ -209,6 +209,7 @@ Supported integrations:
   copilot   Copilot CLI (aliases: copilot-cli)
   droid     Droid
   hermes    Hermes Agent
+  kimi      Kimi Code CLI
   opencode  OpenCode
   openclaw  OpenClaw (aliases: clawdbot, moltbot)
   pi        Pi

@@ -139,6 +139,12 @@ func (t *Array) Less(other *Array) *Array {
 	return out
 }
 
+func (t *Array) MaxAxis(axis int, keepDims bool) *Array {
+	out := New("MAX_AXIS")
+	C.mlx_max_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) Matmul(other *Array) *Array {
 	out := New("MATMUL")
 	C.mlx_matmul(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)

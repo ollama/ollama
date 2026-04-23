@@ -62,3 +62,25 @@ var LogitSoftcap = Compile2(
 	},
 	Shapeless(),
 )
+
+// sigmoidRouterFused traces the DeepSeek-V2 / GLM-MoE aux-loss-free router
+// head. Two outputs are returned so the pre-bias sigmoid (used to gather
+// per-expert scores after top-k) and the post-bias negation (used as the
+// argpartition key for top-k) share a single kernel.
+var sigmoidRouterFused = Compile(
+	"SigmoidRouter",
+	func(in ...*Array) []*Array {
+		gates, bias := in[0], in[1]
+		orig := gates.Sigmoid()
+		neg := orig.Add(bias).Negative()
+		return []*Array{orig, neg}
+	},
+	Shapeless(),
+)
+
+// SigmoidRouter returns (sigmoid(gates), -(sigmoid(gates)+bias)) as a fused
+// kernel — the DeepSeek-V2 / GLM-MoE aux-loss-free router head.
+func SigmoidRouter(gates, bias *Array) (origScores, negScores *Array) {
+	out := sigmoidRouterFused(gates, bias)
+	return out[0], out[1]
+}

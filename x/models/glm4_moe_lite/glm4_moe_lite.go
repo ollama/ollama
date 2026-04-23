@@ -161,21 +161,21 @@ type MoEGate struct {
 func (g *MoEGate) Forward(x *mlx.Array, cfg *Config) (*mlx.Array, *mlx.Array) {
 	gates := g.Gate.Forward(x)
 
-	scores := mlx.Sigmoid(gates)
-	origScores := scores
-
+	var origScores, negScores *mlx.Array
 	if g.EScoreCorrectionBias != nil {
-		scores = mlx.Add(scores, g.EScoreCorrectionBias)
+		origScores, negScores = mlx.SigmoidRouter(gates, g.EScoreCorrectionBias)
+	} else {
+		origScores = mlx.Sigmoid(gates)
+		negScores = mlx.Neg(origScores)
 	}
 
 	topK := cfg.NumExpertsPerTok
-	negScores := mlx.Neg(scores)
 	inds := mlx.Argpartition(negScores, int(topK)-1, -1)
 
 	dims := inds.Dims()
 	inds = mlx.SliceStartStop(inds, []int32{0, 0, 0}, []int32{int32(dims[0]), int32(dims[1]), topK})
 
-	scores = mlx.TakeAlongAxis(origScores, inds, -1)
+	scores := mlx.TakeAlongAxis(origScores, inds, -1)
 
 	if topK > 1 && cfg.NormTopKProb {
 		sumScores := mlx.Sum(scores, -1, true)

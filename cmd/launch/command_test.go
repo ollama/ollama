@@ -61,6 +61,9 @@ func TestLaunchCmd(t *testing.T) {
 		if !strings.Contains(cmd.Long, "hermes") {
 			t.Error("Long description should mention hermes")
 		}
+		if !strings.Contains(cmd.Long, "kimi") {
+			t.Error("Long description should mention kimi")
+		}
 	})
 
 	t.Run("flags exist", func(t *testing.T) {

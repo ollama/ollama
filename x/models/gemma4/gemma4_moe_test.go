@@ -144,6 +144,8 @@ func TestRouterForwardMatchesLegacy(t *testing.T) {
 
 	gotScores, gotInds := r.Forward(x, cfg)
 	wantScores, wantInds := legacyRouterForward(r, x, cfg)
+	gotInds = gotInds.AsType(mlx.DTypeInt32)
+	wantInds = wantInds.AsType(mlx.DTypeInt32)
 	mlx.Eval(gotScores, gotInds, wantScores, wantInds)
 
 	if got, want := gotInds.Ints(), wantInds.Ints(); !intSlicesEqual(got, want) {
