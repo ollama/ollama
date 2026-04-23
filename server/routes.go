@@ -1438,6 +1438,11 @@ func (s *Server) ListHandler(c *gin.Context) {
 	models := []api.ListModelResponse{}
 	for n, m := range ms {
 		var cf model.ConfigV2
+		size, err := manifest.TotalSizeForName(n)
+		if err != nil {
+			slog.Warn("bad manifest size", "name", n, "error", err)
+			size = m.Size()
+		}
 
 		if m.Config.Digest != "" {
 			f, err := m.Config.Open()
@@ -1459,7 +1464,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 			Name:        n.DisplayShortest(),
 			RemoteModel: cf.RemoteModel,
 			RemoteHost:  cf.RemoteHost,
-			Size:        m.Size(),
+			Size:        size,
 			Digest:      m.Digest(),
 			ModifiedAt:  m.FileInfo().ModTime(),
 			Details: api.ModelDetails{

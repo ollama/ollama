@@ -144,6 +144,27 @@ func (m *Manifest) Size() (size int64) {
 	return
 }
 
+// TotalSizeForName returns the combined size of unique config and layer blobs
+// reachable from the named manifest object. Manifest blobs themselves are not
+// included in the total.
+func TotalSizeForName(n model.Name) (int64, error) {
+	if !n.IsFullyQualified() {
+		return 0, model.Unqualified(n)
+	}
+
+	p, root, err := resolveManifestPath(n)
+	if err != nil {
+		return 0, err
+	}
+
+	data, _, _, err := readVerifiedManifest(p, root)
+	if err != nil {
+		return 0, err
+	}
+
+	return totalSizeForManifestData(data)
+}
+
 func (m *Manifest) Digest() string {
 	return m.digest
 }
@@ -320,6 +341,68 @@ func referencedBlobDigestsForData(manifestDigest string, data []byte) ([]string,
 	}
 
 	return digests, nil
+}
+
+func totalSizeForManifestData(data []byte) (int64, error) {
+	seen := make(map[string]struct{})
+
+	addLayer := func(layer Layer) (int64, error) {
+		if layer.Digest == "" {
+			return 0, nil
+		}
+
+		digest, err := canonicalBlobDigest(layer.Digest)
+		if err != nil {
+			return 0, err
+		}
+		if _, ok := seen[digest]; ok {
+			return 0, nil
+		}
+		seen[digest] = struct{}{}
+
+		return layer.Size, nil
+	}
+
+	addManifest := func(m *Manifest) (int64, error) {
+		var size int64
+		for _, layer := range append(m.Layers, m.Config) {
+			layerSize, err := addLayer(layer)
+			if err != nil {
+				return 0, err
+			}
+			size += layerSize
+		}
+
+		return size, nil
+	}
+
+	m, err := parseManifest(data)
+	if err != nil {
+		return 0, err
+	}
+	if m.MediaType == MediaTypeManifestList {
+		var size int64
+		for i := range m.Manifests {
+			child := &m.Manifests[i]
+			if child.isReference() {
+				resolved, err := parseManifestBlob(child.BlobDigest())
+				if err != nil {
+					return 0, err
+				}
+				child = resolved
+			}
+
+			childSize, err := addManifest(child)
+			if err != nil {
+				return 0, err
+			}
+			size += childSize
+		}
+
+		return size, nil
+	}
+
+	return addManifest(m)
 }
 
 // RemoveUnreferencedBlobs removes candidate blob digests that are not reachable

@@ -246,6 +246,104 @@ func TestParseNamedManifestResolvesManifestList(t *testing.T) {
 	}
 }
 
+func TestTotalSizeForNameIncludesAllManifestListChildren(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	name := model.ParseName("example")
+
+	sharedLayerData := []byte("shared layer")
+	ggufConfigData := []byte("gguf config")
+	ggufLayerData := []byte("gguf layer")
+	mlxConfigData := []byte("mlx config")
+	mlxLayerData := []byte("mlx layer")
+
+	sharedLayerDigest := writeManifestBlobForTest(t, sharedLayerData)
+	ggufConfigDigest := writeManifestBlobForTest(t, ggufConfigData)
+	ggufLayerDigest := writeManifestBlobForTest(t, ggufLayerData)
+	mlxConfigDigest := writeManifestBlobForTest(t, mlxConfigData)
+	mlxLayerDigest := writeManifestBlobForTest(t, mlxLayerData)
+
+	gguf := Manifest{
+		SchemaVersion: 2,
+		MediaType:     MediaTypeManifest,
+		Runner:        RunnerOllama,
+		Format:        FormatGGUF,
+		Config: Layer{
+			MediaType: "application/vnd.docker.container.image.v1+json",
+			Digest:    ggufConfigDigest,
+			Size:      int64(len(ggufConfigData)),
+		},
+		Layers: []Layer{
+			{
+				MediaType: "application/vnd.ollama.image.model",
+				Digest:    sharedLayerDigest,
+				Size:      int64(len(sharedLayerData)),
+			},
+			{
+				MediaType: "application/vnd.ollama.image.model",
+				Digest:    ggufLayerDigest,
+				Size:      int64(len(ggufLayerData)),
+			},
+		},
+	}
+	ggufData, err := json.Marshal(gguf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggufManifestDigest := writeManifestBlobForTest(t, ggufData)
+	ggufRef, err := NewManifestReference(ggufManifestDigest, gguf.Runner, gguf.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mlx := Manifest{
+		SchemaVersion: 2,
+		MediaType:     MediaTypeManifest,
+		Runner:        RunnerMLX,
+		Format:        FormatSafetensors,
+		Config: Layer{
+			MediaType: "application/vnd.docker.container.image.v1+json",
+			Digest:    mlxConfigDigest,
+			Size:      int64(len(mlxConfigData)),
+		},
+		Layers: []Layer{
+			{
+				MediaType: MediaTypeImageTensor,
+				Digest:    sharedLayerDigest,
+				Size:      int64(len(sharedLayerData)),
+			},
+			{
+				MediaType: MediaTypeImageTensor,
+				Digest:    mlxLayerDigest,
+				Size:      int64(len(mlxLayerData)),
+			},
+		},
+	}
+	mlxData, err := json.Marshal(mlx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mlxManifestDigest := writeManifestBlobForTest(t, mlxData)
+	mlxRef, err := NewManifestReference(mlxManifestDigest, mlx.Runner, mlx.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteManifestData(name, createManifestListData(t, ggufRef, mlxRef)); err != nil {
+		t.Fatal(err)
+	}
+
+	size, err := TotalSizeForName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := int64(len(ggufConfigData) + len(sharedLayerData) + len(ggufLayerData) + len(mlxConfigData) + len(mlxLayerData))
+	if size != want {
+		t.Fatalf("size = %d, want %d", size, want)
+	}
+}
+
 func TestParseNamedManifestLeavesLegacyManifestInPlace(t *testing.T) {
 	models := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", models)
