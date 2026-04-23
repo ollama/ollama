@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/cmd/config"
 )
 
@@ -1219,8 +1220,9 @@ func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *t
 	if len(gotItems) == 0 {
 		t.Fatal("expected multi selector to receive items")
 	}
-	if gotItems[0] != "qwen3.5:cloud" {
-		t.Fatalf("expected checked models floated to top with qwen3.5:cloud first, got %v", gotItems)
+	wantItems := recommendedNames()
+	if diff := cmp.Diff(wantItems, gotItems); diff != "" {
+		t.Fatalf("expected fixed recommended order in selector items (-want +got):\n%s", diff)
 	}
 	if len(gotPreChecked) < 2 {
 		t.Fatalf("expected prechecked models to be preserved, got %v", gotPreChecked)
