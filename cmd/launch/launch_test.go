@@ -1220,7 +1220,7 @@ func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *t
 	if len(gotItems) == 0 {
 		t.Fatal("expected multi selector to receive items")
 	}
-	wantItems := []string{"kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5"}
+	wantItems := recommendedNames()
 	if diff := cmp.Diff(wantItems, gotItems); diff != "" {
 		t.Fatalf("expected fixed recommended order in selector items (-want +got):\n%s", diff)
 	}

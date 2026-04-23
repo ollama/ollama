@@ -361,6 +361,8 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	}
 
 	if hasLocalModel || hasCloudModel {
+		// Keep the Recommended section pinned to recommendedModels order. Checked
+		// and default-model priority only apply within the More section.
 		slices.SortStableFunc(items, func(a, b ModelItem) int {
 			ac, bc := checked[a.Name], checked[b.Name]
 			aNew, bNew := notInstalled[a.Name], notInstalled[b.Name]
