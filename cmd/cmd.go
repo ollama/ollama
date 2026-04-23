@@ -443,6 +443,9 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 }
 
 func StopHandler(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
 	opts := &runOptions{
 		Model:     args[0],
 		KeepAlive: &api.Duration{Duration: 0},
@@ -1044,6 +1047,10 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ShowHandler(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -2178,11 +2185,16 @@ func NewCLI() *cobra.Command {
 	createCmd.Flags().Bool("experimental", false, "Enable experimental safetensors model creation")
 
 	showCmd := &cobra.Command{
-		Use:     "show MODEL",
-		Short:   "Show information for a model",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    ShowHandler,
+		Use:  "show MODEL",
+		Short: "Show information for a model",
+		Args: cobra.MaximumNArgs(1),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			return checkServerHeartbeat(cmd, args)
+		},
+		RunE: ShowHandler,
 	}
 
 	showCmd.Flags().Bool("license", false, "Show license of a model")
@@ -2221,11 +2233,16 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().MarkHidden("imagegen")
 
 	stopCmd := &cobra.Command{
-		Use:     "stop MODEL",
-		Short:   "Stop a running model",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    StopHandler,
+		Use:  "stop MODEL",
+		Short: "Stop a running model",
+		Args: cobra.MaximumNArgs(1),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			return checkServerHeartbeat(cmd, args)
+		},
+		RunE: StopHandler,
 	}
 
 	serveCmd := &cobra.Command{
