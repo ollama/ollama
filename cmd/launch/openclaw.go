@@ -58,6 +58,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 		// the newest wizard flags (e.g. --auth-choice ollama).
 		if !openclawFreshInstall {
 			update := exec.Command(bin, "update")
+			update.Env = openclawInstallEnv()
 			update.Stdout = os.Stdout
 			update.Stderr = os.Stderr
 			_ = update.Run() // best-effort; continue even if update fails
@@ -86,6 +87,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 			onboardArgs = append(onboardArgs, "--skip-health")
 		}
 		cmd := exec.Command(bin, onboardArgs...)
+		cmd.Env = openclawInstallEnv()
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -335,7 +337,28 @@ func openclawEnv() []string {
 			env = append(env, e)
 		}
 	}
+	if _, ok := os.LookupEnv("OPENCLAW_PLUGIN_STAGE_DIR"); !ok {
+		if dir := openclawPluginStageDir(); dir != "" {
+			env = append(env, "OPENCLAW_PLUGIN_STAGE_DIR="+dir)
+		}
+	}
 	return env
+}
+
+func openclawInstallEnv() []string {
+	env := openclawEnv()
+	if _, ok := os.LookupEnv("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"); !ok {
+		env = append(env, "OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS=1")
+	}
+	return env
+}
+
+func openclawPluginStageDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".openclaw", "plugin-runtime-deps")
 }
 
 // portOpen checks if a TCP port is currently accepting connections.
@@ -561,6 +584,7 @@ func ensureOpenclawInstalled() (string, error) {
 
 	fmt.Fprintf(os.Stderr, "\nInstalling OpenClaw...\n")
 	cmd := exec.Command("npm", "install", "-g", "openclaw@latest")
+	cmd.Env = openclawInstallEnv()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
