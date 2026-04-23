@@ -28,6 +28,8 @@ var openclawModelShowTimeout = 5 * time.Second
 // openclawFreshInstall is set to true when ensureOpenclawInstalled performs an install
 var openclawFreshInstall bool
 
+var openclawCanInstallDaemon = canInstallDaemon
+
 type Openclaw struct{}
 
 func (c *Openclaw) String() string { return "OpenClaw" }
@@ -58,6 +60,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 		// the newest wizard flags (e.g. --auth-choice ollama).
 		if !openclawFreshInstall {
 			update := exec.Command(bin, "update")
+			update.Env = openclawInstallEnv()
 			update.Stdout = os.Stdout
 			update.Stderr = os.Stderr
 			_ = update.Run() // best-effort; continue even if update fails
@@ -73,19 +76,18 @@ func (c *Openclaw) Run(model string, args []string) error {
 			"--auth-choice", "ollama",
 			"--custom-base-url", envconfig.Host().String(),
 			"--custom-model-id", model,
+			// Launch owns the first real gateway startup immediately after onboarding,
+			// so don't let OpenClaw fail the whole first-run flow on a transient
+			// daemon health probe.
+			"--skip-health",
 			"--skip-channels",
 			"--skip-skills",
 		}
-		if canInstallDaemon() {
+		if openclawCanInstallDaemon() {
 			onboardArgs = append(onboardArgs, "--install-daemon")
-		} else {
-			// When we can't install a daemon (e.g. no systemd, sudo dropped
-			// XDG_RUNTIME_DIR, or container environment), skip the gateway
-			// health check so non-interactive onboarding completes. The
-			// gateway is started as a foreground child process after onboarding.
-			onboardArgs = append(onboardArgs, "--skip-health")
 		}
 		cmd := exec.Command(bin, onboardArgs...)
+		cmd.Env = openclawInstallEnv()
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -101,6 +103,18 @@ func (c *Openclaw) Run(model string, args []string) error {
 	// When extra args are passed through, run exactly what the user asked for
 	// after setup and skip the built-in gateway+TUI convenience flow.
 	if len(args) > 0 {
+		cleanup := func() {}
+		if shouldEnsureGatewayForArgs(args) {
+			cleanupFn, _, _, err := c.ensureGatewayReady(bin)
+			if err != nil {
+				return windowsHint(err)
+			}
+			if cleanupFn != nil {
+				cleanup = cleanupFn
+			}
+		}
+		defer cleanup()
+
 		cmd := exec.Command(bin, args...)
 		cmd.Env = openclawEnv()
 		cmd.Stdin = os.Stdin
@@ -121,41 +135,11 @@ func (c *Openclaw) Run(model string, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
 
-	token, port := c.gatewayInfo()
-	addr := fmt.Sprintf("localhost:%d", port)
-
-	// If the gateway is already running (e.g. via the daemon), restart it
-	// so it picks up any config changes (model, provider, etc.).
-	if portOpen(addr) {
-		restart := exec.Command(bin, "daemon", "restart")
-		restart.Env = openclawEnv()
-		if err := restart.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s  Warning: daemon restart failed: %v%s\n", ansiYellow, err, ansiReset)
-		}
-		if !waitForPort(addr, 10*time.Second) {
-			fmt.Fprintf(os.Stderr, "%s  Warning: gateway did not come back after restart%s\n", ansiYellow, ansiReset)
-		}
+	cleanup, token, port, err := c.ensureGatewayReady(bin)
+	if err != nil {
+		return windowsHint(err)
 	}
-
-	// If the gateway isn't running, start it as a background child process.
-	if !portOpen(addr) {
-		gw := exec.Command(bin, "gateway", "run", "--force")
-		gw.Env = openclawEnv()
-		if err := gw.Start(); err != nil {
-			return windowsHint(fmt.Errorf("failed to start gateway: %w", err))
-		}
-		defer func() {
-			if gw.Process != nil {
-				_ = gw.Process.Kill()
-				_ = gw.Wait()
-			}
-		}()
-	}
-
-	fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
-	if !waitForPort(addr, 30*time.Second) {
-		return windowsHint(fmt.Errorf("gateway did not start on %s", addr))
-	}
+	defer cleanup()
 
 	printOpenclawReady(bin, token, port, firstLaunch)
 
@@ -173,6 +157,66 @@ func (c *Openclaw) Run(model string, args []string) error {
 	}
 
 	return nil
+}
+
+func shouldEnsureGatewayForArgs(args []string) bool {
+	return len(args) > 0 && args[0] == "tui"
+}
+
+func (c *Openclaw) ensureGatewayReady(bin string) (func(), string, int, error) {
+	token, port := c.gatewayInfo()
+	addr := fmt.Sprintf("localhost:%d", port)
+
+	// If the gateway is already running (e.g. via the daemon), restart it
+	// so it picks up any config changes (model, provider, etc.).
+	if portOpen(addr) {
+		restart := exec.Command(bin, "daemon", "restart")
+		restart.Env = openclawEnv()
+		if err := restart.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s  Warning: daemon restart failed: %v%s\n", ansiYellow, err, ansiReset)
+		}
+		if !waitForPort(addr, 10*time.Second) {
+			fmt.Fprintf(os.Stderr, "%s  Warning: gateway did not come back after restart%s\n", ansiYellow, ansiReset)
+		}
+	}
+
+	// If the daemon is installed but not currently listening, try to bring it
+	// up before falling back to a foreground child process.
+	if openclawCanInstallDaemon() && !portOpen(addr) {
+		start := exec.Command(bin, "daemon", "start")
+		start.Env = openclawEnv()
+		if err := start.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s  Warning: daemon start failed: %v%s\n", ansiYellow, err, ansiReset)
+		} else if waitForPort(addr, 10*time.Second) {
+			fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
+			return func() {}, token, port, nil
+		}
+	}
+
+	cleanup := func() {}
+
+	// If the gateway still isn't running, start it as a background child process.
+	if !portOpen(addr) {
+		gw := exec.Command(bin, "gateway", "run", "--force")
+		gw.Env = openclawEnv()
+		if err := gw.Start(); err != nil {
+			return nil, "", 0, fmt.Errorf("failed to start gateway: %w", err)
+		}
+		cleanup = func() {
+			if gw.Process != nil {
+				_ = gw.Process.Kill()
+				_ = gw.Wait()
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
+	if !waitForPort(addr, 30*time.Second) {
+		cleanup()
+		return nil, "", 0, fmt.Errorf("gateway did not start on %s", addr)
+	}
+
+	return cleanup, token, port, nil
 }
 
 // runChannelSetupPreflight prompts users to connect a messaging channel before
@@ -335,7 +379,28 @@ func openclawEnv() []string {
 			env = append(env, e)
 		}
 	}
+	if _, ok := os.LookupEnv("OPENCLAW_PLUGIN_STAGE_DIR"); !ok {
+		if dir := openclawPluginStageDir(); dir != "" {
+			env = append(env, "OPENCLAW_PLUGIN_STAGE_DIR="+dir)
+		}
+	}
 	return env
+}
+
+func openclawInstallEnv() []string {
+	env := openclawEnv()
+	if _, ok := os.LookupEnv("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"); !ok {
+		env = append(env, "OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS=1")
+	}
+	return env
+}
+
+func openclawPluginStageDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".openclaw", "plugin-runtime-deps")
 }
 
 // portOpen checks if a TCP port is currently accepting connections.
@@ -561,6 +626,7 @@ func ensureOpenclawInstalled() (string, error) {
 
 	fmt.Fprintf(os.Stderr, "\nInstalling OpenClaw...\n")
 	cmd := exec.Command("npm", "install", "-g", "openclaw@latest")
+	cmd.Env = openclawInstallEnv()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
