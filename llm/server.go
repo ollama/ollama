@@ -728,80 +728,24 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		s.loadRequest.UseMmap = false
 	}
 
-	commitLoad := func() ([]ml.DeviceID, error) {
-		if err := s.waitUntilRunnerLaunched(ctx); err != nil {
-			return nil, err
-		}
-
-		s.loadRequest.GPULayers = gpuLayers
-		resp, err := s.initModel(ctx, s.loadRequest, LoadOperationCommit)
-		if err != nil {
-			return nil, err
-		}
-
-		if !resp.Success {
-			return nil, errors.New("failed to allocate memory for model")
-		}
-
-		// The llama engine does its memory allocations together with model loading, so we
-		// need to wait until it is done to ensure that we have accurate memory data before
-		// loading the next model.
-		return uniqueDeviceIDs(s.loadRequest.GPULayers), s.WaitUntilRunning(ctx)
-	}
-
-	deviceIDs, err := commitLoad()
-	if err == nil {
-		return deviceIDs, nil
-	}
-
-	if !ShouldRetryWithMetalTensorDisabled(err, s.status) {
+	if err := s.waitUntilRunnerLaunched(ctx); err != nil {
 		return nil, err
 	}
 
-	slog.Warn("retrying ggml runner with Metal tensor API disabled", "error", err)
-	if s.cmd != nil && s.cmd.Process != nil {
-		if killErr := s.cmd.Process.Kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
-			return nil, fmt.Errorf("failed to stop runner before metal retry: %w", killErr)
-		}
-		if s.cmd.ProcessState == nil {
-			<-s.done
-		}
-	}
-
-	retryEnv := ml.GetVisibleDevicesEnv(gpus, false)
-	if retryEnv == nil {
-		retryEnv = map[string]string{}
-	}
-	retryEnv["GGML_METAL_TENSOR_DISABLE"] = "1"
-	status := NewStatusWriter(os.Stderr)
-	cmd, port, err := StartRunner(false, s.modelPath, ml.LibraryPaths(gpus), status, retryEnv)
+	s.loadRequest.GPULayers = gpuLayers
+	resp, err := s.initModel(ctx, s.loadRequest, LoadOperationCommit)
 	if err != nil {
-		return nil, fmt.Errorf("error restarting runner with Metal tensor API disabled: %w", err)
+		return nil, err
 	}
 
-	s.cmd = cmd
-	s.port = port
-	s.status = status
-	s.done = make(chan struct{})
-	s.doneErr = nil
-	s.loadProgress = 0
-	s.loadStart = time.Now()
-	go func(cmd *exec.Cmd, status *StatusWriter, done chan struct{}) {
-		err := cmd.Wait()
-		// Favor a more detailed message over the process exit status.
-		if err != nil && status != nil && status.LastError() != "" {
-			slog.Error("llama runner terminated", "error", err)
-			if strings.Contains(status.LastError(), "unknown model") {
-				status.SetLastError("this model is not supported by your version of Ollama. You may need to upgrade")
-			}
-			s.doneErr = errors.New(status.LastError())
-		} else {
-			s.doneErr = err
-		}
-		close(done)
-	}(s.cmd, s.status, s.done)
+	if !resp.Success {
+		return nil, errors.New("failed to allocate memory for model")
+	}
 
-	return commitLoad()
+	// The llama engine does its memory allocations together with model loading, so we
+	// need to wait until it is done to ensure that we have accurate memory data before
+	// loading the next model.
+	return uniqueDeviceIDs(s.loadRequest.GPULayers), s.WaitUntilRunning(ctx)
 }
 
 func projectorMemoryRequirements(filename string) (weights uint64) {

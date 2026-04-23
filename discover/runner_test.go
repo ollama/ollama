@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+
+	"github.com/ollama/ollama/ml"
 )
 
 func init() {
@@ -105,5 +107,29 @@ func TestFilterOverlapByLibrary(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRecordPersistentRunnerEnv(t *testing.T) {
+	devices := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{Library: "Metal", ID: "0"}},
+		{DeviceID: ml.DeviceID{Library: "CUDA", ID: "1"}},
+	}
+
+	recordPersistentRunnerEnv(devices, map[string]string{
+		"GGML_METAL_TENSOR_DISABLE": "1",
+		"CUDA_VISIBLE_DEVICES":      "1",
+	})
+
+	if got := devices[0].RunnerEnvOverrides["GGML_METAL_TENSOR_DISABLE"]; got != "1" {
+		t.Fatalf("Metal RunnerEnvOverrides = %q, want %q", got, "1")
+	}
+
+	if _, ok := devices[0].RunnerEnvOverrides["CUDA_VISIBLE_DEVICES"]; ok {
+		t.Fatal("unexpected CUDA_VISIBLE_DEVICES in Metal RunnerEnvOverrides")
+	}
+
+	if devices[1].RunnerEnvOverrides != nil {
+		t.Fatalf("unexpected RunnerEnvOverrides recorded for non-Metal device: %#v", devices[1].RunnerEnvOverrides)
 	}
 }

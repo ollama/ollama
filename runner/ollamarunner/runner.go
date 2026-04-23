@@ -335,11 +335,12 @@ type Server struct {
 	// loadMu prevents more than one load attempt from occurring at a time
 	loadMu sync.Mutex
 
-	// infoOnce ensures the dummy model used to service /info before a real
-	// model is loaded is initialized at most once.
-	infoOnce  sync.Once
-	infoModel model.Model
-	infoErr   error
+	// infoInitialized caches the result of the dummy /info backend
+	// initialization. loadMu already serializes callers, so a simple cached
+	// result avoids repeated dummy loads without needing sync.Once.
+	infoInitialized bool
+	infoModel       model.Model
+	infoErr         error
 
 	// lastLoad is the load request from the previous load attempt. Used to
 	// detect if we can reuse an existing memory allocation.
@@ -1387,38 +1388,40 @@ func (s *Server) infoModelLocked() (model.Model, error) {
 		return s.model, nil
 	}
 
-	s.infoOnce.Do(func() {
-		startLoad := time.Now()
-		defer func() {
-			if rec := recover(); rec != nil {
-				s.infoErr = fmt.Errorf("panic during dummy backend initialization: %v", rec)
+	if !s.infoInitialized {
+		s.infoInitialized = true
+
+		func() {
+			startLoad := time.Now()
+			defer func() {
+				if rec := recover(); rec != nil {
+					s.infoErr = fmt.Errorf("panic during dummy backend initialization: %v", rec)
+				}
+			}()
+
+			// Dummy load to get the backend wired up.
+			f, err := os.CreateTemp("", "*.bin")
+			if err != nil {
+				s.infoErr = err
+				return
+			}
+			defer f.Close()
+			defer os.Remove(f.Name())
+
+			if err := ggml.WriteGGUF(f, ggml.KV{
+				"general.architecture": "llama",
+				"tokenizer.ggml.model": "gpt2",
+			}, nil); err != nil {
+				s.infoErr = err
+				return
+			}
+
+			s.infoModel, s.infoErr = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
+			if s.infoErr == nil {
+				slog.Debug("dummy model load took", "duration", time.Since(startLoad))
 			}
 		}()
-
-		// Dummy load to get the backend wired up.
-		f, err := os.CreateTemp("", "*.bin")
-		if err != nil {
-			s.infoErr = err
-			return
-		}
-		defer f.Close()
-		defer os.Remove(f.Name())
-
-		if err := ggml.WriteGGUF(f, ggml.KV{
-			"general.architecture": "llama",
-			"tokenizer.ggml.model": "gpt2",
-		}, nil); err != nil {
-			s.infoErr = err
-			return
-		}
-
-		s.infoModel, s.infoErr = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
-		if s.infoErr != nil {
-			return
-		}
-
-		slog.Debug("dummy model load took", "duration", time.Since(startLoad))
-	})
+	}
 
 	if s.infoErr != nil {
 		return nil, s.infoErr

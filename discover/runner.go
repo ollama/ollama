@@ -436,6 +436,9 @@ func bootstrapDevicesWithMetalRetry(firstAttemptCtx, retryParentCtx context.Cont
 	}
 
 	devices, status, err := runDiscovery(firstAttemptCtx, extraEnvs)
+	if err == nil {
+		recordPersistentRunnerEnv(devices, extraEnvs)
+	}
 	if err != nil && llm.ShouldRetryWithMetalTensorDisabled(err, status) && (extraEnvs == nil || extraEnvs["GGML_METAL_TENSOR_DISABLE"] != "1") {
 		retryEnvs := map[string]string{}
 		for k, v := range extraEnvs {
@@ -446,6 +449,9 @@ func bootstrapDevicesWithMetalRetry(firstAttemptCtx, retryParentCtx context.Cont
 		retryCtx, cancel := context.WithTimeout(retryParentCtx, timeout)
 		defer cancel()
 		devices, status, err = runDiscovery(retryCtx, retryEnvs)
+		if err == nil {
+			recordPersistentRunnerEnv(devices, retryEnvs)
+		}
 	}
 
 	if err != nil {
@@ -453,6 +459,22 @@ func bootstrapDevicesWithMetalRetry(firstAttemptCtx, retryParentCtx context.Cont
 	}
 
 	return devices
+}
+
+func recordPersistentRunnerEnv(devices []ml.DeviceInfo, extraEnvs map[string]string) {
+	if extraEnvs["GGML_METAL_TENSOR_DISABLE"] != "1" {
+		return
+	}
+
+	for i := range devices {
+		if devices[i].Library != "Metal" {
+			continue
+		}
+		if devices[i].RunnerEnvOverrides == nil {
+			devices[i].RunnerEnvOverrides = map[string]string{}
+		}
+		devices[i].RunnerEnvOverrides["GGML_METAL_TENSOR_DISABLE"] = "1"
+	}
 }
 
 func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
@@ -466,13 +488,20 @@ func bootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []string, ext
 		baseOut = os.Stderr
 	}
 
+	runnerEnvs := map[string]string{
+		"OLLAMA_GPU_DISCOVERY": "1",
+	}
+	for k, v := range extraEnvs {
+		runnerEnvs[k] = v
+	}
+
 	status := llm.NewStatusWriter(baseOut)
 	cmd, port, err := llm.StartRunner(
 		true, // ollama engine
 		"",   // no model
 		ollamaLibDirs,
 		status,
-		extraEnvs,
+		runnerEnvs,
 	)
 	if err != nil {
 		slog.Debug("failed to start runner to discovery GPUs", "error", err)
