@@ -21,7 +21,7 @@ import (
 )
 
 var recommendedModels = []ModelItem{
-	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
+	{Name: "kimi-k2.6:cloud", Description: "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability", Recommended: true},
 	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
 	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true},
 	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
@@ -56,6 +56,7 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"gpt-oss:20b":         {Context: 131_072, Output: 131_072},
 	"kimi-k2:1t":          {Context: 262_144, Output: 262_144},
 	"kimi-k2.5":           {Context: 262_144, Output: 262_144},
+	"kimi-k2.6":           {Context: 262_144, Output: 262_144},
 	"kimi-k2-thinking":    {Context: 262_144, Output: 262_144},
 	"nemotron-3-nano:30b": {Context: 1_048_576, Output: 131_072},
 	"qwen3-coder:480b":    {Context: 262_144, Output: 65_536},

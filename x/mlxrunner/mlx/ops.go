@@ -139,6 +139,12 @@ func (t *Array) Less(other *Array) *Array {
 	return out
 }
 
+func (t *Array) MaxAxis(axis int, keepDims bool) *Array {
+	out := New("MAX_AXIS")
+	C.mlx_max_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) Matmul(other *Array) *Array {
 	out := New("MATMUL")
 	C.mlx_matmul(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
@@ -166,6 +172,12 @@ func (t *Array) Power(exponent *Array) *Array {
 func (t *Array) PutAlongAxis(indices, values *Array, axis int) *Array {
 	out := New("PUT_ALONG_AXIS")
 	C.mlx_put_along_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) ScatterAddAxis(indices, values *Array, axis int) *Array {
+	out := New("SCATTER_ADD_AXIS")
+	C.mlx_scatter_add_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx)
 	return out
 }
 
