@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "copilot", "droid", "pi", "pool"}
+var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "copilot", "droid", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -178,8 +178,20 @@ var integrationSpecs = []*IntegrationSpec{
 			URL: "https://github.com/poolsideai/pool",
 		},
 	},
-	{
-		Name:        "hermes",
+		{
+			Name:        "qwen",
+			Runner:      &Qwen{},
+			Description: "Qwen's AI coding agent with tool use",
+			Install: IntegrationInstallSpec{
+				CheckInstalled: func() bool {
+					_, err := (&Qwen{}).findPath()
+					return err == nil
+				},
+				URL: "https://github.com/QwenLM/qwen-code",
+			},
+		},
+		{
+			Name:        "hermes",
 		Runner:      &Hermes{},
 		Description: "Self-improving AI agent built by Nous Research",
 		Install: IntegrationInstallSpec{
