@@ -51,7 +51,7 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     command: "ollama launch hermes",
     description: "Self-improving AI agent built by Nous Research",
     icon: "/launch-icons/hermes-agent.svg",
-    darkIcon: "/launch-icons/hermes-agent-dark.png",
+    darkIcon: "/launch-icons/hermes-agent-dark.svg",
     iconClassName: "h-7 w-7",
   },
   {
