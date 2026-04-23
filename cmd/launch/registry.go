@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "copilot", "droid", "pi", "pool"}
+var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "copilot", "droid", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -203,6 +203,18 @@ var integrationSpecs = []*IntegrationSpec{
 				return (&VSCode{}).findBinary() != ""
 			},
 			URL: "https://code.visualstudio.com",
+		},
+	},
+	{
+		Name:        "qwen",
+		Runner:      &Qwen{},
+		Description: "Qwen's AI coding agent with tool use",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&Qwen{}).findPath()
+				return err == nil
+			},
+			URL: "https://github.com/QwenLM/qwen-code",
 		},
 	},
 }
