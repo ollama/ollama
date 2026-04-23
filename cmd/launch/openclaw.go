@@ -101,6 +101,18 @@ func (c *Openclaw) Run(model string, args []string) error {
 	// When extra args are passed through, run exactly what the user asked for
 	// after setup and skip the built-in gateway+TUI convenience flow.
 	if len(args) > 0 {
+		cleanup := func() {}
+		if shouldEnsureGatewayForArgs(args) {
+			cleanupFn, _, _, err := c.ensureGatewayReady(bin)
+			if err != nil {
+				return windowsHint(err)
+			}
+			if cleanupFn != nil {
+				cleanup = cleanupFn
+			}
+		}
+		defer cleanup()
+
 		cmd := exec.Command(bin, args...)
 		cmd.Env = openclawEnv()
 		cmd.Stdin = os.Stdin
@@ -121,6 +133,35 @@ func (c *Openclaw) Run(model string, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
 
+	cleanup, token, port, err := c.ensureGatewayReady(bin)
+	if err != nil {
+		return windowsHint(err)
+	}
+	defer cleanup()
+
+	printOpenclawReady(bin, token, port, firstLaunch)
+
+	tuiArgs := []string{"tui"}
+	if firstLaunch {
+		tuiArgs = append(tuiArgs, "--message", "Wake up, my friend!")
+	}
+	tui := exec.Command(bin, tuiArgs...)
+	tui.Env = openclawEnv()
+	tui.Stdin = os.Stdin
+	tui.Stdout = os.Stdout
+	tui.Stderr = os.Stderr
+	if err := tui.Run(); err != nil {
+		return windowsHint(err)
+	}
+
+	return nil
+}
+
+func shouldEnsureGatewayForArgs(args []string) bool {
+	return len(args) > 0 && args[0] == "tui"
+}
+
+func (c *Openclaw) ensureGatewayReady(bin string) (func(), string, int, error) {
 	token, port := c.gatewayInfo()
 	addr := fmt.Sprintf("localhost:%d", port)
 
@@ -145,47 +186,35 @@ func (c *Openclaw) Run(model string, args []string) error {
 		if err := start.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "%s  Warning: daemon start failed: %v%s\n", ansiYellow, err, ansiReset)
 		} else if waitForPort(addr, 10*time.Second) {
-			goto gatewayReady
+			fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
+			return func() {}, token, port, nil
 		}
 	}
+
+	cleanup := func() {}
 
 	// If the gateway still isn't running, start it as a background child process.
 	if !portOpen(addr) {
 		gw := exec.Command(bin, "gateway", "run", "--force")
 		gw.Env = openclawEnv()
 		if err := gw.Start(); err != nil {
-			return windowsHint(fmt.Errorf("failed to start gateway: %w", err))
+			return nil, "", 0, fmt.Errorf("failed to start gateway: %w", err)
 		}
-		defer func() {
+		cleanup = func() {
 			if gw.Process != nil {
 				_ = gw.Process.Kill()
 				_ = gw.Wait()
 			}
-		}()
+		}
 	}
 
-gatewayReady:
 	fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
 	if !waitForPort(addr, 30*time.Second) {
-		return windowsHint(fmt.Errorf("gateway did not start on %s", addr))
+		cleanup()
+		return nil, "", 0, fmt.Errorf("gateway did not start on %s", addr)
 	}
 
-	printOpenclawReady(bin, token, port, firstLaunch)
-
-	tuiArgs := []string{"tui"}
-	if firstLaunch {
-		tuiArgs = append(tuiArgs, "--message", "Wake up, my friend!")
-	}
-	tui := exec.Command(bin, tuiArgs...)
-	tui.Env = openclawEnv()
-	tui.Stdin = os.Stdin
-	tui.Stdout = os.Stdout
-	tui.Stderr = os.Stderr
-	if err := tui.Run(); err != nil {
-		return windowsHint(err)
-	}
-
-	return nil
+	return cleanup, token, port, nil
 }
 
 // runChannelSetupPreflight prompts users to connect a messaging channel before

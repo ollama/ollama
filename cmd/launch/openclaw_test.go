@@ -325,6 +325,85 @@ exit 0
 	}
 }
 
+func TestOpenclawRun_FirstLaunchTUIArgsEnsureGatewayBeforePassthrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> "$HOME/invocations.log"
+if [ "$1" = "onboard" ]; then
+  /bin/mkdir -p "$HOME/.openclaw"
+  /bin/cat > "$HOME/.openclaw/openclaw.json" <<'EOF'
+{"wizard":{"lastRunAt":"2026-01-01T00:00:00Z"},"gateway":{"port":%d,"mode":"local"}}
+EOF
+fi
+exit 0
+`, port)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "I understand the risks. Continue?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	c := &Openclaw{}
+	if err := c.Run("llama3.2", []string{"tui"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 invocations (update, onboard, daemon restart, tui), got %v", lines)
+	}
+	onboardIdx, daemonRestartIdx, tuiIdx := -1, -1, -1
+	for i, line := range lines {
+		if onboardIdx == -1 && strings.HasPrefix(line, "onboard ") {
+			onboardIdx = i
+		}
+		if daemonRestartIdx == -1 && line == "daemon restart" {
+			daemonRestartIdx = i
+		}
+		if tuiIdx == -1 && line == "tui" {
+			tuiIdx = i
+		}
+	}
+	if onboardIdx == -1 {
+		t.Fatalf("expected an onboarding invocation, got %v", lines)
+	}
+	if daemonRestartIdx == -1 {
+		t.Fatalf("expected a daemon restart before tui, got %v", lines)
+	}
+	if tuiIdx == -1 {
+		t.Fatalf("expected a tui invocation, got %v", lines)
+	}
+	if !(onboardIdx < daemonRestartIdx && daemonRestartIdx < tuiIdx) {
+		t.Fatalf("expected onboarding, then daemon restart, then tui; got %v", lines)
+	}
+}
+
 func TestOpenclawEnv_StagesBundledPluginRuntimeDeps(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
