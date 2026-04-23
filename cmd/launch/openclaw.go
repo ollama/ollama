@@ -28,6 +28,8 @@ var openclawModelShowTimeout = 5 * time.Second
 // openclawFreshInstall is set to true when ensureOpenclawInstalled performs an install
 var openclawFreshInstall bool
 
+var openclawCanInstallDaemon = canInstallDaemon
+
 type Openclaw struct{}
 
 func (c *Openclaw) String() string { return "OpenClaw" }
@@ -81,7 +83,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 			"--skip-channels",
 			"--skip-skills",
 		}
-		if canInstallDaemon() {
+		if openclawCanInstallDaemon() {
 			onboardArgs = append(onboardArgs, "--install-daemon")
 		}
 		cmd := exec.Command(bin, onboardArgs...)
@@ -180,7 +182,7 @@ func (c *Openclaw) ensureGatewayReady(bin string) (func(), string, int, error) {
 
 	// If the daemon is installed but not currently listening, try to bring it
 	// up before falling back to a foreground child process.
-	if !portOpen(addr) {
+	if openclawCanInstallDaemon() && !portOpen(addr) {
 		start := exec.Command(bin, "daemon", "start")
 		start.Env = openclawEnv()
 		if err := start.Run(); err != nil {

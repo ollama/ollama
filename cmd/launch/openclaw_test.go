@@ -404,6 +404,118 @@ exit 0
 	}
 }
 
+func TestOpenclawEnsureGatewayReady_UsesDaemonStartFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	portProbe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := portProbe.Addr().(*net.TCPAddr).Port
+	_ = portProbe.Close()
+
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(fmt.Sprintf(`{
+		"wizard": {"lastRunAt": "2026-01-01T00:00:00Z"},
+		"gateway": {"port": %d, "mode": "local"}
+	}`, port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCanInstallDaemon := openclawCanInstallDaemon
+	openclawCanInstallDaemon = func() bool { return true }
+	defer func() { openclawCanInstallDaemon = oldCanInstallDaemon }()
+
+	triggeredBy := make(chan string, 1)
+	listenerReady := make(chan net.Listener, 1)
+	go func() {
+		invocationsPath := filepath.Join(tmpDir, "invocations.log")
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			data, err := os.ReadFile(invocationsPath)
+			if err == nil {
+				lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+				for _, line := range lines {
+					if line != "daemon start" && line != "gateway run --force" {
+						continue
+					}
+					ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+					if err != nil {
+						return
+					}
+					go func() {
+						for {
+							conn, err := ln.Accept()
+							if err != nil {
+								return
+							}
+							_ = conn.Close()
+						}
+					}()
+					triggeredBy <- line
+					listenerReady <- ln
+					return
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	c := &Openclaw{}
+	cleanup, _, gotPort, err := c.ensureGatewayReady(bin)
+	if err != nil {
+		t.Fatalf("ensureGatewayReady() error = %v", err)
+	}
+	defer cleanup()
+	if gotPort != port {
+		t.Fatalf("ensureGatewayReady() port = %d, want %d", gotPort, port)
+	}
+
+	var ln net.Listener
+	select {
+	case which := <-triggeredBy:
+		if which != "daemon start" {
+			t.Fatalf("expected daemon start fallback, got %q", which)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for gateway startup trigger")
+	}
+	select {
+	case ln = <-listenerReady:
+		defer ln.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for test listener")
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 0 || lines[0] != "daemon start" {
+		t.Fatalf("expected daemon start invocation, got %v", lines)
+	}
+	for _, line := range lines {
+		if line == "gateway run --force" {
+			t.Fatalf("did not expect gateway run fallback when daemon start succeeds, got %v", lines)
+		}
+	}
+}
+
 func TestOpenclawEnv_StagesBundledPluginRuntimeDeps(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
