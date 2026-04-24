@@ -661,6 +661,13 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
 
+	if mf.MediaType == manifest.MediaTypeManifestList {
+		mf, err = pullSelectedManifest(ctx, n, mf, regOpts, fn)
+		if err != nil {
+			return err
+		}
+	}
+
 	var layers []manifest.Layer
 	layers = append(layers, mf.Layers...)
 	if mf.Config.Digest != "" {
@@ -755,8 +762,76 @@ func candidateBlobDigests(m map[string]struct{}) []string {
 	return digests
 }
 
-// pullWithTransfer uses the simplified x/transfer package for downloading blobs.
-func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestData []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func pullSelectedManifest(ctx context.Context, n model.Name, parent *manifest.Manifest, regOpts *registryOptions, fn func(api.ProgressResponse)) (*manifest.Manifest, error) {
+	child, err := manifest.SelectManifestReference(parent.Manifests)
+	if err != nil {
+		return nil, err
+	}
+
+	childDigest := child.BlobDigest()
+	if childDigest == "" {
+		return nil, errors.New("manifest list child is missing digest")
+	}
+
+	layer, err := remoteBlobLayer(ctx, n, childDigest, manifest.MediaTypeManifest, regOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := downloadWithTransfer(ctx, n, []manifest.Layer{layer}, regOpts, fn); err != nil {
+		return nil, err
+	}
+
+	if err := verifyBlob(childDigest); err != nil {
+		return nil, err
+	}
+	blobPath, err := manifest.BlobsPath(childDigest)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var mf manifest.Manifest
+	if err := json.Unmarshal(data, &mf); err != nil {
+		return nil, err
+	}
+	if mf.MediaType == manifest.MediaTypeManifestList {
+		return nil, errors.New("nested manifest lists are not supported")
+	}
+	if mf.Runner == "" {
+		mf.Runner = child.Runner
+	}
+	if mf.Format == "" {
+		mf.Format = child.Format
+	}
+
+	return &mf, nil
+}
+
+func remoteBlobLayer(ctx context.Context, n model.Name, digest, mediaType string, regOpts *registryOptions) (manifest.Layer, error) {
+	requestURL := n.BaseURL().JoinPath("v2", n.DisplayNamespaceModel(), "blobs", digest)
+	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, regOpts)
+	if err != nil {
+		return manifest.Layer{}, err
+	}
+	defer resp.Body.Close()
+
+	size, err := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	if err != nil {
+		return manifest.Layer{}, err
+	}
+
+	return manifest.Layer{
+		MediaType: mediaType,
+		Digest:    digest,
+		Size:      size,
+	}, nil
+}
+
+func downloadWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -808,6 +883,15 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		GetToken:   getToken,
 		Logger:     slog.Default(),
 	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// pullWithTransfer uses the simplified x/transfer package for downloading blobs.
+func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestData []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+	if err := downloadWithTransfer(ctx, n, layers, regOpts, fn); err != nil {
 		return err
 	}
 
@@ -884,7 +968,7 @@ func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptio
 	requestURL := n.BaseURL().JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
 
 	headers := make(http.Header)
-	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+	headers.Set("Accept", strings.Join([]string{manifest.MediaTypeManifestList, manifest.MediaTypeManifest}, ", "))
 	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
 	if err != nil {
 		return nil, nil, err

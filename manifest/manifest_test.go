@@ -156,6 +156,23 @@ func TestSelectManifestUsesRunnerPreference(t *testing.T) {
 	}
 }
 
+func TestSelectManifestReferenceDoesNotResolveBlob(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	ref, err := NewManifestReference("sha256:"+strings.Repeat("a", 64), RunnerGGML, FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	child, err := selectManifestReferenceWithPreferences([]Manifest{ref}, []string{RunnerGGML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := child.BlobDigest(); got != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("blob digest = %q, want selected reference digest", got)
+	}
+}
+
 func TestSelectManifestRejectsOldOllamaRunner(t *testing.T) {
 	_, err := selectManifestWithPreferences([]Manifest{
 		createManifestForTest("sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), "ollama"),
@@ -349,6 +366,77 @@ func TestTotalSizeForNameIncludesAllManifestListChildren(t *testing.T) {
 	}
 
 	want := int64(len(ggufConfigData) + len(sharedLayerData) + len(ggufLayerData) + len(mlxConfigData) + len(mlxLayerData))
+	if size != want {
+		t.Fatalf("size = %d, want %d", size, want)
+	}
+}
+
+func TestPartialManifestListTracksPresentAndMissingChildren(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	name := model.ParseName("example")
+
+	configData := []byte("gguf config")
+	layerData := []byte("gguf layer")
+	configDigest := writeManifestBlobForTest(t, configData)
+	layerDigest := writeManifestBlobForTest(t, layerData)
+
+	child := Manifest{
+		SchemaVersion: 2,
+		MediaType:     MediaTypeManifest,
+		Runner:        RunnerGGML,
+		Format:        FormatGGUF,
+		Config: Layer{
+			MediaType: "application/vnd.docker.container.image.v1+json",
+			Digest:    configDigest,
+			Size:      int64(len(configData)),
+		},
+		Layers: []Layer{
+			{
+				MediaType: "application/vnd.ollama.image.model",
+				Digest:    layerDigest,
+				Size:      int64(len(layerData)),
+			},
+		},
+	}
+	childData, err := json.Marshal(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childDigest := writeManifestBlobForTest(t, childData)
+	childRef, err := NewManifestReference(childDigest, child.Runner, child.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missingDigest := "sha256:" + strings.Repeat("e", 64)
+	missingRef, err := NewManifestReference(missingDigest, RunnerMLX, FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentData := createManifestListData(t, childRef, missingRef)
+	if err := WriteManifestData(name, parentData); err != nil {
+		t.Fatal(err)
+	}
+	parentSum := sha256.Sum256(parentData)
+	parentDigest := fmt.Sprintf("sha256:%x", parentSum)
+
+	referenced, err := ReferencedBlobDigestsForName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, digest := range []string{parentDigest, childDigest, missingDigest, configDigest, layerDigest} {
+		if !slices.Contains(referenced, digest) {
+			t.Fatalf("referenced blob digests missing %s: %#v", digest, referenced)
+		}
+	}
+
+	size, err := TotalSizeForName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int64(len(configData) + len(layerData))
 	if size != want {
 		t.Fatalf("size = %d, want %d", size, want)
 	}

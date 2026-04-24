@@ -322,9 +322,12 @@ func referencedBlobDigestsForData(manifestDigest string, data []byte) ([]string,
 				return nil, err
 			}
 			if child.isReference() {
-				resolved, err := parseManifestBlob(child.BlobDigest())
+				resolved, ok, err := parseManifestBlobIfExists(child.BlobDigest())
 				if err != nil {
 					return nil, err
+				}
+				if !ok {
+					continue
 				}
 				child = resolved
 			}
@@ -385,9 +388,12 @@ func totalSizeForManifestData(data []byte) (int64, error) {
 		for i := range m.Manifests {
 			child := &m.Manifests[i]
 			if child.isReference() {
-				resolved, err := parseManifestBlob(child.BlobDigest())
+				resolved, ok, err := parseManifestBlobIfExists(child.BlobDigest())
 				if err != nil {
 					return 0, err
+				}
+				if !ok {
+					continue
 				}
 				child = resolved
 			}
@@ -567,7 +573,40 @@ func selectManifest(manifests []Manifest) (*Manifest, error) {
 	return selectManifestWithPreferences(manifests, runnerPreferences())
 }
 
+// SelectManifestReference returns the manifest-list child selected for the
+// current platform without resolving it from the local blob store.
+func SelectManifestReference(manifests []Manifest) (*Manifest, error) {
+	return selectManifestReferenceWithPreferences(manifests, runnerPreferences())
+}
+
 func selectManifestWithPreferences(manifests []Manifest, preferences []string) (*Manifest, error) {
+	child, err := selectManifestReferenceWithPreferences(manifests, preferences)
+	if err != nil {
+		return nil, err
+	}
+
+	if child.isReference() {
+		childDigest := child.digest
+		resolved, err := parseManifestBlob(child.BlobDigest())
+		if err != nil {
+			return nil, err
+		}
+		if resolved.Runner == "" {
+			resolved.Runner = child.Runner
+		}
+		if resolved.Format == "" {
+			resolved.Format = child.Format
+		}
+		if resolved.digest == "" {
+			resolved.digest = childDigest
+		}
+		child = resolved
+	}
+	child.Runner = canonicalRunner(child.Runner)
+	return child, nil
+}
+
+func selectManifestReferenceWithPreferences(manifests []Manifest, preferences []string) (*Manifest, error) {
 	for _, runner := range preferences {
 		for i := range manifests {
 			if manifests[i].MediaType != "" && manifests[i].MediaType != MediaTypeManifest {
@@ -575,22 +614,13 @@ func selectManifestWithPreferences(manifests []Manifest, preferences []string) (
 			}
 			if canonicalRunner(manifests[i].Runner) != "" && canonicalRunner(manifests[i].Runner) == canonicalRunner(runner) {
 				child := manifests[i]
-				if child.isReference() {
-					childDigest := child.digest
-					resolved, err := parseManifestBlob(child.BlobDigest())
+				if !child.isReference() && child.digest == "" {
+					canonical, err := json.Marshal(child)
 					if err != nil {
 						return nil, err
 					}
-					if resolved.Runner == "" {
-						resolved.Runner = child.Runner
-					}
-					if resolved.Format == "" {
-						resolved.Format = child.Format
-					}
-					if resolved.digest == "" {
-						resolved.digest = childDigest
-					}
-					child = *resolved
+					sum := sha256.Sum256(canonical)
+					child.digest = fmt.Sprintf("%x", sum)
 				}
 				child.Runner = canonicalRunner(child.Runner)
 				return &child, nil
@@ -677,6 +707,23 @@ func parseManifestBlob(digest string) (*Manifest, error) {
 	}
 
 	return parseManifest(data)
+}
+
+func parseManifestBlobIfExists(digest string) (*Manifest, bool, error) {
+	data, err := readManifestBlob(digest)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	m, err := parseManifest(data)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return m, true, nil
 }
 
 func canonicalBlobDigest(digest string) (string, error) {
