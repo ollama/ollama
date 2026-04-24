@@ -166,7 +166,6 @@ func reapServers() error {
 			continue
 		}
 		if !ollamaServeProcess(pid) {
-			slog.Debug("skipping non-server ollama process", "pid", pid)
 			continue
 		}
 

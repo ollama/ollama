@@ -53,12 +53,21 @@ func ollamaServeProcess(pid int) bool {
 		return false
 	}
 
-	args := strings.Fields(strings.TrimSpace(string(output)))
-	if len(args) < 2 {
+	return ollamaServeArgs(strings.Fields(strings.TrimSpace(string(output))))
+}
+
+func ollamaServeArgs(args []string) bool {
+	if len(args) < 2 || filepath.Base(args[0]) != "ollama" {
 		return false
 	}
 
-	return filepath.Base(args[0]) == "ollama" && args[1] == "serve"
+	for _, arg := range args[1:] {
+		if arg == "serve" {
+			return true
+		}
+	}
+
+	return false
 }
 
 // reapServers kills external ollama serve processes except our own.
@@ -98,7 +107,6 @@ func reapServers() error {
 			continue
 		}
 		if !ollamaServeProcess(pid) {
-			slog.Debug("skipping non-server ollama process", "pid", pid)
 			continue
 		}
 

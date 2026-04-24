@@ -205,6 +205,48 @@ func TestServerCmdCloudSettingEnv(t *testing.T) {
 	}
 }
 
+func TestOllamaServeArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{
+			name: "system ollama serve",
+			args: []string{"ollama", "serve"},
+			want: true,
+		},
+		{
+			name: "relative path ollama serve",
+			args: []string{"./ollama", "serve"},
+			want: true,
+		},
+		{
+			name: "serve after other flags",
+			args: []string{"./ollama", "--verbose", "serve"},
+			want: true,
+		},
+		{
+			name: "launch command",
+			args: []string{"ollama", "launch", "opencode"},
+			want: false,
+		},
+		{
+			name: "different executable",
+			args: []string{"go", "run", "serve"},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ollamaServeArgs(tt.args); got != tt.want {
+				t.Fatalf("ollamaServeArgs(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetInferenceInfo(t *testing.T) {
 	tests := []struct {
 		name             string
