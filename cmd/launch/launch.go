@@ -588,7 +588,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		return nil
 	}
 
-	if (current == "" || needsConfigure || req.ModelOverride != "" || target != current) && !savedMatchesModels(saved, []string{target}) {
+	if needsConfigure || req.ModelOverride != "" || (current != "" && target != current) || !savedMatchesModels(saved, []string{target}) {
 		if err := prepareManagedSingleIntegration(name, runner, managed, target); err != nil {
 			return err
 		}

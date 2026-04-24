@@ -21,7 +21,7 @@ import (
 )
 
 var recommendedModels = []ModelItem{
-	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
+	{Name: "kimi-k2.6:cloud", Description: "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability", Recommended: true},
 	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
 	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true},
 	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
@@ -56,6 +56,7 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"gpt-oss:20b":         {Context: 131_072, Output: 131_072},
 	"kimi-k2:1t":          {Context: 262_144, Output: 262_144},
 	"kimi-k2.5":           {Context: 262_144, Output: 262_144},
+	"kimi-k2.6":           {Context: 262_144, Output: 262_144},
 	"kimi-k2-thinking":    {Context: 262_144, Output: 262_144},
 	"nemotron-3-nano:30b": {Context: 1_048_576, Output: 131_072},
 	"qwen3-coder:480b":    {Context: 262_144, Output: 65_536},
@@ -360,18 +361,12 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	}
 
 	if hasLocalModel || hasCloudModel {
+		// Keep the Recommended section pinned to recommendedModels order. Checked
+		// and default-model priority only apply within the More section.
 		slices.SortStableFunc(items, func(a, b ModelItem) int {
 			ac, bc := checked[a.Name], checked[b.Name]
 			aNew, bNew := notInstalled[a.Name], notInstalled[b.Name]
 			aRec, bRec := recRank[a.Name] > 0, recRank[b.Name] > 0
-			aCloud, bCloud := cloudModels[a.Name], cloudModels[b.Name]
-
-			if ac != bc {
-				if ac {
-					return -1
-				}
-				return 1
-			}
 			if aRec != bRec {
 				if aRec {
 					return -1
@@ -379,13 +374,13 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 				return 1
 			}
 			if aRec && bRec {
-				if aCloud != bCloud {
-					if aCloud {
-						return -1
-					}
-					return 1
-				}
 				return recRank[a.Name] - recRank[b.Name]
+			}
+			if ac != bc {
+				if ac {
+					return -1
+				}
+				return 1
 			}
 			// Among checked non-recommended items - put the default first
 			if ac && !aRec && current != "" {

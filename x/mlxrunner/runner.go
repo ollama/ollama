@@ -18,32 +18,18 @@ import (
 	"github.com/ollama/ollama/x/tokenizer"
 )
 
+// Request is a short-lived struct that carries a completion request through
+// a channel from the HTTP handler to the runner goroutine. The ctx field
+// must travel with the request so that cancellation propagates across the
+// channel boundary.
 type Request struct {
-	TextCompletionsRequest
+	CompletionRequest
 	Responses chan CompletionResponse
-	Pipeline  func(Request) error
+	Pipeline  func(context.Context, Request) error
 
-	Ctx context.Context
-
+	Ctx     context.Context //nolint:containedctx
+	Tokens  []int32
 	Sampler *sample.Sampler
-}
-
-type TextCompletionsRequest struct {
-	Prompt  string `json:"prompt"`
-	Options struct {
-		Temperature      float32 `json:"temperature"`
-		TopP             float32 `json:"top_p"`
-		MinP             float32 `json:"min_p"`
-		TopK             int     `json:"top_k"`
-		RepeatLastN      int     `json:"repeat_last_n"`
-		RepeatPenalty    float32 `json:"repeat_penalty"`
-		PresencePenalty  float32 `json:"presence_penalty"`
-		FrequencyPenalty float32 `json:"frequency_penalty"`
-		MaxTokens        int     `json:"max_tokens"`
-
-		// Deprecated: use MaxTokens instead
-		NumPredict int `json:"num_predict"`
-	} `json:"options"`
 }
 
 type Runner struct {
@@ -149,7 +135,7 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 			case <-ctx.Done():
 				return nil
 			case request := <-r.Requests:
-				if err := request.Pipeline(request); err != nil {
+				if err := request.Pipeline(request.Ctx, request); err != nil {
 					slog.Info("Request terminated", "error", err)
 					var statusErr api.StatusError
 					if !errors.As(err, &statusErr) {
