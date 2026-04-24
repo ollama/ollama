@@ -223,6 +223,12 @@ var (
 	//   -1           = auto-compute from remaining VRAM after dense allocation
 	//   >0           = force this many layers to have MoE on GPU
 	MoeGpuLayers = Int("OLLAMA_MOE_GPU_LAYERS", 0)
+	// MoePinned enables cudaHostRegister for CPU-side MoE expert weight buffers.
+	// When enabled, the CUDA Copy Engine can DMA directly from mmap memory
+	// without CPU-side staging.
+	// Requires MoE split to be active (OLLAMA_MOE_GPU_LAYERS != 0).
+	// Default: false (original pageable behavior).
+	MoePinned = Bool("OLLAMA_MOE_PINNED")
 	// NoHistory disables readline history.
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
