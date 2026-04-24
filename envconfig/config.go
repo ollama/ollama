@@ -218,6 +218,11 @@ var (
 	DebugLogRequests = Bool("OLLAMA_DEBUG_LOG_REQUESTS")
 	// KvCacheType is the quantization type for the K/V cache.
 	KvCacheType = String("OLLAMA_KV_CACHE_TYPE")
+	// MoeGpuLayers controls how many layers have MoE expert weights resident on GPU.
+	//    0 (default) = disable MoE split (default weight layout, useful for baseline comparison)
+	//   -1           = auto-compute from remaining VRAM after dense allocation
+	//   >0           = force this many layers to have MoE on GPU
+	MoeGpuLayers = Int("OLLAMA_MOE_GPU_LAYERS", 0)
 	// NoHistory disables readline history.
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
@@ -266,6 +271,21 @@ func Uint(key string, defaultValue uint) func() uint {
 			}
 		}
 
+		return defaultValue
+	}
+}
+
+// Int returns a function that parses an integer environment variable.
+// Returns defaultValue if the variable is unset or invalid.
+func Int(key string, defaultValue int) func() int {
+	return func() int {
+		if s := Var(key); s != "" {
+			if n, err := strconv.ParseInt(s, 10, 64); err != nil {
+				slog.Warn("invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
+			} else {
+				return int(n)
+			}
+		}
 		return defaultValue
 	}
 }
