@@ -374,19 +374,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	var builtinParser parsers.Parser
-	if shouldUseHarmony(m) && m.Config.Parser == "" {
-		m.Config.Parser = "harmony"
-	}
-
-	if !req.Raw && m.Config.Parser != "" {
-		builtinParser = parsers.ParserForName(m.Config.Parser)
-		if builtinParser != nil {
-			// no tools or last message for generate endpoint
-			builtinParser.Init(nil, nil, req.Think)
-		}
-	}
-
 	caps := []model.Capability{model.CapabilityCompletion}
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
@@ -402,6 +389,19 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if req.Think != nil && req.Think.Bool() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
 			return
+		}
+	}
+
+	var builtinParser parsers.Parser
+	if shouldUseHarmony(m) && m.Config.Parser == "" {
+		m.Config.Parser = "harmony"
+	}
+
+	if !req.Raw && m.Config.Parser != "" {
+		builtinParser = parsers.ParserForName(m.Config.Parser)
+		if builtinParser != nil {
+			// no tools or last message for generate endpoint
+			builtinParser.Init(nil, nil, req.Think)
 		}
 	}
 
