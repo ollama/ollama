@@ -149,6 +149,54 @@ func TestGrammar(t *testing.T) {
 	}
 }
 
+func TestRepeatPenaltyIntegration(t *testing.T) {
+	// With greedy sampling (temp=0) and two equally-strong tokens,
+	// repeat penalty should steer away from already-generated tokens.
+	// Token 0 and token 1 have equal logits.
+	logits := []float32{10.0, 10.0, -100.0, -100.0}
+
+	// Without penalty: greedy always picks token 0 (first max)
+	sampler := NewSampler(0, 0, 0, 0, 0, nil, 0, 0, 0, 0)
+	got, _ := sampler.Sample(logits)
+	if got != 0 {
+		t.Fatalf("without penalty: want token 0, got %d", got)
+	}
+
+	// With penalty and token 0 in history: should pick token 1
+	sampler = NewSampler(0, 0, 0, 0, 0, nil, 2.0, 64, 0, 0)
+	// Manually seed history with token 0
+	sampler.tokenHistory = []int32{0}
+	got, _ = sampler.Sample(logits)
+	if got != 1 {
+		t.Fatalf("with penalty on token 0: want token 1, got %d", got)
+	}
+
+	// Verify token history accumulates across Sample calls
+	sampler = NewSampler(0, 0, 0, 0, 0, nil, 1.5, 4, 0, 0)
+	// Logits where token 0 is always dominant
+	dominantLogits := []float32{10.0, 5.0, 5.0, 5.0}
+	got, _ = sampler.Sample(dominantLogits)
+	if got != 0 {
+		t.Fatalf("first sample should pick dominant token 0, got %d", got)
+	}
+	if len(sampler.tokenHistory) != 1 || sampler.tokenHistory[0] != 0 {
+		t.Fatalf("history should contain [0], got %v", sampler.tokenHistory)
+	}
+
+	// Verify repeatLastN caps the history
+	sampler = NewSampler(0, 0, 0, 0, 0, nil, 1.5, 3, 0, 0)
+	for i := range 5 {
+		sampler.recordToken(int32(i))
+	}
+	if len(sampler.tokenHistory) != 3 {
+		t.Fatalf("history should be capped at 3, got %d: %v", len(sampler.tokenHistory), sampler.tokenHistory)
+	}
+	// Should contain the last 3: [2, 3, 4]
+	if sampler.tokenHistory[0] != 2 || sampler.tokenHistory[1] != 3 || sampler.tokenHistory[2] != 4 {
+		t.Fatalf("history should be [2,3,4], got %v", sampler.tokenHistory)
+	}
+}
+
 func BenchmarkSample(b *testing.B) {
 	samplers := map[string]Sampler{
 		"Greedy":   NewSampler(0, 0, 0, 0, 0, nil, 0, 0, 0, 0), // Use NewSampler with temp=0 for greedy
