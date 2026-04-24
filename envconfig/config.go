@@ -229,6 +229,12 @@ var (
 	// Requires MoE split to be active (OLLAMA_MOE_GPU_LAYERS != 0).
 	// Default: false (original pageable behavior).
 	MoePinned = Bool("OLLAMA_MOE_PINNED")
+	// MoePrefetch enables lookahead copy inside ggml_backend_sched_compute_splits:
+	// after submitting GPU compute for split N, immediately fires an async H2D copy
+	// of split N+1's MoE expert weights on an independent CUDA copy stream.
+	// Requires OLLAMA_MOE_PINNED=1 (pinned source memory for true copy/compute overlap).
+	// Default: false.
+	MoePrefetch = Bool("OLLAMA_MOE_PREFETCH")
 	// NoHistory disables readline history.
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.

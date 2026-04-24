@@ -286,6 +286,12 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 		runnerEnvs["GGML_CUDA_REGISTER_HOST"] = "1"
 	}
+	if envconfig.MoePrefetch() && envconfig.MoePinned() && envconfig.MoeGpuLayers() != 0 {
+		if runnerEnvs == nil {
+			runnerEnvs = map[string]string{}
+		}
+		runnerEnvs["OLLAMA_MOE_PREFETCH"] = "1"
+	}
 	cmd, port, err := StartRunner(
 		tok != nil,
 		modelPath,
