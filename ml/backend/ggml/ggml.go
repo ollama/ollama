@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -154,6 +155,15 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 
 	initDevices()
 
+	// moeExpertRE matches MoE expert weight tensors within a block
+	// (the per-layer ffn_{up,down,gate}_exps projections, optionally
+	// suffixed with .weight or prefixed with ch_ for channel-separated
+	// variants).
+	var moeExpertRE = regexp.MustCompile(`\.ffn_(up|down|gate)_(ch_)?exps(\.weight)?$`)
+	isMoEExpertTensor := func(name string) bool {
+		return moeExpertRE.MatchString(name)
+	}
+
 	var requiredMemory ml.BackendMemory
 	btDeviceMemory := make(map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory)
 
@@ -183,6 +193,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	requiredMemory.CPU.ID = C.GoString(props.id)
 	requiredMemory.CPU.Library = C.GoString(props.library)
 	requiredMemory.CPU.Weights = make([]uint64, blocks+1)
+	requiredMemory.CPU.MoEWeights = make([]uint64, blocks+1)
 	requiredMemory.CPU.Cache = make([]uint64, blocks+1)
 
 	// create list of buffer types for each gpu
@@ -202,6 +213,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory.GPUs[i].ID = C.GoString(props.id)
 		requiredMemory.GPUs[i].Library = C.GoString(props.library)
 		requiredMemory.GPUs[i].Weights = make([]uint64, blocks+1)
+		requiredMemory.GPUs[i].MoEWeights = make([]uint64, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]uint64, blocks+1)
 	}
 
@@ -226,10 +238,56 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		return cpuDeviceBufferType
 	}
 
+	// assignMoELayer returns the buffer type for MoE expert tensors of a given layer.
+	// Uses params.MoEGPULayers: layers in this list get GPU, others get CPU.
+	assignMoELayer := func(layer int) deviceBufferType {
+		for _, p := range params.MoEGPULayers {
+			for _, l := range p.Layers {
+				if l == layer {
+					for i := range requiredMemory.GPUs {
+						if requiredMemory.GPUs[i].DeviceID == p.DeviceID {
+							return gpuDeviceBufferTypes[i]
+						}
+					}
+					return cpuDeviceBufferType
+				}
+			}
+		}
+
+		return cpuDeviceBufferType
+	}
+
 	// repeating layers are assigned based on their index in reverse order, e.g. i / (block_count + 1)
 	layers := make([]deviceBufferType, blocks)
 	for i := range layers {
 		layers[i] = assignLayer(i)
+	}
+
+	// moeLayers holds the buffer type for MoE expert tensors per layer.
+	// Only populated when MoEGPULayers is non-empty (MoE split active).
+	moeLayers := make([]deviceBufferType, blocks)
+	for i := range moeLayers {
+		moeLayers[i] = assignMoELayer(i)
+	}
+
+	// Log routing summary on formal allocation (AllocMemory=true) when MoE split is active
+	if params.AllocMemory && len(params.MoEGPULayers) > 0 {
+		moeGPUSet := make(map[int]bool)
+		for _, p := range params.MoEGPULayers {
+			for _, l := range p.Layers {
+				moeGPUSet[l] = true
+			}
+		}
+		for i := range layers {
+			moeLocation := "cpu"
+			if moeGPUSet[i] {
+				moeLocation = "gpu"
+			}
+			slog.Info("moe split: tensor routing",
+				"layer", i,
+				"dense", "gpu",
+				"moe", moeLocation)
+		}
 	}
 
 	// outputs are assigned iff allowed by splits and configured number of gpu layers
@@ -291,6 +349,14 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				requiredMemory.InputWeights += uint64(size)
 			} else {
 				btDeviceMemory[bt].Weights[layer] += uint64(size)
+				if isMoEExpertTensor(t.source.Name) {
+					btDeviceMemory[bt].MoEWeights[layer] += uint64(size)
+					logutil.Trace("moe split: tracked MoE tensor",
+						"name", t.source.Name,
+						"layer", layer,
+						"size", format.HumanBytes2(uint64(size)),
+						"buffer", C.GoString(C.ggml_backend_buft_name(bt)))
+				}
 			}
 
 			//nolint:staticcheck // TODO: check if buffer type supports this tensor
@@ -342,7 +408,12 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			}
 
 			if layerIndex >= 0 {
-				createTensor(tensor{source: t}, layers[layerIndex].bts, layerIndex)
+				bts := layers[layerIndex].bts
+				if isMoEExpertTensor(t.Name) && len(params.MoEGPULayers) > 0 {
+					// MoE expert tensor: route based on MoEGPULayers (subset of GPULayers)
+					bts = moeLayers[layerIndex].bts
+				}
+				createTensor(tensor{source: t}, bts, layerIndex)
 			} else {
 				// load all other tensors on the cpu
 				createTensor(tensor{source: t}, input.bts, -1)
