@@ -355,3 +355,60 @@ func BenchmarkTransforms(b *testing.B) {
 		}
 	})
 }
+
+func TestRepeatPenalize(t *testing.T) {
+	// Positive logit should be divided by penalty
+	tokens := toTokens([]float32{2.0, 4.0, 1.0, 3.0})
+	lastTokens := []int32{1} // token id 1 has logit 4.0
+	tokens = repeatPenalize(tokens, lastTokens, 2.0, 0, 0)
+	if math.Abs(float64(tokens[1].value-2.0)) > 1e-6 {
+		t.Errorf("positive logit: want 2.0 (4.0/2.0), got %f", tokens[1].value)
+	}
+	if math.Abs(float64(tokens[0].value-2.0)) > 1e-6 {
+		t.Errorf("unpenalized token should be unchanged: want 2.0, got %f", tokens[0].value)
+	}
+
+	// Negative logit should be multiplied by penalty
+	tokens = toTokens([]float32{2.0, -4.0, 1.0, 3.0})
+	tokens = repeatPenalize(tokens, []int32{1}, 2.0, 0, 0)
+	if math.Abs(float64(tokens[1].value-(-8.0))) > 1e-6 {
+		t.Errorf("negative logit: want -8.0 (-4.0*2.0), got %f", tokens[1].value)
+	}
+
+	// Frequency penalty
+	tokens = toTokens([]float32{5.0, 5.0, 5.0, 5.0})
+	tokens = repeatPenalize(tokens, []int32{0, 0, 0, 2}, 1.0, 1.0, 0)
+	if math.Abs(float64(tokens[0].value-2.0)) > 1e-6 {
+		t.Errorf("freq penalty: token 0 appeared 3x, want 5.0-3*1.0=2.0, got %f", tokens[0].value)
+	}
+	if math.Abs(float64(tokens[2].value-4.0)) > 1e-6 {
+		t.Errorf("freq penalty: token 2 appeared 1x, want 5.0-1*1.0=4.0, got %f", tokens[2].value)
+	}
+	if math.Abs(float64(tokens[3].value-5.0)) > 1e-6 {
+		t.Errorf("freq penalty: token 3 not in history, want 5.0, got %f", tokens[3].value)
+	}
+
+	// Presence penalty
+	tokens = toTokens([]float32{5.0, 5.0, 5.0})
+	tokens = repeatPenalize(tokens, []int32{0, 0, 0}, 1.0, 0, 2.0)
+	if math.Abs(float64(tokens[0].value-3.0)) > 1e-6 {
+		t.Errorf("presence penalty: want 5.0-2.0=3.0, got %f", tokens[0].value)
+	}
+	if math.Abs(float64(tokens[1].value-5.0)) > 1e-6 {
+		t.Errorf("presence penalty: token 1 not in history, want 5.0, got %f", tokens[1].value)
+	}
+
+	// No-op when penalty is 1.0 and others are 0
+	tokens = toTokens([]float32{2.0, 4.0})
+	tokens = repeatPenalize(tokens, []int32{0, 1}, 1.0, 0, 0)
+	if math.Abs(float64(tokens[0].value-2.0)) > 1e-6 || math.Abs(float64(tokens[1].value-4.0)) > 1e-6 {
+		t.Error("no-op case should leave tokens unchanged")
+	}
+
+	// Empty history
+	tokens = toTokens([]float32{2.0, 4.0})
+	tokens = repeatPenalize(tokens, nil, 2.0, 1.0, 1.0)
+	if math.Abs(float64(tokens[0].value-2.0)) > 1e-6 || math.Abs(float64(tokens[1].value-4.0)) > 1e-6 {
+		t.Error("empty history should leave tokens unchanged")
+	}
+}

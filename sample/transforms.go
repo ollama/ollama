@@ -114,6 +114,38 @@ func topP(ts []token, p float32) []token {
 	return ts
 }
 
+// repeatPenalize penalizes tokens that appear in lastTokens.
+// Matches llama.cpp's sampling_repetition_penalties implementation.
+// Must be applied before topK/temperature/softmax (operates on raw logits).
+func repeatPenalize(ts []token, lastTokens []int32, penalty, frequencyPenalty, presencePenalty float32) []token {
+	if len(lastTokens) == 0 || (penalty == 1.0 && frequencyPenalty == 0 && presencePenalty == 0) {
+		return ts
+	}
+
+	counts := make(map[int32]int, len(lastTokens))
+	for _, id := range lastTokens {
+		counts[id]++
+	}
+
+	for i := range ts {
+		count, found := counts[ts[i].id]
+		if !found {
+			continue
+		}
+		if penalty != 1.0 {
+			if ts[i].value > 0 {
+				ts[i].value /= penalty
+			} else {
+				ts[i].value *= penalty
+			}
+		}
+		ts[i].value -= float32(count) * frequencyPenalty
+		ts[i].value -= presencePenalty
+	}
+
+	return ts
+}
+
 // minP filters tokens with probabilities >= p * max_prob
 // requires ts to be sorted in descending order of probabilities
 func minP(ts []token, p float32) []token {
