@@ -209,7 +209,7 @@ func TestLLMServerFitGPU(t *testing.T) {
 				s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
 			}
 
-			gpuLayers, err := s.createLayout(systemInfo, tt.gpus, s.mem, tt.requireFull, 0)
+			gpuLayers, _, err := s.createLayout(systemInfo, tt.gpus, s.mem, tt.requireFull, 0)
 			if err != tt.expectedErr {
 				t.Fatalf("fitGPU returned error: %v", err)
 			}
