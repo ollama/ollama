@@ -733,9 +733,10 @@ type DeleteRequest struct {
 
 // ShowRequest is the request passed to [Client.Show].
 type ShowRequest struct {
-	Model  string `json:"model"`
-	Runner string `json:"runner,omitempty"`
-	System string `json:"system"`
+	Model        string `json:"model"`
+	Runner       string `json:"runner,omitempty"`
+	AllManifests bool   `json:"all_manifests,omitempty"`
+	System       string `json:"system"`
 
 	// Template is deprecated
 	Template string `json:"template"`
@@ -766,6 +767,18 @@ type ShowResponse struct {
 	Capabilities  []model.Capability `json:"capabilities,omitempty"`
 	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
 	Requires      string             `json:"requires,omitempty"`
+}
+
+// ShowManifest is a single manifest summary returned from [Client.ShowManifests].
+type ShowManifest struct {
+	Runner string `json:"runner,omitempty"`
+	ShowResponse
+}
+
+// ShowManifestsResponse is the response returned from [Client.ShowManifests].
+type ShowManifestsResponse struct {
+	Manifests []ShowManifest `json:"manifests"`
+	License   string         `json:"license,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].

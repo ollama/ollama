@@ -434,8 +434,8 @@ func TestCreateManifestList(t *testing.T) {
 	}
 
 	want := map[string]string{
-		manifest.RunnerOllama: manifest.FormatGGUF,
-		manifest.RunnerMLX:    manifest.FormatSafetensors,
+		manifest.RunnerGGML: manifest.FormatGGUF,
+		manifest.RunnerMLX:  manifest.FormatSafetensors,
 	}
 	for _, child := range parent.Manifests {
 		if got := want[child.Runner]; got != child.Format {

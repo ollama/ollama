@@ -403,6 +403,21 @@ func (c *Client) Show(ctx context.Context, req *ShowRequest) (*ShowResponse, err
 	return &resp, nil
 }
 
+// ShowManifests obtains model information for all manifests in a manifest list.
+func (c *Client) ShowManifests(ctx context.Context, req *ShowRequest) (*ShowManifestsResponse, error) {
+	showReq := &ShowRequest{AllManifests: true}
+	if req != nil {
+		*showReq = *req
+		showReq.AllManifests = true
+	}
+
+	var resp ShowManifestsResponse
+	if err := c.do(ctx, http.MethodPost, "/api/show", showReq, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // Heartbeat checks if the server has started and is responsive; if yes, it
 // returns nil, otherwise an error.
 func (c *Client) Heartbeat(ctx context.Context) error {

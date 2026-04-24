@@ -30,7 +30,7 @@ const (
 	MediaTypeManifestList = "application/vnd.ollama.manifest.list.v2+json"
 
 	RunnerMLX      = "mlx"
-	RunnerOllama   = "ollama"
+	RunnerGGML     = "ggml"
 	RunnerLlamaCPP = "llamacpp"
 
 	FormatSafetensors = "safetensors"
@@ -550,10 +550,11 @@ func parseManifestData(name model.Name, path string, fi os.FileInfo, digest stri
 		return child, nil
 	}
 
-	if len(preferences) == 1 && m.Runner != "" && !strings.EqualFold(m.Runner, preferences[0]) {
+	if len(preferences) == 1 && m.Runner != "" && canonicalRunner(m.Runner) != canonicalRunner(preferences[0]) {
 		return nil, fmt.Errorf("%w for runners: %s", ErrNoCompatibleManifest, preferences[0])
 	}
 
+	m.Runner = canonicalRunner(m.Runner)
 	m.filepath = path
 	m.fi = fi
 	m.digest = digest
@@ -572,7 +573,7 @@ func selectManifestWithPreferences(manifests []Manifest, preferences []string) (
 			if manifests[i].MediaType != "" && manifests[i].MediaType != MediaTypeManifest {
 				continue
 			}
-			if strings.EqualFold(manifests[i].Runner, runner) {
+			if canonicalRunner(manifests[i].Runner) != "" && canonicalRunner(manifests[i].Runner) == canonicalRunner(runner) {
 				child := manifests[i]
 				if child.isReference() {
 					childDigest := child.digest
@@ -591,6 +592,7 @@ func selectManifestWithPreferences(manifests []Manifest, preferences []string) (
 					}
 					child = *resolved
 				}
+				child.Runner = canonicalRunner(child.Runner)
 				return &child, nil
 			}
 		}
@@ -601,19 +603,23 @@ func selectManifestWithPreferences(manifests []Manifest, preferences []string) (
 
 func runnerPreferences() []string {
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-		return []string{RunnerMLX, RunnerOllama, RunnerLlamaCPP}
+		return []string{RunnerMLX, RunnerGGML, RunnerLlamaCPP}
 	}
 
-	return []string{RunnerOllama, RunnerLlamaCPP, RunnerMLX}
+	return []string{RunnerGGML, RunnerLlamaCPP, RunnerMLX}
 }
 
 func runnerPreferencesFor(runner string) []string {
-	runner = strings.ToLower(strings.TrimSpace(runner))
+	runner = canonicalRunner(runner)
 	if runner == "" {
 		return runnerPreferences()
 	}
 
 	return []string{runner}
+}
+
+func canonicalRunner(runner string) string {
+	return strings.ToLower(strings.TrimSpace(runner))
 }
 
 func parseManifest(data []byte) (*Manifest, error) {
@@ -707,7 +713,7 @@ func WriteManifestWithMetadata(name model.Name, config Layer, layers []Layer, ru
 		MediaType:     MediaTypeManifest,
 		Config:        config,
 		Layers:        layers,
-		Runner:        runner,
+		Runner:        canonicalRunner(runner),
 		Format:        format,
 	}
 
@@ -729,7 +735,7 @@ func NewManifestReference(digest, runner, format string) (Manifest, error) {
 
 	return Manifest{
 		MediaType: MediaTypeManifest,
-		Runner:    runner,
+		Runner:    canonicalRunner(runner),
 		Format:    format,
 		digest:    strings.TrimPrefix(digest, "sha256:"),
 	}, nil

@@ -43,7 +43,13 @@ type modelConfig struct {
 // GetSafetensorsLLMInfo extracts model information from safetensors LLM models.
 // It reads the config.json layer and returns a map compatible with GGML's KV format.
 func GetSafetensorsLLMInfo(name model.Name) (map[string]any, error) {
-	mf, err := manifest.ParseNamedManifest(name)
+	return GetSafetensorsLLMInfoForRunner(name, "")
+}
+
+// GetSafetensorsLLMInfoForRunner extracts model information from the
+// safetensors manifest selected for runner.
+func GetSafetensorsLLMInfoForRunner(name model.Name, runner string) (map[string]any, error) {
+	mf, err := manifest.ParseNamedManifestForRunner(name, runner)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
@@ -212,7 +218,13 @@ func getParameterCountFromManifest(mf *manifest.Manifest) (int64, error) {
 // GetSafetensorsTensorInfo extracts tensor information from safetensors model layers.
 // Each tensor is stored as a minimal safetensors file with an 88-byte header containing metadata.
 func GetSafetensorsTensorInfo(name model.Name) ([]api.Tensor, error) {
-	mf, err := manifest.ParseNamedManifest(name)
+	return GetSafetensorsTensorInfoForRunner(name, "")
+}
+
+// GetSafetensorsTensorInfoForRunner extracts tensor information from the
+// safetensors manifest selected for runner.
+func GetSafetensorsTensorInfoForRunner(name model.Name, runner string) ([]api.Tensor, error) {
+	mf, err := manifest.ParseNamedManifestForRunner(name, runner)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
@@ -309,7 +321,13 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 // Reads quant_type from the first tensor blob's __metadata__.
 // Falls back to torch_dtype from config.json if no quant metadata.
 func GetSafetensorsDtype(name model.Name) (string, error) {
-	mf, err := manifest.ParseNamedManifest(name)
+	return GetSafetensorsDtypeForRunner(name, "")
+}
+
+// GetSafetensorsDtypeForRunner returns the quantization type from the
+// safetensors manifest selected for runner.
+func GetSafetensorsDtypeForRunner(name model.Name, runner string) (string, error) {
+	mf, err := manifest.ParseNamedManifestForRunner(name, runner)
 	if err != nil {
 		return "", fmt.Errorf("failed to load manifest: %w", err)
 	}

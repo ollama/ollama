@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -141,12 +142,12 @@ func TestSelectManifestUsesRunnerPreference(t *testing.T) {
 		SchemaVersion: 2,
 		MediaType:     MediaTypeManifestList,
 		Manifests: []Manifest{
-			createManifestForTest("sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), RunnerOllama),
+			createManifestForTest("sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), RunnerGGML),
 			createManifestForTest("sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64), RunnerLlamaCPP),
 		},
 	}
 
-	child, err := selectManifestWithPreferences(ml.Manifests, []string{RunnerLlamaCPP, RunnerOllama})
+	child, err := selectManifestWithPreferences(ml.Manifests, []string{RunnerLlamaCPP, RunnerGGML})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,17 +156,26 @@ func TestSelectManifestUsesRunnerPreference(t *testing.T) {
 	}
 }
 
+func TestSelectManifestRejectsOldOllamaRunner(t *testing.T) {
+	_, err := selectManifestWithPreferences([]Manifest{
+		createManifestForTest("sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), "ollama"),
+	}, []string{RunnerGGML})
+	if !errors.Is(err, ErrNoCompatibleManifest) {
+		t.Fatalf("err = %v, want %v", err, ErrNoCompatibleManifest)
+	}
+}
+
 func TestParseNamedManifestResolvesManifestList(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	name := model.ParseName("example")
 
-	ollama := createManifestForTest("sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), RunnerOllama)
-	ollamaData, err := json.Marshal(ollama)
+	ggml := createManifestForTest("sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), RunnerGGML)
+	ggmlData, err := json.Marshal(ggml)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ollamaDigest := writeManifestBlobForTest(t, ollamaData)
+	ggmlDigest := writeManifestBlobForTest(t, ggmlData)
 
 	llamacpp := createManifestForTest("sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64), RunnerLlamaCPP)
 	llamacppData, err := json.Marshal(llamacpp)
@@ -174,7 +184,7 @@ func TestParseNamedManifestResolvesManifestList(t *testing.T) {
 	}
 	llamacppDigest := writeManifestBlobForTest(t, llamacppData)
 
-	parentData := createManifestListData(t, llamacpp, ollama)
+	parentData := createManifestListData(t, llamacpp, ggml)
 
 	if err := WriteManifestData(name, parentData); err != nil {
 		t.Fatal(err)
@@ -192,11 +202,11 @@ func TestParseNamedManifestResolvesManifestList(t *testing.T) {
 	if got := m.BlobDigest(); got != fmt.Sprintf("sha256:%x", parentSum) {
 		t.Fatalf("blob digest = %q, want sha256:%x", got, parentSum)
 	}
-	if got := m.SelectedDigest(); got != strings.TrimPrefix(ollamaDigest, "sha256:") {
-		t.Fatalf("selected digest = %q, want %q", got, strings.TrimPrefix(ollamaDigest, "sha256:"))
+	if got := m.SelectedDigest(); got != strings.TrimPrefix(ggmlDigest, "sha256:") {
+		t.Fatalf("selected digest = %q, want %q", got, strings.TrimPrefix(ggmlDigest, "sha256:"))
 	}
-	if got := m.Runner; got != RunnerOllama {
-		t.Fatalf("runner = %q, want %q", got, RunnerOllama)
+	if got := m.Runner; got != RunnerGGML {
+		t.Fatalf("runner = %q, want %q", got, RunnerGGML)
 	}
 	if got := m.Format; got != FormatGGUF {
 		t.Fatalf("format = %q, want %q", got, FormatGGUF)
@@ -223,7 +233,7 @@ func TestParseNamedManifestResolvesManifestList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, digest := range []string{llamacppDigest, ollamaDigest} {
+	for _, digest := range []string{llamacppDigest, ggmlDigest} {
 		if !slices.Contains(referenced, digest) {
 			t.Fatalf("referenced blob digests missing child manifest %s", digest)
 		}
@@ -241,7 +251,7 @@ func TestParseNamedManifestResolvesManifestList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(selected, ollamaData) {
+	if !bytes.Equal(selected, ggmlData) {
 		t.Fatal("ReadSelectedManifestData did not return the selected child manifest")
 	}
 }
@@ -266,7 +276,7 @@ func TestTotalSizeForNameIncludesAllManifestListChildren(t *testing.T) {
 	gguf := Manifest{
 		SchemaVersion: 2,
 		MediaType:     MediaTypeManifest,
-		Runner:        RunnerOllama,
+		Runner:        RunnerGGML,
 		Format:        FormatGGUF,
 		Config: Layer{
 			MediaType: "application/vnd.docker.container.image.v1+json",
@@ -478,14 +488,14 @@ func TestRemoveNamedRemovesUnreferencedManifestBlob(t *testing.T) {
 func TestRemoveNamedTracksManifestListChildBlobs(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	ollamaConfigDigest := writeManifestBlobForTest(t, []byte("ollama config"))
-	ollamaLayerDigest := writeManifestBlobForTest(t, []byte("ollama layer"))
-	ollama := createManifestForTest(ollamaConfigDigest, ollamaLayerDigest, RunnerOllama)
-	ollamaData, err := json.Marshal(ollama)
+	ggmlConfigDigest := writeManifestBlobForTest(t, []byte("ggml config"))
+	ggmlLayerDigest := writeManifestBlobForTest(t, []byte("ggml layer"))
+	ggml := createManifestForTest(ggmlConfigDigest, ggmlLayerDigest, RunnerGGML)
+	ggmlData, err := json.Marshal(ggml)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeManifestBlobForTest(t, ollamaData)
+	writeManifestBlobForTest(t, ggmlData)
 
 	llamacppConfigDigest := writeManifestBlobForTest(t, []byte("llamacpp config"))
 	llamacppLayerDigest := writeManifestBlobForTest(t, []byte("llamacpp layer"))
@@ -496,7 +506,7 @@ func TestRemoveNamedTracksManifestListChildBlobs(t *testing.T) {
 	}
 	writeManifestBlobForTest(t, llamacppData)
 
-	parentData := createManifestListData(t, ollama, llamacpp)
+	parentData := createManifestListData(t, ggml, llamacpp)
 
 	nameA := model.ParseName("example-a")
 	nameB := model.ParseName("example-b")

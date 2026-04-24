@@ -124,7 +124,7 @@ type ollamaServer struct {
 func RunnerName(s LlamaServer) string {
 	switch s.(type) {
 	case *ollamaServer:
-		return "ollama"
+		return "ggml"
 	case *llamaServer:
 		return "llamacpp"
 	default:

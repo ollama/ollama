@@ -109,7 +109,7 @@ func TestListIncludesAllManifestListChildrenInSize(t *testing.T) {
 		sharedBlob,
 		ggufBlob,
 	}
-	if err := manifest.WriteManifestWithMetadata(model.ParseName("test-gguf"), ggufConfig, ggufLayers, manifest.RunnerOllama, manifest.FormatGGUF); err != nil {
+	if err := manifest.WriteManifestWithMetadata(model.ParseName("test-gguf"), ggufConfig, ggufLayers, manifest.RunnerGGML, manifest.FormatGGUF); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,7 +134,7 @@ func TestListIncludesAllManifestListChildrenInSize(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ggufRef, err := manifest.NewManifestReference(ggufManifest.BlobDigest(), manifest.RunnerOllama, manifest.FormatGGUF)
+	ggufRef, err := manifest.NewManifestReference(ggufManifest.BlobDigest(), manifest.RunnerGGML, manifest.FormatGGUF)
 	if err != nil {
 		t.Fatal(err)
 	}

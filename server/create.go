@@ -766,7 +766,7 @@ func manifestMetadataForConfig(config model.ConfigV2) (runner, format string) {
 	case manifest.FormatSafetensors:
 		return manifest.RunnerMLX, manifest.FormatSafetensors
 	case manifest.FormatGGUF, "ggml":
-		return manifest.RunnerOllama, manifest.FormatGGUF
+		return manifest.RunnerGGML, manifest.FormatGGUF
 	default:
 		return "", strings.ToLower(config.ModelFormat)
 	}

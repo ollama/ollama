@@ -147,8 +147,8 @@ func normalizeRunner(runner string) (string, error) {
 		return "", nil
 	case manifest.RunnerMLX, "mlxrunner":
 		return manifest.RunnerMLX, nil
-	case manifest.RunnerOllama, "ggml":
-		return manifest.RunnerOllama, nil
+	case manifest.RunnerGGML:
+		return manifest.RunnerGGML, nil
 	case manifest.RunnerLlamaCPP, "llama.cpp", "llama-cpp", "llama_cpp":
 		return manifest.RunnerLlamaCPP, nil
 	default:
@@ -1116,6 +1116,85 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 	}
 }
 
+func writeShowError(c *gin.Context, model string, err error) {
+	var statusErr api.StatusError
+	switch {
+	case os.IsNotExist(err):
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", model)})
+	case errors.Is(err, manifest.ErrNoCompatibleManifest):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.As(err, &statusErr):
+		c.JSON(statusErr.StatusCode, gin.H{"error": statusErr.ErrorMessage})
+	case err.Error() == errtypes.InvalidModelNameErrMsg:
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	}
+}
+
+func readBlobData(digest string) ([]byte, error) {
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
+		return nil, err
+	}
+
+	return os.ReadFile(blobPath)
+}
+
+func resolveShowManifestChild(child manifest.Manifest) (*manifest.Manifest, error) {
+	if child.MediaType == manifest.MediaTypeManifestList {
+		return nil, errors.New("nested manifest lists are not supported")
+	}
+
+	resolved := child
+	if resolved.Config.Digest == "" && len(resolved.Layers) == 0 && resolved.Digest() != "" {
+		data, err := readBlobData(resolved.BlobDigest())
+		if err != nil {
+			return nil, err
+		}
+
+		if err := json.Unmarshal(data, &resolved); err != nil {
+			return nil, err
+		}
+		if resolved.Runner == "" {
+			resolved.Runner = child.Runner
+		}
+		if resolved.Format == "" {
+			resolved.Format = child.Format
+		}
+	}
+
+	return &resolved, nil
+}
+
+func collectManifestLicenseText(children []manifest.Manifest) (string, error) {
+	seen := make(map[string]struct{})
+	var licenses []string
+
+	for _, child := range children {
+		for _, layer := range child.Layers {
+			if layer.MediaType != "application/vnd.ollama.image.license" || layer.Digest == "" {
+				continue
+			}
+
+			digest := layer.Digest
+			if _, ok := seen[digest]; ok {
+				continue
+			}
+
+			data, err := readBlobData(digest)
+			if err != nil {
+				return "", err
+			}
+
+			seen[digest] = struct{}{}
+			licenses = append(licenses, string(data))
+		}
+	}
+
+	return strings.Join(licenses, "\n"), nil
+}
+
 func (s *Server) ShowHandler(c *gin.Context) {
 	var req api.ShowRequest
 	err := c.ShouldBindJSON(&req)
@@ -1141,6 +1220,10 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.AllManifests && req.Runner != "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "runner cannot be used with all_manifests"})
+		return
+	}
 
 	modelRef, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
@@ -1156,21 +1239,20 @@ func (s *Server) ShowHandler(c *gin.Context) {
 
 	req.Model = modelRef.Base
 
+	if req.AllManifests {
+		resp, err := GetAllManifestsInfo(req)
+		if err != nil {
+			writeShowError(c, req.Model, err)
+			return
+		}
+
+		c.JSON(http.StatusOK, resp)
+		return
+	}
+
 	resp, err := GetModelInfo(req)
 	if err != nil {
-		var statusErr api.StatusError
-		switch {
-		case os.IsNotExist(err):
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-		case errors.Is(err, manifest.ErrNoCompatibleManifest):
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		case errors.As(err, &statusErr):
-			c.JSON(statusErr.StatusCode, gin.H{"error": statusErr.ErrorMessage})
-		case err.Error() == errtypes.InvalidModelNameErrMsg:
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
+		writeShowError(c, req.Model, err)
 		return
 	}
 
@@ -1191,6 +1273,107 @@ func (s *Server) ShowHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func GetAllManifestsInfo(req api.ShowRequest) (*api.ShowManifestsResponse, error) {
+	runner, err := normalizeRunner(req.Runner)
+	if err != nil {
+		return nil, api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: err.Error(),
+		}
+	}
+	req.Runner = runner
+	if req.Runner != "" {
+		return nil, api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: "runner cannot be used with all_manifests",
+		}
+	}
+
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		return nil, model.Unqualified(name)
+	}
+	name, err = getExistingName(name)
+	if err != nil {
+		return nil, err
+	}
+	req.Model = name.String()
+
+	data, err := manifest.ReadManifestData(name)
+	if err != nil {
+		return nil, err
+	}
+
+	var parent manifest.Manifest
+	if err := json.Unmarshal(data, &parent); err != nil {
+		return nil, err
+	}
+
+	if parent.MediaType != manifest.MediaTypeManifestList {
+		resp, err := GetModelInfo(req)
+		if err != nil {
+			return nil, err
+		}
+
+		mf, err := manifest.ParseNamedManifestForRunner(name, "")
+		if err != nil {
+			return nil, err
+		}
+
+		return &api.ShowManifestsResponse{
+			Manifests: []api.ShowManifest{{
+				Runner:       mf.Runner,
+				ShowResponse: *resp,
+			}},
+			License: resp.License,
+		}, nil
+	}
+
+	resolvedChildren := make([]manifest.Manifest, 0, len(parent.Manifests))
+	resp := &api.ShowManifestsResponse{
+		Manifests: make([]api.ShowManifest, 0, len(parent.Manifests)),
+	}
+	for _, child := range parent.Manifests {
+		resolved, err := resolveShowManifestChild(child)
+		if err != nil {
+			return nil, err
+		}
+		if resolved.Runner == "" {
+			return nil, fmt.Errorf("manifest list child %q is missing runner metadata", resolved.BlobDigest())
+		}
+		runner, err := normalizeRunner(resolved.Runner)
+		if err != nil {
+			return nil, err
+		}
+		resolved.Runner = runner
+
+		resolvedChildren = append(resolvedChildren, *resolved)
+
+		childResp, err := GetModelInfo(api.ShowRequest{
+			Model:   req.Model,
+			Runner:  resolved.Runner,
+			System:  req.System,
+			Verbose: req.Verbose,
+			Options: req.Options,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		resp.Manifests = append(resp.Manifests, api.ShowManifest{
+			Runner:       resolved.Runner,
+			ShowResponse: *childResp,
+		})
+	}
+
+	resp.License, err = collectManifestLicenseText(resolvedChildren)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
 }
 
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
@@ -1246,7 +1429,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// For safetensors LLM models (experimental), populate details from config.json
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
-		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
+		if info, err := xserver.GetSafetensorsLLMInfoForRunner(name, req.Runner); err == nil {
 			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
 				modelDetails.Family = arch
 			}
@@ -1256,7 +1439,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		}
 		// Older manifests may not have file_type populated for safetensors models.
 		if modelDetails.QuantizationLevel == "" {
-			if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
+			if dtype, err := xserver.GetSafetensorsDtypeForRunner(name, req.Runner); err == nil && dtype != "" {
 				modelDetails.QuantizationLevel = dtype
 			}
 		}
@@ -1356,25 +1539,19 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
-		// Populate tensor info if verbose
-		if req.Verbose {
-			if tensors, err := xserver.GetSafetensorsTensorInfo(name); err == nil {
-				resp.Tensors = tensors
-			}
+		if tensors, err := xserver.GetSafetensorsTensorInfoForRunner(name, req.Runner); err == nil {
+			resp.Tensors = tensors
 		}
 		return resp, nil
 	}
 
 	// For safetensors LLM models (experimental), populate ModelInfo from config.json
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
-		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
+		if info, err := xserver.GetSafetensorsLLMInfoForRunner(name, req.Runner); err == nil {
 			resp.ModelInfo = info
 		}
-		// Populate tensor info if verbose
-		if req.Verbose {
-			if tensors, err := xserver.GetSafetensorsTensorInfo(name); err == nil {
-				resp.Tensors = tensors
-			}
+		if tensors, err := xserver.GetSafetensorsTensorInfoForRunner(name, req.Runner); err == nil {
+			resp.Tensors = tensors
 		}
 		return resp, nil
 	}
@@ -2090,6 +2267,9 @@ func (s *Server) PsHandler(c *gin.Context) {
 		runner := v.runner
 		if runner == "" {
 			runner = model.Runner
+		}
+		if normalized, err := normalizeRunner(runner); err == nil && normalized != "" {
+			runner = normalized
 		}
 		modelDetails := api.ModelDetails{
 			Format:            model.Config.ModelFormat,
