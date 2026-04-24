@@ -117,12 +117,7 @@ func ollamaServeProcess(pid int) bool {
 			continue
 		}
 
-		fields := strings.Fields(strings.ToLower(commandLine))
-		for i, field := range fields {
-			if strings.Trim(field, `"`) == "serve" && i > 0 {
-				return true
-			}
-		}
+		return ollamaServeArgs(strings.Fields(strings.ToLower(commandLine)))
 	}
 
 	return false
