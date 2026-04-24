@@ -66,7 +66,7 @@ func TestLongInputContext(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("%s: none of %v found in %q -- request was:%v", req.Model, anyResp, response.String(), req.Messages)
+	t.Fatalf("%s: none of %v found in %q -- request was:%s", req.Model, anyResp, response.String(), summarizeMessages(req.Messages))
 }
 
 func isContextLimitError(err string) bool {
