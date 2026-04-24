@@ -500,25 +500,49 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return errInsecureProtocol
 	}
 
-	mf, err := manifest.ParseNamedManifest(n)
+	manifestJSON, err := manifest.ReadManifestData(n)
 	if err != nil {
 		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
 		return err
 	}
 
+	var stored manifest.Manifest
+	if err := json.Unmarshal(manifestJSON, &stored); err != nil {
+		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
+		return err
+	}
+
 	var layers []manifest.Layer
-	layers = append(layers, mf.Layers...)
-	if mf.Config.Digest != "" {
-		layers = append(layers, mf.Config)
+	manifestMediaType := manifest.MediaTypeManifest
+
+	if stored.MediaType == manifest.MediaTypeManifestList {
+		layers, err = pushLayersForManifestList(stored)
+		if err != nil {
+			return err
+		}
+		manifestMediaType = manifest.MediaTypeManifestList
+	} else {
+		mf, err := manifest.ParseNamedManifest(n)
+		if err != nil {
+			fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
+			return err
+		}
+
+		layers = append(layers, mf.Layers...)
+		if mf.Config.Digest != "" {
+			layers = append(layers, mf.Config)
+		}
+
+		if !hasTensorLayers(layers) {
+			manifestJSON, err = json.Marshal(mf)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
-		// Read raw manifest JSON to preserve tensor metadata fields
-		manifestJSON, err := manifest.ReadManifestData(n)
-		if err != nil {
-			return err
-		}
 		if err := pushWithTransfer(ctx, n, layers, manifestJSON, regOpts, fn); err != nil {
 			return err
 		}
@@ -537,13 +561,8 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	requestURL := n.BaseURL()
 	requestURL = requestURL.JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
 
-	manifestJSON, err := json.Marshal(mf)
-	if err != nil {
-		return err
-	}
-
 	headers := make(http.Header)
-	headers.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+	headers.Set("Content-Type", manifestMediaType)
 	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, bytes.NewReader(manifestJSON), regOpts)
 	if err != nil {
 		return err
@@ -553,6 +572,62 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	fn(api.ProgressResponse{Status: "success"})
 
 	return nil
+}
+
+func pushLayersForManifestList(parent manifest.Manifest) ([]manifest.Layer, error) {
+	seen := make(map[string]struct{})
+	var layers []manifest.Layer
+
+	addLayer := func(layer manifest.Layer) error {
+		if layer.Digest == "" {
+			return nil
+		}
+		if _, ok := seen[layer.Digest]; ok {
+			return nil
+		}
+		if layer.Size == 0 {
+			p, err := manifest.BlobsPath(layer.Digest)
+			if err != nil {
+				return err
+			}
+			fi, err := os.Stat(p)
+			if err != nil {
+				return err
+			}
+			layer.Size = fi.Size()
+		}
+		seen[layer.Digest] = struct{}{}
+		layers = append(layers, layer)
+		return nil
+	}
+
+	for _, child := range parent.Manifests {
+		childDigest := child.BlobDigest()
+		if childDigest == "" {
+			return nil, errors.New("manifest list child is missing digest")
+		}
+		if err := addLayer(manifest.Layer{
+			MediaType: manifest.MediaTypeManifest,
+			Digest:    childDigest,
+		}); err != nil {
+			return nil, err
+		}
+
+		resolved, err := resolveShowManifestChild(child)
+		if err != nil {
+			return nil, err
+		}
+		for _, layer := range resolved.Layers {
+			if err := addLayer(layer); err != nil {
+				return nil, err
+			}
+		}
+		if err := addLayer(resolved.Config); err != nil {
+			return nil, err
+		}
+	}
+
+	return layers, nil
 }
 
 func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {

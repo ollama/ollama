@@ -57,6 +57,77 @@ func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
 	}
 }
 
+func TestPushLayersForManifestListIncludesChildManifests(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeChild := func(name, runner, formatName, layerMediaType string) (manifest.Manifest, manifest.Layer, manifest.Layer) {
+		t.Helper()
+
+		config, err := manifest.NewLayer(strings.NewReader(name+" config"), "application/vnd.docker.container.image.v1+json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		layer, err := manifest.NewLayer(strings.NewReader(name+" layer"), layerMediaType)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manifest.WriteManifestWithMetadata(model.ParseName(name), config, []manifest.Layer{layer}, runner, formatName); err != nil {
+			t.Fatal(err)
+		}
+		mf, err := manifest.ParseNamedManifestForRunner(model.ParseName(name), runner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return *mf, config, layer
+	}
+
+	mlx, mlxConfig, mlxLayer := writeChild("library/push-mlx:latest", manifest.RunnerMLX, manifest.FormatSafetensors, manifest.MediaTypeImageTensor)
+	ggml, ggmlConfig, ggmlLayer := writeChild("library/push-ggml:latest", manifest.RunnerGGML, manifest.FormatGGUF, "application/vnd.ollama.image.model")
+
+	mlxRef, err := manifest.NewManifestReference(mlx.BlobDigest(), mlx.Runner, mlx.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlRef, err := manifest.NewManifestReference(ggml.BlobDigest(), ggml.Runner, ggml.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layers, err := pushLayersForManifestList(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{mlxRef, ggmlRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{
+		mlx.BlobDigest():  manifest.MediaTypeManifest,
+		ggml.BlobDigest(): manifest.MediaTypeManifest,
+		mlxConfig.Digest:  mlxConfig.MediaType,
+		mlxLayer.Digest:   mlxLayer.MediaType,
+		ggmlConfig.Digest: ggmlConfig.MediaType,
+		ggmlLayer.Digest:  ggmlLayer.MediaType,
+	}
+	if len(layers) != len(want) {
+		t.Fatalf("layer count = %d, want %d: %#v", len(layers), len(want), layers)
+	}
+	for _, layer := range layers {
+		if wantMediaType, ok := want[layer.Digest]; !ok {
+			t.Fatalf("unexpected layer digest %q", layer.Digest)
+		} else if layer.MediaType != wantMediaType {
+			t.Fatalf("layer %q media type = %q, want %q", layer.Digest, layer.MediaType, wantMediaType)
+		}
+		if layer.Size == 0 {
+			t.Fatalf("layer %q has zero size", layer.Digest)
+		}
+	}
+	if !hasTensorLayers(layers) {
+		t.Fatal("manifest list push layers did not preserve tensor media type")
+	}
+}
+
 func TestModelCapabilities(t *testing.T) {
 	// Create completion model (llama architecture without vision)
 	completionModelPath, _ := createBinFile(t, ggml.KV{
