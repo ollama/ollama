@@ -69,6 +69,12 @@ type BackendParams struct {
 	// GPULayers is the set of layers to offload to GPUs
 	GPULayers GPULayersList
 
+	// MoEGPULayers is the subset of GPULayers where MoE expert weights
+	// are also resident on GPU. Layers in GPULayers but not here have
+	// their MoE expert tensors on CPU (copied on demand via op_offload).
+	// Nil means no MoE split is active.
+	MoEGPULayers GPULayersList
+
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention FlashAttentionType
 }
