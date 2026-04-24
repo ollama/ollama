@@ -5,9 +5,54 @@ package ggml
 // #cgo CPPFLAGS: -I${SRCDIR}/ggml/include
 // #include <stdlib.h>
 // #include <stdint.h>
+// #include <stdbool.h>
 // #include "ggml.h"
 // #include "ggml-cpu.h"
 // #include "ggml-backend.h"
+//
+// // moe_pinned_register looks up the cudaHostRegister proc address from the
+// // first CUDA backend registry entry and calls it to pin a CPU memory region.
+// // Returns true on success, false if CUDA is unavailable or registration fails.
+// //
+// // GGML_CUDA_REGISTER_HOST must already be set in the process env block before
+// // this is called. The env var is injected by server.go into the runner child
+// // process at launch time when OLLAMA_MOE_PINNED=1, which ensures all CRT
+// // instances (including ggml-cuda.dll's own CRT) see it at init time.
+// static bool moe_pinned_register(void *ptr, size_t size) {
+//     typedef bool (*register_fn_t)(void *, size_t);
+//     for (int i = 0; i < (int)ggml_backend_dev_count(); i++) {
+//         ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+//         if (ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_GPU) {
+//             continue;
+//         }
+//         ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
+//         register_fn_t fn = (register_fn_t)ggml_backend_reg_get_proc_address(
+//             reg, "ggml_backend_register_host_buffer");
+//         if (fn == NULL) {
+//             return false;
+//         }
+//         return fn(ptr, size);
+//     }
+//     return false;
+// }
+//
+// // moe_pinned_unregister looks up the cudaHostUnregister proc address and calls it.
+// static void moe_pinned_unregister(void *ptr) {
+//     typedef void (*unregister_fn_t)(void *);
+//     for (int i = 0; i < (int)ggml_backend_dev_count(); i++) {
+//         ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+//         if (ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_GPU) {
+//             continue;
+//         }
+//         ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
+//         unregister_fn_t fn = (unregister_fn_t)ggml_backend_reg_get_proc_address(
+//             reg, "ggml_backend_unregister_host_buffer");
+//         if (fn != NULL) {
+//             fn(ptr);
+//         }
+//         return;
+//     }
+// }
 import "C"
 
 import (
@@ -30,6 +75,7 @@ import (
 	"unicode"
 	"unsafe"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs"
 	fsggml "github.com/ollama/ollama/fs/ggml"
@@ -117,6 +163,11 @@ type Backend struct {
 
 	// weightBuffers are the GGML contexts and buffers for allocating weights
 	weightBuffers map[*C.struct_ggml_context]C.ggml_backend_buffer_t
+
+	// pinnedBuffers holds base pointers of CPU-MoE weight buffers that have been
+	// registered as pinned via cudaHostRegister (when OLLAMA_MOE_PINNED=1).
+	// Must be unregistered before the backing buffers are freed.
+	pinnedBuffers []unsafe.Pointer
 }
 
 var once sync.Once
@@ -262,6 +313,10 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		moeLayers[i] = assignMoELayer(i)
 	}
 
+	// cpuMoEBufTypes collects buffer types used by CPU-resident MoE expert tensors.
+	// Used after buffer allocation to register them as pinned when OLLAMA_MOE_PINNED=1.
+	cpuMoEBufTypes := make(map[C.ggml_backend_buffer_type_t]struct{})
+
 	// Log routing summary on formal allocation (AllocMemory=true) when MoE split is active
 	if params.AllocMemory && len(params.MoEGPULayers) > 0 {
 		moeGPUSet := make(map[int]bool)
@@ -404,6 +459,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				if isMoEExpertTensor(t.Name) && len(params.MoEGPULayers) > 0 {
 					// MoE expert tensor: route based on MoEGPULayers (subset of GPULayers)
 					bts = moeLayers[layerIndex].bts
+					// Track CPU-resident MoE buffer types for optional pinning.
+					// A layer is CPU-resident when its device matches the CPU device.
+					if moeLayers[layerIndex].d == cpuDeviceBufferType.d {
+						cpuMoEBufTypes[bts[0]] = struct{}{}
+					}
 				}
 				createTensor(tensor{source: t}, bts, layerIndex)
 			} else {
@@ -490,6 +550,36 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			"size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
 	}
 
+	// When OLLAMA_MOE_PINNED=1 and MoE split is active, register CPU-side MoE
+	// weight buffers as pinned (page-locked) so that the CUDA Copy Engine can
+	// DMA directly from mmap memory without CPU-side staging.
+	var pinnedBuffers []unsafe.Pointer
+	if params.AllocMemory && envconfig.MoePinned() && len(params.MoEGPULayers) > 0 {
+		for bt, c := range ctxs {
+			if _, isCPUMoE := cpuMoEBufTypes[bt]; !isCPUMoE {
+				continue
+			}
+			b, ok := bbs[c]
+			if !ok {
+				continue
+			}
+			ptr := unsafe.Pointer(C.ggml_backend_buffer_get_base(b))
+			size := C.size_t(C.ggml_backend_buffer_get_size(b))
+			if bool(C.moe_pinned_register(ptr, size)) {
+				pinnedBuffers = append(pinnedBuffers, ptr)
+				slog.Info("moe pinned: registered CPU-MoE buffer",
+					"size", format.HumanBytes2(uint64(size)))
+			} else {
+				slog.Warn("moe pinned: cudaHostRegister failed, falling back to pageable",
+					"size", format.HumanBytes2(uint64(size)))
+			}
+		}
+		if len(pinnedBuffers) > 0 {
+			slog.Info("moe pinned: registered CPU-MoE weight buffers",
+				"count", len(pinnedBuffers))
+		}
+	}
+
 	return &Backend{
 		modelPath:         modelPath,
 		allocMemory:       params.AllocMemory,
@@ -516,6 +606,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		btDeviceMemory: btDeviceMemory,
 		maxGraphNodes:  maxGraphNodes,
 		weightBuffers:  bbs,
+		pinnedBuffers:  pinnedBuffers,
 	}, nil
 }
 
@@ -526,6 +617,12 @@ func init() {
 func (b *Backend) Close() {
 	if b == nil {
 		return
+	}
+
+	// Unregister pinned CPU-MoE buffers before freeing them.
+	// cudaHostUnregister must be called while the memory is still valid.
+	for _, ptr := range b.pinnedBuffers {
+		C.moe_pinned_unregister(ptr)
 	}
 
 	for ctx, b := range b.weightBuffers {

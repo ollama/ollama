@@ -273,12 +273,25 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
+	runnerEnvs := ml.GetVisibleDevicesEnv(gpus, false)
+	// When OLLAMA_MOE_PINNED is enabled, the ggml CUDA backend's internal
+	// cudaHostRegister wrapper checks getenv("GGML_CUDA_REGISTER_HOST") from
+	// the DLL's own CRT instance. Go's os.Setenv and CGo _putenv_s both update
+	// different CRT copies and are invisible to the DLL. The only reliable way
+	// to set a variable for all CRT instances in a process is to inject it into
+	// the child process env block before launch, which all CRTs read at init.
+	if envconfig.MoePinned() && envconfig.MoeGpuLayers() != 0 {
+		if runnerEnvs == nil {
+			runnerEnvs = map[string]string{}
+		}
+		runnerEnvs["GGML_CUDA_REGISTER_HOST"] = "1"
+	}
 	cmd, port, err := StartRunner(
 		tok != nil,
 		modelPath,
 		gpuLibs,
 		status,
-		ml.GetVisibleDevicesEnv(gpus, false),
+		runnerEnvs,
 	)
 
 	s := llmServer{
