@@ -43,7 +43,7 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("creates new file when none exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
-		catalogPath := filepath.Join(tmpDir, "model.json")
+		catalogPath := filepath.Join(tmpDir, codexCatalogFileName)
 
 		if err := writeCodexProfile(configPath, catalogPath); err != nil {
 			t.Fatal(err)
@@ -87,7 +87,7 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("appends profile to existing file without profile", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
-		catalogPath := filepath.Join(tmpDir, "model.json")
+		catalogPath := filepath.Join(tmpDir, codexCatalogFileName)
 		existing := "[some_other_section]\nkey = \"value\"\n"
 		os.WriteFile(configPath, []byte(existing), 0o644)
 
@@ -109,7 +109,7 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("replaces existing profile section", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
-		catalogPath := filepath.Join(tmpDir, "model.json")
+		catalogPath := filepath.Join(tmpDir, codexCatalogFileName)
 		existing := "[profiles.ollama-launch]\nopenai_base_url = \"http://old:1234/v1/\"\n\n[model_providers.ollama-launch]\nname = \"Ollama\"\nbase_url = \"http://old:1234/v1/\"\n"
 		os.WriteFile(configPath, []byte(existing), 0o644)
 
@@ -278,7 +278,7 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("replaces profile while preserving following sections", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
-		catalogPath := filepath.Join(tmpDir, "model.json")
+		catalogPath := filepath.Join(tmpDir, codexCatalogFileName)
 		existing := "[profiles.ollama-launch]\nopenai_base_url = \"http://old:1234/v1/\"\n[another_section]\nfoo = \"bar\"\n"
 		os.WriteFile(configPath, []byte(existing), 0o644)
 
@@ -303,7 +303,7 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("appends newline to file not ending with newline", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
-		catalogPath := filepath.Join(tmpDir, "model.json")
+		catalogPath := filepath.Join(tmpDir, codexCatalogFileName)
 		existing := "[other]\nkey = \"val\""
 		os.WriteFile(configPath, []byte(existing), 0o644)
 
@@ -327,7 +327,7 @@ func TestWriteCodexProfile(t *testing.T) {
 		t.Setenv("OLLAMA_HOST", "http://myhost:9999")
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
-		catalogPath := filepath.Join(tmpDir, "model.json")
+		catalogPath := filepath.Join(tmpDir, codexCatalogFileName)
 
 		if err := writeCodexProfile(configPath, catalogPath); err != nil {
 			t.Fatal(err)
@@ -385,7 +385,7 @@ func TestEnsureCodexConfig(t *testing.T) {
 			t.Error("missing openai_base_url key")
 		}
 
-		catalogPath := filepath.Join(tmpDir, ".codex", "model.json")
+		catalogPath := filepath.Join(tmpDir, ".codex", codexCatalogFileName)
 		data, err = os.ReadFile(catalogPath)
 		if err != nil {
 			t.Fatalf("model.json not created: %v", err)
@@ -415,6 +415,37 @@ func TestEnsureCodexConfig(t *testing.T) {
 		}
 		if strings.Count(content, "[model_providers.ollama-launch]") != 1 {
 			t.Errorf("expected exactly one [model_providers.ollama-launch] section after two calls, got %d", strings.Count(content, "[model_providers.ollama-launch]"))
+		}
+	})
+
+	t.Run("does not overwrite user's default model catalog", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		userCatalogPath := filepath.Join(tmpDir, ".codex", "model.json")
+		if err := os.MkdirAll(filepath.Dir(userCatalogPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		original := `{"models":[{"slug":"user-custom"}]}`
+		if err := os.WriteFile(userCatalogPath, []byte(original), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := ensureCodexConfig("llama3.2"); err != nil {
+			t.Fatal(err)
+		}
+
+		data, err := os.ReadFile(userCatalogPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != original {
+			t.Errorf("default model catalog was modified: got %q want %q", string(data), original)
+		}
+
+		ollamaCatalogPath := filepath.Join(tmpDir, ".codex", codexCatalogFileName)
+		if _, err := os.Stat(ollamaCatalogPath); err != nil {
+			t.Fatalf("ollama catalog not created: %v", err)
 		}
 	})
 }
