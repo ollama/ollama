@@ -496,6 +496,11 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 			expectedThinking: &ThinkValue{Value: "low"},
 		},
 		{
+			name:             "string_max",
+			input:            `{ "think": "max" }`,
+			expectedThinking: &ThinkValue{Value: "max"},
+		},
+		{
 			name:             "invalid_string",
 			input:            `{ "think": "invalid" }`,
 			expectedThinking: nil,
