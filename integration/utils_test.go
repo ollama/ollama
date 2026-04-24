@@ -717,6 +717,45 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 		}
 }
 
+// summarizeMessages returns a compact string form of the messages suitable
+// for logs and error output. Image byte payloads are replaced with a
+// "<image: N bytes>" marker so vision tests don't dump huge integer arrays.
+func summarizeMessages(msgs []api.Message) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, m := range msgs {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "{Role:%s Content:%q", m.Role, m.Content)
+		if m.Thinking != "" {
+			fmt.Fprintf(&b, " Thinking:%q", m.Thinking)
+		}
+		if len(m.Images) > 0 {
+			b.WriteString(" Images:[")
+			for j, img := range m.Images {
+				if j > 0 {
+					b.WriteString(", ")
+				}
+				fmt.Fprintf(&b, "<image: %d bytes>", len(img))
+			}
+			b.WriteByte(']')
+		}
+		if len(m.ToolCalls) > 0 {
+			fmt.Fprintf(&b, " ToolCalls:%+v", m.ToolCalls)
+		}
+		if m.ToolName != "" {
+			fmt.Fprintf(&b, " ToolName:%s", m.ToolName)
+		}
+		if m.ToolCallID != "" {
+			fmt.Fprintf(&b, " ToolCallID:%s", m.ToolCallID)
+		}
+		b.WriteByte('}')
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
 func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) *api.Message {
 	stallTimer := time.NewTimer(initialTimeout)
 	var buf bytes.Buffer
@@ -752,7 +791,7 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 			}
 		}
 		if !atLeastOne {
-			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%v", req.Model, anyResp, response, req.Messages)
+			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%s", req.Model, anyResp, response, summarizeMessages(req.Messages))
 		}
 	}
 
@@ -769,10 +808,10 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 			return nil
 		}
 		if genErr != nil {
-			t.Fatalf("%s failed with %s request prompt %v", genErr, req.Model, req.Messages)
+			t.Fatalf("%s failed with %s request prompt %s", genErr, req.Model, summarizeMessages(req.Messages))
 		}
 		verify()
-		slog.Info("test pass", "model", req.Model, "messages", req.Messages, "contains", anyResp, "response", response)
+		slog.Info("test pass", "model", req.Model, "messages", summarizeMessages(req.Messages), "contains", anyResp, "response", response)
 	case <-ctx.Done():
 		// On slow systems, we might timeout before some models finish rambling, so check what we have so far to see
 		// if it's considered a pass - the stallTimer will detect hangs, but we want to consider slow systems a pass
