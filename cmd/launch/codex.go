@@ -24,6 +24,7 @@ type Codex struct{}
 func (c *Codex) String() string { return "Codex" }
 
 const codexProfileName = "ollama-launch"
+const codexCatalogFileName = "ollama-launch-models.json"
 
 func (c *Codex) args(model string, extra []string) []string {
 	args := []string{"--profile", codexProfileName}
@@ -66,7 +67,7 @@ func ensureCodexConfig(modelName string) error {
 		return err
 	}
 
-	catalogPath := filepath.Join(codexDir, "model.json")
+	catalogPath := filepath.Join(codexDir, codexCatalogFileName)
 	if err := writeCodexModelCatalog(catalogPath, modelName); err != nil {
 		return err
 	}
