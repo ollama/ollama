@@ -1143,6 +1143,21 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	req := api.ShowRequest{Name: args[0], Verbose: verbose}
+	if flagsSet == 0 && !verbose {
+		resp, err := client.ShowManifests(cmd.Context(), &req)
+		if err != nil {
+			return err
+		}
+
+		if len(resp.Manifests) > 1 {
+			return showManifestListInfo(resp, os.Stdout)
+		}
+		if len(resp.Manifests) == 1 {
+			return showInfo(&resp.Manifests[0].ShowResponse, verbose, os.Stdout)
+		}
+		return nil
+	}
+
 	resp, err := client.Show(cmd.Context(), &req)
 	if err != nil {
 		return err
@@ -1166,6 +1181,211 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	return showInfo(resp, verbose, os.Stdout)
+}
+
+func showManifestListInfo(resp *api.ShowManifestsResponse, w io.Writer) error {
+	tableRender := func(header string, rows func() [][]string) {
+		fmt.Fprintln(w, " ", header)
+		table := tablewriter.NewWriter(w)
+		table.SetAlignment(tablewriter.ALIGN_LEFT)
+		table.SetBorder(false)
+		table.SetNoWhiteSpace(true)
+		table.SetTablePadding("    ")
+
+		if header == "License" {
+			table.SetColWidth(100)
+		}
+
+		table.AppendBulk(rows())
+		table.Render()
+		fmt.Fprintln(w)
+	}
+
+	runners := make([]string, len(resp.Manifests))
+	for i, m := range resp.Manifests {
+		runners[i] = m.Runner
+		if runners[i] == "" {
+			runners[i] = fmt.Sprintf("manifest %d", i+1)
+		}
+	}
+
+	headerRow := func(labelColumn bool) []string {
+		row := []string{""}
+		if labelColumn {
+			row = append(row, "")
+		}
+		return append(row, runners...)
+	}
+
+	tableRender("Model", func() (rows [][]string) {
+		rows = append(rows, headerRow(true))
+		for _, field := range []struct {
+			name  string
+			value func(api.ShowResponse) string
+		}{
+			{"architecture", showArchitecture},
+			{"parameters", showParameterSize},
+			{"context length", func(resp api.ShowResponse) string { return showModelInfoNumber(resp, "context_length") }},
+			{"embedding length", func(resp api.ShowResponse) string { return showModelInfoNumber(resp, "embedding_length") }},
+			{"quantization", func(resp api.ShowResponse) string { return resp.Details.QuantizationLevel }},
+			{"requires", func(resp api.ShowResponse) string { return resp.Requires }},
+		} {
+			row := []string{"", field.name}
+			hasValue := false
+			for _, m := range resp.Manifests {
+				value := field.value(m.ShowResponse)
+				if value != "" {
+					hasValue = true
+				}
+				row = append(row, value)
+			}
+			if hasValue {
+				rows = append(rows, row)
+			}
+		}
+		return rows
+	})
+
+	capabilities := showCapabilities(resp.Manifests)
+	if len(capabilities) > 0 {
+		tableRender("Capabilities", func() (rows [][]string) {
+			rows = append(rows, headerRow(false))
+			for _, capability := range capabilities {
+				row := []string{""}
+				for _, m := range resp.Manifests {
+					if slices.Contains(m.Capabilities, capability) {
+						row = append(row, capability.String())
+					} else {
+						row = append(row, "")
+					}
+				}
+				rows = append(rows, row)
+			}
+			return rows
+		})
+	}
+
+	parameterKeys, parameterValues := showParameterValues(resp.Manifests)
+	if len(parameterKeys) > 0 {
+		tableRender("Parameters", func() (rows [][]string) {
+			rows = append(rows, headerRow(true))
+			for _, key := range parameterKeys {
+				row := []string{"", key}
+				for _, values := range parameterValues {
+					row = append(row, values[key])
+				}
+				rows = append(rows, row)
+			}
+			return rows
+		})
+	}
+
+	if resp.License != "" {
+		tableRender("License", func() [][]string {
+			return showHeadRows(resp.License, 2)
+		})
+	}
+
+	return nil
+}
+
+func showCapabilities(manifests []api.ShowManifest) []model.Capability {
+	seen := make(map[model.Capability]struct{})
+	var capabilities []model.Capability
+	for _, m := range manifests {
+		for _, capability := range m.Capabilities {
+			if _, ok := seen[capability]; ok {
+				continue
+			}
+			seen[capability] = struct{}{}
+			capabilities = append(capabilities, capability)
+		}
+	}
+	return capabilities
+}
+
+func showArchitecture(resp api.ShowResponse) string {
+	if resp.ModelInfo != nil {
+		if arch, _ := resp.ModelInfo["general.architecture"].(string); arch != "" {
+			return arch
+		}
+	}
+	return resp.Details.Family
+}
+
+func showParameterSize(resp api.ShowResponse) string {
+	if resp.Details.ParameterSize != "" {
+		return resp.Details.ParameterSize
+	}
+	if resp.ModelInfo != nil {
+		if v, ok := resp.ModelInfo["general.parameter_count"]; ok {
+			if f, ok := v.(float64); ok {
+				return format.HumanNumber(uint64(f))
+			}
+		}
+	}
+	return ""
+}
+
+func showModelInfoNumber(resp api.ShowResponse, key string) string {
+	if resp.ModelInfo == nil {
+		return ""
+	}
+	arch, _ := resp.ModelInfo["general.architecture"].(string)
+	if arch == "" {
+		return ""
+	}
+	if v, ok := resp.ModelInfo[fmt.Sprintf("%s.%s", arch, key)]; ok {
+		if f, ok := v.(float64); ok {
+			return strconv.FormatFloat(f, 'f', -1, 64)
+		}
+	}
+	return ""
+}
+
+func showParameterValues(manifests []api.ShowManifest) ([]string, []map[string]string) {
+	seen := make(map[string]struct{})
+	var keys []string
+	values := make([]map[string]string, len(manifests))
+
+	for i, m := range manifests {
+		values[i] = make(map[string]string)
+		scanner := bufio.NewScanner(strings.NewReader(m.Parameters))
+		for scanner.Scan() {
+			fields := strings.Fields(scanner.Text())
+			if len(fields) == 0 {
+				continue
+			}
+
+			key := fields[0]
+			values[i][key] = strings.Join(fields[1:], " ")
+			if _, ok := seen[key]; !ok {
+				seen[key] = struct{}{}
+				keys = append(keys, key)
+			}
+		}
+	}
+
+	return keys, values
+}
+
+func showHeadRows(s string, n int) (rows [][]string) {
+	scanner := bufio.NewScanner(strings.NewReader(s))
+	count := 0
+	for scanner.Scan() {
+		text := strings.TrimSpace(scanner.Text())
+		if text == "" {
+			continue
+		}
+		count++
+		if n < 0 || count <= n {
+			rows = append(rows, []string{"", text})
+		}
+	}
+	if n >= 0 && count > n {
+		rows = append(rows, []string{"", "..."})
+	}
+	return
 }
 
 func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
@@ -1333,34 +1553,15 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		})
 	}
 
-	head := func(s string, n int) (rows [][]string) {
-		scanner := bufio.NewScanner(strings.NewReader(s))
-		count := 0
-		for scanner.Scan() {
-			text := strings.TrimSpace(scanner.Text())
-			if text == "" {
-				continue
-			}
-			count++
-			if n < 0 || count <= n {
-				rows = append(rows, []string{"", text})
-			}
-		}
-		if n >= 0 && count > n {
-			rows = append(rows, []string{"", "..."})
-		}
-		return
-	}
-
 	if resp.System != "" {
 		tableRender("System", func() [][]string {
-			return head(resp.System, 2)
+			return showHeadRows(resp.System, 2)
 		})
 	}
 
 	if resp.License != "" {
 		tableRender("License", func() [][]string {
-			return head(resp.License, 2)
+			return showHeadRows(resp.License, 2)
 		})
 	}
 

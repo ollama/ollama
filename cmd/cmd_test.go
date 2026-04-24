@@ -326,6 +326,93 @@ Weigh anchor!
 	})
 }
 
+func TestShowManifestListInfo(t *testing.T) {
+	var b bytes.Buffer
+	if err := showManifestListInfo(&api.ShowManifestsResponse{
+		Manifests: []api.ShowManifest{
+			{
+				Runner: "mlx",
+				ShowResponse: api.ShowResponse{
+					ModelInfo: map[string]any{
+						"general.architecture":         "qwen3_5_moe",
+						"general.parameter_count":      float64(35_100_000_000),
+						"qwen3_5_moe.context_length":   float64(262144),
+						"qwen3_5_moe.embedding_length": float64(2048),
+					},
+					Details: api.ModelDetails{
+						ParameterSize:     "35.1B",
+						QuantizationLevel: "nvfp4",
+					},
+					Requires:     "0.19.0",
+					Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityThinking, model.CapabilityTools},
+					Parameters:   "min_p 0\npresence_penalty 1.5\nrepeat_penalty 1\ntemperature 1\ntop_k 20\ntop_p 0.95\n",
+				},
+			},
+			{
+				Runner: "ggml",
+				ShowResponse: api.ShowResponse{
+					ModelInfo: map[string]any{
+						"general.architecture":       "qwen35moe",
+						"qwen35moe.context_length":   float64(262144),
+						"qwen35moe.embedding_length": float64(2048),
+					},
+					Details: api.ModelDetails{
+						ParameterSize:     "36.0B",
+						QuantizationLevel: "Q4_K_M",
+					},
+					Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityTools, model.CapabilityThinking},
+					Parameters:   "min_p 0\npresence_penalty 1.5\nrepeat_penalty 1\ntemperature 1\ntop_k 20\ntop_p 0.95\n",
+				},
+			},
+		},
+		License: "Apache License\nVersion 2.0, January 2004\nterms",
+	}, &b); err != nil {
+		t.Fatal(err)
+	}
+
+	expect := `  Model
+                        mlx            ggml
+    architecture        qwen3_5_moe    qwen35moe
+    parameters          35.1B          36.0B
+    context length      262144         262144
+    embedding length    2048           2048
+    quantization        nvfp4          Q4_K_M
+    requires            0.19.0
+
+  Capabilities
+    mlx           ggml
+    completion    completion
+    vision        vision
+    thinking      thinking
+    tools         tools
+
+  Parameters
+                        mlx     ggml
+    min_p               0       0
+    presence_penalty    1.5     1.5
+    repeat_penalty      1       1
+    temperature         1       1
+    top_k               20      20
+    top_p               0.95    0.95
+
+  License
+    Apache License
+    Version 2.0, January 2004
+    ...
+
+`
+	trimLinePadding := func(s string) string {
+		lines := strings.Split(s, "\n")
+		for i, line := range lines {
+			lines[i] = strings.TrimRight(line, " \t\r")
+		}
+		return strings.Join(lines, "\n")
+	}
+	if diff := cmp.Diff(trimLinePadding(expect), trimLinePadding(b.String())); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
 func TestDeleteHandler(t *testing.T) {
 	stopped := false
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
