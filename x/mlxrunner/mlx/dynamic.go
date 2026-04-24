@@ -22,13 +22,24 @@ var initError error
 var initLoadError string
 var initLoadedPath string
 
+// LockOSThread pins the current goroutine to one OS thread for MLX work.
+// MLX 0.31 keeps default streams and Metal command encoders thread-local, so
+// multi-call graph construction and eval must not move between OS threads.
+func LockOSThread() {
+	runtime.LockOSThread()
+}
+
 // CheckInit returns any error that occurred during MLX dynamic library initialization.
+// On success it also pins the current goroutine for subsequent MLX work.
 func CheckInit() error {
 	if initLoadedPath != "" {
 		slog.Debug("MLX dynamic library loaded", "path", initLoadedPath)
 	}
 	if initError != nil && initLoadError != "" {
 		slog.Error(initLoadError)
+	}
+	if initError == nil {
+		LockOSThread()
 	}
 	return initError
 }

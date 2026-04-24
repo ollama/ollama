@@ -130,6 +130,7 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 	g, ctx := errgroup.WithContext(context.Background())
 
 	g.Go(func() error {
+		mlx.LockOSThread()
 		for {
 			select {
 			case <-ctx.Done():

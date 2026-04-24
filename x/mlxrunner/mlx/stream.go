@@ -52,8 +52,10 @@ func (s Stream) LogValue() slog.Value {
 	return slog.StringValue(C.GoString(C.mlx_string_data(str)))
 }
 
-var DefaultStream = sync.OnceValue(func() Stream {
+func DefaultStream() Stream {
+	LockOSThread()
+
 	s := C.mlx_stream_new()
 	C.mlx_get_default_stream(&s, DefaultDevice().ctx)
 	return Stream{s}
-})
+}
