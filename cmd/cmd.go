@@ -582,10 +582,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			opts.Think = &api.ThinkValue{Value: true}
 		case "false":
 			opts.Think = &api.ThinkValue{Value: false}
-		case "high", "medium", "low":
+		case "high", "medium", "low", "max":
 			opts.Think = &api.ThinkValue{Value: thinkStr}
 		default:
-			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, or low)", thinkStr)
+			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
 		}
 	} else {
 		opts.Think = nil
@@ -1975,8 +1975,61 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 		Options:     map[string]any{},
 		ShowConnect: true,
 	}
-	// loadOrUnloadModel is cloud-safe here: remote/cloud models skip local preload
-	// and only validate auth/connectivity before interactive chat starts.
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	requestedCloud := modelref.HasExplicitCloudSource(modelName)
+
+	info, err := func() (*api.ShowResponse, error) {
+		showReq := &api.ShowRequest{Name: modelName}
+		info, err := client.Show(cmd.Context(), showReq)
+		var se api.StatusError
+		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
+			if requestedCloud {
+				return nil, err
+			}
+			if err := PullHandler(cmd, []string{modelName}); err != nil {
+				return nil, err
+			}
+			return client.Show(cmd.Context(), &api.ShowRequest{Name: modelName})
+		}
+		return info, err
+	}()
+	if err != nil {
+		if handleCloudAuthorizationError(err) {
+			return nil
+		}
+		return err
+	}
+
+	ensureCloudStub(cmd.Context(), client, modelName)
+
+	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, false)
+	if err != nil {
+		return err
+	}
+
+	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
+
+	// TODO: remove the projector info and vision info checks below,
+	// these are left in for backwards compatibility with older servers
+	// that don't have the capabilities field in the model info
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for k := range info.ModelInfo {
+		if strings.Contains(k, ".vision.") {
+			opts.MultiModal = true
+			break
+		}
+	}
+
+	applyShowResponseToRunOptions(&opts, info)
+
 	if err := loadOrUnloadModel(cmd, &opts); err != nil {
 		return fmt.Errorf("error loading model: %w", err)
 	}

@@ -251,6 +251,359 @@ func TestOpenclawRun_SetupLaterContinuesToGatewayAndTUI(t *testing.T) {
 	}
 }
 
+func TestOpenclawRun_FirstLaunchOnboardUsesLaunchManagedHealthFlow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> "$HOME/invocations.log"
+if [ "$1" = "onboard" ]; then
+  /usr/bin/env | /usr/bin/sort > "$HOME/onboard-env.log"
+  /bin/mkdir -p "$HOME/.openclaw"
+  /bin/cat > "$HOME/.openclaw/openclaw.json" <<'EOF'
+{"wizard":{"lastRunAt":"2026-01-01T00:00:00Z"},"gateway":{"port":18789,"mode":"local"}}
+EOF
+fi
+exit 0
+`)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "I understand the risks. Continue?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	c := &Openclaw{}
+	if err := c.Run("llama3.2", []string{"status"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected onboard + passthrough invocations, got %v", lines)
+	}
+	onboardInvocation := ""
+	for _, line := range lines {
+		if strings.HasPrefix(line, "onboard ") {
+			onboardInvocation = line
+			break
+		}
+	}
+	if onboardInvocation == "" {
+		t.Fatalf("expected onboard invocation, got %v", lines)
+	}
+	if !strings.Contains(onboardInvocation, "--skip-health") {
+		t.Fatalf("expected onboard invocation to include --skip-health, got %q", onboardInvocation)
+	}
+
+	envData, err := os.ReadFile(filepath.Join(tmpDir, "onboard-env.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envSliceToMap(strings.Split(strings.TrimSpace(string(envData)), "\n"))
+	if env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"] != "1" {
+		t.Fatalf("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS = %q, want %q", env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"], "1")
+	}
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps") {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps"))
+	}
+}
+
+func TestOpenclawRun_FirstLaunchTUIArgsEnsureGatewayBeforePassthrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> "$HOME/invocations.log"
+if [ "$1" = "onboard" ]; then
+  /bin/mkdir -p "$HOME/.openclaw"
+  /bin/cat > "$HOME/.openclaw/openclaw.json" <<'EOF'
+{"wizard":{"lastRunAt":"2026-01-01T00:00:00Z"},"gateway":{"port":%d,"mode":"local"}}
+EOF
+fi
+exit 0
+`, port)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "I understand the risks. Continue?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	c := &Openclaw{}
+	if err := c.Run("llama3.2", []string{"tui"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 invocations (update, onboard, daemon restart, tui), got %v", lines)
+	}
+	onboardIdx, daemonRestartIdx, tuiIdx := -1, -1, -1
+	for i, line := range lines {
+		if onboardIdx == -1 && strings.HasPrefix(line, "onboard ") {
+			onboardIdx = i
+		}
+		if daemonRestartIdx == -1 && line == "daemon restart" {
+			daemonRestartIdx = i
+		}
+		if tuiIdx == -1 && line == "tui" {
+			tuiIdx = i
+		}
+	}
+	if onboardIdx == -1 {
+		t.Fatalf("expected an onboarding invocation, got %v", lines)
+	}
+	if daemonRestartIdx == -1 {
+		t.Fatalf("expected a daemon restart before tui, got %v", lines)
+	}
+	if tuiIdx == -1 {
+		t.Fatalf("expected a tui invocation, got %v", lines)
+	}
+	if !(onboardIdx < daemonRestartIdx && daemonRestartIdx < tuiIdx) {
+		t.Fatalf("expected onboarding, then daemon restart, then tui; got %v", lines)
+	}
+}
+
+func TestOpenclawEnsureGatewayReady_UsesDaemonStartFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	portProbe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := portProbe.Addr().(*net.TCPAddr).Port
+	_ = portProbe.Close()
+
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(fmt.Sprintf(`{
+		"wizard": {"lastRunAt": "2026-01-01T00:00:00Z"},
+		"gateway": {"port": %d, "mode": "local"}
+	}`, port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCanInstallDaemon := openclawCanInstallDaemon
+	openclawCanInstallDaemon = func() bool { return true }
+	defer func() { openclawCanInstallDaemon = oldCanInstallDaemon }()
+
+	triggeredBy := make(chan string, 1)
+	listenerReady := make(chan net.Listener, 1)
+	go func() {
+		invocationsPath := filepath.Join(tmpDir, "invocations.log")
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			data, err := os.ReadFile(invocationsPath)
+			if err == nil {
+				lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+				for _, line := range lines {
+					if line != "daemon start" && line != "gateway run --force" {
+						continue
+					}
+					ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+					if err != nil {
+						return
+					}
+					go func() {
+						for {
+							conn, err := ln.Accept()
+							if err != nil {
+								return
+							}
+							_ = conn.Close()
+						}
+					}()
+					triggeredBy <- line
+					listenerReady <- ln
+					return
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	c := &Openclaw{}
+	cleanup, _, gotPort, err := c.ensureGatewayReady(bin)
+	if err != nil {
+		t.Fatalf("ensureGatewayReady() error = %v", err)
+	}
+	defer cleanup()
+	if gotPort != port {
+		t.Fatalf("ensureGatewayReady() port = %d, want %d", gotPort, port)
+	}
+
+	var ln net.Listener
+	select {
+	case which := <-triggeredBy:
+		if which != "daemon start" {
+			t.Fatalf("expected daemon start fallback, got %q", which)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for gateway startup trigger")
+	}
+	select {
+	case ln = <-listenerReady:
+		defer ln.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for test listener")
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 0 || lines[0] != "daemon start" {
+		t.Fatalf("expected daemon start invocation, got %v", lines)
+	}
+	for _, line := range lines {
+		if line == "gateway run --force" {
+			t.Fatalf("did not expect gateway run fallback when daemon start succeeds, got %v", lines)
+		}
+	}
+}
+
+func TestOpenclawEnv_StagesBundledPluginRuntimeDeps(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OPENAI_API_KEY", "should-be-cleared")
+
+	env := envSliceToMap(openclawEnv())
+
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps") {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps"))
+	}
+	if _, ok := env["OPENAI_API_KEY"]; ok {
+		t.Fatal("expected OPENAI_API_KEY to be cleared from openclaw environment")
+	}
+}
+
+func TestOpenclawInstallEnv_PreservesExplicitStageDirAndAddsEagerDeps(t *testing.T) {
+	t.Setenv("OPENCLAW_PLUGIN_STAGE_DIR", "/tmp/custom-stage")
+
+	env := envSliceToMap(openclawInstallEnv())
+
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != "/tmp/custom-stage" {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], "/tmp/custom-stage")
+	}
+	if env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"] != "1" {
+		t.Fatalf("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS = %q, want %q", env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"], "1")
+	}
+}
+
+func TestEnsureOpenclawInstalled_UsesBundledPluginInstallEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	writeScript := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	openclawPath := filepath.Join(tmpDir, "openclaw")
+	npmScript := fmt.Sprintf(`#!/bin/sh
+/usr/bin/env | /usr/bin/sort > "$HOME/npm-env.log"
+/bin/cat > %q <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+/bin/chmod +x %q
+exit 0
+`, openclawPath, openclawPath)
+	writeScript(filepath.Join(tmpDir, "npm"), npmScript)
+	writeScript(filepath.Join(tmpDir, "git"), "#!/bin/sh\nexit 0\n")
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "OpenClaw is not installed. Install with npm?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	openclawFreshInstall = false
+	bin, err := ensureOpenclawInstalled()
+	if err != nil {
+		t.Fatalf("ensureOpenclawInstalled() error = %v", err)
+	}
+	if bin != "openclaw" {
+		t.Fatalf("ensureOpenclawInstalled() bin = %q, want %q", bin, "openclaw")
+	}
+
+	envData, err := os.ReadFile(filepath.Join(tmpDir, "npm-env.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envSliceToMap(strings.Split(strings.TrimSpace(string(envData)), "\n"))
+	if env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"] != "1" {
+		t.Fatalf("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS = %q, want %q", env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"], "1")
+	}
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps") {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps"))
+	}
+}
+
 func TestOpenclawEdit(t *testing.T) {
 	c := &Openclaw{}
 	tmpDir := t.TempDir()
@@ -1225,6 +1578,18 @@ func TestOpenclawChannelsConfigured(t *testing.T) {
 			t.Error("expected false because new config should take precedence")
 		}
 	})
+}
+
+func envSliceToMap(entries []string) map[string]string {
+	env := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		env[key] = value
+	}
+	return env
 }
 
 func TestOpenclawChannelSetupPreflight(t *testing.T) {
@@ -2242,95 +2607,7 @@ func TestIntegrationOnboarded(t *testing.T) {
 	})
 }
 
-func TestVersionLessThan(t *testing.T) {
-	tests := []struct {
-		a, b string
-		want bool
-	}{
-		{"0.1.7", "0.2.1", true},
-		{"0.2.0", "0.2.1", true},
-		{"0.2.1", "0.2.1", false},
-		{"0.2.2", "0.2.1", false},
-		{"1.0.0", "0.2.1", false},
-		{"0.2.1", "1.0.0", true},
-		{"v0.1.7", "0.2.1", true},
-		{"0.2.1", "v0.2.1", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.a+"_vs_"+tt.b, func(t *testing.T) {
-			if got := versionLessThan(tt.a, tt.b); got != tt.want {
-				t.Errorf("versionLessThan(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestWebSearchPluginUpToDate(t *testing.T) {
-	t.Run("missing directory", func(t *testing.T) {
-		if webSearchPluginUpToDate(filepath.Join(t.TempDir(), "nonexistent")) {
-			t.Error("expected false for missing directory")
-		}
-	})
-
-	t.Run("missing package.json", func(t *testing.T) {
-		dir := t.TempDir()
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for missing package.json")
-		}
-	})
-
-	t.Run("old version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"0.1.7"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for old version 0.1.7")
-		}
-	})
-
-	t.Run("exact minimum version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"0.2.1"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if !webSearchPluginUpToDate(dir) {
-			t.Error("expected true for exact minimum version 0.2.1")
-		}
-	})
-
-	t.Run("newer version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"1.0.0"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if !webSearchPluginUpToDate(dir) {
-			t.Error("expected true for newer version 1.0.0")
-		}
-	})
-
-	t.Run("invalid json", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`not json`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for invalid json")
-		}
-	})
-
-	t.Run("empty version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":""}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for empty version")
-		}
-	})
-}
-
-func TestRegisterWebSearchPlugin(t *testing.T) {
+func TestConfigureOllamaWebSearch(t *testing.T) {
 	home := t.TempDir()
 	setTestHome(t, home)
 
@@ -2345,7 +2622,7 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registerWebSearchPlugin()
+		configureOllamaWebSearch()
 
 		data, err := os.ReadFile(configPath)
 		if err != nil {
@@ -2361,40 +2638,30 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal("plugins section missing")
 		}
 
-		// Check entries
 		entries, _ := plugins["entries"].(map[string]any)
-		entry, _ := entries["openclaw-web-search"].(map[string]any)
+		entry, _ := entries["ollama"].(map[string]any)
 		if enabled, _ := entry["enabled"].(bool); !enabled {
-			t.Error("expected entries.openclaw-web-search.enabled = true")
+			t.Error("expected entries.ollama.enabled = true")
+		}
+		if _, ok := entries["openclaw-web-search"]; ok {
+			t.Error("expected stale openclaw-web-search entry to be absent")
 		}
 
-		// Check allow list
-		allow, _ := plugins["allow"].([]any)
-		found := false
-		for _, v := range allow {
-			if s, ok := v.(string); ok && s == "openclaw-web-search" {
-				found = true
-			}
+		if _, ok := plugins["allow"]; ok {
+			t.Error("did not expect plugins.allow to be created when no allowlist exists")
 		}
-		if !found {
-			t.Error("expected plugins.allow to contain openclaw-web-search")
+		if _, ok := plugins["installs"]; ok {
+			t.Error("did not expect plugins.installs to be created")
 		}
 
-		// Check install provenance
-		installs, _ := plugins["installs"].(map[string]any)
-		record, _ := installs["openclaw-web-search"].(map[string]any)
-		if record == nil {
-			t.Fatal("expected plugins.installs.openclaw-web-search")
+		tools, _ := config["tools"].(map[string]any)
+		web, _ := tools["web"].(map[string]any)
+		search, _ := web["search"].(map[string]any)
+		if got, _ := search["provider"].(string); got != "ollama" {
+			t.Errorf("search provider = %q, want %q", got, "ollama")
 		}
-		if source, _ := record["source"].(string); source != "npm" {
-			t.Errorf("install source = %q, want %q", source, "npm")
-		}
-		if spec, _ := record["spec"].(string); spec != webSearchNpmPackage {
-			t.Errorf("install spec = %q, want %q", spec, webSearchNpmPackage)
-		}
-		expectedPath := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
-		if installPath, _ := record["installPath"].(string); installPath != expectedPath {
-			t.Errorf("installPath = %q, want %q", installPath, expectedPath)
+		if enabled, _ := search["enabled"].(bool); !enabled {
+			t.Error("expected tools.web.search.enabled = true")
 		}
 	})
 
@@ -2403,8 +2670,8 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registerWebSearchPlugin()
-		registerWebSearchPlugin()
+		configureOllamaWebSearch()
+		configureOllamaWebSearch()
 
 		data, err := os.ReadFile(configPath)
 		if err != nil {
@@ -2416,30 +2683,39 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 		}
 
 		plugins, _ := config["plugins"].(map[string]any)
-		allow, _ := plugins["allow"].([]any)
-		count := 0
-		for _, v := range allow {
-			if s, ok := v.(string); ok && s == "openclaw-web-search" {
-				count++
-			}
+		entries, _ := plugins["entries"].(map[string]any)
+		if len(entries) != 1 {
+			t.Fatalf("expected only bundled ollama entry, got %v", entries)
 		}
-		if count != 1 {
-			t.Errorf("expected exactly 1 openclaw-web-search in allow, got %d", count)
+		if _, ok := entries["ollama"]; !ok {
+			t.Fatalf("expected entries.ollama to exist, got %v", entries)
 		}
 	})
 
-	t.Run("preserves existing config", func(t *testing.T) {
+	t.Run("migrates stale plugin config and preserves unrelated settings", func(t *testing.T) {
 		initial := map[string]any{
 			"plugins": map[string]any{
-				"allow": []any{"some-other-plugin"},
+				"allow": []any{"some-other-plugin", "openclaw-web-search"},
 				"entries": map[string]any{
-					"some-other-plugin": map[string]any{"enabled": true},
+					"some-other-plugin":   map[string]any{"enabled": true},
+					"openclaw-web-search": map[string]any{"enabled": true},
 				},
 				"installs": map[string]any{
 					"some-other-plugin": map[string]any{
 						"source":      "npm",
 						"installPath": "/some/path",
 					},
+					"openclaw-web-search": map[string]any{
+						"source":      "npm",
+						"installPath": "/old/path",
+					},
+				},
+			},
+			"tools": map[string]any{
+				"alsoAllow": []any{"ollama_web_search", "ollama_web_fetch", "browser"},
+				"web": map[string]any{
+					"search": map[string]any{"enabled": false},
+					"fetch":  map[string]any{"enabled": false},
 				},
 			},
 			"customField": "preserved",
@@ -2449,7 +2725,7 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registerWebSearchPlugin()
+		configureOllamaWebSearch()
 
 		out, err := os.ReadFile(configPath)
 		if err != nil {
@@ -2469,28 +2745,61 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 		if entries["some-other-plugin"] == nil {
 			t.Error("existing plugin entry was lost")
 		}
+		if entries["openclaw-web-search"] != nil {
+			t.Error("stale openclaw-web-search entry should be removed")
+		}
+		if ollamaEntry, _ := entries["ollama"].(map[string]any); ollamaEntry == nil {
+			t.Fatal("expected bundled ollama entry to be enabled")
+		}
 
 		installs, _ := plugins["installs"].(map[string]any)
 		if installs["some-other-plugin"] == nil {
 			t.Error("existing install record was lost")
 		}
+		if installs["openclaw-web-search"] != nil {
+			t.Error("stale openclaw-web-search install record should be removed")
+		}
 
 		allow, _ := plugins["allow"].([]any)
-		hasOther, hasWebSearch := false, false
+		hasOther, hasStalePlugin, hasOllama := false, false, false
 		for _, v := range allow {
 			s, _ := v.(string)
 			if s == "some-other-plugin" {
 				hasOther = true
 			}
 			if s == "openclaw-web-search" {
-				hasWebSearch = true
+				hasStalePlugin = true
+			}
+			if s == "ollama" {
+				hasOllama = true
 			}
 		}
 		if !hasOther {
 			t.Error("existing allow entry was lost")
 		}
-		if !hasWebSearch {
-			t.Error("openclaw-web-search not added to allow")
+		if hasStalePlugin {
+			t.Error("stale openclaw-web-search allow entry should be removed")
+		}
+		if !hasOllama {
+			t.Error("expected plugins.allow to contain bundled ollama plugin")
+		}
+
+		tools, _ := config["tools"].(map[string]any)
+		alsoAllow, _ := tools["alsoAllow"].([]any)
+		if len(alsoAllow) != 1 || alsoAllow[0] != "browser" {
+			t.Errorf("expected stale custom web tools to be removed, got %v", alsoAllow)
+		}
+		web, _ := tools["web"].(map[string]any)
+		search, _ := web["search"].(map[string]any)
+		fetch, _ := web["fetch"].(map[string]any)
+		if got, _ := search["provider"].(string); got != "ollama" {
+			t.Errorf("search provider = %q, want %q", got, "ollama")
+		}
+		if enabled, _ := search["enabled"].(bool); !enabled {
+			t.Error("expected migrated tools.web.search.enabled = true")
+		}
+		if enabled, _ := fetch["enabled"].(bool); !enabled {
+			t.Error("expected migrated tools.web.fetch.enabled = true")
 		}
 	})
 }
