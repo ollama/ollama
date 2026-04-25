@@ -399,11 +399,23 @@ type ResponsesRequest struct {
 
 	// optional, default is false
 	Stream *bool `json:"stream,omitempty"`
+
+	// PreviousResponseID chains this request to a prior response, enabling
+	// multi-turn conversations without resending the full message history.
+	// Mutually exclusive with Conversation.
+	PreviousResponseID *string `json:"previous_response_id,omitempty"`
 }
 
-// FromResponsesRequest converts a ResponsesRequest to api.ChatRequest
-func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
+// FromResponsesRequest converts a ResponsesRequest to api.ChatRequest.
+// previousMessages contains the reconstructed history from a previous_response_id
+// chain. They are prepended before the current request's instructions and input.
+func FromResponsesRequest(r ResponsesRequest, previousMessages ...[]api.Message) (*api.ChatRequest, error) {
 	var messages []api.Message
+
+	// Prepend history from previous_response_id chain
+	if len(previousMessages) > 0 && len(previousMessages[0]) > 0 {
+		messages = append(messages, previousMessages[0]...)
+	}
 
 	// Add instructions as system message if present
 	if r.Instructions != "" {
@@ -840,7 +852,7 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		Status:             "completed",
 		IncompleteDetails:  nil, // Only populated if response incomplete
 		Model:              model,
-		PreviousResponseID: nil, // Not supported
+		PreviousResponseID: request.PreviousResponseID,
 		Instructions:       instructions,
 		Output:             output,
 		Error:              nil, // Only populated on failure
@@ -865,8 +877,8 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 			OutputTokensDetails: ResponsesOutputTokensDetails{ReasoningTokens: 0},
 		},
 		MaxOutputTokens:  request.MaxOutputTokens,
-		MaxToolCalls:     nil,   // Not supported
-		Store:            false, // We don't store responses
+		MaxToolCalls:     nil,  // Not supported
+		Store:            true, // Responses are stored for previous_response_id chaining
 		Background:       request.Background,
 		ServiceTier:      "default", // Default value
 		Metadata:         map[string]any{},

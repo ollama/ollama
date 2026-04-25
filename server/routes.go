@@ -102,6 +102,17 @@ type Server struct {
 	sched         *Scheduler
 	defaultNumCtx int
 	requestLogger *inferenceRequestLogger
+	responseStore *ResponseStore
+}
+
+const responseStoreKey = "response_store"
+
+// setResponseStore is a middleware that injects the ResponseStore into the gin context.
+func (s *Server) setResponseStore() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set(responseStoreKey, s.responseStore)
+		c.Next()
+	}
 }
 
 func init() {
@@ -1730,7 +1741,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/v1/embeddings", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", cloudModelPathPassthroughMiddleware(cloudErrRemoteModelDetailsUnavailable), middleware.RetrieveMiddleware(), s.ShowHandler)
-	r.POST("/v1/responses", s.withInferenceRequestLogging("/v1/responses", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ResponsesMiddleware(), s.ChatHandler)...)
+	r.POST("/v1/responses", s.withInferenceRequestLogging("/v1/responses", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), s.setResponseStore(), middleware.ResponsesMiddleware(), s.ChatHandler)...)
 	// OpenAI-compatible image generation endpoints
 	r.POST("/v1/images/generations", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ImageGenerationsMiddleware(), s.GenerateHandler)
 	r.POST("/v1/images/edits", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ImageEditsMiddleware(), s.GenerateHandler)
@@ -1789,7 +1800,10 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
-	s := &Server{addr: ln.Addr()}
+	s := &Server{
+		addr:          ln.Addr(),
+		responseStore: NewResponseStore(envconfig.ResponseStoreMaxResponses(), envconfig.ResponseStoreTTL()),
+	}
 	if err := s.initRequestLogging(); err != nil {
 		return err
 	}
