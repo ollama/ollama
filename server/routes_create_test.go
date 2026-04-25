@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1121,6 +1122,67 @@ func createSafetensorsTestModel(t *testing.T, modelName string, config model.Con
 	name := model.ParseName(modelName)
 	if err := manifest.WriteManifest(name, *configLayer, layers); err != nil {
 		t.Fatalf("failed to write manifest: %v", err)
+	}
+}
+
+func TestCreatePrunesImportedSafetensorBlobs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	var buf bytes.Buffer
+	headerSize := int64(len("{}"))
+	if err := binary.Write(&buf, binary.LittleEndian, headerSize); err != nil {
+		t.Fatal(err)
+	}
+	buf.WriteString("{}")
+
+	modelDigest := createTestBlob(t, buf.Bytes())
+	configDigest := createTestBlob(t, []byte(`{"architectures":["LlamaForCausalLM"],"vocab_size":32000}`))
+	tokenizerDigest := createTestBlob(t, []byte(`{"version":"1.0"}`))
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name: "test-safetensors-cleanup",
+		Files: map[string]string{
+			"model.safetensors": modelDigest,
+			"config.json":       configDigest,
+			"tokenizer.json":    tokenizerDigest,
+		},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	for _, digest := range []string{modelDigest, configDigest, tokenizerDigest} {
+		path, err := manifest.BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("imported blob %s still exists: %v", digest, err)
+		}
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("test-safetensors-cleanup"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+
+	for _, layer := range append(mf.Layers, mf.Config) {
+		if layer.Digest == "" {
+			continue
+		}
+		path, err := manifest.BlobsPath(layer.Digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("manifest blob %s missing: %v", layer.Digest, err)
+		}
 	}
 }
 
