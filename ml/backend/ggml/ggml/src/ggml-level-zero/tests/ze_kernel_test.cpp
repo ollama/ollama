@@ -582,16 +582,19 @@ static void TestL0RmsNormF16() {
         eps
     );
 
-    // Verify: for any row, sum(y^2)/hidden should equal 1.0 (definition of rms_norm)
-    // Check row 0 only (exact enough for a CPU reference test)
-    double sq_sum = 0.0;
+    // Verify: for any row, sum(y^2)/hidden should equal sum_x^2 / (sum_x^2 + hidden*eps).
+    // Pure rms_norm gives exact 1.0 only when eps=0; with eps>0 the expected RMS is slightly < 1.
+    // Compute the input row's sum-of-squares to derive the expected RMS analytically.
+    double sq_sum_y = 0.0, sq_sum_x = 0.0;
     for (int32_t i = 0; i < hidden; ++i) {
-        sq_sum += (double)y_cpu[i] * (double)y_cpu[i];
+        sq_sum_y += (double)y_cpu[i] * (double)y_cpu[i];
+        sq_sum_x += (double)x[i] * (double)x[i];
     }
-    float rms = (float)sqrt(sq_sum / hidden);
-    float one = 1.0f;
-    // Allow 8 ULP for RMS variance over 256 elements (accumulated rounding)
-    ZE_ASSERT_ULP(&rms, &one, 1, 8, "rms_norm row0 rms should equal 1.0");
+    float rms_actual   = (float)sqrt(sq_sum_y / hidden);
+    float rms_expected = (float)sqrt(sq_sum_x / (sq_sum_x + (double)hidden * (double)eps));
+    // Allow 16 ULP for accumulated rounding over 256 elements with two sqrt operations.
+    ZE_ASSERT_ULP(&rms_actual, &rms_expected, 1, 16,
+                  "rms_norm row0 rms should match expected analytical value");
 
     // Verify: no NaN output (Bug AC-10)
     for (size_t i = 0; i < elems; ++i) {

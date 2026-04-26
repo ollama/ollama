@@ -883,7 +883,7 @@ func TestL0TokensPerSec(t *testing.T) {
 	err := client.Chat(ctx, &req, func(resp api.ChatResponse) error {
 		if resp.Done {
 			l0EvalCount = resp.Metrics.EvalCount
-			l0EvalDurationNs = resp.Metrics.EvalDuration
+			l0EvalDurationNs = resp.Metrics.EvalDuration.Nanoseconds()
 		}
 		return nil
 	})
