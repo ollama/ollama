@@ -46,6 +46,18 @@ if echo $PLATFORM | grep "amd64" > /dev/null; then
         --target archive \
         -f Dockerfile \
         .
+
+    # Intel Level Zero flavor (GPU + NPU, amd64 only)
+    if [ "${FLAVOR:-}" = "level_zero" ] || [ "${OLLAMA_BUILD_LEVEL_ZERO:-0}" = "1" ]; then
+        docker buildx build \
+            --output type=local,dest=${outDir} \
+            --platform=linux/amd64 \
+            ${OLLAMA_COMMON_BUILD_ARGS} \
+            --build-arg FLAVOR=level_zero \
+            --target archive \
+            -f Dockerfile \
+            .
+    fi
 fi
 
 # Run deduplication for each platform output directory

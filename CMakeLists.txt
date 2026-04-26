@@ -362,3 +362,43 @@ if(MLX_ENGINE)
         endif()
     endif()
 endif()
+
+# ────────────────────────────────────────────────────────────────────────────
+# Intel Level Zero backend (GPU + NPU)
+# OFF by default — enabling this must NOT alter the default binary output in
+# any way (§8 backwards-compat checklist / joint gate criterion (a) and (d)).
+# ────────────────────────────────────────────────────────────────────────────
+
+# Add cmake/modules to the search path so FindLevelZero.cmake is found.
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
+
+option(GGML_LEVEL_ZERO     "Build Intel Level Zero backend"              OFF)
+option(GGML_LEVEL_ZERO_NPU "Enable NPU device class in Level Zero backend" OFF)
+
+if(GGML_LEVEL_ZERO)
+    find_package(LevelZero REQUIRED)
+
+    # Forward the include path to the GGML Level Zero subdirectory so that
+    # ggml-level-zero.cpp can #include <level_zero/ze_api.h> directly.
+    # LevelZero_LIBRARIES is intentionally not set (dlopen discipline,
+    # ADR-L0-005 / FindLevelZero.cmake INFO-1 comment).
+    set(LEVEL_ZERO_FOUND TRUE CACHE BOOL "Level Zero headers found" FORCE)
+    set(LevelZero_INCLUDE_DIRS "${LevelZero_INCLUDE_DIRS}" CACHE PATH
+        "Level Zero include directories forwarded to ggml subtree" FORCE)
+
+    if(GGML_LEVEL_ZERO_NPU)
+        set(GGML_LEVEL_ZERO_NPU_ENABLE ON CACHE BOOL
+            "NPU device class enabled in Level Zero backend" FORCE)
+    endif()
+
+    add_subdirectory(
+        ${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-level-zero)
+    target_include_directories(ggml-level-zero PRIVATE
+        ${GGML_INCLUDE_DIRS}
+        ${LevelZero_INCLUDE_DIRS})
+
+    install(TARGETS ggml-level-zero
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT LevelZero
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT LevelZero
+    )
+endif()

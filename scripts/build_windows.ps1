@@ -256,6 +256,24 @@ function vulkan {
     }
 }
 
+function level_zero {
+    # Intel Level Zero backend (GPU + NPU).
+    # Requires Intel oneAPI Base Toolkit or a standalone Level Zero SDK.
+    # Set LEVEL_ZERO_ROOT or ensure level-zero headers are on the system include path.
+    # Set OLLAMA_BUILD_LEVEL_ZERO=1 or pass "level_zero" as a build argument to enable.
+    if ($env:ONEAPI_ROOT -or $env:LEVEL_ZERO_ROOT -or $env:OLLAMA_BUILD_LEVEL_ZERO -eq "1") {
+        Write-Output "Building Intel Level Zero backend libraries"
+        & cmake -B build\level_zero --preset "Level Zero" --install-prefix $script:DIST_DIR
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --build build\level_zero --target ggml-level-zero --config Release --parallel $script:JOBS
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --install build\level_zero --component LevelZero --strip
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    } else {
+        Write-Output "Intel Level Zero SDK not detected (set ONEAPI_ROOT, LEVEL_ZERO_ROOT, or OLLAMA_BUILD_LEVEL_ZERO=1), skipping"
+    }
+}
+
 function mlxCuda13 {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     $cudaMajorVer="13"

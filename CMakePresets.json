@@ -115,6 +115,44 @@
         "MLX_CUDA_ARCHITECTURES": "86;89;90;90a;100;103;75-virtual;80-virtual;110-virtual;120-virtual;121-virtual",
         "OLLAMA_RUNNER_DIR": "mlx_cuda_v13"
       }
+    },
+    {
+      "name": "Level Zero",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "GGML_LEVEL_ZERO": "ON",
+        "OLLAMA_RUNNER_DIR": "level_zero",
+        "OLLAMA_L0_DEBUG_TENSOR_IO": {
+          "type": "BOOL",
+          "value": "OFF"
+        }
+      }
+    },
+    {
+      "name": "Level Zero NPU",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "GGML_LEVEL_ZERO": "ON",
+        "GGML_LEVEL_ZERO_NPU": "ON",
+        "OLLAMA_RUNNER_DIR": "level_zero",
+        "OLLAMA_L0_DEBUG_TENSOR_IO": {
+          "type": "BOOL",
+          "value": "OFF"
+        }
+      }
+    },
+    {
+      "name": "Level Zero Debug",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "GGML_LEVEL_ZERO": "ON",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "OLLAMA_RUNNER_DIR": "level_zero",
+        "OLLAMA_L0_DEBUG_TENSOR_IO": {
+          "type": "BOOL",
+          "value": "OFF"
+        }
+      }
     }
   ],
   "buildPresets": [
@@ -192,6 +230,24 @@
       "name": "MLX CUDA 13",
       "targets": [ "mlx", "mlxc" ],
       "configurePreset": "MLX CUDA 13"
+    },
+    {
+      "name": "Level Zero",
+      "targets": [ "ggml-level-zero" ],
+      "configurePreset": "Level Zero",
+      "configuration": "Release"
+    },
+    {
+      "name": "Level Zero NPU",
+      "targets": [ "ggml-level-zero" ],
+      "configurePreset": "Level Zero NPU",
+      "configuration": "Release"
+    },
+    {
+      "name": "Level Zero Debug",
+      "targets": [ "ggml-level-zero" ],
+      "configurePreset": "Level Zero Debug",
+      "configuration": "Debug"
     }
   ]
 }
