@@ -1,151 +1,219 @@
 // SPDX-License-Identifier: MIT
-// softmax.cl — Softmax and causal-softmax kernels for the Intel Level Zero backend.
+// softmax.cl — Softmax kernel for the Intel Level Zero backend.
 //
 // Compiled AOT to SPIR-V by ocloc:
 //   ocloc compile -file softmax.cl -device <target> -options "-cl-std=CL2.0 -O3"
 //
-// Two entry points are compiled from this file:
-//   softmax_f32        — standard softmax (no causal mask)
-//   softmax_causal_f32 — causal softmax (masks positions > cur_pos to -INFINITY)
+// One entry point compiled from this file:
+//   softmax_f32 — stride-aware F32 softmax with optional mask and ALiBi (RC3 fix)
+//
+// Previous entry points removed in this rewrite:
+//   softmax_causal_f32 — subsumed by softmax_f32 with has_mask + mask=-INF encoding
 //
 // Argument binding contract (must match ggml-level-zero.cpp exactly):
-//   arg 0: x      (__global const float*) — input row tensor  src0->data
-//   arg 1: y      (__global float*)       — output row tensor  node->data
-//   arg 2: n_cols (uint)                  — row width == src0->ne[0]
-//   arg 3: scale  (float)                 — pre-scale applied to input (typically 1.0f)
-//   arg 4: cur_pos (uint)  [causal only]  — current token position == op_params[1]
+//   arg 0: pc_raw (__constant int*)       — ze_softmax_pc as raw int array (128 B)
+//   arg 1: x      (__global const float*) — input tensor src0->data
+//   arg 2: mask   (__global const float*) — mask tensor src1->data (may be null buffer)
+//   arg 3: y      (__global float*)       — output tensor dst->data
 //
-// Work-group size: (256, 1, 1).  One work-group per row.
-// groupCountX = n_rows.  Each work-group processes its row cooperatively.
+// Push-constant fields (see ze_buffer.hpp ze_softmax_pc):
+//   ne[4]      — element counts [ne0=n_cols, ne1, ne2, ne3]
+//   nb_x[4]    — input byte strides (BYTES)
+//   nb_y[4]    — output byte strides (BYTES)
+//   nb_mask[4] — mask byte strides (BYTES; zeroed when has_mask=0)
+//   scale      — pre-scale applied to each input element (typically 1/sqrt(d_k))
+//   max_bias   — ALiBi max bias (0.0 when has_alibi=0)
+//   has_mask   — 1 if mask buffer is valid, 0 otherwise
+//   has_alibi  — 1 if ALiBi slope is applied, 0 otherwise
 //
-// Algorithm: numerically stable three-phase softmax:
-//   Phase 1: reduce to find the row maximum (for exp stability).
-//   Phase 2: compute exp(x*scale - max) and reduce to find the sum.
-//   Phase 3: normalise by dividing each element by the sum.
+// Work-group size: (256, 1, 1).
+// Global size:     (256, ne[1]*ne[2]*ne[3], 1) — one work-group per row.
+// The grid Y dimension encodes the flattened row index (i1, i2, i3).
+//
+// Stride-aware indexing (ADR §3.2):
+//   Row base (byte offset from data pointer):
+//     base_x    = i3*nb_x[3] + i2*nb_x[2] + i1*nb_x[1]
+//     base_mask = i3*nb_mask[3] + i2*nb_mask[2] + (i1 % mask_rows)*nb_mask[1]
+//   Element i0: byte_off = base + i0*nb_X[0]
+//
+// Algorithm (two-pass numerically-stable softmax per CUDA Brief §9.9c/e):
+//   Pass 1: find row maximum with scale + optional mask + optional ALiBi applied.
+//           barrier(CLK_LOCAL_MEM_FENCE) after reduction (correctness requirement).
+//   Pass 2: compute exp(xi - max), accumulate sum, write exp values.
+//           barrier between exp-sum and normalise.
+//   Pass 3: divide each element by the sum to produce normalised probabilities.
+//
+// ALiBi slope formula (CUDA softmax.cu §9.9d):
+//   n_head_log2 = largest power of 2 <= n_heads (= ne[2])
+//   For head index h = i2:
+//     if h < n_head_log2: slope = exp2f(-max_bias * (h+1))            [m0 path]
+//     else:               slope = exp2f(-max_bias * 0.5 * (2*(h-n_head_log2)+1)) [m1 path]
+//   xi += slope * col_index_within_row
 
 #define WG_SIZE 256
 
 // ---------------------------------------------------------------------------
-// Standard (full-context) softmax
+// softmax_f32 — stride-aware F32 softmax with optional mask and ALiBi.
 //
-// Applies scale to every input element before computing max and exp.
+// RC3 fix: all row accesses use nb_x[], nb_mask[] byte strides rather than
+// the previous row*n_cols linear addressing that broke on non-contiguous tensors.
+// Correctness requirement: barrier(CLK_LOCAL_MEM_FENCE) between the max-reduction
+// pass and the exp-sum pass (per CUDA Brief §9.9e and ADR §3.2 work-split).
 // ---------------------------------------------------------------------------
 __kernel __attribute__((reqd_work_group_size(WG_SIZE, 1, 1)))
 void softmax_f32(
-    __global const float *x,
-    __global       float *y,
-    uint   n_cols,
-    float  scale)
+    __constant int          *pc_raw,   // ze_softmax_pc (arg 0)
+    __global const float    *x,        // input  src0 (arg 1)
+    __global const float    *mask,     // mask   src1 (arg 2, may be null/unused)
+    __global       float    *y)        // output dst  (arg 3)
 {
     __local float scratch[WG_SIZE];
 
-    uint row = get_group_id(0);
-    uint lid = get_local_id(0);
+    // Unpack ze_softmax_pc from the raw int array.
+    // Layout offsets (int32 elements):
+    //   [0..3]   = ne[4]        (int32 x4)
+    //   [4..11]  = nb_x[4]     (int64 x4 = 8 int32 values)
+    //   [12..19] = nb_y[4]     (int64 x4)
+    //   [20..27] = nb_mask[4]  (int64 x4)
+    //   [28]     = scale        (float as int32 bits)
+    //   [29]     = max_bias     (float)
+    //   [30]     = has_mask     (int32)
+    //   [31]     = has_alibi    (int32)
 
-    __global const float *x_row = x + row * n_cols;
-    __global       float *y_row = y + row * n_cols;
+    int ne0 = pc_raw[0];
+    int ne1 = pc_raw[1];
+    int ne2 = pc_raw[2];
+    // int ne3 = pc_raw[3];  // decoded from grid
 
-    // Phase 1: find row maximum for numerical stability.
-    float lmax = -INFINITY;
-    for (uint i = lid; i < n_cols; i += WG_SIZE) {
-        float v = x_row[i] * scale;
-        if (v > lmax) lmax = v;
+    long nb_x0 = (long)pc_raw[4]  | ((long)pc_raw[5]  << 32);
+    long nb_x1 = (long)pc_raw[6]  | ((long)pc_raw[7]  << 32);
+    long nb_x2 = (long)pc_raw[8]  | ((long)pc_raw[9]  << 32);
+    long nb_x3 = (long)pc_raw[10] | ((long)pc_raw[11] << 32);
+
+    long nb_y0 = (long)pc_raw[12] | ((long)pc_raw[13] << 32);
+    long nb_y1 = (long)pc_raw[14] | ((long)pc_raw[15] << 32);
+    long nb_y2 = (long)pc_raw[16] | ((long)pc_raw[17] << 32);
+    long nb_y3 = (long)pc_raw[18] | ((long)pc_raw[19] << 32);
+
+    long nb_mask0 = (long)pc_raw[20] | ((long)pc_raw[21] << 32);
+    long nb_mask1 = (long)pc_raw[22] | ((long)pc_raw[23] << 32);
+    long nb_mask2 = (long)pc_raw[24] | ((long)pc_raw[25] << 32);
+    long nb_mask3 = (long)pc_raw[26] | ((long)pc_raw[27] << 32);
+
+    float scale    = as_float(pc_raw[28]);
+    float max_bias = as_float(pc_raw[29]);
+    int   has_mask  = pc_raw[30];
+    int   has_alibi = pc_raw[31];
+
+    uint lid     = get_local_id(0);
+    uint row_idx = get_group_id(1);
+
+    // Decode (i1, i2, i3) from flattened row index.
+    uint i1 = row_idx % (uint)ne1;
+    uint i2 = (row_idx / (uint)ne1) % (uint)ne2;
+    uint i3 = row_idx / ((uint)ne1 * (uint)ne2);
+
+    // Byte base for this row.
+    long base_x = (long)i3 * nb_x3 + (long)i2 * nb_x2 + (long)i1 * nb_x1;
+    long base_y = (long)i3 * nb_y3 + (long)i2 * nb_y2 + (long)i1 * nb_y1;
+
+    // Mask is broadcast across the batch dimensions (ne2, ne3) — use i1 modulo
+    // the number of mask rows (ne_mask[1]).  The mask byte strides in nb_mask[]
+    // are set to zero for dimensions the mask broadcasts across (Null Object pattern).
+    // For the common causal mask case: nb_mask[2]=0, nb_mask[3]=0, nb_mask[1] is set.
+    long base_mask = 0;
+    if (has_mask) {
+        base_mask = (long)i3 * nb_mask3 + (long)i2 * nb_mask2 + (long)i1 * nb_mask1;
     }
-    scratch[lid] = lmax;
-    barrier(CLK_LOCAL_MEM_FENCE);
 
-    for (uint s = WG_SIZE / 2; s > 0; s >>= 1) {
-        if (lid < s) {
-            if (scratch[lid + s] > scratch[lid]) scratch[lid] = scratch[lid + s];
-        }
-        barrier(CLK_LOCAL_MEM_FENCE);
-    }
-    float row_max = scratch[0];
+    // ALiBi slope for this head (i2).
+    float alibi_slope = 0.0f;
+    if (has_alibi) {
+        int n_heads = ne2;
+        // n_head_log2 = largest power of 2 <= n_heads.
+        int n_head_log2 = 1;
+        while (n_head_log2 * 2 <= n_heads) n_head_log2 *= 2;
 
-    // Phase 2: compute exp(x*scale - max) and accumulate partial sums.
-    float lsum = 0.0f;
-    for (uint i = lid; i < n_cols; i += WG_SIZE) {
-        float v  = native_exp(x_row[i] * scale - row_max);
-        y_row[i] = v;
-        lsum    += v;
-    }
-    scratch[lid] = lsum;
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    for (uint s = WG_SIZE / 2; s > 0; s >>= 1) {
-        if (lid < s) scratch[lid] += scratch[lid + s];
-        barrier(CLK_LOCAL_MEM_FENCE);
-    }
-    float inv_sum = 1.0f / scratch[0];
-
-    // Phase 3: normalise.
-    for (uint i = lid; i < n_cols; i += WG_SIZE) {
-        y_row[i] *= inv_sum;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Causal (autoregressive) softmax
-//
-// Positions j > cur_pos are treated as -INFINITY before computing max, so
-// their exp value becomes 0 and they contribute nothing to the sum.
-// ---------------------------------------------------------------------------
-__kernel __attribute__((reqd_work_group_size(WG_SIZE, 1, 1)))
-void softmax_causal_f32(
-    __global const float *x,
-    __global       float *y,
-    uint   n_cols,
-    float  scale,
-    uint   cur_pos)
-{
-    __local float scratch[WG_SIZE];
-
-    uint row = get_group_id(0);
-    uint lid = get_local_id(0);
-
-    __global const float *x_row = x + row * n_cols;
-    __global       float *y_row = y + row * n_cols;
-
-    // Phase 1: find max over unmasked positions (j <= cur_pos).
-    float lmax = -INFINITY;
-    for (uint i = lid; i < n_cols; i += WG_SIZE) {
-        float v = (i <= cur_pos) ? (x_row[i] * scale) : -INFINITY;
-        if (v > lmax) lmax = v;
-    }
-    scratch[lid] = lmax;
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    for (uint s = WG_SIZE / 2; s > 0; s >>= 1) {
-        if (lid < s) {
-            if (scratch[lid + s] > scratch[lid]) scratch[lid] = scratch[lid + s];
-        }
-        barrier(CLK_LOCAL_MEM_FENCE);
-    }
-    float row_max = scratch[0];
-
-    // Phase 2: exp for unmasked positions, zero for masked positions.
-    float lsum = 0.0f;
-    for (uint i = lid; i < n_cols; i += WG_SIZE) {
-        float v;
-        if (i <= cur_pos) {
-            v = native_exp(x_row[i] * scale - row_max);
+        int h = (int)i2;
+        if (h < n_head_log2) {
+            alibi_slope = exp2(-max_bias * (float)(h + 1));
         } else {
-            v = 0.0f;
+            alibi_slope = exp2(-max_bias * 0.5f * (float)(2 * (h - n_head_log2) + 1));
         }
-        y_row[i] = v;
-        lsum    += v;
+    }
+
+    // -------------------------------------------------------------------------
+    // Pass 1: find row maximum.
+    // Input xi = x[i] * scale + optional_mask[i] + optional_alibi_slope * i.
+    // -------------------------------------------------------------------------
+    float lmax = -INFINITY;
+    for (int i = (int)lid; i < ne0; i += WG_SIZE) {
+        long byte_off = base_x + (long)i * nb_x0;
+        float xi = *(__global const float *)((__global const char *)x + byte_off) * scale;
+
+        if (has_alibi) {
+            xi += alibi_slope * (float)i;
+        }
+        if (has_mask) {
+            long mask_off = base_mask + (long)i * nb_mask0;
+            xi += *(__global const float *)((__global const char *)mask + mask_off);
+        }
+        lmax = fmax(lmax, xi);
+    }
+    scratch[lid] = lmax;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    // Tree-reduce to find the true row maximum across all 256 threads.
+    for (uint s = WG_SIZE / 2u; s > 0u; s >>= 1u) {
+        if (lid < s) {
+            scratch[lid] = fmax(scratch[lid], scratch[lid + s]);
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    float row_max = scratch[0];
+
+    // -------------------------------------------------------------------------
+    // Pass 2: compute exp(xi - max) and accumulate partial sums.
+    // Write intermediate exp values into y[] for pass 3.
+    // The barrier between this pass and pass 3 is the correctness requirement
+    // (per CUDA Brief §9.9e and ADR work-split §3.2).
+    // -------------------------------------------------------------------------
+    float lsum = 0.0f;
+    for (int i = (int)lid; i < ne0; i += WG_SIZE) {
+        long byte_off_x = base_x + (long)i * nb_x0;
+        long byte_off_y = base_y + (long)i * nb_y0;
+
+        float xi = *(__global const float *)((__global const char *)x + byte_off_x) * scale;
+
+        if (has_alibi) {
+            xi += alibi_slope * (float)i;
+        }
+        if (has_mask) {
+            long mask_off = base_mask + (long)i * nb_mask0;
+            xi += *(__global const float *)((__global const char *)mask + mask_off);
+        }
+
+        float ev = native_exp(xi - row_max);
+        *(__global float *)((__global char *)y + byte_off_y) = ev;
+        lsum += ev;
     }
     scratch[lid] = lsum;
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    for (uint s = WG_SIZE / 2; s > 0; s >>= 1) {
+    // Tree-reduce to find the total sum.
+    for (uint s = WG_SIZE / 2u; s > 0u; s >>= 1u) {
         if (lid < s) scratch[lid] += scratch[lid + s];
         barrier(CLK_LOCAL_MEM_FENCE);
     }
+
     float inv_sum = (scratch[0] > 0.0f) ? (1.0f / scratch[0]) : 0.0f;
 
-    // Phase 3: normalise.
-    for (uint i = lid; i < n_cols; i += WG_SIZE) {
-        y_row[i] *= inv_sum;
+    // -------------------------------------------------------------------------
+    // Pass 3: normalise by dividing each exp value by the total sum.
+    // -------------------------------------------------------------------------
+    for (int i = (int)lid; i < ne0; i += WG_SIZE) {
+        long byte_off_y = base_y + (long)i * nb_y0;
+        float ev = *(__global float *)((__global char *)y + byte_off_y);
+        *(__global float *)((__global char *)y + byte_off_y) = ev * inv_sum;
     }
 }

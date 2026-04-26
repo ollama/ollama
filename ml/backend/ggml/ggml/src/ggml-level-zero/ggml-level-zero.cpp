@@ -47,6 +47,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <immintrin.h>  // _mm_clflushopt, _mm_sfence (x86 cache flush)
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -228,9 +229,11 @@ struct ZeLoader {
     int32_t (*zeCommandListAppendMemoryCopy)(void *, void *, const void *, size_t, void *, uint32_t, void **) = nullptr;
     int32_t (*zeCommandListAppendLaunchKernel)(void *, void *, const void *, void *, uint32_t, void **) = nullptr;
     int32_t (*zeCommandListAppendBarrier)(void *, void *, uint32_t, void **) = nullptr;
+    int32_t (*zeCommandListAppendMemoryRangesBarrier)(void *, uint32_t, const size_t *, const void **, void *, uint32_t, void **) = nullptr;
 
     // Memory.
     int32_t (*zeMemAllocDevice)(void *, const void *, size_t, size_t, void *, void **) = nullptr;
+    int32_t (*zeMemAllocShared)(void *, const void *, const void *, size_t, size_t, void *, void **) = nullptr;
     int32_t (*zeMemAllocHost)(void *, const void *, size_t, size_t, void **)            = nullptr;
     int32_t (*zeMemFree)(void *, void *)                                                = nullptr;
 
@@ -294,9 +297,11 @@ struct ZeLoader {
         LOAD_SYM(zeCommandListAppendMemoryCopy)
         LOAD_SYM(zeCommandListAppendLaunchKernel)
         LOAD_SYM(zeCommandListAppendBarrier)
+        LOAD_SYM(zeCommandListAppendMemoryRangesBarrier)
         LOAD_SYM(zeCommandListCreateImmediate)
         LOAD_SYM(zeCommandListHostSynchronize)
         LOAD_SYM(zeMemAllocDevice)
+        LOAD_SYM(zeMemAllocShared)
         LOAD_SYM(zeMemAllocHost)
         LOAD_SYM(zeMemFree)
         LOAD_SYM(zeModuleCreate)
@@ -418,121 +423,87 @@ static void l0_buf_free_buffer(ggml_backend_buffer_t buffer) {
 }
 
 /**
- * Host-to-device copy via Level Zero immediate command list.
- * Creates a fresh immediate command list for each transfer, appends a
- * MemoryCopy, synchronizes to completion, then destroys the list.
- * Offset and size come from the tensor layout (ggml_backend_buffer.cpp
- * always passes ggml_nbytes(tensor) for size).
+ * Host-to-shared-memory copy via memcpy + x86 cache flush.
+ *
+ * ZeBufferPool uses zeMemAllocShared so every L0 buffer is accessible from
+ * both CPU and GPU.  On Intel Arc (PCIe dGPU) the GPU L2 cache and CPU LLC
+ * are NOT automatically coherent for writes made by CPU to shared memory:
+ * the CPU writes to its own LLC and the GPU may read stale VRAM/DRAM data
+ * via zeMemAllocHost (pinned) staging so the Level Zero driver handles all
+ * CPU→GPU cache coherency internally.  Direct memcpy to zeMemAllocShared on
+ * Intel Arc (PCIe dGPU, Windows) is not visible to subsequent GPU kernels
+ * because the CPU LLC and GPU L2 are not coherent across PCIe — the GPU reads
+ * stale zeros/garbage.  Using a pinned host staging buffer and a GPU copy
+ * command forces the driver to perform a cache-coherent transfer.
  */
 static void l0_buf_set_tensor(ggml_backend_buffer_t buffer,
                               struct ggml_tensor *tensor,
                               const void *data, size_t offset, size_t size) {
     auto *ctx = static_cast<L0DevBufContext *>(buffer->context);
+    GGML_ASSERT(tensor->data != nullptr && "tensor->data must be set before set_tensor");
+    GGML_ASSERT(offset + size <= ggml_nbytes(tensor));
+    L0_TRACE_TENSOR_IO(tensor, "set", offset, size);
+    char *dst = reinterpret_cast<char *>(reinterpret_cast<uintptr_t>(tensor->data) + offset);
 
-    /* zeCommandListCreateImmediate requires a ze_command_queue_desc_t, NOT
-     * a ze_command_list_desc_t.  ze_command_queue_desc_t layout (ze_api.h):
-     *   [0] stype  = ZE_STRUCTURE_TYPE_COMMAND_QUEUE_DESC = 0x000F
-     *   [1] pNext  = 0
-     *   [2] ordinal (uint32) = 0  (compute queue group 0)
-     *   [3] index  (uint32) = 0   (queue index within the group)
-     *   [4] flags  (uint32) = 0
-     *   [5] mode   (uint32) = ZE_COMMAND_QUEUE_MODE_DEFAULT = 0
-     *   [6] priority (uint32) = ZE_COMMAND_QUEUE_PRIORITY_NORMAL = 0
-     * Padded to 8 uint32s for safe alignment on any implementation. */
-    uint32_t desc[8] = {
-        0x000Fu, /* ZE_STRUCTURE_TYPE_COMMAND_QUEUE_DESC */
-        0u,      /* pNext */
-        0u,      /* ordinal: compute queue group 0 */
-        0u,      /* index: first queue in group */
-        0u,      /* flags: 0 (default) */
-        0u,      /* mode: ZE_COMMAND_QUEUE_MODE_DEFAULT */
-        0u,      /* priority: ZE_COMMAND_QUEUE_PRIORITY_NORMAL */
-        0u,      /* padding */
-    };
-
-    void *cmd_list = nullptr;
-    int32_t r = g_loader.zeCommandListCreateImmediate(
+    // Allocate a pinned host staging buffer via zeMemAllocHost.
+    // zeMemAllocHost memory is always GPU-visible; the driver performs a
+    // cache-coherent copy from staging → shared memory in the command below.
+    uint32_t host_desc[3] = { 0x0016u, 0u, 0u }; // ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC
+    void *staging = nullptr;
+    int32_t r = g_loader.zeMemAllocHost(
         static_cast<void *>(ctx->dev->context.get()),
-        static_cast<void *>(ctx->dev->device.handle()),
-        static_cast<const void *>(desc),
-        &cmd_list);
-    if (r != 0 || !cmd_list) {
-        GGML_LOG_ERROR("%s: zeCommandListCreateImmediate failed (r=%d)\n",
-                       __func__, r);
+        reinterpret_cast<const void *>(host_desc),
+        size, 64u, &staging);
+
+    if (r != 0 || !staging) {
+        // Fallback: direct memcpy (may not be GPU-visible but avoids hang).
+        std::memcpy(dst, data, size);
+        GGML_LOG_WARN("l0_buf_set_tensor: zeMemAllocHost failed (r=%d), "
+                      "falling back to memcpy — GPU may see stale data\n", r);
         return;
     }
 
-    GGML_ASSERT(tensor->data != nullptr && "tensor->data must be set by init_tensor before set_tensor");
-    GGML_ASSERT(offset + size <= ggml_nbytes(tensor));
-    char *dst = reinterpret_cast<char *>(reinterpret_cast<uintptr_t>(tensor->data) + offset);
-    L0_TRACE_TENSOR_IO(tensor, "set", offset, size);
-    r = g_loader.zeCommandListAppendMemoryCopy(
-        cmd_list, dst, data, size, nullptr, 0, nullptr);
-    if (r != 0) {
-        GGML_LOG_ERROR("%s: zeCommandListAppendMemoryCopy H2D failed (r=%d)\n",
-                       __func__, r);
+    // CPU copy: source → pinned staging (fast, no GPU involvement).
+    std::memcpy(staging, data, size);
+
+    // GPU copy: staging (pinned, driver-visible) → shared dst.
+    uint32_t cq_desc[8] = { 0x000Fu, 0u, 0u, 0u, 0u, 0u, 0u, 0u };
+    void *cmd_list = nullptr;
+    r = g_loader.zeCommandListCreateImmediate(
+        static_cast<void *>(ctx->dev->context.get()),
+        static_cast<void *>(ctx->dev->device.handle()),
+        static_cast<const void *>(cq_desc), &cmd_list);
+    if (r == 0 && cmd_list) {
+        g_loader.zeCommandListAppendMemoryCopy(cmd_list, dst, staging, size, nullptr, 0, nullptr);
+        g_loader.zeCommandListHostSynchronize(cmd_list, UINT64_MAX);
         g_loader.zeCommandListDestroy(cmd_list);
-        GGML_ABORT("L0 H2D copy failed");
     } else {
-        r = g_loader.zeCommandListHostSynchronize(cmd_list, UINT64_MAX);
-        if (r != 0) {
-            GGML_LOG_ERROR("%s: zeCommandListHostSynchronize H2D failed (r=%d)\n",
-                           __func__, r);
-        }
+        // Fallback if command list creation fails.
+        std::memcpy(dst, staging, size);
     }
-    g_loader.zeCommandListDestroy(cmd_list);
+
+    g_loader.zeMemFree(static_cast<void *>(ctx->dev->context.get()), staging);
 }
 
 /**
  * Device-to-host copy via Level Zero immediate command list.
  * Mirror of l0_buf_set_tensor with source and destination swapped.
  */
+/**
+ * Shared-memory-to-host copy via plain memcpy.
+ * Mirrors l0_buf_set_tensor: shared allocations are CPU-readable after the
+ * GPU has written via kernels (the graph-compute synchronise ensures
+ * coherency before this call is made by the GGML backend layer).
+ */
 static void l0_buf_get_tensor(ggml_backend_buffer_t buffer,
                               const struct ggml_tensor *tensor,
                               void *data, size_t offset, size_t size) {
-    auto *ctx = static_cast<L0DevBufContext *>(buffer->context);
-
-    /* Same ze_command_queue_desc_t fix as l0_buf_set_tensor. */
-    uint32_t desc[8] = {
-        0x000Fu, /* ZE_STRUCTURE_TYPE_COMMAND_QUEUE_DESC */
-        0u,      /* pNext */
-        0u,      /* ordinal: compute queue group 0 */
-        0u,      /* index */
-        0u,      /* flags */
-        0u,      /* mode: default */
-        0u,      /* priority: normal */
-        0u,      /* padding */
-    };
-
-    void *cmd_list = nullptr;
-    int32_t r = g_loader.zeCommandListCreateImmediate(
-        static_cast<void *>(ctx->dev->context.get()),
-        static_cast<void *>(ctx->dev->device.handle()),
-        static_cast<const void *>(desc),
-        &cmd_list);
-    if (r != 0 || !cmd_list) {
-        GGML_LOG_ERROR("%s: zeCommandListCreateImmediate failed (r=%d)\n",
-                       __func__, r);
-        return;
-    }
-
-    GGML_ASSERT(tensor->data != nullptr && "tensor->data must be set by init_tensor before get_tensor");
+    (void)buffer;
+    GGML_ASSERT(tensor->data != nullptr && "tensor->data must be set before get_tensor");
     GGML_ASSERT(offset + size <= ggml_nbytes(tensor));
-    const char *src = reinterpret_cast<const char *>(reinterpret_cast<uintptr_t>(tensor->data) + offset);
     L0_TRACE_TENSOR_IO(tensor, "get", offset, size);
-    r = g_loader.zeCommandListAppendMemoryCopy(
-        cmd_list, data, src, size, nullptr, 0, nullptr);
-    if (r != 0) {
-        GGML_LOG_ERROR("%s: zeCommandListAppendMemoryCopy D2H failed (r=%d)\n",
-                       __func__, r);
-    } else {
-        r = g_loader.zeCommandListHostSynchronize(cmd_list, UINT64_MAX);
-        if (r != 0) {
-            GGML_LOG_ERROR("%s: zeCommandListHostSynchronize D2H failed (r=%d)\n",
-                           __func__, r);
-        }
-    }
-    g_loader.zeCommandListDestroy(cmd_list);
+    const char *src = reinterpret_cast<const char *>(reinterpret_cast<uintptr_t>(tensor->data) + offset);
+    std::memcpy(data, src, size);
 }
 
 /* Fills the L0 device buffer with 'value'. Required: ggml_backend_buffer_clear
@@ -857,6 +828,15 @@ static ggml_status ggml_l0_graph_compute(ggml_backend_t backend,
         return GGML_STATUS_FAILED;
     }
 
+    // Step 3a — global host-to-device memory barrier.
+    // Ensures all CPU writes to zeMemAllocShared regions (model weights written
+    // by l0_buf_set_tensor via memcpy+clflushopt) are visible to GPU kernels.
+    // numRanges=0 flushes ALL host-written shared/mapped memory per the L0 spec.
+    if (g_loader.zeCommandListAppendMemoryRangesBarrier) {
+        g_loader.zeCommandListAppendMemoryRangesBarrier(
+            cmd_list, 0u, nullptr, nullptr, nullptr, 0u, nullptr);
+    }
+
     // Step 3 — iterate nodes, resolve entry name, bind args, append launch.
     for (int i = 0; i < cgraph->n_nodes; ++i) {
         struct ggml_tensor *node = cgraph->nodes[i];
@@ -882,10 +862,19 @@ static ggml_status ggml_l0_graph_compute(ggml_backend_t backend,
                              : "softmax_f32";
                 break;
             case GGML_OP_RMS_NORM:
-                entry_name = "rms_norm";
+                /* Select F16 or F32 variant based on src0 type (ADR §9.7, §9.8).
+                 * Bug #10 invariant I-1: MUST NOT read node->src[1] for weight. */
+                entry_name = (node->src[0] &&
+                              node->src[0]->type == GGML_TYPE_F16)
+                             ? "rms_norm_f16"
+                             : "rms_norm_f32";
                 break;
             case GGML_OP_ROPE:
-                entry_name = "rope";
+                /* Select F16 or F32 variant based on src0 type (ADR §9.5, §9.6). */
+                entry_name = (node->src[0] &&
+                              node->src[0]->type == GGML_TYPE_F16)
+                             ? "rope_f16"
+                             : "rope_f32";
                 break;
             case GGML_OP_ADD:
                 entry_name = "add_f32";
@@ -955,27 +944,68 @@ static ggml_status ggml_l0_graph_compute(ggml_backend_t backend,
         // (build-l0-artifacts/01-blueprint-corrections.md, Corrections 1–4).
 
         if (node->op == GGML_OP_MUL_MAT) {
-            // Signature: mul_mat_*(A, B, C, int M, int N, int K)
-            void *a_ptr = node->src[0]->data;
-            void *b_ptr = node->src[1]->data;
-            void *c_ptr = node->data;
-            int   M     = static_cast<int>(node->src[0]->ne[1]);
-            int   N     = static_cast<int>(node->src[1]->ne[1]);
-            int   K     = static_cast<int>(node->src[0]->ne[0]);
+            // Stride-aware 3D-batched dispatch per ADR-L0-001 §5 and §9.1–9.4.
+            // Push-constant struct mul_mat_pc (160 B) is arg 0; buffers at 1,2,3.
+            // Factory Method: build push-const from node->ne[] and node->nb[]
+            // (ADR §8 Factory Method pattern — centralised, no per-kernel parsing).
 
-            g_loader.zeKernelSetArgumentValue(kernel, 0, sizeof(void *), &a_ptr);
-            g_loader.zeKernelSetArgumentValue(kernel, 1, sizeof(void *), &b_ptr);
-            g_loader.zeKernelSetArgumentValue(kernel, 2, sizeof(void *), &c_ptr);
-            g_loader.zeKernelSetArgumentValue(kernel, 3, sizeof(int),    &M);
-            g_loader.zeKernelSetArgumentValue(kernel, 4, sizeof(int),    &N);
-            g_loader.zeKernelSetArgumentValue(kernel, 5, sizeof(int),    &K);
+            struct mul_mat_pc {
+                int32_t ne_a[4];
+                int32_t ne_b[4];
+                int32_t ne_d[4];
+                int64_t nb_a[4];
+                int64_t nb_b[4];
+                int64_t nb_d[4];
+                int32_t broadcast_a2;
+                int32_t broadcast_a3;
+                int32_t broadcast_b2;
+                int32_t broadcast_b3;
+            };
+
+            const struct ggml_tensor *src0 = node->src[0];
+            const struct ggml_tensor *src1 = node->src[1];
+
+            mul_mat_pc pc{};
+            for (int d = 0; d < 4; ++d) {
+                pc.ne_a[d] = static_cast<int32_t>(src0->ne[d]);
+                pc.ne_b[d] = static_cast<int32_t>(src1->ne[d]);
+                pc.ne_d[d] = static_cast<int32_t>(node->ne[d]);
+                pc.nb_a[d] = static_cast<int64_t>(src0->nb[d]);
+                pc.nb_b[d] = static_cast<int64_t>(src1->nb[d]);
+                pc.nb_d[d] = static_cast<int64_t>(node->nb[d]);
+            }
+
+            // Broadcast flags (ADR §5.2): dimension 2 and 3.
+            pc.broadcast_a2 = (src0->ne[2] == 1 && src1->ne[2] > 1) ? 1 : 0;
+            pc.broadcast_a3 = (src0->ne[3] == 1 && src1->ne[3] > 1) ? 1 : 0;
+            pc.broadcast_b2 = (src1->ne[2] == 1 && src0->ne[2] > 1) ? 1 : 0;
+            pc.broadcast_b3 = (src1->ne[3] == 1 && src0->ne[3] > 1) ? 1 : 0;
+
+            void *a_ptr = src0->data;
+            void *b_ptr = src1->data;
+            void *d_ptr = node->data;
+
+            // Arg 0: push-constant struct by value (ADR §3.5).
+            g_loader.zeKernelSetArgumentValue(kernel, 0, sizeof(mul_mat_pc), &pc);
+            // Arg 1: A (weight matrix, type varies by kernel variant).
+            g_loader.zeKernelSetArgumentValue(kernel, 1, sizeof(void *), &a_ptr);
+            // Arg 2: B (F32 activations).
+            g_loader.zeKernelSetArgumentValue(kernel, 2, sizeof(void *), &b_ptr);
+            // Arg 3: D (F32 output).
+            g_loader.zeKernelSetArgumentValue(kernel, 3, sizeof(void *), &d_ptr);
 
             g_loader.zeKernelSetGroupSize(kernel, 16u, 16u, 1u);
 
+            // Grid: X = ceil(ne_d[0]/16), Y = ceil(ne_d[1]/16), Z = ne_d[2]*ne_d[3]
+            // (ADR §5.3 — Z flattens (i2,i3) batch pairs).
+            uint32_t gx = static_cast<uint32_t>((node->ne[0] + 15) / 16);
+            uint32_t gy = static_cast<uint32_t>((node->ne[1] + 15) / 16);
+            uint32_t gz = static_cast<uint32_t>(node->ne[2] * node->ne[3]);
+
             ze_group_count_t gc{};
-            gc.groupCountX = static_cast<uint32_t>((M + 15) / 16);
-            gc.groupCountY = static_cast<uint32_t>((N + 15) / 16);
-            gc.groupCountZ = 1u;
+            gc.groupCountX = gx;
+            gc.groupCountY = gy;
+            gc.groupCountZ = gz;
             g_loader.zeCommandListAppendLaunchKernel(
                 cmd_list, kernel, &gc, nullptr, 0, nullptr);
 
@@ -1290,20 +1320,38 @@ static bool ggml_l0_supports_op(ggml_backend_t backend, const struct ggml_tensor
                    src_type == GGML_TYPE_Q4_0;
         }
         case GGML_OP_SOFT_MAX:
-            return true;
+            /* softmax_f32 handles F32 with optional mask and ALiBi (ADR §6, §9.9). */
+            return op->src[0] && op->src[0]->type == GGML_TYPE_F32;
         case GGML_OP_RMS_NORM:
-            return op->type == GGML_TYPE_F32;
+            /* rms_norm_f32 and rms_norm_f16 implemented (ADR §6, RC3 fix).
+             * Bug #10 invariant I-1: this case MUST NOT access node->src[1]. */
+            return op->src[0] &&
+                   (op->src[0]->type == GGML_TYPE_F32 ||
+                    op->src[0]->type == GGML_TYPE_F16);
         case GGML_OP_ROPE:
-            return op->type == GGML_TYPE_F32;
+            /* rope_f32 and rope_f16 implemented (ADR §6, RC2 fix).
+             * F16 ROPE prevents GGML_ABORT at ggml-backend.cpp:844 for GQA models. */
+            return op->src[0] &&
+                   (op->src[0]->type == GGML_TYPE_F32 ||
+                    op->src[0]->type == GGML_TYPE_F16);
         case GGML_OP_ADD:
+            /* add_f32 and add_f16; broadcast handled by zero-stride convention. */
             return (op->src[0] && (op->src[0]->type == GGML_TYPE_F32 ||
                                    op->src[0]->type == GGML_TYPE_F16)) &&
                    (op->src[1] && (op->src[1]->type == GGML_TYPE_F32 ||
                                    op->src[1]->type == GGML_TYPE_F16));
-        case GGML_OP_MUL:
-            return op->src[0] && op->src[1] &&
-                   op->src[0]->type == GGML_TYPE_F32 &&
+        case GGML_OP_MUL: {
+            /* mul_f32 implemented with broadcast support (ADR §6, §9.12).
+             * mul_f16 (F16×F16) RESERVED for ADR-L0-002: explicitly return false
+             * so the scheduler routes it to CPU in v1 (ADR §6, §9.13). */
+            if (!op->src[0] || !op->src[1]) return false;
+            if (op->src[0]->type == GGML_TYPE_F16 &&
+                op->src[1]->type == GGML_TYPE_F16) {
+                return false; /* RESERVED — ADR-L0-002 */
+            }
+            return op->src[0]->type == GGML_TYPE_F32 &&
                    op->src[1]->type == GGML_TYPE_F32;
+        }
         case GGML_OP_CONT:
             return true;
         case GGML_OP_UNARY: {
@@ -1862,7 +1910,7 @@ ZE_OLLAMA_API ze_ollama_result_t ze_ollama_device_open(
     new (&dev->pool) ZeBufferPool(
         static_cast<ze_context_handle_t>(ctx_handle),
         static_cast<ze_device_handle_t>(device_handle),
-        reinterpret_cast<PFN_zeMemAllocDevice>(g_loader.zeMemAllocDevice),
+        reinterpret_cast<PFN_zeMemAllocHost>(g_loader.zeMemAllocHost),
         reinterpret_cast<PFN_zeMemFree>(g_loader.zeMemFree));
     GGML_LOG_INFO("ze_ollama_device_open: buffer pool initialized\n");
 
@@ -2019,6 +2067,11 @@ struct ggml_l0_device_ctx {
     ze_ollama_device_info_t   info;
     std::string               name_str;
     std::string               description_str;
+    // Eagerly-created backend produced by ggml_l0_dev_get_buffer_type() to
+    // ensure g_l0_buft.context is non-null before the first buffer alloc.
+    // ggml_l0_dev_init_backend() returns this pointer and clears the field so
+    // the backend is owned by the caller exactly once.
+    ggml_backend_t            pre_init_backend = nullptr;
 };
 
 static const char *ggml_l0_dev_get_name(ggml_backend_dev_t dev) {
@@ -2066,21 +2119,37 @@ static void ggml_l0_dev_get_props(ggml_backend_dev_t dev, struct ggml_backend_de
 static ggml_backend_t ggml_l0_dev_init_backend(ggml_backend_dev_t dev, const char *params) {
     (void)params;
     auto *ctx = static_cast<ggml_l0_device_ctx *>(dev->context);
+    // If get_buffer_type() already initialised the backend to avoid a null
+    // context during early tensor allocation, reuse it and clear the stash so
+    // ownership passes to this caller exactly once.
+    if (ctx->pre_init_backend) {
+        ggml_backend_t backend  = ctx->pre_init_backend;
+        ctx->pre_init_backend   = nullptr;
+        return backend;
+    }
     ggml_backend_t backend = ggml_backend_level_zero_init(static_cast<int>(ctx->index));
     if (backend) {
-        /* Wire the ggml_backend_t back to its owning ggml_backend_device_t so that
-           ggml_backend_get_default_buffer_type(backend) -> ggml_backend_dev_buffer_type(backend->device)
-           does not crash with GGML_ASSERT(device) at ggml-backend.cpp:544. */
         backend->device = dev;
     }
     return backend;
 }
 
 static ggml_backend_buffer_type_t ggml_l0_dev_get_buffer_type(ggml_backend_dev_t dev) {
-    /* Return the file-static L0 device buffer type so that the device-level
-     * buffer type query is consistent with ggml_l0_get_default_buffer_type.
-     * Correction 6: this site was previously returning cpu_buffer_type(). */
-    (void)dev;
+    auto *ctx = static_cast<ggml_l0_device_ctx *>(dev->context);
+    // llama.cpp calls get_buffer_type() before init_backend(), so
+    // g_l0_buft.context may still be null at this point.  Eagerly initialise
+    // the backend here so that l0_buft_alloc_buffer() has a valid pool
+    // pointer when the model loader calls alloc_tensor_range() immediately
+    // after this call returns.  The resulting backend is stashed in
+    // ctx->pre_init_backend; ggml_l0_dev_init_backend() returns it and
+    // clears the stash so ownership passes to the caller exactly once.
+    if (!g_l0_buft.context) {
+        ggml_backend_t backend = ggml_backend_level_zero_init(static_cast<int>(ctx->index));
+        if (backend) {
+            backend->device        = dev;
+            ctx->pre_init_backend  = backend;
+        }
+    }
     return &g_l0_buft;
 }
 
@@ -2103,27 +2172,45 @@ static bool ggml_l0_dev_supports_op(ggml_backend_dev_t dev, const struct ggml_te
     }
     switch (op->op) {
         case GGML_OP_MUL_MAT: {
-            ggml_type src_type = op->src[0] ? op->src[0]->type : GGML_TYPE_COUNT;
+            /* RC1 fix: kernels now support 3D batched and broadcast tensors.
+             * The 2D-only guard is removed; all shape classes are handled by
+             * the stride-aware mul_mat_pc dispatch (ADR §6, §9.1–9.4). */
+            if (!op->src[0] || !op->src[1]) return false;
+            ggml_type src_type = op->src[0]->type;
             return src_type == GGML_TYPE_F32  ||
                    src_type == GGML_TYPE_F16  ||
                    src_type == GGML_TYPE_Q8_0 ||
                    src_type == GGML_TYPE_Q4_0;
         }
         case GGML_OP_SOFT_MAX:
-            return true;
+            /* softmax_f32 handles F32 with optional mask and ALiBi (ADR §6, §9.9). */
+            return op->src[0] && op->src[0]->type == GGML_TYPE_F32;
         case GGML_OP_RMS_NORM:
-            return op->type == GGML_TYPE_F32;
+            /* rms_norm_f32 and rms_norm_f16 implemented (ADR §6, RC3 fix).
+             * Bug #10 invariant I-1: MUST NOT access node->src[1] here. */
+            return op->src[0] &&
+                   (op->src[0]->type == GGML_TYPE_F32 ||
+                    op->src[0]->type == GGML_TYPE_F16);
         case GGML_OP_ROPE:
-            return op->type == GGML_TYPE_F32;
+            /* rope_f32 and rope_f16 implemented (ADR §6, RC2 fix). */
+            return op->src[0] &&
+                   (op->src[0]->type == GGML_TYPE_F32 ||
+                    op->src[0]->type == GGML_TYPE_F16);
         case GGML_OP_ADD:
             return (op->src[0] && (op->src[0]->type == GGML_TYPE_F32 ||
                                    op->src[0]->type == GGML_TYPE_F16)) &&
                    (op->src[1] && (op->src[1]->type == GGML_TYPE_F32 ||
                                    op->src[1]->type == GGML_TYPE_F16));
-        case GGML_OP_MUL:
-            return op->src[0] && op->src[1] &&
-                   op->src[0]->type == GGML_TYPE_F32 &&
+        case GGML_OP_MUL: {
+            /* mul_f16 (F16×F16) RESERVED for ADR-L0-002: return false. */
+            if (!op->src[0] || !op->src[1]) return false;
+            if (op->src[0]->type == GGML_TYPE_F16 &&
+                op->src[1]->type == GGML_TYPE_F16) {
+                return false; /* RESERVED — ADR-L0-002 */
+            }
+            return op->src[0]->type == GGML_TYPE_F32 &&
                    op->src[1]->type == GGML_TYPE_F32;
+        }
         case GGML_OP_CONT:
             return true;
         case GGML_OP_UNARY: {

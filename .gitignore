@@ -16,3 +16,17 @@ llama/build
 llama/vendor
 /ollama
 integration/testdata/models/
+
+# Intel Level Zero build artifacts (local dev only — do not commit)
+build-l0/
+build-l0-artifacts/
+build-l0-prompts/
+commit-todos/
+.claude/
+*.dll
+run-l0-debug.ps1
+INTEL_L0_RESUMPTION_STATE.md
+L0_BUFFER_FIX_EXECUTION_PLAN.md
+L0_BUFFER_FIX_PROMPT_BUNDLE.md
+L0_FIX_PROGRESS.md
+RESUME_INSTRUCTIONS.md
