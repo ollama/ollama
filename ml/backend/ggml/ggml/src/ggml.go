@@ -97,6 +97,31 @@ var OnceLoad = sync.OnceFunc(func() {
 				C.ggml_backend_load_all_from_path(cpath)
 			}()
 
+			// Intel Level Zero is not in ggml's built-in auto-load list
+			// (blas/zendnn/cann/cuda/hip/metal/rpc/sycl/vulkan/opencl/hexagon/musa/cpu).
+			// Load it explicitly from this search path when the DLL is present so
+			// Intel Arc / iGPU / NPU devices are registered alongside CPU variants.
+			var lzName string
+			switch runtime.GOOS {
+			case "windows":
+				lzName = "ggml-level-zero.dll"
+			case "darwin":
+				lzName = "libggml-level-zero.dylib"
+			default:
+				lzName = "libggml-level-zero.so"
+			}
+			lzPath := filepath.Join(abspath, lzName)
+			if _, err := os.Stat(lzPath); err == nil {
+				func() {
+					slog.Debug("ggml loading level-zero backend", "path", lzPath)
+					clz := C.CString(lzPath)
+					defer C.free(unsafe.Pointer(clz))
+					if reg := C.ggml_backend_load(clz); reg == nil {
+						slog.Warn("ggml failed to load level-zero backend", "path", lzPath)
+					}
+				}()
+			}
+
 			visited[abspath] = struct{}{}
 		}
 	}

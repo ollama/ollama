@@ -476,14 +476,24 @@ func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
 	return cmp[0] == bLibSplit[1]
 }
 
-// For each GPU, check if it does NOT support flash attention
+// FlashAttentionSupported returns true when every device in the list is known
+// to support flash attention kernels.  It returns false as soon as any device
+// in the list cannot support FA, because the server applies a single FA flag
+// across the entire GPU set.
+//
+// Level Zero note: discover/gpu_level_zero.go encodes the GPU/NPU distinction
+// in the Library field as "level-zero-gpu" (supports FA via attention_tiled +
+// kv_cache_write/read SPIRV kernels) vs "level-zero-npu" (does not support FA).
+// The former string "level-zero" was dead code that matched no device and has
+// been replaced with "level-zero-gpu".
 func FlashAttentionSupported(l []DeviceInfo) bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
 			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
 			gpu.Library == "ROCm" ||
-			gpu.Library == "Vulkan"
+			gpu.Library == "Vulkan" ||
+			gpu.Library == "level-zero-gpu"
 
 		if !supportsFA {
 			return false
