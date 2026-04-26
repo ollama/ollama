@@ -14,7 +14,7 @@ def generate_response(prompt, history, system_prompt, max_tokens, temperature):
     data = {
         "model": MODEL_NAME,
         "prompt": prompt,
-        "system": system_prompt,  # This is key for uncensored behavior[citation:3]
+        "system": system_prompt,  # This is key for uncensored behavior[citation:4]
         "stream": True,
         "options": {
             "num_predict": max_tokens,
