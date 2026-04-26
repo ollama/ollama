@@ -87,6 +87,8 @@ func ParserForName(name string) Parser {
 		return &LFM2Parser{hasThinkingSupport: false}
 	case "lfm2-thinking":
 		return &LFM2Parser{hasThinkingSupport: true}
+	case "command-r":
+		return &CommandRParser{}
 	default:
 		return nil
 	}
