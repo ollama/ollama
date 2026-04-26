@@ -857,9 +857,10 @@ static ggml_status ggml_l0_graph_compute(ggml_backend_t backend,
                 break;
             }
             case GGML_OP_SOFT_MAX:
-                entry_name = (node->op_params[0] != 0)
-                             ? "softmax_causal_f32"
-                             : "softmax_f32";
+                /* Option A (ADR-001 mandated): softmax_f32 handles both causal and
+                 * non-causal paths via the cur_pos argument bound below (lines ~1025-1029).
+                 * softmax_causal_f32 was a non-existent entry — removed from registry. */
+                entry_name = "softmax_f32";
                 break;
             case GGML_OP_RMS_NORM:
                 /* Select F16 or F32 variant based on src0 type (ADR §9.7, §9.8).
@@ -939,6 +940,17 @@ static ggml_status ggml_l0_graph_compute(ggml_backend_t backend,
         }
 
         ze_kernel_handle_t kernel = ke->kernel.get();
+        // Defense-in-depth null guard (ADR-001 / ADR-002): if the cache entry
+        // somehow holds a null handle (cache corruption or partial init), skip
+        // this node rather than passing a null kernel to zeCommandListAppendLaunchKernel
+        // which would produce SIGSEGV inside the L0 driver.
+        if (!kernel) {
+            GGML_LOG_ERROR(
+                "ggml_l0_graph_compute: kernel '%s' cache entry has null handle for device %s"
+                " — skipping node (cache corruption)\n",
+                entry_name, uuid_str.c_str());
+            continue;
+        }
 
         // Bind arguments and set group size per authoritative signatures
         // (build-l0-artifacts/01-blueprint-corrections.md, Corrections 1–4).
@@ -1309,6 +1321,20 @@ static bool ggml_l0_supports_op(ggml_backend_t backend, const struct ggml_tensor
         }
     }
 
+    /* Defense-in-depth (ADR-002): for ops whose kernels were recently renamed,
+     * consult the kernel_cache before claiming support.  O(1) SHA-256 lookup.
+     * If b->dev is null (backend not fully initialised yet), fall through to
+     * type-only checks — safe because dispatch will hit the cache-miss guard. */
+    auto kernel_available_b = [&](const char *name) -> bool {
+        if (!b->dev) return true;
+        const uint8_t *nb = reinterpret_cast<const uint8_t *>(name);
+        std::pair<const uint8_t *, size_t> parts[1] = {{ nb, strlen(name) }};
+        SHA256Digest key = ze_sha256::hash_chain(parts, 1);
+        std::string uuid = b->dev->device.uuid_str();
+        const KernelEntry *ke = b->dev->kernel_cache.get(key, uuid, std::string(name));
+        return ke != nullptr && ke->kernel.get() != nullptr;
+    };
+
     switch (op->op) {
         case GGML_OP_MUL_MAT: {
             /* Accept F32, F16, Q8_0, Q4_0 weight types only.
@@ -1320,20 +1346,32 @@ static bool ggml_l0_supports_op(ggml_backend_t backend, const struct ggml_tensor
                    src_type == GGML_TYPE_Q4_0;
         }
         case GGML_OP_SOFT_MAX:
-            /* softmax_f32 handles F32 with optional mask and ALiBi (ADR §6, §9.9). */
-            return op->src[0] && op->src[0]->type == GGML_TYPE_F32;
-        case GGML_OP_RMS_NORM:
+            /* softmax_f32 handles F32 with optional mask and ALiBi (ADR §6, §9.9).
+             * Cache gate (ADR-002): only claim if softmax_f32 kernel is loaded. */
+            return op->src[0] && op->src[0]->type == GGML_TYPE_F32
+                   && kernel_available_b("softmax_f32");
+        case GGML_OP_RMS_NORM: {
             /* rms_norm_f32 and rms_norm_f16 implemented (ADR §6, RC3 fix).
-             * Bug #10 invariant I-1: this case MUST NOT access node->src[1]. */
-            return op->src[0] &&
-                   (op->src[0]->type == GGML_TYPE_F32 ||
-                    op->src[0]->type == GGML_TYPE_F16);
-        case GGML_OP_ROPE:
+             * Bug #10 invariant I-1: this case MUST NOT access node->src[1].
+             * Cache gate (ADR-002): only claim if the matching variant is loaded. */
+            if (!op->src[0]) return false;
+            const char *needed = (op->src[0]->type == GGML_TYPE_F16)
+                                     ? "rms_norm_f16" : "rms_norm_f32";
+            return (op->src[0]->type == GGML_TYPE_F32 ||
+                    op->src[0]->type == GGML_TYPE_F16)
+                   && kernel_available_b(needed);
+        }
+        case GGML_OP_ROPE: {
             /* rope_f32 and rope_f16 implemented (ADR §6, RC2 fix).
-             * F16 ROPE prevents GGML_ABORT at ggml-backend.cpp:844 for GQA models. */
-            return op->src[0] &&
-                   (op->src[0]->type == GGML_TYPE_F32 ||
-                    op->src[0]->type == GGML_TYPE_F16);
+             * F16 ROPE prevents GGML_ABORT at ggml-backend.cpp:844 for GQA models.
+             * Cache gate (ADR-002): only claim if the matching variant is loaded. */
+            if (!op->src[0]) return false;
+            const char *needed = (op->src[0]->type == GGML_TYPE_F16)
+                                     ? "rope_f16" : "rope_f32";
+            return (op->src[0]->type == GGML_TYPE_F32 ||
+                    op->src[0]->type == GGML_TYPE_F16)
+                   && kernel_available_b(needed);
+        }
         case GGML_OP_ADD:
             /* add_f32 and add_f16; broadcast handled by zero-stride convention. */
             return (op->src[0] && (op->src[0]->type == GGML_TYPE_F32 ||
@@ -1551,6 +1589,36 @@ ZE_OLLAMA_API ze_ollama_result_t ze_ollama_enumerate_devices(
 #endif
 
 /**
+ * Translate a Level Zero result code to its symbolic name for log messages.
+ *
+ * Prints both the symbol (e.g., ZE_RESULT_ERROR_INVALID_ENUMERATION) and the
+ * raw hex code so engineers can correlate with ze_api.h without manual lookup.
+ * Covers the codes most likely seen during kernel loading (ADR-004).
+ */
+static const char *ze_result_to_str(ze_result_t r) {
+    switch (r) {
+        case ZE_RESULT_SUCCESS:
+            return "ZE_RESULT_SUCCESS";
+        case ZE_RESULT_ERROR_INVALID_ENUMERATION:
+            return "ZE_RESULT_ERROR_INVALID_ENUMERATION";
+        case ZE_RESULT_ERROR_INVALID_KERNEL_NAME:
+            return "ZE_RESULT_ERROR_INVALID_KERNEL_NAME";
+        case ZE_RESULT_ERROR_MODULE_BUILD_FAILURE:
+            return "ZE_RESULT_ERROR_MODULE_BUILD_FAILURE";
+        case ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY:
+            return "ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY";
+        case ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY:
+            return "ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY";
+        case ZE_RESULT_ERROR_INVALID_ARGUMENT:
+            return "ZE_RESULT_ERROR_INVALID_ARGUMENT";
+        case ZE_RESULT_ERROR_UNSUPPORTED_FEATURE:
+            return "ZE_RESULT_ERROR_UNSUPPORTED_FEATURE";
+        default:
+            return "ZE_RESULT_UNKNOWN";
+    }
+}
+
+/**
  * Pre-compile all SPIR-V kernels for a device and populate its ZeKernelCache.
  *
  * For every entry point across the 7 .cl source modules, this function creates
@@ -1590,10 +1658,10 @@ static ze_result_t ze_ollama_load_spirv_kernels(ze_ollama_device_s *dev) {
 
     static const char *mul_mat_entries[]   = {"mul_mat_f32", "mul_mat_f16",
                                                "mul_mat_q8_0", "mul_mat_q4_0"};
-    static const char *softmax_entries[]   = {"softmax_f32", "softmax_causal_f32"};
+    static const char *softmax_entries[]   = {"softmax_f32"};
     static const char *attention_entries[] = {"attention_tiled"};
-    static const char *rms_norm_entries[]  = {"rms_norm"};
-    static const char *rope_entries[]      = {"rope"};
+    static const char *rms_norm_entries[]  = {"rms_norm_f32", "rms_norm_f16"};
+    static const char *rope_entries[]      = {"rope_f32", "rope_f16"};
     static const char *kv_cache_entries[]  = {"kv_cache_write", "kv_cache_read",
                                                "set_rows_f32", "set_rows_f16"};
     static const char *gelu_silu_entries[] = {"gelu_f32", "silu_f32",
@@ -1603,13 +1671,13 @@ static ze_result_t ze_ollama_load_spirv_kernels(ze_ollama_device_s *dev) {
         {"mul_mat",   g_spirv_mul_mat,   g_spirv_mul_mat_size,
                       mul_mat_entries,   4},
         {"softmax",   g_spirv_softmax,   g_spirv_softmax_size,
-                      softmax_entries,   2},
+                      softmax_entries,   1},
         {"attention", g_spirv_attention, g_spirv_attention_size,
                       attention_entries, 1},
         {"rms_norm",  g_spirv_rms_norm,  g_spirv_rms_norm_size,
-                      rms_norm_entries,  1},
+                      rms_norm_entries,  2},
         {"rope",      g_spirv_rope,      g_spirv_rope_size,
-                      rope_entries,      1},
+                      rope_entries,      2},
         {"kv_cache",  g_spirv_kv_cache,  g_spirv_kv_cache_size,
                       kv_cache_entries,  4},
         {"gelu_silu", g_spirv_gelu_silu, g_spirv_gelu_silu_size,
@@ -1634,8 +1702,8 @@ static ze_result_t ze_ollama_load_spirv_kernels(ze_ollama_device_s *dev) {
         if (ret != ZE_RESULT_SUCCESS) {
             GGML_LOG_ERROR(
                 "ze_ollama_load_spirv_kernels: zeModuleCreate failed for "
-                "module '%s': 0x%x — skipping\n",
-                m.source_name, static_cast<unsigned>(ret));
+                "module '%s': %s (0x%x) — skipping\n",
+                m.source_name, ze_result_to_str(ret), static_cast<unsigned>(ret));
             continue;
         }
 
@@ -1652,9 +1720,9 @@ static ze_result_t ze_ollama_load_spirv_kernels(ze_ollama_device_s *dev) {
             if (ret != ZE_RESULT_SUCCESS) {
                 GGML_LOG_ERROR(
                     "ze_ollama_load_spirv_kernels: zeKernelCreate failed for "
-                    "entry '%s' in module '%s': 0x%x — skipping\n",
+                    "entry '%s' in module '%s': %s (0x%x) — skipping\n",
                     m.entry_points[i], m.source_name,
-                    static_cast<unsigned>(ret));
+                    ze_result_to_str(ret), static_cast<unsigned>(ret));
                 continue;
             }
 
@@ -2158,8 +2226,37 @@ static bool ggml_l0_dev_supports_op(ggml_backend_dev_t dev, const struct ggml_te
      * ggml_l0_dev_supports_op is what the GGML scheduler queries for offload
      * routing decisions.  We replicate the same type guards as
      * ggml_l0_supports_op without the NPU F32 narrowing (that guard requires a
-     * live backend pointer; at device-query time no backend is allocated yet). */
-    (void)dev;
+     * live backend pointer; at device-query time no backend is allocated yet).
+     *
+     * Defense-in-depth (ADR-002 / ADR-001): for ops whose kernels were recently
+     * renamed (rms_norm, rope, softmax), consult the kernel_cache before claiming
+     * support.  If the kernel was never registered (e.g., due to a future registry
+     * drift like commit 86a4656f), return false so the GGML scheduler falls back
+     * to CPU rather than assigning the op to L0 and leaving the output buffer
+     * uninitialized (which caused SIGSEGV at PC 0x7ff960129c9f). */
+
+    /* Resolve the ze_ollama_device_s* from the GGML device context for cache lookup.
+     * May be null before ze_ollama_device_open completes; fall through to type-only
+     * checks in that case (safe — kernels will either succeed or be caught at dispatch). */
+    auto *ctx = (dev && dev->context)
+                    ? static_cast<ggml_l0_device_ctx *>(dev->context)
+                    : nullptr;
+    ze_ollama_device_s *l0_dev = (ctx && ctx->index < g_devices.size())
+                                     ? g_devices[ctx->index]
+                                     : nullptr;
+
+    /* Helper lambda: look up a kernel name in the device cache (O(1) SHA-256 lookup).
+     * Returns true iff the kernel exists and has a non-null handle. */
+    auto kernel_available = [&](const char *name) -> bool {
+        if (!l0_dev) return true; /* cache not yet populated — optimistic */
+        const uint8_t *nb = reinterpret_cast<const uint8_t *>(name);
+        std::pair<const uint8_t *, size_t> parts[1] = {{ nb, strlen(name) }};
+        SHA256Digest key = ze_sha256::hash_chain(parts, 1);
+        std::string uuid = l0_dev->device.uuid_str();
+        const KernelEntry *ke = l0_dev->kernel_cache.get(key, uuid, std::string(name));
+        return ke != nullptr && ke->kernel.get() != nullptr;
+    };
+
     /* GGML_OP_NONE tensors are leaf/pre-allocated tensors (e.g. KV-cache
      * tensors cache_k_l0, cache_v_l0) that carry no computation.  The
      * scheduler calls ggml_backend_supports_op -> ggml_backend_dev_supports_op
@@ -2183,19 +2280,31 @@ static bool ggml_l0_dev_supports_op(ggml_backend_dev_t dev, const struct ggml_te
                    src_type == GGML_TYPE_Q4_0;
         }
         case GGML_OP_SOFT_MAX:
-            /* softmax_f32 handles F32 with optional mask and ALiBi (ADR §6, §9.9). */
-            return op->src[0] && op->src[0]->type == GGML_TYPE_F32;
-        case GGML_OP_RMS_NORM:
+            /* softmax_f32 handles F32 with optional mask and ALiBi (ADR §6, §9.9).
+             * Cache gate (ADR-002): only claim if softmax_f32 kernel is loaded. */
+            return op->src[0] && op->src[0]->type == GGML_TYPE_F32
+                   && kernel_available("softmax_f32");
+        case GGML_OP_RMS_NORM: {
             /* rms_norm_f32 and rms_norm_f16 implemented (ADR §6, RC3 fix).
-             * Bug #10 invariant I-1: MUST NOT access node->src[1] here. */
-            return op->src[0] &&
-                   (op->src[0]->type == GGML_TYPE_F32 ||
-                    op->src[0]->type == GGML_TYPE_F16);
-        case GGML_OP_ROPE:
-            /* rope_f32 and rope_f16 implemented (ADR §6, RC2 fix). */
-            return op->src[0] &&
-                   (op->src[0]->type == GGML_TYPE_F32 ||
-                    op->src[0]->type == GGML_TYPE_F16);
+             * Bug #10 invariant I-1: MUST NOT access node->src[1] here.
+             * Cache gate (ADR-002): only claim if the matching variant is loaded. */
+            if (!op->src[0]) return false;
+            const char *needed = (op->src[0]->type == GGML_TYPE_F16)
+                                     ? "rms_norm_f16" : "rms_norm_f32";
+            return (op->src[0]->type == GGML_TYPE_F32 ||
+                    op->src[0]->type == GGML_TYPE_F16)
+                   && kernel_available(needed);
+        }
+        case GGML_OP_ROPE: {
+            /* rope_f32 and rope_f16 implemented (ADR §6, RC2 fix).
+             * Cache gate (ADR-002): only claim if the matching variant is loaded. */
+            if (!op->src[0]) return false;
+            const char *needed = (op->src[0]->type == GGML_TYPE_F16)
+                                     ? "rope_f16" : "rope_f32";
+            return (op->src[0]->type == GGML_TYPE_F32 ||
+                    op->src[0]->type == GGML_TYPE_F16)
+                   && kernel_available(needed);
+        }
         case GGML_OP_ADD:
             return (op->src[0] && (op->src[0]->type == GGML_TYPE_F32 ||
                                    op->src[0]->type == GGML_TYPE_F16)) &&
