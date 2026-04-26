@@ -1009,25 +1009,19 @@ static ggml_status ggml_l0_graph_compute(ggml_backend_t backend,
                 cmd_list, kernel, &gc, nullptr, 0, nullptr);
 
         } else if (node->op == GGML_OP_RMS_NORM) {
-            // Signature: rms_norm(x, weight, y, int n_cols, float eps)
-            if (!node->src[1]) {
-                GGML_LOG_ERROR(
-                    "ggml_l0_graph_compute: rms_norm missing weight tensor — skipping node\n");
-                continue;
-            }
-
-            void  *x_ptr      = node->src[0]->data;
-            void  *weight_ptr = node->src[1]->data;
-            void  *y_ptr      = node->data;
-            int    n_cols     = static_cast<int>(node->src[0]->ne[0]);
-            float  eps        = *reinterpret_cast<const float *>(&node->op_params[0]);
+            // GGML_OP_RMS_NORM: (src[0]=x, op_params[0]=eps) — no weight operand.
+            // The learnable scale (gamma) is applied by a separate GGML_OP_MUL node
+            // downstream in the graph (see ggml.c ggml_rms_norm()).
+            void  *x_ptr  = node->src[0]->data;
+            void  *y_ptr  = node->data;
+            int    n_cols = static_cast<int>(node->src[0]->ne[0]);
+            float  eps    = *reinterpret_cast<const float *>(&node->op_params[0]);
             if (eps == 0.0f) eps = 1e-6f;
 
             g_loader.zeKernelSetArgumentValue(kernel, 0, sizeof(void *), &x_ptr);
-            g_loader.zeKernelSetArgumentValue(kernel, 1, sizeof(void *), &weight_ptr);
-            g_loader.zeKernelSetArgumentValue(kernel, 2, sizeof(void *), &y_ptr);
-            g_loader.zeKernelSetArgumentValue(kernel, 3, sizeof(int),    &n_cols);
-            g_loader.zeKernelSetArgumentValue(kernel, 4, sizeof(float),  &eps);
+            g_loader.zeKernelSetArgumentValue(kernel, 1, sizeof(void *), &y_ptr);
+            g_loader.zeKernelSetArgumentValue(kernel, 2, sizeof(int),    &n_cols);
+            g_loader.zeKernelSetArgumentValue(kernel, 3, sizeof(float),  &eps);
 
             g_loader.zeKernelSetGroupSize(kernel, 256u, 1u, 1u);
 
