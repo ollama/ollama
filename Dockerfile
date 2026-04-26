@@ -142,6 +142,29 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --preset 'Vulkan' -- -l $(nproc) \
         && cmake --install build --component Vulkan --strip
 
+# Pin digest at PR time via:
+#   docker pull intel/oneapi-basekit:latest
+#   docker inspect --format='{{index .RepoDigests 0}}' intel/oneapi-basekit:latest
+# Replace :latest below with the sha256 digest before opening the PR.
+FROM intel/oneapi-basekit:latest AS build-level-zero
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        cmake \
+        ninja-build \
+        build-essential \
+        level-zero-dev \
+        libze-dev \
+        clang \
+    && rm -rf /var/lib/apt/lists/*
+# See scripts/build_linux.sh and scripts/build_windows.ps1 for the FLAVOR=level_zero
+# invocation that calls cmake --preset 'Level Zero' on the host side.
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'Level Zero' \
+        && cmake --build build --parallel $(nproc) \
+        && cmake --install build --component LevelZero --strip
+
 FROM base AS mlx
 ARG CUDA13VERSION=13.0
 RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
@@ -207,6 +230,9 @@ COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 FROM scratch AS rocm
 COPY --from=rocm-7 dist/lib/ollama /lib/ollama
 
+FROM scratch AS level_zero
+COPY --from=build-level-zero /build/lib/ollama/level_zero/ /lib/ollama/level_zero/
+
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
@@ -226,3 +252,42 @@ ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
+
+# ── Intel Level Zero runtime image ──────────────────────────────────────────
+# Layer order (slowest-changing first for maximum BuildKit cache hits):
+#   1. Base OS (ubuntu:22.04)
+#   2. Intel apt packages (level-zero, intel-level-zero-gpu, intel-opencl-icd)
+#   3. ollama binary
+#   4. level_zero shared library
+#   5. USER / EXPOSE / HEALTHCHECK / ENTRYPOINT (metadata)
+#
+# Build with: docker buildx build --build-arg FLAVOR=level_zero \
+#               -t ollama/ollama-level-zero .
+# Run  with:  docker run --rm --device=/dev/dri --device=/dev/accel:/dev/accel \
+#               --cap-drop ALL -e OLLAMA_L0_DEVICE_INDEX=0 \
+#               -e OLLAMA_L0_NPU_ENABLE=0 -e OLLAMA_DEBUG=1 \
+#               -p 11434:11434 ollama/ollama-level-zero ollama run tinyllama "hello"
+#
+# NOTE: level-zero-dev and libze-dev MUST NOT appear here; they are build-only.
+#       Redistribution of the runtime .so files (level-zero, intel-level-zero-gpu)
+#       is permitted under the MIT license.
+FROM ubuntu:22.04 AS runtime-level-zero
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        level-zero \
+        intel-level-zero-gpu \
+        intel-opencl-icd \
+        ca-certificates \
+        curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /bin/ollama /usr/bin/ollama
+COPY --from=build-level-zero /build/lib/ollama/level_zero/ /usr/local/lib/ollama/level_zero/
+ENV LD_LIBRARY_PATH=/usr/local/lib/ollama/level_zero
+ENV OLLAMA_HOST=0.0.0.0:11434
+RUN useradd -m -u 1000 ollama
+USER ollama
+EXPOSE 11434
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl --fail --silent http://localhost:11434/ || exit 1
+ENTRYPOINT ["/usr/bin/ollama", "serve"]

@@ -447,6 +447,47 @@ jobs:
           path: |
             *.tar.zst
 
+  # Build and publish the Level Zero flavor artifact for Linux and Windows.
+  # The Docker image (ollama/ollama-level-zero) is built by the cloud-engineer Dockerfile stage;
+  # these steps package the shared libraries into distributable archives.
+  level-zero-artifact:
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: windows
+            arch: amd64
+    runs-on: ${{ matrix.os }}
+    environment: release
+    needs: setup-environment
+    env:
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish level_zero artifact (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          FLAVOR=level_zero scripts/build_linux.sh
+          tar czf ollama-linux-amd64-level_zero.tgz \
+            -C dist/linux-amd64/lib/ollama/level_zero .
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'linux'
+        with:
+          name: ollama-linux-amd64-level_zero
+          path: ollama-linux-amd64-level_zero.tgz
+      - name: Publish level_zero artifact (Windows)
+        if: matrix.os == 'windows'
+        run: |
+          scripts/build_windows.ps1 -Flavor level_zero
+          Compress-Archive -Path dist\windows-amd64\lib\ollama\level_zero\* `
+            -DestinationPath ollama-windows-amd64-level_zero.zip
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'windows'
+        with:
+          name: ollama-windows-amd64-level_zero
+          path: ollama-windows-amd64-level_zero.zip
+
   # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
   docker-build-push:
     strategy:

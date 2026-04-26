@@ -37,7 +37,16 @@ jobs:
               | xargs python3 -c "import sys; from pathlib import Path; print(any(Path(x).match(glob) for x in sys.argv[1:] for glob in '$*'.split(' ')))"
           }
 
-          echo changed=$(changed 'llama/llama.cpp/**/*' 'ml/backend/ggml/ggml/**/*' '.github/**/*') | tee -a $GITHUB_OUTPUT
+          echo changed=$(changed \
+            'llama/llama.cpp/**/*' \
+            'ml/backend/ggml/ggml/**/*' \
+            'ml/backend/ggml/ggml/src/ggml-level-zero/**' \
+            'discover/level_zero_info.*' \
+            'discover/gpu_level_zero.go' \
+            'ml/backend/level_zero.go' \
+            'envconfig/level_zero.go' \
+            'cmake/modules/FindLevelZero.cmake' \
+            '.github/**/*') | tee -a $GITHUB_OUTPUT
           echo vendorsha=$(make -f Makefile.sync print-base) | tee -a $GITHUB_OUTPUT
 
   linux:
@@ -65,8 +74,16 @@ jobs:
             extra-packages: libcudnn9-dev-cuda-13 libopenblas-dev liblapack-dev liblapacke-dev git curl
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87 -DBLAS_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu -DLAPACK_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu'
             install-go: true
+          - preset: 'Level Zero'
+            container: intel/oneapi-basekit:latest
+            extra-packages: >
+              level-zero intel-level-zero-gpu intel-opencl-icd
+              libze-dev clang cmake ccache g++ make
+            flags: '-DGGML_LEVEL_ZERO=ON'
+            continue-on-error: true  # TODO: flip to strict once Intel Arc runner is online — tracking: ollama/ollama#TBD
     runs-on: linux
     container: ${{ matrix.container }}
+    continue-on-error: ${{ matrix.continue-on-error || false }}
     steps:
       - uses: actions/checkout@v4
       - run: |

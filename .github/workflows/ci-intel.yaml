@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: MIT
+# Nightly Intel Arc integration workflow.
+#
+# Runs on self-hosted runners labelled [self-hosted, linux, x64, intel-arc].
+# NOTE: This runner label does NOT yet exist in the public GitHub Actions pool.
+#       The workflow is informational / opt-in only.  It will queue indefinitely
+#       (or be skipped by GitHub) until a runner with the intel-arc label is
+#       provisioned and connected to this repository.
+#       See: https://docs.github.com/en/actions/hosting-your-own-runners
+#
+# This workflow is non-blocking — it does NOT gate merges to main.
+# Failures are expected while Intel Arc runner infrastructure is being stood up.
+
+name: ci-intel
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 02:00 UTC daily
+  workflow_dispatch:
+
+jobs:
+  intel-arc-smoke:
+    runs-on: [self-hosted, linux, x64, intel-arc]
+    continue-on-error: true  # non-blocking — informational only until runner is GA
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull Level Zero image
+        run: docker pull ollama/ollama-level-zero:latest
+
+      - name: Smoke test
+        # Verbatim from docs/level-zero.mdx (cloud-engineer, Phase B2)
+        run: |
+          docker run --rm \
+            --device=/dev/dri \
+            --device=/dev/accel:/dev/accel \
+            --cap-drop ALL \
+            -e OLLAMA_L0_DEVICE_INDEX=0 \
+            -e OLLAMA_L0_NPU_ENABLE=0 \
+            -e OLLAMA_DEBUG=1 \
+            -p 11434:11434 \
+            ollama/ollama-level-zero \
+            ollama run tinyllama "hello"
+
+      - name: Integration tests
+        run: |
+          go test -tags=integration,level_zero -v -count 1 -timeout 15m ./integration/
