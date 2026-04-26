@@ -4,6 +4,8 @@
   </a>
 </p>
 
+[![Intel Arc CI](https://github.com/ollama/ollama/actions/workflows/ci-intel.yaml/badge.svg)](https://github.com/ollama/ollama/actions/workflows/ci-intel.yaml)
+
 # Ollama
 
 Start building with open models.

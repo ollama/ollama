@@ -1,0 +1,151 @@
+<!-- SPDX-License-Identifier: MIT -->
+
+# Intel GPU (Arc / Iris Xe) and NPU (Meteor Lake+) with Docker
+
+Intel Level Zero is Intel's low-level GPU and accelerator API, providing direct hardware
+access without the overhead of higher-level runtimes. This flavor covers Intel Arc discrete
+GPUs, Iris Xe integrated graphics (Tiger Lake and later), and the NPU accelerators present in
+Meteor Lake, Lunar Lake, and Arrow Lake SoCs. All three device classes are enumerated through
+the `ze_loader` runtime and dispatched as `ZE_DEVICE_TYPE_GPU` or `ZE_DEVICE_TYPE_VPU`.
+
+## Prerequisites
+
+### Host system requirements
+
+- Linux kernel ≥ 6.2 (required for reliable `/dev/accel` node support on NPU hardware)
+- Intel Compute Runtime: `intel-level-zero-gpu ≥ 1.3` installed on the host
+- `/dev/dri` device nodes present (GPU access via DRI; always present on supported Intel systems)
+- `/dev/accel` device nodes present for NPU inference (Meteor Lake+ only; omit if not applicable)
+- Docker Engine ≥ 24 with `--device` passthrough support
+
+### NPU-specific firmware
+
+Meteor Lake, Lunar Lake, and Arrow Lake NPU inference requires the `intel-npu-driver` firmware
+package in addition to the base Intel Compute Runtime. Install it from the Intel compute
+runtime GitHub repository:
+
+```shell
+# Ubuntu 22.04 / 24.04
+sudo apt-get install -y intel-npu-driver
+```
+
+If the NPU firmware is absent, set `OLLAMA_L0_NPU_ENABLE=0` (the default) and Ollama will
+use GPU-only inference, which works without the NPU driver.
+
+### Ubuntu install
+
+```shell
+sudo apt-get install -y \
+  level-zero \
+  intel-level-zero-gpu \
+  intel-opencl-icd
+```
+
+### Arch Linux install
+
+```shell
+sudo pacman -S level-zero-headers intel-compute-runtime
+```
+
+### Docker image
+
+The pre-built image bundles all required Intel runtime libraries:
+
+```shell
+docker pull ollama/ollama-level-zero
+```
+
+---
+
+## Run
+
+```shell
+docker run --rm \
+  --device=/dev/dri \
+  --device=/dev/accel:/dev/accel \
+  --cap-drop ALL \
+  -e OLLAMA_L0_DEVICE_INDEX=0 \
+  -e OLLAMA_L0_NPU_ENABLE=0 \
+  -e OLLAMA_DEBUG=1 \
+  -p 11434:11434 \
+  ollama/ollama-level-zero \
+  ollama run tinyllama "hello"
+```
+
+When `OLLAMA_DEBUG=1` is set you should see `level_zero` appear in the debug log output,
+confirming the backend was loaded. A successful response from `tinyllama` means the Level
+Zero backend is active.
+
+---
+
+## Environment variables
+
+| Env var | Type | Default | Purpose |
+|---|---|---|---|
+| `OLLAMA_L0_DEVICE_INDEX` | int | -1 | Pin inference to a specific L0 device by index; -1 = auto-select |
+| `OLLAMA_L0_NPU_ENABLE` | bool | false | Enable NPU (ZE_DEVICE_TYPE_VPU) enumeration; GPU-only by default |
+| `ZE_AFFINITY_MASK` | string | "" | Intel-defined affinity mask (comma-separated device indices) |
+
+---
+
+## Device passthrough notes
+
+`/dev/dri` is required for Intel Arc GPU and Iris Xe iGPU access. It is present on all
+supported Intel platforms and must be passed to the container via `--device=/dev/dri`.
+
+`/dev/accel` is required for Intel NPU (Meteor Lake and later) access. If the host has no NPU,
+omit `--device=/dev/accel` from the run command — Docker will warn about the missing device
+node, but the container will start normally and GPU inference will proceed unaffected.
+
+`--cap-drop ALL` drops all Linux capabilities from the container. No `--privileged` flag is
+needed or permitted. DRI and accel access is implemented via device node passthrough only,
+which requires no elevated capabilities.
+
+---
+
+## Known limits
+
+- NPU model size is capped at approximately 8 B Q4 per ADR-L0-007; larger models will fall
+  back to CPU if no eligible GPU is present.
+- FP32 compute is not available on some NPU SKUs (Arrow Lake-U); the Level Zero backend
+  will automatically select FP16 for those devices.
+- If `ze_loader` is absent at container start, Ollama falls back to CPU inference and
+  logs one debug-level message — no error is emitted to users.
+
+---
+
+## Troubleshooting
+
+### `ze_loader not found` in debug log
+
+The Intel Level Zero loader (`libze_loader.so.1`) is not present in the container runtime
+path. Verify the image was pulled from `ollama/ollama-level-zero` and not the base CPU image.
+If building from source, confirm `FLAVOR=level_zero` was passed to `docker buildx build`.
+
+### `no devices enumerated`
+
+The Level Zero driver is present but reports zero devices. Check:
+1. `--device=/dev/dri` was included in the `docker run` command.
+2. The host Intel driver is ≥ 1.3: `apt-cache show intel-level-zero-gpu | grep Version`.
+3. The container user (UID 1000) has read access to `/dev/dri/*` on the host — on some
+   distributions the `video` or `render` group ownership on `/dev/dri/renderD128` blocks
+   access. Add the container group to the host `render` group or pass
+   `--group-add=$(stat -c "%g" /dev/dri/renderD128)` to `docker run`.
+
+### `OOM on large models`
+
+Intel iGPU shares system RAM with the CPU. A 7 B Q4 model (~4 GB) may exhaust available
+device memory on systems with 8 GB total RAM. Either reduce the model size
+(use a 3 B or 1 B parameter model) or set `OLLAMA_L0_DEVICE_INDEX=-1` to allow Ollama to
+select the largest-VRAM device automatically across all available Intel devices.
+
+---
+
+## Build from source (FLAVOR=level_zero)
+
+```shell
+docker buildx build \
+  --build-arg FLAVOR=level_zero \
+  -t ollama/ollama-level-zero:dev \
+  .
+```
