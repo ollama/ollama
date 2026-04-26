@@ -24,14 +24,15 @@ type logprobEntry struct {
 func runSampleLogprobs(t *testing.T, logits []float32, topK int) (int, float64, []logprobEntry) {
 	t.Helper()
 
-	s := New(Options{Logprobs: true, TopLogprobs: topK})
+	s := New(128)
 	defer func() {
 		s.Free()
 		mlx.Sweep()
 	}()
+	s.Add(0, Options{Logprobs: true, TopLogprobs: topK}, nil)
 
 	tensor := mlx.FromValues(logits, 1, len(logits))
-	res := s.Sample(tensor)
+	res := s.Sample([]int{0}, tensor)
 
 	mlx.Pin(res.Arrays()...)
 	defer mlx.Unpin(res.Arrays()...)
@@ -55,6 +56,8 @@ func runSampleLogprobs(t *testing.T, logits []float32, topK int) (int, float64, 
 }
 
 func TestSampleLogprobsBasic(t *testing.T) {
+	skipIfNoMLX(t)
+
 	tests := []struct {
 		name           string
 		logits         []float32
@@ -92,6 +95,8 @@ func TestSampleLogprobsBasic(t *testing.T) {
 }
 
 func TestSampleLogprobsNumericalStability(t *testing.T) {
+	skipIfNoMLX(t)
+
 	logits := []float32{1000.0, 999.0, 998.0}
 	_, selLP, top := runSampleLogprobs(t, logits, 3)
 
@@ -111,6 +116,8 @@ func TestSampleLogprobsNumericalStability(t *testing.T) {
 }
 
 func TestSampleLogprobsProbabilityCorrectness(t *testing.T) {
+	skipIfNoMLX(t)
+
 	tests := []struct {
 		name   string
 		logits []float32
@@ -167,6 +174,8 @@ func TestSampleLogprobsProbabilityCorrectness(t *testing.T) {
 }
 
 func TestSampleLogprobsSoftmaxCorrectness(t *testing.T) {
+	skipIfNoMLX(t)
+
 	tests := []struct {
 		name   string
 		logits []float32
@@ -202,6 +211,8 @@ func TestSampleLogprobsSoftmaxCorrectness(t *testing.T) {
 }
 
 func TestSampleLogprobsSelectedTokenCorrectness(t *testing.T) {
+	skipIfNoMLX(t)
+
 	logits := []float32{3.0, 1.0, 2.0, 0.5}
 
 	maxIdx := 0
@@ -225,7 +236,47 @@ func TestSampleLogprobsSelectedTokenCorrectness(t *testing.T) {
 	}
 }
 
+// TestBatchedLogprobsPerRow verifies that per-row logprobs in a batched
+// sample call match the per-slot reference. The numerically-stable softmax
+// must reduce along the last axis only, not over the whole batch.
+func TestBatchedLogprobsPerRow(t *testing.T) {
+	skipIfNoMLX(t)
+
+	rowA := []float32{2, 1, 0}
+	rowB := []float32{0, 5, 0}
+
+	_, wantA, _ := runSampleLogprobs(t, rowA, 0)
+	_, wantB, _ := runSampleLogprobs(t, rowB, 0)
+
+	s := New(128)
+	t.Cleanup(func() {
+		s.Free()
+		mlx.Sweep()
+	})
+	s.Add(1, Options{Logprobs: true}, nil)
+	s.Add(2, Options{Logprobs: true}, nil)
+
+	logits := mlx.FromValues(append(append([]float32{}, rowA...), rowB...), 2, 3)
+	res := s.Sample([]int{1, 2}, logits)
+	mlx.Pin(res.Arrays()...)
+	t.Cleanup(func() { mlx.Unpin(res.Arrays()...) })
+	mlx.Eval(res.Arrays()...)
+
+	got := res.Logprob.Floats()
+	if len(got) != 2 {
+		t.Fatalf("Logprob length = %d, want 2", len(got))
+	}
+	if math.Abs(float64(got[0])-wantA) > 1e-5 {
+		t.Errorf("row 0 logprob = %f, want %f (per-slot reference)", got[0], wantA)
+	}
+	if math.Abs(float64(got[1])-wantB) > 1e-5 {
+		t.Errorf("row 1 logprob = %f, want %f (per-slot reference)", got[1], wantB)
+	}
+}
+
 func TestSampleLogprobsTopKOrdering(t *testing.T) {
+	skipIfNoMLX(t)
+
 	// Logits chosen so argmax order differs from index order.
 	logits := []float32{2.0, 5.0, 1.0, 4.0, 3.0}
 	wantOrder := []int{1, 3, 4, 0, 2}

@@ -582,10 +582,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			opts.Think = &api.ThinkValue{Value: true}
 		case "false":
 			opts.Think = &api.ThinkValue{Value: false}
-		case "high", "medium", "low":
+		case "high", "medium", "low", "max":
 			opts.Think = &api.ThinkValue{Value: thinkStr}
 		default:
-			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, or low)", thinkStr)
+			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
 		}
 	} else {
 		opts.Think = nil
