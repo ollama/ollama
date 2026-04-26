@@ -126,6 +126,15 @@ On Windows, Ollama inherits your user and system environment variables.
 
 6. Start the Ollama application from the Windows Start menu.
 
+## How do I hook into each inference request/response?
+
+Ollama can POST each inference request and response to an external HTTP
+endpoint before the model is invoked and after the response is assembled.
+Configure with `OLLAMA_HOOK_URL_PRE_INFERENCE` and
+`OLLAMA_HOOK_URL_POST_INFERENCE`. See
+[Inference Webhooks](./inference-webhooks.mdx) for the wire protocol and
+configuration details.
+
 ## How do I use Ollama behind a proxy?
 
 Ollama pulls models from the Internet and may require a proxy server to access the models. Use `HTTPS_PROXY` to redirect outbound requests through the proxy. Ensure the proxy certificate is installed as a system certificate. Refer to the section above for how to use environment variables on your platform.
