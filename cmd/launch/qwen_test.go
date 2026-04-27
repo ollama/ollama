@@ -14,10 +14,6 @@ func TestQwenEdit(t *testing.T) {
 	os.Chdir(tmpDir)
 
 	q := &Qwen{}
-	q.ConfigureLaunch(IntegrationLaunchRequest{
-		ConfigScope:  "project",
-		ProviderMode: "hybrid",
-	})
 
 	err := q.Edit([]string{"test-model"})
 	if err != nil {
@@ -89,11 +85,6 @@ func TestQwenEditPreservesAuth(t *testing.T) {
 	os.WriteFile(filepath.Join(configDir, "settings.json"), initialConfig, 0o644)
 
 	q := &Qwen{}
-	q.ConfigureLaunch(IntegrationLaunchRequest{
-		ConfigScope:  "project",
-		ProviderMode: "hybrid",
-	})
-
 	err := q.Edit([]string{"test-model"})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -107,29 +98,6 @@ func TestQwenEditPreservesAuth(t *testing.T) {
 	auth := sec["auth"].(map[string]any)
 	if auth["selectedType"] != "custom_auth" {
 		t.Errorf("expected auth.selectedType to be preserved as 'custom_auth', got %v", auth["selectedType"])
-	}
-}
-
-func TestQwenEditEnvMode(t *testing.T) {
-	tmpDir := t.TempDir()
-	origWd, _ := os.Getwd()
-	defer os.Chdir(origWd)
-	os.Chdir(tmpDir)
-
-	q := &Qwen{}
-	q.ConfigureLaunch(IntegrationLaunchRequest{
-		ConfigScope:  "project",
-		ProviderMode: "env",
-	})
-
-	err := q.Edit([]string{"test-model"})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	configPath := filepath.Join(tmpDir, ".qwen", "settings.json")
-	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
-		t.Fatalf("expected config file NOT to be created in env mode")
 	}
 }
 
@@ -152,11 +120,6 @@ func TestQwenLegacyMigration(t *testing.T) {
 	os.WriteFile(filepath.Join(configDir, "settings.json"), initialConfig, 0o644)
 
 	q := &Qwen{}
-	q.ConfigureLaunch(IntegrationLaunchRequest{
-		ConfigScope:  "project",
-		ProviderMode: "config",
-	})
-
 	q.Edit([]string{"test-model"})
 
 	data, _ := os.ReadFile(filepath.Join(configDir, "settings.json"))

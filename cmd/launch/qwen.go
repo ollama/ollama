@@ -13,13 +13,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 )
 
-type Qwen struct {
-	req IntegrationLaunchRequest
-}
-
-func (q *Qwen) ConfigureLaunch(req IntegrationLaunchRequest) {
-	q.req = req
-}
+type Qwen struct{}
 
 func (q *Qwen) String() string { return "Qwen Code CLI" }
 
@@ -63,10 +57,6 @@ func (q *Qwen) findPath() (string, error) {
 }
 
 func (q *Qwen) Run(model string, args []string) error {
-	if q.req.Experimental {
-		fmt.Fprintln(os.Stderr, "Warning: Qwen integration is experimental and subject to upstream capability mismatches.")
-	}
-
 	qwenPath, err := q.findPath()
 	if err != nil {
 		return fmt.Errorf("qwen is not installed: %w", err)
@@ -82,16 +72,14 @@ func (q *Qwen) Run(model string, args []string) error {
 
 	env := os.Environ()
 
-	if q.req.ProviderMode != "config" {
-		if os.Getenv("OPENAI_API_KEY") == "" {
-			env = append(env, "OPENAI_API_KEY=dummy")
-		}
-		if os.Getenv("OPENAI_BASE_URL") == "" {
-			env = append(env, "OPENAI_BASE_URL="+base)
-		}
-		if model != "" && os.Getenv("OPENAI_MODEL") == "" {
-			env = append(env, "OPENAI_MODEL="+model)
-		}
+	if os.Getenv("OPENAI_API_KEY") == "" {
+		env = append(env, "OPENAI_API_KEY=dummy")
+	}
+	if os.Getenv("OPENAI_BASE_URL") == "" {
+		env = append(env, "OPENAI_BASE_URL="+base)
+	}
+	if model != "" && os.Getenv("OPENAI_MODEL") == "" {
+		env = append(env, "OPENAI_MODEL="+model)
 	}
 
 	cmd.Env = env
@@ -99,30 +87,18 @@ func (q *Qwen) Run(model string, args []string) error {
 }
 
 func (q *Qwen) configPath() (string, error) {
-	var candidates []string
-
-	if q.req.ConfigScope == "project" {
-		if cwd, err := os.Getwd(); err == nil {
-			candidates = append(candidates, filepath.Join(cwd, ".qwen", "settings.json"))
-		}
-	} else {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			candidates = append(candidates, filepath.Join(home, ".qwen", "settings.json"))
-			candidates = append(candidates, filepath.Join(home, ".config", "qwen", "settings.json"))
-		}
+	// Always use project scope: .qwen/settings.json in current working directory.
+	// The file may not exist yet; it will be created by Edit().
+	if cwd, err := os.Getwd(); err == nil {
+		return filepath.Join(cwd, ".qwen", "settings.json"), nil
 	}
 
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
+	// Fall back to user scope
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not determine config path")
 	}
-
-	if len(candidates) > 0 {
-		return candidates[0], nil
-	}
-	return "", fmt.Errorf("could not determine config path")
+	return filepath.Join(home, ".qwen", "settings.json"), nil
 }
 
 func (q *Qwen) Paths() []string {
@@ -135,10 +111,6 @@ func (q *Qwen) Paths() []string {
 
 func (q *Qwen) Edit(models []string) error {
 	if len(models) == 0 {
-		return nil
-	}
-
-	if q.req.ProviderMode == "env" {
 		return nil
 	}
 
@@ -180,12 +152,12 @@ func (q *Qwen) Edit(models []string) error {
 	}
 
 	var openaiProviders []any
-	if existingOpenAI, ok := modelProviders["openai"].([]any); ok {
-		openaiProviders = existingOpenAI
-	} else if existingOpenAI, ok := modelProviders["openai"].(map[string]any); ok && existingOpenAI != nil {
-		openaiProviders = []any{existingOpenAI}
-	}
-	if openaiProviders == nil {
+	switch v := modelProviders["openai"].(type) {
+	case []any:
+		openaiProviders = v
+	case map[string]any:
+		openaiProviders = []any{v}
+	default:
 		openaiProviders = []any{}
 	}
 
