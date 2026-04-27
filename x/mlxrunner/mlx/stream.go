@@ -3,10 +3,7 @@ package mlx
 // #include "generated.h"
 import "C"
 
-import (
-	"log/slog"
-	"sync"
-)
+import "log/slog"
 
 type Device struct {
 	ctx C.mlx_device
@@ -19,11 +16,28 @@ func (d Device) LogValue() slog.Value {
 	return slog.StringValue(C.GoString(C.mlx_string_data(str)))
 }
 
-var DefaultDevice = sync.OnceValue(func() Device {
-	d := C.mlx_device_new()
-	C.mlx_get_default_device(&d)
-	return Device{d}
-})
+var (
+	defaultDevice    Device
+	defaultDeviceSet bool
+	defaultStream    Stream
+	defaultStreamSet bool
+)
+
+func resetDefaultStreamCache() {
+	defaultDeviceSet = false
+	defaultStreamSet = false
+}
+
+func DefaultDevice() Device {
+	if !defaultDeviceSet {
+		d := C.mlx_device_new()
+		C.mlx_get_default_device(&d)
+		defaultDevice = Device{d}
+		defaultDeviceSet = true
+	}
+
+	return defaultDevice
+}
 
 // GPUIsAvailable returns true if a GPU device is available.
 func GPUIsAvailable() bool {
@@ -39,6 +53,7 @@ func SetDefaultDeviceGPU() {
 	dev := C.mlx_device_new_type(C.MLX_GPU, 0)
 	C.mlx_set_default_device(dev)
 	C.mlx_device_free(dev)
+	resetDefaultStreamCache()
 }
 
 type Stream struct {
@@ -52,8 +67,13 @@ func (s Stream) LogValue() slog.Value {
 	return slog.StringValue(C.GoString(C.mlx_string_data(str)))
 }
 
-var DefaultStream = sync.OnceValue(func() Stream {
-	s := C.mlx_stream_new()
-	C.mlx_get_default_stream(&s, DefaultDevice().ctx)
-	return Stream{s}
-})
+func DefaultStream() Stream {
+	if !defaultStreamSet {
+		s := C.mlx_stream_new()
+		C.mlx_get_default_stream(&s, DefaultDevice().ctx)
+		defaultStream = Stream{s}
+		defaultStreamSet = true
+	}
+
+	return defaultStream
+}
