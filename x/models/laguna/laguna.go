@@ -915,6 +915,11 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				layerPrefix+".mlp.experts.e_score_correction_bias",
 				layerPrefix+".mlp.switch_mlp.e_score_correction_bias",
 			)
+			if moe.EScoreCorrectionBias != nil && moe.EScoreCorrectionBias.DType() != mlx.DTypeFloat32 {
+				bias := moe.EScoreCorrectionBias.AsType(mlx.DTypeFloat32).Clone()
+				mlx.Eval(bias)
+				moe.EScoreCorrectionBias = bias
+			}
 
 			gateW := loadStackedProjection(tensors, cfg, useQuantizedExperts,
 				layerPrefix+".mlp.switch_mlp.gate_proj",
@@ -1068,12 +1073,9 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, layer *Laye
 		out = mlx.ScaledDotProductAttentionCausal(q, k, v, cfg.Scale, L > 1)
 	}
 
-	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, numHeads*cfg.HeadDim)
-	gate := mlx.Softplus(a.GProj.Forward(x).AsType(mlx.DTypeFloat32)).AsType(out.DType())
-	gate = mlx.ExpandDims(gate, -1)
-	out = mlx.Reshape(out, B, L, numHeads, cfg.HeadDim)
-	out = mlx.Mul(out, gate)
-	out = mlx.Reshape(out, B, L, numHeads*cfg.HeadDim)
+	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, numHeads, cfg.HeadDim)
+	gate := mlx.ExpandDims(mlx.SoftplusF32(a.GProj.Forward(x)), -1)
+	out = mlx.Reshape(mlx.Mul(out, gate), B, L, numHeads*cfg.HeadDim)
 	return a.OProj.Forward(out)
 }
 
@@ -1172,6 +1174,24 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 	return mlx.Reshape(down, B, L, topK, cfg.HiddenSize)
 }
 
+func (m *SparseMoE) route(xFlat *mlx.Array, cfg *Config) (scores, inds *mlx.Array) {
+	gates := m.Gate.Forward(xFlat).AsType(mlx.DTypeFloat32)
+	var probs, neg *mlx.Array
+	if m.EScoreCorrectionBias != nil {
+		probs, neg = mlx.SigmoidRouter(gates, m.EScoreCorrectionBias)
+	} else {
+		probs = mlx.Sigmoid(gates)
+		neg = mlx.Neg(probs)
+	}
+	inds = mlx.Argpartition(neg, int(cfg.NumExpertsPerTok)-1, -1)
+	inds = mlx.SliceStartStop(inds, []int32{0, 0}, []int32{int32(xFlat.Dim(0)), cfg.NumExpertsPerTok})
+	scores = mlx.TakeAlongAxis(probs, inds, -1)
+	if cfg.NormTopKProb && cfg.NumExpertsPerTok > 1 {
+		scores = mlx.Div(scores, mlx.Sum(scores, -1, true))
+	}
+	return scores, inds
+}
+
 func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
@@ -1179,17 +1199,7 @@ func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 
 	shared := m.SharedExpert.Forward(x, cfg)
 	xFlat := mlx.Reshape(x, BL, cfg.HiddenSize)
-	probs := mlx.Sigmoid(m.Gate.Forward(xFlat).AsType(mlx.DTypeFloat32))
-	if m.EScoreCorrectionBias != nil {
-		probs = mlx.Add(probs, m.EScoreCorrectionBias.AsType(probs.DType()))
-	}
-	neg := mlx.Neg(probs)
-	inds := mlx.Argpartition(neg, int(cfg.NumExpertsPerTok)-1, -1)
-	inds = mlx.SliceStartStop(inds, []int32{0, 0}, []int32{BL, cfg.NumExpertsPerTok})
-	scores := mlx.TakeAlongAxis(probs, inds, -1)
-	if cfg.NormTopKProb && cfg.NumExpertsPerTok > 1 {
-		scores = mlx.Div(scores, mlx.Sum(scores, -1, true))
-	}
+	scores, inds := m.route(xFlat, cfg)
 	scores = scores.AsType(x.DType())
 
 	expertOut := m.SwitchMLP.Forward(x, inds, cfg)

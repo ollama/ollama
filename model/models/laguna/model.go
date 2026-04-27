@@ -149,15 +149,18 @@ type sparse struct {
 	ExpProbsBias ml.Tensor       `gguf:"exp_probs_b.bias,alt:exp_probs_b"`
 }
 
+func (moe *sparse) topKIndices(ctx ml.Context, scores ml.Tensor, opts *Options) ml.Tensor {
+	if moe.ExpProbsBias != nil {
+		scores = scores.Add(ctx, moe.ExpProbsBias)
+	}
+	return scores.TopK(ctx, opts.numExpertsUsed)
+}
+
 func (moe *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
 	residual := hiddenStates
 
 	scores := moe.Router.Forward(ctx, hiddenStates).Cast(ctx, ml.DTypeF32).Sigmoid(ctx)
-	if moe.ExpProbsBias != nil {
-		scores = scores.Add(ctx, moe.ExpProbsBias)
-	}
-
-	selectedExperts := scores.TopK(ctx, opts.numExpertsUsed)
+	selectedExperts := moe.topKIndices(ctx, scores, opts)
 	routingWeights := scores.Reshape(ctx, 1, opts.numExperts, hiddenStates.Dim(1)).Rows(ctx, selectedExperts)
 	if opts.normTopKProb {
 		routingWeights = routingWeights.Reshape(ctx, opts.numExpertsUsed, hiddenStates.Dim(1))

@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/models/nn"
 )
 
 func TestParseConfigLagunaXS(t *testing.T) {
+	skipIfNoMLX(t)
 	cfg, err := parseConfig([]byte(`{
 		"model_type": "laguna",
 		"hidden_size": 2048,
@@ -84,6 +86,7 @@ func TestParseConfigLagunaXS(t *testing.T) {
 }
 
 func TestParseConfigLagunaFP8RopeScaling(t *testing.T) {
+	skipIfNoMLX(t)
 	cfg, err := parseConfig([]byte(`{
 		"hidden_size": 2048,
 		"intermediate_size": 8192,
@@ -112,6 +115,7 @@ func TestParseConfigLagunaFP8RopeScaling(t *testing.T) {
 }
 
 func TestParseConfigLagunaGASchema(t *testing.T) {
+	skipIfNoMLX(t)
 	cfg, err := parseConfig([]byte(`{
 		"model_type": "laguna",
 		"hidden_size": 2048,
@@ -183,6 +187,7 @@ func TestParseConfigLagunaGASchema(t *testing.T) {
 }
 
 func TestTinyLagunaLoadAndForward(t *testing.T) {
+	skipIfNoMLX(t)
 	cfg, err := parseConfig([]byte(`{
 		"model_type": "laguna",
 		"hidden_size": 8,
@@ -265,6 +270,7 @@ func TestTinyLagunaLoadAndForward(t *testing.T) {
 }
 
 func TestSlidingMaskCacheReusesPerForwardMask(t *testing.T) {
+	skipIfNoMLX(t)
 	var c slidingMaskCache
 	first := c.get(8, 8, 4, mlx.DTypeFloat32)
 	second := c.get(8, 8, 4, mlx.DTypeFloat32)
@@ -279,6 +285,7 @@ func TestSlidingMaskCacheReusesPerForwardMask(t *testing.T) {
 }
 
 func TestTinyLagunaLoadWeightsFusesDenseGateUp(t *testing.T) {
+	skipIfNoMLX(t)
 	cfg, err := parseConfig([]byte(`{
 		"model_type": "laguna",
 		"hidden_size": 8,
@@ -333,7 +340,46 @@ func TestTinyLagunaLoadWeightsFusesDenseGateUp(t *testing.T) {
 	}
 }
 
+func TestSparseMoERouteBiasAffectsSelectionNotRoutingWeights(t *testing.T) {
+	skipIfNoMLX(t)
+	cfg := &Config{
+		HiddenSize:       1,
+		NumExperts:       2,
+		NumExpertsPerTok: 1,
+		NormTopKProb:     false,
+	}
+
+	moe := &SparseMoE{
+		Gate:                 nn.NewLinear(mlx.FromValues([]float32{-4, -3}, 2, 1).AsType(mlx.DTypeBFloat16), nil),
+		EScoreCorrectionBias: mlx.FromValues([]float32{0.5, 0}, 2),
+	}
+
+	xFlat := mlx.FromValues([]float32{1}, 1, int(cfg.HiddenSize)).AsType(mlx.DTypeBFloat16)
+	scores, inds := moe.route(xFlat, cfg)
+	scores = scores.AsType(mlx.DTypeFloat32)
+	inds = inds.AsType(mlx.DTypeInt32)
+	mlx.Eval(scores, inds)
+
+	gates := moe.Gate.Forward(xFlat).AsType(mlx.DTypeFloat32)
+	probs := mlx.Sigmoid(gates)
+	mlx.Eval(probs)
+	probVals := probs.Floats()
+	if probVals[0] >= probVals[1] {
+		t.Fatalf("expected unbiased sigmoid scores to prefer expert 1, got %v", probVals)
+	}
+	if probVals[0]+0.5 <= probVals[1] {
+		t.Fatalf("expected bias to flip selection to expert 0, got probs=%v", probVals)
+	}
+	if got := inds.Ints(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf("selected experts = %v, want [0]", got)
+	}
+	if got := scores.Floats(); len(got) != 1 || math.Abs(float64(got[0]-probVals[0])) > 1e-6 {
+		t.Fatalf("routing weights = %v, want [%v] using unbiased sigmoid scores", got, probVals[0])
+	}
+}
+
 func TestSwitchMLPFusedGateUpMatchesSeparate(t *testing.T) {
+	skipIfNoMLX(t)
 	cfg := &Config{HiddenSize: 4, NumExpertsPerTok: 2}
 	B, L := int32(2), int32(3)
 	xVals := make([]float32, int(B*L*cfg.HiddenSize))
@@ -371,6 +417,7 @@ func TestSwitchMLPFusedGateUpMatchesSeparate(t *testing.T) {
 }
 
 func TestCombinedTensorGlobalScaleIgnoresInputGlobalScale(t *testing.T) {
+	skipIfNoMLX(t)
 	tensors := map[string]*mlx.Array{
 		"proj.weight.global_scale":       mlx.FromValues([]float32{0.25}, 1),
 		"proj.weight.input_global_scale": mlx.FromValues([]float32{8}, 1),
@@ -462,4 +509,11 @@ func ones(n int) *mlx.Array {
 		vals[i] = 1
 	}
 	return mlx.FromValues(vals, n)
+}
+
+func skipIfNoMLX(t *testing.T) {
+	t.Helper()
+	if err := mlx.CheckInit(); err != nil {
+		t.Skipf("MLX not available: %v", err)
+	}
 }

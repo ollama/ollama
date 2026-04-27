@@ -34,6 +34,19 @@ var SiLU = Compile1(
 	Shapeless(),
 )
 
+// SoftplusF32 returns softplus(x) computed in float32 precision and cast back
+// to x's original dtype, as a fused kernel. Matches the laguna attention
+// output-gate formula: softplus(cast_f32(x)).cast(orig_dtype).
+var SoftplusF32 = Compile1(
+	"SoftplusF32",
+	func(x *Array) *Array {
+		dt := x.DType()
+		zero := FromValue[float32](0)
+		return Logaddexp(x.AsType(DTypeFloat32), zero).AsType(dt)
+	},
+	Shapeless(),
+)
+
 // SwiGLU returns silu(gate) * up as a fused kernel.
 var SwiGLU = Compile2(
 	"SwiGLU",
