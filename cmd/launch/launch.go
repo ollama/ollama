@@ -123,10 +123,6 @@ type IntegrationLaunchRequest struct {
 	ConfigureOnly  bool
 	ExtraArgs      []string
 	Policy         *LaunchPolicy
-	Think          string
-	ConfigScope    string
-	ProviderMode   string
-	Experimental   bool
 }
 
 var isInteractiveSession = func() bool {
@@ -144,12 +140,6 @@ type Editor interface {
 	Paths() []string
 	Edit(models []string) error
 	Models() []string
-}
-
-// LaunchConfigurator allows an integration to receive the launch flags (scope, mode, etc.)
-// before Run or Edit are called.
-type LaunchConfigurator interface {
-	ConfigureLaunch(req IntegrationLaunchRequest)
 }
 
 // ManagedSingleModel is the narrow launch-owned config path for integrations
@@ -207,10 +197,6 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 	var modelFlag string
 	var configFlag bool
 	var yesFlag bool
-	var thinkFlag string
-	var configScopeFlag string
-	var providerModeFlag string
-	var experimentalFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "launch [INTEGRATION] [-- [EXTRA_ARGS...]]",
@@ -273,7 +259,7 @@ Examples:
 			}
 
 			if name == "" {
-				if cmd.Flags().Changed("model") || cmd.Flags().Changed("config") || cmd.Flags().Changed("yes") || cmd.Flags().Changed("think") || cmd.Flags().Changed("config-scope") || cmd.Flags().Changed("provider-mode") || cmd.Flags().Changed("experimental") || len(passArgs) > 0 {
+				if cmd.Flags().Changed("model") || cmd.Flags().Changed("config") || cmd.Flags().Changed("yes") || len(passArgs) > 0 {
 					return fmt.Errorf("flags and extra args require an integration name, for example: 'ollama launch claude --model qwen3.5'")
 				}
 				runTUI(cmd)
@@ -297,10 +283,6 @@ Examples:
 				ConfigureOnly:  configFlag,
 				ExtraArgs:      passArgs,
 				Policy:         &policy,
-				Think:          thinkFlag,
-				ConfigScope:    configScopeFlag,
-				ProviderMode:   providerModeFlag,
-				Experimental:   experimentalFlag,
 			})
 			if errors.Is(err, ErrCancelled) {
 				return nil
@@ -312,10 +294,6 @@ Examples:
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
 	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
 	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Automatically answer yes to confirmation prompts")
-	cmd.Flags().StringVar(&thinkFlag, "think", "auto", "Enable thinking mode (auto, on, off)")
-	cmd.Flags().StringVar(&configScopeFlag, "config-scope", "user", "Configuration scope (user, project)")
-	cmd.Flags().StringVar(&providerModeFlag, "provider-mode", "hybrid", "Provider integration mode (hybrid, config, env)")
-	cmd.Flags().BoolVar(&experimentalFlag, "experimental", false, "Enable experimental features for the integration")
 	return cmd
 }
 
@@ -369,10 +347,6 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	name, runner, err := LookupIntegration(req.Name)
 	if err != nil {
 		return err
-	}
-
-	if lc, ok := runner.(LaunchConfigurator); ok {
-		lc.ConfigureLaunch(req)
 	}
 
 	policy := launchIntegrationPolicy(req)
