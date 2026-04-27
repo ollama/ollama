@@ -132,3 +132,81 @@ func TestQwenLegacyMigration(t *testing.T) {
 		t.Fatalf("expected openai to be migrated to an array of length 2, got %v", openaiArray)
 	}
 }
+
+func TestQwenIntegration(t *testing.T) {
+	q := &Qwen{}
+
+	t.Run("String", func(t *testing.T) {
+		if got := q.String(); got != "Qwen Code CLI" {
+			t.Errorf("String() = %q, want %q", got, "Qwen Code CLI")
+		}
+	})
+
+	t.Run("implements Runner", func(t *testing.T) {
+		var _ Runner = q
+	})
+
+	t.Run("implements Editor", func(t *testing.T) {
+		var _ Editor = q
+	})
+}
+
+func TestQwenFindPath(t *testing.T) {
+	q := &Qwen{}
+	path, err := q.findPath()
+	if err != nil {
+		t.Skipf("qwen binary not found, skipping: %v", err)
+	}
+	if path == "" {
+		t.Fatal("expected non-empty path")
+	}
+}
+
+func TestQwenModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	origWd, _ := os.Getwd()
+	defer os.Chdir(origWd)
+	os.Chdir(tmpDir)
+
+	// Without config, Models() should return nil
+	q := &Qwen{}
+	if models := q.Models(); models != nil {
+		t.Errorf("expected nil models, got %v", models)
+	}
+
+	// With config, should return model name
+	configDir := filepath.Join(tmpDir, ".qwen")
+	os.MkdirAll(configDir, 0o755)
+	config := map[string]any{
+		"model": map[string]any{"name": "test-model"},
+	}
+	data, _ := json.Marshal(config)
+	os.WriteFile(filepath.Join(configDir, "settings.json"), data, 0o644)
+
+	models := q.Models()
+	if len(models) != 1 || models[0] != "test-model" {
+		t.Errorf("expected [test-model], got %v", models)
+	}
+}
+
+func TestQwenPaths(t *testing.T) {
+	// Test that Paths() returns the project config path when it exists.
+	testDir := filepath.Join(t.TempDir(), "qwen-paths-test")
+	os.MkdirAll(testDir, 0755)
+	origWd, _ := os.Getwd()
+	defer os.Chdir(origWd)
+	os.Chdir(testDir)
+
+	q := &Qwen{}
+	// With config file, Paths() should return the project path
+	os.MkdirAll(filepath.Join(testDir, ".qwen"), 0755)
+	os.WriteFile(filepath.Join(testDir, ".qwen", "settings.json"), []byte("{}"), 0644)
+
+	paths := q.Paths()
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 path, got %v", paths)
+	}
+	if paths[0] != filepath.Join(testDir, ".qwen", "settings.json") {
+		t.Errorf("expected project config path, got %s", paths[0])
+	}
+}
