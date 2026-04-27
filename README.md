@@ -6,13 +6,14 @@
 </p>
 
 ---
-# This Fork from me (Kyle Drake):
-> Adds a token level service layer (API endpoints)
-## With added API tokenize and detokenize endpoints.
-# As requested by many of you [https://github.com/ollama/ollama/pull/12030#issuecomment-4106961583](https://github.com/ollama/ollama/pull/12030#issuecomment-4106961583)
-
-**Backstory:** *I forked Ollama and added tokenizer and detokenizer endpoints because MERNSTA depends on stable causal graphs, memory linking, and contradiction detection that break if text is inconsistently processed, so I needed direct control over how text becomes tokens and back to guarantee that embeddings, similarity scoring, and causal relationships stay aligned over time, while also allowing symbolic reasoning and neural outputs to share the same exact representation layer and improving performance by avoiding repeated tokenization in agent loops, effectively making tokens the ground truth that keeps the entire system coherent and reproducible.* [MeRNSTA](https://github.com/neura-asi/MeRNSTA)
-
+> Added lightweight tokenization endpoints that let clients convert text to tokens (and back) using a model’s vocabulary without loading the full model into GPU/VRAM. This enables fast, model aligned utilities (token counting, prompt splitting, input validation) while avoiding inference runner overhead. Targeted a vocab only loading path with a small in process LRU cache; when vocab only isn’t available, the system gracefully falls back to the scheduler backed path.
+>
+> **`Ollama Fork`** ***+*** **`Tokenizer API`** [https://github.com/ollama/ollama/pull/12030#issuecomment-4106961583](https://github.com/ollama/ollama/pull/12030#issuecomment-4106961583)
+>
+---
+> ### [https://deepwiki.com/icedmoca/ollama-vocab-tokenizer ](https://deepwiki.com/icedmoca/ollama-vocab-tokenizer)
+>
+---
 > [!WARNING]  
 > **Experimental API:** *The /api/tokenize and /api/detokenize endpoints are not part of upstream Ollama’s stable API.*  
 > **Compatibility risk:** *They may break with future Ollama releases, since internal tokenizer APIs can change without notice.*  
@@ -21,10 +22,8 @@
 
 ---
 
-## [Tokenize / Detokenize: Vocab-only!!! endpoints with cache + fallback](https://github.com/icedmoca/ollama/commit/48806d3e196a44fd0452eb09354fd9cf1a82b921)
+### [Tokenize / Detokenize: vocab only endpoints with cache + fallback](https://github.com/icedmoca/ollama/commit/48806d3e196a44fd0452eb09354fd9cf1a82b921)
 
-### Overview
-> Added lightweight tokenization endpoints that let clients convert text to tokens (and back) using a model’s vocabulary without loading the full model into GPU/VRAM. This enables fast, model-aligned utilities (token counting, prompt splitting, input validation) while avoiding inference runner overhead. Targeted a vocab-only loading path with a small in-process LRU cache; when vocab-only isn’t available, the system gracefully falls back to the scheduler-backed path.
 
 ### Goals
 - Provide model-aligned tokenization and detokenization over HTTP
