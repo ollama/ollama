@@ -2442,6 +2442,14 @@ const char * llm_arch_name(llm_arch arch) {
 }
 
 llm_arch llm_arch_from_string(const std::string & name) {
+    // Compatibility aliases for newer architecture names
+    if (name == "qwen35") {
+        return LLM_ARCH_QWEN3NEXT;
+    }
+    if (name == "qwen35moe") {
+        return LLM_ARCH_QWEN3NEXT;
+    }
+
     for (const auto & kv : LLM_ARCH_NAMES) { // NOLINT
         if (kv.second == name) {
             return kv.first;
