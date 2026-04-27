@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "copilot", "droid", "pi"}
+var launcherIntegrationOrder = []string{"openclaw", "claude", "gemini", "opencode", "hermes", "codex", "copilot", "droid", "pi"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -46,6 +46,19 @@ var integrationSpecs = []*IntegrationSpec{
 				return err == nil
 			},
 			URL: "https://code.claude.com/docs/en/quickstart",
+		},
+	},
+	{
+		Name:        "gemini",
+		Runner:      &Gemini{},
+		Description: "Google's Gemini CLI with local model support",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&Gemini{}).findPath()
+				return err == nil
+			},
+			URL:     "https://github.com/google/gemini-cli",
+			Command: []string{"npm", "install", "-g", "@google/gemini-cli"},
 		},
 	},
 	{
