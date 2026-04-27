@@ -4,11 +4,21 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 )
 
 var launchctlGetenv = getenvFromLaunchctl
+
+type launchctlResult struct {
+	value string
+	found bool
+}
+
+var launchctlCache sync.Map
 
 var darwinLaunchctlEnvAllowlist = []string{
 	"GGML_METAL_TENSOR_DISABLE",
@@ -40,19 +50,24 @@ func mergeDarwinLaunchctlEnv(env map[string]string) {
 }
 
 func getenvFromLaunchctl(key string) (string, bool) {
-	cmd := exec.Command("launchctl", "getenv", key)
+	if cached, ok := launchctlCache.Load(key); ok {
+		r := cached.(launchctlResult)
+		return r.value, r.found
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "launchctl", "getenv", key)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	out, err := cmd.Output()
-	if err != nil {
-		return "", false
+	var result launchctlResult
+	if out, err := cmd.Output(); err == nil {
+		if value := strings.TrimSpace(string(out)); value != "" {
+			result = launchctlResult{value: value, found: true}
+		}
 	}
-
-	value := strings.TrimSpace(string(out))
-	if value == "" {
-		return "", false
-	}
-
-	return value, true
+	launchctlCache.Store(key, result)
+	return result.value, result.found
 }
