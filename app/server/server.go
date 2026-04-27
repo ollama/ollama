@@ -94,10 +94,13 @@ func ollamaServeArgs(args []string) bool {
 		return false
 	}
 
-	for _, arg := range args[1:] {
-		if strings.Trim(arg, `"`) == "serve" {
-			return true
+	for _, rawArg := range args[1:] {
+		arg := strings.Trim(rawArg, `"`)
+		if strings.HasPrefix(arg, "-") {
+			continue
 		}
+
+		return arg == "serve" || arg == "start"
 	}
 
 	return false

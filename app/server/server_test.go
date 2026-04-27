@@ -227,8 +227,23 @@ func TestOllamaServeArgs(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "start alias",
+			args: []string{"ollama", "start"},
+			want: true,
+		},
+		{
 			name: "launch command",
 			args: []string{"ollama", "launch", "opencode"},
+			want: false,
+		},
+		{
+			name: "run command with model named serve",
+			args: []string{"ollama", "run", "serve"},
+			want: false,
+		},
+		{
+			name: "launch command with serve in passthrough args",
+			args: []string{"ollama", "launch", "codex", "--", "-p", "serve"},
 			want: false,
 		},
 		{
