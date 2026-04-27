@@ -1263,6 +1263,17 @@ struct ggml_backend_cuda_context {
 
     ggml_cuda_stream_context concurrent_stream_context;
 
+    // MoE prefetch: double-buffered staging for overlap-safe H2D.
+    // prefetch stream writes pinned CPU weights -> moe_staging_buffers[slot],
+    // then records moe_staging_h2d_done[slot]; main compute stream waits on the
+    // event and D2D-copies staging -> input_cpy. Prevents the cross-stream race
+    // with ggml-alloc-aliased input_cpy regions.
+    struct {
+        void *       buffers[2]    = {nullptr, nullptr};
+        cudaEvent_t  h2d_done[2]   = {nullptr, nullptr};
+        size_t       capacity      = 0;
+    } moe_staging;
+
     ~ggml_backend_cuda_context();
 
     cudaStream_t stream(int device, int stream) {
