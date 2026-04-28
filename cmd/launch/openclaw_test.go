@@ -251,6 +251,359 @@ func TestOpenclawRun_SetupLaterContinuesToGatewayAndTUI(t *testing.T) {
 	}
 }
 
+func TestOpenclawRun_FirstLaunchOnboardUsesLaunchManagedHealthFlow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> "$HOME/invocations.log"
+if [ "$1" = "onboard" ]; then
+  /usr/bin/env | /usr/bin/sort > "$HOME/onboard-env.log"
+  /bin/mkdir -p "$HOME/.openclaw"
+  /bin/cat > "$HOME/.openclaw/openclaw.json" <<'EOF'
+{"wizard":{"lastRunAt":"2026-01-01T00:00:00Z"},"gateway":{"port":18789,"mode":"local"}}
+EOF
+fi
+exit 0
+`)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "I understand the risks. Continue?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	c := &Openclaw{}
+	if err := c.Run("llama3.2", []string{"status"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected onboard + passthrough invocations, got %v", lines)
+	}
+	onboardInvocation := ""
+	for _, line := range lines {
+		if strings.HasPrefix(line, "onboard ") {
+			onboardInvocation = line
+			break
+		}
+	}
+	if onboardInvocation == "" {
+		t.Fatalf("expected onboard invocation, got %v", lines)
+	}
+	if !strings.Contains(onboardInvocation, "--skip-health") {
+		t.Fatalf("expected onboard invocation to include --skip-health, got %q", onboardInvocation)
+	}
+
+	envData, err := os.ReadFile(filepath.Join(tmpDir, "onboard-env.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envSliceToMap(strings.Split(strings.TrimSpace(string(envData)), "\n"))
+	if env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"] != "1" {
+		t.Fatalf("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS = %q, want %q", env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"], "1")
+	}
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps") {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps"))
+	}
+}
+
+func TestOpenclawRun_FirstLaunchTUIArgsEnsureGatewayBeforePassthrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> "$HOME/invocations.log"
+if [ "$1" = "onboard" ]; then
+  /bin/mkdir -p "$HOME/.openclaw"
+  /bin/cat > "$HOME/.openclaw/openclaw.json" <<'EOF'
+{"wizard":{"lastRunAt":"2026-01-01T00:00:00Z"},"gateway":{"port":%d,"mode":"local"}}
+EOF
+fi
+exit 0
+`, port)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "I understand the risks. Continue?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	c := &Openclaw{}
+	if err := c.Run("llama3.2", []string{"tui"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 invocations (update, onboard, daemon restart, tui), got %v", lines)
+	}
+	onboardIdx, daemonRestartIdx, tuiIdx := -1, -1, -1
+	for i, line := range lines {
+		if onboardIdx == -1 && strings.HasPrefix(line, "onboard ") {
+			onboardIdx = i
+		}
+		if daemonRestartIdx == -1 && line == "daemon restart" {
+			daemonRestartIdx = i
+		}
+		if tuiIdx == -1 && line == "tui" {
+			tuiIdx = i
+		}
+	}
+	if onboardIdx == -1 {
+		t.Fatalf("expected an onboarding invocation, got %v", lines)
+	}
+	if daemonRestartIdx == -1 {
+		t.Fatalf("expected a daemon restart before tui, got %v", lines)
+	}
+	if tuiIdx == -1 {
+		t.Fatalf("expected a tui invocation, got %v", lines)
+	}
+	if !(onboardIdx < daemonRestartIdx && daemonRestartIdx < tuiIdx) {
+		t.Fatalf("expected onboarding, then daemon restart, then tui; got %v", lines)
+	}
+}
+
+func TestOpenclawEnsureGatewayReady_UsesDaemonStartFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	portProbe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := portProbe.Addr().(*net.TCPAddr).Port
+	_ = portProbe.Close()
+
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(fmt.Sprintf(`{
+		"wizard": {"lastRunAt": "2026-01-01T00:00:00Z"},
+		"gateway": {"port": %d, "mode": "local"}
+	}`, port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCanInstallDaemon := openclawCanInstallDaemon
+	openclawCanInstallDaemon = func() bool { return true }
+	defer func() { openclawCanInstallDaemon = oldCanInstallDaemon }()
+
+	triggeredBy := make(chan string, 1)
+	listenerReady := make(chan net.Listener, 1)
+	go func() {
+		invocationsPath := filepath.Join(tmpDir, "invocations.log")
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			data, err := os.ReadFile(invocationsPath)
+			if err == nil {
+				lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+				for _, line := range lines {
+					if line != "daemon start" && line != "gateway run --force" {
+						continue
+					}
+					ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+					if err != nil {
+						return
+					}
+					go func() {
+						for {
+							conn, err := ln.Accept()
+							if err != nil {
+								return
+							}
+							_ = conn.Close()
+						}
+					}()
+					triggeredBy <- line
+					listenerReady <- ln
+					return
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	c := &Openclaw{}
+	cleanup, _, gotPort, err := c.ensureGatewayReady(bin)
+	if err != nil {
+		t.Fatalf("ensureGatewayReady() error = %v", err)
+	}
+	defer cleanup()
+	if gotPort != port {
+		t.Fatalf("ensureGatewayReady() port = %d, want %d", gotPort, port)
+	}
+
+	var ln net.Listener
+	select {
+	case which := <-triggeredBy:
+		if which != "daemon start" {
+			t.Fatalf("expected daemon start fallback, got %q", which)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for gateway startup trigger")
+	}
+	select {
+	case ln = <-listenerReady:
+		defer ln.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for test listener")
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 0 || lines[0] != "daemon start" {
+		t.Fatalf("expected daemon start invocation, got %v", lines)
+	}
+	for _, line := range lines {
+		if line == "gateway run --force" {
+			t.Fatalf("did not expect gateway run fallback when daemon start succeeds, got %v", lines)
+		}
+	}
+}
+
+func TestOpenclawEnv_StagesBundledPluginRuntimeDeps(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OPENAI_API_KEY", "should-be-cleared")
+
+	env := envSliceToMap(openclawEnv())
+
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps") {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps"))
+	}
+	if _, ok := env["OPENAI_API_KEY"]; ok {
+		t.Fatal("expected OPENAI_API_KEY to be cleared from openclaw environment")
+	}
+}
+
+func TestOpenclawInstallEnv_PreservesExplicitStageDirAndAddsEagerDeps(t *testing.T) {
+	t.Setenv("OPENCLAW_PLUGIN_STAGE_DIR", "/tmp/custom-stage")
+
+	env := envSliceToMap(openclawInstallEnv())
+
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != "/tmp/custom-stage" {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], "/tmp/custom-stage")
+	}
+	if env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"] != "1" {
+		t.Fatalf("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS = %q, want %q", env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"], "1")
+	}
+}
+
+func TestEnsureOpenclawInstalled_UsesBundledPluginInstallEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	writeScript := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	openclawPath := filepath.Join(tmpDir, "openclaw")
+	npmScript := fmt.Sprintf(`#!/bin/sh
+/usr/bin/env | /usr/bin/sort > "$HOME/npm-env.log"
+/bin/cat > %q <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+/bin/chmod +x %q
+exit 0
+`, openclawPath, openclawPath)
+	writeScript(filepath.Join(tmpDir, "npm"), npmScript)
+	writeScript(filepath.Join(tmpDir, "git"), "#!/bin/sh\nexit 0\n")
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "OpenClaw is not installed. Install with npm?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	openclawFreshInstall = false
+	bin, err := ensureOpenclawInstalled()
+	if err != nil {
+		t.Fatalf("ensureOpenclawInstalled() error = %v", err)
+	}
+	if bin != "openclaw" {
+		t.Fatalf("ensureOpenclawInstalled() bin = %q, want %q", bin, "openclaw")
+	}
+
+	envData, err := os.ReadFile(filepath.Join(tmpDir, "npm-env.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envSliceToMap(strings.Split(strings.TrimSpace(string(envData)), "\n"))
+	if env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"] != "1" {
+		t.Fatalf("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS = %q, want %q", env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"], "1")
+	}
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps") {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps"))
+	}
+}
+
 func TestOpenclawEdit(t *testing.T) {
 	c := &Openclaw{}
 	tmpDir := t.TempDir()
@@ -1225,6 +1578,18 @@ func TestOpenclawChannelsConfigured(t *testing.T) {
 			t.Error("expected false because new config should take precedence")
 		}
 	})
+}
+
+func envSliceToMap(entries []string) map[string]string {
+	env := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		env[key] = value
+	}
+	return env
 }
 
 func TestOpenclawChannelSetupPreflight(t *testing.T) {

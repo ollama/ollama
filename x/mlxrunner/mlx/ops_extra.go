@@ -376,6 +376,9 @@ func Concatenate(arrays []*Array, axis int) *Array {
 	if len(arrays) == 0 {
 		return nil
 	}
+	if len(arrays) == 1 {
+		return arrays[0].Clone()
+	}
 	return arrays[0].Concatenate(axis, arrays[1:]...)
 }
 
