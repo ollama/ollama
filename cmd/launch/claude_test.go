@@ -2,6 +2,7 @@ package launch
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -77,6 +78,146 @@ func TestClaudeFindPath(t *testing.T) {
 			t.Fatal("expected error, got nil")
 		}
 	})
+}
+
+func TestClaude_InstallHint(t *testing.T) {
+	c := &Claude{}
+	resetClaudeTestHooks(t)
+	setTestHome(t, t.TempDir())
+	claudeGOOS = "linux"
+	claudeLookPath = func(file string) (string, error) {
+		return "", exec.ErrNotFound
+	}
+
+	err := c.Run("", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	for _, want := range []string{
+		"claude is not installed",
+		claudeBrewCmd,
+		claudeNpmCmd,
+		claudeInstallURL,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+}
+
+func TestClaude_FindPath_Brew(t *testing.T) {
+	c := &Claude{}
+	resetClaudeTestHooks(t)
+	claudeGOOS = "darwin"
+
+	var gotName string
+	var gotArgs []string
+	claudeLookPath = func(file string) (string, error) {
+		switch file {
+		case "brew":
+			return "/test/bin/brew", nil
+		default:
+			return "", exec.ErrNotFound
+		}
+	}
+	claudeCommand = func(name string, args ...string) *exec.Cmd {
+		gotName = name
+		gotArgs = append([]string(nil), args...)
+		return claudeTestCommand(t)
+	}
+
+	if err := c.install(); err != nil {
+		t.Fatalf("install() error = %v", err)
+	}
+	if gotName != "brew" {
+		t.Fatalf("install command = %q, want brew", gotName)
+	}
+	if want := []string{"install", "anthropic/tap/claude-code"}; !slices.Equal(gotArgs, want) {
+		t.Fatalf("install args = %v, want %v", gotArgs, want)
+	}
+}
+
+func TestClaude_FindPath_Npm(t *testing.T) {
+	c := &Claude{}
+	resetClaudeTestHooks(t)
+	claudeGOOS = "linux"
+
+	var gotName string
+	var gotArgs []string
+	claudeLookPath = func(file string) (string, error) {
+		switch file {
+		case "npm":
+			return "/test/bin/npm", nil
+		default:
+			return "", exec.ErrNotFound
+		}
+	}
+	claudeCommand = func(name string, args ...string) *exec.Cmd {
+		gotName = name
+		gotArgs = append([]string(nil), args...)
+		return claudeTestCommand(t)
+	}
+
+	if err := c.install(); err != nil {
+		t.Fatalf("install() error = %v", err)
+	}
+	if gotName != "npm" {
+		t.Fatalf("install command = %q, want npm", gotName)
+	}
+	if want := []string{"install", "-g", "@anthropic-ai/claude-code"}; !slices.Equal(gotArgs, want) {
+		t.Fatalf("install args = %v, want %v", gotArgs, want)
+	}
+}
+
+func TestClaude_Run_MissingBinary(t *testing.T) {
+	c := &Claude{}
+	resetClaudeTestHooks(t)
+	setTestHome(t, t.TempDir())
+	claudeGOOS = "linux"
+
+	installAttempted := false
+	claudeRan := false
+	claudeLookPath = func(file string) (string, error) {
+		switch file {
+		case "claude":
+			if installAttempted {
+				return "/test/bin/claude", nil
+			}
+			return "", exec.ErrNotFound
+		case "npm":
+			return "/test/bin/npm", nil
+		default:
+			return "", exec.ErrNotFound
+		}
+	}
+	claudeCommand = func(name string, args ...string) *exec.Cmd {
+		switch name {
+		case "npm":
+			installAttempted = true
+			if want := []string{"install", "-g", "@anthropic-ai/claude-code"}; !slices.Equal(args, want) {
+				t.Fatalf("install args = %v, want %v", args, want)
+			}
+		case "/test/bin/claude":
+			claudeRan = true
+			if want := []string{"--model", "llama3.2", "--print"}; !slices.Equal(args, want) {
+				t.Fatalf("claude args = %v, want %v", args, want)
+			}
+		default:
+			t.Fatalf("unexpected command %q %v", name, args)
+		}
+		return claudeTestCommand(t)
+	}
+
+	if err := c.Run("llama3.2", []string{"--print"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !installAttempted {
+		t.Fatal("expected Run to attempt install")
+	}
+	if !claudeRan {
+		t.Fatal("expected Run to launch claude after install")
+	}
 }
 
 func TestClaudeArgs(t *testing.T) {
@@ -168,4 +309,30 @@ func TestClaudeModelEnvVars(t *testing.T) {
 			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 		}
 	})
+}
+
+func resetClaudeTestHooks(t *testing.T) {
+	t.Helper()
+	oldLookPath := claudeLookPath
+	oldCommand := claudeCommand
+	oldGOOS := claudeGOOS
+	t.Cleanup(func() {
+		claudeLookPath = oldLookPath
+		claudeCommand = oldCommand
+		claudeGOOS = oldGOOS
+	})
+}
+
+func claudeTestCommand(t *testing.T) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=TestClaudeCommandHelper", "--")
+	cmd.Env = append(os.Environ(), "GO_WANT_CLAUDE_COMMAND_HELPER=1")
+	return cmd
+}
+
+func TestClaudeCommandHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_CLAUDE_COMMAND_HELPER") != "1" {
+		return
+	}
+	os.Exit(0)
 }

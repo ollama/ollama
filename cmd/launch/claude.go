@@ -11,6 +11,18 @@ import (
 	"github.com/ollama/ollama/envconfig"
 )
 
+const (
+	claudeInstallURL = "https://code.claude.com/docs/en/quickstart"
+	claudeBrewCmd    = "brew install anthropic/tap/claude-code"
+	claudeNpmCmd     = "npm install -g @anthropic-ai/claude-code"
+)
+
+var (
+	claudeLookPath = exec.LookPath
+	claudeCommand  = exec.Command
+	claudeGOOS     = runtime.GOOS
+)
+
 // Claude implements Runner for Claude Code integration.
 type Claude struct{}
 
@@ -26,7 +38,7 @@ func (c *Claude) args(model string, extra []string) []string {
 }
 
 func (c *Claude) findPath() (string, error) {
-	if p, err := exec.LookPath("claude"); err == nil {
+	if p, err := claudeLookPath("claude"); err == nil {
 		return p, nil
 	}
 	home, err := os.UserHomeDir()
@@ -34,7 +46,7 @@ func (c *Claude) findPath() (string, error) {
 		return "", err
 	}
 	name := "claude"
-	if runtime.GOOS == "windows" {
+	if claudeGOOS == "windows" {
 		name = "claude.exe"
 	}
 	fallback := filepath.Join(home, ".claude", "local", name)
@@ -44,13 +56,68 @@ func (c *Claude) findPath() (string, error) {
 	return fallback, nil
 }
 
+func (c *Claude) install() error {
+	var bin string
+	var args []string
+
+	switch claudeGOOS {
+	case "darwin":
+		if c.isBrewAvailable() {
+			bin = "brew"
+			args = []string{"install", "anthropic/tap/claude-code"}
+			break
+		}
+		if !c.isNpmAvailable() {
+			return fmt.Errorf("claude is not installed and neither brew nor npm is available")
+		}
+		bin = "npm"
+		args = []string{"install", "-g", "@anthropic-ai/claude-code"}
+	default:
+		if !c.isNpmAvailable() {
+			return fmt.Errorf("claude is not installed and npm is not available")
+		}
+		bin = "npm"
+		args = []string{"install", "-g", "@anthropic-ai/claude-code"}
+	}
+
+	fmt.Fprintf(os.Stderr, "\nInstalling Claude Code...\n")
+	cmd := claudeCommand(bin, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install claude: %w", err)
+	}
+	return nil
+}
+
+func (c *Claude) isBrewAvailable() bool {
+	_, err := claudeLookPath("brew")
+	return err == nil
+}
+
+func (c *Claude) isNpmAvailable() bool {
+	_, err := claudeLookPath("npm")
+	return err == nil
+}
+
+func (c *Claude) installHint() string {
+	return fmt.Sprintf("claude is not installed\n\nAuto-install commands:\n  %s\n  %s\n\nManual install: %s", claudeBrewCmd, claudeNpmCmd, claudeInstallURL)
+}
+
 func (c *Claude) Run(model string, args []string) error {
 	claudePath, err := c.findPath()
 	if err != nil {
-		return fmt.Errorf("claude is not installed, install from https://code.claude.com/docs/en/quickstart")
+		originalErr := fmt.Errorf("%s", c.installHint())
+		if err := c.install(); err != nil {
+			return originalErr
+		}
+		claudePath, err = c.findPath()
+		if err != nil {
+			return originalErr
+		}
 	}
 
-	cmd := exec.Command(claudePath, c.args(model, args)...)
+	cmd := claudeCommand(claudePath, c.args(model, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
