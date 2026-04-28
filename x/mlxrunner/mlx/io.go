@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"runtime"
+	"sort"
 	"unsafe"
 )
 
@@ -121,10 +122,17 @@ func SaveSafetensorsWithMetadata(path string, arrays map[string]*Array, metadata
 	cArrays := C.mlx_map_string_to_array_new()
 	defer C.mlx_map_string_to_array_free(cArrays)
 
+	arrayNames := make([]string, 0, len(arrays))
 	for name, arr := range arrays {
 		if arr == nil {
 			continue
 		}
+		arrayNames = append(arrayNames, name)
+	}
+	sort.Strings(arrayNames)
+
+	for _, name := range arrayNames {
+		arr := arrays[name]
 		cName := C.CString(name)
 		C.mlx_map_string_to_array_insert(cArrays, cName, arr.ctx)
 		C.free(unsafe.Pointer(cName))
@@ -133,7 +141,14 @@ func SaveSafetensorsWithMetadata(path string, arrays map[string]*Array, metadata
 	cMetadata := C.mlx_map_string_to_string_new()
 	defer C.mlx_map_string_to_string_free(cMetadata)
 
-	for key, value := range metadata {
+	metadataKeys := make([]string, 0, len(metadata))
+	for key := range metadata {
+		metadataKeys = append(metadataKeys, key)
+	}
+	sort.Strings(metadataKeys)
+
+	for _, key := range metadataKeys {
+		value := metadata[key]
 		cKey := C.CString(key)
 		cValue := C.CString(value)
 		C.mlx_map_string_to_string_insert(cMetadata, cKey, cValue)
