@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
@@ -994,47 +995,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
-func buildCausalMaskWindow(Q, K, window int32) *mlx.Array {
-	offset := K - Q
-	vals := make([]float32, Q*K)
-	negInf := float32(math.Inf(-1))
-	for q := range Q {
-		absQ := offset + q
-		var lo int32
-		if window > 0 {
-			lo = max(absQ-window+1, 0)
-		}
-		for kv := range K {
-			if kv > absQ || kv < lo {
-				vals[q*K+kv] = negInf
-			}
-		}
-	}
-	return mlx.FromValues(vals, 1, 1, int(Q), int(K))
-}
-
-type slidingMaskCache struct {
-	mask   *mlx.Array
-	L      int32
-	kLen   int32
-	window int32
-}
-
-func (c *slidingMaskCache) get(L, kLen, window int32, dtype mlx.DType) *mlx.Array {
-	if c == nil {
-		return buildCausalMaskWindow(L, kLen, window).AsType(dtype)
-	}
-	if c.mask != nil && c.L == L && c.kLen == kLen && c.window == window {
-		return c.mask
-	}
-	c.mask = buildCausalMaskWindow(L, kLen, window).AsType(dtype)
-	c.L = L
-	c.kLen = kLen
-	c.window = window
-	return c.mask
-}
-
-func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, layer *Layer, cfg *Config, smc *slidingMaskCache) *mlx.Array {
+func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, layer *Layer, cfg *Config) *mlx.Array {
 	numHeads := a.NumHeads
 	q := a.QProj.Forward(x)
 	k := a.KProj.Forward(x)
@@ -1051,27 +1012,21 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, layer *Laye
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	offset := 0
-	if c != nil {
-		offset = c.Offset()
-	}
 	ropeDim, ropeBase, ropeMSScale, ropeFreqs := cfg.FullRopeDim, cfg.FullRopeBase, cfg.FullRopeScale, cfg.FullRopeFreqs
 	if layer.IsSliding {
 		ropeDim, ropeBase, ropeMSScale, ropeFreqs = cfg.SlidingRopeDim, cfg.SlidingRopeBase, cfg.SlidingRopeScale, nil
 	}
-	q = scaleRotaryPart(mlx.RoPEWithFreqs(q, ropeDim, false, ropeBase, 1.0, offset, ropeFreqs), ropeDim, ropeMSScale)
-	k = scaleRotaryPart(mlx.RoPEWithFreqs(k, ropeDim, false, ropeBase, 1.0, offset, ropeFreqs), ropeDim, ropeMSScale)
-	if c != nil {
-		k, v = c.Update(k, v)
-	}
+	q = scaleRotaryPart(mlx.RoPEWithFreqs(q, ropeDim, false, ropeBase, 1.0, positions, ropeFreqs), ropeDim, ropeMSScale)
+	k = scaleRotaryPart(mlx.RoPEWithFreqs(k, ropeDim, false, ropeBase, 1.0, positions, ropeFreqs), ropeDim, ropeMSScale)
 
-	var out *mlx.Array
-	if layer.IsSliding && L > 1 && cfg.SlidingWindow > 0 {
-		mask := smc.get(L, int32(k.Dim(2)), cfg.SlidingWindow, q.DType())
-		out = mlx.ScaledDotProductAttentionMasked(q, k, v, cfg.Scale, mask)
+	var kv nn.SDPAOption
+	if c != nil {
+		history := c.(cache.Attention).Update(b, k, v)
+		kv = nn.WithKVHistory(history)
 	} else {
-		out = mlx.ScaledDotProductAttentionCausal(q, k, v, cfg.Scale, L > 1)
+		kv = nn.WithKV(k, v, b.SeqQueryLens)
 	}
+	out := nn.ScaledDotProductAttention(b, q, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
 
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, numHeads, cfg.HeadDim)
 	gate := mlx.ExpandDims(mlx.SoftplusF32(a.GProj.Forward(x)), -1)
@@ -1210,27 +1165,24 @@ func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	return mlx.Add(routed, shared)
 }
 
-func (l *Layer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config, smc *slidingMaskCache) *mlx.Array {
-	r := l.Attention.Forward(l.InputNorm.Forward(x, cfg.RMSNormEps), c, B, L, l, cfg, smc)
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+	r := l.Attention.Forward(l.InputNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, l, cfg)
 	h := mlx.Add(x, r)
 	r = l.MLP.Forward(l.PostAttentionNorm.Forward(h, cfg.RMSNormEps), cfg)
 	return mlx.Add(h, r)
 }
 
-func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
-	dims := tokens.Dims()
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
-	h := m.EmbedTokens.Forward(tokens)
-	var smc *slidingMaskCache
-	if L > 1 && m.SlidingWindow > 0 {
-		smc = &slidingMaskCache{}
-	}
+	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
+	h := m.EmbedTokens.Forward(b.InputIDs)
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
-		h = layer.Forward(h, c, B, L, m.Config, smc)
+		h = layer.Forward(h, b, c, positions, B, L, m.Config)
 	}
 	return m.Norm.Forward(h, m.RMSNormEps)
 }

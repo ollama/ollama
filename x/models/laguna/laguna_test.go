@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/models/nn"
 )
@@ -251,7 +252,11 @@ func TestTinyLagunaLoadAndForward(t *testing.T) {
 			}
 		}
 	}()
-	hidden := m.Forward(tokens, caches)
+	hidden := m.Forward(&batch.Batch{
+		InputIDs:     tokens,
+		SeqOffsets:   []int32{0},
+		SeqQueryLens: []int32{int32(tokens.Dim(1))},
+	}, caches)
 	mlx.Eval(hidden)
 	if got := hidden.Dims(); len(got) != 3 || got[0] != 1 || got[1] != 3 || got[2] != 8 {
 		t.Fatalf("hidden shape = %v, want [1 3 8]", got)
@@ -266,21 +271,6 @@ func TestTinyLagunaLoadAndForward(t *testing.T) {
 		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
 			t.Fatalf("logits[%d] is not finite: %v", i, v)
 		}
-	}
-}
-
-func TestSlidingMaskCacheReusesPerForwardMask(t *testing.T) {
-	skipIfNoMLX(t)
-	var c slidingMaskCache
-	first := c.get(8, 8, 4, mlx.DTypeFloat32)
-	second := c.get(8, 8, 4, mlx.DTypeFloat32)
-	if first != second {
-		t.Fatal("expected matching sliding mask request to reuse cached array")
-	}
-
-	third := c.get(8, 8, 5, mlx.DTypeFloat32)
-	if third == first {
-		t.Fatal("expected different sliding window to rebuild cached array")
 	}
 }
 
