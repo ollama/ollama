@@ -5131,22 +5131,31 @@ static bool ggml_backend_cuda_moe_staging_init(void * backend_handle, size_t max
         return true;
     }
     ggml_cuda_set_device(cuda_ctx->device);
-    // free any undersized prior allocation
-    for (int i = 0; i < 2; i++) {
-        if (cuda_ctx->moe_staging.buffers[i] != nullptr) {
-            cudaFree(cuda_ctx->moe_staging.buffers[i]);
-            cuda_ctx->moe_staging.buffers[i] = nullptr;
+    auto cleanup_staging = [&]() {
+        for (int i = 0; i < 2; i++) {
+            if (cuda_ctx->moe_staging.buffers[i] != nullptr) {
+                cudaFree(cuda_ctx->moe_staging.buffers[i]);
+                cuda_ctx->moe_staging.buffers[i] = nullptr;
+            }
+            if (cuda_ctx->moe_staging.h2d_done[i] != nullptr) {
+                cudaEventDestroy(cuda_ctx->moe_staging.h2d_done[i]);
+                cuda_ctx->moe_staging.h2d_done[i] = nullptr;
+            }
         }
-    }
+        cuda_ctx->moe_staging.capacity = 0;
+    };
+    cleanup_staging();
     for (int i = 0; i < 2; i++) {
         if (cudaMalloc(&cuda_ctx->moe_staging.buffers[i], max_size) != cudaSuccess) {
             cuda_ctx->moe_staging.buffers[i] = nullptr;
+            cleanup_staging();
             return false;
         }
         if (cuda_ctx->moe_staging.h2d_done[i] == nullptr) {
             if (cudaEventCreateWithFlags(&cuda_ctx->moe_staging.h2d_done[i],
                                          cudaEventDisableTiming) != cudaSuccess) {
                 cuda_ctx->moe_staging.h2d_done[i] = nullptr;
+                cleanup_staging();
                 return false;
             }
         }
