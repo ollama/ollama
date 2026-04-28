@@ -269,6 +269,39 @@ func TestLLMServerMoESplitDenseFallbackUsesLargestGPU(t *testing.T) {
 	}
 }
 
+func TestLLMServerVerifyLayoutMoESplitCPUMemory(t *testing.T) {
+	gpuID := ml.DeviceID{ID: "gpu0"}
+	gpus := []ml.DeviceInfo{{DeviceID: gpuID}}
+	layers := []uint64{1056 * format.MebiByte, 1056 * format.MebiByte}
+	memory := &ml.BackendMemory{
+		CPU: ml.DeviceMemory{
+			Weights:    []uint64{1024 * format.MebiByte, 1024 * format.MebiByte},
+			MoEWeights: []uint64{64 * format.MebiByte, 64 * format.MebiByte},
+			Cache:      []uint64{32 * format.MebiByte, 32 * format.MebiByte},
+		},
+		GPUs: []ml.DeviceMemory{{
+			DeviceID:   gpuID,
+			Weights:    make([]uint64, len(layers)),
+			MoEWeights: make([]uint64, len(layers)),
+			Cache:      make([]uint64, len(layers)),
+		}},
+	}
+	systemInfo := ml.SystemInfo{
+		TotalMemory: 4 * format.GibiByte,
+		FreeMemory:  200 * format.MebiByte,
+	}
+	s := &llmServer{}
+	denseGPULayers := ml.GPULayersList{{DeviceID: gpuID, Layers: []int{0, 1}}}
+
+	if err := s.verifyLayout(systemInfo, gpus, memory, false, nil, denseGPULayers, layers); err != nil {
+		t.Fatalf("verifyLayout with MoE split returned error: %v", err)
+	}
+
+	if err := s.verifyLayout(systemInfo, gpus, memory, false, nil, nil, layers); err == nil {
+		t.Fatal("verifyLayout without MoE split succeeded, want system memory error")
+	}
+}
+
 func TestLLMServerCompletionFormat(t *testing.T) {
 	// This test was written to fix an already deployed issue. It is a bit
 	// of a mess, and but it's good enough, until we can refactoring the

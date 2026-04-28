@@ -1258,26 +1258,92 @@ func (s *llmServer) verifyLayout(systemInfo ml.SystemInfo, systemGPUs []ml.Devic
 	// These sizes will only increase as we go through additional iterations and get additional information.
 	cpuSize := memory.InputWeights + memory.CPU.Graph
 	var vramSize uint64
-	for _, gl := range gpuLayers {
-		for _, gpu := range memory.GPUs {
-			if gl.DeviceID == gpu.DeviceID {
-				vramSize += gpu.Graph
-				break
+	if len(denseGPULayers) > 0 {
+		gpuLayer := func(gpuLayers ml.GPULayersList, layer int) bool {
+			for _, g := range gpuLayers {
+				for _, gl := range g.Layers {
+					if layer == gl {
+						return true
+					}
+				}
 			}
+			return false
 		}
-	}
 
-nextLayer:
-	for i := range layers {
-		for _, g := range gpuLayers {
-			for _, gl := range g.Layers {
-				if i == gl {
-					vramSize += layers[i]
-					continue nextLayer
+		gpuGraphs := map[ml.DeviceID]struct{}{}
+		addGPUGraph := func(deviceID ml.DeviceID) {
+			if _, ok := gpuGraphs[deviceID]; ok {
+				return
+			}
+			for _, gpu := range memory.GPUs {
+				if deviceID == gpu.DeviceID {
+					vramSize += gpu.Graph
+					gpuGraphs[deviceID] = struct{}{}
+					break
 				}
 			}
 		}
-		cpuSize += layers[i]
+
+		for _, gl := range denseGPULayers {
+			if len(gl.Layers) > 0 {
+				addGPUGraph(gl.DeviceID)
+			}
+		}
+		for _, gl := range gpuLayers {
+			if len(gl.Layers) > 0 {
+				addGPUGraph(gl.DeviceID)
+			}
+		}
+
+		for i := range layers {
+			var weightSize, moeSize, cacheSize uint64
+			for _, gpu := range memory.GPUs {
+				weightSize += gpu.Weights[i]
+				cacheSize += gpu.Cache[i]
+				if len(gpu.MoEWeights) > i {
+					moeSize += gpu.MoEWeights[i]
+				}
+			}
+			weightSize += memory.CPU.Weights[i]
+			cacheSize += memory.CPU.Cache[i]
+			if len(memory.CPU.MoEWeights) > i {
+				moeSize += memory.CPU.MoEWeights[i]
+			}
+
+			denseSize := weightSize - moeSize
+			if gpuLayer(denseGPULayers, i) {
+				vramSize += denseSize + cacheSize
+			} else {
+				cpuSize += denseSize + cacheSize
+			}
+			if gpuLayer(gpuLayers, i) {
+				vramSize += moeSize
+			} else {
+				cpuSize += moeSize
+			}
+		}
+	} else {
+		for _, gl := range gpuLayers {
+			for _, gpu := range memory.GPUs {
+				if gl.DeviceID == gpu.DeviceID {
+					vramSize += gpu.Graph
+					break
+				}
+			}
+		}
+
+	nextLayer:
+		for i := range layers {
+			for _, g := range gpuLayers {
+				for _, gl := range g.Layers {
+					if i == gl {
+						vramSize += layers[i]
+						continue nextLayer
+					}
+				}
+			}
+			cpuSize += layers[i]
+		}
 	}
 
 	if requireFull {
