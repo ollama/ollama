@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "copilot", "droid", "pi"}
+var launcherIntegrationOrder = []string{"openclaw", "claude", "openclaude", "opencode", "hermes", "codex", "copilot", "droid", "pi"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -46,6 +46,18 @@ var integrationSpecs = []*IntegrationSpec{
 				return err == nil
 			},
 			URL: "https://code.claude.com/docs/en/quickstart",
+		},
+	},
+	{
+		Name:        "openclaude",
+		Runner:      &Openclaude{},
+		Description: "Open-source coding agent fork of Claude Code",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&Openclaude{}).findPath()
+				return err == nil
+			},
+			URL: "https://github.com/gitlawbh/openclaude",
 		},
 	},
 	{
