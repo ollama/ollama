@@ -65,6 +65,10 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.name == "pool" && poolsideGOOS == "windows" {
+				t.Skip("Poolside is intentionally unsupported on Windows")
+			}
+
 			home := t.TempDir()
 			setTestHome(t, home)
 
