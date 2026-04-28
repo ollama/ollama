@@ -27,6 +27,9 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
+	xcreate "github.com/ollama/ollama/x/create"
+	xcreateclient "github.com/ollama/ollama/x/create/client"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 var stream bool = false
@@ -1124,40 +1127,43 @@ func createSafetensorsTestModel(t *testing.T, modelName string, config model.Con
 	}
 }
 
-func TestCreateFromSafetensorsModel_PreservesConfig(t *testing.T) {
+func TestCreateSafetensorsModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
-	// Create a source safetensors model with specific config fields
-	createSafetensorsTestModel(t, "source-model", model.ConfigV2{
-		ModelFormat:  "safetensors",
-		Capabilities: []string{"completion"},
-		Requires:     "0.14.0",
-		Renderer:     "gemma3",
-		Parser:       "gemma3",
-	}, nil)
+	// Create fake tensor blobs
+	tensorData := []byte("fake-tensor-data-for-testing")
+	configData := []byte(`{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`)
 
-	// Create a derived model FROM the source
+	tensorDigest := createTestBlob(t, tensorData)
+	configDigest := createTestBlob(t, configData)
+
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:  "derived-model",
-		From:   "source-model",
-		System: "You are a pirate.",
-		Stream: &stream,
+		Model:       "test-safetensors",
+		ModelFormat: "safetensors",
+		Files: map[string]string{
+			"model.embed_tokens.weight": tensorDigest,
+			"config.json":               configDigest,
+		},
+		Template: "{{ .Prompt }}",
+		Requires: "0.14.0",
+		Stream:   &stream,
 	})
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
 	}
 
-	// Read the derived model's config
-	derivedName := model.ParseName("derived-model")
-	mf, err := manifest.ParseNamedManifest(derivedName)
+	// Verify the manifest was created
+	name := model.ParseName("test-safetensors")
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
-		t.Fatalf("failed to parse derived manifest: %v", err)
+		t.Fatalf("failed to parse manifest: %v", err)
 	}
 
+	// Verify config layer exists and has correct format
 	configBlobPath, err := manifest.BlobsPath(mf.Config.Digest)
 	if err != nil {
 		t.Fatalf("failed to get config blob path: %v", err)
@@ -1173,176 +1179,440 @@ func TestCreateFromSafetensorsModel_PreservesConfig(t *testing.T) {
 		t.Fatalf("failed to unmarshal config: %v", err)
 	}
 
-	// Verify safetensors-specific config fields are preserved
 	if cfg.ModelFormat != "safetensors" {
-		t.Errorf("ModelFormat = %q, want %q", cfg.ModelFormat, "safetensors")
+		t.Errorf("expected model_format 'safetensors', got %q", cfg.ModelFormat)
 	}
 
 	if !slices.Contains(cfg.Capabilities, "completion") {
-		t.Errorf("Capabilities = %v, want to contain %q", cfg.Capabilities, "completion")
+		t.Errorf("expected capabilities to contain 'completion', got %v", cfg.Capabilities)
 	}
 
 	if cfg.Requires != "0.14.0" {
-		t.Errorf("Requires = %q, want %q", cfg.Requires, "0.14.0")
+		t.Errorf("expected requires '0.14.0', got %q", cfg.Requires)
 	}
 
-	if cfg.Renderer != "gemma3" {
-		t.Errorf("Renderer = %q, want %q", cfg.Renderer, "gemma3")
-	}
-
-	if cfg.Parser != "gemma3" {
-		t.Errorf("Parser = %q, want %q", cfg.Parser, "gemma3")
-	}
-
-	// Verify system prompt was added
-	var hasSystem bool
+	// Verify layers include tensor, config, and template
+	var hasTensor, hasConfig, hasTemplate bool
 	for _, l := range mf.Layers {
-		if l.MediaType == "application/vnd.ollama.image.system" {
-			hasSystem = true
+		switch {
+		case l.Name == "model.embed_tokens.weight" && l.MediaType == manifest.MediaTypeImageTensor:
+			hasTensor = true
+		case l.Name == "config.json" && l.MediaType == "application/vnd.ollama.image.json":
+			hasConfig = true
+		case l.MediaType == "application/vnd.ollama.image.template":
+			hasTemplate = true
+		}
+	}
+
+	if !hasTensor {
+		t.Error("expected tensor layer in manifest")
+	}
+	if !hasConfig {
+		t.Error("expected config.json layer in manifest")
+	}
+	if !hasTemplate {
+		t.Error("expected template layer in manifest")
+	}
+}
+
+func TestCreateSafetensorsModelPreservesClientQuantizedAndParameters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	tensorDigest := createTestBlob(t, []byte("fake-tensor-data-for-testing"))
+	configDigest := createTestBlob(t, []byte(`{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`))
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:           "test-safetensors-metadata",
+		ModelFormat:     "safetensors",
+		ClientQuantized: "int4",
+		Files: map[string]string{
+			"model.embed_tokens.weight": tensorDigest,
+			"config.json":               configDigest,
+		},
+		Parameters: map[string]any{
+			"temperature": 0.5,
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("test-safetensors-metadata"))
+	if err != nil {
+		t.Fatalf("failed to parse manifest: %v", err)
+	}
+
+	configBlobPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("failed to get config blob path: %v", err)
+	}
+	configBlob, err := os.ReadFile(configBlobPath)
+	if err != nil {
+		t.Fatalf("failed to read config blob: %v", err)
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(configBlob, &cfg); err != nil {
+		t.Fatalf("failed to unmarshal config: %v", err)
+	}
+	if cfg.FileType != "int4" {
+		t.Fatalf("FileType = %q, want int4", cfg.FileType)
+	}
+
+	var params map[string]any
+	for _, l := range mf.Layers {
+		if l.MediaType != "application/vnd.ollama.image.params" {
+			continue
+		}
+		paramsPath, err := manifest.BlobsPath(l.Digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(paramsPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, &params); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if params["temperature"] != 0.5 {
+		t.Fatalf("params = %#v, want temperature", params)
+	}
+}
+
+func TestCreateSafetensorsModelDerivesCapabilitiesFromUploadedConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	tensorDigest := createTestBlob(t, []byte("fake-tensor-data-for-testing"))
+	configDigest := createTestBlob(t, []byte(`{
+		"architectures": ["Qwen3_5ForConditionalGeneration"],
+		"model_type": "qwen3",
+		"vision_config": {"hidden_size": 1024},
+		"audio_config": {"num_mel_bins": 128}
+	}`))
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:       "test-safetensors-capabilities",
+		ModelFormat: "safetensors",
+		Files: map[string]string{
+			"model.embed_tokens.weight": tensorDigest,
+			"config.json":               configDigest,
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("test-safetensors-capabilities"))
+	if err != nil {
+		t.Fatalf("failed to parse manifest: %v", err)
+	}
+	configBlobPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("failed to get config blob path: %v", err)
+	}
+	configBlob, err := os.ReadFile(configBlobPath)
+	if err != nil {
+		t.Fatalf("failed to read config blob: %v", err)
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(configBlob, &cfg); err != nil {
+		t.Fatalf("failed to unmarshal config: %v", err)
+	}
+
+	want := []string{"completion", "vision", "audio", "thinking"}
+	if !slices.Equal(cfg.Capabilities, want) {
+		t.Fatalf("Capabilities = %#v, want %#v", cfg.Capabilities, want)
+	}
+}
+
+func TestCreateSafetensorsModelRejectsQuantizeAndClientQuantized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:           "test-safetensors-quantize-conflict",
+		ModelFormat:     "safetensors",
+		Quantize:        "int4",
+		ClientQuantized: "int4",
+		Files: map[string]string{
+			"config.json": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, actual %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "quantize and client_quantized are mutually exclusive") {
+		t.Fatalf("expected mutual exclusion error, got: %s", w.Body.String())
+	}
+}
+
+func TestCreateSafetensorsModelRejectsMissingSourceConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	tensorDigest := createTestBlob(t, []byte("fake-tensor-data-for-testing"))
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:       "test-safetensors-missing-config",
+		ModelFormat: "safetensors",
+		Files: map[string]string{
+			"model.embed_tokens.weight": tensorDigest,
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, actual %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "config.json or model_index.json not found") {
+		t.Fatalf("expected missing source config error, got: %s", w.Body.String())
+	}
+}
+
+func TestCreateSafetensorsModelQuantizesPackedBlob(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	oldSupported := safetensorsQuantizeSupported
+	oldPacked := quantizeSafetensorsPacked
+	t.Cleanup(func() {
+		safetensorsQuantizeSupported = oldSupported
+		quantizeSafetensorsPacked = oldPacked
+	})
+	safetensorsQuantizeSupported = func() bool { return true }
+
+	var quantizeCalls int
+	quantizeSafetensorsPacked = func(group string, inputs []xcreate.PackedTensorInput) ([]byte, error) {
+		quantizeCalls++
+		tds := make([]*safetensors.TensorData, 0, len(inputs))
+		for _, input := range inputs {
+			if input.Quantize != "int4" {
+				t.Fatalf("input %s Quantize = %q, want int4", input.Name, input.Quantize)
+			}
+			var size int
+			for i, dim := range input.Shape {
+				if i == 0 {
+					size = int(dim)
+				} else {
+					size *= int(dim)
+				}
+			}
+			tds = append(tds, safetensors.NewTensorDataFromBytes(input.Name, "F32", input.Shape, make([]byte, size*4)))
+		}
+
+		data, err := io.ReadAll(safetensors.BuildPackedSafetensorsReader(tds))
+		if err != nil {
+			return nil, err
+		}
+		return data, nil
+	}
+
+	groupName := "model.layers.0.mlp.experts"
+	tensorNames := []string{
+		groupName + ".0.gate_proj.weight",
+		groupName + ".1.gate_proj.weight",
+	}
+	packed := safetensors.BuildPackedSafetensorsReader([]*safetensors.TensorData{
+		safetensors.NewTensorDataFromBytes(tensorNames[0], "F32", []int32{64, 64}, make([]byte, 64*64*4)),
+		safetensors.NewTensorDataFromBytes(tensorNames[1], "F32", []int32{64, 64}, make([]byte, 64*64*4)),
+	})
+	packedData, err := io.ReadAll(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	packedDigest := createTestBlob(t, packedData)
+	configDigest := createTestBlob(t, []byte(`{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`))
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:       "test-safetensors-packed-quant",
+		ModelFormat: "safetensors",
+		Quantize:    "int4",
+		Files: map[string]string{
+			groupName:     packedDigest,
+			"config.json": configDigest,
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("test-safetensors-packed-quant"))
+	if err != nil {
+		t.Fatalf("failed to parse manifest: %v", err)
+	}
+
+	var packedLayer manifest.Layer
+	for _, layer := range mf.Layers {
+		if layer.Name == groupName {
+			packedLayer = layer
 			break
 		}
 	}
-	if !hasSystem {
-		t.Error("expected system prompt layer in derived model")
+	if packedLayer.Digest == "" {
+		t.Fatalf("packed layer %q not found in manifest", groupName)
 	}
 
-	// Verify tensor layers were copied with names preserved
-	var tensorNames []string
-	for _, l := range mf.Layers {
-		if l.MediaType == manifest.MediaTypeImageTensor {
-			tensorNames = append(tensorNames, l.Name)
-		}
+	blobPath, err := manifest.BlobsPath(packedLayer.Digest)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(tensorNames) == 0 {
-		t.Error("expected tensor layers in derived model")
+	metas, err := safetensors.ReadBlobMetas(blobPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, name := range tensorNames {
-		if name == "" {
-			t.Error("tensor layer has empty name — names must be preserved from source")
-		}
+	gotNames := make([]string, 0, len(metas))
+	for _, meta := range metas {
+		gotNames = append(gotNames, meta.Name)
+	}
+	slices.Sort(gotNames)
+	wantNames := slices.Clone(tensorNames)
+	slices.Sort(wantNames)
+	if !slices.Equal(gotNames, wantNames) {
+		t.Fatalf("packed quantized tensors = %v, want %v", gotNames, wantNames)
+	}
+	if quantizeCalls != 1 {
+		t.Fatalf("quantizeCalls = %d, want 1", quantizeCalls)
 	}
 }
 
-func TestCreateFromSafetensorsModel_OverrideSystem(t *testing.T) {
+func TestCreateSafetensorsModelServerQuantizeUsesUploadedConfigPolicy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	p := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", p)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	var s Server
 
-	// Create source with a system prompt
-	createSafetensorsTestModel(t, "source-with-system", model.ConfigV2{
-		ModelFormat:  "safetensors",
-		Capabilities: []string{"completion"},
-	}, nil)
-
-	// First create with system prompt
-	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:  "source-with-system",
-		From:   "source-with-system",
-		System: "Original system prompt",
-		Stream: &stream,
+	oldSupported := safetensorsQuantizeSupported
+	oldTensor := quantizeSafetensorsTensor
+	t.Cleanup(func() {
+		safetensorsQuantizeSupported = oldSupported
+		quantizeSafetensorsTensor = oldTensor
 	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	safetensorsQuantizeSupported = func() bool { return true }
+
+	var gotQuantize string
+	quantizeSafetensorsTensor = func(r io.Reader, name, dtype string, shape []int32, quantize string) ([]byte, error) {
+		gotQuantize = quantize
+		raw, err := io.ReadAll(r)
+		if err != nil {
+			return nil, err
+		}
+		return raw, nil
 	}
 
-	// Now create a derived model with a different system prompt
-	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:  "derived-new-system",
-		From:   "source-with-system",
-		System: "New system prompt",
-		Stream: &stream,
-	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// Verify ModelFormat is preserved even after override
-	derivedName := model.ParseName("derived-new-system")
-	mf, err := manifest.ParseNamedManifest(derivedName)
+	tensorName := "model.language_model.embed_tokens.weight"
+	tensorData, err := io.ReadAll(safetensors.NewTensorDataFromBytes(tensorName, "BF16", []int32{1024, 128}, make([]byte, 1024*128*2)).SafetensorsReader())
 	if err != nil {
-		t.Fatalf("failed to parse derived manifest: %v", err)
+		t.Fatal(err)
 	}
+	tensorDigest := createTestBlob(t, tensorData)
+	configDigest := createTestBlob(t, []byte(`{
+		"architectures": ["Gemma4ForConditionalGeneration"],
+		"text_config": {"num_hidden_layers": 64, "num_experts": 8}
+	}`))
 
-	configBlobPath, _ := manifest.BlobsPath(mf.Config.Digest)
-	configBlob, _ := os.ReadFile(configBlobPath)
-
-	var cfg model.ConfigV2
-	json.Unmarshal(configBlob, &cfg)
-
-	if cfg.ModelFormat != "safetensors" {
-		t.Errorf("ModelFormat = %q, want %q", cfg.ModelFormat, "safetensors")
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:       "test-safetensors-gemma4-server-quant",
+		ModelFormat: "safetensors",
+		Quantize:    "nvfp4",
+		Files: map[string]string{
+			tensorName:    tensorDigest,
+			"config.json": configDigest,
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+	if gotQuantize != "mxfp8" {
+		t.Fatalf("server quantize = %q, want mxfp8 from Gemma4 config policy", gotQuantize)
 	}
 }
 
-func TestCreateFromSafetensorsModel_PreservesLayerNames(t *testing.T) {
+func TestCreateSafetensorsModelMissingBlob(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	p := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", p)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	var s Server
 
-	// Create JSON config blobs to include as layers
-	configJSON := []byte(`{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`)
-	configDigest := createTestBlob(t, configJSON)
-	tokenizerJSON := []byte(`{"version": "1.0"}`)
-	tokenizerDigest := createTestBlob(t, tokenizerJSON)
-
-	extraLayers := []manifest.Layer{
-		{
-			MediaType: "application/vnd.ollama.image.json",
-			Digest:    configDigest,
-			Size:      int64(len(configJSON)),
-			Name:      "config.json",
-		},
-		{
-			MediaType: "application/vnd.ollama.image.json",
-			Digest:    tokenizerDigest,
-			Size:      int64(len(tokenizerJSON)),
-			Name:      "tokenizer.json",
-		},
-	}
-
-	createSafetensorsTestModel(t, "source-named-layers", model.ConfigV2{
-		ModelFormat:  "safetensors",
-		Capabilities: []string{"completion"},
-	}, extraLayers)
-
-	// Create derived model
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:  "derived-named-layers",
-		From:   "source-named-layers",
+		Model:       "test-missing-blob",
+		ModelFormat: "safetensors",
+		Files: map[string]string{
+			"model.weight": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
 		Stream: &stream,
 	})
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, actual %d: %s", w.Code, w.Body.String())
 	}
 
-	derivedName := model.ParseName("derived-named-layers")
-	mf, err := manifest.ParseNamedManifest(derivedName)
-	if err != nil {
-		t.Fatalf("failed to parse derived manifest: %v", err)
+	if !strings.Contains(w.Body.String(), "blob not found") {
+		t.Errorf("expected 'blob not found' error, got: %s", w.Body.String())
+	}
+}
+
+func TestCreateSafetensorsModelQuantizeNoMLX(t *testing.T) {
+	if xcreateclient.QuantizeSupported() {
+		t.Skip("MLX is available — this test checks the no-MLX error path")
 	}
 
-	// Check tensor layer names are preserved
-	for _, l := range mf.Layers {
-		if l.MediaType == manifest.MediaTypeImageTensor && l.Name == "" {
-			t.Error("tensor layer has empty name — names must be preserved from source")
-		}
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	tensorData := []byte("fake-tensor-data")
+	configData := []byte(`{"architectures": ["LlamaForCausalLM"]}`)
+	tensorDigest := createTestBlob(t, tensorData)
+	configDigest := createTestBlob(t, configData)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:       "test-quant-no-mlx",
+		ModelFormat: "safetensors",
+		Quantize:    "int4",
+		Files: map[string]string{
+			"model.embed_tokens.weight": tensorDigest,
+			"config.json":               configDigest,
+		},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, actual %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "MLX is not available") {
+		t.Errorf("expected MLX availability error, got: %s", w.Body.String())
+	}
+}
+
+func TestCreateSafetensorsModelNoFiles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:       "test-no-files",
+		ModelFormat: "safetensors",
+		Files:       map[string]string{},
+		Stream:      &stream,
+	})
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, actual %d: %s", w.Code, w.Body.String())
 	}
 
-	// Check JSON layer names are preserved
-	jsonNames := make(map[string]bool)
-	for _, l := range mf.Layers {
-		if l.MediaType == "application/vnd.ollama.image.json" && l.Name != "" {
-			jsonNames[l.Name] = true
-		}
-	}
-
-	if !jsonNames["config.json"] {
-		t.Error("config.json layer name not preserved in derived model")
-	}
-	if !jsonNames["tokenizer.json"] {
-		t.Error("tokenizer.json layer name not preserved in derived model")
+	if !strings.Contains(w.Body.String(), "no files provided") {
+		t.Errorf("expected 'no files provided' error, got: %s", w.Body.String())
 	}
 }

@@ -670,7 +670,13 @@ type CreateRequest struct {
 	Stream *bool `json:"stream,omitempty"`
 
 	// Quantize is the quantization format for the model; leave blank to not change the quantization level.
+	// Mutually exclusive with ClientQuantized.
 	Quantize string `json:"quantize,omitempty"`
+
+	// ClientQuantized is the quantization format already applied to uploaded model files.
+	// It is used with model_format="safetensors" when the client performed quantization.
+	// Mutually exclusive with Quantize.
+	ClientQuantized string `json:"client_quantized,omitempty"`
 
 	// From is the name of the model or file to use as the source.
 	From string `json:"from,omitempty"`
@@ -704,6 +710,11 @@ type CreateRequest struct {
 
 	// Requires is the minimum version of Ollama required by the model.
 	Requires string `json:"requires,omitempty"`
+
+	// ModelFormat specifies the model storage format. When set to "safetensors",
+	// the server assembles a safetensors manifest from pre-uploaded blob layers
+	// instead of converting to GGUF. Files must map tensor/config names to blob digests.
+	ModelFormat string `json:"model_format,omitempty"`
 
 	// Info is a map of additional information for the model
 	Info map[string]any `json:"info,omitempty"`

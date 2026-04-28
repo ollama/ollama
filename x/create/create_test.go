@@ -558,7 +558,7 @@ func TestCreateSafetensorsModel_PacksPrequantizedTensorTriplets(t *testing.T) {
 	}
 
 	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
-		st.NewTensorDataFromBytes("linear.weight", "U32", []int32{4, 4}, make([]byte, 16)),
+		st.NewTensorDataFromBytes("linear.weight", "U32", []int32{4}, make([]byte, 16)),
 		st.NewTensorDataFromBytes("linear.scales", "BF16", []int32{4, 1}, make([]byte, 8)),
 		st.NewTensorDataFromBytes("linear.biases", "BF16", []int32{4, 1}, make([]byte, 8)),
 		st.NewTensorDataFromBytes("plain.weight", "F32", []int32{2, 2}, make([]byte, 16)),
@@ -900,7 +900,7 @@ func TestCreateSafetensorsModel_RejectsRequantizingQuantizedSources(t *testing.T
 			name:       "prequantized affine",
 			configJSON: `{"model_type": "test", "architectures": ["TestModel"]}`,
 			tensors: []*st.TensorData{
-				st.NewTensorDataFromBytes("linear.weight", "U32", []int32{4, 4}, make([]byte, 16)),
+				st.NewTensorDataFromBytes("linear.weight", "U32", []int32{4}, make([]byte, 16)),
 				st.NewTensorDataFromBytes("linear.scales", "BF16", []int32{4, 1}, make([]byte, 8)),
 			},
 			wantErr: `cannot requantize already-quantized source model with --quantize "int4"`,

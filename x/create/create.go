@@ -501,11 +501,12 @@ func ExpertGroupPrefix(tensorName string) string {
 
 // PackedTensorInput holds metadata for a tensor that will be packed into a multi-tensor blob.
 type PackedTensorInput struct {
-	Name     string
-	Dtype    string
-	Shape    []int32
-	Quantize string    // per-tensor quantization type (may differ within group)
-	Reader   io.Reader // safetensors-wrapped tensor data
+	Name       string
+	Dtype      string
+	Shape      []int32
+	Quantize   string                  // per-tensor quantization type (may differ within group)
+	Reader     io.Reader               // safetensors-wrapped tensor data
+	TensorData *safetensors.TensorData // raw file-backed tensor data, when available
 }
 
 // PackedTensorLayerCreator creates a single blob layer containing multiple packed tensors.
@@ -532,11 +533,15 @@ type sourceQuantization struct {
 type sourceModelConfig struct {
 	ModelType          string             `json:"model_type"`
 	Architectures      []string           `json:"architectures"`
+	NumHiddenLayers    int                `json:"num_hidden_layers"`
+	NumExperts         int                `json:"num_experts"`
 	Quantization       sourceQuantization `json:"quantization"`
 	QuantizationConfig sourceQuantization `json:"quantization_config"`
 	CompressionConfig  sourceQuantization `json:"compression_config"`
 	TextConfig         struct {
 		ModelType          string             `json:"model_type"`
+		NumHiddenLayers    int                `json:"num_hidden_layers"`
+		NumExperts         int                `json:"num_experts"`
 		Quantization       sourceQuantization `json:"quantization"`
 		QuantizationConfig sourceQuantization `json:"quantization_config"`
 		CompressionConfig  sourceQuantization `json:"compression_config"`
@@ -550,6 +555,10 @@ func readSourceModelConfig(modelDir string) (sourceModelConfig, error) {
 		return sourceModelConfig{}, err
 	}
 
+	return parseSourceModelConfig(data)
+}
+
+func parseSourceModelConfig(data []byte) (sourceModelConfig, error) {
 	var cfg sourceModelConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return sourceModelConfig{}, err
@@ -813,6 +822,55 @@ func newTensorImportTransform(modelDir string, cfg sourceModelConfig) (tensorImp
 	return noopImportTransform{}, nil
 }
 
+// SafetensorsQuantizationPlanner selects the per-tensor quantization type for
+// server-side safetensors quantization. It intentionally reuses the same
+// architecture-aware import transforms as local creation so remote server-side
+// quantization does not silently fall back to generic tensor rules.
+type SafetensorsQuantizationPlanner struct {
+	transform tensorImportTransform
+}
+
+// NewSafetensorsQuantizationPlannerFromFiles builds a quantization planner from
+// uploaded config blobs. Non-Hugging Face safetensors models fall back to the
+// generic planner. Keep this in sync with local source-quantization inspection:
+// when adding file-based source formats, such as NVIDIA TensorRT Model
+// Optimizer's hf_quant_config.json, derive equivalent server-side decisions
+// from the uploaded file map so CLI/local and direct API creates remain
+// symmetric.
+func NewSafetensorsQuantizationPlannerFromFiles(files map[string][]byte) (*SafetensorsQuantizationPlanner, error) {
+	data, ok := files["config.json"]
+	if !ok {
+		return &SafetensorsQuantizationPlanner{transform: noopImportTransform{}}, nil
+	}
+
+	cfg, err := parseSourceModelConfig(data)
+	if err != nil {
+		return nil, err
+	}
+
+	transform, err := newTensorQuantizationTransform(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &SafetensorsQuantizationPlanner{transform: transform}, nil
+}
+
+func newTensorQuantizationTransform(cfg sourceModelConfig) (tensorImportTransform, error) {
+	if factory, ok := tensorImportTransformRegistry[cfg.Architecture()]; ok {
+		return factory("", cfg)
+	}
+	return noopImportTransform{}, nil
+}
+
+// QuantizationType returns the concrete quantization type for a tensor, or an
+// empty string when the tensor should remain in source precision.
+func (p *SafetensorsQuantizationPlanner) QuantizationType(name string, shape []int32, quantize string) string {
+	if p == nil || p.transform == nil {
+		return GetTensorQuantization(name, shape, quantize)
+	}
+	return p.transform.quantizationType(name, shape, quantize)
+}
+
 // CreateSafetensorsModel imports a standard safetensors model from a directory.
 // This handles Hugging Face style models with config.json and *.safetensors files.
 // Stores each tensor as a separate blob for fine-grained deduplication.
@@ -1033,11 +1091,12 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 						expertGroupOrder = append(expertGroupOrder, groupPrefix)
 					}
 					expertGroups[groupPrefix] = append(expertGroups[groupPrefix], PackedTensorInput{
-						Name:     outTD.Name,
-						Dtype:    outTD.Dtype,
-						Shape:    outTD.Shape,
-						Quantize: quantizeType,
-						Reader:   reader,
+						Name:       outTD.Name,
+						Dtype:      outTD.Dtype,
+						Shape:      outTD.Shape,
+						Quantize:   quantizeType,
+						Reader:     reader,
+						TensorData: outTD,
 					})
 				} else {
 					// Store as minimal safetensors format (88 bytes header overhead)

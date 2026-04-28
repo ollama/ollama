@@ -436,6 +436,19 @@ func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) err
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil)
 }
 
+// HeadBlob checks if a blob exists on the server. Returns true if the blob
+// exists, false if it doesn't. Returns an error for unexpected failures.
+func (c *Client) HeadBlob(ctx context.Context, digest string) (bool, error) {
+	if err := c.do(ctx, http.MethodHead, fmt.Sprintf("/api/blobs/%s", digest), nil, nil); err != nil {
+		var statusErr StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // Version returns the Ollama server version as a string.
 func (c *Client) Version(ctx context.Context) (string, error) {
 	var version struct {

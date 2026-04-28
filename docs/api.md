@@ -1202,7 +1202,12 @@ If you are creating a model from a safetensors directory or from a GGUF file, yo
 - `parameters`: (optional) a dictionary of parameters for the model (see [Modelfile](./modelfile.mdx#valid-parameters-and-values) for a list of parameters)
 - `messages`: (optional) a list of message objects used to create a conversation
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
-- `quantize` (optional): quantize a non-quantized (e.g. float16) model
+- `quantize` (optional): quantize a non-quantized (e.g. float16) model on the server. Mutually exclusive with `client_quantized`
+- `client_quantized`: (optional) quantization type already applied to uploaded model files. Used with `model_format="safetensors"` when the client performed quantization. Mutually exclusive with `quantize`
+- `model_format`: (optional) when set to `"safetensors"`, the server assembles a native safetensors manifest from pre-uploaded blob layers instead of converting to GGUF. Each entry in `files` maps a tensor or config name to its blob digest.
+- `parser`: (optional) the parser to use for the model's input format. Used with `model_format="safetensors"`.
+- `renderer`: (optional) the renderer to use for the model's output format. Used with `model_format="safetensors"`.
+- `requires`: (optional) minimum version of Ollama required to run this model
 
 #### Quantization types
 
@@ -1332,6 +1337,39 @@ A stream of JSON objects is returned:
 {"status":"creating new layer sha256:05ca5b813af4a53d2c2922933936e398958855c44ee534858fcfd830940618b6"}
 {"status":"using autodetected template llama3-instruct"}
 {"status":"using existing layer sha256:56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb"}
+{"status":"writing manifest"}
+{"status":"success"}
+```
+
+#### Create a native safetensors model (remote)
+
+When `model_format` is set to `"safetensors"`, the server assembles a native safetensors manifest directly from pre-uploaded tensor blobs — no GGUF conversion is performed. Each tensor is stored as an individual content-addressed blob, and the `files` map uses tensor names (e.g. `"model.embed_tokens.weight"`) as keys. JSON config files use their file names as keys.
+
+Use [/api/blobs/:digest](#check-if-a-blob-exists) to check which blobs already exist, and [POST /api/blobs/:digest](#push-a-blob) to upload any that are missing, before calling this API.
+
+> **Note:** When uploaded safetensors blobs have already been quantized, set `client_quantized` to the resulting type. For server-side quantization, set `quantize`; the server inspects each uploaded safetensors blob, including packed blobs, and applies Ollama's tensor quantization policy. Server-side quantization requires MLX support on the server.
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/create -d '{
+  "model": "my-safetensors-model",
+  "model_format": "safetensors",
+  "files": {
+    "config.json": "sha256:dd3443e529fb2290423a0c65c2d633e67b419d273f170259e27297219828e389",
+    "tokenizer.json": "sha256:bbc1904d35169c542dffbe1f7589a5994ec7426d9e5b609d07bab876f32e97ab",
+    "tokenizer_config.json": "sha256:24e8a6dc2547164b7002e3125f10b415105644fcf02bf9ad8b674c87b1eaaed6",
+    "model.embed_tokens.weight": "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "model.layers.0.self_attn.q_proj.weight": "sha256:f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5"
+  },
+  "template": "{{ if .System }}<|system|>\n{{ .System }}</s>\n{{ end }}<|user|>\n{{ .Prompt }}</s>\n<|assistant|>\n{{ .Response }}</s>\n"
+}'
+```
+
+##### Response
+
+```json
+{"status":"creating safetensors model"}
 {"status":"writing manifest"}
 {"status":"success"}
 ```
