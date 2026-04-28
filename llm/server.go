@@ -1192,10 +1192,10 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 				allLayerIndices[i] = i
 			}
 			var denseDeviceID ml.DeviceID
-			if len(gpuLayersMoE) > 0 {
+			if gpuLayersMoE.Sum() > 0 {
 				denseDeviceID = gpuLayersMoE[0].DeviceID
 			} else if len(gpus) > 0 {
-				denseDeviceID = gpus[len(gpus)-1].DeviceID
+				denseDeviceID = gpus[0].DeviceID
 			}
 			denseGPULayers = ml.GPULayersList{{
 				DeviceID: denseDeviceID,

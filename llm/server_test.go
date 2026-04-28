@@ -220,6 +220,55 @@ func TestLLMServerFitGPU(t *testing.T) {
 	}
 }
 
+func TestLLMServerMoESplitDenseFallbackUsesLargestGPU(t *testing.T) {
+	t.Setenv("OLLAMA_MOE_GPU_LAYERS", "-1")
+
+	minMemory := uint64(457 * format.MebiByte)
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{ID: "gpu-small"}, FreeMemory: minMemory + 320*format.MebiByte},
+		{DeviceID: ml.DeviceID{ID: "gpu-large"}, FreeMemory: minMemory + 360*format.MebiByte},
+	}
+
+	s := &ollamaServer{
+		llmServer: llmServer{
+			totalLayers: 2,
+			options: api.Options{
+				Runner: api.Runner{NumGPU: -1},
+			},
+		},
+	}
+
+	s.mem = &ml.BackendMemory{CPU: ml.DeviceMemory{
+		Weights:    []uint64{250 * format.MebiByte, 200 * format.MebiByte},
+		MoEWeights: []uint64{50 * format.MebiByte, 50 * format.MebiByte},
+		Cache:      make([]uint64, s.totalLayers),
+	}, GPUs: make([]ml.DeviceMemory, len(gpus))}
+
+	for i := range s.mem.GPUs {
+		s.mem.GPUs[i].DeviceID = gpus[i].DeviceID
+		s.mem.GPUs[i].Weights = make([]uint64, s.totalLayers)
+		s.mem.GPUs[i].MoEWeights = make([]uint64, s.totalLayers)
+		s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
+	}
+
+	systemInfo := ml.SystemInfo{
+		TotalMemory: 4 * format.GibiByte,
+		FreeMemory:  2 * format.GibiByte,
+		FreeSwap:    2 * format.GibiByte,
+	}
+
+	gpuLayers, denseGPULayers, err := s.createLayout(systemInfo, gpus, s.mem, false, 0)
+	if err != nil {
+		t.Fatalf("createLayout returned error: %v", err)
+	}
+	if gpuLayers.Sum() != 0 {
+		t.Fatalf("MoE GPU layers = %v, want none", gpuLayers)
+	}
+	if len(denseGPULayers) != 1 || denseGPULayers[0].DeviceID.ID != "gpu-large" {
+		t.Fatalf("dense GPU layers = %v, want gpu-large", denseGPULayers)
+	}
+}
+
 func TestLLMServerCompletionFormat(t *testing.T) {
 	// This test was written to fix an already deployed issue. It is a bit
 	// of a mess, and but it's good enough, until we can refactoring the
