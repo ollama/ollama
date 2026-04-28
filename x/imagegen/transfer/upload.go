@@ -31,6 +31,7 @@ type uploader struct {
 	userAgent  string
 	progress   *progressTracker
 	logger     *slog.Logger
+	private    bool
 }
 
 func upload(ctx context.Context, opts UploadOptions) error {
@@ -48,6 +49,7 @@ func upload(ctx context.Context, opts UploadOptions) error {
 		getToken:   opts.GetToken,
 		userAgent:  cmp.Or(opts.UserAgent, defaultUserAgent),
 		logger:     opts.Logger,
+		private:    opts.Private,
 	}
 
 	if len(opts.Blobs) > 0 {
@@ -359,7 +361,15 @@ func (u *uploader) put(ctx context.Context, uploadURL string, f *os.File, size i
 }
 
 func (u *uploader) pushManifest(ctx context.Context, repo, ref string, manifest []byte) error {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, fmt.Sprintf("%s/v2/%s/manifests/%s", u.baseURL, repo, ref), bytes.NewReader(manifest))
+	manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", u.baseURL, repo, ref)
+	if u.private {
+		parsed, _ := url.Parse(manifestURL)
+		q := parsed.Query()
+		q.Set("private", "1")
+		parsed.RawQuery = q.Encode()
+		manifestURL = parsed.String()
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, manifestURL, bytes.NewReader(manifest))
 	req.Header.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
 	req.Header.Set("User-Agent", u.userAgent)
 	if *u.token != "" {

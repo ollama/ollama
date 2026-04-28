@@ -53,6 +53,7 @@ var (
 
 type registryOptions struct {
 	Insecure bool
+	Private  bool
 	Username string
 	Password string
 	Token    string
@@ -575,6 +576,12 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	requestURL := n.BaseURL()
 	requestURL = requestURL.JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
 
+	if regOpts != nil && regOpts.Private {
+		q := requestURL.Query()
+		q.Set("private", "1")
+		requestURL.RawQuery = q.Encode()
+	}
+
 	manifestJSON, err := json.Marshal(mf)
 	if err != nil {
 		return err
@@ -847,6 +854,7 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		Manifest:    manifestJSON,
 		ManifestRef: n.Tag,
 		Repository:  n.DisplayNamespaceModel(),
+		Private:     regOpts != nil && regOpts.Private,
 	})
 }
 

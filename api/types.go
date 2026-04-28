@@ -789,6 +789,7 @@ type ProgressResponse struct {
 type PushRequest struct {
 	Model    string `json:"model"`
 	Insecure bool   `json:"insecure,omitempty"`
+	Private  bool   `json:"private,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`

@@ -1152,6 +1152,7 @@ func TestPushHandler(t *testing.T) {
 	tests := []struct {
 		name           string
 		modelName      string
+		private        bool
 		serverResponse map[string]func(w http.ResponseWriter, r *http.Request)
 		expectedError  string
 		expectedOutput string
@@ -1241,6 +1242,39 @@ func TestPushHandler(t *testing.T) {
 			},
 			expectedError: "you are not authorized to push to this namespace, create the model under a namespace you own",
 		},
+		{
+			name:      "private push",
+			modelName: "test-model",
+			private:   true,
+			serverResponse: map[string]func(w http.ResponseWriter, r *http.Request){
+				"/api/push": func(w http.ResponseWriter, r *http.Request) {
+					var req api.PushRequest
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+
+					if !req.Private {
+						t.Error("expected Private to be true")
+					}
+
+					responses := []api.ProgressResponse{
+						{Status: "preparing manifest"},
+						{Digest: "sha256:abc123456789", Total: 100, Completed: 100},
+					}
+
+					for _, resp := range responses {
+						if err := json.NewEncoder(w).Encode(resp); err != nil {
+							http.Error(w, err.Error(), http.StatusInternalServerError)
+							return
+						}
+						w.(http.Flusher).Flush()
+					}
+				},
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {},
+			},
+			expectedOutput: "\nYou can find your model at:\n\n\thttps://ollama.com/test-model\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1262,6 +1296,12 @@ func TestPushHandler(t *testing.T) {
 
 			cmd := &cobra.Command{}
 			cmd.Flags().Bool("insecure", false, "")
+			cmd.Flags().Bool("private", false, "")
+			if tt.private {
+				if err := cmd.Flags().Set("private", "true"); err != nil {
+					t.Fatal(err)
+				}
+			}
 			cmd.SetContext(t.Context())
 
 			// Redirect stderr to capture progress output
