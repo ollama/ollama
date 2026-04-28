@@ -307,7 +307,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	// moeLayers holds the buffer type for MoE expert tensors per layer.
-	// Only populated when MoEGPULayers is non-empty (MoE split active).
+	// Used when MoESplit is true.
 	moeLayers := make([]deviceBufferType, blocks)
 	for i := range moeLayers {
 		moeLayers[i] = assignMoELayer(i)
@@ -318,7 +318,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	cpuMoEBufTypes := make(map[C.ggml_backend_buffer_type_t]struct{})
 
 	// Log routing summary on formal allocation (AllocMemory=true) when MoE split is active
-	if params.AllocMemory && len(params.MoEGPULayers) > 0 {
+	if params.AllocMemory && params.MoESplit {
 		moeGPUSet := make(map[int]bool)
 		for _, p := range params.MoEGPULayers {
 			for _, l := range p.Layers {
@@ -456,7 +456,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 
 			if layerIndex >= 0 {
 				bts := layers[layerIndex].bts
-				if isMoEExpertTensor(t.Name) && len(params.MoEGPULayers) > 0 {
+				if isMoEExpertTensor(t.Name) && params.MoESplit {
 					// MoE expert tensor: route based on MoEGPULayers (subset of GPULayers)
 					bts = moeLayers[layerIndex].bts
 					// Track CPU-resident MoE buffer types for optional pinning.
@@ -554,7 +554,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	// weight buffers as pinned (page-locked) so that the CUDA Copy Engine can
 	// DMA directly from mmap memory without CPU-side staging.
 	var pinnedBuffers []unsafe.Pointer
-	if params.AllocMemory && envconfig.MoePinned() && len(params.MoEGPULayers) > 0 {
+	if params.AllocMemory && envconfig.MoePinned() && params.MoESplit {
 		for bt, c := range ctxs {
 			if _, isCPUMoE := cpuMoEBufTypes[bt]; !isCPUMoE {
 				continue

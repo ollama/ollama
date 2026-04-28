@@ -1309,6 +1309,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 			AllocMemory:    req.Operation != llm.LoadOperationFit,
 			NumThreads:     req.NumThreads,
 			GPULayers:      req.GPULayers,
+			MoESplit:       req.MoESplit,
 			MoEGPULayers:   req.MoEGPULayers,
 			FlashAttention: req.FlashAttention,
 		}
