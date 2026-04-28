@@ -1037,18 +1037,25 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 			moeSize[i] += memory.CPU.MoEWeights[i]
 		}
 	}
+	cacheSize := make([]uint64, len(layers))
+	for i := range cacheSize {
+		for j := range memory.GPUs {
+			cacheSize[i] += memory.GPUs[j].Cache[i]
+		}
+		cacheSize[i] += memory.CPU.Cache[i]
+	}
 
 	isMoEModel := slices.ContainsFunc(moeSize, func(s uint64) bool { return s > 0 })
 
 	if isMoEModel && envconfig.MoeGpuLayers() != 0 {
-		// dense size per layer = total layer size - MoE expert weights
+		// Dense/cache is the baseline reservation; MoE expert weights are assigned separately.
 		denseSize := make([]uint64, len(layers))
 		for i := range denseSize {
-			denseSize[i] = layers[i] - moeSize[i]
+			denseSize[i] = layers[i] - cacheSize[i] - moeSize[i]
 		}
 		var totalDenseOverhead uint64
-		for _, d := range denseSize {
-			totalDenseOverhead += d
+		for i, d := range denseSize {
+			totalDenseOverhead += d + cacheSize[i]
 		}
 
 		// Estimate available VRAM (single-GPU, simple single-device budget).
@@ -1070,13 +1077,13 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 		}
 
 		if totalDenseOverhead > availableVRAM {
-			slog.Warn("moe split: dense weights exceed available VRAM, falling back to standard layout",
-				"dense_total", format.HumanBytes2(totalDenseOverhead),
+			slog.Warn("moe split: dense weights and cache exceed available VRAM, falling back to standard layout",
+				"dense_cache_total", format.HumanBytes2(totalDenseOverhead),
 				"available_vram", format.HumanBytes2(availableVRAM))
 			// Fall through to standard assignLayers below
 		} else {
-			slog.Info("moe split: dense weights fit, activating split",
-				"dense_total", format.HumanBytes2(totalDenseOverhead),
+			slog.Info("moe split: dense weights and cache fit, activating split",
+				"dense_cache_total", format.HumanBytes2(totalDenseOverhead),
 				"vram_for_moe", format.HumanBytes2(availableVRAM-totalDenseOverhead))
 
 			moeGPUCount := envconfig.MoeGpuLayers()
@@ -1113,19 +1120,14 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 				slog.Debug("moe split: layer layout",
 					"layer", i,
 					"dense_size", format.HumanBytes2(denseSize[i]),
+					"cache_size", format.HumanBytes2(cacheSize[i]),
 					"moe_size", format.HumanBytes2(moeSize[i]),
 					"moe_loc", loc)
 			}
 
 			// Build adjusted layer sizes (MoE-only cost) and adjusted GPU free memory
 			adjustedLayers := make([]uint64, len(layers))
-			for i := range adjustedLayers {
-				adjustedLayers[i] = moeSize[i]
-				for j := range memory.GPUs {
-					adjustedLayers[i] += memory.GPUs[j].Cache[i]
-				}
-				adjustedLayers[i] += memory.CPU.Cache[i]
-			}
+			copy(adjustedLayers, moeSize)
 
 			adjustedGPUs := make([]ml.DeviceInfo, len(gpus))
 			copy(adjustedGPUs, gpus)
