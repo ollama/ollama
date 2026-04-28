@@ -45,6 +45,8 @@ var (
 
 	// Note: add newer models at the top of the list to test them first
 	ollamaEngineChatModels = []string{
+		"nemotron3:33b",
+		"laguna-xs.2:q4_K_M",
 		"gemma4",
 		"lfm2.5-thinking",
 		"ministral-3",
@@ -71,6 +73,7 @@ var (
 	// coming). On other platforms, skipIfMLXUnsupported turns the load
 	// failure into a test skip.
 	mlxEngineChatModels = []string{
+		"laguna-xs.2:nvfp4",
 		"qwen3.5:2b-nvfp4",  // ~2.5GB, Qwen3_5 arch
 		"gemma4:e2b-nvfp4",  // ~7.1GB, Gemma4 arch (skipped under low VRAM)
 	}
@@ -282,6 +285,8 @@ var (
 		"qwen3-embedding",
 	}
 	libraryToolsModels = []string{
+		"nemotron3:33b",
+		"laguna-xs.2",
 		"gemma4",
 		"lfm2.5-thinking",
 		"qwen3-vl",
@@ -870,6 +875,33 @@ func skipIfMLXUnsupported(t *testing.T, err error) {
 	} {
 		if strings.Contains(msg, s) {
 			t.Skipf("MLX not available on %s/%s: %v", runtime.GOOS, runtime.GOARCH, err)
+		}
+	}
+}
+
+// skipIfModelTooLargeForVRAM skips the test when the model's on-disk size
+// is larger than OLLAMA_MAX_VRAM by enough that even partial GPU offload
+// won't help. Uses the same 0.75x gate as TestPerfModels (model_perf_test.go)
+// so vision/audio tests stay runnable on systems where the model is slightly
+// over VRAM and a portion legitimately spills to CPU. No-op when
+// OLLAMA_MAX_VRAM is unset.
+func skipIfModelTooLargeForVRAM(ctx context.Context, t *testing.T, client *api.Client, modelName string) {
+	t.Helper()
+	s := os.Getenv("OLLAMA_MAX_VRAM")
+	if s == "" {
+		return
+	}
+	maxVram, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		t.Fatalf("invalid OLLAMA_MAX_VRAM %v", err)
+	}
+	resp, err := client.List(ctx)
+	if err != nil {
+		t.Fatalf("list models failed %v", err)
+	}
+	for _, m := range resp.Models {
+		if m.Name == modelName && float32(m.Size)*0.75 > float32(maxVram) {
+			t.Skipf("model %s is too large %s for available VRAM %s", modelName, format.HumanBytes(m.Size), format.HumanBytes(int64(maxVram)))
 		}
 	}
 }
