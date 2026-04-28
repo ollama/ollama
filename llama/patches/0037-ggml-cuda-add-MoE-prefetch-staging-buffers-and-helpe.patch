@@ -25,8 +25,8 @@ with compute:
     staging resources as a safety net.
 ---
  ggml/src/ggml-cuda/common.cuh   |  11 ++
- ggml/src/ggml-cuda/ggml-cuda.cu | 260 ++++++++++++++++++++++++++++++++
- 2 files changed, 271 insertions(+)
+ ggml/src/ggml-cuda/ggml-cuda.cu | 269 ++++++++++++++++++++++++++++++++
+ 2 files changed, 280 insertions(+)
 
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
 index 79673ac2e..034c61d6d 100644
@@ -72,7 +72,7 @@ index b8ed3709b..4d95365f5 100644
      for (int i = 0; i < GGML_CUDA_MAX_DEVICES; ++i) {
          for (int j = 0; j < GGML_CUDA_MAX_STREAMS; ++j) {
              if (streams[i][j] != nullptr) {
-@@ -5073,6 +5084,228 @@ static ggml_backend_feature * ggml_backend_cuda_get_features(ggml_backend_reg_t
+@@ -5073,6 +5084,237 @@ static ggml_backend_feature * ggml_backend_cuda_get_features(ggml_backend_reg_t
      GGML_UNUSED(reg);
  }
  
@@ -123,22 +123,31 @@ index b8ed3709b..4d95365f5 100644
 +        return true;
 +    }
 +    ggml_cuda_set_device(cuda_ctx->device);
-+    // free any undersized prior allocation
-+    for (int i = 0; i < 2; i++) {
-+        if (cuda_ctx->moe_staging.buffers[i] != nullptr) {
-+            cudaFree(cuda_ctx->moe_staging.buffers[i]);
-+            cuda_ctx->moe_staging.buffers[i] = nullptr;
++    auto cleanup_staging = [&]() {
++        for (int i = 0; i < 2; i++) {
++            if (cuda_ctx->moe_staging.buffers[i] != nullptr) {
++                cudaFree(cuda_ctx->moe_staging.buffers[i]);
++                cuda_ctx->moe_staging.buffers[i] = nullptr;
++            }
++            if (cuda_ctx->moe_staging.h2d_done[i] != nullptr) {
++                cudaEventDestroy(cuda_ctx->moe_staging.h2d_done[i]);
++                cuda_ctx->moe_staging.h2d_done[i] = nullptr;
++            }
 +        }
-+    }
++        cuda_ctx->moe_staging.capacity = 0;
++    };
++    cleanup_staging();
 +    for (int i = 0; i < 2; i++) {
 +        if (cudaMalloc(&cuda_ctx->moe_staging.buffers[i], max_size) != cudaSuccess) {
 +            cuda_ctx->moe_staging.buffers[i] = nullptr;
++            cleanup_staging();
 +            return false;
 +        }
 +        if (cuda_ctx->moe_staging.h2d_done[i] == nullptr) {
 +            if (cudaEventCreateWithFlags(&cuda_ctx->moe_staging.h2d_done[i],
 +                                         cudaEventDisableTiming) != cudaSuccess) {
 +                cuda_ctx->moe_staging.h2d_done[i] = nullptr;
++                cleanup_staging();
 +                return false;
 +            }
 +        }
@@ -301,7 +310,7 @@ index b8ed3709b..4d95365f5 100644
  static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, const char * name) {
      GGML_UNUSED(reg);
      if (strcmp(name, "ggml_backend_split_buffer_type") == 0) {
-@@ -5087,6 +5320,33 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
+@@ -5087,6 +5329,33 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
      if (strcmp(name, "ggml_backend_get_features") == 0) {
          return (void *)ggml_backend_cuda_get_features;
      }
