@@ -48,19 +48,14 @@ var integrationSpecs = []*IntegrationSpec{
 			URL: "https://code.claude.com/docs/en/quickstart",
 		},
 	},
-	{
-		Name:        "gemini",
-		Runner:      &Gemini{},
-		Description: "Google's Gemini CLI with local model support",
-		Install: IntegrationInstallSpec{
-			CheckInstalled: func() bool {
-				_, err := (&Gemini{}).findPath()
-				return err == nil
+		{
+			Name: "gemini",
+			Runner: &Gemini{},
+			Description: "Google Gemini AI",
+			Install: IntegrationInstallSpec{
+				CheckInstalled: func() bool { return true },
 			},
-			URL:     "https://github.com/google/gemini-cli",
-			Command: []string{"npm", "install", "-g", "@google/gemini-cli"},
 		},
-	},
 	{
 		Name:        "cline",
 		Runner:      &Cline{},
