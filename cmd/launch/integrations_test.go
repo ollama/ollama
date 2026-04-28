@@ -1553,7 +1553,19 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		if diff := compareStrings(got, integrationOrder); diff != "" {
+
+		want := append([]string(nil), integrationOrder...)
+		if poolsideGOOS == "windows" {
+			filtered := make([]string, 0, len(want))
+			for _, name := range want {
+				if name != "pool" {
+					filtered = append(filtered, name)
+				}
+			}
+			want = filtered
+		}
+
+		if diff := compareStrings(got, want); diff != "" {
 			t.Fatalf("launcher integration order mismatch: %s", diff)
 		}
 	})
@@ -1570,7 +1582,10 @@ func TestListIntegrationInfos(t *testing.T) {
 	})
 
 	t.Run("includes known integrations", func(t *testing.T) {
-		known := map[string]bool{"claude": false, "codex": false, "opencode": false, "pool": false}
+		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
+		if poolsideGOOS != "windows" {
+			known["pool"] = false
+		}
 		for _, info := range infos {
 			if _, ok := known[info.Name]; ok {
 				known[info.Name] = true
