@@ -88,14 +88,6 @@ var (
 		"internlm2:latest",
 		"codellama:latest", // arch=llama
 		"phi3:latest",
-		"falcon2:latest",
-		"gemma:latest",
-		"llama2:latest",
-		"nous-hermes:latest",
-		"orca-mini:latest",
-		"qwen:latest",
-		"stablelm2:latest", // Predictions are off, crashes on small VRAM GPUs
-		"falcon:latest",
 	}
 
 	// Some library models are quite large - ensure large VRAM and sufficient disk space
@@ -297,7 +289,6 @@ var (
 		"llama3.2",
 		"mistral",
 		"qwen2.5",
-		"qwen2",
 		"ministral-3",
 		"mistral-nemo",
 		"mistral-small",
