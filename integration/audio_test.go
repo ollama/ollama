@@ -19,6 +19,7 @@ import (
 )
 
 var defaultAudioModels = []string{
+	"nemotron3:33b",
 	"gemma4:e2b",
 	"gemma4:e4b",
 }
@@ -39,6 +40,7 @@ func setupAudioModel(ctx context.Context, t *testing.T, client *api.Client, mode
 	if testModel == "" {
 		pullOrSkip(ctx, t, client, model)
 	}
+	skipIfModelTooLargeForVRAM(ctx, t, client, model)
 	requireCapability(ctx, t, client, model, "audio")
 	err := client.Generate(ctx, &api.GenerateRequest{Model: model}, func(response api.GenerateResponse) error { return nil })
 	if err != nil {

@@ -16,6 +16,7 @@ import (
 // Default set of vision models to test. When OLLAMA_TEST_MODEL is set,
 // only that model is tested (with a capability check for vision).
 var defaultVisionModels = []string{
+	"nemotron3:33b",
 	"gemma4",
 	"gemma3",
 	"llama3.2-vision",
@@ -70,6 +71,7 @@ func setupVisionModel(ctx context.Context, t *testing.T, client *api.Client, mod
 	if testModel == "" {
 		pullOrSkip(ctx, t, client, model)
 	}
+	skipIfModelTooLargeForVRAM(ctx, t, client, model)
 	requireCapability(ctx, t, client, model, "vision")
 	err := client.Generate(ctx, &api.GenerateRequest{Model: model}, func(response api.GenerateResponse) error { return nil })
 	if err != nil {
