@@ -56,6 +56,33 @@ func (q *Qwen) findPath() (string, error) {
 	return "", fmt.Errorf("qwen binary not found (checked PATH, ~/.local/bin, ~/.cargo/bin, /usr/local/bin)")
 }
 
+func (q *Qwen) buildEnv(model string) []string {
+	host := strings.TrimRight(envconfig.Host().String(), "/")
+	base := host + "/v1"
+
+	env := os.Environ()
+
+	// Filter out existing OPENAI_* vars to force Ollama-specific values
+	filteredEnv := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, "OPENAI_API_KEY=") &&
+			!strings.HasPrefix(e, "OPENAI_BASE_URL=") &&
+			!strings.HasPrefix(e, "OPENAI_MODEL=") {
+			filteredEnv = append(filteredEnv, e)
+		}
+	}
+	env = filteredEnv
+
+	// Force Ollama-specific values for the child process
+	env = append(env, "OPENAI_API_KEY=dummy")
+	env = append(env, "OPENAI_BASE_URL="+base)
+	if model != "" {
+		env = append(env, "OPENAI_MODEL="+model)
+	}
+
+	return env
+}
+
 func (q *Qwen) Run(model string, args []string) error {
 	qwenPath, err := q.findPath()
 	if err != nil {
@@ -67,38 +94,39 @@ func (q *Qwen) Run(model string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	host := strings.TrimRight(envconfig.Host().String(), "/")
-	base := host + "/v1"
-
-	env := os.Environ()
-
-	if os.Getenv("OPENAI_API_KEY") == "" {
-		env = append(env, "OPENAI_API_KEY=dummy")
-	}
-	if os.Getenv("OPENAI_BASE_URL") == "" {
-		env = append(env, "OPENAI_BASE_URL="+base)
-	}
-	if model != "" && os.Getenv("OPENAI_MODEL") == "" {
-		env = append(env, "OPENAI_MODEL="+model)
-	}
-
-	cmd.Env = env
+	cmd.Env = q.buildEnv(model)
 	return cmd.Run()
 }
 
 func (q *Qwen) configPath() (string, error) {
-	// Always use project scope: .qwen/settings.json in current working directory.
-	// The file may not exist yet; it will be created by Edit().
+	// Check for existing project-local config first
+	if cwd, err := os.Getwd(); err == nil {
+		projectPath := filepath.Join(cwd, ".qwen", "settings.json")
+		if _, err := os.Stat(projectPath); err == nil {
+			return projectPath, nil
+		}
+	}
+
+	// Check for existing user config next
+	home, err := os.UserHomeDir()
+	if err == nil {
+		userPath := filepath.Join(home, ".qwen", "settings.json")
+		if _, err := os.Stat(userPath); err == nil {
+			return userPath, nil
+		}
+	}
+
+	// Default to project-local config (will be created by Edit())
 	if cwd, err := os.Getwd(); err == nil {
 		return filepath.Join(cwd, ".qwen", "settings.json"), nil
 	}
 
-	// Fall back to user scope
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("could not determine config path")
+	// Fall back to user scope if cwd fails
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".qwen", "settings.json"), nil
 	}
-	return filepath.Join(home, ".qwen", "settings.json"), nil
+
+	return "", fmt.Errorf("could not determine config path")
 }
 
 func (q *Qwen) Paths() []string {
@@ -196,9 +224,7 @@ func (q *Qwen) Edit(models []string) error {
 		auth = make(map[string]any)
 		security["auth"] = auth
 	}
-	if _, hasType := auth["selectedType"]; !hasType {
-		auth["selectedType"] = "openai"
-	}
+	auth["selectedType"] = "openai"
 
 	if len(models) > 0 {
 		modelCfg, ok := existingConfig["model"].(map[string]any)
