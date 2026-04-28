@@ -83,6 +83,29 @@ func resolvePath(name string) string {
 	return name
 }
 
+func ollamaServeArgs(args []string) bool {
+	if len(args) < 2 {
+		return false
+	}
+
+	switch strings.Trim(filepath.Base(args[0]), `"`) {
+	case "ollama", "ollama.exe":
+	default:
+		return false
+	}
+
+	for _, rawArg := range args[1:] {
+		arg := strings.Trim(rawArg, `"`)
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+
+		return arg == "serve" || arg == "start"
+	}
+
+	return false
+}
+
 // cleanup checks the pid file for a running ollama process
 // and shuts it down gracefully if it is running
 func cleanup() error {
