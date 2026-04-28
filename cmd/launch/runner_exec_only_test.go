@@ -46,6 +46,14 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			},
 		},
 		{
+			name:   "pool",
+			binary: "pool",
+			runner: &Poolside{},
+			checkPath: func(home string) string {
+				return filepath.Join(home, ".poolside", "config")
+			},
+		},
+		{
 			name:   "kimi",
 			binary: "kimi",
 			runner: &Kimi{},

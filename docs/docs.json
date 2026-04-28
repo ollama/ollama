@@ -124,7 +124,8 @@
                   "/integrations/opencode",
                   "/integrations/droid",
                   "/integrations/goose",
-                  "/integrations/pi"
+                  "/integrations/pi",
+                  "/integrations/poolside"
                 ]
               },
               {

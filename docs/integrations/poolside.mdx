@@ -1,0 +1,70 @@
+---
+title: Poolside
+---
+
+Poolside is Poolside's software agent for the terminal, built for enterprise development workflows.
+
+Open models can be used with Poolside through Ollama, enabling you to use models such as `qwen3.5`, `glm-5.1:cloud`, and `kimi-k2.6:cloud`.
+## Install
+
+Install the Poolside CLI.
+
+```shell
+# TODO: replace with the official Poolside CLI install command
+```
+
+## Usage with Ollama
+
+### Quick setup
+
+```shell
+ollama launch pool
+```
+
+### Run directly with a model
+
+```shell
+ollama launch pool --model kimi-k2.6:cloud
+```
+
+### Pass arguments through to Poolside
+
+Arguments after `--` are passed directly to Poolside:
+
+```shell
+ollama launch pool -- --help
+```
+
+## Recommended Models
+
+- `kimi-k2.6:cloud`
+- `glm-5:cloud`
+- `minimax-m2.7:cloud`
+- `qwen3.5:cloud`
+- `glm-4.7-flash`
+- `qwen3.5`
+
+Cloud models are also available at [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud).
+
+## Manual setup
+
+Poolside connects to Ollama using the OpenAI-compatible API via environment variables.
+
+1. Set the environment variables:
+
+```shell
+export POOLSIDE_STANDALONE_BASE_URL=http://localhost:11434/v1
+export POOLSIDE_API_KEY=ollama
+```
+
+2. Run Poolside with an Ollama model:
+
+```shell
+pool -m kimi-k2.6:cloud
+```
+
+Or run with environment variables inline:
+
+```shell
+POOLSIDE_STANDALONE_BASE_URL=http://localhost:11434/v1 POOLSIDE_API_KEY=ollama pool -m kimi-k2.6:cloud
+```
