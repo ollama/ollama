@@ -25,7 +25,10 @@ A Modelfile is the blueprint to create and share customized models using Ollama.
 
 ## Format
 
-The format of the `Modelfile`:
+A `Modelfile` is a plain text file with one instruction per line. The file does not need an extension; examples use `Modelfile` by convention.
+By default, `ollama create` looks for a file named `Modelfile` in the current directory. Use `ollama create -f <path>` to use a different filename or location.
+
+The format of the file:
 
 ```
 # comment
@@ -261,7 +264,8 @@ The version should be a valid Ollama version (e.g. 0.14.0).
 
 ## Notes
 
-- the **`Modelfile` is not case sensitive**. In the examples, uppercase instructions are used to make it easier to distinguish it from arguments.
+- The **`Modelfile` is not case sensitive**. In the examples, uppercase instructions are used to make it easier to distinguish it from arguments.
 - Instructions can be in any order. In the examples, the `FROM` instruction is first to keep it easily readable.
+- Paths in `FROM` and `ADAPTER` instructions can be absolute or relative to the `Modelfile` location.
 
 [1]: https://ollama.com/library
