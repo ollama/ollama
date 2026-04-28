@@ -618,8 +618,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if builtinParser != nil {
-				// only send messages with meaningful content (empty messages confuse clients)
-				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 {
+				// Emit chunks that carry logprobs even if the parser is still buffering
+				// visible content, otherwise generate logprobs disappear for models with
+				// builtin thinking/tool parsers.
+				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
 					ch <- res
 				}
 

@@ -776,6 +776,11 @@ type tensorImportTransform interface {
 	quantizationType(name string, shape []int32, quantize string) string
 }
 
+type sourceFP8TensorImportTransform interface {
+	sourceFP8TensorQuantization(name string, shape []int32, requested string, fallback string) string
+	sourceFP8BF16Quantization(name string, shape []int32, requested string) string
+}
+
 type noopImportTransform struct{}
 
 func (noopImportTransform) skipTensor(string) bool { return false }
@@ -804,6 +809,7 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Qwen3NextMoeForConditionalGeneration": newQwen35ImportTransform,
 	"Gemma4ForCausalLM":                    newGemma4ImportTransform,
 	"Gemma4ForConditionalGeneration":       newGemma4ImportTransform,
+	"LagunaForCausalLM":                    newLagunaImportTransform,
 }
 
 func newTensorImportTransform(modelDir string, cfg sourceModelConfig) (tensorImportTransform, error) {
@@ -842,6 +848,7 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 	if err != nil {
 		return fmt.Errorf("failed to construct import transform for architecture %q: %w", sourceConfig.Architecture(), err)
 	}
+	sourceFP8Transform, _ := importTransform.(sourceFP8TensorImportTransform)
 
 	// Resolve the optional packed layer creator
 	var packedCreator PackedTensorLayerCreator
@@ -991,9 +998,17 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 						// synthetic tests may not pass the generic import size filter.
 						quantizeType = "mxfp8"
 					}
-					quantizeType = sourceFP8TensorQuantization(outTD.Name, outTD.Shape, quantize, quantizeType)
+					if sourceFP8Transform != nil {
+						quantizeType = sourceFP8Transform.sourceFP8TensorQuantization(outTD.Name, outTD.Shape, quantize, quantizeType)
+					} else {
+						quantizeType = sourceFP8TensorQuantization(outTD.Name, outTD.Shape, quantize, quantizeType)
+					}
 				case sourceQuantKind == sourceQuantizedKindSourceFP8:
-					quantizeType = sourceFP8BF16PromotionQuantization(outTD.Name, outTD.Shape, quantize)
+					if sourceFP8Transform != nil {
+						quantizeType = sourceFP8Transform.sourceFP8BF16Quantization(outTD.Name, outTD.Shape, quantize)
+					} else {
+						quantizeType = sourceFP8BF16PromotionQuantization(outTD.Name, outTD.Shape, quantize)
+					}
 				case effectiveQuantize != "":
 					quantizeType = importTransform.quantizationType(outTD.Name, outTD.Shape, effectiveQuantize)
 				}
