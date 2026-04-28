@@ -2433,6 +2433,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
+			var observedMetrics api.Metrics
 			err := r.Completion(ctx, llm.CompletionRequest{
 				Prompt:      prompt,
 				Images:      images,
@@ -2456,6 +2457,23 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					},
 					Logprobs: toAPILogprobs(r.Logprobs),
 				}
+
+				if res.Metrics.PromptEvalCount > 0 {
+					observedMetrics.PromptEvalCount = res.Metrics.PromptEvalCount
+				}
+				if res.Metrics.PromptEvalDuration > 0 {
+					observedMetrics.PromptEvalDuration = res.Metrics.PromptEvalDuration
+				}
+				if res.Metrics.EvalCount > 0 {
+					observedMetrics.EvalCount = res.Metrics.EvalCount
+				}
+				if res.Metrics.EvalDuration > 0 {
+					observedMetrics.EvalDuration = res.Metrics.EvalDuration
+				}
+				res.Metrics.PromptEvalCount = observedMetrics.PromptEvalCount
+				res.Metrics.PromptEvalDuration = observedMetrics.PromptEvalDuration
+				res.Metrics.EvalCount = observedMetrics.EvalCount
+				res.Metrics.EvalDuration = observedMetrics.EvalDuration
 
 				if r.Done {
 					res.DoneReason = r.DoneReason.String()
