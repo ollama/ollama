@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
@@ -87,10 +88,17 @@ type TextConfig struct {
 	KVDonors map[int32]bool `json:"-"`
 }
 
-// sharedKVEntry stores cached KV state from a donor layer for KV sharing.
-type sharedKVEntry struct {
-	K, V   *mlx.Array
-	Offset int // RoPE offset from donor's cache
+// sharedHistory carries a donor layer's K/V to donees that share
+// it. Exactly one of history or (k, v) is populated: history when
+// the donor had a cache (donees feed it to SDPA via WithKVHistory;
+// (k, v) when the donor had no cache (donees feed them via WithKV).
+// mask carries any storage-side mask the (k, v) path needs (e.g.
+// sliding window) — unused on the history path, where the cache's
+// applier supplies the equivalent restriction.
+type sharedHistory struct {
+	history *nn.KVHistory
+	k, v    *mlx.Array
+	mask    nn.AttentionMask
 }
 
 // Attention implements Gemma 4 attention with Q/K normalization and v-norm.
@@ -133,34 +141,6 @@ func firstNonNil(tensors map[string]*mlx.Array, keys ...string) *mlx.Array {
 		}
 	}
 	return nil
-}
-
-// buildCausalMaskWindow creates a [1, 1, Q, K] additive causal mask with an
-// optional sliding-window restriction. When window > 0, positions where
-// kv < absQ - window + 1 are also masked (the token can only see the most
-// recent `window` keys). When window == 0, only the causal constraint applies.
-//
-// This is the prefill-time mask for sliding-window attention layers. Without
-// the window restriction, a sliding layer would attend to the entire prefix
-// during prompt processing and diverge from the reference starting at the
-// first position past the window boundary.
-func buildCausalMaskWindow(Q, K, window int32) *mlx.Array {
-	offset := K - Q // cache offset: kv positions before the current query chunk
-	vals := make([]float32, Q*K)
-	negInf := float32(math.Inf(-1))
-	for q := range Q {
-		absQ := offset + q
-		var lo int32
-		if window > 0 {
-			lo = max(absQ-window+1, 0)
-		}
-		for kv := range K {
-			if kv > absQ || kv < lo {
-				vals[q*K+kv] = negInf
-			}
-		}
-	}
-	return mlx.FromValues(vals, 1, 1, int(Q), int(K))
 }
 
 // sliceAxis1 slices a tensor along axis 1: a[:, start:stop, ...].
@@ -1013,32 +993,24 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
-func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
-	dims := tokens.Dims()
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
-	h := m.EmbedTokens.Forward(tokens)
+	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
+	h := m.EmbedTokens.Forward(b.InputIDs)
 	h = mlx.MulScalar(h, m.EmbedScale)
 
 	// Compute PLE inputs if configured.
 	var perLayerInputs *mlx.Array
 	if m.HiddenSizePerLayer > 0 && m.EmbedTokensPerLayer != nil {
-		perLayerInputs = m.computePLEInputs(tokens, h)
+		perLayerInputs = m.computePLEInputs(b.InputIDs, h)
 	}
 
-	var sharedKV map[int32]sharedKVEntry
+	// KV sharing: each donor layer stores its KVHistory here so later
+	// shared layers can reuse it in lieu of their own cache update.
+	var sharedKV map[int32]sharedHistory
 	if len(m.KVShareMap) > 0 {
-		sharedKV = make(map[int32]sharedKVEntry)
-	}
-
-	// Per-forward-pass sliding-window mask cache. The first sliding layer
-	// populates it; every subsequent sliding layer reuses the cached mask.
-	// Before this, Attention.Forward rebuilt a ~L×kLen mask from scratch on
-	// the CPU for every sliding layer (~25 rebuilds on a 26B MoE prefill),
-	// which was the bulk of a ~28% prefill regression vs the pre-SWA-fix
-	// baseline.
-	var smc *slidingMaskCache
-	if L > 1 && m.SlidingWindow > 0 {
-		smc = &slidingMaskCache{}
+		sharedKV = make(map[int32]sharedHistory)
 	}
 
 	for i, layer := range m.Layers {
@@ -1054,15 +1026,15 @@ func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
 		}
 
 		// Get shared KV for this layer if it's a shared layer.
-		var donorEntry *sharedKVEntry
+		var donor *sharedHistory
 		if layer.KVShareDonor >= 0 {
-			if entry, ok := sharedKV[layer.KVShareDonor]; ok {
-				donorEntry = &entry
+			if d, ok := sharedKV[layer.KVShareDonor]; ok {
+				donor = &d
 			}
 		}
 
-		var donorKV *sharedKVEntry
-		h, donorKV = layer.Forward(h, c, B, L, m.TextConfig, pleInput, donorEntry, smc)
+		var donorKV *sharedHistory
+		h, donorKV = layer.Forward(h, b, c, positions, B, L, m.TextConfig, pleInput, donor)
 
 		// If this layer is a donor, store its cached KV for later shared layers.
 		if layer.IsDonor && donorKV != nil {
@@ -1071,37 +1043,6 @@ func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
 	}
 
 	return mlx.RMSNormFn(h, m.NormScaled, m.RMSNormEps)
-}
-
-// slidingMaskCache is a per-forward-pass cache for the sliding-window
-// additive mask used by Attention.Forward. All sliding-attention layers in
-// a single forward pass see the same (L, kLen, window, dtype) tuple, so
-// we can build the mask once on the first sliding layer's call and let
-// every subsequent layer reuse it. The cache is instantiated fresh at the
-// top of Model.Forward and passed through DecoderLayer → Attention; it is
-// nil on paths where no caching is wanted (e.g. L == 1 decode).
-type slidingMaskCache struct {
-	mask   *mlx.Array
-	L      int32
-	kLen   int32
-	window int32
-}
-
-// get returns a cached mask matching (L, kLen, window, dtype), or builds
-// and caches a new one. Safe to call with a nil receiver (falls through to
-// a direct build without caching).
-func (c *slidingMaskCache) get(L, kLen, window int32, dtype mlx.DType) *mlx.Array {
-	if c == nil {
-		return buildCausalMaskWindow(L, kLen, window).AsType(dtype)
-	}
-	if c.mask != nil && c.L == L && c.kLen == kLen && c.window == window {
-		return c.mask
-	}
-	c.mask = buildCausalMaskWindow(L, kLen, window).AsType(dtype)
-	c.L = L
-	c.kLen = kLen
-	c.window = window
-	return c.mask
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
@@ -1188,9 +1129,9 @@ func sliceLayerDim(combined *mlx.Array, layerIdx, B, L, pleDim int32) *mlx.Array
 	return mlx.Squeeze(sliced, 2)
 }
 
-func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donorEntry *sharedKVEntry, slidingMaskCache *slidingMaskCache) (*mlx.Array, *sharedKVEntry) {
+func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donor *sharedHistory) (*mlx.Array, *sharedHistory) {
 	normed := mlx.RMSNormFn(x, l.InputNormScaled, cfg.RMSNormEps)
-	attnOut, donorKV := l.Attention.Forward(normed, c, B, L, l.IsSliding, cfg, donorEntry, slidingMaskCache)
+	attnOut, kv := l.Attention.Forward(normed, b, c, positions, B, L, l.IsSliding, cfg, donor)
 	attnOut = mlx.RMSNormFn(attnOut, l.PostAttnNormScaled, cfg.RMSNormEps)
 	h := mlx.Add(x, attnOut)
 
@@ -1235,10 +1176,10 @@ func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Tex
 		h = mlx.Mul(h, l.LayerScalar)
 	}
 
-	return h, donorKV
+	return h, kv
 }
 
-func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding bool, cfg *TextConfig, donorEntry *sharedKVEntry, slidingMaskCache *slidingMaskCache) (*mlx.Array, *sharedKVEntry) {
+func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, isSliding bool, cfg *TextConfig, donor *sharedHistory) (*mlx.Array, *sharedHistory) {
 	// Determine head dim and scale based on layer type.
 	headDim := cfg.HeadDim
 	scale := cfg.SlidingScale
@@ -1258,38 +1199,25 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 	// Apply Q norm.
 	q = mlx.RMSNormFn(q, a.QNormScaled, cfg.RMSNormEps)
 
-	// RoPE offset: use cache offset for non-shared layers, donor offset for shared.
-	offset := 0
-	if donorEntry != nil {
-		offset = donorEntry.Offset - int(L)
-	} else if c != nil {
-		offset = c.Offset()
-	}
 	var ropeFreqs *mlx.Array
 	if !isSliding {
 		ropeFreqs = cfg.FullRopeFreqs
 	}
-	q = mlx.RoPEWithFreqs(q, ropeDims, false, ropeBase, 1.0, offset, ropeFreqs)
+	q = mlx.RoPEWithFreqs(q, ropeDims, false, ropeBase, 1.0, positions, ropeFreqs)
 
-	var k, v *mlx.Array
-	var donorKV *sharedKVEntry
-
-	if donorEntry != nil {
-		// Shared layer: use donor's cached K/V.
-		k = donorEntry.K
-		v = donorEntry.V
-	} else {
+	kv := donor
+	if kv == nil {
 		// Determine KV head count: K=V full-attention layers use NumGlobalKeyValueHeads.
 		kvHeads := cfg.NumKeyValueHeads
 		if a.VProj == nil && !isSliding && cfg.NumGlobalKeyValueHeads > 0 {
 			kvHeads = cfg.NumGlobalKeyValueHeads
 		}
 
-		// Non-shared layer: compute K/V.
-		k = a.KProj.Forward(x)
+		k := a.KProj.Forward(x)
 		k = mlx.Reshape(k, B, L, kvHeads, headDim)
 		k = mlx.Transpose(k, 0, 2, 1, 3)
 
+		var v *mlx.Array
 		if a.VProj != nil {
 			v = a.VProj.Forward(x)
 			v = mlx.Reshape(v, B, L, kvHeads, headDim)
@@ -1303,37 +1231,46 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 		k = mlx.RMSNormFn(k, a.KNormScaled, cfg.RMSNormEps)
 
 		// Apply RoPE to K.
-		k = mlx.RoPEWithFreqs(k, ropeDims, false, ropeBase, 1.0, offset, ropeFreqs)
+		k = mlx.RoPEWithFreqs(k, ropeDims, false, ropeBase, 1.0, positions, ropeFreqs)
 
 		// Apply V norm (no learnable weight, pure RMS normalization).
 		v = mlx.RMSNormFn(v, nil, cfg.RMSNormEps)
 
 		// Update cache.
+		kv = &sharedHistory{}
 		if c != nil {
-			k, v = c.Update(k, v)
-			donorKV = &sharedKVEntry{K: k, V: v, Offset: c.Offset()}
+			kv.history = c.(cache.Attention).Update(b, k, v)
+		} else {
+			kv.k, kv.v = k, v
+			if isSliding {
+				kv.mask = nn.SlidingWindowMask(b, k.Dim(2), int(cfg.SlidingWindow), q.DType())
+			}
 		}
 	}
 
-	// Sliding-window layers must restrict attention to the last `window` keys
-	// during prefill. The rotating KV cache handles decode, but for L > 1 the
-	// cache holds all prefix keys so we need an explicit mask. Full-attention
-	// layers pass window=0 (plain causal).
-	var window int32
-	if isSliding && L > 1 && cfg.SlidingWindow > 0 {
-		window = cfg.SlidingWindow
-	}
-
 	var out *mlx.Array
-	switch {
-	case headDim > 128 && L > 1 && !mlx.MetalIsAvailable():
+	if headDim > 128 && L > 1 && !mlx.MetalIsAvailable() {
 		// Manual attention for CUDA prefill with head_dim > 128.
 		// cuDNN SDPA requires head_dim <= 128, and the MLX CUDA SDPA vector
 		// kernel only handles L < 4 (generation). For prefill, we fall back
 		// to explicit matmul+softmax+matmul on CUDA.
+		var k, v *mlx.Array
+		mask := nn.CausalMask().Intersect(nn.QPaddingMask(b, q.DType()))
+		if kv.history != nil {
+			k, v = kv.history.K(), kv.history.V()
+			mask = kv.history.Mask(mask)
+		} else {
+			k, v = kv.k, kv.v
+			mask = mask.Intersect(nn.KPaddingMask(b, k.Dim(2), b.SeqQueryLens, q.DType()))
+			mask = mask.Intersect(kv.mask)
+		}
 		kvHeads := int32(k.Dim(1))
 		nRepeats := cfg.NumAttentionHeads / kvHeads
 		kLen := int32(k.Dim(2))
+		// AsArray returns [B, 1, L, K]; reshape to rank 5 so that
+		// right-to-left broadcast against scores [B, kvHeads,
+		// nRepeats, L, K] aligns the batch dim correctly.
+		maskArr := mlx.Reshape(mask.AsArray(b, int(kLen), q.DType()), B, 1, 1, L, kLen)
 
 		q = mlx.MulScalar(q, scale)
 		q = mlx.Reshape(q, B, kvHeads, nRepeats, L, headDim)
@@ -1342,22 +1279,20 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 
 		kT := mlx.Transpose(k, 0, 1, 2, 4, 3)
 		scores := mlx.Matmul(q, kT)
-		mask := buildCausalMaskWindow(L, kLen, window)
-		scores = mlx.Add(scores, mask)
+		scores = mlx.Add(scores, maskArr)
 		scores = mlx.SoftmaxAxis(scores, -1, true)
 		out = mlx.Matmul(scores, v)
 		out = mlx.Reshape(out, B, cfg.NumAttentionHeads, L, headDim)
-	case window > 0:
-		// Sliding-window prefill: fast SDPA "causal" mode doesn't take a
-		// window, so supply an explicit additive mask. All sliding layers
-		// in one forward pass see the same (L, kLen, window, dtype) tuple,
-		// so we memoize the mask on the first call and reuse it for every
-		// subsequent sliding layer via slidingMaskCache.
-		kLen := int32(k.Dim(2))
-		mask := slidingMaskCache.get(L, kLen, window, q.DType())
-		out = mlx.ScaledDotProductAttentionMasked(q, k, v, scale, mask)
-	default:
-		out = mlx.ScaledDotProductAttentionCausal(q, k, v, scale, L > 1)
+	} else {
+		var opt nn.SDPAOption
+		mask := nn.CausalMask()
+		if kv.history != nil {
+			opt = nn.WithKVHistory(kv.history)
+		} else {
+			opt = nn.WithKV(kv.k, kv.v, b.SeqQueryLens)
+			mask = mask.Intersect(kv.mask)
+		}
+		out = nn.ScaledDotProductAttention(b, q, scale, opt, nn.WithMask(mask))
 	}
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*headDim)
 	if !mlx.MetalIsAvailable() {
@@ -1365,7 +1300,7 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 		// strided views differently. Metal handles them natively.
 		out = mlx.Contiguous(out, false)
 	}
-	return a.OProj.Forward(out), donorKV
+	return a.OProj.Forward(out), kv
 }
 
 func (m *MLP) Forward(x *mlx.Array) *mlx.Array {
