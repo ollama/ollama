@@ -532,8 +532,11 @@ type LoadRequest struct {
 	KvCacheType    string
 	NumThreads     int
 	GPULayers      ml.GPULayersList
+	// MoESplit means dense weights and MoE expert weights can be routed separately.
+	// MoEGPULayers may be empty when all MoE expert weights are CPU-resident.
+	MoESplit bool
 	// MoEGPULayers is the subset of GPULayers where MoE expert weights
-	// are also resident on GPU. Nil means no MoE split.
+	// are also resident on GPU. Used only when MoESplit is true.
 	MoEGPULayers   ml.GPULayersList
 	MultiUserCache bool
 
@@ -831,9 +834,11 @@ nextOperation:
 		for {
 			if len(denseGPULayers) > 0 {
 				s.loadRequest.GPULayers = denseGPULayers
+				s.loadRequest.MoESplit = true
 				s.loadRequest.MoEGPULayers = gpuLayers
 			} else {
 				s.loadRequest.GPULayers = gpuLayers
+				s.loadRequest.MoESplit = false
 				s.loadRequest.MoEGPULayers = nil
 			}
 			resp, err := s.initModel(ctx, s.loadRequest, operation)
@@ -891,9 +896,11 @@ nextOperation:
 
 						if len(newDenseGPULayers) > 0 {
 							s.loadRequest.GPULayers = newDenseGPULayers
+							s.loadRequest.MoESplit = true
 							s.loadRequest.MoEGPULayers = newGPULayers
 						} else {
 							s.loadRequest.GPULayers = newGPULayers
+							s.loadRequest.MoESplit = false
 							s.loadRequest.MoEGPULayers = nil
 						}
 						resp, err = s.initModel(ctx, s.loadRequest, operation)
@@ -954,9 +961,11 @@ nextOperation:
 
 	if len(denseGPULayers) > 0 {
 		s.loadRequest.GPULayers = denseGPULayers
+		s.loadRequest.MoESplit = true
 		s.loadRequest.MoEGPULayers = gpuLayers
 	} else {
 		s.loadRequest.GPULayers = gpuLayers
+		s.loadRequest.MoESplit = false
 		s.loadRequest.MoEGPULayers = nil
 	}
 	resp, err := s.initModel(ctx, s.loadRequest, LoadOperationCommit)

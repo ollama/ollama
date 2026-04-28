@@ -69,10 +69,14 @@ type BackendParams struct {
 	// GPULayers is the set of layers to offload to GPUs
 	GPULayers GPULayersList
 
+	// MoESplit means dense weights and MoE expert weights can be routed separately.
+	// MoEGPULayers may be empty when all MoE expert weights are CPU-resident.
+	MoESplit bool
+
 	// MoEGPULayers is the subset of GPULayers where MoE expert weights
 	// are also resident on GPU. Layers in GPULayers but not here have
 	// their MoE expert tensors on CPU (copied on demand via op_offload).
-	// Nil means no MoE split is active.
+	// Used only when MoESplit is true.
 	MoEGPULayers GPULayersList
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
