@@ -302,6 +302,46 @@ func TestLLMServerVerifyLayoutMoESplitCPUMemory(t *testing.T) {
 	}
 }
 
+func TestLLMServerMoESplitBudgetExcludesCacheFromMoELayers(t *testing.T) {
+	t.Setenv("OLLAMA_MOE_GPU_LAYERS", "-1")
+	t.Setenv("OLLAMA_GPU_OVERHEAD", "0")
+
+	gpuID := ml.DeviceID{ID: "gpu0"}
+	minMemory := uint64(457 * format.MebiByte)
+	denseSize := uint64(100 * format.MebiByte)
+	moeSize := uint64(50 * format.MebiByte)
+	cacheSize := uint64(40 * format.MebiByte)
+	denseCacheTotal := 2 * (denseSize + cacheSize)
+	gpus := []ml.DeviceInfo{{DeviceID: gpuID, FreeMemory: minMemory + denseCacheTotal + moeSize}}
+
+	s := &ollamaServer{
+		llmServer: llmServer{
+			totalLayers: 2,
+			options: api.Options{
+				Runner: api.Runner{NumGPU: -1},
+			},
+		},
+	}
+	s.mem = &ml.BackendMemory{CPU: ml.DeviceMemory{
+		Weights:    []uint64{denseSize + moeSize, denseSize + moeSize},
+		MoEWeights: []uint64{moeSize, moeSize},
+		Cache:      []uint64{cacheSize, cacheSize},
+	}, GPUs: []ml.DeviceMemory{{
+		DeviceID:   gpuID,
+		Weights:    make([]uint64, s.totalLayers),
+		MoEWeights: make([]uint64, s.totalLayers),
+		Cache:      make([]uint64, s.totalLayers),
+	}}}
+
+	gpuLayers, denseGPULayers, _ := s.buildLayout(gpus, s.mem, false, 0)
+	if gpuLayers.Sum() != 1 {
+		t.Fatalf("MoE GPU layers = %v, want one layer", gpuLayers)
+	}
+	if len(denseGPULayers) != 1 || denseGPULayers[0].DeviceID != gpuID || denseGPULayers.Sum() != 2 {
+		t.Fatalf("dense GPU layers = %v, want all layers on %v", denseGPULayers, gpuID)
+	}
+}
+
 func TestLLMServerCompletionFormat(t *testing.T) {
 	// This test was written to fix an already deployed issue. It is a bit
 	// of a mess, and but it's good enough, until we can refactoring the
