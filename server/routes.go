@@ -1436,7 +1436,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 		}
 
 		// tag should never be masked
-		models = append(models, api.ListModelResponse{
+		resp := api.ListModelResponse{
 			Model:       n.DisplayShortest(),
 			Name:        n.DisplayShortest(),
 			RemoteModel: cf.RemoteModel,
@@ -1451,7 +1451,31 @@ func (s *Server) ListHandler(c *gin.Context) {
 				ParameterSize:     cf.ModelType,
 				QuantizationLevel: cf.FileType,
 			},
-		})
+		}
+
+		mdl := &Model{Config: cf}
+		for _, layer := range m.Layers {
+			filename, err := manifest.BlobsPath(layer.Digest)
+			if err != nil {
+				continue
+			}
+			switch layer.MediaType {
+			case "application/vnd.ollama.image.model":
+				mdl.ModelPath = filename
+			case "application/vnd.ollama.image.projector":
+				mdl.ProjectorPaths = append(mdl.ProjectorPaths, filename)
+			case "application/vnd.ollama.image.prompt",
+				"application/vnd.ollama.image.template":
+				if bts, err := os.ReadFile(filename); err == nil {
+					if t, err := template.Parse(string(bts)); err == nil {
+						mdl.Template = t
+					}
+				}
+			}
+		}
+		resp.Capabilities = mdl.Capabilities()
+
+		models = append(models, resp)
 	}
 
 	slices.SortStableFunc(models, func(i, j api.ListModelResponse) int {
