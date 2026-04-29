@@ -596,6 +596,17 @@ type Options struct {
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+
+	// RepeatLineWindow enables segment-level loop detection. When > 0, the
+	// sampler tracks recently completed text segments (delimited by
+	// RepeatLineDelimiters) and boosts the temperature by RepeatLineTempBoost
+	// whenever the current segment matches any of the last RepeatLineWindow
+	// segments. This breaks deterministic thinking loops that repeat_penalty
+	// cannot catch because it only operates on token-level n-gram recency.
+	// Set to 0 (default) to disable.
+	RepeatLineWindow    int     `json:"repeat_line_window,omitempty"`
+	RepeatLineDelimiters string  `json:"repeat_line_delimiters,omitempty"`
+	RepeatLineTempBoost  float32 `json:"repeat_line_temp_boost,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
@@ -854,9 +865,26 @@ type CloudStatus struct {
 	Source   string `json:"source"`
 }
 
+// GpuInfo describes a single GPU device as reported by the backend discovery layer.
+type GpuInfo struct {
+	ID           string `json:"id"`
+	Backend      string `json:"backend,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Description  string `json:"description,omitempty"`
+	Integrated   bool   `json:"integrated,omitempty"`
+	PCIID        string `json:"pci_id,omitempty"`
+	TotalMemory  uint64 `json:"total_memory"`
+	FreeMemory   uint64 `json:"free_memory,omitempty"`
+	ComputeMajor int    `json:"compute_major,omitempty"`
+	ComputeMinor int    `json:"compute_minor,omitempty"`
+	DriverMajor  int    `json:"driver_major,omitempty"`
+	DriverMinor  int    `json:"driver_minor,omitempty"`
+}
+
 // StatusResponse is the response from [Client.CloudStatusExperimental].
 type StatusResponse struct {
 	Cloud CloudStatus `json:"cloud"`
+	Gpus  []GpuInfo   `json:"gpus,omitempty"`
 }
 
 // GenerateResponse is the response passed into [GenerateResponseFunc].
@@ -1081,6 +1109,9 @@ func DefaultOptions() Options {
 		RepeatPenalty:    1.1,
 		PresencePenalty:  0.0,
 		FrequencyPenalty: 0.0,
+		RepeatLineWindow:    0,
+		RepeatLineDelimiters: "\n.!?",
+		RepeatLineTempBoost:  0.3,
 		Seed:             -1,
 
 		Runner: Runner{
