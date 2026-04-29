@@ -237,6 +237,11 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 
 	alignment := llm.kv.Uint("general.alignment", 32)
 
+	// Validate alignment
+	if alignment == 0 {
+		return fmt.Errorf("invalid general.alignment: cannot be zero")
+	}
+
 	offset, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
