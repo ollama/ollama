@@ -388,6 +388,71 @@ func TestShowInModelPicker(t *testing.T) {
 		}
 	})
 
+	// helper to read a string value from the state DB
+	readValue := func(t *testing.T, dbPath, key string) string {
+		t.Helper()
+		db, err := sql.Open("sqlite3", dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		var val string
+		if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = ?", key).Scan(&val); err != nil {
+			return ""
+		}
+		return val
+	}
+
+	t.Run("sets primary model as active selection", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		setupDB(t, testVSCodePath(t, tmpDir, ""), nil, nil)
+
+		err := v.ShowInModelPicker([]string{"llama3.2", "qwen3:8b"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dbPath := testVSCodePath(t, tmpDir, filepath.Join("globalStorage", "state.vscdb"))
+		panelModel := readValue(t, dbPath, "chat.currentLanguageModel.panel")
+		if panelModel != "ollama/Ollama/llama3.2:latest" {
+			t.Errorf("expected panel model ollama/Ollama/llama3.2:latest, got %q", panelModel)
+		}
+		editorModel := readValue(t, dbPath, "chat.currentLanguageModel.editor")
+		if editorModel != "ollama/Ollama/llama3.2:latest" {
+			t.Errorf("expected editor model ollama/Ollama/llama3.2:latest, got %q", editorModel)
+		}
+		panelDefault := readValue(t, dbPath, "chat.currentLanguageModel.panel.isDefault")
+		if panelDefault != "false" {
+			t.Errorf("expected panel isDefault false, got %q", panelDefault)
+		}
+	})
+
+	t.Run("sets cached numeric ID as active selection", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		cache := []map[string]any{
+			{
+				"identifier": "ollama/Ollama/4",
+				"metadata":   map[string]any{"vendor": "ollama", "name": "llama3.2"},
+			},
+		}
+		setupDB(t, testVSCodePath(t, tmpDir, ""), nil, cache)
+
+		err := v.ShowInModelPicker([]string{"llama3.2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dbPath := testVSCodePath(t, tmpDir, filepath.Join("globalStorage", "state.vscdb"))
+		panelModel := readValue(t, dbPath, "chat.currentLanguageModel.panel")
+		if panelModel != "ollama/Ollama/4" {
+			t.Errorf("expected panel model to use cached numeric ID ollama/Ollama/4, got %q", panelModel)
+		}
+	})
+
 	t.Run("previously hidden model is re-shown when configured", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
@@ -406,6 +471,111 @@ func TestShowInModelPicker(t *testing.T) {
 		prefs := readPrefs(t, dbPath)
 		if !prefs["ollama/Ollama/llama3.2"] {
 			t.Error("expected llama3.2 to be re-shown")
+		}
+	})
+
+	// helper to read and parse the cached models from the state DB
+	readCache := func(t *testing.T, dbPath string) []map[string]any {
+		t.Helper()
+		db, err := sql.Open("sqlite3", dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		var raw string
+		if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = 'chat.cachedLanguageModels.v2'").Scan(&raw); err != nil {
+			return nil
+		}
+		var result []map[string]any
+		_ = json.Unmarshal([]byte(raw), &result)
+		return result
+	}
+
+	t.Run("adds uncached model to cache for instant startup display", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		// No seed cache — model has never been used in VS Code before
+		dbPath := setupDB(t, testVSCodePath(t, tmpDir, ""), nil, nil)
+
+		err := v.ShowInModelPicker([]string{"qwen3:8b"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cache := readCache(t, dbPath)
+		if len(cache) != 1 {
+			t.Fatalf("expected 1 cached entry, got %d", len(cache))
+		}
+		entry := cache[0]
+		if id, _ := entry["identifier"].(string); id != "ollama/Ollama/qwen3:8b" {
+			t.Errorf("expected identifier ollama/Ollama/qwen3:8b, got %q", id)
+		}
+		meta, _ := entry["metadata"].(map[string]any)
+		if meta == nil {
+			t.Fatal("expected metadata in cache entry")
+		}
+		if v, _ := meta["vendor"].(string); v != "ollama" {
+			t.Errorf("expected vendor ollama, got %q", v)
+		}
+		if sel, ok := meta["isUserSelectable"].(bool); !ok || !sel {
+			t.Error("expected isUserSelectable to be true")
+		}
+	})
+
+	t.Run("does not duplicate already-cached model", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		cache := []map[string]any{
+			{
+				"identifier": "ollama/Ollama/4",
+				"metadata":   map[string]any{"vendor": "ollama", "name": "llama3.2"},
+			},
+			{
+				"identifier": "copilot/copilot/auto",
+				"metadata":   map[string]any{"vendor": "copilot", "name": "Auto"},
+			},
+		}
+		dbPath := setupDB(t, testVSCodePath(t, tmpDir, ""), nil, cache)
+
+		err := v.ShowInModelPicker([]string{"llama3.2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Cache should still have exactly 2 entries (no duplicate added)
+		result := readCache(t, dbPath)
+		if len(result) != 2 {
+			t.Errorf("expected 2 cached entries (no duplicate), got %d", len(result))
+		}
+	})
+
+	t.Run("adds only missing models to existing cache", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		cache := []map[string]any{
+			{
+				"identifier": "ollama/Ollama/4",
+				"metadata":   map[string]any{"vendor": "ollama", "name": "llama3.2"},
+			},
+		}
+		dbPath := setupDB(t, testVSCodePath(t, tmpDir, ""), nil, cache)
+
+		// llama3.2 is cached, qwen3:8b is not
+		err := v.ShowInModelPicker([]string{"llama3.2", "qwen3:8b"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result := readCache(t, dbPath)
+		if len(result) != 2 {
+			t.Fatalf("expected 2 cached entries, got %d", len(result))
+		}
+		// Second entry should be the newly added qwen3:8b
+		if id, _ := result[1]["identifier"].(string); id != "ollama/Ollama/qwen3:8b" {
+			t.Errorf("expected new entry ollama/Ollama/qwen3:8b, got %q", id)
 		}
 	})
 }
