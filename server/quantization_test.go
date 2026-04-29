@@ -309,6 +309,95 @@ func TestQuantizeModel(t *testing.T) {
 			},
 		},
 		{
+			name: "source_fp8_q8_preserves_bf16_tensors",
+			kv: map[string]any{
+				"general.architecture": "test",
+				"source_quantization":  "hf_fp8",
+				"source_fp8_tensors":   []string{"blk.1.ffn_down_exps.weight"},
+			},
+			tensors: []*fsggml.Tensor{
+				{
+					Name: "blk.1.ffn_down_exps.weight", Kind: uint32(fsggml.TensorTypeBF16),
+					Offset: uint64(0), Shape: []uint64{256, 1},
+					WriterTo: bytes.NewReader(quantBytes[fsggml.TensorTypeBF16]),
+				},
+				{
+					Name: "blk.1.attn_q.weight", Kind: uint32(fsggml.TensorTypeBF16),
+					Offset: uint64(0), Shape: []uint64{256, 1},
+					WriterTo: bytes.NewReader(quantBytes[fsggml.TensorTypeBF16]),
+				},
+			},
+			newType: "Q8_0",
+			expectedTensorTypes: map[string]fsggml.TensorType{
+				"blk.1.ffn_down_exps.weight": fsggml.TensorTypeQ8_0,
+				"blk.1.attn_q.weight":        fsggml.TensorTypeBF16,
+			},
+		},
+		{
+			name: "source_fp8_q4_promotes_bf16_tensors_to_q8",
+			kv: map[string]any{
+				"general.architecture": "test",
+				"source_quantization":  "hf_fp8",
+				"source_fp8_tensors": []string{
+					"blk.1.ffn_gate_exps.weight",
+					"blk.1.ffn_down_exps.weight",
+				},
+			},
+			tensors: []*fsggml.Tensor{
+				{
+					Name: "blk.1.ffn_gate_exps.weight", Kind: uint32(fsggml.TensorTypeBF16),
+					Offset: uint64(0), Shape: []uint64{256, 1},
+					WriterTo: bytes.NewReader(quantBytes[fsggml.TensorTypeBF16]),
+				},
+				{
+					Name: "blk.1.ffn_down_exps.weight", Kind: uint32(fsggml.TensorTypeBF16),
+					Offset: uint64(0), Shape: []uint64{256, 1},
+					WriterTo: bytes.NewReader(quantBytes[fsggml.TensorTypeBF16]),
+				},
+				{
+					Name: "blk.1.attn_q.weight", Kind: uint32(fsggml.TensorTypeBF16),
+					Offset: uint64(0), Shape: []uint64{256, 1},
+					WriterTo: bytes.NewReader(quantBytes[fsggml.TensorTypeBF16]),
+				},
+				{
+					Name: "blk.1.attn_v.weight", Kind: uint32(fsggml.TensorTypeBF16),
+					Offset: uint64(0), Shape: []uint64{256, 1},
+					WriterTo: bytes.NewReader(quantBytes[fsggml.TensorTypeBF16]),
+				},
+				{
+					Name: "blk.1.ffn_down.weight", Kind: uint32(fsggml.TensorTypeBF16),
+					Offset: uint64(0), Shape: []uint64{256, 1},
+					WriterTo: bytes.NewReader(quantBytes[fsggml.TensorTypeBF16]),
+				},
+				{
+					Name: "blk.1.attn_q_norm.weight", Kind: uint32(fsggml.TensorTypeBF16),
+					Offset: uint64(0), Shape: []uint64{256},
+					WriterTo: bytes.NewReader(quantBytes[fsggml.TensorTypeBF16]),
+				},
+				{
+					Name: "blk.1.ffn_gate_inp.weight", Kind: uint32(fsggml.TensorTypeBF16),
+					Offset: uint64(0), Shape: []uint64{256, 1},
+					WriterTo: bytes.NewReader(quantBytes[fsggml.TensorTypeBF16]),
+				},
+				{
+					Name: "output.weight", Kind: uint32(fsggml.TensorTypeBF16),
+					Offset: uint64(0), Shape: []uint64{256, 1},
+					WriterTo: bytes.NewReader(quantBytes[fsggml.TensorTypeBF16]),
+				},
+			},
+			newType: "Q4_K_M",
+			expectedTensorTypes: map[string]fsggml.TensorType{
+				"blk.1.ffn_gate_exps.weight": fsggml.TensorTypeQ4_K,
+				"blk.1.ffn_down_exps.weight": fsggml.TensorTypeQ6_K,
+				"blk.1.attn_q.weight":        fsggml.TensorTypeQ8_0,
+				"blk.1.attn_v.weight":        fsggml.TensorTypeQ8_0,
+				"blk.1.ffn_down.weight":      fsggml.TensorTypeQ8_0,
+				"blk.1.attn_q_norm.weight":   fsggml.TensorTypeBF16,
+				"blk.1.ffn_gate_inp.weight":  fsggml.TensorTypeBF16,
+				"output.weight":              fsggml.TensorTypeQ8_0,
+			},
+		},
+		{
 			name: "f32_short_data",
 			kv: map[string]any{
 				"general.architecture": "foo",

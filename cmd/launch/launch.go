@@ -213,6 +213,7 @@ Supported integrations:
   opencode  OpenCode
   openclaw  OpenClaw (aliases: clawdbot, moltbot)
   pi        Pi
+  pool      Poolside
   vscode    VS Code (aliases: code)
 
 Examples:

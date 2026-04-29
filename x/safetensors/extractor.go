@@ -110,6 +110,19 @@ func NewTensorDataFromBytes(name, dtype string, shape []int32, rawData []byte) *
 	}
 }
 
+// NewTensorDataFromReaderAt creates a TensorData backed by an arbitrary
+// io.ReaderAt. This is useful for constructing large synthetic tensors from
+// temporary files without loading the full payload into memory.
+func NewTensorDataFromReaderAt(name, dtype string, shape []int32, readerAt io.ReaderAt, size int64) *TensorData {
+	return &TensorData{
+		Name:   name,
+		Dtype:  dtype,
+		Shape:  shape,
+		Size:   size,
+		reader: io.NewSectionReader(readerAt, 0, size),
+	}
+}
+
 // ExtractRawFromSafetensors reads a safetensors-wrapped reader and extracts
 // the raw tensor data bytes (stripping the header).
 func ExtractRawFromSafetensors(r io.Reader) ([]byte, error) {

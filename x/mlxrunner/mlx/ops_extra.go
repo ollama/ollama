@@ -376,6 +376,9 @@ func Concatenate(arrays []*Array, axis int) *Array {
 	if len(arrays) == 0 {
 		return nil
 	}
+	if len(arrays) == 1 {
+		return arrays[0].Clone()
+	}
 	return arrays[0].Concatenate(axis, arrays[1:]...)
 }
 
@@ -404,15 +407,18 @@ func GatherMM(a, b *Array, lhsIndices, rhsIndices *Array, sortedIndices bool) *A
 	return a.GatherMM(b, lhsIndices, rhsIndices, sortedIndices)
 }
 
-func RoPEWithBase(x *Array, dims int, traditional bool, base, scale float32, offset int) *Array {
-	return RoPEWithFreqs(x, dims, traditional, base, scale, offset, nil)
+// RoPEWithBase applies rotary position embeddings to x. offsets is an
+// int32 array of shape [B] giving each batch row's starting position;
+// the kernel applies positions offsets[b] + 0..T-1 per row.
+func RoPEWithBase(x *Array, dims int, traditional bool, base, scale float32, offsets *Array) *Array {
+	return RoPEWithFreqs(x, dims, traditional, base, scale, offsets, nil)
 }
 
 // RoPEWithFreqs applies RoPE with optional custom frequencies.
 // When freqs is non-nil, it is used instead of computing from base.
 // Note: MLX takes reciprocal(freqs) internally to get inv_freq, so pass
 // the actual frequencies (base^(2i/dim)), not the inverse frequencies.
-func RoPEWithFreqs(x *Array, dims int, traditional bool, base, scale float32, offset int, freqs *Array) *Array {
+func RoPEWithFreqs(x *Array, dims int, traditional bool, base, scale float32, offsets *Array, freqs *Array) *Array {
 	var freqsCtx C.mlx_array
 	var optBase C.mlx_optional_float
 	if freqs != nil {
@@ -427,14 +433,14 @@ func RoPEWithFreqs(x *Array, dims int, traditional bool, base, scale float32, of
 		}
 	}
 	out := New("FAST_ROPE")
-	C.mlx_fast_rope(
+	C.mlx_fast_rope_dynamic(
 		&out.ctx,
 		x.ctx,
 		C.int(dims),
 		C.bool(traditional),
 		optBase,
 		C.float(scale),
-		C.int(offset),
+		offsets.ctx,
 		freqsCtx,
 		DefaultStream().ctx,
 	)
@@ -484,35 +490,6 @@ func Logaddexp(a, b *Array) *Array {
 func SoftmaxAxis(a *Array, axis int, precise bool) *Array {
 	out := New("SOFTMAX_AXIS")
 	C.mlx_softmax_axis(&out.ctx, a.ctx, C.int(axis), C.bool(precise), DefaultStream().ctx)
-	return out
-}
-
-func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask bool) *Array {
-	mask := New("")
-	sinks := New("")
-	mode := ""
-	if causalMask {
-		mode = "causal"
-	}
-	cMode := C.CString(mode)
-	defer C.free(unsafe.Pointer(cMode))
-
-	out := New("FAST_SDPA")
-	C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), cMode, mask.ctx, sinks.ctx, DefaultStream().ctx)
-	return out
-}
-
-// ScaledDotProductAttentionMasked runs the fast SDPA kernel with an explicit
-// additive mask. The mask is broadcast to [B, H, Q, K] and added to scores
-// before softmax. Pass mode="array" so MLX actually consults mask_arr; the
-// empty string is "no mask" and silently ignores the array argument.
-func ScaledDotProductAttentionMasked(q, k, v *Array, scale float32, mask *Array) *Array {
-	sinks := New("")
-	cMode := C.CString("array")
-	defer C.free(unsafe.Pointer(cMode))
-
-	out := New("FAST_SDPA")
-	C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), cMode, mask.ctx, sinks.ctx, DefaultStream().ctx)
 	return out
 }
 

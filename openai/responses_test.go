@@ -415,6 +415,86 @@ func TestFromResponsesRequest_Tools(t *testing.T) {
 	}
 }
 
+func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name      string
+		effort    string
+		wantThink any
+		wantErr   bool
+	}{
+		{
+			name: "unset",
+		},
+		{
+			name:      "low",
+			effort:    "low",
+			wantThink: "low",
+		},
+		{
+			name:      "medium",
+			effort:    "medium",
+			wantThink: "medium",
+		},
+		{
+			name:      "high",
+			effort:    "high",
+			wantThink: "high",
+		},
+		{
+			name:      "max",
+			effort:    "max",
+			wantThink: "max",
+		},
+		{
+			name:      "none",
+			effort:    "none",
+			wantThink: false,
+		},
+		{
+			name:    "invalid",
+			effort:  "extreme",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ResponsesRequest{
+				Model: "deepseek-v4-flash",
+				Input: ResponsesInput{Text: "hi"},
+			}
+			if tt.effort != "" {
+				req.Reasoning.Effort = tt.effort
+			}
+
+			chatReq, err := FromResponsesRequest(req)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantThink == nil {
+				if chatReq.Think != nil {
+					t.Fatalf("Think = %#v, want nil", chatReq.Think)
+				}
+				return
+			}
+
+			if chatReq.Think == nil {
+				t.Fatalf("Think = nil, want %v", tt.wantThink)
+			}
+			if chatReq.Think.Value != tt.wantThink {
+				t.Errorf("Think.Value = %v, want %v", chatReq.Think.Value, tt.wantThink)
+			}
+		})
+	}
+}
+
 func TestFromResponsesRequest_FunctionCallOutput(t *testing.T) {
 	// Test a complete tool call round-trip:
 	// 1. User message asking about weather

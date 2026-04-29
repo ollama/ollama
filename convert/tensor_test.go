@@ -21,7 +21,8 @@ type fakeTensor struct {
 	shape []uint64
 	data  []float32
 
-	repacker Repacker
+	sourceDType string
+	repacker    Repacker
 }
 
 func (f fakeTensor) Name() string {
@@ -36,16 +37,21 @@ func (f fakeTensor) Kind() uint32 {
 	return 0
 }
 
+func (f fakeTensor) SourceDType() string {
+	return f.sourceDType
+}
+
 func (f *fakeTensor) SetRepacker(fn Repacker) {
 	f.repacker = fn
 }
 
 func (f fakeTensor) Clone() Tensor {
 	return &fakeTensor{
-		name:     f.name,
-		shape:    slices.Clone(f.shape),
-		data:     slices.Clone(f.data),
-		repacker: f.repacker,
+		name:        f.name,
+		shape:       slices.Clone(f.shape),
+		data:        slices.Clone(f.data),
+		sourceDType: f.sourceDType,
+		repacker:    f.repacker,
 	}
 }
 
@@ -993,5 +999,45 @@ func TestMergeOrder(t *testing.T) {
 				t.Errorf("merged tensor data is not in order: %+v", f32s)
 			}
 		})
+	}
+}
+
+func TestSourceTensorKVRecordsFP8OutputTensors(t *testing.T) {
+	fp8 := &fakeTensor{name: "linear.weight", shape: []uint64{2, 2}, sourceDType: "F8_E4M3"}
+	bf16 := &fakeTensor{name: "other.weight", shape: []uint64{2, 2}, sourceDType: "BF16"}
+
+	kv := sourceTensorKV([]*ggml.Tensor{
+		{Name: "blk.0.linear.weight", WriterTo: fp8},
+		{Name: "blk.0.other.weight", WriterTo: bf16},
+	})
+
+	if got := kv["source_quantization"]; got != "hf_fp8" {
+		t.Fatalf("source_quantization = %v, want hf_fp8", got)
+	}
+	got, ok := kv["source_fp8_tensors"].([]string)
+	if !ok {
+		t.Fatalf("source_fp8_tensors = %#v, want []string", kv["source_fp8_tensors"])
+	}
+	if diff := cmp.Diff([]string{"blk.0.linear.weight"}, got); diff != "" {
+		t.Fatalf("source_fp8_tensors mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSourceTensorKVRecordsMergedFP8OutputTensors(t *testing.T) {
+	fp8A := &fakeTensor{name: "expert.0.weight", shape: []uint64{2, 2}, sourceDType: "F8_E4M3"}
+	fp8B := &fakeTensor{name: "expert.1.weight", shape: []uint64{2, 2}, sourceDType: "F8_E4M3"}
+	bf16 := &fakeTensor{name: "expert.2.weight", shape: []uint64{2, 2}, sourceDType: "BF16"}
+
+	kv := sourceTensorKV([]*ggml.Tensor{
+		{Name: "ffn_exps.weight", WriterTo: mergeGroup{fp8A, fp8B}},
+		{Name: "mixed_exps.weight", WriterTo: mergeGroup{fp8A, bf16}},
+	})
+
+	got, ok := kv["source_fp8_tensors"].([]string)
+	if !ok {
+		t.Fatalf("source_fp8_tensors = %#v, want []string", kv["source_fp8_tensors"])
+	}
+	if diff := cmp.Diff([]string{"ffn_exps.weight"}, got); diff != "" {
+		t.Fatalf("source_fp8_tensors mismatch (-want +got):\n%s", diff)
 	}
 }
