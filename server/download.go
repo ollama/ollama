@@ -131,8 +131,6 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 		return err
 	}
 
-	b.done = make(chan struct{})
-
 	for _, partFilePath := range partFilePaths {
 		part, err := b.readPart(partFilePath)
 		if err != nil {
@@ -215,7 +213,6 @@ func newBackoff(maxBackoff time.Duration) func(ctx context.Context) error {
 
 func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
 	defer blobDownloadManager.Delete(b.Digest)
-	ctx, b.CancelFunc = context.WithCancel(ctx)
 
 	file, err := os.OpenFile(b.Name+"-partial", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -431,7 +428,9 @@ func (b *blobDownload) acquire() {
 
 func (b *blobDownload) release() {
 	if b.references.Add(-1) == 0 {
-		b.CancelFunc()
+		if b.CancelFunc != nil {
+			b.CancelFunc()
+		}
 	}
 }
 
@@ -440,6 +439,7 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 	defer b.release()
 
 	ticker := time.NewTicker(60 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-b.done:
@@ -491,18 +491,30 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		return true, nil
 	}
 
-	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
+	runCtx, cancel := context.WithCancel(context.Background())
+	candidate := &blobDownload{
+		Name:       fp,
+		Digest:     opts.digest,
+		CancelFunc: cancel,
+		done:       make(chan struct{}),
+	}
+
+	data, ok := blobDownloadManager.LoadOrStore(opts.digest, candidate)
 	download := data.(*blobDownload)
 	if !ok {
 		requestURL := opts.n.BaseURL()
 		requestURL = requestURL.JoinPath("v2", opts.n.DisplayNamespaceModel(), "blobs", opts.digest)
 		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
+			download.err = err
+			close(download.done)
+			cancel()
 			blobDownloadManager.Delete(opts.digest)
 			return false, err
 		}
 
-		//nolint:contextcheck
-		go download.Run(context.Background(), requestURL, opts.regOpts)
+		go download.Run(runCtx, requestURL, opts.regOpts)
+	} else {
+		cancel()
 	}
 
 	return false, download.Wait(ctx, opts.fn)
