@@ -455,18 +455,17 @@ function ChatForm({
       }
     };
 
-    const handlePaste = (e: ClipboardEvent) => {
-      focusTextareaIfAppropriate(e.target as HTMLElement);
-    };
-
     window.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("paste", handlePaste);
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("paste", handlePaste);
     };
-  }, [isStreaming, editingMessage, onCancelEdit, navigateToNextElement]);
+  }, [
+    isStreaming,
+    editingMessage,
+    onCancelEdit,
+    navigateToNextElement,
+  ]);
 
   const handleSubmit = async () => {
     if (!message.content.trim() || isStreaming || isDownloading) return;
@@ -572,6 +571,30 @@ function ChatForm({
         firstElement?.focus();
       }
       return;
+    }
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = e.clipboardData?.files;
+    if (files && files.length > 0) {
+      // Si hay archivos, detenemos la propagación para que FileUpload.tsx no lo duplique
+      e.stopPropagation();
+
+      const hasText = e.clipboardData?.getData("text/plain");
+      // Si no hay texto, prevenimos el comportamiento por defecto para no ensuciar el input
+      if (!hasText) {
+        e.preventDefault();
+      }
+
+      const filesArray = Array.from(files);
+      const { validFiles, errors } = await processFiles(filesArray, {
+        selectedModel,
+        hasVisionCapability,
+      });
+
+      if (validFiles.length > 0 || errors.length > 0) {
+        handleFilesReceived(validFiles, errors);
+      }
     }
   };
 
@@ -742,68 +765,67 @@ function ChatForm({
               const isUnsupportedImage =
                 !hasVisionCapability && isImageFile(attachment.filename);
               return (
-              <div
-                key={attachment.id}
-                className={`group flex items-center gap-2 py-2 px-3 rounded-lg transition-colors flex-shrink-0 ${
-                  isUnsupportedImage
-                    ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
-                    : "bg-neutral-50 dark:bg-neutral-700/50 hover:bg-neutral-100 dark:hover:bg-neutral-700"
-                }`}
-              >
-                {isImageFile(attachment.filename) ? (
-                  <ImageThumbnail
-                    image={{
-                      filename: attachment.filename,
-                      data: attachment.data || new Uint8Array(0),
-                    }}
-                    className="w-8 h-8 object-cover rounded-md flex-shrink-0"
-                  />
-                ) : (
-                  <svg
-                    className="w-4 h-4 text-neutral-400 dark:text-neutral-500 flex-shrink-0"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                    />
-                  </svg>
-                )}
-                <div className="flex flex-col min-w-0">
-                  <span className={`text-sm max-w-36 truncate ${isUnsupportedImage ? "text-red-700 dark:text-red-300" : "text-neutral-700 dark:text-neutral-300"}`}>
-                    {attachment.filename}
-                  </span>
-                  {isUnsupportedImage && (
-                    <span className="text-xs text-red-600 dark:text-red-400 opacity-75">
-                      This model does not support images
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeFile(index)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 -mr-1 cursor-pointer"
-                  aria-label={`Remove ${attachment.filename}`}
+                <div
+                  key={attachment.id}
+                  className={`group flex items-center gap-2 py-2 px-3 rounded-lg transition-colors flex-shrink-0 ${isUnsupportedImage
+                      ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                      : "bg-neutral-50 dark:bg-neutral-700/50 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                    }`}
                 >
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
+                  {isImageFile(attachment.filename) ? (
+                    <ImageThumbnail
+                      image={{
+                        filename: attachment.filename,
+                        data: attachment.data || new Uint8Array(0),
+                      }}
+                      className="w-8 h-8 object-cover rounded-md flex-shrink-0"
                     />
-                  </svg>
-                </button>
-              </div>
+                  ) : (
+                    <svg
+                      className="w-4 h-4 text-neutral-400 dark:text-neutral-500 flex-shrink-0"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                  )}
+                  <div className="flex flex-col min-w-0">
+                    <span className={`text-sm max-w-36 truncate ${isUnsupportedImage ? "text-red-700 dark:text-red-300" : "text-neutral-700 dark:text-neutral-300"}`}>
+                      {attachment.filename}
+                    </span>
+                    {isUnsupportedImage && (
+                      <span className="text-xs text-red-600 dark:text-red-400 opacity-75">
+                        This model does not support images
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeFile(index)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 -mr-1 cursor-pointer"
+                    aria-label={`Remove ${attachment.filename}`}
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                </div>
               );
             })}
             {message.fileErrors.map((fileError, index) => (
@@ -860,11 +882,11 @@ function ChatForm({
             ref={textareaRef}
             value={message.content}
             onChange={handleTextareaChange}
+            onPaste={handlePaste}
             placeholder="Send a message"
             disabled={isDisabled}
-            className={`allow-context-menu w-full overflow-y-auto text-neutral-700 outline-none resize-none border-none bg-transparent dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 min-h-[24px] leading-6 transition-opacity duration-300 ${
-              editingMessage ? "animate-fade-in" : ""
-            }`}
+            className={`allow-context-menu w-full overflow-y-auto text-neutral-700 outline-none resize-none border-none bg-transparent dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 min-h-[24px] leading-6 transition-opacity duration-300 ${editingMessage ? "animate-fade-in" : ""
+              }`}
             rows={1}
             onKeyDown={handleKeyDown}
             onCompositionStart={handleCompositionStart}
