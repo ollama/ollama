@@ -1586,6 +1586,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return err
 	}
 	defer s.sem.Release(1)
+	defer preventSleep()()
 
 	// put an upper limit on num_predict to avoid the model running on forever
 	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {

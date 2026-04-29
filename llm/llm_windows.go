@@ -10,6 +10,22 @@ const (
 	CREATE_NO_WINDOW            = 0x08000000
 )
 
+var (
+	kernel32           = syscall.NewLazyDLL("kernel32.dll")
+	setThreadExecState = kernel32.NewProc("SetThreadExecutionState")
+)
+
+// preventSleep keeps the system awake for the duration of a long operation.
+// Call the returned function (or defer it) to restore normal sleep behavior.
+func preventSleep() func() {
+	const esContinuous     = uintptr(0x80000000)
+	const esSystemRequired = uintptr(0x00000001)
+	setThreadExecState.Call(esContinuous | esSystemRequired) //nolint:errcheck
+	return func() {
+		setThreadExecState.Call(esContinuous) //nolint:errcheck
+	}
+}
+
 var LlamaServerSysProcAttr = &syscall.SysProcAttr{
 	// Wire up the default error handling logic If for some reason a DLL is
 	// missing in the path this will pop up a GUI Dialog explaining the fault so
