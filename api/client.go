@@ -368,6 +368,16 @@ func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 	return &lr, nil
 }
 
+// ModelRecommendationsExperimental lists model recommendations from the local
+// server's experimental recommendations endpoint.
+func (c *Client) ModelRecommendationsExperimental(ctx context.Context) (*ModelRecommendationsResponse, error) {
+	var resp ModelRecommendationsResponse
+	if err := c.do(ctx, http.MethodGet, "/api/experimental/model-recommendations", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // ListRunning lists running models.
 func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 	var lr ProcessResponse
