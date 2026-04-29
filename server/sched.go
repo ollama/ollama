@@ -471,8 +471,10 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 		if wantPath == "" {
 			wantPath = req.model.ShortName
 		}
-		if s.activeLoading.ModelPath() != wantPath {
-			panic(fmt.Errorf("attempting to load different model after eviction (original %v new %v)", s.activeLoading.ModelPath(), wantPath))
+		loadedPath := s.activeLoading.ModelPath()
+		if loadedPath != wantPath {
+			s.loadedMu.Unlock()
+			panic(fmt.Errorf("attempting to load different model after eviction (original %v new %v)", loadedPath, wantPath))
 		}
 	}
 
