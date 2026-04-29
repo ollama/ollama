@@ -1,0 +1,36 @@
+name: Generate SBOM
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Go SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ""
+          path: .
+          format: spdx-json
+          output-file: sbom-go.spdx.json
+      - name: Generate npm SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ""
+          path: ./app
+          format: spdx-json
+          output-file: sbom-npm.spdx.json
+      - name: Upload SBOMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-artifacts
+          path: |
+            sbom-go.spdx.json
+            sbom-npm.spdx.json
