@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -187,4 +188,66 @@ func TestTruncateToolOutput(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnsureDisplayResponseLineBreak(t *testing.T) {
+	t.Run("adds newline and resets state when mid-line", func(t *testing.T) {
+		var out strings.Builder
+		state := &displayResponseState{
+			lineLength: 7,
+			wordBuffer: "partial",
+		}
+
+		ensureDisplayResponseLineBreak(&out, state)
+
+		if out.String() != "\n" {
+			t.Fatalf("ensureDisplayResponseLineBreak() output = %q, want %q", out.String(), "\n")
+		}
+		if state.lineLength != 0 || state.wordBuffer != "" {
+			t.Fatalf("ensureDisplayResponseLineBreak() did not reset state: %+v", state)
+		}
+	})
+
+	t.Run("does nothing when already at line start", func(t *testing.T) {
+		var out strings.Builder
+		state := &displayResponseState{}
+
+		ensureDisplayResponseLineBreak(&out, state)
+
+		if out.String() != "" {
+			t.Fatalf("ensureDisplayResponseLineBreak() output = %q, want empty", out.String())
+		}
+	})
+}
+
+func TestRenderToolOutput(t *testing.T) {
+	t.Run("renders multiline output", func(t *testing.T) {
+		var out strings.Builder
+
+		renderToolOutput(&out, "line one\nline two")
+
+		got := out.String()
+		if !strings.Contains(got, "line one\n  line two") {
+			t.Fatalf("renderToolOutput() output = %q, want indented multiline content", got)
+		}
+	})
+
+	t.Run("truncates long output for display", func(t *testing.T) {
+		var out strings.Builder
+		renderToolOutput(&out, strings.Repeat("a", 301))
+
+		got := out.String()
+		if !strings.Contains(got, "... (truncated)") {
+			t.Fatalf("renderToolOutput() output = %q, want truncation marker", got)
+		}
+	})
+
+	t.Run("ignores empty output", func(t *testing.T) {
+		var out strings.Builder
+		renderToolOutput(&out, "")
+
+		if out.String() != "" {
+			t.Fatalf("renderToolOutput() output = %q, want empty", out.String())
+		}
+	})
 }
