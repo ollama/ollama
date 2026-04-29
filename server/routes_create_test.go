@@ -792,6 +792,7 @@ func TestCreateAndShowRemoteModel(t *testing.T) {
 		Family:            "gptoss",
 		Families:          []string{"gptoss"},
 		ParameterSize:     "20.9B",
+		ParameterCount:    parseParameterSize("20.9B"),
 		QuantizationLevel: "MXFP4",
 	}
 

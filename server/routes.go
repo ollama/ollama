@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"strconv"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -1221,7 +1222,10 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
 		if info, err := imagegenmanifest.GetModelInfo(name.String()); err == nil {
 			modelDetails.Family = info.Architecture
-			modelDetails.ParameterSize = format.HumanNumber(uint64(info.ParameterCount))
+			if info.ParameterCount > 0 {
+				modelDetails.ParameterCount = info.ParameterCount
+				modelDetails.ParameterSize = format.HumanNumber(uint64(info.ParameterCount))
+			}
 			modelDetails.QuantizationLevel = info.Quantization
 		}
 	}
@@ -1233,6 +1237,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 				modelDetails.Family = arch
 			}
 			if paramCount, ok := info["general.parameter_count"].(int64); ok && paramCount > 0 {
+				modelDetails.ParameterCount = paramCount
 				modelDetails.ParameterSize = format.HumanNumber(uint64(paramCount))
 			}
 		}
@@ -1242,6 +1247,13 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 				modelDetails.QuantizationLevel = dtype
 			}
 		}
+	}
+
+	// If we still don't have an explicit parameter count but do have a
+	// human-readable size, derive an approximate numeric count so clients can
+	// make capability-aware decisions based on model scale.
+	if modelDetails.ParameterCount == 0 && modelDetails.ParameterSize != "" {
+		modelDetails.ParameterCount = parseParameterSize(modelDetails.ParameterSize)
 	}
 
 	if req.System != "" {
@@ -1292,6 +1304,46 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 				resp.ModelInfo[fmt.Sprintf("%s.embedding_length", m.Config.ModelFamily)] = m.Config.EmbedLen
 			}
 		}
+
+		return resp, nil
+	}
+
+	// parseParameterSize converts a human-readable parameter size (for example,
+	// "7B", "2.1B", or "430M") into an approximate numeric parameter count. It
+	// mirrors the formatting used by format.HumanNumber so clients can make
+	// capability decisions based on model scale without needing to reverse-engineer
+	// the string representation themselves.
+	func parseParameterSize(s string) int64 {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return 0
+		}
+
+		multiplier := int64(1)
+		last := s[len(s)-1]
+		switch last {
+		case 'K', 'k':
+			multiplier = format.Thousand
+			s = s[:len(s)-1]
+		case 'M', 'm':
+			multiplier = format.Million
+			s = s[:len(s)-1]
+		case 'B', 'b':
+			multiplier = format.Billion
+			s = s[:len(s)-1]
+		}
+
+		value, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0
+		}
+
+		count := int64(math.Round(value * float64(multiplier)))
+		if count < 0 {
+			return 0
+		}
+
+		return count
 	}
 
 	var params []string
@@ -1449,6 +1501,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 				Family:            cf.ModelFamily,
 				Families:          cf.ModelFamilies,
 				ParameterSize:     cf.ModelType,
+				ParameterCount:    parseParameterSize(cf.ModelType),
 				QuantizationLevel: cf.FileType,
 			},
 		})
@@ -2089,6 +2142,7 @@ func (s *Server) PsHandler(c *gin.Context) {
 			Family:            model.Config.ModelFamily,
 			Families:          model.Config.ModelFamilies,
 			ParameterSize:     model.Config.ModelType,
+			ParameterCount:    parseParameterSize(model.Config.ModelType),
 			QuantizationLevel: model.Config.FileType,
 		}
 
