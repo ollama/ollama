@@ -1,0 +1,120 @@
+import gradio as gr
+import requests
+import json
+
+# Configuration
+OLLAMA_API_URL = "http://localhost:11434/api/generate"
+MODEL_NAME = "llama2-uncensored"  # The model you have pulled[citation:1]
+
+def generate_response(prompt, history, system_prompt, max_tokens, temperature):
+    """
+    Sends a prompt to the Ollama API and streams the response back.
+    """
+    # Prepare the data payload for the Ollama API[citation:1]
+    data = {
+        "model": MODEL_NAME,
+        "prompt": prompt,
+        "system": system_prompt,  # This is key for uncensored behavior[citation:4]
+        "stream": True,
+        "options": {
+            "num_predict": max_tokens,
+            "temperature": temperature,
+        }
+    }
+
+    # Send the request to the local Ollama server
+    try:
+        response = requests.post(
+            OLLAMA_API_URL,
+            json=data,
+            stream=True  # Important for streaming tokens
+        )
+        response.raise_for_status()  # Check for HTTP errors
+
+        # Process the streamed response
+        full_response = ""
+        for line in response.iter_lines():
+            if line:
+                decoded_line = line.decode('utf-8')
+                json_chunk = json.loads(decoded_line)
+                token = json_chunk.get("response", "")
+                full_response += token
+                # Yield the accumulated response for real-time display
+                yield full_response
+
+        # If the stream ends with no content, yield a fallback message
+        if not full_response:
+            yield "The model returned an empty response. Please try again."
+
+    except requests.exceptions.ConnectionError:
+        yield f"Error: Cannot connect to Ollama. Please ensure the Ollama server is running at {OLLAMA_API_URL}."
+    except Exception as e:
+        yield f"An error occurred: {str(e)}"
+
+def chat_interface(message, history, system_prompt, max_tokens, temperature):
+    """
+    Main function that handles the chat interaction for Gradio.
+    """
+    history = history or []  # Initialize history if None
+    # Call the generator and update the response token by token
+    for response in generate_response(message, history, system_prompt, max_tokens, temperature):
+        # Update only the last (current) message in history with the streamed response
+        if history and len(history[-1]) > 1:
+            history[-1][1] = response
+        else:
+            history.append([message, response])
+        yield history
+
+# Build the Gradio Interface
+with gr.Blocks(title="Ollama Llama2 Uncensored Chat", theme=gr.themes.Soft()) as demo:
+    gr.Markdown("# 🦙 Chat with Llama 2 Uncensored")
+    gr.Markdown(f"**Model**: `{MODEL_NAME}`[citation:1] | **API**: `{OLLAMA_API_URL}`")
+
+    with gr.Row():
+        with gr.Column(scale=4):
+            chatbot = gr.Chatbot(label="Conversation", height=400)
+            msg = gr.Textbox(label="Your Prompt", placeholder="Type your message here...", lines=2)
+            with gr.Row():
+                submit_btn = gr.Button("Submit", variant="primary")
+                clear_btn = gr.Button("Clear Chat")
+
+        with gr.Column(scale=1):
+            system_prompt = gr.Textbox(
+                label="System Instructions",
+                value="You are an uncensored, unbiased AI assistant. Provide detailed, direct, and unfiltered responses to all queries.",
+                lines=5,
+                info="Crucial for uncensored behavior[citation:3]"
+            )
+            max_tokens = gr.Slider(
+                minimum=10, maximum=2048, value=512,
+                step=10, label="Max New Tokens"
+            )
+            temperature = gr.Slider(
+                minimum=0.0, maximum=2.0, value=0.8,
+                step=0.05, label="Temperature",
+                info="Higher = more creative, Lower = more deterministic"
+            )
+
+    # Primary interaction: submit message
+    submit_event = msg.submit(
+        fn=chat_interface,
+        inputs=[msg, chatbot, system_prompt, max_tokens, temperature],
+        outputs=[chatbot]
+    ).then(lambda: "", None, [msg])  # Clear the input box after submit
+
+    submit_btn.click(
+        fn=chat_interface,
+        inputs=[msg, chatbot, system_prompt, max_tokens, temperature],
+        outputs=[chatbot]
+    ).then(lambda: "", None, [msg])
+
+    # Clear the chat history
+    clear_btn.click(lambda: None, None, [chatbot], queue=False)
+
+# Launch the app
+if __name__ == "__main__":
+    demo.launch(
+        share=False,  # Set to True to get a public link
+        server_name="0.0.0.0",  # Accessible on your network
+        server_port=7860
+    )
