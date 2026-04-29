@@ -197,6 +197,8 @@ func TestBuildLauncherState_ManagedSingleIntegrationUsesCurrentModel(t *testing.
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
 		case "/api/show":
@@ -230,6 +232,8 @@ func TestBuildLauncherState_ManagedSingleIntegrationShowsSavedModelWhenLiveConfi
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
 		case "/api/show":
@@ -269,6 +273,8 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfiguresOnboardsAndRuns(t *
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
 		case "/api/show":
@@ -326,6 +332,8 @@ func TestLaunchIntegration_ManagedSingleIntegrationReOnboardsWhenSavedFlagIsStal
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
 		case "/api/show":
@@ -418,6 +426,8 @@ func TestLaunchIntegration_ManagedSingleIntegrationSkipsRewriteWhenSavedMatches(
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
 		case "/api/show":
@@ -468,6 +478,8 @@ func TestLaunchIntegration_ManagedSingleIntegrationRewritesWhenSavedDiffers(t *t
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
 		case "/api/show":
@@ -715,6 +727,8 @@ func TestBuildLauncherState_InstalledAndCloudDisabled(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		case "/api/status":
@@ -767,6 +781,8 @@ func TestBuildLauncherState_MigratesLegacyOpenclawAliasConfig(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		default:
@@ -812,6 +828,8 @@ func TestBuildLauncherState_ToleratesInventoryFailure(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprint(w, `{"error":"temporary failure"}`)
@@ -858,6 +876,8 @@ func TestResolveRunModel_UsesSavedModelWithoutSelector(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		case "/api/show":
@@ -903,6 +923,8 @@ func TestResolveRunModel_HeadlessYesAutoPicksLastModel(t *testing.T) {
 	modelPulled := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		case "/api/show":
@@ -965,6 +987,8 @@ func TestResolveRunModel_UsesRequestPolicy(t *testing.T) {
 	modelPulled := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		case "/api/show":
@@ -1024,6 +1048,8 @@ func TestResolveRunModel_ForcePickerAlwaysUsesSelector(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"qwen3:8b"}]}`)
 		case "/api/show":
@@ -1074,6 +1100,8 @@ func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"gemma4"}]}`)
 		case "/api/show":
@@ -1124,6 +1152,8 @@ func TestResolveRunModel_UsesSignInHookForCloudModel(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[]}`)
 		case "/api/status":
@@ -1181,6 +1211,8 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"qwen3:8b"}]}`)
 		case "/api/show":
@@ -1250,6 +1282,8 @@ func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *t
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"qwen3.5:cloud","remote_model":"qwen3.5"},{"name":"qwen3.5"}]}`)
 		case "/api/show":
@@ -1368,6 +1402,8 @@ func TestLaunchIntegration_EditorCloudDisabledFallsBackToSelector(t *testing.T) 
 		switch r.URL.Path {
 		case "/api/status":
 			fmt.Fprint(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		case "/api/show":
@@ -1415,6 +1451,8 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsMissingLocalAndPersistsAccep
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"glm-5:cloud","remote_model":"glm-5"}]}`)
 		case "/api/status":
@@ -1497,6 +1535,8 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"glm-5:cloud","remote_model":"glm-5"}]}`)
 		case "/api/status":
@@ -1582,6 +1622,8 @@ func TestLaunchIntegration_EditorConfigureMultiRemovesReselectedFailingModel(t *
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"glm-5:cloud","remote_model":"glm-5"},{"name":"llama3.2"}]}`)
 		case "/api/status":
@@ -1669,6 +1711,8 @@ func TestLaunchIntegration_EditorConfigureMultiAllFailuresKeepsExistingAndSkipsL
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[]}`)
 		case "/api/show":
@@ -1975,6 +2019,8 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		case "/api/show":
@@ -2018,6 +2064,8 @@ func TestLaunchIntegration_ClaudeSavesPrimaryModel(t *testing.T) {
 	var aliasSyncCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[]}`)
 		case "/api/status":
@@ -2077,6 +2125,8 @@ func TestLaunchIntegration_ClaudeForceConfigureReprompts(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"qwen3:8b"}]}`)
 		case "/api/show":
@@ -2134,6 +2184,8 @@ func TestLaunchIntegration_ClaudeForceConfigureMissingSelectionDoesNotSave(t *te
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		case "/api/show":
@@ -2260,6 +2312,8 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		case "/api/show":
@@ -2484,6 +2538,8 @@ func TestLaunchIntegration_HeadlessSelectorFlowFailsWithoutPrompt(t *testing.T) 
 	pullCalled := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		case "/api/show":

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"slices"
@@ -182,9 +183,12 @@ type ModelInfo = modelInfo
 
 // ModelItem represents a model for selection UIs.
 type ModelItem struct {
-	Name        string
-	Description string
-	Recommended bool
+	Name            string
+	Description     string
+	Recommended     bool
+	VRAM            string
+	ContextLength   int
+	MaxOutputTokens int
 }
 
 // LaunchCmd returns the cobra command for launching integrations.
@@ -213,6 +217,7 @@ Supported integrations:
   opencode  OpenCode
   openclaw  OpenClaw (aliases: clawdbot, moltbot)
   pi        Pi
+  pool      Poolside
   vscode    VS Code (aliases: code)
 
 Examples:
@@ -719,9 +724,10 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 	if err := c.loadModelInventoryOnce(ctx); err != nil {
 		return nil, nil, err
 	}
+	recommendations := c.recommendations(ctx)
 
 	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
-	items, orderedChecked, _, _ := buildModelList(c.modelInventory, preChecked, current)
+	items, orderedChecked, _, _ := buildModelListWithRecommendations(c.modelInventory, recommendations, preChecked, current)
 	if cloudDisabled {
 		items = filterCloudItems(items)
 		orderedChecked = c.filterDisabledCloudModels(ctx, orderedChecked)
@@ -730,6 +736,60 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 		return nil, nil, errors.New(emptyMessage)
 	}
 	return items, orderedChecked, nil
+}
+
+func (c *launcherClient) recommendations(ctx context.Context) []ModelItem {
+	recommendations, err := c.requestRecommendations(ctx)
+	if err != nil || len(recommendations) == 0 {
+		// Fail open: recommendation issues should not block launch flows.
+		// Fall back to built-in recommendations until server data is available.
+		fallback := append([]ModelItem(nil), recommendedModels...)
+		setDynamicCloudModelLimits(cloudModelLimitsFromRecommendations(fallback))
+		return fallback
+	}
+	setDynamicCloudModelLimits(cloudModelLimitsFromRecommendations(recommendations))
+	return recommendations
+}
+
+func (c *launcherClient) requestRecommendations(ctx context.Context) ([]ModelItem, error) {
+	resp, err := c.apiClient.ModelRecommendationsExperimental(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]ModelItem, 0, len(resp.Recommendations))
+	seen := make(map[string]struct{}, len(resp.Recommendations))
+
+	for _, rec := range resp.Recommendations {
+		name := strings.TrimSpace(rec.Model)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+
+		if isCloudModelName(name) && (rec.ContextLength <= 0 || rec.MaxOutputTokens <= 0) {
+			slog.Warn("skipping cloud recommendation with missing limits", "model", name)
+			continue
+		}
+
+		description := strings.TrimSpace(rec.Description)
+		if description == "" {
+			description = "Recommended model"
+		}
+
+		items = append(items, ModelItem{
+			Name:            name,
+			Description:     description,
+			Recommended:     true,
+			VRAM:            strings.TrimSpace(rec.VRAM),
+			ContextLength:   rec.ContextLength,
+			MaxOutputTokens: rec.MaxOutputTokens,
+		})
+	}
+
+	return items, nil
 }
 
 func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string) error {

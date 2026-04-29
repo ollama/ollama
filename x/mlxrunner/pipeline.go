@@ -11,6 +11,7 @@ import (
 
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 	"github.com/ollama/ollama/x/tokenizer"
@@ -105,6 +106,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	now := time.Now()
 	total, processed := len(tokens), 0
+	position := len(inputs) - len(tokens)
 	for total-processed > 1 {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -115,23 +117,26 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		// If there's a pending snapshot, split the batch so we can
 		// capture it at the exact offset.
 		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
-			baseOffset := len(session.inputs) - len(tokens)
-			tokensUntilSnapshot := snapOffset - (baseOffset + processed)
+			tokensUntilSnapshot := snapOffset - position
 			if tokensUntilSnapshot > 0 && tokensUntilSnapshot < n {
 				n = tokensUntilSnapshot
 			}
 		}
 
-		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], 1, n), caches)
+		r.Model.Forward(&batch.Batch{
+			InputIDs:     mlx.FromValues(tokens[processed:processed+n], 1, n),
+			SeqOffsets:   []int32{int32(position)},
+			SeqQueryLens: []int32{int32(n)},
+		}, caches)
 		mlx.Sweep()
 		materializeCaches()
 		processed += n
+		position += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
 
 		// Create snapshot if we've reached a pending offset.
 		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
-			baseOffset := len(session.inputs) - len(tokens)
-			if baseOffset+processed >= snapOffset {
+			if position >= snapOffset {
 				session.snapshot()
 			}
 		}
@@ -143,7 +148,12 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
 
 	step := func(token *mlx.Array) sampler.Result {
-		fwd := r.Model.Forward(token, caches)
+		fwd := r.Model.Forward(&batch.Batch{
+			InputIDs:     token,
+			SeqOffsets:   []int32{int32(position)},
+			SeqQueryLens: []int32{int32(token.Dim(1))},
+		}, caches)
+		position += token.Dim(1)
 		logits := r.Model.Unembed(fwd)
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 

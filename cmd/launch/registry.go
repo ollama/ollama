@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "copilot", "droid", "pi"}
+var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "copilot", "droid", "pi", "pool"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -167,6 +167,18 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
+		Name:        "pool",
+		Runner:      &Poolside{},
+		Description: "Poolside's software agent for enterprise development",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := exec.LookPath("pool")
+				return err == nil
+			},
+			URL: "https://github.com/poolsideai/pool",
+		},
+	},
+	{
 		Name:        "hermes",
 		Runner:      &Hermes{},
 		Description: "Self-improving AI agent built by Nous Research",
@@ -285,6 +297,9 @@ func ListVisibleIntegrationSpecs() []IntegrationSpec {
 		if spec.Hidden {
 			continue
 		}
+		if spec.Name == "pool" && poolsideGOOS == "windows" {
+			continue
+		}
 		visible = append(visible, *spec)
 	}
 
@@ -397,6 +412,10 @@ func EnsureIntegrationInstalled(name string, runner Runner) error {
 	integration, err := integrationFor(name)
 	if err != nil {
 		return fmt.Errorf("%s is not installed", runner)
+	}
+
+	if integration.spec.Name == "pool" && poolsideGOOS == "windows" {
+		return poolsideUnsupportedError()
 	}
 
 	if integration.installed {

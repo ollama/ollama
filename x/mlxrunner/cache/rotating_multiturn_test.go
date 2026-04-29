@@ -61,13 +61,13 @@ func feedMulti(c *RotatingKVCache, startID float32, n int) float32 {
 		ids[i] = startID + float32(i)
 	}
 	k, v := multiTokenKV(ids)
-	c.Update(k, v)
+	c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	return startID + float32(n)
 }
 
 func feedSingle(c *RotatingKVCache, id float32) {
 	k, v := singleTokenKV(id)
-	c.Update(k, v)
+	c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 }
 
 // TestRotatingKVCacheConcatMidRotationPreservesContext: after the buffer

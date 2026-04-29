@@ -1,12 +1,17 @@
 package cache
 
 import (
+	"fmt"
+
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/models/nn"
 )
 
+// Cache is common state management shared by every cache kind. Writers
+// live on the specific caches
 type Cache interface {
-	Update(keys, values *mlx.Array) (newKeys, newValues *mlx.Array)
 	// State returns the cache-owned state roots that should be kept/evaluated.
 	State() []*mlx.Array
 	Free()
@@ -39,6 +44,16 @@ type Snapshot interface {
 	Close()
 }
 
+// Attention is the contract for caches that back attention layers
+// (KVCache, RotatingKVCache).
+type Attention interface {
+	Cache
+
+	// Update appends (k, v) and returns an opaque nn.KVHistory for
+	// this layer's SDPA.
+	Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVHistory
+}
+
 type KVCache struct {
 	keys, values *mlx.Array
 	offset       int
@@ -49,7 +64,14 @@ func NewKVCache() *KVCache {
 	return &KVCache{step: 256}
 }
 
-func (c *KVCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
+// Assumes B = 1; heterogeneous batches are not supported.
+func (c *KVCache) Update(_ *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
+	newK, newV := c.appendKV(keys, values)
+	return nn.NewKVHistory(newK, newV, nil)
+}
+
+// appendKV is the raw write path shared by Update and Restore.
+func (c *KVCache) appendKV(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 	B, H, L, Dk, Dv := keys.Dim(0), keys.Dim(1), keys.Dim(2), keys.Dim(3), values.Dim(3)
 
 	prev := c.offset
@@ -141,9 +163,9 @@ func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
 		return false
 	}
 
-	// Rewind to snapshot start, then feed snapshot data through Update.
+	// Rewind to snapshot start, then feed snapshot.
 	c.offset = snap.fromOffset
-	c.Update(snap.keys, snap.values)
+	c.appendKV(snap.keys, snap.values)
 
 	// Clamp to target if needed (target may be less than full snapshot).
 	if target < c.offset {
@@ -240,7 +262,22 @@ func NewRotatingKVCache(maxSize int) *RotatingKVCache {
 	return &RotatingKVCache{maxSize: maxSize, KVCache: NewKVCache()}
 }
 
-func (c *RotatingKVCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
+// Assumes B = 1; heterogeneous batches are not supported.
+func (c *RotatingKVCache) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
+	newK, newV := c.appendKV(keys, values)
+	return nn.NewKVHistory(newK, newV, rotatingApplier{
+		b:       b,
+		K:       newK.Dim(2),
+		L:       keys.Dim(2),
+		window:  c.maxSize,
+		ringIdx: c.idx,
+		dtype:   keys.DType(),
+	})
+}
+
+// appendKV is the raw write path shared by Update and Restore —
+// routes to concat for prefill (L > 1) and update for decode.
+func (c *RotatingKVCache) appendKV(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 	if keys.Dim(2) > 1 {
 		return c.concat(keys, values)
 	}
@@ -443,4 +480,68 @@ func (c *RotatingKVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) 
 func (c *RotatingKVCache) Free() {
 	c.KVCache.Free()
 	c.idx = 0
+}
+
+// rotatingApplier composes the sliding-window storage restriction
+// onto the caller's logical mask.
+//
+// ringIdx is the cache's write cursor at Update time. At L=1 decode
+// the ring buffer is not position-ordered — logical col j lives at
+// storage slot (ringIdx+j) mod K — so tensor masks built in
+// logical space must be gathered into this layout before the kernel
+// sees them. At L>1 prefill the concat path has already linearised
+// storage, so the gather is identity and ringIdx is unused.
+type rotatingApplier struct {
+	b       *batch.Batch
+	K       int
+	L       int
+	window  int
+	ringIdx int
+	dtype   mlx.DType
+}
+
+func (r rotatingApplier) ApplyMask(logical nn.AttentionMask) nn.AttentionMask {
+	if r.L == 1 {
+		// Single-query decode: storage already enforces the window
+		// (Update keeps the last maxSize tokens, all within
+		// [absQ-window+1, absQ]), and every stored key's absolute
+		// position <= absQ. For a zero or plain-causal logical mask
+		// both constraints reduce to "no mask", so return the zero
+		// mask and let SDPA dispatch to mode="".
+		if logical.IsZero() || logical.IsCausal() {
+			return nn.AttentionMask{}
+		}
+
+		// Tensor-backed mask (user ArrayMask, causal+Relax, causal
+		// with accumulated array): materialize in logical-position
+		// order then gather K cols into ring-slot order so they
+		// align with the cache output the kernel will index.
+		arr := logical.AsArray(r.b, r.K, r.dtype)
+		arr = gatherRingCols(arr, r.ringIdx, r.K)
+		return nn.ArrayMask(arr)
+	}
+
+	return logical.Intersect(nn.SlidingWindowMask(r.b, r.K, r.window, r.dtype))
+}
+
+// gatherRingCols reorders a [B, 1, L, K] mask's K axis from
+// logical-position order (col 0 = oldest stored position) into the
+// cache's ring-slot order (col 0 = buffer slot 0). Logical col j
+// lives at slot (ringIdx+j) mod K, so storage slot s reads from
+// logical col (s-ringIdx+K) mod K. Returns arr unchanged when the
+// permutation is a no-op: ringIdx % K == 0 (layouts coincide), or
+// the K axis broadcasts (dim 3 == 1, i.e. Q-padding-shaped masks
+// where every key shares the same value).
+func gatherRingCols(arr *mlx.Array, ringIdx, K int) *mlx.Array {
+	if w := arr.Dim(3); w != 1 && w != K {
+		panic(fmt.Sprintf("gatherRingCols: K-axis width %d must be 1 or %d", w, K))
+	}
+	ringIdx %= K
+	if ringIdx == 0 || arr.Dim(3) == 1 {
+		return arr
+	}
+	shift := K - ringIdx
+	tail := arr.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(shift, K))
+	head := arr.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, shift))
+	return tail.Concatenate(3, head)
 }

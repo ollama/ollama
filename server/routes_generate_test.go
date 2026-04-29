@@ -1473,6 +1473,119 @@ func TestGenerateLogprobs(t *testing.T) {
 	})
 }
 
+func TestGenerateLogprobsWithBuiltinParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{}
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		responses := []llm.CompletionResponse{
+			{
+				Content:  "h",
+				Logprobs: []llm.Logprob{{TokenLogprob: llm.TokenLogprob{Token: "h", Logprob: -0.1}}},
+			},
+			{
+				Content:  "i</think>Hello",
+				Logprobs: []llm.Logprob{{TokenLogprob: llm.TokenLogprob{Token: "hi", Logprob: -0.2}}},
+			},
+			{
+				Content:    " world",
+				Done:       true,
+				DoneReason: llm.DoneReasonStop,
+				Logprobs:   []llm.Logprob{{TokenLogprob: llm.TokenLogprob{Token: " world", Logprob: -0.3}}},
+			},
+		}
+
+		for _, resp := range responses {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				fn(resp)
+			}
+		}
+
+		return nil
+	}
+
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				req.successCh <- &runnerRef{llama: &mock}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	if w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:    "test-generate-logprob-parser",
+		Files:    map[string]string{"file.gguf": digest},
+		Parser:   "deepseek3",
+		Template: `{{ .Prompt }}`,
+		Stream:   &stream,
+	}); w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	noStream := false
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:    "test-generate-logprob-parser",
+		Prompt:   "Why is the sky blue?",
+		Stream:   &noStream,
+		Logprobs: true,
+		Options: map[string]any{
+			"temperature": 0,
+		},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.GenerateResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if got := len(resp.Logprobs); got != 3 {
+		t.Fatalf("expected 3 logprob entries, got %d", got)
+	}
+}
+
 func TestChatLogprobs(t *testing.T) {
 	t.Run("invalid top_logprobs negative", func(t *testing.T) {
 		gin.SetMode(gin.TestMode)

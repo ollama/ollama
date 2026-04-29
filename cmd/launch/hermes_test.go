@@ -49,15 +49,6 @@ func withHermesUserHome(t *testing.T, dir string) {
 	})
 }
 
-func withHermesLookPath(t *testing.T, fn func(string) (string, error)) {
-	t.Helper()
-	old := hermesLookPath
-	hermesLookPath = fn
-	t.Cleanup(func() {
-		hermesLookPath = old
-	})
-}
-
 func clearHermesMessagingEnvVars(t *testing.T) {
 	t.Helper()
 	for _, group := range hermesMessagingEnvGroups {
@@ -112,6 +103,8 @@ func TestHermesConfigurePreservesExistingConfigAndEnablesWeb(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/show":
 			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"gemma4"},{"name":"qwen3.5"},{"name":"llama3.3"}]}`)
 		default:
@@ -224,6 +217,8 @@ func TestHermesConfigureUpdatesMatchingCustomProviderWithoutDroppingFields(t *te
 		switch r.URL.Path {
 		case "/api/show":
 			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"gemma4"},{"name":"qwen3.5"},{"name":"llama3.3"}]}`)
 		default:
@@ -300,6 +295,8 @@ func TestHermesConfigureUsesLaunchResolvedHostForModelDiscovery(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/show":
 			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"gemma4"},{"name":"qwen3.5"},{"name":"llama3.3"}]}`)
 		default:
@@ -365,6 +362,8 @@ func TestHermesConfigureMigratesLegacyManagedAliases(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"gemma4"},{"name":"qwen3.5"}]}`)
 		default:
