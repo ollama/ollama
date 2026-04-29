@@ -40,6 +40,18 @@ var (
 	cloudProxySigningHost = defaultCloudProxySigningHost
 	cloudProxySignRequest = signCloudProxyRequest
 	cloudProxySigninURL   = signinURL
+
+	// cloudProxyHTTPClient uses phase-specific timeouts: tight bounds for
+	// connection, TLS, and time-to-first-byte, but no overall timeout so
+	// long-lived streaming responses are not killed mid-stream.
+	cloudProxyHTTPClient = &http.Client{
+		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
 )
 
 var hopByHopHeaders = map[string]struct{}{
@@ -213,10 +225,7 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 		return
 	}
 
-	// TODO(drifkin): Add phase-specific proxy timeouts.
-	// Connect/TLS/TTFB should have bounded timeouts, but once streaming starts
-	// we should not enforce a short total timeout for long-lived responses.
-	resp, err := http.DefaultClient.Do(outReq)
+	resp, err := cloudProxyHTTPClient.Do(outReq)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
