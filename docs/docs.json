@@ -75,6 +75,10 @@
     {
       "source": "/integrations/clawdbot",
       "destination": "/integrations/openclaw"
+    },
+    {
+      "source": "/integrations/poolside",
+      "destination": "/integrations/pool"
     }
   ],
   "navigation": {
