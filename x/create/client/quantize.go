@@ -28,7 +28,10 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, arrays map[string]
 		}
 	}
 
-	tmpDir := ensureTempDir()
+	tmpDir, err := ensureTempDir()
+	if err != nil {
+		return "", nil, nil, err
+	}
 
 	tmpFile, err := os.CreateTemp(tmpDir, "quant-*.safetensors")
 	if err != nil {
@@ -175,7 +178,10 @@ func quantizeTensor(r io.Reader, tensorName, dtype string, shape []int32, quanti
 		"group_size": strconv.Itoa(groupSize),
 	}
 
-	tmpDir := ensureTempDir()
+	tmpDir, err := ensureTempDir()
+	if err != nil {
+		return nil, err
+	}
 	outPath := filepath.Join(tmpDir, "combined.safetensors")
 	defer os.Remove(outPath)
 	if err := mlx.SaveSafetensorsWithMetadata(outPath, arrays, metadata); err != nil {
@@ -268,7 +274,10 @@ func quantizePackedGroup(groupName string, inputs []create.PackedTensorInput) ([
 
 	// Save combined blob. Add global metadata only when every packed tensor uses
 	// the same quantization mode and group size.
-	tmpDir := ensureTempDir()
+	tmpDir, err := ensureTempDir()
+	if err != nil {
+		return nil, err
+	}
 	outPath := filepath.Join(tmpDir, "packed-combined.safetensors")
 	defer os.Remove(outPath)
 	if err := mlx.SaveSafetensorsWithMetadata(outPath, allArrays, metadata); err != nil {
@@ -488,7 +497,10 @@ func stackAndQuantizeExpertGroup(groupName string, projGroups map[string][]exper
 
 	defer cleanup()
 
-	tmpDir := ensureTempDir()
+	tmpDir, err := ensureTempDir()
+	if err != nil {
+		return nil, err
+	}
 	outPath := filepath.Join(tmpDir, "stacked-combined.safetensors")
 	defer os.Remove(outPath)
 	if err := mlx.SaveSafetensorsWithMetadata(outPath, allArrays, metadata); err != nil {
@@ -508,10 +520,12 @@ func QuantizeSupported() bool {
 }
 
 // ensureTempDir creates the temp directory for quantization if it doesn't exist
-func ensureTempDir() string {
+func ensureTempDir() (string, error) {
 	tmpDir := filepath.Join(os.TempDir(), "ollama-quantize")
-	os.MkdirAll(tmpDir, 0755)
-	return tmpDir
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		return "", fmt.Errorf("creating quantization temp directory: %w", err)
+	}
+	return tmpDir, nil
 }
 
 type safetensorsHeaderEntry struct {
