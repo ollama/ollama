@@ -1,8 +1,12 @@
 package manifest
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+
+	rootmanifest "github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestTotalTensorSize(t *testing.T) {
@@ -53,5 +57,41 @@ func TestManifestAndBlobDirsRespectOLLAMAModels(t *testing.T) {
 	wantBlobs := filepath.Join(modelsDir, "blobs")
 	if got := DefaultBlobDir(); got != wantBlobs {
 		t.Fatalf("DefaultBlobDir() = %q, want %q", got, wantBlobs)
+	}
+}
+
+func TestLoadManifestPrefersV2(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	name := model.ParseName("example")
+
+	legacyPath, err := rootmanifest.PathForName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte(`{"schemaVersion":2,"mediaType":"legacy"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v2Path, err := rootmanifest.V2PathForName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(v2Path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(v2Path, []byte(`{"schemaVersion":2,"mediaType":"v2"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := LoadManifest(name.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Manifest.MediaType != "v2" {
+		t.Fatalf("media type = %q, want %q", m.Manifest.MediaType, "v2")
 	}
 }

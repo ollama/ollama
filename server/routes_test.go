@@ -658,11 +658,14 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	checkManifestList := func() {
 		t.Helper()
 
-		mandir := filepath.Join(os.Getenv("OLLAMA_MODELS"), "manifests/")
+		mandir, err := manifest.V2Path()
+		if err != nil {
+			t.Fatalf("failed to resolve v2 manifest path: %v", err)
+		}
 		var entries []string
 		t.Logf("dir entries:")
 		fsys := os.DirFS(mandir)
-		err := fs.WalkDir(fsys, ".", func(path string, info fs.DirEntry, err error) error {
+		err = fs.WalkDir(fsys, ".", func(path string, info fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -685,7 +688,14 @@ func TestManifestCaseSensitivity(t *testing.T) {
 
 		g := entries[0] // raw path
 		g = filepath.ToSlash(g)
-		w := model.ParseName(wantStableName).Filepath()
+		wp, err := manifest.V2PathForName(model.ParseName(wantStableName))
+		if err != nil {
+			t.Fatalf("failed to resolve expected manifest path: %v", err)
+		}
+		w, err := filepath.Rel(mandir, wp)
+		if err != nil {
+			t.Fatalf("failed to make expected manifest path relative: %v", err)
+		}
 		w = filepath.ToSlash(w)
 		if g != w {
 			t.Errorf("\ngot:  %s\nwant: %s", g, w)
