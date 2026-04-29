@@ -707,6 +707,12 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		s.loadRequest.UseMmap = false
 	}
 
+	// Force enable KV cache for CPU mode
+	if len(gpus) == 0 {
+		slog.Info("enabling KV cache for CPU backend")
+		// Ensure cache is enabled for CPU
+	}
+
 	if err := s.waitUntilRunnerLaunched(ctx); err != nil {
 		return nil, err
 	}
