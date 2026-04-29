@@ -24,7 +24,7 @@ declare module "@/gotypes" {
 }
 
 Model.prototype.isCloud = function (): boolean {
-  return this.model.endsWith("cloud");
+  return this.model.endsWith("cloud") || this.model === "gemini-3-pro-preview";
 };
 
 export type CloudStatusSource = "env" | "config" | "both" | "none";
