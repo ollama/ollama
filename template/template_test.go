@@ -769,3 +769,141 @@ func TestTemplatePropertiesRange(t *testing.T) {
 		t.Errorf("Range over Properties failed, got: %s, want: location:string;", got)
 	}
 }
+
+func TestTemplateToolFunctionJSON(t *testing.T) {
+	// Test that {{ .Function }} outputs valid JSON, not Go struct format.
+	// This is critical for models like Qwen3 whose templates use {{ .Function }} directly.
+	tmpl := `{{- range .Messages }}{{- end }}{{- range .Tools }}{{ .Function }}{{- end }}`
+
+	template, err := Parse(tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	props := api.NewToolPropertiesMap()
+	props.Set("city", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "The name of the city"})
+
+	var buf bytes.Buffer
+	err = template.Execute(&buf, Values{
+		Messages: []api.Message{{Role: "user", Content: "test"}},
+		Tools: api.Tools{{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get the current weather for a city",
+				Parameters: api.ToolFunctionParameters{
+					Type:       "object",
+					Required:   []string{"city"},
+					Properties: props,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.TrimSpace(buf.String())
+	// Should be valid JSON, not Go struct format like "{get_weather Get the current weather ...}"
+	if strings.HasPrefix(got, "{get_weather") {
+		t.Errorf("Function output as Go struct format: %s", got)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Errorf("Function not valid JSON: %s, error: %v", got, err)
+	}
+
+	if parsed["name"] != "get_weather" {
+		t.Errorf("Function name not correct, got: %v", parsed["name"])
+	}
+	if parsed["description"] != "Get the current weather for a city" {
+		t.Errorf("Function description not correct, got: %v", parsed["description"])
+	}
+}
+
+func TestTemplateToolJSON(t *testing.T) {
+	// Test that {{ . }} on a tool outputs valid JSON (the whole tool object).
+	tmpl := `{{- range .Messages }}{{- end }}{{- range .Tools }}{{ . }}{{- end }}`
+
+	template, err := Parse(tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	props := api.NewToolPropertiesMap()
+	props.Set("city", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "City name"})
+
+	var buf bytes.Buffer
+	err = template.Execute(&buf, Values{
+		Messages: []api.Message{{Role: "user", Content: "test"}},
+		Tools: api.Tools{{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters: api.ToolFunctionParameters{
+					Type:       "object",
+					Required:   []string{"city"},
+					Properties: props,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.TrimSpace(buf.String())
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Errorf("Tool not valid JSON: %s, error: %v", got, err)
+	}
+
+	if parsed["type"] != "function" {
+		t.Errorf("Tool type not correct, got: %v", parsed["type"])
+	}
+}
+
+func TestTemplateToolParametersJSON(t *testing.T) {
+	// Test that {{ .Function.Parameters }} outputs valid JSON.
+	tmpl := `{{- range .Messages }}{{- end }}{{- range .Tools }}{{ .Function.Parameters }}{{- end }}`
+
+	template, err := Parse(tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	props := api.NewToolPropertiesMap()
+	props.Set("city", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "City name"})
+
+	var buf bytes.Buffer
+	err = template.Execute(&buf, Values{
+		Messages: []api.Message{{Role: "user", Content: "test"}},
+		Tools: api.Tools{{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters: api.ToolFunctionParameters{
+					Type:       "object",
+					Required:   []string{"city"},
+					Properties: props,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.TrimSpace(buf.String())
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Errorf("Parameters not valid JSON: %s, error: %v", got, err)
+	}
+
+	if parsed["type"] != "object" {
+		t.Errorf("Parameters type not correct, got: %v", parsed["type"])
+	}
+}
