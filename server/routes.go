@@ -558,6 +558,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
 		defer close(ch)
+		
+		// Prevent system sleep during inference
+		sp := NewSleepPrevention()
+		sp.Start()
+		defer sp.Stop()
+		
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:      prompt,
 			Images:      images,
@@ -2436,6 +2442,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	ch := make(chan any)
 	go func() {
+		// Prevent system sleep during inference
+		sp := NewSleepPrevention()
+		sp.Start()
+		defer sp.Stop()
+		
 		defer close(ch)
 
 		structuredOutputsState := structuredOutputsState_None
