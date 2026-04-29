@@ -186,7 +186,7 @@ type ModelItem struct {
 	Name            string
 	Description     string
 	Recommended     bool
-	VRAM            string
+	VRAMBytes       int64
 	ContextLength   int
 	MaxOutputTokens int
 }
@@ -783,7 +783,7 @@ func (c *launcherClient) requestRecommendations(ctx context.Context) ([]ModelIte
 			Name:            name,
 			Description:     description,
 			Recommended:     true,
-			VRAM:            strings.TrimSpace(rec.VRAM),
+			VRAMBytes:       rec.VRAMBytes,
 			ContextLength:   rec.ContextLength,
 			MaxOutputTokens: rec.MaxOutputTokens,
 		})
