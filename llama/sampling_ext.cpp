@@ -134,3 +134,8 @@ void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *token
 void grammar_accept(struct llama_grammar *g, llama_token id) {
     llama_grammar_accept_impl(*g, id);
 }
+
+const char* grammar_token_to_piece(const struct llama_grammar* g, uint32_t token) {
+    if (!g || !g->o_vocab) return "";
+    return g->o_vocab->token_to_piece(token).c_str();
+}

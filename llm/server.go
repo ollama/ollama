@@ -1550,7 +1550,9 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	slog.Debug("completion request", "images", len(req.Images), "prompt", len(req.Prompt), "format", string(req.Format))
 	logutil.Trace("completion request", "prompt", req.Prompt)
 
-	if len(req.Format) > 0 {
+	if req.Grammar != "" {
+		req.Grammar = req.Grammar
+	} else if len(req.Format) > 0 {
 		switch string(req.Format) {
 		case `null`, `""`:
 			// Field was set, but "missing" a value. We accept

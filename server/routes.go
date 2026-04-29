@@ -562,6 +562,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Prompt:      prompt,
 			Images:      images,
 			Format:      req.Format,
+			Grammar: 	 req.Grammar,
 			Options:     opts,
 			Shift:       req.Shift == nil || *req.Shift,
 			Truncate:    req.Truncate == nil || *req.Truncate,
@@ -2444,6 +2445,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			var tb strings.Builder
 
 			currentFormat := req.Format
+			currentGrammar := req.Grammar
 			// structured outputs via double request is enabled when:
 			// 1. the model supports the thinking capability and
 			// 2. it uses a built-in parser or our generic thinking parser
@@ -2466,6 +2468,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Prompt:      prompt,
 				Images:      images,
 				Format:      currentFormat,
+				Grammar: 	 currentGrammar,
 				Options:     opts,
 				Shift:       req.Shift == nil || *req.Shift,
 				Truncate:    truncate,
