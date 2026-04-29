@@ -280,6 +280,10 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 				if len(toolCalls) > 0 {
 					reason = "tool_calls"
 				}
+				// map non-standard reasons to valid OpenAI finish_reason values
+				if reason == "repeat" {
+					reason = "stop"
+				}
 				if len(reason) > 0 {
 					return &reason
 				}
@@ -309,6 +313,9 @@ func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 			Index: 0,
 			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
 			FinishReason: func(reason string) *string {
+				if reason == "repeat" {
+					reason = "stop"
+				}
 				if len(reason) > 0 {
 					if toolCallSent || len(toolCalls) > 0 {
 						return &finishReasonToolCalls
@@ -373,6 +380,9 @@ func ToCompletion(id string, r api.GenerateResponse) Completion {
 			Text:  r.Response,
 			Index: 0,
 			FinishReason: func(reason string) *string {
+				if reason == "repeat" {
+					reason = "stop"
+				}
 				if len(reason) > 0 {
 					return &reason
 				}
@@ -395,6 +405,9 @@ func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
 			Text:  r.Response,
 			Index: 0,
 			FinishReason: func(reason string) *string {
+				if reason == "repeat" {
+					reason = "stop"
+				}
 				if len(reason) > 0 {
 					return &reason
 				}
