@@ -61,18 +61,20 @@ type registryOptions struct {
 }
 
 type Model struct {
-	Name           string `json:"name"`
-	Config         model.ConfigV2
-	ShortName      string
-	ModelPath      string
-	ParentModel    string
-	AdapterPaths   []string
-	ProjectorPaths []string
-	System         string
-	License        []string
-	Digest         string
-	Options        map[string]any
-	Messages       []api.Message
+	Name              string `json:"name"`
+	Config            model.ConfigV2
+	ShortName         string
+	ModelPath         string
+	ParentModel       string
+	HasChatTemplate   bool
+	HasLegacyTemplate bool
+	AdapterPaths      []string
+	ProjectorPaths    []string
+	System            string
+	License           []string
+	Digest            string
+	Options           map[string]any
+	Messages          []api.Message
 
 	Template *template.Template
 }
@@ -81,26 +83,51 @@ func (m *Model) IsMLX() bool {
 	return m.Config.ModelFormat == "safetensors"
 }
 
+func (m *Model) isGGUF() bool {
+	return m.Config.ModelFormat == "" || m.Config.ModelFormat == "gguf"
+}
+
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
+	modelArch := ""
+	appendCapability := func(cap model.Capability) {
+		if !slices.Contains(capabilities, cap) {
+			capabilities = append(capabilities, cap)
+		}
+	}
+	finalizeCapabilities := func() []model.Capability {
+		if suppressAudioCapability(m, modelArch) {
+			capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+				return c == model.CapabilityAudio
+			})
+		}
+		if isGemma4Renderer(m.Config.Renderer) && m.Config.ModelFormat == "safetensors" {
+			capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+				return c == model.CapabilityVision
+			})
+		}
+
+		return capabilities
+	}
 
 	if m.ModelPath != "" {
 		f, err := gguf.Open(m.ModelPath)
 		if err == nil {
 			defer f.Close()
+			modelArch = f.KeyValue("general.architecture").String()
 
 			if f.KeyValue("pooling_type").Valid() {
-				capabilities = append(capabilities, model.CapabilityEmbedding)
+				appendCapability(model.CapabilityEmbedding)
 			} else {
 				// If no embedding is specified, we assume the model supports completion
-				capabilities = append(capabilities, model.CapabilityCompletion)
+				appendCapability(model.CapabilityCompletion)
 			}
 			if f.KeyValue("vision.block_count").Valid() {
-				capabilities = append(capabilities, model.CapabilityVision)
+				appendCapability(model.CapabilityVision)
 			}
 			if f.KeyValue("audio.block_count").Valid() {
-				capabilities = append(capabilities, model.CapabilityAudio)
+				appendCapability(model.CapabilityAudio)
 			}
 		} else {
 			slog.Error("couldn't open model file", "error", err)
@@ -111,10 +138,7 @@ func (m *Model) Capabilities() []model.Capability {
 	// set during creation for MLX/safetensors models).
 	if len(m.Config.Capabilities) > 0 {
 		for _, c := range m.Config.Capabilities {
-			cap := model.Capability(c)
-			if !slices.Contains(capabilities, cap) {
-				capabilities = append(capabilities, cap)
-			}
+			appendCapability(model.Capability(c))
 		}
 	}
 
@@ -123,7 +147,7 @@ func (m *Model) Capabilities() []model.Capability {
 	}
 
 	if m.Template == nil {
-		return capabilities
+		return finalizeCapabilities()
 	}
 
 	builtinParser := parsers.ParserForName(m.Config.Parser)
@@ -133,22 +157,33 @@ func (m *Model) Capabilities() []model.Capability {
 		slog.Warn("model template contains errors", "error", err)
 	}
 	if slices.Contains(v, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
-		capabilities = append(capabilities, model.CapabilityTools)
+		appendCapability(model.CapabilityTools)
 	}
 
 	// Check for insert capability
 	if slices.Contains(v, "suffix") {
-		capabilities = append(capabilities, model.CapabilityInsert)
+		appendCapability(model.CapabilityInsert)
 	}
 
 	// Check for vision capability in projector-based models
 	if len(m.ProjectorPaths) > 0 {
-		capabilities = append(capabilities, model.CapabilityVision)
+		appendCapability(model.CapabilityVision)
+		for _, projectorPath := range m.ProjectorPaths {
+			f, err := gguf.Open(projectorPath)
+			if err != nil {
+				slog.Error("couldn't open projector file", "error", err)
+				continue
+			}
+			if projectorHasAudio(f) && !projectorSuppressesAudioCapability(f) {
+				appendCapability(model.CapabilityAudio)
+			}
+			f.Close()
+		}
 	}
 
 	// Skip the thinking check if it's already set
 	if slices.Contains(capabilities, "thinking") {
-		return capabilities
+		return finalizeCapabilities()
 	}
 
 	// Check for thinking capability
@@ -156,18 +191,50 @@ func (m *Model) Capabilities() []model.Capability {
 	hasTags := openingTag != "" && closingTag != ""
 	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
 	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
-		capabilities = append(capabilities, model.CapabilityThinking)
+		appendCapability(model.CapabilityThinking)
 	}
 
-	// Temporary workaround — suppress vision/audio for gemma4 MLX models
-	// until multimodal runtime pipeline lands. Remove when imageproc.go is wired up.
-	if m.Config.ModelFormat == "safetensors" && isGemma4Renderer(m.Config.Renderer) {
-		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityVision || c == "audio"
-		})
+	return finalizeCapabilities()
+}
+
+func suppressAudioCapability(m *Model, arch string) bool {
+	if isGemma4Renderer(m.Config.Renderer) {
+		// TODO: expose Gemma 4 audio once llama-server audio support is reliable.
+		return true
 	}
 
-	return capabilities
+	if arch == "nemotron_h_omni" ||
+		m.Config.ModelFamily == "nemotron_h_omni" ||
+		slices.Contains(m.Config.ModelFamilies, "nemotron_h_omni") {
+		// TODO: expose Nemotron3 audio once llama.cpp can skip or load the audio projector safely.
+		return true
+	}
+
+	return false
+}
+
+func projectorHasAudio(f *gguf.File) bool {
+	if f.KeyValue("has_audio_encoder").Bool() {
+		return true
+	}
+
+	for _, kv := range f.KeyValues() {
+		if strings.HasSuffix(kv.Key, ".has_audio_encoder") && kv.Bool() {
+			return true
+		}
+	}
+
+	return false
+}
+
+func projectorSuppressesAudioCapability(f *gguf.File) bool {
+	switch f.KeyValue("vision.projector_type").String() {
+	case "gemma3nv", "gemma4v":
+		// TODO: expose Gemma projector audio once llama-server audio support is reliable.
+		return true
+	}
+
+	return false
 }
 
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing
@@ -330,6 +397,7 @@ func GetModel(name string) (*Model, error) {
 		}
 	}
 
+	modelHasPooling := false
 	for _, layer := range mf.Layers {
 		filename, err := manifest.BlobsPath(layer.Digest)
 		if err != nil {
@@ -340,6 +408,16 @@ func GetModel(name string) (*Model, error) {
 		case "application/vnd.ollama.image.model":
 			m.ModelPath = filename
 			m.ParentModel = layer.From
+			if m.isGGUF() {
+				f, err := gguf.Open(filename)
+				if err != nil {
+					slog.Error("couldn't open model file", "error", err)
+					break
+				}
+				m.HasChatTemplate = f.KeyValue("tokenizer.chat_template").String() != ""
+				modelHasPooling = f.KeyValue("pooling_type").Valid()
+				f.Close()
+			}
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
@@ -350,6 +428,7 @@ func GetModel(name string) (*Model, error) {
 			m.ProjectorPaths = append(m.ProjectorPaths, filename)
 		case "application/vnd.ollama.image.prompt",
 			"application/vnd.ollama.image.template":
+			m.HasLegacyTemplate = true
 			bts, err := os.ReadFile(filename)
 			if err != nil {
 				return nil, err
@@ -394,6 +473,10 @@ func GetModel(name string) (*Model, error) {
 			}
 			m.License = append(m.License, string(bts))
 		}
+	}
+
+	if m.ModelPath != "" && m.isGGUF() && !modelHasPooling && !m.HasChatTemplate && (!m.HasLegacyTemplate || !envconfig.GoTemplate(true)) && m.Config.Renderer == "" && m.Config.Parser == "" && !shouldUseHarmony(m) {
+		slog.Warn("model is missing tokenizer.chat_template and Go TEMPLATE support is unavailable; chat responses may be poorly formatted", "model", m.Name, "env", "OLLAMA_GO_TEMPLATE=1")
 	}
 
 	return m, nil

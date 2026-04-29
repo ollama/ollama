@@ -136,15 +136,6 @@ if(MLX_ENGINE)
         install(DIRECTORY ${CMAKE_BINARY_DIR}/_deps/cccl-src/include/nv
             DESTINATION ${OLLAMA_INSTALL_DIR}/include/cccl
             COMPONENT MLX)
-        if(NOT WIN32 AND NOT APPLE)
-            install(CODE "
-                set(_link \"${CMAKE_INSTALL_PREFIX}/lib/ollama/include\")
-                set(_target \"${OLLAMA_RUNNER_DIR}/include\")
-                if(NOT EXISTS \${_link})
-                    execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink \${_target} \${_link})
-                endif()
-            " COMPONENT MLX)
-        endif()
     endif()
 
     # Install minimal CUDA toolkit headers needed by MLX JIT kernels.
@@ -199,6 +190,15 @@ if(MLX_ENGINE)
             install(FILES "${_cuda_inc}/crt/host_defines.h"
                 DESTINATION "${_dst}/crt"
                 COMPONENT MLX)
+            if(NOT WIN32 AND NOT APPLE)
+                install(CODE "
+                    set(_link \"${CMAKE_INSTALL_PREFIX}/lib/ollama/include\")
+                    set(_target \"${OLLAMA_RUNNER_DIR}/include\")
+                    if(NOT EXISTS \${_link})
+                        execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink \${_target} \${_link})
+                    endif()
+                " COMPONENT MLX)
+            endif()
         endif()
     endif()
 
@@ -230,5 +230,4 @@ if(MLX_ENGINE)
         endif()
     endif()
 endif()
-
 

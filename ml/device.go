@@ -485,12 +485,15 @@ func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
 	return cmp[0] == bLibSplit[1]
 }
 
-// For each GPU, check if it does NOT support flash attention
+// FlashAttentionSupported reports whether flash attention can be used across
+// all selected devices.
 func FlashAttentionSupported(l []DeviceInfo) bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
-			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
+			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 &&
+				gpu.ComputeMajor >= 7 &&
+				!(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
 			gpu.Library == "ROCm" ||
 			gpu.Library == "Vulkan"
 

@@ -52,6 +52,8 @@ type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
+	Chat(ctx context.Context, req ChatRequest, fn func(ChatResponse)) error
+	ApplyChatTemplate(ctx context.Context, req ChatRequest) (string, error)
 	Embedding(ctx context.Context, input string) ([]float32, int, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
@@ -166,6 +168,29 @@ type CompletionRequest struct {
 	Height int32 `json:"height,omitempty"`
 	Steps  int32 `json:"steps,omitempty"`
 	Seed   int64 `json:"seed,omitempty"`
+}
+
+type ChatRequest struct {
+	Messages []api.Message
+	Tools    api.Tools
+	Format   json.RawMessage
+	Options  *api.Options
+	Think    *api.ThinkValue
+	Shift    bool
+
+	Logprobs    bool
+	TopLogprobs int
+}
+
+type ChatResponse struct {
+	Message            api.Message   `json:"message"`
+	DoneReason         DoneReason    `json:"done_reason"`
+	Done               bool          `json:"done"`
+	PromptEvalCount    int           `json:"prompt_eval_count"`
+	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
+	EvalCount          int           `json:"eval_count"`
+	EvalDuration       time.Duration `json:"eval_duration"`
+	Logprobs           []Logprob     `json:"logprobs,omitempty"`
 }
 
 // DoneReason represents the reason why a completion response is done

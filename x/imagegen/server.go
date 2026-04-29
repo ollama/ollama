@@ -372,6 +372,14 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	return scanErr
 }
 
+func (s *Server) Chat(ctx context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
+	return errors.New("image generation runner does not support native chat")
+}
+
+func (s *Server) ApplyChatTemplate(ctx context.Context, req llm.ChatRequest) (string, error) {
+	return "", errors.New("image generation runner does not support native chat templates")
+}
+
 // Close terminates the subprocess.
 func (s *Server) Close() error {
 	s.mu.Lock()

@@ -17,6 +17,10 @@ const (
 	lagunaToolCallCloseTag = "</tool_call>"
 	lagunaUserOpenTag      = "<user>"
 	lagunaUserCloseTag     = "</user>"
+	lagunaArgKeyOpenTag    = "<arg_key>"
+	lagunaArgKeyCloseTag   = "</arg_key>"
+	lagunaArgValueOpenTag  = "<arg_value>"
+	lagunaArgValueCloseTag = "</arg_value>"
 )
 
 type lagunaParserState int
@@ -43,6 +47,21 @@ func (p *LagunaParser) HasToolSupport() bool {
 
 func (p *LagunaParser) HasThinkingSupport() bool {
 	return true
+}
+
+func (p *LagunaParser) PreservedTokens() []string {
+	return []string{
+		lagunaThinkingOpenTag,
+		lagunaThinkingCloseTag,
+		lagunaToolCallOpenTag,
+		lagunaToolCallCloseTag,
+		lagunaUserOpenTag,
+		lagunaUserCloseTag,
+		lagunaArgKeyOpenTag,
+		lagunaArgKeyCloseTag,
+		lagunaArgValueOpenTag,
+		lagunaArgValueCloseTag,
+	}
 }
 
 func (p *LagunaParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {

@@ -68,7 +68,12 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 				return nil, err
 			}
 
-			layers = append(layers, &layerGGML{layer, f})
+			layerGGML, err := normalizeLegacyLlavaProjectorLayer(&layerGGML{layer, f}, blob)
+			if err != nil {
+				return nil, err
+			}
+
+			layers = append(layers, layerGGML)
 		default:
 			layers = append(layers, &layerGGML{layer, nil})
 		}

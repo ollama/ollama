@@ -16,6 +16,9 @@ type Parser interface {
 	// Add processes streamed content and returns parsed content, thinking, and tool calls
 	// The done flag indicates if this is the last chunk (used for draining accumulators)
 	Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error)
+	// PreservedTokens returns parser grammar tokens that must remain visible in
+	// llama-server detokenized output for this parser to recognize boundaries.
+	PreservedTokens() []string
 	HasToolSupport() bool
 	HasThinkingSupport() bool
 }
@@ -103,6 +106,10 @@ func (p *PassthroughParser) Init(tools []api.Tool, lastMessage *api.Message, thi
 
 func (p *PassthroughParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	return s, "", nil, nil
+}
+
+func (p *PassthroughParser) PreservedTokens() []string {
+	return nil
 }
 
 func (p *PassthroughParser) HasToolSupport() bool {

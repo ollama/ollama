@@ -86,8 +86,28 @@ func (p *glm4MoeLiteModel) KV(t *Tokenizer) KV {
 	kv["deepseek2.attention.value_length_mla"] = p.VHeadDim
 
 	kv["tokenizer.ggml.pre"] = "glm4"
+	setGLM4MoeLiteExtraEOGFromEOSIDs(kv)
 
 	return kv
+}
+
+func setGLM4MoeLiteExtraEOGFromEOSIDs(kv KV) {
+	switch ids := kv["tokenizer.ggml.eos_token_ids"].(type) {
+	case []int32:
+		if len(ids) >= 2 {
+			kv["tokenizer.ggml.eot_token_id"] = uint32(ids[1])
+		}
+		if len(ids) >= 3 {
+			kv["tokenizer.ggml.eom_token_id"] = uint32(ids[2])
+		}
+	case []uint32:
+		if len(ids) >= 2 {
+			kv["tokenizer.ggml.eot_token_id"] = ids[1]
+		}
+		if len(ids) >= 3 {
+			kv["tokenizer.ggml.eom_token_id"] = ids[2]
+		}
+	}
 }
 
 func (p *glm4MoeLiteModel) Replacements() []string {

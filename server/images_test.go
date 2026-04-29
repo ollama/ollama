@@ -57,6 +57,82 @@ func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
 	}
 }
 
+func TestGetModelTemplateMetadata(t *testing.T) {
+	customTemplate := "CUSTOM {{ .Prompt }}"
+
+	t.Run("records chat template and legacy template layer", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture":    "llama",
+			"tokenizer.chat_template": "{{ bos_token }}{{ messages[0]['content'] }}",
+		}, nil)
+		writeTestModelManifest(t, "template-disabled", digest, customTemplate)
+
+		m, err := GetModel("template-disabled")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !m.HasChatTemplate {
+			t.Fatal("expected GGUF chat template to be detected")
+		}
+		if !m.HasLegacyTemplate {
+			t.Fatal("expected legacy template layer to be detected")
+		}
+		if got := m.Template.String(); got != customTemplate {
+			t.Fatalf("template = %q, want %q", got, customTemplate)
+		}
+	})
+
+	t.Run("records missing chat template", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture": "llama",
+		}, nil)
+		writeTestModelManifest(t, "missing-chat-template", digest, customTemplate)
+
+		m, err := GetModel("missing-chat-template")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.HasChatTemplate {
+			t.Fatal("expected missing GGUF chat template")
+		}
+		if !m.HasLegacyTemplate {
+			t.Fatal("expected legacy template layer to be detected")
+		}
+	})
+}
+
+func writeTestModelManifest(t *testing.T, name, digest, tmpl string) {
+	t.Helper()
+
+	modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	templateLayer, err := manifest.NewLayer(strings.NewReader(tmpl), "application/vnd.ollama.image.template")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layers := []manifest.Layer{modelLayer, templateLayer}
+	configLayer, err := createConfigLayer(layers, model.ConfigV2{
+		ModelFormat:   "gguf",
+		ModelFamily:   "llama",
+		ModelFamilies: []string{"llama"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifest(model.ParseName(name), *configLayer, layers); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestModelCapabilities(t *testing.T) {
 	// Create completion model (llama architecture without vision)
 	completionModelPath, _ := createBinFile(t, ggml.KV{
@@ -73,6 +149,28 @@ func TestModelCapabilities(t *testing.T) {
 	embeddingModelPath, _ := createBinFile(t, ggml.KV{
 		"general.architecture": "bert",
 		"bert.pooling_type":    uint32(1),
+	}, []*ggml.Tensor{})
+
+	audioProjectorPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":    "clip",
+		"clip.has_audio_encoder":  true,
+		"vision.projector_type":   "pixtral",
+		"clip.vision.block_count": uint32(1),
+	}, []*ggml.Tensor{})
+
+	nemotronOmniModelPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":                 "nemotron_h_omni",
+		"nemotron_h_omni.vision.block_count":   uint32(1),
+		"nemotron_h_omni.audio.block_count":    uint32(1),
+		"nemotron_h_omni.embedding_length":     uint32(1),
+		"nemotron_h_omni.attention.head_count": uint32(1),
+	}, []*ggml.Tensor{})
+
+	suppressedAudioProjectorPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":    "clip",
+		"clip.has_audio_encoder":  true,
+		"vision.projector_type":   "gemma4v",
+		"clip.vision.block_count": uint32(1),
 	}, []*ggml.Tensor{})
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
@@ -161,6 +259,57 @@ func TestModelCapabilities(t *testing.T) {
 				Template:  chatTemplate,
 			},
 			expectedCaps: []model.Capability{model.CapabilityEmbedding},
+		},
+		{
+			name: "model with audio projector capability",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioProjectorPath},
+				Template:       chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio},
+		},
+		{
+			name: "gemma4 projector suppresses audio capability",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{suppressedAudioProjectorPath},
+				Template:       chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
+		},
+		{
+			name: "gemma4 gguf suppresses audio capability",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioProjectorPath},
+				Config: model.ConfigV2{
+					Renderer:     gemma4RendererSmall,
+					Capabilities: []string{"audio"},
+				},
+				Template: chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
+		},
+		{
+			name: "nemotron3 gguf suppresses audio capability",
+			model: Model{
+				ModelPath: nemotronOmniModelPath,
+				Template:  chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
+		},
+		{
+			name: "nemotron3 projector suppresses audio capability",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioProjectorPath},
+				Config: model.ConfigV2{
+					ModelFamily: "nemotron_h_omni",
+				},
+				Template: chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
 		},
 		{
 			name: "gemma4 small safetensors suppresses vision and audio",

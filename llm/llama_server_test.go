@@ -2,17 +2,23 @@ package llm
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
 
 	"github.com/ollama/ollama/api"
@@ -186,6 +192,145 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	}
 }
 
+func TestLlamaServerCompletionTruncatesPromptAsTokens(t *testing.T) {
+	var completionReq llamaServerCompletionRequest
+	var tokenizeReq struct {
+		Content      string `json:"content"`
+		AddSpecial   bool   `json:"add_special"`
+		ParseSpecial *bool  `json:"parse_special"`
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/tokenize":
+			if err := json.NewDecoder(r.Body).Decode(&tokenizeReq); err != nil {
+				t.Errorf("invalid tokenize request body: %v", err)
+				return
+			}
+			fmt.Fprint(w, `{"tokens":[0,1,2,3,4,5,6,7,8,9]}`)
+		case "/completion":
+			if err := json.NewDecoder(r.Body).Decode(&completionReq); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":7,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 8}},
+	}
+
+	opts := api.DefaultOptions()
+	opts.NumKeep = 3
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:   strings.Repeat("long prompt ", 2),
+		Options:  &opts,
+		Truncate: true,
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if tokenizeReq.Content != strings.Repeat("long prompt ", 2) {
+		t.Fatalf("tokenize content = %q", tokenizeReq.Content)
+	}
+	if !tokenizeReq.AddSpecial {
+		t.Fatal("expected tokenize request to add special tokens")
+	}
+
+	got, ok := completionReq.Prompt.([]any)
+	if !ok {
+		t.Fatalf("completion prompt = %T, want token array", completionReq.Prompt)
+	}
+	want := []int{0, 1, 2, 6, 7, 8, 9}
+	if len(got) != len(want) {
+		t.Fatalf("token prompt len = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i, wantToken := range want {
+		gotToken, ok := got[i].(float64)
+		if !ok || int(gotToken) != wantToken {
+			t.Fatalf("token prompt[%d] = %#v, want %d", i, got[i], wantToken)
+		}
+	}
+}
+
+func TestLlamaServerCompletionWithMediaUsesRunnerMarker(t *testing.T) {
+	var capturedReq llamaServerCompletionRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		if r.URL.Path != "/completion" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&capturedReq); err != nil {
+			t.Errorf("invalid request body: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"content":"","stop":true,"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	const mediaMarker = "<__ollama_media_test__>"
+	runner := &llamaServerRunner{
+		port:        portInt,
+		cmd:         fakeRunningCmd(),
+		sem:         semaphore.NewWeighted(1),
+		options:     api.Options{Runner: api.Runner{NumCtx: 2048}},
+		mediaMarker: mediaMarker,
+	}
+
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:  "look [img-7] now",
+		Options: &opts,
+		Images:  []ImageData{{ID: 7, Data: []byte("media-bytes")}},
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	promptObj, ok := capturedReq.Prompt.(map[string]any)
+	if !ok {
+		t.Fatalf("prompt = %T, want multimodal prompt object", capturedReq.Prompt)
+	}
+	if got, want := promptObj["prompt_string"], "look "+mediaMarker+" now"; got != want {
+		t.Fatalf("prompt_string = %q, want %q", got, want)
+	}
+	data, ok := promptObj["multimodal_data"].([]any)
+	if !ok {
+		t.Fatalf("multimodal_data = %T, want array", promptObj["multimodal_data"])
+	}
+	if len(data) != 1 {
+		t.Fatalf("multimodal_data len = %d, want 1", len(data))
+	}
+	if got, want := data[0], base64.StdEncoding.EncodeToString([]byte("media-bytes")); got != want {
+		t.Fatalf("multimodal_data[0] = %q, want %q", got, want)
+	}
+}
+
 func TestLlamaServerCompletionLengthStop(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
@@ -223,6 +368,138 @@ func TestLlamaServerCompletionLengthStop(t *testing.T) {
 	}
 	if lastResp.DoneReason != DoneReasonLength {
 		t.Errorf("DoneReason = %v, want %v", lastResp.DoneReason, DoneReasonLength)
+	}
+}
+
+func TestLlamaServerStatusErrorMessageIncludesOOMStatus(t *testing.T) {
+	status := &StatusWriter{}
+	status.SetLastError("error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)")
+	runner := &llamaServerRunner{
+		status: status,
+	}
+
+	got := runner.statusErrorMessage([]byte(`{"error":{"message":"Compute error."}}`))
+	if !strings.Contains(got, "Compute error") {
+		t.Fatalf("expected original response body, got %q", got)
+	}
+	if !IsOutOfMemoryMessage(got) {
+		t.Fatalf("expected OOM status detail to be detectable, got %q", got)
+	}
+}
+
+func TestLlamaServerWaitUntilRunningUsesStatusWhenDoneErrIsNil(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+
+	status := &StatusWriter{}
+	status.SetLastError("llama_init_from_model: failed to initialize the context: failed to initialize Metal backend")
+
+	runner := &llamaServerRunner{
+		done:   done,
+		status: status,
+	}
+
+	err := runner.WaitUntilRunning(t.Context())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "%!w(<nil>)") {
+		t.Fatalf("unexpected wrapped nil error: %q", err)
+	}
+	if !strings.Contains(err.Error(), status.LastError()) {
+		t.Fatalf("error %q does not include status message %q", err, status.LastError())
+	}
+}
+
+func TestLlamaServerWaitUntilRunningIgnoresStaleStartupOOMWhenReady(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	status := &StatusWriter{}
+	status.SetLastError("error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)")
+
+	runner := &llamaServerRunner{
+		port:   portInt,
+		cmd:    fakeRunningCmd(),
+		status: status,
+	}
+
+	err := runner.WaitUntilRunning(t.Context())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := status.LastError(); got != "" {
+		t.Fatalf("expected stale startup status to be cleared, got %q", got)
+	}
+}
+
+func TestLlamaServerWaitUntilRunningFailsOnHealthOOM(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"status":"error","message":"out of memory"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port: portInt,
+		cmd:  fakeRunningCmd(),
+	}
+
+	err := runner.WaitUntilRunning(t.Context())
+	if err == nil {
+		t.Fatal("expected startup OOM error")
+	}
+	if !IsOutOfMemory(err) {
+		t.Fatalf("expected OOM-classified error, got %q", err)
+	}
+}
+
+func TestLlamaServerWaitUntilRunningTimesOutWhenLoadExceedsTimeout(t *testing.T) {
+	t.Setenv("OLLAMA_LOAD_TIMEOUT", "10ms")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"status":"loading model"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port: portInt,
+		cmd:  fakeRunningCmd(),
+	}
+
+	err := runner.WaitUntilRunning(t.Context())
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out waiting for llama-server to start") {
+		t.Fatalf("expected load timeout, got %q", err)
 	}
 }
 
@@ -329,6 +606,131 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 	}
 }
 
+func TestLlamaServerCompletionStripsLeadingBOS(t *testing.T) {
+	tests := []struct {
+		name             string
+		stripLeadingBOS  bool
+		tokenizerAddsBOS bool
+		prompt           string
+		wantPrompt       string
+	}{
+		{
+			name:            "gemma4 llama server path",
+			stripLeadingBOS: true,
+			prompt:          "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+			wantPrompt:      "<|turn>user\nhello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:             "tokenizer auto bos path",
+			tokenizerAddsBOS: true,
+			prompt:           "<bos><start_of_turn>user\nhello<end_of_turn>\n<start_of_turn>model\n",
+			wantPrompt:       "<start_of_turn>user\nhello<end_of_turn>\n<start_of_turn>model\n",
+		},
+		{
+			name:            "other model keeps prompt",
+			stripLeadingBOS: false,
+			prompt:          "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+			wantPrompt:      "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:            "only leading bos is stripped",
+			stripLeadingBOS: true,
+			prompt:          "prefix <bos>",
+			wantPrompt:      "prefix <bos>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedReq llamaServerCompletionRequest
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/health" {
+					fmt.Fprint(w, `{"status":"ok"}`)
+					return
+				}
+				json.NewDecoder(r.Body).Decode(&capturedReq)
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+			}))
+			defer srv.Close()
+
+			parts := strings.Split(srv.URL, ":")
+			var portInt int
+			fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+			runner := &llamaServerRunner{
+				port:            portInt,
+				cmd:             fakeRunningCmd(),
+				sem:             semaphore.NewWeighted(1),
+				options:         api.Options{Runner: api.Runner{NumCtx: 2048}},
+				stripLeadingBOS: tt.stripLeadingBOS,
+			}
+			if tt.tokenizerAddsBOS {
+				runner.ggml = loadTestGGML(t, ggml.KV{
+					"general.architecture":         "gemma3",
+					"tokenizer.ggml.add_bos_token": true,
+				})
+			}
+
+			opts := api.DefaultOptions()
+			err := runner.Completion(t.Context(), CompletionRequest{
+				Prompt:  tt.prompt,
+				Options: &opts,
+			}, func(cr CompletionResponse) {})
+			if err != nil {
+				t.Fatalf("Completion error: %v", err)
+			}
+
+			if capturedReq.Prompt != tt.wantPrompt {
+				t.Fatalf("prompt = %q, want %q", capturedReq.Prompt, tt.wantPrompt)
+			}
+		})
+	}
+}
+
+func TestQwenVLServerArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		arch string
+		want []string
+	}{
+		{
+			name: "qwen2vl",
+			arch: "qwen2vl",
+			want: []string{"--image-min-tokens", "1024"},
+		},
+		{
+			name: "qwen25vl",
+			arch: "qwen25vl",
+			want: []string{"--image-min-tokens", "1024"},
+		},
+		{
+			name: "qwen3vl",
+			arch: "qwen3vl",
+			want: []string{"--image-min-tokens", "1024"},
+		},
+		{
+			name: "qwen3vlmoe",
+			arch: "qwen3vlmoe",
+			want: []string{"--image-min-tokens", "1024"},
+		},
+		{
+			name: "other model",
+			arch: "llama",
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := qwenVLServerArgs(tt.arch); !slices.Equal(got, tt.want) {
+				t.Fatalf("qwenVLServerArgs(%q) = %v, want %v", tt.arch, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLlamaServerTokenize(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/tokenize" {
@@ -355,6 +757,39 @@ func TestLlamaServerTokenize(t *testing.T) {
 	}
 	if len(tokens) != 3 || tokens[0] != 1 || tokens[1] != 2 || tokens[2] != 3 {
 		t.Errorf("tokens = %v, want [1,2,3]", tokens)
+	}
+}
+
+func TestLlamaServerTokenizeDoesNotReuseIdleConnections(t *testing.T) {
+	var newConns atomic.Int64
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tokenize" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		fmt.Fprint(w, `{"tokens":[1,2,3]}`)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConns.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{port: portInt, cmd: fakeRunningCmd()}
+	for range 2 {
+		if _, err := runner.Tokenize(t.Context(), "hello world"); err != nil {
+			t.Fatalf("Tokenize error: %v", err)
+		}
+	}
+	if got := newConns.Load(); got < 2 {
+		t.Fatalf("Tokenize reused an idle llama-server connection, new connections = %d", got)
 	}
 }
 
@@ -518,6 +953,193 @@ func TestLlamaServerEmbeddingTooLargeError(t *testing.T) {
 	}
 }
 
+func TestEmbeddingBatchSize(t *testing.T) {
+	tests := []struct {
+		name        string
+		numCtx      int
+		numBatch    int
+		numParallel int
+		want        int
+	}{
+		{
+			name:        "uses num batch",
+			numCtx:      40960,
+			numBatch:    2048,
+			numParallel: 1,
+			want:        2048,
+		},
+		{
+			name:        "caps to context",
+			numCtx:      1024,
+			numBatch:    2048,
+			numParallel: 1,
+			want:        1024,
+		},
+		{
+			name:        "accounts for parallel context",
+			numCtx:      1024,
+			numBatch:    4096,
+			numParallel: 2,
+			want:        2048,
+		},
+		{
+			name:        "omits flags when unset",
+			numCtx:      40960,
+			numBatch:    0,
+			numParallel: 1,
+			want:        0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := api.DefaultOptions()
+			opts.NumCtx = tt.numCtx
+			opts.NumBatch = tt.numBatch
+			if got := embeddingBatchSize(opts, tt.numParallel); got != tt.want {
+				t.Fatalf("embeddingBatchSize = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAppendFlashAttentionArgs(t *testing.T) {
+	supportedGPU := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9}}
+	oldGPU := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9},
+		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2},
+	}
+
+	tests := []struct {
+		name string
+		env  string
+		set  bool
+		gpus []ml.DeviceInfo
+		want []string
+	}{
+		{
+			name: "unset uses llama-server auto mode",
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "auto"},
+		},
+		{
+			name: "empty uses llama-server auto mode",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "auto"},
+		},
+		{
+			name: "zero disables flash attention",
+			env:  "0",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "off"},
+		},
+		{
+			name: "false disables flash attention",
+			env:  "false",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "off"},
+		},
+		{
+			name: "one enables flash attention",
+			env:  "1",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "on"},
+		},
+		{
+			name: "true enables flash attention",
+			env:  "true",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "on"},
+		},
+		{
+			name: "invalid enables flash attention",
+			env:  "random",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "on"},
+		},
+		{
+			name: "old cuda disables flash attention by default",
+			gpus: oldGPU,
+			want: []string{"base", "--flash-attn", "off"},
+		},
+		{
+			name: "explicit enable is clamped off on old cuda",
+			env:  "1",
+			set:  true,
+			gpus: oldGPU,
+			want: []string{"base", "--flash-attn", "off"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setFlashAttentionEnv(t, tt.env, tt.set)
+			got := appendFlashAttentionArgs([]string{"base"}, tt.gpus)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendFlashAttentionArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAppendMainGPUArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		opts api.Options
+		want []string
+	}{
+		{
+			name: "unset leaves llama-server default split mode",
+			opts: api.DefaultOptions(),
+			want: []string{"base"},
+		},
+		{
+			name: "explicit zero selects gpu zero",
+			opts: api.Options{Runner: api.Runner{MainGPU: testIntPtr(0)}},
+			want: []string{"base", "--split-mode", "none", "--main-gpu", "0"},
+		},
+		{
+			name: "explicit nonzero selects requested gpu",
+			opts: api.Options{Runner: api.Runner{MainGPU: testIntPtr(1)}},
+			want: []string{"base", "--split-mode", "none", "--main-gpu", "1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendMainGPUArgs([]string{"base"}, tt.opts)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendMainGPUArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func testIntPtr(v int) *int {
+	return &v
+}
+
+func setFlashAttentionEnv(t *testing.T, value string, set bool) {
+	t.Helper()
+
+	if set {
+		t.Setenv("OLLAMA_FLASH_ATTENTION", value)
+		return
+	}
+
+	old, ok := os.LookupEnv("OLLAMA_FLASH_ATTENTION")
+	if ok {
+		t.Setenv("OLLAMA_FLASH_ATTENTION", old)
+	}
+	os.Unsetenv("OLLAMA_FLASH_ATTENTION")
+}
+
 func TestNormalizeEmbeddingError(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -623,6 +1245,63 @@ func TestLlamaServerCompletionWithLogprobs(t *testing.T) {
 	}
 	if len(responses[0].Logprobs[0].TopLogprobs) != 2 {
 		t.Errorf("top_logprobs len = %d, want 2", len(responses[0].Logprobs[0].TopLogprobs))
+	}
+}
+
+func TestLlamaServerCompletionDoneCallbackAfterStreamClosed(t *testing.T) {
+	var completionClosed atomic.Bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/completion":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"eos","timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			time.Sleep(25 * time.Millisecond)
+			completionClosed.Store(true)
+		case "/tokenize":
+			if !completionClosed.Load() {
+				http.Error(w, "completion stream still active", http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprint(w, `{"tokens":[1,2,3]}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	opts := api.DefaultOptions()
+	var callbackErr error
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:  "test",
+		Options: &opts,
+	}, func(cr CompletionResponse) {
+		if !cr.Done {
+			return
+		}
+		_, callbackErr = runner.Tokenize(t.Context(), "test")
+	})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+	if callbackErr != nil {
+		t.Fatalf("Tokenize from Done callback failed: %v", callbackErr)
 	}
 }
 
@@ -1033,6 +1712,52 @@ func TestIsGPUBuffer(t *testing.T) {
 	}
 }
 
+func TestAccumulatedToolCallsRejectsInvalidArguments(t *testing.T) {
+	_, err := accumulatedToolCalls(map[int]*llamaServerToolCallAccumulator{
+		0: {
+			name:      "weather",
+			arguments: `{"city":`,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected invalid tool call arguments to return an error")
+	}
+	if !strings.Contains(err.Error(), "weather") {
+		t.Fatalf("expected function name in error, got %v", err)
+	}
+}
+
+func TestLlamaServerChatMessageConvertsToolCalls(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("command", "ls")
+
+	msg, err := llamaServerChatMessage(api.Message{
+		Role: "assistant",
+		ToolCalls: []api.ToolCall{{
+			ID: "call_1",
+			Function: api.ToolCallFunction{
+				Index:     2,
+				Name:      "bash",
+				Arguments: args,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	toolCalls, ok := msg["tool_calls"].([]llamaServerChatToolCall)
+	if !ok || len(toolCalls) != 1 {
+		t.Fatalf("expected one llama-server tool call, got %#v", msg["tool_calls"])
+	}
+	if toolCalls[0].Index != 2 || toolCalls[0].Type != "function" || toolCalls[0].Function.Name != "bash" {
+		t.Fatalf("unexpected tool call metadata: %#v", toolCalls[0])
+	}
+	if toolCalls[0].Function.Arguments != `{"command":"ls"}` {
+		t.Fatalf("expected string-encoded arguments, got %#v", toolCalls[0])
+	}
+}
+
 func TestFindLlamaServer(t *testing.T) {
 	// This just tests that the function doesn't panic and returns a reasonable error
 	// when the binary doesn't exist in the expected locations
@@ -1040,6 +1765,27 @@ func TestFindLlamaServer(t *testing.T) {
 	// In the test environment, it may or may not exist depending on whether
 	// cmake was run. Just verify it doesn't panic.
 	_ = err
+}
+
+func loadTestGGML(t *testing.T, kv ggml.KV) *ggml.GGML {
+	t.Helper()
+
+	f, err := os.CreateTemp(t.TempDir(), "*.gguf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ggml.WriteGGUF(f, kv, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	model, err := LoadModel(f.Name(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return model
 }
 
 // fakeRunningCmd returns an exec.Cmd that looks like it's still running

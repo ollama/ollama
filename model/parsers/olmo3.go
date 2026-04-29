@@ -39,6 +39,13 @@ func (p *Olmo3Parser) HasThinkingSupport() bool {
 	return false
 }
 
+func (p *Olmo3Parser) PreservedTokens() []string {
+	return []string{
+		olmo3FuncCallsOpenTag,
+		olmo3FuncCallsCloseTag,
+	}
+}
+
 func (p *Olmo3Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.state = olmo3StateContent
 	p.callIndex = 0

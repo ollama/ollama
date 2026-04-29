@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -500,7 +501,11 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 			if err != nil {
 				return nil, err
 			}
-			layers = append(layers, &layerGGML{projLayer, projGGML})
+			projectorLayer, err := normalizeLegacyLlavaProjectorLayer(&layerGGML{projLayer, projGGML}, projFile)
+			if err != nil {
+				return nil, err
+			}
+			layers = append(layers, projectorLayer)
 		}
 		return detectChatTemplate(layers)
 	}
@@ -745,7 +750,84 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 
 	layers = append(layers, &layerGGML{layer, f})
 
+	normalized, err := normalizeLegacyLlavaProjectorLayer(layers[0], blob)
+	if err != nil {
+		return nil, err
+	}
+	layers[0] = normalized
+
 	return detectChatTemplate(layers)
+}
+
+func normalizeLegacyLlavaProjectorLayer(layer *layerGGML, blob *os.File) (*layerGGML, error) {
+	if layer.GGML == nil || layer.MediaType != "application/vnd.ollama.image.projector" || !needsLegacyLlavaProjectorType(layer.GGML.KV()) {
+		return layer, nil
+	}
+
+	kv := maps.Clone(layer.GGML.KV())
+	kv["clip.projector_type"] = "mlp"
+
+	temp, err := os.CreateTemp(filepath.Dir(blob.Name()), "projector-")
+	if err != nil {
+		return nil, err
+	}
+	defer temp.Close()
+	defer os.Remove(temp.Name())
+
+	if err := ggml.WriteGGUF(temp, kv, ggufTensorsFrom(blob, layer.GGML)); err != nil {
+		return nil, err
+	}
+	if _, err := temp.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	normalizedLayer, err := manifest.NewLayer(temp, layer.MediaType)
+	if err != nil {
+		return nil, err
+	}
+	normalizedLayer.Name = layer.Name
+
+	if _, err := temp.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	normalizedGGML, err := ggml.Decode(temp, -1)
+	if err != nil {
+		return nil, err
+	}
+
+	return &layerGGML{normalizedLayer, normalizedGGML}, nil
+}
+
+func needsLegacyLlavaProjectorType(kv ggml.KV) bool {
+	return kv.Architecture() == "clip" &&
+		kv.Bool("has_vision_encoder") &&
+		kv.String("projector_type") == "" &&
+		kv.String("vision.projector_type") == ""
+}
+
+func ggufTensorsFrom(r io.ReaderAt, f *ggml.GGML) []*ggml.Tensor {
+	tensors := f.Tensors()
+	out := make([]*ggml.Tensor, 0, len(tensors.Items()))
+	for _, tensor := range tensors.Items() {
+		t := *tensor
+		t.WriterTo = ggufTensorReader{
+			r:   r,
+			off: int64(tensors.Offset + tensor.Offset),
+			n:   int64(tensor.Size()),
+		}
+		out = append(out, &t)
+	}
+	return out
+}
+
+type ggufTensorReader struct {
+	r   io.ReaderAt
+	off int64
+	n   int64
+}
+
+func (r ggufTensorReader) WriteTo(w io.Writer) (int64, error) {
+	return io.Copy(w, io.NewSectionReader(r.r, r.off, r.n))
 }
 
 func removeLayer(layers []manifest.Layer, mediatype string) []manifest.Layer {

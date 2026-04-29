@@ -38,17 +38,14 @@ import (
 // Captured from system_info line:
 //
 //	system_info: ... | CUDA : ARCHS = 750,800,860,890,... |
-func llamaServerDiscoverDevices(ctx context.Context, libDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
-	devices, _, _, _ := llamaServerDiscoverDevicesWithStatus(ctx, libDirs, extraEnvs)
-	return devices
-}
+const llamaServerDiscoveryWaitDelay = 5 * time.Second
 
-func llamaServerDiscoverDevicesWithStatus(ctx context.Context, libDirs []string, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, int, error) {
+func llamaServerDiscoverDevices(ctx context.Context, libDirs []string, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, error) {
 	status := llm.NewStatusWriter(llamaServerDiscoveryOutput(ctx))
 	llamaServer, err := llm.FindLlamaServer()
 	if err != nil {
 		slog.Debug("llama-server not available for device discovery", "error", err)
-		return nil, status, -1, err
+		return nil, status, err
 	}
 
 	start := time.Now()
@@ -65,6 +62,7 @@ func llamaServerDiscoverDevicesWithStatus(ctx context.Context, libDirs []string,
 		"--no-webui",
 		"--offline",
 	)
+	cmd.WaitDelay = llamaServerDiscoveryWaitDelay
 	cmd.Env = os.Environ()
 
 	setupLibraryEnv(cmd, libDirs, extraEnvs)
@@ -76,15 +74,15 @@ func llamaServerDiscoverDevicesWithStatus(ctx context.Context, libDirs []string,
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		slog.Debug("llama-server discovery: failed to create stderr pipe", "error", err)
-		return nil, status, -1, err
+		return nil, status, err
 	}
-	// Capture stdout (device list) into a buffer
-	var stdoutBuf strings.Builder
-	cmd.Stdout = io.MultiWriter(&stdoutBuf, status)
+	// Forward stdout through the same status writer so trace logging captures
+	// all llama-server discovery output.
+	cmd.Stdout = status
 
 	if err := cmd.Start(); err != nil {
 		slog.Debug("llama-server discovery: failed to start", "error", err)
-		return nil, status, -1, err
+		return nil, status, err
 	}
 
 	// Read stderr until we see system_info or timeout
@@ -95,8 +93,8 @@ func llamaServerDiscoverDevicesWithStatus(ctx context.Context, libDirs []string,
 		scanner := bufio.NewScanner(stderrPipe)
 		for scanner.Scan() {
 			line := scanner.Text()
-			stderrLines = append(stderrLines, line)
 			_, _ = status.Write([]byte(line + "\n"))
+			stderrLines = append(stderrLines, line)
 			if strings.Contains(line, "system_info:") {
 				gotSystemInfo = true
 				break
@@ -110,16 +108,12 @@ func llamaServerDiscoverDevicesWithStatus(ctx context.Context, libDirs []string,
 	case <-ctx.Done():
 	}
 
-	// Kill the server — we have what we need (or timed out)
+	// Kill the server - we have what we need, or timed out.
 	stoppedForDiscovery := false
 	if cmd.Process != nil {
 		stoppedForDiscovery = cmd.Process.Kill() == nil
 	}
 	waitErr := cmd.Wait()
-	exitCode := -1
-	if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	}
 	if waitErr != nil {
 		if stoppedForDiscovery {
 			slog.Debug("llama-server discovery: stopped subprocess after collecting GPU info", "libDirs", libDirs)
@@ -129,8 +123,13 @@ func llamaServerDiscoverDevicesWithStatus(ctx context.Context, libDirs []string,
 	}
 	<-done
 
+	if ctx.Err() != nil {
+		slog.Warn("llama-server discovery: timed out waiting for server startup", "error", ctx.Err(), "libDirs", libDirs, "lines_captured", len(stderrLines))
+		return nil, status, ctx.Err()
+	}
+
 	if !gotSystemInfo {
-		slog.Warn("llama-server discovery: system_info line not found in output — "+
+		slog.Warn("llama-server discovery: system_info line not found in output - "+
 			"CUDA architecture filtering will be disabled. If GPU inference fails, "+
 			"this may indicate an incompatible llama-server version.",
 			"libDirs", libDirs, "lines_captured", len(stderrLines))
@@ -139,19 +138,17 @@ func llamaServerDiscoverDevicesWithStatus(ctx context.Context, libDirs []string,
 	// Also run --list-devices to get the stdout device list with free memory
 	// (the brief server startup doesn't print that)
 	cmd2 := exec.CommandContext(ctx, llamaServer, "--list-devices", "--offline")
+	cmd2.WaitDelay = llamaServerDiscoveryWaitDelay
 	cmd2.Env = cmd.Env // reuse same environment
 	listOutput, err := cmd2.CombinedOutput()
 	_, _ = status.Write(listOutput)
 	if err != nil {
 		slog.Debug("llama-server --list-devices failed", "error", err)
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
-		return nil, status, exitCode, err
+		return nil, status, fmt.Errorf("llama-server --list-devices failed: %w", err)
 	}
 
 	combined := string(listOutput) + "\n" + strings.Join(stderrLines, "\n")
-	return parseLlamaServerDevices(combined, libDirs), status, exitCode, nil
+	return parseLlamaServerDevices(combined, libDirs), status, nil
 }
 
 func llamaServerDiscoveryOutput(ctx context.Context) io.Writer {
@@ -237,6 +234,13 @@ var gfxTargetRegex = regexp.MustCompile(
 	`Device\s+(\d+):.*,\s+(gfx[0-9a-f]+)[\s:(]`,
 )
 
+// vulkanUMARegex matches Vulkan debug lines like:
+//
+//	ggml_vulkan: 0 = Intel(R) Graphics (...) | uma: 1 | fp16: 1 |
+var vulkanUMARegex = regexp.MustCompile(
+	`ggml_vulkan:\s+(\d+)\s+=.*\|\s+uma:\s+([01])\s+\|`,
+)
+
 // cudaCCRegex matches CUDA stderr lines like:
 //
 //	Device 0: NVIDIA GeForce GTX 1060 6GB, compute capability 6.1, VMM: yes, VRAM: 6063 MiB
@@ -257,8 +261,9 @@ var cudaArchsRegex = regexp.MustCompile(
 func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 	// Extract per-device metadata from stderr
 	gfxByIndex := make(map[int]string)
-	ccByIndex := make(map[int]string) // "610", "890", etc.
-	var cudaArchs []string            // compiled architectures for this variant
+	integratedByIndex := make(map[int]bool)
+	ccByIndex := make(map[int]cudaComputeCapability)
+	var cudaArchs []string // compiled architectures for this variant
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
@@ -267,11 +272,19 @@ func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 			idx, _ := strconv.Atoi(matches[1])
 			gfxByIndex[idx] = matches[2]
 		}
+		if matches := vulkanUMARegex.FindStringSubmatch(line); matches != nil {
+			idx, _ := strconv.Atoi(matches[1])
+			integratedByIndex[idx] = matches[2] == "1"
+		}
 		if matches := cudaCCRegex.FindStringSubmatch(line); matches != nil {
 			idx, _ := strconv.Atoi(matches[1])
 			major, _ := strconv.Atoi(matches[2])
 			minor, _ := strconv.Atoi(matches[3])
-			ccByIndex[idx] = fmt.Sprintf("%d%d0", major, minor)
+			ccByIndex[idx] = cudaComputeCapability{
+				major: major,
+				minor: minor,
+				arch:  fmt.Sprintf("%d%d0", major, minor),
+			}
 		}
 		if matches := cudaArchsRegex.FindStringSubmatch(line); matches != nil {
 			cudaArchs = strings.Split(matches[1], ",")
@@ -311,16 +324,16 @@ func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 
 		// For CUDA devices, check if this variant supports the device's CC
 		if library == "CUDA" {
-			cc := ccByIndex[deviceIndex]
-			if cc != "" && len(cudaArchSet) > 0 {
-				if !cudaArchSet[cc] {
+			cc, ok := ccByIndex[deviceIndex]
+			if ok && len(cudaArchSet) > 0 {
+				if !cudaArchSet[cc.arch] {
 					slog.Info("skipping CUDA device — compute capability not in compiled architectures",
-						"device", description, "cc", cc, "archs", cudaArchs,
+						"device", description, "cc", cc.arch, "archs", cudaArchs,
 						"libDirs", libDirs)
 					deviceIndex++
 					continue
 				}
-			} else if cc == "" {
+			} else if !ok {
 				slog.Warn("llama-server discovery: could not determine compute capability for CUDA device — "+
 					"architecture filtering disabled for this device. If inference crashes, "+
 					"check that the CUDA backend supports this GPU.",
@@ -333,17 +346,21 @@ func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 			}
 		}
 
+		computeMajor, computeMinor := computeVersion(library, deviceIndex, gfxByIndex, ccByIndex)
 		dev := ml.DeviceInfo{
 			DeviceID: ml.DeviceID{
 				ID:      strconv.Itoa(deviceIndex),
 				Library: library,
 			},
-			Name:        name,
-			Description: description,
-			TotalMemory: totalMiB * 1024 * 1024,
-			FreeMemory:  freeMiB * 1024 * 1024,
-			LibraryPath: libDirs,
-			GFXTarget:   gfxByIndex[deviceIndex],
+			Name:         name,
+			Description:  description,
+			TotalMemory:  totalMiB * 1024 * 1024,
+			FreeMemory:   freeMiB * 1024 * 1024,
+			ComputeMajor: computeMajor,
+			ComputeMinor: computeMinor,
+			LibraryPath:  libDirs,
+			GFXTarget:    gfxByIndex[deviceIndex],
+			Integrated:   isIntegratedLlamaServerDevice(library, deviceIndex, integratedByIndex),
 		}
 
 		devices = append(devices, dev)
@@ -351,6 +368,42 @@ func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 	}
 
 	return devices
+}
+
+type cudaComputeCapability struct {
+	major int
+	minor int
+	arch  string
+}
+
+func computeVersion(library string, deviceIndex int, gfxByIndex map[int]string, ccByIndex map[int]cudaComputeCapability) (int, int) {
+	switch library {
+	case "CUDA":
+		if cc, ok := ccByIndex[deviceIndex]; ok {
+			return cc.major, cc.minor
+		}
+	case "ROCm":
+		return parseGFXTarget(gfxByIndex[deviceIndex])
+	}
+	return 0, 0
+}
+
+func parseGFXTarget(gfx string) (int, int) {
+	gfx, ok := strings.CutPrefix(gfx, "gfx")
+	if !ok || len(gfx) < 3 {
+		return 0, 0
+	}
+
+	major, err := strconv.ParseInt(gfx[:len(gfx)-2], 16, 32)
+	if err != nil {
+		return 0, 0
+	}
+	minor, err := strconv.ParseInt(gfx[len(gfx)-2:], 16, 32)
+	if err != nil {
+		return 0, 0
+	}
+
+	return int(major), int(minor)
 }
 
 // inferLibrary determines the GPU library type from the llama-server device name and description.
@@ -370,21 +423,25 @@ func inferLibrary(name, description string) string {
 	}
 }
 
-// llamaServerBootstrapDevices discovers GPU devices using llama-server.
-// CUDA devices are validated against compiled architectures (from system_info).
-// ROCm devices are validated against bundled rocblas kernels.
-func llamaServerBootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
-	devices, _, _, _ := llamaServerBootstrapDevicesWithStatus(ctx, ollamaLibDirs, extraEnvs)
-	return devices
+func isIntegratedLlamaServerDevice(library string, deviceIndex int, integratedByIndex map[int]bool) bool {
+	if integratedByIndex[deviceIndex] {
+		return true
+	}
+
+	// llama-server does not currently print backend device type in
+	// --list-devices output. On Apple Silicon the Metal device is unified
+	// memory, while discrete Metal devices are not supported by this arm64
+	// path.
+	return library == "Metal" && runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 }
 
-func llamaServerBootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, int, error) {
-	devices, status, exitCode, err := llamaServerDiscoverDevicesWithStatus(ctx, ollamaLibDirs, extraEnvs)
+func llamaServerBootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, error) {
+	devices, status, err := llamaServerDiscoverDevices(ctx, ollamaLibDirs, extraEnvs)
 	if err != nil {
-		return devices, status, exitCode, err
+		return devices, status, err
 	}
 	if runtime.GOOS != "linux" {
-		return devices, status, exitCode, nil
+		return devices, status, nil
 	}
 
 	hasROCm := false
@@ -395,10 +452,10 @@ func llamaServerBootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []
 		}
 	}
 	if !hasROCm {
-		return devices, status, exitCode, nil
+		return devices, status, nil
 	}
 
-	return filterUnsupportedROCmDevices(devices, ollamaLibDirs), status, exitCode, nil
+	return filterUnsupportedROCmDevices(devices, ollamaLibDirs), status, nil
 }
 
 // rocblasGFXTargets scans the rocblas library directory for supported gfx targets
