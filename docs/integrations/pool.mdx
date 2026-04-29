@@ -1,12 +1,12 @@
 ---
-title: Poolside
+title: Pool
 ---
 
-Poolside is Poolside's software agent for the terminal, built for enterprise development workflows.
+Pool is Poolside's software agent for the terminal, built for enterprise development workflows.
 
 ## Install
 
-Install [Poolside](https://github.com/poolsideai/pool):
+Install [Pool](https://github.com/poolsideai/pool):
 
 ## Usage with Ollama
 
@@ -22,9 +22,9 @@ ollama launch pool
 ollama launch pool --model kimi-k2.6:cloud
 ```
 
-### Pass arguments through to Poolside
+### Pass arguments through to Pool
 
-Arguments after `--` are passed directly to Poolside:
+Arguments after `--` are passed directly to Pool:
 
 ```shell
 ollama launch pool -- --help
@@ -32,7 +32,7 @@ ollama launch pool -- --help
 
 ## Manual setup
 
-Poolside connects to Ollama using the OpenAI-compatible API via environment variables.
+Pool connects to Ollama using the OpenAI-compatible API via environment variables.
 
 1. Set the environment variables:
 
@@ -41,7 +41,7 @@ export POOLSIDE_STANDALONE_BASE_URL=http://localhost:11434/v1
 export POOLSIDE_API_KEY=ollama
 ```
 
-2. Run Poolside with an Ollama model:
+2. Run Pool with an Ollama model:
 
 ```shell
 pool -m kimi-k2.6:cloud
