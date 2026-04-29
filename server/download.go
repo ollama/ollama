@@ -360,6 +360,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 
 	g.Go(func() error {
 		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
