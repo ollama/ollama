@@ -75,8 +75,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "codex", "kimi", "droid", "opencode", "hermes"}
-
+	expectedIntegrations := []string{"claude", "codex", "kimi", "droid", "opencode", "hermes", "pool"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -1495,6 +1494,11 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantURL: "https://docs.openclaw.ai",
 		},
 		{
+			name:    "pool has hint",
+			input:   "pool",
+			wantURL: "https://github.com/poolsideai/pool",
+		},
+		{
 			name:      "unknown has no hint",
 			input:     "unknown",
 			wantEmpty: true,
@@ -1549,7 +1553,19 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		if diff := compareStrings(got, integrationOrder); diff != "" {
+
+		want := append([]string(nil), integrationOrder...)
+		if poolsideGOOS == "windows" {
+			filtered := make([]string, 0, len(want))
+			for _, name := range want {
+				if name != "pool" {
+					filtered = append(filtered, name)
+				}
+			}
+			want = filtered
+		}
+
+		if diff := compareStrings(got, want); diff != "" {
 			t.Fatalf("launcher integration order mismatch: %s", diff)
 		}
 	})
@@ -1567,6 +1583,9 @@ func TestListIntegrationInfos(t *testing.T) {
 
 	t.Run("includes known integrations", func(t *testing.T) {
 		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
+		if poolsideGOOS != "windows" {
+			known["pool"] = false
+		}
 		for _, info := range infos {
 			if _, ok := known[info.Name]; ok {
 				known[info.Name] = true
@@ -1600,6 +1619,17 @@ func TestListIntegrationInfos(t *testing.T) {
 			t.Fatal("expected hermes integration runner to be present")
 		}
 	})
+}
+func TestListIntegrationInfos_HidesPoolsideOnWindows(t *testing.T) {
+	prev := poolsideGOOS
+	poolsideGOOS = "windows"
+	t.Cleanup(func() { poolsideGOOS = prev })
+
+	for _, info := range ListIntegrationInfos() {
+		if info.Name == "pool" {
+			t.Fatal("expected pool to be hidden on Windows")
+		}
+	}
 }
 
 func TestBuildModelList_Descriptions(t *testing.T) {
@@ -1704,6 +1734,20 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 				t.Errorf("integrationFor(%q).autoInstallable = %v, want %v", tt.name, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEnsureIntegrationInstalled_PoolsideUnsupportedOnWindows(t *testing.T) {
+	prev := poolsideGOOS
+	poolsideGOOS = "windows"
+	t.Cleanup(func() { poolsideGOOS = prev })
+
+	err := EnsureIntegrationInstalled("pool", &Poolside{})
+	if err == nil {
+		t.Fatal("expected Windows unsupported error")
+	}
+	if !strings.Contains(err.Error(), "not currently supported on Windows") {
+		t.Fatalf("expected Windows warning, got %v", err)
 	}
 }
 

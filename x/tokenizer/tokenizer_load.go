@@ -447,7 +447,9 @@ func extractPretokenizer(data json.RawMessage) string {
 	if err := json.Unmarshal(data, &seq); err == nil && seq.Type == "Sequence" {
 		for _, pt := range seq.Pretokenizers {
 			if pt.Type == "Split" && pt.Pattern.Regex != "" {
-				return pt.Pattern.Regex
+				if _, err := regexp.Compile(rewritePatternForRE2(pt.Pattern.Regex)); err == nil {
+					return pt.Pattern.Regex
+				}
 			}
 		}
 	}
