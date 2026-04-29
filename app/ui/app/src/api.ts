@@ -160,10 +160,12 @@ export async function getModels(query?: string): Promise<Model[]> {
 
       // Add query if it's in the registry and not already in the list
       if (!exactMatch) {
-        const result = await getModelUpstreamInfo(new Model({ model: query }));
+        const result = await getModelUpstreamInfo(
+          new Model({ model: normalizedQuery }),
+        );
         const existsUpstream = result.exists;
         if (existsUpstream) {
-          filteredModels.push(new Model({ model: query }));
+          filteredModels.push(new Model({ model: normalizedQuery }));
         }
       }
 

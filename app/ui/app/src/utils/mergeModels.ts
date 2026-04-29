@@ -3,7 +3,7 @@ import { Model } from "@/gotypes";
 // Featured models list (in priority order)
 export const FEATURED_MODELS = [
   "kimi-k2.5:cloud",
-  "glm-5:cloud",
+  "glm-5.1:cloud",
   "minimax-m2.7:cloud",
   "gemma4:31b-cloud",
   "qwen3.5:397b-cloud",
