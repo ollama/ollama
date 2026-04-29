@@ -17,8 +17,9 @@ import (
 	"github.com/ollama/ollama/x/tokenizer"
 )
 
+// Line 17-19 — FIXED
 func prefillChunkSize() int {
-	return 2 << 10
+	return 512
 }
 
 // Prepare tokenizes the prompt and validates it against the model's
@@ -206,7 +207,8 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		mlx.Unpin(sample.Arrays()...)
 		sample, nextSample = nextSample, sampler.Result{}
 
-		if i%256 == 0 {
+		if i%64 == 0 {
+			mlx.Eval(sample)
 			mlx.ClearCache()
 		}
 	}
