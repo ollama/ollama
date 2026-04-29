@@ -1344,3 +1344,75 @@ func TestFindArguments(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoverTruncatedJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []byte
+		wantKey string
+		wantVal string
+		wantNil bool
+	}{
+		{
+			name:    "truncated content value",
+			input:   []byte(`{"path": "/tmp/test.html", "content": "<html><body><h1>Hello</h`),
+			wantKey: "path",
+			wantVal: "/tmp/test.html",
+		},
+		{
+			name:    "valid JSON returns nil",
+			input:   []byte(`{"path": "/tmp/test.html", "content": "hello"}`),
+			wantNil: true,
+		},
+		{
+			name:    "too early truncation returns nil",
+			input:   []byte(`{"pa`),
+			wantNil: true,
+		},
+		{
+			name:    "empty input returns nil",
+			input:   []byte{},
+			wantNil: true,
+		},
+		{
+			name:    "compact JSON truncated",
+			input:   []byte(`{"path":"/tmp/a.txt","content":"some long con`),
+			wantKey: "path",
+			wantVal: "/tmp/a.txt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := recoverTruncatedJSON(tt.input)
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("expected nil, got %v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if val, ok := got[tt.wantKey]; !ok {
+				t.Errorf("expected key %q in result", tt.wantKey)
+			} else if str, ok := val.(string); !ok || str != tt.wantVal {
+				t.Errorf("expected %q=%q, got %v", tt.wantKey, tt.wantVal, val)
+			}
+		})
+	}
+}
+
+func TestFindArgumentsTruncated(t *testing.T) {
+	// findArguments should recover truncated JSON when braces never balance
+	buf := []byte(`{"name": "write_file", "arguments": {"path": "/tmp/test.html", "content": "<html><body>truncated here`)
+	got, _ := findArguments(buf)
+	if got == nil {
+		t.Fatal("expected recovered arguments, got nil")
+	}
+	if path, ok := got["path"]; !ok {
+		t.Error("expected 'path' key in recovered arguments")
+	} else if str, ok := path.(string); !ok || str != "/tmp/test.html" {
+		t.Errorf("expected path=/tmp/test.html, got %v", path)
+	}
+}
