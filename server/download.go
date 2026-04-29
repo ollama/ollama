@@ -34,6 +34,7 @@ var (
 	errMaxRetriesExceeded   = errors.New("max retries exceeded")
 	errPartStalled          = errors.New("part stalled")
 	errMaxRedirectsExceeded = errors.New("maximum redirects exceeded (10) for directURL")
+	errBlobDownloadCanceled = errors.New("blob download canceled")
 )
 
 var blobDownloadManager sync.Map
@@ -49,9 +50,11 @@ type blobDownload struct {
 
 	context.CancelFunc
 
-	done       chan struct{}
-	err        error
-	references atomic.Int32
+	done         chan struct{}
+	err          error
+	referencesMu sync.Mutex
+	references   atomic.Int32
+	canceled     bool
 }
 
 type blobDownloadPart struct {
@@ -131,8 +134,6 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 		return err
 	}
 
-	b.done = make(chan struct{})
-
 	for _, partFilePath := range partFilePaths {
 		part, err := b.readPart(partFilePath)
 		if err != nil {
@@ -184,6 +185,11 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 
 func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *registryOptions) {
 	defer close(b.done)
+	if err := ctx.Err(); err != nil {
+		b.err = err
+		return
+	}
+
 	b.err = b.run(ctx, requestURL, opts)
 }
 
@@ -214,8 +220,7 @@ func newBackoff(maxBackoff time.Duration) func(ctx context.Context) error {
 }
 
 func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
-	defer blobDownloadManager.Delete(b.Digest)
-	ctx, b.CancelFunc = context.WithCancel(ctx)
+	defer blobDownloadManager.CompareAndDelete(b.Digest, b)
 
 	file, err := os.OpenFile(b.Name+"-partial", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -425,21 +430,63 @@ func (b *blobDownload) writePart(partName string, part *blobDownloadPart) error 
 	return json.NewEncoder(partFile).Encode(part)
 }
 
-func (b *blobDownload) acquire() {
+func (b *blobDownload) acquire() bool {
+	b.referencesMu.Lock()
+	defer b.referencesMu.Unlock()
+
+	if b.canceled {
+		return false
+	}
+
 	b.references.Add(1)
+	return true
 }
 
 func (b *blobDownload) release() {
+	b.referencesMu.Lock()
+	defer b.referencesMu.Unlock()
+
 	if b.references.Add(-1) == 0 {
-		b.CancelFunc()
+		b.canceled = true
+		if b.CancelFunc != nil {
+			b.CancelFunc()
+		}
 	}
 }
 
+func (b *blobDownload) isCanceled() bool {
+	b.referencesMu.Lock()
+	defer b.referencesMu.Unlock()
+	return b.canceled
+}
+
+func (b *blobDownload) releaseOnContextDone(ctx context.Context, done <-chan struct{}) func() {
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			b.release()
+		})
+	}
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			release()
+		case <-done:
+		}
+	}()
+
+	return release
+}
+
 func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) error {
-	b.acquire()
+	if !b.acquire() {
+		return errBlobDownloadCanceled
+	}
 	defer b.release()
 
 	ticker := time.NewTicker(60 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-b.done:
@@ -454,6 +501,15 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+}
+
+func (b *blobDownload) waitDone(ctx context.Context) error {
+	select {
+	case <-b.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -491,19 +547,73 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		return true, nil
 	}
 
-	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
-	download := data.(*blobDownload)
-	if !ok {
-		requestURL := opts.n.BaseURL()
-		requestURL = requestURL.JoinPath("v2", opts.n.DisplayNamespaceModel(), "blobs", opts.digest)
-		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
-			blobDownloadManager.Delete(opts.digest)
-			return false, err
+	for {
+		runCtx, cancel := context.WithCancel(context.Background())
+		candidate := &blobDownload{
+			Name:       fp,
+			Digest:     opts.digest,
+			CancelFunc: cancel,
+			done:       make(chan struct{}),
+		}
+		candidate.acquire()
+
+		data, ok := blobDownloadManager.LoadOrStore(opts.digest, candidate)
+		download := data.(*blobDownload)
+		releaseCreator := func() {}
+		if !ok {
+			requestURL := opts.n.BaseURL()
+			requestURL = requestURL.JoinPath("v2", opts.n.DisplayNamespaceModel(), "blobs", opts.digest)
+			prepareDone := make(chan struct{})
+			releaseCreator = download.releaseOnContextDone(ctx, prepareDone)
+			err := download.Prepare(runCtx, requestURL, opts.regOpts)
+			close(prepareDone)
+			if err != nil {
+				download.err = err
+				close(download.done)
+				cancel()
+				blobDownloadManager.CompareAndDelete(opts.digest, download)
+				releaseCreator()
+				return false, err
+			}
+
+			if err := ctx.Err(); err != nil {
+				releaseCreator()
+			}
+			if err := runCtx.Err(); err != nil || download.isCanceled() {
+				if err == nil {
+					err = context.Canceled
+				}
+				download.err = err
+				close(download.done)
+				blobDownloadManager.CompareAndDelete(opts.digest, download)
+				releaseCreator()
+				return false, err
+			}
+
+			go download.Run(runCtx, requestURL, opts.regOpts)
+		} else {
+			cancel()
+			if download.isCanceled() {
+				if err := download.waitDone(ctx); err != nil {
+					return false, err
+				}
+				blobDownloadManager.CompareAndDelete(opts.digest, download)
+				continue
+			}
 		}
 
-		//nolint:contextcheck
-		go download.Run(context.Background(), requestURL, opts.regOpts)
-	}
+		err = download.Wait(ctx, opts.fn)
+		if !ok {
+			releaseCreator()
+		}
+		if ok && errors.Is(err, errBlobDownloadCanceled) {
+			if err := download.waitDone(ctx); err != nil {
+				return false, err
+			}
+			blobDownloadManager.CompareAndDelete(opts.digest, download)
+			continue
+		}
 
-	return false, download.Wait(ctx, opts.fn)
+		return false, err
+	}
 }
