@@ -128,6 +128,47 @@ func TestSchedLoad(t *testing.T) {
 	require.Len(t, s.expiredCh, 1)
 }
 
+func TestSchedLoadStoresEffectiveContextLength(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	scenario := newScenarioRequest(t, ctx, "test", 10, nil, map[ml.DeviceID]uint64{})
+	scenario.req.opts.NumCtx = 262144
+	scenario.req.numCtxAuto = true
+	scenario.srv.contextLength = 131072
+	s.newServerFn = scenario.newServer
+
+	s.load(scenario.req, ml.SystemInfo{}, nil, false)
+
+	select {
+	case err := <-scenario.req.errCh:
+		require.NoError(t, err)
+	case runner := <-scenario.req.successCh:
+		require.Equal(t, 131072, runner.Options.NumCtx)
+	}
+}
+
+func TestSchedLoadPreservesExplicitContextLength(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	scenario := newScenarioRequest(t, ctx, "test", 10, nil, map[ml.DeviceID]uint64{})
+	scenario.req.opts.NumCtx = 262144
+	scenario.srv.contextLength = 131072
+	s.newServerFn = scenario.newServer
+
+	s.load(scenario.req, ml.SystemInfo{}, nil, false)
+
+	select {
+	case err := <-scenario.req.errCh:
+		require.NoError(t, err)
+	case runner := <-scenario.req.successCh:
+		require.Equal(t, 262144, runner.Options.NumCtx)
+	}
+}
+
 type reqBundle struct {
 	ctx     context.Context //nolint:containedctx
 	ctxDone func()
@@ -141,13 +182,17 @@ func (scenario *reqBundle) newServer(systemInfo ml.SystemInfo, gpus []ml.DeviceI
 }
 
 func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, vramSize uint64, duration *api.Duration, vramByGPU map[ml.DeviceID]uint64) *reqBundle {
+	return newScenarioRequestWithContext(t, ctx, modelName, vramSize, duration, vramByGPU, 32)
+}
+
+func newScenarioRequestWithContext(t *testing.T, ctx context.Context, modelName string, vramSize uint64, duration *api.Duration, vramByGPU map[ml.DeviceID]uint64, trainCtx uint32) *reqBundle {
 	b := &reqBundle{}
 	b.ctx, b.ctxDone = context.WithCancel(ctx)
 	t.Helper()
 
 	p, _ := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
-		"llama.context_length":          uint32(32),
+		"llama.context_length":          trainCtx,
 		"llama.embedding_length":        uint32(4096),
 		"llama.block_count":             uint32(1),
 		"llama.attention.head_count":    uint32(32),
@@ -783,6 +828,34 @@ func TestSchedNeedsReload(t *testing.T) {
 	require.False(t, resp)
 }
 
+func TestSchedNeedsReloadIgnoresAutomaticNumCtxClamp(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	llm := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
+	opts := api.DefaultOptions()
+	opts.NumCtx = 131072
+	model := &Model{}
+	runner := &runnerRef{
+		model:       model,
+		Options:     &opts,
+		llama:       llm,
+		numParallel: 1,
+		numCtxAuto:  true,
+	}
+	req := &LlmRequest{
+		model:      model,
+		opts:       api.DefaultOptions(),
+		numCtxAuto: true,
+	}
+	req.opts.NumCtx = 262144
+
+	require.False(t, runner.needsReload(ctx, req))
+
+	req.numCtxAuto = false
+	require.True(t, runner.needsReload(ctx, req))
+}
+
 func TestSchedUnloadAllRunners(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
@@ -921,8 +994,211 @@ func TestSchedLlamaServerFitsAlongside(t *testing.T) {
 	require.False(t, needEvict, "expected no eviction when model fits in available VRAM")
 }
 
+func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	t.Setenv("OLLAMA_NUM_PARALLEL", "2")
+
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 900 * format.MebiByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	scenario := newScenarioRequestWithContext(t, ctx, "parallel-context-model", 1*format.GigaByte, nil, nil, 65536)
+	scenario.req.opts.NumCtx = 32768
+
+	called := false
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		called = true
+		return scenario.srv, nil
+	}
+
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.True(t, needEvict, "expected eviction when total parallel context exceeds available memory")
+	require.False(t, called, "preflight prediction should reject before spawning llama-server")
+}
+
+func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
+	tests := []struct {
+		name              string
+		systemFree        uint64
+		gpus              []ml.DeviceInfo
+		wantAvailable     uint64
+		wantGPUFree       uint64
+		wantSystemLimited bool
+	}{
+		{
+			name:       "integrated metal uses lower system free",
+			systemFree: 80 * format.GigaByte,
+			gpus: []ml.DeviceInfo{{
+				DeviceID:   ml.DeviceID{Library: "Metal"},
+				Integrated: true,
+				FreeMemory: 300 * format.GigaByte,
+			}},
+			wantAvailable:     80 * format.GigaByte,
+			wantGPUFree:       300 * format.GigaByte,
+			wantSystemLimited: true,
+		},
+		{
+			name:       "integrated gpu uses lower system free",
+			systemFree: 6 * format.GigaByte,
+			gpus: []ml.DeviceInfo{{
+				DeviceID:   ml.DeviceID{Library: "Vulkan"},
+				Integrated: true,
+				FreeMemory: 12 * format.GigaByte,
+			}},
+			wantAvailable:     6 * format.GigaByte,
+			wantGPUFree:       12 * format.GigaByte,
+			wantSystemLimited: true,
+		},
+		{
+			name:       "discrete metal ignores lower system free",
+			systemFree: 6 * format.GigaByte,
+			gpus: []ml.DeviceInfo{{
+				DeviceID:   ml.DeviceID{Library: "Metal"},
+				FreeMemory: 12 * format.GigaByte,
+			}},
+			wantAvailable: 12 * format.GigaByte,
+			wantGPUFree:   12 * format.GigaByte,
+		},
+		{
+			name:       "discrete gpu ignores lower system free",
+			systemFree: 6 * format.GigaByte,
+			gpus: []ml.DeviceInfo{{
+				DeviceID:   ml.DeviceID{Library: "CUDA"},
+				FreeMemory: 12 * format.GigaByte,
+			}},
+			wantAvailable: 12 * format.GigaByte,
+			wantGPUFree:   12 * format.GigaByte,
+		},
+		{
+			name:       "mixed gpus only clamp integrated contribution",
+			systemFree: 6 * format.GigaByte,
+			gpus: []ml.DeviceInfo{
+				{
+					DeviceID:   ml.DeviceID{Library: "CUDA"},
+					FreeMemory: 12 * format.GigaByte,
+				},
+				{
+					DeviceID:   ml.DeviceID{Library: "Vulkan"},
+					Integrated: true,
+					FreeMemory: 10 * format.GigaByte,
+				},
+			},
+			wantAvailable:     18 * format.GigaByte,
+			wantGPUFree:       22 * format.GigaByte,
+			wantSystemLimited: true,
+		},
+		{
+			name:       "shared gpu keeps lower adjusted gpu baseline",
+			systemFree: 20 * format.GigaByte,
+			gpus: []ml.DeviceInfo{{
+				DeviceID:   ml.DeviceID{Library: "Metal"},
+				Integrated: true,
+				FreeMemory: 12 * format.GigaByte,
+			}},
+			wantAvailable: 12 * format.GigaByte,
+			wantGPUFree:   12 * format.GigaByte,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			available, gpuFree, systemLimited := availableMemoryForLoad(ml.SystemInfo{FreeMemory: tt.systemFree}, tt.gpus)
+			require.Equal(t, tt.wantAvailable, available)
+			require.Equal(t, tt.wantGPUFree, gpuFree)
+			require.Equal(t, tt.wantSystemLimited, systemLimited)
+		})
+	}
+}
+
+func TestDisableMmapForHostPressure(t *testing.T) {
+	gpus := []ml.DeviceInfo{{
+		DeviceID:    ml.DeviceID{Library: "CUDA"},
+		TotalMemory: 100 * format.GigaByte,
+		FreeMemory:  80 * format.GigaByte,
+	}}
+	systemInfo := ml.SystemInfo{
+		TotalMemory: 100 * format.GigaByte,
+		FreeMemory:  50 * format.GigaByte,
+	}
+
+	require.True(t, disableMmapForHostPressure(
+		"linux",
+		api.Options{},
+		systemInfo,
+		gpus,
+		20*format.GigaByte,
+		25*format.GigaByte,
+		30*format.GigaByte,
+		80*format.GigaByte,
+	))
+
+	useMmap := true
+	require.False(t, disableMmapForHostPressure(
+		"linux",
+		api.Options{Runner: api.Runner{UseMMap: &useMmap}},
+		systemInfo,
+		gpus,
+		20*format.GigaByte,
+		25*format.GigaByte,
+		30*format.GigaByte,
+		80*format.GigaByte,
+	), "explicit use_mmap=true should win")
+
+	require.False(t, disableMmapForHostPressure(
+		"darwin",
+		api.Options{},
+		systemInfo,
+		gpus,
+		20*format.GigaByte,
+		25*format.GigaByte,
+		30*format.GigaByte,
+		80*format.GigaByte,
+	), "only the Linux pressure heuristic is restored")
+
+	igpu := append([]ml.DeviceInfo(nil), gpus...)
+	igpu[0].Integrated = true
+	require.False(t, disableMmapForHostPressure(
+		"linux",
+		api.Options{},
+		systemInfo,
+		igpu,
+		20*format.GigaByte,
+		25*format.GigaByte,
+		30*format.GigaByte,
+		80*format.GigaByte,
+	), "shared-memory GPU loads should keep the normal mmap path")
+
+	require.False(t, disableMmapForHostPressure(
+		"linux",
+		api.Options{},
+		systemInfo,
+		gpus,
+		20*format.GigaByte,
+		25*format.GigaByte,
+		70*format.GigaByte,
+		80*format.GigaByte,
+	), "when VRAM is tight, no-mmap could make partial CPU offload worse")
+}
+
 // TestSchedLoadCrashTriggersEvictAllAndRetry verifies that a post-spawn
-// Load() failure while other models are resident signals evict-all-and-retry
+// Load() OOM while other models are resident signals evict-all-and-retry
 // on the first attempt, but fails fast on the second attempt.
 func TestSchedLoadCrashTriggersEvictAllAndRetry(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
@@ -946,7 +1222,7 @@ func TestSchedLoadCrashTriggersEvictAllAndRetry(t *testing.T) {
 	s.loadedMu.Unlock()
 
 	// newServerFn returns a mockLlm that crashes in Load()
-	loadCrash := errors.New("simulated llama-server OOM crash")
+	loadCrash := errors.New("cudaMalloc failed: out of memory")
 	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
@@ -958,7 +1234,7 @@ func TestSchedLoadCrashTriggersEvictAllAndRetry(t *testing.T) {
 	// First attempt: should signal evict-all by returning true and NOT send
 	// the error to errCh (so the caller will retry).
 	needEvict := s.load(scenario.req, systemInfo, gpus, true)
-	require.True(t, needEvict, "first crash should signal eviction")
+	require.True(t, needEvict, "first load OOM should signal eviction")
 	require.True(t, scenario.req.oomRetryAttempted, "oomRetryAttempted should be set")
 	select {
 	case err := <-scenario.req.errCh:
@@ -970,12 +1246,149 @@ func TestSchedLoadCrashTriggersEvictAllAndRetry(t *testing.T) {
 	// other runners): same crash, but this time oomRetryAttempted is set so
 	// load() should fail fast and report the error.
 	needEvict = s.load(scenario.req, systemInfo, gpus, true)
-	require.False(t, needEvict, "second crash should not ask for another eviction")
+	require.False(t, needEvict, "second load OOM should not ask for another eviction")
 	select {
 	case err := <-scenario.req.errCh:
 		require.ErrorIs(t, err, loadCrash)
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected error on errCh after second crash")
+	}
+}
+
+func TestSchedLoadOOMReducesAutomaticContextBeforeRetry(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 20 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "/fake/existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	loadCrash := errors.New("cudaMalloc failed: out of memory")
+	var seenNumCtx []int
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		seenNumCtx = append(seenNumCtx, opts.NumCtx)
+		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
+	}
+
+	scenario := newScenarioRequestWithContext(t, ctx, "crashing-model", 1*format.GigaByte, nil, nil, 131072)
+	scenario.req.opts.NumCtx = 262144
+	scenario.req.numCtxAuto = true
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.True(t, needEvict, "first automatic-context load OOM should signal eviction and retry")
+	require.True(t, scenario.req.oomRetryAttempted)
+	require.Equal(t, 32768, scenario.req.opts.NumCtx)
+	select {
+	case err := <-scenario.req.errCh:
+		t.Fatalf("errCh should be empty on first crash, got %v", err)
+	default:
+	}
+
+	needEvict = s.load(scenario.req, systemInfo, gpus, true)
+	require.False(t, needEvict, "second load OOM should not ask for another eviction")
+	require.Equal(t, []int{262144, 32768}, seenNumCtx)
+	select {
+	case err := <-scenario.req.errCh:
+		require.ErrorIs(t, err, loadCrash)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected error on errCh after second crash")
+	}
+}
+
+func TestSchedLoadOOMKeepsExplicitContextBeforeRetry(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 20 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "/fake/existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	loadCrash := errors.New("cudaMalloc failed: out of memory")
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
+	}
+
+	scenario := newScenarioRequestWithContext(t, ctx, "crashing-model", 1*format.GigaByte, nil, nil, 131072)
+	scenario.req.opts.NumCtx = 262144
+	scenario.req.numCtxAuto = false
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.True(t, needEvict, "explicit-context load OOM should still evict and retry once")
+	require.True(t, scenario.req.oomRetryAttempted)
+	require.Equal(t, 262144, scenario.req.opts.NumCtx)
+	select {
+	case err := <-scenario.req.errCh:
+		t.Fatalf("errCh should be empty on first crash, got %v", err)
+	default:
+	}
+}
+
+func TestSchedFirstLoadOOMReducesAutomaticContextAndRetries(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), time.Second)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 20 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	loadCrash := errors.New("cudaMalloc failed: out of memory")
+	var seenNumCtx []int
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		seenNumCtx = append(seenNumCtx, opts.NumCtx)
+		if len(seenNumCtx) == 1 {
+			return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
+		}
+		return &mockLlm{modelPath: model, vramSize: 1 * format.GigaByte, contextLength: opts.NumCtx}, nil
+	}
+
+	scenario := newScenarioRequestWithContext(t, ctx, "first-load-crashing-model", 1*format.GigaByte, nil, nil, 131072)
+	scenario.req.opts.NumCtx = 262144
+	scenario.req.numCtxAuto = true
+
+	s.pendingReqCh <- scenario.req
+	s.Run(ctx)
+
+	select {
+	case runner := <-scenario.req.successCh:
+		require.Equal(t, 32768, runner.Options.NumCtx)
+		require.Equal(t, []int{262144, 32768}, seenNumCtx)
+	case err := <-scenario.req.errCh:
+		t.Fatalf("expected retry success, got error %v", err)
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for first-load retry")
 	}
 }
 
@@ -1012,6 +1425,78 @@ func TestSchedLoadCrashNoOtherModelsFailsFast(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected error on errCh immediately")
 	}
+}
+
+func TestSchedLoadNonOOMWithOtherModelsFailsFast(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 20 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "/fake/existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	loadCrash := errors.New("server parse failed")
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
+	}
+
+	scenario := newScenarioRequest(t, ctx, "crashing-model", 1*format.GigaByte, nil, nil)
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.False(t, needEvict, "non-OOM load crash should not ask for eviction")
+	require.False(t, scenario.req.oomRetryAttempted, "oomRetryAttempted must stay false")
+	select {
+	case err := <-scenario.req.errCh:
+		require.ErrorIs(t, err, loadCrash)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected error on errCh immediately")
+	}
+}
+
+func TestSchedRuntimeOOMExpiresLoadedRunners(t *testing.T) {
+	ctx, done := context.WithCancel(t.Context())
+	defer done()
+	s := InitScheduler(ctx)
+
+	currentModel := &Model{ModelPath: "/tmp/current.gguf"}
+	current := &runnerRef{
+		model:           currentModel,
+		modelKey:        schedulerModelKey(currentModel),
+		sessionDuration: time.Hour,
+		llama:           &mockLlm{modelPath: "/tmp/current.gguf"},
+	}
+	otherModel := &Model{ModelPath: "/tmp/other.gguf"}
+	other := &runnerRef{
+		model:           otherModel,
+		modelKey:        schedulerModelKey(otherModel),
+		sessionDuration: time.Hour,
+		llama:           &mockLlm{modelPath: "/tmp/other.gguf"},
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[current.modelKey] = current
+	s.loaded[other.modelKey] = other
+	s.loadedMu.Unlock()
+
+	s.expireRunnersForRuntimeOOM(currentModel, errors.New("cudaMalloc failed: out of memory"))
+
+	require.Equal(t, time.Duration(0), current.sessionDuration)
+	require.Equal(t, time.Duration(0), other.sessionDuration)
+	require.Len(t, s.expiredCh, 2)
 }
 
 func TestSchedLlamaServerEvictsExistingOnPending(t *testing.T) {
@@ -1051,6 +1536,7 @@ type mockLlm struct {
 	closeCalled       bool
 	vramSize          uint64
 	totalSize         uint64
+	contextLength     int
 	vramByGPU         map[ml.DeviceID]uint64
 
 	// loadErr, if non-nil, is returned from Load() to simulate a post-spawn
@@ -1114,7 +1600,7 @@ func (s *mockLlm) GetPort() int                                       { return -
 func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
 func (s *mockLlm) HasExited() bool                                    { return false }
 func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
-func (s *mockLlm) ContextLength() int                                 { return 0 }
+func (s *mockLlm) ContextLength() int                                 { return s.contextLength }
 
 // TestImageGenRunnerCanBeEvicted verifies that an image generation model
 // loaded in the scheduler can be evicted when idle.

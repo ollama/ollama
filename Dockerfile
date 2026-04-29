@@ -71,7 +71,7 @@ RUN ln -s /usr/bin/python3 /usr/bin/python \
     && rm -rf /tmp/${VULKANVERSION} /tmp/vulkansdk.tar.xz
 
 #
-# llama-server stages — rebuild when LLAMA_CPP_VERSION or llama/server/ changes.
+# llama-server stages — rebuild when LLAMA_CPP_VERSION, llama/server/, or llama/compat/ changes.
 #
 # CPU stage: llama-server + ggml-base + ggml-cpu variants → lib/ollama/
 # GPU stages: GPU backend .so only → lib/ollama/<variant>/
@@ -80,6 +80,7 @@ RUN ln -s /usr/bin/python3 /usr/bin/python \
 FROM cpu-deps AS llama-server-cpu
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
+COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset cpu \
         && cmake --build build/llama-server-cpu -- -l $(nproc) \
@@ -95,6 +96,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 FROM cuda-12-deps AS llama-server-cuda-v12
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
+COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset cuda-v12 \
         && cmake --build build/llama-server-cuda-v12 -- -l $(nproc) \
@@ -103,6 +105,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 FROM cuda-13-deps AS llama-server-cuda-v13
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
+COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset cuda-v13 \
         && cmake --build build/llama-server-cuda-v13 -- -l $(nproc) \
@@ -112,6 +115,7 @@ FROM rocm-7-deps AS llama-server-rocm
 ENV CC=clang CXX=clang++
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
+COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset rocm \
         -DAMDGPU_TARGETS="gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-" \
@@ -123,6 +127,7 @@ RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*
 FROM vulkan-deps AS llama-server-vulkan
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
+COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset vulkan \
         && cmake --build build/llama-server-vulkan -- -l $(nproc) \
@@ -143,6 +148,7 @@ RUN apt-get update && apt-get install -y curl ccache git unzip \
 ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
+COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset jetpack5 \
         && cmake --build build/llama-server-jetpack5 -- -l $(nproc) \
@@ -159,6 +165,7 @@ RUN apt-get update && apt-get install -y curl ccache git unzip \
 ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
+COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset jetpack6 \
         && cmake --build build/llama-server-jetpack6 -- -l $(nproc) \
@@ -232,6 +239,8 @@ COPY --from=mlx     /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama
 
 FROM --platform=linux/arm64 scratch AS arm64
 COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda-v12 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda-v13 dist/lib/ollama /lib/ollama/
 COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 

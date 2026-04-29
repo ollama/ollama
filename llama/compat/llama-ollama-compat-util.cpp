@@ -3,11 +3,16 @@
 #include "llama-impl.h"
 #include "llama-model-loader.h"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+
+#if !defined(_WIN32)
+#include <sys/types.h>
+#endif
 
 namespace llama_ollama_compat::detail {
 
@@ -271,9 +276,31 @@ bool take_load_op(const char * dest_name, LoadOp & out) {
 
 bool read_at(const char * path, size_t offset, void * dst, size_t size) {
     FILE * f = std::fopen(path, "rb");
-    if (!f) return false;
-    bool ok = (std::fseek(f, (long) offset, SEEK_SET) == 0
-               && std::fread(dst, 1, size, f) == size);
+    if (!f) {
+        std::fprintf(stderr, "%s: open failed path=%s offset=%zu size=%zu errno=%d (%s)\n",
+                     __func__, path, offset, size, errno, std::strerror(errno));
+        return false;
+    }
+
+    errno = 0;
+#if defined(_WIN32)
+    const int seek_rc = _fseeki64(f, static_cast<__int64>(offset), SEEK_SET);
+#else
+    const int seek_rc = fseeko(f, static_cast<off_t>(offset), SEEK_SET);
+#endif
+    if (seek_rc != 0) {
+        std::fprintf(stderr, "%s: seek failed path=%s offset=%zu size=%zu errno=%d (%s)\n",
+                     __func__, path, offset, size, errno, std::strerror(errno));
+        std::fclose(f);
+        return false;
+    }
+
+    const size_t n = std::fread(dst, 1, size, f);
+    const bool ok = n == size;
+    if (!ok) {
+        std::fprintf(stderr, "%s: read failed path=%s offset=%zu size=%zu got=%zu errno=%d (%s) ferror=%d\n",
+                     __func__, path, offset, size, n, errno, std::strerror(errno), std::ferror(f));
+    }
     std::fclose(f);
     return ok;
 }

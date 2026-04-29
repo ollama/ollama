@@ -77,20 +77,65 @@ var errorPrefixes = []string{
 	"llama_init_from_model:",
 }
 
-func (w *StatusWriter) Write(b []byte) (int, error) {
-	var errMsg string
-	for _, prefix := range errorPrefixes {
-		if _, after, ok := bytes.Cut(b, []byte(prefix)); ok {
-			line := after
-			if j := bytes.IndexByte(line, '\n'); j >= 0 {
-				line = line[:j]
-			}
-			errMsg = prefix + string(bytes.TrimRight(line, " \t\r"))
+var outOfMemorySubstrings = []string{
+	"out of memory",
+	"out of device memory",
+	"cudaMalloc failed",
+	"hipMalloc failed",
+	"failed to allocate",
+	"allocation failed",
+	"not enough memory",
+	"insufficient memory",
+	"vk_error_out_of_device_memory",
+	"erroroutofmemory",
+}
+
+func IsOutOfMemory(err error) bool {
+	if err == nil {
+		return false
+	}
+	return IsOutOfMemoryMessage(err.Error())
+}
+
+func IsOutOfMemoryMessage(msg string) bool {
+	msg = strings.ToLower(msg)
+	for _, needle := range outOfMemorySubstrings {
+		if strings.Contains(msg, strings.ToLower(needle)) {
+			return true
 		}
 	}
-	if errMsg != "" {
-		w.AppendError(errMsg)
+	return false
+}
+
+func (w *StatusWriter) Write(b []byte) (int, error) {
+	for _, raw := range bytes.Split(b, []byte{'\n'}) {
+		line := strings.TrimRight(string(raw), " \t\r")
+		if line == "" {
+			continue
+		}
+
+		if errMsg := statusErrorLine(line); errMsg != "" {
+			w.AppendError(errMsg)
+		}
+	}
+
+	if w.out == nil {
+		return len(b), nil
 	}
 
 	return w.out.Write(b)
+}
+
+func statusErrorLine(line string) string {
+	for _, prefix := range errorPrefixes {
+		if _, after, ok := strings.Cut(line, prefix); ok {
+			return prefix + strings.TrimRight(after, " \t\r")
+		}
+	}
+
+	if IsOutOfMemoryMessage(line) {
+		return line
+	}
+
+	return ""
 }

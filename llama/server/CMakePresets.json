@@ -39,7 +39,7 @@
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda-v12",
       "cacheVariables": {
         "GGML_CUDA": "ON",
-        "CMAKE_CUDA_ARCHITECTURES": "50;52;60;61;70;75;80;86;89;90;90a;120",
+        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;52-virtual;60-virtual;61-virtual;70;75;80;86;89;90;90a;120",
         "CMAKE_CUDA_FLAGS": "-Wno-deprecated-gpu-targets -t 2",
         "OLLAMA_RUNNER_DIR": "cuda_v12",
         "OLLAMA_GPU_BACKEND": "cuda"

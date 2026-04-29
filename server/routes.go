@@ -131,15 +131,48 @@ func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Opt
 		opts.NumCtx = s.defaultNumCtx
 	}
 
-	if err := opts.FromMap(model.Options); err != nil {
-		return api.Options{}, err
+	if model != nil {
+		if err := opts.FromMap(model.Options); err != nil {
+			return api.Options{}, err
+		}
 	}
 
 	if err := opts.FromMap(requestOpts); err != nil {
 		return api.Options{}, err
 	}
 
+	if shouldApplyEmbeddingBatchDefault(model, requestOpts) {
+		opts = llm.WithDefaultEmbeddingNumBatch(opts)
+	}
+
 	return opts, nil
+}
+
+func shouldApplyEmbeddingBatchDefault(m *Model, requestOpts map[string]any) bool {
+	if m == nil || hasOption(m.Options, "num_batch") || hasOption(requestOpts, "num_batch") {
+		return false
+	}
+	if slices.Contains(m.Config.Capabilities, string(model.CapabilityEmbedding)) {
+		return true
+	}
+	return m.ModelPath != "" && m.CheckCapabilities(model.CapabilityEmbedding) == nil
+}
+
+func hasOption(opts map[string]any, name string) bool {
+	_, ok := opts[name]
+	return ok
+}
+
+func usesAutomaticNumCtx(model *Model, requestOpts map[string]any) bool {
+	if _, ok := requestOpts["num_ctx"]; ok {
+		return false
+	}
+	if model != nil {
+		if _, ok := model.Options["num_ctx"]; ok {
+			return false
+		}
+	}
+	return envconfig.ContextLength() == 0
 }
 
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
@@ -165,12 +198,13 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	// Deprecated runner override option; ignore if present.
 	delete(requestOpts, "use_imagegen_runner")
 
+	numCtxAuto := usesAutomaticNumCtx(model, requestOpts)
 	opts, err := s.modelOptions(model, requestOpts)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
+	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
@@ -559,14 +593,15 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:      prompt,
-			Images:      images,
-			Format:      req.Format,
-			Options:     opts,
-			Shift:       req.Shift == nil || *req.Shift,
-			Truncate:    req.Truncate == nil || *req.Truncate,
-			Logprobs:    req.Logprobs,
-			TopLogprobs: req.TopLogprobs,
+			Prompt:          prompt,
+			Images:          images,
+			Format:          req.Format,
+			Options:         opts,
+			Shift:           req.Shift == nil || *req.Shift,
+			Truncate:        req.Truncate == nil || *req.Truncate,
+			Logprobs:        req.Logprobs,
+			TopLogprobs:     req.TopLogprobs,
+			PreservedTokens: preservedTokensForCompletion(builtinParser, nil),
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -631,6 +666,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			ch <- res
 		}); err != nil {
+			s.sched.expireRunnersForRuntimeOOM(m, err)
 			var serr api.StatusError
 			if errors.As(err, &serr) {
 				ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
@@ -759,10 +795,20 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	truncateInput := func(text string) (string, bool, error) {
+	adjustTokenLimit := func(tokens []int, limit int) int {
+		if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
+			limit--
+		}
+		if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); len(tokens) > 0 && tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
+			limit--
+		}
+		return limit
+	}
+
+	inputTokensAndContext := func(text string) ([]int, int, error) {
 		tokens, err := r.Tokenize(ctx, text)
 		if err != nil {
-			return "", false, err
+			return nil, 0, err
 		}
 
 		// TODO @nicolepardal: avoid reaching into kvData here; pass required tokenizer metadata via model/options instead
@@ -770,11 +816,17 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		if opts.NumCtx > 0 {
 			ctxLen = min(opts.NumCtx, ctxLen)
 		}
-		if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
-			ctxLen--
+
+		return tokens, adjustTokenLimit(tokens, ctxLen), nil
+	}
+
+	truncateInputToLimit := func(text string, limit int) (string, bool, error) {
+		tokens, ctxLen, err := inputTokensAndContext(text)
+		if err != nil {
+			return "", false, err
 		}
-		if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); len(tokens) > 0 && tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
-			ctxLen--
+		if limit > 0 {
+			ctxLen = min(ctxLen, adjustTokenLimit(tokens, limit))
 		}
 
 		if ctxLen <= 0 {
@@ -791,8 +843,26 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return truncated, true, nil
 	}
 
+	truncateInput := func(text string) (string, bool, error) {
+		return truncateInputToLimit(text, 0)
+	}
+
 	embedWithRetry := func(text string) ([]float32, int, error) {
-		if req.Truncate == nil || *req.Truncate {
+		if req.Truncate != nil && !*req.Truncate {
+			tokens, ctxLen, err := inputTokensAndContext(text)
+			if err != nil {
+				return nil, 0, err
+			}
+			if ctxLen <= 0 {
+				return nil, 0, fmt.Errorf("input after truncation exceeds maximum context length")
+			}
+			if len(tokens) > ctxLen {
+				return nil, 0, api.StatusError{
+					StatusCode:   http.StatusBadRequest,
+					ErrorMessage: "the input length exceeds the context length",
+				}
+			}
+		} else {
 			var err error
 			text, _, err = truncateInput(text)
 			if err != nil {
@@ -813,7 +883,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return nil, 0, err
 		}
 
-		truncated, ok, err := truncateInput(text)
+		truncated, ok, err := truncateInputToLimit(text, opts.NumBatch)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -851,6 +921,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	if err := g.Wait(); err != nil {
+		s.sched.expireRunnersForRuntimeOOM(m, err)
 		var serr api.StatusError
 		if errors.As(err, &serr) {
 			c.AbortWithStatusJSON(serr.StatusCode, gin.H{
@@ -915,7 +986,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	name := modelRef.Name
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, m, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -929,6 +1000,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
+		s.sched.expireRunnersForRuntimeOOM(m, err)
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
 	}
@@ -2173,6 +2245,23 @@ func toolCallId() string {
 	return "call_" + strings.ToLower(string(b))
 }
 
+type preservedTokenProvider interface {
+	PreservedTokens() []string
+}
+
+func preservedTokensForCompletion(builtinParser parsers.Parser, toolParser *tools.Parser) []string {
+	var preservedTokens []string
+	if builtinParser != nil {
+		if p, ok := builtinParser.(preservedTokenProvider); ok {
+			preservedTokens = append(preservedTokens, p.PreservedTokens()...)
+		}
+	}
+	if toolParser != nil {
+		preservedTokens = append(preservedTokens, toolParser.PreservedTokens()...)
+	}
+	return preservedTokens
+}
+
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
@@ -2500,13 +2589,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
-			// If the tool parser is active and its tag is a special token,
-			// tell llama-server to preserve it during detokenization so the
-			// parser can find it in the output stream.
-			var preservedTokens []string
-			if toolParser != nil && toolParser.Tag() != "" && toolParser.Tag() != "{" && toolParser.Tag() != "[" {
-				preservedTokens = []string{toolParser.Tag()}
-			}
 
 			err := r.Completion(ctx, llm.CompletionRequest{
 				Prompt:          prompt,
@@ -2517,7 +2599,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Truncate:        truncate,
 				Logprobs:        req.Logprobs,
 				TopLogprobs:     req.TopLogprobs,
-				PreservedTokens: preservedTokens,
+				PreservedTokens: preservedTokensForCompletion(builtinParser, toolParser),
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
 					Model:     req.Model,
@@ -2627,6 +2709,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				if structuredOutputsState == structuredOutputsState_ReadyToApply && strings.Contains(err.Error(), "context canceled") && c.Request.Context().Err() == nil {
 					// only ignores error if it's a context cancellation due to setting structured outputs
 				} else {
+					s.sched.expireRunnersForRuntimeOOM(m, err)
 					var serr api.StatusError
 					if errors.As(err, &serr) {
 						ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
@@ -2773,7 +2856,7 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 	}
 
 	// Schedule the runner for image generation
-	runner, _, _, err := s.scheduleRunner(c.Request.Context(), modelName, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive)
+	runner, m, _, err := s.scheduleRunner(c.Request.Context(), modelName, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -2861,6 +2944,7 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		c.Writer.Write(append(data, '\n'))
 		c.Writer.Flush()
 	}); err != nil {
+		s.sched.expireRunnersForRuntimeOOM(m, err)
 		// Only send JSON error if streaming hasn't started yet
 		// (once streaming starts, headers are committed and we can't change status code)
 		if !streamStarted {

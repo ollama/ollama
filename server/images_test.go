@@ -75,6 +75,20 @@ func TestModelCapabilities(t *testing.T) {
 		"bert.pooling_type":    uint32(1),
 	}, []*ggml.Tensor{})
 
+	audioProjectorPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":    "clip",
+		"clip.has_audio_encoder":  true,
+		"vision.projector_type":   "pixtral",
+		"clip.vision.block_count": uint32(1),
+	}, []*ggml.Tensor{})
+
+	suppressedAudioProjectorPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":    "clip",
+		"clip.has_audio_encoder":  true,
+		"vision.projector_type":   "gemma4v",
+		"clip.vision.block_count": uint32(1),
+	}, []*ggml.Tensor{})
+
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
 	if err != nil {
 		t.Fatalf("Failed to parse template: %v", err)
@@ -161,6 +175,37 @@ func TestModelCapabilities(t *testing.T) {
 				Template:  chatTemplate,
 			},
 			expectedCaps: []model.Capability{model.CapabilityEmbedding},
+		},
+		{
+			name: "model with audio projector capability",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioProjectorPath},
+				Template:       chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio},
+		},
+		{
+			name: "gemma4 projector suppresses audio capability",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{suppressedAudioProjectorPath},
+				Template:       chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
+		},
+		{
+			name: "gemma4 gguf suppresses audio capability",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioProjectorPath},
+				Config: model.ConfigV2{
+					Renderer:     gemma4RendererSmall,
+					Capabilities: []string{"audio"},
+				},
+				Template: chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
 		},
 		{
 			name: "gemma4 small safetensors suppresses vision and audio",

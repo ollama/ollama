@@ -42,3 +42,21 @@ func TestStatusWriterAccumulatesErrorLines(t *testing.T) {
 		t.Fatalf("LastError = %q, want %q", got, want)
 	}
 }
+
+func TestIsOutOfMemoryMessage(t *testing.T) {
+	tests := []struct {
+		msg  string
+		want bool
+	}{
+		{"cudaMalloc failed: out of memory", true},
+		{"error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)", true},
+		{"failed to allocate context", true},
+		{"model loaded successfully", false},
+	}
+
+	for _, tt := range tests {
+		if got := IsOutOfMemoryMessage(tt.msg); got != tt.want {
+			t.Fatalf("IsOutOfMemoryMessage(%q) = %v, want %v", tt.msg, got, tt.want)
+		}
+	}
+}

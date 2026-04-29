@@ -17,7 +17,10 @@ endif()
 
 # Ensure all shared libraries and executables can find their dependencies
 # in the same directory at runtime (via $ORIGIN on Linux, @loader_path on macOS).
-if(NOT APPLE)
+if(APPLE)
+    set(CMAKE_INSTALL_RPATH "@loader_path")
+    set(CMAKE_BUILD_RPATH "@loader_path")
+elseif(NOT WIN32)
     set(CMAKE_INSTALL_RPATH "$ORIGIN")
     set(CMAKE_BUILD_RPATH "$ORIGIN")
 endif()
@@ -46,7 +49,26 @@ endif()
 set(_ollama_compat_patch_cmd "")
 if(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
     include(${CMAKE_CURRENT_SOURCE_DIR}/../compat/compat.cmake)
-    set(_ollama_compat_patch_cmd PATCH_COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND})
+
+    if(DEFINED FETCHCONTENT_SOURCE_DIR_LLAMA_CPP AND NOT FETCHCONTENT_SOURCE_DIR_LLAMA_CPP STREQUAL "")
+        get_filename_component(_llama_cpp_source_override
+            "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" ABSOLUTE)
+        message(STATUS
+            "Applying Ollama llama.cpp compat patch to source override: "
+            "${_llama_cpp_source_override}")
+        execute_process(
+            COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND}
+            WORKING_DIRECTORY "${_llama_cpp_source_override}"
+            RESULT_VARIABLE _ollama_compat_patch_result
+        )
+        if(NOT _ollama_compat_patch_result EQUAL 0)
+            message(FATAL_ERROR
+                "Failed to apply Ollama llama.cpp compat patch to "
+                "${_llama_cpp_source_override}")
+        endif()
+    else()
+        set(_ollama_compat_patch_cmd PATCH_COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND})
+    endif()
 endif()
 
 # Configure upstream build options BEFORE FetchContent_MakeAvailable.
@@ -77,14 +99,16 @@ FetchContent_MakeAvailable(llama_cpp)
 if(DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     file(GLOB _compat_sources CONFIGURE_DEPENDS
         ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/*.cpp)
-    target_sources(llama PRIVATE ${_compat_sources})
-    target_include_directories(llama PRIVATE
-        ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
-    # mtmd's clip.cpp #include's the compat header too — add the same dir
-    # to its PRIVATE include path (PRIVATE on llama doesn't propagate).
+    foreach(_compat_target IN ITEMS llama mtmd)
+        if(TARGET ${_compat_target})
+            target_sources(${_compat_target} PRIVATE ${_compat_sources})
+            target_include_directories(${_compat_target} PRIVATE
+                ${OLLAMA_LLAMA_CPP_COMPAT_DIR}
+                ${llama_cpp_SOURCE_DIR}/src)
+        endif()
+    endforeach()
     if(TARGET mtmd)
-        target_include_directories(mtmd PRIVATE
-            ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
+        target_compile_definitions(mtmd PRIVATE OLLAMA_COMPAT_MTMD_BUILD)
     endif()
 endif()
 
@@ -183,7 +207,12 @@ else()
     # RUNTIME covers executables and Windows DLLs; LIBRARY covers .so on Linux
     install(TARGETS llama-server llama-quantize
         RUNTIME DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL)
-    install(TARGETS ggml-base ggml llama mtmd
+    set(_llama_server_base_libs ggml-base ggml llama mtmd)
+    if(TARGET llama-common)
+        list(APPEND _llama_server_base_libs llama-common)
+    endif()
+
+    install(TARGETS ${_llama_server_base_libs}
         RUNTIME DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL
         LIBRARY DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL)
 

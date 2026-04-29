@@ -2,13 +2,16 @@ package llm
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -186,6 +189,69 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	}
 }
 
+func TestLlamaServerCompletionWithMediaUsesRunnerMarker(t *testing.T) {
+	var capturedReq llamaServerCompletionRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		if r.URL.Path != "/completion" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&capturedReq); err != nil {
+			t.Errorf("invalid request body: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"content":"","stop":true,"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	const mediaMarker = "<__ollama_media_test__>"
+	runner := &llamaServerRunner{
+		port:        portInt,
+		cmd:         fakeRunningCmd(),
+		sem:         semaphore.NewWeighted(1),
+		options:     api.Options{Runner: api.Runner{NumCtx: 2048}},
+		mediaMarker: mediaMarker,
+	}
+
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:  "look [img-7] now",
+		Options: &opts,
+		Images:  []ImageData{{ID: 7, Data: []byte("media-bytes")}},
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	promptObj, ok := capturedReq.Prompt.(map[string]any)
+	if !ok {
+		t.Fatalf("prompt = %T, want multimodal prompt object", capturedReq.Prompt)
+	}
+	if got, want := promptObj["prompt_string"], "look "+mediaMarker+" now"; got != want {
+		t.Fatalf("prompt_string = %q, want %q", got, want)
+	}
+	data, ok := promptObj["multimodal_data"].([]any)
+	if !ok {
+		t.Fatalf("multimodal_data = %T, want array", promptObj["multimodal_data"])
+	}
+	if len(data) != 1 {
+		t.Fatalf("multimodal_data len = %d, want 1", len(data))
+	}
+	if got, want := data[0], base64.StdEncoding.EncodeToString([]byte("media-bytes")); got != want {
+		t.Fatalf("multimodal_data[0] = %q, want %q", got, want)
+	}
+}
+
 func TestLlamaServerCompletionLengthStop(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
@@ -223,6 +289,138 @@ func TestLlamaServerCompletionLengthStop(t *testing.T) {
 	}
 	if lastResp.DoneReason != DoneReasonLength {
 		t.Errorf("DoneReason = %v, want %v", lastResp.DoneReason, DoneReasonLength)
+	}
+}
+
+func TestLlamaServerStatusErrorMessageIncludesOOMStatus(t *testing.T) {
+	status := &StatusWriter{}
+	status.SetLastError("error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)")
+	runner := &llamaServerRunner{
+		status: status,
+	}
+
+	got := runner.statusErrorMessage([]byte(`{"error":{"message":"Compute error."}}`))
+	if !strings.Contains(got, "Compute error") {
+		t.Fatalf("expected original response body, got %q", got)
+	}
+	if !IsOutOfMemoryMessage(got) {
+		t.Fatalf("expected OOM status detail to be detectable, got %q", got)
+	}
+}
+
+func TestLlamaServerWaitUntilRunningUsesStatusWhenDoneErrIsNil(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+
+	status := &StatusWriter{}
+	status.SetLastError("llama_init_from_model: failed to initialize the context: failed to initialize Metal backend")
+
+	runner := &llamaServerRunner{
+		done:   done,
+		status: status,
+	}
+
+	err := runner.WaitUntilRunning(t.Context())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "%!w(<nil>)") {
+		t.Fatalf("unexpected wrapped nil error: %q", err)
+	}
+	if !strings.Contains(err.Error(), status.LastError()) {
+		t.Fatalf("error %q does not include status message %q", err, status.LastError())
+	}
+}
+
+func TestLlamaServerWaitUntilRunningIgnoresStaleStartupOOMWhenReady(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	status := &StatusWriter{}
+	status.SetLastError("error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)")
+
+	runner := &llamaServerRunner{
+		port:   portInt,
+		cmd:    fakeRunningCmd(),
+		status: status,
+	}
+
+	err := runner.WaitUntilRunning(t.Context())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := status.LastError(); got != "" {
+		t.Fatalf("expected stale startup status to be cleared, got %q", got)
+	}
+}
+
+func TestLlamaServerWaitUntilRunningFailsOnHealthOOM(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"status":"error","message":"out of memory"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port: portInt,
+		cmd:  fakeRunningCmd(),
+	}
+
+	err := runner.WaitUntilRunning(t.Context())
+	if err == nil {
+		t.Fatal("expected startup OOM error")
+	}
+	if !IsOutOfMemory(err) {
+		t.Fatalf("expected OOM-classified error, got %q", err)
+	}
+}
+
+func TestLlamaServerWaitUntilRunningTimesOutWhenLoadExceedsTimeout(t *testing.T) {
+	t.Setenv("OLLAMA_LOAD_TIMEOUT", "10ms")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"status":"loading model"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port: portInt,
+		cmd:  fakeRunningCmd(),
+	}
+
+	err := runner.WaitUntilRunning(t.Context())
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out waiting for llama-server to start") {
+		t.Fatalf("expected load timeout, got %q", err)
 	}
 }
 
@@ -324,6 +522,108 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			}
 			if !tt.wantGrammar && !tt.wantJsonSchema && capturedReq.Grammar != "" {
 				t.Errorf("unexpected grammar: %s", capturedReq.Grammar)
+			}
+		})
+	}
+}
+
+func TestLlamaServerCompletionStripsLeadingBOS(t *testing.T) {
+	tests := []struct {
+		name            string
+		stripLeadingBOS bool
+		prompt          string
+		wantPrompt      string
+	}{
+		{
+			name:            "gemma4 llama server path",
+			stripLeadingBOS: true,
+			prompt:          "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+			wantPrompt:      "<|turn>user\nhello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:            "other model keeps prompt",
+			stripLeadingBOS: false,
+			prompt:          "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+			wantPrompt:      "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:            "only leading bos is stripped",
+			stripLeadingBOS: true,
+			prompt:          "prefix <bos>",
+			wantPrompt:      "prefix <bos>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedReq llamaServerCompletionRequest
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/health" {
+					fmt.Fprint(w, `{"status":"ok"}`)
+					return
+				}
+				json.NewDecoder(r.Body).Decode(&capturedReq)
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+			}))
+			defer srv.Close()
+
+			parts := strings.Split(srv.URL, ":")
+			var portInt int
+			fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+			runner := &llamaServerRunner{
+				port:            portInt,
+				cmd:             fakeRunningCmd(),
+				sem:             semaphore.NewWeighted(1),
+				options:         api.Options{Runner: api.Runner{NumCtx: 2048}},
+				stripLeadingBOS: tt.stripLeadingBOS,
+			}
+
+			opts := api.DefaultOptions()
+			err := runner.Completion(t.Context(), CompletionRequest{
+				Prompt:  tt.prompt,
+				Options: &opts,
+			}, func(cr CompletionResponse) {})
+			if err != nil {
+				t.Fatalf("Completion error: %v", err)
+			}
+
+			if capturedReq.Prompt != tt.wantPrompt {
+				t.Fatalf("prompt = %q, want %q", capturedReq.Prompt, tt.wantPrompt)
+			}
+		})
+	}
+}
+
+func TestQwen3VLServerArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		arch string
+		want []string
+	}{
+		{
+			name: "qwen3vl",
+			arch: "qwen3vl",
+			want: []string{"--image-min-tokens", "1024"},
+		},
+		{
+			name: "qwen3vlmoe",
+			arch: "qwen3vlmoe",
+			want: []string{"--image-min-tokens", "1024"},
+		},
+		{
+			name: "other model",
+			arch: "llama",
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := qwen3VLServerArgs(tt.arch); !slices.Equal(got, tt.want) {
+				t.Fatalf("qwen3VLServerArgs(%q) = %v, want %v", tt.arch, got, tt.want)
 			}
 		})
 	}
@@ -516,6 +816,156 @@ func TestLlamaServerEmbeddingTooLargeError(t *testing.T) {
 	if statusErr.StatusCode != 400 {
 		t.Errorf("status code = %d, want 400", statusErr.StatusCode)
 	}
+}
+
+func TestEmbeddingBatchSize(t *testing.T) {
+	tests := []struct {
+		name        string
+		numCtx      int
+		numBatch    int
+		numParallel int
+		want        int
+	}{
+		{
+			name:        "uses num batch",
+			numCtx:      40960,
+			numBatch:    2048,
+			numParallel: 1,
+			want:        2048,
+		},
+		{
+			name:        "caps to context",
+			numCtx:      1024,
+			numBatch:    2048,
+			numParallel: 1,
+			want:        1024,
+		},
+		{
+			name:        "accounts for parallel context",
+			numCtx:      1024,
+			numBatch:    4096,
+			numParallel: 2,
+			want:        2048,
+		},
+		{
+			name:        "omits flags when unset",
+			numCtx:      40960,
+			numBatch:    0,
+			numParallel: 1,
+			want:        0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := api.DefaultOptions()
+			opts.NumCtx = tt.numCtx
+			opts.NumBatch = tt.numBatch
+			if got := embeddingBatchSize(opts, tt.numParallel); got != tt.want {
+				t.Fatalf("embeddingBatchSize = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAppendFlashAttentionArgs(t *testing.T) {
+	supportedGPU := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9}}
+	oldGPU := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9},
+		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2},
+	}
+
+	tests := []struct {
+		name string
+		env  string
+		set  bool
+		gpus []ml.DeviceInfo
+		want []string
+	}{
+		{
+			name: "unset uses llama-server auto mode",
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "auto"},
+		},
+		{
+			name: "empty uses llama-server auto mode",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "auto"},
+		},
+		{
+			name: "zero disables flash attention",
+			env:  "0",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "off"},
+		},
+		{
+			name: "false disables flash attention",
+			env:  "false",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "off"},
+		},
+		{
+			name: "one enables flash attention",
+			env:  "1",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "on"},
+		},
+		{
+			name: "true enables flash attention",
+			env:  "true",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "on"},
+		},
+		{
+			name: "invalid enables flash attention",
+			env:  "random",
+			set:  true,
+			gpus: supportedGPU,
+			want: []string{"base", "--flash-attn", "on"},
+		},
+		{
+			name: "old cuda disables flash attention by default",
+			gpus: oldGPU,
+			want: []string{"base", "--flash-attn", "off"},
+		},
+		{
+			name: "explicit enable is clamped off on old cuda",
+			env:  "1",
+			set:  true,
+			gpus: oldGPU,
+			want: []string{"base", "--flash-attn", "off"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setFlashAttentionEnv(t, tt.env, tt.set)
+			got := appendFlashAttentionArgs([]string{"base"}, tt.gpus)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendFlashAttentionArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func setFlashAttentionEnv(t *testing.T, value string, set bool) {
+	t.Helper()
+
+	if set {
+		t.Setenv("OLLAMA_FLASH_ATTENTION", value)
+		return
+	}
+
+	old, ok := os.LookupEnv("OLLAMA_FLASH_ATTENTION")
+	if ok {
+		t.Setenv("OLLAMA_FLASH_ATTENTION", old)
+	}
+	os.Unsetenv("OLLAMA_FLASH_ATTENTION")
 }
 
 func TestNormalizeEmbeddingError(t *testing.T) {

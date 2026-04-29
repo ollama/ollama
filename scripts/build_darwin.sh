@@ -172,8 +172,8 @@ _sign_darwin() {
 
     status "Creating universal tarball..."
     tar -cf dist/ollama-darwin.tar --strip-components 2 dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize
-    tar -rf dist/ollama-darwin.tar --strip-components 4 dist/darwin-amd64/lib/
-    tar -rf dist/ollama-darwin.tar --strip-components 4 dist/darwin-arm64/lib/
+    tar -rf dist/ollama-darwin.tar --strip-components 4 --exclude '*/llama-server' --exclude '*/llama-quantize' dist/darwin-amd64/lib/
+    tar -rf dist/ollama-darwin.tar --strip-components 4 --exclude '*/llama-server' --exclude '*/llama-quantize' dist/darwin-arm64/lib/
     gzip -9vc <dist/ollama-darwin.tar >dist/ollama-darwin.tgz
 }
 

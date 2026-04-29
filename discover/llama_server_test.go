@@ -2,10 +2,31 @@ package discover
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/logutil"
 )
+
+func TestLlamaServerDiscoveryOutputOnlyTrace(t *testing.T) {
+	original := slog.Default()
+	t.Cleanup(func() {
+		slog.SetDefault(original)
+	})
+
+	slog.SetDefault(logutil.NewLogger(io.Discard, slog.LevelDebug))
+	if got := llamaServerDiscoveryOutput(t.Context()); got != io.Discard {
+		t.Fatal("debug logging should discard raw llama-server discovery output")
+	}
+
+	slog.SetDefault(logutil.NewLogger(io.Discard, logutil.LevelTrace))
+	if got := llamaServerDiscoveryOutput(t.Context()); got == io.Discard {
+		t.Fatal("trace logging should emit raw llama-server discovery output")
+	}
+}
 
 func TestParseLlamaServerDevices(t *testing.T) {
 	tests := []struct {
@@ -99,6 +120,20 @@ Available devices:
 	}
 }
 
+func TestParseLlamaServerDevicesMarksVulkanUMAGPUsIntegrated(t *testing.T) {
+	output := `ggml_vulkan: 0 = Intel(R) Graphics (Intel open-source Mesa driver) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 32 | shared memory: 65536 | int dot: 1 | matrix cores: none
+Available devices:
+  Vulkan0: Intel(R) Graphics (16384 MiB, 12288 MiB free)
+`
+	devices := parseLlamaServerDevices(output, []string{"/lib/ollama", "/lib/ollama/vulkan"})
+	if len(devices) != 1 {
+		t.Fatalf("expected 1 device, got %d", len(devices))
+	}
+	if !devices[0].Integrated {
+		t.Fatal("expected Vulkan UMA device to be marked integrated")
+	}
+}
+
 func TestCUDADeviceFilteredByArchs(t *testing.T) {
 	// GTX 1060 (CC 6.1 = 610) with v13 ARCHS that don't include 610
 	output := `ggml_cuda_init: found 1 CUDA devices (Total VRAM: 6063 MiB):
@@ -126,6 +161,9 @@ Available devices:
 	if len(devices) != 1 {
 		t.Fatalf("expected 1 device (CC 890 in ARCHS), got %d", len(devices))
 	}
+	if devices[0].ComputeMajor != 8 || devices[0].ComputeMinor != 9 {
+		t.Fatalf("expected compute 8.9, got %s", devices[0].Compute())
+	}
 }
 
 func TestCUDANoArchsFailOpen(t *testing.T) {
@@ -138,6 +176,9 @@ Available devices:
 	devices := parseLlamaServerDevices(output, []string{"/lib/ollama"})
 	if len(devices) != 1 {
 		t.Fatalf("expected 1 device (no ARCHS = fail open), got %d", len(devices))
+	}
+	if devices[0].ComputeMajor != 6 || devices[0].ComputeMinor != 1 {
+		t.Fatalf("expected compute 6.1, got %s", devices[0].Compute())
 	}
 }
 
@@ -185,6 +226,9 @@ Available devices:
 	if devices[0].GFXTarget != "gfx1031" {
 		t.Errorf("expected gfx1031, got %s", devices[0].GFXTarget)
 	}
+	if devices[0].Compute() != "gfx1031" {
+		t.Errorf("expected compute gfx1031, got %s", devices[0].Compute())
+	}
 }
 
 func TestROCmDeviceGFXTargetWithXnack(t *testing.T) {
@@ -205,6 +249,12 @@ Available devices:
 	}
 	if devices[1].GFXTarget != "gfx906" {
 		t.Errorf("device 1: expected gfx906, got %s", devices[1].GFXTarget)
+	}
+	if devices[0].Compute() != "gfx1030" {
+		t.Errorf("device 0: expected compute gfx1030, got %s", devices[0].Compute())
+	}
+	if devices[1].Compute() != "gfx906" {
+		t.Errorf("device 1: expected compute gfx906, got %s", devices[1].Compute())
 	}
 }
 

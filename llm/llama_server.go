@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -68,6 +69,26 @@ number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
 ws ::= ([ \t\n] ws)?
 `
 
+// DefaultEmbeddingNumBatch is the default NumBatch used for embedding models
+// when neither the model nor the request specifies num_batch.
+const DefaultEmbeddingNumBatch = 2048
+
+// DefaultEmbeddingNumBatchForContext caps the embedding batch default to the
+// active context length before it is passed to llama-server.
+func DefaultEmbeddingNumBatchForContext(numCtx int) int {
+	if numCtx > 0 {
+		return min(DefaultEmbeddingNumBatch, numCtx)
+	}
+	return DefaultEmbeddingNumBatch
+}
+
+// WithDefaultEmbeddingNumBatch applies the llama-server embedding batch
+// default to a copy of opts.
+func WithDefaultEmbeddingNumBatch(opts api.Options) api.Options {
+	opts.NumBatch = DefaultEmbeddingNumBatchForContext(opts.NumCtx)
+	return opts
+}
+
 // llamaServerRunner wraps an upstream llama-server process and implements the LlamaServer interface.
 // It communicates with llama-server over HTTP.
 type llamaServerRunner struct {
@@ -80,6 +101,13 @@ type llamaServerRunner struct {
 	status    *StatusWriter
 	options   api.Options
 	modelPath string
+	// mediaMarker must match the LLAMA_MEDIA_MARKER value passed to llama-server.
+	// llama.cpp randomizes this by default; Ollama renders stable [img-N] markers
+	// and rewrites them before forwarding the request.
+	mediaMarker string
+	// stripLeadingBOS handles renderers that emit a textual BOS while
+	// llama-server's tokenizer also auto-adds BOS for the model.
+	stripLeadingBOS bool
 
 	// Per-device VRAM tracking, populated from llama-server log parsing.
 	// Keys are device names from llama-server output (e.g., "CUDA0", "ROCm0", "MTL0").
@@ -123,6 +151,30 @@ func (s *llamaServerRunner) GetPort() int {
 
 func (s *llamaServerRunner) HasExited() bool {
 	return s.cmd != nil && s.cmd.ProcessState != nil && s.cmd.ProcessState.ExitCode() >= 0
+}
+
+func (s *llamaServerRunner) llamaServerMediaMarker() string {
+	if s.mediaMarker != "" {
+		return s.mediaMarker
+	}
+	return "<__media__>"
+}
+
+func newLlamaServerMediaMarker() string {
+	var b [16]byte
+	if _, err := crand.Read(b[:]); err == nil {
+		return fmt.Sprintf("<__ollama_media_%x__>", b)
+	}
+
+	return fmt.Sprintf("<__ollama_media_%d_%d__>", time.Now().UnixNano(), rand.Int63())
+}
+
+func (s *llamaServerRunner) completionPrompt(prompt string) string {
+	if s.stripLeadingBOS {
+		return strings.TrimPrefix(prompt, "<bos>")
+	}
+
+	return prompt
 }
 
 func (s *llamaServerRunner) ContextLength() int {
@@ -204,12 +256,14 @@ func FindLlamaServer() (string, error) {
 // startLlamaServer spawns the upstream llama-server process with appropriate CLI flags.
 func startLlamaServer(
 	modelPath string,
+	modelArch string,
 	projectors []string,
 	adapters []string,
 	opts api.Options,
 	numParallel int,
 	kvCacheType string,
 	embedding bool,
+	gpus []ml.DeviceInfo,
 	gpuLibs []string,
 	extraEnvs map[string]string,
 	out io.Writer,
@@ -249,6 +303,8 @@ func startLlamaServer(
 		params = append(params, "--mmproj", projectors[0])
 	}
 
+	params = append(params, qwen3VLServerArgs(modelArch)...)
+
 	// LoRA adapters
 	for _, adapter := range adapters {
 		params = append(params, "--lora", adapter)
@@ -264,13 +320,15 @@ func startLlamaServer(
 		params = append(params, "--cache-type-k", kvCacheType, "--cache-type-v", kvCacheType)
 	}
 
+	params = appendFlashAttentionArgs(params, gpus)
+
 	// Batch size — match the old engine default (512) instead of
 	// llama-server's default (2048) to avoid generation regressions
 	if embedding {
-		// Embedding mode — set batch size to context size so large inputs fit
 		params = append(params, "--embedding")
-		params = append(params, "-b", strconv.Itoa(opts.NumCtx*numParallel))
-		params = append(params, "-ub", strconv.Itoa(opts.NumCtx*numParallel))
+		if batchSize := embeddingBatchSize(opts, numParallel); batchSize > 0 {
+			params = append(params, "-b", strconv.Itoa(batchSize), "-ub", strconv.Itoa(batchSize))
+		}
 	} else if opts.NumBatch > 0 {
 		params = append(params, "-b", strconv.Itoa(opts.NumBatch))
 	}
@@ -353,20 +411,9 @@ func startLlamaServer(
 	cmd.Env = os.Environ()
 
 	if out != nil {
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to spawn llama-server stdout pipe: %w", err)
-		}
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to spawn llama-server stderr pipe: %w", err)
-		}
-		go func() {
-			io.Copy(out, stdout) //nolint:errcheck
-		}()
-		go func() {
-			io.Copy(out, stderr) //nolint:errcheck
-		}()
+		// os/exec serializes Write calls when stdout and stderr share a writer.
+		cmd.Stdout = out
+		cmd.Stderr = out
 	}
 	cmd.SysProcAttr = LlamaServerSysProcAttr
 
@@ -410,6 +457,33 @@ func startLlamaServer(
 	return cmd, port, nil
 }
 
+func embeddingBatchSize(opts api.Options, numParallel int) int {
+	batchSize := opts.NumBatch
+	if batchSize <= 0 {
+		return 0
+	}
+	if opts.NumCtx > 0 {
+		batchSize = min(batchSize, opts.NumCtx*max(numParallel, 1))
+	}
+	return batchSize
+}
+
+func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
+	if !ml.FlashAttentionSupported(gpus) {
+		return append(params, "--flash-attn", "off")
+	}
+
+	enabled := envconfig.FlashAttention(false)
+	userSet := enabled == envconfig.FlashAttention(true)
+	if !userSet {
+		return append(params, "--flash-attn", "auto")
+	}
+	if enabled {
+		return append(params, "--flash-attn", "on")
+	}
+	return append(params, "--flash-attn", "off")
+}
+
 // NewLlamaServerRunner creates a new llama-server runner that wraps the upstream llama-server binary.
 func NewLlamaServerRunner(
 	gpus []ml.DeviceInfo,
@@ -421,7 +495,8 @@ func NewLlamaServerRunner(
 	kvCacheType string,
 ) (LlamaServer, error) {
 	// Check if this is an embedding model
-	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
+	arch := f.KV().Architecture()
+	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", arch)]
 
 	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
 	// the main model file rather than in a separate projector layer. When
@@ -433,20 +508,22 @@ func NewLlamaServerRunner(
 	// and aborts model load. So gate on an explicit allowlist that mirrors
 	// the compat layer's clip-side coverage in llama/compat/.
 	compatClipArches := map[string]bool{
-		"gemma3":      true,
-		"gemma4":      true,
-		"qwen35moe":   true,
-		"qwen25vl":    true,
-		"qwen3vl":     true,
-		"mistral3":    true,
-		"deepseekocr": true,
-		"glmocr":      true,
-		"llama4":      true,
+		"gemma3":          true,
+		"gemma4":          true,
+		"qwen35moe":       true,
+		"qwen25vl":        true,
+		"qwen3vl":         true,
+		"qwen3vlmoe":      true,
+		"mistral3":        true,
+		"deepseekocr":     true,
+		"glmocr":          true,
+		"llama4":          true,
+		"nemotron_h_omni": true,
 		// Add entries as llama/compat grows clip handlers.
 	}
 	if len(projectors) == 0 &&
 		len(f.Tensors().Items("v.")) > 0 &&
-		compatClipArches[f.KV().Architecture()] {
+		compatClipArches[arch] {
 		projectors = []string{modelPath}
 	}
 
@@ -456,16 +533,26 @@ func NewLlamaServerRunner(
 	// memWriter wraps the status writer and parses buffer size lines from llama-server logs
 	memWriter := &memoryParsingWriter{inner: status}
 
+	mediaMarker := newLlamaServerMediaMarker()
+	extraEnvs := ml.GetDevicesEnv(gpus, false)
+	serverEnvs := make(map[string]string, len(extraEnvs)+1)
+	for k, v := range extraEnvs {
+		serverEnvs[k] = v
+	}
+	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
+
 	cmd, port, err := startLlamaServer(
 		modelPath,
+		arch,
 		projectors,
 		adapters,
 		opts,
 		numParallel,
 		kvCacheType,
 		isEmbedding,
+		gpus,
 		gpuLibs,
-		ml.GetDevicesEnv(gpus, false),
+		serverEnvs,
 		memWriter,
 	)
 
@@ -475,6 +562,8 @@ func NewLlamaServerRunner(
 		status:           status,
 		options:          opts,
 		modelPath:        modelPath,
+		mediaMarker:      mediaMarker,
+		stripLeadingBOS:  arch == "gemma4",
 		vramByDevice:     make(map[string]uint64),
 		systemFreeAtLoad: make(map[string]uint64),
 		gpus:             gpus,
@@ -488,19 +577,16 @@ func NewLlamaServerRunner(
 	memWriter.runner = s
 
 	if err != nil {
-		var msg string
-		if s.status != nil && s.status.LastError() != "" {
-			msg = s.status.LastError()
-		}
+		msg := s.lastErrMsg()
 		return nil, fmt.Errorf("error starting llama-server: %v %s", err, msg)
 	}
 
 	// Reap subprocess when it exits
 	go func() {
 		err := s.cmd.Wait()
-		if err != nil && s.status != nil && s.status.LastError() != "" {
+		if err != nil && s.lastErrMsg() != "" {
 			slog.Error("llama-server terminated", "error", err)
-			s.doneErr = errors.New(s.status.LastError())
+			s.doneErr = errors.New(s.lastErrMsg())
 		} else {
 			s.doneErr = err
 		}
@@ -508,6 +594,17 @@ func NewLlamaServerRunner(
 	}()
 
 	return s, nil
+}
+
+func qwen3VLServerArgs(modelArch string) []string {
+	switch modelArch {
+	case "qwen3vl", "qwen3vlmoe":
+		// Upstream mtmd warns that Qwen-VL needs at least 1024 image tokens for
+		// correct grounding/counting behavior; the GGUF metadata default is too low.
+		return []string{"--image-min-tokens", "1024"}
+	default:
+		return nil
+	}
 }
 
 // Load waits for llama-server to finish loading the model. lama-server loads
@@ -543,10 +640,7 @@ func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, 
 // llama-server returns {"status":"ok"}, {"status":"loading model"}, or {"status":"error"}.
 func (s *llamaServerRunner) getServerStatus(ctx context.Context) (ServerStatus, error) {
 	if s.cmd.ProcessState != nil {
-		msg := ""
-		if s.status != nil && s.status.LastError() != "" {
-			msg = s.status.LastError()
-		}
+		msg := s.lastErrMsg()
 		if s.cmd.ProcessState.ExitCode() == -1 {
 			slog.Warn("llama-server process no longer running", "sys", s.cmd.ProcessState.Sys(), "string", s.cmd.ProcessState)
 		}
@@ -623,8 +717,7 @@ func (s *llamaServerRunner) Ping(ctx context.Context) error {
 }
 
 func (s *llamaServerRunner) WaitUntilRunning(ctx context.Context) error {
-	stallDuration := envconfig.LoadTimeout()
-	stallTimer := time.Now().Add(stallDuration)
+	loadDeadline := time.Now().Add(envconfig.LoadTimeout())
 
 	slog.Info("waiting for llama-server to start responding")
 	var lastStatus ServerStatus = -1
@@ -635,89 +728,70 @@ func (s *llamaServerRunner) WaitUntilRunning(ctx context.Context) error {
 			slog.Warn("client connection closed before llama-server finished loading, aborting load")
 			return fmt.Errorf("timed out waiting for llama-server to start: %w", ctx.Err())
 		case <-s.done:
-			if s.status != nil && s.status.LastError() != "" {
-				return fmt.Errorf("llama-server process has terminated: %s", s.status.LastError())
+			if msg := s.lastErrMsg(); msg != "" {
+				if s.doneErr == nil {
+					return fmt.Errorf("llama-server process has terminated: %s", msg)
+				}
+				return fmt.Errorf("llama-server process has terminated: %w: %s", s.doneErr, msg)
 			}
-			if s.doneErr != nil {
-				return fmt.Errorf("llama-server process has terminated: %w", s.doneErr)
+			if s.doneErr == nil {
+				if s.cmd != nil && s.cmd.ProcessState != nil {
+					return fmt.Errorf("llama-server process has terminated with exit code %d", s.cmd.ProcessState.ExitCode())
+				}
+				return errors.New("llama-server process has terminated")
 			}
-			if s.cmd != nil && s.cmd.ProcessState != nil {
-				return fmt.Errorf("llama-server process has terminated with exit code %d", s.cmd.ProcessState.ExitCode())
-			}
-			return errors.New("llama-server process has terminated")
+			return fmt.Errorf("llama-server process has terminated: %w", s.doneErr)
 		default:
 		}
 
-		if time.Now().After(stallTimer) {
-			msg := ""
-			if s.status != nil && s.status.LastError() != "" {
-				msg = s.status.LastError()
-			}
+		if time.Now().After(loadDeadline) {
+			msg := s.lastErrMsg()
 			return fmt.Errorf("timed out waiting for llama-server to start - %s", msg)
 		}
 
 		if s.cmd.ProcessState != nil {
-			msg := ""
-			if s.status != nil && s.status.LastError() != "" {
-				msg = s.status.LastError()
-			}
+			msg := s.lastErrMsg()
 			return fmt.Errorf("llama-server process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
 		}
 
 		pollCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-		status, _ := s.getServerStatus(pollCtx)
+		status, statusErr := s.getServerStatus(pollCtx)
 		cancel()
 
-		if lastStatus != status && status != ServerStatusReady {
+		statusChanged := lastStatus != status
+		if statusChanged && status != ServerStatusReady {
 			slog.Info("waiting for llama-server to become available", "status", status)
 		}
 
 		switch status {
 		case ServerStatusReady:
+			if s.status != nil {
+				s.status.SetLastError("")
+			}
 			slog.Info(fmt.Sprintf("llama-server started in %0.2f seconds", time.Since(s.loadStart).Seconds()))
 			return nil
+		case ServerStatusError:
+			msg := s.lastErrMsg()
+			if IsOutOfMemoryMessage(msg) {
+				return fmt.Errorf("llama-server reported out-of-memory during startup: %s", msg)
+			}
+			if IsOutOfMemory(statusErr) {
+				return fmt.Errorf("llama-server reported out-of-memory during startup: %w", statusErr)
+			}
+			lastStatus = status
+			time.Sleep(time.Millisecond * 250)
 		default:
 			lastStatus = status
-			// Reset stall timer on progress
-			stallTimer = time.Now().Add(stallDuration)
 			time.Sleep(time.Millisecond * 250)
 		}
 	}
 }
 
-// ShouldRetryWithMetalTensorDisabled reports whether a startup/discovery
-// failure matches the Metal tensor API crash path. Discovery records the
-// successful override on the device so regular model loads inherit it.
-func ShouldRetryWithMetalTensorDisabled(err error, status *StatusWriter) bool {
-	if runtime.GOOS != "darwin" {
-		return false
+func (s *llamaServerRunner) lastErrMsg() string {
+	if s.status == nil {
+		return ""
 	}
-
-	var msg strings.Builder
-	if err != nil {
-		msg.WriteString(strings.ToLower(err.Error()))
-	}
-	if status != nil && status.LastError() != "" {
-		msg.WriteByte(' ')
-		msg.WriteString(strings.ToLower(status.LastError()))
-	}
-	text := msg.String()
-
-	for _, needle := range []string{
-		"failed to initialize ggml backend device: metal",
-		"failed to initialize metal backend",
-		"failed to initialize the metal library",
-		"failed to allocate context",
-		"unable to create llama context",
-		"signal arrived during cgo execution",
-		"input types must match cooperative tensor types",
-	} {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-
-	return false
+	return s.status.LastError()
 }
 
 // llamaServerCompletionRequest is the request format for llama-server's POST /completion endpoint.
@@ -824,7 +898,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 
 	// Build the llama-server request
 	lsReq := llamaServerCompletionRequest{
-		Prompt:          req.Prompt,
+		Prompt:          s.completionPrompt(req.Prompt),
 		Stream:          true,
 		CachePrompt:     req.Shift,
 		NPredict:        req.Options.NumPredict,
@@ -866,14 +940,14 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		lsReq.Grammar = req.Grammar
 	}
 
-	// Convert images: replace [img-N] markers with <__media__> and
-	// package image data as base64 in a multimodal prompt object
+	// Convert media: replace Ollama's stable [img-N] markers with the per-process
+	// llama-server media marker and package the matching payloads as base64.
 	if len(req.Images) > 0 {
 		promptStr := lsReq.Prompt.(string)
 		var imageData []string
 		for _, img := range req.Images {
 			marker := fmt.Sprintf("[img-%d]", img.ID)
-			promptStr = strings.Replace(promptStr, marker, "<__media__>", 1)
+			promptStr = strings.Replace(promptStr, marker, s.llamaServerMediaMarker(), 1)
 			imageData = append(imageData, base64.StdEncoding.EncodeToString(img.Data))
 		}
 		lsReq.Prompt = llamaServerMultimodalPrompt{
@@ -902,6 +976,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			return err
 		}
 		slog.Error("llama-server completion error", "error", err)
+		if msg := s.lastErrMsg(); msg != "" {
+			return fmt.Errorf("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details: %s", msg)
+		}
 		return errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
 	defer res.Body.Close()
@@ -912,7 +989,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			return fmt.Errorf("failed reading llama-server error response: %w", err)
 		}
 
-		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: strings.TrimSpace(string(bodyBytes))}
+		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: s.statusErrorMessage(bodyBytes)}
 	}
 
 	// Parse SSE stream from llama-server
@@ -987,10 +1064,8 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	if err := scanner.Err(); err != nil {
 		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
 			s.Close()
-			var msg string
-			if s.status != nil && s.status.LastError() != "" {
-				msg = s.status.LastError()
-			} else {
+			msg := s.lastErrMsg()
+			if msg == "" {
 				msg = err.Error()
 			}
 			return fmt.Errorf("an error was encountered while running the model: %s", msg)
@@ -999,6 +1074,20 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	}
 
 	return nil
+}
+
+func (s *llamaServerRunner) statusErrorMessage(body []byte) string {
+	errMsg := strings.TrimSpace(string(body))
+	statusMsg := s.lastErrMsg()
+	if statusMsg == "" {
+		return errMsg
+	}
+
+	if IsOutOfMemoryMessage(statusMsg) && !strings.Contains(strings.ToLower(errMsg), strings.ToLower(statusMsg)) {
+		return strings.TrimSpace(errMsg + "\n" + statusMsg)
+	}
+
+	return errMsg
 }
 
 // convertLogprobs converts llama-server's completion_probabilities to Ollama's Logprob format.

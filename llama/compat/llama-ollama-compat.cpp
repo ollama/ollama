@@ -3,6 +3,16 @@
 
 #include "llama-impl.h"
 
+// Temporary compatibility layer for Ollama specific GGUFs whose metadata or
+// tensor layout does not match llama.cpp's current loaders. The goal is to
+// minimize user disruption during a transition phase to llama.cpp-compatible
+// GGUFs with manifest-list support. Ultimately this patch should be removed and
+// Ollama should run against unmodified upstream loaders.
+
+#include <cmath>
+#include <algorithm>
+#include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -16,6 +26,21 @@ namespace llama_ollama_compat {
 using namespace llama_ollama_compat::detail; // pull detail:: helpers into scope
 
 namespace {
+
+#ifdef OLLAMA_COMPAT_MTMD_BUILD
+void ollama_compat_log(const char * format, ...) {
+    std::va_list args;
+    va_start(args, format);
+    std::vfprintf(stderr, format, args);
+    va_end(args);
+}
+
+#define OLLAMA_COMPAT_LOG_INFO(...)  ollama_compat_log(__VA_ARGS__)
+#define OLLAMA_COMPAT_LOG_ERROR(...) ollama_compat_log(__VA_ARGS__)
+#else
+#define OLLAMA_COMPAT_LOG_INFO(...)  LLAMA_LOG_INFO(__VA_ARGS__)
+#define OLLAMA_COMPAT_LOG_ERROR(...) LLAMA_LOG_ERROR(__VA_ARGS__)
+#endif
 
 // Per-loader file path registry — set by translate_metadata, read by
 // maybe_load_text_tensor so it can pass the path to load ops without a
@@ -49,7 +74,7 @@ bool detect_ollama_gemma3(const gguf_context * meta, const ggml_context * ctx) {
 void handle_gemma3(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
     if (!detect_ollama_gemma3(meta, ctx)) return;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format gemma3 GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format gemma3 GGUF; applying compatibility fixes\n", __func__);
 
     // Old Ollama converters sometimes used nested rope key names. Copy
     // them to the flat names upstream expects BEFORE injecting defaults.
@@ -129,7 +154,7 @@ void handle_gemma3n(const llama_model_loader * ml, gguf_context * meta, ggml_con
     (void) ml;
     if (!detect_ollama_gemma3n(meta, ctx)) return;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format gemma3n GGUF; truncating vocab to per_layer_token_embd size\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format gemma3n GGUF; truncating vocab to per_layer_token_embd size\n", __func__);
 
     ggml_tensor * pe = ggml_get_tensor(ctx, "per_layer_token_embd.weight");
     if (!pe) return;
@@ -178,7 +203,7 @@ void handle_embeddinggemma(const llama_model_loader * ml, gguf_context * meta,
     (void) ml;
     if (!detect_ollama_embeddinggemma(meta, ctx)) return;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format embeddinggemma; translating to gemma-embedding\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format embeddinggemma; translating to gemma-embedding\n", __func__);
 
     // Switch architecture so upstream loads the embedding-specific code path
     // (no causal attention, dense_2/dense_3 loaded by name).
@@ -203,6 +228,80 @@ void handle_embeddinggemma(const llama_model_loader * ml, gguf_context * meta,
 
     rename_tensor(meta, ctx, "dense.0.weight", "dense_2.weight");
     rename_tensor(meta, ctx, "dense.1.weight", "dense_3.weight");
+}
+
+// =========================================================================
+// snowflake-arctic-embed2 (text side)
+// =========================================================================
+//
+// The legacy Ollama GGUF stores tokenizer.ggml.precompiled_charsmap as an
+// array of single-character base64 strings. llama.cpp now expects this KV as a
+// raw int8/uint8 byte array and aborts while loading the vocab otherwise.
+
+int base64_value(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+bool decode_base64(const std::string & encoded, std::vector<uint8_t> & decoded) {
+    int value = 0;
+    int bits  = -8;
+    decoded.clear();
+    decoded.reserve(encoded.size() * 3 / 4);
+
+    for (const char c : encoded) {
+        if (c == '=') break;
+        const int d = base64_value(c);
+        if (d < 0) return false;
+
+        value = (value << 6) | d;
+        bits += 6;
+        if (bits >= 0) {
+            decoded.push_back((uint8_t) ((value >> bits) & 0xff));
+            bits -= 8;
+        }
+    }
+
+    return true;
+}
+
+void handle_snowflake_arctic_embed2(gguf_context * meta) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0 || std::strcmp(gguf_get_val_str(meta, arch_kid), "bert") != 0) return;
+
+    const int64_t tok_kid = gguf_find_key(meta, "tokenizer.ggml.model");
+    if (tok_kid < 0 || std::strcmp(gguf_get_val_str(meta, tok_kid), "t5") != 0) return;
+
+    const char * key = "tokenizer.ggml.precompiled_charsmap";
+    const int64_t kid = gguf_find_key(meta, key);
+    if (kid < 0 || gguf_get_kv_type(meta, kid) != GGUF_TYPE_ARRAY) return;
+    if (gguf_get_arr_type(meta, kid) != GGUF_TYPE_STRING) return;
+
+    const size_t n = gguf_get_arr_n(meta, kid);
+    std::string encoded;
+    encoded.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+        const char * s = gguf_get_arr_str(meta, kid, i);
+        if (!s || std::strlen(s) != 1) {
+            OLLAMA_COMPAT_LOG_ERROR("%s: unexpected precompiled charsmap entry length at index %zu\n",
+                                    __func__, i);
+            return;
+        }
+        encoded.push_back(s[0]);
+    }
+
+    std::vector<uint8_t> decoded;
+    if (!decode_base64(encoded, decoded) || decoded.empty()) {
+        OLLAMA_COMPAT_LOG_ERROR("%s: failed to decode precompiled charsmap\n", __func__);
+        return;
+    }
+
+    gguf_set_arr_data(meta, key, GGUF_TYPE_UINT8, decoded.data(), decoded.size());
+    OLLAMA_COMPAT_LOG_INFO("%s: converted tokenizer precompiled charsmap to byte array\n", __func__);
 }
 
 // =========================================================================
@@ -292,7 +391,7 @@ bool detect_ollama_qwen35moe(const gguf_context * meta, const ggml_context * ctx
 
 void handle_qwen35moe(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
     if (!detect_ollama_qwen35moe(meta, ctx)) return;
-    LLAMA_LOG_INFO("%s: detected Ollama-format qwen35moe GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format qwen35moe GGUF; applying compatibility fixes\n", __func__);
     apply_qwen35_text_fixes(ml, meta, ctx, "qwen35moe");
 }
 
@@ -317,7 +416,7 @@ bool detect_ollama_qwen35(const gguf_context * meta, const ggml_context * ctx) {
 
 void handle_qwen35(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
     if (!detect_ollama_qwen35(meta, ctx)) return;
-    LLAMA_LOG_INFO("%s: detected Ollama-format qwen35 GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format qwen35 GGUF; applying compatibility fixes\n", __func__);
     apply_qwen35_text_fixes(ml, meta, ctx, "qwen35");
 }
 
@@ -343,7 +442,7 @@ void handle_gemma4(const llama_model_loader * ml, gguf_context * meta, ggml_cont
     if (!detect_ollama_gemma4(meta, ctx)) return;
     (void) ctx;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format gemma4 GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format gemma4 GGUF; applying compatibility fixes\n", __func__);
 
     // Tokenizer fix: Ollama writes `tokenizer.ggml.model = 'llama'` (SPM) on
     // gemma4 GGUFs, but gemma4 actually uses BPE — upstream-converted GGUFs
@@ -398,7 +497,7 @@ void handle_deepseekocr(const llama_model_loader * ml, gguf_context * meta,
                         ggml_context * ctx, std::string & arch_name) {
     if (!detect_ollama_deepseekocr(meta)) return;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format deepseekocr GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format deepseekocr GGUF; applying compatibility fixes\n", __func__);
 
     gguf_set_val_str(meta, "general.architecture", "deepseek2-ocr");
     rename_kv_prefix(meta, "deepseekocr.", "deepseek2-ocr.");
@@ -460,7 +559,7 @@ bool detect_ollama_nemotron_h_moe(const gguf_context * meta, const ggml_context 
 void handle_nemotron_h_moe(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
     if (!detect_ollama_nemotron_h_moe(meta, ctx)) return;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format nemotron_h_moe GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format nemotron_h_moe GGUF; applying compatibility fixes\n", __func__);
 
     // Inject moe_latent_size for latent-FFN variants (e.g. super 120B-A12B).
     // Standard variants (e.g. cascade-2 30B-A3B) have no latent tensors and
@@ -490,6 +589,79 @@ void handle_nemotron_h_moe(const llama_model_loader * ml, gguf_context * meta, g
 }
 
 // =========================================================================
+// nemotron_h_omni (text side)
+// =========================================================================
+//
+// The official Ollama nemotron3:33b GGUF is a unified text+vision+audio
+// `nemotron_h_omni` blob. Upstream llama.cpp currently loads the runnable
+// pieces as `nemotron_h_moe` text plus a `clip` / `nemotron_v2_vl` projector.
+// Audio is intentionally hidden until upstream can skip or load it safely.
+
+bool detect_ollama_nemotron_h_omni(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "nemotron_h_omni") != 0) return false;
+    return any_tensor_with_prefix(ctx, "v.")
+        || any_tensor_with_prefix(ctx, "a.")
+        || any_tensor_with_prefix(ctx, "mm.");
+}
+
+const char * nemotron_h_omni_text_arch(const gguf_context * meta) {
+    const int64_t expert_count_kid = gguf_find_key(meta, "nemotron_h_omni.expert_count");
+    const int64_t expert_used_kid  = gguf_find_key(meta, "nemotron_h_omni.expert_used_count");
+    const bool has_experts =
+        (expert_count_kid >= 0 && gguf_get_val_u32(meta, expert_count_kid) > 0) ||
+        (expert_used_kid  >= 0 && gguf_get_val_u32(meta, expert_used_kid)  > 0);
+    return has_experts ? "nemotron_h_moe" : "nemotron_h";
+}
+
+void copy_nemotron_h_omni_text_kvs(gguf_context * meta, const char * text_arch) {
+    const char * old_prefix = "nemotron_h_omni.";
+    const size_t old_len = std::strlen(old_prefix);
+
+    std::vector<std::string> matches;
+    const int64_t n = gguf_get_n_kv(meta);
+    for (int64_t i = 0; i < n; ++i) {
+        const char * k = gguf_get_key(meta, i);
+        if (std::strncmp(k, old_prefix, old_len) != 0) continue;
+        const char * suffix = k + old_len;
+        if (std::strncmp(suffix, "vision.", 7) == 0) continue;
+        if (std::strncmp(suffix, "audio.", 6) == 0) continue;
+        matches.emplace_back(k);
+    }
+
+    const std::string new_prefix = std::string(text_arch) + ".";
+    for (const auto & old_key : matches) {
+        copy_kv(meta, old_key.c_str(),
+                (new_prefix + old_key.substr(old_len)).c_str());
+    }
+}
+
+void handle_nemotron_h_omni(const llama_model_loader * ml,
+                            gguf_context * meta,
+                            ggml_context * ctx,
+                            std::string & arch_name) {
+    if (!detect_ollama_nemotron_h_omni(meta, ctx)) return;
+
+    const char * text_arch = nemotron_h_omni_text_arch(meta);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format nemotron_h_omni GGUF; translating text side to %s\n",
+                           __func__, text_arch);
+
+    gguf_set_val_str(meta, "general.architecture", text_arch);
+    arch_name = text_arch;
+    copy_nemotron_h_omni_text_kvs(meta, text_arch);
+
+    // Hide embedded audio + vision + projector tensors from the text loader.
+    add_skip_prefix(ml, "a.");
+    add_skip_prefix(ml, "v.");
+    add_skip_prefix(ml, "mm.");
+
+    // Reuse the existing nemotron_h_moe fixes if this unified model also has
+    // latent FFN or MTP tensors in future variants.
+    if (arch_name == "nemotron_h_moe") handle_nemotron_h_moe(ml, meta, ctx);
+}
+
+// =========================================================================
 // llama4 (text side)
 // =========================================================================
 //
@@ -511,7 +683,7 @@ void handle_llama4(const llama_model_loader * ml, gguf_context * meta, ggml_cont
     (void) meta;
     (void) ctx;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format llama4 GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format llama4 GGUF; applying compatibility fixes\n", __func__);
 
     add_skip_prefix(ml, "v.");
     add_skip_prefix(ml, "mm.");
@@ -563,7 +735,7 @@ void handle_glmocr(const llama_model_loader * ml, gguf_context * meta,
                    ggml_context * ctx, std::string & arch_name) {
     if (!detect_ollama_glmocr(meta)) return;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format glmocr GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format glmocr GGUF; applying compatibility fixes\n", __func__);
 
     gguf_set_val_str(meta, "general.architecture", "glm4");
     rename_kv_prefix(meta, "glmocr.", "glm4.");
@@ -656,7 +828,7 @@ void handle_gptoss(const llama_model_loader * ml, gguf_context * meta,
     if (!detect_ollama_gptoss(meta)) return;
     (void) ml;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format gpt-oss GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format gpt-oss GGUF; applying compatibility fixes\n", __func__);
 
     gguf_set_val_str(meta, "general.architecture", "gpt-oss");
     rename_kv_prefix(meta, "gptoss.", "gpt-oss.");
@@ -706,7 +878,7 @@ void handle_lfm2(const llama_model_loader * ml, gguf_context * meta, ggml_contex
     if (!detect_ollama_lfm2(meta, ctx)) return;
     (void) ml;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format lfm2 GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format lfm2 GGUF; applying compatibility fixes\n", __func__);
 
     rename_tensor(meta, ctx, "output_norm.weight", "token_embd_norm.weight");
 
@@ -757,7 +929,7 @@ void handle_mistral3(const llama_model_loader * ml, gguf_context * meta, ggml_co
     if (!detect_ollama_mistral3(meta, ctx)) return;
     (void) ctx;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format mistral3 GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format mistral3 GGUF; applying compatibility fixes\n", __func__);
 
     // RoPE YaRN parameter renames.
     copy_kv(meta, "mistral3.rope.scaling.beta_fast",
@@ -814,7 +986,7 @@ void handle_glm4moelite(const llama_model_loader * ml, gguf_context * meta,
     (void) ctx;
     if (!detect_ollama_glm4moelite(meta)) return;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format glm4moelite GGUF; translating to deepseek2 (MLA conventions)\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format glm4moelite GGUF; translating to deepseek2 (MLA conventions)\n", __func__);
 
     arch_name = "deepseek2";
     gguf_set_val_str(meta, "general.architecture", "deepseek2");
@@ -883,7 +1055,7 @@ void handle_qwen25vl(const llama_model_loader * ml, gguf_context * meta,
     (void) ctx;
     if (!detect_ollama_qwen25vl(meta)) return;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format qwen25vl GGUF; translating to qwen2vl\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format qwen25vl GGUF; translating to qwen2vl\n", __func__);
 
     // Switch architecture so the loader reads qwen2vl.* keys (and uses the
     // qwen2vl model build path, which handles M-RoPE).
@@ -908,47 +1080,65 @@ void handle_qwen25vl(const llama_model_loader * ml, gguf_context * meta,
 }
 
 // =========================================================================
-// qwen3vl (text side — Qwen3-VL)
+// qwen3vl/qwen3vlmoe (text side — Qwen3-VL)
 // =========================================================================
 //
-// Ollama publishes Qwen3-VL with general.architecture=qwen3vl (matches
-// upstream). Two missing KVs that the upstream qwen3vl loader requires:
+// Ollama publishes Qwen3-VL with general.architecture=qwen3vl or qwen3vlmoe
+// (matches upstream). Two missing KVs that the upstream loader requires:
 //
-//   * qwen3vl.rope.dimension_sections — M-RoPE section sizes. Derived from
+//   * <arch>.rope.dimension_sections — M-RoPE section sizes. Derived from
 //     the HF config (rope_scaling.mrope_section). Hardcoded here as
 //     [24, 20, 20, 0] which matches Qwen3-VL-8B (head_dim=128, sum=64).
 //     If new Qwen3-VL variants ship with a different mrope, derive from
 //     the head_dim or read from a published KV.
 //
-//   * qwen3vl.n_deepstack_layers — count of deepstack adapters. Length of
-//     qwen3vl.vision.deepstack_visual_indexes (3 for Qwen3-VL-8B).
+//   * <arch>.n_deepstack_layers — count of deepstack adapters. Length of
+//     <arch>.vision.deepstack_visual_indexes (3 for current Qwen3-VL).
+
+const char * qwen3vl_arch(const gguf_context * meta) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return nullptr;
+
+    const char * arch = gguf_get_val_str(meta, arch_kid);
+    if (std::strcmp(arch, "qwen3vl") == 0 || std::strcmp(arch, "qwen3vlmoe") == 0) {
+        return arch;
+    }
+
+    return nullptr;
+}
+
+std::string qwen3vl_key(const char * arch, const char * suffix) {
+    return std::string(arch) + suffix;
+}
 
 bool detect_ollama_qwen3vl(const gguf_context * meta, const ggml_context * ctx) {
     (void) ctx;
-    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
-    if (arch_kid < 0) return false;
-    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "qwen3vl") != 0) return false;
-    // Marker: upstream-converted qwen3vl always has rope.dimension_sections;
-    // Ollama's blob doesn't.
-    return !has_key(meta, "qwen3vl.rope.dimension_sections");
+    const char * arch = qwen3vl_arch(meta);
+    if (!arch) return false;
+    // Marker: upstream-converted qwen3vl/qwen3vlmoe always has
+    // rope.dimension_sections; Ollama's legacy blob doesn't.
+    return !has_key(meta, qwen3vl_key(arch, ".rope.dimension_sections").c_str());
 }
 
 void handle_qwen3vl(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
     (void) ctx;
-    if (!detect_ollama_qwen3vl(meta, ctx)) return;
+    const char * arch = qwen3vl_arch(meta);
+    if (!arch || !detect_ollama_qwen3vl(meta, ctx)) return;
 
-    LLAMA_LOG_INFO("%s: detected Ollama-format qwen3vl GGUF; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format %s GGUF; applying compatibility fixes\n", __func__, arch);
 
-    // Inject required M-RoPE sections (Qwen3-VL-8B default).
+    // Inject required M-RoPE sections (current Qwen3-VL family default).
     const int32_t mrope[4] = { 24, 20, 20, 0 };
-    gguf_set_arr_data(meta, "qwen3vl.rope.dimension_sections",
+    gguf_set_arr_data(meta, qwen3vl_key(arch, ".rope.dimension_sections").c_str(),
                       GGUF_TYPE_INT32, mrope, 4);
 
     // Derive n_deepstack_layers from the deepstack indexes array length.
-    const int64_t ds_kid = gguf_find_key(meta, "qwen3vl.vision.deepstack_visual_indexes");
+    const int64_t ds_kid = gguf_find_key(meta, qwen3vl_key(arch, ".vision.deepstack_visual_indexes").c_str());
     const uint32_t n_ds = (ds_kid >= 0) ? (uint32_t) gguf_get_arr_n(meta, ds_kid) : 0;
-    inject_u32_if_missing(meta, "qwen3vl.n_deepstack_layers", n_ds);
+    inject_u32_if_missing(meta, qwen3vl_key(arch, ".n_deepstack_layers").c_str(), n_ds);
 
+    // Hide embedded vision tensors from the text loader. Ollama's Go side
+    // re-passes the same blob as --mmproj so the clip loader picks them up.
     add_skip_prefix(ml, "v.");
     add_skip_prefix(ml, "mm.");
 }
@@ -1109,8 +1299,74 @@ void register_qwen35moe_patch_embed_split(gguf_context * meta, ggml_context * ct
     register_load_op("v.patch_embd.weight.1", make_slice_op(1));
 }
 
+void register_qwen3vl_patch_embed_split(gguf_context * meta, ggml_context * ctx, const char * arch) {
+    const char * src_name = "v.patch_embed.weight";
+    if (gguf_find_tensor(meta, src_name) < 0) return;
+    const ggml_tensor * src_t = ggml_get_tensor(ctx, src_name);
+    if (!src_t) return;
+    if (src_t->type != GGML_TYPE_F16) {
+        OLLAMA_COMPAT_LOG_ERROR("%s: unsupported %s type %d; expected F16\n", __func__, src_name, src_t->type);
+        return;
+    }
+
+    const int64_t cin_kid = gguf_find_key(meta, qwen3vl_key(arch, ".vision.num_channels").c_str());
+    const int64_t cin     = cin_kid >= 0 ? gguf_get_val_u32(meta, cin_kid) : 3;
+    const int64_t width   = src_t->ne[0];
+    const int64_t height  = src_t->ne[1];
+    const int64_t frames  = src_t->ne[2];
+    const int64_t packed  = src_t->ne[3];
+    if (cin <= 0 || width <= 0 || height <= 0 || frames != 2 || packed % cin != 0) {
+        OLLAMA_COMPAT_LOG_ERROR("%s: unsupported %s shape [%lld %lld %lld %lld] with channels %lld\n",
+                                __func__, src_name,
+                                (long long) width, (long long) height, (long long) frames,
+                                (long long) packed, (long long) cin);
+        return;
+    }
+
+    const int64_t cout = packed / cin;
+    const size_t src_offset = tensor_file_offset(meta, src_name);
+    const size_t src_size   = (size_t) ggml_nelements(src_t) * sizeof(uint16_t);
+    const size_t hw         = (size_t) width * (size_t) height;
+
+    auto make_slice_op = [=](int slice_idx) {
+        return LoadOp{
+            [=](const char * path, void * dst, size_t dst_size) {
+                const size_t expected = hw * (size_t) cin * (size_t) cout * sizeof(float);
+                if (dst_size != expected) return false;
+                std::vector<uint8_t> src(src_size);
+                if (!read_at(path, src_offset, src.data(), src_size)) return false;
+                const uint16_t * sp = reinterpret_cast<const uint16_t *>(src.data());
+                float          * dp = reinterpret_cast<float *>(dst);
+                for (int64_t c_out = 0; c_out < cout; ++c_out) {
+                    for (int64_t c_in = 0; c_in < cin; ++c_in) {
+                        const size_t packed_idx = (size_t) c_out * (size_t) cin + (size_t) c_in;
+                        const uint16_t * in_base  = sp + hw * ((size_t) slice_idx + (size_t) frames * packed_idx);
+                        float          * out_base = dp + hw * ((size_t) c_in + (size_t) cin * (size_t) c_out);
+                        for (size_t i = 0; i < hw; ++i) out_base[i] = ggml_fp16_to_fp32(in_base[i]);
+                    }
+                }
+                return true;
+            },
+            slice_idx == 0 ? "qwen3vl patch_embed slice 0 (permute+F16->F32)"
+                           : "qwen3vl patch_embed slice 1 (permute+F16->F32)",
+        };
+    };
+
+    rename_tensor(meta, ctx, src_name, "v.patch_embd.weight");
+    if (ggml_tensor * dest0 = ggml_get_tensor(ctx, "v.patch_embd.weight")) {
+        set_tensor_shape(dest0, {width, height, cin, cout});
+        set_tensor_type (dest0, GGML_TYPE_F32);
+    }
+    register_load_op("v.patch_embd.weight", make_slice_op(0));
+
+    reclaim_slot_as(meta, ctx,
+                    "v.blk.0.attn_k.weight", "v.patch_embd.weight.1",
+                    {width, height, cin, cout}, GGML_TYPE_F32);
+    register_load_op("v.patch_embd.weight.1", make_slice_op(1));
+}
+
 void handle_qwen35moe_clip(gguf_context * meta, ggml_context * ctx) {
-    LLAMA_LOG_INFO("%s: detected Ollama-format qwen35moe GGUF used as mmproj; translating\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format qwen35moe GGUF used as mmproj; translating\n", __func__);
 
     copy_u32_kv(meta, "qwen35moe.vision.block_count",                   "clip.vision.block_count");
     copy_u32_kv(meta, "qwen35moe.vision.embedding_length",              "clip.vision.embedding_length");
@@ -1194,7 +1450,7 @@ constexpr std::pair<const char *, const char *> kDeepseekocrClipRenames[] = {
 };
 
 void handle_deepseekocr_clip(gguf_context * meta, ggml_context * ctx) {
-    LLAMA_LOG_INFO("%s: detected Ollama-format deepseekocr GGUF used as mmproj; translating\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format deepseekocr GGUF used as mmproj; translating\n", __func__);
 
     // CLIP encoder hparams.
     copy_u32_kv(meta, "deepseekocr.vision.block_count",      "clip.vision.block_count");
@@ -1258,6 +1514,279 @@ void handle_deepseekocr_clip(gguf_context * meta, ggml_context * ctx) {
 }
 
 // =========================================================================
+// nemotron_h_omni (clip side — nemotron_v2_vl projector)
+// =========================================================================
+
+uint32_t read_u32_kv(const gguf_context * meta, const char * key, uint32_t fallback) {
+    const int64_t kid = gguf_find_key(meta, key);
+    return kid >= 0 ? gguf_get_val_u32(meta, kid) : fallback;
+}
+
+std::vector<int64_t> tensor_shape(const ggml_tensor * t) {
+    std::vector<int64_t> shape;
+    const int n_dims = ggml_n_dims(t);
+    shape.reserve(n_dims);
+    for (int i = 0; i < n_dims; ++i) shape.push_back(t->ne[i]);
+    return shape;
+}
+
+bool read_tensor_as_f32(const char * path,
+                        size_t offset,
+                        ggml_type type,
+                        size_t src_size,
+                        size_t n_elem,
+                        std::vector<float> & out) {
+    out.resize(n_elem);
+    if (type == GGML_TYPE_F32) {
+        return read_at(path, offset, out.data(), n_elem * sizeof(float));
+    }
+
+    std::vector<uint8_t> src(src_size);
+    if (!read_at(path, offset, src.data(), src.size())) return false;
+    const auto * traits = ggml_get_type_traits(type);
+    if (!traits || !traits->to_float) return false;
+    traits->to_float(src.data(), out.data(), (int64_t) n_elem);
+    return true;
+}
+
+uint64_t nemotron3_square_side(uint64_t n) {
+    const uint64_t side = (uint64_t) std::sqrt((double) n);
+    if (side * side == n) return side;
+    if ((side + 1) * (side + 1) == n) return side + 1;
+    return 0;
+}
+
+double nemotron3_align_corners(uint64_t target, uint64_t target_side, uint64_t source_side) {
+    if (target_side <= 1) return 0.0;
+    return (double) target * (double) (source_side - 1) / (double) (target_side - 1);
+}
+
+bool nemotron3_position_layout(const std::vector<int64_t> & shape,
+                               uint64_t & embedding,
+                               uint64_t & positions) {
+    if (shape.size() == 2) {
+        if (nemotron3_square_side((uint64_t) shape[1]) > 0) {
+            embedding = (uint64_t) shape[0];
+            positions = (uint64_t) shape[1];
+            return true;
+        }
+        if (nemotron3_square_side((uint64_t) shape[0]) > 0) {
+            embedding = (uint64_t) shape[1];
+            positions = (uint64_t) shape[0];
+            return true;
+        }
+    } else if (shape.size() == 3) {
+        if (shape[0] == 1 && nemotron3_square_side((uint64_t) shape[1]) > 0) {
+            embedding = (uint64_t) shape[2];
+            positions = (uint64_t) shape[1];
+            return true;
+        }
+        if (shape[2] == 1 && nemotron3_square_side((uint64_t) shape[1]) > 0) {
+            embedding = (uint64_t) shape[0];
+            positions = (uint64_t) shape[1];
+            return true;
+        }
+    }
+    return false;
+}
+
+void register_nemotron3_position_embedding(gguf_context * meta,
+                                           ggml_context * ctx,
+                                           uint64_t embedding,
+                                           uint64_t target_side) {
+    const char * src_name = ggml_get_tensor(ctx, "v.position_embd")
+        ? "v.position_embd"
+        : "v.position_embd.weight";
+    ggml_tensor * t = ggml_get_tensor(ctx, src_name);
+    if (!t || target_side == 0) return;
+
+    const size_t src_offset = tensor_file_offset(meta, src_name);
+    const size_t src_size   = ggml_nbytes(t);
+    const size_t n_elem     = ggml_nelements(t);
+    const ggml_type src_type = t->type;
+    const std::vector<int64_t> src_shape = tensor_shape(t);
+
+    uint64_t detected_embedding = 0;
+    uint64_t positions = 0;
+    if (!nemotron3_position_layout(src_shape, detected_embedding, positions)) return;
+    if (embedding == 0) embedding = detected_embedding;
+    const uint64_t source_side = nemotron3_square_side(positions);
+    if (embedding == 0 || source_side == 0) return;
+
+    if (std::strcmp(src_name, "v.position_embd.weight") != 0) {
+        rename_tensor(meta, ctx, src_name, "v.position_embd.weight");
+        t = ggml_get_tensor(ctx, "v.position_embd.weight");
+        if (!t) return;
+    }
+    set_tensor_shape(t, {(int64_t) embedding, (int64_t) (target_side * target_side)});
+    set_tensor_type(t, GGML_TYPE_F32);
+
+    register_load_op("v.position_embd.weight", LoadOp{
+        [=](const char * path, void * dst, size_t dst_size) {
+            std::vector<float> src;
+            if (!read_tensor_as_f32(path, src_offset, src_type, src_size, n_elem, src)) return false;
+            if (src.size() != embedding * positions) return false;
+
+            auto source_at = [&](uint64_t pos, uint64_t emb) -> float {
+                if (src_shape.size() == 2) {
+                    if ((uint64_t) src_shape[0] == embedding) {
+                        return src[emb + embedding * pos];
+                    }
+                    return src[pos + positions * emb];
+                }
+                if (src_shape.size() == 3 && src_shape[0] == 1) {
+                    return src[pos * embedding + emb];
+                }
+                return src[emb * positions + pos];
+            };
+
+            const size_t out_elems = embedding * target_side * target_side;
+            if (dst_size != out_elems * sizeof(float)) return false;
+            float * out = static_cast<float *>(dst);
+            for (uint64_t y = 0; y < target_side; ++y) {
+                const double source_y = nemotron3_align_corners(y, target_side, source_side);
+                const uint64_t y0 = (uint64_t) std::floor(source_y);
+                const uint64_t y1 = std::min(y0 + 1, source_side - 1);
+                const float wy = (float) (source_y - (double) y0);
+                for (uint64_t x = 0; x < target_side; ++x) {
+                    const double source_x = nemotron3_align_corners(x, target_side, source_side);
+                    const uint64_t x0 = (uint64_t) std::floor(source_x);
+                    const uint64_t x1 = std::min(x0 + 1, source_side - 1);
+                    const float wx = (float) (source_x - (double) x0);
+                    for (uint64_t emb = 0; emb < embedding; ++emb) {
+                        const float v00 = source_at(y0 * source_side + x0, emb);
+                        const float v01 = source_at(y0 * source_side + x1, emb);
+                        const float v10 = source_at(y1 * source_side + x0, emb);
+                        const float v11 = source_at(y1 * source_side + x1, emb);
+                        const float top = v00 * (1.0f - wx) + v01 * wx;
+                        const float bottom = v10 * (1.0f - wx) + v11 * wx;
+                        out[emb + embedding * (y * target_side + x)] = top * (1.0f - wy) + bottom * wy;
+                    }
+                }
+            }
+            return true;
+        },
+        "Nemotron3 position embedding downsample",
+    });
+}
+
+void register_nemotron3_patch_embedding(gguf_context * meta,
+                                        ggml_context * ctx,
+                                        uint64_t patch_size,
+                                        uint64_t channels,
+                                        uint64_t embedding) {
+    ggml_tensor * t = ggml_get_tensor(ctx, "v.patch_embd.weight");
+    if (!t || patch_size == 0 || channels == 0 || embedding == 0) return;
+
+    const size_t src_offset = tensor_file_offset(meta, "v.patch_embd.weight");
+    const size_t src_size   = ggml_nbytes(t);
+    const size_t n_elem     = ggml_nelements(t);
+    const ggml_type src_type = t->type;
+    const std::vector<int64_t> src_shape = tensor_shape(t);
+    const uint64_t flat = patch_size * patch_size * channels;
+
+    if (src_shape.size() != 2 || (uint64_t) src_shape[0] != flat || (uint64_t) src_shape[1] != embedding) return;
+
+    set_tensor_shape(t, {(int64_t) patch_size, (int64_t) patch_size, (int64_t) channels, (int64_t) embedding});
+    set_tensor_type(t, GGML_TYPE_F32);
+
+    register_load_op("v.patch_embd.weight", LoadOp{
+        [=](const char * path, void * dst, size_t dst_size) {
+            std::vector<float> src;
+            if (!read_tensor_as_f32(path, src_offset, src_type, src_size, n_elem, src)) return false;
+            if (src.size() != flat * embedding || dst_size != src.size() * sizeof(float)) return false;
+
+            float * out = static_cast<float *>(dst);
+            for (uint64_t emb = 0; emb < embedding; ++emb) {
+                for (uint64_t channel = 0; channel < channels; ++channel) {
+                    for (uint64_t y = 0; y < patch_size; ++y) {
+                        for (uint64_t x = 0; x < patch_size; ++x) {
+                            const uint64_t flat_index = (y * patch_size + x) * channels + channel;
+                            const uint64_t src_index = flat_index + flat * emb;
+                            const uint64_t dst_index = x + patch_size * (y + patch_size * (channel + channels * emb));
+                            out[dst_index] = src[src_index];
+                        }
+                    }
+                }
+            }
+            return true;
+        },
+        "Nemotron3 patch embedding reshape",
+    });
+}
+
+void handle_nemotron_h_omni_clip(gguf_context * meta, ggml_context * ctx) {
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format nemotron_h_omni GGUF used as mmproj; translating\n", __func__);
+
+    gguf_set_val_str(meta, "general.architecture", "clip");
+
+    copy_u32_kv(meta, "nemotron_h_omni.vision.block_count",                  "clip.vision.block_count");
+    copy_u32_kv(meta, "nemotron_h_omni.vision.embedding_length",             "clip.vision.embedding_length");
+    copy_u32_kv(meta, "nemotron_h_omni.vision.feed_forward_length",          "clip.vision.feed_forward_length");
+    copy_u32_kv(meta, "nemotron_h_omni.vision.attention.head_count",         "clip.vision.attention.head_count");
+    copy_f32_kv(meta, "nemotron_h_omni.vision.attention.layer_norm_epsilon", "clip.vision.attention.layer_norm_epsilon");
+    copy_u32_kv(meta, "nemotron_h_omni.vision.patch_size",                   "clip.vision.patch_size");
+    copy_u32_kv(meta, "nemotron_h_omni.vision.image_size",                   "clip.vision.image_size");
+    copy_u32_kv(meta, "nemotron_h_omni.vision.num_channels",                 "clip.vision.num_channels");
+    copy_u32_kv(meta, "nemotron_h_omni.vision.projector.scale_factor",       "clip.vision.projector.scale_factor");
+    copy_u32_kv(meta, "nemotron_h_omni.embedding_length",                    "clip.vision.projection_dim");
+    copy_kv    (meta, "nemotron_h_omni.vision.image_mean",                  "clip.vision.image_mean");
+    copy_kv    (meta, "nemotron_h_omni.vision.image_std",                   "clip.vision.image_std");
+
+    for (const char * key : {
+        "image_token_id",
+        "image_start_token_id",
+        "image_end_token_id",
+        "max_tiles",
+        "min_num_patches",
+        "max_num_patches",
+    }) {
+        const std::string src = std::string("nemotron_h_omni.vision.") + key;
+        const std::string dst = std::string("clip.vision.") + key;
+        copy_kv(meta, src.c_str(), dst.c_str());
+    }
+
+    const uint32_t image_size = read_u32_kv(meta, "clip.vision.image_size", 512);
+    const uint32_t patch_size = read_u32_kv(meta, "clip.vision.patch_size", 16);
+    const uint32_t embedding  = read_u32_kv(meta, "clip.vision.embedding_length", 1280);
+    const uint32_t channels   = read_u32_kv(meta, "clip.vision.num_channels", 3);
+    const uint32_t target_side = patch_size > 0 ? image_size / patch_size : 0;
+
+    inject_u32_if_missing(meta, "clip.vision.block_count", 32);
+    inject_u32_if_missing(meta, "clip.vision.embedding_length", embedding);
+    inject_u32_if_missing(meta, "clip.vision.feed_forward_length", embedding * 4);
+    inject_u32_if_missing(meta, "clip.vision.attention.head_count", 16);
+    inject_f32_if_missing(meta, "clip.vision.attention.layer_norm_epsilon", 1e-6f);
+    inject_u32_if_missing(meta, "clip.vision.patch_size", patch_size);
+    inject_u32_if_missing(meta, "clip.vision.image_size", image_size);
+    inject_u32_if_missing(meta, "clip.vision.num_channels", channels);
+    inject_u32_if_missing(meta, "clip.vision.projector.scale_factor", 2);
+    copy_u32_kv(meta, "nemotron_h_omni.embedding_length", "clip.vision.projection_dim");
+    static const float kNemotronMean[3] = {0.48145466f, 0.45782750f, 0.40821073f};
+    static const float kNemotronStd [3] = {0.26862954f, 0.26130258f, 0.27577711f};
+    inject_f32_arr_if_missing(meta, "clip.vision.image_mean", kNemotronMean, 3);
+    inject_f32_arr_if_missing(meta, "clip.vision.image_std",  kNemotronStd,  3);
+
+    inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
+    gguf_set_val_str(meta, "clip.vision.projector_type", "nemotron_v2_vl");
+    inject_bool_if_missing(meta, "clip.use_gelu", true);
+
+    // TODO: expose Nemotron3 audio once llama.cpp can skip or load the
+    // Nemotron audio projector safely. For now, do not create an audio
+    // context and do not load a.* / mm.a.* tensors into backend memory.
+    gguf_set_val_bool(meta, "clip.has_audio_encoder", false);
+
+    rename_tensor(meta, ctx, "v.cls_embd", "v.class_embd");
+    promote_tensor_to_f32(meta, ctx, "v.class_embd");
+    register_nemotron3_position_embedding(meta, ctx, embedding, target_side);
+    register_nemotron3_patch_embedding(meta, ctx, patch_size, channels, embedding);
+
+    rename_tensor(meta, ctx, "mm.norm.weight", "mm.model.mlp.0.weight");
+    rename_tensor(meta, ctx, "mm.1.weight",    "mm.model.mlp.1.weight");
+    rename_tensor(meta, ctx, "mm.2.weight",    "mm.model.mlp.3.weight");
+}
+
+// =========================================================================
 // gemma4 (clip side — gemma4v projector)
 // =========================================================================
 //
@@ -1273,12 +1802,20 @@ void handle_deepseekocr_clip(gguf_context * meta, ggml_context * ctx) {
 // most other arches.
 
 void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
-    LLAMA_LOG_INFO("%s: detected Ollama-format gemma4 GGUF used as mmproj; translating\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format gemma4 GGUF used as mmproj; translating\n", __func__);
 
     gguf_set_val_str(meta, "general.architecture", "clip");
 
-    const bool has_vision = any_tensor_with_prefix(ctx, "v.");
-    const bool has_audio  = any_tensor_with_prefix(ctx, "a.");
+    const bool has_vision       = any_tensor_with_prefix(ctx, "v.");
+    const bool has_audio_tensors = any_tensor_with_prefix(ctx, "a.");
+    // TODO: expose Gemma 4 audio once llama-server audio support is reliable.
+    // Keep Gemma 4 audio hidden until llama-server can route and load mixed
+    // vision/audio projectors reliably. This prevents the audio clip context
+    // and a.* tensors from being loaded into backend memory.
+    if (has_audio_tensors) {
+        gguf_set_val_bool(meta, "clip.has_audio_encoder", false);
+    }
+    const bool has_audio = false;
 
     if (has_vision) {
         copy_u32_kv(meta, "gemma4.vision.block_count",                   "clip.vision.block_count");
@@ -1368,7 +1905,7 @@ void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
 //   * F32 promote of patch_embd weights (Metal IM2COL).
 
 void handle_glmocr_clip(gguf_context * meta, ggml_context * ctx) {
-    LLAMA_LOG_INFO("%s: detected Ollama-format glm-ocr GGUF used as mmproj; translating\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format glm-ocr GGUF used as mmproj; translating\n", __func__);
 
     copy_u32_kv(meta, "glmocr.vision.block_count",                   "clip.vision.block_count");
     copy_u32_kv(meta, "glmocr.vision.embedding_length",              "clip.vision.embedding_length");
@@ -1448,7 +1985,7 @@ constexpr std::pair<const char *, const char *> kLlama4ClipRenames[] = {
 };
 
 void handle_llama4_clip(gguf_context * meta, ggml_context * ctx) {
-    LLAMA_LOG_INFO("%s: detected Ollama-format llama4 GGUF used as mmproj; translating\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format llama4 GGUF used as mmproj; translating\n", __func__);
 
     copy_u32_kv(meta, "llama4.vision.block_count",                    "clip.vision.block_count");
     copy_u32_kv(meta, "llama4.vision.embedding_length",               "clip.vision.embedding_length");
@@ -1572,7 +2109,7 @@ void register_mistral3_vision_qk_permute(gguf_context * meta, ggml_context * ctx
 }
 
 void handle_mistral3_clip(gguf_context * meta, ggml_context * ctx) {
-    LLAMA_LOG_INFO("%s: detected Ollama-format mistral3 GGUF used as mmproj; translating\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format mistral3 GGUF used as mmproj; translating\n", __func__);
 
     copy_u32_kv(meta, "mistral3.vision.block_count",            "clip.vision.block_count");
     copy_u32_kv(meta, "mistral3.vision.embedding_length",       "clip.vision.embedding_length");
@@ -1665,7 +2202,7 @@ void handle_mistral3_clip(gguf_context * meta, ggml_context * ctx) {
 // projection_dim (= text embedding_length, qwen25vl.embedding_length).
 
 void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
-    LLAMA_LOG_INFO("%s: detected Ollama-format qwen25vl GGUF used as mmproj; translating\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format qwen25vl GGUF used as mmproj; translating\n", __func__);
 
     copy_u32_kv(meta, "qwen25vl.vision.attention.head_count",          "clip.vision.attention.head_count");
     copy_f32_kv(meta, "qwen25vl.vision.attention.layer_norm_epsilon",  "clip.vision.attention.layer_norm_epsilon");
@@ -1722,10 +2259,10 @@ void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
 }
 
 // =========================================================================
-// qwen3vl (clip side — Qwen3-VL vision tower + deepstack adapters)
+// qwen3vl/qwen3vlmoe (clip side — Qwen3-VL vision tower + deepstack adapters)
 // =========================================================================
 //
-// Ollama qwen3vl monolithic GGUF embeds the vision tower (27 blocks),
+// Ollama qwen3vl/qwen3vlmoe monolithic GGUFs embed the vision tower (27 blocks),
 // deepstack merger adapters (3 of them, indexed 0/1/2), and the merger
 // MLP. Compared to upstream's qwen3vl_merger expectations:
 //
@@ -1734,7 +2271,7 @@ void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
 //   * Merger renames: v.merger.norm→v.post_ln, v.merger.linear_fc1→mm.0,
 //     v.merger.linear_fc2→mm.2 (LLaVA proj).
 //   * Deepstack remap: v.deepstack_merger.X.* → v.deepstack.{indexes[X]}.*
-//     where indexes is qwen3vl.vision.deepstack_visual_indexes (e.g.
+//     where indexes is <arch>.vision.deepstack_visual_indexes (e.g.
 //     [8, 16, 24] for Qwen3-VL-8B). The leaf names also rename:
 //     linear_fc1→fc1, linear_fc2→fc2.
 //   * Per-block QKV merge: upstream's qwen3vl graph reads a single
@@ -1745,16 +2282,26 @@ void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
 //     donor (orphaned attn_k from QKV merge) as qwen35moe; reuse that helper.
 
 void handle_qwen3vl_clip(gguf_context * meta, ggml_context * ctx) {
-    LLAMA_LOG_INFO("%s: detected Ollama-format qwen3vl GGUF used as mmproj; translating\n", __func__);
+    const char * arch_cstr = qwen3vl_arch(meta);
+    if (!arch_cstr) return;
+    const std::string arch(arch_cstr);
 
-    copy_u32_kv(meta, "qwen3vl.vision.attention.head_count",          "clip.vision.attention.head_count");
-    copy_f32_kv(meta, "qwen3vl.vision.attention.layer_norm_epsilon",  "clip.vision.attention.layer_norm_epsilon");
-    copy_u32_kv(meta, "qwen3vl.vision.block_count",                   "clip.vision.block_count");
-    copy_u32_kv(meta, "qwen3vl.vision.embedding_length",              "clip.vision.embedding_length");
-    copy_u32_kv(meta, "qwen3vl.vision.num_channels",                  "clip.vision.num_channels");
-    copy_u32_kv(meta, "qwen3vl.vision.patch_size",                    "clip.vision.patch_size");
-    copy_u32_kv(meta, "qwen3vl.vision.spatial_merge_size",            "clip.vision.spatial_merge_size");
-    copy_u32_kv(meta, "qwen3vl.embedding_length",                     "clip.vision.projection_dim");
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format %s GGUF used as mmproj; translating\n", __func__, arch.c_str());
+
+    copy_u32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.attention.head_count").c_str(),         "clip.vision.attention.head_count");
+    copy_f32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.attention.layer_norm_epsilon").c_str(), "clip.vision.attention.layer_norm_epsilon");
+    copy_u32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.block_count").c_str(),                  "clip.vision.block_count");
+    copy_u32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.embedding_length").c_str(),             "clip.vision.embedding_length");
+    copy_u32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.num_channels").c_str(),                 "clip.vision.num_channels");
+    copy_u32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.patch_size").c_str(),                   "clip.vision.patch_size");
+    copy_u32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.spatial_merge_size").c_str(),           "clip.vision.spatial_merge_size");
+    copy_u32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.temporal_patch_size").c_str(),          "clip.vision.temporal_patch_size");
+    copy_f32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.rope.freq_base").c_str(),               "clip.vision.rope.freq_base");
+    copy_u32_kv(meta, qwen3vl_key(arch.c_str(), ".embedding_length").c_str(),                    "clip.vision.projection_dim");
+
+    inject_u32_if_missing(meta, "clip.vision.num_channels",        3);
+    inject_u32_if_missing(meta, "clip.vision.temporal_patch_size", 2);
+    inject_f32_if_missing(meta, "clip.vision.rope.freq_base",      10000.0f);
 
     // Derive feed_forward_length from ffn_up / mlp.linear_fc1 shape.
     if (!has_key(meta, "clip.vision.feed_forward_length")) {
@@ -1767,7 +2314,7 @@ void handle_qwen3vl_clip(gguf_context * meta, ggml_context * ctx) {
     // shape is [n_embd, num_positions], so num_positions = ne[1].
     if (!has_key(meta, "clip.vision.image_size")) {
         ggml_tensor * pe = ggml_get_tensor(ctx, "v.pos_embed.weight");
-        const int64_t patch_kid = gguf_find_key(meta, "qwen3vl.vision.patch_size");
+        const int64_t patch_kid = gguf_find_key(meta, qwen3vl_key(arch.c_str(), ".vision.patch_size").c_str());
         if (pe && patch_kid >= 0) {
             const uint32_t patch = gguf_get_val_u32(meta, patch_kid);
             const uint32_t side  = (uint32_t) std::sqrt((double) pe->ne[1]);
@@ -1775,10 +2322,34 @@ void handle_qwen3vl_clip(gguf_context * meta, ggml_context * ctx) {
         }
     }
 
+    copy_kv(meta, qwen3vl_key(arch.c_str(), ".vision.image_mean").c_str(), "clip.vision.image_mean");
+    copy_kv(meta, qwen3vl_key(arch.c_str(), ".vision.image_std").c_str(),  "clip.vision.image_std");
+    copy_u32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.shortest_edge").c_str(), "clip.vision.image_min_pixels");
+    copy_u32_kv(meta, qwen3vl_key(arch.c_str(), ".vision.longest_edge").c_str(),  "clip.vision.image_max_pixels");
+    inject_u32_if_missing(meta, "clip.vision.image_min_pixels", 65536);
+    inject_u32_if_missing(meta, "clip.vision.image_max_pixels", 16777216);
+
     // Image mean/std (Qwen3-VL uses [0.5, 0.5, 0.5] for both, per HF config).
     static const float kHalfHalfHalf[3] = {0.5f, 0.5f, 0.5f};
     inject_f32_arr_if_missing(meta, "clip.vision.image_mean", kHalfHalfHalf, 3);
     inject_f32_arr_if_missing(meta, "clip.vision.image_std",  kHalfHalfHalf, 3);
+
+    if (!has_key(meta, "clip.vision.is_deepstack_layers")) {
+        const int64_t block_kid = gguf_find_key(meta, "clip.vision.block_count");
+        const uint32_t n_blocks = block_kid >= 0 ? gguf_get_val_u32(meta, block_kid) : 0;
+        std::vector<uint8_t> mask(n_blocks);
+        const int64_t ds_kid = gguf_find_key(meta, qwen3vl_key(arch.c_str(), ".vision.deepstack_visual_indexes").c_str());
+        if (ds_kid >= 0) {
+            const size_t n = gguf_get_arr_n(meta, ds_kid);
+            const auto * idx = static_cast<const int32_t *>(gguf_get_arr_data(meta, ds_kid));
+            for (size_t i = 0; i < n; ++i) {
+                if (idx[i] >= 0 && (uint32_t) idx[i] < n_blocks) mask[idx[i]] = 1;
+            }
+        }
+        if (!mask.empty()) {
+            gguf_set_arr_data(meta, "clip.vision.is_deepstack_layers", GGUF_TYPE_BOOL, mask.data(), mask.size());
+        }
+    }
 
     inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
     inject_bool_if_missing(meta, "clip.use_gelu",           true);
@@ -1822,9 +2393,9 @@ void handle_qwen3vl_clip(gguf_context * meta, ggml_context * ctx) {
     }
 
     // Patch embed split runs BEFORE per-block substring renames so it can
-    // find the source by name `v.patch_embed.weight`. Same shape as
-    // qwen35moe (16x16 patches, 2 temporal slices, 3 in_ch, 1152 out_ch).
-    register_qwen35moe_patch_embed_split(meta, ctx);
+    // find the source by name `v.patch_embed.weight`. Qwen3-VL variants have
+    // different vision widths, so derive the split shape from the source.
+    register_qwen3vl_patch_embed_split(meta, ctx, arch.c_str());
 
     // Top-level renames (full names) — must run before substring per-block
     // renames so .linear_fc1 substring matches only inside .mlp.linear_fc1.
@@ -1842,7 +2413,7 @@ void handle_qwen3vl_clip(gguf_context * meta, ggml_context * ctx) {
     // Upstream stores deepstack tensors at the absolute clip layer index
     // (e.g. v.deepstack.8.* for the adapter that fires after layer 8).
     {
-        const int64_t ds_kid = gguf_find_key(meta, "qwen3vl.vision.deepstack_visual_indexes");
+        const int64_t ds_kid = gguf_find_key(meta, qwen3vl_key(arch.c_str(), ".vision.deepstack_visual_indexes").c_str());
         if (ds_kid >= 0) {
             const size_t n = gguf_get_arr_n(meta, ds_kid);
             const auto * idx = static_cast<const int32_t *>(gguf_get_arr_data(meta, ds_kid));
@@ -1874,6 +2445,25 @@ void handle_qwen3vl_clip(gguf_context * meta, ggml_context * ctx) {
     promote_tensor_to_f32(meta, ctx, "v.position_embd.weight");
 }
 
+bool is_legacy_llava_projector(const gguf_context * meta) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "clip") != 0) return false;
+
+    const int64_t vision_kid = gguf_find_key(meta, "clip.has_vision_encoder");
+    if (vision_kid < 0 || !gguf_get_val_bool(meta, vision_kid)) return false;
+
+    return !has_key(meta, "clip.projector_type")
+        && !has_key(meta, "clip.vision.projector_type");
+}
+
+void handle_legacy_llava_projector(gguf_context * meta) {
+    if (!is_legacy_llava_projector(meta)) return;
+
+    OLLAMA_COMPAT_LOG_INFO("%s: detected legacy LLaVA/BakLLaVA projector; defaulting projector type to mlp\n", __func__);
+    gguf_set_val_str(meta, "clip.projector_type", "mlp");
+}
+
 } // anonymous namespace
 
 // =========================================================================
@@ -1895,6 +2485,7 @@ bool translate_metadata(const llama_model_loader * ml,
     // prefix) need to see.
     if (arch_name == "gemma3")    handle_embeddinggemma(ml, meta, ctx, arch_name);
     if (arch_name == "gemma3")    handle_gemma3   (ml, meta, ctx);
+    if (arch_name == "bert")      handle_snowflake_arctic_embed2(meta);
     if (arch_name == "gemma3n")   handle_gemma3n  (ml, meta, ctx);
     if (arch_name == "gemma4")    handle_gemma4   (ml, meta, ctx);
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
@@ -1905,11 +2496,13 @@ bool translate_metadata(const llama_model_loader * ml,
     // qwen25vl must run before any qwen2vl-targeted handler — it switches
     // arch_name to "qwen2vl" so the loader uses qwen2vl.* keys.
     if (arch_name == "qwen25vl")      handle_qwen25vl      (ml, meta, ctx, arch_name);
-    if (arch_name == "qwen3vl")       handle_qwen3vl       (ml, meta, ctx);
+    if (arch_name == "qwen3vl" || arch_name == "qwen3vlmoe")
+                                     handle_qwen3vl       (ml, meta, ctx);
     // glm4moelite switches arch_name to "deepseek2" — same pattern.
     if (arch_name == "glm4moelite")   handle_glm4moelite   (ml, meta, ctx, arch_name);
     if (arch_name == "deepseekocr")   handle_deepseekocr   (ml, meta, ctx, arch_name);
-    if (arch_name == "nemotron_h_moe") handle_nemotron_h_moe(ml, meta, ctx);
+    if (arch_name == "nemotron_h_omni") handle_nemotron_h_omni(ml, meta, ctx, arch_name);
+    if (arch_name == "nemotron_h_moe")  handle_nemotron_h_moe (ml, meta, ctx);
     if (arch_name == "llama4")        handle_llama4        (ml, meta, ctx);
     if (arch_name == "glmocr")        handle_glmocr        (ml, meta, ctx, arch_name);
     // Dispatch. Add more arches as they are wired up.
@@ -1919,10 +2512,13 @@ bool translate_metadata(const llama_model_loader * ml,
 
 void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     if (!meta) return;
+
+    handle_legacy_llava_projector(meta);
+
     if (!any_tensor_with_prefix(ctx, "v.")) return; // nothing to translate
 
     if (detect_ollama_gemma3(meta, ctx)) {
-        LLAMA_LOG_INFO("%s: detected Ollama-format gemma3 GGUF used as mmproj; translating\n", __func__);
+        OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format gemma3 GGUF used as mmproj; translating\n", __func__);
         handle_gemma3_clip(meta, ctx);
         return;
     }
@@ -1936,6 +2532,10 @@ void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     }
     if (detect_ollama_deepseekocr(meta)) {
         handle_deepseekocr_clip(meta, ctx);
+        return;
+    }
+    if (detect_ollama_nemotron_h_omni(meta, ctx)) {
+        handle_nemotron_h_omni_clip(meta, ctx);
         return;
     }
     if (detect_ollama_llama4(meta, ctx)) {
@@ -1976,7 +2576,7 @@ bool maybe_load_tensor(ggml_tensor * cur,
     const size_t dst_size = ggml_nbytes(cur);
     std::vector<uint8_t> dst(dst_size);
     if (!op.apply(source_file, dst.data(), dst_size)) {
-        LLAMA_LOG_ERROR("%s: %s failed for %s\n", __func__, op.description, ggml_get_name(cur));
+        OLLAMA_COMPAT_LOG_ERROR("%s: %s failed for %s\n", __func__, op.description, ggml_get_name(cur));
         return false;
     }
 
@@ -1986,7 +2586,7 @@ bool maybe_load_tensor(ggml_tensor * cur,
     const bool is_host = !buft || ggml_backend_buft_is_host(buft);
     if (is_host) {
         if (!cur->data) {
-            LLAMA_LOG_ERROR("%s: no destination for %s (no buffer, no data)\n", __func__, ggml_get_name(cur));
+            OLLAMA_COMPAT_LOG_ERROR("%s: no destination for %s (no buffer, no data)\n", __func__, ggml_get_name(cur));
             return false;
         }
         std::memcpy(cur->data, dst.data(), dst_size);
@@ -1994,7 +2594,7 @@ bool maybe_load_tensor(ggml_tensor * cur,
         ggml_backend_tensor_set(cur, dst.data(), 0, dst_size);
     }
 
-    LLAMA_LOG_INFO("%s: %s for %s (%zu bytes)\n", __func__, op.description, ggml_get_name(cur), dst_size);
+    OLLAMA_COMPAT_LOG_INFO("%s: %s for %s (%zu bytes)\n", __func__, op.description, ggml_get_name(cur), dst_size);
     return true;
 }
 
