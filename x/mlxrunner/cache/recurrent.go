@@ -53,9 +53,17 @@ func (c *RecurrentCache) ensure(batch int, dtype mlx.DType) {
 		batch = 1
 	}
 
+	// Conv state matches the activation dtype (typically bf16). Delta state
+	// is held in fp32 because it accumulates across many recurrent steps and
+	// precision matters more than the modest memory cost (a few small tensors
+	// per layer). This matches MLX-LM's reference implementation, which always
+	// allocates the recurrent state as fp32, and pairs with the kernel storing
+	// state via static_cast<StT>(...) in gated_delta.go.
+	const deltaDType = mlx.DTypeFloat32
+
 	needConv := c.convState == nil || !c.convState.Valid() || c.convState.DType() != dtype ||
 		c.convState.Dim(0) != batch || c.convState.Dim(1) != c.convTail || c.convState.Dim(2) != c.convDim
-	needDelta := c.deltaState == nil || !c.deltaState.Valid() || c.deltaState.DType() != dtype ||
+	needDelta := c.deltaState == nil || !c.deltaState.Valid() || c.deltaState.DType() != deltaDType ||
 		c.deltaState.Dim(0) != batch || c.deltaState.Dim(1) != c.numVHeads || c.deltaState.Dim(2) != c.headVDim || c.deltaState.Dim(3) != c.headKDim
 	if !needConv && !needDelta {
 		return
@@ -65,7 +73,7 @@ func (c *RecurrentCache) ensure(batch int, dtype mlx.DType) {
 		c.convState = c.setState(c.convState, mlx.Zeros(dtype, batch, c.convTail, c.convDim), false)
 	}
 	if needDelta {
-		c.deltaState = c.setState(c.deltaState, mlx.Zeros(dtype, batch, c.numVHeads, c.headVDim, c.headKDim), false)
+		c.deltaState = c.setState(c.deltaState, mlx.Zeros(deltaDType, batch, c.numVHeads, c.headVDim, c.headKDim), false)
 	}
 }
 

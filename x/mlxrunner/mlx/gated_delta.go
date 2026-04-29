@@ -83,7 +83,7 @@ for (int t = 0; t < T; ++t) {
 
 for (int i = 0; i < n_per_t; ++i) {
   auto s_idx = n_per_t * dk_idx + i;
-  o_state[s_idx] = static_cast<InT>(state[i]);
+  o_state[s_idx] = static_cast<StT>(state[i]);
 }
 `
 
@@ -163,7 +163,7 @@ for (int t = 0; t < T_val; ++t) {
 
 for (int i = 0; i < n_per_t; ++i) {
   auto s_idx = n_per_t * dk_idx + i;
-  o_state[s_idx] = static_cast<InT>(state[i]);
+  o_state[s_idx] = static_cast<StT>(state[i]);
 }
 `
 
@@ -263,9 +263,11 @@ func gatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 	}
 
 	dtype := q.DType()
-	if k.DType() != dtype || v.DType() != dtype || g.DType() != dtype || beta.DType() != dtype || state.DType() != dtype {
+	if k.DType() != dtype || v.DType() != dtype || g.DType() != dtype || beta.DType() != dtype {
 		return nil, nil, false
 	}
+	// state may have a different dtype than the inputs (typically fp32 vs bf16)
+	// to preserve precision in the recurrent accumulator across many steps.
 
 	gatedDeltaMetalKernelOnce.Do(initGatedDeltaMetalKernel)
 	if gatedDeltaMetalDisabled {
@@ -278,6 +280,12 @@ func gatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 	cInT := C.CString("InT")
 	defer C.free(unsafe.Pointer(cInT))
 	if C.mlx_fast_metal_kernel_config_add_template_arg_dtype(cfg, cInT, C.mlx_dtype(dtype)) != 0 {
+		gatedDeltaMetalDisabled = true
+		return nil, nil, false
+	}
+	cStT := C.CString("StT")
+	defer C.free(unsafe.Pointer(cStT))
+	if C.mlx_fast_metal_kernel_config_add_template_arg_dtype(cfg, cStT, C.mlx_dtype(state.DType())) != 0 {
 		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
@@ -305,7 +313,7 @@ func gatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
-	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(dtype)) != 0 {
+	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(state.DType())) != 0 {
 		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
@@ -517,9 +525,11 @@ func gatedDeltaCUDAKernelApply(q, k, v, g, beta, state *Array) (y, nextState *Ar
 	}
 
 	dtype := q.DType()
-	if k.DType() != dtype || v.DType() != dtype || g.DType() != dtype || beta.DType() != dtype || state.DType() != dtype {
+	if k.DType() != dtype || v.DType() != dtype || g.DType() != dtype || beta.DType() != dtype {
 		return nil, nil, false
 	}
+	// state may have a different dtype than the inputs (typically fp32 vs bf16)
+	// to preserve precision in the recurrent accumulator across many steps.
 
 	gatedDeltaCUDAKernelOnce.Do(initGatedDeltaCUDAKernel)
 	if gatedDeltaCUDADisabled {
@@ -532,6 +542,12 @@ func gatedDeltaCUDAKernelApply(q, k, v, g, beta, state *Array) (y, nextState *Ar
 	cInT := C.CString("InT")
 	defer C.free(unsafe.Pointer(cInT))
 	if C.mlx_fast_cuda_kernel_config_add_template_arg_dtype(cfg, cInT, C.mlx_dtype(dtype)) != 0 {
+		gatedDeltaCUDADisabled = true
+		return nil, nil, false
+	}
+	cStT := C.CString("StT")
+	defer C.free(unsafe.Pointer(cStT))
+	if C.mlx_fast_cuda_kernel_config_add_template_arg_dtype(cfg, cStT, C.mlx_dtype(state.DType())) != 0 {
 		gatedDeltaCUDADisabled = true
 		return nil, nil, false
 	}
@@ -559,7 +575,7 @@ func gatedDeltaCUDAKernelApply(q, k, v, g, beta, state *Array) (y, nextState *Ar
 		gatedDeltaCUDADisabled = true
 		return nil, nil, false
 	}
-	if C.mlx_fast_cuda_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(dtype)) != 0 {
+	if C.mlx_fast_cuda_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(state.DType())) != 0 {
 		gatedDeltaCUDADisabled = true
 		return nil, nil, false
 	}
