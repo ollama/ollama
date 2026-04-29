@@ -224,6 +224,7 @@ func (c *DiskCache) Import(r io.Reader, size int64) (Digest, error) {
 		return Digest{}, err
 	}
 	defer os.Remove(f.Name())
+	defer f.Close()
 
 	// Copy the blob to a temporary file.
 	h := sha256.New()
