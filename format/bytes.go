@@ -16,6 +16,7 @@ const (
 	KibiByte = Byte * 1024
 	MebiByte = KibiByte * 1024
 	GibiByte = MebiByte * 1024
+	TebiByte = GibiByte * 1024
 )
 
 func HumanBytes(b int64) string {
@@ -23,18 +24,18 @@ func HumanBytes(b int64) string {
 	var unit string
 
 	switch {
-	case b >= TeraByte:
-		value = float64(b) / TeraByte
-		unit = "TB"
-	case b >= GigaByte:
-		value = float64(b) / GigaByte
-		unit = "GB"
-	case b >= MegaByte:
-		value = float64(b) / MegaByte
-		unit = "MB"
-	case b >= KiloByte:
-		value = float64(b) / KiloByte
-		unit = "KB"
+	case b >= TebiByte:
+		value = float64(b) / TebiByte
+		unit = "TiB"
+	case b >= GibiByte:
+		value = float64(b) / GibiByte
+		unit = "GiB"
+	case b >= MebiByte:
+		value = float64(b) / MebiByte
+		unit = "MiB"
+	case b >= KibiByte:
+		value = float64(b) / KibiByte
+		unit = "KiB"
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
@@ -51,6 +52,8 @@ func HumanBytes(b int64) string {
 
 func HumanBytes2(b uint64) string {
 	switch {
+	case b >= TebiByte:
+		return fmt.Sprintf("%.1f TiB", float64(b)/TebiByte)
 	case b >= GibiByte:
 		return fmt.Sprintf("%.1f GiB", float64(b)/GibiByte)
 	case b >= MebiByte:
