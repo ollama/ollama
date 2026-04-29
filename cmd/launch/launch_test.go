@@ -125,6 +125,20 @@ func withIntegrationOverride(t *testing.T, name string, runner Runner) {
 	t.Cleanup(restore)
 }
 
+func withIntegrationSpecOverride(t *testing.T, name string, spec *IntegrationSpec) {
+	t.Helper()
+	key := strings.ToLower(name)
+	original, hadOriginal := integrationSpecsByName[key]
+	integrationSpecsByName[key] = spec
+	t.Cleanup(func() {
+		if hadOriginal {
+			integrationSpecsByName[key] = original
+			return
+		}
+		delete(integrationSpecsByName, key)
+	})
+}
+
 func withInteractiveSession(t *testing.T, interactive bool) {
 	t.Helper()
 	old := isInteractiveSession
@@ -321,6 +335,116 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfiguresOnboardsAndRuns(t *
 	}
 	if diff := compareStrings(saved.Models, []string{"gemma4"}); diff != "" {
 		t.Fatalf("saved models mismatch: %s", diff)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationConfiguresBeforeInstall(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherManagedRunner{}
+	withIntegrationSpecOverride(t, "stubmanagedinstall", &IntegrationSpec{
+		Name:   "stubmanagedinstall",
+		Runner: runner,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool { return false },
+			EnsureInstalled: func() error {
+				if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
+					t.Fatalf("expected configure to run before install, got %s", diff)
+				}
+				return nil
+			},
+		},
+	})
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		return "gemma4", nil
+	}
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanagedinstall"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationConfigOnlySkipsInstall(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherManagedRunner{}
+	withIntegrationSpecOverride(t, "stubmanagedconfigonly", &IntegrationSpec{
+		Name:   "stubmanagedconfigonly",
+		Runner: runner,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool { return false },
+			EnsureInstalled: func() error {
+				t.Fatal("did not expect install for configure-only managed integration")
+				return nil
+			},
+		},
+	})
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		return "gemma4", nil
+	}
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "stubmanagedconfigonly",
+		ConfigureOnly: true,
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
+		t.Fatalf("configured models mismatch: %s", diff)
+	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected runtime refresh once after configure, got %d", runner.refreshCalls)
+	}
+	if runner.onboardCalls != 1 {
+		t.Fatalf("expected onboarding to run once, got %d", runner.onboardCalls)
+	}
+	if runner.ranModel != "" {
+		t.Fatalf("did not expect final run for configure-only launch, got %q", runner.ranModel)
 	}
 }
 

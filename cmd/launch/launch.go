@@ -360,9 +360,6 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	}
 
 	if managed, ok := runner.(ManagedSingleModel); ok {
-		if err := EnsureIntegrationInstalled(name, runner); err != nil {
-			return err
-		}
 		return launchClient.launchManagedSingleIntegration(ctx, name, runner, managed, saved, req)
 	}
 
@@ -598,6 +595,15 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		if err := prepareManagedSingleIntegration(name, runner, managed, target); err != nil {
 			return err
 		}
+	}
+
+	if !req.ConfigureOnly {
+		if err := EnsureIntegrationInstalled(name, runner); err != nil {
+			return err
+		}
+	}
+
+	if needsConfigure || req.ModelOverride != "" || (current != "" && target != current) || !savedMatchesModels(saved, []string{target}) {
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
 			if err := refresher.RefreshRuntimeAfterConfigure(); err != nil {
 				return err
