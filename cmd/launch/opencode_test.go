@@ -3,6 +3,8 @@ package launch
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -238,6 +240,133 @@ func TestLookupCloudModelLimit(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// inlineConfigModel extracts a model entry from the inline config content.
+func inlineConfigModel(t *testing.T, content, model string) map[string]any {
+	t.Helper()
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
+		t.Fatalf("configContent is not valid JSON: %v", err)
+	}
+	provider, _ := cfg["provider"].(map[string]any)
+	ollama, _ := provider["ollama"].(map[string]any)
+	models, _ := ollama["models"].(map[string]any)
+	entry, ok := models[model].(map[string]any)
+	if !ok {
+		t.Fatalf("model %s not found in inline config", model)
+	}
+	return entry
+}
+
+func TestOpenCodeEdit_ReasoningOnThinkingModel(t *testing.T) {
+	setTestHome(t, t.TempDir())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	o := &OpenCode{}
+	if err := o.Edit([]string{"qwq"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := inlineConfigModel(t, o.configContent, "qwq")
+	if entry["reasoning"] != true {
+		t.Error("expected reasoning = true for thinking model")
+	}
+	variants, ok := entry["variants"].(map[string]any)
+	if !ok {
+		t.Fatal("expected variants to be set")
+	}
+	none, ok := variants["none"].(map[string]any)
+	if !ok {
+		t.Fatal("expected none variant to be set")
+	}
+	if none["reasoningEffort"] != "none" {
+		t.Errorf("none variant reasoningEffort = %v, want none", none["reasoningEffort"])
+	}
+	// Built-in low/medium/high should be disabled
+	for _, level := range []string{"low", "medium", "high"} {
+		v, ok := variants[level].(map[string]any)
+		if !ok {
+			t.Errorf("expected %s variant to exist", level)
+			continue
+		}
+		if v["disabled"] != true {
+			t.Errorf("expected %s variant to be disabled", level)
+		}
+	}
+}
+
+func TestOpenCodeEdit_ReasoningLevelsOnGptOss(t *testing.T) {
+	setTestHome(t, t.TempDir())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	o := &OpenCode{}
+	if err := o.Edit([]string{"gpt-oss:120b-cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := inlineConfigModel(t, o.configContent, "gpt-oss:120b-cloud")
+	if entry["reasoning"] != true {
+		t.Error("expected reasoning = true")
+	}
+	// GPT-OSS cannot turn thinking off and supports levels,
+	// so no custom variants should be written.
+	if entry["variants"] != nil {
+		t.Errorf("expected no variants for gpt-oss, got %v", entry["variants"])
+	}
+	// Should default to medium reasoning effort
+	opts, ok := entry["options"].(map[string]any)
+	if !ok {
+		t.Fatal("expected options to be set for gpt-oss")
+	}
+	if opts["reasoningEffort"] != "medium" {
+		t.Errorf("reasoningEffort = %v, want medium", opts["reasoningEffort"])
+	}
+}
+
+func TestOpenCodeEdit_NoReasoningOnNonThinkingModel(t *testing.T) {
+	setTestHome(t, t.TempDir())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":[],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	o := &OpenCode{}
+	if err := o.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := inlineConfigModel(t, o.configContent, "llama3.2")
+	if entry["reasoning"] != nil {
+		t.Errorf("expected no reasoning for non-thinking model, got %v", entry["reasoning"])
+	}
+	if entry["variants"] != nil {
+		t.Errorf("expected no variants for non-thinking model, got %v", entry["variants"])
 	}
 }
 
