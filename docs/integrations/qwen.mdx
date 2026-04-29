@@ -1,0 +1,78 @@
+---
+title: Qwen Code
+---
+
+Qwen Code is an AI coding assistant that runs in your terminal.
+
+## Install
+
+Install [Qwen Code](https://github.com/QwenLM/qwen-code) manually:
+
+```bash
+npm install -g @qwen-code/qwen-code@latest
+```
+
+## Usage with Ollama
+
+### Quick setup
+
+```bash
+ollama launch qwen
+```
+
+To configure without launching:
+
+```shell
+ollama launch qwen --config
+```
+
+If Qwen Code is missing, `ollama launch qwen` can prompt to install it automatically with `npm install -g @qwen-code/qwen-code@latest`.
+
+### Manual setup
+
+If you want to configure Qwen Code manually, or want to understand what `ollama launch qwen` writes for you, create `~/.qwen/settings.json` with:
+
+- `baseUrl` set to `http://localhost:11434/v1`
+- one provider entry for the Ollama model you want to use
+- an `envKey` on every Ollama-backed provider entry
+- a matching value under `env`
+
+For current Qwen Code versions, using `id: "ollama"` is not enough unless your actual model id is also `ollama`. Use the real Ollama model id such as `llama3.2`, `gemma4`, or `qwen3:14b`.
+
+`ollama launch qwen` writes `~/.qwen/settings.json` in this shape:
+
+- `security.auth.selectedType` is set to `openai`
+- `model.name` is set to the selected Ollama model id
+- `modelProviders.openai[]` contains one entry for the selected Ollama model
+- the Ollama-backed provider entry uses `envKey: "OLLAMA_API_KEY"`
+- `settings.json -> env` includes `"OLLAMA_API_KEY": "ollama"`
+
+Example:
+
+```json
+{
+  "env": {
+    "OLLAMA_API_KEY": "ollama"
+  },
+  "modelProviders": {
+    "openai": [
+      {
+        "id": "llama3.2",
+        "name": "llama3.2 (Ollama)",
+        "baseUrl": "http://localhost:11434/v1",
+        "envKey": "OLLAMA_API_KEY"
+      }
+    ]
+  },
+  "security": {
+    "auth": {
+      "selectedType": "openai"
+    }
+  },
+  "model": {
+    "name": "llama3.2"
+  }
+}
+```
+
+<Note>`ollama launch qwen` manages your user-level Qwen config at `~/.qwen/settings.json`.</Note>

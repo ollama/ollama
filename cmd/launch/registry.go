@@ -214,6 +214,9 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := (&Qwen{}).findPath()
 				return err == nil
 			},
+			EnsureInstalled: func() error {
+				return (&Qwen{}).ensureInstalled()
+			},
 			URL: "https://github.com/QwenLM/qwen-code",
 		},
 	},
