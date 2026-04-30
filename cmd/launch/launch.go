@@ -577,6 +577,13 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	return launchAfterConfiguration(name, runner, models[0], req)
 }
 
+// The launcher stores selected models in ~/.ollama/config.json, but some editor
+// integrations also need their own config files on disk. If that editor config
+// is deleted or drifts from the launcher state, we should rewrite it before
+// launch instead of trusting the saved launcher selection alone.
+//
+// This helps avoid cases where launch appears configured from Ollama's point of
+// view while the editor's real config file is missing or out of sync.
 func editorConfigNeedsRepair(editor Editor, models []string) bool {
 	if len(models) == 0 {
 		return false
