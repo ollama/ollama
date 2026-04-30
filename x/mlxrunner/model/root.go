@@ -200,7 +200,12 @@ func parseGlobalQuantMetadata(header map[string]json.RawMessage) (quantType stri
 func mainTensorNames(header map[string]json.RawMessage) []string {
 	names := make([]string, 0, len(header))
 	for name := range header {
-		if name == "__metadata__" || strings.HasSuffix(name, ".scale") || strings.HasSuffix(name, ".bias") {
+		// Skip metadata + both aux-naming conventions:
+		//   Ollama-native dot-child singular: ".scale" / ".bias"
+		//   mlx-lm sibling plural: ".scales" / ".biases"
+		if name == "__metadata__" ||
+			strings.HasSuffix(name, ".scale") || strings.HasSuffix(name, ".bias") ||
+			strings.HasSuffix(name, ".scales") || strings.HasSuffix(name, ".biases") {
 			continue
 		}
 		names = append(names, name)
