@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/format"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
@@ -27,17 +28,15 @@ var recommendedModels = []ModelItem{
 	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true, ContextLength: 262_144, MaxOutputTokens: 32_768},
 	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true, ContextLength: 202_752, MaxOutputTokens: 131_072},
 	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true, ContextLength: 204_800, MaxOutputTokens: 128_000},
-	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true, VRAMBytes: 12 * bytesPerGB},
-	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true, VRAMBytes: 14 * bytesPerGB},
+	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true, VRAMBytes: 12 * format.GigaByte},
+	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true, VRAMBytes: 14 * format.GigaByte},
 }
-
-const bytesPerGB = 1_000_000_000
 
 func displayVRAM(vramBytes int64) string {
 	if vramBytes <= 0 {
 		return ""
 	}
-	gb := float64(vramBytes) / bytesPerGB
+	gb := float64(vramBytes) / format.GigaByte
 	if gb == math.Trunc(gb) {
 		return fmt.Sprintf("~%.0fGB", gb)
 	}

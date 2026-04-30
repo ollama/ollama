@@ -19,6 +19,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 )
 
 func TestModelRecommendationsDefaultOrder(t *testing.T) {
@@ -41,11 +42,11 @@ func TestModelRecommendationsCacheRefreshAppliesServerSideChanges(t *testing.T) 
 
 	first := []api.ModelRecommendation{
 		{Model: " first-cloud:cloud ", Description: " first ", ContextLength: 2048, MaxOutputTokens: 512},
-		{Model: " first-local ", Description: " first local ", VRAMBytes: 3 * bytesPerGB},
+		{Model: " first-local ", Description: " first local ", VRAMBytes: 3 * format.GigaByte},
 	}
 	second := []api.ModelRecommendation{
 		{Model: "second-cloud:cloud", Description: "second", ContextLength: 4096, MaxOutputTokens: 1024},
-		{Model: "second-local", Description: "second local", VRAMBytes: 6 * bytesPerGB},
+		{Model: "second-local", Description: "second local", VRAMBytes: 6 * format.GigaByte},
 	}
 
 	calls := 0
@@ -76,7 +77,7 @@ func TestModelRecommendationsCacheRefreshAppliesServerSideChanges(t *testing.T) 
 	}
 	if got, want := cache.Get(), []api.ModelRecommendation{
 		{Model: "first-cloud:cloud", Description: "first", ContextLength: 2048, MaxOutputTokens: 512},
-		{Model: "first-local", Description: "first local", VRAMBytes: 3 * bytesPerGB},
+		{Model: "first-local", Description: "first local", VRAMBytes: 3 * format.GigaByte},
 	}; !slices.Equal(got, want) {
 		t.Fatalf("after first refresh recommendations = %#v, want %#v", got, want)
 	}
@@ -160,7 +161,7 @@ func TestModelRecommendationsCacheRefreshErrorCasesPreserveCurrentData(t *testin
 			setupModelRecommendationsTestEnv(t, "")
 
 			cache := newModelRecommendationsCache()
-			stable := []api.ModelRecommendation{{Model: "stable-local", Description: "stable desc", VRAMBytes: 2 * bytesPerGB}}
+			stable := []api.ModelRecommendation{{Model: "stable-local", Description: "stable desc", VRAMBytes: 2 * format.GigaByte}}
 			cache.set(stable)
 			cache.client = &http.Client{Transport: tc.transport}
 
@@ -211,7 +212,7 @@ func TestModelRecommendationsSnapshotPersistAndLoad(t *testing.T) {
 
 	want := []api.ModelRecommendation{
 		{Model: "persist-cloud:cloud", Description: "persisted", ContextLength: 8192, MaxOutputTokens: 2048},
-		{Model: "persist-local", Description: "persisted local", VRAMBytes: 5 * bytesPerGB},
+		{Model: "persist-local", Description: "persisted local", VRAMBytes: 5 * format.GigaByte},
 	}
 
 	writer := newModelRecommendationsCache()
@@ -256,7 +257,7 @@ func TestValidateModelRecommendationsTrimsAndDropsInvalidCloudEntries(t *testing
 	input := []api.ModelRecommendation{
 		{Model: " good-cloud:cloud ", Description: " good cloud ", ContextLength: 1024, MaxOutputTokens: 256},
 		{Model: "bad-cloud:cloud", Description: "missing limits"},
-		{Model: " good-local ", Description: " good local ", VRAMBytes: 2 * bytesPerGB},
+		{Model: " good-local ", Description: " good local ", VRAMBytes: 2 * format.GigaByte},
 	}
 
 	got, err := validateModelRecommendations(input)
@@ -266,7 +267,7 @@ func TestValidateModelRecommendationsTrimsAndDropsInvalidCloudEntries(t *testing
 
 	want := []api.ModelRecommendation{
 		{Model: "good-cloud:cloud", Description: "good cloud", ContextLength: 1024, MaxOutputTokens: 256},
-		{Model: "good-local", Description: "good local", VRAMBytes: 2 * bytesPerGB},
+		{Model: "good-local", Description: "good local", VRAMBytes: 2 * format.GigaByte},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("validated recommendations = %#v, want %#v", got, want)

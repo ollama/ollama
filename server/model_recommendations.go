@@ -17,11 +17,11 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 )
 
 const (
 	modelRecommendationsURL = "https://ollama.com/api/experimental/model-recommendations"
-	bytesPerGB              = 1_000_000_000
 )
 
 var (
@@ -393,11 +393,11 @@ var defaultModelRecommendations = []api.ModelRecommendation{
 	{
 		Model:       "gemma4",
 		Description: "Reasoning and code generation locally",
-		VRAMBytes:   12 * bytesPerGB,
+		VRAMBytes:   12 * format.GigaByte,
 	},
 	{
 		Model:       "qwen3.5",
 		Description: "Reasoning, coding, and visual understanding locally",
-		VRAMBytes:   14 * bytesPerGB,
+		VRAMBytes:   14 * format.GigaByte,
 	},
 }
