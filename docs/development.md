@@ -206,34 +206,8 @@ To run tests, use `go test`:
 go test ./...
 ```
 
-> NOTE: In rare circumstances, you may need to change a package using the new
-> "synctest" package in go1.24.
->
-> If you do not have the "synctest" package enabled, you will not see build or
-> test failures resulting from your change(s), if any, locally, but CI will
-> break.
->
-> If you see failures in CI, you can either keep pushing changes to see if the
-> CI build passes, or you can enable the "synctest" package locally to see the
-> failures before pushing.
->
-> To enable the "synctest" package for testing, run the following command:
->
-> ```shell
-> GOEXPERIMENT=synctest go test ./...
-> ```
->
-> If you wish to enable synctest for all go commands, you can set the
-> `GOEXPERIMENT` environment variable in your shell profile or by using:
->
-> ```shell
-> go env -w GOEXPERIMENT=synctest
-> ```
->
-> Which will enable the "synctest" package for all go commands without needing
-> to set it for all shell sessions.
->
-> The synctest package is not required for production builds.
+> NOTE: Some packages use the `testing/synctest` package, which is stable as of
+> go1.25 and requires no special flags.
 
 ## Library detection
 

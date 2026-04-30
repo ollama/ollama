@@ -1,5 +1,3 @@
-//go:build goexperiment.synctest
-
 package syncs
 
 import (
@@ -12,7 +10,7 @@ import (
 
 func TestPipelineReadWriterTo(t *testing.T) {
 	for range 10 {
-		synctest.Run(func() {
+		synctest.Test(t, func(t *testing.T) {
 			q := NewRelayReader()
 
 			tickets := []struct {
