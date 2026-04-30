@@ -380,20 +380,36 @@ jobs:
             dist/*.ps1
             dist/OllamaSetup.exe
 
-  linux-build:
+  # Pre-build each Dockerfile stage on its own runner in parallel and push the
+  # resulting layers to a per-stage registry cache.  The downstream
+  # docker-build-push job then assembles cache-hit-only.
+  linux-depends:
     strategy:
       matrix:
         include:
-          - os: linux
-            arch: amd64
-            target: archive
-          - os: linux
-            arch: amd64
-            target: rocm
-          - os: linux
-            arch: arm64
-            target: archive
-    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
+          - arch: amd64
+            target: cpu
+          - arch: amd64
+            target: cuda-12
+          - arch: amd64
+            target: cuda-13
+          - arch: amd64
+            target: mlx
+          - arch: amd64
+            target: rocm-7
+          - arch: amd64
+            target: vulkan
+          - arch: arm64
+            target: cpu
+          - arch: arm64
+            target: cuda-12
+          - arch: arm64
+            target: cuda-13
+          - arch: arm64
+            target: jetpack-5
+          - arch: arm64
+            target: jetpack-6
+    runs-on: ${{ matrix.arch == 'arm64' && 'linux-arm64' || 'linux' }}
     environment: release
     needs: setup-environment
     env:
@@ -401,18 +417,114 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          target: ${{ matrix.target }}
+          build-args: |
+            CGO_CFLAGS=${{ env.CGO_CFLAGS }}
+            CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
+            GOFLAGS=${{ env.GOFLAGS }}
+            APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+          cache-from: |
+            type=registry,ref=ollama/release:cache-${{ matrix.arch }}-${{ matrix.target }}
+            type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+          cache-to: type=registry,ref=ollama/release:cache-${{ matrix.arch }}-${{ matrix.target }},mode=max
+
+  # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
+  # Heavy stages were pre-built by linux-depends; this job is cache-hit-only for those layers
+  # and just assembles, runs the Go build, and pushes the final image.
+  docker-build-push:
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: arm64
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+            cache-from: |
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+              type=registry,ref=ollama/release:cache-arm64-cpu
+              type=registry,ref=ollama/release:cache-arm64-cuda-12
+              type=registry,ref=ollama/release:cache-arm64-cuda-13
+              type=registry,ref=ollama/release:cache-arm64-jetpack-5
+              type=registry,ref=ollama/release:cache-arm64-jetpack-6
+          - os: linux
+            arch: amd64
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+            cache-from: |
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+              type=registry,ref=ollama/release:cache-amd64-cpu
+              type=registry,ref=ollama/release:cache-amd64-cuda-12
+              type=registry,ref=ollama/release:cache-amd64-cuda-13
+              type=registry,ref=ollama/release:cache-amd64-mlx
+              type=registry,ref=ollama/release:cache-amd64-vulkan
+          - os: linux
+            arch: amd64
+            suffix: '-rocm'
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+              FLAVOR=rocm
+              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+            cache-from: |
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+              type=registry,ref=ollama/release:cache-amd64-cpu
+              type=registry,ref=ollama/release:cache-amd64-rocm-7
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
+    environment: release
+    needs: [setup-environment, linux-depends]
+    env:
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - id: build-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          build-args: ${{ matrix.build-args }}
+          outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: ${{ matrix.cache-from }}
+          cache-to: type=inline
+      - run: |
+          mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
+          echo "${{ steps.build-push.outputs.digest }}" >${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+        working-directory: ${{ runner.temp }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+      # Re-run buildx with --target archive against buildkit's local cache to
+      # extract the release directory layout.  All upstream stages were just
+      # built above, so this is a cache-hit-only pass that just writes files.
       - uses: docker/build-push-action@v6
         with:
           context: .
           platforms: ${{ matrix.os }}/${{ matrix.arch }}
-          target: ${{ matrix.target }}
-          build-args: |
-            GOFLAGS=${{ env.GOFLAGS }}
-            CGO_CFLAGS=${{ env.CGO_CFLAGS }}
-            CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
+          target: archive
+          build-args: ${{ matrix.build-args }}
           outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
-          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
-          cache-to: type=inline
+          cache-from: ${{ matrix.cache-from }}
       - name: Deduplicate CUDA libraries
         run: |
           ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
@@ -443,68 +555,9 @@ jobs:
           done
       - uses: actions/upload-artifact@v4
         with:
-          name: bundles-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
+          name: bundles-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
           path: |
             *.tar.zst
-
-  # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
-  docker-build-push:
-    strategy:
-      matrix:
-        include:
-          - os: linux
-            arch: arm64
-            build-args: |
-              CGO_CFLAGS
-              CGO_CXXFLAGS
-              GOFLAGS
-              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
-          - os: linux
-            arch: amd64
-            build-args: |
-              CGO_CFLAGS
-              CGO_CXXFLAGS
-              GOFLAGS
-              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
-          - os: linux
-            arch: amd64
-            suffix: '-rocm'
-            build-args: |
-              CGO_CFLAGS
-              CGO_CXXFLAGS
-              GOFLAGS
-              FLAVOR=rocm
-              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
-    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
-    environment: release
-    needs: setup-environment
-    env:
-      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - id: build-push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: ${{ matrix.os }}/${{ matrix.arch }}
-          build-args: ${{ matrix.build-args }}
-          outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
-          cache-to: type=inline
-      - run: |
-          mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
-          echo "${{ steps.build-push.outputs.digest }}" >${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
-        working-directory: ${{ runner.temp }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
-          path: |
-            ${{ runner.temp }}/${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
 
   # Merge Docker images for the same flavor into a single multi-arch manifest
   docker-merge-push:
@@ -544,7 +597,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     environment: release
-    needs: [darwin-build, windows-app, linux-build]
+    needs: [darwin-build, windows-app, docker-build-push]
     permissions:
       contents: write
     env:

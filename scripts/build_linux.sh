@@ -74,3 +74,13 @@ elif echo $PLATFORM | grep "amd64" > /dev/null ; then
         tar c -C ./dist/ ./lib/ollama/rocm  | zstd -9 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
         tar c -C ./dist/ ./lib/ollama/mlx_cuda_v13 ./lib/ollama/include  | zstd -9 -T0 >./dist/ollama-linux-amd64-mlx.tar.zst
 fi
+
+# Warn if any compressed tarball exceeds GitHub's 2 GiB release-asset limit
+LIMIT=2147483648
+for f in ./dist/ollama-linux-*.tar.zst; do
+    [ -f "$f" ] || continue
+    size=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f")
+    if [ "$size" -gt "$LIMIT" ]; then
+        echo "WARNING: $f is $size bytes ($((size - LIMIT)) over the 2 GiB GitHub release-asset limit)" >&2
+    fi
+done
