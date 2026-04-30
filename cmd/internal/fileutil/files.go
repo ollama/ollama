@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -38,16 +39,24 @@ func copyFile(src, dst string) error {
 
 // BackupDir returns the shared backup directory used before overwriting files.
 func BackupDir() string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".ollama", "backups")
+	}
 	return filepath.Join(os.TempDir(), "ollama-backups")
 }
 
-func backupToTmp(srcPath string) (string, error) {
+func backupToTmp(srcPath string, hint string) (string, error) {
 	dir := BackupDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 
-	backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", filepath.Base(srcPath), time.Now().Unix()))
+	name := filepath.Base(srcPath)
+	if hint := sanitizeBackupHint(hint); hint != "" {
+		name = hint + "-" + name
+	}
+
+	backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", name, time.Now().Unix()))
 	if err := copyFile(srcPath, backupPath); err != nil {
 		return "", err
 	}
@@ -56,11 +65,22 @@ func backupToTmp(srcPath string) (string, error) {
 
 // WriteWithBackup writes data to path via temp file + rename, backing up any existing file first.
 func WriteWithBackup(path string, data []byte) error {
+	return writeWithBackup(path, data, "")
+}
+
+// WriteWithBackupHint writes data to path with the same safety guarantees as
+// WriteWithBackup, but prefixes backup filenames with <hint>- when a short
+// caller hint is provided.
+func WriteWithBackupHint(path string, data []byte, hint string) error {
+	return writeWithBackup(path, data, hint)
+}
+
+func writeWithBackup(path string, data []byte, hint string) error {
 	var backupPath string
 	// backup must be created before any writes to the target file
 	if existingContent, err := os.ReadFile(path); err == nil {
 		if !bytes.Equal(existingContent, data) {
-			backupPath, err = backupToTmp(path)
+			backupPath, err = backupToTmp(path, hint)
 			if err != nil {
 				return fmt.Errorf("backup failed: %w", err)
 			}
@@ -100,4 +120,29 @@ func WriteWithBackup(path string, data []byte) error {
 	}
 
 	return nil
+}
+
+func sanitizeBackupHint(hint string) string {
+	hint = strings.TrimSpace(strings.ToLower(hint))
+	if hint == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.Grow(len(hint))
+	lastDash := false
+	for _, r := range hint {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		case r == '-', r == '_', r == ' ':
+			if b.Len() > 0 && !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+
+	return strings.Trim(b.String(), "-")
 }

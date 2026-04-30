@@ -361,9 +361,23 @@ func confirmConfigEdit(runner Runner, paths []string) (bool, error) {
 	for _, path := range paths {
 		fmt.Fprintf(os.Stderr, "  %s\n", path)
 	}
-	fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", fileutil.BackupDir())
+	if countExistingPaths(paths) > 0 {
+		fmt.Fprintf(os.Stderr, "Existing files will be backed up to %s/\n\n", fileutil.BackupDir())
+	} else {
+		fmt.Fprintf(os.Stderr, "\n")
+	}
 
 	return ConfirmPrompt("Proceed?")
+}
+
+func countExistingPaths(paths []string) int {
+	var count int
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			count++
+		}
+	}
+	return count
 }
 
 // buildModelList merges existing models with recommendations for selection UIs.
