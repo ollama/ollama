@@ -1544,6 +1544,8 @@ func TestCreateSafetensorsModel_Qwen35DirectNonAffineKeepsSensitiveWeightsBF16(t
 				st.NewTensorDataFromBytes("lm_head.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
 				st.NewTensorDataFromBytes("model.language_model.layers.0.linear_attn.in_proj_a.weight", "BF16", []int32{32, 64}, make([]byte, 32*64*2)),
 				st.NewTensorDataFromBytes("model.language_model.layers.0.linear_attn.in_proj_b.weight", "BF16", []int32{32, 64}, make([]byte, 32*64*2)),
+				st.NewTensorDataFromBytes("model.language_model.layers.0.linear_attn.in_proj_qkv.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
+				st.NewTensorDataFromBytes("model.language_model.layers.0.linear_attn.in_proj_z.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
 				st.NewTensorDataFromBytes("model.language_model.layers.0.mlp.gate.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
 				st.NewTensorDataFromBytes("model.language_model.layers.0.mlp.shared_expert_gate.weight", "BF16", []int32{1, 64}, make([]byte, 64*2)),
 				st.NewTensorDataFromBytes("model.language_model.layers.0.self_attn.q_proj.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
@@ -1598,6 +1600,8 @@ func TestCreateSafetensorsModel_Qwen35DirectNonAffineKeepsSensitiveWeightsBF16(t
 				"language_model.lm_head.weight",
 				"language_model.model.layers.0.linear_attn.in_proj_a.weight",
 				"language_model.model.layers.0.linear_attn.in_proj_b.weight",
+				"language_model.model.layers.0.linear_attn.in_proj_qkv.weight",
+				"language_model.model.layers.0.linear_attn.in_proj_z.weight",
 				"language_model.model.layers.0.mlp.gate.weight",
 				"language_model.model.layers.0.mlp.shared_expert_gate.weight",
 			} {
