@@ -1659,7 +1659,7 @@ func TestBuildModelList_Descriptions(t *testing.T) {
 
 		for _, item := range items {
 			if item.Name == "qwen3.5" {
-				if !strings.Contains(item.Description, "~11GB") {
+				if !strings.Contains(item.Description, "~14GB") {
 					t.Errorf("not-installed qwen3.5 should show VRAM hint, got %q", item.Description)
 				}
 				return
@@ -1676,7 +1676,7 @@ func TestBuildModelList_Descriptions(t *testing.T) {
 
 		for _, item := range items {
 			if item.Name == "qwen3.5" {
-				if strings.Contains(item.Description, "~11GB") {
+				if strings.Contains(item.Description, "~14GB") {
 					t.Errorf("installed qwen3.5 should not show VRAM hint, got %q", item.Description)
 				}
 				return

@@ -17,9 +17,12 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 )
 
-const modelRecommendationsURL = "https://ollama.com/api/experimental/model-recommendations"
+const (
+	modelRecommendationsURL = "https://ollama.com/api/experimental/model-recommendations"
+)
 
 var (
 	modelRecommendationsRefreshInterval     = 4 * time.Hour
@@ -320,7 +323,6 @@ func validateModelRecommendations(recs []api.ModelRecommendation) ([]api.ModelRe
 	for _, rec := range recs {
 		rec.Model = strings.TrimSpace(rec.Model)
 		rec.Description = strings.TrimSpace(rec.Description)
-		rec.VRAM = strings.TrimSpace(rec.VRAM)
 
 		if rec.Model == "" {
 			return nil, errors.New("recommendation missing model")
@@ -391,11 +393,11 @@ var defaultModelRecommendations = []api.ModelRecommendation{
 	{
 		Model:       "gemma4",
 		Description: "Reasoning and code generation locally",
-		VRAM:        "~16GB",
+		VRAMBytes:   12 * format.GigaByte,
 	},
 	{
 		Model:       "qwen3.5",
 		Description: "Reasoning, coding, and visual understanding locally",
-		VRAM:        "~11GB",
+		VRAMBytes:   14 * format.GigaByte,
 	},
 }
