@@ -206,9 +206,6 @@ To run tests, use `go test`:
 go test ./...
 ```
 
-> NOTE: Some packages use the `testing/synctest` package, which is stable as of
-> go1.25 and requires no special flags.
-
 ## Library detection
 
 Ollama looks for acceleration libraries in the following paths relative to the `ollama` executable:
