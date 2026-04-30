@@ -179,7 +179,8 @@ func BoolWithDefault(k string) func(defaultValue bool) bool {
 		if s := Var(k); s != "" {
 			b, err := strconv.ParseBool(s)
 			if err != nil {
-				return true
+				slog.Warn("invalid boolean value for environment variable, using default", "variable", k, "value", s, "default", defaultValue)
+				return defaultValue
 			}
 
 			return b
