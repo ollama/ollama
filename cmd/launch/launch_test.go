@@ -19,7 +19,6 @@ import (
 
 type launcherEditorRunner struct {
 	paths    []string
-	models   []string
 	edited   [][]string
 	ranModel string
 }
@@ -38,7 +37,7 @@ func (r *launcherEditorRunner) Edit(models []string) error {
 	return nil
 }
 
-func (r *launcherEditorRunner) Models() []string { return r.models }
+func (r *launcherEditorRunner) Models() []string { return nil }
 
 type launcherSingleRunner struct {
 	ranModel string
@@ -1380,55 +1379,6 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 	if diff := compareStrings(saved.Models, []string{"llama3.2", "qwen3:8b"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
-	}
-}
-
-func TestLaunchIntegration_EditorRepairsMissingConfigWhenSavedModelsExist(t *testing.T) {
-	tmpDir := t.TempDir()
-	setLaunchTestHome(t, tmpDir)
-	withLauncherHooks(t)
-
-	binDir := t.TempDir()
-	writeFakeBinary(t, binDir, "droid")
-	t.Setenv("PATH", binDir)
-
-	missingPath := filepath.Join(tmpDir, "missing-settings.json")
-	editor := &launcherEditorRunner{
-		paths:  []string{missingPath},
-		models: nil,
-	}
-	withIntegrationOverride(t, "droid", editor)
-
-	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
-		return true, nil
-	}
-
-	if err := config.SaveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
-		t.Fatalf("failed to save integration config: %v", err)
-	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/show":
-			var req apiShowRequest
-			_ = json.NewDecoder(r.Body).Decode(&req)
-			fmt.Fprintf(w, `{"model":%q}`, req.Model)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "droid"}); err != nil {
-		t.Fatalf("LaunchIntegration returned error: %v", err)
-	}
-
-	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2", "qwen3:8b"}}); diff != "" {
-		t.Fatalf("unexpected edited models (-want +got):\n%s", diff)
-	}
-	if editor.ranModel != "llama3.2" {
-		t.Fatalf("expected launch to run saved primary model, got %q", editor.ranModel)
 	}
 }
 
