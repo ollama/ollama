@@ -27,7 +27,7 @@ var (
 
 type Qwen struct{}
 
-func (q *Qwen) String() string { return "Qwen Code CLI" }
+func (q *Qwen) String() string { return "Qwen Code" }
 
 func (q *Qwen) findPath() (string, error) {
 	if p, err := exec.LookPath("qwen"); err == nil {

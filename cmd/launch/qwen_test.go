@@ -393,8 +393,8 @@ func TestQwenIntegration(t *testing.T) {
 	q := &Qwen{}
 
 	t.Run("String", func(t *testing.T) {
-		if got := q.String(); got != "Qwen Code CLI" {
-			t.Errorf("String() = %q, want %q", got, "Qwen Code CLI")
+		if got := q.String(); got != "Qwen Code" {
+			t.Errorf("String() = %q, want %q", got, "Qwen Code")
 		}
 	})
 
