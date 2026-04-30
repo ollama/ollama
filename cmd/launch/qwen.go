@@ -20,8 +20,10 @@ const (
 	qwenOllamaEnvKey = "OLLAMA_API_KEY"
 )
 
-var qwenPendingConfigPath string
-var qwenPendingConfigCreated bool
+var (
+	qwenPendingConfigPath    string
+	qwenPendingConfigCreated bool
+)
 
 type Qwen struct{}
 
