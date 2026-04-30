@@ -2,15 +2,31 @@
 title: Qwen Code
 ---
 
-Qwen Code is an AI coding assistant that runs in your terminal.
+Qwen Code is Qwen's terminal-based coding agent for code editing, code review, and tool-assisted development workflows.
 
 ## Install
 
-Install [Qwen Code](https://github.com/QwenLM/qwen-code) manually:
+Install [Qwen Code](https://qwen.ai/qwencode):
 
-```bash
+<CodeGroup>
+
+```shell macOS / Linux (script)
+bash -c "$(curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh)"
+```
+
+```powershell Windows (PowerShell)
+powershell -Command "Invoke-WebRequest 'https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.bat' -OutFile (Join-Path $env:TEMP 'install-qwen.bat'); & (Join-Path $env:TEMP 'install-qwen.bat')"
+```
+
+```shell npm (all platforms)
 npm install -g @qwen-code/qwen-code@latest
 ```
+
+```shell macOS / Linux (Homebrew)
+brew install qwen-code
+```
+
+</CodeGroup>
 
 ## Usage with Ollama
 
@@ -37,7 +53,7 @@ If you want to configure Qwen Code manually, or want to understand what `ollama 
 - an `envKey` on every Ollama-backed provider entry
 - a matching value under `env`
 
-For current Qwen Code versions, using `id: "ollama"` is not enough unless your actual model id is also `ollama`. Use the real Ollama model id such as `llama3.2`, `gemma4`, or `qwen3:14b`.
+For current Qwen Code versions, using `id: "ollama"` is not enough unless your actual model id is also `ollama`. Use the real Ollama model id such as `qwen3.5`, `qwen3.5:cloud`, `glm-5:cloud`, or `kimi-k2.6:cloud`.
 
 `ollama launch qwen` writes `~/.qwen/settings.json` in this shape:
 
@@ -57,8 +73,8 @@ Example:
   "modelProviders": {
     "openai": [
       {
-        "id": "llama3.2",
-        "name": "llama3.2 (Ollama)",
+        "id": "qwen3.5",
+        "name": "qwen3.5 (Ollama)",
         "baseUrl": "http://localhost:11434/v1",
         "envKey": "OLLAMA_API_KEY"
       }
@@ -70,7 +86,7 @@ Example:
     }
   },
   "model": {
-    "name": "llama3.2"
+    "name": "qwen3.5"
   }
 }
 ```
