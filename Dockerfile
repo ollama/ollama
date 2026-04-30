@@ -90,8 +90,6 @@ RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'ROCm 7' \
         && cmake --build --preset 'ROCm 7' -- -l $(nproc) \
         && cmake --install build --component HIP --strip
-RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx950*
-RUN rm -f dist/lib/ollama/rocm/hipblaslt/library/*gfx950*
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
 ARG CMAKEVERSION
