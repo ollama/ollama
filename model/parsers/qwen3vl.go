@@ -79,8 +79,11 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 		case qwenEventRawToolCall:
 			toolCall, err := parseJSONToolCall(event, p.tools)
 			if err != nil {
-				slog.Warn("qwen tool call parsing failed", "error", err)
-				return "", "", nil, err
+				slog.Warn("qwen tool call parsing failed, treating as content", "error", err)
+				contentSb.WriteString(toolOpenTag)
+				contentSb.WriteString(event.raw)
+				contentSb.WriteString(toolCloseTag)
+				continue
 			}
 			calls = append(calls, toolCall)
 		case qwenEventThinkingContent:
