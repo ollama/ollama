@@ -591,10 +591,11 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		return nil
 	}
 
-	if needsConfigure || req.ModelOverride != "" || (current != "" && target != current) || !savedMatchesModels(saved, []string{target}) {
-		if err := prepareManagedSingleIntegration(name, runner, managed, target); err != nil {
-			return err
-		}
+	// Managed integrations may need config written before install/first launch,
+	// and some of them also need a post-config runtime refresh after install.
+	reconfigured := managedSingleNeedsReconfigure(saved, req, current, target, needsConfigure)
+	if err := prepareManagedSingleIntegrationIfNeeded(name, runner, managed, target, reconfigured); err != nil {
+		return err
 	}
 
 	if !req.ConfigureOnly {
@@ -603,12 +604,8 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		}
 	}
 
-	if needsConfigure || req.ModelOverride != "" || (current != "" && target != current) || !savedMatchesModels(saved, []string{target}) {
-		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
-			if err := refresher.RefreshRuntimeAfterConfigure(); err != nil {
-				return err
-			}
-		}
+	if err := refreshManagedSingleRuntimeIfNeeded(managed, reconfigured); err != nil {
+		return err
 	}
 
 	if !managedIntegrationOnboarded(saved, managed) {
@@ -653,6 +650,30 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, run
 	}
 
 	return target, needsConfigure, nil
+}
+
+func managedSingleNeedsReconfigure(saved *config.IntegrationConfig, req IntegrationLaunchRequest, current, target string, needsConfigure bool) bool {
+	return needsConfigure || req.ModelOverride != "" || (current != "" && target != current) || !savedMatchesModels(saved, []string{target})
+}
+
+func prepareManagedSingleIntegrationIfNeeded(name string, runner Runner, managed ManagedSingleModel, target string, reconfigured bool) error {
+	if !reconfigured {
+		return nil
+	}
+	return prepareManagedSingleIntegration(name, runner, managed, target)
+}
+
+// Runtime refresh is separate from config writes because some integrations need
+// their binary/runtime available before they can reload updated settings.
+func refreshManagedSingleRuntimeIfNeeded(managed ManagedSingleModel, reconfigured bool) error {
+	if !reconfigured {
+		return nil
+	}
+	refresher, ok := managed.(ManagedRuntimeRefresher)
+	if !ok {
+		return nil
+	}
+	return refresher.RefreshRuntimeAfterConfigure()
 }
 
 func savedIntegrationOnboarded(saved *config.IntegrationConfig) bool {
