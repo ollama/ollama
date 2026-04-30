@@ -596,6 +596,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.HideThinking = hidethinking
 
+	thinkingstderr, err := cmd.Flags().GetBool("thinkingstderr")
+	if err != nil {
+		return err
+	}
+	opts.ThinkingToStderr = thinkingstderr
+
 	keepAlive, err := cmd.Flags().GetString("keepalive")
 	if err != nil {
 		return err
@@ -761,7 +767,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 		// Use experimental agent loop with tools
 		if isExperimental {
-			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive, yoloMode, enableWebsearch)
+			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.ThinkingToStderr, opts.KeepAlive, yoloMode, enableWebsearch)
 		}
 
 		return generateInteractive(cmd, opts)
@@ -1424,8 +1430,9 @@ type runOptions struct {
 	MultiModal     bool
 	KeepAlive      *api.Duration
 	Think          *api.ThinkValue
-	HideThinking   bool
-	ShowConnect    bool
+	HideThinking     bool
+	ThinkingToStderr bool
+	ShowConnect      bool
 }
 
 func (r runOptions) Copy() runOptions {
@@ -1475,8 +1482,9 @@ func (r runOptions) Copy() runOptions {
 		MultiModal:     r.MultiModal,
 		KeepAlive:      r.KeepAlive,
 		Think:          think,
-		HideThinking:   r.HideThinking,
-		ShowConnect:    r.ShowConnect,
+		HideThinking:     r.HideThinking,
+		ThinkingToStderr: r.ThinkingToStderr,
+		ShowConnect:      r.ShowConnect,
 	}
 }
 
@@ -1491,7 +1499,11 @@ type displayResponseState struct {
 }
 
 func displayResponse(content string, wordWrap bool, state *displayResponseState) {
-	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	displayResponseTo(os.Stdout, int(os.Stdout.Fd()), content, wordWrap, state)
+}
+
+func displayResponseTo(w io.Writer, fd int, content string, wordWrap bool, state *displayResponseState) {
+	termWidth, _, _ := term.GetSize(fd)
 	if termWidth == 0 {
 		termWidth = 80
 	}
@@ -1499,7 +1511,7 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
 				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
-					fmt.Printf("%s%c", state.wordBuffer, ch)
+					fmt.Fprintf(w, "%s%c", state.wordBuffer, ch)
 					state.wordBuffer = ""
 					state.lineLength = 0
 					continue
@@ -1508,15 +1520,15 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 				// backtrack the length of the last word and clear to the end of the line
 				a := runewidth.StringWidth(state.wordBuffer)
 				if a > 0 {
-					fmt.Printf("\x1b[%dD", a)
+					fmt.Fprintf(w, "\x1b[%dD", a)
 				}
-				fmt.Printf("\x1b[K\n")
-				fmt.Printf("%s%c", state.wordBuffer, ch)
+				fmt.Fprintf(w, "\x1b[K\n")
+				fmt.Fprintf(w, "%s%c", state.wordBuffer, ch)
 				chWidth := runewidth.RuneWidth(ch)
 
 				state.lineLength = runewidth.StringWidth(state.wordBuffer) + chWidth
 			} else {
-				fmt.Print(string(ch))
+				fmt.Fprint(w, string(ch))
 				state.lineLength += runewidth.RuneWidth(ch)
 				if runewidth.RuneWidth(ch) >= 2 {
 					state.wordBuffer = ""
@@ -1535,7 +1547,7 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 			}
 		}
 	} else {
-		fmt.Printf("%s%s", state.wordBuffer, content)
+		fmt.Fprintf(w, "%s%s", state.wordBuffer, content)
 		if len(state.wordBuffer) > 0 {
 			state.wordBuffer = ""
 		}
@@ -1592,32 +1604,42 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	var thinkTagOpened bool = false
 	var thinkTagClosed bool = false
 
+	showThinking := !opts.HideThinking || opts.ThinkingToStderr
+	thinkWriter := io.Writer(os.Stdout)
+	thinkFd := int(os.Stdout.Fd())
+	thinkPlainText := false
+	if opts.ThinkingToStderr {
+		thinkWriter = os.Stderr
+		thinkFd = int(os.Stderr.Fd())
+		thinkPlainText = !term.IsTerminal(thinkFd)
+	}
+
 	role := "assistant"
 
 	fn := func(response api.ChatResponse) error {
-		if response.Message.Content != "" || !opts.HideThinking {
+		if response.Message.Content != "" || showThinking {
 			p.StopAndClear()
 		}
 
 		latest = response
 
 		role = response.Message.Role
-		if response.Message.Thinking != "" && !opts.HideThinking {
+		if response.Message.Thinking != "" && showThinking {
 			if !thinkTagOpened {
-				fmt.Print(thinkingOutputOpeningText(false))
+				fmt.Fprint(thinkWriter, thinkingOutputOpeningText(thinkPlainText))
 				thinkTagOpened = true
 				thinkTagClosed = false
 			}
 			thinkingContent.WriteString(response.Message.Thinking)
-			displayResponse(response.Message.Thinking, opts.WordWrap, state)
+			displayResponseTo(thinkWriter, thinkFd, response.Message.Thinking, opts.WordWrap, state)
 		}
 
 		content := response.Message.Content
 		if thinkTagOpened && !thinkTagClosed && (content != "" || len(response.Message.ToolCalls) > 0) {
 			if !strings.HasSuffix(thinkingContent.String(), "\n") {
-				fmt.Println()
+				fmt.Fprintln(thinkWriter)
 			}
-			fmt.Print(thinkingOutputClosingText(false))
+			fmt.Fprint(thinkWriter, thinkingOutputClosingText(thinkPlainText))
 			thinkTagOpened = false
 			thinkTagClosed = true
 			state = &displayResponseState{}
@@ -1725,29 +1747,39 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 
 	plainText := !term.IsTerminal(int(os.Stdout.Fd()))
 
+	showThinking := !opts.HideThinking || opts.ThinkingToStderr
+	thinkWriter := io.Writer(os.Stdout)
+	thinkFd := int(os.Stdout.Fd())
+	thinkPlainText := plainText
+	if opts.ThinkingToStderr {
+		thinkWriter = os.Stderr
+		thinkFd = int(os.Stderr.Fd())
+		thinkPlainText = !term.IsTerminal(thinkFd)
+	}
+
 	fn := func(response api.GenerateResponse) error {
 		latest = response
 		content := response.Response
 
-		if response.Response != "" || !opts.HideThinking {
+		if response.Response != "" || showThinking {
 			p.StopAndClear()
 		}
 
-		if response.Thinking != "" && !opts.HideThinking {
+		if response.Thinking != "" && showThinking {
 			if !thinkTagOpened {
-				fmt.Print(thinkingOutputOpeningText(plainText))
+				fmt.Fprint(thinkWriter, thinkingOutputOpeningText(thinkPlainText))
 				thinkTagOpened = true
 				thinkTagClosed = false
 			}
 			thinkingContent.WriteString(response.Thinking)
-			displayResponse(response.Thinking, opts.WordWrap, state)
+			displayResponseTo(thinkWriter, thinkFd, response.Thinking, opts.WordWrap, state)
 		}
 
 		if thinkTagOpened && !thinkTagClosed && (content != "" || len(response.ToolCalls) > 0) {
 			if !strings.HasSuffix(thinkingContent.String(), "\n") {
-				fmt.Println()
+				fmt.Fprintln(thinkWriter)
 			}
-			fmt.Print(thinkingOutputClosingText(plainText))
+			fmt.Fprint(thinkWriter, thinkingOutputClosingText(thinkPlainText))
 			thinkTagOpened = false
 			thinkTagClosed = true
 			state = &displayResponseState{}
@@ -2208,6 +2240,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
+	runCmd.Flags().Bool("thinkingstderr", false, "Output thinking to stderr instead of stdout")
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
 	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
