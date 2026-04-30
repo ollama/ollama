@@ -157,10 +157,6 @@ func main() {
 		}
 	}
 
-	if u := os.Getenv("OLLAMA_UPDATE_URL"); u != "" {
-		updater.UpdateCheckURLBase = u
-	}
-
 	// Detect if this is a first start after an upgrade, in
 	// which case we need to do some cleanup
 	var skipMove bool
