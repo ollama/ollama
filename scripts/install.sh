@@ -293,7 +293,9 @@ check_gpu() {
 
 if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
-    exit 0
+    if ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
+        exit 0
+    fi
 fi
 
 if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
