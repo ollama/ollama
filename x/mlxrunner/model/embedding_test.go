@@ -76,3 +76,35 @@ func TestMakeEmbeddingLayerQuantized(t *testing.T) {
 		t.Fatalf("AsLinear type = %T, want *nn.QuantizedLinear", emb.AsLinear())
 	}
 }
+
+// TestMakeEmbeddingLayerQuantizedMLXLMSibling confirms that MakeEmbeddingLayer
+// accepts mlx-lm sibling-plural aux naming ("<path>.scales" / "<path>.biases")
+// as an alternative to Ollama-native "<path>.weight_scale" / "<path>.weight_qbias".
+func TestMakeEmbeddingLayerQuantizedMLXLMSibling(t *testing.T) {
+	skipIfNoMLX(t)
+
+	denseWeight := mlx.FromValues(func() []float32 {
+		out := make([]float32, 2*64)
+		for i := range out {
+			out[i] = float32(i%17) / 8
+		}
+		return out
+	}(), 2, 64).AsType(mlx.DTypeBFloat16)
+
+	qw, scales, qbiases := mlx.Quantize(denseWeight, 64, 4, "affine")
+	mlx.Eval(qw, scales, qbiases)
+
+	emb := MakeEmbeddingLayer(map[string]*mlx.Array{
+		"model.embed_tokens.weight": qw,
+		"model.embed_tokens.scales": scales,
+		"model.embed_tokens.biases": qbiases,
+	}, "model.embed_tokens", 64, 4, "affine", nil)
+
+	qemb, ok := emb.(*nn.QuantizedEmbedding)
+	if !ok {
+		t.Fatalf("embedding type = %T, want *nn.QuantizedEmbedding", emb)
+	}
+	if qemb.GroupSize != 64 || qemb.Bits != 4 || qemb.Mode != "affine" {
+		t.Fatalf("quant params = (%d, %d, %q), want (64, 4, %q)", qemb.GroupSize, qemb.Bits, qemb.Mode, "affine")
+	}
+}
