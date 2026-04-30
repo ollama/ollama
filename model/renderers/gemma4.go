@@ -71,7 +71,6 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			continue
 		}
 
-		messageHadContent := r.messageHasContent(message)
 		prevMessageType = ""
 		role := message.Role
 		if role == "assistant" {
@@ -105,14 +104,18 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			}
 		}
 
+		messageHadContent := false
 		switch role {
 		case "model":
 			if message.Content != "" || len(message.Images) > 0 {
 				message.Content = stripThinking(message.Content)
 				r.renderContent(&sb, message, &imageOffset, false)
+				messageHadContent = r.messageHasContent(message)
 			}
 		default:
 			r.renderContent(&sb, message, &imageOffset, true)
+			message.Content = strings.TrimSpace(message.Content)
+			messageHadContent = r.messageHasContent(message)
 		}
 
 		if prevMessageType == "tool_call" && !toolResponsesEmitted {
@@ -180,7 +183,7 @@ func (r *Gemma4Renderer) previousNonToolRole(messages []api.Message, idx int) st
 }
 
 func (r *Gemma4Renderer) messageHasContent(message api.Message) bool {
-	return message.Content != "" || len(message.Images) > 0
+	return strings.TrimSpace(message.Content) != "" || len(message.Images) > 0
 }
 
 func (r *Gemma4Renderer) toolResponseName(message api.Message, toolCalls []api.ToolCall) string {
