@@ -380,73 +380,6 @@ jobs:
             dist/*.ps1
             dist/OllamaSetup.exe
 
-  linux-build:
-    strategy:
-      matrix:
-        include:
-          - os: linux
-            arch: amd64
-            target: archive
-          - os: linux
-            arch: amd64
-            target: rocm
-          - os: linux
-            arch: arm64
-            target: archive
-    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
-    environment: release
-    needs: setup-environment
-    env:
-      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: ${{ matrix.os }}/${{ matrix.arch }}
-          target: ${{ matrix.target }}
-          build-args: |
-            GOFLAGS=${{ env.GOFLAGS }}
-            CGO_CFLAGS=${{ env.CGO_CFLAGS }}
-            CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
-          outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
-          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
-          cache-to: type=inline
-      - name: Deduplicate CUDA libraries
-        run: |
-          ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
-      - run: |
-          for COMPONENT in bin/* lib/ollama/*; do
-            case "$COMPONENT" in
-              bin/ollama*)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
-              lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
-              lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
-            esac
-          done
-        working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
-      - run: |
-          echo "Manifests"
-          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in ; do
-            echo $ARCHIVE
-            cat $ARCHIVE
-          done
-      - run: |
-          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
-            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd --ultra -22 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
-          done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bundles-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
-          path: |
-            *.tar.zst
-
   # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
   docker-build-push:
     strategy:
@@ -502,6 +435,50 @@ jobs:
           name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
           path: |
             ${{ runner.temp }}/${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+      # Re-run buildx with --target archive against buildkit's local cache to
+      # extract the release directory layout.  All upstream stages were just
+      # built above, so this is a cache-hit-only pass that just writes files.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          target: archive
+          build-args: ${{ matrix.build-args }}
+          outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
+          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+      - name: Deduplicate CUDA libraries
+        run: |
+          ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
+      - run: |
+          for COMPONENT in bin/* lib/ollama/*; do
+            case "$COMPONENT" in
+              bin/ollama*)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
+              lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
+              lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+            esac
+          done
+        working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
+      - run: |
+          echo "Manifests"
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in ; do
+            echo $ARCHIVE
+            cat $ARCHIVE
+          done
+      - run: |
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd --ultra -22 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
+          path: |
+            *.tar.zst
 
   # Merge Docker images for the same flavor into a single multi-arch manifest
   docker-merge-push:
@@ -541,7 +518,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     environment: release
-    needs: [darwin-build, windows-app, linux-build]
+    needs: [darwin-build, windows-app, docker-build-push]
     permissions:
       contents: write
     env:
