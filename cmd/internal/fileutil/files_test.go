@@ -41,6 +41,17 @@ func isolatedTempDir(t *testing.T) string {
 func TestWriteWithBackup(t *testing.T) {
 	tmpDir := isolatedTempDir(t)
 
+	t.Run("uses ollama directory under home", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+
+		want := filepath.Join(home, ".ollama", "backups")
+		if got := BackupDir(); got != want {
+			t.Fatalf("BackupDir() = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("creates file", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "new.json")
 		data := mustMarshal(t, map[string]string{"key": "value"})
@@ -107,6 +118,35 @@ func TestWriteWithBackup(t *testing.T) {
 		json.Unmarshal(current, &currentData)
 		if !currentData["updated"] {
 			t.Error("file doesn't contain updated data")
+		}
+	})
+
+	t.Run("prefixes backup filename with hint when provided", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "hinted.json")
+		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
+
+		data := mustMarshal(t, map[string]bool{"updated": true})
+		if err := WriteWithBackupHint(path, data, "OpenClaw"); err != nil {
+			t.Fatal(err)
+		}
+
+		entries, err := os.ReadDir(BackupDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var found bool
+		for _, entry := range entries {
+			name := entry.Name()
+			if len(name) > len("openclaw-hinted.json.") && name[:len("openclaw-hinted.json.")] == "openclaw-hinted.json." {
+				found = true
+				_ = os.Remove(filepath.Join(BackupDir(), name))
+				break
+			}
+		}
+
+		if !found {
+			t.Error("backup filename did not include sanitized hint")
 		}
 	})
 
@@ -302,7 +342,7 @@ func TestBackupToTmp_SpecialCharsInFilename(t *testing.T) {
 	path := filepath.Join(tmpDir, "my config (backup).json")
 	os.WriteFile(path, []byte(`{"test": true}`), 0o644)
 
-	backupPath, err := backupToTmp(path)
+	backupPath, err := backupToTmp(path, "")
 	if err != nil {
 		t.Fatalf("backupToTmp with special chars failed: %v", err)
 	}
