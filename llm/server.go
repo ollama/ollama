@@ -1371,7 +1371,14 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 			slog.Warn("client connection closed before server finished loading, aborting load")
 			return fmt.Errorf("timed out waiting for llama runner to start: %w", ctx.Err())
 		case <-s.done:
-			return fmt.Errorf("llama runner process has terminated: %w", s.doneErr)
+			if s.doneErr != nil {
+				return fmt.Errorf("llama runner process has terminated: %w", s.doneErr)
+			}
+			msg := ""
+			if s.status != nil && s.status.LastErrMsg != "" {
+				msg = s.status.LastErrMsg
+			}
+			return fmt.Errorf("llama runner process has terminated: %s", msg)
 		default:
 		}
 		if time.Now().After(stallTimer) {
