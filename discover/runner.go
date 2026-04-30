@@ -128,45 +128,63 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		needsDelete := make([]bool, len(devices))
 		supportedMu := sync.Mutex{}
 		supported := make(map[string]map[string]map[string]int) // [Library][libDir][ID] = pre-deletion devices index
+		addSupported := func(lib, libDir, id string, idx int) {
+			supportedMu.Lock()
+			defer supportedMu.Unlock()
+			if _, ok := supported[lib]; !ok {
+				supported[lib] = make(map[string]map[string]int)
+			}
+			if _, ok := supported[lib][libDir]; !ok {
+				supported[lib][libDir] = make(map[string]int)
+			}
+			supported[lib][libDir][id] = idx
+		}
+		getInitValidationEnvs := func(dev ml.DeviceInfo, mustFilter bool) map[string]string {
+			extraEnvs := ml.GetVisibleDevicesEnv([]ml.DeviceInfo{dev}, mustFilter)
+			if extraEnvs == nil {
+				extraEnvs = map[string]string{}
+			}
+			dev.AddInitValidation(extraEnvs)
+			return extraEnvs
+		}
 		for i := range devices {
 			libDir := devices[i].LibraryPath[len(devices[i].LibraryPath)-1]
 			if !devices[i].NeedsInitValidation() {
 				// No need to validate, add to the supported map
-				supportedMu.Lock()
-				if _, ok := supported[devices[i].Library]; !ok {
-					supported[devices[i].Library] = make(map[string]map[string]int)
-				}
-				if _, ok := supported[devices[i].Library][libDir]; !ok {
-					supported[devices[i].Library][libDir] = make(map[string]int)
-				}
-				supported[devices[i].Library][libDir][devices[i].ID] = i
-				supportedMu.Unlock()
+				addSupported(devices[i].Library, libDir, devices[i].ID, i)
 				continue
 			}
 			slog.Debug("verifying if device is supported", "library", libDir, "description", devices[i].Description, "compute", devices[i].Compute(), "id", devices[i].ID, "pci_id", devices[i].PCIID)
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				extraEnvs := ml.GetVisibleDevicesEnv(devices[i:i+1], true)
-				devices[i].AddInitValidation(extraEnvs)
-				if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, extraEnvs)) == 0 {
+				libDir := devices[i].LibraryPath[len(devices[i].LibraryPath)-1]
+				filteredEnvs := getInitValidationEnvs(devices[i], true)
+				if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, filteredEnvs)) == 0 {
+					// CUDA with MIG can fail this filtered probe if CUDA_VISIBLE_DEVICES and
+					// container-visible UUID semantics don't align. Retry once without the CUDA filter.
+					if devices[i].Library == "CUDA" {
+						unfilteredEnvs := getInitValidationEnvs(devices[i], false)
+						if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, unfilteredEnvs)) != 0 {
+							slog.Debug("device recovered with secondary unfiltered CUDA probe",
+								"id", devices[i].ID,
+								"libdir", libDir,
+								"pci_id", devices[i].PCIID,
+								"library", devices[i].Library,
+							)
+							addSupported(devices[i].Library, libDir, devices[i].ID, i)
+							return
+						}
+					}
 					slog.Debug("filtering device which didn't fully initialize",
 						"id", devices[i].ID,
-						"libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
+						"libdir", libDir,
 						"pci_id", devices[i].PCIID,
 						"library", devices[i].Library,
 					)
 					needsDelete[i] = true
 				} else {
-					supportedMu.Lock()
-					if _, ok := supported[devices[i].Library]; !ok {
-						supported[devices[i].Library] = make(map[string]map[string]int)
-					}
-					if _, ok := supported[devices[i].Library][libDir]; !ok {
-						supported[devices[i].Library][libDir] = make(map[string]int)
-					}
-					supported[devices[i].Library][libDir][devices[i].ID] = i
-					supportedMu.Unlock()
+					addSupported(devices[i].Library, libDir, devices[i].ID, i)
 				}
 			}(i)
 		}
