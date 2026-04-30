@@ -279,6 +279,95 @@ func TestEnsureCodexConfig(t *testing.T) {
 			t.Fatalf("ollama catalog not created: %v", err)
 		}
 	})
+
+	t.Run("merges additional models into ollama catalog", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		if err := ensureCodexConfig("llama3.2"); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensureCodexConfig("qwen3.5"); err != nil {
+			t.Fatal(err)
+		}
+
+		catalogPath := filepath.Join(tmpDir, ".codex", codexCatalogFileName)
+		data, err := os.ReadFile(catalogPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var catalog struct {
+			Models []struct {
+				Slug string `json:"slug"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(data, &catalog); err != nil {
+			t.Fatalf("failed to parse catalog: %v", err)
+		}
+
+		if len(catalog.Models) != 2 {
+			t.Fatalf("expected 2 merged models, got %d", len(catalog.Models))
+		}
+		if catalog.Models[0].Slug != "llama3.2" {
+			t.Fatalf("first merged model = %q, want %q", catalog.Models[0].Slug, "llama3.2")
+		}
+		if catalog.Models[1].Slug != "qwen3.5" {
+			t.Fatalf("second merged model = %q, want %q", catalog.Models[1].Slug, "qwen3.5")
+		}
+	})
+
+	t.Run("refreshes existing model entry in place", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		catalogPath := filepath.Join(tmpDir, ".codex", codexCatalogFileName)
+		if err := os.MkdirAll(filepath.Dir(catalogPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		original := `{
+			"models": [
+				{"slug":"llama3.2","display_name":"stale","context_window":1},
+				{"slug":"qwen3.5","display_name":"keep","context_window":2}
+			]
+		}`
+		if err := os.WriteFile(catalogPath, []byte(original), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := ensureCodexConfig("llama3.2"); err != nil {
+			t.Fatal(err)
+		}
+
+		data, err := os.ReadFile(catalogPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var catalog struct {
+			Models []struct {
+				Slug          string `json:"slug"`
+				DisplayName   string `json:"display_name"`
+				ContextWindow int    `json:"context_window"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(data, &catalog); err != nil {
+			t.Fatalf("failed to parse catalog: %v", err)
+		}
+
+		if len(catalog.Models) != 2 {
+			t.Fatalf("expected 2 models after refresh, got %d", len(catalog.Models))
+		}
+		if catalog.Models[0].Slug != "llama3.2" {
+			t.Fatalf("first refreshed model = %q, want %q", catalog.Models[0].Slug, "llama3.2")
+		}
+		if catalog.Models[0].DisplayName != "llama3.2" {
+			t.Fatalf("refreshed display_name = %q, want %q", catalog.Models[0].DisplayName, "llama3.2")
+		}
+		if catalog.Models[1].Slug != "qwen3.5" {
+			t.Fatalf("preserved second model = %q, want %q", catalog.Models[1].Slug, "qwen3.5")
+		}
+	})
 }
 
 func TestParseNumCtx(t *testing.T) {

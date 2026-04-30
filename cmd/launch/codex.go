@@ -138,9 +138,14 @@ func writeCodexProfile(configPath, catalogPath string) error {
 func writeCodexModelCatalog(catalogPath, modelName string) error {
 	entry := buildCodexModelEntry(modelName)
 
-	catalog := map[string]any{
-		"models": []any{entry},
+	catalog := map[string]any{}
+	if content, err := os.ReadFile(catalogPath); err == nil {
+		if err := json.Unmarshal(content, &catalog); err != nil {
+			catalog = map[string]any{}
+		}
 	}
+
+	catalog["models"] = mergeCodexModelEntries(catalog["models"], entry)
 
 	data, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
@@ -148,6 +153,32 @@ func writeCodexModelCatalog(catalogPath, modelName string) error {
 	}
 
 	return os.WriteFile(catalogPath, data, 0o644)
+}
+
+func mergeCodexModelEntries(existing any, entry map[string]any) []any {
+	models, _ := existing.([]any)
+	merged := make([]any, 0, len(models)+1)
+	replaced := false
+	slug, _ := entry["slug"].(string)
+
+	for _, model := range models {
+		current, ok := model.(map[string]any)
+		if !ok {
+			continue
+		}
+		if currentSlug, _ := current["slug"].(string); currentSlug == slug {
+			merged = append(merged, entry)
+			replaced = true
+			continue
+		}
+		merged = append(merged, current)
+	}
+
+	if !replaced {
+		merged = append(merged, entry)
+	}
+
+	return merged
 }
 
 func buildCodexModelEntry(modelName string) map[string]any {
