@@ -18,7 +18,7 @@ func TestMergeEnvWithRunnerEnvOverrides(t *testing.T) {
 		},
 	}
 
-	env := GetVisibleDevicesEnv(devices, true)
+	env := GetDevicesEnv(devices, true)
 
 	if got, want := env["GGML_METAL_TENSOR_DISABLE"], "1"; got != want {
 		t.Fatalf("GGML_METAL_TENSOR_DISABLE = %q, want %q", got, want)
@@ -29,7 +29,7 @@ func TestMergeEnvWithRunnerEnvOverrides(t *testing.T) {
 	}
 }
 
-func TestGetVisibleDevicesEnvWarnsOnConflictingOverrides(t *testing.T) {
+func TestGetDevicesEnvWarnsOnConflictingOverrides(t *testing.T) {
 	var logs bytes.Buffer
 	oldLogger := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -48,7 +48,7 @@ func TestGetVisibleDevicesEnvWarnsOnConflictingOverrides(t *testing.T) {
 		},
 	}
 
-	env := GetVisibleDevicesEnv(devices, false)
+	env := GetDevicesEnv(devices, false)
 
 	if got, want := env["TEST_OVERRIDE"], "two"; got != want {
 		t.Fatalf("TEST_OVERRIDE = %q, want %q", got, want)

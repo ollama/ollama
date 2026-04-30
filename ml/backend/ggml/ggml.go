@@ -55,11 +55,7 @@ var initDevices = sync.OnceFunc(func() {
 
 		b := C.ggml_backend_dev_init(d, nil)
 		if b == nil {
-			if os.Getenv("OLLAMA_GPU_DISCOVERY") == "1" {
-				slog.Debug("failed to initialize ggml backend device during discovery", "device", name, "type", t)
-			} else {
-				slog.Error("failed to initialize ggml backend device", "device", name, "type", t)
-			}
+			slog.Error("failed to initialize ggml backend device", "device", name, "type", t)
 			panic(fmt.Sprintf("failed to initialize ggml backend device: %s", name))
 		}
 

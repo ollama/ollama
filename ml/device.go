@@ -524,10 +524,10 @@ func (f FlashAttentionType) String() string {
 }
 
 // Given the list of GPUs this instantiation is targeted for,
-// figure out the visible devices environment variables and any recorded
+// figure out the device environment variables and any recorded
 // per-device runner environment overrides. Set mustFilter true to enable
 // filtering of CUDA devices.
-func GetVisibleDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
+func GetDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
 	if len(l) == 0 {
 		return nil
 	}
