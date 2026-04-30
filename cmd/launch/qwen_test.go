@@ -60,8 +60,8 @@ func TestQwenEdit(t *testing.T) {
 	if provider["name"] != "test-model (Ollama)" {
 		t.Errorf("expected name %q, got %v", "test-model (Ollama)", provider["name"])
 	}
-	if provider["description"] != "test-model running locally via Ollama" {
-		t.Errorf("expected description %q, got %v", "test-model running locally via Ollama", provider["description"])
+	if _, ok := provider["description"]; ok {
+		t.Errorf("did not expect description for non-recommended model, got %v", provider["description"])
 	}
 
 	envCfg, ok := cfg["env"].(map[string]any)
@@ -90,7 +90,7 @@ func TestQwenEdit(t *testing.T) {
 	}
 }
 
-func TestQwenEditKeepsOnlyPrimarySelectedModel(t *testing.T) {
+func TestQwenEditAddsAllSelectedModels(t *testing.T) {
 	tmpDir := t.TempDir()
 	setQwenTestHome(t, tmpDir)
 
@@ -111,26 +111,54 @@ func TestQwenEditKeepsOnlyPrimarySelectedModel(t *testing.T) {
 
 	modelProviders := cfg["modelProviders"].(map[string]any)
 	openaiArray := modelProviders["openai"].([]any)
-	if len(openaiArray) != 1 {
-		t.Fatalf("expected 1 openai provider, got %d", len(openaiArray))
+	if len(openaiArray) != 2 {
+		t.Fatalf("expected 2 openai providers, got %d", len(openaiArray))
 	}
 
-	provider := openaiArray[0].(map[string]any)
-	if provider["id"] != "qwen3:32b" {
-		t.Fatalf("expected provider id %q, got %v", "qwen3:32b", provider["id"])
+	var gotIDs []string
+	for _, item := range openaiArray {
+		provider := item.(map[string]any)
+		gotIDs = append(gotIDs, provider["id"].(string))
+		if provider["envKey"] != qwenAPIKeyEnvKey() {
+			t.Fatalf("expected envKey %q, got %v", qwenAPIKeyEnvKey(), provider["envKey"])
+		}
 	}
-	if provider["envKey"] != qwenAPIKeyEnvKey() {
-		t.Fatalf("expected envKey %q, got %v", qwenAPIKeyEnvKey(), provider["envKey"])
-	}
-	modelBlock := cfg["model"].(map[string]any)
-	if modelBlock["name"] != "qwen3:32b" {
-		t.Fatalf("expected model.name %q, got %v", "qwen3:32b", modelBlock["name"])
+
+	if !slices.Equal(gotIDs, []string{"qwen3:32b", "qwen3:14b"}) {
+		t.Fatalf("expected providers %v, got %v", []string{"qwen3:32b", "qwen3:14b"}, gotIDs)
 	}
 }
 
 func TestQwenAPIKeyEnvKey(t *testing.T) {
 	if got := qwenAPIKeyEnvKey(); got != "OLLAMA_API_KEY" {
 		t.Fatalf("expected OLLAMA_API_KEY, got %q", got)
+	}
+}
+
+func TestQwenEditUsesRecommendedModelDescriptionWhenAvailable(t *testing.T) {
+	tmpDir := t.TempDir()
+	setQwenTestHome(t, tmpDir)
+
+	q := &Qwen{}
+	if err := q.Edit([]string{"gemma4"}); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".qwen", "settings.json"))
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse json: %v", err)
+	}
+
+	modelProviders := cfg["modelProviders"].(map[string]any)
+	openaiArray := modelProviders["openai"].([]any)
+	provider := openaiArray[0].(map[string]any)
+	if provider["description"] != "Reasoning and code generation locally" {
+		t.Fatalf("expected recommended description %q, got %v", "Reasoning and code generation locally", provider["description"])
 	}
 }
 
@@ -377,10 +405,6 @@ func TestQwenIntegration(t *testing.T) {
 	t.Run("implements Editor", func(t *testing.T) {
 		var _ Editor = q
 	})
-
-	t.Run("implements ManagedSingleModel", func(t *testing.T) {
-		var _ ManagedSingleModel = q
-	})
 }
 
 func TestQwenFindPath(t *testing.T) {
@@ -391,31 +415,6 @@ func TestQwenFindPath(t *testing.T) {
 	}
 	if path == "" {
 		t.Fatal("expected non-empty path")
-	}
-}
-
-func TestQwenCurrentModel(t *testing.T) {
-	tmpDir := t.TempDir()
-	setQwenTestHome(t, tmpDir)
-
-	configDir := filepath.Join(tmpDir, ".qwen")
-	os.MkdirAll(configDir, 0o755)
-	config := map[string]any{
-		"modelProviders": map[string]any{
-			"openai": []any{
-				map[string]any{
-					"id":      "second-model",
-					"baseUrl": qwenBaseURL(),
-				},
-			},
-		},
-		"model": map[string]any{"name": "test-model"},
-	}
-	data, _ := json.Marshal(config)
-	os.WriteFile(filepath.Join(configDir, "settings.json"), data, 0o644)
-
-	if got := (&Qwen{}).CurrentModel(); got != "test-model" {
-		t.Fatalf("expected CurrentModel() %q, got %q", "test-model", got)
 	}
 }
 
@@ -551,7 +550,7 @@ func TestQwenLaunchEnvOverridesExistingOpenAIEnv(t *testing.T) {
 	}
 }
 
-func TestQwenRunDoesNotRewriteConfiguredSingleModel(t *testing.T) {
+func TestQwenRunDoesNotRewriteMultiModelConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setQwenTestHome(t, tmpDir)
 	origWd, _ := os.Getwd()
@@ -598,6 +597,11 @@ func TestQwenRunDoesNotRewriteConfiguredSingleModel(t *testing.T) {
 					"baseUrl": qwenBaseURL(),
 					"envKey":  qwenAPIKeyEnvKey(),
 				},
+				map[string]any{
+					"id":      "qwen3:14b",
+					"baseUrl": qwenBaseURL(),
+					"envKey":  qwenAPIKeyEnvKey(),
+				},
 			},
 		},
 		"security": map[string]any{
@@ -635,7 +639,7 @@ func TestQwenRunDoesNotRewriteConfiguredSingleModel(t *testing.T) {
 
 	modelProviders := cfg["modelProviders"].(map[string]any)
 	openaiArray := modelProviders["openai"].([]any)
-	if len(openaiArray) != 1 {
-		t.Fatalf("expected configured Ollama provider to remain after launch, got %d", len(openaiArray))
+	if len(openaiArray) != 2 {
+		t.Fatalf("expected both Ollama providers to remain after launch, got %d", len(openaiArray))
 	}
 }

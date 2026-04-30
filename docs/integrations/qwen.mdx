@@ -33,7 +33,7 @@ If Qwen Code is missing, `ollama launch qwen` can prompt to install it automatic
 If you want to configure Qwen Code manually, or want to understand what `ollama launch qwen` writes for you, create `~/.qwen/settings.json` with:
 
 - `baseUrl` set to `http://localhost:11434/v1`
-- one provider entry for the Ollama model you want to use
+- one provider entry per Ollama model you want to use
 - an `envKey` on every Ollama-backed provider entry
 - a matching value under `env`
 
@@ -43,7 +43,7 @@ For current Qwen Code versions, using `id: "ollama"` is not enough unless your a
 
 - `security.auth.selectedType` is set to `openai`
 - `model.name` is set to the selected Ollama model id
-- `modelProviders.openai[]` contains one entry for the selected Ollama model
+- `modelProviders.openai[]` contains one entry per selected Ollama model
 - the Ollama-backed provider entry uses `envKey: "OLLAMA_API_KEY"`
 - `settings.json -> env` includes `"OLLAMA_API_KEY": "ollama"`
 

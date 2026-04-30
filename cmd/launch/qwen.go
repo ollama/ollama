@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
@@ -27,22 +26,6 @@ var qwenPendingConfigCreated bool
 type Qwen struct{}
 
 func (q *Qwen) String() string { return "Qwen Code CLI" }
-
-func (q *Qwen) Configure(model string) error {
-	return q.Edit([]string{model})
-}
-
-func (q *Qwen) CurrentModel() string {
-	models := q.Models()
-	if len(models) == 0 {
-		return ""
-	}
-	return models[0]
-}
-
-func (q *Qwen) Onboard() error {
-	return config.MarkIntegrationOnboarded("qwen")
-}
 
 func (q *Qwen) findPath() (string, error) {
 	if p, err := exec.LookPath("qwen"); err == nil {
@@ -156,7 +139,6 @@ func (q *Qwen) Edit(models []string) error {
 	if len(models) == 0 {
 		return nil
 	}
-	models = models[:1]
 
 	configPath, err := q.configPath()
 	if err != nil {
@@ -365,9 +347,6 @@ func qwenOpenAIProviders(raw any) []map[string]any {
 
 func qwenUpsertOpenAIProviders(existing any, models []string) []any {
 	providers := qwenOpenAIProviders(existing)
-	if len(models) > 1 {
-		models = models[:1]
-	}
 	selected := make(map[string]bool, len(models))
 	for _, model := range models {
 		selected[model] = true
@@ -397,11 +376,13 @@ func qwenUpsertOpenAIProviders(existing any, models []string) []any {
 		if _, ok := provider["name"].(string); !ok || provider["name"] == "" {
 			provider["name"] = modelLabel(model)
 		}
-		if _, ok := provider["description"].(string); !ok || provider["description"] == "" {
-			provider["description"] = fmt.Sprintf("%s running locally via Ollama", model)
+			if _, ok := provider["description"].(string); !ok || provider["description"] == "" {
+				if description := qwenModelDescription(model); description != "" {
+					provider["description"] = description
+				}
+			}
+			result = append(result, provider)
 		}
-		result = append(result, provider)
-	}
 
 	for _, provider := range providers {
 		id, _ := provider["id"].(string)
@@ -417,6 +398,15 @@ func qwenUpsertOpenAIProviders(existing any, models []string) []any {
 
 func modelLabel(name string) string {
 	return fmt.Sprintf("%s (Ollama)", name)
+}
+
+func qwenModelDescription(name string) string {
+	for _, item := range recommendedModels {
+		if item.Name == name {
+			return item.Description
+		}
+	}
+	return ""
 }
 
 func modelsOrNil(models []string) []string {
