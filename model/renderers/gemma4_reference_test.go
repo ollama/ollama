@@ -1338,7 +1338,7 @@ Hi<turn|>
 				"<|turn>user\nList files<turn|>\n" +
 				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
 				"<|tool_response>response:bash{value:" + q + "file1.txt" + q + "}<tool_response|>" +
-				"<turn|>\nHere are the files.<turn|>\n" +
+				"Here are the files.<turn|>\n" +
 				"<|turn>user\nThanks<turn|>\n" +
 				"<|turn>model\n",
 		},
