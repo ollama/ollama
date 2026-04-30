@@ -460,8 +460,8 @@ func TestQwenPaths(t *testing.T) {
 	setQwenTestHome(t, testDir)
 
 	q := &Qwen{}
-	os.MkdirAll(filepath.Join(testDir, ".qwen"), 0755)
-	os.WriteFile(filepath.Join(testDir, ".qwen", "settings.json"), []byte("{}"), 0644)
+	os.MkdirAll(filepath.Join(testDir, ".qwen"), 0o755)
+	os.WriteFile(filepath.Join(testDir, ".qwen", "settings.json"), []byte("{}"), 0o644)
 
 	paths := q.Paths()
 	if len(paths) != 1 {
@@ -553,11 +553,7 @@ func TestQwenLaunchEnvOverridesExistingOpenAIEnv(t *testing.T) {
 func TestQwenRunDoesNotRewriteMultiModelConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setQwenTestHome(t, tmpDir)
-	origWd, _ := os.Getwd()
-	defer os.Chdir(origWd)
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to chdir: %v", err)
-	}
+	t.Chdir(tmpDir)
 
 	qwenBinDir := filepath.Join(tmpDir, "bin")
 	if err := os.MkdirAll(qwenBinDir, 0o755); err != nil {

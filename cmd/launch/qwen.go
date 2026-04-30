@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	qwenNpmPackage = "@qwen-code/qwen-code"
+	qwenNpmPackage   = "@qwen-code/qwen-code"
 	qwenOllamaEnvKey = "OLLAMA_API_KEY"
 )
 
@@ -376,13 +376,13 @@ func qwenUpsertOpenAIProviders(existing any, models []string) []any {
 		if _, ok := provider["name"].(string); !ok || provider["name"] == "" {
 			provider["name"] = modelLabel(model)
 		}
-			if _, ok := provider["description"].(string); !ok || provider["description"] == "" {
-				if description := qwenModelDescription(model); description != "" {
-					provider["description"] = description
-				}
+		if _, ok := provider["description"].(string); !ok || provider["description"] == "" {
+			if description := qwenModelDescription(model); description != "" {
+				provider["description"] = description
 			}
-			result = append(result, provider)
 		}
+		result = append(result, provider)
+	}
 
 	for _, provider := range providers {
 		id, _ := provider["id"].(string)
