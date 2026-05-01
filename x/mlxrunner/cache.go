@@ -59,6 +59,8 @@ type cacheSession struct {
 	// during prefill, sorted by offset. Entries are consumed as the
 	// cache advances past them.
 	pendingSnapshots []pendingSnapshot
+
+	lastDecodeCheckpointOffset int
 }
 
 func (c *kvCache) ensureCaches(m base.Model) {
@@ -281,24 +283,66 @@ func (s *cacheSession) nextPendingSnapshot() int {
 	return s.pendingSnapshots[0].offset
 }
 
+func (s *cacheSession) tokenCount() int {
+	return len(s.inputs) + len(s.outputs)
+}
+
+func (s *cacheSession) tokensBetween(start, end int) []int32 {
+	if start < 0 || end < start || end > s.tokenCount() {
+		return nil
+	}
+	if end <= len(s.inputs) {
+		return s.inputs[start:end]
+	}
+	if start >= len(s.inputs) {
+		return s.outputs[start-len(s.inputs) : end-len(s.inputs)]
+	}
+
+	tokens := make([]int32, 0, end-start)
+	tokens = append(tokens, s.inputs[start:]...)
+	tokens = append(tokens, s.outputs[:end-len(s.inputs)]...)
+	return tokens
+}
+
 // snapshot creates a snapshot at the current cache position. It determines
 // whether this is a user snapshot by consuming pending entries whose offset
 // has been reached.
 func (s *cacheSession) snapshot() {
-	c := s.cache
-	cacheOffset := c.minCacheOffset()
-	if cacheOffset <= 0 {
-		return
-	}
-
 	// Consume pending snapshots up to the current offset and derive
 	// the user flag from them.
 	user := false
+	cacheOffset := s.cache.minCacheOffset()
 	for len(s.pendingSnapshots) > 0 && cacheOffset >= s.pendingSnapshots[0].offset {
 		if s.pendingSnapshots[0].user {
 			user = true
 		}
 		s.pendingSnapshots = s.pendingSnapshots[1:]
+	}
+
+	s.snapshotCurrent(user)
+}
+
+func (s *cacheSession) decodeCheckpoint() bool {
+	cacheOffset := s.cache.minCacheOffset()
+	if cacheOffset <= 0 || cacheOffset == s.lastDecodeCheckpointOffset {
+		return false
+	}
+	if !s.snapshotCurrent(true) {
+		return false
+	}
+	s.lastDecodeCheckpointOffset = cacheOffset
+	return true
+}
+
+func (s *cacheSession) snapshotCurrent(user bool) bool {
+	c := s.cache
+	cacheOffset := c.minCacheOffset()
+	if cacheOffset <= 0 {
+		return false
+	}
+	if cacheOffset > s.tokenCount() {
+		slog.Warn("snapshot skipped: cacheOffset is beyond stored tokens", "cacheOffset", cacheOffset, "storedTokens", s.tokenCount())
+		return false
 	}
 
 	// The last node in activePath is the frontier where caches are advancing.
@@ -314,16 +358,16 @@ func (s *cacheSession) snapshot() {
 		if !frontier.hasAllSnapshots() {
 			s.attachSnapshots(frontier, cacheOffset)
 		}
-		return
+		return true
 	}
 
 	if frontier.endOffset > cacheOffset {
 		slog.Warn("snapshot skipped: cacheOffset is behind frontier", "cacheOffset", cacheOffset, "frontierEndOffset", frontier.endOffset)
-		return
+		return false
 	}
 
 	// Advance the trie to cacheOffset — find or create a node there.
-	edgeTokens := append(s.inputs, s.outputs...)[frontier.endOffset:cacheOffset]
+	edgeTokens := s.tokensBetween(frontier.endOffset, cacheOffset)
 	frontier = c.advancePath(frontier, edgeTokens, cacheOffset)
 
 	// Attach fresh snapshots from the live caches. Always use fresh
@@ -334,6 +378,7 @@ func (s *cacheSession) snapshot() {
 		frontier.user = true
 	}
 	s.attachSnapshots(frontier, cacheOffset)
+	return true
 }
 
 // advancePath advances the active path from the current frontier by matching
@@ -449,10 +494,9 @@ func (s *cacheSession) close() {
 	c := s.cache
 	if len(c.activePath) > 0 {
 		frontier := c.activePath[len(c.activePath)-1]
-		stored := append(s.inputs, s.outputs...)
 
 		if offset > frontier.endOffset {
-			newTokens := stored[frontier.endOffset:offset]
+			newTokens := s.tokensBetween(frontier.endOffset, offset)
 			c.advancePath(frontier, newTokens, offset)
 		}
 		c.activePath[len(c.activePath)-1].lastUsed = time.Now()

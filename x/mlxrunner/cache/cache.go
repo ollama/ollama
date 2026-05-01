@@ -36,6 +36,21 @@ type Cache interface {
 	Split(snapshot Snapshot, at int) (parent, child Snapshot)
 }
 
+// ExactRestorePointCache marks cache types that cannot cheaply restore to an
+// arbitrary matched offset without a snapshot at that exact point.
+type ExactRestorePointCache interface {
+	RequiresExactRestorePoint() bool
+}
+
+func RequiresExactRestorePoint(caches []Cache) bool {
+	for _, c := range caches {
+		if exact, ok := c.(ExactRestorePointCache); ok && exact.RequiresExactRestorePoint() {
+			return true
+		}
+	}
+	return false
+}
+
 // Snapshot is paged-out cache state that can be restored later.
 type Snapshot interface {
 	// Size returns the byte size of the paged-out data (in VRAM).
@@ -260,6 +275,10 @@ type RotatingKVCache struct {
 
 func NewRotatingKVCache(maxSize int) *RotatingKVCache {
 	return &RotatingKVCache{maxSize: maxSize, KVCache: NewKVCache()}
+}
+
+func (c *RotatingKVCache) RequiresExactRestorePoint() bool {
+	return true
 }
 
 // Assumes B = 1; heterogeneous batches are not supported.
