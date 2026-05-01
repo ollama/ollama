@@ -7,7 +7,8 @@ import { useFeaturedModels } from "./useFeaturedModels";
 
 export function useModels(searchQuery = "") {
   const { cloudDisabled } = useCloudStatus();
-  const { data: recommendations } = useFeaturedModels();
+  const { data: recommendations, isLoading: recommendationsLoading } =
+    useFeaturedModels();
   const localQuery = useQuery<Model[], Error>({
     queryKey: ["models", searchQuery],
     queryFn: () => getModels(searchQuery),
@@ -42,7 +43,7 @@ export function useModels(searchQuery = "") {
   return {
     ...localQuery,
     data: allModels,
-    isLoading: localQuery.isLoading,
+    isLoading: localQuery.isLoading || recommendationsLoading,
   };
 }
 
