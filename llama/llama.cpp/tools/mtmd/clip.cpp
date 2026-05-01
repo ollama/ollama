@@ -854,6 +854,10 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
             {
                 builder = std::make_unique<clip_graph_glm4v>(ctx, img);
             } break;
+        case PROJECTOR_TYPE_YOUTUVL:
+            {
+                builder = std::make_unique<clip_graph_youtuvl>(ctx, img);
+            } break;
         default:
             GGML_ABORT("missing cgraph builder");
     }
@@ -1179,6 +1183,20 @@ struct clip_model_loader {
                         hparams.set_limit_image_tokens(8, 4096);
                         hparams.set_warmup_n_tokens(46*46); // avoid OOM on warmup
                     } break;
+                case PROJECTOR_TYPE_YOUTUVL:
+                    {
+                        hparams.n_merge = 2;
+                        get_u32(KEY_SPATIAL_MERGE_SIZE, hparams.n_merge, false);
+                        get_u32(KEY_ATTN_WINDOW_SIZE, hparams.attn_window_size, true);
+                        std::vector<int> wa_layer_indexes_vec;
+                        get_arr_int(KEY_WIN_ATTN_LAYER_INDEXES, wa_layer_indexes_vec, true);
+                        for (auto & layer : wa_layer_indexes_vec) {
+                            hparams.wa_layer_indexes.insert(layer);
+                        }
+                        // support max_height * max_width = 8000 * 8000. 8000/16/2 = 250 image tokens
+                        hparams.set_limit_image_tokens(8, 250*250);
+                        hparams.set_warmup_n_tokens(46*46); // avoid OOM on warmup
+                    } break;
                 case PROJECTOR_TYPE_LLAMA4:
                     {
                         hparams.rope_theta = 10000.0f;
@@ -1492,6 +1510,14 @@ struct clip_model_loader {
                 } break;
             case PROJECTOR_TYPE_QWEN3VL:
                 {
+                    model.mm_0_w = get_tensor(string_format(TN_LLAVA_PROJ, 0, "weight"));
+                    model.mm_0_b = get_tensor(string_format(TN_LLAVA_PROJ, 0, "bias"));
+                    model.mm_1_w = get_tensor(string_format(TN_LLAVA_PROJ, 2, "weight"));
+                    model.mm_1_b = get_tensor(string_format(TN_LLAVA_PROJ, 2, "bias"));
+                } break;
+            case PROJECTOR_TYPE_YOUTUVL:
+                {
+                    model.mm_input_norm_w = get_tensor(TN_MM_INP_NORM);
                     model.mm_0_w = get_tensor(string_format(TN_LLAVA_PROJ, 0, "weight"));
                     model.mm_0_b = get_tensor(string_format(TN_LLAVA_PROJ, 0, "bias"));
                     model.mm_1_w = get_tensor(string_format(TN_LLAVA_PROJ, 2, "weight"));
@@ -2652,6 +2678,7 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_QWEN3VL:
         case PROJECTOR_TYPE_GLM4V:
+        case PROJECTOR_TYPE_YOUTUVL:
             {
                 GGML_ASSERT(params.image_min_pixels > 0 && params.image_max_pixels > 0);
                 clip_image_u8 resized;
@@ -2900,6 +2927,7 @@ int clip_n_output_tokens_x(const struct clip_ctx * ctx, struct clip_image_f32 * 
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_QWEN3VL:
         case PROJECTOR_TYPE_GLM4V:
+        case PROJECTOR_TYPE_YOUTUVL:
             return (img->nx / params.patch_size) / 2;
         default:
             break;
@@ -2915,6 +2943,7 @@ int clip_n_output_tokens_y(const struct clip_ctx * ctx, struct clip_image_f32 * 
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_QWEN3VL:
         case PROJECTOR_TYPE_GLM4V:
+        case PROJECTOR_TYPE_YOUTUVL:
             return (img->ny / params.patch_size) / 2;
         default:
             break;
@@ -2975,6 +3004,7 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_QWEN3VL:
         case PROJECTOR_TYPE_GLM4V:
+        case PROJECTOR_TYPE_YOUTUVL:
             {
                 // dynamic size (2 conv, so double patch size)
                 int x_patch = img->nx / (params.patch_size * 2);
@@ -3326,6 +3356,88 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
 
                 set_input_i32("positions", positions);
             } break;
+        case PROJECTOR_TYPE_YOUTUVL:
+            {
+                // pw * ph = number of tokens output by ViT after apply patch merger
+                // ipw * ipw = number of vision token been processed inside ViT
+                const bool use_window_attn_youtuvl = !hparams.wa_layer_indexes.empty();
+                const int merge_ratio = 2;
+                const int pw  = image_size_width  / patch_size / merge_ratio;
+                const int ph  = image_size_height / patch_size / merge_ratio;
+                const int ipw = image_size_width  / patch_size;
+                const int iph = image_size_height / patch_size;
+
+                std::vector<int> idx    (ph * pw);
+                std::vector<int> inv_idx(ph * pw);
+
+                if (use_window_attn_youtuvl) {
+                    const int attn_window_size = hparams.attn_window_size > 0 ? hparams.attn_window_size : 112;
+                    const int grid_window = attn_window_size / patch_size / merge_ratio;
+                    int dst = 0;
+                    // [num_vision_tokens, num_vision_tokens] attention mask tensor
+                    std::vector<float> mask(pow(ipw * iph, 2), std::numeric_limits<float>::lowest());
+                    int mask_row = 0;
+
+                    for (int y = 0; y < ph; y += grid_window) {
+                        for (int x = 0; x < pw; x += grid_window) {
+                            const int win_h = std::min(grid_window, ph - y);
+                            const int win_w = std::min(grid_window, pw - x);
+                            const int dst_0 = dst;
+                            // group all tokens belong to the same window togather (to a continue range)
+                            for (int dy = 0; dy < win_h; dy++) {
+                                for (int dx = 0; dx < win_w; dx++) {
+                                    const int src = (y + dy) * pw + (x + dx);
+                                    GGML_ASSERT(src < (int)idx.size());
+                                    GGML_ASSERT(dst < (int)inv_idx.size());
+                                    idx    [src] = dst;
+                                    inv_idx[dst] = src;
+                                    dst++;
+                                }
+                            }
+
+                            for (int r=0; r < win_h * win_w * merge_ratio * merge_ratio; r++) {
+                                int row_offset = mask_row * (ipw * iph);
+                                std::fill(
+                                    mask.begin() + row_offset + (dst_0 * merge_ratio * merge_ratio),
+                                    mask.begin() + row_offset + (dst   * merge_ratio * merge_ratio),
+                                    0.0);
+                                mask_row++;
+                            }
+                        }
+                    }
+
+                    set_input_i32("window_idx",     idx);
+                    set_input_i32("inv_window_idx", inv_idx);
+                    set_input_f32("window_mask",    mask);
+                } else {
+                    for (int i = 0; i < ph * pw; i++) {
+                        idx[i] = i;
+                    }
+                }
+
+                const int mpow = merge_ratio * merge_ratio;
+                std::vector<int> positions(n_pos * 4);
+
+                int ptr = 0;
+                for (int y = 0; y < iph; y += merge_ratio) {
+                    for (int x = 0; x < ipw; x += merge_ratio) {
+                        for (int dy = 0; dy < 2; dy++) {
+                            for (int dx = 0; dx < 2; dx++) {
+                                auto remap = idx[ptr / mpow];
+                                remap = (remap * mpow) + (ptr % mpow);
+
+                                positions[                  remap] = y + dy;
+                                positions[    num_patches + remap] = x + dx;
+                                positions[2 * num_patches + remap] = y + dy;
+                                positions[3 * num_patches + remap] = x + dx;
+                                ptr++;
+                            }
+                        }
+                    }
+                }
+
+                set_input_i32("positions", positions);
+            } break;
         case PROJECTOR_TYPE_PIXTRAL:
         case PROJECTOR_TYPE_KIMIVL:
         case PROJECTOR_TYPE_LIGHTONOCR:
@@ -3475,6 +3587,7 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
         case PROJECTOR_TYPE_QWEN2VL:
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_JANUS_PRO:
+        case PROJECTOR_TYPE_YOUTUVL:
             return ctx->model.mm_1_b->ne[0];
         case PROJECTOR_TYPE_QWEN3VL:
             // main path + deepstack paths
