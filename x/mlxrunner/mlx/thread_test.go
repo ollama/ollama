@@ -73,12 +73,12 @@ func TestThreadedMLXOperations(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
-			for j := 0; j < iterations; j++ {
+			for range iterations {
 				if err := thread.Do(context.Background(), func() error {
 					a := FromValues([]float32{1, 2, 3, 4}, 2, 2)
 					b := Matmul(a, a)

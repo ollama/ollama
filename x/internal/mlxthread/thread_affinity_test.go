@@ -16,7 +16,7 @@ func TestDoUsesSameOSThread(t *testing.T) {
 	defer thread.Stop(context.Background(), nil)
 
 	var first uint64
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		if err := thread.Do(context.Background(), func() error {
 			id := currentThreadID()
 			if first == 0 {
