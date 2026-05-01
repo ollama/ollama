@@ -115,7 +115,8 @@
                 "expanded": true,
                 "pages": [
                   "/integrations/openclaw",
-                  "/integrations/hermes"
+                  "/integrations/hermes",
+                  "/integrations/claude-desktop"
                 ]
               },
               {

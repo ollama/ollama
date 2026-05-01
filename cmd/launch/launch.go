@@ -121,6 +121,7 @@ type IntegrationLaunchRequest struct {
 	ModelOverride  string
 	ForceConfigure bool
 	ConfigureOnly  bool
+	Restore        bool
 	ExtraArgs      []string
 	Policy         *LaunchPolicy
 }
@@ -154,6 +155,12 @@ type ManagedSingleModel interface {
 	Onboard() error
 }
 
+// ManagedModelListConfigurer lets managed single-model integrations receive
+// the launcher's model list while still preserving one primary selected model.
+type ManagedModelListConfigurer interface {
+	ConfigureWithModels(primary string, models []string) error
+}
+
 // ManagedRuntimeRefresher lets managed integrations refresh any long-lived
 // background runtime after launch rewrites their config.
 type ManagedRuntimeRefresher interface {
@@ -170,6 +177,25 @@ type ManagedOnboardingValidator interface {
 // onboarding step really requires an interactive terminal. Hermes does not.
 type ManagedInteractiveOnboarding interface {
 	RequiresInteractiveOnboarding() bool
+}
+
+// ManagedModelReadinessSkipper lets managed integrations opt out of local
+// Ollama model readiness checks when the configured runtime is not the local
+// daemon.
+type ManagedModelReadinessSkipper interface {
+	SkipModelReadiness() bool
+}
+
+// RestorableIntegration lets integrations switch back from a launch-managed
+// mode to the application's normal/default mode.
+type RestorableIntegration interface {
+	Restore() error
+}
+
+// SupportedIntegration lets an integration report platform support separately
+// from whether the underlying app binary is installed.
+type SupportedIntegration interface {
+	Supported() error
 }
 
 type modelInfo struct {
@@ -197,6 +223,7 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 	var modelFlag string
 	var configFlag bool
 	var yesFlag bool
+	var restoreFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "launch [INTEGRATION] [-- [EXTRA_ARGS...]]",
@@ -207,29 +234,37 @@ Without arguments, this is equivalent to running 'ollama' directly.
 Flags and extra arguments require an integration name.
 
 Supported integrations:
-  claude    Claude Code
-  cline     Cline
-  codex     Codex
-  copilot   Copilot CLI (aliases: copilot-cli)
-  droid     Droid
-  hermes    Hermes Agent
-  kimi      Kimi Code CLI
-  opencode  OpenCode
-  openclaw  OpenClaw (aliases: clawdbot, moltbot)
-  pi        Pi
-  pool      Pool
-  vscode    VS Code (aliases: code)
+  claude          Claude Code
+  claude-desktop Claude Desktop (aliases: claude-app)
+  cline           Cline
+  codex           Codex
+  copilot         Copilot CLI (aliases: copilot-cli)
+  droid           Droid
+  hermes          Hermes Agent
+  kimi            Kimi Code CLI
+  opencode        OpenCode
+  openclaw        OpenClaw (aliases: clawdbot, moltbot)
+  pi              Pi
+  pool            Pool
+  vscode          VS Code (aliases: code)
 
 Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
+  ollama launch claude-desktop --model <model>
+  ollama launch claude-desktop --restore
   ollama launch hermes
   ollama launch droid --config (does not auto-launch)
   ollama launch codex -- -p myprofile (pass extra args to integration)
   ollama launch codex -- --sandbox workspace-write`,
-		Args:    cobra.ArbitraryArgs,
-		PreRunE: checkServerHeartbeat,
+		Args: cobra.ArbitraryArgs,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if restoreFlag || launchCommandCanSkipHeartbeat(args) {
+				return nil
+			}
+			return checkServerHeartbeat(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			policy := defaultLaunchPolicy(isInteractiveSession(), yesFlag)
 			// reset when done to make sure state doens't leak between launches
@@ -258,7 +293,7 @@ Examples:
 			}
 
 			if name == "" {
-				if cmd.Flags().Changed("model") || cmd.Flags().Changed("config") || cmd.Flags().Changed("yes") || len(passArgs) > 0 {
+				if cmd.Flags().Changed("model") || cmd.Flags().Changed("config") || cmd.Flags().Changed("yes") || cmd.Flags().Changed("restore") || len(passArgs) > 0 {
 					return fmt.Errorf("flags and extra args require an integration name, for example: 'ollama launch claude --model qwen3.5'")
 				}
 				runTUI(cmd)
@@ -280,6 +315,7 @@ Examples:
 				ModelOverride:  modelFlag,
 				ForceConfigure: configFlag || (modelFlag == "" && !headlessYes),
 				ConfigureOnly:  configFlag,
+				Restore:        restoreFlag,
 				ExtraArgs:      passArgs,
 				Policy:         &policy,
 			})
@@ -292,8 +328,17 @@ Examples:
 
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
 	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
+	cmd.Flags().BoolVar(&restoreFlag, "restore", false, "Restore an integration to its default profile")
 	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Automatically answer yes to confirmation prompts")
 	return cmd
+}
+
+func launchCommandCanSkipHeartbeat(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	name, _, err := LookupIntegration(args[0])
+	return err == nil && name == "claude-desktop"
 }
 
 type launcherClient struct {
@@ -349,6 +394,9 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	}
 
 	policy := launchIntegrationPolicy(req)
+	if req.Restore {
+		return restoreIntegration(name, runner, req)
+	}
 	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
 		return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
 	}
@@ -375,6 +423,20 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		return launchClient.launchEditorIntegration(ctx, name, runner, editor, saved, req)
 	}
 	return launchClient.launchSingleIntegration(ctx, name, runner, saved, req)
+}
+
+func restoreIntegration(name string, runner Runner, req IntegrationLaunchRequest) error {
+	if req.ModelOverride != "" || req.ConfigureOnly || len(req.ExtraArgs) > 0 {
+		return fmt.Errorf("--restore cannot be combined with --model, --config, or extra args")
+	}
+	restorable, ok := runner.(RestorableIntegration)
+	if !ok {
+		return fmt.Errorf("%s does not support --restore", name)
+	}
+	if err := EnsureIntegrationInstalled(name, runner); err != nil {
+		return err
+	}
+	return restorable.Restore()
 }
 
 func launchIntegrationPolicy(req IntegrationLaunchRequest) LaunchPolicy {
@@ -489,6 +551,10 @@ func (c *launcherClient) launcherManagedModelState(ctx context.Context, name str
 		return "", false, nil
 	}
 
+	if skips, ok := managed.(ManagedModelReadinessSkipper); ok && skips.SkipModelReadiness() {
+		return current, true, nil
+	}
+
 	usable, err := c.savedModelUsable(ctx, current)
 	if err != nil {
 		return current, false, err
@@ -594,7 +660,11 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 	}
 
 	if needsConfigure || req.ModelOverride != "" || (current != "" && target != current) || !savedMatchesModels(saved, []string{target}) {
-		if err := prepareManagedSingleIntegration(name, runner, managed, target); err != nil {
+		configureModels, err := c.managedSingleConfigureModels(ctx, managed, target)
+		if err != nil {
+			return err
+		}
+		if err := prepareManagedSingleIntegration(name, runner, managed, target, configureModels); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
@@ -620,15 +690,43 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 	return runIntegration(runner, target, req.ExtraArgs)
 }
 
+func (c *launcherClient) managedSingleConfigureModels(ctx context.Context, managed ManagedSingleModel, target string) ([]string, error) {
+	models := []string{target}
+	if _, ok := managed.(ManagedModelListConfigurer); !ok {
+		return models, nil
+	}
+
+	items, _, err := c.loadSelectableModels(ctx, []string{target}, target, "no models available")
+	if err != nil {
+		// Managed integrations that can use a model catalog should still be
+		// configurable with an explicit target even if the broader inventory
+		// cannot be loaded in the moment.
+		return models, nil
+	}
+
+	for _, item := range items {
+		models = append(models, item.Name)
+	}
+	return dedupeModelList(models), nil
+}
+
 func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, runner Runner, current string, req IntegrationLaunchRequest) (string, bool, error) {
 	target := req.ModelOverride
 	needsConfigure := req.ForceConfigure
+	skipReadiness := false
+	if skipper, ok := runner.(ManagedModelReadinessSkipper); ok {
+		skipReadiness = skipper.SkipModelReadiness()
+	}
 
 	if target == "" {
 		target = current
-		usable, err := c.savedModelUsable(ctx, target)
-		if err != nil {
-			return "", false, err
+		usable := skipReadiness && target != ""
+		if !skipReadiness {
+			var err error
+			usable, err = c.savedModelUsable(ctx, target)
+			if err != nil {
+				return "", false, err
+			}
 		}
 		if !usable {
 			needsConfigure = true
@@ -636,13 +734,19 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, run
 	}
 
 	if needsConfigure {
-		selected, err := c.selectSingleModelWithSelector(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector)
+		selected, err := c.selectSingleModelWithSelectorReady(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector, !skipReadiness)
 		if err != nil {
 			return "", false, err
 		}
 		target = selected
-	} else if err := c.ensureModelsReady(ctx, []string{target}); err != nil {
-		return "", false, err
+	} else if !skipReadiness {
+		if err := c.ensureModelsReady(ctx, []string{target}); err != nil {
+			return "", false, err
+		}
+	}
+
+	if target == "" {
+		return "", false, nil
 	}
 
 	return target, needsConfigure, nil
@@ -675,6 +779,10 @@ func managedRequiresInteractiveOnboarding(managed ManagedSingleModel) bool {
 }
 
 func (c *launcherClient) selectSingleModelWithSelector(ctx context.Context, title, current string, selector SingleSelector) (string, error) {
+	return c.selectSingleModelWithSelectorReady(ctx, title, current, selector, true)
+}
+
+func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context, title, current string, selector SingleSelector, ensureReady bool) (string, error) {
 	if selector == nil {
 		return "", fmt.Errorf("no selector configured")
 	}
@@ -688,8 +796,13 @@ func (c *launcherClient) selectSingleModelWithSelector(ctx context.Context, titl
 	if err != nil {
 		return "", err
 	}
-	if err := c.ensureModelsReady(ctx, []string{selected}); err != nil {
-		return "", err
+	if selected == "" {
+		return "", ErrCancelled
+	}
+	if ensureReady {
+		if err := c.ensureModelsReady(ctx, []string{selected}); err != nil {
+			return "", err
+		}
 	}
 	return selected, nil
 }

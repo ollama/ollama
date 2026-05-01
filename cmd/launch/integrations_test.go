@@ -53,6 +53,8 @@ func TestIntegrationLookup(t *testing.T) {
 		{"claude lowercase", "claude", true, "Claude Code"},
 		{"claude uppercase", "CLAUDE", true, "Claude Code"},
 		{"claude mixed case", "Claude", true, "Claude Code"},
+		{"claude desktop", "claude-desktop", true, "Claude Desktop"},
+		{"claude desktop alias", "claude-app", true, "Claude Desktop"},
 		{"codex", "codex", true, "Codex"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
 		{"droid", "droid", true, "Droid"},
@@ -76,7 +78,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "codex", "kimi", "droid", "opencode", "hermes", "pool"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "codex", "kimi", "droid", "opencode", "hermes", "pool"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -1485,6 +1487,11 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantURL: "https://code.claude.com/docs/en/quickstart",
 		},
 		{
+			name:    "claude desktop has hint",
+			input:   "claude-desktop",
+			wantURL: "https://claude.com/download",
+		},
+		{
 			name:    "codex has hint",
 			input:   "codex",
 			wantURL: "https://developers.openai.com/codex/cli/",
@@ -1583,7 +1590,7 @@ func TestListIntegrationInfos(t *testing.T) {
 	})
 
 	t.Run("includes known integrations", func(t *testing.T) {
-		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
+		known := map[string]bool{"claude": false, "claude-desktop": false, "codex": false, "opencode": false}
 		if poolsideGOOS != "windows" {
 			known["pool"] = false
 		}
@@ -1695,6 +1702,7 @@ func TestIntegration_Editor(t *testing.T) {
 		{"opencode", true},
 		{"openclaw", true},
 		{"claude", false},
+		{"claude-desktop", false},
 		{"codex", false},
 		{"nonexistent", false},
 	}
@@ -1721,6 +1729,7 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 		{"pi", true},
 		{"hermes", true},
 		{"claude", false},
+		{"claude-desktop", false},
 		{"codex", false},
 		{"opencode", false},
 	}

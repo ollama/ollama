@@ -310,13 +310,20 @@ func prepareEditorIntegration(name string, runner Runner, editor Editor, models 
 	return nil
 }
 
-func prepareManagedSingleIntegration(name string, runner Runner, managed ManagedSingleModel, model string) error {
+func prepareManagedSingleIntegration(name string, runner Runner, managed ManagedSingleModel, model string, models []string) error {
 	if ok, err := confirmConfigEdit(runner, managed.Paths()); err != nil {
 		return err
 	} else if !ok {
 		return errCancelled
 	}
-	if err := managed.Configure(model); err != nil {
+	models = dedupeModelList(append([]string{model}, models...))
+	var err error
+	if withModels, ok := managed.(ManagedModelListConfigurer); ok {
+		err = withModels.ConfigureWithModels(model, models)
+	} else {
+		err = managed.Configure(model)
+	}
+	if err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 	if err := config.SaveIntegration(name, []string{model}); err != nil {

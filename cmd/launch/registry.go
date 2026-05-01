@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "copilot", "droid", "pi", "pool"}
+var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "claude-desktop", "hermes", "codex", "copilot", "droid", "pi", "pool"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -46,6 +46,18 @@ var integrationSpecs = []*IntegrationSpec{
 				return err == nil
 			},
 			URL: "https://code.claude.com/docs/en/quickstart",
+		},
+	},
+	{
+		Name:        "claude-desktop",
+		Runner:      &ClaudeDesktop{},
+		Aliases:     []string{"claude-app"},
+		Description: "Claude Desktop with Ollama Cloud",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return claudeDesktopInstalled()
+			},
+			URL: "https://claude.com/download",
 		},
 	},
 	{
@@ -412,6 +424,12 @@ func EnsureIntegrationInstalled(name string, runner Runner) error {
 	integration, err := integrationFor(name)
 	if err != nil {
 		return fmt.Errorf("%s is not installed", runner)
+	}
+
+	if supported, ok := runner.(SupportedIntegration); ok {
+		if err := supported.Supported(); err != nil {
+			return err
+		}
 	}
 
 	if integration.spec.Name == "pool" && poolsideGOOS == "windows" {

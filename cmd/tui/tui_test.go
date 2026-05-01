@@ -44,6 +44,13 @@ func launcherTestState() *launch.LauncherState {
 				Selectable:  true,
 				Changeable:  true,
 			},
+			"claude-desktop": {
+				Name:        "claude-desktop",
+				DisplayName: "Claude Desktop",
+				Description: "Claude Desktop with Ollama Cloud",
+				Selectable:  true,
+				Changeable:  true,
+			},
 			"hermes": {
 				Name:        "hermes",
 				DisplayName: "Hermes Agent",
@@ -129,7 +136,7 @@ func TestMenuExpandsOthersFromLastSelection(t *testing.T) {
 	if strings.Contains(view, "More...") {
 		t.Fatalf("expected expanded view to replace More... item\n%s", view)
 	}
-	wantOrder := []string{"run", "openclaw", "claude", "opencode", "hermes", "codex", "droid", "pi"}
+	wantOrder := []string{"run", "openclaw", "claude", "opencode", "claude-desktop", "hermes", "codex", "droid", "pi"}
 	if diff := compareStrings(integrationSequence(menu.items), wantOrder); diff != "" {
 		t.Fatalf("unexpected expanded order: %s", diff)
 	}

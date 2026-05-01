@@ -99,6 +99,16 @@ type launcherHeadlessManagedRunner struct {
 
 func (r *launcherHeadlessManagedRunner) RequiresInteractiveOnboarding() bool { return false }
 
+type launcherManagedListRunner struct {
+	launcherManagedRunner
+	configuredModelLists [][]string
+}
+
+func (r *launcherManagedListRunner) ConfigureWithModels(primary string, models []string) error {
+	r.configuredModelLists = append(r.configuredModelLists, append([]string(nil), models...))
+	return r.Configure(primary)
+}
+
 func setLaunchTestHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
@@ -624,6 +634,49 @@ func TestLaunchIntegration_ManagedSingleIntegrationStopsWhenRuntimeRefreshFails(
 	}
 	if runner.onboardCalls != 0 {
 		t.Fatalf("expected onboarding to stop after refresh failure, got %d", runner.onboardCalls)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationCanConfigureWithModelList(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"},{"name":"qwen3:8b"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherManagedListRunner{}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "stubmanaged",
+		ModelOverride: "gemma4",
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if diff := compareStringSlices(runner.configuredModelLists, [][]string{{"gemma4", "kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "qwen3.5", "qwen3:8b"}}); diff != "" {
+		t.Fatalf("configured model list mismatch (-want +got):\n%s", diff)
+	}
+	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
+		t.Fatalf("configured primary mismatch: %s", diff)
 	}
 }
 

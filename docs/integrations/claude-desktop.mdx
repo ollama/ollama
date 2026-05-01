@@ -1,0 +1,44 @@
+---
+title: Claude Desktop
+---
+
+Claude Desktop can use Ollama Cloud through Claude's third-party inference mode on macOS.
+
+## Requirements
+
+- Claude Desktop for macOS
+- An [Ollama API key](https://ollama.com/settings/keys)
+
+Set the key in your shell before launching:
+
+```shell
+export OLLAMA_API_KEY=your_api_key
+```
+
+## Quick setup
+
+```shell
+ollama launch claude-desktop --model qwen3.5:cloud
+```
+
+This configures Claude Desktop's third-party profile to use `https://ollama.com`, sets your Ollama API key as the gateway credential, and restarts Claude Desktop if needed.
+
+## Configure without launching
+
+```shell
+ollama launch claude-desktop --model qwen3.5:cloud --config
+```
+
+## Restore normal Claude
+
+Switch Claude Desktop back to its usual profile:
+
+```shell
+ollama launch claude-desktop --restore
+```
+
+If Claude Desktop is running, use `--yes` to approve the restart automatically:
+
+```shell
+ollama launch claude-desktop --restore --yes
+```
