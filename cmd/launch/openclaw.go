@@ -653,7 +653,7 @@ func (c *Openclaw) Paths() []string {
 	if _, err := os.Stat(legacy); err == nil {
 		return []string{legacy}
 	}
-	return nil
+	return []string{p}
 }
 
 func (c *Openclaw) Edit(models []string) error {

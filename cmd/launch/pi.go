@@ -171,16 +171,9 @@ func (p *Pi) Paths() []string {
 		return nil
 	}
 
-	var paths []string
 	modelsPath := filepath.Join(home, ".pi", "agent", "models.json")
-	if _, err := os.Stat(modelsPath); err == nil {
-		paths = append(paths, modelsPath)
-	}
 	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
-	if _, err := os.Stat(settingsPath); err == nil {
-		paths = append(paths, settingsPath)
-	}
-	return paths
+	return []string{modelsPath, settingsPath}
 }
 
 func (p *Pi) Edit(models []string) error {

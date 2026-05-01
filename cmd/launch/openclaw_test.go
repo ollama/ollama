@@ -846,11 +846,12 @@ func TestOpenclawPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("returns nil when config missing", func(t *testing.T) {
+	t.Run("returns canonical new-path when config missing", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
-		if paths := c.Paths(); paths != nil {
-			t.Errorf("expected nil, got %v", paths)
+		want := filepath.Join(tmpDir, ".openclaw", "openclaw.json")
+		if paths := c.Paths(); len(paths) != 1 || paths[0] != want {
+			t.Errorf("expected [%s], got %v", want, paths)
 		}
 	})
 }

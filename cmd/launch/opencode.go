@@ -83,10 +83,7 @@ func (o *OpenCode) Paths() []string {
 	if err != nil {
 		return nil
 	}
-	if _, err := os.Stat(sp); err == nil {
-		return []string{sp}
-	}
-	return nil
+	return []string{sp}
 }
 
 // openCodeStatePath returns the path to opencode's model state file.
