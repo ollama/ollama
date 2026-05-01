@@ -28,6 +28,18 @@ func TestDroidIntegration(t *testing.T) {
 	})
 }
 
+func TestDroidPathsReturnsCanonicalConfigPathWhenMissing(t *testing.T) {
+	d := &Droid{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	got := d.Paths()
+	want := filepath.Join(tmpDir, ".factory", "settings.json")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("expected paths [%q], got %v", want, got)
+	}
+}
+
 func TestDroidEdit(t *testing.T) {
 	d := &Droid{}
 	tmpDir := t.TempDir()
