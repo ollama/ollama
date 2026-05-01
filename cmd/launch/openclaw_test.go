@@ -2135,7 +2135,7 @@ func TestPrintOpenclawReady(t *testing.T) {
 		buf.ReadFrom(r)
 
 		output := buf.String()
-		if !strings.Contains(output, "localhost:9999") {
+		if !strings.Contains(output, "127.0.0.1:9999") {
 			t.Errorf("expected port 9999 in output, got:\n%s", output)
 		}
 		if strings.Contains(output, "#token=") {
