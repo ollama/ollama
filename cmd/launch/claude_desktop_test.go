@@ -34,15 +34,21 @@ func withClaudeDesktopProcessHooks(t *testing.T, running func() bool, quit func(
 	oldRunning := claudeDesktopIsRunning
 	oldQuit := claudeDesktopQuitApp
 	oldOpen := claudeDesktopOpenApp
+	oldOpenPath := claudeDesktopOpenAppPath
+	oldRunningPath := claudeDesktopRunningAppPath
 	oldSleep := claudeDesktopSleep
 	claudeDesktopIsRunning = running
 	claudeDesktopQuitApp = quit
 	claudeDesktopOpenApp = open
+	claudeDesktopOpenAppPath = oldOpenPath
+	claudeDesktopRunningAppPath = oldRunningPath
 	claudeDesktopSleep = func(time.Duration) {}
 	t.Cleanup(func() {
 		claudeDesktopIsRunning = oldRunning
 		claudeDesktopQuitApp = oldQuit
 		claudeDesktopOpenApp = oldOpen
+		claudeDesktopOpenAppPath = oldOpenPath
+		claudeDesktopRunningAppPath = oldRunningPath
 		claudeDesktopSleep = oldSleep
 	})
 }
@@ -187,6 +193,164 @@ func TestClaudeDesktopConfigureWithModelsWritesOllamaCloudModelCatalog(t *testin
 	want := []string{"qwen3.5", "glm-5.1", "minimax-m2.7"}
 	if diff := compareStrings(models, want); diff != "" {
 		t.Fatalf("models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestClaudeDesktopWindowsConfigPathsUseLocalAppData(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "windows")
+	t.Setenv("LOCALAPPDATA", filepath.Join(tmpDir, "LocalAppData"))
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(tmpDir, "LocalAppData", "Claude-3p", "claude_desktop_config.json"); paths.desktopConfig != want {
+		t.Fatalf("desktop config = %q, want %q", paths.desktopConfig, want)
+	}
+	if want := filepath.Join(tmpDir, "LocalAppData", "Claude", "claude_desktop_config.json"); paths.normalConfig != want {
+		t.Fatalf("normal config = %q, want %q", paths.normalConfig, want)
+	}
+}
+
+func TestClaudeDesktopWindowsConfigPathsFallbackToNestProfile(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "windows")
+	local := filepath.Join(tmpDir, "LocalAppData")
+	t.Setenv("LOCALAPPDATA", local)
+	if err := os.MkdirAll(filepath.Join(local, "Claude Nest-3p"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(local, "Claude Nest-3p", "claude_desktop_config.json"); paths.desktopConfig != want {
+		t.Fatalf("desktop config = %q, want %q", paths.desktopConfig, want)
+	}
+}
+
+func TestClaudeDesktopCurrentModelReadsOnWindows(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "windows")
+	t.Setenv("LOCALAPPDATA", filepath.Join(tmpDir, "LocalAppData"))
+	t.Setenv("OLLAMA_API_KEY", "test-api-key")
+	withClaudeDesktopValidation(t, func(context.Context, string) error { return nil })
+
+	c := &ClaudeDesktop{}
+	if err := c.Configure("qwen3.5:cloud"); err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+	if got := c.CurrentModel(); got != "qwen3.5" {
+		t.Fatalf("CurrentModel() = %q, want qwen3.5", got)
+	}
+}
+
+func TestClaudeDesktopInstalledOnWindowsRecognizesLocalProfileDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "windows")
+	local := filepath.Join(tmpDir, "LocalAppData")
+	t.Setenv("LOCALAPPDATA", local)
+	withClaudeDesktopProcessHooks(t, func() bool { return false }, func() error { return nil }, func() error { return nil })
+	if err := os.MkdirAll(filepath.Join(local, "Claude-3p"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if !claudeDesktopInstalled() {
+		t.Fatal("expected Claude Desktop to be installed when the Windows profile directory exists")
+	}
+}
+
+func TestClaudeDesktopWindowsAppPathFindsAnthropicClaudeInstall(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "windows")
+	local := filepath.Join(tmpDir, "LocalAppData")
+	t.Setenv("LOCALAPPDATA", local)
+	want := filepath.Join(local, "AnthropicClaude", "app-1.2.3", "Claude.exe")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte(""), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := claudeDesktopAppPath(); got != want {
+		t.Fatalf("claudeDesktopAppPath() = %q, want %q", got, want)
+	}
+}
+
+func TestWaitForClaudeDesktopExitUsesRunningHook(t *testing.T) {
+	withClaudeDesktopPlatform(t, "windows")
+	runningChecks := 0
+	withClaudeDesktopProcessHooks(t,
+		func() bool {
+			runningChecks++
+			return runningChecks == 1
+		},
+		func() error { return nil },
+		func() error { return nil },
+	)
+
+	if err := waitForClaudeDesktopExit(time.Second); err != nil {
+		t.Fatalf("waitForClaudeDesktopExit returned error: %v", err)
+	}
+	if runningChecks < 2 {
+		t.Fatalf("expected running hook to be checked until the visible window exits, got %d checks", runningChecks)
+	}
+}
+
+func TestClaudeDesktopWindowsRestartUsesCapturedDesktopPath(t *testing.T) {
+	withClaudeDesktopPlatform(t, "windows")
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	desktopPath := `C:\Users\parth\AppData\Local\AnthropicClaude\app-1.2.3\Claude.exe`
+	running := true
+	var openedPath string
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return running },
+		func() error {
+			running = false
+			return nil
+		},
+		func() error {
+			t.Fatal("expected restart to open the captured Desktop executable path, not the generic launcher")
+			return nil
+		},
+	)
+	claudeDesktopRunningAppPath = func() string { return desktopPath }
+	claudeDesktopOpenAppPath = func(path string) error {
+		openedPath = path
+		return nil
+	}
+
+	if err := (&ClaudeDesktop{}).Run("qwen3.5", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if openedPath != desktopPath {
+		t.Fatalf("opened path = %q, want %q", openedPath, desktopPath)
+	}
+}
+
+func TestClaudeDesktopWindowsOpenDoesNotFallBackToClaudeCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "windows")
+	t.Setenv("LOCALAPPDATA", filepath.Join(tmpDir, "LocalAppData"))
+
+	oldRunningPath := claudeDesktopRunningAppPath
+	claudeDesktopRunningAppPath = func() string { return "" }
+	t.Cleanup(func() { claudeDesktopRunningAppPath = oldRunningPath })
+
+	err := defaultClaudeDesktopOpenApp()
+	if err == nil || !strings.Contains(err.Error(), "Claude Desktop executable was not found") {
+		t.Fatalf("defaultClaudeDesktopOpenApp error = %v, want executable-not-found error", err)
 	}
 }
 

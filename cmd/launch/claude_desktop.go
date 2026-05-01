@@ -32,8 +32,11 @@ var (
 	claudeDesktopUserHome       = os.UserHomeDir
 	claudeDesktopStat           = os.Stat
 	claudeDesktopOpenApp        = defaultClaudeDesktopOpenApp
+	claudeDesktopOpenAppPath    = defaultClaudeDesktopOpenAppPath
 	claudeDesktopQuitApp        = defaultClaudeDesktopQuitApp
 	claudeDesktopIsRunning      = defaultClaudeDesktopIsRunning
+	claudeDesktopRunningAppPath = defaultClaudeDesktopRunningAppPath
+	claudeDesktopGlob           = filepath.Glob
 	claudeDesktopSleep          = time.Sleep
 	claudeDesktopHTTPClient     = http.DefaultClient
 	claudeDesktopPromptAPIKey   = promptClaudeDesktopAPIKey
@@ -98,7 +101,7 @@ func (c *ClaudeDesktop) ConfigureWithModels(model string, models []string) error
 }
 
 func (c *ClaudeDesktop) CurrentModel() string {
-	if claudeDesktopGOOS != "darwin" {
+	if err := claudeDesktopSupported(); err != nil {
 		return ""
 	}
 	paths, err := claudeDesktopConfigPaths()
@@ -169,18 +172,31 @@ func (c *ClaudeDesktop) Restore() error {
 }
 
 func claudeDesktopSupported() error {
-	if claudeDesktopGOOS != "darwin" {
-		return fmt.Errorf("Claude Desktop launch is only supported on macOS")
+	switch claudeDesktopGOOS {
+	case "darwin", "windows":
+		return nil
+	default:
+		return fmt.Errorf("Claude Desktop launch is only supported on macOS and Windows")
 	}
-	return nil
 }
 
 func claudeDesktopInstalled() bool {
-	return claudeDesktopAppPath() != ""
+	if claudeDesktopAppPath() != "" {
+		return true
+	}
+	if claudeDesktopGOOS == "windows" && claudeDesktopIsRunning() {
+		return true
+	}
+	for _, dir := range claudeDesktopProfileDirCandidates(false) {
+		if _, err := claudeDesktopStat(dir); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func claudeDesktopAppPath() string {
-	if claudeDesktopGOOS != "darwin" {
+	if claudeDesktopGOOS != "darwin" && claudeDesktopGOOS != "windows" {
 		return ""
 	}
 	for _, path := range claudeDesktopAppCandidates() {
@@ -192,11 +208,55 @@ func claudeDesktopAppPath() string {
 }
 
 func claudeDesktopAppCandidates() []string {
-	candidates := []string{"/Applications/Claude.app"}
-	if home, err := claudeDesktopUserHome(); err == nil {
-		candidates = append(candidates, filepath.Join(home, "Applications", "Claude.app"))
+	switch claudeDesktopGOOS {
+	case "darwin":
+		candidates := []string{"/Applications/Claude.app"}
+		if home, err := claudeDesktopUserHome(); err == nil {
+			candidates = append(candidates, filepath.Join(home, "Applications", "Claude.app"))
+		}
+		return candidates
+	case "windows":
+		local, err := claudeDesktopLocalAppData()
+		if err != nil {
+			return nil
+		}
+		candidates := []string{
+			filepath.Join(local, "Programs", "Claude", "Claude.exe"),
+			filepath.Join(local, "Programs", "Claude Desktop", "Claude.exe"),
+			filepath.Join(local, "Claude", "Claude.exe"),
+			filepath.Join(local, "Claude Nest", "Claude.exe"),
+			filepath.Join(local, "Claude Desktop", "Claude.exe"),
+			filepath.Join(local, "AnthropicClaude", "Claude.exe"),
+		}
+		for _, pattern := range []string{
+			filepath.Join(local, "AnthropicClaude", "app-*", "Claude.exe"),
+			filepath.Join(local, "Programs", "Claude", "app-*", "Claude.exe"),
+			filepath.Join(local, "Programs", "Claude Desktop", "app-*", "Claude.exe"),
+		} {
+			matches, _ := claudeDesktopGlob(pattern)
+			candidates = append(candidates, matches...)
+		}
+		return claudeDesktopDedupePaths(candidates)
+	default:
+		return nil
 	}
-	return candidates
+}
+
+func claudeDesktopDedupePaths(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	seen := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		key := strings.ToLower(path)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, path)
+	}
+	return out
 }
 
 type claudeDesktopPaths struct {
@@ -207,17 +267,84 @@ type claudeDesktopPaths struct {
 }
 
 func claudeDesktopConfigPaths() (claudeDesktopPaths, error) {
+	switch claudeDesktopGOOS {
+	case "darwin":
+		home, err := claudeDesktopUserHome()
+		if err != nil {
+			return claudeDesktopPaths{}, err
+		}
+		base := filepath.Join(home, "Library", "Application Support", "Claude-3p")
+		return claudeDesktopPaths{
+			normalConfig:  filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json"),
+			desktopConfig: filepath.Join(base, "claude_desktop_config.json"),
+			meta:          filepath.Join(base, "configLibrary", "_meta.json"),
+			profile:       filepath.Join(base, "configLibrary", claudeDesktopProfileID+".json"),
+		}, nil
+	case "windows":
+		normalBase, err := claudeDesktopProfileDir(true)
+		if err != nil {
+			return claudeDesktopPaths{}, err
+		}
+		thirdPartyBase, err := claudeDesktopProfileDir(false)
+		if err != nil {
+			return claudeDesktopPaths{}, err
+		}
+		return claudeDesktopPaths{
+			normalConfig:  filepath.Join(normalBase, "claude_desktop_config.json"),
+			desktopConfig: filepath.Join(thirdPartyBase, "claude_desktop_config.json"),
+			meta:          filepath.Join(thirdPartyBase, "configLibrary", "_meta.json"),
+			profile:       filepath.Join(thirdPartyBase, "configLibrary", claudeDesktopProfileID+".json"),
+		}, nil
+	default:
+		return claudeDesktopPaths{}, claudeDesktopSupported()
+	}
+}
+
+func claudeDesktopProfileDir(normal bool) (string, error) {
+	candidates := claudeDesktopProfileDirCandidates(normal)
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("Claude Desktop profile directory could not be resolved")
+	}
+	for _, candidate := range candidates {
+		if _, err := claudeDesktopStat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return candidates[0], nil
+}
+
+func claudeDesktopProfileDirCandidates(normal bool) []string {
+	if claudeDesktopGOOS != "windows" {
+		return nil
+	}
+	local, err := claudeDesktopLocalAppData()
+	if err != nil {
+		return nil
+	}
+	if normal {
+		return []string{
+			filepath.Join(local, "Claude"),
+			filepath.Join(local, "Claude Nest"),
+		}
+	}
+	return []string{
+		filepath.Join(local, "Claude-3p"),
+		filepath.Join(local, "Claude Nest-3p"),
+	}
+}
+
+func claudeDesktopLocalAppData() (string, error) {
+	if local := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); local != "" {
+		return local, nil
+	}
+	if home := strings.TrimSpace(os.Getenv("USERPROFILE")); home != "" {
+		return filepath.Join(home, "AppData", "Local"), nil
+	}
 	home, err := claudeDesktopUserHome()
 	if err != nil {
-		return claudeDesktopPaths{}, err
+		return "", err
 	}
-	base := filepath.Join(home, "Library", "Application Support", "Claude-3p")
-	return claudeDesktopPaths{
-		normalConfig:  filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json"),
-		desktopConfig: filepath.Join(base, "claude_desktop_config.json"),
-		meta:          filepath.Join(base, "configLibrary", "_meta.json"),
-		profile:       filepath.Join(base, "configLibrary", claudeDesktopProfileID+".json"),
-	}, nil
+	return filepath.Join(home, "AppData", "Local"), nil
 }
 
 func claudeDesktopAPIKey() (string, error) {
@@ -441,6 +568,10 @@ func claudeDesktopLaunchOrRestart(prompt string) error {
 	if !claudeDesktopIsRunning() {
 		return claudeDesktopOpenApp()
 	}
+	restartAppPath := ""
+	if claudeDesktopGOOS == "windows" {
+		restartAppPath = claudeDesktopRunningAppPath()
+	}
 
 	restart, err := ConfirmPrompt(prompt)
 	if err != nil {
@@ -457,6 +588,9 @@ func claudeDesktopLaunchOrRestart(prompt string) error {
 	if err := waitForClaudeDesktopExit(30 * time.Second); err != nil {
 		return err
 	}
+	if restartAppPath != "" {
+		return claudeDesktopOpenAppPath(restartAppPath)
+	}
 	return claudeDesktopOpenApp()
 }
 
@@ -472,17 +606,68 @@ func waitForClaudeDesktopExit(timeout time.Duration) error {
 }
 
 func defaultClaudeDesktopIsRunning() bool {
-	out, err := exec.Command("pgrep", "-f", "Claude.app/Contents/MacOS/Claude").Output()
+	var cmd *exec.Cmd
+	switch claudeDesktopGOOS {
+	case "darwin":
+		cmd = exec.Command("pgrep", "-f", "Claude.app/Contents/MacOS/Claude")
+	case "windows":
+		cmd = exec.Command("powershell.exe", "-NoProfile", "-Command", `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`)
+	default:
+		return false
+	}
+	out, err := cmd.Output()
+	if claudeDesktopGOOS == "windows" {
+		return err == nil && strings.TrimSpace(string(out)) != ""
+	}
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
 func defaultClaudeDesktopOpenApp() error {
+	if claudeDesktopGOOS == "windows" {
+		if path := claudeDesktopAppPath(); path != "" {
+			return claudeDesktopOpenAppPath(path)
+		}
+		if path := claudeDesktopRunningAppPath(); path != "" {
+			return claudeDesktopOpenAppPath(path)
+		}
+		return fmt.Errorf("Claude Desktop executable was not found; open Claude Desktop manually once and re-run 'ollama launch claude-desktop'")
+	}
 	cmd := exec.Command("open", "-a", "Claude")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
+func defaultClaudeDesktopOpenAppPath(path string) error {
+	if claudeDesktopGOOS == "windows" {
+		return exec.Command("powershell.exe", "-NoProfile", "-Command", "Start-Process -FilePath "+quotePowerShellString(path)).Run()
+	}
+	cmd := exec.Command("open", "-a", "Claude")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func defaultClaudeDesktopRunningAppPath() string {
+	if claudeDesktopGOOS != "windows" {
+		return ""
+	}
+	script := `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path } | Select-Object -First 1 -ExpandProperty Path)`
+	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func defaultClaudeDesktopQuitApp() error {
+	if claudeDesktopGOOS == "windows" {
+		script := `Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }`
+		return exec.Command("powershell.exe", "-NoProfile", "-Command", script).Run()
+	}
 	return exec.Command("osascript", "-e", `tell application "Claude" to quit`).Run()
+}
+
+func quotePowerShellString(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
