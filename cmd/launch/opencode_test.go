@@ -1,12 +1,19 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/api"
 )
 
 func TestOpenCodeIntegration(t *testing.T) {
@@ -155,6 +162,70 @@ func TestOpenCodeEdit(t *testing.T) {
 
 		if entry["limit"] != nil {
 			t.Errorf("local model should not have limit, got %v", entry["limit"])
+		}
+	})
+
+	t.Run("vision model gets image input modalities", func(t *testing.T) {
+		u, err := url.Parse("http://ollama.example")
+		if err != nil {
+			t.Fatalf("parse test URL: %v", err)
+		}
+		client := api.NewClient(u, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path != "/api/show" {
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(strings.NewReader("not found")),
+					Header:     make(http.Header),
+				}, nil
+			}
+
+			var body struct {
+				Model string `json:"model"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				t.Fatalf("decode show request: %v", err)
+			}
+			if body.Model != "gemma4:26b" {
+				t.Fatalf("show request model = %q, want gemma4:26b", body.Model)
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"capabilities":["vision"],"model_info":{}}`)),
+				Header:     make(http.Header),
+			}, nil
+		})})
+
+		models := buildModelEntries(context.Background(), client, []string{"gemma4:26b"})
+		entry, _ := models["gemma4:26b"].(map[string]any)
+		modalities, _ := entry["modalities"].(map[string]any)
+		input, _ := modalities["input"].([]string)
+		output, _ := modalities["output"].([]string)
+
+		if len(input) != 2 || input[0] != "text" || input[1] != "image" {
+			t.Fatalf("modalities.input = %v, want [text image]", input)
+		}
+		if len(output) != 1 || output[0] != "text" {
+			t.Fatalf("modalities.output = %v, want [text]", output)
+		}
+	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestBuildModelEntries(t *testing.T) {
+	t.Run("defaults to model name when capabilities cannot be probed", func(t *testing.T) {
+		models := buildModelEntries(context.Background(), nil, []string{"llama3.2"})
+		entry, _ := models["llama3.2"].(map[string]any)
+		if entry["name"] != "llama3.2" {
+			t.Fatalf("name = %v, want llama3.2", entry["name"])
+		}
+		if _, ok := entry["modalities"]; ok {
+			t.Fatalf("modalities should not be set without an API client, got %v", entry["modalities"])
 		}
 	})
 }
