@@ -1435,6 +1435,32 @@ func (s *Server) ListHandler(c *gin.Context) {
 			}
 		}
 
+		modelDetails := api.ModelDetails{
+			Format:            cf.ModelFormat,
+			Family:            cf.ModelFamily,
+			Families:          cf.ModelFamilies,
+			ParameterSize:     cf.ModelType,
+			QuantizationLevel: cf.FileType,
+		}
+
+		// For safetensors LLM models (experimental), enrich details from config.json
+		// to match the behaviour of /api/show for these models.
+		if cf.ModelFormat == "safetensors" && slices.Contains(cf.Capabilities, "completion") {
+			if info, err := xserver.GetSafetensorsLLMInfo(n); err == nil {
+				if arch, ok := info["general.architecture"].(string); ok && arch != "" {
+					modelDetails.Family = arch
+				}
+				if paramCount, ok := info["general.parameter_count"].(int64); ok && paramCount > 0 {
+					modelDetails.ParameterSize = format.HumanNumber(uint64(paramCount))
+				}
+			}
+			if modelDetails.QuantizationLevel == "" {
+				if dtype, err := xserver.GetSafetensorsDtype(n); err == nil && dtype != "" {
+					modelDetails.QuantizationLevel = dtype
+				}
+			}
+		}
+
 		// tag should never be masked
 		models = append(models, api.ListModelResponse{
 			Model:       n.DisplayShortest(),
@@ -1444,13 +1470,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 			Size:        m.Size(),
 			Digest:      m.Digest(),
 			ModifiedAt:  m.FileInfo().ModTime(),
-			Details: api.ModelDetails{
-				Format:            cf.ModelFormat,
-				Family:            cf.ModelFamily,
-				Families:          cf.ModelFamilies,
-				ParameterSize:     cf.ModelType,
-				QuantizationLevel: cf.FileType,
-			},
+			Details:     modelDetails,
 		})
 	}
 

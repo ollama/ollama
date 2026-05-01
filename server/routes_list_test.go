@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -9,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestList(t *testing.T) {
@@ -62,5 +65,56 @@ func TestList(t *testing.T) {
 
 	if !slices.Equal(actualNames, expectNames) {
 		t.Fatalf("expected slices to be equal %v", actualNames)
+	}
+}
+
+// TestListSafetensorsDetails verifies that /api/tags populates parameter_size and
+// quantization_level for safetensors models when those values are stored in the
+// manifest config, matching the behaviour of /api/show.
+func TestListSafetensorsDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	cfgData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  "safetensors",
+		ModelType:    "26B",
+		FileType:     "mxfp8",
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(cfgData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName("gemma4:26b-mxfp8")
+	if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	var s Server
+	w := createRequest(t, s.ListHandler, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ListResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(resp.Models) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(resp.Models))
+	}
+
+	got := resp.Models[0].Details
+	if got.ParameterSize == "" {
+		t.Errorf("ParameterSize is empty, want non-empty for safetensors model")
+	}
+	if got.QuantizationLevel != "mxfp8" {
+		t.Errorf("QuantizationLevel = %q, want %q", got.QuantizationLevel, "mxfp8")
 	}
 }
