@@ -332,6 +332,21 @@ func prepareManagedSingleIntegration(name string, runner Runner, managed Managed
 	return nil
 }
 
+func prepareManagedAutodiscoveryIntegration(name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, model string) error {
+	if ok, err := confirmConfigEdit(runner, autodiscovery.Paths()); err != nil {
+		return err
+	} else if !ok {
+		return errCancelled
+	}
+	if err := autodiscovery.ConfigureAutodiscovery(); err != nil {
+		return fmt.Errorf("setup failed: %w", err)
+	}
+	if err := config.SaveIntegration(name, []string{model}); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
+	}
+	return nil
+}
+
 func confirmConfigEdit(runner Runner, paths []string) (bool, error) {
 	if len(paths) == 0 {
 		return true, nil

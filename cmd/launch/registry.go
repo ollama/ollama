@@ -309,6 +309,9 @@ func ListVisibleIntegrationSpecs() []IntegrationSpec {
 		if spec.Hidden {
 			continue
 		}
+		if supported, ok := spec.Runner.(SupportedIntegration); ok && supported.Supported() != nil {
+			continue
+		}
 		if spec.Name == "pool" && poolsideGOOS == "windows" {
 			continue
 		}

@@ -72,11 +72,8 @@ func TestClaudeDesktopIntegration(t *testing.T) {
 	t.Run("implements Runner", func(t *testing.T) {
 		var _ Runner = c
 	})
-	t.Run("implements managed single model", func(t *testing.T) {
-		var _ ManagedSingleModel = c
-	})
-	t.Run("implements managed model list configurer", func(t *testing.T) {
-		var _ ManagedModelListConfigurer = c
+	t.Run("implements managed autodiscovery integration", func(t *testing.T) {
+		var _ ManagedAutodiscoveryIntegration = c
 	})
 	t.Run("implements restore", func(t *testing.T) {
 		var _ RestorableIntegration = c
@@ -118,7 +115,7 @@ func TestClaudeDesktopConfigureWritesOllamaCloudProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := (&ClaudeDesktop{}).Configure("gpt-oss:120b-cloud"); err != nil {
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
 		t.Fatalf("Configure returned error: %v", err)
 	}
 	if validatedKey != "test-api-key" {
@@ -162,37 +159,39 @@ func TestClaudeDesktopConfigureWritesOllamaCloudProfile(t *testing.T) {
 	if profile["disableDeploymentModeChooser"] != true {
 		t.Fatalf("disableDeploymentModeChooser = %v, want true", profile["disableDeploymentModeChooser"])
 	}
-	models := claudeDesktopStringSlice(profile["inferenceModels"])
-	if len(models) != 1 || models[0] != "gpt-oss:120b" {
-		t.Fatalf("models = %v, want [gpt-oss:120b]", models)
+	if _, ok := profile["inferenceModels"]; ok {
+		t.Fatalf("inferenceModels should be omitted so Claude can discover models, got %v", profile["inferenceModels"])
 	}
 }
 
-func TestClaudeDesktopConfigureWithModelsWritesOllamaCloudModelCatalog(t *testing.T) {
+func TestClaudeDesktopConfigureAutodiscoveryRemovesExistingModelCatalog(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	withClaudeDesktopPlatform(t, "darwin")
 	t.Setenv("OLLAMA_API_KEY", "test-api-key")
 	withClaudeDesktopValidation(t, func(context.Context, string) error { return nil })
 
-	if err := (&ClaudeDesktop{}).ConfigureWithModels("qwen3.5:cloud", []string{
-		"glm-5.1:cloud",
-		"qwen3.5:cloud",
-		"gemma4",
-		"minimax-m2.7:cloud",
-	}); err != nil {
-		t.Fatalf("ConfigureWithModels returned error: %v", err)
-	}
-
 	paths, err := claudeDesktopConfigPaths()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.profile, []byte(`{"inferenceModels":["qwen3.5"],"inferenceGatewayApiKey":"old"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+	}
+
 	profile := claudeDesktopReadJSON(t, paths.profile)
-	models := claudeDesktopStringSlice(profile["inferenceModels"])
-	want := []string{"qwen3.5", "glm-5.1", "minimax-m2.7"}
-	if diff := compareStrings(models, want); diff != "" {
-		t.Fatalf("models mismatch (-want +got):\n%s", diff)
+	if _, ok := profile["inferenceModels"]; ok {
+		t.Fatalf("inferenceModels should be removed, got %v", profile["inferenceModels"])
+	}
+	if profile["inferenceGatewayApiKey"] != "test-api-key" {
+		t.Fatal("expected env API key to replace the old key")
 	}
 }
 
@@ -233,7 +232,7 @@ func TestClaudeDesktopWindowsConfigPathsFallbackToNestProfile(t *testing.T) {
 	}
 }
 
-func TestClaudeDesktopCurrentModelReadsOnWindows(t *testing.T) {
+func TestClaudeDesktopAutodiscoveryConfiguredOnWindows(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	withClaudeDesktopPlatform(t, "windows")
@@ -242,11 +241,77 @@ func TestClaudeDesktopCurrentModelReadsOnWindows(t *testing.T) {
 	withClaudeDesktopValidation(t, func(context.Context, string) error { return nil })
 
 	c := &ClaudeDesktop{}
-	if err := c.Configure("qwen3.5:cloud"); err != nil {
+	if err := c.ConfigureAutodiscovery(); err != nil {
 		t.Fatalf("Configure returned error: %v", err)
 	}
-	if got := c.CurrentModel(); got != "qwen3.5" {
-		t.Fatalf("CurrentModel() = %q, want qwen3.5", got)
+	if !c.AutodiscoveryConfigured() {
+		t.Fatal("expected Claude Desktop autodiscovery config to be detected on Windows")
+	}
+}
+
+func TestClaudeDesktopConfigureAutodiscoveryTouchesAllWindowsProfileCandidates(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "windows")
+	local := filepath.Join(tmpDir, "LocalAppData")
+	t.Setenv("LOCALAPPDATA", local)
+	t.Setenv("OLLAMA_API_KEY", "test-api-key")
+	withClaudeDesktopValidation(t, func(context.Context, string) error { return nil })
+
+	targets, err := claudeDesktopTargetPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets.normalConfigs) != 2 {
+		t.Fatalf("normal config target count = %d, want 2", len(targets.normalConfigs))
+	}
+	if len(targets.thirdPartyProfiles) != 2 {
+		t.Fatalf("third-party target count = %d, want 2", len(targets.thirdPartyProfiles))
+	}
+
+	c := &ClaudeDesktop{}
+	if err := c.ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+	}
+
+	for _, path := range targets.normalConfigs {
+		cfg := claudeDesktopReadJSON(t, path)
+		if cfg["deploymentMode"] != "3p" {
+			t.Fatalf("%s deploymentMode = %v, want 3p", path, cfg["deploymentMode"])
+		}
+	}
+	for _, target := range targets.thirdPartyProfiles {
+		cfg := claudeDesktopReadJSON(t, target.desktopConfig)
+		if cfg["deploymentMode"] != "3p" {
+			t.Fatalf("%s deploymentMode = %v, want 3p", target.desktopConfig, cfg["deploymentMode"])
+		}
+		meta := claudeDesktopReadJSON(t, target.meta)
+		if meta["appliedId"] != claudeDesktopProfileID {
+			t.Fatalf("%s appliedId = %v, want %s", target.meta, meta["appliedId"], claudeDesktopProfileID)
+		}
+		profile := claudeDesktopReadJSON(t, target.profile)
+		if profile["inferenceProvider"] != "gateway" {
+			t.Fatalf("%s inferenceProvider = %v, want gateway", target.profile, profile["inferenceProvider"])
+		}
+		if profile["inferenceGatewayBaseUrl"] != claudeDesktopGatewayBaseURL {
+			t.Fatalf("%s base URL = %v, want %s", target.profile, profile["inferenceGatewayBaseUrl"], claudeDesktopGatewayBaseURL)
+		}
+		if profile["inferenceGatewayApiKey"] != "test-api-key" {
+			t.Fatalf("%s should contain the configured API key", target.profile)
+		}
+		if _, ok := profile["inferenceModels"]; ok {
+			t.Fatalf("%s inferenceModels should be omitted, got %v", target.profile, profile["inferenceModels"])
+		}
+	}
+	if !c.AutodiscoveryConfigured() {
+		t.Fatal("expected all Windows profile candidates to be considered configured")
+	}
+
+	if err := writeClaudeDesktopDeploymentMode(targets.thirdPartyProfiles[1].desktopConfig, "1p"); err != nil {
+		t.Fatal(err)
+	}
+	if c.AutodiscoveryConfigured() {
+		t.Fatal("expected a stale Windows candidate to force reconfiguration")
 	}
 }
 
@@ -363,7 +428,7 @@ func TestClaudeDesktopConfigureStopsBeforeWriteWhenKeyValidationFails(t *testing
 		return errors.New("invalid key")
 	})
 
-	err := (&ClaudeDesktop{}).Configure("qwen3.5:cloud")
+	err := (&ClaudeDesktop{}).ConfigureAutodiscovery()
 	if err == nil || !strings.Contains(err.Error(), "invalid key") {
 		t.Fatalf("Configure error = %v, want invalid key", err)
 	}
@@ -387,13 +452,84 @@ func TestClaudeDesktopConfigureRequiresAPIKey(t *testing.T) {
 		return nil
 	})
 
-	err := (&ClaudeDesktop{}).Configure("qwen3.5:cloud")
+	err := (&ClaudeDesktop{}).ConfigureAutodiscovery()
 	if err == nil || !strings.Contains(err.Error(), "OLLAMA_API_KEY is required") {
 		t.Fatalf("Configure error = %v, want missing key guidance", err)
 	}
 }
 
-func TestClaudeDesktopCurrentModelReadsAppliedOllamaProfile(t *testing.T) {
+func TestClaudeDesktopConfigureReusesExistingAPIKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	t.Setenv("OLLAMA_API_KEY", "")
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.profile, []byte(`{"inferenceGatewayApiKey":"existing-key"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var validatedKey string
+	withClaudeDesktopValidation(t, func(_ context.Context, key string) error {
+		validatedKey = key
+		return nil
+	})
+
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+	}
+	if validatedKey != "existing-key" {
+		t.Fatalf("validated key = %q, want existing-key", validatedKey)
+	}
+}
+
+func TestClaudeDesktopConfigureReusesExistingAPIKeyFromAnyWindowsProfile(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "windows")
+	local := filepath.Join(tmpDir, "LocalAppData")
+	t.Setenv("LOCALAPPDATA", local)
+	t.Setenv("OLLAMA_API_KEY", "")
+
+	targets, err := claudeDesktopTargetPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallbackProfile := targets.thirdPartyProfiles[1].profile
+	if err := os.MkdirAll(filepath.Dir(fallbackProfile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fallbackProfile, []byte(`{"inferenceGatewayApiKey":"fallback-key"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var validatedKey string
+	withClaudeDesktopValidation(t, func(_ context.Context, key string) error {
+		validatedKey = key
+		return nil
+	})
+
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+	}
+	if validatedKey != "fallback-key" {
+		t.Fatalf("validated key = %q, want fallback-key", validatedKey)
+	}
+	for _, target := range targets.thirdPartyProfiles {
+		profile := claudeDesktopReadJSON(t, target.profile)
+		if profile["inferenceGatewayApiKey"] != "fallback-key" {
+			t.Fatalf("%s should reuse fallback key, got %v", target.profile, profile["inferenceGatewayApiKey"])
+		}
+	}
+}
+
+func TestClaudeDesktopAutodiscoveryConfiguredRequiresAppliedOllamaProfile(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	withClaudeDesktopPlatform(t, "darwin")
@@ -401,11 +537,11 @@ func TestClaudeDesktopCurrentModelReadsAppliedOllamaProfile(t *testing.T) {
 	withClaudeDesktopValidation(t, func(context.Context, string) error { return nil })
 
 	c := &ClaudeDesktop{}
-	if err := c.Configure("qwen3.5:cloud"); err != nil {
+	if err := c.ConfigureAutodiscovery(); err != nil {
 		t.Fatalf("Configure returned error: %v", err)
 	}
-	if got := c.CurrentModel(); got != "qwen3.5" {
-		t.Fatalf("CurrentModel() = %q, want qwen3.5", got)
+	if !c.AutodiscoveryConfigured() {
+		t.Fatal("expected Claude Desktop autodiscovery config to be detected")
 	}
 
 	paths, err := claudeDesktopConfigPaths()
@@ -415,8 +551,8 @@ func TestClaudeDesktopCurrentModelReadsAppliedOllamaProfile(t *testing.T) {
 	if err := os.WriteFile(paths.meta, []byte(`{"appliedId":"custom"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.CurrentModel(); got != "" {
-		t.Fatalf("CurrentModel() with another applied profile = %q, want empty", got)
+	if c.AutodiscoveryConfigured() {
+		t.Fatal("expected another applied profile to hide Claude Desktop autodiscovery config")
 	}
 }
 
@@ -433,7 +569,10 @@ func TestClaudeDesktopRestoreSwitchesBackToFirstPartyMode(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.profile, []byte(`{"disableDeploymentModeChooser":true,"inferenceGatewayApiKey":"keep"}`), 0o644); err != nil {
+	if err := os.WriteFile(paths.meta, []byte(`{"appliedId":"`+claudeDesktopProfileID+`","entries":[{"id":"`+claudeDesktopProfileID+`","name":"Ollama"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.profile, []byte(`{"disableDeploymentModeChooser":true,"inferenceGatewayApiKey":"keep","inferenceProvider":"gateway","inferenceGatewayBaseUrl":"https://ollama.com","inferenceGatewayAuthScheme":"bearer","inferenceModels":["legacy"]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -455,6 +594,82 @@ func TestClaudeDesktopRestoreSwitchesBackToFirstPartyMode(t *testing.T) {
 	}
 	if profile["inferenceGatewayApiKey"] != "keep" {
 		t.Fatal("restore should leave existing Ollama profile credentials in place")
+	}
+	for _, key := range []string{"inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayAuthScheme", "inferenceModels"} {
+		if _, ok := profile[key]; ok {
+			t.Fatalf("restore should clear stale %s from the Ollama profile: %v", key, profile)
+		}
+	}
+	meta := claudeDesktopReadJSON(t, paths.meta)
+	if _, ok := meta["appliedId"]; ok {
+		t.Fatalf("restore should clear the applied Ollama third-party profile: %v", meta)
+	}
+	if (&ClaudeDesktop{}).AutodiscoveryConfigured() {
+		t.Fatal("restore should leave Claude Desktop autodiscovery unconfigured")
+	}
+}
+
+func TestClaudeDesktopRestoreTouchesAllWindowsProfileCandidates(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "windows")
+	local := filepath.Join(tmpDir, "LocalAppData")
+	t.Setenv("LOCALAPPDATA", local)
+	withClaudeDesktopProcessHooks(t, func() bool { return false }, func() error { return nil }, func() error { return nil })
+
+	targets, err := claudeDesktopTargetPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets.normalConfigs) != 2 {
+		t.Fatalf("normal config target count = %d, want 2", len(targets.normalConfigs))
+	}
+	if len(targets.thirdPartyProfiles) != 2 {
+		t.Fatalf("third-party target count = %d, want 2", len(targets.thirdPartyProfiles))
+	}
+	for _, target := range targets.thirdPartyProfiles {
+		if err := os.MkdirAll(filepath.Dir(target.profile), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target.meta, []byte(`{"appliedId":"`+claudeDesktopProfileID+`","entries":[{"id":"`+claudeDesktopProfileID+`","name":"Ollama"}]}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target.profile, []byte(`{"disableDeploymentModeChooser":true,"inferenceGatewayApiKey":"keep","inferenceProvider":"gateway","inferenceGatewayBaseUrl":"https://ollama.com","inferenceGatewayAuthScheme":"bearer","inferenceModels":["legacy"]}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := (&ClaudeDesktop{}).Restore(); err != nil {
+		t.Fatalf("Restore returned error: %v", err)
+	}
+
+	for _, path := range targets.normalConfigs {
+		cfg := claudeDesktopReadJSON(t, path)
+		if cfg["deploymentMode"] != "1p" {
+			t.Fatalf("%s deploymentMode = %v, want 1p", path, cfg["deploymentMode"])
+		}
+	}
+	for _, target := range targets.thirdPartyProfiles {
+		cfg := claudeDesktopReadJSON(t, target.desktopConfig)
+		if cfg["deploymentMode"] != "1p" {
+			t.Fatalf("%s deploymentMode = %v, want 1p", target.desktopConfig, cfg["deploymentMode"])
+		}
+		meta := claudeDesktopReadJSON(t, target.meta)
+		if _, ok := meta["appliedId"]; ok {
+			t.Fatalf("%s should not keep the Ollama applied profile: %v", target.meta, meta)
+		}
+		profile := claudeDesktopReadJSON(t, target.profile)
+		if profile["disableDeploymentModeChooser"] != false {
+			t.Fatalf("%s disableDeploymentModeChooser = %v, want false", target.profile, profile["disableDeploymentModeChooser"])
+		}
+		if profile["inferenceGatewayApiKey"] != "keep" {
+			t.Fatalf("%s should preserve gateway API key", target.profile)
+		}
+		for _, key := range []string{"inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayAuthScheme", "inferenceModels"} {
+			if _, ok := profile[key]; ok {
+				t.Fatalf("%s should clear stale %s: %v", target.profile, key, profile)
+			}
+		}
 	}
 }
 

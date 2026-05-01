@@ -1572,6 +1572,15 @@ func TestListIntegrationInfos(t *testing.T) {
 			}
 			want = filtered
 		}
+		if claudeDesktopSupported() != nil {
+			filtered := make([]string, 0, len(want))
+			for _, name := range want {
+				if name != "claude-desktop" {
+					filtered = append(filtered, name)
+				}
+			}
+			want = filtered
+		}
 
 		if diff := compareStrings(got, want); diff != "" {
 			t.Fatalf("launcher integration order mismatch: %s", diff)
@@ -1590,7 +1599,10 @@ func TestListIntegrationInfos(t *testing.T) {
 	})
 
 	t.Run("includes known integrations", func(t *testing.T) {
-		known := map[string]bool{"claude": false, "claude-desktop": false, "codex": false, "opencode": false}
+		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
+		if claudeDesktopSupported() == nil {
+			known["claude-desktop"] = false
+		}
 		if poolsideGOOS != "windows" {
 			known["pool"] = false
 		}
@@ -1636,6 +1648,18 @@ func TestListIntegrationInfos_HidesPoolsideOnWindows(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		if info.Name == "pool" {
 			t.Fatal("expected pool to be hidden on Windows")
+		}
+	}
+}
+
+func TestListIntegrationInfos_HidesClaudeDesktopOnUnsupportedPlatform(t *testing.T) {
+	prev := claudeDesktopGOOS
+	claudeDesktopGOOS = "linux"
+	t.Cleanup(func() { claudeDesktopGOOS = prev })
+
+	for _, info := range ListIntegrationInfos() {
+		if info.Name == "claude-desktop" {
+			t.Fatal("expected claude-desktop to be hidden on unsupported platforms")
 		}
 	}
 }

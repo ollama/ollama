@@ -161,6 +161,16 @@ type ManagedModelListConfigurer interface {
 	ConfigureWithModels(primary string, models []string) error
 }
 
+// ManagedAutodiscoveryIntegration is for managed integrations that do not need
+// a launcher-selected model because the app discovers available models itself.
+type ManagedAutodiscoveryIntegration interface {
+	Paths() []string
+	AutodiscoveredModel() string
+	AutodiscoveryConfigured() bool
+	ConfigureAutodiscovery() error
+	Onboard() error
+}
+
 // ManagedRuntimeRefresher lets managed integrations refresh any long-lived
 // background runtime after launch rewrites their config.
 type ManagedRuntimeRefresher interface {
@@ -252,7 +262,7 @@ Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
-  ollama launch claude-desktop --model <model>
+  ollama launch claude-desktop
   ollama launch claude-desktop --restore
   ollama launch hermes
   ollama launch droid --config (does not auto-launch)
@@ -398,12 +408,21 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		return restoreIntegration(name, runner, req)
 	}
 	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
-		return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
+		if _, ok := runner.(ManagedAutodiscoveryIntegration); !ok {
+			return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
+		}
 	}
 
 	launchClient, saved, err := prepareIntegrationLaunch(name, policy)
 	if err != nil {
 		return err
+	}
+
+	if autodiscovery, ok := runner.(ManagedAutodiscoveryIntegration); ok {
+		if err := EnsureIntegrationInstalled(name, runner); err != nil {
+			return err
+		}
+		return launchClient.launchManagedAutodiscoveryIntegration(name, runner, autodiscovery, saved, req)
 	}
 
 	if managed, ok := runner.(ManagedSingleModel); ok {
@@ -489,7 +508,12 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 	}
 	var currentModel string
 	var usable bool
-	if managed, ok := integration.spec.Runner.(ManagedSingleModel); ok {
+	if autodiscovery, ok := integration.spec.Runner.(ManagedAutodiscoveryIntegration); ok {
+		currentModel, usable, err = c.launcherManagedAutodiscoveryState(info.Name, autodiscovery)
+		if err != nil {
+			return LauncherIntegrationState{}, err
+		}
+	} else if managed, ok := integration.spec.Runner.(ManagedSingleModel); ok {
 		currentModel, usable, err = c.launcherManagedModelState(ctx, info.Name, managed)
 		if err != nil {
 			return LauncherIntegrationState{}, err
@@ -560,6 +584,20 @@ func (c *launcherClient) launcherManagedModelState(ctx context.Context, name str
 		return current, false, err
 	}
 	return current, usable, nil
+}
+
+func (c *launcherClient) launcherManagedAutodiscoveryState(name string, autodiscovery ManagedAutodiscoveryIntegration) (string, bool, error) {
+	if autodiscovery.AutodiscoveryConfigured() {
+		return autodiscovery.AutodiscoveredModel(), true, nil
+	}
+
+	cfg, loadErr := loadStoredIntegrationConfig(name)
+	if loadErr == nil {
+		if current := primaryModelFromConfig(cfg); current != "" {
+			return current, false, nil
+		}
+	}
+	return "", false, nil
 }
 
 func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
@@ -690,6 +728,41 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 	return runIntegration(runner, target, req.ExtraArgs)
 }
 
+func (c *launcherClient) launchManagedAutodiscoveryIntegration(name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+	if req.ModelOverride != "" {
+		return fmt.Errorf("%s discovers models automatically; omit --model", runner)
+	}
+
+	target := autodiscovery.AutodiscoveredModel()
+	needsConfigure := req.ConfigureOnly || !autodiscovery.AutodiscoveryConfigured() || !savedMatchesModels(saved, []string{target})
+
+	if needsConfigure {
+		if err := prepareManagedAutodiscoveryIntegration(name, runner, autodiscovery, target); err != nil {
+			return err
+		}
+		if refresher, ok := autodiscovery.(ManagedRuntimeRefresher); ok {
+			if err := refresher.RefreshRuntimeAfterConfigure(); err != nil {
+				return err
+			}
+		}
+	}
+
+	if !managedIntegrationOnboarded(saved, autodiscovery) {
+		if !isInteractiveSession() && managedRequiresInteractiveOnboarding(autodiscovery) {
+			return fmt.Errorf("%s still needs interactive gateway setup; run 'ollama launch %s' in a terminal to finish onboarding", runner, name)
+		}
+		if err := autodiscovery.Onboard(); err != nil {
+			return err
+		}
+	}
+
+	if req.ConfigureOnly {
+		return nil
+	}
+
+	return runIntegration(runner, target, req.ExtraArgs)
+}
+
 func (c *launcherClient) managedSingleConfigureModels(ctx context.Context, managed ManagedSingleModel, target string) ([]string, error) {
 	models := []string{target}
 	if _, ok := managed.(ManagedModelListConfigurer); !ok {
@@ -756,7 +829,7 @@ func savedIntegrationOnboarded(saved *config.IntegrationConfig) bool {
 	return saved != nil && saved.Onboarded
 }
 
-func managedIntegrationOnboarded(saved *config.IntegrationConfig, managed ManagedSingleModel) bool {
+func managedIntegrationOnboarded(saved *config.IntegrationConfig, managed any) bool {
 	if !savedIntegrationOnboarded(saved) {
 		return false
 	}
@@ -770,7 +843,7 @@ func managedIntegrationOnboarded(saved *config.IntegrationConfig, managed Manage
 // Most managed integrations treat onboarding as an interactive terminal step.
 // Hermes opts out because its launch-owned onboarding is just bookkeeping, so
 // headless launches should not be blocked once config is already prepared.
-func managedRequiresInteractiveOnboarding(managed ManagedSingleModel) bool {
+func managedRequiresInteractiveOnboarding(managed any) bool {
 	onboarding, ok := managed.(ManagedInteractiveOnboarding)
 	if !ok {
 		return true

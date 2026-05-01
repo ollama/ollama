@@ -16,7 +16,6 @@ import (
 
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
-	"github.com/ollama/ollama/internal/modelref"
 	"golang.org/x/term"
 )
 
@@ -25,6 +24,7 @@ const (
 	claudeDesktopProfileName     = "Ollama"
 	claudeDesktopProfileID       = "00000000-0000-4000-8000-000000000114"
 	claudeDesktopGatewayBaseURL  = "https://ollama.com"
+	claudeDesktopModelLabel      = "Ollama Cloud"
 )
 
 var (
@@ -52,27 +52,32 @@ func (c *ClaudeDesktop) String() string { return "Claude Desktop" }
 func (c *ClaudeDesktop) Supported() error { return claudeDesktopSupported() }
 
 func (c *ClaudeDesktop) Paths() []string {
-	paths, err := claudeDesktopConfigPaths()
+	targets, err := claudeDesktopTargetPaths()
 	if err != nil {
 		return nil
 	}
-	return []string{paths.normalConfig, paths.desktopConfig, paths.meta, paths.profile}
+	paths := append([]string{}, targets.normalConfigs...)
+	for _, target := range targets.thirdPartyProfiles {
+		paths = append(paths, target.desktopConfig, target.meta, target.profile)
+	}
+	return paths
 }
 
-func (c *ClaudeDesktop) Configure(model string) error {
-	return c.ConfigureWithModels(model, []string{model})
+func (c *ClaudeDesktop) AutodiscoveredModel() string {
+	return claudeDesktopModelLabel
 }
 
-func (c *ClaudeDesktop) ConfigureWithModels(model string, models []string) error {
+func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return fmt.Errorf("model is required")
+
+	targets, err := claudeDesktopTargetPaths()
+	if err != nil {
+		return err
 	}
 
-	key, err := claudeDesktopAPIKey()
+	key, err := claudeDesktopAPIKey(claudeDesktopTargetProfilePaths(targets))
 	if err != nil {
 		return err
 	}
@@ -80,53 +85,32 @@ func (c *ClaudeDesktop) ConfigureWithModels(model string, models []string) error
 		return err
 	}
 
-	paths, err := claudeDesktopConfigPaths()
-	if err != nil {
-		return err
+	for _, path := range targets.normalConfigs {
+		if err := writeClaudeDesktopDeploymentMode(path, "3p"); err != nil {
+			return err
+		}
 	}
-
-	if err := writeClaudeDesktopDeploymentMode(paths.normalConfig, "3p"); err != nil {
-		return err
+	for _, target := range targets.thirdPartyProfiles {
+		if err := writeClaudeDesktopDeploymentMode(target.desktopConfig, "3p"); err != nil {
+			return err
+		}
+		if err := writeClaudeDesktopMeta(target.meta, claudeDesktopProfileID, claudeDesktopProfileName); err != nil {
+			return err
+		}
+		if err := writeClaudeDesktopGatewayProfile(target.profile, key, true); err != nil {
+			return err
+		}
 	}
-	if err := writeClaudeDesktopDeploymentMode(paths.desktopConfig, "3p"); err != nil {
-		return err
-	}
-	if err := writeClaudeDesktopMeta(paths.meta, claudeDesktopProfileID, claudeDesktopProfileName); err != nil {
-		return err
-	}
-	if err := writeClaudeDesktopGatewayProfile(paths.profile, claudeDesktopGatewayModels(model, models), key, true); err != nil {
-		return err
-	}
+	fmt.Fprintln(os.Stderr, "Tip: run 'ollama launch claude-desktop --restore' to bring back the usual Anthropic Claude profile.")
 	return nil
 }
 
-func (c *ClaudeDesktop) CurrentModel() string {
-	if err := claudeDesktopSupported(); err != nil {
-		return ""
-	}
-	paths, err := claudeDesktopConfigPaths()
+func (c *ClaudeDesktop) AutodiscoveryConfigured() bool {
+	targets, err := claudeDesktopTargetPaths()
 	if err != nil {
-		return ""
+		return false
 	}
-	if appliedID := readClaudeDesktopAppliedID(paths.meta); appliedID != "" && appliedID != claudeDesktopProfileID {
-		return ""
-	}
-
-	cfg, err := readClaudeDesktopJSON(paths.profile)
-	if err != nil {
-		return ""
-	}
-	if s, _ := cfg["inferenceProvider"].(string); s != "gateway" {
-		return ""
-	}
-	if s, _ := cfg["inferenceGatewayBaseUrl"].(string); strings.TrimRight(s, "/") != claudeDesktopGatewayBaseURL {
-		return ""
-	}
-	models := claudeDesktopStringSlice(cfg["inferenceModels"])
-	if len(models) == 0 {
-		return ""
-	}
-	return models[0]
+	return claudeDesktopTargetsConfigured(targets)
 }
 
 func (c *ClaudeDesktop) Onboard() error {
@@ -155,18 +139,26 @@ func (c *ClaudeDesktop) Restore() error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
-	paths, err := claudeDesktopConfigPaths()
+	targets, err := claudeDesktopTargetPaths()
 	if err != nil {
 		return err
 	}
-	if err := writeClaudeDesktopDeploymentMode(paths.normalConfig, "1p"); err != nil {
-		return err
+
+	for _, path := range targets.normalConfigs {
+		if err := writeClaudeDesktopDeploymentMode(path, "1p"); err != nil {
+			return err
+		}
 	}
-	if err := writeClaudeDesktopDeploymentMode(paths.desktopConfig, "1p"); err != nil {
-		return err
-	}
-	if err := disableClaudeDesktopLaunchProfileForce(paths.profile); err != nil {
-		return err
+	for _, target := range targets.thirdPartyProfiles {
+		if err := writeClaudeDesktopDeploymentMode(target.desktopConfig, "1p"); err != nil {
+			return err
+		}
+		if err := restoreClaudeDesktopMeta(target.meta); err != nil {
+			return err
+		}
+		if err := restoreClaudeDesktopOllamaProfile(target.profile); err != nil {
+			return err
+		}
 	}
 	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use the usual Claude profile?")
 }
@@ -210,36 +202,45 @@ func claudeDesktopAppPath() string {
 func claudeDesktopAppCandidates() []string {
 	switch claudeDesktopGOOS {
 	case "darwin":
-		candidates := []string{"/Applications/Claude.app"}
-		if home, err := claudeDesktopUserHome(); err == nil {
-			candidates = append(candidates, filepath.Join(home, "Applications", "Claude.app"))
-		}
-		return candidates
+		return claudeDesktopDarwinAppCandidates()
 	case "windows":
-		local, err := claudeDesktopLocalAppData()
-		if err != nil {
-			return nil
-		}
-		candidates := []string{
-			filepath.Join(local, "Programs", "Claude", "Claude.exe"),
-			filepath.Join(local, "Programs", "Claude Desktop", "Claude.exe"),
-			filepath.Join(local, "Claude", "Claude.exe"),
-			filepath.Join(local, "Claude Nest", "Claude.exe"),
-			filepath.Join(local, "Claude Desktop", "Claude.exe"),
-			filepath.Join(local, "AnthropicClaude", "Claude.exe"),
-		}
-		for _, pattern := range []string{
-			filepath.Join(local, "AnthropicClaude", "app-*", "Claude.exe"),
-			filepath.Join(local, "Programs", "Claude", "app-*", "Claude.exe"),
-			filepath.Join(local, "Programs", "Claude Desktop", "app-*", "Claude.exe"),
-		} {
-			matches, _ := claudeDesktopGlob(pattern)
-			candidates = append(candidates, matches...)
-		}
-		return claudeDesktopDedupePaths(candidates)
+		return claudeDesktopWindowsAppCandidates()
 	default:
 		return nil
 	}
+}
+
+func claudeDesktopDarwinAppCandidates() []string {
+	candidates := []string{"/Applications/Claude.app"}
+	if home, err := claudeDesktopUserHome(); err == nil {
+		candidates = append(candidates, filepath.Join(home, "Applications", "Claude.app"))
+	}
+	return candidates
+}
+
+func claudeDesktopWindowsAppCandidates() []string {
+	local, err := claudeDesktopLocalAppData()
+	if err != nil {
+		return nil
+	}
+
+	candidates := []string{
+		filepath.Join(local, "Programs", "Claude", "Claude.exe"),
+		filepath.Join(local, "Programs", "Claude Desktop", "Claude.exe"),
+		filepath.Join(local, "Claude", "Claude.exe"),
+		filepath.Join(local, "Claude Nest", "Claude.exe"),
+		filepath.Join(local, "Claude Desktop", "Claude.exe"),
+		filepath.Join(local, "AnthropicClaude", "Claude.exe"),
+	}
+	for _, pattern := range []string{
+		filepath.Join(local, "AnthropicClaude", "app-*", "Claude.exe"),
+		filepath.Join(local, "Programs", "Claude", "app-*", "Claude.exe"),
+		filepath.Join(local, "Programs", "Claude Desktop", "app-*", "Claude.exe"),
+	} {
+		matches, _ := claudeDesktopGlob(pattern)
+		candidates = append(candidates, matches...)
+	}
+	return claudeDesktopDedupePaths(candidates)
 }
 
 func claudeDesktopDedupePaths(paths []string) []string {
@@ -266,38 +267,58 @@ type claudeDesktopPaths struct {
 	profile       string
 }
 
+type claudeDesktopThirdPartyPaths struct {
+	desktopConfig string
+	meta          string
+	profile       string
+}
+
+type claudeDesktopTargets struct {
+	normalConfigs      []string
+	thirdPartyProfiles []claudeDesktopThirdPartyPaths
+}
+
 func claudeDesktopConfigPaths() (claudeDesktopPaths, error) {
 	switch claudeDesktopGOOS {
 	case "darwin":
-		home, err := claudeDesktopUserHome()
-		if err != nil {
-			return claudeDesktopPaths{}, err
-		}
-		base := filepath.Join(home, "Library", "Application Support", "Claude-3p")
-		return claudeDesktopPaths{
-			normalConfig:  filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json"),
-			desktopConfig: filepath.Join(base, "claude_desktop_config.json"),
-			meta:          filepath.Join(base, "configLibrary", "_meta.json"),
-			profile:       filepath.Join(base, "configLibrary", claudeDesktopProfileID+".json"),
-		}, nil
+		return claudeDesktopDarwinConfigPaths()
 	case "windows":
-		normalBase, err := claudeDesktopProfileDir(true)
-		if err != nil {
-			return claudeDesktopPaths{}, err
-		}
-		thirdPartyBase, err := claudeDesktopProfileDir(false)
-		if err != nil {
-			return claudeDesktopPaths{}, err
-		}
-		return claudeDesktopPaths{
-			normalConfig:  filepath.Join(normalBase, "claude_desktop_config.json"),
-			desktopConfig: filepath.Join(thirdPartyBase, "claude_desktop_config.json"),
-			meta:          filepath.Join(thirdPartyBase, "configLibrary", "_meta.json"),
-			profile:       filepath.Join(thirdPartyBase, "configLibrary", claudeDesktopProfileID+".json"),
-		}, nil
+		return claudeDesktopWindowsConfigPaths()
 	default:
 		return claudeDesktopPaths{}, claudeDesktopSupported()
 	}
+}
+
+func claudeDesktopDarwinConfigPaths() (claudeDesktopPaths, error) {
+	normalRoots, thirdPartyRoots, err := claudeDesktopDarwinProfileRoots()
+	if err != nil {
+		return claudeDesktopPaths{}, err
+	}
+	normalBase := normalRoots[0]
+	thirdPartyBase := thirdPartyRoots[0]
+	return claudeDesktopPaths{
+		normalConfig:  filepath.Join(normalBase, "claude_desktop_config.json"),
+		desktopConfig: filepath.Join(thirdPartyBase, "claude_desktop_config.json"),
+		meta:          filepath.Join(thirdPartyBase, "configLibrary", "_meta.json"),
+		profile:       filepath.Join(thirdPartyBase, "configLibrary", claudeDesktopProfileID+".json"),
+	}, nil
+}
+
+func claudeDesktopWindowsConfigPaths() (claudeDesktopPaths, error) {
+	normalBase, err := claudeDesktopProfileDir(true)
+	if err != nil {
+		return claudeDesktopPaths{}, err
+	}
+	thirdPartyBase, err := claudeDesktopProfileDir(false)
+	if err != nil {
+		return claudeDesktopPaths{}, err
+	}
+	return claudeDesktopPaths{
+		normalConfig:  filepath.Join(normalBase, "claude_desktop_config.json"),
+		desktopConfig: filepath.Join(thirdPartyBase, "claude_desktop_config.json"),
+		meta:          filepath.Join(thirdPartyBase, "configLibrary", "_meta.json"),
+		profile:       filepath.Join(thirdPartyBase, "configLibrary", claudeDesktopProfileID+".json"),
+	}, nil
 }
 
 func claudeDesktopProfileDir(normal bool) (string, error) {
@@ -317,20 +338,84 @@ func claudeDesktopProfileDirCandidates(normal bool) []string {
 	if claudeDesktopGOOS != "windows" {
 		return nil
 	}
-	local, err := claudeDesktopLocalAppData()
+	normalRoots, thirdPartyRoots, err := claudeDesktopWindowsProfileRoots()
 	if err != nil {
 		return nil
 	}
 	if normal {
-		return []string{
-			filepath.Join(local, "Claude"),
-			filepath.Join(local, "Claude Nest"),
-		}
+		return normalRoots
 	}
-	return []string{
+	return thirdPartyRoots
+}
+
+func claudeDesktopDarwinProfileRoots() ([]string, []string, error) {
+	home, err := claudeDesktopUserHome()
+	if err != nil {
+		return nil, nil, err
+	}
+	base := filepath.Join(home, "Library", "Application Support")
+	return []string{filepath.Join(base, "Claude")}, []string{filepath.Join(base, "Claude-3p")}, nil
+}
+
+func claudeDesktopWindowsProfileRoots() ([]string, []string, error) {
+	local, err := claudeDesktopLocalAppData()
+	if err != nil {
+		return nil, nil, err
+	}
+	normalRoots := []string{
+		filepath.Join(local, "Claude"),
+		filepath.Join(local, "Claude Nest"),
+	}
+	thirdPartyRoots := []string{
 		filepath.Join(local, "Claude-3p"),
 		filepath.Join(local, "Claude Nest-3p"),
 	}
+	return normalRoots, thirdPartyRoots, nil
+}
+
+func claudeDesktopTargetPaths() (claudeDesktopTargets, error) {
+	var (
+		normalRoots     []string
+		thirdPartyRoots []string
+		err             error
+	)
+
+	switch claudeDesktopGOOS {
+	case "darwin":
+		normalRoots, thirdPartyRoots, err = claudeDesktopDarwinProfileRoots()
+	case "windows":
+		normalRoots, thirdPartyRoots, err = claudeDesktopWindowsProfileRoots()
+	default:
+		err = claudeDesktopSupported()
+	}
+	if err != nil {
+		return claudeDesktopTargets{}, err
+	}
+
+	return newClaudeDesktopTargets(normalRoots, thirdPartyRoots), nil
+}
+
+func newClaudeDesktopTargets(normalRoots, thirdPartyRoots []string) claudeDesktopTargets {
+	targets := claudeDesktopTargets{}
+	for _, root := range claudeDesktopDedupePaths(normalRoots) {
+		targets.normalConfigs = append(targets.normalConfigs, filepath.Join(root, "claude_desktop_config.json"))
+	}
+	for _, root := range claudeDesktopDedupePaths(thirdPartyRoots) {
+		targets.thirdPartyProfiles = append(targets.thirdPartyProfiles, claudeDesktopThirdPartyPaths{
+			desktopConfig: filepath.Join(root, "claude_desktop_config.json"),
+			meta:          filepath.Join(root, "configLibrary", "_meta.json"),
+			profile:       filepath.Join(root, "configLibrary", claudeDesktopProfileID+".json"),
+		})
+	}
+	return targets
+}
+
+func claudeDesktopTargetProfilePaths(targets claudeDesktopTargets) []string {
+	paths := make([]string, 0, len(targets.thirdPartyProfiles))
+	for _, target := range targets.thirdPartyProfiles {
+		paths = append(paths, target.profile)
+	}
+	return paths
 }
 
 func claudeDesktopLocalAppData() (string, error) {
@@ -347,9 +432,14 @@ func claudeDesktopLocalAppData() (string, error) {
 	return filepath.Join(home, "AppData", "Local"), nil
 }
 
-func claudeDesktopAPIKey() (string, error) {
+func claudeDesktopAPIKey(profilePaths []string) (string, error) {
 	if key := strings.TrimSpace(os.Getenv("OLLAMA_API_KEY")); key != "" {
 		return key, nil
+	}
+	for _, profilePath := range profilePaths {
+		if key := readClaudeDesktopGatewayAPIKey(profilePath); key != "" {
+			return key, nil
+		}
 	}
 	if !isInteractiveSession() || currentLaunchConfirmPolicy.requireYesMessage {
 		return "", missingClaudeDesktopAPIKeyError()
@@ -379,6 +469,15 @@ func promptClaudeDesktopAPIKey() (string, error) {
 	return string(key), nil
 }
 
+func readClaudeDesktopGatewayAPIKey(path string) string {
+	cfg, err := readClaudeDesktopJSON(path)
+	if err != nil {
+		return ""
+	}
+	key, _ := cfg["inferenceGatewayApiKey"].(string)
+	return strings.TrimSpace(key)
+}
+
 func validateClaudeDesktopAPIKey(ctx context.Context, key string) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -405,29 +504,6 @@ func validateClaudeDesktopAPIKey(ctx context.Context, key string) error {
 	default:
 		return fmt.Errorf("validate Ollama API key: unexpected status %d", resp.StatusCode)
 	}
-}
-
-func claudeDesktopGatewayModels(primary string, models []string) []string {
-	out := make([]string, 0, len(models)+1)
-	add := func(model string, allowPlain bool) {
-		model = strings.TrimSpace(model)
-		if model == "" {
-			return
-		}
-		if base, ok := modelref.StripCloudSourceTag(model); ok {
-			out = append(out, base)
-			return
-		}
-		if allowPlain {
-			out = append(out, model)
-		}
-	}
-
-	add(primary, true)
-	for _, model := range models {
-		add(model, false)
-	}
-	return dedupeModelList(out)
 }
 
 func writeClaudeDesktopDeploymentMode(path, mode string) error {
@@ -466,7 +542,7 @@ func writeClaudeDesktopMeta(path, id, name string) error {
 	return writeClaudeDesktopJSON(path, meta)
 }
 
-func writeClaudeDesktopGatewayProfile(path string, models []string, apiKey string, forceChooser bool) error {
+func writeClaudeDesktopGatewayProfile(path string, apiKey string, forceChooser bool) error {
 	cfg, err := readClaudeDesktopJSONAllowMissing(path)
 	if err != nil {
 		return fmt.Errorf("parse Claude Desktop Ollama profile: %w", err)
@@ -475,12 +551,47 @@ func writeClaudeDesktopGatewayProfile(path string, models []string, apiKey strin
 	cfg["inferenceGatewayBaseUrl"] = claudeDesktopGatewayBaseURL
 	cfg["inferenceGatewayApiKey"] = apiKey
 	cfg["inferenceGatewayAuthScheme"] = "bearer"
-	cfg["inferenceModels"] = models
+	delete(cfg, "inferenceModels")
 	cfg["disableDeploymentModeChooser"] = forceChooser
 	return writeClaudeDesktopJSON(path, cfg)
 }
 
-func disableClaudeDesktopLaunchProfileForce(path string) error {
+func restoreClaudeDesktopMeta(path string) error {
+	meta, err := readClaudeDesktopJSONAllowMissing(path)
+	if err != nil {
+		return fmt.Errorf("parse Claude Desktop config metadata: %w", err)
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+
+	changed := false
+	if appliedID, _ := meta["appliedId"].(string); appliedID == claudeDesktopProfileID {
+		delete(meta, "appliedId")
+		changed = true
+	}
+
+	entries := claudeDesktopAnySlice(meta["entries"])
+	if entries != nil {
+		filtered := make([]any, 0, len(entries))
+		for _, entry := range entries {
+			entryMap, _ := entry.(map[string]any)
+			if entryID, _ := entryMap["id"].(string); entryID == claudeDesktopProfileID {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, entry)
+		}
+		meta["entries"] = filtered
+	}
+
+	if !changed {
+		return nil
+	}
+	return writeClaudeDesktopJSON(path, meta)
+}
+
+func restoreClaudeDesktopOllamaProfile(path string) error {
 	cfg, err := readClaudeDesktopJSONAllowMissing(path)
 	if err != nil {
 		return fmt.Errorf("parse Claude Desktop Ollama profile: %w", err)
@@ -489,6 +600,10 @@ func disableClaudeDesktopLaunchProfileForce(path string) error {
 		return nil
 	}
 	cfg["disableDeploymentModeChooser"] = false
+	delete(cfg, "inferenceProvider")
+	delete(cfg, "inferenceGatewayBaseUrl")
+	delete(cfg, "inferenceGatewayAuthScheme")
+	delete(cfg, "inferenceModels")
 	return writeClaudeDesktopJSON(path, cfg)
 }
 
@@ -499,6 +614,53 @@ func readClaudeDesktopAppliedID(path string) string {
 	}
 	applied, _ := meta["appliedId"].(string)
 	return applied
+}
+
+func readClaudeDesktopDeploymentMode(path string) string {
+	cfg, err := readClaudeDesktopJSON(path)
+	if err != nil {
+		return ""
+	}
+	mode, _ := cfg["deploymentMode"].(string)
+	return mode
+}
+
+func claudeDesktopTargetsConfigured(targets claudeDesktopTargets) bool {
+	if len(targets.normalConfigs) == 0 || len(targets.thirdPartyProfiles) == 0 {
+		return false
+	}
+	for _, path := range targets.normalConfigs {
+		if readClaudeDesktopDeploymentMode(path) != "3p" {
+			return false
+		}
+	}
+	for _, target := range targets.thirdPartyProfiles {
+		if readClaudeDesktopDeploymentMode(target.desktopConfig) != "3p" {
+			return false
+		}
+		if !claudeDesktopThirdPartyProfileConfigured(target) {
+			return false
+		}
+	}
+	return true
+}
+
+func claudeDesktopThirdPartyProfileConfigured(target claudeDesktopThirdPartyPaths) bool {
+	if readClaudeDesktopAppliedID(target.meta) != claudeDesktopProfileID {
+		return false
+	}
+
+	cfg, err := readClaudeDesktopJSON(target.profile)
+	if err != nil {
+		return false
+	}
+	if s, _ := cfg["inferenceProvider"].(string); s != "gateway" {
+		return false
+	}
+	if s, _ := cfg["inferenceGatewayBaseUrl"].(string); strings.TrimRight(s, "/") != claudeDesktopGatewayBaseURL {
+		return false
+	}
+	return true
 }
 
 func readClaudeDesktopJSONAllowMissing(path string) (map[string]any, error) {
@@ -534,23 +696,6 @@ func writeClaudeDesktopJSON(path string, cfg any) error {
 		return err
 	}
 	return fileutil.WriteWithBackup(path, data)
-}
-
-func claudeDesktopStringSlice(value any) []string {
-	switch v := value.(type) {
-	case []string:
-		return v
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
 }
 
 func claudeDesktopAnySlice(value any) []any {
@@ -606,24 +751,21 @@ func waitForClaudeDesktopExit(timeout time.Duration) error {
 }
 
 func defaultClaudeDesktopIsRunning() bool {
-	var cmd *exec.Cmd
 	switch claudeDesktopGOOS {
 	case "darwin":
-		cmd = exec.Command("pgrep", "-f", "Claude.app/Contents/MacOS/Claude")
+		out, err := exec.Command("pgrep", "-f", "Claude.app/Contents/MacOS/Claude").Output()
+		return err == nil && strings.TrimSpace(string(out)) != ""
 	case "windows":
-		cmd = exec.Command("powershell.exe", "-NoProfile", "-Command", `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`)
+		out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`).Output()
+		return err == nil && strings.TrimSpace(string(out)) != ""
 	default:
 		return false
 	}
-	out, err := cmd.Output()
-	if claudeDesktopGOOS == "windows" {
-		return err == nil && strings.TrimSpace(string(out)) != ""
-	}
-	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
 func defaultClaudeDesktopOpenApp() error {
-	if claudeDesktopGOOS == "windows" {
+	switch claudeDesktopGOOS {
+	case "windows":
 		if path := claudeDesktopAppPath(); path != "" {
 			return claudeDesktopOpenAppPath(path)
 		}
@@ -631,17 +773,25 @@ func defaultClaudeDesktopOpenApp() error {
 			return claudeDesktopOpenAppPath(path)
 		}
 		return fmt.Errorf("Claude Desktop executable was not found; open Claude Desktop manually once and re-run 'ollama launch claude-desktop'")
+	case "darwin":
+		return openClaudeDesktopDarwin()
+	default:
+		return claudeDesktopSupported()
 	}
-	cmd := exec.Command("open", "-a", "Claude")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func defaultClaudeDesktopOpenAppPath(path string) error {
-	if claudeDesktopGOOS == "windows" {
+	switch claudeDesktopGOOS {
+	case "windows":
 		return exec.Command("powershell.exe", "-NoProfile", "-Command", "Start-Process -FilePath "+quotePowerShellString(path)).Run()
+	case "darwin":
+		return openClaudeDesktopDarwin()
+	default:
+		return claudeDesktopSupported()
 	}
+}
+
+func openClaudeDesktopDarwin() error {
 	cmd := exec.Command("open", "-a", "Claude")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

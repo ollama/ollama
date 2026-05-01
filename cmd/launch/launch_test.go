@@ -109,6 +109,24 @@ func (r *launcherManagedListRunner) ConfigureWithModels(primary string, models [
 	return r.Configure(primary)
 }
 
+type launcherManagedAutodiscoveryRunner struct {
+	launcherManagedRunner
+	autodiscoveryConfigures int
+	autodiscoveryConfigured bool
+}
+
+func (r *launcherManagedAutodiscoveryRunner) AutodiscoveredModel() string { return "Ollama Cloud" }
+
+func (r *launcherManagedAutodiscoveryRunner) AutodiscoveryConfigured() bool {
+	return r.autodiscoveryConfigured
+}
+
+func (r *launcherManagedAutodiscoveryRunner) ConfigureAutodiscovery() error {
+	r.autodiscoveryConfigures++
+	r.autodiscoveryConfigured = true
+	return nil
+}
+
 func setLaunchTestHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
@@ -677,6 +695,63 @@ func TestLaunchIntegration_ManagedSingleIntegrationCanConfigureWithModelList(t *
 	}
 	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
 		t.Fatalf("configured primary mismatch: %s", diff)
+	}
+}
+
+func TestLaunchIntegration_ManagedAutodiscoverySkipsModelPicker(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedAutodiscoveryRunner{}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		t.Fatal("model selector should not run for autodiscovery integrations")
+		return "", nil
+	}
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if runner.autodiscoveryConfigures != 1 {
+		t.Fatalf("expected one autodiscovery configure, got %d", runner.autodiscoveryConfigures)
+	}
+	if runner.ranModel != "Ollama Cloud" {
+		t.Fatalf("expected launch to run autodiscovery label, got %q", runner.ranModel)
+	}
+	saved, err := config.LoadIntegration("stubmanaged")
+	if err != nil {
+		t.Fatalf("failed to reload managed integration config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"Ollama Cloud"}); diff != "" {
+		t.Fatalf("saved models mismatch: %s", diff)
+	}
+}
+
+func TestLaunchIntegration_ManagedAutodiscoveryRejectsModelOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedAutodiscoveryRunner{}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "stubmanaged",
+		ModelOverride: "qwen3.5:cloud",
+	})
+	if err == nil || !strings.Contains(err.Error(), "discovers models automatically") {
+		t.Fatalf("LaunchIntegration error = %v, want automatic discovery guidance", err)
+	}
+	if runner.autodiscoveryConfigures != 0 {
+		t.Fatalf("expected no configure after model override rejection, got %d", runner.autodiscoveryConfigures)
 	}
 }
 
