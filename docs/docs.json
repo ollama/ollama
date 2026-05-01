@@ -115,6 +115,7 @@
                 "expanded": true,
                 "pages": [
                   "/integrations/openclaw",
+                  "/integrations/clearframe",
                   "/integrations/hermes"
                 ]
               },
