@@ -441,6 +441,48 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		}
 	})
 
+	t.Run("v1 chat completions streaming injects usage option", func(t *testing.T) {
+		upstream, capture := newUpstream(t, `{"id":"chatcmpl_test","object":"chat.completion"}`)
+		defer upstream.Close()
+
+		original := cloudProxyBaseURL
+		cloudProxyBaseURL = upstream.URL
+		t.Cleanup(func() { cloudProxyBaseURL = original })
+
+		s := &Server{}
+		router, err := s.GenerateRoutes(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		local := httptest.NewServer(router)
+		defer local.Close()
+
+		reqBody := `{"model":"gpt-oss:120b:cloud","messages":[{"role":"user","content":"hi"}],"stream":true}`
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/v1/chat/completions", bytes.NewBufferString(reqBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := local.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+		}
+
+		if !strings.Contains(capture.body, `"stream":true`) {
+			t.Fatalf("expected stream=true in upstream body, got %q", capture.body)
+		}
+		if !strings.Contains(capture.body, `"stream_options":{"include_usage":true}`) {
+			t.Fatalf("expected stream_options include_usage in upstream body, got %q", capture.body)
+		}
+	})
+
 	t.Run("v1 chat completions bypasses conversion with legacy cloud suffix", func(t *testing.T) {
 		upstream, capture := newUpstream(t, `{"id":"chatcmpl_test","object":"chat.completion"}`)
 		defer upstream.Close()
