@@ -100,7 +100,7 @@ func compareStrings(got, want []string) string {
 func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
 	menu := newModel(launcherTestState())
 	view := menu.View()
-	for _, want := range []string{"Chat with a model", "Launch OpenClaw", "Launch Claude Code", "Launch OpenCode", "More..."} {
+	for _, want := range []string{"Chat with a model", "Launch OpenClaw", "Launch Claude Code", "Launch Hermes Agent", "More..."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected menu view to contain %q\n%s", want, view)
 		}
@@ -108,7 +108,10 @@ func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
 	if strings.Contains(view, "Launch Codex") {
 		t.Fatalf("expected Codex to be under More, not pinned\n%s", view)
 	}
-	wantOrder := []string{"run", "openclaw", "claude", "opencode", "more"}
+	if strings.Contains(view, "Launch OpenCode") {
+		t.Fatalf("expected OpenCode to be under More, not pinned\n%s", view)
+	}
+	wantOrder := []string{"run", "openclaw", "claude", "hermes", "more"}
 	if diff := compareStrings(integrationSequence(menu.items), wantOrder); diff != "" {
 		t.Fatalf("unexpected pinned order: %s", diff)
 	}
@@ -129,7 +132,7 @@ func TestMenuExpandsOthersFromLastSelection(t *testing.T) {
 	if strings.Contains(view, "More...") {
 		t.Fatalf("expected expanded view to replace More... item\n%s", view)
 	}
-	wantOrder := []string{"run", "openclaw", "claude", "opencode", "hermes", "codex", "droid", "pi"}
+	wantOrder := []string{"run", "openclaw", "claude", "hermes", "pi", "opencode", "codex", "droid"}
 	if diff := compareStrings(integrationSequence(menu.items), wantOrder); diff != "" {
 		t.Fatalf("unexpected expanded order: %s", diff)
 	}
