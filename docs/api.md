@@ -14,6 +14,7 @@
 - [Pull a Model](#pull-a-model)
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
+- [Generate Embeddings (Cohere-compatible)](#generate-embeddings-cohere-compatible)
 - [List Running Models](#list-running-models)
 - [Version](#version)
 - [Experimental: Image Generation](#image-generation-experimental)
@@ -1704,6 +1705,9 @@ Generate embeddings from a model
 
 - `model`: name of model to generate embeddings from
 - `input`: text or list of text to generate embeddings for
+- `inputs`: optional multimodal list of embedding inputs. Each item may include:
+  - `text`: text to embed
+  - `image`: base64-encoded image bytes to embed, optionally alongside `text`
 
 Advanced parameters:
 
@@ -1765,6 +1769,109 @@ curl http://localhost:11434/api/embed -d '{
     ]
   ]
 }
+```
+
+#### Request (Multimodal input)
+
+Use `inputs` with models that support image embeddings. Each `image` value is the raw image bytes encoded as base64 in JSON.
+
+```shell
+curl http://localhost:11434/api/embed -d '{
+  "model": "llava",
+  "inputs": [
+    {
+      "text": "Describe this image for retrieval",
+      "image": "<base64-encoded-image>"
+    }
+  ]
+}'
+```
+
+## Generate Embeddings (Cohere-compatible)
+
+```
+POST /v2/embed
+```
+
+Generate embeddings using a Cohere-compatible API.
+
+### Parameters
+
+- `model`: name of model to generate embeddings from
+- `texts`: optional list of text inputs
+- `images`: optional list of base64-encoded image inputs
+- `inputs`: optional multimodal list of inputs using Cohere content blocks
+- `embedding_types`: optional list of output formats. Supported values: `float`, `base64`
+- `output_dimension`: optional output embedding dimension
+- `truncate`: truncation strategy. Supported values: `END` and `NONE`
+
+Notes:
+
+- Provide exactly one of `texts`, `images`, or `inputs`
+- `image_url.url` currently supports base64 data URIs, not remote URLs
+- `inputs` supports `text` and `image_url` content blocks
+
+### Examples
+
+#### Request (Text)
+
+```shell
+curl http://localhost:11434/v2/embed -d '{
+  "model": "all-minilm",
+  "texts": ["Why is the sky blue?"],
+  "embedding_types": ["float"]
+}'
+```
+
+#### Response
+
+```json
+{
+  "id": "embed-response",
+  "embeddings": {
+    "float": [
+      [
+        0.010071029, -0.0017594862, 0.05007221, 0.04692972, 0.054916814,
+        0.008599704, 0.105441414, -0.025878139, 0.12958129, 0.031952348
+      ]
+    ]
+  },
+  "texts": ["Why is the sky blue?"],
+  "meta": {
+    "api_version": {
+      "version": "2"
+    },
+    "billed_units": {
+      "input_tokens": 8
+    }
+  },
+  "response_type": "embeddings_by_type"
+}
+```
+
+#### Request (Multimodal)
+
+```shell
+curl http://localhost:11434/v2/embed -d '{
+  "model": "llava",
+  "inputs": [
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Describe this image for retrieval"
+        },
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,<base64-encoded-image>"
+          }
+        }
+      ]
+    }
+  ],
+  "embedding_types": ["float", "base64"]
+}'
 ```
 
 ## List Running Models
