@@ -196,30 +196,40 @@ func New(c fs.Config) (model.Model, error) {
 		}
 	}
 
+	vocab := &tokenizer.Vocabulary{
+		Values: c.Strings("tokenizer.ggml.tokens"),
+		Scores: c.Floats("tokenizer.ggml.scores"),
+		Types:  c.Ints("tokenizer.ggml.token_type"),
+		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+		BOS: []int32{
+			int32(cmp.Or(
+				c.Uint("tokenizer.ggml.cls_token_id"),
+				c.Uint("tokenizer.ggml.bos_token_id"),
+			)),
+		},
+		AddEOS: c.Bool("tokenizer.ggml.add_eos_token", true),
+		EOS: []int32{
+			int32(cmp.Or(
+				c.Uint("tokenizer.ggml.separator_token_id"),
+				c.Uint("tokenizer.ggml.eos_token_id"),
+			)),
+		},
+		AddSpacePrefix: c.Bool("tokenizer.ggml.add_space_prefix", false),
+	}
+
+	var t tokenizer.Tokenizer
+	switch c.String("tokenizer.ggml.model", "bert") {
+	case "bert":
+		t = tokenizer.NewWordPiece(vocab, false)
+	case "t5":
+		t = tokenizer.NewSentencePiece(vocab)
+	default:
+		return nil, model.ErrUnsupportedTokenizer
+	}
+
 	return &Model{
-		Tokenizer: tokenizer.NewWordPiece(
-			&tokenizer.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Scores: c.Floats("tokenizer.ggml.scores"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				BOS: []int32{
-					int32(cmp.Or(
-						c.Uint("tokenizer.ggml.cls_token_id"),
-						c.Uint("tokenizer.ggml.bos_token_id"),
-					)),
-				},
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", true),
-				EOS: []int32{
-					int32(cmp.Or(
-						c.Uint("tokenizer.ggml.separator_token_id"),
-						c.Uint("tokenizer.ggml.eos_token_id"),
-					)),
-				},
-			},
-			false,
-		),
-		Layers: layers,
+		Tokenizer: t,
+		Layers:    layers,
 		Options: Options{
 			hiddenSize:      hiddenSize,
 			numHeads:        numHeads,
