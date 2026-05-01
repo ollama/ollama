@@ -1,0 +1,94 @@
+---
+title: Qwen Code
+---
+
+Qwen Code is Qwen's terminal-based coding agent for code editing, code review, and tool-assisted development workflows.
+
+## Install
+
+Install [Qwen Code](https://qwen.ai/qwencode):
+
+<CodeGroup>
+
+```shell macOS / Linux (script)
+bash -c "$(curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh)"
+```
+
+```powershell Windows (PowerShell)
+powershell -Command "Invoke-WebRequest 'https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.bat' -OutFile (Join-Path $env:TEMP 'install-qwen.bat'); & (Join-Path $env:TEMP 'install-qwen.bat')"
+```
+
+```shell npm (all platforms)
+npm install -g @qwen-code/qwen-code@latest
+```
+
+```shell macOS / Linux (Homebrew)
+brew install qwen-code
+```
+
+</CodeGroup>
+
+## Usage with Ollama
+
+### Quick setup
+
+```bash
+ollama launch qwen
+```
+
+To configure without launching:
+
+```shell
+ollama launch qwen --config
+```
+
+If Qwen Code is missing, `ollama launch qwen` can prompt to install it automatically with `npm install -g @qwen-code/qwen-code@latest`.
+
+### Manual setup
+
+If you want to configure Qwen Code manually, or want to understand what `ollama launch qwen` writes for you, create `~/.qwen/settings.json` with:
+
+- `baseUrl` set to `http://localhost:11434/v1`
+- one provider entry per Ollama model you want to use
+- an `envKey` on every Ollama-backed provider entry
+- a matching value under `env`
+
+For current Qwen Code versions, using `id: "ollama"` is not enough unless your actual model id is also `ollama`. Use the real Ollama model id such as `qwen3.5`, `qwen3.5:cloud`, `glm-5:cloud`, or `kimi-k2.6:cloud`.
+
+`ollama launch qwen` writes `~/.qwen/settings.json` in this shape:
+
+- `security.auth.selectedType` is set to `openai`
+- `model.name` is set to the selected Ollama model id
+- `modelProviders.openai[]` contains one entry per selected Ollama model
+- the Ollama-backed provider entry uses `envKey: "OLLAMA_API_KEY"`
+- `settings.json -> env` includes `"OLLAMA_API_KEY": "ollama"`
+
+Example:
+
+```json
+{
+  "env": {
+    "OLLAMA_API_KEY": "ollama"
+  },
+  "modelProviders": {
+    "openai": [
+      {
+        "id": "qwen3.5",
+        "name": "qwen3.5 (Ollama)",
+        "baseUrl": "http://localhost:11434/v1",
+        "envKey": "OLLAMA_API_KEY"
+      }
+    ]
+  },
+  "security": {
+    "auth": {
+      "selectedType": "openai"
+    }
+  },
+  "model": {
+    "name": "qwen3.5"
+  }
+}
+```
+
+<Note>`ollama launch qwen` manages your user-level Qwen config at `~/.qwen/settings.json`.</Note>

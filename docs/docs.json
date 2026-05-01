@@ -126,6 +126,7 @@
                   "/integrations/codex",
                   "/integrations/copilot-cli",
                   "/integrations/opencode",
+                  "/integrations/qwen",
                   "/integrations/droid",
                   "/integrations/goose",
                   "/integrations/pi",
