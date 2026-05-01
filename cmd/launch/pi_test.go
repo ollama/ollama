@@ -941,7 +941,7 @@ func TestPiModels(t *testing.T) {
 		}
 	})
 
-	t.Run("returns sorted models", func(t *testing.T) {
+	t.Run("returns models in config order", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
@@ -966,8 +966,8 @@ func TestPiModels(t *testing.T) {
 		}
 
 		models := pi.Models()
-		if models[0] != "a-model" || models[1] != "m-model" || models[2] != "z-model" {
-			t.Errorf("Models() = %v, want [a-model m-model z-model] (sorted)", models)
+		if models[0] != "z-model" || models[1] != "a-model" || models[2] != "m-model" {
+			t.Errorf("Models() = %v, want [z-model a-model m-model] (config order)", models)
 		}
 	})
 

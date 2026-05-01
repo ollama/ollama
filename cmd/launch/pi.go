@@ -310,7 +310,6 @@ func (p *Pi) Models() []string {
 			}
 		}
 	}
-	slices.Sort(result)
 	return result
 }
 

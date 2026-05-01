@@ -164,7 +164,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 }
 
 func (o *OpenCode) Models() []string {
-	return nil
+	return readModelJSONModels()
 }
 
 // buildInlineConfig produces the JSON string for OPENCODE_CONFIG_CONTENT.

@@ -159,11 +159,43 @@ func TestOpenCodeEdit(t *testing.T) {
 	})
 }
 
-func TestOpenCodeModels_ReturnsNil(t *testing.T) {
-	o := &OpenCode{}
-	if models := o.Models(); models != nil {
-		t.Errorf("Models() = %v, want nil", models)
-	}
+func TestOpenCodeModels(t *testing.T) {
+	t.Run("returns nil when no model state exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		o := &OpenCode{}
+		if models := o.Models(); models != nil {
+			t.Errorf("Models() = %v, want nil", models)
+		}
+	})
+
+	t.Run("returns ollama models from recent state", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		if err := os.MkdirAll(stateDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		state := `{
+			"recent": [
+				{"providerID": "ollama", "modelID": "qwen3.5"},
+				{"providerID": "openai", "modelID": "gpt-4.1"},
+				{"providerID": "ollama", "modelID": "glm-5:cloud"}
+			]
+		}`
+		if err := os.WriteFile(filepath.Join(stateDir, "model.json"), []byte(state), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		o := &OpenCode{}
+		models := o.Models()
+		want := []string{"qwen3.5", "glm-5:cloud"}
+		if len(models) != len(want) || models[0] != want[0] || models[1] != want[1] {
+			t.Errorf("Models() = %v, want %v", models, want)
+		}
+	})
 }
 
 func TestOpenCodePaths(t *testing.T) {
