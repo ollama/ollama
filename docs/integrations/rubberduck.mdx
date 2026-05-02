@@ -1,0 +1,53 @@
+---
+title: Rubberduck
+---
+
+[Rubberduck](https://github.com/098tarik/rubberduck) is a local chat web app that connects to Ollama. It provides a clean browser-based interface with chat history, model switching, Markdown rendering, and syntax-highlighted code blocks.
+
+## Requirements
+
+- Python 3.11+
+- Ollama installed and running
+- At least one Ollama model pulled locally
+
+## Install
+
+Clone the repository and install the Python dependencies:
+
+```bash
+git clone https://github.com/098tarik/rubberduck.git
+cd rubberduck
+pip install .
+```
+
+## Usage with Ollama
+
+1. Pull a model:
+
+```bash
+ollama pull deepseek-r1:8b
+```
+
+2. Start Rubberduck:
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+3. Open the app in your browser at `http://localhost:8000`.
+
+## Configuration
+
+| Variable | Description | Default |
+|---|---|---|
+| `OLLAMA_URL` | URL of your Ollama server | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Default model to use | `deepseek-r1:8b` |
+| `SESSIONS_DIR` | Folder used to store chat history | `./sessions` |
+
+Example:
+
+```bash
+export OLLAMA_URL=http://localhost:11434
+export OLLAMA_MODEL=deepseek-r1:8b
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
