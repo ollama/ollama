@@ -238,6 +238,14 @@ if(MLX_ENGINE)
         FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     )
 
+    if(TARGET jaccl)
+        install(TARGETS jaccl
+            RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
+            LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
+            FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
+        )
+    endif()
+
     # Install the Metal library for macOS arm64 (must be colocated with the binary)
     # Metal backend is only built for arm64, not x86_64
     if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")

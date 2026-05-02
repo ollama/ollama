@@ -233,9 +233,11 @@ _build_macapp() {
                         cp "$VARIANT$LIB" "$DEST/"
                     fi
                 done
-                # Copy remaining files (metallib) from arm64 v3
+                # Copy remaining files (metallib and auxiliary runtime dylibs)
+                # from arm64 v3. libmlx/libmlxc are handled above so v3 can
+                # be universal when an x86_64 build is available.
                 for F in "$VARIANT"*; do
-                    case "$(basename "$F")" in *.dylib) continue ;; esac
+                    case "$(basename "$F")" in libmlx.dylib|libmlxc.dylib) continue ;; esac
                     [ -f "$F" ] && [ ! -L "$F" ] || continue
                     cp "$F" "$DEST/"
                 done
