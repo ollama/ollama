@@ -2,6 +2,7 @@ package renderers
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -61,8 +62,8 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think
 	multiStepTool := true
 	lastQueryIndex := len(messages) - 1 // so this is the last user message
 
-	for i := len(messages) - 1; i >= 0; i-- {
-		message := messages[i]
+	for i, message := range slices.Backward(messages) {
+		message := message
 		if multiStepTool && message.Role == "user" {
 			// Check if content starts with <tool_response> and ends with </tool_response>
 			content, _ := r.renderContent(message, 0)

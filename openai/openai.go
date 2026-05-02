@@ -660,8 +660,8 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 func nameFromToolCallID(messages []Message, toolCallID string) string {
 	// iterate backwards to be more resilient to duplicate tool call IDs (this
 	// follows "last one wins")
-	for i := len(messages) - 1; i >= 0; i-- {
-		msg := messages[i]
+	for _, message := range slices.Backward(messages) {
+		msg := message
 		for _, tc := range msg.ToolCalls {
 			if tc.ID == toolCallID {
 				return tc.Function.Name
