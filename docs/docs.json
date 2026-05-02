@@ -147,7 +147,8 @@
               {
                 "group": "Chat & RAG",
                 "pages": [
-                  "/integrations/onyx"
+                  "/integrations/onyx",
+                  "/integrations/rubberduck"
                 ]
               },
               {
