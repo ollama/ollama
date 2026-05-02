@@ -281,6 +281,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"deepseekocr",
 		"gemma3",
 		"gemma3n",
+		"gemma4",
 		"gptoss", "gpt-oss",
 		"llama4",
 		"mistral3",

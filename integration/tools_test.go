@@ -30,6 +30,7 @@ func TestAPIToolCalling(t *testing.T) {
 	defer cleanup()
 
 	minVRAM := map[string]uint64{
+		"gemma4":        8,
 		"qwen3-vl":      16,
 		"gpt-oss:20b":   16,
 		"gpt-oss:120b":  70,
