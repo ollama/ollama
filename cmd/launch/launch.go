@@ -172,7 +172,7 @@ type ManagedAutodiscoveryIntegration interface {
 }
 
 // ManagedAutodiscoveryCloudIntegration marks an autodiscovery integration whose
-// discovered model catalog depends on the user's Ollama Cloud account.
+// discovered model catalog depends on the user's local Ollama Cloud auth state.
 type ManagedAutodiscoveryCloudIntegration interface {
 	UsesOllamaCloud() bool
 }
@@ -332,10 +332,18 @@ Examples:
 			}
 
 			headlessYes := yesFlag && !isInteractiveSession()
+			forceConfigure := configFlag || (modelFlag == "" && !headlessYes)
+			if forceConfigure && !configFlag && modelFlag == "" {
+				if _, runner, err := LookupIntegration(name); err == nil {
+					if _, ok := runner.(ManagedAutodiscoveryIntegration); ok {
+						forceConfigure = false
+					}
+				}
+			}
 			err := LaunchIntegration(cmd.Context(), IntegrationLaunchRequest{
 				Name:           name,
 				ModelOverride:  modelFlag,
-				ForceConfigure: configFlag || (modelFlag == "" && !headlessYes),
+				ForceConfigure: forceConfigure,
 				ConfigureOnly:  configFlag,
 				Restore:        restoreFlag,
 				ExtraArgs:      passArgs,
@@ -750,7 +758,7 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 		return err
 	}
 
-	needsConfigure := req.ConfigureOnly || !autodiscovery.AutodiscoveryConfigured() || !savedMatchesModels(saved, []string{target})
+	needsConfigure := req.ForceConfigure || req.ConfigureOnly || !autodiscovery.AutodiscoveryConfigured() || !savedMatchesModels(saved, []string{target})
 
 	if needsConfigure {
 		if err := prepareManagedAutodiscoveryIntegration(name, runner, autodiscovery, target); err != nil {
@@ -829,6 +837,7 @@ func (c *launcherClient) managedSingleConfigureModels(ctx context.Context, manag
 		// Managed integrations that can use a model catalog should still be
 		// configurable with an explicit target even if the broader inventory
 		// cannot be loaded in the moment.
+		//nolint:nilerr
 		return models, nil
 	}
 

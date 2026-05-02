@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,10 +94,9 @@ func TestClaudeDesktopIntegration(t *testing.T) {
 	t.Run("implements managed autodiscovery integration", func(t *testing.T) {
 		var _ ManagedAutodiscoveryIntegration = c
 	})
-	t.Run("uses Ollama Cloud", func(t *testing.T) {
-		var _ ManagedAutodiscoveryCloudIntegration = c
-		if !c.UsesOllamaCloud() {
-			t.Fatal("expected Claude Desktop autodiscovery to require Ollama Cloud")
+	t.Run("does not use local Ollama Cloud auth gate", func(t *testing.T) {
+		if _, ok := any(c).(ManagedAutodiscoveryCloudIntegration); ok {
+			t.Fatal("Claude Desktop should validate OLLAMA_API_KEY directly instead of requiring local Ollama Cloud sign-in")
 		}
 	})
 	t.Run("implements restore", func(t *testing.T) {
@@ -116,6 +117,65 @@ func TestClaudeDesktopIntegration(t *testing.T) {
 			t.Fatal("expected Claude Desktop to skip local model readiness")
 		}
 	})
+}
+
+func TestLaunchIntegration_ClaudeDesktopDoesNotRequireLocalCloudSignIn(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+	t.Setenv("OLLAMA_API_KEY", "test-api-key")
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "Applications", "Claude.app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"not found"}`)
+		case "/api/me":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	var validatedKey string
+	withClaudeDesktopValidation(t, func(_ context.Context, key string) error {
+		validatedKey = key
+		return nil
+	})
+
+	DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		t.Fatalf("Claude Desktop launch should not require local Ollama Cloud sign-in, got %s at %s", modelName, signInURL)
+		return "", nil
+	}
+
+	var openCalls int
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return false },
+		func() error { return nil },
+		func() error {
+			openCalls++
+			return nil
+		},
+	)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "claude-desktop"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+	if validatedKey != "test-api-key" {
+		t.Fatalf("validated key = %q, want test API key", validatedKey)
+	}
+	if openCalls != 1 {
+		t.Fatalf("open calls = %d, want 1", openCalls)
+	}
 }
 
 func TestClaudeDesktopConfigureWritesOllamaCloudProfile(t *testing.T) {
@@ -501,6 +561,22 @@ func TestValidateClaudeDesktopAPIKeyUsesClaudeModelsRoute(t *testing.T) {
 	}
 }
 
+func TestValidateClaudeDesktopAPIKeyHidesInvalidHeaderDetails(t *testing.T) {
+	err := validateClaudeDesktopAPIKey(context.Background(), "bad\nkey")
+	if err == nil {
+		t.Fatal("expected validation error for key with newline")
+	}
+	if !strings.Contains(err.Error(), "could not verify Ollama API key") {
+		t.Fatalf("validation error = %v, want friendly verification message", err)
+	}
+	if strings.Contains(err.Error(), "invalid header") || strings.Contains(err.Error(), "net/http") {
+		t.Fatalf("validation error should not expose transport internals: %v", err)
+	}
+	if !strings.Contains(err.Error(), "https://ollama.com/settings/keys") {
+		t.Fatalf("validation error should include settings link: %v", err)
+	}
+}
+
 func TestClaudeDesktopConfigureRequiresAPIKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -514,6 +590,16 @@ func TestClaudeDesktopConfigureRequiresAPIKey(t *testing.T) {
 	err := (&ClaudeDesktop{}).ConfigureAutodiscovery()
 	if err == nil || !strings.Contains(err.Error(), "OLLAMA_API_KEY is required") {
 		t.Fatalf("Configure error = %v, want missing key guidance", err)
+	}
+}
+
+func TestClaudeDesktopAPIKeyPromptIncludesSettingsLink(t *testing.T) {
+	prompt := claudeDesktopAPIKeyPrompt()
+	if !strings.Contains(prompt, "Enter Ollama API key") {
+		t.Fatalf("prompt should ask for the API key, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "https://ollama.com/settings/keys") {
+		t.Fatalf("prompt should include API key settings link, got %q", prompt)
 	}
 }
 

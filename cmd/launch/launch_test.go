@@ -776,6 +776,39 @@ func TestLaunchIntegration_ManagedAutodiscoveryPrintsRestoreHintWhenAlreadyConfi
 	}
 }
 
+func TestLaunchIntegration_ManagedAutodiscoveryForceConfigureRerunsSetup(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedAutodiscoveryRunner{
+		autodiscoveryConfigured: true,
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	if err := config.SaveIntegration("stubmanaged", []string{"Ollama Cloud"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+	if err := config.MarkIntegrationOnboarded("stubmanaged"); err != nil {
+		t.Fatalf("failed to mark integration onboarded: %v", err)
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:           "stubmanaged",
+		ForceConfigure: true,
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if runner.autodiscoveryConfigures != 1 {
+		t.Fatalf("expected forced autodiscovery configure to rerun setup, got %d configures", runner.autodiscoveryConfigures)
+	}
+	if runner.ranModel != "Ollama Cloud" {
+		t.Fatalf("expected launch to run autodiscovery label, got %q", runner.ranModel)
+	}
+}
+
 func TestLaunchIntegration_CloudAutodiscoveryUsesSignInHook(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)

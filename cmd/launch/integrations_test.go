@@ -1664,6 +1664,7 @@ func TestListIntegrationInfos(t *testing.T) {
 		}
 	})
 }
+
 func TestListIntegrationInfos_HidesPoolsideOnWindows(t *testing.T) {
 	prev := poolsideGOOS
 	poolsideGOOS = "windows"

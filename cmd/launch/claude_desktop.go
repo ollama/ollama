@@ -24,6 +24,7 @@ const (
 	claudeDesktopProfileName     = "Ollama"
 	claudeDesktopProfileID       = "00000000-0000-4000-8000-000000000114"
 	claudeDesktopGatewayBaseURL  = "https://ollama.com"
+	claudeDesktopAPIKeyURL       = "https://ollama.com/settings/keys"
 	claudeDesktopModelLabel      = "Ollama Cloud"
 	claudeDesktopRestoreMessage  = "To restore the usual Claude profile, run: ollama launch claude-app --restore"
 )
@@ -58,10 +59,6 @@ func (c *ClaudeDesktop) Paths() []string {
 
 func (c *ClaudeDesktop) AutodiscoveredModel() string {
 	return claudeDesktopModelLabel
-}
-
-func (c *ClaudeDesktop) UsesOllamaCloud() bool {
-	return true
 }
 
 func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
@@ -494,17 +491,21 @@ func promptClaudeDesktopAPIKeyValue() (string, error) {
 }
 
 func missingClaudeDesktopAPIKeyError() error {
-	return fmt.Errorf("OLLAMA_API_KEY is required for Claude App. Create an API key at https://ollama.com/settings/keys, then re-run with OLLAMA_API_KEY set")
+	return fmt.Errorf("OLLAMA_API_KEY is required for Claude App. Create an API key at %s, then re-run with OLLAMA_API_KEY set", claudeDesktopAPIKeyURL)
 }
 
 func promptClaudeDesktopAPIKey() (string, error) {
-	fmt.Fprint(os.Stderr, "Enter Ollama API key (input hidden): ")
+	fmt.Fprint(os.Stderr, claudeDesktopAPIKeyPrompt())
 	key, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", err
 	}
 	return string(key), nil
+}
+
+func claudeDesktopAPIKeyPrompt() string {
+	return fmt.Sprintf("Create an Ollama API key at %s\nEnter Ollama API key (input hidden): ", claudeDesktopAPIKeyURL)
 }
 
 func readClaudeDesktopGatewayAPIKey(path string) string {
@@ -520,28 +521,42 @@ func validateClaudeDesktopAPIKey(ctx context.Context, key string) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
+	if claudeDesktopAPIKeyHasInvalidHeaderChars(key) {
+		return claudeDesktopAPIKeyVerificationError()
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeDesktopGatewayBaseURL+"/v1/models", nil)
 	if err != nil {
-		return err
+		return claudeDesktopAPIKeyVerificationError()
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := claudeDesktopHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("validate Ollama API key: %w", err)
+		return claudeDesktopAPIKeyVerificationError()
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 
 	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("Ollama API key was rejected; create a valid key at %s", claudeDesktopAPIKeyURL)
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return nil
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return fmt.Errorf("Ollama API key was rejected; create a valid key at https://ollama.com/settings/keys")
 	default:
-		return fmt.Errorf("validate Ollama API key: unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("could not verify Ollama API key; ollama.com returned status %d, try again later", resp.StatusCode)
 	}
+}
+
+func claudeDesktopAPIKeyHasInvalidHeaderChars(key string) bool {
+	return strings.ContainsFunc(key, func(r rune) bool {
+		return r < ' ' || r == 0x7f
+	})
+}
+
+func claudeDesktopAPIKeyVerificationError() error {
+	return fmt.Errorf("could not verify Ollama API key; copy a key from %s and try again", claudeDesktopAPIKeyURL)
 }
 
 func writeClaudeDesktopDeploymentMode(path, mode string) error {
