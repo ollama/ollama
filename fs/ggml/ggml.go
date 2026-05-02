@@ -912,18 +912,19 @@ func kvCacheBytesPerElement(cacheType string) float64 {
 	case "q4_0":
 		return 0.5 // 1/4 of fp16
 	case "tq2":
-		// TurboQuant 2-bit: persistent cache ≈ 0.28 bytes/elem (2-bit Lloyd-Max MSE).
-		// Inflated to account for F16 decompression graph overhead.
-		return 0.5
+		// TurboQuant 2-bit MSE: 2 bits packed indices + 1 F32 norm per head.
+		// For head_dim=128: (128*2/32 + 1) * 4 = 36 bytes / 128 = 0.28 bytes/elem.
+		// TQDecompress Q8_0 intermediate is reused across layers by the GGML
+		// allocator, so it does not multiply per-layer here.
+		return 0.28
 	case "tq3":
-		// TurboQuant 3-bit: persistent cache ≈ 0.41 bytes/elem (3-bit Lloyd-Max MSE).
-		// Inflated to account for F16 decompression graph overhead (TQDecompress ops
-		// create F16 intermediates that don't exist for Q4_0's on-the-fly flash attn).
-		return 0.75
+		// TurboQuant 3-bit MSE: 3 bits packed indices + 1 F32 norm per head.
+		// For head_dim=128: (128*3/32 + 1) * 4 = 52 bytes / 128 = 0.41 bytes/elem.
+		return 0.41
 	case "tq4":
-		// TurboQuant 4-bit: persistent cache ≈ 0.53 bytes/elem (4-bit Lloyd-Max MSE).
-		// Inflated to account for F16 decompression graph overhead.
-		return 1.0
+		// TurboQuant 4-bit MSE: 4 bits packed indices + 1 F32 norm per head.
+		// For head_dim=128: (128*4/32 + 1) * 4 = 68 bytes / 128 = 0.53 bytes/elem.
+		return 0.53
 	case "f32":
 		return 4 // f32 (default for recurrent)
 	default:
