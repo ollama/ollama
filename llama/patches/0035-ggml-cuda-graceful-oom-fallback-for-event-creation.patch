@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Samaresh Kumar Singh <ssam3003@gmail.com>
+Date: Wed, 4 Mar 2026 12:51:08 -0600
+Subject: [PATCH] ggml-cuda: graceful OOM fallback for event creation
+
+When a model is partially offloaded to GPU, the CUDA_Host (pinned
+memory) buffer for CPU<->GPU transfers can exhaust the system's pinned
+memory pool. The subsequent call to cudaEventCreateWithFlags() would
+then fail but was wrapped in CUDA_CHECK(), a fatal abort macro, causing
+the llama runner to crash with "CUDA error: out of memory".
+
+Replace the fatal CUDA_CHECK() with an explicit error check that clears
+the CUDA error state, logs a warning, and returns nullptr. This matches
+the same fallback pattern already used by ggml_cuda_host_malloc(). The
+backend scheduler already null-checks every event before use, so
+returning nullptr safely skips cross-device event synchronization
+without crashing.
+---
+ ggml/src/ggml-cuda/ggml-cuda.cu | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 5c9dfd032..f4316ef30 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -4954,7 +4954,14 @@ static ggml_backend_event_t ggml_backend_cuda_device_event_new(ggml_backend_dev_
+     ggml_cuda_set_device(dev_ctx->device);
+ 
+     cudaEvent_t event;
+-    CUDA_CHECK(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
++    cudaError_t err = cudaEventCreateWithFlags(&event, cudaEventDisableTiming);
++    if (err != cudaSuccess) {
++        // Gracefully handle the error (e.g when pinned memory runs out during GPU offload)
++        // Returning nullptr simply skips cross-device sync, which the scheduler already guards with null checks.
++        (void)cudaGetLastError();
++        GGML_LOG_WARN("%s: failed to create CUDA event: %s\n", __func__, cudaGetErrorString(err));
++        return nullptr;
++    }
+ 
+     return new ggml_backend_event {
+         /* .device  = */ dev,
