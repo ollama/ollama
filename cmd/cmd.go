@@ -747,6 +747,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
+		if err := printActiveSkills(os.Stderr, false); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: couldn't load active skills: %v\n", err)
+		}
+
 		for _, msg := range info.Messages {
 			switch msg.Role {
 			case "user":
@@ -2320,6 +2324,59 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	skillsCmd := &cobra.Command{
+		Use:   "skills",
+		Short: "Manage local skills",
+	}
+
+	skillsListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List installed skills",
+		Args:  cobra.ExactArgs(0),
+		RunE:  SkillsListHandler,
+	}
+
+	skillsInstallCmd := &cobra.Command{
+		Use:   "install SOURCE",
+		Short: "Install a skill from a local directory or pinned Git/GitHub source",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsInstallHandler,
+	}
+	skillsInstallCmd.Flags().Bool("enable", false, "Enable the skill after installing")
+
+	skillsEnableCmd := &cobra.Command{
+		Use:   "enable NAME",
+		Short: "Enable a skill",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsEnableHandler,
+	}
+
+	skillsDisableCmd := &cobra.Command{
+		Use:   "disable NAME",
+		Short: "Disable a skill",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsDisableHandler,
+	}
+
+	skillsRunCmd := &cobra.Command{
+		Use:   "run NAME [ARGS...]",
+		Short: "Run an enabled skill",
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  SkillsRunHandler,
+	}
+	skillsRunCmd.Flags().StringSlice("allow", nil, "Grant permissions for this run (repeatable or comma-separated)")
+	skillsRunCmd.Flags().Bool("dry-run", false, "Print the execution plan without running the skill")
+	skillsRunCmd.Flags().Int("timeout", 0, "Override sandbox timeout in seconds (0 uses skill default)")
+	skillsRunCmd.Flags().Int64("max-output-bytes", 0, "Override output byte limit (0 uses skill default)")
+
+	skillsCmd.AddCommand(
+		skillsListCmd,
+		skillsInstallCmd,
+		skillsEnableCmd,
+		skillsDisableCmd,
+		skillsRunCmd,
+	)
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -2394,6 +2451,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		skillsCmd,
 		runnerCmd,
 		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
