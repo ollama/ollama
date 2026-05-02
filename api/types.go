@@ -1312,3 +1312,9 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 
 	return out, nil
 }
+
+// MonitorResponse is the response from [Client.Monitor].
+type MonitorResponse struct {
+	Model   string `json:"model"`
+	Content string `json:"content"`
+}

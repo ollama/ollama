@@ -486,3 +486,18 @@ func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
 	}
 	return &resp, nil
 }
+
+// MonitorResponseFunc is a function that [Client.Monitor] invokes every time
+// a token is generated across the server.
+type MonitorResponseFunc func(MonitorResponse) error
+
+// Monitor connects to the server's monitor stream.
+func (c *Client) Monitor(ctx context.Context, fn MonitorResponseFunc) error {
+	return c.stream(ctx, http.MethodGet, "/api/monitor", nil, func(bts []byte) error {
+		var resp MonitorResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+		return fn(resp)
+	})
+}

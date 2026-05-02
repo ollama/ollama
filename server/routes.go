@@ -103,6 +103,7 @@ type Server struct {
 	defaultNumCtx        int
 	requestLogger        *inferenceRequestLogger
 	modelRecommendations *modelRecommendationsCache
+	broadcaster          *Broadcaster
 }
 
 func init() {
@@ -190,6 +191,29 @@ func signinURL() (string, error) {
 	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
 	h, _ := os.Hostname()
 	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
+}
+
+func (s *Server) MonitorHandler(c *gin.Context) {
+	c.Header("Content-Type", "application/x-ndjson")
+
+	ch := s.broadcaster.Subscribe()
+	defer s.broadcaster.Unsubscribe(ch)
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case msg := <-ch:
+			data, err := json.Marshal(msg)
+			if err != nil {
+				continue
+			}
+			if _, err := c.Writer.Write(append(data, '\n')); err != nil {
+				return
+			}
+			c.Writer.Flush()
+		}
+	}
 }
 
 func (s *Server) GenerateHandler(c *gin.Context) {
@@ -568,6 +592,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Logprobs:    req.Logprobs,
 			TopLogprobs: req.TopLogprobs,
 		}, func(cr llm.CompletionResponse) {
+			if cr.Content != "" {
+				s.broadcaster.Broadcast(api.MonitorResponse{
+					Model:   req.Model,
+					Content: cr.Content,
+				})
+			}
+
 			res := api.GenerateResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
@@ -1700,6 +1731,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/pull", s.PullHandler)
 	r.POST("/api/push", s.PushHandler)
 	r.HEAD("/api/tags", s.ListHandler)
+	r.GET("/api/monitor", s.MonitorHandler)
 	r.GET("/api/tags", s.ListHandler)
 	r.POST("/api/show", s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
@@ -1817,6 +1849,7 @@ func Serve(ln net.Listener) error {
 	s := &Server{
 		addr:                 ln.Addr(),
 		modelRecommendations: newModelRecommendationsCache(),
+		broadcaster:          NewBroadcaster(),
 	}
 	if err := s.initRequestLogging(); err != nil {
 		return err
@@ -2472,6 +2505,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Logprobs:    req.Logprobs,
 				TopLogprobs: req.TopLogprobs,
 			}, func(r llm.CompletionResponse) {
+				if r.Content != "" {
+					s.broadcaster.Broadcast(api.MonitorResponse{
+						Model:   req.Model,
+						Content: r.Content,
+					})
+				}
+
 				res := api.ChatResponse{
 					Model:     req.Model,
 					CreatedAt: time.Now().UTC(),
