@@ -4,12 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func withClaudeDesktopPlatform(t *testing.T, goos string) {
 	t.Helper()
@@ -26,6 +34,15 @@ func withClaudeDesktopValidation(t *testing.T, fn func(context.Context, string) 
 	claudeDesktopValidateAPIKey = fn
 	t.Cleanup(func() {
 		claudeDesktopValidateAPIKey = old
+	})
+}
+
+func withClaudeDesktopPrompt(t *testing.T, fn func() (string, error)) {
+	t.Helper()
+	old := claudeDesktopPromptAPIKey
+	claudeDesktopPromptAPIKey = fn
+	t.Cleanup(func() {
+		claudeDesktopPromptAPIKey = old
 	})
 }
 
@@ -75,8 +92,23 @@ func TestClaudeDesktopIntegration(t *testing.T) {
 	t.Run("implements managed autodiscovery integration", func(t *testing.T) {
 		var _ ManagedAutodiscoveryIntegration = c
 	})
+	t.Run("uses Ollama Cloud", func(t *testing.T) {
+		var _ ManagedAutodiscoveryCloudIntegration = c
+		if !c.UsesOllamaCloud() {
+			t.Fatal("expected Claude Desktop autodiscovery to require Ollama Cloud")
+		}
+	})
 	t.Run("implements restore", func(t *testing.T) {
 		var _ RestorableIntegration = c
+	})
+	t.Run("has restore hint", func(t *testing.T) {
+		var _ RestoreHintIntegration = c
+		if !strings.Contains(c.RestoreHint(), "--restore") {
+			t.Fatalf("expected restore hint to mention --restore, got %q", c.RestoreHint())
+		}
+		if strings.Contains(c.RestoreHint(), "Tip:") {
+			t.Fatalf("restore hint should not use Tip wording, got %q", c.RestoreHint())
+		}
 	})
 	t.Run("skips local model readiness", func(t *testing.T) {
 		var _ ManagedModelReadinessSkipper = c
@@ -414,7 +446,7 @@ func TestClaudeDesktopWindowsOpenDoesNotFallBackToClaudeCommand(t *testing.T) {
 	t.Cleanup(func() { claudeDesktopRunningAppPath = oldRunningPath })
 
 	err := defaultClaudeDesktopOpenApp()
-	if err == nil || !strings.Contains(err.Error(), "Claude Desktop executable was not found") {
+	if err == nil || !strings.Contains(err.Error(), "Claude App executable was not found") {
 		t.Fatalf("defaultClaudeDesktopOpenApp error = %v, want executable-not-found error", err)
 	}
 }
@@ -439,6 +471,33 @@ func TestClaudeDesktopConfigureStopsBeforeWriteWhenKeyValidationFails(t *testing
 	}
 	if _, err := os.Stat(paths.desktopConfig); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("desktop config should not be written after validation failure, stat err = %v", err)
+	}
+}
+
+func TestValidateClaudeDesktopAPIKeyUsesClaudeModelsRoute(t *testing.T) {
+	oldClient := claudeDesktopHTTPClient
+	var gotPath, gotAuth string
+	claudeDesktopHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotPath = req.URL.Path
+		gotAuth = req.Header.Get("Authorization")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"data":[]}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	t.Cleanup(func() {
+		claudeDesktopHTTPClient = oldClient
+	})
+
+	if err := validateClaudeDesktopAPIKey(context.Background(), "test-key"); err != nil {
+		t.Fatalf("validateClaudeDesktopAPIKey returned error: %v", err)
+	}
+	if gotPath != "/v1/models" {
+		t.Fatalf("validation path = %q, want /v1/models", gotPath)
+	}
+	if gotAuth != "Bearer test-key" {
+		t.Fatalf("Authorization header = %q, want bearer key", gotAuth)
 	}
 }
 
@@ -486,6 +545,48 @@ func TestClaudeDesktopConfigureReusesExistingAPIKey(t *testing.T) {
 	}
 	if validatedKey != "existing-key" {
 		t.Fatalf("validated key = %q, want existing-key", validatedKey)
+	}
+}
+
+func TestClaudeDesktopConfigureReplacesInvalidExistingAPIKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	withInteractiveSession(t, true)
+	t.Setenv("OLLAMA_API_KEY", "")
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.profile, []byte(`{"inferenceGatewayApiKey":"stale-key"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var validated []string
+	withClaudeDesktopValidation(t, func(_ context.Context, key string) error {
+		validated = append(validated, key)
+		if key == "stale-key" {
+			return errors.New("invalid key")
+		}
+		return nil
+	})
+	withClaudeDesktopPrompt(t, func() (string, error) {
+		return "replacement-key", nil
+	})
+
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+	}
+	if diff := compareStrings(validated, []string{"stale-key", "replacement-key"}); diff != "" {
+		t.Fatalf("validated keys mismatch: %s", diff)
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	if profile["inferenceGatewayApiKey"] != "replacement-key" {
+		t.Fatalf("configured key = %v, want replacement-key", profile["inferenceGatewayApiKey"])
 	}
 }
 
@@ -553,6 +654,37 @@ func TestClaudeDesktopAutodiscoveryConfiguredRequiresAppliedOllamaProfile(t *tes
 	}
 	if c.AutodiscoveryConfigured() {
 		t.Fatal("expected another applied profile to hide Claude Desktop autodiscovery config")
+	}
+}
+
+func TestClaudeDesktopAutodiscoveryConfiguredRequiresAPIKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	t.Setenv("OLLAMA_API_KEY", "test-api-key")
+	withClaudeDesktopValidation(t, func(context.Context, string) error { return nil })
+
+	c := &ClaudeDesktop{}
+	if err := c.ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	delete(profile, "inferenceGatewayApiKey")
+	data, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.profile, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if c.AutodiscoveryConfigured() {
+		t.Fatal("expected missing gateway API key to force Claude Desktop reconfiguration")
 	}
 }
 

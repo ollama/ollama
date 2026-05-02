@@ -171,6 +171,18 @@ type ManagedAutodiscoveryIntegration interface {
 	Onboard() error
 }
 
+// ManagedAutodiscoveryCloudIntegration marks an autodiscovery integration whose
+// discovered model catalog depends on the user's Ollama Cloud account.
+type ManagedAutodiscoveryCloudIntegration interface {
+	UsesOllamaCloud() bool
+}
+
+// RestoreHintIntegration can provide a short restore command after launch
+// switches an app into a launch-managed mode.
+type RestoreHintIntegration interface {
+	RestoreHint() string
+}
+
 // ManagedRuntimeRefresher lets managed integrations refresh any long-lived
 // background runtime after launch rewrites their config.
 type ManagedRuntimeRefresher interface {
@@ -245,7 +257,7 @@ Flags and extra arguments require an integration name.
 
 Supported integrations:
   claude          Claude Code
-  claude-desktop Claude Desktop (aliases: claude-app)
+  claude-app      Claude App
   cline           Cline
   codex           Codex
   copilot         Copilot CLI (aliases: copilot-cli)
@@ -262,8 +274,8 @@ Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
-  ollama launch claude-desktop
-  ollama launch claude-desktop --restore
+  ollama launch claude-app
+  ollama launch claude-app --restore
   ollama launch hermes
   ollama launch droid --config (does not auto-launch)
   ollama launch codex -- -p myprofile (pass extra args to integration)
@@ -422,7 +434,7 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		if err := EnsureIntegrationInstalled(name, runner); err != nil {
 			return err
 		}
-		return launchClient.launchManagedAutodiscoveryIntegration(name, runner, autodiscovery, saved, req)
+		return launchClient.launchManagedAutodiscoveryIntegration(ctx, name, runner, autodiscovery, saved, req)
 	}
 
 	if managed, ok := runner.(ManagedSingleModel); ok {
@@ -509,7 +521,7 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 	var currentModel string
 	var usable bool
 	if autodiscovery, ok := integration.spec.Runner.(ManagedAutodiscoveryIntegration); ok {
-		currentModel, usable, err = c.launcherManagedAutodiscoveryState(info.Name, autodiscovery)
+		currentModel, usable, err = c.launcherManagedAutodiscoveryState(ctx, info.Name, autodiscovery)
 		if err != nil {
 			return LauncherIntegrationState{}, err
 		}
@@ -586,9 +598,9 @@ func (c *launcherClient) launcherManagedModelState(ctx context.Context, name str
 	return current, usable, nil
 }
 
-func (c *launcherClient) launcherManagedAutodiscoveryState(name string, autodiscovery ManagedAutodiscoveryIntegration) (string, bool, error) {
+func (c *launcherClient) launcherManagedAutodiscoveryState(ctx context.Context, name string, autodiscovery ManagedAutodiscoveryIntegration) (string, bool, error) {
 	if autodiscovery.AutodiscoveryConfigured() {
-		return autodiscovery.AutodiscoveredModel(), true, nil
+		return autodiscovery.AutodiscoveredModel(), c.managedAutodiscoveryUsable(ctx, autodiscovery), nil
 	}
 
 	cfg, loadErr := loadStoredIntegrationConfig(name)
@@ -728,12 +740,16 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 	return runIntegration(runner, target, req.ExtraArgs)
 }
 
-func (c *launcherClient) launchManagedAutodiscoveryIntegration(name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Context, name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
 	if req.ModelOverride != "" {
 		return fmt.Errorf("%s discovers models automatically; omit --model", runner)
 	}
 
 	target := autodiscovery.AutodiscoveredModel()
+	if err := c.ensureManagedAutodiscoveryUsable(ctx, autodiscovery, target); err != nil {
+		return err
+	}
+
 	needsConfigure := req.ConfigureOnly || !autodiscovery.AutodiscoveryConfigured() || !savedMatchesModels(saved, []string{target})
 
 	if needsConfigure {
@@ -756,11 +772,50 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(name string, runn
 		}
 	}
 
+	printRestoreHint(autodiscovery)
+
 	if req.ConfigureOnly {
 		return nil
 	}
 
 	return runIntegration(runner, target, req.ExtraArgs)
+}
+
+func (c *launcherClient) managedAutodiscoveryUsable(ctx context.Context, autodiscovery ManagedAutodiscoveryIntegration) bool {
+	if !managedAutodiscoveryUsesOllamaCloud(autodiscovery) {
+		return true
+	}
+	return c.ollamaCloudSignedIn(ctx)
+}
+
+func (c *launcherClient) ensureManagedAutodiscoveryUsable(ctx context.Context, autodiscovery ManagedAutodiscoveryIntegration, label string) error {
+	if !managedAutodiscoveryUsesOllamaCloud(autodiscovery) {
+		return nil
+	}
+	return ensureCloudAuth(ctx, c.apiClient, label)
+}
+
+func managedAutodiscoveryUsesOllamaCloud(autodiscovery ManagedAutodiscoveryIntegration) bool {
+	cloud, ok := autodiscovery.(ManagedAutodiscoveryCloudIntegration)
+	return ok && cloud.UsesOllamaCloud()
+}
+
+func printRestoreHint(integration any) {
+	hint, ok := integration.(RestoreHintIntegration)
+	if !ok {
+		return
+	}
+	if msg := strings.TrimSpace(hint.RestoreHint()); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+	}
+}
+
+func (c *launcherClient) ollamaCloudSignedIn(ctx context.Context) bool {
+	if disabled, known := cloudStatusDisabled(ctx, c.apiClient); known && disabled {
+		return false
+	}
+	user, err := c.apiClient.Whoami(ctx)
+	return err == nil && user != nil && user.Name != ""
 }
 
 func (c *launcherClient) managedSingleConfigureModels(ctx context.Context, managed ManagedSingleModel, target string) ([]string, error) {

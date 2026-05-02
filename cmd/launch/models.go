@@ -181,6 +181,10 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 	if len(selectedCloudModels) == 0 {
 		return nil
 	}
+	return ensureCloudAuth(ctx, client, strings.Join(selectedCloudModels, ", "))
+}
+
+func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) error {
 	if disabled, known := cloudStatusDisabled(ctx, client); known && disabled {
 		return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
 	}
@@ -192,10 +196,11 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 
 	var aErr api.AuthorizationError
 	if !errors.As(err, &aErr) || aErr.SigninURL == "" {
-		return err
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("%s requires sign in", modelList)
 	}
-
-	modelList := strings.Join(selectedCloudModels, ", ")
 
 	if DefaultSignIn != nil {
 		_, err := DefaultSignIn(modelList, aErr.SigninURL)

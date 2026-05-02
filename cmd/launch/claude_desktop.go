@@ -25,6 +25,7 @@ const (
 	claudeDesktopProfileID       = "00000000-0000-4000-8000-000000000114"
 	claudeDesktopGatewayBaseURL  = "https://ollama.com"
 	claudeDesktopModelLabel      = "Ollama Cloud"
+	claudeDesktopRestoreMessage  = "To restore the usual Claude profile, run: ollama launch claude-app --restore"
 )
 
 var (
@@ -52,19 +53,15 @@ func (c *ClaudeDesktop) String() string { return "Claude Desktop" }
 func (c *ClaudeDesktop) Supported() error { return claudeDesktopSupported() }
 
 func (c *ClaudeDesktop) Paths() []string {
-	targets, err := claudeDesktopTargetPaths()
-	if err != nil {
-		return nil
-	}
-	paths := append([]string{}, targets.normalConfigs...)
-	for _, target := range targets.thirdPartyProfiles {
-		paths = append(paths, target.desktopConfig, target.meta, target.profile)
-	}
-	return paths
+	return nil
 }
 
 func (c *ClaudeDesktop) AutodiscoveredModel() string {
 	return claudeDesktopModelLabel
+}
+
+func (c *ClaudeDesktop) UsesOllamaCloud() bool {
+	return true
 }
 
 func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
@@ -77,11 +74,8 @@ func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 		return err
 	}
 
-	key, err := claudeDesktopAPIKey(claudeDesktopTargetProfilePaths(targets))
+	key, err := claudeDesktopValidatedAPIKey(context.Background(), claudeDesktopTargetProfilePaths(targets))
 	if err != nil {
-		return err
-	}
-	if err := claudeDesktopValidateAPIKey(context.Background(), key); err != nil {
 		return err
 	}
 
@@ -101,8 +95,11 @@ func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 			return err
 		}
 	}
-	fmt.Fprintln(os.Stderr, "Tip: run 'ollama launch claude-desktop --restore' to bring back the usual Anthropic Claude profile.")
 	return nil
+}
+
+func (c *ClaudeDesktop) RestoreHint() string {
+	return claudeDesktopRestoreMessage
 }
 
 func (c *ClaudeDesktop) AutodiscoveryConfigured() bool {
@@ -130,9 +127,9 @@ func (c *ClaudeDesktop) Run(_ string, args []string) error {
 		return err
 	}
 	if len(args) > 0 {
-		return fmt.Errorf("claude-desktop does not accept extra arguments")
+		return fmt.Errorf("claude-app does not accept extra arguments")
 	}
-	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use Ollama?")
+	return claudeDesktopLaunchOrRestart("Restart Claude App to use Ollama?")
 }
 
 func (c *ClaudeDesktop) Restore() error {
@@ -160,7 +157,7 @@ func (c *ClaudeDesktop) Restore() error {
 			return err
 		}
 	}
-	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use the usual Claude profile?")
+	return claudeDesktopLaunchOrRestart("Restart Claude App to use the usual Claude profile?")
 }
 
 func claudeDesktopSupported() error {
@@ -168,7 +165,7 @@ func claudeDesktopSupported() error {
 	case "darwin", "windows":
 		return nil
 	default:
-		return fmt.Errorf("Claude Desktop launch is only supported on macOS and Windows")
+		return fmt.Errorf("Claude App launch is only supported on macOS and Windows")
 	}
 }
 
@@ -432,16 +429,57 @@ func claudeDesktopLocalAppData() (string, error) {
 	return filepath.Join(home, "AppData", "Local"), nil
 }
 
-func claudeDesktopAPIKey(profilePaths []string) (string, error) {
-	if key := strings.TrimSpace(os.Getenv("OLLAMA_API_KEY")); key != "" {
+type claudeDesktopAPIKeySource int
+
+const (
+	claudeDesktopAPIKeySourceNone claudeDesktopAPIKeySource = iota
+	claudeDesktopAPIKeySourceEnv
+	claudeDesktopAPIKeySourceProfile
+)
+
+func claudeDesktopValidatedAPIKey(ctx context.Context, profilePaths []string) (string, error) {
+	key, source, err := claudeDesktopAPIKey(profilePaths)
+	if err != nil {
+		return "", err
+	}
+	if err := claudeDesktopValidateAPIKey(ctx, key); err == nil {
 		return key, nil
+	} else if source != claudeDesktopAPIKeySourceProfile || !canPromptClaudeDesktopAPIKey() {
+		return "", err
+	}
+	return promptValidClaudeDesktopAPIKey(ctx)
+}
+
+func claudeDesktopAPIKey(profilePaths []string) (string, claudeDesktopAPIKeySource, error) {
+	if key := strings.TrimSpace(os.Getenv("OLLAMA_API_KEY")); key != "" {
+		return key, claudeDesktopAPIKeySourceEnv, nil
 	}
 	for _, profilePath := range profilePaths {
 		if key := readClaudeDesktopGatewayAPIKey(profilePath); key != "" {
-			return key, nil
+			return key, claudeDesktopAPIKeySourceProfile, nil
 		}
 	}
-	if !isInteractiveSession() || currentLaunchConfirmPolicy.requireYesMessage {
+	key, err := promptClaudeDesktopAPIKeyValue()
+	return key, claudeDesktopAPIKeySourceNone, err
+}
+
+func canPromptClaudeDesktopAPIKey() bool {
+	return isInteractiveSession() && !currentLaunchConfirmPolicy.requireYesMessage
+}
+
+func promptValidClaudeDesktopAPIKey(ctx context.Context) (string, error) {
+	key, err := promptClaudeDesktopAPIKeyValue()
+	if err != nil {
+		return "", err
+	}
+	if err := claudeDesktopValidateAPIKey(ctx, key); err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+func promptClaudeDesktopAPIKeyValue() (string, error) {
+	if !canPromptClaudeDesktopAPIKey() {
 		return "", missingClaudeDesktopAPIKeyError()
 	}
 	key, err := claudeDesktopPromptAPIKey()
@@ -456,7 +494,7 @@ func claudeDesktopAPIKey(profilePaths []string) (string, error) {
 }
 
 func missingClaudeDesktopAPIKeyError() error {
-	return fmt.Errorf("OLLAMA_API_KEY is required for Claude Desktop. Create an API key at https://ollama.com/settings/keys, then re-run with OLLAMA_API_KEY set")
+	return fmt.Errorf("OLLAMA_API_KEY is required for Claude App. Create an API key at https://ollama.com/settings/keys, then re-run with OLLAMA_API_KEY set")
 }
 
 func promptClaudeDesktopAPIKey() (string, error) {
@@ -482,7 +520,7 @@ func validateClaudeDesktopAPIKey(ctx context.Context, key string) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeDesktopGatewayBaseURL+"/api/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeDesktopGatewayBaseURL+"/v1/models", nil)
 	if err != nil {
 		return err
 	}
@@ -660,6 +698,9 @@ func claudeDesktopThirdPartyProfileConfigured(target claudeDesktopThirdPartyPath
 	if s, _ := cfg["inferenceGatewayBaseUrl"].(string); strings.TrimRight(s, "/") != claudeDesktopGatewayBaseURL {
 		return false
 	}
+	if s, _ := cfg["inferenceGatewayApiKey"].(string); strings.TrimSpace(s) == "" {
+		return false
+	}
 	return true
 }
 
@@ -723,7 +764,7 @@ func claudeDesktopLaunchOrRestart(prompt string) error {
 		return err
 	}
 	if !restart {
-		fmt.Fprintln(os.Stderr, "\nQuit and reopen Claude Desktop when you're ready for the profile change to take effect.")
+		fmt.Fprintln(os.Stderr, "\nQuit and reopen Claude App when you're ready for the profile change to take effect.")
 		return nil
 	}
 
@@ -747,7 +788,7 @@ func waitForClaudeDesktopExit(timeout time.Duration) error {
 		}
 		claudeDesktopSleep(200 * time.Millisecond)
 	}
-	return fmt.Errorf("Claude Desktop did not quit; quit it manually and re-run the command")
+	return fmt.Errorf("Claude App did not quit; quit it manually and re-run the command")
 }
 
 func defaultClaudeDesktopIsRunning() bool {
@@ -772,7 +813,7 @@ func defaultClaudeDesktopOpenApp() error {
 		if path := claudeDesktopRunningAppPath(); path != "" {
 			return claudeDesktopOpenAppPath(path)
 		}
-		return fmt.Errorf("Claude Desktop executable was not found; open Claude Desktop manually once and re-run 'ollama launch claude-desktop'")
+		return fmt.Errorf("Claude App executable was not found; open Claude App manually once and re-run 'ollama launch claude-app'")
 	case "darwin":
 		return openClaudeDesktopDarwin()
 	default:

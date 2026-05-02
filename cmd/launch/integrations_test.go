@@ -1366,6 +1366,30 @@ func TestEnsureAuth_SkipsWhenNoCloudSelected(t *testing.T) {
 	}
 }
 
+func TestEnsureAuth_EmptyWhoamiRequiresSignIn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"not found"}`)
+		case "/api/me":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ensureAuth(context.Background(), client, map[string]bool{"cloud-model:cloud": true}, []string{"cloud-model:cloud"})
+	if err == nil || !strings.Contains(err.Error(), "cloud-model:cloud requires sign in") {
+		t.Fatalf("ensureAuth error = %v, want sign-in required", err)
+	}
+}
+
 func TestEnsureAuth_PreservesCancelledSignInHook(t *testing.T) {
 	oldSignIn := DefaultSignIn
 	DefaultSignIn = func(modelName, signInURL string) (string, error) {

@@ -113,9 +113,15 @@ type launcherManagedAutodiscoveryRunner struct {
 	launcherManagedRunner
 	autodiscoveryConfigures int
 	autodiscoveryConfigured bool
+	usesCloud               bool
+	restoreHint             string
 }
 
 func (r *launcherManagedAutodiscoveryRunner) AutodiscoveredModel() string { return "Ollama Cloud" }
+
+func (r *launcherManagedAutodiscoveryRunner) UsesOllamaCloud() bool { return r.usesCloud }
+
+func (r *launcherManagedAutodiscoveryRunner) RestoreHint() string { return r.restoreHint }
 
 func (r *launcherManagedAutodiscoveryRunner) AutodiscoveryConfigured() bool {
 	return r.autodiscoveryConfigured
@@ -731,6 +737,142 @@ func TestLaunchIntegration_ManagedAutodiscoverySkipsModelPicker(t *testing.T) {
 	}
 	if diff := compareStrings(saved.Models, []string{"Ollama Cloud"}); diff != "" {
 		t.Fatalf("saved models mismatch: %s", diff)
+	}
+}
+
+func TestLaunchIntegration_ManagedAutodiscoveryPrintsRestoreHintWhenAlreadyConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedAutodiscoveryRunner{
+		autodiscoveryConfigured: true,
+		restoreHint:             "run restore command",
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	if err := config.SaveIntegration("stubmanaged", []string{"Ollama Cloud"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+	if err := config.MarkIntegrationOnboarded("stubmanaged"); err != nil {
+		t.Fatalf("failed to mark integration onboarded: %v", err)
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+			t.Fatalf("LaunchIntegration returned error: %v", err)
+		}
+	})
+
+	if runner.autodiscoveryConfigures != 0 {
+		t.Fatalf("expected configured autodiscovery integration not to reconfigure, got %d configures", runner.autodiscoveryConfigures)
+	}
+	if runner.ranModel != "Ollama Cloud" {
+		t.Fatalf("expected launch to run autodiscovery label, got %q", runner.ranModel)
+	}
+	if !strings.Contains(stderr, "run restore command") {
+		t.Fatalf("expected restore hint in stderr, got %q", stderr)
+	}
+}
+
+func TestLaunchIntegration_CloudAutodiscoveryUsesSignInHook(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedAutodiscoveryRunner{usesCloud: true}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	signInCalled := false
+	DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		signInCalled = true
+		if modelName != "Ollama Cloud" {
+			t.Fatalf("sign-in model = %q, want Ollama Cloud", modelName)
+		}
+		if signInURL != "https://example.com/signin" {
+			t.Fatalf("sign-in URL = %q, want test URL", signInURL)
+		}
+		return "test-user", nil
+	}
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"not found"}`)
+		case "/api/me":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if !signInCalled {
+		t.Fatal("expected cloud autodiscovery launch to use the sign-in hook")
+	}
+	if runner.autodiscoveryConfigures != 1 {
+		t.Fatalf("expected one autodiscovery configure, got %d", runner.autodiscoveryConfigures)
+	}
+	if runner.ranModel != "Ollama Cloud" {
+		t.Fatalf("expected launch to run autodiscovery label, got %q", runner.ranModel)
+	}
+}
+
+func TestBuildLauncherIntegrationState_CloudAutodiscoveryRequiresSignedIn(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedAutodiscoveryRunner{
+		autodiscoveryConfigured: true,
+		usesCloud:               true,
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"not found"}`)
+		case "/api/me":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	launchClient, err := newLauncherClient(defaultLaunchPolicy(true, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := launchClient.buildLauncherIntegrationState(context.Background(), IntegrationInfo{
+		Name:        "stubmanaged",
+		DisplayName: "Stub Managed",
+	})
+	if err != nil {
+		t.Fatalf("buildLauncherIntegrationState returned error: %v", err)
+	}
+
+	if state.CurrentModel != "Ollama Cloud" {
+		t.Fatalf("current model = %q, want Ollama Cloud", state.CurrentModel)
+	}
+	if state.ModelUsable {
+		t.Fatal("expected cloud autodiscovery config to be unusable while signed out")
 	}
 }
 
