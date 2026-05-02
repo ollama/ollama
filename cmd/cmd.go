@@ -2041,6 +2041,11 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 
 // runInteractiveTUI runs the main interactive TUI menu.
 func runInteractiveTUI(cmd *cobra.Command) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprintln(os.Stderr, "Error: interactive terminal required. To start the server, run: ollama serve")
+		return
+	}
+
 	// Ensure the server is running before showing the TUI
 	if err := ensureServerRunning(cmd.Context()); err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
