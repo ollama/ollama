@@ -1881,7 +1881,7 @@ func Serve(ln net.Listener) error {
 
 	var totalVRAM uint64
 	for _, gpu := range gpus {
-		totalVRAM += gpu.TotalMemory - envconfig.GpuOverhead()
+		totalVRAM += min(gpu.TotalMemory, envconfig.MaxVRAM()) - envconfig.GpuOverhead()
 	}
 
 	// Set default context based on VRAM tier
