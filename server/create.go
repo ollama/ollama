@@ -89,6 +89,15 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		return
 	}
 
+	// Validate the quantization argument up-front so a typo (e.g. "Q5_K_M") fails
+	// before importing/merging any blobs (#15925).
+	if quantType := strings.ToUpper(cmp.Or(r.Quantize, r.Quantization)); quantType != "" {
+		if _, err := ggml.ParseFileType(quantType); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
 	name, err := getExistingName(name)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
