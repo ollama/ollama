@@ -368,6 +368,57 @@ How much the cache quantization impacts the model's response quality will depend
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
 
+## How can I auto-optimize Ollama for my hardware?
+
+Ollama includes an **autotune** feature that automatically detects your hardware (CPU, GPU, VRAM, RAM) and applies optimal settings. Instead of manually configuring Flash Attention, KV cache type, context length, and other parameters, you can set a single performance profile.
+
+### Available profiles
+
+| Profile | Description |
+| :-- | :-- |
+| `speed` | Maximize token generation speed (single-user, high VRAM usage) |
+| `balanced` | Good tradeoff between speed and resource usage (default) |
+| `memory` | Minimize memory usage for constrained hardware |
+| `multiuser` | Optimize for concurrent users with shared cache |
+| `max` | Squeeze maximum performance at the cost of resources |
+
+### Using autotune
+
+Set the `OLLAMA_PERFORMANCE_PROFILE` environment variable before starting the server:
+
+```shell
+OLLAMA_PERFORMANCE_PROFILE=speed ollama serve
+```
+
+Or use the `--profile` flag:
+
+```shell
+ollama serve --profile speed
+```
+
+You can also change the profile at runtime using the CLI:
+
+```shell
+ollama autotune speed
+```
+
+Check current autotune status:
+
+```shell
+ollama autotune status
+```
+
+List available profiles:
+
+```shell
+ollama autotune profiles
+```
+
+<Note>
+  Autotune only sets values for environment variables that are not already explicitly set.
+  Your manual overrides always take priority.
+</Note>
+
 ## Where can I find my Ollama Public Key?
 
 Your **Ollama Public Key** is the public part of the key pair that lets your local Ollama instance talk to [ollama.com](https://ollama.com).
