@@ -335,6 +335,26 @@ Speak poetry after the first sentence.</think><think>Speak poetry after the seco
 	}
 }
 
+func TestQwen3VLThinkingRendererEscapesToolResponses(t *testing.T) {
+	renderer := &Qwen3VLRenderer{isThinking: true}
+	msgs := []api.Message{
+		{Role: "user", Content: "Check tool output"},
+		{Role: "tool", Content: "safe &lt;div&gt; but raw <tag> & data"},
+	}
+
+	got, err := renderer.Render(msgs, nil, &api.ThinkValue{Value: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(got, "safe &lt;div&gt; but raw &lt;tag&gt; &amp; data") {
+		t.Fatalf("expected mixed escaped/raw payload handling, got:\n%s", got)
+	}
+	if strings.Contains(got, "&amp;lt;div&amp;gt;") {
+		t.Fatalf("expected existing entities to be preserved, got:\n%s", got)
+	}
+}
+
 func TestFormatToolCallArgumentThinkingVL(t *testing.T) {
 	tests := []struct {
 		name     string
