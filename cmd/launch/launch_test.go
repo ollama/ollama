@@ -1681,6 +1681,64 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 }
 
+func TestConfirmConfigEdit_OmitsBackupMessageWhenFilesDoNotExist(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	var prompted bool
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		prompted = true
+		return true, nil
+	}
+
+	stderr := captureStderr(t, func() {
+		ok, err := confirmConfigEdit(&launcherEditorRunner{}, []string{filepath.Join(tmpDir, "missing.json")})
+		if err != nil {
+			t.Fatalf("confirmConfigEdit returned error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected confirmConfigEdit to continue")
+		}
+	})
+
+	if !prompted {
+		t.Fatal("expected confirmation prompt")
+	}
+	if strings.Contains(stderr, "backed up to") {
+		t.Fatalf("did not expect backup message for missing files, got %q", stderr)
+	}
+}
+
+func TestConfirmConfigEdit_ShowsBackupMessageWhenFilesExist(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	path := filepath.Join(tmpDir, "settings.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("failed to seed config file: %v", err)
+	}
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	stderr := captureStderr(t, func() {
+		ok, err := confirmConfigEdit(&launcherEditorRunner{}, []string{path})
+		if err != nil {
+			t.Fatalf("confirmConfigEdit returned error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected confirmConfigEdit to continue")
+		}
+	})
+
+	if !strings.Contains(stderr, "Existing files will be backed up to "+filepath.Join(tmpDir, ".ollama", "backups")+"/") {
+		t.Fatalf("expected backup message in stderr, got %q", stderr)
+	}
+}
+
 func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
