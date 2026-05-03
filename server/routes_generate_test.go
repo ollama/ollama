@@ -600,6 +600,90 @@ func TestGenerateChat(t *testing.T) {
 		}
 	})
 
+	t.Run("messages with tools preserves prompt metrics from buffered chunks", func(t *testing.T) {
+		tools := []api.Tool{
+			{
+				Type: "function",
+				Function: api.ToolFunction{
+					Name: "get_weather",
+					Parameters: api.ToolFunctionParameters{
+						Type: "object",
+						Properties: testPropsMap(map[string]api.ToolProperty{
+							"location": {Type: api.PropertyType{"string"}},
+						}),
+					},
+				},
+			},
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			defer wg.Done()
+
+			responses := []llm.CompletionResponse{
+				{
+					Content:            `{"name":"get_weather",`,
+					PromptEvalCount:    42,
+					PromptEvalDuration: 7,
+				},
+				{
+					Content:    `"arguments":{"location":"Seattle"}}`,
+					Done:       true,
+					DoneReason: llm.DoneReasonStop,
+					EvalCount:  5,
+				},
+			}
+
+			for _, resp := range responses {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+					fn(resp)
+				}
+			}
+			return nil
+		}
+
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-system",
+			Messages: []api.Message{
+				{Role: "user", Content: "What's the weather in Seattle?"},
+			},
+			Tools:  tools,
+			Stream: &stream,
+		})
+
+		wg.Wait()
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		decoder := json.NewDecoder(w.Body)
+		var final api.ChatResponse
+		for {
+			var resp api.ChatResponse
+			if err := decoder.Decode(&resp); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Done {
+				final = resp
+			}
+		}
+
+		if final.Metrics.PromptEvalCount != 42 {
+			t.Fatalf("expected prompt eval count 42, got %d", final.Metrics.PromptEvalCount)
+		}
+		if final.Metrics.PromptEvalDuration != 7 {
+			t.Fatalf("expected prompt eval duration 7, got %s", final.Metrics.PromptEvalDuration)
+		}
+	})
+
 	t.Run("messages with tools (streaming)", func(t *testing.T) {
 		tools := []api.Tool{
 			{
