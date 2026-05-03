@@ -314,6 +314,11 @@ type DeviceInfo struct {
 
 	// Where backends were loaded from
 	LibraryPath []string
+
+	// RunnerEnvOverrides stores exceptional per-device runner environment
+	// overrides discovered during bootstrap. This is internal server state and
+	// is not serialized.
+	RunnerEnvOverrides map[string]string `json:"-"`
 }
 
 type SystemInfo struct {
@@ -519,16 +524,24 @@ func (f FlashAttentionType) String() string {
 }
 
 // Given the list of GPUs this instantiation is targeted for,
-// figure out the visible devices environment variables
-// Set mustFilter true to enable filtering of CUDA devices
-func GetVisibleDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
+// figure out the device environment variables and any recorded
+// per-device runner environment overrides. Set mustFilter true to enable
+// filtering of CUDA devices.
+func GetDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
 	if len(l) == 0 {
 		return nil
 	}
 	env := map[string]string{}
 	for _, d := range l {
 		d.updateVisibleDevicesEnv(env, mustFilter)
+		for k, v := range d.RunnerEnvOverrides {
+			if existing, ok := env[k]; ok && existing != v {
+				slog.Warn("conflicting device environment override", "key", k, "existing", existing, "new", v, "library", d.Library, "id", d.ID)
+			}
+			env[k] = v
+		}
 	}
+
 	return env
 }
 

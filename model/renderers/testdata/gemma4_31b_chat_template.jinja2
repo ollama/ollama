@@ -1,9 +1,9 @@
-{%- macro format_parameters(properties, required) -%}
+{%- macro format_parameters(properties, required, filter_keys=false) -%}
     {%- set standard_keys = ['description', 'type', 'properties', 'required', 'nullable'] -%}
     {%- set ns = namespace(found_first=false) -%}
     {%- for key, value in properties | dictsort -%}
         {%- set add_comma = false -%}
-        {%- if key not in standard_keys -%}
+        {%- if not filter_keys or key not in standard_keys -%}
             {%- if ns.found_first %},{% endif -%}
             {%- set ns.found_first = true -%}
             {{ key }}:{
@@ -65,7 +65,7 @@
                 {%- elif value is mapping -%}
                     {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}
                     properties:{
-                    {{- format_parameters(value, value['required'] | default([])) -}}
+                    {{- format_parameters(value, value['required'] | default([]), filter_keys=true) -}}
                     }
                 {%- endif -%}
                 {%- if value['required'] -%}
@@ -178,18 +178,21 @@
 {#- Handle System/Tool Definitions Block -#}
 {%- if (enable_thinking is defined and enable_thinking) or tools or messages[0]['role'] in ['system', 'developer'] -%}
     {{- '<|turn>system\n' -}}
-
     {#- Inject Thinking token at the very top of the FIRST system turn -#}
     {%- if enable_thinking is defined and enable_thinking -%}
         {{- '<|think|>\n' -}}
         {%- set ns.prev_message_type = 'think' -%}
     {%- endif -%}
-
     {%- if messages[0]['role'] in ['system', 'developer'] -%}
-        {{- messages[0]['content'] | trim -}}
+        {%- if messages[0]['content'] is string -%}
+            {{- messages[0]['content'] | trim -}}
+        {%- elif messages[0]['content'] is sequence -%}
+            {%- for item in messages[0]['content'] -%}
+                {{- item['text'] | trim + ' '-}}
+            {%- endfor -%}
+        {%- endif -%}
         {%- set loop_messages = messages[1:] -%}
     {%- endif -%}
-
     {%- if tools -%}
         {%- for tool in tools %}
             {{- '<|tool>' -}}
@@ -198,7 +201,6 @@
         {%- endfor %}
         {%- set ns.prev_message_type = 'tool' -%}
     {%- endif -%}
-
     {{- '<turn|>\n' -}}
 {%- endif %}
 
@@ -302,6 +304,7 @@
                 {%- endfor -%}
             {%- endif -%}
 
+            {%- set captured_content -%}
             {%- if message['content'] is string -%}
                 {%- if role == 'model' -%}
                     {{- strip_thinking(message['content']) -}}
@@ -328,10 +331,14 @@
                     {%- endif -%}
                 {%- endfor -%}
             {%- endif -%}
+            {%- endset -%}
+
+            {{- captured_content -}}
+            {%- set has_content = captured_content | trim | length > 0 -%}
 
         {%- if ns.prev_message_type == 'tool_call' and not ns_tr_out.flag -%}
             {{- '<|tool_response>' -}}
-        {%- elif not (ns_tr_out.flag and not message.get('content')) -%}
+        {%- elif not (ns_tr_out.flag and not has_content) -%}
             {{- '<turn|>\n' -}}
         {%- endif -%}
     {%- endif -%}

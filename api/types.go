@@ -802,6 +802,20 @@ type ListResponse struct {
 	Models []ListModelResponse `json:"models"`
 }
 
+// ModelRecommendationsResponse is the response from [Client.ModelRecommendationsExperimental].
+type ModelRecommendationsResponse struct {
+	Recommendations []ModelRecommendation `json:"recommendations"`
+}
+
+// ModelRecommendation is a single recommendation entry in [ModelRecommendationsResponse].
+type ModelRecommendation struct {
+	Model           string `json:"model"`
+	Description     string `json:"description"`
+	ContextLength   int    `json:"context_length,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+	VRAMBytes       int64  `json:"vram_bytes,omitempty"`
+}
+
 // ProcessResponse is the response from [Client.Process].
 type ProcessResponse struct {
 	Models []ProcessModelResponse `json:"models"`

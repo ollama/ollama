@@ -45,9 +45,9 @@ type Client struct {
 	cmd           *exec.Cmd
 }
 
-// statusWriter captures the last stderr line from the subprocess while
-// forwarding all output to os.Stderr. Lines longer than maxStatusLen are
-// truncated to the first maxStatusLen bytes.
+// statusWriter captures the last subprocess line while forwarding all output
+// to os.Stderr. Lines longer than maxStatusLen are truncated to the first
+// maxStatusLen bytes.
 type statusWriter struct {
 	lastErrMsg string
 	buf        []byte
@@ -405,17 +405,12 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 
 	c.cmd = cmd
 
-	// Forward subprocess stdout/stderr to server logs
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
 	status := &statusWriter{out: os.Stderr}
 	c.status = status
-	go func() {
-		io.Copy(os.Stderr, stdout) //nolint:errcheck
-	}()
-	go func() {
-		io.Copy(status, stderr) //nolint:errcheck
-	}()
+	// os/exec serializes Write calls when shared, which keeps the status writer
+	// from seeing concurrent stdout/stderr fragments.
+	cmd.Stdout = status
+	cmd.Stderr = status
 
 	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
 	if err := cmd.Start(); err != nil {
