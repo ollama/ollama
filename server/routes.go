@@ -194,6 +194,8 @@ func signinURL() (string, error) {
 
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
+	AcquirePowerLock()          // Prevent sleep during inference
+	defer ReleasePowerLock()
 	var req api.GenerateRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -2138,6 +2140,8 @@ func toolCallId() string {
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
+	AcquirePowerLock()          // Prevent sleep during inference
+	defer ReleasePowerLock()
 	var req api.ChatRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
