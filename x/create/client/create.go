@@ -290,6 +290,13 @@ func createUnquantizedLayer(r io.Reader, name string) ([]create.LayerInfo, error
 // creating packed multi-tensor blob layers (used for expert groups).
 func newPackedTensorLayerCreator() create.PackedTensorLayerCreator {
 	return func(groupName string, tensors []create.PackedTensorInput) (create.LayerInfo, error) {
+		// Stack any per-expert 2-D inputs into 3-D switch_mlp form before
+		// the quantize/pack branch split, so both paths see the same layout.
+		tensors, err := create.StackPerExpertGroup(groupName, tensors)
+		if err != nil {
+			return create.LayerInfo{}, fmt.Errorf("failed to stack expert group %s: %w", groupName, err)
+		}
+
 		// Check if any tensor in the group needs quantization
 		hasQuantize := false
 		for _, t := range tensors {
@@ -304,7 +311,7 @@ func newPackedTensorLayerCreator() create.PackedTensorLayerCreator {
 			if !QuantizeSupported() {
 				return create.LayerInfo{}, fmt.Errorf("quantization requires MLX support")
 			}
-			blobData, err := quantizePackedGroup(groupName, tensors)
+			blobData, err := quantizePackedGroup(tensors)
 			if err != nil {
 				return create.LayerInfo{}, fmt.Errorf("failed to quantize packed group %s: %w", groupName, err)
 			}

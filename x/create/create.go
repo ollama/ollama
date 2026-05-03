@@ -324,7 +324,8 @@ func isStackedExpertWeight(name string) bool {
 	return strings.Contains(name, ".mlp.switch_mlp.") ||
 		strings.Contains(name, ".mlp.experts.") ||
 		strings.Contains(name, ".mlp.shared_experts.") ||
-		strings.Contains(name, ".moe.experts.")
+		strings.Contains(name, ".moe.experts.") || // gemma4 misname compat
+		strings.Contains(name, ".moe.switch_mlp.") // gemma4 misname compat
 }
 
 func sourceFP8BF16PromotionQuantization(name string, shape []int32, requested string) string {
@@ -463,7 +464,6 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 }
 
 var expertLayerPrefixRegexp = regexp.MustCompile(`^(?:model\.language_model\.|language_model(?:\.model)?\.|model\.)?layers\.\d+$`)
-var prequantizedExpertSuffixRegexp = regexp.MustCompile(`^\.(\d+)\.(.+)$`)
 
 // ExpertGroupPrefix returns the group prefix for expert tensors that should be packed together.
 // For example:
@@ -481,7 +481,8 @@ func ExpertGroupPrefix(tensorName string) string {
 		".mlp.experts.",
 		".mlp.shared_experts.",
 		".mlp.switch_mlp.",
-		".moe.experts.",
+		".moe.experts.",    // gemma4 misname compat
+		".moe.switch_mlp.", // gemma4 misname compat
 	} {
 		idx := strings.Index(tensorName, marker)
 		if idx == -1 {
@@ -511,6 +512,119 @@ type PackedTensorInput struct {
 // PackedTensorLayerCreator creates a single blob layer containing multiple packed tensors.
 // groupName is the group prefix (e.g., "model.layers.1.mlp.experts").
 type PackedTensorLayerCreator func(groupName string, tensors []PackedTensorInput) (LayerInfo, error)
+
+// StackPerExpertGroup folds per-expert 2-D tensors in an `*.experts` packed
+// group into one 3-D switch_mlp tensor per projection so the rest of the
+// pipeline sees a single on-disk layout regardless of source format.
+//
+// Inputs matching "<groupName>.{N}.<proj>" are sorted by expert index and
+// concatenated along axis 0 into "<groupBase>.switch_mlp.<proj>" with shape
+// [N, ...inputShape], where groupBase is groupName minus its trailing
+// ".experts". dtype, shape, and quantize must match within a projection.
+// Inputs that don't match the per-expert pattern pass through unchanged.
+//
+// Stacking is byte-level concatenation, so this layer carries no MLX
+// dependency; quantization, when requested, runs downstream once per
+// stacked projection.
+func StackPerExpertGroup(groupName string, inputs []PackedTensorInput) ([]PackedTensorInput, error) {
+	if !strings.HasSuffix(groupName, ".experts") {
+		return inputs, nil
+	}
+
+	type expertEntry struct {
+		index int
+		in    PackedTensorInput
+	}
+	projGroups := make(map[string][]expertEntry)
+	var passthrough []PackedTensorInput
+	for _, in := range inputs {
+		suffix := strings.TrimPrefix(in.Name, groupName)
+		m := perExpertSuffixRegexp.FindStringSubmatch(suffix)
+		if m == nil {
+			passthrough = append(passthrough, in)
+			continue
+		}
+		idx, err := strconv.Atoi(m[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid expert index in %q: %w", in.Name, err)
+		}
+		projGroups[m[2]] = append(projGroups[m[2]], expertEntry{index: idx, in: in})
+	}
+	if len(projGroups) == 0 {
+		return inputs, nil
+	}
+
+	out := make([]PackedTensorInput, 0, len(passthrough)+len(projGroups))
+	out = append(out, passthrough...)
+
+	groupBase := strings.TrimSuffix(groupName, ".experts")
+	projNames := make([]string, 0, len(projGroups))
+	for proj := range projGroups {
+		projNames = append(projNames, proj)
+	}
+	sort.Strings(projNames)
+
+	for _, proj := range projNames {
+		experts := projGroups[proj]
+		sort.Slice(experts, func(i, j int) bool {
+			return experts[i].index < experts[j].index
+		})
+
+		first := experts[0].in
+		elemSize, err := DTypeSize(first.Dtype)
+		if err != nil {
+			return nil, fmt.Errorf("unsupported dtype %q for %s: %w", first.Dtype, first.Name, err)
+		}
+		var perExpertElems int64 = 1
+		for _, d := range first.Shape {
+			perExpertElems *= int64(d)
+		}
+		perExpertBytes := perExpertElems * int64(elemSize)
+
+		combined := make([]byte, 0, int64(len(experts))*perExpertBytes)
+		for _, e := range experts {
+			if e.in.Dtype != first.Dtype {
+				return nil, fmt.Errorf("expert dtype mismatch in projection %q: %s has %s, %s has %s",
+					proj, first.Name, first.Dtype, e.in.Name, e.in.Dtype)
+			}
+			if !slices.Equal(e.in.Shape, first.Shape) {
+				return nil, fmt.Errorf("expert shape mismatch in projection %q: %s has %v, %s has %v",
+					proj, first.Name, first.Shape, e.in.Name, e.in.Shape)
+			}
+			if e.in.Quantize != first.Quantize {
+				return nil, fmt.Errorf("mixed quantization within projection %q for group %q: %q vs %q",
+					proj, groupName, first.Quantize, e.in.Quantize)
+			}
+			raw, err := safetensors.ExtractRawFromSafetensors(e.in.Reader)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract raw bytes for %s: %w", e.in.Name, err)
+			}
+			if int64(len(raw)) != perExpertBytes {
+				return nil, fmt.Errorf("%s: raw byte length %d does not match shape %v dtype %s (expected %d)",
+					e.in.Name, len(raw), e.in.Shape, e.in.Dtype, perExpertBytes)
+			}
+			combined = append(combined, raw...)
+		}
+
+		stackedShape := append([]int32{int32(len(experts))}, first.Shape...)
+		stackedName := groupBase + ".switch_mlp." + proj
+		td := safetensors.NewTensorDataFromBytes(stackedName, first.Dtype, stackedShape, combined)
+		out = append(out, PackedTensorInput{
+			Name:     stackedName,
+			Dtype:    first.Dtype,
+			Shape:    stackedShape,
+			Quantize: first.Quantize,
+			Reader:   td.SafetensorsReader(),
+		})
+	}
+
+	return out, nil
+}
+
+// perExpertSuffixRegexp matches ".{index}.{proj_and_suffix}" after the
+// expert group prefix. Used both by StackPerExpertGroup and by the
+// pre-quantized NVFP4 expert pipeline.
+var perExpertSuffixRegexp = regexp.MustCompile(`^\.(\d+)\.(.+)$`)
 
 type sourceQuantization struct {
 	Bits            int     `json:"bits"`
@@ -1495,7 +1609,7 @@ func stackPackedNVFP4ExpertGroup(groupName string, tensors []*safetensors.Tensor
 	grouped := make(map[string][]namedExpertTensor)
 	for _, td := range tensors {
 		suffix := strings.TrimPrefix(td.Name, groupName)
-		m := prequantizedExpertSuffixRegexp.FindStringSubmatch(suffix)
+		m := perExpertSuffixRegexp.FindStringSubmatch(suffix)
 		if m == nil {
 			return nil, nil, false, nil
 		}

@@ -167,10 +167,16 @@ func transposeForGatherMM(w *mlx.Array) *mlx.Array {
 	return t
 }
 
-// collectExpertProjection collects per-expert tensors, stacks them, and
-// optionally keeps quantized weight/scale/bias for GatherQMM.
+// collectExpertProjection loads "<layerPrefix>.moe.experts.{E}.<proj>" tensors
+// and stacks them at load time.
+//
+// Backwards compatibility only: kept so previously-published per-expert blobs
+// keep loading. New imports land in the 3-D switch_mlp form via
+// create.StackPerExpertGroup and are read directly by the switch_mlp branch
+// in LoadWeights above.
+//
 // prefix: e.g. "model.language_model.layers.0.moe.experts"
-// proj: e.g. "gate_proj"
+// proj:   e.g. "gate_proj"
 func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, prefix, proj string, numExperts int32) *stackedExpertResult {
 	weights := make([]*mlx.Array, 0, numExperts)
 	scales := make([]*mlx.Array, 0, numExperts)
@@ -726,8 +732,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				Scale: routerScale,
 			}
 
-			// MoE expert weights. Try pre-stacked (BF16 from HF) first,
-			// then per-expert (from quantized create path).
+			// MoE expert weights. New imports land in the 3-D switch_mlp form
+			// below; the per-expert branch further down is a backwards-compat
+			// fallback for previously-published blobs.
 			perExpertScale := tensors[layerPrefix+".router.per_expert_scale"]
 			if perExpertScale == nil {
 				perExpertScale = tensors[layerPrefix+".moe.per_expert_scale"]
@@ -738,49 +745,10 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 			moe := &MoEBlock{PerExpertScale: perExpertScale}
 
-			// Check for pre-stacked tensors (unquantized HF format).
-			// Try .experts. first (new weight drop), fall back to .moe. (old format).
-			gateUpW := tensors[layerPrefix+".experts.gate_up_proj"]
-			if gateUpW == nil {
-				gateUpW = tensors[layerPrefix+".moe.gate_up_proj"]
-			}
-			gateW := tensors[layerPrefix+".experts.gate_proj"]
-			if gateW == nil {
-				gateW = tensors[layerPrefix+".moe.gate_proj"]
-			}
-			if gateUpW != nil {
-				// Fused gate+up: split along dim 1, transpose for GatherMM.
-				dims := gateUpW.Dims()
-				half := int32(dims[1] / 2)
-				gateSlice := sliceAxis1(gateUpW, 0, half)
-				upSlice := sliceAxis1(gateUpW, half, int32(dims[1]))
-				moe.GateWeight = transposeForGatherMM(gateSlice)
-				moe.UpWeight = transposeForGatherMM(upSlice)
-				downW := tensors[layerPrefix+".experts.down_proj"]
-				if downW == nil {
-					downW = tensors[layerPrefix+".moe.down_proj"]
-				}
-				if downW == nil {
-					return fmt.Errorf("layer %d: missing MoE down_proj with fused gate_up_proj", i)
-				}
-				moe.DownWeight = transposeForGatherMM(downW)
-			} else if gateW != nil {
-				// Separate gate_proj and up_proj (older format). Transpose for GatherMM.
-				moe.GateWeight = transposeForGatherMM(gateW)
-				upW := tensors[layerPrefix+".experts.up_proj"]
-				if upW == nil {
-					upW = tensors[layerPrefix+".moe.up_proj"]
-				}
-				downW := tensors[layerPrefix+".experts.down_proj"]
-				if downW == nil {
-					downW = tensors[layerPrefix+".moe.down_proj"]
-				}
-				moe.UpWeight = transposeForGatherMM(upW)
-				moe.DownWeight = transposeForGatherMM(downW)
-				if moe.UpWeight == nil || moe.DownWeight == nil {
-					return fmt.Errorf("layer %d: incomplete pre-stacked MoE weights", i)
-				}
-			} else if switchGateUp := firstNonNil(tensors,
+			// gemma4 reads its stacked MoE tensors from ".moe.switch_mlp." for
+			// backwards compatibility with previously-published blobs. New MoE
+			// ports should use ".mlp.switch_mlp."
+			if switchGateUp := firstNonNil(tensors,
 				layerPrefix+".moe.switch_mlp.gate_up_proj.weight",
 				layerPrefix+".moe.switch_mlp.gate_up_proj"); switchGateUp != nil {
 				// Stacked switch_mlp format (from create pipeline with expert packing).

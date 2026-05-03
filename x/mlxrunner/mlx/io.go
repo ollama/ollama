@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"sort"
 	"unsafe"
+
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 // SafetensorsFile represents a loaded safetensors file.
@@ -160,5 +162,12 @@ func SaveSafetensorsWithMetadata(path string, arrays map[string]*Array, metadata
 		return fmt.Errorf("failed to save safetensors: %s", path)
 	}
 
+	// MLX-C writes tensors in C++ map iteration order, which depends on the
+	// library's hash function and varies across MLX versions. Re-emit the
+	// file with tensors in sorted-name order so the on-disk byte layout is
+	// reproducible across builds.
+	if err := safetensors.CanonicalizeFile(path); err != nil {
+		return fmt.Errorf("canonicalize %s: %w", path, err)
+	}
 	return nil
 }
