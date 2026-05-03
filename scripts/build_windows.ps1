@@ -235,7 +235,7 @@ function rocm6 {
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build\rocm --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            Remove-Item -Path $script:DIST_DIR\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
+            Get-ChildItem -Path "$script:DIST_DIR\lib\ollama\rocm\rocblas\library\" -Filter "*gfx906*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
         } else {
             Write-Output "ROCm not detected, skipping"
         }
