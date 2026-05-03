@@ -99,6 +99,10 @@ func qwen35ShouldKeepBF16ForDirectNonAffine(name string) bool {
 		return true
 	case strings.HasSuffix(name, ".linear_attn.in_proj_ba.weight"):
 		return true
+	case strings.HasSuffix(name, ".linear_attn.in_proj_qkv.weight"):
+		return true
+	case strings.HasSuffix(name, ".linear_attn.in_proj_z.weight"):
+		return true
 	case strings.HasSuffix(name, ".mlp.gate.weight") && !strings.Contains(name, "_proj"):
 		return true
 	case strings.HasSuffix(name, ".mlp.shared_expert_gate.weight"):
