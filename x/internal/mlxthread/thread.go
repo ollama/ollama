@@ -140,11 +140,15 @@ func (t *Thread) loop(init func() error, initResult chan<- result) {
 }
 
 func (t *Thread) enqueue(ctx context.Context, fn func() error, stop, allowStopping bool) (result, error) {
+	ctx = contextOrBackground(ctx)
+	if err := ctx.Err(); err != nil {
+		return result{}, err
+	}
+
 	if !allowStopping && t.stopping.Load() {
 		return result{}, ErrStopped
 	}
 
-	ctx = contextOrBackground(ctx)
 	resultCh := make(chan result, 1)
 	j := job{fn: fn, result: resultCh, stop: stop}
 

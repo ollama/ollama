@@ -88,6 +88,56 @@ func TestDoCancelsBeforeJobStarts(t *testing.T) {
 	}
 }
 
+func TestAlreadyCanceledContextDoesNotEnqueue(t *testing.T) {
+	t.Run("Do", func(t *testing.T) {
+		thread, err := Start("test", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer thread.Stop(context.Background(), nil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		ran := false
+		err = thread.Do(ctx, func() error {
+			ran = true
+			return nil
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v, want %v", err, context.Canceled)
+		}
+		if ran {
+			t.Fatal("canceled job ran")
+		}
+	})
+
+	t.Run("Stop", func(t *testing.T) {
+		thread, err := Start("test", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer thread.Stop(context.Background(), nil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		cleaned := false
+		err = thread.Stop(ctx, func() {
+			cleaned = true
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v, want %v", err, context.Canceled)
+		}
+		if cleaned {
+			t.Fatal("cleanup ran for canceled stop")
+		}
+		if err := thread.Do(context.Background(), func() error { return nil }); err != nil {
+			t.Fatalf("thread did not accept work after canceled Stop: %v", err)
+		}
+	})
+}
+
 func TestCallReturnsValue(t *testing.T) {
 	thread, err := Start("test", nil)
 	if err != nil {

@@ -66,9 +66,11 @@ func (w *StatusWriter) AppendError(msg string) {
 
 var errorPrefixes = []string{
 	"mlx:",
+	"MLX:",
 	"panic:",
 	"fatal error:",
 	"error:",
+	"Error:",
 	"CUDA error",
 	"ROCm error",
 	"cudaMalloc failed",
