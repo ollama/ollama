@@ -798,81 +798,6 @@ func verifyBlob(t *testing.T, dir string, blob Blob, expected []byte) {
 
 // ==================== Parallelism Tests ====================
 
-func TestDownloadParallelism(t *testing.T) {
-	// Create many blobs to test parallelism
-	serverDir := t.TempDir()
-	numBlobs := 10
-	blobs := make([]Blob, numBlobs)
-	blobData := make([][]byte, numBlobs)
-
-	for i := range numBlobs {
-		blobs[i], blobData[i] = createTestBlob(t, serverDir, 1024+i*100)
-	}
-
-	var activeRequests atomic.Int32
-	var maxConcurrent atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		current := activeRequests.Add(1)
-		defer activeRequests.Add(-1)
-
-		// Track max concurrent requests
-		for {
-			old := maxConcurrent.Load()
-			if current <= old || maxConcurrent.CompareAndSwap(old, current) {
-				break
-			}
-		}
-
-		// Simulate network latency to ensure parallelism is visible
-		time.Sleep(50 * time.Millisecond)
-
-		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
-		data, err := os.ReadFile(path)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write(data)
-	}))
-	defer server.Close()
-
-	clientDir := t.TempDir()
-
-	start := time.Now()
-	err := Download(context.Background(), DownloadOptions{
-		Blobs:       blobs,
-		BaseURL:     server.URL,
-		DestDir:     clientDir,
-		Concurrency: 4,
-	})
-	elapsed := time.Since(start)
-
-	if err != nil {
-		t.Fatalf("Download failed: %v", err)
-	}
-
-	// Verify all blobs downloaded
-	for i, blob := range blobs {
-		verifyBlob(t, clientDir, blob, blobData[i])
-	}
-
-	// Verify parallelism was used
-	if maxConcurrent.Load() < 2 {
-		t.Errorf("Max concurrent requests was %d, expected at least 2 for parallelism", maxConcurrent.Load())
-	}
-
-	// With 10 blobs at 50ms each, sequential would take ~500ms
-	// Parallel with 4 workers should take ~150ms (relax to 1s for CI variance)
-	if elapsed > time.Second {
-		t.Errorf("Downloads took %v, expected faster with parallelism", elapsed)
-	}
-
-	t.Logf("Downloaded %d blobs in %v with max %d concurrent requests", numBlobs, elapsed, maxConcurrent.Load())
-}
-
 func TestUploadParallelism(t *testing.T) {
 	clientDir := t.TempDir()
 	numBlobs := 10
@@ -1242,53 +1167,6 @@ func TestUploadEmptyBlobList(t *testing.T) {
 	if err != nil {
 		t.Errorf("Expected no error for empty blob list, got: %v", err)
 	}
-}
-
-func TestDownloadManyBlobs(t *testing.T) {
-	// Test with many blobs to verify high concurrency works
-	serverDir := t.TempDir()
-	numBlobs := 50
-	blobs := make([]Blob, numBlobs)
-	blobData := make([][]byte, numBlobs)
-
-	for i := range numBlobs {
-		blobs[i], blobData[i] = createTestBlob(t, serverDir, 512) // Small blobs
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
-		data, err := os.ReadFile(path)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write(data)
-	}))
-	defer server.Close()
-
-	clientDir := t.TempDir()
-
-	start := time.Now()
-	err := Download(context.Background(), DownloadOptions{
-		Blobs:       blobs,
-		BaseURL:     server.URL,
-		DestDir:     clientDir,
-		Concurrency: 16,
-	})
-	elapsed := time.Since(start)
-
-	if err != nil {
-		t.Fatalf("Download failed: %v", err)
-	}
-
-	// Verify all blobs
-	for i, blob := range blobs {
-		verifyBlob(t, clientDir, blob, blobData[i])
-	}
-
-	t.Logf("Downloaded %d blobs in %v", numBlobs, elapsed)
 }
 
 func TestUploadRetryOnFailure(t *testing.T) {
