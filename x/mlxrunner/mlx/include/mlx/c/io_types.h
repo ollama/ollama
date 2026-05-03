@@ -95,6 +95,52 @@ int mlx_io_writer_tostring(mlx_string* str_, mlx_io_writer io);
  */
 int mlx_io_writer_free(mlx_io_writer io);
 
+/**
+ * A MLX GGUF object.
+ */
+typedef struct mlx_io_gguf_ {
+  void* ctx;
+} mlx_io_gguf;
+
+mlx_io_gguf mlx_io_gguf_new(void);
+int mlx_io_gguf_free(mlx_io_gguf io);
+int mlx_io_gguf_get_keys(mlx_vector_string* keys, mlx_io_gguf io);
+int mlx_io_gguf_get_array(mlx_array* arr, mlx_io_gguf io, const char* key);
+int mlx_io_gguf_get_metadata_array(
+    mlx_array* arr,
+    mlx_io_gguf io,
+    const char* key);
+int mlx_io_gguf_get_metadata_string(
+    mlx_string* str,
+    mlx_io_gguf io,
+    const char* key);
+int mlx_io_gguf_get_metadata_vector_string(
+    mlx_vector_string* vstr,
+    mlx_io_gguf io,
+    const char* key);
+int mlx_io_gguf_has_metadata_array(bool* flag, mlx_io_gguf io, const char* key);
+int mlx_io_gguf_has_metadata_string(
+    bool* flag,
+    mlx_io_gguf io,
+    const char* key);
+int mlx_io_gguf_has_metadata_vector_string(
+    bool* flag,
+    mlx_io_gguf io,
+    const char* key);
+int mlx_io_gguf_set_array(mlx_io_gguf io, const char* key, const mlx_array arr);
+int mlx_io_gguf_set_metadata_array(
+    mlx_io_gguf io,
+    const char* key,
+    const mlx_array marr);
+int mlx_io_gguf_set_metadata_string(
+    mlx_io_gguf io,
+    const char* key,
+    const char* mstr);
+int mlx_io_gguf_set_metadata_vector_string(
+    mlx_io_gguf io,
+    const char* key,
+    const mlx_vector_string mvstr);
+
 /**@}*/
 
 #ifdef __cplusplus

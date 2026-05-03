@@ -24,6 +24,24 @@ typedef struct mlx_distributed_group_ {
 } mlx_distributed_group;
 
 /**
+ * Create an empty group.
+ */
+mlx_distributed_group mlx_distributed_group_new(void);
+
+/**
+ * Free the group.
+ */
+int mlx_distributed_group_free(mlx_distributed_group group);
+
+/**
+ * Initialize distributed.
+ */
+int mlx_distributed_init(
+    mlx_distributed_group* res,
+    bool strict,
+    const char* bk /* may be null */);
+
+/**
  * Get the rank.
  */
 int mlx_distributed_group_rank(mlx_distributed_group group);
@@ -36,20 +54,16 @@ int mlx_distributed_group_size(mlx_distributed_group group);
 /**
  * Split the group.
  */
-mlx_distributed_group
-mlx_distributed_group_split(mlx_distributed_group group, int color, int key);
+int mlx_distributed_group_split(
+    mlx_distributed_group* res,
+    mlx_distributed_group group,
+    int color,
+    int key);
 
 /**
  * Check if distributed is available.
  */
 bool mlx_distributed_is_available(const char* bk /* may be null */);
-
-/**
- * Initialize distributed.
- */
-mlx_distributed_group mlx_distributed_init(
-    bool strict,
-    const char* bk /* may be null */);
 
 /**@}*/
 

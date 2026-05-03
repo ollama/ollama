@@ -2,7 +2,6 @@ package mlxrunner
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,64 +39,9 @@ type Client struct {
 	done          chan struct{}
 	doneErr       error // valid after done is closed
 	client        *http.Client
-	status        *statusWriter
+	status        *llm.StatusWriter
 	mu            sync.Mutex
 	cmd           *exec.Cmd
-}
-
-// statusWriter captures the last subprocess line while forwarding all output
-// to os.Stderr. Lines longer than maxStatusLen are truncated to the first
-// maxStatusLen bytes.
-type statusWriter struct {
-	lastErrMsg string
-	buf        []byte
-	discarding bool
-	mu         sync.Mutex
-	out        *os.File
-}
-
-const maxStatusLen = 256
-
-func (w *statusWriter) Write(b []byte) (int, error) {
-	n, err := w.out.Write(b)
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	w.buf = append(w.buf, b...)
-	for {
-		i := bytes.IndexByte(w.buf, '\n')
-		if i < 0 {
-			break
-		}
-		if !w.discarding {
-			line := bytes.TrimSpace(w.buf[:i])
-			if len(line) > 0 {
-				if len(line) > maxStatusLen {
-					line = line[:maxStatusLen]
-				}
-				w.lastErrMsg = string(line)
-			}
-		}
-		w.buf = w.buf[i+1:]
-		w.discarding = false
-	}
-	// if the buffer grows past maxStatusLen without a newline, keep the front
-	if len(w.buf) > maxStatusLen {
-		if !w.discarding {
-			w.lastErrMsg = string(bytes.TrimSpace(w.buf[:maxStatusLen]))
-			w.discarding = true
-		}
-		w.buf = w.buf[:0]
-	}
-
-	return n, err
-}
-
-func (w *statusWriter) getLastErr() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.lastErrMsg
 }
 
 // NewClient prepares a new MLX runner client for LLM models.
@@ -133,12 +77,12 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-c.done:
-			if msg := c.status.getLastErr(); msg != "" {
+			if msg := c.status.LastError(); msg != "" {
 				return fmt.Errorf("mlx runner failed: %s (exit: %v)", msg, c.doneErr)
 			}
 			return fmt.Errorf("mlx runner exited unexpectedly: %w", c.doneErr)
 		case <-timeout:
-			if msg := c.status.getLastErr(); msg != "" {
+			if msg := c.status.LastError(); msg != "" {
 				return fmt.Errorf("timeout waiting for mlx runner: %s", msg)
 			}
 			return errors.New("timeout waiting for mlx runner to start")
@@ -217,7 +161,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		if errMsg := c.status.getLastErr(); errMsg != "" {
+		if errMsg := c.status.LastError(); errMsg != "" {
 			return fmt.Errorf("mlx runner failed: %s", errMsg)
 		}
 		return err
@@ -259,7 +203,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	}
 
 	if err := scanner.Err(); err != nil {
-		if errMsg := c.status.getLastErr(); errMsg != "" {
+		if errMsg := c.status.LastError(); errMsg != "" {
 			return fmt.Errorf("mlx runner failed: %s", errMsg)
 		}
 		return err
@@ -405,7 +349,7 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 
 	c.cmd = cmd
 
-	status := &statusWriter{out: os.Stderr}
+	status := llm.NewStatusWriter(os.Stderr)
 	c.status = status
 	// os/exec serializes Write calls when shared, which keeps the status writer
 	// from seeing concurrent stdout/stderr fragments.

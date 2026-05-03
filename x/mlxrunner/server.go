@@ -15,23 +15,13 @@ import (
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
 func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
-
-	if err := mlx.CheckInit(); err != nil {
-		return fmt.Errorf("MLX not available: %w", err)
-	}
-
-	if mlx.GPUIsAvailable() {
-		mlx.SetDefaultDeviceGPU()
-		slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "gpu")
-	} else {
-		slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "cpu")
-	}
 
 	var (
 		modelName string
@@ -44,21 +34,55 @@ func Execute(args []string) error {
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
 
+	worker, err := mlxthread.Start("mlxrunner", func() error {
+		if err := mlx.CheckInit(); err != nil {
+			return fmt.Errorf("MLX not available: %w", err)
+		}
+
+		if mlx.GPUIsAvailable() {
+			mlx.SetDefaultDeviceGPU()
+			slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "gpu")
+		} else {
+			slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "cpu")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	defer worker.Stop(context.Background(), func() {
+		mlx.Sweep()
+		mlx.ClearCache()
+	})
+
 	runner := Runner{
-		Requests: make(chan Request),
+		Requests:  make(chan Request),
+		mlxThread: worker,
 	}
 
-	if err := runner.Load(modelName); err != nil {
+	if err := worker.Do(context.Background(), func() error {
+		return runner.Load(modelName)
+	}); err != nil {
 		return err
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		memory, err := mlxthread.Call(r.Context(), worker, func() (uint64, error) {
+			return uint64(mlx.ActiveMemory() + mlx.CacheMemory()), nil
+		})
+		if err != nil {
+			slog.Error("Failed to read MLX memory status", "error", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
 		if err := json.NewEncoder(w).Encode(statusResponse{
 			Status:        0,
 			Progress:      100,
 			ContextLength: runner.contextLength,
-			Memory:        uint64(mlx.ActiveMemory() + mlx.CacheMemory()),
+			Memory:        memory,
 		}); err != nil {
 			slog.Error("Failed to encode response", "error", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
