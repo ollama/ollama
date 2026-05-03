@@ -135,6 +135,99 @@ func TestMigrationV13ToV14ContextLength(t *testing.T) {
 	}
 }
 
+func TestMigrationV16ToV17TokenMetrics(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	conn, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL")
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	if err := conn.Ping(); err != nil {
+		conn.Close()
+		t.Fatalf("failed to ping database: %v", err)
+	}
+
+	_, err = conn.Exec(`
+		CREATE TABLE settings (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			last_home_view TEXT NOT NULL DEFAULT 'launch',
+			schema_version INTEGER NOT NULL DEFAULT 16
+		);
+		INSERT INTO settings (id, last_home_view, schema_version) VALUES (1, 'launch', 16);
+
+		CREATE TABLE chats (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			browser_state TEXT
+		);
+
+		CREATE TABLE messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL DEFAULT '',
+			thinking TEXT NOT NULL DEFAULT '',
+			stream BOOLEAN NOT NULL DEFAULT 0,
+			model_name TEXT,
+			model_cloud BOOLEAN,
+			model_ollama_host BOOLEAN,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			thinking_time_start TIMESTAMP,
+			thinking_time_end TIMESTAMP,
+			tool_result TEXT,
+			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+		);
+		INSERT INTO chats (id, title) VALUES ('chat-1', 'Test');
+		INSERT INTO messages (chat_id, role, content) VALUES ('chat-1', 'assistant', 'Hello');
+	`)
+	if err != nil {
+		t.Fatalf("failed to seed v16 schema state: %v", err)
+	}
+
+	db := &database{conn: conn}
+	defer db.Close()
+
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v16 to v17 failed: %v", err)
+	}
+
+	var schemaVersion int
+	if err := db.conn.QueryRow("SELECT schema_version FROM settings").Scan(&schemaVersion); err != nil {
+		t.Fatalf("failed to read schema version: %v", err)
+	}
+	if schemaVersion != currentSchemaVersion {
+		t.Fatalf("expected schema version %d, got %d", currentSchemaVersion, schemaVersion)
+	}
+
+	var columnCount int
+	if err := db.conn.QueryRow(`
+		SELECT COUNT(*)
+		FROM pragma_table_info('messages')
+		WHERE name IN ('prompt_eval_count', 'eval_count')
+	`).Scan(&columnCount); err != nil {
+		t.Fatalf("failed to inspect messages columns: %v", err)
+	}
+	if columnCount != 2 {
+		t.Fatalf("expected token metric columns to exist, found %d", columnCount)
+	}
+
+	var promptEvalCount, evalCount int
+	if err := db.conn.QueryRow(`
+		SELECT prompt_eval_count, eval_count
+		FROM messages
+		WHERE chat_id = 'chat-1'
+		LIMIT 1
+	`).Scan(&promptEvalCount, &evalCount); err != nil {
+		t.Fatalf("failed to read migrated token counters: %v", err)
+	}
+	if promptEvalCount != 0 || evalCount != 0 {
+		t.Fatalf("expected migrated token counters to default to 0, got %d and %d", promptEvalCount, evalCount)
+	}
+}
+
 func TestMigrationV15ToV16LastHomeViewDefaultsToLaunch(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
