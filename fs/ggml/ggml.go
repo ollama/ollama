@@ -883,7 +883,27 @@ func (f GGML) SupportsFlashAttention() bool {
 	// Check head counts match and are non-zero
 	headCountK := f.KV().EmbeddingHeadCountK()
 	headCountV := f.KV().EmbeddingHeadCountV()
-	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
+	if headCountK == 0 || headCountV == 0 || headCountK != headCountV {
+		return false
+	}
+
+	// Hybrid attention architectures (e.g. Gemma 4) have a second head_dim
+	// for sliding-window layers. The SWA head_dim must also be FA-compatible
+	// and its K/V dims must match. Without this check, a model with a
+	// FA-supported global head_dim but an unsupported SWA head_dim (or
+	// mismatched SWA K/V) silently runs FA on global layers while the SWA
+	// layers fall back, which can produce graph-scheduling stalls
+	// (see issue #15350).
+	swaK := f.KV().Uint(fmt.Sprintf("%s.attention.key_length_swa", arch), 0)
+	swaV := f.KV().Uint(fmt.Sprintf("%s.attention.value_length_swa", arch), 0)
+	if swaK != 0 || swaV != 0 {
+		// If either is set, both must be set, equal, and non-zero.
+		if swaK == 0 || swaV == 0 || swaK != swaV {
+			return false
+		}
+	}
+
+	return true
 }
 
 // FlashAttention checks if the model should enable flash attention
