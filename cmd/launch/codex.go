@@ -1,13 +1,20 @@
 package launch
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 	"golang.org/x/mod/semver"
 )
 
@@ -17,6 +24,7 @@ type Codex struct{}
 func (c *Codex) String() string { return "Codex" }
 
 const codexProfileName = "ollama-launch"
+const codexCatalogFileName = "ollama-launch-models.json"
 
 func (c *Codex) args(model string, extra []string) []string {
 	args := []string{"--profile", codexProfileName}
@@ -32,7 +40,7 @@ func (c *Codex) Run(model string, args []string) error {
 		return err
 	}
 
-	if err := ensureCodexConfig(); err != nil {
+	if err := ensureCodexConfig(model); err != nil {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
@@ -46,9 +54,9 @@ func (c *Codex) Run(model string, args []string) error {
 	return cmd.Run()
 }
 
-// ensureCodexConfig writes a [profiles.ollama-launch] section to ~/.codex/config.toml
-// with openai_base_url pointing to the local Ollama server.
-func ensureCodexConfig() error {
+// ensureCodexConfig writes a Codex profile and model catalog so Codex uses the
+// local Ollama server and has model metadata available.
+func ensureCodexConfig(modelName string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -59,13 +67,18 @@ func ensureCodexConfig() error {
 		return err
 	}
 
+	catalogPath := filepath.Join(codexDir, codexCatalogFileName)
+	if err := writeCodexModelCatalog(catalogPath, modelName); err != nil {
+		return err
+	}
+
 	configPath := filepath.Join(codexDir, "config.toml")
-	return writeCodexProfile(configPath)
+	return writeCodexProfile(configPath, catalogPath)
 }
 
 // writeCodexProfile ensures ~/.codex/config.toml has the ollama-launch profile
 // and model provider sections with the correct base URL.
-func writeCodexProfile(configPath string) error {
+func writeCodexProfile(configPath, catalogPath string) error {
 	baseURL := envconfig.Host().String() + "/v1/"
 
 	sections := []struct {
@@ -78,6 +91,7 @@ func writeCodexProfile(configPath string) error {
 				fmt.Sprintf("openai_base_url = %q", baseURL),
 				`forced_login_method = "api"`,
 				fmt.Sprintf("model_provider = %q", codexProfileName),
+				fmt.Sprintf("model_catalog_json = %q", catalogPath),
 			},
 		},
 		{
@@ -119,6 +133,141 @@ func writeCodexProfile(configPath string) error {
 	}
 
 	return os.WriteFile(configPath, []byte(text), 0o644)
+}
+
+func writeCodexModelCatalog(catalogPath, modelName string) error {
+	entry := buildCodexModelEntry(modelName)
+
+	catalog := map[string]any{}
+	if content, err := os.ReadFile(catalogPath); err == nil {
+		if err := json.Unmarshal(content, &catalog); err != nil {
+			catalog = map[string]any{}
+		}
+	}
+
+	catalog["models"] = mergeCodexModelEntries(catalog["models"], entry)
+
+	data, err := json.MarshalIndent(catalog, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(catalogPath, data, 0o644)
+}
+
+func mergeCodexModelEntries(existing any, entry map[string]any) []any {
+	models, _ := existing.([]any)
+	merged := make([]any, 0, len(models)+1)
+	replaced := false
+	slug, _ := entry["slug"].(string)
+
+	for _, model := range models {
+		current, ok := model.(map[string]any)
+		if !ok {
+			continue
+		}
+		if currentSlug, _ := current["slug"].(string); currentSlug == slug {
+			merged = append(merged, entry)
+			replaced = true
+			continue
+		}
+		merged = append(merged, current)
+	}
+
+	if !replaced {
+		merged = append(merged, entry)
+	}
+
+	return merged
+}
+
+func buildCodexModelEntry(modelName string) map[string]any {
+	contextWindow := 0
+	hasVision := false
+	hasThinking := false
+	systemPrompt := ""
+
+	if l, ok := lookupCloudModelLimit(modelName); ok {
+		contextWindow = l.Context
+	}
+
+	client := api.NewClient(envconfig.Host(), http.DefaultClient)
+	resp, err := client.Show(context.Background(), &api.ShowRequest{Model: modelName})
+	if err == nil {
+		systemPrompt = resp.System
+		if slices.Contains(resp.Capabilities, model.CapabilityVision) {
+			hasVision = true
+		}
+		if slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+			hasThinking = true
+		}
+
+		if !isCloudModelName(modelName) {
+			if n, ok := modelInfoContextLength(resp.ModelInfo); ok {
+				contextWindow = n
+			}
+			if resp.Details.Format != "safetensors" {
+				if ctxLen := envconfig.ContextLength(); ctxLen > 0 {
+					contextWindow = int(ctxLen)
+				}
+				if numCtx := parseNumCtx(resp.Parameters); numCtx > 0 {
+					contextWindow = numCtx
+				}
+			}
+		}
+	}
+
+	modalities := []string{"text"}
+	if hasVision {
+		modalities = append(modalities, "image")
+	}
+
+	reasoningLevels := []any{}
+	if hasThinking {
+		reasoningLevels = []any{
+			map[string]any{"effort": "low", "description": "Fast responses with lighter reasoning"},
+			map[string]any{"effort": "medium", "description": "Balances speed and reasoning depth"},
+			map[string]any{"effort": "high", "description": "Greater reasoning depth for complex problems"},
+		}
+	}
+
+	truncationMode := "bytes"
+	if isCloudModelName(modelName) {
+		truncationMode = "tokens"
+	}
+
+	return map[string]any{
+		"slug":                         modelName,
+		"display_name":                 modelName,
+		"context_window":               contextWindow,
+		"apply_patch_tool_type":        "function",
+		"shell_type":                   "default",
+		"visibility":                   "list",
+		"supported_in_api":             true,
+		"priority":                     0,
+		"truncation_policy":            map[string]any{"mode": truncationMode, "limit": 10000},
+		"input_modalities":             modalities,
+		"base_instructions":            systemPrompt,
+		"support_verbosity":            true,
+		"default_verbosity":            "low",
+		"supports_parallel_tool_calls": false,
+		"supports_reasoning_summaries": hasThinking,
+		"supported_reasoning_levels":   reasoningLevels,
+		"experimental_supported_tools": []any{},
+	}
+}
+
+func parseNumCtx(parameters string) int {
+	for _, line := range strings.Split(parameters, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "num_ctx" {
+			if v, err := strconv.ParseFloat(fields[1], 64); err == nil {
+				return int(v)
+			}
+		}
+	}
+
+	return 0
 }
 
 func checkCodexVersion() error {
