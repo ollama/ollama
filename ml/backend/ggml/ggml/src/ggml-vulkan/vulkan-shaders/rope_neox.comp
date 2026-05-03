@@ -6,6 +6,9 @@
 void main() {
     const uint i0 = 2*gl_GlobalInvocationID.y;
     // i1 is actually i2*nb2+i1, but the rows are contiguous
-    const uint i1 = gl_GlobalInvocationID.x;
+    const uint i1 = gl_GlobalInvocationID.x + 32768 * gl_GlobalInvocationID.z;
+    if (i1 >= pc.nrows) {
+        return;
+    }
     rope_neox(i0, i1, pc);
 }
