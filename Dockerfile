@@ -224,5 +224,18 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
+ARG VERSION
+ARG REVISION
+ARG CREATED
+LABEL org.opencontainers.image.title="Ollama" \
+      org.opencontainers.image.description="Get up and running with large language models" \
+      org.opencontainers.image.url="https://ollama.com" \
+      org.opencontainers.image.source="https://github.com/ollama/ollama" \
+      org.opencontainers.image.documentation="https://github.com/ollama/ollama/tree/main/docs" \
+      org.opencontainers.image.vendor="Ollama" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}"
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
