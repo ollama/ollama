@@ -1,29 +1,9 @@
 package sample
 
 import (
-	"container/heap"
 	"math"
 	"slices"
 )
-
-// tokenHeap implements heap.Interface and holds tokens as a min-heap to track k largest elements
-type tokenHeap []token
-
-func (h tokenHeap) Len() int           { return len(h) }
-func (h tokenHeap) Less(i, j int) bool { return h[i].value < h[j].value }
-func (h tokenHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-
-func (h *tokenHeap) Push(x any) {
-	*h = append(*h, x.(token))
-}
-
-func (h *tokenHeap) Pop() any {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[0 : n-1]
-	return x
-}
 
 // temperature applies scaling to the logits
 func temperature(ts []token, temp float32) {
@@ -59,40 +39,20 @@ func softmax(ts []token) {
 
 // topK limits the number of tokens considered to the k highest logits
 func topK(ts []token, k int) []token {
-	if k >= len(ts) || k <= 0 {
-		slices.SortFunc(ts, func(a, b token) int {
-			switch {
-			case a.value < b.value:
-				return 1
-			case a.value > b.value:
-				return -1
-			default:
-				return 0
-			}
-		})
+	slices.SortFunc(ts, func(a, b token) int {
+		switch {
+		case a.value < b.value:
+			return 1
+		case a.value > b.value:
+			return -1
+		default:
+			return 0
+		}
+	})
+	if k <= 0 || k >= len(ts) {
 		return ts
 	}
-
-	// Initialize min-heap with first k elements
-	h := make(tokenHeap, k)
-	copy(h, ts[:k])
-	heap.Init(&h)
-
-	// Process remaining elements
-	for i := k; i < len(ts); i++ {
-		if ts[i].value > h[0].value {
-			heap.Pop(&h)
-			heap.Push(&h, ts[i])
-		}
-	}
-
-	// Convert heap to sorted slice in descending order
-	result := make([]token, len(h))
-	for i := k - 1; i >= 0; i-- {
-		result[i] = heap.Pop(&h).(token)
-	}
-
-	return result
+	return ts[:k]
 }
 
 // topP limits tokens to those with cumulative probability p

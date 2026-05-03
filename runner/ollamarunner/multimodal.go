@@ -94,7 +94,7 @@ func (m multimodalStore) getTensor(backend ml.Backend, ctx ml.Context, in ml.Ten
 
 			for i, t := range entry.mm {
 				if t.Tensor != nil {
-					entry.data[i] = t.Tensor.Floats()
+					entry.data[i] = t.Tensor.Floats(nil)
 				}
 			}
 		} else {

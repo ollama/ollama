@@ -75,6 +75,8 @@ type Causal struct {
 	backend      ml.Backend
 	ctxs         map[int]ml.Context
 	keys, values map[int]ml.Tensor
+
+	maskBuf []float32
 }
 
 type cacheCell struct {
@@ -365,7 +367,14 @@ func (c *Causal) buildMask(ctx ml.Context) ml.Tensor {
 
 	length := c.curCellRange.max - c.curCellRange.min + 1
 
-	mask := make([]float32, c.curBatchSize*length)
+	size := c.curBatchSize * length
+	if cap(c.maskBuf) < size {
+		c.maskBuf = make([]float32, size)
+	}
+	mask := c.maskBuf[:size]
+	for i := range mask {
+		mask[i] = 0
+	}
 
 	for i := range c.curBatchSize {
 		enabled := !slices.Contains(c.opts.Except, i)

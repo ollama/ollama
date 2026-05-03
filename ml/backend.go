@@ -136,7 +136,7 @@ type Tensor interface {
 	Cast(ctx Context, dtype DType) Tensor
 
 	Bytes() []byte
-	Floats() []float32
+	Floats(dst []float32) []float32
 	BackendGet() []float32
 
 	FromBytes([]byte)

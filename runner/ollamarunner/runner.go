@@ -392,6 +392,14 @@ type Server struct {
 	// multimodalHash generates hashes for comparing equality
 	// of non-text data
 	multimodalHash maphash.Hash
+
+	// logitsBuf is reused across decode steps to avoid per-request allocations
+	logitsBuf []float32
+
+	// Reusable buffers for computeBatch to avoid per-batch allocations
+	batchInputsBuf []int32
+	nextTokensBuf  []*input.Input
+	iBatchesBuf    []int
 }
 
 func (s *Server) allNil() bool {
@@ -662,7 +670,10 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	s.mu.Lock()
 
 	// Gather the actual input token values now that they're ready
-	batchInputs := make([]int32, len(activeBatch.batchInputs))
+	if cap(s.batchInputsBuf) < len(activeBatch.batchInputs) {
+		s.batchInputsBuf = make([]int32, len(activeBatch.batchInputs))
+	}
+	batchInputs := s.batchInputsBuf[:len(activeBatch.batchInputs)]
 	for i := range batchInputs {
 		batchInputs[i] = activeBatch.batchInputs[i].Token
 	}
@@ -670,8 +681,19 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	// Now we run part of the decoding algorithm to adjust the seq.inputs with placeholder tokens
 	// so that forwardBatch can build a batchInputs set which will eventually contain the actual
 	// decoded tokens.
-	nextBatchTokens := make([]*input.Input, len(s.seqs))
-	iBatches := make([]int, len(s.seqs)) // Record the iBatch values before releasing the lock
+	if cap(s.nextTokensBuf) < len(s.seqs) {
+		s.nextTokensBuf = make([]*input.Input, len(s.seqs))
+	}
+	nextBatchTokens := s.nextTokensBuf[:len(s.seqs)]
+	// Clear buffer (important: set to nil, not reuse old pointers)
+	for i := range nextBatchTokens {
+		nextBatchTokens[i] = nil
+	}
+
+	if cap(s.iBatchesBuf) < len(s.seqs) {
+		s.iBatchesBuf = make([]int, len(s.seqs))
+	}
+	iBatches := s.iBatchesBuf[:len(s.seqs)] // Record the iBatch values before releasing the lock
 	for i, seq := range s.seqs {
 		iBatches[i] = -1
 		if seq == nil {
@@ -727,7 +749,8 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		},
 		activeBatch.modelOutput)
 
-	outputs := activeBatch.modelOutput.Floats()
+	s.logitsBuf = activeBatch.modelOutput.Floats(s.logitsBuf)
+	outputs := s.logitsBuf
 	t := time.Now()
 
 	logutil.Trace("computeBatch: logits ready", "batchID", activeBatch.id)
