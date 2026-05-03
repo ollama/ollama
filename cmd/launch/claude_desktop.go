@@ -26,7 +26,7 @@ const (
 	claudeDesktopGatewayBaseURL  = "https://ollama.com"
 	claudeDesktopAPIKeyURL       = "https://ollama.com/settings/keys"
 	claudeDesktopModelLabel      = "Ollama Cloud"
-	claudeDesktopRestoreMessage  = "To restore the usual Claude profile, run: ollama launch claude-app --restore"
+	claudeDesktopRestoreMessage  = "To restore the usual Claude profile, run: ollama launch claude-desktop --restore"
 )
 
 var (
@@ -124,9 +124,9 @@ func (c *ClaudeDesktop) Run(_ string, args []string) error {
 		return err
 	}
 	if len(args) > 0 {
-		return fmt.Errorf("claude-app does not accept extra arguments")
+		return fmt.Errorf("claude-desktop does not accept extra arguments")
 	}
-	return claudeDesktopLaunchOrRestart("Restart Claude App to use Ollama?")
+	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use Ollama?")
 }
 
 func (c *ClaudeDesktop) Restore() error {
@@ -154,7 +154,7 @@ func (c *ClaudeDesktop) Restore() error {
 			return err
 		}
 	}
-	return claudeDesktopLaunchOrRestart("Restart Claude App to use the usual Claude profile?")
+	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use the usual Claude profile?")
 }
 
 func claudeDesktopSupported() error {
@@ -162,7 +162,7 @@ func claudeDesktopSupported() error {
 	case "darwin", "windows":
 		return nil
 	default:
-		return fmt.Errorf("Claude App launch is only supported on macOS and Windows")
+		return fmt.Errorf("Claude Desktop launch is only supported on macOS and Windows")
 	}
 }
 
@@ -491,7 +491,7 @@ func promptClaudeDesktopAPIKeyValue() (string, error) {
 }
 
 func missingClaudeDesktopAPIKeyError() error {
-	return fmt.Errorf("OLLAMA_API_KEY is required for Claude App. Create an API key at %s, then re-run with OLLAMA_API_KEY set", claudeDesktopAPIKeyURL)
+	return fmt.Errorf("OLLAMA_API_KEY is required for Claude Desktop. Create an API key at %s, then re-run with OLLAMA_API_KEY set", claudeDesktopAPIKeyURL)
 }
 
 func promptClaudeDesktopAPIKey() (string, error) {
@@ -779,7 +779,7 @@ func claudeDesktopLaunchOrRestart(prompt string) error {
 		return err
 	}
 	if !restart {
-		fmt.Fprintln(os.Stderr, "\nQuit and reopen Claude App when you're ready for the profile change to take effect.")
+		fmt.Fprintln(os.Stderr, "\nQuit and reopen Claude Desktop when you're ready for the profile change to take effect.")
 		return nil
 	}
 
@@ -803,7 +803,7 @@ func waitForClaudeDesktopExit(timeout time.Duration) error {
 		}
 		claudeDesktopSleep(200 * time.Millisecond)
 	}
-	return fmt.Errorf("Claude App did not quit; quit it manually and re-run the command")
+	return fmt.Errorf("Claude Desktop did not quit; quit it manually and re-run the command")
 }
 
 func defaultClaudeDesktopIsRunning() bool {
@@ -828,7 +828,7 @@ func defaultClaudeDesktopOpenApp() error {
 		if path := claudeDesktopRunningAppPath(); path != "" {
 			return claudeDesktopOpenAppPath(path)
 		}
-		return fmt.Errorf("Claude App executable was not found; open Claude App manually once and re-run 'ollama launch claude-app'")
+		return fmt.Errorf("Claude Desktop executable was not found; open Claude Desktop manually once and re-run 'ollama launch claude-desktop'")
 	case "darwin":
 		return openClaudeDesktopDarwin()
 	default:

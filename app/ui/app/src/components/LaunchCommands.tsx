@@ -16,7 +16,7 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
   {
     id: "claude-desktop",
     name: "Claude Desktop",
-    command: "ollama launch claude-app",
+    command: "ollama launch claude-desktop",
     description: "Claude Desktop with Ollama Cloud",
     icon: "/launch-icons/claude.svg",
     iconClassName: "h-7 w-7",

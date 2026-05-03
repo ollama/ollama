@@ -24,17 +24,17 @@ export OLLAMA_API_KEY=your_api_key
 ## Quick setup
 
 ```shell
-ollama launch claude-app
+ollama launch claude-desktop
 ```
 
 This configures Claude Desktop's third-party profile to use `https://ollama.com`, sets your Ollama API key as the gateway credential, lets Claude Desktop discover available models from Ollama Cloud, and restarts Claude Desktop if needed.
 
-`claude-desktop` is also supported as an alias for `claude-app`.
+`claude-app` is also supported as an alias for `claude-desktop`.
 
 To bring back the usual Anthropic Claude profile later, run:
 
 ```shell
-ollama launch claude-app --restore
+ollama launch claude-desktop --restore
 ```
 
 On Windows, the launcher writes the Claude Desktop profile settings under `%LOCALAPPDATA%` for both observed profile families, including `Claude-3p` and `Claude Nest-3p`.
@@ -50,7 +50,7 @@ The same model is also available to Claude Code from inside the Ollama app:
 ## Configure without launching
 
 ```shell
-ollama launch claude-app --config
+ollama launch claude-desktop --config
 ```
 
 ## Restore normal Claude
@@ -58,7 +58,7 @@ ollama launch claude-app --config
 Switch Claude Desktop back to its usual profile:
 
 ```shell
-ollama launch claude-app --restore
+ollama launch claude-desktop --restore
 ```
 
 Restore clears the launcher-managed third-party profile selection and gateway fields while preserving the saved Ollama API key for the next setup.
@@ -66,5 +66,5 @@ Restore clears the launcher-managed third-party profile selection and gateway fi
 If Claude Desktop is running, use `--yes` to approve the restart automatically:
 
 ```shell
-ollama launch claude-app --restore --yes
+ollama launch claude-desktop --restore --yes
 ```

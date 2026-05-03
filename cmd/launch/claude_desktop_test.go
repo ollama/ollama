@@ -506,7 +506,7 @@ func TestClaudeDesktopWindowsOpenDoesNotFallBackToClaudeCommand(t *testing.T) {
 	t.Cleanup(func() { claudeDesktopRunningAppPath = oldRunningPath })
 
 	err := defaultClaudeDesktopOpenApp()
-	if err == nil || !strings.Contains(err.Error(), "Claude App executable was not found") {
+	if err == nil || !strings.Contains(err.Error(), "Claude Desktop executable was not found") {
 		t.Fatalf("defaultClaudeDesktopOpenApp error = %v, want executable-not-found error", err)
 	}
 }

@@ -257,7 +257,7 @@ Flags and extra arguments require an integration name.
 
 Supported integrations:
   claude          Claude Code
-  claude-app      Claude App
+  claude-desktop Claude Desktop (aliases: claude-app)
   cline           Cline
   codex           Codex
   copilot         Copilot CLI (aliases: copilot-cli)
@@ -274,8 +274,8 @@ Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
-  ollama launch claude-app
-  ollama launch claude-app --restore
+  ollama launch claude-desktop
+  ollama launch claude-desktop --restore
   ollama launch hermes
   ollama launch droid --config (does not auto-launch)
   ollama launch codex -- -p myprofile (pass extra args to integration)
