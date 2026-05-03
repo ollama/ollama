@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/internal/cmputil"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/format"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
@@ -375,7 +377,6 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 	existingModels = make(map[string]bool)
 	cloudModels = make(map[string]bool)
 	recommended := make(map[string]bool)
-	var hasLocalModel, hasCloudModel bool
 
 	recDesc := make(map[string]string)
 	for _, rec := range recommendations {
@@ -387,9 +388,6 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 		existingModels[m.Name] = true
 		if m.Remote {
 			cloudModels[m.Name] = true
-			hasCloudModel = true
-		} else {
-			hasLocalModel = true
 		}
 		displayName := strings.TrimSuffix(m.Name, ":latest")
 		existingModels[displayName] = true
@@ -451,55 +449,56 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 		}
 	}
 
-	recRank := make(map[string]int)
-	for i, rec := range recommendations {
-		recRank[rec.Name] = i + 1
-	}
-
-	if hasLocalModel || hasCloudModel {
-		// Keep the Recommended section pinned to recommendation order. Checked
-		// and default-model priority only apply within the More section.
-		slices.SortStableFunc(items, func(a, b ModelItem) int {
-			ac, bc := checked[a.Name], checked[b.Name]
-			aNew, bNew := notInstalled[a.Name], notInstalled[b.Name]
-			aRec, bRec := recRank[a.Name] > 0, recRank[b.Name] > 0
-			if aRec != bRec {
-				if aRec {
-					return -1
-				}
-				return 1
-			}
-			if aRec && bRec {
-				return recRank[a.Name] - recRank[b.Name]
-			}
-			if ac != bc {
-				if ac {
-					return -1
-				}
-				return 1
-			}
-			// Among checked non-recommended items - put the default first
-			if ac && !aRec && current != "" {
-				aCurrent := a.Name == current
-				bCurrent := b.Name == current
-				if aCurrent != bCurrent {
-					if aCurrent {
-						return -1
-					}
-					return 1
-				}
-			}
-			if aNew != bNew {
-				if aNew {
-					return 1
-				}
-				return -1
-			}
-			return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
-		})
-	}
+	sortModelList(items, recommendations, current, checked, notInstalled)
 
 	return items, preChecked, existingModels, cloudModels
+}
+
+// Sort the model list, according to the following criteria:
+//
+// - Recommended models are pinned to the top of the list, and ordered by rank
+// - Checked models appear before unchecked models
+// - Checked, un-recommended models appear first if they are the current model
+// - Installed models appear before uninstalled models
+// - Without other heuristics, models are sorted alphabetically by name
+//
+// We assume that the models are unique by name, and they have non-blank names.
+func sortModelList(models []ModelItem, recommendations []ModelItem, current string, checked map[string]bool, notInstalled map[string]bool) {
+	if len(models) == 0 {
+		return
+	}
+
+	recommendedModelRanks := make(map[string]int)
+	for i, rec := range recommendations {
+		recommendedModelRanks[rec.Name] = len(recommendations) - i
+	}
+
+	slices.SortStableFunc(models, func(a, b ModelItem) int {
+		if recommendedModelRanks[a.Name] > 0 || recommendedModelRanks[b.Name] > 0 {
+			return -1 * cmp.Compare(recommendedModelRanks[a.Name], recommendedModelRanks[b.Name])
+		}
+
+		if checked[a.Name] != checked[b.Name] {
+			return cmputil.CompareBool(checked[a.Name], checked[b.Name])
+		}
+
+		if checked[a.Name] && checked[b.Name] {
+			switch {
+			case a.Name == current:
+				return -1
+			case b.Name == current:
+				return 1
+			}
+		}
+
+		if notInstalled[a.Name] != notInstalled[b.Name] {
+			return -1 * cmputil.CompareBool(notInstalled[a.Name], notInstalled[b.Name])
+		}
+
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+
+	return
 }
 
 // isCloudModelName reports whether the model name has an explicit cloud source.
