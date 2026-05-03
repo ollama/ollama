@@ -2119,13 +2119,21 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 		if err != nil {
 			return true, fmt.Errorf("launching %s: %w", action.Integration, err)
 		}
-		// VS Code is a GUI app — exit the TUI loop after launching
-		if action.Integration == "vscode" {
+		if launcherActionExitsLoop(action.Integration) {
 			return false, nil
 		}
 		return true, nil
 	default:
 		return false, fmt.Errorf("unknown launcher action: %d", action.Kind)
+	}
+}
+
+func launcherActionExitsLoop(integration string) bool {
+	switch integration {
+	case "claude-desktop", "vscode":
+		return true
+	default:
+		return false
 	}
 }
 

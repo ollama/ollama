@@ -14,6 +14,22 @@ interface LaunchCommand {
 
 const LAUNCH_COMMANDS: LaunchCommand[] = [
   {
+    id: "claude-desktop",
+    name: "Claude Desktop",
+    command: "ollama launch claude-desktop",
+    description: "Claude Desktop with Ollama Cloud",
+    icon: "/launch-icons/claude.svg",
+    iconClassName: "h-7 w-7",
+  },
+  {
+    id: "claude",
+    name: "Claude Code",
+    command: "ollama launch claude",
+    description: "Anthropic's coding tool with subagents",
+    icon: "/launch-icons/claude-code.svg",
+    iconClassName: "h-7 w-7",
+  },
+  {
     id: "openclaw",
     name: "OpenClaw",
     command: "ollama launch openclaw",
@@ -21,20 +37,11 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     icon: "/launch-icons/openclaw.svg",
   },
   {
-    id: "claude",
-    name: "Claude",
-    command: "ollama launch claude",
-    description: "Anthropic's coding tool with subagents",
-    icon: "/launch-icons/claude.svg",
-    iconClassName: "h-7 w-7",
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    command: "ollama launch codex",
-    description: "OpenAI's open-source coding agent",
-    icon: "/launch-icons/codex.svg",
-    darkIcon: "/launch-icons/codex-dark.svg",
+    id: "hermes",
+    name: "Hermes Agent",
+    command: "ollama launch hermes",
+    description: "Self-improving AI agent built by Nous Research",
+    icon: "/launch-icons/hermes-agent.svg",
     iconClassName: "h-7 w-7",
   },
   {
@@ -46,11 +53,12 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     iconClassName: "h-7 w-7 rounded",
   },
   {
-    id: "hermes",
-    name: "Hermes Agent",
-    command: "ollama launch hermes",
-    description: "Self-improving AI agent built by Nous Research",
-    icon: "/launch-icons/hermes-agent.svg",
+    id: "codex",
+    name: "Codex",
+    command: "ollama launch codex",
+    description: "OpenAI's open-source coding agent",
+    icon: "/launch-icons/codex.svg",
+    darkIcon: "/launch-icons/codex-dark.svg",
     iconClassName: "h-7 w-7",
   },
   {
