@@ -12,6 +12,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/backend/ggml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/model/input"
 )
 
 func TestParseTags(t *testing.T) {
@@ -55,6 +56,21 @@ type fakeTensor struct {
 	*ggml.Tensor
 	Name string
 }
+
+type fakeCache struct{}
+
+func (f *fakeCache) Init(ml.Backend, ml.DType, int, int, int) {}
+func (f *fakeCache) SetConfig(ml.CacheConfig)                 {}
+func (f *fakeCache) SetLayer(int)                             {}
+func (f *fakeCache) Get(ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
+	return nil, nil, nil
+}
+func (f *fakeCache) Put(ml.Context, ml.Tensor, ml.Tensor)             {}
+func (f *fakeCache) CopyPrefix(int, int, int32)                       {}
+func (f *fakeCache) Remove(int, int32, int32) error                   { return nil }
+func (f *fakeCache) CanResume(int, int32) bool                        { return true }
+func (f *fakeCache) StartForward(ml.Context, input.Batch, bool) error { return nil }
+func (f *fakeCache) Close()                                           {}
 
 // Stub methods to satisfy ml.Tensor interface
 func (f *fakeTensor) Exp(ctx ml.Context) ml.Tensor                                 { return f }
@@ -269,5 +285,22 @@ func TestModelForArch(t *testing.T) {
 				t.Errorf("modelForArch() returned unexpected values (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestBaseSetCache(t *testing.T) {
+	initial := &fakeCache{}
+	replacement := &fakeCache{}
+
+	base := &Base{
+		config: config{
+			Cache: initial,
+		},
+	}
+
+	base.SetCache(replacement)
+
+	if base.Config().Cache != replacement {
+		t.Fatal("expected Config().Cache to be replaced")
 	}
 }
