@@ -177,6 +177,23 @@ func TestClineModels(t *testing.T) {
 			t.Errorf("Models() = %v, want [kimi-k2.5:cloud]", models)
 		}
 	})
+
+	t.Run("returns full launcher-managed model list when present", func(t *testing.T) {
+		os.MkdirAll(configDir, 0o755)
+		config := map[string]any{
+			"actModeApiProvider":   "ollama",
+			"actModeOllamaModelId": "kimi-k2.5:cloud",
+			clineLaunchModelsKey:   []string{"kimi-k2.5:cloud", "glm-5:cloud"},
+		}
+		data, _ := json.Marshal(config)
+		os.WriteFile(configPath, data, 0o644)
+
+		models := c.Models()
+		want := []string{"kimi-k2.5:cloud", "glm-5:cloud"}
+		if len(models) != len(want) || models[0] != want[0] || models[1] != want[1] {
+			t.Errorf("Models() = %v, want %v", models, want)
+		}
+	})
 }
 
 func TestClinePaths(t *testing.T) {
@@ -184,9 +201,10 @@ func TestClinePaths(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	t.Run("returns nil when no config exists", func(t *testing.T) {
-		if paths := c.Paths(); paths != nil {
-			t.Errorf("Paths() = %v, want nil", paths)
+	t.Run("returns canonical path when config is missing", func(t *testing.T) {
+		configPath := filepath.Join(tmpDir, ".cline", "data", "globalState.json")
+		if paths := c.Paths(); len(paths) != 1 || paths[0] != configPath {
+			t.Errorf("Paths() = %v, want [%s]", paths, configPath)
 		}
 	})
 

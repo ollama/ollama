@@ -16,6 +16,8 @@ type Cline struct{}
 
 func (c *Cline) String() string { return "Cline" }
 
+const clineLaunchModelsKey = "ollamaLaunchModels"
+
 func (c *Cline) Run(model string, args []string) error {
 	if _, err := exec.LookPath("cline"); err != nil {
 		return fmt.Errorf("cline is not installed, install with: npm install -g cline")
@@ -33,11 +35,7 @@ func (c *Cline) Paths() []string {
 	if err != nil {
 		return nil
 	}
-	p := filepath.Join(home, ".cline", "data", "globalState.json")
-	if _, err := os.Stat(p); err == nil {
-		return []string{p}
-	}
-	return nil
+	return []string{filepath.Join(home, ".cline", "data", "globalState.json")}
 }
 
 func (c *Cline) Edit(models []string) error {
@@ -71,6 +69,7 @@ func (c *Cline) Edit(models []string) error {
 	config["planModeApiProvider"] = "ollama"
 	config["planModeOllamaModelId"] = models[0]
 	config["planModeOllamaBaseUrl"] = baseURL
+	config[clineLaunchModelsKey] = models
 
 	config["welcomeViewCompleted"] = true
 
@@ -100,5 +99,18 @@ func (c *Cline) Models() []string {
 	if modelID == "" {
 		return nil
 	}
+
+	if raw, ok := config[clineLaunchModelsKey].([]any); ok {
+		models := make([]string, 0, len(raw))
+		for _, entry := range raw {
+			if model, ok := entry.(string); ok && model != "" {
+				models = append(models, model)
+			}
+		}
+		if len(models) > 0 {
+			return models
+		}
+	}
+
 	return []string{modelID}
 }

@@ -83,10 +83,7 @@ func (o *OpenCode) Paths() []string {
 	if err != nil {
 		return nil
 	}
-	if _, err := os.Stat(sp); err == nil {
-		return []string{sp}
-	}
-	return nil
+	return []string{sp}
 }
 
 // openCodeStatePath returns the path to opencode's model state file.
@@ -167,7 +164,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 }
 
 func (o *OpenCode) Models() []string {
-	return nil
+	return readModelJSONModels()
 }
 
 // buildInlineConfig produces the JSON string for OPENCODE_CONFIG_CONTENT.

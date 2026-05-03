@@ -373,17 +373,21 @@ exit 0
 func TestPiPaths(t *testing.T) {
 	pi := &Pi{}
 
-	t.Run("returns empty when no config exists", func(t *testing.T) {
+	t.Run("returns canonical paths when config is missing", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
 		paths := pi.Paths()
-		if len(paths) != 0 {
-			t.Errorf("Paths() = %v, want empty", paths)
+		want := []string{
+			filepath.Join(tmpDir, ".pi", "agent", "models.json"),
+			filepath.Join(tmpDir, ".pi", "agent", "settings.json"),
+		}
+		if len(paths) != 2 || paths[0] != want[0] || paths[1] != want[1] {
+			t.Errorf("Paths() = %v, want %v", paths, want)
 		}
 	})
 
-	t.Run("returns path when config exists", func(t *testing.T) {
+	t.Run("returns canonical paths when config exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
@@ -391,14 +395,19 @@ func TestPiPaths(t *testing.T) {
 		if err := os.MkdirAll(configDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		configPath := filepath.Join(configDir, "models.json")
-		if err := os.WriteFile(configPath, []byte("{}"), 0o644); err != nil {
+		modelsPath := filepath.Join(configDir, "models.json")
+		if err := os.WriteFile(modelsPath, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		settingsPath := filepath.Join(configDir, "settings.json")
+		if err := os.WriteFile(settingsPath, []byte("{}"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
 		paths := pi.Paths()
-		if len(paths) != 1 || paths[0] != configPath {
-			t.Errorf("Paths() = %v, want [%s]", paths, configPath)
+		want := []string{modelsPath, settingsPath}
+		if len(paths) != 2 || paths[0] != want[0] || paths[1] != want[1] {
+			t.Errorf("Paths() = %v, want %v", paths, want)
 		}
 	})
 }
@@ -932,7 +941,7 @@ func TestPiModels(t *testing.T) {
 		}
 	})
 
-	t.Run("returns sorted models", func(t *testing.T) {
+	t.Run("returns models in config order", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
@@ -957,8 +966,8 @@ func TestPiModels(t *testing.T) {
 		}
 
 		models := pi.Models()
-		if models[0] != "a-model" || models[1] != "m-model" || models[2] != "z-model" {
-			t.Errorf("Models() = %v, want [a-model m-model z-model] (sorted)", models)
+		if models[0] != "z-model" || models[1] != "a-model" || models[2] != "m-model" {
+			t.Errorf("Models() = %v, want [z-model a-model m-model] (config order)", models)
 		}
 	})
 
