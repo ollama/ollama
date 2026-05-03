@@ -16,6 +16,7 @@ import (
 // Default set of vision models to test. When OLLAMA_TEST_MODEL is set,
 // only that model is tested (with a capability check for vision).
 var defaultVisionModels = []string{
+	"nemotron3:33b",
 	"gemma4",
 	"gemma3",
 	"llama3.2-vision",
@@ -67,10 +68,11 @@ func skipIfNoVisionOverride(t *testing.T) {
 // setupVisionModel pulls the model, preloads it, and skips if not GPU-loaded.
 func setupVisionModel(ctx context.Context, t *testing.T, client *api.Client, model string) {
 	t.Helper()
-	if testModel != "" {
-		requireCapability(ctx, t, client, model, "vision")
+	if testModel == "" {
+		pullOrSkip(ctx, t, client, model)
 	}
-	pullOrSkip(ctx, t, client, model)
+	skipIfModelTooLargeForVRAM(ctx, t, client, model)
+	requireCapability(ctx, t, client, model, "vision")
 	err := client.Generate(ctx, &api.GenerateRequest{Model: model}, func(response api.GenerateResponse) error { return nil })
 	if err != nil {
 		t.Fatalf("failed to load model %s: %s", model, err)
@@ -82,7 +84,7 @@ func setupVisionModel(ctx context.Context, t *testing.T, client *api.Client, mod
 // questions about the same image. This verifies that the KV cache correctly
 // handles cached image tokens across turns.
 func TestVisionMultiTurn(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
 	// Models that fail on multi-turn detail questions (e.g. misidentifying objects).
@@ -115,7 +117,8 @@ func TestVisionMultiTurn(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			resp1 := DoChat(ctx, t, client, req, []string{
 				"llama", "cross", "walk", "road", "animal", "cartoon",
@@ -150,7 +153,7 @@ func TestVisionMultiTurn(t *testing.T) {
 
 // TestVisionObjectCounting asks the model to count objects in an image.
 func TestVisionObjectCounting(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
 	skipModels := map[string]string{
@@ -180,7 +183,8 @@ func TestVisionObjectCounting(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{"4", "four"}, 120*time.Second, 30*time.Second)
 		})
@@ -190,7 +194,7 @@ func TestVisionObjectCounting(t *testing.T) {
 // TestVisionSceneUnderstanding tests whether the model can identify
 // cultural references and scene context from an image.
 func TestVisionSceneUnderstanding(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
 	// Models known to be too small or not capable enough for cultural reference detection.
@@ -222,7 +226,8 @@ func TestVisionSceneUnderstanding(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
 				"abbey road", "beatles", "abbey", "llama",
@@ -234,7 +239,7 @@ func TestVisionSceneUnderstanding(t *testing.T) {
 // TestVisionSpatialReasoning tests the model's ability to identify
 // objects based on their spatial position in the image.
 func TestVisionSpatialReasoning(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
 	for _, model := range testModels(defaultVisionModels) {
@@ -259,10 +264,11 @@ func TestVisionSpatialReasoning(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
-				"laptop", "computer", "typing", "working",
+				"laptop", "computer", "typing", "working", "desk", "writing", "pen", "glasses", "reading",
 			}, 120*time.Second, 30*time.Second)
 		})
 	}
@@ -271,7 +277,7 @@ func TestVisionSpatialReasoning(t *testing.T) {
 // TestVisionDetailRecognition tests whether the model can identify
 // small details like accessories in an image.
 func TestVisionDetailRecognition(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
 	for _, model := range testModels(defaultVisionModels) {
@@ -294,7 +300,8 @@ func TestVisionDetailRecognition(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
 				"glasses", "spectacles", "eyeglasses",
@@ -307,7 +314,7 @@ func TestVisionDetailRecognition(t *testing.T) {
 // the model to compare and contrast them. This exercises multi-image
 // encoding and cross-image reasoning.
 func TestVisionMultiImage(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
 	// Multi-image support varies across models.
@@ -338,7 +345,8 @@ func TestVisionMultiImage(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			// Both images feature cartoon llamas/alpacas — the model should
 			// note the common subject and the different settings.
@@ -353,7 +361,7 @@ func TestVisionMultiImage(t *testing.T) {
 // of the ollama homepage image (a cartoon llama with "Start building with
 // open models" text). Basic sanity check that the vision pipeline works.
 func TestVisionImageDescription(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
 	for _, model := range testModels(defaultVisionModels) {
@@ -376,7 +384,8 @@ func TestVisionImageDescription(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
 				"llama", "animal", "build", "model", "open", "cartoon", "character",
