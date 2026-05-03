@@ -12,6 +12,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
+	cachepkg "github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 	"github.com/ollama/ollama/x/tokenizer"
@@ -19,6 +20,25 @@ import (
 
 func prefillChunkSize() int {
 	return 2 << 10
+}
+
+const minDecodeCheckpointTokens = 64
+
+func shouldDecodeCheckpoint(generated int) bool {
+	switch {
+	case generated <= 0:
+		return false
+	case generated <= 512:
+		return generated%64 == 0
+	case generated <= 2048:
+		return generated%256 == 0
+	default:
+		return generated%1024 == 0
+	}
+}
+
+func shouldFinalDecodeCheckpoint(generated int) bool {
+	return generated >= minDecodeCheckpointTokens
 }
 
 // Prepare tokenizes the prompt and validates it against the model's
@@ -79,6 +99,10 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	caches := session.caches
 	tokens := session.remaining
 	prefillChunk := prefillChunkSize()
+	decodeCheckpoints := cachepkg.RequiresExactRestorePoint(caches)
+	if decodeCheckpoints {
+		slog.Debug("decode cache checkpoints enabled")
+	}
 
 	// Request periodic snapshots during prefill and near the end of the
 	// prompt so that long prompts can be partially restored and
@@ -165,6 +189,10 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	}
 
 	sample = step(mlx.FromValues(tokens[processed:], 1, total-processed))
+	decodeCheckpointBaseOffset := 0
+	if decodeCheckpoints && len(session.cache.activePath) > 0 {
+		decodeCheckpointBaseOffset = session.cache.activePath[len(session.cache.activePath)-1].endOffset
+	}
 
 	dec := decoder{
 		tokenizer:       r.Tokenizer,
@@ -189,6 +217,10 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		output := int32(sample.Token.Int())
 		session.outputs = append(session.outputs, output)
 
+		if decodeCheckpoints && shouldDecodeCheckpoint(session.cache.minCacheOffset()-decodeCheckpointBaseOffset) {
+			session.decodeCheckpoint()
+		}
+
 		if r.Tokenizer.IsEOS(output) {
 			final.DoneReason = 0
 			final.EvalCount = i
@@ -209,6 +241,10 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		if i%256 == 0 {
 			mlx.ClearCache()
 		}
+	}
+
+	if decodeCheckpoints && shouldFinalDecodeCheckpoint(len(session.outputs)) {
+		session.decodeCheckpoint()
 	}
 
 	final.EvalDuration = time.Since(now)
