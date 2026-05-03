@@ -50,6 +50,22 @@ func (r *launcherSingleRunner) Run(model string, args []string) error {
 
 func (r *launcherSingleRunner) String() string { return "StubSingle" }
 
+type launcherRestorableRunner struct {
+	launcherSingleRunner
+	restored              bool
+	restoreErr            error
+	restoreSuccessMessage string
+}
+
+func (r *launcherRestorableRunner) Restore() error {
+	r.restored = true
+	return r.restoreErr
+}
+
+func (r *launcherRestorableRunner) RestoreSuccessMessage() string {
+	return r.restoreSuccessMessage
+}
+
 type launcherManagedRunner struct {
 	paths              []string
 	currentModel       string
@@ -115,6 +131,7 @@ type launcherManagedAutodiscoveryRunner struct {
 	autodiscoveryConfigured bool
 	usesCloud               bool
 	restoreHint             string
+	configSuccessMessage    string
 }
 
 func (r *launcherManagedAutodiscoveryRunner) AutodiscoveredModel() string { return "Ollama Cloud" }
@@ -122,6 +139,10 @@ func (r *launcherManagedAutodiscoveryRunner) AutodiscoveredModel() string { retu
 func (r *launcherManagedAutodiscoveryRunner) UsesOllamaCloud() bool { return r.usesCloud }
 
 func (r *launcherManagedAutodiscoveryRunner) RestoreHint() string { return r.restoreHint }
+
+func (r *launcherManagedAutodiscoveryRunner) ConfigurationSuccessMessage() string {
+	return r.configSuccessMessage
+}
 
 func (r *launcherManagedAutodiscoveryRunner) AutodiscoveryConfigured() bool {
 	return r.autodiscoveryConfigured
@@ -740,6 +761,42 @@ func TestLaunchIntegration_ManagedAutodiscoverySkipsModelPicker(t *testing.T) {
 	}
 }
 
+func TestLaunchIntegration_ManagedAutodiscoveryPrintsConfigurationSuccessAfterConfigure(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedAutodiscoveryRunner{
+		restoreHint:          "run restore command",
+		configSuccessMessage: "configured successfully\nrestore via success message",
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+			t.Fatalf("LaunchIntegration returned error: %v", err)
+		}
+	})
+
+	if runner.autodiscoveryConfigures != 1 {
+		t.Fatalf("expected one autodiscovery configure, got %d", runner.autodiscoveryConfigures)
+	}
+	if !strings.Contains(stderr, "configured successfully") {
+		t.Fatalf("expected configuration success in stderr, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "restore via success message") {
+		t.Fatalf("expected restore guidance in configuration success, got %q", stderr)
+	}
+	if strings.Contains(stderr, "run restore command") {
+		t.Fatalf("restore hint should not print separately after configure, got %q", stderr)
+	}
+}
+
 func TestLaunchIntegration_ManagedAutodiscoveryPrintsRestoreHintWhenAlreadyConfigured(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
@@ -773,6 +830,73 @@ func TestLaunchIntegration_ManagedAutodiscoveryPrintsRestoreHintWhenAlreadyConfi
 	}
 	if !strings.Contains(stderr, "run restore command") {
 		t.Fatalf("expected restore hint in stderr, got %q", stderr)
+	}
+}
+
+func TestLaunchIntegration_ManagedAutodiscoveryPrintsConfigurationSuccessWhenAlreadyConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedAutodiscoveryRunner{
+		autodiscoveryConfigured: true,
+		restoreHint:             "run restore command",
+		configSuccessMessage:    "configured successfully\nrestore via success message",
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	if err := config.SaveIntegration("stubmanaged", []string{"Ollama Cloud"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+	if err := config.MarkIntegrationOnboarded("stubmanaged"); err != nil {
+		t.Fatalf("failed to mark integration onboarded: %v", err)
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+			t.Fatalf("LaunchIntegration returned error: %v", err)
+		}
+	})
+
+	if runner.autodiscoveryConfigures != 0 {
+		t.Fatalf("expected configured autodiscovery integration not to reconfigure, got %d configures", runner.autodiscoveryConfigures)
+	}
+	if !strings.Contains(stderr, "configured successfully") {
+		t.Fatalf("expected configuration success in stderr, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "restore via success message") {
+		t.Fatalf("expected restore guidance in configuration success, got %q", stderr)
+	}
+	if strings.Contains(stderr, "run restore command") {
+		t.Fatalf("restore hint should not print separately when success message exists, got %q", stderr)
+	}
+}
+
+func TestLaunchIntegration_RestorePrintsSuccessMessage(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	runner := &launcherRestorableRunner{
+		restoreSuccessMessage: "restored successfully",
+	}
+	withIntegrationOverride(t, "stubrestore", runner)
+
+	stderr := captureStderr(t, func() {
+		if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+			Name:    "stubrestore",
+			Restore: true,
+		}); err != nil {
+			t.Fatalf("LaunchIntegration returned error: %v", err)
+		}
+	})
+
+	if !runner.restored {
+		t.Fatal("expected restore to run")
+	}
+	if !strings.Contains(stderr, "restored successfully") {
+		t.Fatalf("expected restore success in stderr, got %q", stderr)
 	}
 }
 

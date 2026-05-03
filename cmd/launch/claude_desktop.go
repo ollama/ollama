@@ -26,7 +26,9 @@ const (
 	claudeDesktopGatewayBaseURL  = "https://ollama.com"
 	claudeDesktopAPIKeyURL       = "https://ollama.com/settings/keys"
 	claudeDesktopModelLabel      = "Ollama Cloud"
+	claudeDesktopSuccessMessage  = "Claude Desktop profile changed to Ollama Cloud."
 	claudeDesktopRestoreMessage  = "To restore the usual Claude profile, run: ollama launch claude-desktop --restore"
+	claudeDesktopRestoredMessage = "Claude Desktop restored to the usual Claude profile."
 )
 
 var (
@@ -97,6 +99,14 @@ func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 
 func (c *ClaudeDesktop) RestoreHint() string {
 	return claudeDesktopRestoreMessage
+}
+
+func (c *ClaudeDesktop) ConfigurationSuccessMessage() string {
+	return claudeDesktopSuccessMessage + "\n" + claudeDesktopRestoreMessage
+}
+
+func (c *ClaudeDesktop) RestoreSuccessMessage() string {
+	return claudeDesktopRestoredMessage
 }
 
 func (c *ClaudeDesktop) AutodiscoveryConfigured() bool {

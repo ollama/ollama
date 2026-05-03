@@ -183,6 +183,18 @@ type RestoreHintIntegration interface {
 	RestoreHint() string
 }
 
+// ConfigurationSuccessIntegration can print a short message after launcher
+// successfully switches an app into a launch-managed mode.
+type ConfigurationSuccessIntegration interface {
+	ConfigurationSuccessMessage() string
+}
+
+// RestoreSuccessIntegration can print a short message after launcher restores
+// an app back to its default mode.
+type RestoreSuccessIntegration interface {
+	RestoreSuccessMessage() string
+}
+
 // ManagedRuntimeRefresher lets managed integrations refresh any long-lived
 // background runtime after launch rewrites their config.
 type ManagedRuntimeRefresher interface {
@@ -475,7 +487,11 @@ func restoreIntegration(name string, runner Runner, req IntegrationLaunchRequest
 	if err := EnsureIntegrationInstalled(name, runner); err != nil {
 		return err
 	}
-	return restorable.Restore()
+	if err := restorable.Restore(); err != nil {
+		return err
+	}
+	printRestoreSuccess(restorable)
+	return nil
 }
 
 func launchIntegrationPolicy(req IntegrationLaunchRequest) LaunchPolicy {
@@ -780,7 +796,9 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 		}
 	}
 
-	printRestoreHint(autodiscovery)
+	if !printConfigurationSuccess(autodiscovery) {
+		printRestoreHint(autodiscovery)
+	}
 
 	if req.ConfigureOnly {
 		return nil
@@ -814,6 +832,28 @@ func printRestoreHint(integration any) {
 		return
 	}
 	if msg := strings.TrimSpace(hint.RestoreHint()); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+	}
+}
+
+func printConfigurationSuccess(integration any) bool {
+	success, ok := integration.(ConfigurationSuccessIntegration)
+	if !ok {
+		return false
+	}
+	if msg := strings.TrimSpace(success.ConfigurationSuccessMessage()); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		return true
+	}
+	return false
+}
+
+func printRestoreSuccess(integration any) {
+	success, ok := integration.(RestoreSuccessIntegration)
+	if !ok {
+		return
+	}
+	if msg := strings.TrimSpace(success.RestoreSuccessMessage()); msg != "" {
 		fmt.Fprintln(os.Stderr, msg)
 	}
 }

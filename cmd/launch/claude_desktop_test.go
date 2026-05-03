@@ -111,6 +111,16 @@ func TestClaudeDesktopIntegration(t *testing.T) {
 			t.Fatalf("restore hint should not use Tip wording, got %q", c.RestoreHint())
 		}
 	})
+	t.Run("has success messages", func(t *testing.T) {
+		var _ ConfigurationSuccessIntegration = c
+		var _ RestoreSuccessIntegration = c
+		if got := c.ConfigurationSuccessMessage(); got != "Claude Desktop profile changed to Ollama Cloud.\nTo restore the usual Claude profile, run: ollama launch claude-desktop --restore" {
+			t.Fatalf("configuration success message = %q", got)
+		}
+		if got := c.RestoreSuccessMessage(); got != "Claude Desktop restored to the usual Claude profile." {
+			t.Fatalf("restore success message = %q", got)
+		}
+	})
 	t.Run("skips local model readiness", func(t *testing.T) {
 		var _ ManagedModelReadinessSkipper = c
 		if !c.SkipModelReadiness() {
