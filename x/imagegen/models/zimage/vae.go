@@ -135,7 +135,7 @@ func (gn *GroupNormLayer) forwardTiled(x *mlx.Array, B, H, W, C int32) *mlx.Arra
 	mlx.Eval(mean, invStd)
 
 	// Tile along H dimension
-	tileH := int32(512 * 512 / W)
+	tileH := 512 * 512 / W
 	if tileH < 1 {
 		tileH = 1
 	}
@@ -521,7 +521,7 @@ type UpDecoderBlock2D struct {
 // NewUpDecoderBlock2D creates an up decoder block
 func NewUpDecoderBlock2D(weights safetensors.WeightSource, prefix string, numLayers, numGroups int32, hasUpsample bool) (*UpDecoderBlock2D, error) {
 	resnets := make([]*ResnetBlock2D, numLayers)
-	for i := int32(0); i < numLayers; i++ {
+	for i := range numLayers {
 		resPrefix := fmt.Sprintf("%s.resnets.%d", prefix, i)
 		resnet, err := NewResnetBlock2D(weights, resPrefix, numGroups)
 		if err != nil {
@@ -691,7 +691,7 @@ func (m *VAEDecoder) loadWeights(weights safetensors.WeightSource, cfg *VAEConfi
 	fmt.Print("  Loading up blocks... ")
 	numBlocks := len(cfg.BlockOutChannels)
 	m.UpBlocks = make([]*UpDecoderBlock2D, numBlocks)
-	for i := 0; i < numBlocks; i++ {
+	for i := range numBlocks {
 		prefix := fmt.Sprintf("decoder.up_blocks.%d", i)
 		hasUpsample := i < numBlocks-1
 		m.UpBlocks[i], err = NewUpDecoderBlock2D(weights, prefix, cfg.LayersPerBlock+1, cfg.NormNumGroups, hasUpsample)

@@ -37,94 +37,28 @@ RUN dnf install -y unzip \
 ENV CMAKE_GENERATOR=Ninja
 ENV LDFLAGS=-s
 
-FROM base AS cpu
+#
+# GPU toolchain stages — provide compilers for llama-server GPU builds
+#
+
+FROM base AS cpu-deps
 RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
 ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
-COPY CMakeLists.txt CMakePresets.json .
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CPU' \
-        && cmake --build --preset 'CPU' -- -l $(nproc) \
-        && cmake --install build --component CPU --strip
 
-FROM base AS cuda-11
-ARG CUDA11VERSION=11.8
-RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
-ENV PATH=/usr/local/cuda-11/bin:$PATH
-COPY CMakeLists.txt CMakePresets.json .
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 11' \
-        && cmake --build --preset 'CUDA 11' -- -l $(nproc) \
-        && cmake --install build --component CUDA --strip
-
-FROM base AS cuda-12
+FROM base AS cuda-12-deps
 ARG CUDA12VERSION=12.8
 RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
 ENV PATH=/usr/local/cuda-12/bin:$PATH
-COPY CMakeLists.txt CMakePresets.json .
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 12' \
-        && cmake --build --preset 'CUDA 12' -- -l $(nproc) \
-        && cmake --install build --component CUDA --strip
 
-
-FROM base AS cuda-13
+FROM base AS cuda-13-deps
 ARG CUDA13VERSION=13.0
 RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-}
 ENV PATH=/usr/local/cuda-13/bin:$PATH
-COPY CMakeLists.txt CMakePresets.json .
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 13' \
-        && cmake --build --preset 'CUDA 13' -- -l $(nproc) \
-        && cmake --install build --component CUDA --strip
 
+FROM base AS rocm-7-deps
+ENV PATH=/opt/rocm/llvm/bin:/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:$PATH
 
-FROM base AS rocm-7
-ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
-COPY CMakeLists.txt CMakePresets.json .
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'ROCm 7' \
-        && cmake --build --preset 'ROCm 7' -- -l $(nproc) \
-        && cmake --install build --component HIP --strip
-RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*
-
-FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
-ARG CMAKEVERSION
-ARG NINJAVERSION
-RUN apt-get update && apt-get install -y curl ccache unzip \
-    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 \
-    && curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
-    && unzip /tmp/ninja.zip -d /usr/local/bin \
-    && rm /tmp/ninja.zip
-ENV CMAKE_GENERATOR=Ninja
-COPY CMakeLists.txt CMakePresets.json .
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'JetPack 5' \
-        && cmake --build --preset 'JetPack 5' -- -l $(nproc) \
-        && cmake --install build --component CUDA --strip
-
-FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
-ARG CMAKEVERSION
-ARG NINJAVERSION
-RUN apt-get update && apt-get install -y curl ccache unzip \
-    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 \
-    && curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
-    && unzip /tmp/ninja.zip -d /usr/local/bin \
-    && rm /tmp/ninja.zip
-ENV CMAKE_GENERATOR=Ninja
-COPY CMakeLists.txt CMakePresets.json .
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'JetPack 6' \
-        && cmake --build --preset 'JetPack 6' -- -l $(nproc) \
-        && cmake --install build --component CUDA --strip
-
-FROM base AS vulkan
+FROM base AS vulkan-deps
 ARG VULKANVERSION
 RUN ln -s /usr/bin/python3 /usr/bin/python \
     && wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk.tar.xz \
@@ -135,12 +69,111 @@ RUN ln -s /usr/bin/python3 /usr/bin/python \
     && cp -r /tmp/${VULKANVERSION}/x86_64/lib/* /usr/local/lib \
     && cp -r /tmp/${VULKANVERSION}/x86_64/bin/* /usr/local/bin/ \
     && rm -rf /tmp/${VULKANVERSION} /tmp/vulkansdk.tar.xz
-COPY CMakeLists.txt CMakePresets.json .
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+
+#
+# llama-server stages — rebuild when LLAMA_CPP_VERSION, llama/server/, or llama/compat/ changes.
+#
+# CPU stage: llama-server + ggml-base + ggml-cpu variants → lib/ollama/
+# GPU stages: GPU backend .so only → lib/ollama/<variant>/
+#
+
+FROM cpu-deps AS llama-server-cpu
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'Vulkan' \
-        && cmake --build --preset 'Vulkan' -- -l $(nproc) \
-        && cmake --install build --component Vulkan --strip
+    cmake -S llama/server --preset cpu \
+        && cmake --build build/llama-server-cpu -- -l $(nproc) \
+        && cmake --install build/llama-server-cpu --component llama-server --strip \
+        && for lib in \
+            /usr/lib64/libgomp.so* \
+            /usr/lib64/libomp.so* \
+            /opt/rh/gcc-toolset-11/root/usr/lib64/libgomp.so* \
+            /opt/rh/gcc-toolset-11/root/usr/lib64/libomp.so*; do \
+                [ -e "$lib" ] && cp -a "$lib" dist/lib/ollama/ || true; \
+            done
+
+FROM cuda-12-deps AS llama-server-cuda-v12
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset cuda-v12 \
+        && cmake --build build/llama-server-cuda-v12 -- -l $(nproc) \
+        && cmake --install build/llama-server-cuda-v12 --component llama-server --strip
+
+FROM cuda-13-deps AS llama-server-cuda-v13
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset cuda-v13 \
+        && cmake --build build/llama-server-cuda-v13 -- -l $(nproc) \
+        && cmake --install build/llama-server-cuda-v13 --component llama-server --strip
+
+FROM rocm-7-deps AS llama-server-rocm
+ENV CC=clang CXX=clang++
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset rocm \
+        -DAMDGPU_TARGETS="gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-" \
+        -DCMAKE_HIP_FLAGS="-parallel-jobs=4" \
+        && cmake --build build/llama-server-rocm -- -l $(nproc) \
+        && cmake --install build/llama-server-rocm --component llama-server --strip
+RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*
+
+FROM vulkan-deps AS llama-server-vulkan
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset vulkan \
+        && cmake --build build/llama-server-vulkan -- -l $(nproc) \
+        && cmake --install build/llama-server-vulkan --component llama-server --strip
+
+#
+# JetPack stages — self-contained with their own base images
+#
+
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
+ARG CMAKEVERSION
+ARG NINJAVERSION
+RUN apt-get update && apt-get install -y curl ccache git unzip \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 \
+    && curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
+    && unzip /tmp/ninja.zip -d /usr/local/bin \
+    && rm /tmp/ninja.zip
+ENV CMAKE_GENERATOR=Ninja
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset jetpack5 \
+        && cmake --build build/llama-server-jetpack5 -- -l $(nproc) \
+        && cmake --install build/llama-server-jetpack5 --component llama-server --strip
+
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
+ARG CMAKEVERSION
+ARG NINJAVERSION
+RUN apt-get update && apt-get install -y curl ccache git unzip \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 \
+    && curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
+    && unzip /tmp/ninja.zip -d /usr/local/bin \
+    && rm /tmp/ninja.zip
+ENV CMAKE_GENERATOR=Ninja
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset jetpack6 \
+        && cmake --build build/llama-server-jetpack6 -- -l $(nproc) \
+        && cmake --install build/llama-server-jetpack6 --component llama-server --strip
+
+#
+# MLX stage
+#
 
 FROM base AS mlx
 ARG CUDA13VERSION=13.0
@@ -154,7 +187,6 @@ ENV LAPACK_INCLUDE_DIRS=/usr/include/openblas
 ENV CGO_LDFLAGS="-L/usr/local/cuda-13/lib64 -L/usr/local/cuda-13/targets/x86_64-linux/lib/stubs"
 WORKDIR /go/src/github.com/ollama/ollama
 COPY CMakeLists.txt CMakePresets.json .
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 COPY x/imagegen/mlx x/imagegen/mlx
 COPY go.mod go.sum .
 COPY MLX_VERSION MLX_C_VERSION .
@@ -174,6 +206,10 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --preset 'MLX CUDA 13' -- -l $(nproc) \
         && cmake --install build --component MLX --strip
 
+#
+# Go build
+#
+
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama
 COPY go.mod go.sum .
@@ -190,25 +226,39 @@ ENV CGO_CXXFLAGS="${CGO_CXXFLAGS}"
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
+#
+# Assembly stages — combine llama-server variants + GPU runtime libs
+#
+
 FROM --platform=linux/amd64 scratch AS amd64
-# COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
-COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
-COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
-COPY --from=vulkan  dist/lib/ollama  /lib/ollama/
+COPY --from=llama-server-cpu      dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda-v12 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda-v13 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-vulkan   dist/lib/ollama /lib/ollama/
 COPY --from=mlx     /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64
-# COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
-COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
-COPY --from=cuda-13 dist/lib/ollama/ /lib/ollama/
+COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda-v12 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda-v13 dist/lib/ollama /lib/ollama/
 COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
-COPY --from=rocm-7 dist/lib/ollama /lib/ollama
+COPY --from=llama-server-cpu  dist/lib/ollama /lib/ollama
+COPY --from=llama-server-rocm dist/lib/ollama /lib/ollama
 
-FROM ${FLAVOR} AS archive
-COPY --from=cpu dist/lib/ollama /lib/ollama
+FROM --platform=linux/amd64 scratch AS amd64-archive
+COPY --from=amd64 /lib/ollama /lib/ollama/
+COPY --from=llama-server-rocm dist/lib/ollama /lib/ollama/
+
+FROM --platform=linux/arm64 scratch AS arm64-archive
+COPY --from=arm64 /lib/ollama /lib/ollama/
+
+FROM ${TARGETARCH}-archive AS archive
+COPY --from=build /bin/ollama /bin/ollama
+
+FROM ${FLAVOR} AS image-archive
 COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:24.04
@@ -216,9 +266,9 @@ RUN apt-get update \
     && apt-get install -y ca-certificates libvulkan1 libopenblas0 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=archive /bin /usr/bin
+COPY --from=image-archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-COPY --from=archive /lib/ollama /usr/lib/ollama
+COPY --from=image-archive /lib/ollama /usr/lib/ollama
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all

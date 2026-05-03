@@ -37,8 +37,8 @@ jobs:
               | xargs python3 -c "import sys; from pathlib import Path; print(any(Path(x).match(glob) for x in sys.argv[1:] for glob in '$*'.split(' ')))"
           }
 
-          echo changed=$(changed 'llama/llama.cpp/**/*' 'ml/backend/ggml/ggml/**/*' '.github/**/*') | tee -a $GITHUB_OUTPUT
-          echo vendorsha=$(make -f Makefile.sync print-base) | tee -a $GITHUB_OUTPUT
+          echo changed=$(changed 'llama/server/**/*' 'LLAMA_CPP_VERSION' '.github/**/*') | tee -a $GITHUB_OUTPUT
+          echo vendorsha=$(cat LLAMA_CPP_VERSION) | tee -a $GITHUB_OUTPUT
 
   linux:
     needs: [changes]
@@ -80,11 +80,9 @@ jobs:
             echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg]  https://packages.lunarg.com/vulkan/1.4.313 jammy main" | $sudo tee /etc/apt/sources.list.d/lunarg-vulkan-1.4.313-jammy.list > /dev/null
             $sudo apt-get update
           fi
-          $sudo apt-get install -y cmake ccache ${{ matrix.extra-packages }}
-          # MLX requires CMake 3.25+, install from official releases
-          if [ "${{ matrix.preset }}" = "MLX CUDA 13" ]; then
-            curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.2/cmake-3.31.2-linux-$(uname -m).tar.gz | $sudo tar xz -C /usr/local --strip-components 1
-          fi
+          $sudo apt-get install -y cmake ccache curl ${{ matrix.extra-packages }}
+          # llama-server requires CMake 3.24+, while Ubuntu 22.04 ships 3.22.
+          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.2/cmake-3.31.2-linux-$(uname -m).tar.gz | $sudo tar xz -C /usr/local --strip-components 1
           # Export VULKAN_SDK if provided by LunarG package (defensive)
           if [ -d "/usr/lib/x86_64-linux-gnu/vulkan" ] && [ "${{ matrix.preset }}" = "Vulkan" ]; then
             echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
@@ -101,9 +99,10 @@ jobs:
         with:
           path: /github/home/.cache/ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.vendorsha }}
-      - run: |
-          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
-          cmake --build --preset "${{ matrix.preset }}" --parallel
+      - name: Build llama-server
+        run: |
+          cmake -S llama/server --preset cpu ${{ matrix.flags }}
+          cmake --build build/llama-server-cpu -- -l $(nproc)
 
   windows:
     needs: [changes]
@@ -125,7 +124,8 @@ jobs:
               - '"nvptxcompiler"'
             cuda-version: '13.0'
           - preset: ROCm
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe
+            rocm-version: '7.1'
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
           - preset: Vulkan
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
@@ -234,11 +234,22 @@ jobs:
         with:
           path: ${{ github.workspace }}\.ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.vendorsha }}
-      - run: |
+      - name: Build llama-server
+        if: matrix.preset != 'MLX CUDA 13'
+        run: |
+          Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
+          cmake -S llama\server --preset cpu ${{ matrix.flags }}
+          cmake --build build\llama-server-cpu -- -l $([Environment]::ProcessorCount)
+        env:
+          CMAKE_GENERATOR: Ninja
+      - name: Build MLX
+        if: matrix.preset == 'MLX CUDA 13'
+        run: |
           Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
-          cmake --build --parallel --preset "${{ matrix.preset }}"
+          cmake --build --preset "${{ matrix.preset }}" -- -l $([Environment]::ProcessorCount)
         env:
           CMAKE_GENERATOR: Ninja
 
@@ -263,7 +274,7 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: |
             go.sum
-            Makefile.sync
+            LLAMA_CPP_VERSION
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -287,12 +298,3 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           only-new-issues: true
-
-  patches:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify patches apply cleanly and do not change files
-        run: |
-          make -f Makefile.sync clean checkout apply-patches sync
-          git diff --compact-summary --exit-code

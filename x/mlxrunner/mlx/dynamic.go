@@ -18,9 +18,11 @@ import (
 	"unsafe"
 )
 
-var initError error
-var initLoadError string
-var initLoadedPath string
+var (
+	initError      error
+	initLoadError  string
+	initLoadedPath string
+)
 
 // CheckInit returns any error that occurred during MLX dynamic library initialization.
 func CheckInit() error {

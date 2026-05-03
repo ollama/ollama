@@ -461,6 +461,17 @@ func (h *HarmonyMessageHandler) HasThinkingSupport() bool {
 	return true
 }
 
+func (h *HarmonyMessageHandler) PreservedTokens() []string {
+	return []string{
+		"<|start|>",
+		"<|end|>",
+		"<|message|>",
+		"<|channel|>",
+		"<|call|>",
+		"<|constrain|>",
+	}
+}
+
 func (m *FunctionNameMap) ConvertAndAdd(userFunctionName string) string {
 	harmonyFunctionName := m.deriveName(userFunctionName)
 	// built-in functions should not be renamed

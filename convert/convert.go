@@ -200,6 +200,26 @@ type ModelConverter interface {
 	specialTokenTypes() []string
 }
 
+// MultimodalConverter is an optional interface for models with embedded vision
+// projectors. When implemented, ConvertModel splits the output into a text
+// model GGUF and a separate projector GGUF.
+type MultimodalConverter interface {
+	ModelConverter
+	// ProjectorKV returns KV metadata for the projector GGUF.
+	ProjectorKV(*Tokenizer) KV
+	// ProjectorTensors filters the full tensor list to only vision/projector tensors.
+	ProjectorTensors([]Tensor) []*ggml.Tensor
+	// TextTensors filters the full tensor list to only text model tensors (excluding vision).
+	// The tokenizer is provided so implementations can truncate embeddings to the actual vocab size.
+	TextTensors([]Tensor, *Tokenizer) []*ggml.Tensor
+}
+
+// vocabSizer optionally returns the maximum vocabulary size for a model.
+// When implemented, the tokenizer is truncated to this size.
+type vocabSizer interface {
+	VocabSize() int
+}
+
 type moreParser interface {
 	parseMore(fs.FS) error
 }
@@ -286,7 +306,7 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &gemmaModel{}
 	case "Gemma2ForCausalLM":
 		conv = &gemma2Model{}
-	case "Gemma3ForCausalLM", "Gemma3ForConditionalGeneration":
+	case "Gemma3ForCausalLM", "Gemma3ForConditionalGeneration", "Gemma3TextModel":
 		conv = &gemma3Model{Architecture: p.Architectures[0]}
 	case "Gemma3nForConditionalGeneration":
 		conv = &gemma3nModel{}
@@ -349,6 +369,22 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		return nil, nil, err
 	}
 
+	// Allow converters to override the vocab size (e.g., to exclude multimodal tokens
+	// from text-only models where tokenizer.json includes them but the model doesn't use them).
+	// NOTE: if multiple models need this, consider making truncation the default behavior
+	// in the vocabSize < len(tokens) case below instead of per-model opt-in.
+	if vs, ok := conv.(vocabSizer); ok {
+		if maxVocab := vs.VocabSize(); maxVocab > 0 && maxVocab < len(t.Vocabulary.Tokens) {
+			slog.Debug("converter requested vocab truncation", "from", len(t.Vocabulary.Tokens), "to", maxVocab)
+			t.Vocabulary.Tokens = t.Vocabulary.Tokens[:maxVocab]
+			t.Vocabulary.Scores = t.Vocabulary.Scores[:maxVocab]
+			t.Vocabulary.Types = t.Vocabulary.Types[:maxVocab]
+			// Also update config so the padding logic below doesn't re-add the truncated tokens
+			p.VocabSize = uint32(maxVocab)
+			p.TextModel.VocabSize = uint32(maxVocab)
+		}
+	}
+
 	vocabSize := int(cmp.Or(p.VocabSize, p.TextModel.VocabSize))
 
 	switch {
@@ -375,7 +411,7 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 // and files it finds in the input path.
 // Supported input model formats include safetensors.
 // Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
-func ConvertModel(fsys fs.FS, f *os.File) error {
+func ConvertModel(fsys fs.FS, f *os.File, projectorFiles ...*os.File) error {
 	kv, t, err := LoadModelMetadata(fsys)
 	if err != nil {
 		return err
@@ -385,6 +421,19 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 	ts, err := parseTensors(fsys, strings.NewReplacer(conv.Replacements()...))
 	if err != nil {
 		return err
+	}
+
+	// If the converter supports multimodal and a projector file is provided,
+	// split into text model + projector
+	if mc, ok := conv.(MultimodalConverter); ok && len(projectorFiles) > 0 && projectorFiles[0] != nil {
+		projTensors := mc.ProjectorTensors(ts)
+		if len(projTensors) > 0 {
+			slog.Info("splitting multimodal model into text + projector")
+			if err := writeFile(f, mc.KV(t), mc.TextTensors(ts, t)); err != nil {
+				return err
+			}
+			return writeFile(projectorFiles[0], mc.ProjectorKV(t), projTensors)
+		}
 	}
 
 	return writeFile(f, conv.KV(t), conv.Tensors(ts))

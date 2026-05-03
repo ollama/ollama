@@ -1,17 +1,14 @@
 package discover
 
 import (
-	"log/slog"
-	"os"
+	"context"
+	"errors"
 	"testing"
+	"time"
 
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 )
-
-func init() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	slog.SetDefault(logger)
-}
 
 func TestFilterOverlapByLibrary(t *testing.T) {
 	type testcase struct {
@@ -131,5 +128,59 @@ func TestRecordPersistentRunnerEnv(t *testing.T) {
 
 	if devices[1].RunnerEnvOverrides != nil {
 		t.Fatalf("unexpected RunnerEnvOverrides recorded for non-Metal device: %#v", devices[1].RunnerEnvOverrides)
+	}
+}
+
+func TestBootstrapDevicesWithStatusWatchdogReturnsResult(t *testing.T) {
+	want := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA", ID: "0"}}}
+	devices, _, err := runBootstrapDevicesWithStatusWatchdog(
+		t.Context(),
+		[]string{"/lib/ollama", "/lib/ollama/cuda_v12"},
+		nil,
+		func(context.Context, []string, map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, error) {
+			return want, nil, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(devices) != 1 || devices[0].DeviceID != want[0].DeviceID {
+		t.Fatalf("devices = %#v, want %#v", devices, want)
+	}
+}
+
+func TestBootstrapDevicesWithStatusWatchdogReturnsOnDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+
+	_, _, err := runBootstrapDevicesWithStatusWatchdog(
+		ctx,
+		[]string{"/lib/ollama", "/lib/ollama/rocm"},
+		nil,
+		func(context.Context, []string, map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, error) {
+			close(started)
+			defer close(finished)
+			<-release
+			return nil, nil, nil
+		},
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context deadline exceeded", err)
+	}
+	close(release)
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("discovery function was not called")
+	}
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("discovery function did not finish after release")
 	}
 }

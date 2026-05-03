@@ -84,6 +84,11 @@ func (m *Model) IsMLX() bool {
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
+	appendCapability := func(cap model.Capability) {
+		if !slices.Contains(capabilities, cap) {
+			capabilities = append(capabilities, cap)
+		}
+	}
 
 	if m.ModelPath != "" {
 		f, err := gguf.Open(m.ModelPath)
@@ -91,16 +96,16 @@ func (m *Model) Capabilities() []model.Capability {
 			defer f.Close()
 
 			if f.KeyValue("pooling_type").Valid() {
-				capabilities = append(capabilities, model.CapabilityEmbedding)
+				appendCapability(model.CapabilityEmbedding)
 			} else {
 				// If no embedding is specified, we assume the model supports completion
-				capabilities = append(capabilities, model.CapabilityCompletion)
+				appendCapability(model.CapabilityCompletion)
 			}
 			if f.KeyValue("vision.block_count").Valid() {
-				capabilities = append(capabilities, model.CapabilityVision)
+				appendCapability(model.CapabilityVision)
 			}
 			if f.KeyValue("audio.block_count").Valid() {
-				capabilities = append(capabilities, model.CapabilityAudio)
+				appendCapability(model.CapabilityAudio)
 			}
 		} else {
 			slog.Error("couldn't open model file", "error", err)
@@ -111,10 +116,7 @@ func (m *Model) Capabilities() []model.Capability {
 	// set during creation for MLX/safetensors models).
 	if len(m.Config.Capabilities) > 0 {
 		for _, c := range m.Config.Capabilities {
-			cap := model.Capability(c)
-			if !slices.Contains(capabilities, cap) {
-				capabilities = append(capabilities, cap)
-			}
+			appendCapability(model.Capability(c))
 		}
 	}
 
@@ -133,17 +135,28 @@ func (m *Model) Capabilities() []model.Capability {
 		slog.Warn("model template contains errors", "error", err)
 	}
 	if slices.Contains(v, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
-		capabilities = append(capabilities, model.CapabilityTools)
+		appendCapability(model.CapabilityTools)
 	}
 
 	// Check for insert capability
 	if slices.Contains(v, "suffix") {
-		capabilities = append(capabilities, model.CapabilityInsert)
+		appendCapability(model.CapabilityInsert)
 	}
 
 	// Check for vision capability in projector-based models
 	if len(m.ProjectorPaths) > 0 {
-		capabilities = append(capabilities, model.CapabilityVision)
+		appendCapability(model.CapabilityVision)
+		for _, projectorPath := range m.ProjectorPaths {
+			f, err := gguf.Open(projectorPath)
+			if err != nil {
+				slog.Error("couldn't open projector file", "error", err)
+				continue
+			}
+			if projectorHasAudio(f) && !projectorSuppressesAudioCapability(f) {
+				appendCapability(model.CapabilityAudio)
+			}
+			f.Close()
+		}
 	}
 
 	// Skip the thinking check if it's already set
@@ -156,18 +169,45 @@ func (m *Model) Capabilities() []model.Capability {
 	hasTags := openingTag != "" && closingTag != ""
 	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
 	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
-		capabilities = append(capabilities, model.CapabilityThinking)
+		appendCapability(model.CapabilityThinking)
 	}
 
-	// Temporary workaround — suppress vision/audio for gemma4 MLX models
-	// until multimodal runtime pipeline lands. Remove when imageproc.go is wired up.
-	if m.Config.ModelFormat == "safetensors" && isGemma4Renderer(m.Config.Renderer) {
+	if isGemma4Renderer(m.Config.Renderer) {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityVision || c == "audio"
+			if c == model.CapabilityAudio {
+				// TODO: expose Gemma 4 audio once llama-server audio support is reliable.
+				return true
+			}
+
+			return m.Config.ModelFormat == "safetensors" && c == model.CapabilityVision
 		})
 	}
 
 	return capabilities
+}
+
+func projectorHasAudio(f *gguf.File) bool {
+	if f.KeyValue("has_audio_encoder").Bool() {
+		return true
+	}
+
+	for _, kv := range f.KeyValues() {
+		if strings.HasSuffix(kv.Key, ".has_audio_encoder") && kv.Bool() {
+			return true
+		}
+	}
+
+	return false
+}
+
+func projectorSuppressesAudioCapability(f *gguf.File) bool {
+	switch f.KeyValue("vision.projector_type").String() {
+	case "gemma3nv", "gemma4v":
+		// TODO: expose Gemma projector audio once llama-server audio support is reliable.
+		return true
+	}
+
+	return false
 }
 
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing

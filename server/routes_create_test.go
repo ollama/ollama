@@ -132,6 +132,36 @@ func readCreatedModelConfig(t *testing.T, name string) model.ConfigV2 {
 	return cfg
 }
 
+func readProjectorKV(t *testing.T, name string) ggml.KV {
+	t.Helper()
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName(name))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+
+	for _, layer := range mf.Layers {
+		if layer.MediaType != "application/vnd.ollama.image.projector" {
+			continue
+		}
+
+		blob, err := layer.Open()
+		if err != nil {
+			t.Fatalf("open projector layer: %v", err)
+		}
+		defer blob.Close()
+
+		f, err := ggml.Decode(blob, -1)
+		if err != nil {
+			t.Fatalf("decode projector layer: %v", err)
+		}
+		return f.KV()
+	}
+
+	t.Fatalf("projector layer not found for %s", name)
+	return nil
+}
+
 func checkFileExists(t *testing.T, p string, expect []string) {
 	t.Helper()
 
@@ -249,6 +279,91 @@ func TestCreateFromModel(t *testing.T) {
 		filepath.Join(p, "blobs", "sha256-6bcdb8859d417753645538d7bbfbd7ca91a3f0c191aef5379c53c05e86b669dd"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
+}
+
+func TestCreateNormalizesLegacyLlavaProjector(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	_, modelDigest := createBinFile(t, ggml.KV{
+		"general.architecture": "llama",
+	}, nil)
+	_, projectorDigest := createBinFile(t, ggml.KV{
+		"general.architecture":     "clip",
+		"general.type":             "projector",
+		"clip.has_vision_encoder":  true,
+		"clip.has_llava_projector": true,
+	}, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name: "legacy-llava-projector",
+		Files: map[string]string{
+			"model.gguf":     modelDigest,
+			"projector.gguf": projectorDigest,
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	kv := readProjectorKV(t, "legacy-llava-projector")
+	if got, want := kv.String("projector_type"), "mlp"; got != want {
+		t.Fatalf("clip.projector_type = %q, want %q", got, want)
+	}
+}
+
+func TestCreateFromModelNormalizesLegacyLlavaProjector(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	_, modelDigest := createBinFile(t, ggml.KV{
+		"general.architecture": "llama",
+	}, nil)
+	_, projectorDigest := createBinFile(t, ggml.KV{
+		"general.architecture":    "clip",
+		"general.type":            "projector",
+		"clip.has_vision_encoder": true,
+	}, nil)
+
+	modelLayer, err := manifest.NewLayerFromLayer(modelDigest, "application/vnd.ollama.image.model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectorLayer, err := manifest.NewLayerFromLayer(projectorDigest, "application/vnd.ollama.image.projector", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	layers := []manifest.Layer{modelLayer, projectorLayer}
+	configLayer, err := createConfigLayer(layers, model.ConfigV2{
+		ModelFormat:   "gguf",
+		ModelFamily:   "llama",
+		ModelFamilies: []string{"llama", "clip"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifest(model.ParseName("legacy-bakllava-source"), *configLayer, layers); err != nil {
+		t.Fatal(err)
+	}
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:   "legacy-bakllava-copy",
+		From:   "legacy-bakllava-source",
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	kv := readProjectorKV(t, "legacy-bakllava-copy")
+	if got, want := kv.String("projector_type"), "mlp"; got != want {
+		t.Fatalf("clip.projector_type = %q, want %q", got, want)
+	}
 }
 
 func TestCreateFromModelInheritsRendererParser(t *testing.T) {

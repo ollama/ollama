@@ -1,6 +1,12 @@
 package server
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/model/parsers"
+	"github.com/ollama/ollama/tools"
+)
 
 func TestResolveGemma4Renderer(t *testing.T) {
 	tests := []struct {
@@ -75,4 +81,30 @@ func TestResolveGemma4Renderer(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPreservedTokensForCompletion(t *testing.T) {
+	t.Run("builtin parser", func(t *testing.T) {
+		got := preservedTokensForCompletion(parsers.ParserForName("gemma4"), nil)
+		want := []string{
+			"<|channel>",
+			"<channel|>",
+			"<|tool_call>",
+			"<tool_call|>",
+			"<|tool_response>",
+			`<|"|>`,
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("preserved tokens mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("generic parser", func(t *testing.T) {
+		toolParser := tools.NewParserWithTag(nil, "[TOOL_CALLS][")
+		got := preservedTokensForCompletion(nil, toolParser)
+		want := []string{"[TOOL_CALLS]"}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("preserved tokens mismatch (-want +got):\n%s", diff)
+		}
+	})
 }

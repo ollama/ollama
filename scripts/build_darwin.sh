@@ -1,7 +1,7 @@
 #!/bin/sh
 
-# Note: 
-#  While testing, if you double-click on the Ollama.app 
+# Note:
+#  While testing, if you double-click on the Ollama.app
 #  some state is left on MacOS and subsequent attempts
 #  to build again will fail with:
 #
@@ -40,9 +40,24 @@ done
 shift $(( $OPTIND - 1 ))
 
 _build_darwin() {
+    # Shared upstream-source cache so each build dir doesn't fetch its own
+    # copy of llama.cpp. First build to need it populates the cache; the rest
+    # reference it via FETCHCONTENT_SOURCE_DIR_LLAMA_CPP. Mirrors what we do
+    # for MLX (FETCHCONTENT_SOURCE_DIR_MLX/MLX-C/JSON/FMT/METAL_CPP further
+    # down). Stays under build/ so `git clean -dfx` clears it.
+    LLAMA_CPP_SHARED_SRC="$(pwd)/build/_shared_deps/llama_cpp-src"
+    if [ ! -f "$LLAMA_CPP_SHARED_SRC/CMakeLists.txt" ]; then
+        LLAMA_CPP_TAG=$(cat LLAMA_CPP_VERSION)
+        status "Cloning shared llama.cpp source ($LLAMA_CPP_TAG) → $LLAMA_CPP_SHARED_SRC"
+        rm -rf "$LLAMA_CPP_SHARED_SRC"
+        mkdir -p "$(dirname "$LLAMA_CPP_SHARED_SRC")"
+        git clone --depth 1 --branch "$LLAMA_CPP_TAG" \
+            https://github.com/ggml-org/llama.cpp.git "$LLAMA_CPP_SHARED_SRC"
+    fi
+
     for ARCH in $ARCHS; do
         status "Building darwin $ARCH"
-        INSTALL_PREFIX=dist/darwin-$ARCH/        
+        INSTALL_PREFIX=dist/darwin-$ARCH/
 
         if [ "$ARCH" = "amd64" ]; then
             status "Building darwin $ARCH dynamic backends"
@@ -54,24 +69,22 @@ _build_darwin() {
                 -DMLX_ENGINE=ON \
                 -DMLX_ENABLE_X64_MAC=ON \
                 -DOLLAMA_RUNNER_DIR=./
-            cmake --build $BUILD_DIR --target ggml-cpu -j
             cmake --build $BUILD_DIR --target mlx mlxc -j
-            cmake --install $BUILD_DIR --component CPU
             cmake --install $BUILD_DIR --component MLX
-            # Override CGO flags to point to the amd64 build directory
+            # Build llama-server statically (no Metal on x86, CPU-only)
+            status "Building darwin $ARCH llama-server (static)"
+            cmake -S llama/server --preset cpu \
+                -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+                -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=$LLAMA_CPP_SHARED_SRC \
+                -DGGML_METAL=OFF \
+                -DGGML_CPU_ALL_VARIANTS=ON
+            cmake --build build/llama-server-cpu --target llama-server --target llama-quantize --target ggml -j
+            cmake --install build/llama-server-cpu --component llama-server
             MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-ldl -lc++ -framework Accelerate -mmacosx-version-min=14.0"
         else
-            # CPU backend (ggml-cpu, installed flat to lib/ollama/)
-            BUILD_DIR_CPU=build/arm64-cpu
-            status "Building arm64 CPU backend"
-            cmake -S . -B $BUILD_DIR_CPU \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
-            cmake --build $BUILD_DIR_CPU --target ggml-cpu --parallel
-            cmake --install $BUILD_DIR_CPU --component CPU
-
             # Build MLX twice for arm64
             # Metal 3.x build (backward compatible, macOS 14+)
             BUILD_DIR=build/metal-v3
@@ -109,6 +122,15 @@ _build_darwin() {
                 status "Skipping MLX Metal v4 (SDK $SDK_MAJOR < 26, need Xcode 26+)"
             fi
 
+            # Build llama-server from upstream source (Metal + CPU linked in)
+            status "Building darwin $ARCH llama-server (static)"
+            cmake -S llama/server --preset darwin \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+                -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=$LLAMA_CPP_SHARED_SRC
+            cmake --build build/llama-server-darwin --target llama-server --target llama-quantize --parallel
+            cmake --install build/llama-server-darwin --component llama-server
+
             # Use the v3 build for CGO linking (compatible with both)
             MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-lc++ -framework Metal -framework Foundation -framework Accelerate -mmacosx-version-min=14.0"
@@ -123,11 +145,20 @@ _build_darwin() {
 _sign_darwin() {
     status "Creating universal binary..."
     mkdir -p dist/darwin
-    lipo -create -output dist/darwin/ollama dist/darwin-*/ollama
+    lipo -create -output dist/darwin/ollama dist/darwin-amd64/ollama dist/darwin-arm64/ollama
     chmod +x dist/darwin/ollama
+    lipo dist/darwin/ollama -verify_arch x86_64 arm64
+
+    lipo -create -output dist/darwin/llama-server dist/darwin-amd64/lib/ollama/llama-server dist/darwin-arm64/lib/ollama/llama-server
+    chmod +x dist/darwin/llama-server
+    lipo dist/darwin/llama-server -verify_arch x86_64 arm64
+
+    lipo -create -output dist/darwin/llama-quantize dist/darwin-amd64/lib/ollama/llama-quantize dist/darwin-arm64/lib/ollama/llama-quantize
+    chmod +x dist/darwin/llama-quantize
+    lipo dist/darwin/llama-quantize -verify_arch x86_64 arm64
 
     if [ -n "$APPLE_IDENTITY" ]; then
-        for F in dist/darwin/ollama dist/darwin-*/lib/ollama/* dist/darwin-*/lib/ollama/mlx_metal_v*/*; do
+        for F in dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize dist/darwin-*/lib/ollama/* dist/darwin-*/lib/ollama/mlx_metal_v*/*; do
             [ -f "$F" ] && [ ! -L "$F" ] || continue
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$F"
         done
@@ -140,9 +171,9 @@ _sign_darwin() {
     fi
 
     status "Creating universal tarball..."
-    tar -cf dist/ollama-darwin.tar --strip-components 2 dist/darwin/ollama
-    tar -rf dist/ollama-darwin.tar --strip-components 4 dist/darwin-amd64/lib/
-    tar -rf dist/ollama-darwin.tar --strip-components 4 dist/darwin-arm64/lib/
+    tar -cf dist/ollama-darwin.tar --strip-components 2 dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize
+    tar -rf dist/ollama-darwin.tar --strip-components 4 --exclude '*/llama-server' --exclude '*/llama-quantize' dist/darwin-amd64/lib/
+    tar -rf dist/ollama-darwin.tar --strip-components 4 --exclude '*/llama-server' --exclude '*/llama-quantize' dist/darwin-arm64/lib/
     gzip -9vc <dist/ollama-darwin.tar >dist/ollama-darwin.tgz
 }
 
@@ -197,6 +228,10 @@ _build_macapp() {
     if [ -d dist/darwin-amd64 ]; then
         lipo -create -output dist/Ollama.app/Contents/Resources/ollama dist/darwin-amd64/ollama dist/darwin-arm64/ollama
 
+        # llama-server + llama-quantize universal binaries
+        cp dist/darwin/llama-server dist/Ollama.app/Contents/Resources/
+        cp dist/darwin/llama-quantize dist/Ollama.app/Contents/Resources/
+
         # Copy .so files from both architectures (names don't collide: arm64=libggml-cpu.so, amd64=libggml-cpu-*.so)
         cp dist/darwin-arm64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
         cp dist/darwin-amd64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
@@ -215,8 +250,14 @@ _build_macapp() {
                 cp "$F" dist/Ollama.app/Contents/Resources/
             fi
         done
-        # Recreate ggml-base symlinks
-        (cd dist/Ollama.app/Contents/Resources && ln -sf libggml-base.0.0.0.dylib libggml-base.0.dylib && ln -sf libggml-base.0.dylib libggml-base.dylib) 2>/dev/null || true
+        # Preserve dylib soname symlinks required by the x86_64 llama-server slice
+        # (for example @rpath/libmtmd.0.dylib).
+        for F in dist/darwin-amd64/lib/ollama/*.dylib; do
+            [ -L "$F" ] || continue
+            BASE=$(basename "$F")
+            case "$BASE" in libmlx*) continue ;; esac
+            cp -P "$F" dist/Ollama.app/Contents/Resources/
+        done
 
         # MLX Metal variant subdirs from arm64
         for VARIANT in dist/darwin-arm64/lib/ollama/mlx_metal_v*/; do
@@ -249,6 +290,8 @@ _build_macapp() {
         done
     else
         cp -a dist/darwin/ollama dist/Ollama.app/Contents/Resources/ollama
+        cp dist/darwin/llama-server dist/Ollama.app/Contents/Resources/
+        cp dist/darwin/llama-quantize dist/Ollama.app/Contents/Resources/
         # arm64-only build: copy variant subdirs directly
         for VARIANT in dist/darwin-arm64/lib/ollama/mlx_metal_v*/; do
             [ -d "$VARIANT" ] || continue
@@ -262,13 +305,18 @@ _build_macapp() {
             [ -f "$F" ] && [ ! -L "$F" ] || continue
             cp "$F" dist/Ollama.app/Contents/Resources/
         done
-        (cd dist/Ollama.app/Contents/Resources && ln -sf libggml-base.0.0.0.dylib libggml-base.0.dylib && ln -sf libggml-base.0.dylib libggml-base.dylib) 2>/dev/null || true
+        for F in dist/darwin-arm64/lib/ollama/*.dylib; do
+            [ -L "$F" ] || continue
+            cp -P "$F" dist/Ollama.app/Contents/Resources/
+        done
     fi
     chmod a+x dist/Ollama.app/Contents/Resources/ollama
 
     # Sign
     if [ -n "$APPLE_IDENTITY" ]; then
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/ollama
+        codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/llama-server
+        codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/llama-quantize
         for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib dist/Ollama.app/Contents/Resources/*.metallib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.dylib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.metallib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.so; do
             [ -f "$lib" ] || continue
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$lib"
@@ -278,7 +326,7 @@ _build_macapp() {
 
     rm -f dist/Ollama-darwin.zip
     ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
-    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama *.so *.dylib *.metallib mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
+    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server llama-quantize *.so *.dylib *.metallib mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then

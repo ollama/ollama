@@ -312,6 +312,10 @@ type DeviceInfo struct {
 	DriverMajor int `json:"driver_major,omitempty"`
 	DriverMinor int `json:"driver_minor,omitempty"`
 
+	// GFXTarget is the AMD GPU gfx target string (e.g. "gfx1100") for ROCm
+	// device validation. Empty on non-AMD devices.
+	GFXTarget string `json:"gfx_target,omitempty"`
+
 	// Where backends were loaded from
 	LibraryPath []string
 
@@ -481,12 +485,15 @@ func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
 	return cmp[0] == bLibSplit[1]
 }
 
-// For each GPU, check if it does NOT support flash attention
+// FlashAttentionSupported reports whether flash attention can be used across
+// all selected devices.
 func FlashAttentionSupported(l []DeviceInfo) bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
-			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
+			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 &&
+				gpu.ComputeMajor >= 7 &&
+				!(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
 			gpu.Library == "ROCm" ||
 			gpu.Library == "Vulkan"
 

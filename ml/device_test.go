@@ -58,3 +58,58 @@ func TestGetDevicesEnvWarnsOnConflictingOverrides(t *testing.T) {
 		t.Fatalf("expected warning log, got %q", logs.String())
 	}
 }
+
+func TestFlashAttentionSupported(t *testing.T) {
+	tests := []struct {
+		name string
+		gpus []DeviceInfo
+		want bool
+	}{
+		{
+			name: "cuda compute 5.0 unsupported",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 5, ComputeMinor: 0}},
+		},
+		{
+			name: "cuda compute 6.2 unsupported",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2}},
+		},
+		{
+			name: "cuda compute 7.2 unsupported",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 7, ComputeMinor: 2}},
+		},
+		{
+			name: "cuda compute 7.0 supported",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 7, ComputeMinor: 0}},
+			want: true,
+		},
+		{
+			name: "cuda compute 7.5 supported",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 7, ComputeMinor: 5}},
+			want: true,
+		},
+		{
+			name: "cuda unknown compute unsupported",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: -1, ComputeMinor: -1}},
+		},
+		{
+			name: "mixed cuda unsupported",
+			gpus: []DeviceInfo{
+				{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9},
+				{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2},
+			},
+		},
+		{
+			name: "metal supported",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "Metal"}}},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FlashAttentionSupported(tt.gpus); got != tt.want {
+				t.Fatalf("FlashAttentionSupported = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}

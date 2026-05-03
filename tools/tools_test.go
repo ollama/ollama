@@ -932,6 +932,59 @@ func TestContent(t *testing.T) {
 	}
 }
 
+func TestParserPreservedTokens(t *testing.T) {
+	cases := []struct {
+		name string
+		tag  string
+		want []string
+	}{
+		{
+			name: "adjacent square bracket after special token",
+			tag:  "[TOOL_CALLS][",
+			want: []string{"[TOOL_CALLS]"},
+		},
+		{
+			name: "adjacent xml bracket after special token",
+			tag:  "<tool_call>[",
+			want: []string{"<tool_call>"},
+		},
+		{
+			name: "adjacent angle token variant",
+			tag:  "<|tool_call|>[",
+			want: []string{"<|tool_call|>"},
+		},
+		{
+			name: "single special token",
+			tag:  "[TOOL_CALLS]",
+			want: []string{"[TOOL_CALLS]"},
+		},
+		{
+			name: "json object fallback",
+			tag:  "{",
+			want: nil,
+		},
+		{
+			name: "json array fallback",
+			tag:  "[",
+			want: nil,
+		},
+		{
+			name: "plain text tag",
+			tag:  "```json",
+			want: []string{"```json"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := &Parser{tag: tc.tag}
+			if diff := cmp.Diff(tc.want, parser.PreservedTokens()); diff != "" {
+				t.Fatalf("preserved tokens mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestFindTag(t *testing.T) {
 	cases := []struct {
 		name   string
