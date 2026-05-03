@@ -1099,6 +1099,9 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
             return true;
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
+            if (op->src[0]->type == GGML_TYPE_BF16 && op->src[1]->type == GGML_TYPE_F16) {
+                return false;
+            }
             return has_simdgroup_reduction;
         case GGML_OP_CPY:
         case GGML_OP_DUP:
