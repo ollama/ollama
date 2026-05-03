@@ -358,6 +358,116 @@ func TestExtractRawFromSafetensors_InvalidInput(t *testing.T) {
 	}
 }
 
+func TestCanonicalizeFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.safetensors")
+
+	// Hand-build a safetensors file where the data section is in
+	// "scale, weight" order — the order MLX-C's unordered_map sometimes
+	// produces — and tensorInfo fields are in declaration-default order.
+	dataA := []byte{0xAA, 0xAA, 0xAA, 0xAA} // weight: 4 bytes
+	dataB := []byte{0xBB, 0xBB}             // scale: 2 bytes
+
+	header := map[string]any{
+		"__metadata__": map[string]string{"quant_type": "demo"},
+		"weight": tensorInfo{
+			DataOffsets: [2]int{2, 6}, // weight stored at end
+			Dtype:       "U8",
+			Shape:       []int32{4},
+		},
+		"weight.scale": tensorInfo{
+			DataOffsets: [2]int{0, 2}, // scale stored at start
+			Dtype:       "U8",
+			Shape:       []int32{2},
+		},
+	}
+	headerJSON, _ := json.Marshal(header)
+	padding := (8 - len(headerJSON)%8) % 8
+	headerJSON = append(headerJSON, bytes.Repeat([]byte(" "), padding)...)
+
+	f, _ := os.Create(path)
+	binary.Write(f, binary.LittleEndian, uint64(len(headerJSON)))
+	f.Write(headerJSON)
+	f.Write(dataB) // scale first
+	f.Write(dataA) // weight second
+	f.Close()
+
+	if err := CanonicalizeFile(path); err != nil {
+		t.Fatalf("CanonicalizeFile: %v", err)
+	}
+
+	// Re-open and verify: tensors now appear in sorted name order, data
+	// section ordered the same way, metadata preserved.
+	ext, err := OpenForExtraction(path)
+	if err != nil {
+		t.Fatalf("OpenForExtraction: %v", err)
+	}
+	defer ext.Close()
+
+	weight, err := ext.GetTensor("weight")
+	if err != nil {
+		t.Fatalf("GetTensor weight: %v", err)
+	}
+	scale, err := ext.GetTensor("weight.scale")
+	if err != nil {
+		t.Fatalf("GetTensor weight.scale: %v", err)
+	}
+
+	wb, err := io.ReadAll(weight.reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := io.ReadAll(scale.reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(wb, dataA) {
+		t.Errorf("weight bytes = %x, want %x", wb, dataA)
+	}
+	if !bytes.Equal(sb, dataB) {
+		t.Errorf("scale bytes = %x, want %x", sb, dataB)
+	}
+
+	// "weight" sorts before "weight.scale", so weight should be at offset 0
+	// in the data section after canonicalization.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hsz := binary.LittleEndian.Uint64(raw[:8])
+	dataStart := 8 + int(hsz)
+	if !bytes.Equal(raw[dataStart:dataStart+4], dataA) {
+		t.Errorf("expected weight at offset 0, got %x", raw[dataStart:dataStart+4])
+	}
+}
+
+// TestCanonicalizeFile_Idempotent confirms repeated canonicalization yields
+// identical bytes — i.e., the on-disk format is the deterministic fixed point.
+func TestCanonicalizeFile_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.safetensors")
+	a, b := []byte{1, 2, 3, 4}, []byte{5, 6, 7, 8}
+	td1 := NewTensorDataFromBytes("a", "U8", []int32{4}, a)
+	td2 := NewTensorDataFromBytes("b", "U8", []int32{4}, b)
+	out, _ := io.ReadAll(BuildPackedSafetensorsReaderWithMetadata(
+		[]*TensorData{td1, td2},
+		map[string]string{"k": "v"},
+	))
+	os.WriteFile(path, out, 0o644)
+
+	if err := CanonicalizeFile(path); err != nil {
+		t.Fatalf("first canonicalize: %v", err)
+	}
+	first, _ := os.ReadFile(path)
+	if err := CanonicalizeFile(path); err != nil {
+		t.Fatalf("second canonicalize: %v", err)
+	}
+	second, _ := os.ReadFile(path)
+	if !bytes.Equal(first, second) {
+		t.Error("canonicalization is not idempotent")
+	}
+}
+
 func TestOpenForExtraction_MetadataIgnored(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.safetensors")

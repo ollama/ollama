@@ -561,6 +561,12 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 	return nil
 }
 
+// collectPerExpertProjection loads "<layerPrefix>.mlp.experts.{E}.<proj>"
+// per-expert tensors and stacks them at load time.
+//
+// Backwards compatibility only: kept so previously-published per-expert blobs
+// keep loading. New imports land in the 3-D switch_mlp form via
+// create.StackPerExpertGroup and are read by loadStackedProjection above.
 func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix, proj string, numExperts int32) *stackedExpertWeights {
 	weights := make([]*mlx.Array, 0, numExperts)
 	scales := make([]*mlx.Array, 0, numExperts)

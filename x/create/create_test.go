@@ -2350,3 +2350,112 @@ func TestCreateImageGenModel_WithQuantize(t *testing.T) {
 		t.Error("no tensors processed")
 	}
 }
+
+func TestStackPerExpertGroup(t *testing.T) {
+	makeInput := func(name, dtype string, shape []int32, raw []byte, quantize string) PackedTensorInput {
+		td := st.NewTensorDataFromBytes(name, dtype, shape, raw)
+		return PackedTensorInput{
+			Name:     name,
+			Dtype:    dtype,
+			Shape:    shape,
+			Quantize: quantize,
+			Reader:   td.SafetensorsReader(),
+		}
+	}
+
+	t.Run("non-experts group passes through", func(t *testing.T) {
+		inputs := []PackedTensorInput{
+			makeInput("layer.mlp.shared_experts.gate_proj.weight", "BF16", []int32{4, 4}, make([]byte, 32), "int4"),
+		}
+		out, err := StackPerExpertGroup("layer.mlp.shared_experts", inputs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(out) != 1 || out[0].Name != inputs[0].Name {
+			t.Fatalf("expected pass-through; got %+v", out)
+		}
+	})
+
+	t.Run("already-stacked tensors pass through", func(t *testing.T) {
+		// 3-D tensor that does not match the per-expert ".{N}.<proj>" suffix.
+		inputs := []PackedTensorInput{
+			makeInput("layer.moe.switch_mlp.gate_proj.weight", "BF16", []int32{2, 4, 4}, make([]byte, 64), "int4"),
+		}
+		out, err := StackPerExpertGroup("layer.moe.experts", inputs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(out) != 1 || out[0].Name != inputs[0].Name {
+			t.Fatalf("expected pass-through; got %+v", out)
+		}
+	})
+
+	t.Run("per-expert tensors are stacked into switch_mlp 3-D form", func(t *testing.T) {
+		// Two experts × two projections, BF16 (2 bytes/elem), shape [2, 3] = 12 bytes per expert.
+		raw := func(seed byte) []byte {
+			b := make([]byte, 12)
+			for i := range b {
+				b[i] = seed + byte(i)
+			}
+			return b
+		}
+		inputs := []PackedTensorInput{
+			makeInput("layer.moe.experts.0.gate_proj.weight", "BF16", []int32{2, 3}, raw(0x10), "int4"),
+			makeInput("layer.moe.experts.1.gate_proj.weight", "BF16", []int32{2, 3}, raw(0x20), "int4"),
+			makeInput("layer.moe.experts.0.down_proj.weight", "BF16", []int32{2, 3}, raw(0x30), "int8"),
+			makeInput("layer.moe.experts.1.down_proj.weight", "BF16", []int32{2, 3}, raw(0x40), "int8"),
+		}
+		out, err := StackPerExpertGroup("layer.moe.experts", inputs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(out) != 2 {
+			t.Fatalf("expected 2 stacked tensors, got %d (%v)", len(out), out)
+		}
+		byName := map[string]PackedTensorInput{out[0].Name: out[0], out[1].Name: out[1]}
+		gate, ok := byName["layer.moe.switch_mlp.gate_proj.weight"]
+		if !ok {
+			t.Fatalf("missing stacked gate_proj; have %v", byName)
+		}
+		if !slices.Equal(gate.Shape, []int32{2, 2, 3}) {
+			t.Errorf("gate stacked shape = %v, want [2 2 3]", gate.Shape)
+		}
+		if gate.Quantize != "int4" {
+			t.Errorf("gate quant = %q, want int4", gate.Quantize)
+		}
+		gateRaw, err := st.ExtractRawFromSafetensors(gate.Reader)
+		if err != nil {
+			t.Fatalf("failed to extract stacked gate bytes: %v", err)
+		}
+		want := append(raw(0x10), raw(0x20)...)
+		if !bytes.Equal(gateRaw, want) {
+			t.Errorf("gate stacked bytes mismatch: got %x want %x", gateRaw, want)
+		}
+		down := byName["layer.moe.switch_mlp.down_proj.weight"]
+		if down.Quantize != "int8" {
+			t.Errorf("down quant = %q, want int8", down.Quantize)
+		}
+	})
+
+	t.Run("mixed quant within projection is rejected", func(t *testing.T) {
+		inputs := []PackedTensorInput{
+			makeInput("layer.moe.experts.0.down_proj.weight", "BF16", []int32{2, 3}, make([]byte, 12), "int4"),
+			makeInput("layer.moe.experts.1.down_proj.weight", "BF16", []int32{2, 3}, make([]byte, 12), "int8"),
+		}
+		_, err := StackPerExpertGroup("layer.moe.experts", inputs)
+		if err == nil {
+			t.Fatal("expected error for mixed quant within projection")
+		}
+	})
+
+	t.Run("shape mismatch within projection is rejected", func(t *testing.T) {
+		inputs := []PackedTensorInput{
+			makeInput("layer.moe.experts.0.gate_proj.weight", "BF16", []int32{2, 3}, make([]byte, 12), "int4"),
+			makeInput("layer.moe.experts.1.gate_proj.weight", "BF16", []int32{4, 3}, make([]byte, 24), "int4"),
+		}
+		_, err := StackPerExpertGroup("layer.moe.experts", inputs)
+		if err == nil {
+			t.Fatal("expected error for mismatched expert shapes")
+		}
+	})
+}
