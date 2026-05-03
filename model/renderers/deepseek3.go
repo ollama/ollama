@@ -2,6 +2,7 @@ package renderers
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -72,8 +73,8 @@ func (r *DeepSeek3Renderer) Render(messages []api.Message, tools []api.Tool, thi
 
 	// Find the index of the last user message to determine which assistant message is "current"
 	lastUserIndex := -1
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
+	for i, message := range slices.Backward(messages) {
+		if message.Role == "user" {
 			lastUserIndex = i
 			break
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -446,8 +447,8 @@ func parseTextConfig(configData []byte) (TextConfig, error) {
 			layerType := cfg.LayerTypes[i]
 			// Find the last non-shared layer of the same type.
 			donor := int32(-1)
-			for j := len(prevLayers) - 1; j >= 0; j-- {
-				if prevLayers[j] == layerType {
+			for j, prevLayer := range slices.Backward(prevLayers) {
+				if prevLayer == layerType {
 					donor = int32(j)
 					break
 				}

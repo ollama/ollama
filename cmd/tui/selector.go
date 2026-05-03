@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -457,8 +458,8 @@ func newMultiSelectorModel(title string, items []SelectItem, preChecked []string
 
 	// Reverse order so preChecked[0] (the current default) ends up last
 	// in checkOrder, matching the "last checked = default" convention.
-	for i := len(preChecked) - 1; i >= 0; i-- {
-		if idx, ok := m.itemIndex[preChecked[i]]; ok {
+	for _, p := range slices.Backward(preChecked) {
+		if idx, ok := m.itemIndex[p]; ok {
 			m.checked[idx] = true
 			m.checkOrder = append(m.checkOrder, idx)
 		}
