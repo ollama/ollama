@@ -1560,6 +1560,7 @@ type CompletionResponse struct {
 	Done               bool          `json:"done"`
 	PromptEvalCount    int           `json:"prompt_eval_count"`
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
+	PromptCachedCount  int           `json:"prompt_cached_count,omitempty"`
 	EvalCount          int           `json:"eval_count"`
 	EvalDuration       time.Duration `json:"eval_duration"`
 

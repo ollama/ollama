@@ -113,6 +113,7 @@ type Sequence struct {
 	samplingDuration         time.Duration
 	numPredicted             int
 	numPromptInputs          int
+	numCachedInputs          int
 }
 
 type NewSequenceParams struct {
@@ -944,6 +945,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
 				return
 			}
+			seq.numCachedInputs = len(seq.cache.Inputs)
 
 			s.seqs[i] = seq
 			s.cond.Signal()
@@ -982,6 +984,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 					DoneReason:         seq.doneReason,
 					PromptEvalCount:    seq.numPromptInputs,
 					PromptEvalDuration: seq.processingDuration,
+					PromptCachedCount:  seq.numCachedInputs,
 					EvalCount:          seq.numPredicted,
 					EvalDuration:       seq.lastUpdatedAt.Sub(seq.startedAt) - seq.samplingDuration,
 				}); err != nil {
