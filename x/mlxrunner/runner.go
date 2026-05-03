@@ -79,10 +79,22 @@ func (r *Runner) Load(modelName string) error {
 // loadTensorsFromManifest loads all tensor blobs from the manifest into a
 // flat map, deduplicating by digest and remapping safetensors key suffixes.
 //
-// Uses a two-phase approach: first loads all raw tensors, then remaps
-// .bias → _qbias with complete knowledge of which base names have .scale
-// entries. This avoids a race condition where Go map iteration order could
-// cause .bias to be processed before .scale within the same blob.
+// Two aux-naming conventions may appear in the source blobs (either because
+// of how Ollama packages tensors on import, or because "ollama create
+// --experimental" occasionally emits an orphan blob that retains the
+// original mlx-lm naming):
+//
+//   - Dot-child singular: "<foo>.weight.scale" / "<foo>.weight.bias".
+//     Ollama-native form.
+//   - Sibling plural: "<foo>.scales" / "<foo>.biases".
+//     mlx-lm / mx.nn.quantize-native form.
+//
+// Both are normalised to the canonical "<foo>.weight_scale" / "<foo>.weight_qbias"
+// form so downstream consumers (MakeLinearLayer, loadStackedProjection, etc.)
+// can use a single lookup key without caring which convention was in the blob.
+//
+// Uses a three-phase approach so that .bias / .biases → _qbias remapping can
+// consult complete scale knowledge regardless of Go map iteration order.
 func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
 	// Phase 1: Load all tensors raw from all blobs
 	rawTensors := make(map[string]*mlx.Array)
@@ -98,36 +110,73 @@ func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
 		}
 	}
 
-	// Phase 2: Identify all base names that have .scale tensors and remap them
+	allTensors := normaliseAuxNames(rawTensors)
+	slog.Info("Loaded tensors from manifest", "count", len(allTensors))
+	return allTensors, nil
+}
+
+// normaliseAuxNames rewrites quantisation aux tensor keys to the canonical
+// "<base>.weight_scale" / "<base>.weight_qbias" form, recognising both the
+// Ollama-native dot-child singular naming (".scale" / ".bias") and the
+// mlx-lm sibling plural naming (".scales" / ".biases").
+//
+// Singular wins over plural when both forms target the same canonical key —
+// Ollama-native singular is the canonical convention; the plural fallback
+// only fills targets the singular pass did not populate. Two-pass also
+// ensures .bias / .biases → _qbias remapping has complete scale knowledge.
+func normaliseAuxNames[V any](raw map[string]V) map[string]V {
 	scaleBaseNames := make(map[string]bool)
-	allTensors := make(map[string]*mlx.Array, len(rawTensors))
-	for name, arr := range rawTensors {
+	out := make(map[string]V, len(raw))
+
+	// Pass 1a: singular .scale (Ollama-native, canonical).
+	for name, arr := range raw {
 		if strings.HasSuffix(name, ".scale") {
 			baseName := strings.TrimSuffix(name, ".scale")
-			allTensors[baseName+"_scale"] = arr
+			out[baseName+"_scale"] = arr
 			scaleBaseNames[baseName] = true
 		}
 	}
-
-	// Phase 3: Process remaining tensors with complete scale knowledge
-	for name, arr := range rawTensors {
-		if strings.HasSuffix(name, ".scale") {
-			continue // already handled
-		}
-		if strings.HasSuffix(name, ".bias") && !strings.HasSuffix(name, ".weight_qbias") {
-			baseName := strings.TrimSuffix(name, ".bias")
-			if scaleBaseNames[baseName] {
-				allTensors[baseName+"_qbias"] = arr
-			} else {
-				allTensors[name] = arr
+	// Pass 1b: plural .scales (mlx-lm sibling) — only fill targets the
+	// singular pass did not populate, so the precedence is deterministic.
+	for name, arr := range raw {
+		if strings.HasSuffix(name, ".scales") {
+			stem := strings.TrimSuffix(name, ".scales")
+			target := stem + ".weight_scale"
+			if _, exists := out[target]; !exists {
+				out[target] = arr
+				scaleBaseNames[stem+".weight"] = true
 			}
-		} else {
-			allTensors[name] = arr
 		}
 	}
 
-	slog.Info("Loaded tensors from manifest", "count", len(allTensors))
-	return allTensors, nil
+	// Pass 2: bias-like auxiliaries and pass-through
+	for name, arr := range raw {
+		if strings.HasSuffix(name, ".scale") || strings.HasSuffix(name, ".scales") {
+			continue // already handled in Pass 1
+		}
+		switch {
+		case strings.HasSuffix(name, ".bias") && !strings.HasSuffix(name, ".weight_qbias"):
+			baseName := strings.TrimSuffix(name, ".bias")
+			if scaleBaseNames[baseName] {
+				out[baseName+"_qbias"] = arr
+			} else {
+				out[name] = arr
+			}
+		case strings.HasSuffix(name, ".biases"):
+			// mlx-lm sibling plural bias → "<foo>.weight_qbias" if a matching
+			// scale was remapped, else keep the original name (some layers
+			// use .biases for dense bias).
+			stem := strings.TrimSuffix(name, ".biases")
+			if scaleBaseNames[stem+".weight"] {
+				out[stem+".weight_qbias"] = arr
+			} else {
+				out[name] = arr
+			}
+		default:
+			out[name] = arr
+		}
+	}
+	return out
 }
 
 func (r *Runner) Run(host, port string, mux http.Handler) error {
