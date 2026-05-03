@@ -352,7 +352,7 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got := inferSafetensorsCapabilities(dir, ""); !slices.Equal(got, tt.want) {
+			if got := inferSafetensorsCapabilities(loadSafetensorsConfig(dir), ""); !slices.Equal(got, tt.want) {
 				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
 			}
 		})
@@ -576,7 +576,7 @@ func TestSupportsThinking(t *testing.T) {
 			dir := t.TempDir()
 			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
 
-			if got := supportsThinking(dir); got != tt.want {
+			if got := supportsThinking(loadSafetensorsConfig(dir)); got != tt.want {
 				t.Errorf("supportsThinking() = %v, want %v", got, tt.want)
 			}
 		})
@@ -584,7 +584,7 @@ func TestSupportsThinking(t *testing.T) {
 }
 
 func TestSupportsThinking_NoConfig(t *testing.T) {
-	if supportsThinking(t.TempDir()) {
+	if supportsThinking(loadSafetensorsConfig(t.TempDir())) {
 		t.Error("supportsThinking should return false for missing config.json")
 	}
 }
@@ -614,7 +614,7 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got := inferSafetensorsCapabilities(dir, tt.parserName); !slices.Equal(got, tt.want) {
+			if got := inferSafetensorsCapabilities(loadSafetensorsConfig(dir), tt.parserName); !slices.Equal(got, tt.want) {
 				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
 			}
 		})
@@ -627,7 +627,7 @@ func TestInferSafetensorsCapabilitiesLaguna(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := inferSafetensorsCapabilities(dir, "laguna")
+	got := inferSafetensorsCapabilities(loadSafetensorsConfig(dir), "laguna")
 	for _, want := range []string{"completion", "tools", "thinking"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("capabilities %v missing %q", got, want)
@@ -686,7 +686,7 @@ func TestGetParserName(t *testing.T) {
 			dir := t.TempDir()
 			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
 
-			if got := getParserName(dir); got != tt.want {
+			if got := getParserName(loadSafetensorsConfig(dir)); got != tt.want {
 				t.Errorf("getParserName() = %q, want %q", got, tt.want)
 			}
 		})
@@ -731,7 +731,7 @@ func TestGetRendererName(t *testing.T) {
 			dir := t.TempDir()
 			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
 
-			if got := getRendererName(dir); got != tt.want {
+			if got := getRendererName(loadSafetensorsConfig(dir)); got != tt.want {
 				t.Errorf("getRendererName() = %q, want %q", got, tt.want)
 			}
 		})
