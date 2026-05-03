@@ -3,6 +3,7 @@ package discover
 import (
 	"bytes"
 	"log/slog"
+	"os"
 	"testing"
 )
 
@@ -2078,6 +2079,60 @@ power management:
 				if c.ThreadCount != v.expCPUs[i].threads {
 					t.Fatalf("incorrect number of threads: expected:%v got:%v", v.expCPUs[i], c)
 				}
+			}
+		})
+	}
+}
+
+func TestGetCgroupMemStatInactiveFile(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		key     string
+		wantVal uint64
+		wantErr bool
+	}{
+		{
+			name:    "finds inactive_file",
+			content: "anon 36884480\nfile 21266915328\ninactive_file 21189849088\nactive_file 77045760\n",
+			key:     "inactive_file",
+			wantVal: 21189849088,
+		},
+		{
+			name:    "key not present",
+			content: "anon 36884480\nfile 21266915328\n",
+			key:     "inactive_file",
+			wantErr: true,
+		},
+		{
+			name:    "empty file",
+			content: "",
+			key:     "inactive_file",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Write a temp file and redirect the function via a wrapper
+			f, err := os.CreateTemp(t.TempDir(), "memory.stat")
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.WriteString(tt.content)
+			f.Close()
+
+			val, err := cgroupMemStatFromFile(f.Name(), tt.key)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got val=%d", val)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if val != tt.wantVal {
+				t.Errorf("got %d, want %d", val, tt.wantVal)
 			}
 		})
 	}
