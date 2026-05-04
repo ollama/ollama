@@ -199,8 +199,8 @@ func TestVSCodeEdit_CreatesDistinctBackupsForManagedFiles(t *testing.T) {
 		t.Fatalf("backup matching %q with expected content not found", pattern)
 	}
 
-	assertBackupMatches("vscode-chatLanguageModels.json.*", clmOriginal)
-	assertBackupMatches("vscode-settings.json.*", settingsOriginal)
+	assertBackupMatches(filepath.Join("vscode", "chatLanguageModels.json.*"), clmOriginal)
+	assertBackupMatches(filepath.Join("vscode", "settings.json.*"), settingsOriginal)
 }
 
 func TestVSCodePaths(t *testing.T) {

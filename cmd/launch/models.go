@@ -16,7 +16,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
-	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/format"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
@@ -300,12 +299,7 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 }
 
 // prepareEditorIntegration persists models and applies editor-managed config files.
-func prepareEditorIntegration(name string, runner Runner, editor Editor, models []string) error {
-	if ok, err := confirmConfigEdit(runner, editor.Paths()); err != nil {
-		return err
-	} else if !ok {
-		return errCancelled
-	}
+func prepareEditorIntegration(name string, editor Editor, models []string) error {
 	if err := editor.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
@@ -315,6 +309,7 @@ func prepareEditorIntegration(name string, runner Runner, editor Editor, models 
 	return nil
 }
 
+<<<<<<< HEAD
 func prepareManagedSingleIntegration(name string, runner Runner, managed ManagedSingleModel, model string, models []string) error {
 	if ok, err := confirmConfigEdit(runner, managed.Paths()); err != nil {
 		return err
@@ -344,40 +339,16 @@ func prepareManagedAutodiscoveryIntegration(name string, runner Runner, autodisc
 		return errCancelled
 	}
 	if err := autodiscovery.ConfigureAutodiscovery(); err != nil {
+=======
+func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, model string) error {
+	if err := managed.Configure(model); err != nil {
+>>>>>>> ed6e02b0 (clean up and simplify)
 		return fmt.Errorf("setup failed: %w", err)
 	}
 	if err := config.SaveIntegration(name, []string{model}); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
 	return nil
-}
-
-func confirmConfigEdit(runner Runner, paths []string) (bool, error) {
-	if len(paths) == 0 {
-		return true, nil
-	}
-
-	fmt.Fprintf(os.Stderr, "This will modify your %s configuration:\n", runner)
-	for _, path := range paths {
-		fmt.Fprintf(os.Stderr, "  %s\n", path)
-	}
-	if countExistingPaths(paths) > 0 {
-		fmt.Fprintf(os.Stderr, "Existing files will be backed up to %s/\n\n", fileutil.BackupDir())
-	} else {
-		fmt.Fprintf(os.Stderr, "\n")
-	}
-
-	return ConfirmPrompt("Proceed?")
-}
-
-func countExistingPaths(paths []string) int {
-	var count int
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			count++
-		}
-	}
-	return count
 }
 
 // buildModelList merges existing models with recommendations for selection UIs.

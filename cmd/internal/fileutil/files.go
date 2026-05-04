@@ -37,23 +37,23 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, info.Mode().Perm())
 }
 
-// BackupDir returns the shared backup directory used before overwriting files.
+// BackupDir returns the shared backup root used before overwriting files.
 func BackupDir() string {
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".ollama", "backups")
+		return filepath.Join(home, ".ollama", "backup")
 	}
-	return filepath.Join(os.TempDir(), "ollama-backups")
+	return filepath.Join(os.TempDir(), "ollama-backup")
 }
 
-func backupToTmp(srcPath string, hint string) (string, error) {
+func writeBackupCopy(srcPath string, hint string) (string, error) {
 	dir := BackupDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-
 	name := filepath.Base(srcPath)
 	if hint := sanitizeBackupHint(hint); hint != "" {
-		name = hint + "-" + name
+		dir = filepath.Join(dir, hint)
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
 	}
 
 	backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", name, time.Now().Unix()))
@@ -69,8 +69,8 @@ func WriteWithBackup(path string, data []byte) error {
 }
 
 // WriteWithBackupHint writes data to path with the same safety guarantees as
-// WriteWithBackup, but prefixes backup filenames with <hint>- when a short
-// caller hint is provided.
+// WriteWithBackup, but stores backups under a sanitized <hint>/ subdirectory
+// when a short caller hint is provided.
 func WriteWithBackupHint(path string, data []byte, hint string) error {
 	return writeWithBackup(path, data, hint)
 }
@@ -80,7 +80,7 @@ func writeWithBackup(path string, data []byte, hint string) error {
 	// backup must be created before any writes to the target file
 	if existingContent, err := os.ReadFile(path); err == nil {
 		if !bytes.Equal(existingContent, data) {
-			backupPath, err = backupToTmp(path, hint)
+			backupPath, err = writeBackupCopy(path, hint)
 			if err != nil {
 				return fmt.Errorf("backup failed: %w", err)
 			}
@@ -122,6 +122,12 @@ func writeWithBackup(path string, data []byte, hint string) error {
 	return nil
 }
 
+// sanitizeBackupHint converts a caller-provided integration label into one
+// stable path segment for BackupDir()/.../<hint>/.
+//
+// We keep only lowercase ASCII letters and digits, and collapse common
+// separators to "-". That lets callers pass human-readable names without
+// accidentally creating nested paths or platform-specific directory names.
 func sanitizeBackupHint(hint string) string {
 	hint = strings.TrimSpace(strings.ToLower(hint))
 	if hint == "" {

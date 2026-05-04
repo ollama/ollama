@@ -1166,7 +1166,7 @@ func TestOpenclawEdit_BackupCreated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	backups, _ := filepath.Glob(filepath.Join(backupDir, "openclaw-openclaw.json.*"))
+	backups, _ := filepath.Glob(filepath.Join(backupDir, "openclaw", "openclaw.json.*"))
 	foundBackup := false
 	for _, backup := range backups {
 		data, _ := os.ReadFile(backup)

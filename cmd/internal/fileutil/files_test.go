@@ -18,6 +18,12 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("TMPDIR", tmpRoot); err != nil {
 		panic(err)
 	}
+	if err := os.Setenv("HOME", tmpRoot); err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("USERPROFILE", tmpRoot); err != nil {
+		panic(err)
+	}
 
 	code := m.Run()
 	_ = os.RemoveAll(tmpRoot)
@@ -46,7 +52,7 @@ func TestWriteWithBackup(t *testing.T) {
 		t.Setenv("HOME", home)
 		t.Setenv("USERPROFILE", home)
 
-		want := filepath.Join(home, ".ollama", "backups")
+		want := filepath.Join(home, ".ollama", "backup")
 		if got := BackupDir(); got != want {
 			t.Fatalf("BackupDir() = %q, want %q", got, want)
 		}
@@ -74,7 +80,7 @@ func TestWriteWithBackup(t *testing.T) {
 		}
 	})
 
-	t.Run("creates backup in the temp backup directory", func(t *testing.T) {
+	t.Run("creates backup in the shared backup directory", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "backup.json")
 
 		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
@@ -121,7 +127,7 @@ func TestWriteWithBackup(t *testing.T) {
 		}
 	})
 
-	t.Run("prefixes backup filename with hint when provided", func(t *testing.T) {
+	t.Run("stores hinted backups under a subdirectory", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "hinted.json")
 		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
 
@@ -130,7 +136,7 @@ func TestWriteWithBackup(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		entries, err := os.ReadDir(BackupDir())
+		entries, err := os.ReadDir(filepath.Join(BackupDir(), "openclaw"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,15 +144,15 @@ func TestWriteWithBackup(t *testing.T) {
 		var found bool
 		for _, entry := range entries {
 			name := entry.Name()
-			if len(name) > len("openclaw-hinted.json.") && name[:len("openclaw-hinted.json.")] == "openclaw-hinted.json." {
+			if len(name) > len("hinted.json.") && name[:len("hinted.json.")] == "hinted.json." {
 				found = true
-				_ = os.Remove(filepath.Join(BackupDir(), name))
+				_ = os.Remove(filepath.Join(BackupDir(), "openclaw", name))
 				break
 			}
 		}
 
 		if !found {
-			t.Error("backup filename did not include sanitized hint")
+			t.Error("backup file was not created under sanitized hint directory")
 		}
 	})
 
@@ -342,9 +348,9 @@ func TestBackupToTmp_SpecialCharsInFilename(t *testing.T) {
 	path := filepath.Join(tmpDir, "my config (backup).json")
 	os.WriteFile(path, []byte(`{"test": true}`), 0o644)
 
-	backupPath, err := backupToTmp(path, "")
+	backupPath, err := writeBackupCopy(path, "")
 	if err != nil {
-		t.Fatalf("backupToTmp with special chars failed: %v", err)
+		t.Fatalf("writeBackupCopy with special chars failed: %v", err)
 	}
 
 	// Verify backup exists and has correct content

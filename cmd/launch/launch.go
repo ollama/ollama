@@ -710,7 +710,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	}
 
 	if (needsConfigure || req.ModelOverride != "") && !savedMatchesModels(saved, models) {
-		if err := prepareEditorIntegration(name, runner, editor, models); err != nil {
+		if err := prepareEditorIntegration(name, editor, models); err != nil {
 			return err
 		}
 	}
@@ -734,11 +734,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 	}
 
 	if needsConfigure || req.ModelOverride != "" || (current != "" && target != current) || !savedMatchesModels(saved, []string{target}) {
-		configureModels, err := c.managedSingleConfigureModels(ctx, managed, target)
-		if err != nil {
-			return err
-		}
-		if err := prepareManagedSingleIntegration(name, runner, managed, target, configureModels); err != nil {
+		if err := prepareManagedSingleIntegration(name, managed, target); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {

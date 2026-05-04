@@ -940,8 +940,8 @@ func TestPiEdit_CreatesDistinctBackupsForEachManagedFile(t *testing.T) {
 		t.Fatalf("backup matching %q with expected content not found", pattern)
 	}
 
-	assertBackupMatches("pi-models.json.*", modelsOriginal)
-	assertBackupMatches("pi-settings.json.*", settingsOriginal)
+	assertBackupMatches(filepath.Join("pi", "models.json.*"), modelsOriginal)
+	assertBackupMatches(filepath.Join("pi", "settings.json.*"), settingsOriginal)
 }
 
 func TestPiModels(t *testing.T) {

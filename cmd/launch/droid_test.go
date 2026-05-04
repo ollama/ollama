@@ -1186,7 +1186,7 @@ func TestDroidEdit_BackupCreated(t *testing.T) {
 	}
 
 	// Find backup containing our unique marker
-	backups, _ := filepath.Glob(filepath.Join(backupDir, "droid-settings.json.*"))
+	backups, _ := filepath.Glob(filepath.Join(backupDir, "droid", "settings.json.*"))
 	foundBackup := false
 	for _, backup := range backups {
 		data, err := os.ReadFile(backup)
