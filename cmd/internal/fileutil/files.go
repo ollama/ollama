@@ -63,16 +63,15 @@ func writeBackupCopy(srcPath string, hint string) (string, error) {
 	return backupPath, nil
 }
 
-// WriteWithBackup writes data to path via temp file + rename, backing up any existing file first.
-func WriteWithBackup(path string, data []byte) error {
-	return writeWithBackup(path, data, "")
-}
-
-// WriteWithBackupHint writes data to path with the same safety guarantees as
-// WriteWithBackup, but stores backups under a sanitized <hint>/ subdirectory
-// when a short caller hint is provided.
-func WriteWithBackupHint(path string, data []byte, hint string) error {
-	return writeWithBackup(path, data, hint)
+// WriteWithBackup writes data to path via temp file + rename, backing up any
+// existing file first. Callers may optionally pass one integration hint to
+// store backups under BackupDir()/.../<hint>/.
+func WriteWithBackup(path string, data []byte, hint ...string) error {
+	backupHint := ""
+	if len(hint) > 0 {
+		backupHint = hint[0]
+	}
+	return writeWithBackup(path, data, backupHint)
 }
 
 func writeWithBackup(path string, data []byte, hint string) error {

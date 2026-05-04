@@ -309,13 +309,7 @@ func prepareEditorIntegration(name string, editor Editor, models []string) error
 	return nil
 }
 
-<<<<<<< HEAD
-func prepareManagedSingleIntegration(name string, runner Runner, managed ManagedSingleModel, model string, models []string) error {
-	if ok, err := confirmConfigEdit(runner, managed.Paths()); err != nil {
-		return err
-	} else if !ok {
-		return errCancelled
-	}
+func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, model string, models []string) error {
 	models = dedupeModelList(append([]string{model}, models...))
 	var err error
 	if withModels, ok := managed.(ManagedModelListConfigurer); ok {
@@ -332,17 +326,8 @@ func prepareManagedSingleIntegration(name string, runner Runner, managed Managed
 	return nil
 }
 
-func prepareManagedAutodiscoveryIntegration(name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, model string) error {
-	if ok, err := confirmConfigEdit(runner, autodiscovery.Paths()); err != nil {
-		return err
-	} else if !ok {
-		return errCancelled
-	}
+func prepareManagedAutodiscoveryIntegration(name string, autodiscovery ManagedAutodiscoveryIntegration, model string) error {
 	if err := autodiscovery.ConfigureAutodiscovery(); err != nil {
-=======
-func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, model string) error {
-	if err := managed.Configure(model); err != nil {
->>>>>>> ed6e02b0 (clean up and simplify)
 		return fmt.Errorf("setup failed: %w", err)
 	}
 	if err := config.SaveIntegration(name, []string{model}); err != nil {

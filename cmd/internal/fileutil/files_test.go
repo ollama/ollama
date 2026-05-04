@@ -132,7 +132,7 @@ func TestWriteWithBackup(t *testing.T) {
 		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
 
 		data := mustMarshal(t, map[string]bool{"updated": true})
-		if err := WriteWithBackupHint(path, data, "OpenClaw"); err != nil {
+		if err := WriteWithBackup(path, data, "OpenClaw"); err != nil {
 			t.Fatal(err)
 		}
 

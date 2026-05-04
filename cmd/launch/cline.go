@@ -78,7 +78,7 @@ func (c *Cline) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackupHint(configPath, data, "cline")
+	return fileutil.WriteWithBackup(configPath, data, "cline")
 }
 
 func (c *Cline) Models() []string {

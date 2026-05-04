@@ -734,7 +734,11 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 	}
 
 	if needsConfigure || req.ModelOverride != "" || (current != "" && target != current) || !savedMatchesModels(saved, []string{target}) {
-		if err := prepareManagedSingleIntegration(name, managed, target); err != nil {
+		models, err := c.managedSingleConfigureModels(ctx, managed, target)
+		if err != nil {
+			return err
+		}
+		if err := prepareManagedSingleIntegration(name, managed, target, models); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
@@ -773,7 +777,7 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 	needsConfigure := req.ForceConfigure || req.ConfigureOnly || !autodiscovery.AutodiscoveryConfigured() || !savedMatchesModels(saved, []string{target})
 
 	if needsConfigure {
-		if err := prepareManagedAutodiscoveryIntegration(name, runner, autodiscovery, target); err != nil {
+		if err := prepareManagedAutodiscoveryIntegration(name, autodiscovery, target); err != nil {
 			return err
 		}
 		if refresher, ok := autodiscovery.(ManagedRuntimeRefresher); ok {
