@@ -306,7 +306,7 @@ func TestModelRecommendationsHandlerUsesCache(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/experimental/model-recommendations", nil)
 
-	s := &Server{modelRecommendations: cache}
+	s := &Server{modelCaches: &modelCaches{recommendations: cache}}
 	s.ModelRecommendationsExperimentalHandler(ctx)
 
 	if w.Code != http.StatusOK {
@@ -326,7 +326,7 @@ func TestModelRecommendationsRouteRegistration(t *testing.T) {
 
 	cache := newModelRecommendationsCache()
 	cache.set([]api.ModelRecommendation{{Model: "route-model", Description: "route description"}})
-	s := &Server{modelRecommendations: cache}
+	s := &Server{modelCaches: &modelCaches{recommendations: cache}}
 
 	router, err := s.GenerateRoutes(nil)
 	if err != nil {
