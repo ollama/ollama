@@ -479,7 +479,7 @@ func TestLaunchCmdHeadlessWithYes_AutoPullsMissingLocalModel(t *testing.T) {
 	}
 }
 
-func TestLaunchCmdHeadlessWithoutYes_ReturnsActionableConfirmError(t *testing.T) {
+func TestLaunchCmdHeadlessWithoutYes_AllowsConfiguredLaunch(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -511,17 +511,14 @@ func TestLaunchCmdHeadlessWithoutYes_ReturnsActionableConfirmError(t *testing.T)
 	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
 	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected launch command to fail without --yes in headless mode")
+	if err != nil {
+		t.Fatalf("expected launch command to succeed without --yes when an explicit model is provided, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "re-run with --yes") {
-		t.Fatalf("expected actionable --yes guidance, got %v", err)
+	if diff := compareStringSlices(stub.edited, [][]string{{"llama3.2"}}); diff != "" {
+		t.Fatalf("unexpected editor writes (-want +got):\n%s", diff)
 	}
-	if len(stub.edited) != 0 {
-		t.Fatalf("expected no editor writes when confirmation is blocked, got %v", stub.edited)
-	}
-	if stub.ranModel != "" {
-		t.Fatalf("expected launch to abort before run, got %q", stub.ranModel)
+	if stub.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to run configured model, got %q", stub.ranModel)
 	}
 }
 
