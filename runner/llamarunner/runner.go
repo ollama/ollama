@@ -519,7 +519,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		if len(seq.inputs) != 0 {
 			seq.processingDuration += time.Since(t)
 			now := time.Now()
-			if now.Sub(seq.lastPrefillLogAt) >= 500*time.Millisecond {
+			if now.Sub(seq.lastPrefillLogAt) >= 300*time.Millisecond {
 				slog.Info("prefill in progress", "processed", len(seq.cache.Inputs), "total", seq.numPromptInputs)
 				seq.lastPrefillLogAt = now
 			}
@@ -527,6 +527,9 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 
 		seq.numDecoded++
+		if seq.numDecoded == 1 {
+			slog.Info("prefill in progress", "processed", seq.numPromptInputs, "total", seq.numPromptInputs)
+		}
 		if seq.numDecoded > 1 {
 			seq.generationDuration += time.Since(t)
 		} else {

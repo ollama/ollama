@@ -713,7 +713,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 				panic("caching disabled but unable to fit entire input in a batch")
 			}
 			now := time.Now()
-			if now.Sub(seq.lastPrefillLogAt) >= 500*time.Millisecond {
+			if now.Sub(seq.lastPrefillLogAt) >= 300*time.Millisecond {
 				processedPromptInputs := len(seq.cache.Inputs) - len(seq.inputs)
 				if processedPromptInputs < 0 {
 					processedPromptInputs = 0
@@ -765,6 +765,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		if seq.numPredicted == 1 {
 			seq.processingDuration = seq.lastUpdatedAt.Sub(seq.startedAt)
 			seq.startedAt = seq.lastUpdatedAt
+			slog.Info("prefill in progress", "processed", seq.numPromptInputs, "total", seq.numPromptInputs)
 		}
 
 		// if done processing the prompt, generate an embedding and return
