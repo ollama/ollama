@@ -235,6 +235,35 @@ func TestWriteWithBackup(t *testing.T) {
 			t.Error("backup file with timestamp not found")
 		}
 	})
+
+	t.Run("retains only the five newest backups per file", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "pruned.json")
+		if err := os.WriteFile(path, []byte(`{"v": 0}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		for i := 1; i <= maxBackupsPerFile; i++ {
+			backupPath := filepath.Join(BackupDir(), fmt.Sprintf("pruned.json.%d", i))
+			if err := os.WriteFile(backupPath, []byte(fmt.Sprintf(`{"v": %d}`, i)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		if err := WriteWithBackup(path, []byte(`{"v": 1}`)); err != nil {
+			t.Fatal(err)
+		}
+
+		backups, err := filepath.Glob(filepath.Join(BackupDir(), "pruned.json.*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(backups) != maxBackupsPerFile {
+			t.Fatalf("expected %d backups after pruning, got %d", maxBackupsPerFile, len(backups))
+		}
+		if _, err := os.Stat(filepath.Join(BackupDir(), "pruned.json.1")); !os.IsNotExist(err) {
+			t.Fatalf("expected oldest backup to be pruned, stat err = %v", err)
+		}
+	})
 }
 
 // Edge case tests for files.go
@@ -294,6 +323,36 @@ func TestWriteWithBackup_PermissionDenied(t *testing.T) {
 
 	if err == nil {
 		t.Error("expected permission error, got nil")
+	}
+}
+
+func TestWriteWithBackup_UnchangedContentIsNoOp(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission tests unreliable on Windows")
+	}
+
+	tmpDir := isolatedTempDir(t)
+	path := filepath.Join(tmpDir, "unchanged-noop.json")
+	data := []byte(`{"same":true}`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(tmpDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(tmpDir, 0o755)
+
+	if err := WriteWithBackup(path, data); err != nil {
+		t.Fatalf("expected unchanged write to be a no-op, got %v", err)
+	}
+
+	backups, err := filepath.Glob(filepath.Join(BackupDir(), "unchanged-noop.json.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("expected no backups for unchanged content, got %d", len(backups))
 	}
 }
 
