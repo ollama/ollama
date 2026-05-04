@@ -616,6 +616,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					}
 					res.Context = tokens
 				}
+
+				slog.Info("request complete",
+					"model", req.Model,
+					"prompt_eval_count", cr.PromptEvalCount,
+					"prompt_eval_duration", cr.PromptEvalDuration,
+					"eval_count", cr.EvalCount,
+					"eval_duration", cr.EvalDuration,
+				)
 			}
 
 			if builtinParser != nil {
@@ -2518,6 +2526,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
+						if r.Done {
+							slog.Info("request complete",
+								"model", req.Model,
+								"prompt_eval_count", r.PromptEvalCount,
+								"prompt_eval_duration", r.PromptEvalDuration,
+								"eval_count", r.EvalCount,
+								"eval_duration", r.EvalDuration,
+							)
+						}
 						ch <- res
 					} else {
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser empty output", "parser", m.Config.Parser)
@@ -2568,12 +2585,28 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 						if r.Done {
 							res.Message.Content = toolParser.Content()
+							slog.Info("request complete",
+								"model", req.Model,
+								"prompt_eval_count", r.PromptEvalCount,
+								"prompt_eval_duration", r.PromptEvalDuration,
+								"eval_count", r.EvalCount,
+								"eval_duration", r.EvalDuration,
+							)
 							ch <- res
 						}
 						return
 					}
 				}
 
+				if r.Done {
+					slog.Info("request complete",
+						"model", req.Model,
+						"prompt_eval_count", r.PromptEvalCount,
+						"prompt_eval_duration", r.PromptEvalDuration,
+						"eval_count", r.EvalCount,
+						"eval_duration", r.EvalDuration,
+					)
+				}
 				ch <- res
 			})
 			if err != nil {

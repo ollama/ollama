@@ -104,6 +104,11 @@ type Sequence struct {
 	generationDuration time.Duration
 	numDecoded         int
 	numPromptInputs    int
+
+	// lastPrefillLogAt is the time of the last "prefill in progress" log entry.
+	// It gates slog.Info("prefill in progress") to emit at most once every 500 ms,
+	// keeping log volume bounded regardless of prompt length or batch size.
+	lastPrefillLogAt time.Time
 }
 
 type NewSequenceParams struct {
@@ -513,6 +518,11 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		// don't sample prompt processing
 		if len(seq.inputs) != 0 {
 			seq.processingDuration += time.Since(t)
+			now := time.Now()
+			if now.Sub(seq.lastPrefillLogAt) >= 500*time.Millisecond {
+				slog.Info("prefill in progress", "processed", len(seq.cache.Inputs), "total", seq.numPromptInputs)
+				seq.lastPrefillLogAt = now
+			}
 			continue
 		}
 
