@@ -221,7 +221,7 @@
 
 #define GGML_MAX_DIMS           4
 #define GGML_MAX_PARAMS         2048
-#define GGML_MAX_SRC            10
+#define GGML_MAX_SRC            16
 #define GGML_MAX_N_THREADS      512
 #define GGML_MAX_OP_PARAMS      64
 
@@ -566,6 +566,13 @@ extern "C" {
         GGML_OP_OPT_STEP_SGD,
 
         GGML_OP_GLU,
+
+        GGML_OP_TQ_ENCODE,
+        GGML_OP_TQ_DEQUANT,
+        GGML_OP_TQ_DEQUANT_KV,
+        GGML_OP_TQ_FLASH_ATTN_EXT,
+        GGML_OP_TQ_ENCODE_V,
+        GGML_OP_TQ_ENCODE_KV,
 
         GGML_OP_COUNT,
     };
@@ -2713,6 +2720,209 @@ extern "C" {
     GGML_API struct ggml_threadpool_params ggml_threadpool_params_default(int n_threads);
     GGML_API void                          ggml_threadpool_params_init   (struct ggml_threadpool_params * p, int n_threads);
     GGML_API bool                          ggml_threadpool_params_match  (const struct ggml_threadpool_params * p0, const struct ggml_threadpool_params * p1);
+
+// TurboQuant GPU-native key encoding: f16 K + rotation → packed N-bit + scales.
+// packed: [packedBytes*numKVHeads, capacity] GGML_TYPE_I8
+// scales: [numKVHeads, capacity] f32  (written as side output via src[3])
+// k:      [headDim, numKVHeads, batchSize] f16
+// rotation: [headDim, headDim] f32 (R^T row-major)
+// cell_idx: [batchSize] i32
+// boundaries: [(1<<bits)-1] f32
+GGML_API struct ggml_tensor * ggml_tq_encode(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * packed,
+        struct ggml_tensor  * scales,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * rotation,
+        int32_t              firstCell,
+        struct ggml_tensor  * boundaries,
+        int32_t              bits,
+        struct ggml_tensor  * zeros,    // NULL = symmetric; [numKVHeads, capacity] f32 for asymmetric
+        struct ggml_tensor  * k_bias,   // NULL = no bias; [numKVHeads*headDim] f32 subtracted pre-rotation
+        struct ggml_tensor  * codebook);// NULL = RMS scale only; [1<<bits] f32 enables EDEN biased scale
+
+// TurboQuant GPU-native key dequant: packed N-bit → f16 [headDim, numKVHeads, nCells].
+// encode_result: view of packed buffer returned by ggml_tq_encode (establishes graph
+//                dependency: encode must run before dequant)
+// scales: [numKVHeads, capacity] f32
+// codebook: [1<<bits] f32
+GGML_API struct ggml_tensor * ggml_tq_dequant(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * encode_result,
+        struct ggml_tensor  * scales,
+        struct ggml_tensor  * codebook,
+        int                  headDim,
+        int                  numKVHeads,
+        int                  nCells,
+        int                  firstCell,
+        int                  bits);
+
+// TurboQuant GPU-native key encode with outlier split: same op family as
+// ggml_tq_encode but adds top-K outlier sub-block. After rotation, the top
+// outlier_count channels by absolute magnitude go into a higher-bit sub-block;
+// the remaining channels go into a lower-bit regular sub-block. Matches the
+// TurboQuant paper (arXiv 2504.19874, Sec 4.3) experimental setup. outlier_count
+// is stored in op_params[3] so the CUDA backend dispatcher can branch on it.
+// packed, scales, outlier_packed, outlier_scales, outlier_indices are written
+// as side effects (persistent GPU buffers, not graph intermediates).
+GGML_API struct ggml_tensor * ggml_tq_encode_outlier(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * packed,
+        struct ggml_tensor  * scales,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * rotation,
+        int32_t              firstCell,
+        struct ggml_tensor  * boundaries,
+        int32_t              bits,
+        struct ggml_tensor  * outlier_packed,
+        struct ggml_tensor  * outlier_scales,
+        struct ggml_tensor  * outlier_indices,
+        struct ggml_tensor  * outlier_boundaries,
+        int32_t              outlier_bits,
+        int32_t              outlier_count,
+        struct ggml_tensor  * zeros,
+        struct ggml_tensor  * outlier_zeros,
+        struct ggml_tensor  * qjl_packed,
+        struct ggml_tensor  * qjl_norm,
+        struct ggml_tensor  * qjl_projection,
+        int32_t              qjl_rows,
+        struct ggml_tensor  * codebook,
+        struct ggml_tensor  * outlier_codebook,
+        struct ggml_tensor  * k_bias);  // NULL = no bias; [numKVHeads*headDim] f32 subtracted pre-rotation
+
+// TurboQuant GPU-native key dequant with outlier overwrite pass: reconstructs
+// [headDim, numKVHeads, nCells] f16 by decoding the regular sub-block for all
+// positions and then overwriting the outlier channels from the outlier
+// sub-block. Paired with ggml_tq_encode_outlier.
+GGML_API struct ggml_tensor * ggml_tq_dequant_outlier(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * encode_result,
+        struct ggml_tensor  * scales,
+        struct ggml_tensor  * codebook,
+        int                  headDim,
+        int                  numKVHeads,
+        int                  nCells,
+        int                  firstCell,
+        int                  bits,
+        struct ggml_tensor  * outlier_packed,
+        struct ggml_tensor  * outlier_scales,
+        struct ggml_tensor  * outlier_indices,
+        struct ggml_tensor  * outlier_codebook,
+        int32_t              outlier_bits,
+        int32_t              outlier_count,
+        struct ggml_tensor  * zeros,
+        struct ggml_tensor  * outlier_zeros,
+        struct ggml_tensor  * qjl_packed,
+        struct ggml_tensor  * qjl_norm,
+        struct ggml_tensor  * qjl_projection,
+        int32_t              qjl_rows);
+
+// Combined K+V dequant: single op dequants both K and V packed buffers.
+// Output: [headDim, numKVHeads, nCells, 2] f16 where ne[3]=0 is K, ne[3]=1 is V.
+// Halves scheduler overhead vs separate DequantK + DequantV.
+//
+// Outlier-aware: when k_outlier_packed != NULL (and outlier_count > 0), the K
+// plane is dequanted via the regular+outlier overwrite kernel. The V plane is
+// always plain dequant (V has no outliers in any ship preset).
+GGML_API struct ggml_tensor * ggml_tq_dequant_kv(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * k_encode_result,
+        struct ggml_tensor  * k_scales,
+        struct ggml_tensor  * k_codebook,
+        struct ggml_tensor  * v_encode_result,
+        struct ggml_tensor  * v_scales,
+        struct ggml_tensor  * v_codebook,
+        struct ggml_tensor  * v_rotation,        // R [headDim, headDim] f32 — undo V rotation during dequant; NULL = no rotation
+        int                  headDim,
+        int                  numKVHeads,
+        int                  nCells,
+        int                  firstCell,
+        int                  k_bits,
+        int                  v_bits,
+        // K outlier-split (NULL/zero for non-outlier presets):
+        struct ggml_tensor  * k_outlier_packed,  // [outlier_packed_bytes*numKVHeads, capacity] i8
+        struct ggml_tensor  * k_outlier_scales,  // [numKVHeads, capacity] f32
+        struct ggml_tensor  * k_outlier_indices, // [outlier_count*numKVHeads, capacity] i8
+        struct ggml_tensor  * k_outlier_codebook,// [1<<outlier_bits] f32
+        struct ggml_tensor  * k_zeros,           // [numKVHeads, capacity] f32 — asymmetric K zero; NULL = symmetric
+        struct ggml_tensor  * k_outlier_zeros,   // [numKVHeads, capacity] f32 — asymmetric outlier K zero; NULL = symmetric
+        int32_t              outlier_bits,
+        int32_t              outlier_count);
+
+GGML_API struct ggml_tensor * ggml_tq_flash_attn_ext(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * q,
+        struct ggml_tensor  * k_packed,
+        struct ggml_tensor  * v,          // f16 when v_scales==NULL; packed i8 when v_scales!=NULL
+        struct ggml_tensor  * mask,
+        struct ggml_tensor  * scales,     // K scales [nKVHeads, capacity] f32
+        struct ggml_tensor  * codebook,   // K codebook [1<<bits] f32
+        float scale, float logit_softcap,
+        int32_t bits, int32_t firstCell,
+        struct ggml_tensor  * v_scales,   // NULL → V is f16; non-NULL → V is packed i8
+        struct ggml_tensor  * v_codebook, // V codebook (required when v_scales != NULL)
+        int32_t v_bits,                   // V bit width (ignored when v_scales == NULL)
+        struct ggml_tensor  * zeros,      // K zeros [nKVHeads, capacity] f32 (NULL if symmetric)
+        struct ggml_tensor  * qjl_packed, // QJL sign bits (NULL if no QJL)
+        struct ggml_tensor  * qjl_norm,   // QJL residual L2 norm [nKVHeads, capacity] f32 (NULL if no QJL)
+        struct ggml_tensor  * qjl_projection, // [qjlRows, headDim] f32 projection matrix (NULL if no QJL)
+        int32_t qjl_rows,                 // 0 = no QJL residual sketch
+        int32_t asymmetric,               // 1 = add zero after decode
+        // Outlier-split dual-stream decode (TurboQuant *qa/*q presets).
+        // When outlier_count > 0, the fused kernel reconstructs K on the fly
+        // from both regular (primary-bits) and outlier (outlier_bits) streams
+        // using outlier_indices as the sparse head-dim position map.
+        // The outlier_codebook is concatenated into `codebook` after the first
+        // (1<<bits) regular entries — pass NULL for outlier_codebook, it is
+        // implicit via `codebook[1<<bits ..]`.
+        struct ggml_tensor  * outlier_packed,   // [outlierPackedBytes*nKVHeads, capacity] i8, or NULL
+        struct ggml_tensor  * outlier_scales,   // [nKVHeads, capacity] f32, or NULL
+        struct ggml_tensor  * outlier_indices,  // [outlierCount*nKVHeads, capacity] i8, or NULL
+        struct ggml_tensor  * outlier_zeros,    // [nKVHeads, capacity] f32, or NULL
+        int32_t outlier_bits,
+        int32_t outlier_count,
+        int32_t outlier_packed_bytes);
+
+// TurboQuant GPU-native value encode: V → RMS scale → Lloyd-Max quantize → packed bits.
+// Like ggml_tq_encode but for V. rotation may be NULL (no rotation) or a [headDim, headDim]
+// R^T matrix to apply before quantization. Using the same rotation as K spreads outlier
+// energy evenly so the Lloyd-Max codebook applies correctly.
+// packed: [packedBytes*numKVHeads, capacity] i8 (destination buffer, view returned)
+// scales: [numKVHeads, capacity] f32 (scale per head per cell)
+// v: [headDim, numKVHeads, batchSize] f16 or f32
+// rotation: [headDim, headDim] f32 R^T row-major, or NULL
+// boundaries: [(1<<bits)-1] f32
+GGML_API struct ggml_tensor * ggml_tq_encode_v(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * packed,
+        struct ggml_tensor  * scales,
+        struct ggml_tensor  * v,
+        struct ggml_tensor  * rotation,
+        int32_t              firstCell,
+        struct ggml_tensor  * boundaries,
+        int32_t              bits,
+        struct ggml_tensor  * codebook); // NULL = RMS; [1<<bits] f32 enables EDEN
+
+// Combined K+V encode: single GGML op encoding both K and V, halving scheduler overhead.
+// k_packed: [packedBytes*numKVHeads, capacity] i8 (K destination, view returned)
+// v_packed: [packedBytes*numKVHeads, capacity] i8 (V destination, side-effect write)
+GGML_API struct ggml_tensor * ggml_tq_encode_kv(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * k_packed,
+        struct ggml_tensor  * k_scales,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * rotation,
+        struct ggml_tensor  * k_boundaries,
+        struct ggml_tensor  * v_packed,
+        struct ggml_tensor  * v_scales,
+        struct ggml_tensor  * v,
+        struct ggml_tensor  * v_boundaries,
+        int32_t              firstCell,
+        int32_t              k_bits,
+        int32_t              v_bits,
+        struct ggml_tensor  * k_bias,       // NULL = no bias; [numKVHeads*headDim] f32
+        struct ggml_tensor  * k_codebook,  // NULL = RMS scale; [1<<k_bits] f32 enables EDEN
+        struct ggml_tensor  * v_codebook); // NULL = RMS scale; [1<<v_bits] f32 enables EDEN
 
 #ifdef  __cplusplus
 }

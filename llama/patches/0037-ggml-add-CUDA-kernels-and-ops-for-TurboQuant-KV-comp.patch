@@ -1,0 +1,4026 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Verrilli <msv@pobox.com>
+Date: Mon, 4 May 2026 03:45:10 +0000
+Subject: [PATCH] ggml: add CUDA kernels and ops for TurboQuant KV compression
+
+Adds six GGML ops backed by CUDA kernels for compressed KV cache:
+
+  GGML_OP_TQ_ENCODE         encode K to packed N-bit + scale
+  GGML_OP_TQ_ENCODE_V       encode V (per-cell scalar quant)
+  GGML_OP_TQ_ENCODE_KV      combined K+V encode
+  GGML_OP_TQ_DEQUANT        reconstruct f16 K
+  GGML_OP_TQ_DEQUANT_KV     back-to-back K and V dequant
+  GGML_OP_TQ_FLASH_ATTN_EXT fused flash attention with inline K/V decode
+
+The CPU backend rejects all six via supports_op so the scheduler keeps
+them on GPU. Kernels compile under both nvcc and hipcc; on AMD they
+require wave32 (RDNA), gated on the Go side. The fused flash-attention
+kernel covers head dims 64, 128, and 256; other dims fall back to the
+dequant-then-stock-FA path.
+
+Pascal cc 6.1 (Tesla P40, GTX 9xx) is special-cased: smaller block size
+and a pre-loaded shared-memory Q tile to avoid the divergent shuffle
+pattern that would otherwise trigger on the older warp-shuffle path.
+
+Reference: TurboQuant arXiv:2504.19874.
+---
+ ggml/include/ggml.h                 | 212 +++++-
+ ggml/src/ggml-backend.cpp           |  14 +-
+ ggml/src/ggml-cpu/ggml-cpu.c        |  23 +
+ ggml/src/ggml-cpu/ggml-cpu.cpp      |   9 +
+ ggml/src/ggml-cuda/ggml-cuda.cu     |  28 +
+ ggml/src/ggml-cuda/tq-dequant.cu    | 758 ++++++++++++++++++++++
+ ggml/src/ggml-cuda/tq-dequant.cuh   |   6 +
+ ggml/src/ggml-cuda/tq-encode-v.cu   | 198 ++++++
+ ggml/src/ggml-cuda/tq-encode-v.cuh  |   5 +
+ ggml/src/ggml-cuda/tq-encode.cu     | 900 ++++++++++++++++++++++++++
+ ggml/src/ggml-cuda/tq-encode.cuh    |   6 +
+ ggml/src/ggml-cuda/tq-fattn-vec.cuh | 964 ++++++++++++++++++++++++++++
+ ggml/src/ggml-cuda/tq-fattn.cu      | 335 ++++++++++
+ ggml/src/ggml-cuda/tq-fattn.cuh     |   4 +
+ ggml/src/ggml.c                     | 330 +++++++++-
+ 15 files changed, 3785 insertions(+), 7 deletions(-)
+ create mode 100644 ggml/src/ggml-cuda/tq-dequant.cu
+ create mode 100644 ggml/src/ggml-cuda/tq-dequant.cuh
+ create mode 100644 ggml/src/ggml-cuda/tq-encode-v.cu
+ create mode 100644 ggml/src/ggml-cuda/tq-encode-v.cuh
+ create mode 100644 ggml/src/ggml-cuda/tq-encode.cu
+ create mode 100644 ggml/src/ggml-cuda/tq-encode.cuh
+ create mode 100644 ggml/src/ggml-cuda/tq-fattn-vec.cuh
+ create mode 100644 ggml/src/ggml-cuda/tq-fattn.cu
+ create mode 100644 ggml/src/ggml-cuda/tq-fattn.cuh
+
+diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
+index 20c912d0e..9bde30767 100644
+--- a/ggml/include/ggml.h
++++ b/ggml/include/ggml.h
+@@ -221,7 +221,7 @@
+ 
+ #define GGML_MAX_DIMS           4
+ #define GGML_MAX_PARAMS         2048
+-#define GGML_MAX_SRC            10
++#define GGML_MAX_SRC            16
+ #define GGML_MAX_N_THREADS      512
+ #define GGML_MAX_OP_PARAMS      64
+ 
+@@ -567,6 +567,13 @@ extern "C" {
+ 
+         GGML_OP_GLU,
+ 
++        GGML_OP_TQ_ENCODE,
++        GGML_OP_TQ_DEQUANT,
++        GGML_OP_TQ_DEQUANT_KV,
++        GGML_OP_TQ_FLASH_ATTN_EXT,
++        GGML_OP_TQ_ENCODE_V,
++        GGML_OP_TQ_ENCODE_KV,
++
+         GGML_OP_COUNT,
+     };
+ 
+@@ -2714,6 +2721,209 @@ extern "C" {
+     GGML_API void                          ggml_threadpool_params_init   (struct ggml_threadpool_params * p, int n_threads);
+     GGML_API bool                          ggml_threadpool_params_match  (const struct ggml_threadpool_params * p0, const struct ggml_threadpool_params * p1);
+ 
++// TurboQuant GPU-native key encoding: f16 K + rotation → packed N-bit + scales.
++// packed: [packedBytes*numKVHeads, capacity] GGML_TYPE_I8
++// scales: [numKVHeads, capacity] f32  (written as side output via src[3])
++// k:      [headDim, numKVHeads, batchSize] f16
++// rotation: [headDim, headDim] f32 (R^T row-major)
++// cell_idx: [batchSize] i32
++// boundaries: [(1<<bits)-1] f32
++GGML_API struct ggml_tensor * ggml_tq_encode(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * packed,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * k,
++        struct ggml_tensor  * rotation,
++        int32_t              firstCell,
++        struct ggml_tensor  * boundaries,
++        int32_t              bits,
++        struct ggml_tensor  * zeros,    // NULL = symmetric; [numKVHeads, capacity] f32 for asymmetric
++        struct ggml_tensor  * k_bias,   // NULL = no bias; [numKVHeads*headDim] f32 subtracted pre-rotation
++        struct ggml_tensor  * codebook);// NULL = RMS scale only; [1<<bits] f32 enables EDEN biased scale
++
++// TurboQuant GPU-native key dequant: packed N-bit → f16 [headDim, numKVHeads, nCells].
++// encode_result: view of packed buffer returned by ggml_tq_encode (establishes graph
++//                dependency: encode must run before dequant)
++// scales: [numKVHeads, capacity] f32
++// codebook: [1<<bits] f32
++GGML_API struct ggml_tensor * ggml_tq_dequant(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * encode_result,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * codebook,
++        int                  headDim,
++        int                  numKVHeads,
++        int                  nCells,
++        int                  firstCell,
++        int                  bits);
++
++// TurboQuant GPU-native key encode with outlier split: same op family as
++// ggml_tq_encode but adds top-K outlier sub-block. After rotation, the top
++// outlier_count channels by absolute magnitude go into a higher-bit sub-block;
++// the remaining channels go into a lower-bit regular sub-block. Matches the
++// TurboQuant paper (arXiv 2504.19874, Sec 4.3) experimental setup. outlier_count
++// is stored in op_params[3] so the CUDA backend dispatcher can branch on it.
++// packed, scales, outlier_packed, outlier_scales, outlier_indices are written
++// as side effects (persistent GPU buffers, not graph intermediates).
++GGML_API struct ggml_tensor * ggml_tq_encode_outlier(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * packed,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * k,
++        struct ggml_tensor  * rotation,
++        int32_t              firstCell,
++        struct ggml_tensor  * boundaries,
++        int32_t              bits,
++        struct ggml_tensor  * outlier_packed,
++        struct ggml_tensor  * outlier_scales,
++        struct ggml_tensor  * outlier_indices,
++        struct ggml_tensor  * outlier_boundaries,
++        int32_t              outlier_bits,
++        int32_t              outlier_count,
++        struct ggml_tensor  * zeros,
++        struct ggml_tensor  * outlier_zeros,
++        struct ggml_tensor  * qjl_packed,
++        struct ggml_tensor  * qjl_norm,
++        struct ggml_tensor  * qjl_projection,
++        int32_t              qjl_rows,
++        struct ggml_tensor  * codebook,
++        struct ggml_tensor  * outlier_codebook,
++        struct ggml_tensor  * k_bias);  // NULL = no bias; [numKVHeads*headDim] f32 subtracted pre-rotation
++
++// TurboQuant GPU-native key dequant with outlier overwrite pass: reconstructs
++// [headDim, numKVHeads, nCells] f16 by decoding the regular sub-block for all
++// positions and then overwriting the outlier channels from the outlier
++// sub-block. Paired with ggml_tq_encode_outlier.
++GGML_API struct ggml_tensor * ggml_tq_dequant_outlier(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * encode_result,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * codebook,
++        int                  headDim,
++        int                  numKVHeads,
++        int                  nCells,
++        int                  firstCell,
++        int                  bits,
++        struct ggml_tensor  * outlier_packed,
++        struct ggml_tensor  * outlier_scales,
++        struct ggml_tensor  * outlier_indices,
++        struct ggml_tensor  * outlier_codebook,
++        int32_t              outlier_bits,
++        int32_t              outlier_count,
++        struct ggml_tensor  * zeros,
++        struct ggml_tensor  * outlier_zeros,
++        struct ggml_tensor  * qjl_packed,
++        struct ggml_tensor  * qjl_norm,
++        struct ggml_tensor  * qjl_projection,
++        int32_t              qjl_rows);
++
++// Combined K+V dequant: single op dequants both K and V packed buffers.
++// Output: [headDim, numKVHeads, nCells, 2] f16 where ne[3]=0 is K, ne[3]=1 is V.
++// Halves scheduler overhead vs separate DequantK + DequantV.
++//
++// Outlier-aware: when k_outlier_packed != NULL (and outlier_count > 0), the K
++// plane is dequanted via the regular+outlier overwrite kernel. The V plane is
++// always plain dequant (V has no outliers in any ship preset).
++GGML_API struct ggml_tensor * ggml_tq_dequant_kv(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * k_encode_result,
++        struct ggml_tensor  * k_scales,
++        struct ggml_tensor  * k_codebook,
++        struct ggml_tensor  * v_encode_result,
++        struct ggml_tensor  * v_scales,
++        struct ggml_tensor  * v_codebook,
++        struct ggml_tensor  * v_rotation,        // R [headDim, headDim] f32 — undo V rotation during dequant; NULL = no rotation
++        int                  headDim,
++        int                  numKVHeads,
++        int                  nCells,
++        int                  firstCell,
++        int                  k_bits,
++        int                  v_bits,
++        // K outlier-split (NULL/zero for non-outlier presets):
++        struct ggml_tensor  * k_outlier_packed,  // [outlier_packed_bytes*numKVHeads, capacity] i8
++        struct ggml_tensor  * k_outlier_scales,  // [numKVHeads, capacity] f32
++        struct ggml_tensor  * k_outlier_indices, // [outlier_count*numKVHeads, capacity] i8
++        struct ggml_tensor  * k_outlier_codebook,// [1<<outlier_bits] f32
++        struct ggml_tensor  * k_zeros,           // [numKVHeads, capacity] f32 — asymmetric K zero; NULL = symmetric
++        struct ggml_tensor  * k_outlier_zeros,   // [numKVHeads, capacity] f32 — asymmetric outlier K zero; NULL = symmetric
++        int32_t              outlier_bits,
++        int32_t              outlier_count);
++
++GGML_API struct ggml_tensor * ggml_tq_flash_attn_ext(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * q,
++        struct ggml_tensor  * k_packed,
++        struct ggml_tensor  * v,          // f16 when v_scales==NULL; packed i8 when v_scales!=NULL
++        struct ggml_tensor  * mask,
++        struct ggml_tensor  * scales,     // K scales [nKVHeads, capacity] f32
++        struct ggml_tensor  * codebook,   // K codebook [1<<bits] f32
++        float scale, float logit_softcap,
++        int32_t bits, int32_t firstCell,
++        struct ggml_tensor  * v_scales,   // NULL → V is f16; non-NULL → V is packed i8
++        struct ggml_tensor  * v_codebook, // V codebook (required when v_scales != NULL)
++        int32_t v_bits,                   // V bit width (ignored when v_scales == NULL)
++        struct ggml_tensor  * zeros,      // K zeros [nKVHeads, capacity] f32 (NULL if symmetric)
++        struct ggml_tensor  * qjl_packed, // QJL sign bits (NULL if no QJL)
++        struct ggml_tensor  * qjl_norm,   // QJL residual L2 norm [nKVHeads, capacity] f32 (NULL if no QJL)
++        struct ggml_tensor  * qjl_projection, // [qjlRows, headDim] f32 projection matrix (NULL if no QJL)
++        int32_t qjl_rows,                 // 0 = no QJL residual sketch
++        int32_t asymmetric,               // 1 = add zero after decode
++        // Outlier-split dual-stream decode (TurboQuant *qa/*q presets).
++        // When outlier_count > 0, the fused kernel reconstructs K on the fly
++        // from both regular (primary-bits) and outlier (outlier_bits) streams
++        // using outlier_indices as the sparse head-dim position map.
++        // The outlier_codebook is concatenated into `codebook` after the first
++        // (1<<bits) regular entries — pass NULL for outlier_codebook, it is
++        // implicit via `codebook[1<<bits ..]`.
++        struct ggml_tensor  * outlier_packed,   // [outlierPackedBytes*nKVHeads, capacity] i8, or NULL
++        struct ggml_tensor  * outlier_scales,   // [nKVHeads, capacity] f32, or NULL
++        struct ggml_tensor  * outlier_indices,  // [outlierCount*nKVHeads, capacity] i8, or NULL
++        struct ggml_tensor  * outlier_zeros,    // [nKVHeads, capacity] f32, or NULL
++        int32_t outlier_bits,
++        int32_t outlier_count,
++        int32_t outlier_packed_bytes);
++
++// TurboQuant GPU-native value encode: V → RMS scale → Lloyd-Max quantize → packed bits.
++// Like ggml_tq_encode but for V. rotation may be NULL (no rotation) or a [headDim, headDim]
++// R^T matrix to apply before quantization. Using the same rotation as K spreads outlier
++// energy evenly so the Lloyd-Max codebook applies correctly.
++// packed: [packedBytes*numKVHeads, capacity] i8 (destination buffer, view returned)
++// scales: [numKVHeads, capacity] f32 (scale per head per cell)
++// v: [headDim, numKVHeads, batchSize] f16 or f32
++// rotation: [headDim, headDim] f32 R^T row-major, or NULL
++// boundaries: [(1<<bits)-1] f32
++GGML_API struct ggml_tensor * ggml_tq_encode_v(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * packed,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * v,
++        struct ggml_tensor  * rotation,
++        int32_t              firstCell,
++        struct ggml_tensor  * boundaries,
++        int32_t              bits,
++        struct ggml_tensor  * codebook); // NULL = RMS; [1<<bits] f32 enables EDEN
++
++// Combined K+V encode: single GGML op encoding both K and V, halving scheduler overhead.
++// k_packed: [packedBytes*numKVHeads, capacity] i8 (K destination, view returned)
++// v_packed: [packedBytes*numKVHeads, capacity] i8 (V destination, side-effect write)
++GGML_API struct ggml_tensor * ggml_tq_encode_kv(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * k_packed,
++        struct ggml_tensor  * k_scales,
++        struct ggml_tensor  * k,
++        struct ggml_tensor  * rotation,
++        struct ggml_tensor  * k_boundaries,
++        struct ggml_tensor  * v_packed,
++        struct ggml_tensor  * v_scales,
++        struct ggml_tensor  * v,
++        struct ggml_tensor  * v_boundaries,
++        int32_t              firstCell,
++        int32_t              k_bits,
++        int32_t              v_bits,
++        struct ggml_tensor  * k_bias,       // NULL = no bias; [numKVHeads*headDim] f32
++        struct ggml_tensor  * k_codebook,  // NULL = RMS scale; [1<<k_bits] f32 enables EDEN
++        struct ggml_tensor  * v_codebook); // NULL = RMS scale; [1<<v_bits] f32 enables EDEN
++
+ #ifdef  __cplusplus
+ }
+ #endif
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 189e97170..630ea3c36 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -692,7 +692,12 @@ static bool ggml_is_view_op(enum ggml_op op) {
+ #endif
+ 
+ #ifndef GGML_SCHED_MAX_SPLIT_INPUTS
+-#define GGML_SCHED_MAX_SPLIT_INPUTS 30
++// Increased from 30 to 128 to support TurboQuant K+V compression on large MoE
++// models (e.g. qwen3-coder:30b/48-layer) where per-layer TQ encode ops and
++// MoE expert routing create more cross-backend split inputs than the original
++// limit allows. Upstream GGML has a FIXME here: the check only fires when the
++// split is exactly full, so multi-input ops can overshoot the limit.
++#define GGML_SCHED_MAX_SPLIT_INPUTS 128
+ #endif
+ 
+ #ifndef GGML_SCHED_MAX_COPIES
+@@ -1941,13 +1946,14 @@ size_t ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched,
+     int backend_index = ggml_backend_sched_backend_id(sched, backend);
+     GGML_ASSERT(backend_index >= 0 && backend_index < sched->n_backends);
+ 
+-    size_t size = ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
++    size_t gallocr_size = ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
++    size_t pool_size = 0;
+ 
+     if (backend->iface.buffer_size != NULL) {
+-        size += backend->iface.buffer_size(backend);
++        pool_size = backend->iface.buffer_size(backend);
+     }
+ 
+-    return size;
++    return gallocr_size + pool_size;
+ }
+ 
+ void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 8d4851312..990ea400c 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -2080,6 +2080,20 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
+             {
+                 // nop
+             } break;
++        case GGML_OP_TQ_ENCODE:
++        case GGML_OP_TQ_DEQUANT:
++        case GGML_OP_TQ_DEQUANT_KV:
++        case GGML_OP_TQ_FLASH_ATTN_EXT:
++        case GGML_OP_TQ_ENCODE_V:
++        case GGML_OP_TQ_ENCODE_KV:
++            {
++                // CUDA-only ops. If these reach CPU, it means the scheduler
++                // incorrectly assigned them to CPU — abort to diagnose.
++                fprintf(stderr, "[FATAL] TQ op %s reached CPU backend! This is a scheduler bug.\n",
++                        ggml_op_name(tensor->op));
++                fflush(stderr);
++                GGML_ABORT("TQ op reached CPU backend");
++            } break;
+         case GGML_OP_COUNT:
+             {
+                 GGML_ABORT("fatal error");
+@@ -2401,6 +2415,15 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+             {
+                 n_tasks = 1;
+             } break;
++        case GGML_OP_TQ_ENCODE:
++        case GGML_OP_TQ_DEQUANT:
++        case GGML_OP_TQ_DEQUANT_KV:
++        case GGML_OP_TQ_FLASH_ATTN_EXT:
++        case GGML_OP_TQ_ENCODE_V:
++        case GGML_OP_TQ_ENCODE_KV:
++            {
++                n_tasks = 1; // CUDA-only; handled as no-op in compute_forward
++            } break;
+         case GGML_OP_COUNT:
+             {
+                 GGML_ABORT("fatal error");
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
+index 92ba577a5..22464e7a9 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.cpp
++++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
+@@ -426,7 +426,16 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
+         }
+     }
+ 
++    // TQ ops are CUDA-only; CPU has no implementation.
++    // Returning false here prevents the scheduler from routing them to CPU in pass 3.
+     switch (op->op) {
++        case GGML_OP_TQ_ENCODE:
++        case GGML_OP_TQ_DEQUANT:
++        case GGML_OP_TQ_DEQUANT_KV:
++        case GGML_OP_TQ_FLASH_ATTN_EXT:
++        case GGML_OP_TQ_ENCODE_V:
++        case GGML_OP_TQ_ENCODE_KV:
++            return false;
+         case GGML_OP_CPY:
+         case GGML_OP_SET_ROWS:
+             return
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index b8ed3709b..278214a92 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -58,6 +58,10 @@
+ #include "ggml-cuda/tri.cuh"
+ #include "ggml-cuda/cumsum.cuh"
+ #include "ggml-cuda/fill.cuh"
++#include "ggml-cuda/tq-encode.cuh"
++#include "ggml-cuda/tq-dequant.cuh"
++#include "ggml-cuda/tq-fattn.cuh"
++#include "ggml-cuda/tq-encode-v.cuh"
+ #include "ggml.h"
+ 
+ #include <algorithm>
+@@ -2872,6 +2876,24 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
+         case GGML_OP_FILL:
+             ggml_cuda_op_fill(ctx, dst);
+             break;
++        case GGML_OP_TQ_ENCODE:
++            ggml_cuda_tq_encode(ctx, dst);
++            break;
++        case GGML_OP_TQ_DEQUANT:
++            ggml_cuda_tq_dequant(ctx, dst);
++            break;
++        case GGML_OP_TQ_DEQUANT_KV:
++            ggml_cuda_tq_dequant_kv(ctx, dst);
++            break;
++            case GGML_OP_TQ_FLASH_ATTN_EXT:
++                ggml_cuda_tq_flash_attn_ext(ctx, dst);
++                break;
++        case GGML_OP_TQ_ENCODE_V:
++            ggml_cuda_tq_encode_v(ctx, dst);
++            break;
++        case GGML_OP_TQ_ENCODE_KV:
++            ggml_cuda_tq_encode_kv(ctx, dst);
++            break;
+         default:
+             return false;
+     }
+@@ -4910,6 +4932,12 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+         case GGML_OP_TRI:
+         case GGML_OP_DIAG:
+         case GGML_OP_SOLVE_TRI:
++        case GGML_OP_TQ_ENCODE:
++        case GGML_OP_TQ_DEQUANT:
++        case GGML_OP_TQ_DEQUANT_KV:
++        case GGML_OP_TQ_FLASH_ATTN_EXT:
++        case GGML_OP_TQ_ENCODE_V:
++        case GGML_OP_TQ_ENCODE_KV:
+             return true;
+ 
+         default:
+diff --git a/ggml/src/ggml-cuda/tq-dequant.cu b/ggml/src/ggml-cuda/tq-dequant.cu
+new file mode 100644
+index 000000000..0197c013a
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq-dequant.cu
+@@ -0,0 +1,758 @@
++#include "tq-dequant.cuh"
++#include <cstdlib>
++
++// Read OLLAMA_TQ_DEQUANT_BLOCK_SIZE once and clamp to {32, 64, 128}. Used for
++// A/B testing block-size occupancy on Pascal. Default 128 matches headDim for
++// D=128 (one element per thread); smaller blocks let the stride loop in the
++// kernel handle multiple elements per thread, raising max_blocks_per_sm.
++static int tq_dequant_block_size_override() {
++    static int cached = -1;
++    if (cached < 0) {
++        cached = 0;
++        if (const char * env = std::getenv("OLLAMA_TQ_DEQUANT_BLOCK_SIZE")) {
++            int v = std::atoi(env);
++            if (v == 32 || v == 64 || v == 128 || v == 256) {
++                cached = v;
++            }
++        }
++    }
++    return cached;
++}
++
++// OLLAMA_TQ_DEQUANT_SPLIT_KV=1 falls back to the legacy two-kernel path
++// (separate K and V launches) for diagnostic A/B vs the combined kernel.
++// Default is the combined path which halves the per-layer launches.
++static bool tq_dequant_split_kv_override() {
++    static int cached = -1;
++    if (cached < 0) {
++        cached = 0;
++        if (const char * env = std::getenv("OLLAMA_TQ_DEQUANT_SPLIT_KV")) {
++            cached = std::atoi(env) != 0 ? 1 : 0;
++        }
++    }
++    return cached != 0;
++}
++
++// Optimized TQ dequant kernel: warp-shuffle codebook + hardcoded bit extraction.
++//
++// Grid: (nCells, numKVHeads).  Block: 64 threads (each thread decodes 2 elems
++// for D=128 via the stride loop). 64-thread blocks raise occupancy on Pascal
++// vs the prior 128-thread launch (max 2 blocks/SM at 128 threads vs 4 at 64),
++// which on llama3.1:8b ctx=16384 lifts decode from 11.9 to 14.6 tok/s and
++// clears the 0.5× f16 gate. PPL is bit-for-bit unchanged.
++//
++// Codebook lookup via __shfl_sync eliminates global memory reads.
++// Output is written as f16.
++//
++// This kernel is the "separate dequant" path — paired with the stock f16
++// flash attention kernel, it avoids injecting decode ALU into the
++// bandwidth-bound FA loop.
++
++#if __CUDA_ARCH__ >= 600 || !defined(__CUDA_ARCH__)
++__global__ void tq_dequant_multihead_kernel(
++    const uint8_t *packed,    // [(firstCell+c)*numKVHeads+h]*packed_bytes
++    const float   *scales,    // [(firstCell+c)*numKVHeads+h]
++    const float   *codebook,  // [codebook_len]
++    uint16_t      *output,    // [nCells * numKVHeads * headDim] f16
++    int            headDim,
++    int            numKVHeads,
++    int            bits,
++    int            packed_bytes,
++    int            codebook_len,
++    int            firstCell
++) {
++    int c    = blockIdx.x;  // cell index within [0, nCells)
++    int h    = blockIdx.y;  // head index within [0, numKVHeads)
++    int cell = firstCell + c;
++
++    int slot = cell * numKVHeads + h;
++    float scale = scales[slot];
++    const uint8_t *cell_packed = packed + (size_t)slot * packed_bytes;
++    __half *cell_out = (__half *)(output + ((size_t)c * numKVHeads + h) * headDim);
++
++    // Load one codebook entry per lane for warp-shuffle lookup.
++    // For 3-bit (8 entries): lanes 0-7 hold codebook[0-7], repeated every 8 lanes.
++    // For 2-bit (4 entries): lanes 0-3 hold codebook[0-3], repeated.
++    const int cb_mask = (1 << bits) - 1;
++    const float cb_lane = codebook[threadIdx.x & cb_mask];
++
++    for (int elem = threadIdx.x; elem < headDim; elem += blockDim.x) {
++        // Generic bit extraction (handles any alignment).
++        const int bit_offset = elem * bits;
++        const int byte_idx   = bit_offset >> 3;
++        const int shift      = bit_offset & 7;
++
++        int idx = (cell_packed[byte_idx] >> shift) & cb_mask;
++        if (shift + bits > 8) {
++            idx |= (cell_packed[byte_idx + 1] << (8 - shift)) & cb_mask;
++        }
++
++        // Codebook lookup via warp shuffle: zero global memory latency.
++        // Width = 32 works because cb_lane is periodic with period (1<<bits).
++        // Pass width explicitly — the HIP __shfl_sync shim is a 4-arg macro
++        // that doesn't default, and CUDA's 3-arg overload is width=warpSize=32
++        // anyway, so this is behavior-neutral on NVIDIA.
++        float val = __shfl_sync(0xFFFFFFFF, cb_lane, idx, 32) * scale;
++        cell_out[elem] = __float2half_rn(val);
++    }
++}
++#else
++// Stub for sm < 600 (no __shfl_sync).  Never executed — the launcher
++// asserts compute capability >= 6.0.  Only exists so the kernel launch
++// in ggml_cuda_tq_dequant compiles for Maxwell targets.
++__global__ void tq_dequant_multihead_kernel(
++    const uint8_t *, const float *, const float *, uint16_t *,
++    int, int, int, int, int, int) {}
++#endif
++
++// ── outlier-split dequant ──────────────────────────────────────────────────
++// Paired with tq_encode_kernel_outlier. Reads the regular packed sub-block and
++// the outlier packed sub-block from two separate per-layer tensors, decodes
++// each with its own codebook/scale, and writes a single [headDim] f16 K
++// vector per (cell, head) to the output tensor.
++//
++// The outlier_indices tensor holds the top-K channel positions the encoder
++// selected. For each output position elem, the kernel scans outlier_indices
++// to determine whether elem is an outlier (and if so, which outlier slot k)
++// or a regular channel (and if so, its contiguous regular slot r = elem minus
++// the number of outlier indices less than elem). This scan is O(outlier_count)
++// per thread, which is cheap: at outlier_count=32 it's 32 compares per thread,
++// all in registers.
++#if __CUDA_ARCH__ >= 600 || !defined(__CUDA_ARCH__)
++__global__ void tq_dequant_multihead_kernel_outlier(
++    const uint8_t *reg_packed,
++    const float   *reg_scales,
++    const float   *reg_codebook,
++    const uint8_t *out_packed,
++    const float   *out_scales,
++    const uint8_t *out_indices,
++    const float   *out_codebook,
++    uint16_t      *output,
++    int headDim,
++    int numKVHeads,
++    int bits,
++    int reg_packed_bytes,
++    int outlier_bits,
++    int outlier_count,
++    int out_packed_bytes,
++    int firstCell,
++    const float   *zeros,
++    const float   *outlier_zeros,
++    const uint8_t *qjl_packed,
++    const float   *qjl_norm,
++    const float   *qjl_projection,
++    int qjlRows,
++    int qjl_packed_bytes
++) {
++    int c    = blockIdx.x;
++    int h    = blockIdx.y;
++    int cell = firstCell + c;
++    int slot = cell * numKVHeads + h;
++
++    float regScale = reg_scales[slot];
++    float outScale = out_scales[slot];
++    const uint8_t *cell_reg  = reg_packed  + (size_t)slot * reg_packed_bytes;
++    const uint8_t *cell_outl = out_packed  + (size_t)slot * out_packed_bytes;
++    const uint8_t *cell_idx  = out_indices + (size_t)slot * outlier_count;
++    __half *cell_out = (__half *)(output + ((size_t)c * numKVHeads + h) * headDim);
++
++    // Shared memory layout:
++    //   s_outl_slot[headDim]           int8_t — outlier slot k or -1 if not outlier
++    //   s_mask[headDim / 32 (min 4)]  uint32  — outlier bitmap (bit i = channel i outlier)
++    //
++    // Per-element `regular_slot` is computed at decode time via popcount over the
++    // mask bits below `elem` — O(1) for headDim <= 256 (up to 8 popc ops). This
++    // replaces the per-element O(outlier_count) classification scan.
++    // Setup is fully parallel: no serial prefix sum, no idle threads.
++    const int mask_words = (headDim + 31) >> 5;  // e.g. 4 for headDim=128, 8 for 256
++    extern __shared__ char s_mem_dq[];
++    int8_t   *s_outl_slot = (int8_t   *)s_mem_dq;
++    uint32_t *s_mask      = (uint32_t *)(s_outl_slot + headDim);
++    float    *s_qjl_corr  = (float    *)(s_mask + mask_words);  // only valid when qjlRows > 0
++
++    // Step A: init s_outl_slot to -1 and s_mask to 0 (parallel over all threads).
++    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++        s_outl_slot[i] = -1;
++    }
++    for (int w = threadIdx.x; w < mask_words; w += blockDim.x) {
++        s_mask[w] = 0u;
++    }
++    __syncthreads();
++
++    // Step B: threads 0..outlier_count-1 each register one outlier — write its
++    // slot into s_outl_slot AND set its bit in s_mask. atomicOr needed because
++    // two outliers can land in the same word.
++    if ((int)threadIdx.x < outlier_count) {
++        int pos = (int)cell_idx[threadIdx.x];
++        s_outl_slot[pos] = (int8_t)threadIdx.x;
++        atomicOr(&s_mask[pos >> 5], 1u << (pos & 31));
++    }
++    __syncthreads();
++
++    // Warp-shuffle register-resident codebooks.
++    const int cb_mask  = (1 << bits) - 1;
++    const int ocb_mask = (1 << outlier_bits) - 1;
++    const float cb_lane_reg = reg_codebook[threadIdx.x & cb_mask];
++    const float cb_lane_out = out_codebook[threadIdx.x & ocb_mask];
++
++    for (int elem = threadIdx.x; elem < headDim; elem += blockDim.x) {
++        int outlier_slot = (int)s_outl_slot[elem];
++
++        // regular_slot = elem - popcount(outlier_mask bits below elem).
++        // Sum popcount of fully-covered 32-bit chunks, then partial chunk.
++        int outliers_below = 0;
++        const int full_words = elem >> 5;
++        #pragma unroll
++        for (int w = 0; w < 8; w++) {   // hard-unrolled; loop body is a no-op past mask_words
++            if (w < full_words && w < mask_words) {
++                outliers_below += __popc(s_mask[w]);
++            }
++        }
++        if (full_words < mask_words) {
++            uint32_t partial_bits = (1u << (elem & 31)) - 1u;
++            outliers_below += __popc(s_mask[full_words] & partial_bits);
++        }
++        int regular_slot = elem - outliers_below;
++
++        // Both sub-block decodes must execute unconditionally because
++        // __shfl_sync with mask 0xFFFFFFFF requires every lane in the warp
++        // to be at the same instruction. Putting a shuffle inside a divergent
++        // if-branch is undefined behavior (observed as all-zero decodes for
++        // some (cell, head) blocks on multi-head models). Compute both values
++        // up front, then select.
++        int reg_bit_offset = regular_slot * bits;
++        int reg_byte_idx   = reg_bit_offset >> 3;
++        int reg_shift      = reg_bit_offset & 7;
++        int reg_idx = (cell_reg[reg_byte_idx] >> reg_shift) & cb_mask;
++        if (reg_shift + bits > 8) {
++            reg_idx |= (cell_reg[reg_byte_idx + 1] << (8 - reg_shift)) & cb_mask;
++        }
++        float reg_val = __shfl_sync(0xFFFFFFFF, cb_lane_reg, reg_idx, 32) * regScale;
++
++        int out_slot_safe = (outlier_slot >= 0) ? outlier_slot : 0;
++        int out_bit_offset = out_slot_safe * outlier_bits;
++        int out_byte_idx   = out_bit_offset >> 3;
++        int out_shift      = out_bit_offset & 7;
++        int out_idx = (cell_outl[out_byte_idx] >> out_shift) & ocb_mask;
++        if (out_shift + outlier_bits > 8) {
++            out_idx |= (cell_outl[out_byte_idx + 1] << (8 - out_shift)) & ocb_mask;
++        }
++        float out_val = __shfl_sync(0xFFFFFFFF, cb_lane_out, out_idx, 32) * outScale;
++
++        float val = (outlier_slot >= 0) ? out_val : reg_val;
++        // Add asymmetric zero offset if present.
++        if (zeros) {
++            float z = (outlier_slot >= 0) ? outlier_zeros[slot] : zeros[slot];
++            val += z;
++        }
++        cell_out[elem] = __float2half_rn(val);
++    }
++
++    // QJL residual correction (optional).
++    // Compute correction vector in shared memory, then add to output.
++    if (qjlRows > 0 && qjl_packed && qjl_norm && qjl_projection) {
++        float residualNorm = qjl_norm[slot];
++        if (residualNorm > 1e-12f) {
++            const float qjlUnbiasScale = 1.2533141373155001f;
++            float scale = qjlUnbiasScale * residualNorm / (float)qjlRows;
++
++            // Each thread computes one column of the correction vector.
++            for (int col = threadIdx.x; col < headDim; col += blockDim.x) {
++                float corr = 0.0f;
++                const uint8_t *cell_qjl = qjl_packed + (size_t)slot * qjl_packed_bytes;
++                for (int row = 0; row < qjlRows; row++) {
++                    int byte_idx = row >> 3;
++                    int bit = row & 7;
++                    int sign = ((cell_qjl[byte_idx] >> bit) & 1) ? 1 : -1;
++                    corr += (float)sign * qjl_projection[row * headDim + col];
++                }
++                s_qjl_corr[col] = corr * scale;
++            }
++            __syncthreads();
++
++            for (int elem = threadIdx.x; elem < headDim; elem += blockDim.x) {
++                float val = __half2float(cell_out[elem]) + s_qjl_corr[elem];
++                cell_out[elem] = __float2half_rn(val);
++            }
++        }
++    }
++}
++#else
++__global__ void tq_dequant_multihead_kernel_outlier(
++    const uint8_t *, const float *, const float *,
++    const uint8_t *, const float *, const uint8_t *, const float *,
++    uint16_t *, int, int, int, int, int, int, int, int,
++    const float *, const float *, const uint8_t *, const float *, const float *, int, int) {}
++#endif
++
++// ── Combined K (outlier) + V (simple) dequant in a single kernel ──
++// Same grid (nCells, numKVHeads) as the separate kernels, but each block
++// dequants both planes for its (cell, head) before exiting. Halves the
++// per-layer ggml_cuda_tq_dequant_kv kernel-call count and amortises the
++// per-block scale/slot fetch across both planes.
++//
++// V is symmetric and outlier-free in every ship preset, so the V phase
++// uses the simple-kernel codepath. K is always outlier-aware here (the
++// non-outlier K case still hits the separate simple kernel above for now;
++// this combined path is the one path 1 actually uses by default).
++#if __CUDA_ARCH__ >= 600 || !defined(__CUDA_ARCH__)
++__global__ void tq_dequant_kv_kernel_outlier(
++    // K (outlier-aware)
++    const uint8_t *k_reg_packed,
++    const float   *k_reg_scales,
++    const float   *k_reg_codebook,
++    const uint8_t *k_outl_packed,
++    const float   *k_outl_scales,
++    const uint8_t *k_outl_indices,
++    const float   *k_outl_codebook,
++    const float   *k_zeros,
++    const float   *k_outl_zeros,
++    int            k_bits,
++    int            k_reg_packed_bytes,
++    int            k_outl_bits,
++    int            k_outl_count,
++    int            k_outl_packed_bytes,
++    // V (simple)
++    const uint8_t *v_packed,
++    const float   *v_scales,
++    const float   *v_codebook,
++    int            v_bits,
++    int            v_packed_bytes,
++    // Output (two planes)
++    uint16_t      *output_k,
++    uint16_t      *output_v,
++    // Geometry
++    int headDim, int numKVHeads, int firstCell)
++{
++    const int c    = blockIdx.x;
++    const int h    = blockIdx.y;
++    const int cell = firstCell + c;
++    const int slot = cell * numKVHeads + h;
++
++    // Shared memory for K outlier classification (reused only by K phase).
++    const int mask_words = (headDim + 31) >> 5;
++    extern __shared__ char s_mem_dq[];
++    int8_t   *s_outl_slot = (int8_t   *)s_mem_dq;
++    uint32_t *s_mask      = (uint32_t *)(s_outl_slot + headDim);
++
++    // K phase: build outlier mask, decode K plane.
++    {
++        for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++            s_outl_slot[i] = -1;
++        }
++        for (int w = threadIdx.x; w < mask_words; w += blockDim.x) {
++            s_mask[w] = 0u;
++        }
++        __syncthreads();
++
++        if ((int)threadIdx.x < k_outl_count) {
++            const uint8_t *cell_idx = k_outl_indices + (size_t)slot * k_outl_count;
++            int pos = (int)cell_idx[threadIdx.x];
++            s_outl_slot[pos] = (int8_t)threadIdx.x;
++            atomicOr(&s_mask[pos >> 5], 1u << (pos & 31));
++        }
++        __syncthreads();
++
++        // Precompute prefix-sum of popcounts so each element only needs one
++        // popc (the partial-word bits below `elem`). Without this, every
++        // element ran a 4-iteration unrolled popc loop in registers.
++        // mask_words ≤ 8 for D ≤ 256; popc_prefix[w] = sum of popcounts of
++        // s_mask[0..w-1], so popc_prefix[full_words] is the count of
++        // outliers strictly below `elem`'s 32-bit word.
++        __shared__ int s_popc_prefix[9];
++        if (threadIdx.x == 0) {
++            int acc = 0;
++            s_popc_prefix[0] = 0;
++            for (int w = 0; w < mask_words; w++) {
++                acc += __popc(s_mask[w]);
++                s_popc_prefix[w + 1] = acc;
++            }
++        }
++        __syncthreads();
++
++        const float regScale = k_reg_scales[slot];
++        const float outScale = k_outl_scales[slot];
++        const float regZero  = k_zeros      ? k_zeros[slot]      : 0.0f;
++        const float outZero  = k_outl_zeros ? k_outl_zeros[slot] : 0.0f;
++        const uint8_t *cell_reg  = k_reg_packed  + (size_t)slot * k_reg_packed_bytes;
++        const uint8_t *cell_outl = k_outl_packed + (size_t)slot * k_outl_packed_bytes;
++        __half *cell_out = (__half *)(output_k + ((size_t)c * numKVHeads + h) * headDim);
++
++        const int cb_mask  = (1 << k_bits) - 1;
++        const int ocb_mask = (1 << k_outl_bits) - 1;
++        const float cb_lane_reg = k_reg_codebook[threadIdx.x & cb_mask];
++        const float cb_lane_out = k_outl_codebook[threadIdx.x & ocb_mask];
++
++        for (int elem = threadIdx.x; elem < headDim; elem += blockDim.x) {
++            int outlier_slot = (int)s_outl_slot[elem];
++
++            const int full_words = elem >> 5;
++            int outliers_below = s_popc_prefix[full_words];
++            if (full_words < mask_words) {
++                uint32_t partial_bits = (1u << (elem & 31)) - 1u;
++                outliers_below += __popc(s_mask[full_words] & partial_bits);
++            }
++            int regular_slot = elem - outliers_below;
++
++            int reg_bit_offset = regular_slot * k_bits;
++            int reg_byte_idx   = reg_bit_offset >> 3;
++            int reg_shift      = reg_bit_offset & 7;
++            int reg_idx = (cell_reg[reg_byte_idx] >> reg_shift) & cb_mask;
++            if (reg_shift + k_bits > 8) {
++                reg_idx |= (cell_reg[reg_byte_idx + 1] << (8 - reg_shift)) & cb_mask;
++            }
++            // Mul-only here; zero added after the outlier/regular select to
++            // match tq_dequant_multihead_kernel_outlier's rounding (separate
++            // mul then add, not FMA fusion). Combined output must be bit-
++            // for-bit identical to the split-kernel output.
++            float reg_val = __shfl_sync(0xFFFFFFFF, cb_lane_reg, reg_idx, 32) * regScale;
++
++            int out_slot_safe = (outlier_slot >= 0) ? outlier_slot : 0;
++            int out_bit_offset = out_slot_safe * k_outl_bits;
++            int out_byte_idx   = out_bit_offset >> 3;
++            int out_shift      = out_bit_offset & 7;
++            int out_idx = (cell_outl[out_byte_idx] >> out_shift) & ocb_mask;
++            if (out_shift + k_outl_bits > 8) {
++                out_idx |= (cell_outl[out_byte_idx + 1] << (8 - out_shift)) & ocb_mask;
++            }
++            float out_val = __shfl_sync(0xFFFFFFFF, cb_lane_out, out_idx, 32) * outScale;
++
++            float val = (outlier_slot >= 0) ? out_val : reg_val;
++            if (k_zeros) {
++                val += (outlier_slot >= 0) ? outZero : regZero;
++            }
++            cell_out[elem] = __float2half_rn(val);
++        }
++    }
++
++    // V phase: independent of K, no shared memory needed.
++    {
++        const float v_scale = v_scales[slot];
++        const uint8_t *cell_v = v_packed + (size_t)slot * v_packed_bytes;
++        __half *cell_v_out = (__half *)(output_v + ((size_t)c * numKVHeads + h) * headDim);
++
++        const int v_cb_mask = (1 << v_bits) - 1;
++        const float v_cb_lane = v_codebook[threadIdx.x & v_cb_mask];
++
++        for (int elem = threadIdx.x; elem < headDim; elem += blockDim.x) {
++            const int bit_offset = elem * v_bits;
++            const int byte_idx   = bit_offset >> 3;
++            const int shift      = bit_offset & 7;
++
++            int idx = (cell_v[byte_idx] >> shift) & v_cb_mask;
++            if (shift + v_bits > 8) {
++                idx |= (cell_v[byte_idx + 1] << (8 - shift)) & v_cb_mask;
++            }
++            float val = __shfl_sync(0xFFFFFFFF, v_cb_lane, idx, 32) * v_scale;
++            cell_v_out[elem] = __float2half_rn(val);
++        }
++    }
++}
++#else
++__global__ void tq_dequant_kv_kernel_outlier(
++    const uint8_t *, const float *, const float *,
++    const uint8_t *, const float *, const uint8_t *, const float *,
++    const float *, const float *,
++    int, int, int, int, int,
++    const uint8_t *, const float *, const float *, int, int,
++    uint16_t *, uint16_t *, int, int, int) {}
++#endif
++
++void ggml_cuda_tq_dequant(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
++    GGML_ASSERT(ggml_cuda_info().devices[ctx.device].cc >= 600 &&
++                "TurboQuant dequant requires compute capability 6.0+ (Pascal or newer)");
++    const struct ggml_tensor * encode_result = dst->src[0]; // view of packed
++    const struct ggml_tensor * scales        = dst->src[1];
++    const struct ggml_tensor * codebook      = dst->src[2];
++
++    const int headDim      = (int)dst->ne[0];
++    const int numKVHeads   = (int)dst->ne[1];
++    const int nCells       = (int)dst->ne[2];
++    const int bits         = (int)((const int32_t *)dst->op_params)[0];
++    const int firstCell    = (int)((const int32_t *)dst->op_params)[1];
++    const int outlierBits  = (int)((const int32_t *)dst->op_params)[2];
++    const int outlierCount = (int)((const int32_t *)dst->op_params)[3];
++    const int asymmetric   = (int)((const int32_t *)dst->op_params)[4];
++    const int qjlRows      = (int)((const int32_t *)dst->op_params)[5];
++
++    dim3 grid(nCells, numKVHeads);
++    int block_size = 64;
++    if (headDim < block_size) block_size = headDim;
++    if (int ov = tq_dequant_block_size_override(); ov > 0 && ov <= headDim) {
++        block_size = ov;
++    }
++
++    if (outlierCount > 0 && outlierBits > 0 && outlierCount < headDim) {
++        // Outlier-split dequant: read both sub-blocks.
++        const struct ggml_tensor * outlier_packed   = dst->src[3];
++        const struct ggml_tensor * outlier_scales   = dst->src[4];
++        const struct ggml_tensor * outlier_indices  = dst->src[5];
++        const struct ggml_tensor * outlier_codebook = dst->src[6];
++        const struct ggml_tensor * zeros            = dst->src[7];
++        const struct ggml_tensor * outlier_zeros    = dst->src[8];
++        const struct ggml_tensor * qjl_packed       = dst->src[9];
++        const struct ggml_tensor * qjl_norm         = dst->src[10];
++        const struct ggml_tensor * qjl_projection   = dst->src[11];
++
++        const int regular_count        = headDim - outlierCount;
++        // Per-head stride for both packed tensors is padded up to a 4-byte
++        // multiple so atomicOr-on-word stays aligned in the encode kernel.
++        // The Go-side ggmlTQCompressedK.regularPackedBytes() applies the
++        // same padding, so the kernel-visible layout matches the allocator.
++        const int reg_packed_raw       = (regular_count * bits + 7) / 8;
++        const int reg_packed_bytes     = (reg_packed_raw + 3) & ~3;
++        const int out_packed_raw       = (outlierCount * outlierBits + 7) / 8;
++        const int out_packed_bytes     = (out_packed_raw + 3) & ~3;
++        const int qjl_packed_raw       = (qjlRows + 7) / 8;
++        const int qjl_packed_bytes     = (qjl_packed_raw + 3) & ~3;
++
++        // Shared memory: s_outl_slot (headDim * int8) + s_mask (ceil(headDim/32) * u32)
++        // plus s_qjl_corr (headDim * float) when QJL is active.
++        const int mask_words = (headDim + 31) >> 5;
++        size_t smem = (size_t)headDim * sizeof(int8_t)
++                    + (size_t)mask_words * sizeof(uint32_t);
++        if (qjlRows > 0) {
++            smem += (size_t)headDim * sizeof(float);
++        }
++
++        tq_dequant_multihead_kernel_outlier<<<grid, block_size, smem, ctx.stream()>>>(
++            (const uint8_t *)encode_result->data,
++            (const float   *)scales->data,
++            (const float   *)codebook->data,
++            (const uint8_t *)outlier_packed->data,
++            (const float   *)outlier_scales->data,
++            (const uint8_t *)outlier_indices->data,
++            (const float   *)outlier_codebook->data,
++            (uint16_t      *)dst->data,
++            headDim, numKVHeads, bits, reg_packed_bytes,
++            outlierBits, outlierCount, out_packed_bytes, firstCell,
++            asymmetric ? (const float *)zeros->data : nullptr,
++            asymmetric ? (const float *)outlier_zeros->data : nullptr,
++            qjlRows > 0 ? (const uint8_t *)qjl_packed->data : nullptr,
++            qjlRows > 0 ? (const float *)qjl_norm->data : nullptr,
++            qjlRows > 0 ? (const float *)qjl_projection->data : nullptr,
++            qjlRows, qjl_packed_bytes
++        );
++        return;
++    }
++
++    const int packed_bytes  = (headDim * bits + 7) / 8;
++    const int codebook_len  = (int)codebook->ne[0];
++
++    tq_dequant_multihead_kernel<<<grid, block_size, 0, ctx.stream()>>>(
++        (const uint8_t *)encode_result->data,
++        (const float   *)scales->data,
++        (const float   *)codebook->data,
++        (uint16_t      *)dst->data,
++        headDim, numKVHeads, bits, packed_bytes, codebook_len, firstCell
++    );
++}
++
++// V dequant with fused rotation undo: decode packed V to shared memory
++// (rotated domain), then multiply by R [headDim × headDim] to produce
++// unrotated f16 output.  Eliminates the per-layer mulmat op in SDPA.
++//
++// Grid: (nCells, numKVHeads).  Block: 128 (= headDim for D=128).
++// Shared memory: headDim floats = 512 bytes.
++#if __CUDA_ARCH__ >= 600 || !defined(__CUDA_ARCH__)
++__global__ void tq_dequant_v_rotated_kernel(
++    const uint8_t * __restrict__ packed,
++    const float   * __restrict__ scales,
++    const float   * __restrict__ codebook,
++    const float   * __restrict__ rotation,  // R [headDim, headDim] row-major
++    uint16_t      * __restrict__ output,
++    int headDim, int numKVHeads, int bits, int packed_bytes,
++    int codebook_len, int firstCell)
++{
++    extern __shared__ float s_rotV[];  // headDim floats
++
++    int c    = blockIdx.x;
++    int h    = blockIdx.y;
++    int cell = firstCell + c;
++    int slot = cell * numKVHeads + h;
++    float scale = scales[slot];
++    const uint8_t *cell_packed = packed + (size_t)slot * packed_bytes;
++
++    // Phase 1: decode one element per thread into shared memory (rotated domain).
++    const int cb_mask = (1 << bits) - 1;
++    const float cb_lane = codebook[threadIdx.x & cb_mask];
++
++    int elem = threadIdx.x;
++    int bit_offset = elem * bits;
++    int byte_idx   = bit_offset >> 3;
++    int shift      = bit_offset & 7;
++    int idx = (cell_packed[byte_idx] >> shift) & cb_mask;
++    if (shift + bits > 8) {
++        idx |= (cell_packed[byte_idx + 1] << (8 - shift)) & cb_mask;
++    }
++    s_rotV[elem] = __shfl_sync(0xFFFFFFFF, cb_lane, idx, 32) * scale;
++    __syncthreads();
++
++    // Phase 2: each thread computes one output element = dot(R[elem,:], s_rotV).
++    // R is in L2 (64KB, fits in P40's 3MB L2; read-only, broadcast across blocks).
++    const float *R_row = rotation + elem * headDim;
++    float sum = 0.0f;
++    for (int j = 0; j < headDim; j++) {
++        sum += R_row[j] * s_rotV[j];
++    }
++
++    __half *cell_out = (__half *)(output + ((size_t)c * numKVHeads + h) * headDim);
++    cell_out[elem] = __float2half_rn(sum);
++}
++#else
++// Stub for sm < 600 (no __shfl_sync).  Not currently launched, but kept
++// so future call sites compile for Maxwell targets without special casing.
++__global__ void tq_dequant_v_rotated_kernel(
++    const uint8_t * __restrict__, const float * __restrict__,
++    const float   * __restrict__, const float * __restrict__,
++    uint16_t      * __restrict__,
++    int, int, int, int, int, int) {}
++#endif
++
++// Combined K+V dequant: two back-to-back kernel launches in a single GGML op.
++// Output: [headDim, numKVHeads, nCells, 2] f16 — K at ne[3]=0, V at ne[3]=1.
++// When src[6] (v_rotation) is non-NULL, V is dequanted with rotation fused.
++// When K outlier sources (src[7..12]) are non-NULL, K plane uses the
++// regular+outlier overwrite kernel; V is always plain dequant (no outliers).
++void ggml_cuda_tq_dequant_kv(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
++    GGML_ASSERT(ggml_cuda_info().devices[ctx.device].cc >= 600 &&
++                "TurboQuant dequant requires compute capability 6.0+ (Pascal or newer)");
++    const struct ggml_tensor * k_encode   = dst->src[0];
++    const struct ggml_tensor * k_scales   = dst->src[1];
++    const struct ggml_tensor * k_cb       = dst->src[2];
++    const struct ggml_tensor * v_encode   = dst->src[3];
++    const struct ggml_tensor * v_scales   = dst->src[4];
++    const struct ggml_tensor * v_cb       = dst->src[5];
++    const struct ggml_tensor * v_rotation __attribute__((unused)) = dst->src[6];  // NULL = no rotation fusion
++    const struct ggml_tensor * k_outl_packed   = dst->src[7];   // NULL when no outliers
++    const struct ggml_tensor * k_outl_scales   = dst->src[8];
++    const struct ggml_tensor * k_outl_indices  = dst->src[9];
++    const struct ggml_tensor * k_outl_codebook = dst->src[10];
++    const struct ggml_tensor * k_zeros         = dst->src[11];  // NULL when symmetric
++    const struct ggml_tensor * k_outl_zeros    = dst->src[12];
++
++    const int headDim    = (int)dst->ne[0];
++    const int numKVHeads = (int)dst->ne[1];
++    const int nCells     = (int)dst->ne[2];
++
++    int32_t k_bits, v_bits, firstCell, outlier_bits, outlier_count;
++    memcpy(&k_bits,        (const int32_t *)dst->op_params + 0, sizeof(int32_t));
++    memcpy(&v_bits,        (const int32_t *)dst->op_params + 1, sizeof(int32_t));
++    memcpy(&firstCell,     (const int32_t *)dst->op_params + 2, sizeof(int32_t));
++    memcpy(&outlier_bits,  (const int32_t *)dst->op_params + 3, sizeof(int32_t));
++    memcpy(&outlier_count, (const int32_t *)dst->op_params + 4, sizeof(int32_t));
++
++    const int v_packed_bytes = (headDim * v_bits + 7) / 8;
++
++    dim3 grid(nCells, numKVHeads);
++    int block_size = 64;
++    if (headDim < block_size) {
++        block_size = headDim;
++    }
++    if (int ov = tq_dequant_block_size_override(); ov > 0 && ov <= headDim) {
++        block_size = ov;
++    }
++
++    const size_t plane_size = (size_t)headDim * numKVHeads * nCells;
++    uint16_t * out_base = (uint16_t *)dst->data;
++
++    cudaStream_t stream = ctx.stream();
++    (void)v_rotation; // SDPA applies V rotation undo via mulmat
++
++    const bool k_has_outliers = (k_outl_packed != nullptr) && outlier_count > 0
++                                && outlier_bits > 0 && outlier_count < headDim;
++
++    // Default: combined K+V kernel on CUDA (one launch per layer; halves
++    // scheduler ops, +3.5% decode on Pascal P40). Disabled on HIP because
++    // RDNA3 gfx1102 regresses ~11% — the combined kernel's per-block smem
++    // (headDim int8 outlier-slot map + mask_words uint32 bitmap) hurts
++    // occupancy/LDS bank-conflict behaviour relative to two lightweight
++    // separate kernels. Pascal benefits from the amortised per-block work;
++    // RDNA3 doesn't. OLLAMA_TQ_DEQUANT_SPLIT_KV=1 forces split on either.
++    bool use_combined = k_has_outliers && !tq_dequant_split_kv_override();
++#ifdef GGML_USE_HIP
++    use_combined = false;
++#endif
++    if (use_combined) {
++        const int regular_count    = headDim - outlier_count;
++        const int reg_packed_raw   = (regular_count * k_bits + 7) / 8;
++        const int reg_packed_bytes = (reg_packed_raw + 3) & ~3;
++        const int out_packed_raw   = (outlier_count * outlier_bits + 7) / 8;
++        const int out_packed_bytes = (out_packed_raw + 3) & ~3;
++        const int mask_words       = (headDim + 31) >> 5;
++        const size_t smem = (size_t)headDim * sizeof(int8_t)
++                          + (size_t)mask_words * sizeof(uint32_t);
++
++        tq_dequant_kv_kernel_outlier<<<grid, block_size, smem, stream>>>(
++            (const uint8_t *)k_encode->data,
++            (const float   *)k_scales->data,
++            (const float   *)k_cb->data,
++            (const uint8_t *)k_outl_packed->data,
++            (const float   *)k_outl_scales->data,
++            (const uint8_t *)k_outl_indices->data,
++            (const float   *)k_outl_codebook->data,
++            k_zeros      ? (const float *)k_zeros->data      : nullptr,
++            k_outl_zeros ? (const float *)k_outl_zeros->data : nullptr,
++            k_bits, reg_packed_bytes, outlier_bits, outlier_count, out_packed_bytes,
++            (const uint8_t *)v_encode->data,
++            (const float   *)v_scales->data,
++            (const float   *)v_cb->data,
++            v_bits, v_packed_bytes,
++            out_base, out_base + plane_size,
++            headDim, numKVHeads, firstCell
++        );
++        return;
++    }
++
++    // K dequant → first plane (offset 0) — always unrotated.
++    if (k_has_outliers) {
++        const int regular_count    = headDim - outlier_count;
++        const int reg_packed_raw   = (regular_count * k_bits + 7) / 8;
++        const int reg_packed_bytes = (reg_packed_raw + 3) & ~3;
++        const int out_packed_raw   = (outlier_count * outlier_bits + 7) / 8;
++        const int out_packed_bytes = (out_packed_raw + 3) & ~3;
++        const int mask_words       = (headDim + 31) >> 5;
++        const size_t smem = (size_t)headDim * sizeof(int8_t)
++                          + (size_t)mask_words * sizeof(uint32_t);
++
++        tq_dequant_multihead_kernel_outlier<<<grid, block_size, smem, stream>>>(
++            (const uint8_t *)k_encode->data,
++            (const float   *)k_scales->data,
++            (const float   *)k_cb->data,
++            (const uint8_t *)k_outl_packed->data,
++            (const float   *)k_outl_scales->data,
++            (const uint8_t *)k_outl_indices->data,
++            (const float   *)k_outl_codebook->data,
++            out_base,
++            headDim, numKVHeads, k_bits, reg_packed_bytes,
++            outlier_bits, outlier_count, out_packed_bytes, firstCell,
++            k_zeros      ? (const float *)k_zeros->data      : nullptr,
++            k_outl_zeros ? (const float *)k_outl_zeros->data : nullptr,
++            /* qjl_packed     = */ nullptr,
++            /* qjl_norm       = */ nullptr,
++            /* qjl_projection = */ nullptr,
++            /* qjlRows        = */ 0,
++            /* qjl_packed_bytes = */ 0
++        );
++    } else {
++        const int k_packed_bytes = (headDim * k_bits + 7) / 8;
++        tq_dequant_multihead_kernel<<<grid, block_size, 0, stream>>>(
++            (const uint8_t *)k_encode->data,
++            (const float   *)k_scales->data,
++            (const float   *)k_cb->data,
++            out_base,
++            headDim, numKVHeads, k_bits, k_packed_bytes, (int)k_cb->ne[0], firstCell
++        );
++    }
++
++    // V dequant → second plane (offset plane_size). Plain dequant only — the
++    // rotation undo (R @ attn_out) is handled by SDPA via mulmat, which is
++    // dramatically faster than the per-cell matmul the fused kernel did.
++    tq_dequant_multihead_kernel<<<grid, block_size, 0, stream>>>(
++        (const uint8_t *)v_encode->data,
++        (const float   *)v_scales->data,
++        (const float   *)v_cb->data,
++        out_base + plane_size,
++        headDim, numKVHeads, v_bits, v_packed_bytes, (int)v_cb->ne[0], firstCell
++    );
++}
+diff --git a/ggml/src/ggml-cuda/tq-dequant.cuh b/ggml/src/ggml-cuda/tq-dequant.cuh
+new file mode 100644
+index 000000000..e88ba7fac
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq-dequant.cuh
+@@ -0,0 +1,6 @@
++#pragma once
++
++#include "common.cuh"
++
++void ggml_cuda_tq_dequant(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst);
++void ggml_cuda_tq_dequant_kv(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst);
+diff --git a/ggml/src/ggml-cuda/tq-encode-v.cu b/ggml/src/ggml-cuda/tq-encode-v.cu
+new file mode 100644
+index 000000000..22857a3b4
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq-encode-v.cu
+@@ -0,0 +1,198 @@
++#include "tq-encode-v.cuh"
++#include <math.h>
++
++#define TQ_ENCODE_V_BLOCK_SIZE 128
++
++__global__ void tq_encode_v_kernel(
++    const void      *v,
++    const float     *rotation,   // [headDim, headDim] R^T row-major, or NULL for no rotation
++    uint8_t         *packed_out,
++    float           *scales_out,
++    int              firstCell,
++    const float     *boundaries,
++    int              headDim,
++    int              numKVHeads,
++    int              bits,
++    int              numBoundaries,
++    int              vIsF32,
++    const float     *codebook    // [1<<bits] f32, NULL = RMS only
++) {
++    int batch = blockIdx.x;
++    int head  = blockIdx.y;
++    int cell  = firstCell + batch;
++
++    extern __shared__ char s_mem[];
++    float   *s_v      = (float *)s_mem;
++    float   *s_rot    = s_v + headDim;
++    float   *s_reduce = s_rot + headDim;
++    uint8_t *s_idx    = (uint8_t *)(s_reduce + blockDim.x);
++
++    // Step 1: Load V[batch, head] into shared memory as f32
++    int base_v = batch * numKVHeads * headDim + head * headDim;
++    for (int d = threadIdx.x; d < headDim; d += blockDim.x) {
++        if (vIsF32) {
++            s_v[d] = ((const float *)v)[base_v + d];
++        } else {
++            s_v[d] = __half2float(__ushort_as_half(((const uint16_t *)v)[base_v + d]));
++        }
++    }
++    __syncthreads();
++
++    // Step 2: Apply Hadamard rotation if provided (R^T @ v spreads outlier energy evenly)
++    float *s_input = s_v;
++    if (rotation != NULL) {
++        for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++            float sum = 0.0f;
++            for (int j = 0; j < headDim; j++) {
++                sum += rotation[i * headDim + j] * s_v[j];
++            }
++            s_rot[i] = sum;
++        }
++        __syncthreads();
++        s_input = s_rot;
++    }
++
++    // Step 3: RMS scale = sqrt(mean(v^2))
++    float local_sq = 0.0f;
++    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++        local_sq += s_input[i] * s_input[i];
++    }
++    s_reduce[threadIdx.x] = local_sq;
++    __syncthreads();
++
++    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++        if (threadIdx.x < stride)
++            s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++        __syncthreads();
++    }
++
++    float scale = 0.0f;
++    if (threadIdx.x == 0) {
++        float sum_sq = s_reduce[0];
++        if (sum_sq > 1e-12f)
++            scale = sqrtf(sum_sq / (float)headDim);
++        scales_out[cell * numKVHeads + head] = scale;
++        s_reduce[0] = scale;
++    }
++    __syncthreads();
++    scale = s_reduce[0];
++
++    // Step 4: Quantize via boundary binary search
++    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++        float val = (scale > 0.0f) ? (s_input[i] / scale) : 0.0f;
++        int idx = 0;
++        for (int b = 0; b < numBoundaries; b++) {
++            if (val >= boundaries[b]) idx++;
++        }
++        s_idx[i] = (uint8_t)idx;
++    }
++    __syncthreads();
++
++    // EDEN biased scale refinement (two-pass). Uses s_v as second reduce buffer.
++    if (codebook != nullptr) {
++        float *s_reduce2 = s_v;
++        for (int pass = 0; pass < 2; pass++) {
++            float local_num = 0.0f, local_den = 0.0f;
++            for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++                float ci = codebook[(int)s_idx[i]];
++                float vi = s_input[i];
++                local_num += vi * ci;
++                local_den += ci * ci;
++            }
++            s_reduce[threadIdx.x] = local_num;
++            __syncthreads();
++            for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++                if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++                __syncthreads();
++            }
++            s_reduce2[threadIdx.x] = local_den;
++            __syncthreads();
++            for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++                if (threadIdx.x < stride) s_reduce2[threadIdx.x] += s_reduce2[threadIdx.x + stride];
++                __syncthreads();
++            }
++            float s_eden = (s_reduce2[0] > 1e-12f && s_reduce[0] > 0.0f) ? (s_reduce[0] / s_reduce2[0]) : scale;
++            scale = s_eden;
++            if (threadIdx.x == 0) scales_out[cell * numKVHeads + head] = scale;
++            if (pass == 0) {
++                for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++                    float val = (scale > 0.0f) ? (s_input[i] / scale) : 0.0f;
++                    int idx = 0;
++                    for (int b = 0; b < numBoundaries; b++) { if (val >= boundaries[b]) idx++; }
++                    s_idx[i] = (uint8_t)idx;
++                }
++                __syncthreads();
++            }
++        }
++    }
++
++    // Step 5: Pack bits LSB-first
++    {
++        int packed_bytes = (headDim * bits + 7) / 8;
++        uint8_t *out = packed_out + (cell * numKVHeads + head) * packed_bytes;
++        uint8_t bitmask = (uint8_t)((1 << bits) - 1);
++
++        for (int p = threadIdx.x; p < packed_bytes; p += blockDim.x) {
++            out[p] = 0;
++        }
++        __syncthreads();
++
++        for (int elem = threadIdx.x; elem < headDim; elem += blockDim.x) {
++            int bit_offset = elem * bits;
++            int byte_idx   = bit_offset >> 3;
++            int shift      = bit_offset & 7;
++            uint8_t val = s_idx[elem] & bitmask;
++            atomicOr((unsigned int *)(out + (byte_idx & ~3)),
++                     (unsigned int)(val << shift) << ((byte_idx & 3) * 8));
++            if (shift + bits > 8) {
++                int byte_idx2 = byte_idx + 1;
++                atomicOr((unsigned int *)(out + (byte_idx2 & ~3)),
++                         (unsigned int)(val >> (8 - shift)) << ((byte_idx2 & 3) * 8));
++            }
++        }
++    }
++}
++
++void ggml_cuda_tq_encode_v(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
++    const struct ggml_tensor * v          = dst->src[0];
++    const struct ggml_tensor * rotation   = dst->src[1]; // NULL when no rotation
++    const struct ggml_tensor * scales     = dst->src[3];
++    const struct ggml_tensor * boundaries = dst->src[4];
++
++    const int headDim    = (int)v->ne[0];
++    const int numKVHeads = (int)v->ne[1];
++    const int batchSize  = (int)v->ne[2];
++    const int bits       = (int)((const int32_t *)dst->op_params)[0];
++    const int firstCell  = (int)((const int32_t *)dst->op_params)[1];
++    const int numBoundaries = (1 << bits) - 1;
++    const int vIsF32     = (v->type == GGML_TYPE_F32) ? 1 : 0;
++
++    const float * rotation_ptr = rotation ? (const float *)rotation->data : nullptr;
++
++    // src[5] = v_codebook for EDEN biased scale refinement; NULL = RMS only.
++    const struct ggml_tensor * v_codebook = dst->src[5];
++    const float * codebook_ptr = v_codebook ? (const float *)v_codebook->data : nullptr;
++
++    dim3 grid(batchSize, numKVHeads);
++    int block_size = (headDim < TQ_ENCODE_V_BLOCK_SIZE) ? headDim : TQ_ENCODE_V_BLOCK_SIZE;
++    int bs = 1;
++    while (bs < block_size) bs <<= 1;
++    block_size = bs;
++
++    size_t smem = (size_t)headDim * 2 * sizeof(float)  // s_v + s_rot
++                + (size_t)block_size * sizeof(float)
++                + (size_t)headDim * sizeof(uint8_t);
++
++    cudaStream_t stream = ctx.stream();
++
++    tq_encode_v_kernel<<<grid, block_size, smem, stream>>>(
++        v->data,
++        rotation_ptr,
++        (uint8_t        *)dst->data,
++        (float          *)scales->data,
++        firstCell,
++        (const float    *)boundaries->data,
++        headDim, numKVHeads, bits, numBoundaries, vIsF32,
++        codebook_ptr
++    );
++}
+diff --git a/ggml/src/ggml-cuda/tq-encode-v.cuh b/ggml/src/ggml-cuda/tq-encode-v.cuh
+new file mode 100644
+index 000000000..5e475e714
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq-encode-v.cuh
+@@ -0,0 +1,5 @@
++#pragma once
++
++#include "common.cuh"
++
++void ggml_cuda_tq_encode_v(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst);
+diff --git a/ggml/src/ggml-cuda/tq-encode.cu b/ggml/src/ggml-cuda/tq-encode.cu
+new file mode 100644
+index 000000000..1c800f785
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq-encode.cu
+@@ -0,0 +1,900 @@
++#include "tq-encode.cuh"
++#include <math.h>
++
++#define TQ_ENCODE_BLOCK_SIZE 128
++
++// ── kernel ──────────────────────────────────────────────────────────────────
++
++// tq_encode_kernel — uniform Lloyd-Max N-bit key encoder.
++// Template parameter kAsymmetric: when true, centres each rotated vector by
++// its mean before RMS normalization; mean is stored in zeros_out for decode.
++// Using a template (static dispatch) avoids an nvcc ICE on compute_70/75/87/90
++// that occurs when the same conditional logic is expressed via a runtime pointer.
++template<bool kAsymmetric>
++__global__ void tq_encode_kernel(
++    const void      *k,            // f16 or f32, ggml layout [headDim, numKVHeads, batchSize]
++    const float     *rotation,     // [headDim, headDim] R^T stored row-major
++    uint8_t         *packed_out,   // [(c*numKVHeads+h)*packedBytes] interleaved
++    float           *scales_out,   // [c*numKVHeads+h] interleaved
++    int              firstCell,    // first cache cell index (cell = firstCell + batch)
++    const float     *boundaries,   // [numLevels-1]
++    int              headDim,
++    int              numKVHeads,
++    int              bits,
++    int              numBoundaries, // = (1<<bits) - 1
++    int              kIsF32,       // non-zero when k is float32 (vs float16)
++    float           *zeros_out,    // [numKVHeads*cells] f32 mean (kAsymmetric only; ignored if !kAsymmetric)
++    const float     *k_bias,       // [numKVHeads * headDim] f32, NULL = no bias subtraction
++    const float     *codebook      // [1<<bits] f32 Lloyd-Max centroids; NULL = skip EDEN refinement
++) {
++    int batch = blockIdx.x;
++    int head  = blockIdx.y;
++    int cell  = firstCell + batch;
++
++    // Shared memory layout:
++    //   s_k[headDim]       – K values as f32
++    //   s_rot[headDim]     – rotated values
++    //   s_reduce[BLOCK]    – warp reduction scratch
++    //   s_idx[headDim]     – quantized indices (uint8)
++    extern __shared__ char s_mem[];
++    float   *s_k      = (float *)s_mem;
++    float   *s_rot    = s_k + headDim;
++    float   *s_reduce = s_rot + headDim;
++    uint8_t *s_idx    = (uint8_t *)(s_reduce + blockDim.x);
++
++    // ── Step 1: Load K[batch, head] into shared memory as f32 ────────────────
++    // If k_bias is provided, subtract it before rotation so the Lloyd-Max
++    // codebook sees zero-mean data even when the K projection has a bias term
++    // (e.g. Qwen2). The bias term cancels in softmax attention scores so the
++    // decoder does not need to add it back.
++    int base_k = batch * numKVHeads * headDim + head * headDim;
++    int bias_base = head * headDim;
++    for (int d = threadIdx.x; d < headDim; d += blockDim.x) {
++        float val;
++        if (kIsF32) {
++            val = ((const float *)k)[base_k + d];
++        } else {
++            val = __half2float(__ushort_as_half(((const uint16_t *)k)[base_k + d]));
++        }
++        if (k_bias != nullptr) {
++            val -= k_bias[bias_base + d];
++        }
++        s_k[d] = val;
++    }
++    __syncthreads();
++
++    // ── Step 2: Rotation matmul: rotated = R^T @ k ───────────────────────────
++    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++        float sum = 0.0f;
++        for (int j = 0; j < headDim; j++) {
++            sum += rotation[i * headDim + j] * s_k[j];
++        }
++        s_rot[i] = sum;
++    }
++    __syncthreads();
++
++    // ── Step 3: Mean (kAsymmetric only) then RMS scale ───────────────────────
++    float regMean = 0.0f;
++    if (kAsymmetric) {
++        float local_sum = 0.0f;
++        for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++            local_sum += s_rot[i];
++        }
++        s_reduce[threadIdx.x] = local_sum;
++        __syncthreads();
++        for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++            if (threadIdx.x < stride)
++                s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++            __syncthreads();
++        }
++        // EXPERIMENT: all threads compute regMean directly from the
++        // reduction sum to eliminate the write-then-read pattern.
++        regMean = s_reduce[0] / (float)headDim;
++        if (threadIdx.x == 0) {
++            zeros_out[cell * numKVHeads + head] = regMean;
++        }
++        __syncthreads();
++    }
++
++    float local_sq = 0.0f;
++    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++        float v = s_rot[i] - regMean;  // regMean==0 when !kAsymmetric
++        local_sq += v * v;
++    }
++    s_reduce[threadIdx.x] = local_sq;
++    __syncthreads();
++
++    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++        if (threadIdx.x < stride)
++            s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++        __syncthreads();
++    }
++
++    // All threads compute scale from the reduction sum directly. Avoids the
++    // write-then-read pattern (s_reduce[0] = scale; sync; scale = s_reduce[0])
++    // which can race when the kernel runs the mean reduction immediately
++    // before this RMS reduction (asymmetric path), producing non-deterministic
++    // garbage on llama3.2:3b. See the mean broadcast above for context.
++    float sum_sq = s_reduce[0];
++    float scale = (sum_sq > 1e-12f) ? sqrtf(sum_sq / (float)headDim) : 0.0f;
++    if (threadIdx.x == 0) {
++        scales_out[cell * numKVHeads + head] = scale;
++    }
++    __syncthreads();
++
++    // ── Step 4: Quantize each element via boundary binary search ─────────────
++    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++        float v = (scale > 0.0f) ? ((s_rot[i] - regMean) / scale) : 0.0f;
++        int idx = 0;
++        for (int b = 0; b < numBoundaries; b++) {
++            if (v >= boundaries[b]) idx++;
++        }
++        s_idx[i] = (uint8_t)idx;
++    }
++    __syncthreads();
++
++    // ── EDEN scale refinement (Option B: two-pass MSE-optimal scale) ────────────
++    // Given current assignment {s_idx[i]}, the scale minimising ||v - S·c||²
++    // is S* = Σ(v[i]·c[idx[i]]) / Σ(c[idx[i]]²)  (EDEN biased estimator).
++    // Two passes: compute S₁ with initial assignment → re-quantize → compute S₂
++    // with updated assignment → write S₂ as final scale.
++    // Reuses s_k (dead after step 2 rotation) as a second reduction buffer.
++    // V and outlier-split paths still use the RMS scale set in step 3.
++    if (codebook != nullptr) {
++        float *s_reduce2 = s_k;  // headDim ≥ blockDim.x; safe to alias dead buffer
++
++        for (int pass = 0; pass < 2; pass++) {
++            float local_num = 0.0f, local_den = 0.0f;
++            for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++                float ci = codebook[(int)s_idx[i]];
++                float vi = s_rot[i] - regMean;
++                local_num += vi * ci;
++                local_den += ci * ci;
++            }
++
++            s_reduce[threadIdx.x] = local_num;
++            __syncthreads();
++            for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++                if (threadIdx.x < stride)
++                    s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++                __syncthreads();
++            }
++
++            s_reduce2[threadIdx.x] = local_den;
++            __syncthreads();
++            for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++                if (threadIdx.x < stride)
++                    s_reduce2[threadIdx.x] += s_reduce2[threadIdx.x + stride];
++                __syncthreads();
++            }
++
++            float eden_num = s_reduce[0];
++            float eden_den = s_reduce2[0];
++            float s_eden = (eden_den > 1e-12f && eden_num > 0.0f)
++                           ? (eden_num / eden_den) : scale;
++            scale = s_eden;
++
++            if (threadIdx.x == 0)
++                scales_out[cell * numKVHeads + head] = scale;
++
++            if (pass == 0) {
++                // Re-quantize with S₁ to get the assignment used in pass 1 and packing.
++                for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++                    float v = (scale > 0.0f) ? ((s_rot[i] - regMean) / scale) : 0.0f;
++                    int idx = 0;
++                    for (int b = 0; b < numBoundaries; b++) {
++                        if (v >= boundaries[b]) idx++;
++                    }
++                    s_idx[i] = (uint8_t)idx;
++                }
++                __syncthreads();
++            }
++        }
++    }
++
++    // ── Step 5: Pack bits LSB-first into output (parallel via atomicOr) ─────
++    {
++        int packed_bytes = (headDim * bits + 7) / 8;
++        uint8_t *out = packed_out + (cell * numKVHeads + head) * packed_bytes;
++        uint8_t bitmask = (uint8_t)((1 << bits) - 1);
++
++        // Zero output buffer in parallel.
++        for (int p = threadIdx.x; p < packed_bytes; p += blockDim.x) {
++            out[p] = 0;
++        }
++        __syncthreads();
++
++        // Each thread packs its own elements using atomicOr on 4-byte aligned words.
++        for (int elem = threadIdx.x; elem < headDim; elem += blockDim.x) {
++            int bit_offset = elem * bits;
++            int byte_idx   = bit_offset >> 3;
++            int shift      = bit_offset & 7;
++            uint8_t v = s_idx[elem] & bitmask;
++            // Pack into 4-byte aligned word: position byte within 32-bit word.
++            atomicOr((unsigned int *)(out + (byte_idx & ~3)),
++                     (unsigned int)(v << shift) << ((byte_idx & 3) * 8));
++            if (shift + bits > 8) {
++                int byte_idx2 = byte_idx + 1;
++                atomicOr((unsigned int *)(out + (byte_idx2 & ~3)),
++                         (unsigned int)(v >> (8 - shift)) << ((byte_idx2 & 3) * 8));
++            }
++        }
++    }
++}
++
++// ── outlier-split kernel ─────────────────────────────────────────────────────
++//
++// Implements the TurboQuant paper's actual experimental configuration
++// (arXiv 2504.19874 Sec 4.3): split channels into a top-K outlier set and a
++// regular set, each encoded with its own RMS scale and codebook at different
++// bit widths. Outlier selection happens in ROTATED space (single rotation
++// matmul shared between both sub-blocks), not in the original space like the
++// CPU reference — this is the only paper-realistic algorithm we can run
++// cheaply on the GPU without a second rotation pass. For the near-orthogonal
++// rotations produced by QR on a Gaussian matrix, the top-K in rotated space
++// is a close proxy for the top-K in original space.
++
++__global__ void tq_encode_kernel_outlier(
++    const void      *k,                  // f16 or f32, [headDim, numKVHeads, batchSize]
++    const float     *rotation,           // [headDim, headDim] R^T row-major
++    uint8_t         *packed_out,         // regular packed [regularPackedBytes*numKVHeads*cells]
++    float           *scales_out,         // regular scales [numKVHeads*cells]
++    uint8_t         *outlier_packed,     // outlier packed [outlierPackedBytes*numKVHeads*cells]
++    float           *outlier_scales,     // outlier scales [numKVHeads*cells]
++    uint8_t         *outlier_indices,    // outlier channel idx [outlierCount*numKVHeads*cells] (interpreted as uint8 so positions 0..255 fit)
++    int              firstCell,
++    const float     *boundaries,         // regular boundaries [(1<<bits)-1]
++    const float     *outlier_boundaries, // outlier boundaries [(1<<outlierBits)-1]
++    int              headDim,
++    int              numKVHeads,
++    int              bits,
++    int              numBoundaries,
++    int              outlierBits,
++    int              outlierCount,
++    int              numOutlierBoundaries,
++    int              kIsF32,
++    float           *zeros_out,          // regular zeros [numKVHeads*cells] (NULL if symmetric)
++    float           *outlier_zeros_out,  // outlier zeros [numKVHeads*cells] (NULL if symmetric)
++    uint8_t         *qjl_packed_out,     // QJL sign bits [qjlPackedBytes*numKVHeads*cells] (NULL if no QJL)
++    float           *qjl_norm_out,       // QJL residual L2 norm [numKVHeads*cells] (NULL if no QJL)
++    const float     *qjl_projection,     // [qjlRows, headDim] f32 projection matrix (NULL if no QJL)
++    int              qjlRows,
++    const float     *codebook,           // regular codebook [1<<bits] (NULL if no QJL)
++    const float     *outlier_codebook,   // outlier codebook [1<<outlierBits] (NULL if no QJL)
++    const float     *k_bias              // [numKVHeads * headDim] f32, NULL = no bias subtraction
++) {
++    int batch = blockIdx.x;
++    int head  = blockIdx.y;
++    int cell  = firstCell + batch;
++
++    // Shared memory layout (laid out contiguously — launch passes total size):
++    //   s_k[headDim]              - f32 K values
++    //   s_rot[headDim]             - f32 rotated values
++    //   s_reduce[blockDim.x]       - reduction scratch (float)
++    //   s_idx[headDim]             - regular quantized indices (uint8)
++    //   s_is_outlier[headDim]      - 1 = outlier, 0 = regular (uint8)
++    //   s_reg_pos[headDim]         - regular position index map (int, up to headDim entries)
++    //   s_outl_pos[outlierCount]   - outlier channel positions (int)
++    //   s_outl_val[outlierCount]   - outlier rotated values (float)
++    //   s_outl_idx[outlierCount]   - outlier quantized indices (uint8)
++
++    extern __shared__ char s_mem[];
++    float   *s_k          = (float *)s_mem;
++    float   *s_rot        = s_k + headDim;
++    float   *s_reduce     = s_rot + headDim;
++    uint8_t *s_idx        = (uint8_t *)(s_reduce + blockDim.x);
++    uint8_t *s_is_outlier = s_idx + headDim;
++    int     *s_reg_pos    = (int *)(s_is_outlier + headDim);
++    int     *s_outl_pos   = s_reg_pos + headDim;
++    float   *s_outl_val   = (float *)(s_outl_pos + outlierCount);
++    uint8_t *s_outl_idx   = (uint8_t *)(s_outl_val + outlierCount);
++
++    // Step 1: Load K into s_k as f32, subtracting k_bias if present.
++    int base_k = batch * numKVHeads * headDim + head * headDim;
++    int bias_base = head * headDim;
++    for (int d = threadIdx.x; d < headDim; d += blockDim.x) {
++        float val;
++        if (kIsF32) {
++            val = ((const float *)k)[base_k + d];
++        } else {
++            val = __half2float(__ushort_as_half(((const uint16_t *)k)[base_k + d]));
++        }
++        if (k_bias != nullptr) {
++            val -= k_bias[bias_base + d];
++        }
++        s_k[d] = val;
++    }
++    __syncthreads();
++
++    // Step 2: Rotate: s_rot[i] = sum_j rotation[i*headDim+j] * s_k[j] = (R^T @ k)[i].
++    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++        float sum = 0.0f;
++        for (int j = 0; j < headDim; j++) {
++            sum += rotation[i * headDim + j] * s_k[j];
++        }
++        s_rot[i] = sum;
++    }
++    __syncthreads();
++
++    // Step 3: Clear outlier mask.
++    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++        s_is_outlier[i] = 0;
++    }
++    __syncthreads();
++
++    // Step 4: Top-K outlier selection (serial on thread 0). O(K * headDim)
++    // comparisons. At outlierCount=32, headDim=128 that's ~4k ops on one
++    // thread — negligible next to the rotation matmul (16k ops) that ran
++    // in parallel above. Also builds s_reg_pos as the ordered list of
++    // regular (non-outlier) channel positions, and s_outl_pos for outliers.
++    if (threadIdx.x == 0) {
++        for (int r = 0; r < outlierCount; r++) {
++            float best_val = -1.0f;
++            int   best_idx = 0;
++            for (int i = 0; i < headDim; i++) {
++                if (s_is_outlier[i]) continue;
++                float a = fabsf(s_rot[i]);
++                if (a > best_val) {
++                    best_val = a;
++                    best_idx = i;
++                }
++            }
++            s_is_outlier[best_idx] = 1;
++            s_outl_pos[r]          = best_idx;
++            s_outl_val[r]          = s_rot[best_idx];
++        }
++        // Build regular position map after outlier selection is complete.
++        int pos = 0;
++        for (int i = 0; i < headDim; i++) {
++            if (!s_is_outlier[i]) {
++                s_reg_pos[pos++] = i;
++            }
++        }
++    }
++    __syncthreads();
++
++    int regularCount = headDim - outlierCount;
++
++    // Step 5: Per-sub-block stats (mean + RMS scale).
++    // For symmetric presets: scale = sqrt(mean(v^2)).
++    // For asymmetric presets: mean = avg(v), then scale = sqrt(mean((v-mean)^2)).
++    float local_sum_reg = 0.0f;
++    float local_sum_out = 0.0f;
++    float local_sq_reg = 0.0f;
++    float local_sq_out = 0.0f;
++    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++        float v = s_rot[i];
++        if (s_is_outlier[i]) {
++            local_sum_out += v;
++            local_sq_out += v * v;
++        } else {
++            local_sum_reg += v;
++            local_sq_reg += v * v;
++        }
++    }
++
++    float regMean = 0.0f;
++    float regScale = 0.0f;
++    {
++        s_reduce[threadIdx.x] = local_sum_reg;
++        __syncthreads();
++        for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++            if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++            __syncthreads();
++        }
++        // All threads compute regMean directly. The previous write-back-to-
++        // shared-then-read pattern raced under NVCC; see the simple kernel
++        // for the reproducer. The race appears specifically when a second
++        // reduction follows the first (mean → RMS scale), which is the
++        // asymmetric path's signature.
++        regMean = (regularCount > 0) ? (s_reduce[0] / (float)regularCount) : 0.0f;
++        if (threadIdx.x == 0 && zeros_out) {
++            zeros_out[cell * numKVHeads + head] = regMean;
++        }
++        __syncthreads();
++
++        s_reduce[threadIdx.x] = local_sq_reg;
++        __syncthreads();
++        for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++            if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++            __syncthreads();
++        }
++        {
++            float sum_sq = s_reduce[0];
++            if (zeros_out && regularCount > 0) {
++                float centered_sq = sum_sq - regularCount * regMean * regMean;
++                if (centered_sq > 1e-12f) regScale = sqrtf(centered_sq / (float)regularCount);
++            } else if (sum_sq > 1e-12f && regularCount > 0) {
++                regScale = sqrtf(sum_sq / (float)regularCount);
++            }
++        }
++        if (threadIdx.x == 0) {
++            scales_out[cell * numKVHeads + head] = regScale;
++        }
++        __syncthreads();
++    }
++    __syncthreads();
++
++    float outMean = 0.0f;
++    float outScale = 0.0f;
++    {
++        s_reduce[threadIdx.x] = local_sum_out;
++        __syncthreads();
++        for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++            if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++            __syncthreads();
++        }
++        // All threads compute outMean directly (see regMean above for context).
++        outMean = (outlierCount > 0) ? (s_reduce[0] / (float)outlierCount) : 0.0f;
++        if (threadIdx.x == 0 && outlier_zeros_out) {
++            outlier_zeros_out[cell * numKVHeads + head] = outMean;
++        }
++        __syncthreads();
++
++        s_reduce[threadIdx.x] = local_sq_out;
++        __syncthreads();
++        for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++            if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++            __syncthreads();
++        }
++        {
++            float sum_sq = s_reduce[0];
++            if (outlier_zeros_out && outlierCount > 0) {
++                float centered_sq = sum_sq - outlierCount * outMean * outMean;
++                if (centered_sq > 1e-12f) outScale = sqrtf(centered_sq / (float)outlierCount);
++            } else if (sum_sq > 1e-12f && outlierCount > 0) {
++                outScale = sqrtf(sum_sq / (float)outlierCount);
++            }
++        }
++        if (threadIdx.x == 0) {
++            outlier_scales[cell * numKVHeads + head] = outScale;
++        }
++        __syncthreads();
++    }
++
++    // Step 6: Quantize regular channels. s_idx[r] stores the code at the
++    // CONTIGUOUS regular position r, not the original channel index, so the
++    // dequant kernel can read them directly into the packed bit stream.
++    // For asymmetric presets we centre by regMean before scaling.
++    for (int r = threadIdx.x; r < regularCount; r += blockDim.x) {
++        int orig = s_reg_pos[r];
++        float v = (regScale > 0.0f) ? ((s_rot[orig] - regMean) / regScale) : 0.0f;
++        int idx = 0;
++        for (int b = 0; b < numBoundaries; b++) {
++            if (v >= boundaries[b]) idx++;
++        }
++        s_idx[r] = (uint8_t)idx;
++    }
++    __syncthreads();
++
++    // EDEN biased scale refinement for regular channels (two-pass).
++    // Uses s_k as a second reduction buffer — it is dead after step 2.
++    if (codebook != nullptr) {
++        float *s_reduce2 = s_k;
++        for (int pass = 0; pass < 2; pass++) {
++            float local_num = 0.0f, local_den = 0.0f;
++            for (int r = threadIdx.x; r < regularCount; r += blockDim.x) {
++                int orig = s_reg_pos[r];
++                float ci = codebook[(int)s_idx[r]];
++                float vi = s_rot[orig] - regMean;
++                local_num += vi * ci;
++                local_den += ci * ci;
++            }
++            s_reduce[threadIdx.x] = local_num;
++            __syncthreads();
++            for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++                if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++                __syncthreads();
++            }
++            s_reduce2[threadIdx.x] = local_den;
++            __syncthreads();
++            for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++                if (threadIdx.x < stride) s_reduce2[threadIdx.x] += s_reduce2[threadIdx.x + stride];
++                __syncthreads();
++            }
++            float s_eden = (s_reduce2[0] > 1e-12f && s_reduce[0] > 0.0f) ? (s_reduce[0] / s_reduce2[0]) : regScale;
++            regScale = s_eden;
++            if (threadIdx.x == 0) scales_out[cell * numKVHeads + head] = regScale;
++            if (pass == 0) {
++                for (int r = threadIdx.x; r < regularCount; r += blockDim.x) {
++                    int orig = s_reg_pos[r];
++                    float v = (regScale > 0.0f) ? ((s_rot[orig] - regMean) / regScale) : 0.0f;
++                    int idx = 0;
++                    for (int b = 0; b < numBoundaries; b++) { if (v >= boundaries[b]) idx++; }
++                    s_idx[r] = (uint8_t)idx;
++                }
++                __syncthreads();
++            }
++        }
++    }
++
++    // Step 7: Pack regular bits into packed_out.
++    // Per-head stride is padded up to a 4-byte multiple so atomicOr on
++    // unsigned-int words stays aligned for every head, regardless of
++    // how many regular channels (bit count) are in play. The Go-side
++    // allocator uses the same padded value (regularPackedBytes()).
++    const int regular_packed_bytes_raw    = (regularCount * bits + 7) / 8;
++    const int regular_packed_bytes        = (regular_packed_bytes_raw + 3) & ~3;
++    uint8_t *reg_out = packed_out + (cell * numKVHeads + head) * regular_packed_bytes;
++    for (int p = threadIdx.x; p < regular_packed_bytes; p += blockDim.x) {
++        reg_out[p] = 0;
++    }
++    __syncthreads();
++    {
++        uint8_t bitmask = (uint8_t)((1 << bits) - 1);
++        for (int r = threadIdx.x; r < regularCount; r += blockDim.x) {
++            int bit_offset = r * bits;
++            int byte_idx   = bit_offset >> 3;
++            int shift      = bit_offset & 7;
++            uint8_t v = s_idx[r] & bitmask;
++            atomicOr((unsigned int *)(reg_out + (byte_idx & ~3)),
++                     (unsigned int)(v << shift) << ((byte_idx & 3) * 8));
++            if (shift + bits > 8) {
++                int byte_idx2 = byte_idx + 1;
++                atomicOr((unsigned int *)(reg_out + (byte_idx2 & ~3)),
++                         (unsigned int)(v >> (8 - shift)) << ((byte_idx2 & 3) * 8));
++            }
++        }
++    }
++    __syncthreads();
++
++    // Step 8: Quantize outlier channels with their own codebook.
++    // For asymmetric presets we centre by outMean before scaling.
++    for (int r = threadIdx.x; r < outlierCount; r += blockDim.x) {
++        float v = (outScale > 0.0f) ? ((s_outl_val[r] - outMean) / outScale) : 0.0f;
++        int idx = 0;
++        for (int b = 0; b < numOutlierBoundaries; b++) {
++            if (v >= outlier_boundaries[b]) idx++;
++        }
++        s_outl_idx[r] = (uint8_t)idx;
++    }
++    __syncthreads();
++
++    // EDEN biased scale refinement for outlier channels (two-pass).
++    if (outlier_codebook != nullptr) {
++        float *s_reduce2 = s_k;
++        for (int pass = 0; pass < 2; pass++) {
++            float local_num = 0.0f, local_den = 0.0f;
++            for (int r = threadIdx.x; r < outlierCount; r += blockDim.x) {
++                float ci = outlier_codebook[(int)s_outl_idx[r]];
++                float vi = s_outl_val[r] - outMean;
++                local_num += vi * ci;
++                local_den += ci * ci;
++            }
++            s_reduce[threadIdx.x] = local_num;
++            __syncthreads();
++            for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++                if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++                __syncthreads();
++            }
++            s_reduce2[threadIdx.x] = local_den;
++            __syncthreads();
++            for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++                if (threadIdx.x < stride) s_reduce2[threadIdx.x] += s_reduce2[threadIdx.x + stride];
++                __syncthreads();
++            }
++            float s_eden = (s_reduce2[0] > 1e-12f && s_reduce[0] > 0.0f) ? (s_reduce[0] / s_reduce2[0]) : outScale;
++            outScale = s_eden;
++            if (threadIdx.x == 0) outlier_scales[cell * numKVHeads + head] = outScale;
++            if (pass == 0) {
++                for (int r = threadIdx.x; r < outlierCount; r += blockDim.x) {
++                    float v = (outScale > 0.0f) ? ((s_outl_val[r] - outMean) / outScale) : 0.0f;
++                    int idx = 0;
++                    for (int b = 0; b < numOutlierBoundaries; b++) { if (v >= outlier_boundaries[b]) idx++; }
++                    s_outl_idx[r] = (uint8_t)idx;
++                }
++                __syncthreads();
++            }
++        }
++    }
++
++    // Step 9: Pack outlier bits. Same 4-byte alignment as regular packing.
++    const int outlier_packed_bytes_raw = (outlierCount * outlierBits + 7) / 8;
++    const int outlier_packed_bytes     = (outlier_packed_bytes_raw + 3) & ~3;
++    uint8_t *out_out = outlier_packed + (cell * numKVHeads + head) * outlier_packed_bytes;
++    for (int p = threadIdx.x; p < outlier_packed_bytes; p += blockDim.x) {
++        out_out[p] = 0;
++    }
++    __syncthreads();
++    {
++        uint8_t obmask = (uint8_t)((1 << outlierBits) - 1);
++        for (int r = threadIdx.x; r < outlierCount; r += blockDim.x) {
++            int bit_offset = r * outlierBits;
++            int byte_idx   = bit_offset >> 3;
++            int shift      = bit_offset & 7;
++            uint8_t v = s_outl_idx[r] & obmask;
++            atomicOr((unsigned int *)(out_out + (byte_idx & ~3)),
++                     (unsigned int)(v << shift) << ((byte_idx & 3) * 8));
++            if (shift + outlierBits > 8) {
++                int byte_idx2 = byte_idx + 1;
++                atomicOr((unsigned int *)(out_out + (byte_idx2 & ~3)),
++                         (unsigned int)(v >> (8 - shift)) << ((byte_idx2 & 3) * 8));
++            }
++        }
++    }
++
++    // Step 10: Write outlier channel indices. uint8_t covers 0..255 safely.
++    uint8_t *idx_out = outlier_indices + (cell * numKVHeads + head) * outlierCount;
++    for (int r = threadIdx.x; r < outlierCount; r += blockDim.x) {
++        idx_out[r] = (uint8_t)s_outl_pos[r];
++    }
++
++    // Step 11: QJL residual sketch (optional).
++    // Reconstruct the rotated vector from primary quantization, compute
++    // residual = rotated - reconstructed, project onto Gaussian matrix rows,
++    // store sign bits and L2 norm.
++    if (qjlRows > 0 && qjl_packed_out && qjl_norm_out && qjl_projection) {
++        // Reconstruct in shared memory using s_k as scratch (original K no longer needed).
++        float *s_recon = s_k;
++        for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++            s_recon[i] = 0.0f;
++        }
++        __syncthreads();
++
++        // Reconstruct regular channels.
++        for (int r = threadIdx.x; r < regularCount; r += blockDim.x) {
++            int orig = s_reg_pos[r];
++            float recon = (regScale > 0.0f) ? (codebook[s_idx[r]] * regScale + regMean) : regMean;
++            s_recon[orig] = recon;
++        }
++        // Reconstruct outlier channels.
++        for (int r = threadIdx.x; r < outlierCount; r += blockDim.x) {
++            int orig = s_outl_pos[r];
++            float recon = (outScale > 0.0f) ? (outlier_codebook[s_outl_idx[r]] * outScale + outMean) : outMean;
++            s_recon[orig] = recon;
++        }
++        __syncthreads();
++
++        // Compute residual = s_rot - s_recon, then L2 norm and projection signs.
++        float local_l2 = 0.0f;
++        for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
++            float diff = s_rot[i] - s_recon[i];
++            s_recon[i] = diff;  // reuse s_recon as residual scratch
++            local_l2 += diff * diff;
++        }
++        s_reduce[threadIdx.x] = local_l2;
++        __syncthreads();
++        for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
++            if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
++            __syncthreads();
++        }
++        float residualNorm = 0.0f;
++        if (threadIdx.x == 0) {
++            residualNorm = sqrtf(s_reduce[0]);
++            qjl_norm_out[cell * numKVHeads + head] = residualNorm;
++        }
++        __syncthreads();
++
++        // Compute projection dot products and store sign bits.
++        // qjl_projection is [qjlRows, headDim] row-major.
++        // Each thread handles one or more rows.
++        if (residualNorm > 1e-12f) {
++            for (int row = threadIdx.x; row < qjlRows; row += blockDim.x) {
++                float dot = 0.0f;
++                const float *proj_row = qjl_projection + row * headDim;
++                for (int col = 0; col < headDim; col++) {
++                    dot += s_recon[col] * proj_row[col];
++                }
++                int bit_idx = row;
++                int byte_idx = bit_idx >> 3;
++                int bit_in_byte = bit_idx & 7;
++                uint8_t mask = (uint8_t)(1 << bit_in_byte);
++                if (dot >= 0.0f) {
++                    atomicOr((unsigned int *)(qjl_packed_out + (cell * numKVHeads + head) * ((qjlRows + 7) / 8) + (byte_idx & ~3)),
++                             (unsigned int)mask << ((byte_idx & 3) * 8));
++                }
++            }
++        } else if (threadIdx.x == 0) {
++            // Zero residual: clear QJL packed bytes for this head.
++            int qjl_packed_bytes = (qjlRows + 7) / 8;
++            uint8_t *qp = qjl_packed_out + (cell * numKVHeads + head) * qjl_packed_bytes;
++            for (int p = 0; p < qjl_packed_bytes; p++) qp[p] = 0;
++        }
++    }
++}
++
++// ── ggml dispatch ─────────────────────────────────────────────────────────────
++
++// Extern declaration for the V encode kernel (defined in tq-encode-v.cu).
++extern __global__ void tq_encode_v_kernel(
++    const void *v, const float *rotation, uint8_t *packed_out, float *scales_out,
++    int firstCell, const float *boundaries,
++    int headDim, int numKVHeads, int bits, int numBoundaries, int vIsF32,
++    const float *codebook);
++
++void ggml_cuda_tq_encode(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
++    const struct ggml_tensor * k          = dst->src[0];
++    const struct ggml_tensor * rotation   = dst->src[1];
++    const struct ggml_tensor * zeros      = dst->src[2];
++    const struct ggml_tensor * scales     = dst->src[3];
++    const struct ggml_tensor * boundaries = dst->src[4];
++    // src[5] = k_bias for simple path (non-outlier); NULL when no bias.
++
++    const int headDim    = (int)k->ne[0];
++    const int numKVHeads = (int)k->ne[1];
++    const int batchSize  = (int)k->ne[2];
++    const int bits         = (int)((const int32_t *)dst->op_params)[0];
++    const int firstCell    = (int)((const int32_t *)dst->op_params)[1];
++    const int outlierBits  = (int)((const int32_t *)dst->op_params)[2];
++    const int outlierCount = (int)((const int32_t *)dst->op_params)[3];
++    const int asymmetric   = (int)((const int32_t *)dst->op_params)[4];
++    const int qjlRows      = (int)((const int32_t *)dst->op_params)[5];
++    const int numBoundaries = (1 << bits) - 1;
++    const int kIsF32     = (k->type == GGML_TYPE_F32) ? 1 : 0;
++
++    dim3 grid(batchSize, numKVHeads);
++    int block_size = (headDim < TQ_ENCODE_BLOCK_SIZE) ? headDim : TQ_ENCODE_BLOCK_SIZE;
++    int bs = 1;
++    while (bs < block_size) bs <<= 1;
++    block_size = bs;
++
++    cudaStream_t stream = ctx.stream();
++
++    if (outlierCount > 0 && outlierBits > 0 && outlierCount < headDim) {
++        const struct ggml_tensor * outlier_packed     = dst->src[5];
++        const struct ggml_tensor * outlier_scales     = dst->src[6];
++        const struct ggml_tensor * outlier_indices    = dst->src[7];
++        const struct ggml_tensor * outlier_boundaries = dst->src[8];
++        const struct ggml_tensor * outlier_zeros      = dst->src[9];
++        const struct ggml_tensor * qjl_packed         = dst->src[10];
++        const struct ggml_tensor * qjl_norm           = dst->src[11];
++        const struct ggml_tensor * qjl_projection     = dst->src[12];
++        const struct ggml_tensor * codebook           = dst->src[13];
++        const struct ggml_tensor * outlier_codebook   = dst->src[14];
++        // src[15] = k_bias for outlier path; NULL when no bias.
++        const struct ggml_tensor * k_bias_outlier     = dst->src[15];
++        const int numOutlierBoundaries = (1 << outlierBits) - 1;
++
++        // Shared memory layout for outlier kernel:
++        //   s_k[headDim]              f32
++        //   s_rot[headDim]             f32
++        //   s_reduce[block_size]       f32
++        //   s_idx[headDim]             u8
++        //   s_is_outlier[headDim]      u8
++        //   s_reg_pos[headDim]         i32 (over-sized to headDim; only regularCount used)
++        //   s_outl_pos[outlierCount]   i32
++        //   s_outl_val[outlierCount]   f32
++        //   s_outl_idx[outlierCount]   u8
++        size_t smem = (size_t)headDim * 2 * sizeof(float)               // s_k + s_rot
++                    + (size_t)block_size * sizeof(float)                 // s_reduce
++                    + (size_t)headDim * 2 * sizeof(uint8_t)              // s_idx + s_is_outlier
++                    + (size_t)headDim * sizeof(int)                      // s_reg_pos
++                    + (size_t)outlierCount * (sizeof(int) + sizeof(float) + sizeof(uint8_t));
++
++        tq_encode_kernel_outlier<<<grid, block_size, smem, stream>>>(
++            k->data,
++            (const float *)rotation->data,
++            (uint8_t     *)dst->data,
++            (float       *)scales->data,
++            (uint8_t     *)outlier_packed->data,
++            (float       *)outlier_scales->data,
++            (uint8_t     *)outlier_indices->data,
++            firstCell,
++            (const float *)boundaries->data,
++            (const float *)outlier_boundaries->data,
++            headDim, numKVHeads, bits, numBoundaries,
++            outlierBits, outlierCount, numOutlierBoundaries, kIsF32,
++            asymmetric ? (float *)zeros->data : nullptr,
++            asymmetric ? (float *)outlier_zeros->data : nullptr,
++            qjlRows > 0 ? (uint8_t *)qjl_packed->data : nullptr,
++            qjlRows > 0 ? (float *)qjl_norm->data : nullptr,
++            qjlRows > 0 ? (const float *)qjl_projection->data : nullptr,
++            qjlRows,
++            codebook ? (const float *)codebook->data : nullptr,
++            outlier_codebook ? (const float *)outlier_codebook->data : nullptr,
++            k_bias_outlier ? (const float *)k_bias_outlier->data : nullptr
++        );
++        return;
++    }
++
++    size_t smem = (size_t)headDim * 2 * sizeof(float)
++                + (size_t)block_size * sizeof(float)
++                + (size_t)headDim * sizeof(uint8_t);
++
++    const struct ggml_tensor * k_bias = dst->src[5];
++    const float * k_bias_ptr = k_bias ? (const float *)k_bias->data : nullptr;
++    // src[6] = codebook for EDEN biased scale refinement; NULL disables EDEN.
++    const struct ggml_tensor * codebook_t = dst->src[6];
++    const float * codebook_ptr = codebook_t ? (const float *)codebook_t->data : nullptr;
++
++    if (asymmetric && zeros) {
++        tq_encode_kernel<true><<<grid, block_size, smem, stream>>>(
++            k->data,
++            (const float    *)rotation->data,
++            (uint8_t        *)dst->data,
++            (float          *)scales->data,
++            firstCell,
++            (const float    *)boundaries->data,
++            headDim, numKVHeads, bits, numBoundaries, kIsF32,
++            (float *)zeros->data,
++            k_bias_ptr,
++            codebook_ptr
++        );
++    } else {
++        tq_encode_kernel<false><<<grid, block_size, smem, stream>>>(
++            k->data,
++            (const float    *)rotation->data,
++            (uint8_t        *)dst->data,
++            (float          *)scales->data,
++            firstCell,
++            (const float    *)boundaries->data,
++            headDim, numKVHeads, bits, numBoundaries, kIsF32,
++            nullptr,
++            k_bias_ptr,
++            codebook_ptr
++        );
++    }
++}
++
++// Combined K+V encode: two back-to-back kernel launches in a single GGML op.
++void ggml_cuda_tq_encode_kv(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
++    // src layout: [0]=K, [1]=rotation, [2]=V, [3]=K_scales, [4]=K_bounds,
++    //             [5]=V_packed, [6]=V_scales, [7]=V_bounds
++    const struct ggml_tensor * k          = dst->src[0];
++    const struct ggml_tensor * rotation   = dst->src[1];
++    const struct ggml_tensor * v          = dst->src[2];
++    const struct ggml_tensor * k_scales   = dst->src[3];
++    const struct ggml_tensor * k_bounds   = dst->src[4];
++    const struct ggml_tensor * v_packed   = dst->src[5];
++    const struct ggml_tensor * v_scales   = dst->src[6];
++    const struct ggml_tensor * v_bounds   = dst->src[7];
++
++    int32_t k_bits, v_bits, firstCell;
++    memcpy(&k_bits,    (const int32_t *)dst->op_params + 0, sizeof(int32_t));
++    memcpy(&v_bits,    (const int32_t *)dst->op_params + 1, sizeof(int32_t));
++    memcpy(&firstCell, (const int32_t *)dst->op_params + 2, sizeof(int32_t));
++
++    const int headDim    = (int)k->ne[0];
++    const int numKVHeads = (int)k->ne[1];
++    const int batchSize  = (int)k->ne[2];
++    const int kIsF32     = (k->type == GGML_TYPE_F32) ? 1 : 0;
++    const int vIsF32     = (v->type == GGML_TYPE_F32) ? 1 : 0;
++
++    dim3 grid(batchSize, numKVHeads);
++    int block_size = (headDim < TQ_ENCODE_BLOCK_SIZE) ? headDim : TQ_ENCODE_BLOCK_SIZE;
++    int bs = 1;
++    while (bs < block_size) bs <<= 1;
++    block_size = bs;
++
++    size_t smem = (size_t)headDim * 2 * sizeof(float)
++                + (size_t)block_size * sizeof(float)
++                + (size_t)headDim * sizeof(uint8_t);
++
++    cudaStream_t stream = ctx.stream();
++
++    // src[8] = k_bias, src[9] = k_codebook, src[10] = v_codebook (NULL = RMS only).
++    const struct ggml_tensor * k_bias_kv      = dst->src[8];
++    const struct ggml_tensor * k_codebook_kv  = dst->src[9];
++    const struct ggml_tensor * v_codebook_kv  = dst->src[10];
++    const float * k_bias_kv_ptr     = k_bias_kv     ? (const float *)k_bias_kv->data     : nullptr;
++    const float * k_codebook_kv_ptr = k_codebook_kv ? (const float *)k_codebook_kv->data : nullptr;
++    const float * v_codebook_kv_ptr = v_codebook_kv ? (const float *)v_codebook_kv->data : nullptr;
++
++    // K encode: TQEncodeKV always uses the symmetric kernel (zeros=nullptr).
++    // Asymmetric presets route through separate EncodeK+EncodeV (see turboquant_compressed.go).
++    tq_encode_kernel<false><<<grid, block_size, smem, stream>>>(
++        k->data,
++        (const float *)rotation->data,
++        (uint8_t     *)dst->data,
++        (float       *)k_scales->data,
++        firstCell,
++        (const float *)k_bounds->data,
++        headDim, numKVHeads, k_bits, (1 << k_bits) - 1, kIsF32,
++        nullptr,            // zeros (asymmetric not used on combined KV path)
++        k_bias_kv_ptr,
++        k_codebook_kv_ptr   // EDEN biased scale when codebook provided
++    );
++
++    // V encode
++    const float * rotation_ptr = rotation ? (const float *)rotation->data : nullptr;
++    tq_encode_v_kernel<<<grid, block_size, smem, stream>>>(
++        v->data,
++        rotation_ptr,
++        (uint8_t     *)v_packed->data,
++        (float       *)v_scales->data,
++        firstCell,
++        (const float *)v_bounds->data,
++        headDim, numKVHeads, v_bits, (1 << v_bits) - 1, vIsF32,
++        v_codebook_kv_ptr
++    );
++}
+diff --git a/ggml/src/ggml-cuda/tq-encode.cuh b/ggml/src/ggml-cuda/tq-encode.cuh
+new file mode 100644
+index 000000000..8e1875fba
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq-encode.cuh
+@@ -0,0 +1,6 @@
++#pragma once
++
++#include "common.cuh"
++
++void ggml_cuda_tq_encode(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst);
++void ggml_cuda_tq_encode_kv(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst);
+diff --git a/ggml/src/ggml-cuda/tq-fattn-vec.cuh b/ggml/src/ggml-cuda/tq-fattn-vec.cuh
+new file mode 100644
+index 000000000..c42b6f7e2
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq-fattn-vec.cuh
+@@ -0,0 +1,964 @@
++#pragma once
++
++#include "common.cuh"
++#include "fattn-common.cuh"
++
++// TurboQuant inline decode: extract a N-bit Lloyd-Max index from a packed byte row
++// and return codebook[idx] * rms_scale.  Handles cross-byte boundaries for bits=2,3.
++static __device__ __forceinline__ float tq_decode_elem(
++    const uint8_t * packed_row, const float * codebook, float rms_scale, int elem, int bits)
++{
++    const int bit_pos  = elem * bits;
++    const int byte_idx = bit_pos >> 3;
++    const int shift    = bit_pos & 7;
++    const int mask_val = (1 << bits) - 1;
++    int idx = ((int)(packed_row[byte_idx] >> shift)) & mask_val;
++    if (shift + bits > 8) {
++        idx |= ((int)(packed_row[byte_idx + 1] << (8 - shift))) & mask_val;
++    }
++    return codebook[idx] * rms_scale;
++}
++
++// --------------------------------------------------------------------
++// Hardcoded warp-shuffle TQ decode: combine packed bytes into a single
++// integer, shift to align, then extract N indices with compile-time
++// offsets.  Eliminates per-element multiply, byte_idx computation, and
++// boundary-crossing branches.
++//
++// cb_lane: codebook[threadIdx.x % (1<<bits)], loaded once per kernel.
++// shfl_w:  shuffle width (power of 2, >= 1<<bits).
++// --------------------------------------------------------------------
++
++#if __CUDA_ARCH__ >= 600 || !defined(__CUDA_ARCH__)
++// 3-bit, 4 elements.  start_elem is a multiple of 4.
++// 12 bits needed from 2 bytes; bit offset within the first byte is 0 or 4.
++static __device__ __forceinline__ void tq_decode_4_3bit(
++    const uint8_t * __restrict__ packed_row,
++    float cb_lane, float rms, int start_elem, int shfl_w,
++    float * __restrict__ out)
++{
++    const int byte_off = (start_elem * 3) >> 3;
++    const int bit_off  = (start_elem * 3) & 7;   // 0 or 4
++    const uint32_t w = (uint32_t)packed_row[byte_off] | ((uint32_t)packed_row[byte_off + 1] << 8);
++    const uint32_t s = w >> bit_off;              // align element 0 to bit 0
++    out[0] = __shfl_sync(0xFFFFFFFF, cb_lane, (s >> 0) & 7, shfl_w) * rms;
++    out[1] = __shfl_sync(0xFFFFFFFF, cb_lane, (s >> 3) & 7, shfl_w) * rms;
++    out[2] = __shfl_sync(0xFFFFFFFF, cb_lane, (s >> 6) & 7, shfl_w) * rms;
++    out[3] = __shfl_sync(0xFFFFFFFF, cb_lane, (s >> 9) & 7, shfl_w) * rms;
++}
++
++// 3-bit, 8 elements.  start_elem is a multiple of 8 (Volta+ path).
++// 24 bits from 3 bytes; bit offset is always 0.
++static __device__ __forceinline__ void tq_decode_8_3bit(
++    const uint8_t * __restrict__ packed_row,
++    float cb_lane, float rms, int start_elem, int shfl_w,
++    float * __restrict__ out)
++{
++    const int byte_off = (start_elem * 3) >> 3;
++    const uint32_t w = (uint32_t)packed_row[byte_off]
++                     | ((uint32_t)packed_row[byte_off + 1] << 8)
++                     | ((uint32_t)packed_row[byte_off + 2] << 16);
++    out[0] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  0) & 7, shfl_w) * rms;
++    out[1] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  3) & 7, shfl_w) * rms;
++    out[2] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  6) & 7, shfl_w) * rms;
++    out[3] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  9) & 7, shfl_w) * rms;
++    out[4] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 12) & 7, shfl_w) * rms;
++    out[5] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 15) & 7, shfl_w) * rms;
++    out[6] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 18) & 7, shfl_w) * rms;
++    out[7] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 21) & 7, shfl_w) * rms;
++}
++
++// 4-bit, 4 elements.  start_elem is a multiple of 4.
++// 16 bits = 2 bytes, always byte-aligned (start_elem*4 bits always on a byte boundary).
++// Uses shfl_w=16 (two KQ-groups): 16-entry codebook fits exactly in a 16-lane subgroup
++// because codebook[thread%16] cycles 0..15 within each 16-lane aligned half-warp.
++static __device__ __forceinline__ void tq_decode_4_4bit(
++    const uint8_t * __restrict__ packed_row,
++    float cb_lane, float rms, int start_elem, int shfl_w,
++    float * __restrict__ out)
++{
++    const int byte_off = start_elem >> 1;  // start_elem * 4 / 8
++    const uint32_t w = (uint32_t)packed_row[byte_off] | ((uint32_t)packed_row[byte_off + 1] << 8);
++    out[0] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  0) & 0xF, 16) * rms;
++    out[1] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  4) & 0xF, 16) * rms;
++    out[2] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  8) & 0xF, 16) * rms;
++    out[3] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 12) & 0xF, 16) * rms;
++}
++
++// 4-bit, 8 elements.  start_elem is a multiple of 8 (Volta+ path).
++// 32 bits = 4 bytes.
++static __device__ __forceinline__ void tq_decode_8_4bit(
++    const uint8_t * __restrict__ packed_row,
++    float cb_lane, float rms, int start_elem, int shfl_w,
++    float * __restrict__ out)
++{
++    const int byte_off = start_elem >> 1;
++    const uint32_t w = (uint32_t)packed_row[byte_off]
++                     | ((uint32_t)packed_row[byte_off + 1] << 8)
++                     | ((uint32_t)packed_row[byte_off + 2] << 16)
++                     | ((uint32_t)packed_row[byte_off + 3] << 24);
++    out[0] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  0) & 0xF, 16) * rms;
++    out[1] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  4) & 0xF, 16) * rms;
++    out[2] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  8) & 0xF, 16) * rms;
++    out[3] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 12) & 0xF, 16) * rms;
++    out[4] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 16) & 0xF, 16) * rms;
++    out[5] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 20) & 0xF, 16) * rms;
++    out[6] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 24) & 0xF, 16) * rms;
++    out[7] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 28) & 0xF, 16) * rms;
++}
++
++// 2-bit, 4 elements.  start_elem is a multiple of 4.
++// 8 bits = 1 byte, always byte-aligned.
++static __device__ __forceinline__ void tq_decode_4_2bit(
++    const uint8_t * __restrict__ packed_row,
++    float cb_lane, float rms, int start_elem, int shfl_w,
++    float * __restrict__ out)
++{
++    const uint32_t b = packed_row[start_elem >> 2];
++    out[0] = __shfl_sync(0xFFFFFFFF, cb_lane, (b >> 0) & 3, shfl_w) * rms;
++    out[1] = __shfl_sync(0xFFFFFFFF, cb_lane, (b >> 2) & 3, shfl_w) * rms;
++    out[2] = __shfl_sync(0xFFFFFFFF, cb_lane, (b >> 4) & 3, shfl_w) * rms;
++    out[3] = __shfl_sync(0xFFFFFFFF, cb_lane, (b >> 6) & 3, shfl_w) * rms;
++}
++
++// 2-bit, 8 elements.  start_elem is a multiple of 8.
++// 16 bits = 2 bytes.
++static __device__ __forceinline__ void tq_decode_8_2bit(
++    const uint8_t * __restrict__ packed_row,
++    float cb_lane, float rms, int start_elem, int shfl_w,
++    float * __restrict__ out)
++{
++    const int byte_off = start_elem >> 2;
++    const uint32_t w = (uint32_t)packed_row[byte_off] | ((uint32_t)packed_row[byte_off + 1] << 8);
++    out[0] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  0) & 3, shfl_w) * rms;
++    out[1] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  2) & 3, shfl_w) * rms;
++    out[2] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  4) & 3, shfl_w) * rms;
++    out[3] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  6) & 3, shfl_w) * rms;
++    out[4] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >>  8) & 3, shfl_w) * rms;
++    out[5] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 10) & 3, shfl_w) * rms;
++    out[6] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 12) & 3, shfl_w) * rms;
++    out[7] = __shfl_sync(0xFFFFFFFF, cb_lane, (w >> 14) & 3, shfl_w) * rms;
++}
++#else
++// Stubs for sm < 600 (no __shfl_sync).  Never executed — the launcher
++// asserts compute capability >= 6.0.  These only exist so that the
++// __device__ dispatch template below can compile for Maxwell targets.
++static __device__ __forceinline__ void tq_decode_4_3bit(
++    const uint8_t * __restrict__, float, float, int, int,
++    float * __restrict__ out)
++{ out[0] = out[1] = out[2] = out[3] = 0.0f; }
++static __device__ __forceinline__ void tq_decode_8_3bit(
++    const uint8_t * __restrict__, float, float, int, int,
++    float * __restrict__ out)
++{ out[0] = out[1] = out[2] = out[3] = out[4] = out[5] = out[6] = out[7] = 0.0f; }
++static __device__ __forceinline__ void tq_decode_4_4bit(
++    const uint8_t * __restrict__, float, float, int, int,
++    float * __restrict__ out)
++{ out[0] = out[1] = out[2] = out[3] = 0.0f; }
++static __device__ __forceinline__ void tq_decode_8_4bit(
++    const uint8_t * __restrict__, float, float, int, int,
++    float * __restrict__ out)
++{ out[0] = out[1] = out[2] = out[3] = out[4] = out[5] = out[6] = out[7] = 0.0f; }
++static __device__ __forceinline__ void tq_decode_4_2bit(
++    const uint8_t * __restrict__, float, float, int, int,
++    float * __restrict__ out)
++{ out[0] = out[1] = out[2] = out[3] = 0.0f; }
++static __device__ __forceinline__ void tq_decode_8_2bit(
++    const uint8_t * __restrict__, float, float, int, int,
++    float * __restrict__ out)
++{ out[0] = out[1] = out[2] = out[3] = out[4] = out[5] = out[6] = out[7] = 0.0f; }
++#endif
++
++// Dispatch: decode N elements (N=4 on Pascal, N=8 on Volta+).
++template<int N>
++static __device__ __forceinline__ void tq_decode_N_shfl(
++    const uint8_t * __restrict__ packed_row,
++    float cb_lane, float rms,
++    int start_elem, int bits, int shfl_w,
++    float * __restrict__ out)
++{
++    if constexpr (N == 4) {
++        if      (bits == 4) { tq_decode_4_4bit(packed_row, cb_lane, rms, start_elem, shfl_w, out); }
++        else if (bits == 3) { tq_decode_4_3bit(packed_row, cb_lane, rms, start_elem, shfl_w, out); }
++        else                { tq_decode_4_2bit(packed_row, cb_lane, rms, start_elem, shfl_w, out); }
++    } else {
++        if      (bits == 4) { tq_decode_8_4bit(packed_row, cb_lane, rms, start_elem, shfl_w, out); }
++        else if (bits == 3) { tq_decode_8_3bit(packed_row, cb_lane, rms, start_elem, shfl_w, out); }
++        else                { tq_decode_8_2bit(packed_row, cb_lane, rms, start_elem, shfl_w, out); }
++    }
++}
++
++// Fetch Q[d] (a single float at head-dim position d ∈ [0, D)) from the
++// per-lane Q_reg storage, routing across the 8-lane KQ group via a warp
++// shuffle. Q_reg layout (see kernel body): for each i0 ∈ {0,32,64,96}
++// in pair units, the 8 lanes of a KQ group each hold 4 consecutive pairs
++// Q[i0 + tid_kq*4 .. i0 + tid_kq*4 + 3] at slots [i0/8 .. i0/8+3].
++//
++// Given d, derive the owning lane and slot and shuffle out the scalar.
++// cpy_ne=4, nthreads_KQ=8 are fixed at template instantiation time.
++template<int D, int nthreads_KQ, int cpy_ne>
++static __device__ __forceinline__ float shuffle_Q_at(
++    const float2 * __restrict__ Q_reg_j, int d)
++{
++    const int p     = d >> 1;
++    const int chunk = p / (nthreads_KQ * cpy_ne);               // p / 32
++    const int lane  = (p / cpy_ne) % nthreads_KQ;               // (p/4) & 7
++    const int slot  = chunk * cpy_ne + (p & (cpy_ne - 1));      // chunk*4 + p%4
++    const unsigned tgt_lane = (threadIdx.x & ~(nthreads_KQ - 1)) | lane;
++    const float qx = __shfl_sync(0xFFFFFFFF, Q_reg_j[slot].x, tgt_lane, WARP_SIZE);
++    const float qy = __shfl_sync(0xFFFFFFFF, Q_reg_j[slot].y, tgt_lane, WARP_SIZE);
++    return (d & 1) ? qy : qx;
++}
++
++// Compute Q·K dot product where K is TQ-compressed.
++// Uses warp-shuffle for codebook lookup (1-cycle register-to-register).
++template<int D, int nthreads, int cpy_ne>
++static __device__ __forceinline__ float tq_vec_dot_KQ(
++    const uint8_t * packed_row,
++    float           cb_lane,
++    float           rms_scale,
++    const float2  * Q_f,
++    int             bits)
++{
++    float sum = 0.0f;
++    const int tid_kq = threadIdx.x % nthreads;
++
++#pragma unroll
++    for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += nthreads*cpy_ne) {
++        float k_dec[2*cpy_ne];
++        tq_decode_N_shfl<2*cpy_ne>(packed_row, cb_lane, rms_scale,
++                                    2*(k_KQ_0 + tid_kq*cpy_ne), bits, nthreads, k_dec);
++#pragma unroll
++        for (int k_KQ_1 = 0; k_KQ_1 < cpy_ne; ++k_KQ_1) {
++            const float2 q_pair = Q_f[k_KQ_0/nthreads + k_KQ_1];
++            sum += q_pair.x * k_dec[2*k_KQ_1] + q_pair.y * k_dec[2*k_KQ_1 + 1];
++        }
++    }
++    return sum;
++}
++
++// TurboQuant fused flash-attention kernel.
++//
++// Q:        [D, nTokensQ, nHeadsQ, nSeq] f32  (after SDPA Permute(0,2,1,3))
++// K_packed: [packedBytes*nKVHeads, capacity] i8 (encode result; base = full buffer)
++// V:        [D, nCells, nKVHeads, nSeq] f16  when !V_PACKED (after FA-branch Permute(0,2,1,3))
++//            [v_packedBytes*nKVHeads, capacity] i8 when V_PACKED (packed buffer, no permute)
++// mask:     [nCells, nTokensQ] f16 or NULL
++// scales:   [nKVHeads, capacity] f32         (K scales; base = full buffer)
++// codebook: [1<<bits] f32                    (K codebook)
++//
++// V_PACKED == false: existing K-only fused path (V is f16, src[6] == NULL)
++// V_PACKED == true:  new K+V fused path (V is packed i8, src[6] = v_scales, src[7] = v_codebook)
++//
++// Phase 1: D == 128, bits runtime param.
++// Multi-block KV-split (parallel_blocks > 1): when gridDim.y > 1, blocks share
++// each (Q-tile, head, sequence) and use interleaved K-cell striping. Each block
++// writes its partial VKQ + (KQ_max, KQ_sum) meta into dst / dst_meta workspace
++// slots indexed by blockIdx.y; flash_attn_combine_results combines them.
++template<int D, int ncols, bool use_logit_softcap, bool V_PACKED, bool HAS_OUTLIERS>
++__launch_bounds__(128, 2)
++static __global__ void tq_flash_attn_ext_vec(
++    const char    * __restrict__ Q,
++    const uint8_t * __restrict__ K_packed,
++    const char    * __restrict__ V,
++    const char    * __restrict__ mask,
++    float         * __restrict__ dst,
++    float2        * __restrict__ dst_meta,
++    const float   * __restrict__ scales,
++    const float   * __restrict__ codebook,
++    float   scale,
++    float   logit_softcap,
++    int     bits,
++    int     firstCell,
++    int     nCells,
++    int     nKVHeads,
++    int     packedBytes,
++    // Q geometry
++    int32_t ne00,
++    uint3   ne01,       // init_fastdiv_values(nTokensQ); .z == nTokensQ
++    int32_t ne02,       // nHeadsQ
++    int32_t ne03,       // nSeq
++    int32_t nb01,       // Q stride: bytes between consecutive tokens
++    int32_t nb02,       // Q stride: bytes between consecutive heads
++    int64_t nb03,       // Q stride: bytes between consecutive sequences
++    // V geometry (after permute: [D, nCells, nKVHeads]) — only used when !V_PACKED
++    int32_t nb21,       // bytes between V cells  (= D*nKVHeads*sizeof(half))
++    int32_t nb22,       // bytes between V heads  (= D*sizeof(half))
++    int64_t nb23,       // bytes between V seqs
++    // mask geometry
++    int32_t ne31,       // nCells (mask row width)
++    int32_t nb31,       // mask stride: bytes between token rows
++    // V packed params (only used when V_PACKED == true)
++    const float   * __restrict__ v_scales,    // [nKVHeads, capacity] f32
++    const float   * __restrict__ v_codebook,  // [1<<v_bits] f32
++    int     v_bits,
++    int     v_packedBytes,
++    // Asymmetric primary quantization params
++    const float   * __restrict__ zeros,       // [nKVHeads, capacity] f32 (NULL if symmetric)
++    int     asymmetric,
++    // QJL residual sketch params
++    const uint8_t * __restrict__ qjl_packed,  // QJL sign bits (NULL if no QJL)
++    const float   * __restrict__ qjl_norm,    // [nKVHeads, capacity] f32 (NULL if no QJL)
++    const float   * __restrict__ qjl_projection, // [qjlRows, headDim] f32 (NULL if no QJL)
++    int     qjl_rows,
++    int     qjl_packedBytes,
++    // Outlier-split dual-stream decode params (only used when HAS_OUTLIERS).
++    // When HAS_OUTLIERS, the codebook array is concatenated as
++    //   [regular (1<<bits), outlier (1<<outlier_bits)]
++    // and outlier_count > 0.
++    const uint8_t * __restrict__ outlier_packed,  // [outlierPackedBytes*nKVHeads, capacity] i8
++    const float   * __restrict__ outlier_scales,  // [nKVHeads, capacity] f32
++    const int8_t  * __restrict__ outlier_indices, // [outlierCount*nKVHeads, capacity] i8
++    const float   * __restrict__ outlier_zeros,   // [nKVHeads, capacity] f32 (NULL if !asymmetric)
++    int     outlier_bits,
++    int     outlier_count,
++    int     outlier_packedBytes
++)
++{
++#ifdef FLASH_ATTN_AVAILABLE
++    // Skip logit_softcap variants for unsupported D values (mirrors original kernel guard).
++    if (use_logit_softcap && D != 64 && D != 128 && D != 256) {
++        GGML_UNUSED_VARS(Q, K_packed, V, mask, dst, dst_meta, scales, codebook,
++            scale, logit_softcap, bits, firstCell, nCells, nKVHeads, packedBytes,
++            ne00, ne01, ne02, ne03, nb01, nb02, nb03,
++            nb21, nb22, nb23, ne31, nb31,
++            v_scales, v_codebook, v_bits, v_packedBytes,
++            zeros, asymmetric, qjl_packed, qjl_norm, qjl_projection, qjl_rows, qjl_packedBytes,
++            outlier_packed, outlier_scales, outlier_indices, outlier_zeros,
++            outlier_bits, outlier_count, outlier_packedBytes);
++        NO_DEVICE_CODE;
++        return;
++    }
++
++    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();  // 16 on Volta+
++    constexpr int cpy_ne = cpy_nb / 4;                     // 4
++
++    constexpr int nthreads    = 128;
++    constexpr int nthreads_KQ = nthreads / cpy_nb;         // 8
++    constexpr int nthreads_V  = nthreads / cpy_nb;         // 8
++
++    static_assert(WARP_SIZE % nthreads_KQ == 0, "bad nthreads_KQ");
++    static_assert(WARP_SIZE % nthreads_V  == 0, "bad nthreads_V");
++    static_assert(D % (2*WARP_SIZE) == 0,        "D not divisible by 64");
++
++    constexpr int V_rows_per_thread = 2 * cpy_ne;                  // 8
++    constexpr int V_cols_per_iter   = WARP_SIZE / nthreads_V;      // 4
++
++    // dequantize_V is only needed for the f16 V path
++    [[maybe_unused]] constexpr dequantize_V_t dequantize_V =
++        V_PACKED ? (dequantize_V_t)nullptr
++                 : get_dequantize_V<GGML_TYPE_F16, float, V_rows_per_thread>();
++
++    const int ic0     = blockIdx.x * ncols;
++    const int sequence = blockIdx.z / ne02;
++    const int head     = blockIdx.z % ne02;
++    const int gqa_ratio = ne02 / nKVHeads;
++    const int head_kv   = head / gqa_ratio;
++
++    Q        += (int64_t)nb03*sequence + nb02*head + nb01*ic0;
++    K_packed += (int64_t)firstCell * nKVHeads * packedBytes + (int64_t)head_kv * packedBytes;
++    scales   += (int64_t)firstCell * nKVHeads + head_kv;
++
++    if (zeros) {
++        zeros += (int64_t)firstCell * nKVHeads + head_kv;
++    }
++    if (qjl_rows > 0) {
++        qjl_packed += (int64_t)firstCell * nKVHeads * qjl_packedBytes + (int64_t)head_kv * qjl_packedBytes;
++        qjl_norm   += (int64_t)firstCell * nKVHeads + head_kv;
++    }
++
++    // Outlier-split base-pointer adjustments. All outlier tensors are indexed
++    // with firstCell as the leading cell offset (matches encode-side writes).
++    if constexpr (HAS_OUTLIERS) {
++        outlier_packed  += (int64_t)firstCell * nKVHeads * outlier_packedBytes + (int64_t)head_kv * outlier_packedBytes;
++        outlier_scales  += (int64_t)firstCell * nKVHeads + head_kv;
++        outlier_indices += (int64_t)firstCell * nKVHeads * outlier_count + (int64_t)head_kv * outlier_count;
++        if (outlier_zeros) {
++            outlier_zeros += (int64_t)firstCell * nKVHeads + head_kv;
++        }
++    }
++
++    // V pointer setup: f16 path uses stride-based addressing; packed path uses cell-index addressing.
++    const uint8_t * V_packed_base = nullptr;
++    const float   * v_scales_base = nullptr;
++    if constexpr (V_PACKED) {
++        V_packed_base = (const uint8_t *)V
++            + (int64_t)firstCell * nKVHeads * v_packedBytes
++            + (int64_t)head_kv * v_packedBytes;
++        v_scales_base = v_scales
++            + (int64_t)firstCell * nKVHeads + head_kv;
++    } else {
++        V += (int64_t)nb23*sequence + (int64_t)nb22*head_kv;
++    }
++
++    // Multi-block KV-split: when gridDim.y > 1, each block handles an interleaved
++    // subset of K cells starting at blockIdx.y * nthreads, striding by gridDim.y *
++    // nthreads. Bump V (f16 path) and maskh by this block's starting offset so the
++    // existing per-iteration increments (k_VKQ_0 += gridDim.y*nthreads) track them.
++    // Mirrors stock CUDA FA's pattern at fattn-vec.cuh:240-245.
++    if constexpr (!V_PACKED) {
++        V += (int64_t)blockIdx.y * nthreads * nb21;
++    }
++
++    const half * maskh = mask ? (const half *)(mask + (int64_t)nb31*ic0) : nullptr;
++    if (maskh) {
++        maskh += blockIdx.y * nthreads;
++    }
++
++    // Load one codebook entry per lane for warp-shuffle lookups.
++    // For 3-bit (8 entries): lanes 0-7 hold codebook[0-7], lanes 8-15 repeat, etc.
++    // __shfl_sync with width=8 handles the wrap-around.
++    const float k_cb_lane = codebook[threadIdx.x & ((1 << bits) - 1)];
++    [[maybe_unused]] const float v_cb_lane = V_PACKED
++        ? v_codebook[threadIdx.x & ((1 << v_bits) - 1)]
++        : 0.0f;
++    // Outlier codebook is concatenated onto `codebook` after the first (1<<bits)
++    // regular entries (see NewTQCompressedKManager). Lane `t` reads outlier
++    // codebook entry at index `t & ((1<<outlier_bits)-1)`.
++    [[maybe_unused]] const float o_cb_lane = HAS_OUTLIERS
++        ? codebook[(1 << bits) + (threadIdx.x & ((1 << outlier_bits) - 1))]
++        : 0.0f;
++
++    constexpr int nwarps = nthreads / WARP_SIZE;
++    const int tid = WARP_SIZE*threadIdx.y + threadIdx.x;
++    __builtin_assume(tid < nthreads);
++
++    constexpr int ne_KQ      = ncols * D;
++    constexpr int ne_combine = nwarps * V_cols_per_iter * D;
++
++    float2 VKQ[ncols][(D/2)/nthreads_V] = {{{0.0f, 0.0f}}};
++
++    extern __shared__ float s_mem_all[];
++    float * KQ = s_mem_all;
++    float * s_Q_fixed = s_mem_all + (ne_KQ > ne_combine ? ne_KQ : ne_combine);
++    float * s_dot_q_fixed = s_Q_fixed + ncols * D;
++
++    const int tid_global = threadIdx.y * WARP_SIZE + threadIdx.x;
++
++    // Load Q into shared memory for stable divergent access in the outlier path.
++    // Pre-scale on load so consumers can read s_Q_fixed directly.
++    for (int i = tid_global; i < ncols * D; i += nthreads) {
++        const int head_q = i / D;
++        const int elem   = i % D;
++        if (head_q < ncols) {
++            const float * Q_ptr = (const float *)(Q + head_q * nb01);
++            s_Q_fixed[i] = Q_ptr[elem] * scale;
++        }
++    }
++    __syncthreads();
++
++    float KQ_max[ncols];
++    float KQ_sum[ncols];
++#pragma unroll
++    for (int j = 0; j < ncols; ++j) {
++        KQ_max[j] = -FLT_MAX/2.0f;
++        KQ_sum[j] = 0.0f;
++    }
++
++    // Precompute constants for KQ groups and thread identification.
++    constexpr int num_kq_groups = nthreads / nthreads_KQ; // 128 / 8 = 16
++    const int kq_group_id = threadIdx.y * (WARP_SIZE / nthreads_KQ) + (threadIdx.x / nthreads_KQ);
++    const int tid_kq = threadIdx.x % nthreads_KQ;
++
++    // Load Q into registers from shared memory (stable divergent access).
++    // s_Q_fixed is already pre-scaled, no additional multiply needed.
++    float2 Q_reg[ncols][(D/2)/nthreads_KQ];
++#pragma unroll
++    for (int j = 0; j < ncols; ++j) {
++#pragma unroll
++        for (int k = 0; k < (D/2)/nthreads_KQ; ++k) {
++            const int i = k * nthreads_KQ + tid_kq;
++            // Q_reg[j][k] stores elements (2*i, 2*i+1)
++            // s_Q_fixed is pre-scaled at load time.
++            Q_reg[j][k].x = s_Q_fixed[j * D + 2*i];
++            Q_reg[j][k].y = s_Q_fixed[j * D + 2*i + 1];
++        }
++    }
++
++    // Precompute per-query sums of Q elements (for asymmetric zero contribution).
++    float sum_q[ncols];
++#pragma unroll
++    for (int j = 0; j < ncols; ++j) {
++        float local_sum = 0.0f;
++#pragma unroll
++        for (int k = 0; k < (D/2)/nthreads_KQ; ++k) {
++            local_sum += Q_reg[j][k].x + Q_reg[j][k].y;
++        }
++        sum_q[j] = warp_reduce_sum<nthreads_KQ>(local_sum);
++    }
++
++    // Precompute dot_q[j] = Σ_e Q[e] * G_j[e] for QJL residual sketch.
++    // Partition j across KQ groups to avoid redundant work.
++
++    if (qjl_rows > 0) {
++        for (int i = tid_global; i < ncols * qjl_rows; i += nthreads) {
++            s_dot_q_fixed[i] = 0.0f;
++        }
++        __syncthreads();
++
++        for (int qj = 0; qj < ncols; ++qj) {
++            for (int i = kq_group_id; i < qjl_rows; i += num_kq_groups) {
++                float partial = 0.0f;
++#pragma unroll
++                for (int k = 0; k < (D/2)/nthreads_KQ; ++k) {
++                    const int base_elem = 2*(k*nthreads_KQ + tid_kq);
++                    const float qx = Q_reg[qj][k].x;
++                    const float qy = Q_reg[qj][k].y;
++                    const float px = qjl_projection[i * D + base_elem];
++                    const float py = qjl_projection[i * D + base_elem + 1];
++                    const float prod_x = qx * px;
++                    const float prod_y = qy * py;
++                    partial += prod_x;
++                    partial += prod_y;
++                }
++                partial = warp_reduce_sum<nthreads_KQ>(partial);
++                if (tid_kq == 0) {
++                    s_dot_q_fixed[qj * 256 + i] = partial;
++                }
++            }
++        }
++        __syncthreads();
++    }
++
++    // Main KV loop. When gridDim.y > 1, this block handles every gridDim.y'th
++    // chunk of K cells starting at blockIdx.y. Initial K_packed/V/maskh offsets
++    // for blockIdx.y are applied above; the per-iteration increment uses gridDim.y
++    // so successive iterations skip over slices owned by sibling blocks.
++    for (int k_VKQ_0 = blockIdx.y * nthreads; k_VKQ_0 < nCells; k_VKQ_0 += gridDim.y * nthreads,
++             V += (V_PACKED ? 0 : (int64_t)gridDim.y * nthreads * nb21),
++             maskh += (maskh ? gridDim.y * nthreads : 0)) {
++
++        float KQ_reg[ncols];
++        float KQ_max_new[ncols];
++#pragma unroll
++        for (int j = 0; j < ncols; ++j) {
++            KQ_max_new[j] = KQ_max[j];
++        }
++
++#pragma unroll
++        for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; ++i_KQ_0) {
++            const int i_KQ = threadIdx.y*WARP_SIZE
++                           + (nthreads_KQ == WARP_SIZE ? 0 : (threadIdx.x & ~(nthreads_KQ-1)))
++                           + i_KQ_0;
++            const int cell_rel = k_VKQ_0 + i_KQ;
++            const bool in_range = (cell_rel < nCells);
++
++            // Outlier-split: build per-lane register bitmap from outlier_indices.
++            // sum_q_outl[j] accumulates Σ_d∈outlier Q[d] across the
++            // outlier slots, for asymmetric zero re-addition later.
++            [[maybe_unused]] float sum_q_outl[ncols];
++            [[maybe_unused]] const int8_t * o_idx_cell_saved = nullptr;
++            [[maybe_unused]] uint32_t bmap[(D + 31) / 32] = {0};
++            if constexpr (HAS_OUTLIERS) {
++#pragma unroll
++                for (int j = 0; j < ncols; ++j) { sum_q_outl[j] = 0.0f; }
++
++                const int8_t * o_idx_cell = in_range
++                    ? outlier_indices + (int64_t)cell_rel * nKVHeads * outlier_count
++                    : nullptr;
++                o_idx_cell_saved = o_idx_cell;
++                if (in_range) {
++#pragma unroll
++                    for (int s = 0; s < 32; ++s) {              // outlier_count ≤ 32 for D=128 presets
++                        if (s >= outlier_count) break;
++                        const int pos = (int)o_idx_cell[s];
++                        if (pos >= 0 && pos < D) {
++                            bmap[pos >> 5] |= (1u << (pos & 31));
++                        }
++                    }
++                }
++
++                // Precompute Σ_s Q[outlier_pos[s]] per query for asymmetric fixup.
++                // Must be unconditional across the warp because shuffle_Q_at
++                // uses a full-mask __shfl_sync — divergent lane groups in the
++                // same warp (different cell_rel, hence different in_range)
++                // would break warp convergence. For out-of-range cells we
++                // load pos=0 and multiply by zero-scale at the use site; the
++                // contribution is mathematically harmless because such cells
++                // are masked to -FLT_MAX downstream.
++#pragma unroll
++                for (int s = 0; s < 32; ++s) {
++                    if (s >= outlier_count) break;
++                    const int pos = (in_range && o_idx_cell) ? (int)o_idx_cell[s] : 0;
++#pragma unroll
++                    for (int j = 0; j < ncols; ++j) {
++                        sum_q_outl[j] += s_Q_fixed[j * D + pos];
++                    }
++                }
++#ifndef GGML_USE_HIP
++                __syncwarp();
++#endif
++            }
++
++            // ----------------------------------------------------------------
++            // Q-tile decode amortization (the prefill perf fix).
++            //
++            // The original kernel decoded K (and outliers) inside the `j`
++            // (ncols) loop, so each cell got decoded ncols × per Q-tile.
++            // Hoist the decode out of `j`: build a per-lane register cache
++            // of K values, then the `j` loop is a pure FMA against
++            // s_Q_fixed[j*D + d]. Same hoist for the outlier sub-stream.
++            //
++            // Storage:
++            //   k_lane[D/nthreads_KQ]      — regular-stream decoded K at strided d's
++            //   o_val_lane[outlier_count/nthreads_KQ_max] — outlier-stream decoded K
++            //   o_pos_lane[outlier_count/nthreads_KQ_max] — outlier head-dim positions
++            // ----------------------------------------------------------------
++
++            const uint8_t * packed_row = K_packed + (int64_t)cell_rel * nKVHeads * packedBytes;
++            const float     rms_scale  = in_range ? scales[cell_rel * nKVHeads] : 0.0f;
++
++            // Regular-stream decode: hoisted out of `j`.
++            constexpr int K_PER_LANE = D / nthreads_KQ;          // 16 for D=128, 8 for D=64, 32 for D=256
++            float k_lane[K_PER_LANE];
++            // Per-lane outlier-channel mask & rank-below-d, only meaningful
++            // when HAS_OUTLIERS. For the regular stream, k_lane[ki] holds the
++            // dequantized regular K at head-dim position d=tid_kq+ki*nthreads_KQ;
++            // when the position is itself an outlier, the entry is forced to 0
++            // so the unconditional FMA in the j-loop produces the correct
++            // (zero) contribution from regular-stream K.
++            if constexpr (HAS_OUTLIERS) {
++                #pragma unroll
++                for (int ki = 0; ki < K_PER_LANE; ++ki) {
++                    const int d = tid_kq + ki * nthreads_KQ;
++                    const bool is_outl = (bmap[d >> 5] >> (d & 31)) & 1u;
++                    int outl_below = 0;
++                    #pragma unroll
++                    for (int w = 0; w < (D + 31) / 32; ++w) {
++                        const int wbit = w * 32;
++                        if (wbit + 31 < d) {
++                            outl_below += __popc(bmap[w]);
++                        } else if (wbit < d) {
++                            const uint32_t mask = (d - wbit) < 32
++                                ? ((1u << (d - wbit)) - 1u) : ~0u;
++                            outl_below += __popc(bmap[w] & mask);
++                        }
++                    }
++                    const int r_raw = d - outl_below;
++                    const int r = is_outl ? 0 : r_raw;
++                    const float k_val = tq_decode_elem(
++                        packed_row, codebook, rms_scale, r, bits);
++                    k_lane[ki] = is_outl ? 0.0f : k_val;
++                }
++            } else {
++                #pragma unroll
++                for (int ki = 0; ki < K_PER_LANE; ++ki) {
++                    const int d = tid_kq + ki * nthreads_KQ;
++                    k_lane[ki] = tq_decode_elem(packed_row, codebook, rms_scale, d, bits);
++                }
++            }
++
++            // Outlier-stream decode: hoisted out of `j`. Each lane handles
++            // 32/nthreads_KQ outlier slots (outlier_count ≤ 32 by construction).
++            constexpr int O_PER_LANE = 32 / nthreads_KQ;         // 4 (assumes nthreads_KQ=8)
++            [[maybe_unused]] float o_val_lane[O_PER_LANE];
++            [[maybe_unused]] int   o_pos_lane[O_PER_LANE];
++            if constexpr (HAS_OUTLIERS) {
++                const uint8_t * o_packed_row = outlier_packed
++                    + (int64_t)cell_rel * nKVHeads * outlier_packedBytes;
++                const float o_rms = in_range
++                    ? outlier_scales[cell_rel * nKVHeads] : 0.0f;
++                const float * outlier_codebook_ptr = codebook + (1 << bits);
++                #pragma unroll
++                for (int s_it = 0; s_it < O_PER_LANE; ++s_it) {
++                    const int s = s_it * nthreads_KQ + tid_kq;
++                    const bool s_valid = (s < outlier_count);
++                    o_val_lane[s_it] = s_valid
++                        ? tq_decode_elem(o_packed_row, outlier_codebook_ptr,
++                                         o_rms, s, outlier_bits)
++                        : 0.0f;
++                    o_pos_lane[s_it] = (s_valid && in_range && o_idx_cell_saved)
++                        ? (int)o_idx_cell_saved[s] : 0;
++                }
++            }
++
++            // Per-cell scalars hoisted out of `j` too.
++            const float reg_zero_val = (HAS_OUTLIERS
++                ? (zeros && in_range ? zeros[cell_rel * nKVHeads] : 0.0f)
++                : (asymmetric && zeros && in_range ? zeros[cell_rel * nKVHeads] : 0.0f));
++            [[maybe_unused]] const float out_zero_val =
++                (HAS_OUTLIERS && outlier_zeros && in_range)
++                    ? outlier_zeros[cell_rel * nKVHeads] : 0.0f;
++            const float qjl_norm_val = (qjl_rows > 0 && qjl_norm && in_range)
++                ? qjl_norm[cell_rel * nKVHeads] : 0.0f;
++            const uint8_t * cell_qjl = (qjl_rows > 0 && qjl_packed)
++                ? qjl_packed + (int64_t)cell_rel * nKVHeads * qjl_packedBytes
++                : nullptr;
++
++#pragma unroll
++            for (int j = 0; j < ncols; ++j) {
++                float sum;
++
++                if constexpr (HAS_OUTLIERS) {
++                    // Regular stream: pure FMA with cached K decode.
++                    float reg_sum = 0.0f;
++                    #pragma unroll
++                    for (int ki = 0; ki < K_PER_LANE; ++ki) {
++                        const int d = tid_kq + ki * nthreads_KQ;
++                        reg_sum += s_Q_fixed[j * D + d] * k_lane[ki];
++                    }
++                    // Outlier stream: pure FMA with cached outlier decode.
++                    float out_sum = 0.0f;
++                    #pragma unroll
++                    for (int s_it = 0; s_it < O_PER_LANE; ++s_it) {
++                        out_sum += s_Q_fixed[j * D + o_pos_lane[s_it]] * o_val_lane[s_it];
++                    }
++                    sum = reg_sum + out_sum;
++                } else {
++                    // Non-outlier path: pure FMA with cached K decode.
++                    float reg_sum = 0.0f;
++                    #pragma unroll
++                    for (int ki = 0; ki < K_PER_LANE; ++ki) {
++                        const int d = tid_kq + ki * nthreads_KQ;
++                        reg_sum += s_Q_fixed[j * D + d] * k_lane[ki];
++                    }
++                    sum = reg_sum;
++                }
++                sum = warp_reduce_sum<nthreads_KQ>(sum);
++
++                // Asymmetric primary quantization: add zero * sum(Q) to the dot product.
++                if constexpr (HAS_OUTLIERS) {
++                    // Dual-stream zeros: regular zero applies to Σ_{d∈reg} Q[d]
++                    // = sum_q[j] − sum_q_outl[j]; outlier zero applies to sum_q_outl[j].
++                    if (asymmetric && (zeros || outlier_zeros)) {
++#ifdef GGML_USE_HIP
++                        // HIP compiler reorders sum_q_outl[j] reads past subsequent
++                        // warp-reduce shuffles, reading a stale accumulator on RDNA3.
++                        // A compiler fence prevents the reordering at zero HW cost.
++                        asm volatile("" ::: "memory");
++#endif
++                        sum += reg_zero_val * (sum_q[j] - sum_q_outl[j])
++                             + out_zero_val * sum_q_outl[j];
++                    }
++                } else if (asymmetric && zeros) {
++                    sum += reg_zero_val * sum_q[j];
++                }
++
++                // QJL residual sketch: add norm * scale * Σ_i sign_i * dot_q[i] to the dot product.
++                if (qjl_rows > 0 && qjl_packed && qjl_norm) {
++                    const float qjl_scale = 1.2533141373155001f / qjl_rows;
++                    float sign_dot = 0.0f;
++                    for (int i = tid_kq; i < qjl_rows; i += nthreads_KQ) {
++                        int sign = ((cell_qjl[i >> 3] >> (i & 7)) & 1) ? 1.0f : -1.0f;
++                        sign_dot += (float)sign * s_dot_q_fixed[j * 256 + i];
++                    }
++                    sign_dot = warp_reduce_sum<nthreads_KQ>(sign_dot);
++                    sum += qjl_norm_val * qjl_scale * sign_dot;
++                }
++
++                if (use_logit_softcap) {
++                    sum = logit_softcap * tanhf(sum);
++                }
++
++                if (maskh && (ncols == 1 || ic0 + j < (int)ne01.z)) {
++                    sum += __half2float(maskh[j*ne31 + i_KQ]);
++                }
++
++                if (!in_range) {
++                    sum = -FLT_MAX/2.0f;
++                }
++
++                KQ_max_new[j] = fmaxf(KQ_max_new[j], sum + FATTN_KQ_MAX_OFFSET);
++
++                if ((nthreads_KQ == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_KQ) == (uint32_t)i_KQ_0) {
++                    KQ_reg[j] = sum;
++                }
++            }
++        }
++
++#pragma unroll
++        for (int j = 0; j < ncols; ++j) {
++#pragma unroll
++            for (int offset = nthreads_KQ; offset < WARP_SIZE; offset <<= 1) {
++                KQ_max_new[j] = fmaxf(KQ_max_new[j], __shfl_xor_sync(0xFFFFFFFF, KQ_max_new[j], offset, WARP_SIZE));
++            }
++            const float KQ_max_scale = expf(KQ_max[j] - KQ_max_new[j]);
++            KQ_max[j] = KQ_max_new[j];
++
++            KQ_reg[j] = expf(KQ_reg[j] - KQ_max[j]);
++            KQ_sum[j] = KQ_sum[j]*KQ_max_scale + KQ_reg[j];
++            KQ[j*nthreads + tid] = KQ_reg[j];
++
++#pragma unroll
++            for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
++                VKQ[j][i_VKQ_0/nthreads_V].x *= KQ_max_scale;
++                VKQ[j][i_VKQ_0/nthreads_V].y *= KQ_max_scale;
++            }
++        }
++
++#ifndef GGML_USE_HIP
++        __syncwarp();
++#endif
++
++#pragma unroll
++        for (int k0 = 0; k0 < WARP_SIZE; k0 += V_cols_per_iter) {
++            const int k = threadIdx.y*WARP_SIZE + k0
++                        + (nthreads_V == WARP_SIZE ? 0 : threadIdx.x / nthreads_V);
++
++            float KQ_k[ncols];
++#pragma unroll
++            for (int j = 0; j < ncols; ++j) {
++                KQ_k[j] = KQ[j*nthreads + k];
++            }
++
++            if constexpr (V_PACKED) {
++                // Decode V from packed buffer inline — warp-shuffle batch decode.
++                // Always execute decodes to keep all lanes convergent for shuffles.
++                // v_rms=0 for out-of-range cells produces zero contributions.
++                const int cell_rel = k_VKQ_0 + k;
++                const uint8_t * v_row = V_packed_base
++                    + (int64_t)cell_rel * nKVHeads * v_packedBytes;
++                const float v_rms = (cell_rel < nCells)
++                    ? v_scales_base[cell_rel * nKVHeads] : 0.0f;
++
++#pragma unroll
++                for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
++                    const int base_elem = 2*i_VKQ_0
++                        + (nthreads_V == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_V)
++                          * V_rows_per_thread;
++
++                    // Batch-decode V elements using shuffle codebook.
++                    float v_dec[V_rows_per_thread];
++                    tq_decode_N_shfl<V_rows_per_thread>(v_row, v_cb_lane, v_rms,
++                                                         base_elem, v_bits, nthreads_V, v_dec);
++
++#pragma unroll
++                    for (int i_VKQ_1 = 0; i_VKQ_1 < V_rows_per_thread/2; ++i_VKQ_1) {
++#pragma unroll
++                        for (int j = 0; j < ncols; ++j) {
++                            VKQ[j][i_VKQ_0/nthreads_V + i_VKQ_1].x += v_dec[2*i_VKQ_1]   * KQ_k[j];
++                            VKQ[j][i_VKQ_0/nthreads_V + i_VKQ_1].y += v_dec[2*i_VKQ_1+1] * KQ_k[j];
++                        }
++                    }
++                }
++            } else {
++                // f16 V path.
++#pragma unroll
++                for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
++                    float2 tmp[V_rows_per_thread/2];
++                    dequantize_V(V + k*nb21, tmp,
++                        2*i_VKQ_0 + (nthreads_V == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_V)*V_rows_per_thread);
++#pragma unroll
++                    for (int i_VKQ_1 = 0; i_VKQ_1 < V_rows_per_thread/2; ++i_VKQ_1) {
++#pragma unroll
++                        for (int j = 0; j < ncols; ++j) {
++                            VKQ[j][i_VKQ_0/nthreads_V + i_VKQ_1].x += tmp[i_VKQ_1].x * KQ_k[j];
++                            VKQ[j][i_VKQ_0/nthreads_V + i_VKQ_1].y += tmp[i_VKQ_1].y * KQ_k[j];
++                        }
++                    }
++                }
++            }
++        }
++    } // end KV loop
++
++    // --- Reduce across warps and write output ---
++
++    __shared__ float KQ_max_shared[ncols][WARP_SIZE];
++    __shared__ float KQ_sum_shared[ncols][WARP_SIZE];
++#pragma unroll
++    for (int j = 0; j < ncols; ++j) {
++        if (threadIdx.y == 0) {
++            KQ_max_shared[j][threadIdx.x] = -FLT_MAX/2.0f;
++            KQ_sum_shared[j][threadIdx.x] = 0.0f;
++        }
++    }
++    __syncthreads();
++
++#pragma unroll
++    for (int j = 0; j < ncols; ++j) {
++        if (threadIdx.x == 0) {
++            KQ_max_shared[j][threadIdx.y] = KQ_max[j];
++        }
++    }
++    __syncthreads();
++
++#pragma unroll
++    for (int j_VKQ = 0; j_VKQ < ncols; ++j_VKQ) {
++        if (ncols > 1 && ic0 + j_VKQ >= (int)ne01.z) {
++            break;
++        }
++
++        float kqmax_new = KQ_max_shared[j_VKQ][threadIdx.x];
++        kqmax_new = warp_reduce_max(kqmax_new);
++        const float kqmax_scale = expf(KQ_max[j_VKQ] - kqmax_new);
++        KQ_max[j_VKQ] = kqmax_new;
++
++        float2 * VKQ_tmp = (float2 *)KQ + threadIdx.y*(V_cols_per_iter*D/2)
++            + (nthreads_V == WARP_SIZE ? 0 : threadIdx.x / nthreads_V)*(D/2);
++
++#pragma unroll
++        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
++            VKQ[j_VKQ][i_VKQ_0/nthreads_V].x *= kqmax_scale;
++            VKQ[j_VKQ][i_VKQ_0/nthreads_V].y *= kqmax_scale;
++        }
++#pragma unroll
++        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
++            const int i_VKQ = i_VKQ_0
++                + (nthreads_V == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
++            ggml_cuda_memcpy_1<V_rows_per_thread/2*sizeof(float)>(VKQ_tmp + i_VKQ,
++                                &VKQ[j_VKQ][i_VKQ_0/nthreads_V]);
++            ggml_cuda_memcpy_1<V_rows_per_thread/2*sizeof(float)>(VKQ_tmp + i_VKQ + V_rows_per_thread/4,
++                                &VKQ[j_VKQ][i_VKQ_0/nthreads_V + V_rows_per_thread/4]);
++        }
++
++        KQ_sum[j_VKQ] *= kqmax_scale;
++        KQ_sum[j_VKQ] = warp_reduce_sum(KQ_sum[j_VKQ]);
++        if (threadIdx.x == 0) {
++            KQ_sum_shared[j_VKQ][threadIdx.y] = KQ_sum[j_VKQ];
++        }
++        __syncthreads();
++
++        if (nthreads <= D || tid < D) {
++            KQ_sum[j_VKQ] = KQ_sum_shared[j_VKQ][threadIdx.x];
++            KQ_sum[j_VKQ] = warp_reduce_sum(KQ_sum[j_VKQ]);
++
++#pragma unroll
++            for (int i0 = 0; i0 < D; i0 += nthreads) {
++                float dst_val = 0;
++#pragma unroll
++                for (int w = 0; w < nwarps; ++w) {
++#pragma unroll
++                    for (int v = 0; v < V_cols_per_iter; ++v) {
++                        dst_val += float(KQ[w*V_cols_per_iter*D + v*D + i0 + tid]);
++                    }
++                }
++                // gridDim.y == 1: produce final result (divide by KQ_sum, write to
++                // [D, head, col, seq] dst). gridDim.y > 1: write un-normalised
++                // partial VKQ to workspace at slot blockIdx.y; the combine kernel
++                // (flash_attn_combine_results) does the cross-block normalisation.
++                if (gridDim.y == 1) {
++                    dst_val /= KQ_sum[j_VKQ];
++                }
++                // Output layout: [D, gridDim.y, nHeadsQ, nTokensQ, nSeq] when gridDim.y
++                // > 1 (workspace); [D, nHeadsQ, nTokensQ, nSeq] when gridDim.y == 1
++                // (final). Matches stock CUDA FA layout (fattn-vec.cuh:482) and
++                // flash_attn_combine_results' VKQ_parts addressing.
++                dst[((((int64_t)sequence*(int)ne01.z + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y)*D + i0 + tid] = dst_val;
++            }
++
++            // Meta write for the combine kernel. Only when gridDim.y > 1; one thread
++            // per (j_VKQ, blockIdx.y) is sufficient since KQ_max[j_VKQ] / KQ_sum[j_VKQ]
++            // are the cross-warp reduced values for this block's K slice.
++            if (gridDim.y != 1 && tid == 0) {
++                const int64_t meta_offset =
++                    (((int64_t)sequence*(int)ne01.z + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y;
++                dst_meta[meta_offset] = make_float2(KQ_max[j_VKQ], KQ_sum[j_VKQ]);
++            }
++        }
++
++        if (j_VKQ < ncols-1) {
++            __syncthreads();
++        }
++    }
++#else
++    GGML_UNUSED_VARS(Q, K_packed, V, mask, dst, dst_meta, scales, codebook,
++        scale, logit_softcap, bits, firstCell, nCells, nKVHeads, packedBytes,
++        ne00, ne01, ne02, ne03, nb01, nb02, nb03,
++        nb21, nb22, nb23, ne31, nb31,
++        v_scales, v_codebook, v_bits, v_packedBytes,
++        zeros, asymmetric, qjl_packed, qjl_norm, qjl_projection, qjl_rows, qjl_packedBytes,
++        outlier_packed, outlier_scales, outlier_indices, outlier_zeros,
++        outlier_bits, outlier_count, outlier_packedBytes);
++    NO_DEVICE_CODE;
++#endif // FLASH_ATTN_AVAILABLE
++}
+diff --git a/ggml/src/ggml-cuda/tq-fattn.cu b/ggml/src/ggml-cuda/tq-fattn.cu
+new file mode 100644
+index 000000000..99b05271f
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq-fattn.cu
+@@ -0,0 +1,335 @@
++#include "tq-fattn.cuh"
++#include "tq-fattn-vec.cuh"
++
++// Launch the TQ fused flash-attention kernel for a given (D, ncols, use_logit_softcap, V_PACKED, HAS_OUTLIERS).
++template<int D, int ncols, bool use_logit_softcap, bool V_PACKED, bool HAS_OUTLIERS>
++static void tq_fattn_vec_launch(ggml_backend_cuda_context & ctx, ggml_tensor * dst,
++                                float scale, float logit_softcap,
++                                int bits, int firstCell, int nCells, int nKVHeads, int packedBytes,
++                                int v_bits, int v_packedBytes,
++                                const float * v_scales_ptr, const float * v_codebook_ptr,
++                                const float   * zeros_ptr,
++                                int             asymmetric,
++                                const uint8_t * qjl_packed_ptr,
++                                const float   * qjl_norm_ptr,
++                                const float   * qjl_projection_ptr,
++                                int             qjl_rows,
++                                int             qjl_packedBytes,
++                                const uint8_t * outlier_packed_ptr,
++                                const float   * outlier_scales_ptr,
++                                const int8_t  * outlier_indices_ptr,
++                                const float   * outlier_zeros_ptr,
++                                int             outlier_bits,
++                                int             outlier_count,
++                                int             outlier_packed_bytes)
++{
++    const ggml_tensor * Q    = dst->src[0];
++    const ggml_tensor * K_p  = dst->src[1];
++    const ggml_tensor * V    = dst->src[2];
++    const ggml_tensor * mask = dst->src[3];
++    const ggml_tensor * scales   = dst->src[4];
++    const ggml_tensor * codebook = dst->src[5];
++
++    GGML_ASSERT(Q->ne[0] == D);
++    GGML_ASSERT(Q->type  == GGML_TYPE_F32);
++    if constexpr (!V_PACKED) {
++        GGML_ASSERT(V->type  == GGML_TYPE_F16);
++    } else {
++        GGML_ASSERT(V->type  == GGML_TYPE_I8);
++    }
++
++    const int nTokensQ = (int)Q->ne[1];
++    const int nHeadsQ  = (int)Q->ne[2];
++    const int nSeq     = (int)Q->ne[3];
++
++    GGML_ASSERT(!mask || mask->type == GGML_TYPE_F16);
++
++    const uint3 ne01 = init_fastdiv_values((uint64_t)nTokensQ);
++
++    const int ntiles_x = (nTokensQ + ncols - 1) / ncols;
++    dim3 threads(WARP_SIZE, 4);
++
++    // V strides: only used by !V_PACKED path; pass V strides for the f16 case.
++    // For the V_PACKED case these are passed but ignored by the kernel.
++    // Per-block smem layout (see tq-fattn-vec.cuh:431-434):
++    //   [0, max(ne_KQ, ne_combine))  KQ + combine workspace
++    //   [..., +ncols*D)              s_Q_fixed (pre-scaled Q tile)
++    //   [..., +ncols*256)            s_dot_q_fixed (QJL projection scratch)
++    // ne_KQ      = ncols * D                                    (Q·K result tile)
++    // ne_combine = nwarps * V_cols_per_iter * D = 16 * D        (warp-VKQ reduce)
++    constexpr int ne_KQ      = ncols * D;
++    constexpr int ne_combine = 16 * D;  // nwarps(4) * V_cols_per_iter(4) * D
++    constexpr size_t smem    = ((ne_KQ > ne_combine ? ne_KQ : ne_combine)
++                                + ncols * D
++                                + ncols * 256) * sizeof(float);
++
++    // ---- Multi-block KV-split heuristic ----
++    // The TQ inline-decode kernel previously launched a fixed
++    // `(ntiles_x, 1, nHeadsQ*nSeq)` grid: at decode (Q=1, ntiles_x=1) the
++    // grid only has nHeadsQ*nSeq blocks (e.g. 24 for llama3.2:3b), each
++    // walking the entire K/V context serially. That leaves SMs idle and
++    // makes decode O(nCells) per block. Adding a Y dimension (parallel_blocks)
++    // splits K cells across additional blocks via interleaved striping;
++    // flash_attn_combine_results merges the per-block partial VKQ + (max,sum)
++    // meta into the final result. This mirrors the pattern stock CUDA FA
++    // uses (fattn-common.cuh:904-955).
++    //
++    // Workspace (transient, per layer-decode):
++    //   dst_tmp      = parallel_blocks * D * nHeadsQ * nTokensQ * nSeq floats
++    //   dst_tmp_meta = parallel_blocks * nHeadsQ * nTokensQ * nSeq float2s
++    // For llama3.2:3b decode at ctx=32k with parallel_blocks=8 this is
++    // ~96 KiB total — three orders of magnitude below the model+KV footprint.
++    constexpr int nthreads = 128;
++    const int ntiles_total = ntiles_x * nHeadsQ * nSeq;
++    const int ntiles_KQ = std::max(1, (nCells + nthreads - 1) / nthreads);
++
++    auto kernel_ptr = tq_flash_attn_ext_vec<D, ncols, use_logit_softcap, V_PACKED, HAS_OUTLIERS>;
++
++    int max_blocks_per_sm = 1;
++    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
++        &max_blocks_per_sm, kernel_ptr,
++        (int)(threads.x * threads.y * threads.z), smem));
++    GGML_ASSERT(max_blocks_per_sm > 0);
++
++    const int dev_id = ggml_cuda_get_device();
++    const int nsm    = ggml_cuda_info().devices[dev_id].nsm;
++    const int blocks_per_wave = nsm * max_blocks_per_sm;
++
++    // Default to single-block (no workspace, no combine kernel). Only consider
++    // multi-block KV-split when the single-block layout obviously underutilises
++    // the GPU (less than one full wave of blocks). Prefill — where ntiles_total
++    // is already nTokensQ/ncols * nHeadsQ ≥ blocks_per_wave — therefore stays
++    // on the original single-kernel path and incurs zero extra VRAM. Decode
++    // (Q=1, ntiles_total = nHeadsQ*nSeq, often dozens of blocks) takes the
++    // multi-block path with ~96 KiB transient workspace.
++    int parallel_blocks = 1;
++    if (ntiles_total < blocks_per_wave && ntiles_KQ > 1) {
++        // Initial efficiency at parallel_blocks=1.
++        int nwaves_best = 1;
++        int eff_best    = (100 * ntiles_total) / blocks_per_wave;
++        // Refine upward, mirroring fattn-common.cuh:929-948.
++        for (int test = std::min(max_blocks_per_sm, ntiles_KQ); test <= ntiles_KQ; ++test) {
++            const int nblocks_total = ntiles_total * test;
++            const int nwaves        = (nblocks_total + blocks_per_wave - 1) / blocks_per_wave;
++            const int eff_pct       = nwaves > 0 ? (100 * nblocks_total) / (nwaves * blocks_per_wave) : 0;
++            if (eff_best >= 95 && nwaves > nwaves_best) {
++                break;
++            }
++            if (eff_pct > eff_best) {
++                nwaves_best     = nwaves;
++                eff_best        = eff_pct;
++                parallel_blocks = test;
++            }
++        }
++    }
++
++    // ---- Allocate workspace if multi-block ----
++    ggml_cuda_pool & pool = ctx.pool();
++    ggml_cuda_pool_alloc<float>  dst_tmp(pool);
++    ggml_cuda_pool_alloc<float2> dst_tmp_meta(pool);
++    if (parallel_blocks > 1) {
++        const size_t kqv_n    = (size_t)D * nHeadsQ * nTokensQ * nSeq;
++        const size_t kqv_rows = (size_t)nHeadsQ * nTokensQ * nSeq;
++        dst_tmp.alloc((size_t)parallel_blocks * kqv_n);
++        dst_tmp_meta.alloc((size_t)parallel_blocks * kqv_rows);
++    }
++
++    dim3 blocks(ntiles_x, parallel_blocks, nHeadsQ * nSeq);
++
++    float  * kernel_dst      = (parallel_blocks > 1) ? dst_tmp.ptr      : (float  *)dst->data;
++    float2 * kernel_dst_meta = (parallel_blocks > 1) ? dst_tmp_meta.ptr : (float2 *)nullptr;
++
++    kernel_ptr<<<blocks, threads, smem, ctx.stream()>>>(
++        (const char    *)Q->data,
++        (const uint8_t *)K_p->data,
++        (const char    *)V->data,
++        mask ? (const char *)mask->data : nullptr,
++        kernel_dst,
++        kernel_dst_meta,
++        (const float *)scales->data,
++        (const float *)codebook->data,
++        scale, logit_softcap, bits, firstCell, nCells, nKVHeads, packedBytes,
++        (int32_t)Q->ne[0],
++        ne01,
++        (int32_t)Q->ne[2],
++        (int32_t)Q->ne[3],
++        (int32_t)Q->nb[1],
++        (int32_t)Q->nb[2],
++        (int64_t)Q->nb[3],
++        (int32_t)V->nb[1],
++        (int32_t)V->nb[2],
++        (int64_t)V->nb[3],
++        mask ? (int32_t)mask->ne[0] : 0,   // nCells (mask row width)
++        mask ? (int32_t)mask->nb[1] : 0,   // bytes between token rows
++        v_scales_ptr, v_codebook_ptr, v_bits, v_packedBytes,
++        zeros_ptr, asymmetric,
++        qjl_packed_ptr, qjl_norm_ptr, qjl_projection_ptr, qjl_rows, qjl_packedBytes,
++        outlier_packed_ptr, outlier_scales_ptr, outlier_indices_ptr, outlier_zeros_ptr,
++        outlier_bits, outlier_count, outlier_packed_bytes
++    );
++    CUDA_CHECK(cudaGetLastError());
++
++    if (parallel_blocks > 1) {
++        // Combine per-block partials into final output. Block grid mirrors
++        // the FA output's logical shape (col, head, seq); each block reduces
++        // parallel_blocks slots into one D-wide row of the final dst.
++        const dim3 block_dim_combine(D, 1, 1);
++        const dim3 blocks_num_combine((unsigned)nTokensQ, (unsigned)nHeadsQ, (unsigned)nSeq);
++        const size_t nbytes_shared_combine = (size_t)parallel_blocks * sizeof(float2);
++        flash_attn_combine_results<D>
++            <<<blocks_num_combine, block_dim_combine, nbytes_shared_combine, ctx.stream()>>>(
++                dst_tmp.ptr, dst_tmp_meta.ptr, (float *)dst->data, parallel_blocks);
++        CUDA_CHECK(cudaGetLastError());
++    }
++}
++
++void ggml_cuda_tq_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
++    GGML_ASSERT(ggml_cuda_info().devices[ctx.device].cc >= 600 &&
++                "TurboQuant fused flash attention requires compute capability 6.0+");
++    const ggml_tensor * Q    = dst->src[0];
++    const ggml_tensor * V    = dst->src[2];
++    const ggml_tensor * v_scales_t   = dst->src[6];  // NULL for K-only fused
++    const ggml_tensor * v_codebook_t = dst->src[7];
++    const ggml_tensor * zeros_t          = dst->src[8];   // NULL if symmetric
++    const ggml_tensor * qjl_packed_t     = dst->src[9];   // NULL if no QJL
++    const ggml_tensor * qjl_norm_t       = dst->src[10];
++    const ggml_tensor * qjl_projection_t = dst->src[11];
++    const ggml_tensor * outlier_packed_t  = dst->src[12]; // NULL if no outliers
++    const ggml_tensor * outlier_scales_t  = dst->src[13];
++    const ggml_tensor * outlier_indices_t = dst->src[14];
++    const ggml_tensor * outlier_zeros_t   = dst->src[15]; // NULL if no outliers or !asymmetric
++
++    float   scale;
++    float   logit_softcap;
++    int32_t bits;
++    int32_t firstCell;
++    int32_t v_bits;
++    int32_t qjl_rows;
++    int32_t asymmetric;
++    int32_t outlier_bits;
++    int32_t outlier_count;
++    int32_t outlier_packed_bytes;
++    memcpy(&scale,                (const float   *)dst->op_params + 0, sizeof(float));
++    memcpy(&logit_softcap,        (const float   *)dst->op_params + 1, sizeof(float));
++    memcpy(&bits,                 (const int32_t *)dst->op_params + 2, sizeof(int32_t));
++    memcpy(&firstCell,            (const int32_t *)dst->op_params + 3, sizeof(int32_t));
++    memcpy(&v_bits,               (const int32_t *)dst->op_params + 4, sizeof(int32_t));
++    memcpy(&qjl_rows,             (const int32_t *)dst->op_params + 5, sizeof(int32_t));
++    memcpy(&asymmetric,           (const int32_t *)dst->op_params + 6, sizeof(int32_t));
++    memcpy(&outlier_bits,         (const int32_t *)dst->op_params + 7, sizeof(int32_t));
++    memcpy(&outlier_count,        (const int32_t *)dst->op_params + 8, sizeof(int32_t));
++    memcpy(&outlier_packed_bytes, (const int32_t *)dst->op_params + 9, sizeof(int32_t));
++
++    const int D         = (int)Q->ne[0];
++    const int nTokensQ  = (int)Q->ne[1];
++    // nCells: when V_PACKED, V is the raw buffer so ne[1] is capacity not nCells.
++    // Compute nCells from the mask if available, else from V geometry.
++    const bool v_packed = (v_scales_t != nullptr);
++
++    int nCells;
++    if (v_packed) {
++        // V is packed i8 buffer: nCells is not directly in V->ne[].
++        // The mask always carries nCells; require mask when V is packed.
++        GGML_ASSERT(dst->src[3] != nullptr && "TQ K+V fused requires mask to determine nCells");
++        nCells = (int)dst->src[3]->ne[0];
++    } else {
++        nCells = (int)V->ne[1]; // after SDPA permute: [D, nCells, nKVHeads]
++    }
++
++    // packedBytes for K: when outliers are active, the regular sub-block holds
++    // (D - outlier_count) codes at `bits` each, padded to 4-byte multiple.
++    // Must match regularPackedBytes() in turboquant_compressed.go AND the
++    // stride computation in tq-encode.cu / tq-dequant.cu.
++    int packedBytes;
++    if (outlier_count > 0) {
++        const int regular_count = D - outlier_count;
++        const int raw = (regular_count * bits + 7) / 8;
++        packedBytes = (raw + 3) & ~3;
++    } else {
++        packedBytes = (D * bits + 7) / 8;
++    }
++    // packedBytes for V (computed before nKVHeads so we can derive nKVHeads from packed V dims):
++    const int v_packedBytes = v_packed ? ((D * v_bits + 7) / 8) : 0;
++    // nKVHeads: for K-only fused, V is a permuted f16 tensor with ne[2]=nKVHeads.
++    // For K+V fused, V is the raw packed i8 buffer with ne[0]=v_packedBytes*nKVHeads.
++    const int nKVHeads  = v_packed ? (int)V->ne[0] / v_packedBytes : (int)V->ne[2];
++
++    const float * v_scales_ptr   = v_scales_t   ? (const float *)v_scales_t->data   : nullptr;
++    const float * v_codebook_ptr = v_codebook_t ? (const float *)v_codebook_t->data : nullptr;
++    const float   * zeros_ptr          = zeros_t          ? (const float   *)zeros_t->data          : nullptr;
++    const uint8_t * qjl_packed_ptr     = qjl_packed_t     ? (const uint8_t *)qjl_packed_t->data     : nullptr;
++    const float   * qjl_norm_ptr       = qjl_norm_t       ? (const float   *)qjl_norm_t->data       : nullptr;
++    const float   * qjl_projection_ptr = qjl_projection_t ? (const float   *)qjl_projection_t->data : nullptr;
++    const int qjl_packed_raw   = (qjl_rows + 7) / 8;
++    const int qjl_packedBytes  = (qjl_packed_raw + 3) & ~3;
++
++    const uint8_t * outlier_packed_ptr  = outlier_packed_t  ? (const uint8_t *)outlier_packed_t->data  : nullptr;
++    const float   * outlier_scales_ptr  = outlier_scales_t  ? (const float   *)outlier_scales_t->data  : nullptr;
++    const int8_t  * outlier_indices_ptr = outlier_indices_t ? (const int8_t  *)outlier_indices_t->data : nullptr;
++    const float   * outlier_zeros_ptr   = outlier_zeros_t   ? (const float   *)outlier_zeros_t->data   : nullptr;
++
++    GGML_ASSERT((D == 64 || D == 128 || D == 256) && "TurboQuant fused kernel: unsupported head_dim (need 64, 128, or 256)");
++
++    if (logit_softcap != 0.0f) { scale /= logit_softcap; }
++
++    // Q-tile size selection. Prefill amortises K+V decode across ncols Q-tokens;
++    // bigger ncols = fewer K+V re-decodes for the same nTokensQ. ncols=2 is
++    // the legacy size — for nTokensQ=2048 at ctx=16384 that means decoding all
++    // nCells K+V values 1024 times per layer. ncols=8 cuts that 4×.
++    //   nTokensQ == 1  → decode (ncols=1)
++    //   nTokensQ < 8   → small batch, ncols=2 keeps register pressure low
++    //   nTokensQ ≥ 8   → prefill, ncols=8 amortises decode
++    int ncols;
++    if (nTokensQ == 1)      ncols = 1;
++    else if (nTokensQ < 8)  ncols = 2;
++    else                    ncols = 8;
++
++    const bool has_outliers = (outlier_count > 0);
++
++    // Outlier dual-stream decode (HAS_OUTLIERS=true) only instantiated for the
++    // V_PACKED asymmetric D=128 combination. D=64 routes to HAS_OUTLIERS=false.
++    #define DISPATCH(DIM, NCOLS, SOFTCAP) \
++        if (v_packed && has_outliers && DIM == 128) { \
++            tq_fattn_vec_launch<DIM, NCOLS, SOFTCAP, true, true>(ctx, dst, scale, logit_softcap, \
++                bits, firstCell, nCells, nKVHeads, packedBytes, \
++                v_bits, v_packedBytes, v_scales_ptr, v_codebook_ptr, \
++                zeros_ptr, asymmetric, \
++                qjl_packed_ptr, qjl_norm_ptr, qjl_projection_ptr, qjl_rows, qjl_packedBytes, \
++                outlier_packed_ptr, outlier_scales_ptr, outlier_indices_ptr, outlier_zeros_ptr, \
++                outlier_bits, outlier_count, outlier_packed_bytes); \
++        } else if (v_packed) { \
++            tq_fattn_vec_launch<DIM, NCOLS, SOFTCAP, true, false>(ctx, dst, scale, logit_softcap, \
++                bits, firstCell, nCells, nKVHeads, packedBytes, \
++                v_bits, v_packedBytes, v_scales_ptr, v_codebook_ptr, \
++                zeros_ptr, asymmetric, \
++                qjl_packed_ptr, qjl_norm_ptr, qjl_projection_ptr, qjl_rows, qjl_packedBytes, \
++                nullptr, nullptr, nullptr, nullptr, 0, 0, 0); \
++        } else { \
++            tq_fattn_vec_launch<DIM, NCOLS, SOFTCAP, false, false>(ctx, dst, scale, logit_softcap, \
++                bits, firstCell, nCells, nKVHeads, packedBytes, \
++                0, 0, nullptr, nullptr, \
++                zeros_ptr, asymmetric, \
++                qjl_packed_ptr, qjl_norm_ptr, qjl_projection_ptr, qjl_rows, qjl_packedBytes, \
++                nullptr, nullptr, nullptr, nullptr, 0, 0, 0); \
++        }
++
++    #define DISPATCH_NCOLS(DIM, SOFTCAP) \
++        if      (ncols == 1) { DISPATCH(DIM, 1, SOFTCAP); } \
++        else if (ncols == 2) { DISPATCH(DIM, 2, SOFTCAP); } \
++        else                 { DISPATCH(DIM, 8, SOFTCAP); }
++
++    if (D == 64) {
++        if (logit_softcap == 0.0f) { DISPATCH_NCOLS(64, false); }
++        else                       { DISPATCH_NCOLS(64, true);  }
++    } else if (D == 256) {
++        if (logit_softcap == 0.0f) { DISPATCH_NCOLS(256, false); }
++        else                       { DISPATCH_NCOLS(256, true);  }
++    } else {
++        if (logit_softcap == 0.0f) { DISPATCH_NCOLS(128, false); }
++        else                       { DISPATCH_NCOLS(128, true);  }
++    }
++    #undef DISPATCH_NCOLS
++    #undef DISPATCH
++
++    CUDA_CHECK(cudaGetLastError());
++}
+diff --git a/ggml/src/ggml-cuda/tq-fattn.cuh b/ggml/src/ggml-cuda/tq-fattn.cuh
+new file mode 100644
+index 000000000..89ee9d15a
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq-fattn.cuh
+@@ -0,0 +1,4 @@
++#pragma once
++#include "ggml-cuda/common.cuh"
++
++void ggml_cuda_tq_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index c9242a15a..74119346d 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -1048,9 +1048,15 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
+     "OPT_STEP_SGD",
+ 
+     "GLU",
++    "TQ_ENCODE",
++    "TQ_DEQUANT",
++    "TQ_DEQUANT_KV",
++    "TQ_FLASH_ATTN_EXT",
++    "TQ_ENCODE_V",
++    "TQ_ENCODE_KV",
+ };
+ 
+-static_assert(GGML_OP_COUNT == 95, "GGML_OP_COUNT != 95");
++static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+ 
+ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+     "none",
+@@ -1157,9 +1163,14 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+     "sgd(x)",
+ 
+     "glu(x)",
++    "tq_encode(k,rot,idx)->packed",
++    "tq_dequant(packed,scales)->f16",
++    "tq_flash_attn_ext(q,k_packed,v)->f32",
++    "tq_encode_v(v)->packed",
++    "tq_encode_kv(k,v)->packed",
+ };
+ 
+-static_assert(GGML_OP_COUNT == 95, "GGML_OP_COUNT != 95");
++static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+ 
+ static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
+ 
+@@ -7603,3 +7614,318 @@ bool ggml_threadpool_params_match(const struct ggml_threadpool_params * p0, cons
+     if (p0->strict_cpu     != p1->strict_cpu )    return false;
+     return memcmp(p0->cpumask, p1->cpumask, GGML_MAX_N_THREADS) == 0;
+ }
++
++struct ggml_tensor * ggml_tq_encode(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * packed,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * k,
++        struct ggml_tensor  * rotation,
++        int32_t              firstCell,
++        struct ggml_tensor  * boundaries,
++        int32_t              bits,
++        struct ggml_tensor  * zeros,
++        struct ggml_tensor  * k_bias,
++        struct ggml_tensor  * codebook) {
++    struct ggml_tensor * result = ggml_view_tensor(ctx, packed);
++    result->op     = GGML_OP_TQ_ENCODE;
++    result->src[0] = k;
++    result->src[1] = rotation;
++    result->src[2] = zeros;      // NULL = symmetric; [numKVHeads, capacity] f32 for asymmetric
++    result->src[3] = scales;
++    result->src[4] = boundaries;
++    result->src[5] = k_bias;     // NULL = no bias subtraction; [numKVHeads*headDim] f32
++    result->src[6] = codebook;   // NULL = RMS only; [1<<bits] f32 enables EDEN biased scale
++    ggml_set_op_params_i32(result, 0, bits);
++    ggml_set_op_params_i32(result, 1, firstCell);
++    ggml_set_op_params_i32(result, 2, 0); // outlier_bits (0 = uniform)
++    ggml_set_op_params_i32(result, 3, 0); // outlier_count (0 = uniform)
++    ggml_set_op_params_i32(result, 4, zeros != NULL ? 1 : 0); // asymmetric flag
++    ggml_set_op_params_i32(result, 5, 0); // qjl_rows (0 = no QJL)
++    return result;
++}
++
++struct ggml_tensor * ggml_tq_dequant(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * encode_result,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * codebook,
++        int headDim, int numKVHeads, int nCells, int firstCell, int bits) {
++    struct ggml_tensor * result = ggml_new_tensor_3d(ctx, GGML_TYPE_F16,
++                                                     headDim, numKVHeads, nCells);
++    result->op     = GGML_OP_TQ_DEQUANT;
++    result->src[0] = encode_result;
++    result->src[1] = scales;
++    result->src[2] = codebook;
++    ggml_set_op_params_i32(result, 0, (int32_t)bits);
++    ggml_set_op_params_i32(result, 1, (int32_t)firstCell);
++    ggml_set_op_params_i32(result, 2, 0); // outlier_bits (0 = uniform)
++    ggml_set_op_params_i32(result, 3, 0); // outlier_count (0 = uniform)
++    ggml_set_op_params_i32(result, 4, 0); // asymmetric (0 = symmetric) — kernel reads this unconditionally
++    ggml_set_op_params_i32(result, 5, 0); // qjl_rows (0 = no QJL) — ditto
++    return result;
++}
++
++// ggml_tq_encode_outlier: extends ggml_tq_encode with an outlier sub-block.
++// Same op (GGML_OP_TQ_ENCODE) with outlier_count > 0 in op_params[3]; the
++// CUDA backend dispatches to the outlier-aware kernel when it sees a non-zero
++// outlier_count in op_params. The regular packed buffer is the dst (view);
++// the outlier packed, scales, and indices are written as side effects via
++// src[5..8], same pattern as the regular scales src[3].
++struct ggml_tensor * ggml_tq_encode_outlier(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * packed,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * k,
++        struct ggml_tensor  * rotation,
++        int32_t              firstCell,
++        struct ggml_tensor  * boundaries,
++        int32_t              bits,
++        struct ggml_tensor  * outlier_packed,
++        struct ggml_tensor  * outlier_scales,
++        struct ggml_tensor  * outlier_indices,
++        struct ggml_tensor  * outlier_boundaries,
++        int32_t              outlier_bits,
++        int32_t              outlier_count,
++        struct ggml_tensor  * zeros,
++        struct ggml_tensor  * outlier_zeros,
++        struct ggml_tensor  * qjl_packed,
++        struct ggml_tensor  * qjl_norm,
++        struct ggml_tensor  * qjl_projection,
++        int32_t              qjl_rows,
++        struct ggml_tensor  * codebook,
++        struct ggml_tensor  * outlier_codebook,
++        struct ggml_tensor  * k_bias) {
++    struct ggml_tensor * result = ggml_view_tensor(ctx, packed);
++    result->op     = GGML_OP_TQ_ENCODE;
++    result->src[0] = k;
++    result->src[1] = rotation;
++    result->src[2] = zeros;
++    result->src[3] = scales;
++    result->src[4] = boundaries;
++    result->src[5] = outlier_packed;
++    result->src[6] = outlier_scales;
++    result->src[7] = outlier_indices;
++    result->src[8] = outlier_boundaries;
++    result->src[9] = outlier_zeros;
++    result->src[10] = qjl_packed;
++    result->src[11] = qjl_norm;
++    result->src[12] = qjl_projection;
++    result->src[13] = codebook;
++    result->src[14] = outlier_codebook;
++    result->src[15] = k_bias;   // NULL = no bias subtraction; [numKVHeads*headDim] f32
++    ggml_set_op_params_i32(result, 0, bits);
++    ggml_set_op_params_i32(result, 1, firstCell);
++    ggml_set_op_params_i32(result, 2, outlier_bits);
++    ggml_set_op_params_i32(result, 3, outlier_count);
++    ggml_set_op_params_i32(result, 4, zeros ? 1 : 0);
++    ggml_set_op_params_i32(result, 5, qjl_rows);
++    return result;
++}
++
++// ggml_tq_dequant_outlier: extends ggml_tq_dequant with an outlier overwrite
++// pass. Reconstructs [headDim, numKVHeads, nCells] f16 by decoding the
++// regular sub-block for all 128 positions, then overwriting the outlier
++// channel positions from the outlier sub-block.
++struct ggml_tensor * ggml_tq_dequant_outlier(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * encode_result,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * codebook,
++        int headDim, int numKVHeads, int nCells, int firstCell, int bits,
++        struct ggml_tensor  * outlier_packed,
++        struct ggml_tensor  * outlier_scales,
++        struct ggml_tensor  * outlier_indices,
++        struct ggml_tensor  * outlier_codebook,
++        int32_t outlier_bits,
++        int32_t outlier_count,
++        struct ggml_tensor  * zeros,
++        struct ggml_tensor  * outlier_zeros,
++        struct ggml_tensor  * qjl_packed,
++        struct ggml_tensor  * qjl_norm,
++        struct ggml_tensor  * qjl_projection,
++        int32_t qjl_rows) {
++    struct ggml_tensor * result = ggml_new_tensor_3d(ctx, GGML_TYPE_F16,
++                                                     headDim, numKVHeads, nCells);
++    result->op     = GGML_OP_TQ_DEQUANT;
++    result->src[0] = encode_result;
++    result->src[1] = scales;
++    result->src[2] = codebook;
++    result->src[3] = outlier_packed;
++    result->src[4] = outlier_scales;
++    result->src[5] = outlier_indices;
++    result->src[6] = outlier_codebook;
++    result->src[7] = zeros;
++    result->src[8] = outlier_zeros;
++    result->src[9] = qjl_packed;
++    result->src[10] = qjl_norm;
++    result->src[11] = qjl_projection;
++    ggml_set_op_params_i32(result, 0, (int32_t)bits);
++    ggml_set_op_params_i32(result, 1, (int32_t)firstCell);
++    ggml_set_op_params_i32(result, 2, outlier_bits);
++    ggml_set_op_params_i32(result, 3, outlier_count);
++    ggml_set_op_params_i32(result, 4, zeros ? 1 : 0);
++    ggml_set_op_params_i32(result, 5, qjl_rows);
++    return result;
++}
++
++struct ggml_tensor * ggml_tq_dequant_kv(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * k_encode_result,
++        struct ggml_tensor  * k_scales,
++        struct ggml_tensor  * k_codebook,
++        struct ggml_tensor  * v_encode_result,
++        struct ggml_tensor  * v_scales,
++        struct ggml_tensor  * v_codebook,
++        struct ggml_tensor  * v_rotation,
++        int headDim, int numKVHeads, int nCells, int firstCell,
++        int k_bits, int v_bits,
++        struct ggml_tensor  * k_outlier_packed,
++        struct ggml_tensor  * k_outlier_scales,
++        struct ggml_tensor  * k_outlier_indices,
++        struct ggml_tensor  * k_outlier_codebook,
++        struct ggml_tensor  * k_zeros,
++        struct ggml_tensor  * k_outlier_zeros,
++        int32_t outlier_bits,
++        int32_t outlier_count) {
++    // Output: [headDim, numKVHeads, nCells, 2] f16 — last dim separates K (0) and V (1).
++    struct ggml_tensor * result = ggml_new_tensor_4d(ctx, GGML_TYPE_F16,
++                                                      headDim, numKVHeads, nCells, 2);
++    result->op     = GGML_OP_TQ_DEQUANT_KV;
++    result->src[0] = k_encode_result;
++    result->src[1] = k_scales;
++    result->src[2] = k_codebook;
++    result->src[3] = v_encode_result;
++    result->src[4] = v_scales;
++    result->src[5] = v_codebook;
++    result->src[6] = v_rotation;          // NULL = no rotation fusion
++    result->src[7]  = k_outlier_packed;   // NULL when no outliers
++    result->src[8]  = k_outlier_scales;
++    result->src[9]  = k_outlier_indices;
++    result->src[10] = k_outlier_codebook;
++    result->src[11] = k_zeros;            // NULL when symmetric
++    result->src[12] = k_outlier_zeros;    // NULL when symmetric
++    ggml_set_op_params_i32(result, 0, (int32_t)k_bits);
++    ggml_set_op_params_i32(result, 1, (int32_t)v_bits);
++    ggml_set_op_params_i32(result, 2, (int32_t)firstCell);
++    ggml_set_op_params_i32(result, 3, outlier_bits);
++    ggml_set_op_params_i32(result, 4, outlier_count);
++    return result;
++}
++
++struct ggml_tensor * ggml_tq_flash_attn_ext(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * q,
++        struct ggml_tensor  * k_packed,
++        struct ggml_tensor  * v,
++        struct ggml_tensor  * mask,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * codebook,
++        float scale, float logit_softcap,
++        int32_t bits, int32_t firstCell,
++        struct ggml_tensor  * v_scales,
++        struct ggml_tensor  * v_codebook,
++        int32_t v_bits,
++        struct ggml_tensor  * zeros,
++        struct ggml_tensor  * qjl_packed,
++        struct ggml_tensor  * qjl_norm,
++        struct ggml_tensor  * qjl_projection,
++        int32_t qjl_rows,
++        int32_t asymmetric,
++        struct ggml_tensor  * outlier_packed,
++        struct ggml_tensor  * outlier_scales,
++        struct ggml_tensor  * outlier_indices,
++        struct ggml_tensor  * outlier_zeros,
++        int32_t outlier_bits,
++        int32_t outlier_count,
++        int32_t outlier_packed_bytes) {
++    // Output: [D, nHeadsQ, nTokensQ, nSeq] f32 — same shape as standard flash_attn_ext.
++    struct ggml_tensor * result = ggml_new_tensor_4d(ctx, GGML_TYPE_F32,
++                                                     q->ne[0], q->ne[2], q->ne[1], q->ne[3]);
++    result->op     = GGML_OP_TQ_FLASH_ATTN_EXT;
++    result->src[0] = q;
++    result->src[1] = k_packed;
++    result->src[2] = v;
++    result->src[3] = mask;
++    result->src[4] = scales;
++    result->src[5] = codebook;
++    result->src[6] = v_scales;   // NULL → V is f16 (K-only fused); non-NULL → V is packed
++    result->src[7] = v_codebook; // NULL when V is f16
++    result->src[8] = zeros;      // NULL if symmetric
++    result->src[9] = qjl_packed; // NULL if no QJL
++    result->src[10] = qjl_norm;  // NULL if no QJL
++    result->src[11] = qjl_projection; // NULL if no QJL
++    result->src[12] = outlier_packed;   // NULL if no outliers
++    result->src[13] = outlier_scales;   // NULL if no outliers
++    result->src[14] = outlier_indices;  // NULL if no outliers
++    result->src[15] = outlier_zeros;    // NULL if no outliers or !asymmetric
++    ggml_set_op_params_f32(result, 0, scale);
++    ggml_set_op_params_f32(result, 1, logit_softcap);
++    ggml_set_op_params_i32(result, 2, bits);
++    ggml_set_op_params_i32(result, 3, firstCell);
++    ggml_set_op_params_i32(result, 4, v_bits);
++    ggml_set_op_params_i32(result, 5, qjl_rows);
++    ggml_set_op_params_i32(result, 6, asymmetric);
++    ggml_set_op_params_i32(result, 7, outlier_bits);
++    ggml_set_op_params_i32(result, 8, outlier_count);
++    ggml_set_op_params_i32(result, 9, outlier_packed_bytes);
++    return result;
++}
++
++struct ggml_tensor * ggml_tq_encode_v(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * packed,
++        struct ggml_tensor  * scales,
++        struct ggml_tensor  * v,
++        struct ggml_tensor  * rotation,
++        int32_t              firstCell,
++        struct ggml_tensor  * boundaries,
++        int32_t              bits,
++        struct ggml_tensor  * codebook) {
++    struct ggml_tensor * result = ggml_view_tensor(ctx, packed);
++    result->op     = GGML_OP_TQ_ENCODE_V;
++    result->src[0] = v;
++    result->src[1] = rotation; // NULL = no rotation, non-NULL = R^T matrix
++    result->src[2] = NULL;
++    result->src[3] = scales;
++    result->src[4] = boundaries;
++    result->src[5] = codebook;  // NULL = RMS; [1<<bits] f32 enables EDEN
++    ggml_set_op_params_i32(result, 0, bits);
++    ggml_set_op_params_i32(result, 1, firstCell);
++    return result;
++}
++
++struct ggml_tensor * ggml_tq_encode_kv(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * k_packed,
++        struct ggml_tensor  * k_scales,
++        struct ggml_tensor  * k,
++        struct ggml_tensor  * rotation,
++        struct ggml_tensor  * k_boundaries,
++        struct ggml_tensor  * v_packed,
++        struct ggml_tensor  * v_scales,
++        struct ggml_tensor  * v,
++        struct ggml_tensor  * v_boundaries,
++        int32_t firstCell, int32_t k_bits, int32_t v_bits,
++        struct ggml_tensor  * k_bias,
++        struct ggml_tensor  * k_codebook,
++        struct ggml_tensor  * v_codebook) {
++    struct ggml_tensor * result = ggml_view_tensor(ctx, k_packed);
++    result->op     = GGML_OP_TQ_ENCODE_KV;
++    result->src[0] = k;
++    result->src[1] = rotation;
++    result->src[2] = v;
++    result->src[3] = k_scales;
++    result->src[4] = k_boundaries;
++    result->src[5] = v_packed;
++    result->src[6] = v_scales;
++    result->src[7] = v_boundaries;
++    result->src[8] = k_bias;        // NULL = no bias; [numKVHeads*headDim] f32
++    result->src[9] = k_codebook;    // NULL = RMS scale only; [1<<k_bits] f32 enables EDEN
++    result->src[10] = v_codebook;   // NULL = RMS scale only; [1<<v_bits] f32 enables EDEN
++    ggml_set_op_params_i32(result, 0, k_bits);
++    ggml_set_op_params_i32(result, 1, v_bits);
++    ggml_set_op_params_i32(result, 2, firstCell);
++    return result;
++}
++
