@@ -16,6 +16,11 @@
 //   - Inline hashing: SHA256 computed during streaming, not asynchronously after parts complete.
 //   - Stall and speed detection: Cancels on no data (stall) or speed below 10% of median.
 //
+// This means interruption behavior here differs from the standard downloader in
+// server/download.go. That path uses part-based transfers with persisted progress
+// state and supports resuming partial downloads. This transfer path intentionally
+// prefers simpler whole-blob retries for many-small-blob workloads.
+//
 // For large models (multi-GB), use the server's download/upload code which has:
 //   - Part-based transfers with 64MB chunks
 //   - Resumable downloads with JSON state files
