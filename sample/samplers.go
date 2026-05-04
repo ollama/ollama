@@ -17,12 +17,17 @@ type token struct {
 }
 
 type Sampler struct {
-	rng         *rand.Rand
-	topK        int
-	topP        float32
-	minP        float32
-	temperature float32
-	grammar     *GrammarSampler
+	rng              *rand.Rand
+	topK             int
+	topP             float32
+	minP             float32
+	temperature      float32
+	grammar          *GrammarSampler
+	repeatPenalty    float32
+	frequencyPenalty float32
+	presencePenalty  float32
+	repeatLastN      int
+	tokenHistory     []int32
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
@@ -36,6 +41,8 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		tokens[i].value = logits[i]
 	}
 
+	tokens = repeatPenalize(tokens, s.tokenHistory, s.repeatPenalty, s.frequencyPenalty, s.presencePenalty)
+
 	t, err := s.sample(tokens)
 	if err != nil {
 		return -1, err
@@ -48,6 +55,7 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		s.grammar.Apply(top)
 		if !math.IsInf(float64(top[0].value), -1) {
 			s.grammar.Accept(top[0].id)
+			s.recordToken(top[0].id)
 			return top[0].id, nil
 		}
 
@@ -66,7 +74,18 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		s.grammar.Accept(t.id)
 	}
 
+	s.recordToken(t.id)
 	return t.id, nil
+}
+
+func (s *Sampler) recordToken(id int32) {
+	if s.repeatLastN <= 0 {
+		return
+	}
+	s.tokenHistory = append(s.tokenHistory, id)
+	if len(s.tokenHistory) > s.repeatLastN {
+		s.tokenHistory = s.tokenHistory[len(s.tokenHistory)-s.repeatLastN:]
+	}
 }
 
 // greedy returns the highest probability token from the tokens
@@ -127,7 +146,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
-func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *GrammarSampler) Sampler {
+func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *GrammarSampler, repeatPenalty float32, repeatLastN int, frequencyPenalty float32, presencePenalty float32) Sampler {
 	var rng *rand.Rand
 	if seed != -1 {
 		// PCG requires two parameters: sequence and stream
@@ -154,13 +173,21 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		minP = 1.0
 	}
 
+	if repeatPenalty < 0 {
+		repeatPenalty = 0
+	}
+
 	return Sampler{
-		rng:         rng,
-		topK:        topK,
-		topP:        topP,
-		minP:        minP,
-		temperature: temperature,
-		grammar:     grammar,
+		rng:              rng,
+		topK:             topK,
+		topP:             topP,
+		minP:             minP,
+		temperature:      temperature,
+		grammar:          grammar,
+		repeatPenalty:    repeatPenalty,
+		frequencyPenalty: frequencyPenalty,
+		presencePenalty:  presencePenalty,
+		repeatLastN:      repeatLastN,
 	}
 }
 

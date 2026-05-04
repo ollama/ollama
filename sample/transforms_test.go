@@ -355,3 +355,93 @@ func BenchmarkTransforms(b *testing.B) {
 		}
 	})
 }
+
+func TestRepeatPenalize(t *testing.T) {
+	// Positive logit should be divided by penalty
+	tokens := toTokens([]float32{2.0, 4.0, 1.0, 3.0})
+	lastTokens := []int32{1} // token id 1 has logit 4.0
+	tokens = repeatPenalize(tokens, lastTokens, 2.0, 0, 0)
+	if math.Abs(float64(tokens[1].value-2.0)) > 1e-6 {
+		t.Errorf("positive logit: want 2.0 (4.0/2.0), got %f", tokens[1].value)
+	}
+	if math.Abs(float64(tokens[0].value-2.0)) > 1e-6 {
+		t.Errorf("unpenalized token should be unchanged: want 2.0, got %f", tokens[0].value)
+	}
+
+	// Negative logit should be multiplied by penalty
+	tokens = toTokens([]float32{2.0, -4.0, 1.0, 3.0})
+	tokens = repeatPenalize(tokens, []int32{1}, 2.0, 0, 0)
+	if math.Abs(float64(tokens[1].value-(-8.0))) > 1e-6 {
+		t.Errorf("negative logit: want -8.0 (-4.0*2.0), got %f", tokens[1].value)
+	}
+
+	// Frequency penalty
+	tokens = toTokens([]float32{5.0, 5.0, 5.0, 5.0})
+	tokens = repeatPenalize(tokens, []int32{0, 0, 0, 2}, 1.0, 1.0, 0)
+	if math.Abs(float64(tokens[0].value-2.0)) > 1e-6 {
+		t.Errorf("freq penalty: token 0 appeared 3x, want 5.0-3*1.0=2.0, got %f", tokens[0].value)
+	}
+	if math.Abs(float64(tokens[2].value-4.0)) > 1e-6 {
+		t.Errorf("freq penalty: token 2 appeared 1x, want 5.0-1*1.0=4.0, got %f", tokens[2].value)
+	}
+	if math.Abs(float64(tokens[3].value-5.0)) > 1e-6 {
+		t.Errorf("freq penalty: token 3 not in history, want 5.0, got %f", tokens[3].value)
+	}
+
+	// Presence penalty
+	tokens = toTokens([]float32{5.0, 5.0, 5.0})
+	tokens = repeatPenalize(tokens, []int32{0, 0, 0}, 1.0, 0, 2.0)
+	if math.Abs(float64(tokens[0].value-3.0)) > 1e-6 {
+		t.Errorf("presence penalty: want 5.0-2.0=3.0, got %f", tokens[0].value)
+	}
+	if math.Abs(float64(tokens[1].value-5.0)) > 1e-6 {
+		t.Errorf("presence penalty: token 1 not in history, want 5.0, got %f", tokens[1].value)
+	}
+
+	// No-op when penalty is 1.0 and others are 0
+	tokens = toTokens([]float32{2.0, 4.0})
+	tokens = repeatPenalize(tokens, []int32{0, 1}, 1.0, 0, 0)
+	if math.Abs(float64(tokens[0].value-2.0)) > 1e-6 || math.Abs(float64(tokens[1].value-4.0)) > 1e-6 {
+		t.Error("no-op case should leave tokens unchanged")
+	}
+
+	// Empty history
+	tokens = toTokens([]float32{2.0, 4.0})
+	tokens = repeatPenalize(tokens, nil, 2.0, 1.0, 1.0)
+	if math.Abs(float64(tokens[0].value-2.0)) > 1e-6 || math.Abs(float64(tokens[1].value-4.0)) > 1e-6 {
+		t.Error("empty history should leave tokens unchanged")
+	}
+
+	// Zero logit with repeat penalty stays zero (0/penalty = 0, 0*penalty = 0)
+	tokens = toTokens([]float32{0.0, 5.0})
+	tokens = repeatPenalize(tokens, []int32{0}, 2.0, 0, 0)
+	if math.Abs(float64(tokens[0].value)) > 1e-6 {
+		t.Errorf("zero logit should stay zero, got %f", tokens[0].value)
+	}
+
+	// Combined: repeat + frequency + presence all applied together
+	tokens = toTokens([]float32{10.0, 10.0, 10.0})
+	// token 0 appears 2x in history
+	tokens = repeatPenalize(tokens, []int32{0, 0}, 2.0, 0.5, 1.0)
+	// token 0: 10.0/2.0 - 2*0.5 - 1.0 = 5.0 - 1.0 - 1.0 = 3.0
+	if math.Abs(float64(tokens[0].value-3.0)) > 1e-6 {
+		t.Errorf("combined penalties: want 3.0, got %f", tokens[0].value)
+	}
+	// token 1: untouched
+	if math.Abs(float64(tokens[1].value-10.0)) > 1e-6 {
+		t.Errorf("unpenalized token should be 10.0, got %f", tokens[1].value)
+	}
+
+	// Token appearing multiple times with different IDs
+	tokens = toTokens([]float32{6.0, 6.0, 6.0, 6.0})
+	tokens = repeatPenalize(tokens, []int32{0, 1, 2}, 1.5, 0, 0)
+	// tokens 0, 1, 2 all penalized; token 3 untouched
+	for i := 0; i < 3; i++ {
+		if math.Abs(float64(tokens[i].value-4.0)) > 1e-6 {
+			t.Errorf("token %d: want 4.0 (6.0/1.5), got %f", i, tokens[i].value)
+		}
+	}
+	if math.Abs(float64(tokens[3].value-6.0)) > 1e-6 {
+		t.Errorf("token 3 should be unchanged: want 6.0, got %f", tokens[3].value)
+	}
+}
