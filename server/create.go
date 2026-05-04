@@ -103,6 +103,8 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		}
 
 		oldManifest, _ := manifest.ParseNamedManifest(name)
+		defer pruneCreateInputBlobs(r.Files)
+		defer pruneCreateInputBlobs(r.Adapters)
 
 		var baseLayers []*layerGGML
 		var err error
@@ -280,6 +282,40 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+// pruneCreateInputBlobs removes uploaded create inputs that are not referenced by
+// any manifest once the request completes. This keeps converted safetensors and
+// re-quantized GGUF imports from leaving their original upload blobs behind while
+// preserving any inputs that became part of a model manifest.
+func pruneCreateInputBlobs(files map[string]string) {
+	if envconfig.NoPrune() || len(files) == 0 {
+		return
+	}
+
+	m := &manifest.Manifest{}
+	seen := make(map[string]struct{}, len(files))
+
+	for _, digest := range files {
+		if digest == "" {
+			continue
+		}
+
+		if _, ok := seen[digest]; ok {
+			continue
+		}
+
+		seen[digest] = struct{}{}
+		m.Layers = append(m.Layers, manifest.Layer{Digest: digest})
+	}
+
+	if len(m.Layers) == 0 {
+		return
+	}
+
+	if err := m.RemoveLayers(); err != nil {
+		slog.Warn("couldn't remove imported blobs", "error", err)
+	}
 }
 
 func remoteURL(raw string) (string, error) {
