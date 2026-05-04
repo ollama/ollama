@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -82,8 +83,9 @@ type MessagesRequest struct {
 }
 
 type OutputConfig struct {
-	Effort string `json:"effort,omitempty"`
+	Effort string `json:"effort,omitempty"` // "max", "xhigh", "high"(default), "medium", "low"
 }
+
 
 // MessageParam represents a message in the request
 type MessageParam struct {
@@ -192,7 +194,7 @@ type ToolChoice struct {
 
 // ThinkingConfig controls extended thinking
 type ThinkingConfig struct {
-	Type         string `json:"type"` // "enabled" or "disabled"
+	Type         string `json:"type"` // "enabled", "disabled", "adaptive"
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
@@ -378,24 +380,26 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 
 	var think *api.ThinkValue
-	normalizedEffort := ""
-	if r.OutputConfig != nil {
-		normalizedEffort = strings.ToLower(strings.TrimSpace(r.OutputConfig.Effort))
-		if normalizedEffort == "xhigh" {
-			normalizedEffort = "high"
-		}
-	}
+	if r.Thinking != nil {
+		switch r.Thinking.Type {
+		case "disabled":
+			think = &api.ThinkValue{Value: false}
+		case "adaptive", "enabled":
+			effort := "high" // default effort level for adaptive thinking
 
-	if r.Thinking != nil && r.Thinking.Type == "enabled" {
-		think = &api.ThinkValue{Value: true}
-	}
-	if r.Thinking != nil && r.Thinking.Type == "disabled" {
-		think = &api.ThinkValue{Value: false}
-	}
-	if think == nil && r.OutputConfig != nil {
-		switch normalizedEffort {
-		case "high", "medium", "low", "max":
-			think = &api.ThinkValue{Value: normalizedEffort}
+			if r.OutputConfig != nil {
+				effort = r.OutputConfig.Effort
+
+				if effort == "xhigh" {
+					effort = "high" // map "xhigh" to "high" in the API, as "xhigh" is an Anthropic-specific value
+				} else if !slices.Contains([]string{"max", "high", "medium", "low"}, effort) {
+					return nil, fmt.Errorf("invalid effort value: '%s' (must be \"max\", \"xhigh\", \"high\", \"medium\", or \"low\")", effort)
+				}
+			}
+
+			think = &api.ThinkValue{Value: effort}
+		default:
+			return nil, fmt.Errorf("invalid thinking type: '%s' (must be \"enabled\", \"disabled\", or \"adaptive\")", r.Thinking.Type)
 		}
 	}
 

@@ -613,24 +613,185 @@ func TestFromMessagesRequest_KeepsCustomWebSearchWhenBuiltinAbsent(t *testing.T)
 	}
 }
 
-func TestFromMessagesRequest_WithThinking(t *testing.T) {
+func TestFromMessagesRequest_InvalidThinkingType(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
 		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
-		Thinking:  &ThinkingConfig{Type: "enabled", BudgetTokens: 1000},
+		Thinking:  &ThinkingConfig{Type: "bogus"},
 	}
 
-	result, err := FromMessagesRequest(req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := FromMessagesRequest(req)
+	if err == nil {
+		t.Fatal("expected error for invalid thinking type")
+	}
+	if !strings.Contains(err.Error(), "invalid thinking type") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestFromMessagesRequest_EffortAcrossThinkingModes(t *testing.T) {
+	tests := []struct {
+		name         string
+		thinking     *ThinkingConfig
+		outputConfig *OutputConfig
+		wantThinkNil bool
+		wantValue    any
+		wantErr      string
+	}{
+		// enabled + effort: effort string overrides bool.
+		{
+			name:         "enabled + effort high",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "high"},
+			wantValue:    "high",
+		},
+		{
+			name:         "enabled + effort medium",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "medium"},
+			wantValue:    "medium",
+		},
+		{
+			name:         "enabled + effort low",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "low"},
+			wantValue:    "low",
+		},
+		{
+			name:         "enabled + effort max",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "max"},
+			wantValue:    "max",
+		},
+		{
+			name:         "enabled + effort xhigh maps to high",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "xhigh"},
+			wantValue:    "high",
+		},
+		{
+			name:         "enabled + no effort stays bool true",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: nil,
+			wantValue:    "high",
+		},
+		{
+			name:         "enabled + invalid effort",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "turbo"},
+			wantErr:      `invalid effort value: 'turbo'`,
+		},
+
+		// adaptive + effort: effort string overrides bool.
+		{
+			name:         "adaptive + effort high",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "high"},
+			wantValue:    "high",
+		},
+		{
+			name:         "adaptive + effort medium",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "medium"},
+			wantValue:    "medium",
+		},
+		{
+			name:         "adaptive + effort low",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "low"},
+			wantValue:    "low",
+		},
+		{
+			name:         "adaptive + effort max",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "max"},
+			wantValue:    "max",
+		},
+		{
+			name:         "adaptive + effort xhigh maps to high",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "xhigh"},
+			wantValue:    "high",
+		},
+		{
+			name:         "adaptive + no effort stays bool true",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: nil,
+			wantValue:    "high",
+		},
+		{
+			name:         "adaptive + invalid effort",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "turbo"},
+			wantErr:      `invalid effort value: 'turbo'`,
+		},
+
+		// disabled: effort is silently ignored, value stays false.
+		{
+			name:         "disabled + effort silently ignored",
+			thinking:     &ThinkingConfig{Type: "disabled"},
+			outputConfig: &OutputConfig{Effort: "low"},
+			wantValue:    false,
+		},
+		{
+			name:         "disabled + no effort stays bool false",
+			thinking:     &ThinkingConfig{Type: "disabled"},
+			outputConfig: nil,
+			wantValue:    false,
+		},
+		{
+			name:         "disabled + invalid effort still errors",
+			thinking:     &ThinkingConfig{Type: "disabled"},
+			outputConfig: &OutputConfig{Effort: "turbo"},
+			wantValue:    false,
+		},
+
+		// no thinking field: effort is silently ignored, Think stays nil.
+		{
+			name:         "no thinking + effort is silently ignored",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "low"},
+			wantThinkNil: true,
+		},
 	}
 
-	if result.Think == nil {
-		t.Fatal("expected Think to be set")
-	}
-	if v, ok := result.Think.Value.(bool); !ok || !v {
-		t.Errorf("expected Think.Value to be true, got %v", result.Think.Value)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := MessagesRequest{
+				Model:        "test-model",
+				MaxTokens:    1024,
+				Messages:     []MessageParam{{Role: "user", Content: textContent("Hello")}},
+				Thinking:     tt.thinking,
+				OutputConfig: tt.outputConfig,
+			}
+
+			result, err := FromMessagesRequest(req)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %q", tt.wantErr, err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantThinkNil {
+				if result.Think != nil {
+					t.Fatalf("expected Think to be nil, got %+v", result.Think)
+				}
+				return
+			}
+			if result.Think == nil {
+				t.Fatal("expected Think to be set")
+			}
+			if result.Think.Value != tt.wantValue {
+				t.Errorf("expected Think.Value = %v (%T), got %v (%T)", tt.wantValue, tt.wantValue, result.Think.Value, result.Think.Value)
+			}
+		})
 	}
 }
 
