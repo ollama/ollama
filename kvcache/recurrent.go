@@ -40,7 +40,7 @@ var (
 // Conv state shape (per layer, per sequence): [convDim, convChannels]
 // Recurrent state shape (per layer, per sequence): [recurrentStateSize]
 type Recurrent struct {
-	kv *Causal
+	kv Cache
 
 	backend      ml.Backend
 	dtype        ml.DType
@@ -94,6 +94,19 @@ type Recurrent struct {
 	writableEnsured bool
 	writableError   error
 }
+
+// AttentionKV returns the inner attention KV cache when it is still the
+// original *Causal. Returns nil after the cache has been replaced (e.g. by
+// *TurboQuantCache), making WrapWithTurboQuant idempotently skip a second wrap.
+func (c *Recurrent) AttentionKV() *Causal {
+	causal, _ := c.kv.(*Causal)
+	return causal
+}
+
+// SetAttentionKV replaces the inner attention KV cache. Used by
+// WrapWithTurboQuant to inject compression into the attention path
+// without disturbing the embedded conv/recurrent state tensors.
+func (c *Recurrent) SetAttentionKV(kv Cache) { c.kv = kv }
 
 func NewRecurrentCache(config RecurrentConfig) *Recurrent {
 	return &Recurrent{

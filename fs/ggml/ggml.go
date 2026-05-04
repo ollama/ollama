@@ -283,11 +283,10 @@ func (kv KV) OllamaEngineRequired() bool {
 		"gemma3n",
 		"gemma4",
 		"gptoss", "gpt-oss",
-		"laguna",
 		"llama4",
 		"mistral3",
 		"mllama",
-		"nemotron_h", "nemotron_h_moe", "nemotron_h_omni",
+		"nemotron_h", "nemotron_h_moe",
 		"nomic-bert",
 		"olmo3",
 		"qwen25vl",
@@ -853,7 +852,11 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 		return true
 	}
 
-	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
+	return slices.Contains([]string{
+		"q8_0", "q4_0",
+		"tq2", "tq3", "tq4",
+		"tq2k", "tq3k", "tq4k",
+	}, cacheType)
 }
 
 // KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
@@ -862,6 +865,20 @@ func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
 		return false
 	}
 	return true
+}
+
+// KVCacheTypeRequiresFlashAttention reports whether a KV cache type can only be
+// used when flash attention is enabled. Ggml-native quantized types (q8_0,
+// q4_0) store K/V as quantized tensors that the non-FA softmax+matmul attention
+// path cannot consume directly. TurboQuant K-only presets (tq2k, tq3k) dequant
+// the packed K buffer to f16 before the attention op runs, so they work with
+// either FA or the standard attention path.
+func (f GGML) KVCacheTypeRequiresFlashAttention(cacheType string) bool {
+	switch cacheType {
+	case "tq2k", "tq3k", "tq4k":
+		return false
+	}
+	return f.KVCacheTypeIsQuantized(cacheType)
 }
 
 // SupportsFlashAttention checks if the model supports flash attention
@@ -898,7 +915,7 @@ func (f GGML) FlashAttention() bool {
 		"lfm2",
 		"lfm2moe",
 		"mistral3",
-		"nemotron_h", "nemotron_h_moe", "nemotron_h_omni",
+		"nemotron_h", "nemotron_h_moe",
 		"olmo3",
 		"qwen3", "qwen3moe",
 		"qwen35", "qwen35moe",
@@ -907,13 +924,27 @@ func (f GGML) FlashAttention() bool {
 	}, f.KV().String("general.architecture"))
 }
 
-// kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type
+// kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type.
+// TQ presets include outlier-split (32 ch at OutlierBits) + asymmetric Zero overhead;
+// the figures below assume headDim=128 where the overhead amortises to ~0.07 B/elem.
 func kvCacheBytesPerElement(cacheType string) float64 {
 	switch cacheType {
 	case "q8_0":
 		return 1 // 1/2 of fp16
 	case "q4_0":
 		return 0.5 // 1/4 of fp16
+	case "tq2":
+		return 0.32 // 2-bit K + 2-bit V (outlier=32 at 3-bit + asymmetric)
+	case "tq2k":
+		return 1.16 // 2-bit K + f16 V averaged
+	case "tq3":
+		return 0.45 // 3-bit K + 3-bit V (outlier=32 at 4-bit + asymmetric)
+	case "tq3k":
+		return 1.225 // 3-bit K + f16 V averaged
+	case "tq4":
+		return 0.60 // 4-bit K + 4-bit V (outlier=32 at 5-bit + asymmetric)
+	case "tq4k":
+		return 1.30 // 4-bit K + f16 V averaged
 	case "f32":
 		return 4 // f32 (default for recurrent)
 	default:
