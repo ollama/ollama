@@ -859,6 +859,82 @@ func verifyBlob(t *testing.T, dir string, blob Blob, expected []byte) {
 
 // ==================== Parallelism Tests ====================
 
+func TestDownloadParallelism(t *testing.T) {
+	// Create many blobs to test parallelism
+	serverDir := t.TempDir()
+	numBlobs := 10
+	blobs := make([]Blob, numBlobs)
+	blobData := make([][]byte, numBlobs)
+
+	for i := range numBlobs {
+		blobs[i], blobData[i] = createTestBlob(t, serverDir, 1024+i*100)
+	}
+
+	var activeRequests atomic.Int32
+	var maxConcurrent atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := activeRequests.Add(1)
+		defer activeRequests.Add(-1)
+
+		// Track max concurrent requests
+		for {
+			old := maxConcurrent.Load()
+			if current <= old || maxConcurrent.CompareAndSwap(old, current) {
+				break
+			}
+		}
+
+		// Simulate network latency to ensure parallelism is visible
+		time.Sleep(50 * time.Millisecond)
+
+		digest := filepath.Base(r.URL.Path)
+		path := filepath.Join(serverDir, digestToPath(digest))
+		data, err := os.ReadFile(path)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+	}))
+	defer server.Close()
+
+	clientDir := t.TempDir()
+
+	start := time.Now()
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:           blobs,
+		BaseURL:         server.URL,
+		DestDir:         clientDir,
+		Concurrency:     4,
+		BodyConcurrency: 4,
+	})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Download failed: %v", err)
+	}
+
+	// Verify all blobs downloaded
+	for i, blob := range blobs {
+		verifyBlob(t, clientDir, blob, blobData[i])
+	}
+
+	// Verify parallelism was used
+	if maxConcurrent.Load() < 2 {
+		t.Errorf("Max concurrent requests was %d, expected at least 2 for parallelism", maxConcurrent.Load())
+	}
+
+	// With 10 blobs at 50ms each, sequential would take ~500ms
+	// Parallel with 4 workers should take ~150ms (relax to 1s for CI variance)
+	if elapsed > time.Second {
+		t.Errorf("Downloads took %v, expected faster with parallelism", elapsed)
+	}
+
+	t.Logf("Downloaded %d blobs in %v with max %d concurrent requests", numBlobs, elapsed, maxConcurrent.Load())
+}
+
 func TestUploadParallelism(t *testing.T) {
 	clientDir := t.TempDir()
 	numBlobs := 10
@@ -2374,12 +2450,10 @@ func multiPartTestHelper(t *testing.T, blobSize int, partSize int64, serverURL s
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, data, 0o644)
 
-	token := ""
 	u := &uploader{
 		client:    defaultClient,
 		baseURL:   serverURL,
 		srcDir:    clientDir,
-		token:     &token,
 		userAgent: defaultUserAgent,
 		progress:  newProgressTracker(int64(blobSize), nil),
 		makeParts: func(totalSize int64) []uploadPart {
@@ -2661,7 +2735,7 @@ func TestV2DirectUpload(t *testing.T) {
 	// client forwards it to the CDN.
 	hexDigest := strings.TrimPrefix(blob.Digest, "sha256:")
 	digestBytes := make([]byte, len(hexDigest)/2)
-	for i := range len(digestBytes) {
+	for i := range digestBytes {
 		fmt.Sscanf(hexDigest[i*2:i*2+2], "%02x", &digestBytes[i])
 	}
 	expectedChecksum := base64.StdEncoding.EncodeToString(digestBytes)

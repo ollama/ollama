@@ -277,6 +277,11 @@ var (
 	MaxRunners = Uint("OLLAMA_MAX_LOADED_MODELS", 0)
 	// MaxQueue sets the maximum number of queued requests. MaxQueue can be configured via the OLLAMA_MAX_QUEUE environment variable.
 	MaxQueue = Uint("OLLAMA_MAX_QUEUE", 512)
+	// MaxTransfers caps the number of simultaneous body-bearing transfers
+	// during safetensors model pulls/pushes, keeping slower networks from
+	// being saturated. Tune higher for fast networks. Has no effect on
+	// GGUF transfers, which use the legacy upload/download paths.
+	MaxTransfers = Uint("OLLAMA_MAX_TRANSFERS", 4)
 )
 
 func Uint64(key string, defaultValue uint64) func() uint64 {
@@ -314,6 +319,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_LLM_LIBRARY":        {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":       {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
 		"OLLAMA_MAX_LOADED_MODELS":  {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
+		"OLLAMA_MAX_TRANSFERS":      {"OLLAMA_MAX_TRANSFERS", MaxTransfers(), "Maximum number of parallel safetensors pull or push streams (default 4)"},
 		"OLLAMA_MAX_QUEUE":          {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
 		"OLLAMA_MODELS":             {"OLLAMA_MODELS", Models(), "The path to the models directory"},
 		"OLLAMA_NO_CLOUD":           {"OLLAMA_NO_CLOUD", NoCloud(), "Disable Ollama cloud features (remote inference and web search)"},
