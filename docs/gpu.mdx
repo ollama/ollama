@@ -44,6 +44,11 @@ Numeric IDs may be used, however ordering may vary, so UUIDs are more reliable.
 You can discover the UUID of your GPUs by running `nvidia-smi -L` If you want to
 ignore the GPUs and force CPU usage, use an invalid GPU ID (e.g., "-1")
 
+On systems with both NVIDIA and AMD GPUs, ROCm may also honor
+`CUDA_VISIBLE_DEVICES` for HIP compatibility. Setting `CUDA_VISIBLE_DEVICES=-1`
+can hide AMD GPUs as well. To prefer ROCm over CUDA, set `OLLAMA_LLM_LIBRARY=rocm`
+instead.
+
 ### Linux Suspend Resume
 
 On linux, after a suspend/resume cycle, sometimes Ollama will fail to discover
@@ -128,6 +133,11 @@ subset, you can set `ROCR_VISIBLE_DEVICES` to a comma separated list of GPUs.
 You can see the list of devices with `rocminfo`. If you want to ignore the GPUs
 and force CPU usage, use an invalid GPU ID (e.g., "-1"). When available, use the
 `Uuid` to uniquely identify the device instead of numeric value.
+
+On systems with both AMD and NVIDIA GPUs, ROCm may also honor
+`CUDA_VISIBLE_DEVICES` for HIP compatibility. If AMD GPUs disappear
+unexpectedly, unset `CUDA_VISIBLE_DEVICES` and use `ROCR_VISIBLE_DEVICES` to
+select AMD devices.
 
 ### Container Permission
 
