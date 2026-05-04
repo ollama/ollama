@@ -1011,6 +1011,7 @@ func (s *Server) PushHandler(c *gin.Context) {
 
 		regOpts := &registryOptions{
 			Insecure: req.Insecure,
+			Private:  req.Private,
 		}
 
 		ctx, cancel := context.WithCancel(c.Request.Context())

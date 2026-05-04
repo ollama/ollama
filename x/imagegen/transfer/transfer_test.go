@@ -1577,6 +1577,59 @@ func TestManifestPush(t *testing.T) {
 	t.Logf("Manifest push test passed: received %d bytes at %s", len(manifestReceived), manifestPath)
 }
 
+func TestManifestPushPrivate(t *testing.T) {
+	clientDir := t.TempDir()
+	blob, _ := createTestBlob(t, clientDir, 1000)
+
+	testManifest := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json"}`)
+	testRepo := "library/test-model"
+	testRef := "latest"
+
+	var manifestPrivateParam string
+	var serverURL string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/blobs/uploads") {
+			w.Header().Set("Location", fmt.Sprintf("%s/v2/library/_/blobs/uploads/1", serverURL))
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/blobs/") {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/manifests/") {
+			manifestPrivateParam = r.URL.Query().Get("private")
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	err := Upload(context.Background(), UploadOptions{
+		Blobs:       []Blob{blob},
+		BaseURL:     server.URL,
+		SrcDir:      clientDir,
+		Manifest:    testManifest,
+		ManifestRef: testRef,
+		Repository:  testRepo,
+		Private:     true,
+	})
+	if err != nil {
+		t.Fatalf("Upload failed: %v", err)
+	}
+
+	if manifestPrivateParam != "1" {
+		t.Errorf("expected private=1 query param on manifest PUT, got %q", manifestPrivateParam)
+	}
+}
+
 // ==================== Throughput Benchmarks ====================
 
 func BenchmarkDownloadThroughput(b *testing.B) {

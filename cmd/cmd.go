@@ -840,6 +840,11 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	private, err := cmd.Flags().GetBool("private")
+	if err != nil {
+		return err
+	}
+
 	n := model.ParseName(args[0])
 	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
 		_, err := client.Whoami(cmd.Context())
@@ -897,7 +902,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PushRequest{Name: args[0], Insecure: insecure}
+	request := api.PushRequest{Name: args[0], Insecure: insecure, Private: private}
 
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
@@ -2263,6 +2268,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pushCmd.Flags().Bool("private", false, "Create the repository as private on the registry")
 
 	signinCmd := &cobra.Command{
 		Use:     "signin",

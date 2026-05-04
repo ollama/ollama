@@ -186,6 +186,21 @@ func TestPushSingle(t *testing.T) {
 	testutil.Check(t, err)
 }
 
+func TestPushPrivate(t *testing.T) {
+	var manifestPrivateParam string
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" && strings.Contains(r.URL.Path, "/manifests/") {
+			manifestPrivateParam = r.URL.Query().Get("private")
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	err := rc.Push(t.Context(), "single", &PushParams{Private: true})
+	testutil.Check(t, err)
+	if manifestPrivateParam != "1" {
+		t.Errorf("expected private=1 query param on manifest PUT, got %q", manifestPrivateParam)
+	}
+}
+
 func TestPushMultiple(t *testing.T) {
 	rc, _ := newClient(t, okHandler)
 	err := rc.Push(t.Context(), "multiple", nil)
