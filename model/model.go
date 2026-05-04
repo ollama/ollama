@@ -38,6 +38,7 @@ type Model interface {
 
 	Backend() ml.Backend
 	Config() config
+	SetCache(kvcache.Cache)
 }
 
 // Validator is an optional interface that models can implement to perform
@@ -102,6 +103,13 @@ func (m *Base) Backend() ml.Backend {
 
 func (m *Base) Config() config {
 	return m.config
+}
+
+// SetCache replaces the model's KV cache. Models that need to intercept cache
+// replacement (e.g. to wire per-layer K biases into TurboQuantCache) should
+// embed Base and override this method, calling m.Base.SetCache first.
+func (m *Base) SetCache(cache kvcache.Cache) {
+	m.config.Cache = cache
 }
 
 var models = make(map[string]func(fs.Config) (Model, error))

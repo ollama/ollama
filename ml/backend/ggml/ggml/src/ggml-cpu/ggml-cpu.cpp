@@ -426,7 +426,16 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
         }
     }
 
+    // TQ ops are CUDA-only; CPU has no implementation.
+    // Returning false here prevents the scheduler from routing them to CPU in pass 3.
     switch (op->op) {
+        case GGML_OP_TQ_ENCODE:
+        case GGML_OP_TQ_DEQUANT:
+        case GGML_OP_TQ_DEQUANT_KV:
+        case GGML_OP_TQ_FLASH_ATTN_EXT:
+        case GGML_OP_TQ_ENCODE_V:
+        case GGML_OP_TQ_ENCODE_KV:
+            return false;
         case GGML_OP_CPY:
         case GGML_OP_SET_ROWS:
             return

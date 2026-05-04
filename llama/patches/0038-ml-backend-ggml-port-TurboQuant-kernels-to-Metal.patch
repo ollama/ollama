@@ -1,0 +1,3631 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Verrilli <msv@pobox.com>
+Date: Mon, 4 May 2026 04:16:35 +0000
+Subject: [PATCH] ml/backend/ggml: port TurboQuant kernels to Metal
+
+Mirrors the CUDA TurboQuant ops on Apple Silicon. Adds Metal kernels for
+encode (with optional asymmetric per-sub-block mean and 32-channel
+outlier split), dequant, and fused flash attention. Covers head dims 64,
+128, and 256.
+
+The Metal kernels share the on-disk block format with CUDA so blocks
+written by one backend decode under the other unchanged.
+---
+ ggml/src/ggml-metal/ggml-metal-device.cpp |   22 +
+ ggml/src/ggml-metal/ggml-metal-device.h   |   13 +
+ ggml/src/ggml-metal/ggml-metal-device.m   |    7 +
+ ggml/src/ggml-metal/ggml-metal-impl.h     |   95 +
+ ggml/src/ggml-metal/ggml-metal-ops.cpp    |  670 +++++
+ ggml/src/ggml-metal/ggml-metal-ops.h      |    8 +
+ ggml/src/ggml-metal/ggml-metal.metal      | 2721 +++++++++++++++++++++
+ 7 files changed, 3536 insertions(+)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
+index 83385c9ef..60db77f22 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -1704,3 +1704,25 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_opt_step_sgd(ggm
+ 
+     return res;
+ }
++
++// TurboQuant pipeline getters — fixed-name kernels, no variants
++
++static struct ggml_metal_pipeline_with_params tq_get_pipeline(ggml_metal_library_t lib, const char * name) {
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, name, name, nullptr);
++    }
++    return res;
++}
++
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_dequant       (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_dequant");        }
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_dequant_outlier(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_dequant_outlier"); }
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_encode        (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_encode");          }
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_encode_v      (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_encode_v");        }
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_encode_outlier(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_encode_outlier");  }
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16         (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16");          }
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed      (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed");       }
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d64     (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_d64");      }
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d64  (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_d64");   }
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d256    (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_d256");     }
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d256 (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_d256");  }
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
+index 8a9d17460..8d60e5820 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -188,6 +188,19 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_att
+         int32_t dv,
+         int32_t nwg);
+ 
++// TurboQuant pipeline getters
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_dequant       (ggml_metal_library_t lib);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_dequant_outlier(ggml_metal_library_t lib);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_encode        (ggml_metal_library_t lib);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_encode_v      (ggml_metal_library_t lib);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_encode_outlier(ggml_metal_library_t lib);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16         (ggml_metal_library_t lib);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed      (ggml_metal_library_t lib);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d64     (ggml_metal_library_t lib);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d64  (ggml_metal_library_t lib);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d256    (ggml_metal_library_t lib);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d256 (ggml_metal_library_t lib);
++
+ // MTLResidencySet wrapper
+ 
+ typedef void * ggml_metal_rset_t;
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+index 11457f2b1..6c9fee204 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -1181,6 +1181,13 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+         case GGML_OP_OPT_STEP_ADAMW:
+         case GGML_OP_OPT_STEP_SGD:
+             return has_simdgroup_reduction;
++        case GGML_OP_TQ_ENCODE:
++        case GGML_OP_TQ_ENCODE_V:
++        case GGML_OP_TQ_ENCODE_KV:
++        case GGML_OP_TQ_DEQUANT:
++        case GGML_OP_TQ_DEQUANT_KV:
++        case GGML_OP_TQ_FLASH_ATTN_EXT:
++            return has_simdgroup_reduction;
+         default:
+             return false;
+     }
+diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
+index cfdea9c07..2c6b662fb 100644
+--- a/ggml/src/ggml-metal/ggml-metal-impl.h
++++ b/ggml/src/ggml-metal/ggml-metal-impl.h
+@@ -942,4 +942,99 @@ typedef struct {
+     int64_t  np;
+ } ggml_metal_kargs_opt_step_sgd;
+ 
++// TurboQuant (TQ) — dynamic KV-cache compression at inference time
++
++typedef struct {
++    int32_t headDim;
++    int32_t numKVHeads;
++    int32_t bits;
++    int32_t firstCell;
++    int32_t packed_bytes;  // (headDim * bits + 7) / 8
++    int32_t codebook_len;
++} ggml_metal_kargs_tq_dequant;
++
++typedef struct {
++    int32_t headDim;
++    int32_t numKVHeads;
++    int32_t bits;
++    int32_t firstCell;
++    int32_t reg_packed_bytes;  // padded: (reg_count * bits + 7) / 8, aligned to 4
++    int32_t outlier_bits;
++    int32_t outlier_count;
++    int32_t out_packed_bytes;  // padded: (outlierCount * outlierBits + 7) / 8, aligned to 4
++    int32_t asymmetric;        // 1 = subtract mean before quant, store zero
++    int32_t qjl_rows;          // 0 = no QJL residual sketch
++    int32_t qjl_packed_bytes;  // padded: (qjl_rows + 7) / 8, aligned to 4
++} ggml_metal_kargs_tq_dequant_outlier;
++
++typedef struct {
++    int32_t headDim;
++    int32_t numKVHeads;
++    int32_t k_bits;
++    int32_t v_bits;
++    int32_t firstCell;
++    int32_t k_packed_bytes;
++    int32_t v_packed_bytes;
++    int32_t k_codebook_len;
++    int32_t v_codebook_len;
++} ggml_metal_kargs_tq_dequant_kv;
++
++typedef struct {
++    int32_t headDim;
++    int32_t numKVHeads;
++    int32_t bits;
++    int32_t firstCell;
++    int32_t kIsF32;       // 1 = f32 input, 0 = f16
++    int32_t hasRotation;  // 1 = apply rotation matrix, 0 = skip
++    int32_t hasBias;      // 1 = K projection bias present in src[bias_slot]
++    int32_t hasCodebook;  // 1 = Lloyd-Max codebook provided, 0 = uniform quantization
++    int32_t asymmetric;   // 1 = compute mean, subtract before quant, write to zeros_out
++} ggml_metal_kargs_tq_encode;
++
++typedef struct {
++    int32_t headDim;
++    int32_t numKVHeads;
++    int32_t bits;
++    int32_t firstCell;
++    int32_t kIsF32;
++    int32_t outlierBits;
++    int32_t outlierCount;
++    int32_t asymmetric;        // 1 = subtract mean before quant, store zero
++    int32_t qjl_rows;          // 0 = no QJL residual sketch
++    int32_t qjl_packed_bytes;  // padded: (qjl_rows + 7) / 8, aligned to 4
++    int32_t hasBias;           // 1 = K projection bias present in src[15]
++} ggml_metal_kargs_tq_encode_outlier;
++
++typedef struct {
++    int32_t  ncols;       // 1 or 2 (nTokensQ == 1 ? 1 : 2)
++    int32_t  nTokensQ;
++    int32_t  nHeadsQ;
++    int32_t  nSeq;
++    int32_t  nCells;
++    int32_t  nKVHeads;
++    int32_t  bits;        // K bits
++    int32_t  firstCell;
++    int32_t  packedBytes; // K packed bytes per head
++    int32_t  v_bits;      // 0 when V is f16
++    int32_t  v_packedBytes;
++    int32_t  hasMask;     // 1 = mask buffer valid
++    int32_t  ne31;        // mask row width (= nCells)
++    float    scale;
++    float    logit_softcap;
++    uint64_t nb01; // Q stride: bytes between consecutive tokens
++    uint64_t nb02; // Q stride: bytes between consecutive heads
++    uint64_t nb03; // Q stride: bytes between consecutive sequences
++    uint64_t nb21; // V stride: bytes between cells  (f16 path only)
++    uint64_t nb22; // V stride: bytes between heads  (f16 path only)
++    uint64_t nb23; // V stride: bytes between seqs   (f16 path only)
++    uint64_t nb31; // mask stride: bytes between token rows
++    // *qa extension fields (asymmetric primary + outlier-split + QJL residual)
++    int32_t  asymmetric;          // 1 = asymmetric primary quantization
++    int32_t  qjl_rows;            // 0 = no QJL residual sketch
++    int32_t  qjl_packedBytes;     // padded: (qjl_rows + 7) / 8, aligned to 4
++    int32_t  outlierCount;        // 0 = no outlier-split
++    int32_t  outlierBits;         // bits per outlier index
++    int32_t  outlierPackedBytes;  // padded outlier packed bytes per cell-head
++} ggml_metal_kargs_tq_fattn_vec;
++
+ #endif // GGML_METAL_IMPL
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index ac5ad53db..fb8aa5062 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -452,6 +452,30 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
+             {
+                 n_fuse = ggml_metal_op_opt_step_sgd(ctx, idx);
+             } break;
++        case GGML_OP_TQ_ENCODE:
++            {
++                n_fuse = ggml_metal_op_tq_encode(ctx, idx);
++            } break;
++        case GGML_OP_TQ_ENCODE_V:
++            {
++                n_fuse = ggml_metal_op_tq_encode_v(ctx, idx);
++            } break;
++        case GGML_OP_TQ_ENCODE_KV:
++            {
++                n_fuse = ggml_metal_op_tq_encode_kv(ctx, idx);
++            } break;
++        case GGML_OP_TQ_DEQUANT:
++            {
++                n_fuse = ggml_metal_op_tq_dequant(ctx, idx);
++            } break;
++        case GGML_OP_TQ_DEQUANT_KV:
++            {
++                n_fuse = ggml_metal_op_tq_dequant_kv(ctx, idx);
++            } break;
++        case GGML_OP_TQ_FLASH_ATTN_EXT:
++            {
++                n_fuse = ggml_metal_op_tq_flash_attn_ext(ctx, idx);
++            } break;
+        default:
+             {
+                 GGML_LOG_ERROR("%s: error: node %3d, op = %8s not implemented\n", __func__, idx, ggml_op_name(node->op));
+@@ -4154,3 +4178,649 @@ int ggml_metal_op_opt_step_sgd(ggml_metal_op_t ctx, int idx) {
+ 
+     return 1;
+ }
++
++// ── TurboQuant Metal ops ───────────────────────────────────────────────────
++
++int ggml_metal_op_tq_dequant(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    const int headDim      = (int)op->ne[0];
++    const int numKVHeads   = (int)op->ne[1];
++    const int nCells       = (int)op->ne[2];
++    const int bits         = (int)((const int32_t *)op->op_params)[0];
++    const int firstCell    = (int)((const int32_t *)op->op_params)[1];
++    const int outlierBits  = (int)((const int32_t *)op->op_params)[2];
++    const int outlierCount = (int)((const int32_t *)op->op_params)[3];
++
++    ggml_metal_buffer_id bid_dst = ggml_metal_get_buffer_id(op);
++
++    // Outlier kernel uses a 128-thread TG: threadgroup barriers + atomics on
++    // s_mask require all threads. Non-outlier kernel uses a single simdgroup
++    // (32 threads): it only reads tiisg and has no barriers, so a larger TG
++    // just replicates work across idle simdgroups.
++    const int outlier_block_size    = 128;
++    const int nonoutlier_block_size = 32;
++
++    if (outlierCount > 0 && outlierBits > 0 && outlierCount < headDim) {
++        const int regular_count    = headDim - outlierCount;
++        const int reg_packed_raw   = (regular_count * bits + 7) / 8;
++        const int reg_packed_bytes = (reg_packed_raw + 3) & ~3;
++        const int out_packed_raw   = (outlierCount * outlierBits + 7) / 8;
++        const int out_packed_bytes = (out_packed_raw + 3) & ~3;
++
++        const int asymmetric = (int)((const int32_t *)op->op_params)[4];
++        const int qjlRows    = (int)((const int32_t *)op->op_params)[5];
++        const int qjl_packed_raw   = qjlRows > 0 ? (qjlRows + 7) / 8 : 0;
++        const int qjl_packed_bytes = qjlRows > 0 ? ((qjl_packed_raw + 3) & ~3) : 0;
++
++        ggml_metal_kargs_tq_dequant_outlier args = {
++            /*.headDim         =*/ headDim,
++            /*.numKVHeads      =*/ numKVHeads,
++            /*.bits            =*/ bits,
++            /*.firstCell       =*/ firstCell,
++            /*.reg_packed_bytes=*/ reg_packed_bytes,
++            /*.outlier_bits    =*/ outlierBits,
++            /*.outlier_count   =*/ outlierCount,
++            /*.out_packed_bytes=*/ out_packed_bytes,
++            /*.asymmetric      =*/ asymmetric,
++            /*.qjl_rows        =*/ qjlRows,
++            /*.qjl_packed_bytes=*/ qjl_packed_bytes,
++        };
++
++        auto pipeline = ggml_metal_library_get_pipeline_tq_dequant_outlier(lib);
++
++        const int mask_words = (headDim + 31) >> 5;
++        const size_t smem = GGML_PAD((size_t)headDim * sizeof(int8_t) + (size_t)mask_words * sizeof(uint32_t), 16);
++
++        ggml_metal_buffer_id bid_zeros          = op->src[7]  ? ggml_metal_get_buffer_id(op->src[7])  : bid_dst;
++        ggml_metal_buffer_id bid_outlier_zeros  = op->src[8]  ? ggml_metal_get_buffer_id(op->src[8])  : bid_dst;
++        ggml_metal_buffer_id bid_qjl_packed     = op->src[9]  ? ggml_metal_get_buffer_id(op->src[9])  : bid_dst;
++        ggml_metal_buffer_id bid_qjl_norm       = op->src[10] ? ggml_metal_get_buffer_id(op->src[10]) : bid_dst;
++        ggml_metal_buffer_id bid_qjl_projection = op->src[11] ? ggml_metal_get_buffer_id(op->src[11]) : bid_dst;
++
++        ggml_metal_encoder_set_pipeline(enc, pipeline);
++        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // reg packed
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2); // reg scales
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]), 3); // reg codebook
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4); // outlier packed
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5); // outlier scales
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), 6); // outlier indices
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]), 7); // outlier codebook
++        ggml_metal_encoder_set_buffer  (enc, bid_dst,                             8); // dst
++        ggml_metal_encoder_set_buffer  (enc, bid_zeros,                           9); // zeros (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_outlier_zeros,                  10); // outlier zeros (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_qjl_packed,                     11); // qjl packed (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_qjl_norm,                       12); // qjl norm (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_qjl_projection,                 13); // qjl projection (or dummy)
++
++        ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
++        ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, outlier_block_size, 1, 1);
++        return 1;
++    }
++
++    const int packed_bytes  = (headDim * bits + 7) / 8;
++    const int codebook_len  = (int)op->src[2]->ne[0];
++
++    ggml_metal_kargs_tq_dequant args = {
++        /*.headDim      =*/ headDim,
++        /*.numKVHeads   =*/ numKVHeads,
++        /*.bits         =*/ bits,
++        /*.firstCell    =*/ firstCell,
++        /*.packed_bytes =*/ packed_bytes,
++        /*.codebook_len =*/ codebook_len,
++    };
++
++    auto pipeline = ggml_metal_library_get_pipeline_tq_dequant(lib);
++
++    ggml_metal_encoder_set_pipeline(enc, pipeline);
++    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // packed
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2); // scales
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]), 3); // codebook
++    ggml_metal_encoder_set_buffer  (enc, bid_dst, 4);
++
++    ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, nonoutlier_block_size, 1, 1);
++    return 1;
++}
++
++int ggml_metal_op_tq_dequant_kv(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    const int headDim    = (int)op->ne[0];
++    const int numKVHeads = (int)op->ne[1];
++    const int nCells     = (int)op->ne[2];
++
++    int32_t k_bits, v_bits, firstCell, outlier_bits, outlier_count;
++    memcpy(&k_bits,        (const int32_t *)op->op_params + 0, sizeof(int32_t));
++    memcpy(&v_bits,        (const int32_t *)op->op_params + 1, sizeof(int32_t));
++    memcpy(&firstCell,     (const int32_t *)op->op_params + 2, sizeof(int32_t));
++    memcpy(&outlier_bits,  (const int32_t *)op->op_params + 3, sizeof(int32_t));
++    memcpy(&outlier_count, (const int32_t *)op->op_params + 4, sizeof(int32_t));
++
++    const int v_packed_bytes = (headDim * v_bits + 7) / 8;
++    const int v_codebook_len = (int)op->src[5]->ne[0];
++
++    const int simple_block_size  = 32;
++    const int outlier_block_size = 128;
++    const size_t plane_size = (size_t)headDim * numKVHeads * nCells;
++
++    ggml_metal_buffer_id bid_dst = ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_dst_v = bid_dst;
++    bid_dst_v.offs += plane_size * sizeof(uint16_t);
++
++    // K dequant → first plane.
++    const bool k_has_outliers = (op->src[7] != nullptr) && outlier_count > 0
++                                && outlier_bits > 0 && outlier_count < headDim;
++    if (k_has_outliers) {
++        const int regular_count    = headDim - outlier_count;
++        const int reg_packed_raw   = (regular_count * k_bits + 7) / 8;
++        const int reg_packed_bytes = (reg_packed_raw + 3) & ~3;
++        const int out_packed_raw   = (outlier_count * outlier_bits + 7) / 8;
++        const int out_packed_bytes = (out_packed_raw + 3) & ~3;
++        const int asymmetric       = (op->src[11] != nullptr) ? 1 : 0;
++
++        ggml_metal_kargs_tq_dequant_outlier args_k = {
++            /*.headDim         =*/ headDim,
++            /*.numKVHeads      =*/ numKVHeads,
++            /*.bits            =*/ k_bits,
++            /*.firstCell       =*/ firstCell,
++            /*.reg_packed_bytes=*/ reg_packed_bytes,
++            /*.outlier_bits    =*/ outlier_bits,
++            /*.outlier_count   =*/ outlier_count,
++            /*.out_packed_bytes=*/ out_packed_bytes,
++            /*.asymmetric      =*/ asymmetric,
++            /*.qjl_rows        =*/ 0,
++            /*.qjl_packed_bytes=*/ 0,
++        };
++
++        auto pipeline_outl = ggml_metal_library_get_pipeline_tq_dequant_outlier(lib);
++
++        const int mask_words = (headDim + 31) >> 5;
++        const size_t smem = GGML_PAD((size_t)headDim * sizeof(int8_t) + (size_t)mask_words * sizeof(uint32_t), 16);
++
++        ggml_metal_buffer_id bid_zeros         = op->src[11] ? ggml_metal_get_buffer_id(op->src[11]) : bid_dst;
++        ggml_metal_buffer_id bid_outlier_zeros = op->src[12] ? ggml_metal_get_buffer_id(op->src[12]) : bid_dst;
++
++        ggml_metal_encoder_set_pipeline(enc, pipeline_outl);
++        ggml_metal_encoder_set_bytes   (enc, &args_k, sizeof(args_k), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]),  1); // reg packed
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]),  2); // reg scales
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]),  3); // reg codebook
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[7]),  4); // outlier packed
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[8]),  5); // outlier scales
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[9]),  6); // outlier indices
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[10]), 7); // outlier codebook
++        ggml_metal_encoder_set_buffer  (enc, bid_dst,                                8); // dst (K plane)
++        ggml_metal_encoder_set_buffer  (enc, bid_zeros,                              9);
++        ggml_metal_encoder_set_buffer  (enc, bid_outlier_zeros,                     10);
++        ggml_metal_encoder_set_buffer  (enc, bid_dst,                               11); // qjl packed (unused)
++        ggml_metal_encoder_set_buffer  (enc, bid_dst,                               12); // qjl norm (unused)
++        ggml_metal_encoder_set_buffer  (enc, bid_dst,                               13); // qjl projection (unused)
++        ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
++        ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, outlier_block_size, 1, 1);
++    } else {
++        const int k_packed_bytes = (headDim * k_bits + 7) / 8;
++        const int k_codebook_len = (int)op->src[2]->ne[0];
++        ggml_metal_kargs_tq_dequant args_k = {
++            /*.headDim      =*/ headDim,
++            /*.numKVHeads   =*/ numKVHeads,
++            /*.bits         =*/ k_bits,
++            /*.firstCell    =*/ firstCell,
++            /*.packed_bytes =*/ k_packed_bytes,
++            /*.codebook_len =*/ k_codebook_len,
++        };
++        auto pipeline = ggml_metal_library_get_pipeline_tq_dequant(lib);
++        ggml_metal_encoder_set_pipeline(enc, pipeline);
++        ggml_metal_encoder_set_bytes   (enc, &args_k, sizeof(args_k), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]), 3);
++        ggml_metal_encoder_set_buffer  (enc, bid_dst, 4);
++        ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, simple_block_size, 1, 1);
++    }
++
++    // V dequant → second plane (V is symmetric, no outliers, plain dequant).
++    {
++        ggml_metal_kargs_tq_dequant args_v = {
++            /*.headDim      =*/ headDim,
++            /*.numKVHeads   =*/ numKVHeads,
++            /*.bits         =*/ v_bits,
++            /*.firstCell    =*/ firstCell,
++            /*.packed_bytes =*/ v_packed_bytes,
++            /*.codebook_len =*/ v_codebook_len,
++        };
++        auto pipeline_v = ggml_metal_library_get_pipeline_tq_dequant(lib);
++        ggml_metal_encoder_set_pipeline(enc, pipeline_v);
++        ggml_metal_encoder_set_bytes   (enc, &args_v, sizeof(args_v), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 1);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 2);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), 3);
++        ggml_metal_encoder_set_buffer  (enc, bid_dst_v, 4);
++        ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, simple_block_size, 1, 1);
++    }
++
++    return 1;
++}
++
++static int tq_encode_block_size(int headDim) {
++    int bs = 1;
++    int target = std::min(headDim, 128);
++    while (bs < target) bs <<= 1;
++    return bs;
++}
++
++int ggml_metal_op_tq_encode(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    const int headDim    = (int)op->src[0]->ne[0];
++    const int numKVHeads = (int)op->src[0]->ne[1];
++    const int batchSize  = (int)op->src[0]->ne[2];
++    const int bits         = (int)((const int32_t *)op->op_params)[0];
++    const int firstCell    = (int)((const int32_t *)op->op_params)[1];
++    const int outlierBits  = (int)((const int32_t *)op->op_params)[2];
++    const int outlierCount = (int)((const int32_t *)op->op_params)[3];
++    const int kIsF32 = (op->src[0]->type == GGML_TYPE_F32) ? 1 : 0;
++
++    const int block_size = tq_encode_block_size(headDim);
++
++    if (outlierCount > 0 && outlierBits > 0 && outlierCount < headDim) {
++        const int asymmetric = (int)((const int32_t *)op->op_params)[4];
++        const int qjlRows    = (int)((const int32_t *)op->op_params)[5];
++        const int qjl_packed_raw   = qjlRows > 0 ? (qjlRows + 7) / 8 : 0;
++        const int qjl_packed_bytes = qjlRows > 0 ? ((qjl_packed_raw + 3) & ~3) : 0;
++        const int hasBias_outl = (op->src[15] != nullptr) ? 1 : 0;
++
++        ggml_metal_kargs_tq_encode_outlier args = {
++            /*.headDim        =*/ headDim,
++            /*.numKVHeads     =*/ numKVHeads,
++            /*.bits           =*/ bits,
++            /*.firstCell      =*/ firstCell,
++            /*.kIsF32         =*/ kIsF32,
++            /*.outlierBits    =*/ outlierBits,
++            /*.outlierCount   =*/ outlierCount,
++            /*.asymmetric     =*/ asymmetric,
++            /*.qjl_rows       =*/ qjlRows,
++            /*.qjl_packed_bytes=*/ qjl_packed_bytes,
++            /*.hasBias        =*/ hasBias_outl,
++        };
++
++        auto pipeline = ggml_metal_library_get_pipeline_tq_encode_outlier(lib);
++
++        // Canonical src layout (ggml.c ggml_tq_encode_outlier):
++        //   src[2]=zeros, src[9]=outlier_zeros, src[10]=qjl_packed, src[11]=qjl_norm,
++        //   src[12]=qjl_projection, src[13]=codebook, src[14]=outlier_codebook, src[15]=k_bias
++        ggml_metal_buffer_id bid_zeros            = op->src[2]  ? ggml_metal_get_buffer_id(op->src[2])  : ggml_metal_get_buffer_id(op);
++        ggml_metal_buffer_id bid_outlier_zeros    = op->src[9]  ? ggml_metal_get_buffer_id(op->src[9])  : ggml_metal_get_buffer_id(op);
++        ggml_metal_buffer_id bid_qjl_packed       = op->src[10] ? ggml_metal_get_buffer_id(op->src[10]) : ggml_metal_get_buffer_id(op);
++        ggml_metal_buffer_id bid_qjl_norm         = op->src[11] ? ggml_metal_get_buffer_id(op->src[11]) : ggml_metal_get_buffer_id(op);
++        ggml_metal_buffer_id bid_qjl_projection   = op->src[12] ? ggml_metal_get_buffer_id(op->src[12]) : ggml_metal_get_buffer_id(op);
++        ggml_metal_buffer_id bid_codebook         = op->src[13] ? ggml_metal_get_buffer_id(op->src[13]) : ggml_metal_get_buffer_id(op);
++        ggml_metal_buffer_id bid_outlier_codebook = op->src[14] ? ggml_metal_get_buffer_id(op->src[14]) : ggml_metal_get_buffer_id(op);
++        ggml_metal_buffer_id bid_k_bias_outl      = op->src[15] ? ggml_metal_get_buffer_id(op->src[15]) : ggml_metal_get_buffer_id(op);
++
++        ggml_metal_encoder_set_pipeline(enc, pipeline);
++        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // k
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2); // rotation
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3); // packed_out (dst)
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4); // scales
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5); // boundaries
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), 6); // outlier_packed
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]), 7); // outlier_scales
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[7]), 8); // outlier_indices
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[8]), 9); // outlier_boundaries
++        ggml_metal_encoder_set_buffer  (enc, bid_zeros,                           10); // zeros (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_outlier_zeros,                   11); // outlier zeros (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_qjl_packed,                      12); // qjl packed (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_qjl_norm,                        13); // qjl norm (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_qjl_projection,                  14); // qjl projection (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_codebook,                        15); // codebook (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_outlier_codebook,                16); // outlier codebook (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_k_bias_outl,                     17); // k_bias (or dummy)
++
++        ggml_metal_encoder_dispatch_threadgroups(enc, batchSize, numKVHeads, 1, block_size, 1, 1);
++        return 1;
++    }
++
++    const int hasRotation  = (op->src[1] != nullptr) ? 1 : 0;
++    const int asymmetric   = (int)((const int32_t *)op->op_params)[4]; // zeros != NULL
++    const int hasBias      = (op->src[5] != nullptr) ? 1 : 0;
++    const int hasCodebook  = (op->src[6] != nullptr) ? 1 : 0;
++
++    ggml_metal_kargs_tq_encode args = {
++        /*.headDim     =*/ headDim,
++        /*.numKVHeads  =*/ numKVHeads,
++        /*.bits        =*/ bits,
++        /*.firstCell   =*/ firstCell,
++        /*.kIsF32      =*/ kIsF32,
++        /*.hasRotation =*/ hasRotation,
++        /*.hasBias     =*/ hasBias,
++        /*.hasCodebook =*/ hasCodebook,
++        /*.asymmetric  =*/ asymmetric,
++    };
++
++    auto pipeline = ggml_metal_library_get_pipeline_tq_encode(lib);
++
++    ggml_metal_buffer_id bid_rot      = hasRotation
++        ? ggml_metal_get_buffer_id(op->src[1])
++        : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_k_bias   = hasBias
++        ? ggml_metal_get_buffer_id(op->src[5])
++        : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_codebook = hasCodebook
++        ? ggml_metal_get_buffer_id(op->src[6])
++        : ggml_metal_get_buffer_id(op);
++    // src[2] = zeros output tensor (non-null when asymmetric)
++    ggml_metal_buffer_id bid_zeros    = op->src[2]
++        ? ggml_metal_get_buffer_id(op->src[2])
++        : ggml_metal_get_buffer_id(op);
++
++    ggml_metal_encoder_set_pipeline(enc, pipeline);
++    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // k
++    ggml_metal_encoder_set_buffer  (enc, bid_rot,       2); // rotation (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3); // packed_out (dst)
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4); // scales
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5); // boundaries
++    ggml_metal_encoder_set_buffer  (enc, bid_k_bias,    6); // k_bias (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, bid_codebook,  7); // codebook (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, bid_zeros,     8); // zeros_out (or dummy)
++
++    ggml_metal_encoder_dispatch_threadgroups(enc, batchSize, numKVHeads, 1, block_size, 1, 1);
++    return 1;
++}
++
++int ggml_metal_op_tq_encode_v(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    const int headDim    = (int)op->src[0]->ne[0];
++    const int numKVHeads = (int)op->src[0]->ne[1];
++    const int batchSize  = (int)op->src[0]->ne[2];
++    const int bits       = (int)((const int32_t *)op->op_params)[0];
++    const int firstCell  = (int)((const int32_t *)op->op_params)[1];
++    const int vIsF32      = (op->src[0]->type == GGML_TYPE_F32) ? 1 : 0;
++    const int hasRotation = (op->src[1] != nullptr) ? 1 : 0;
++    const int hasCodebook = (op->src[5] != nullptr) ? 1 : 0; // src[5]=codebook for V
++
++    const int block_size = tq_encode_block_size(headDim);
++
++    ggml_metal_kargs_tq_encode args = {
++        /*.headDim     =*/ headDim,
++        /*.numKVHeads  =*/ numKVHeads,
++        /*.bits        =*/ bits,
++        /*.firstCell   =*/ firstCell,
++        /*.kIsF32      =*/ vIsF32,
++        /*.hasRotation =*/ hasRotation,
++        /*.hasBias     =*/ 0,
++        /*.hasCodebook =*/ hasCodebook,
++        /*.asymmetric  =*/ 0, // V encode is always symmetric
++    };
++
++    auto pipeline = ggml_metal_library_get_pipeline_tq_encode_v(lib);
++
++    ggml_metal_buffer_id bid_rot      = hasRotation
++        ? ggml_metal_get_buffer_id(op->src[1])
++        : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_codebook = hasCodebook
++        ? ggml_metal_get_buffer_id(op->src[5])
++        : ggml_metal_get_buffer_id(op);
++
++    ggml_metal_encoder_set_pipeline(enc, pipeline);
++    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // v
++    ggml_metal_encoder_set_buffer  (enc, bid_rot,      2); // rotation (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3); // packed_out (dst)
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4); // scales
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5); // boundaries
++    ggml_metal_encoder_set_buffer  (enc, bid_codebook, 6); // codebook (or dummy)
++
++    ggml_metal_encoder_dispatch_threadgroups(enc, batchSize, numKVHeads, 1, block_size, 1, 1);
++    return 1;
++}
++
++int ggml_metal_op_tq_encode_kv(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    // src layout: [0]=K, [1]=rotation, [2]=V, [3]=K_scales, [4]=K_bounds,
++    //             [5]=V_packed, [6]=V_scales, [7]=V_bounds
++    const int headDim    = (int)op->src[0]->ne[0];
++    const int numKVHeads = (int)op->src[0]->ne[1];
++    const int batchSize  = (int)op->src[0]->ne[2];
++    const int kIsF32     = (op->src[0]->type == GGML_TYPE_F32) ? 1 : 0;
++    const int vIsF32     = (op->src[2]->type == GGML_TYPE_F32) ? 1 : 0;
++    const int hasRotation = (op->src[1] != nullptr) ? 1 : 0;
++
++    int32_t k_bits, v_bits, firstCell;
++    memcpy(&k_bits,    (const int32_t *)op->op_params + 0, sizeof(int32_t));
++    memcpy(&v_bits,    (const int32_t *)op->op_params + 1, sizeof(int32_t));
++    memcpy(&firstCell, (const int32_t *)op->op_params + 2, sizeof(int32_t));
++
++    const int block_size = tq_encode_block_size(headDim);
++
++    ggml_metal_buffer_id bid_rot = hasRotation
++        ? ggml_metal_get_buffer_id(op->src[1])
++        : ggml_metal_get_buffer_id(op);
++
++    // K encode: src[8]=k_bias, src[9]=k_codebook
++    {
++        const int hasBias_k     = (op->src[8] != nullptr) ? 1 : 0;
++        const int hasCodebook_k = (op->src[9] != nullptr) ? 1 : 0;
++        ggml_metal_kargs_tq_encode args_k = {
++            /*.headDim     =*/ headDim,
++            /*.numKVHeads  =*/ numKVHeads,
++            /*.bits        =*/ k_bits,
++            /*.firstCell   =*/ firstCell,
++            /*.kIsF32      =*/ kIsF32,
++            /*.hasRotation =*/ hasRotation,
++            /*.hasBias     =*/ hasBias_k,
++            /*.hasCodebook =*/ hasCodebook_k,
++            /*.asymmetric  =*/ 0, // KV path never asymmetric (Go routes to separate K+V)
++        };
++        ggml_metal_buffer_id bid_k_bias   = hasBias_k
++            ? ggml_metal_get_buffer_id(op->src[8])
++            : ggml_metal_get_buffer_id(op);
++        ggml_metal_buffer_id bid_k_codebook = hasCodebook_k
++            ? ggml_metal_get_buffer_id(op->src[9])
++            : ggml_metal_get_buffer_id(op);
++        auto pipeline_k = ggml_metal_library_get_pipeline_tq_encode(lib);
++        ggml_metal_encoder_set_pipeline(enc, pipeline_k);
++        ggml_metal_encoder_set_bytes   (enc, &args_k, sizeof(args_k), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // K
++        ggml_metal_encoder_set_buffer  (enc, bid_rot,        2); // rotation (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3); // dst = K packed
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4); // K scales
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5); // K bounds
++        ggml_metal_encoder_set_buffer  (enc, bid_k_bias,     6); // k_bias (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, bid_k_codebook, 7); // k_codebook (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 8); // zeros_out (dummy — KV path is always symmetric)
++        ggml_metal_encoder_dispatch_threadgroups(enc, batchSize, numKVHeads, 1, block_size, 1, 1);
++    }
++
++    // V encode: src[10]=v_codebook
++    {
++        const int hasCodebook_v = (op->src[10] != nullptr) ? 1 : 0;
++        ggml_metal_kargs_tq_encode args_v = {
++            /*.headDim     =*/ headDim,
++            /*.numKVHeads  =*/ numKVHeads,
++            /*.bits        =*/ v_bits,
++            /*.firstCell   =*/ firstCell,
++            /*.kIsF32      =*/ vIsF32,
++            /*.hasRotation =*/ hasRotation,
++            /*.hasBias     =*/ 0,
++            /*.hasCodebook =*/ hasCodebook_v,
++        };
++        ggml_metal_buffer_id bid_v_codebook = hasCodebook_v
++            ? ggml_metal_get_buffer_id(op->src[10])
++            : ggml_metal_get_buffer_id(op);
++        auto pipeline_v = ggml_metal_library_get_pipeline_tq_encode_v(lib);
++        ggml_metal_encoder_set_pipeline(enc, pipeline_v);
++        ggml_metal_encoder_set_bytes   (enc, &args_v, sizeof(args_v), 0);
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]), 1); // V
++        ggml_metal_encoder_set_buffer  (enc, bid_rot,        2); // rotation (or dummy)
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), 3); // V packed
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]), 4); // V scales
++        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[7]), 5); // V bounds
++        ggml_metal_encoder_set_buffer  (enc, bid_v_codebook, 6); // v_codebook (or dummy)
++        ggml_metal_encoder_dispatch_threadgroups(enc, batchSize, numKVHeads, 1, block_size, 1, 1);
++    }
++
++    return 1;
++}
++
++int ggml_metal_op_tq_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    const ggml_tensor * Q    = op->src[0];
++    const ggml_tensor * K_p  = op->src[1];
++    const ggml_tensor * V    = op->src[2];
++    const ggml_tensor * mask = op->src[3];
++    // src[4]=K_scales, src[5]=K_codebook, src[6]=V_scales (NULL for K-only), src[7]=V_codebook
++    const bool v_packed = (op->src[6] != nullptr);
++
++    float scale;
++    float logit_softcap;
++    int32_t bits;
++    int32_t firstCell;
++    int32_t v_bits;
++    int32_t qjl_rows;
++    int32_t asymmetric;
++    int32_t outlier_bits;
++    int32_t outlier_count;
++    int32_t outlier_packed_bytes;
++    memcpy(&scale,               (const float   *)op->op_params + 0, sizeof(float));
++    memcpy(&logit_softcap,       (const float   *)op->op_params + 1, sizeof(float));
++    memcpy(&bits,                (const int32_t *)op->op_params + 2, sizeof(int32_t));
++    memcpy(&firstCell,           (const int32_t *)op->op_params + 3, sizeof(int32_t));
++    memcpy(&v_bits,              (const int32_t *)op->op_params + 4, sizeof(int32_t));
++    memcpy(&qjl_rows,            (const int32_t *)op->op_params + 5, sizeof(int32_t));
++    memcpy(&asymmetric,          (const int32_t *)op->op_params + 6, sizeof(int32_t));
++    memcpy(&outlier_bits,        (const int32_t *)op->op_params + 7, sizeof(int32_t));
++    memcpy(&outlier_count,       (const int32_t *)op->op_params + 8, sizeof(int32_t));
++    memcpy(&outlier_packed_bytes,(const int32_t *)op->op_params + 9, sizeof(int32_t));
++
++    if (logit_softcap != 0.0f) { scale /= logit_softcap; }
++
++    const int D        = (int)Q->ne[0];
++    const int nTokensQ = (int)Q->ne[1];
++    const int nHeadsQ  = (int)Q->ne[2];
++    const int nSeq     = (int)Q->ne[3];
++
++    const int packedBytes   = (D * bits + 7) / 8;
++    const int v_packedBytes = v_packed ? ((D * v_bits + 7) / 8) : 0;
++    const int nKVHeads      = v_packed ? ((int)V->ne[0] / v_packedBytes) : (int)V->ne[2];
++
++    int nCells;
++    if (v_packed) {
++        GGML_ASSERT(mask != nullptr);
++        nCells = (int)mask->ne[0];
++    } else {
++        nCells = (int)V->ne[1];
++    }
++
++    const int ncols    = (nTokensQ == 1) ? 1 : 2;
++    const int ntiles_x = (nTokensQ + ncols - 1) / ncols;
++    const int hasMask  = mask ? 1 : 0;
++    const int ne31     = mask ? (int)mask->ne[0] : 0;
++
++    // *qa extension: QJL packed bytes per head (4-byte aligned).
++    const int qjl_packed_raw   = qjl_rows > 0 ? (qjl_rows + 7) / 8 : 0;
++    const int qjl_packed_bytes = qjl_rows > 0 ? ((qjl_packed_raw + 3) & ~3) : 0;
++
++    ggml_metal_kargs_tq_fattn_vec args = {
++        /*.ncols             =*/ ncols,
++        /*.nTokensQ          =*/ nTokensQ,
++        /*.nHeadsQ           =*/ nHeadsQ,
++        /*.nSeq              =*/ nSeq,
++        /*.nCells            =*/ nCells,
++        /*.nKVHeads          =*/ nKVHeads,
++        /*.bits              =*/ bits,
++        /*.firstCell         =*/ firstCell,
++        /*.packedBytes       =*/ packedBytes,
++        /*.v_bits            =*/ v_bits,
++        /*.v_packedBytes     =*/ v_packedBytes,
++        /*.hasMask           =*/ hasMask,
++        /*.ne31              =*/ ne31,
++        /*.scale             =*/ scale,
++        /*.logit_softcap     =*/ logit_softcap,
++        /*.nb01              =*/ Q->nb[1],
++        /*.nb02              =*/ Q->nb[2],
++        /*.nb03              =*/ Q->nb[3],
++        /*.nb21              =*/ V->nb[1],
++        /*.nb22              =*/ V->nb[2],
++        /*.nb23              =*/ V->nb[3],
++        /*.nb31              =*/ mask ? mask->nb[1] : 0,
++        /*.asymmetric        =*/ asymmetric,
++        /*.qjl_rows          =*/ qjl_rows,
++        /*.qjl_packedBytes   =*/ qjl_packed_bytes,
++        /*.outlierCount      =*/ outlier_count,
++        /*.outlierBits       =*/ outlier_bits,
++        /*.outlierPackedBytes=*/ outlier_packed_bytes,
++    };
++
++    // Select pipeline by D. Supported: 64 (llama3.2:3b), 128 (llama3.1/qwen), 256 (gemma3).
++    GGML_ASSERT(D == 64 || D == 128 || D == 256);
++    auto pipeline = v_packed
++        ? (D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d256(lib)
++         : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d64(lib)
++                    : ggml_metal_library_get_pipeline_tq_fattn_vec_packed(lib))
++        : (D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d256(lib)
++         : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d64(lib)
++                    : ggml_metal_library_get_pipeline_tq_fattn_vec_f16(lib));
++
++    ggml_metal_buffer_id bid_mask            = hasMask       ? ggml_metal_get_buffer_id(mask)        : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_v_scales        = v_packed      ? ggml_metal_get_buffer_id(op->src[6])  : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_v_codebook      = v_packed      ? ggml_metal_get_buffer_id(op->src[7])  : ggml_metal_get_buffer_id(op);
++    // *qa buffers: src[8]=zeros, src[9]=qjl_packed, src[10]=qjl_norm, src[11]=qjl_projection,
++    //              src[12]=outlier_packed, src[13]=outlier_scales, src[14]=outlier_indices, src[15]=outlier_zeros
++    ggml_metal_buffer_id bid_zeros           = op->src[8]  ? ggml_metal_get_buffer_id(op->src[8])  : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_qjl_packed      = op->src[9]  ? ggml_metal_get_buffer_id(op->src[9])  : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_qjl_norm        = op->src[10] ? ggml_metal_get_buffer_id(op->src[10]) : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_qjl_projection  = op->src[11] ? ggml_metal_get_buffer_id(op->src[11]) : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_outl_packed     = op->src[12] ? ggml_metal_get_buffer_id(op->src[12]) : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_outl_scales     = op->src[13] ? ggml_metal_get_buffer_id(op->src[13]) : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_outl_indices    = op->src[14] ? ggml_metal_get_buffer_id(op->src[14]) : ggml_metal_get_buffer_id(op);
++    ggml_metal_buffer_id bid_outl_zeros      = op->src[15] ? ggml_metal_get_buffer_id(op->src[15]) : ggml_metal_get_buffer_id(op);
++
++    ggml_metal_encoder_set_pipeline(enc, pipeline);
++    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(Q),          1);  // Q
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(K_p),        2);  // K packed (regular channels)
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(V),          3);  // V (f16 or packed i8)
++    ggml_metal_encoder_set_buffer  (enc, bid_mask,                             4);  // mask
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5);  // K scales
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), 6);  // K codebook
++    ggml_metal_encoder_set_buffer  (enc, bid_v_scales,                         7);  // V scales (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, bid_v_codebook,                       8);  // V codebook (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         9);  // dst
++    ggml_metal_encoder_set_buffer  (enc, bid_zeros,                            10); // zeros (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, bid_qjl_packed,                       11); // qjl packed (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, bid_qjl_norm,                         12); // qjl norm (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, bid_qjl_projection,                   13); // qjl projection (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, bid_outl_packed,                      14); // outlier packed (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, bid_outl_scales,                      15); // outlier scales (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, bid_outl_indices,                     16); // outlier indices (or dummy)
++    ggml_metal_encoder_set_buffer  (enc, bid_outl_zeros,                       17); // outlier zeros (or dummy)
++
++    // Block: (32, 4, 1) = 128 threads; Grid: (ntiles_x, 1, nHeadsQ*nSeq)
++    ggml_metal_encoder_dispatch_threadgroups(enc, ntiles_x, 1, nHeadsQ * nSeq, 32, 4, 1);
++    return 1;
++}
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.h b/ggml/src/ggml-metal/ggml-metal-ops.h
+index a475183d3..90a3e76c5 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.h
++++ b/ggml/src/ggml-metal/ggml-metal-ops.h
+@@ -89,6 +89,14 @@ int ggml_metal_op_tri               (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_opt_step_adamw    (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_opt_step_sgd      (ggml_metal_op_t ctx, int idx);
+ 
++// TurboQuant ops
++int ggml_metal_op_tq_encode         (ggml_metal_op_t ctx, int idx);
++int ggml_metal_op_tq_encode_v       (ggml_metal_op_t ctx, int idx);
++int ggml_metal_op_tq_encode_kv      (ggml_metal_op_t ctx, int idx);
++int ggml_metal_op_tq_dequant        (ggml_metal_op_t ctx, int idx);
++int ggml_metal_op_tq_dequant_kv     (ggml_metal_op_t ctx, int idx);
++int ggml_metal_op_tq_flash_attn_ext (ggml_metal_op_t ctx, int idx);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
+index 398c80717..ca085bc2e 100644
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -10216,3 +10216,2724 @@ kernel void kernel_opt_step_sgd_f32(
+ 
+     x[gid] = x[gid] * (1.0f - pars[0] * pars[1]) - pars[0] * g[gid];
+ }
++
++// ─────────────────────────────────────────────────────────────────────────────
++// TurboQuant kernels
++// ─────────────────────────────────────────────────────────────────────────────
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_dequant
++// Grid:  (nCells, numKVHeads, 1)
++// Block: (headDim, 1, 1) capped at 128
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_dequant(
++    constant   ggml_metal_kargs_tq_dequant & args,
++    device const uint8_t * packed     [[buffer(1)]],
++    device const float   * scales     [[buffer(2)]],
++    device const float   * codebook   [[buffer(3)]],
++    device       uint16_t* output     [[buffer(4)]],
++    uint3 tgpig [[threadgroup_position_in_grid]],
++    uint  tiisg [[thread_index_in_simdgroup]])
++{
++    const int c    = (int)tgpig.x;  // cell index in [0, nCells)
++    const int h    = (int)tgpig.y;  // head index
++    const int cell = args.firstCell + c;
++    const int slot = cell * args.numKVHeads + h;
++
++    const float scale = scales[slot];
++    device const uint8_t * cell_packed = packed + (long)slot * args.packed_bytes;
++    device       half    * cell_out    = (device half *)(output + ((long)c * args.numKVHeads + h) * args.headDim);
++
++    const int cb_mask = (1 << args.bits) - 1;
++    // Load one codebook entry per lane; period ≤ 8 divides 32, so simd_shuffle is exact.
++    // Pre-multiply by the per-cell scale so the decode path drops 1 fmul per element.
++    const float scaled_cb_lane = codebook[tiisg & cb_mask] * scale;
++
++    // Fast path: when headDim is a multiple of 128 (=32 lanes × 4 elements per thread),
++    // each thread decodes 4 consecutive D-positions per iter and writes a single half4.
++    //   bits=2: 4 elems = 8 bits, always byte-aligned (shift0=0 since elem_base mod 4 == 0).
++    //   bits=3: 4 elems = 12 bits, shift0 ∈ {0,4}, fits in a 16-bit window.
++    //   bits=4: 4 elems = 16 bits, shift0 = 0, fits in a 16-bit window.
++    // A 16-bit window (2 packed bytes) suffices for bits ≥ 3. The scalar
++    // fallback covers non-multiple-of-128 head dims.
++    if ((args.headDim & 127) == 0) {
++        const int iters = args.headDim >> 7;
++        for (int iter = 0; iter < iters; iter++) {
++            const int elem_base   = iter * 128 + (int)tiisg * 4;
++            const int bit_offset  = elem_base * args.bits;
++            const int byte_base   = bit_offset >> 3;
++            const int shift0      = bit_offset & 7;
++
++            uint w = (uint)cell_packed[byte_base];
++            if (args.bits >= 3) {
++                w |= ((uint)cell_packed[byte_base + 1] << 8);
++            }
++
++            half4 v4;
++            v4[0] = half(simd_shuffle(scaled_cb_lane, (ushort)((w >>  shift0                 ) & cb_mask)));
++            v4[1] = half(simd_shuffle(scaled_cb_lane, (ushort)((w >> (shift0 +     args.bits)) & cb_mask)));
++            v4[2] = half(simd_shuffle(scaled_cb_lane, (ushort)((w >> (shift0 + 2 * args.bits)) & cb_mask)));
++            v4[3] = half(simd_shuffle(scaled_cb_lane, (ushort)((w >> (shift0 + 3 * args.bits)) & cb_mask)));
++
++            *((device half4 *)(cell_out + elem_base)) = v4;
++        }
++        return;
++    }
++
++    // Scalar fallback for head dims that aren't a multiple of 128.
++    for (uint elem = tiisg; elem < (uint)args.headDim; elem += 32) {
++        const int bit_offset = (int)elem * args.bits;
++        const int byte_idx   = bit_offset >> 3;
++        const int shift      = bit_offset & 7;
++        int idx = ((int)(cell_packed[byte_idx] >> shift)) & cb_mask;
++        if (shift + args.bits > 8) {
++            idx |= ((int)(cell_packed[byte_idx + 1] << (8 - shift))) & cb_mask;
++        }
++        cell_out[elem] = half(simd_shuffle(scaled_cb_lane, (ushort)idx));
++    }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_dequant_outlier
++// Grid:  (nCells, numKVHeads, 1)
++// Block: (128, 1, 1)
++// Threadgroup memory: s_outl_slot[headDim] (int8) + s_mask[ceil(headDim/32)] (uint)
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_dequant_outlier(
++    constant   ggml_metal_kargs_tq_dequant_outlier & args,
++    device const uint8_t * reg_packed    [[buffer(1)]],
++    device const float   * reg_scales    [[buffer(2)]],
++    device const float   * reg_codebook  [[buffer(3)]],
++    device const uint8_t * out_packed    [[buffer(4)]],
++    device const float   * out_scales    [[buffer(5)]],
++    device const uint8_t * out_indices   [[buffer(6)]],
++    device const float   * out_codebook  [[buffer(7)]],
++    device       uint16_t* output        [[buffer(8)]],
++    device const float   * zeros         [[buffer(9)]],
++    device const float   * outlier_zeros [[buffer(10)]],
++    device const uint8_t * qjl_packed    [[buffer(11)]],
++    device const float   * qjl_norm      [[buffer(12)]],
++    device const float   * qjl_projection[[buffer(13)]],
++    uint3 tgpig   [[threadgroup_position_in_grid]],
++    uint  tiisg   [[thread_index_in_simdgroup]],
++    uint3 tpitg_v  [[thread_position_in_threadgroup]],
++    threadgroup int8_t * s_outl_slot [[threadgroup(0)]])
++{
++    const uint tpitg = tpitg_v.x;
++    const int c    = (int)tgpig.x;
++    const int h    = (int)tgpig.y;
++    const int cell = args.firstCell + c;
++    const int slot = cell * args.numKVHeads + h;
++
++    // QJL residual sketch is not yet implemented in the Metal dequant
++    // kernel. The host gates qjl-on configurations to f16; this path should
++    // not be reached in normal operation. asymmetric+outlier is supported
++    // (mirrors tq_dequant_multihead_kernel_outlier in tq-dequant.cu).
++    if (args.qjl_rows > 0) {
++        return;
++    }
++
++    const float regScale = reg_scales[slot];
++    const float outScale = out_scales[slot];
++    const float regZero  = args.asymmetric ? zeros[slot]         : 0.0f;
++    const float outZero  = args.asymmetric ? outlier_zeros[slot] : 0.0f;
++    device const uint8_t * cell_reg  = reg_packed  + (long)slot * args.reg_packed_bytes;
++    device const uint8_t * cell_outl = out_packed  + (long)slot * args.out_packed_bytes;
++    device const uint8_t * cell_idx  = out_indices + (long)slot * args.outlier_count;
++    device       half    * cell_out  = (device half *)(output + ((long)c * args.numKVHeads + h) * args.headDim);
++
++    // s_mask follows s_outl_slot in threadgroup memory.
++    const int mask_words = (args.headDim + 31) >> 5;
++    threadgroup uint * s_mask = (threadgroup uint *)(s_outl_slot + args.headDim);
++
++    // Step A: init s_outl_slot to -1 and s_mask to 0.
++    for (uint i = tpitg; i < (uint)args.headDim; i += 128) {
++        s_outl_slot[i] = -1;
++    }
++    for (uint w = tpitg; w < (uint)mask_words; w += 128) {
++        s_mask[w] = 0u;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // Step B: threads 0..outlier_count-1 each register one outlier.
++    if ((int)tpitg < args.outlier_count) {
++        const int pos = (int)cell_idx[tpitg];
++        s_outl_slot[pos] = (int8_t)tpitg;
++        atomic_fetch_or_explicit((threadgroup atomic_uint *)&s_mask[pos >> 5],
++                                  1u << (pos & 31), memory_order_relaxed);
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    const int cb_mask  = (1 << args.bits) - 1;
++    const int ocb_mask = (1 << args.outlier_bits) - 1;
++    const float cb_lane_reg = reg_codebook[tiisg & cb_mask];
++    const float cb_lane_out = out_codebook[tiisg & ocb_mask];
++
++    for (uint elem = tpitg; elem < (uint)args.headDim; elem += 128) {
++        const int outlier_slot = (int)s_outl_slot[elem];
++
++        // Compute regular_slot = elem - popcount(outlier mask bits below elem).
++        int outliers_below = 0;
++        const int full_words = (int)elem >> 5;
++        for (int w = 0; w < full_words && w < mask_words; w++) {
++            outliers_below += popcount(s_mask[w]);
++        }
++        if (full_words < mask_words) {
++            const uint partial_bits = (1u << ((int)elem & 31)) - 1u;
++            outliers_below += popcount(s_mask[full_words] & partial_bits);
++        }
++        const int regular_slot = (int)elem - outliers_below;
++
++        // Decode regular sub-block (always, for warp convergence).
++        const int reg_bit_offset = regular_slot * args.bits;
++        const int reg_byte_idx   = reg_bit_offset >> 3;
++        const int reg_shift      = reg_bit_offset & 7;
++        int reg_idx = ((int)(cell_reg[reg_byte_idx] >> reg_shift)) & cb_mask;
++        if (reg_shift + args.bits > 8) {
++            reg_idx |= ((int)(cell_reg[reg_byte_idx + 1] << (8 - reg_shift))) & cb_mask;
++        }
++        // Add the asymmetric per-sub-block mean back after scalar dequant
++        // so the f16 K matches the post-rotation pre-quant K. regZero/outZero
++        // are 0 in the symmetric path.
++        const float reg_val = simd_shuffle(cb_lane_reg, (ushort)reg_idx) * regScale + regZero;
++
++        // Decode outlier sub-block (always, for warp convergence).
++        const int out_slot_safe    = (outlier_slot >= 0) ? outlier_slot : 0;
++        const int out_bit_offset   = out_slot_safe * args.outlier_bits;
++        const int out_byte_idx     = out_bit_offset >> 3;
++        const int out_shift        = out_bit_offset & 7;
++        int out_idx = ((int)(cell_outl[out_byte_idx] >> out_shift)) & ocb_mask;
++        if (out_shift + args.outlier_bits > 8) {
++            out_idx |= ((int)(cell_outl[out_byte_idx + 1] << (8 - out_shift))) & ocb_mask;
++        }
++        const float out_val = simd_shuffle(cb_lane_out, (ushort)out_idx) * outScale + outZero;
++
++        cell_out[elem] = half((outlier_slot >= 0) ? out_val : reg_val);
++    }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_encode  (K encode; also used by kernel_tq_encode_kv K phase)
++// Grid:  (batchSize, numKVHeads, 1)
++// Block: (block_size, 1, 1) where block_size = next power-of-2 ≤ 128
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_encode(
++    constant   ggml_metal_kargs_tq_encode & args,
++    device const char  * k_data      [[buffer(1)]],
++    device const float * rotation    [[buffer(2)]],
++    device       uint8_t * packed_out [[buffer(3)]],
++    device       float   * scales_out [[buffer(4)]],
++    device const float   * boundaries [[buffer(5)]],
++    device const float   * k_bias     [[buffer(6)]],
++    device const float   * codebook   [[buffer(7)]],
++    device       float   * zeros_out  [[buffer(8)]],
++    uint3 tgpig  [[threadgroup_position_in_grid]],
++    uint3 tpitg_v [[thread_position_in_threadgroup]],
++    uint3 ntpitg_v[[threads_per_threadgroup]])
++{
++    const uint tpitg  = tpitg_v.x;
++    const uint ntpitg = ntpitg_v.x;
++    const int batch = (int)tgpig.x;
++    const int head  = (int)tgpig.y;
++    const int cell  = args.firstCell + batch;
++
++    // Threadgroup memory layout (max headDim=128, block_size≤128):
++    //   s_k[128], s_rot[128], s_reduce[128], s_idx[128], tg_packed[16 uint]
++    threadgroup float    s_k[128];
++    threadgroup float    s_rot[128];
++    threadgroup float    s_reduce[128];
++    threadgroup uint8_t  s_idx[128];
++    threadgroup uint tg_packed[16];
++
++    const int headDim    = args.headDim;
++    const int numKVHeads = args.numKVHeads;
++    const int bits       = args.bits;
++    const int packed_bytes = (headDim * bits + 7) / 8;
++    const int packed_words = (packed_bytes + 3) / 4;
++
++    // Step 1: Load K into s_k as f32.
++    const int base_k = batch * numKVHeads * headDim + head * headDim;
++    for (int d = (int)tpitg; d < headDim; d += (int)ntpitg) {
++        if (args.kIsF32) {
++            s_k[d] = ((device const float *)k_data)[base_k + d];
++        } else {
++            s_k[d] = float(((device const half *)k_data)[base_k + d]);
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // Step 1b: Subtract K projection bias before rotation (e.g. Qwen2 attn_k.bias).
++    if (args.hasBias) {
++        const int bias_base = head * headDim;
++        for (int d = (int)tpitg; d < headDim; d += (int)ntpitg) {
++            s_k[d] -= k_bias[bias_base + d];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++
++    // Step 2: Rotation matmul (optional).
++    if (args.hasRotation) {
++        for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++            float sum = 0.0f;
++            for (int j = 0; j < headDim; j++) {
++                sum += rotation[i * headDim + j] * s_k[j];
++            }
++            s_rot[i] = sum;
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    } else {
++        for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++            s_rot[i] = s_k[i];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++
++    // Step 2b: Asymmetric mean centering — subtract per-vector mean from s_rot,
++    //          write mean to zeros_out so the decode kernel can add it back.
++    if (args.asymmetric) {
++        float local_sum = 0.0f;
++        for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++            local_sum += s_rot[i];
++        }
++        s_reduce[tpitg] = local_sum;
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++        for (uint stride = ntpitg >> 1; stride > 0; stride >>= 1) {
++            if (tpitg < stride) s_reduce[tpitg] += s_reduce[tpitg + stride];
++            threadgroup_barrier(mem_flags::mem_threadgroup);
++        }
++        // All threads compute mean_val directly from the reduction sum.
++        // The previous write-back-to-shared-then-read pattern raced under
++        // NVCC on the CUDA twin of this kernel (see tq-encode.cu commit
++        // ac34ae96). Apply the same bit-equivalent fix here defensively.
++        const float mean_val = s_reduce[0] / (float)headDim;
++        if (tpitg == 0) {
++            zeros_out[cell * numKVHeads + head] = mean_val;
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++        for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++            s_rot[i] -= mean_val;
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++
++    // Step 3: RMS scale via parallel reduction.
++    float local_sq = 0.0f;
++    for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++        local_sq += s_rot[i] * s_rot[i];
++    }
++    s_reduce[tpitg] = local_sq;
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (uint stride = ntpitg >> 1; stride > 0; stride >>= 1) {
++        if (tpitg < stride) {
++            s_reduce[tpitg] += s_reduce[tpitg + stride];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++
++    // All threads compute scale from the reduction sum directly.
++    const float sum_sq = s_reduce[0];
++    float scale = (sum_sq > 1e-12f) ? sqrt(sum_sq / (float)headDim) : 0.0f;
++    if (tpitg == 0) {
++        scales_out[cell * numKVHeads + head] = scale;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // Step 4: Quantize via boundary binary search.
++    const int numBoundaries = (1 << bits) - 1;
++    for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++        float v = (scale > 0.0f) ? (s_rot[i] / scale) : 0.0f;
++        int idx = 0;
++        for (int b = 0; b < numBoundaries; b++) {
++            if (v >= boundaries[b]) idx++;
++        }
++        s_idx[i] = (uint8_t)idx;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // Step 5: Pack bits into output using threadgroup atomics.
++    const int slot = cell * numKVHeads + head;
++    device uint * out_words = (device uint *)(packed_out + (long)slot * packed_bytes);
++    const uint8_t bitmask = (uint8_t)((1 << bits) - 1);
++
++    for (uint i = tpitg; i < (uint)packed_words; i += ntpitg) {
++        atomic_store_explicit((threadgroup atomic_uint *)&tg_packed[i], 0u, memory_order_relaxed);
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int elem = (int)tpitg; elem < headDim; elem += (int)ntpitg) {
++        const uint bit_offset = (uint)elem * (uint)bits;
++        const uint byte_idx   = bit_offset >> 3;
++        const uint shift      = bit_offset & 7;
++        const uint v          = (uint)(s_idx[elem] & bitmask);
++        atomic_fetch_or_explicit((threadgroup atomic_uint *)&tg_packed[byte_idx >> 2],
++            (v << shift) << ((byte_idx & 3) * 8), memory_order_relaxed);
++        if (shift + (uint)bits > 8) {
++            const uint byte_idx2 = byte_idx + 1;
++            atomic_fetch_or_explicit((threadgroup atomic_uint *)&tg_packed[byte_idx2 >> 2],
++                (v >> (8 - shift)) << ((byte_idx2 & 3) * 8), memory_order_relaxed);
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (uint i = tpitg; i < (uint)packed_words; i += ntpitg) {
++        out_words[i] = atomic_load_explicit((threadgroup atomic_uint *)&tg_packed[i], memory_order_relaxed);
++    }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_encode_v  (V encode with optional rotation)
++// Same structure as kernel_tq_encode but for V.
++// Grid:  (batchSize, numKVHeads, 1)
++// Block: (block_size, 1, 1)
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_encode_v(
++    constant   ggml_metal_kargs_tq_encode & args,
++    device const char  * v_data      [[buffer(1)]],
++    device const float * rotation    [[buffer(2)]],
++    device       uint8_t * packed_out [[buffer(3)]],
++    device       float   * scales_out [[buffer(4)]],
++    device const float   * boundaries [[buffer(5)]],
++    uint3 tgpig   [[threadgroup_position_in_grid]],
++    uint3 tpitg_v  [[thread_position_in_threadgroup]],
++    uint3 ntpitg_v [[threads_per_threadgroup]])
++{
++    const uint tpitg  = tpitg_v.x;
++    const uint ntpitg = ntpitg_v.x;
++    const int batch = (int)tgpig.x;
++    const int head  = (int)tgpig.y;
++    const int cell  = args.firstCell + batch;
++
++    threadgroup float    s_v[128];
++    threadgroup float    s_rot[128];
++    threadgroup float    s_reduce[128];
++    threadgroup uint8_t  s_idx[128];
++    threadgroup uint tg_packed[16];
++
++    const int headDim    = args.headDim;
++    const int numKVHeads = args.numKVHeads;
++    const int bits       = args.bits;
++    const int packed_bytes = (headDim * bits + 7) / 8;
++    const int packed_words = (packed_bytes + 3) / 4;
++
++    const int base_v = batch * numKVHeads * headDim + head * headDim;
++    for (int d = (int)tpitg; d < headDim; d += (int)ntpitg) {
++        if (args.kIsF32) {
++            s_v[d] = ((device const float *)v_data)[base_v + d];
++        } else {
++            s_v[d] = float(((device const half *)v_data)[base_v + d]);
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    if (args.hasRotation) {
++        for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++            float sum = 0.0f;
++            for (int j = 0; j < headDim; j++) {
++                sum += rotation[i * headDim + j] * s_v[j];
++            }
++            s_rot[i] = sum;
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    } else {
++        for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++            s_rot[i] = s_v[i];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++
++    float local_sq = 0.0f;
++    for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++        local_sq += s_rot[i] * s_rot[i];
++    }
++    s_reduce[tpitg] = local_sq;
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (uint stride = ntpitg >> 1; stride > 0; stride >>= 1) {
++        if (tpitg < stride) {
++            s_reduce[tpitg] += s_reduce[tpitg + stride];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++
++    // All threads compute scale from the reduction sum directly.
++    const float sum_sq = s_reduce[0];
++    float scale = (sum_sq > 1e-12f) ? sqrt(sum_sq / (float)headDim) : 0.0f;
++    if (tpitg == 0) {
++        scales_out[cell * numKVHeads + head] = scale;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    const int numBoundaries = (1 << bits) - 1;
++    for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++        float v = (scale > 0.0f) ? (s_rot[i] / scale) : 0.0f;
++        int idx = 0;
++        for (int b = 0; b < numBoundaries; b++) {
++            if (v >= boundaries[b]) idx++;
++        }
++        s_idx[i] = (uint8_t)idx;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    const int slot = cell * numKVHeads + head;
++    device uint * out_words = (device uint *)(packed_out + (long)slot * packed_bytes);
++    const uint8_t bitmask = (uint8_t)((1 << bits) - 1);
++
++    for (uint i = tpitg; i < (uint)packed_words; i += ntpitg) {
++        atomic_store_explicit((threadgroup atomic_uint *)&tg_packed[i], 0u, memory_order_relaxed);
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int elem = (int)tpitg; elem < headDim; elem += (int)ntpitg) {
++        const uint bit_offset = (uint)elem * (uint)bits;
++        const uint byte_idx   = bit_offset >> 3;
++        const uint shift      = bit_offset & 7;
++        const uint v          = (uint)(s_idx[elem] & bitmask);
++        atomic_fetch_or_explicit((threadgroup atomic_uint *)&tg_packed[byte_idx >> 2],
++            (v << shift) << ((byte_idx & 3) * 8), memory_order_relaxed);
++        if (shift + (uint)bits > 8) {
++            const uint byte_idx2 = byte_idx + 1;
++            atomic_fetch_or_explicit((threadgroup atomic_uint *)&tg_packed[byte_idx2 >> 2],
++                (v >> (8 - shift)) << ((byte_idx2 & 3) * 8), memory_order_relaxed);
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (uint i = tpitg; i < (uint)packed_words; i += ntpitg) {
++        out_words[i] = atomic_load_explicit((threadgroup atomic_uint *)&tg_packed[i], memory_order_relaxed);
++    }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_encode_outlier  (K encode with outlier-split)
++// Grid:  (batchSize, numKVHeads, 1)
++// Block: (block_size, 1, 1)
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_encode_outlier(
++    constant   ggml_metal_kargs_tq_encode_outlier & args,
++    device const char    * k_data            [[buffer(1)]],
++    device const float   * rotation          [[buffer(2)]],
++    device       uint8_t * packed_out        [[buffer(3)]],
++    device       float   * scales_out        [[buffer(4)]],
++    device const float   * boundaries        [[buffer(5)]],
++    device       uint8_t * outlier_packed    [[buffer(6)]],
++    device       float   * outlier_scales    [[buffer(7)]],
++    device       uint8_t * outlier_indices   [[buffer(8)]],
++    device const float   * outlier_boundaries[[buffer(9)]],
++    device       float   * zeros_out         [[buffer(10)]],
++    device       float   * outlier_zeros_out [[buffer(11)]],
++    device       uint8_t * qjl_packed_out    [[buffer(12)]],
++    device       float   * qjl_norm_out      [[buffer(13)]],
++    device const float   * qjl_projection    [[buffer(14)]],
++    device const float   * codebook          [[buffer(15)]],
++    device const float   * outlier_codebook  [[buffer(16)]],
++    device const float   * k_bias            [[buffer(17)]],
++    uint3 tgpig   [[threadgroup_position_in_grid]],
++    uint3 tpitg_v  [[thread_position_in_threadgroup]],
++    uint3 ntpitg_v [[threads_per_threadgroup]])
++{
++    const uint tpitg  = tpitg_v.x;
++    const uint ntpitg = ntpitg_v.x;
++    const int batch = (int)tgpig.x;
++    const int head  = (int)tgpig.y;
++    const int cell  = args.firstCell + batch;
++
++    // QJL residual sketch is not yet implemented in the Metal encode kernel.
++    // The host gate routes qjl-on configurations to f16 (no ship preset uses
++    // QJL — only test fixtures opt into it directly). asymmetric+outlier is
++    // now supported (ported from tq-encode.cu/tq_encode_kernel_outlier).
++    if (args.qjl_rows > 0) {
++        return;
++    }
++
++    threadgroup float    s_k[128];
++    threadgroup float    s_rot[128];
++    threadgroup float    s_reduce[128];
++    threadgroup uint8_t  s_idx[128];       // regular quantized indices
++    threadgroup uint8_t  s_is_outlier[128];
++    threadgroup int      s_reg_pos[128];
++    threadgroup int      s_outl_pos[32];   // max outlierCount assumed ≤ 32
++    threadgroup float    s_outl_val[32];
++    threadgroup uint8_t  s_outl_idx[32];
++    threadgroup uint tg_packed[16];
++
++    const int headDim      = args.headDim;
++    const int numKVHeads   = args.numKVHeads;
++    const int bits         = args.bits;
++    const int outlierBits  = args.outlierBits;
++    const int outlierCount = args.outlierCount;
++
++    // Step 1: Load K, subtract K projection bias before rotation if present
++    // (Qwen2 attn_k.bias). Same pattern as kernel_tq_encode.
++    const int base_k = batch * numKVHeads * headDim + head * headDim;
++    for (int d = (int)tpitg; d < headDim; d += (int)ntpitg) {
++        float val;
++        if (args.kIsF32) {
++            val = ((device const float *)k_data)[base_k + d];
++        } else {
++            val = float(((device const half *)k_data)[base_k + d]);
++        }
++        if (args.hasBias) {
++            val -= k_bias[head * headDim + d];
++        }
++        s_k[d] = val;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // Step 2: Rotate.
++    for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++        float sum = 0.0f;
++        for (int j = 0; j < headDim; j++) {
++            sum += rotation[i * headDim + j] * s_k[j];
++        }
++        s_rot[i] = sum;
++    }
++    for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++        s_is_outlier[i] = 0;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // Step 3: Top-K outlier selection (serial on thread 0).
++    if (tpitg == 0) {
++        for (int r = 0; r < outlierCount; r++) {
++            float best_val = -1.0f;
++            int   best_idx = 0;
++            for (int i = 0; i < headDim; i++) {
++                if (s_is_outlier[i]) continue;
++                float a = fabs(s_rot[i]);
++                if (a > best_val) { best_val = a; best_idx = i; }
++            }
++            s_is_outlier[best_idx] = 1;
++            s_outl_pos[r]          = best_idx;
++            s_outl_val[r]          = s_rot[best_idx];
++        }
++        int pos = 0;
++        for (int i = 0; i < headDim; i++) {
++            if (!s_is_outlier[i]) { s_reg_pos[pos++] = i; }
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    const int regularCount = headDim - outlierCount;
++
++    // Step 4: Per-sub-block stats. For symmetric: scale = sqrt(mean(v^2)).
++    // For asymmetric: mean = avg(v), scale = sqrt(mean((v-mean)^2)) = sqrt((sum_sq - n*mean^2)/n);
++    // mean is written to {zeros_out, outlier_zeros_out} for the decode kernels
++    // to add back. Race fix: all threads compute mean/scale from s_reduce[0]
++    // directly rather than write-back-then-read (matches tq-encode.cu after
++    // commit ac34ae96).
++    float local_sum_reg = 0.0f, local_sum_out = 0.0f;
++    float local_sq_reg  = 0.0f, local_sq_out  = 0.0f;
++    for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
++        float v  = s_rot[i];
++        float sq = v * v;
++        if (s_is_outlier[i]) { local_sum_out += v; local_sq_out += sq; }
++        else                 { local_sum_reg += v; local_sq_reg += sq; }
++    }
++
++    // ── Regular sub-block: regMean (asymmetric only) → regScale.
++    float regMean = 0.0f;
++    if (args.asymmetric) {
++        s_reduce[tpitg] = local_sum_reg;
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++        for (uint stride = ntpitg >> 1; stride > 0; stride >>= 1) {
++            if (tpitg < stride) s_reduce[tpitg] += s_reduce[tpitg + stride];
++            threadgroup_barrier(mem_flags::mem_threadgroup);
++        }
++        regMean = (regularCount > 0) ? (s_reduce[0] / (float)regularCount) : 0.0f;
++        if (tpitg == 0) {
++            zeros_out[cell * numKVHeads + head] = regMean;
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++
++    s_reduce[tpitg] = local_sq_reg;
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++    for (uint stride = ntpitg >> 1; stride > 0; stride >>= 1) {
++        if (tpitg < stride) s_reduce[tpitg] += s_reduce[tpitg + stride];
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++    float regScale = 0.0f;
++    {
++        const float sum_sq = s_reduce[0];
++        if (regularCount > 0) {
++            float effective_sq = args.asymmetric
++                ? (sum_sq - (float)regularCount * regMean * regMean)
++                : sum_sq;
++            if (effective_sq > 1e-12f) regScale = sqrt(effective_sq / (float)regularCount);
++        }
++    }
++    if (tpitg == 0) {
++        scales_out[cell * numKVHeads + head] = regScale;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // ── Outlier sub-block: outMean (asymmetric only) → outScale.
++    float outMean = 0.0f;
++    if (args.asymmetric) {
++        s_reduce[tpitg] = local_sum_out;
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++        for (uint stride = ntpitg >> 1; stride > 0; stride >>= 1) {
++            if (tpitg < stride) s_reduce[tpitg] += s_reduce[tpitg + stride];
++            threadgroup_barrier(mem_flags::mem_threadgroup);
++        }
++        outMean = (outlierCount > 0) ? (s_reduce[0] / (float)outlierCount) : 0.0f;
++        if (tpitg == 0) {
++            outlier_zeros_out[cell * numKVHeads + head] = outMean;
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++
++    s_reduce[tpitg] = local_sq_out;
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++    for (uint stride = ntpitg >> 1; stride > 0; stride >>= 1) {
++        if (tpitg < stride) s_reduce[tpitg] += s_reduce[tpitg + stride];
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++    float outScale = 0.0f;
++    {
++        const float sum_sq = s_reduce[0];
++        if (outlierCount > 0) {
++            float effective_sq = args.asymmetric
++                ? (sum_sq - (float)outlierCount * outMean * outMean)
++                : sum_sq;
++            if (effective_sq > 1e-12f) outScale = sqrt(effective_sq / (float)outlierCount);
++        }
++    }
++    if (tpitg == 0) {
++        outlier_scales[cell * numKVHeads + head] = outScale;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // Step 5: Quantize regular channels — centre by regMean if asymmetric
++    // (regMean=0 for symmetric so the same expression works either way).
++    const int numBoundaries = (1 << bits) - 1;
++    for (int r = (int)tpitg; r < regularCount; r += (int)ntpitg) {
++        const int orig = s_reg_pos[r];
++        float v = (regScale > 0.0f) ? ((s_rot[orig] - regMean) / regScale) : 0.0f;
++        int idx = 0;
++        for (int b = 0; b < numBoundaries; b++) { if (v >= boundaries[b]) idx++; }
++        s_idx[r] = (uint8_t)idx;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // Step 6: Pack regular bits.
++    const int reg_packed_raw   = (regularCount * bits + 7) / 8;
++    const int reg_packed_bytes = (reg_packed_raw + 3) & ~3;
++    const int reg_packed_words = reg_packed_bytes / 4;
++    {
++        const int slot = cell * numKVHeads + head;
++        device uint * reg_words = (device uint *)(packed_out + (long)slot * reg_packed_bytes);
++        const uint8_t bitmask = (uint8_t)((1 << bits) - 1);
++        for (uint i = tpitg; i < (uint)reg_packed_words; i += ntpitg) {
++            atomic_store_explicit((threadgroup atomic_uint *)&tg_packed[i], 0u, memory_order_relaxed);
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++        for (int r = (int)tpitg; r < regularCount; r += (int)ntpitg) {
++            const uint bit_offset = (uint)r * (uint)bits;
++            const uint byte_idx   = bit_offset >> 3;
++            const uint shift      = bit_offset & 7;
++            const uint v          = (uint)(s_idx[r] & bitmask);
++            atomic_fetch_or_explicit((threadgroup atomic_uint *)&tg_packed[byte_idx >> 2],
++                (v << shift) << ((byte_idx & 3) * 8), memory_order_relaxed);
++            if (shift + (uint)bits > 8) {
++                const uint byte_idx2 = byte_idx + 1;
++                atomic_fetch_or_explicit((threadgroup atomic_uint *)&tg_packed[byte_idx2 >> 2],
++                    (v >> (8 - shift)) << ((byte_idx2 & 3) * 8), memory_order_relaxed);
++            }
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++        for (uint i = tpitg; i < (uint)reg_packed_words; i += ntpitg) {
++            reg_words[i] = atomic_load_explicit((threadgroup atomic_uint *)&tg_packed[i], memory_order_relaxed);
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // Step 7: Quantize outlier channels — centre by outMean if asymmetric
++    // (outMean=0 for symmetric).
++    const int numOutlierBoundaries = (1 << outlierBits) - 1;
++    for (int r = (int)tpitg; r < outlierCount; r += (int)ntpitg) {
++        float v = (outScale > 0.0f) ? ((s_outl_val[r] - outMean) / outScale) : 0.0f;
++        int idx = 0;
++        for (int b = 0; b < numOutlierBoundaries; b++) { if (v >= outlier_boundaries[b]) idx++; }
++        s_outl_idx[r] = (uint8_t)idx;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    // Step 8: Pack outlier bits.
++    const int out_packed_raw   = (outlierCount * outlierBits + 7) / 8;
++    const int out_packed_bytes = (out_packed_raw + 3) & ~3;
++    const int out_packed_words = out_packed_bytes / 4;
++    {
++        const int slot = cell * numKVHeads + head;
++        device uint * out_words = (device uint *)(outlier_packed + (long)slot * out_packed_bytes);
++        const uint8_t obmask = (uint8_t)((1 << outlierBits) - 1);
++        for (uint i = tpitg; i < (uint)out_packed_words; i += ntpitg) {
++            atomic_store_explicit((threadgroup atomic_uint *)&tg_packed[i], 0u, memory_order_relaxed);
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++        for (int r = (int)tpitg; r < outlierCount; r += (int)ntpitg) {
++            const uint bit_offset = (uint)r * (uint)outlierBits;
++            const uint byte_idx   = bit_offset >> 3;
++            const uint shift      = bit_offset & 7;
++            const uint v          = (uint)(s_outl_idx[r] & obmask);
++            atomic_fetch_or_explicit((threadgroup atomic_uint *)&tg_packed[byte_idx >> 2],
++                (v << shift) << ((byte_idx & 3) * 8), memory_order_relaxed);
++            if (shift + (uint)outlierBits > 8) {
++                const uint byte_idx2 = byte_idx + 1;
++                atomic_fetch_or_explicit((threadgroup atomic_uint *)&tg_packed[byte_idx2 >> 2],
++                    (v >> (8 - shift)) << ((byte_idx2 & 3) * 8), memory_order_relaxed);
++            }
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++        for (uint i = tpitg; i < (uint)out_packed_words; i += ntpitg) {
++            out_words[i] = atomic_load_explicit((threadgroup atomic_uint *)&tg_packed[i], memory_order_relaxed);
++        }
++    }
++
++    // Step 9: Write outlier channel indices.
++    {
++        const int slot = cell * numKVHeads + head;
++        device uint8_t * idx_out = outlier_indices + (long)slot * outlierCount;
++        for (int r = (int)tpitg; r < outlierCount; r += (int)ntpitg) {
++            idx_out[r] = (uint8_t)s_outl_pos[r];
++        }
++    }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// TQ Flash-Attention helpers
++// ─────────────────────────────────────────────────────────────────────────────
++
++// Decode 8 TQ-packed elements starting at start_elem using SIMD shuffle codebook.
++static inline void tq_decode_8_shfl(
++    device const uint8_t * packed_row,
++    float cb_lane, float rms,
++    int start_elem, int bits,
++    thread float * out)
++{
++    if (bits == 3) {
++        const int byte_off = (start_elem * 3) >> 3;
++        const uint w = (uint)packed_row[byte_off]
++                     | ((uint)packed_row[byte_off + 1] << 8)
++                     | ((uint)packed_row[byte_off + 2] << 16);
++        out[0] = simd_shuffle(cb_lane, (ushort)((w >>  0) & 7)) * rms;
++        out[1] = simd_shuffle(cb_lane, (ushort)((w >>  3) & 7)) * rms;
++        out[2] = simd_shuffle(cb_lane, (ushort)((w >>  6) & 7)) * rms;
++        out[3] = simd_shuffle(cb_lane, (ushort)((w >>  9) & 7)) * rms;
++        out[4] = simd_shuffle(cb_lane, (ushort)((w >> 12) & 7)) * rms;
++        out[5] = simd_shuffle(cb_lane, (ushort)((w >> 15) & 7)) * rms;
++        out[6] = simd_shuffle(cb_lane, (ushort)((w >> 18) & 7)) * rms;
++        out[7] = simd_shuffle(cb_lane, (ushort)((w >> 21) & 7)) * rms;
++    } else if (bits == 4) {
++        // 4-bit: 2 nibbles per byte → 4 bytes for 8 elements.
++        const int byte_off = start_elem >> 1;
++        const uint w = (uint)packed_row[byte_off]
++                     | ((uint)packed_row[byte_off + 1] << 8)
++                     | ((uint)packed_row[byte_off + 2] << 16)
++                     | ((uint)packed_row[byte_off + 3] << 24);
++        out[0] = simd_shuffle(cb_lane, (ushort)((w >>  0) & 0xF)) * rms;
++        out[1] = simd_shuffle(cb_lane, (ushort)((w >>  4) & 0xF)) * rms;
++        out[2] = simd_shuffle(cb_lane, (ushort)((w >>  8) & 0xF)) * rms;
++        out[3] = simd_shuffle(cb_lane, (ushort)((w >> 12) & 0xF)) * rms;
++        out[4] = simd_shuffle(cb_lane, (ushort)((w >> 16) & 0xF)) * rms;
++        out[5] = simd_shuffle(cb_lane, (ushort)((w >> 20) & 0xF)) * rms;
++        out[6] = simd_shuffle(cb_lane, (ushort)((w >> 24) & 0xF)) * rms;
++        out[7] = simd_shuffle(cb_lane, (ushort)((w >> 28) & 0xF)) * rms;
++    } else {
++        // 2-bit: 4 elements per byte → 2 bytes for 8 elements.
++        const int byte_off = start_elem >> 2;
++        const uint w = (uint)packed_row[byte_off] | ((uint)packed_row[byte_off + 1] << 8);
++        out[0] = simd_shuffle(cb_lane, (ushort)((w >>  0) & 3)) * rms;
++        out[1] = simd_shuffle(cb_lane, (ushort)((w >>  2) & 3)) * rms;
++        out[2] = simd_shuffle(cb_lane, (ushort)((w >>  4) & 3)) * rms;
++        out[3] = simd_shuffle(cb_lane, (ushort)((w >>  6) & 3)) * rms;
++        out[4] = simd_shuffle(cb_lane, (ushort)((w >>  8) & 3)) * rms;
++        out[5] = simd_shuffle(cb_lane, (ushort)((w >> 10) & 3)) * rms;
++        out[6] = simd_shuffle(cb_lane, (ushort)((w >> 12) & 3)) * rms;
++        out[7] = simd_shuffle(cb_lane, (ushort)((w >> 14) & 3)) * rms;
++    }
++}
++
++// Warp-reduce sum across 8 adjacent threads (nthreads_KQ = 8).
++static inline float warp_reduce_sum8(float x, uint tiisg) {
++    x += simd_shuffle_xor(x, 4);
++    x += simd_shuffle_xor(x, 2);
++    x += simd_shuffle_xor(x, 1);
++    return x;
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_fattn_vec_f16
++// TQ fused flash-attention: K packed i8, V f16.
++// Grid:  (ntiles_x, 1, nHeadsQ*nSeq)
++// Block: (32, 4, 1) = 128 threads
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_fattn_vec_f16(
++    constant   ggml_metal_kargs_tq_fattn_vec & args,
++    device const char    * Q_data    [[buffer(1)]],
++    device const uint8_t * K_packed  [[buffer(2)]],
++    device const half    * V_data    [[buffer(3)]],
++    device const half    * mask_data [[buffer(4)]],
++    device const float   * K_scales  [[buffer(5)]],
++    device const float   * K_cb      [[buffer(6)]],
++    device const float   * dummy_vs  [[buffer(7)]],
++    device const float   * dummy_vc  [[buffer(8)]],
++    device       float   * dst       [[buffer(9)]],
++    device const float   * K_zeros   [[buffer(10)]],
++    uint3 tgpig [[threadgroup_position_in_grid]],
++    uint  tiisg [[thread_index_in_simdgroup]],
++    uint  sgitg [[simdgroup_index_in_threadgroup]])
++{
++    // D=128 fixed. nthreads=128 (4 SIMDgroups × 32).
++    constexpr int D           = 128;
++    constexpr int nthreads    = 128;
++    constexpr int nthreads_KQ = 8;    // threads per K dot product group
++    constexpr int nthreads_V  = 8;    // threads per V accumulate group
++    constexpr int V_rows_per_thread = 8;
++    constexpr int V_cols_per_iter   = 4;  // WARP_SIZE / nthreads_V
++    constexpr int nwarps      = 4;
++
++    const int ic0     = (int)tgpig.x * args.ncols;
++    const int blk_z   = (int)tgpig.z;
++    const int sequence = blk_z / args.nHeadsQ;
++    const int head     = blk_z % args.nHeadsQ;
++    const int gqa_ratio = args.nHeadsQ / args.nKVHeads;
++    const int head_kv   = head / gqa_ratio;
++
++    const int tid = (int)sgitg * 32 + (int)tiisg;
++
++    // Advance Q pointer.
++    device const float * Q = (device const float *)Q_data
++        + (long)sequence * (args.nb03 / sizeof(float))
++        + (long)head * (args.nb02 / sizeof(float))
++        + (long)ic0  * (args.nb01 / sizeof(float));
++
++    // Advance K_packed and K_scales.
++    device const uint8_t * K_p = K_packed
++        + (long)args.firstCell * args.nKVHeads * args.packedBytes
++        + (long)head_kv * args.packedBytes;
++    device const float * K_sc = K_scales
++        + (long)args.firstCell * args.nKVHeads + head_kv;
++    device const float * K_zr = args.asymmetric
++        ? (K_zeros + (long)args.firstCell * args.nKVHeads + head_kv)
++        : nullptr;
++
++    // Advance V pointer.
++    device const half * V = V_data
++        + (long)sequence * (args.nb23 / sizeof(half))
++        + (long)head_kv  * (args.nb22 / sizeof(half));
++
++    device const half * maskh = args.hasMask
++        ? (mask_data + (long)ic0 * (args.nb31 / sizeof(half)))
++        : nullptr;
++
++    // K codebook per-lane value.
++    const int k_cb_mask = (1 << args.bits) - 1;
++    const float k_cb_lane = K_cb[tiisg & k_cb_mask];
++
++    // Per-thread KQ group index within warp: [0,7] repeated.
++    const int tid_kq = (int)tiisg % nthreads_KQ;  // 0..7
++
++    // Q registers: 2 query slots × 8 float2 per thread.
++    float2 Q_reg[2][8];
++    for (int j = 0; j < args.ncols; j++) {
++        device const float2 * Q_j = (device const float2 *)(Q + (long)j * (args.nb01 / sizeof(float)));
++        // Each KQ group thread (tid_kq = 0..7) loads 8 float2 = D/nthreads_KQ
++        for (int i = 0; i < 8; i++) {
++            const int elem = tid_kq * 8 + i;  // float2 index within [0,63]
++            Q_reg[j][i] = (elem < D/2) ? Q_j[elem] : float2(0.0f, 0.0f);
++        }
++        // Apply attention scale.
++        for (int i = 0; i < 8; i++) {
++            Q_reg[j][i].x *= args.scale;
++            Q_reg[j][i].y *= args.scale;
++        }
++    }
++
++    // Accumulators.
++    // Precompute sum_q[j] = Σ_e scaled_Q[j][e] for asymmetric zero correction.
++    float sum_q[2] = { 0.0f, 0.0f };
++    if (args.asymmetric) {
++        for (int j = 0; j < args.ncols; j++) {
++            float local_sum = 0.0f;
++            for (int k = 0; k < D/(2*nthreads_KQ); k++) {
++                local_sum += Q_reg[j][k].x + Q_reg[j][k].y;
++            }
++            // Reduce within KQ group (same 8 threads share same Q elements).
++            local_sum += simd_shuffle_xor(local_sum, 4);
++            local_sum += simd_shuffle_xor(local_sum, 2);
++            local_sum += simd_shuffle_xor(local_sum, 1);
++            sum_q[j] = local_sum;
++        }
++    }
++
++    float2 VKQ[2][8];
++    for (int j = 0; j < 2; j++)
++        for (int i = 0; i < 8; i++)
++            VKQ[j][i] = float2(0.0f, 0.0f);
++
++    float KQ_max[2] = { -FLT_MAX/2.0f, -FLT_MAX/2.0f };
++    float KQ_sum[2] = { 0.0f, 0.0f };
++
++    // Shared memory: KQ[2048], KQ_max_tg[2][32], KQ_sum_tg[2][32].
++    threadgroup float KQ_tg[2048];
++    threadgroup float KQ_max_tg[2][32];
++    threadgroup float KQ_sum_tg[2][32];
++
++    // KV loop: process nthreads=128 cells per outer iteration.
++    for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
++
++        float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
++
++        // Each warp (sgitg=0..3) computes nthreads_KQ=8 cells.
++        // i_KQ_0 iterates 0..7, combined with KQ group offset gives the cell.
++        for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
++            // KQ group start for this thread within this warp:
++            const int kq_grp_start = ((int)tiisg & ~(nthreads_KQ - 1));  // 0, 8, 16, 24
++            const int i_KQ = (int)sgitg * 32 + kq_grp_start + i_KQ_0;
++            const int cell_rel = k_VKQ_0 + i_KQ;
++            const bool in_range = (cell_rel < args.nCells);
++
++            // Hoist K decode out of the j loop: cell_rel and start_elem do not
++            // depend on j, so each Q-token was redundantly decoding the same K
++            // bytes. Cache decoded values in a per-thread k_lane[] register
++            // array (private address space; no threadgroup memory increase),
++            // then the j loop becomes a pure FMA. O(nCells × ncols) decode
++            // work → O(nCells) for prefill (ncols=2).
++            device const uint8_t * packed_row = K_p + (long)cell_rel * args.nKVHeads * args.packedBytes;
++            const float rms_scale = in_range ? K_sc[cell_rel * args.nKVHeads] : 0.0f;
++            const float zero_val = (args.asymmetric && K_zr && in_range)
++                ? K_zr[(long)cell_rel * args.nKVHeads] : 0.0f;
++
++            float k_lane[8][2];
++            for (int k = 0; k < 8; k++) {
++                const int start_elem = tid_kq * 16 + k * 2;  // float (not float2) index
++                if (args.bits == 3) {
++                    const int bit_pos0 = start_elem * 3;
++                    const int byte0 = bit_pos0 >> 3, sh0 = bit_pos0 & 7;
++                    const uint w0 = (uint)packed_row[byte0] | ((uint)packed_row[byte0+1] << 8);
++                    int idx0 = (int)((w0 >> sh0) & 7);
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)idx0) * rms_scale;
++                    const int bit_pos1 = (start_elem + 1) * 3;
++                    const int byte1 = bit_pos1 >> 3, sh1 = bit_pos1 & 7;
++                    const uint w1 = (uint)packed_row[byte1] | ((uint)packed_row[byte1+1] << 8);
++                    int idx1 = (int)((w1 >> sh1) & 7);
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)idx1) * rms_scale;
++                } else if (args.bits == 4) {
++                    // 4-bit nibble decode: start_elem is always even, so both
++                    // nibbles for this pair live in the same byte.
++                    const int byte0 = start_elem >> 1;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)(packed_row[byte0] & 0xF)) * rms_scale;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> 4) & 0xF)) * rms_scale;
++                } else {
++                    // 2-bit: 4 elements per byte.
++                    const int byte0 = start_elem >> 2, sh0 = (start_elem & 3) * 2;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> sh0) & 3)) * rms_scale;
++                    const int byte1 = (start_elem + 1) >> 2, sh1 = ((start_elem + 1) & 3) * 2;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte1] >> sh1) & 3)) * rms_scale;
++                }
++            }
++
++            for (int j = 0; j < args.ncols; j++) {
++                // Dot product: sum Q_reg[j][k] · k_lane[k]
++                float sum = 0.0f;
++                for (int k = 0; k < 8; k++) {
++                    sum += Q_reg[j][k].x * k_lane[k][0] + Q_reg[j][k].y * k_lane[k][1];
++                }
++                // Reduce within KQ group (8 threads).
++                sum += simd_shuffle_xor(sum, 4);
++                sum += simd_shuffle_xor(sum, 2);
++                sum += simd_shuffle_xor(sum, 1);
++
++                // Asymmetric mean correction: K was encoded as (K - mean);
++                // add back mean × Σ_e Q[e] to restore the true Q·K dot product.
++                if (args.asymmetric && K_zr) {
++                    sum += zero_val * sum_q[j];
++                }
++
++                if (args.logit_softcap != 0.0f) {
++                    sum = args.logit_softcap * tanh(sum);
++                }
++
++                if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
++                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
++                }
++
++                if (!in_range) sum = -FLT_MAX/2.0f;
++
++                KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);  // FATTN_KQ_MAX_OFFSET = ln(2)
++
++                if (tid_kq == (uint)i_KQ_0) {
++                    KQ_tg[j * nthreads + tid] = sum;
++                }
++            }
++        }
++
++        for (int j = 0; j < args.ncols; j++) {
++            // Cross-thread max reduction across the full warp (32 lanes).
++            KQ_max_new[j] = simd_max(KQ_max_new[j]);
++
++            const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
++            KQ_max[j] = KQ_max_new[j];
++
++            const float kq_val = KQ_tg[j * nthreads + tid];
++            const float kq_exp = exp(kq_val - KQ_max[j]);
++            KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
++            KQ_tg[j * nthreads + tid] = kq_exp;
++
++            for (int i = 0; i < 8; i++) {
++                VKQ[j][i].x *= KQ_max_scale;
++                VKQ[j][i].y *= KQ_max_scale;
++            }
++        }
++
++        // Accumulate V contributions.
++        // Each group of nthreads_V=8 threads handles 4 KQ cells (V_cols_per_iter=4).
++        for (int k0 = 0; k0 < 32; k0 += V_cols_per_iter) {
++            const int k = (int)sgitg * 32 + k0 + (int)tiisg / nthreads_V;
++            const int cell_rel = k_VKQ_0 + k;
++
++            float KQ_k[2];
++            for (int j = 0; j < args.ncols; j++) {
++                KQ_k[j] = KQ_tg[j * nthreads + k];
++            }
++
++            // Load V[cell_rel] f16 and accumulate.
++            // Two passes: pass 0 covers V elements [v_tid*8 .. v_tid*8+7] (output[0..63]),
++            //             pass 1 covers V elements [64+v_tid*8 .. 64+v_tid*8+7] (output[64..127]).
++            // Matches CUDA layout: VKQ[0..3] = pass-0 data, VKQ[4..7] = pass-1 data.
++            device const half * V_cell = (cell_rel < args.nCells)
++                ? V + (long)cell_rel * (args.nb21 / sizeof(half))
++                : nullptr;
++
++            const int v_tid = (int)tiisg % nthreads_V;
++            for (int pass = 0; pass < 2; pass++) {
++                for (int i = 0; i < 8; i++) {
++                    const int elem = pass * 64 + v_tid * 8 + i;
++                    float v_val = (V_cell && elem < D) ? float(V_cell[elem]) : 0.0f;
++                    const int vkq_idx = pass * 4 + i / 2;
++                    for (int j = 0; j < args.ncols; j++) {
++                        if (i % 2 == 0) VKQ[j][vkq_idx].x += v_val * KQ_k[j];
++                        else            VKQ[j][vkq_idx].y += v_val * KQ_k[j];
++                    }
++                }
++            }
++        }
++    } // end KV loop
++
++    // Reduce across warps and write output.
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (sgitg == 0) {
++            KQ_max_tg[j][tiisg] = -FLT_MAX/2.0f;
++            KQ_sum_tg[j][tiisg] = 0.0f;
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (tiisg == 0) {
++            KQ_max_tg[j][sgitg] = KQ_max[j];
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (args.ncols > 1 && ic0 + j >= args.nTokensQ) break;
++
++        float kqmax_new = KQ_max_tg[j][tiisg];
++        kqmax_new = simd_max(kqmax_new);
++        const float kqmax_scale = exp(KQ_max[j] - kqmax_new);
++        KQ_max[j] = kqmax_new;
++
++        // Scale VKQ and write to shared.
++        for (int i = 0; i < 8; i++) {
++            VKQ[j][i].x *= kqmax_scale;
++            VKQ[j][i].y *= kqmax_scale;
++        }
++        // Write VKQ to KQ_tg for cross-warp reduction.
++        // CUDA layout: VKQ[0..3] → float2 slots [v_tid*4 .. v_tid*4+3],
++        //              VKQ[4..7] → float2 slots [32+v_tid*4 .. 32+v_tid*4+3].
++        // This ensures reading KQ_tg[w*4*D + v*D + tid] yields V[tid] contribution.
++        const int v_tid = (int)tiisg % nthreads_V;
++        threadgroup float2 * VKQ_tg = (threadgroup float2 *)KQ_tg
++            + (long)sgitg * (V_cols_per_iter * D/2)
++            + (long)((int)tiisg / nthreads_V) * (D/2);
++        VKQ_tg[v_tid * 4 + 0] = VKQ[j][0];
++        VKQ_tg[v_tid * 4 + 1] = VKQ[j][1];
++        VKQ_tg[v_tid * 4 + 2] = VKQ[j][2];
++        VKQ_tg[v_tid * 4 + 3] = VKQ[j][3];
++        VKQ_tg[32 + v_tid * 4 + 0] = VKQ[j][4];
++        VKQ_tg[32 + v_tid * 4 + 1] = VKQ[j][5];
++        VKQ_tg[32 + v_tid * 4 + 2] = VKQ[j][6];
++        VKQ_tg[32 + v_tid * 4 + 3] = VKQ[j][7];
++
++        KQ_sum[j] *= kqmax_scale;
++        KQ_sum[j] = simd_sum(KQ_sum[j]);
++        if (tiisg == 0) {
++            KQ_sum_tg[j][sgitg] = KQ_sum[j];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++
++        if (tid < D) {
++            KQ_sum[j] = KQ_sum_tg[j][tiisg];
++            KQ_sum[j] = simd_sum(KQ_sum[j]);
++
++            float dst_val = 0.0f;
++            for (int w = 0; w < nwarps; w++) {
++                for (int v = 0; v < V_cols_per_iter; v++) {
++                    dst_val += ((threadgroup float *)KQ_tg)[w * V_cols_per_iter * D + v * D + tid];
++                }
++            }
++            dst_val /= KQ_sum[j];
++            const long out_idx = ((long)sequence * args.nTokensQ + ic0 + j) * args.nHeadsQ + head;
++            dst[out_idx * D + tid] = dst_val;
++        }
++        if (j < args.ncols - 1) threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_fattn_vec_f16_d64
++// TQ fused flash-attention at head dim 64: K packed i8, V f16.
++// Same thread layout as D=128 (32×4 = 128 threads) but half the Q/K/V work
++// per thread.  Each thread handles 4 float2 of Q (vs 8 at D=128), one V pass
++// (vs two), and only threads 0..63 write output.
++// Grid:  (ntiles_x, 1, nHeadsQ*nSeq)
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_fattn_vec_f16_d64(
++    constant   ggml_metal_kargs_tq_fattn_vec & args,
++    device const char    * Q_data    [[buffer(1)]],
++    device const uint8_t * K_packed  [[buffer(2)]],
++    device const half    * V_data    [[buffer(3)]],
++    device const half    * mask_data [[buffer(4)]],
++    device const float   * K_scales  [[buffer(5)]],
++    device const float   * K_cb      [[buffer(6)]],
++    device const float   * dummy_vs  [[buffer(7)]],
++    device const float   * dummy_vc  [[buffer(8)]],
++    device       float   * dst       [[buffer(9)]],
++    device const float   * K_zeros   [[buffer(10)]],
++    uint3 tgpig [[threadgroup_position_in_grid]],
++    uint  tiisg [[thread_index_in_simdgroup]],
++    uint  sgitg [[simdgroup_index_in_threadgroup]])
++{
++    constexpr int D           = 64;
++    constexpr int nthreads    = 128;
++    constexpr int nthreads_KQ = 8;
++    constexpr int nthreads_V  = 8;
++    constexpr int V_cols_per_iter   = 4;
++    constexpr int nwarps      = 4;
++
++    const int ic0     = (int)tgpig.x * args.ncols;
++    const int blk_z   = (int)tgpig.z;
++    const int sequence = blk_z / args.nHeadsQ;
++    const int head     = blk_z % args.nHeadsQ;
++    const int gqa_ratio = args.nHeadsQ / args.nKVHeads;
++    const int head_kv   = head / gqa_ratio;
++
++    const int tid = (int)sgitg * 32 + (int)tiisg;
++
++    device const float * Q = (device const float *)Q_data
++        + (long)sequence * (args.nb03 / sizeof(float))
++        + (long)head * (args.nb02 / sizeof(float))
++        + (long)ic0  * (args.nb01 / sizeof(float));
++
++    device const uint8_t * K_p = K_packed
++        + (long)args.firstCell * args.nKVHeads * args.packedBytes
++        + (long)head_kv * args.packedBytes;
++    device const float * K_sc = K_scales
++        + (long)args.firstCell * args.nKVHeads + head_kv;
++    device const float * K_zr = args.asymmetric
++        ? (K_zeros + (long)args.firstCell * args.nKVHeads + head_kv)
++        : nullptr;
++
++    device const half * V = V_data
++        + (long)sequence * (args.nb23 / sizeof(half))
++        + (long)head_kv  * (args.nb22 / sizeof(half));
++
++    device const half * maskh = args.hasMask
++        ? (mask_data + (long)ic0 * (args.nb31 / sizeof(half)))
++        : nullptr;
++
++    const int k_cb_mask = (1 << args.bits) - 1;
++    const float k_cb_lane = K_cb[tiisg & k_cb_mask];
++
++    const int tid_kq = (int)tiisg % nthreads_KQ;
++
++    // D=64: each thread loads 4 float2 = D/(2*nthreads_KQ).
++    float2 Q_reg[2][4];
++    for (int j = 0; j < args.ncols; j++) {
++        device const float2 * Q_j = (device const float2 *)(Q + (long)j * (args.nb01 / sizeof(float)));
++        for (int i = 0; i < 4; i++) {
++            const int elem = tid_kq * 4 + i;
++            Q_reg[j][i] = (elem < D/2) ? Q_j[elem] : float2(0.0f, 0.0f);
++        }
++        for (int i = 0; i < 4; i++) {
++            Q_reg[j][i].x *= args.scale;
++            Q_reg[j][i].y *= args.scale;
++        }
++    }
++
++    // Precompute sum_q[j] = Σ_e scaled_Q[j][e] for asymmetric zero correction.
++    float sum_q[2] = { 0.0f, 0.0f };
++    if (args.asymmetric) {
++        for (int j = 0; j < args.ncols; j++) {
++            float local_sum = 0.0f;
++            for (int k = 0; k < D/(2*nthreads_KQ); k++) {
++                local_sum += Q_reg[j][k].x + Q_reg[j][k].y;
++            }
++            local_sum += simd_shuffle_xor(local_sum, 4);
++            local_sum += simd_shuffle_xor(local_sum, 2);
++            local_sum += simd_shuffle_xor(local_sum, 1);
++            sum_q[j] = local_sum;
++        }
++    }
++
++    float2 VKQ[2][4];
++    for (int j = 0; j < 2; j++)
++        for (int i = 0; i < 4; i++)
++            VKQ[j][i] = float2(0.0f, 0.0f);
++
++    float KQ_max[2] = { -FLT_MAX/2.0f, -FLT_MAX/2.0f };
++    float KQ_sum[2] = { 0.0f, 0.0f };
++
++    // D=64: KQ_tg = nwarps*V_cols_per_iter*D = 4*4*64 = 1024 floats.
++    threadgroup float KQ_tg[1024];
++    threadgroup float KQ_max_tg[2][32];
++    threadgroup float KQ_sum_tg[2][32];
++
++    for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
++
++        float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
++
++        for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
++            const int kq_grp_start = ((int)tiisg & ~(nthreads_KQ - 1));
++            const int i_KQ = (int)sgitg * 32 + kq_grp_start + i_KQ_0;
++            const int cell_rel = k_VKQ_0 + i_KQ;
++            const bool in_range = (cell_rel < args.nCells);
++
++            // Hoist K decode out of the j loop. See kernel_tq_fattn_vec_f16
++            // for full rationale. Per-thread k_lane[] cache replaces redundant
++            // per-Q-token K decode.
++            device const uint8_t * packed_row = K_p + (long)cell_rel * args.nKVHeads * args.packedBytes;
++            const float rms_scale = in_range ? K_sc[cell_rel * args.nKVHeads] : 0.0f;
++            const float zero_val = (args.asymmetric && K_zr && in_range)
++                ? K_zr[(long)cell_rel * args.nKVHeads] : 0.0f;
++
++            // D=64: 4 k-iterations × 2 elements each = 8 D-positions per thread.
++            float k_lane[4][2];
++            for (int k = 0; k < 4; k++) {
++                const int start_elem = tid_kq * 8 + k * 2;
++                if (args.bits == 3) {
++                    const int bit_pos0 = start_elem * 3;
++                    const int byte0 = bit_pos0 >> 3, sh0 = bit_pos0 & 7;
++                    const uint w0 = (uint)packed_row[byte0] | ((uint)packed_row[byte0+1] << 8);
++                    int idx0 = (int)((w0 >> sh0) & 7);
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)idx0) * rms_scale;
++                    const int bit_pos1 = (start_elem + 1) * 3;
++                    const int byte1 = bit_pos1 >> 3, sh1 = bit_pos1 & 7;
++                    const uint w1 = (uint)packed_row[byte1] | ((uint)packed_row[byte1+1] << 8);
++                    int idx1 = (int)((w1 >> sh1) & 7);
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)idx1) * rms_scale;
++                } else if (args.bits == 4) {
++                    // 4-bit nibble decode: start_elem is always even, so both
++                    // nibbles for this pair live in the same byte.
++                    const int byte0 = start_elem >> 1;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)(packed_row[byte0] & 0xF)) * rms_scale;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> 4) & 0xF)) * rms_scale;
++                } else {
++                    // 2-bit: 4 elements per byte.
++                    const int byte0 = start_elem >> 2, sh0 = (start_elem & 3) * 2;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> sh0) & 3)) * rms_scale;
++                    const int byte1 = (start_elem + 1) >> 2, sh1 = ((start_elem + 1) & 3) * 2;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte1] >> sh1) & 3)) * rms_scale;
++                }
++            }
++
++            for (int j = 0; j < args.ncols; j++) {
++                float sum = 0.0f;
++                for (int k = 0; k < 4; k++) {
++                    sum += Q_reg[j][k].x * k_lane[k][0] + Q_reg[j][k].y * k_lane[k][1];
++                }
++                sum += simd_shuffle_xor(sum, 4);
++                sum += simd_shuffle_xor(sum, 2);
++                sum += simd_shuffle_xor(sum, 1);
++
++                // Asymmetric mean correction.
++                if (args.asymmetric && K_zr) {
++                    sum += zero_val * sum_q[j];
++                }
++
++                if (args.logit_softcap != 0.0f) {
++                    sum = args.logit_softcap * tanh(sum);
++                }
++
++                if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
++                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
++                }
++
++                if (!in_range) sum = -FLT_MAX/2.0f;
++
++                KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);
++
++                if (tid_kq == (uint)i_KQ_0) {
++                    KQ_tg[j * nthreads + tid] = sum;
++                }
++            }
++        }
++
++        for (int j = 0; j < args.ncols; j++) {
++            KQ_max_new[j] = simd_max(KQ_max_new[j]);
++
++            const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
++            KQ_max[j] = KQ_max_new[j];
++
++            const float kq_val = KQ_tg[j * nthreads + tid];
++            const float kq_exp = exp(kq_val - KQ_max[j]);
++            KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
++            KQ_tg[j * nthreads + tid] = kq_exp;
++
++            for (int i = 0; i < 4; i++) {
++                VKQ[j][i].x *= KQ_max_scale;
++                VKQ[j][i].y *= KQ_max_scale;
++            }
++        }
++
++        // D=64: 1 pass × 64 V-elements → VKQ[0..3].
++        for (int k0 = 0; k0 < 32; k0 += V_cols_per_iter) {
++            const int k = (int)sgitg * 32 + k0 + (int)tiisg / nthreads_V;
++            const int cell_rel = k_VKQ_0 + k;
++
++            float KQ_k[2];
++            for (int j = 0; j < args.ncols; j++) {
++                KQ_k[j] = KQ_tg[j * nthreads + k];
++            }
++
++            device const half * V_cell = (cell_rel < args.nCells)
++                ? V + (long)cell_rel * (args.nb21 / sizeof(half))
++                : nullptr;
++
++            const int v_tid = (int)tiisg % nthreads_V;
++            const int elem = v_tid * 8;  // pass 0 only
++            for (int i = 0; i < 8; i++) {
++                float v_val = (V_cell && (elem + i) < D) ? float(V_cell[elem + i]) : 0.0f;
++                const int vkq_idx = i / 2;
++                for (int j = 0; j < args.ncols; j++) {
++                    if (i % 2 == 0) VKQ[j][vkq_idx].x += v_val * KQ_k[j];
++                    else            VKQ[j][vkq_idx].y += v_val * KQ_k[j];
++                }
++            }
++        }
++    } // end KV loop
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (sgitg == 0) {
++            KQ_max_tg[j][tiisg] = -FLT_MAX/2.0f;
++            KQ_sum_tg[j][tiisg] = 0.0f;
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (tiisg == 0) {
++            KQ_max_tg[j][sgitg] = KQ_max[j];
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (args.ncols > 1 && ic0 + j >= args.nTokensQ) break;
++
++        float kqmax_new = KQ_max_tg[j][tiisg];
++        kqmax_new = simd_max(kqmax_new);
++        const float kqmax_scale = exp(KQ_max[j] - kqmax_new);
++        KQ_max[j] = kqmax_new;
++
++        for (int i = 0; i < 4; i++) {
++            VKQ[j][i].x *= kqmax_scale;
++            VKQ[j][i].y *= kqmax_scale;
++        }
++
++        // D=64: VKQ_tg layout: sgitg*(V_cols_per_iter*D/2) + (tiisg/nthreads_V)*(D/2)
++        //   = sgitg*128 + (tiisg/8)*32.  Only 4 float2 per thread (1 pass).
++        const int v_tid = (int)tiisg % nthreads_V;
++        threadgroup float2 * VKQ_tg = (threadgroup float2 *)KQ_tg
++            + (long)sgitg * (V_cols_per_iter * D/2)
++            + (long)((int)tiisg / nthreads_V) * (D/2);
++        VKQ_tg[v_tid * 4 + 0] = VKQ[j][0];
++        VKQ_tg[v_tid * 4 + 1] = VKQ[j][1];
++        VKQ_tg[v_tid * 4 + 2] = VKQ[j][2];
++        VKQ_tg[v_tid * 4 + 3] = VKQ[j][3];
++
++        KQ_sum[j] *= kqmax_scale;
++        KQ_sum[j] = simd_sum(KQ_sum[j]);
++        if (tiisg == 0) {
++            KQ_sum_tg[j][sgitg] = KQ_sum[j];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++
++        // D=64: only first 64 threads write output.
++        if (tid < D) {
++            KQ_sum[j] = KQ_sum_tg[j][tiisg];
++            KQ_sum[j] = simd_sum(KQ_sum[j]);
++
++            float dst_val = 0.0f;
++            for (int w = 0; w < nwarps; w++) {
++                for (int v = 0; v < V_cols_per_iter; v++) {
++                    dst_val += ((threadgroup float *)KQ_tg)[w * V_cols_per_iter * D + v * D + tid];
++                }
++            }
++            dst_val /= KQ_sum[j];
++            const long out_idx = ((long)sequence * args.nTokensQ + ic0 + j) * args.nHeadsQ + head;
++            dst[out_idx * D + tid] = dst_val;
++        }
++        if (j < args.ncols - 1) threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_fattn_vec_f16_d256
++// TQ fused flash-attention at head dim 256: K packed i8, V f16.
++// Thread layout identical to the D=128 variant (32×4 = 128 threads) but each
++// thread now produces 2 output elements (D/nthreads = 2) and covers twice as
++// many D positions in the Q/K/V loops.
++// Grid:  (ntiles_x, 1, nHeadsQ*nSeq)
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_fattn_vec_f16_d256(
++    constant   ggml_metal_kargs_tq_fattn_vec & args,
++    device const char    * Q_data    [[buffer(1)]],
++    device const uint8_t * K_packed  [[buffer(2)]],
++    device const half    * V_data    [[buffer(3)]],
++    device const half    * mask_data [[buffer(4)]],
++    device const float   * K_scales  [[buffer(5)]],
++    device const float   * K_cb      [[buffer(6)]],
++    device const float   * dummy_vs  [[buffer(7)]],
++    device const float   * dummy_vc  [[buffer(8)]],
++    device       float   * dst       [[buffer(9)]],
++    device const float   * K_zeros   [[buffer(10)]],
++    uint3 tgpig [[threadgroup_position_in_grid]],
++    uint  tiisg [[thread_index_in_simdgroup]],
++    uint  sgitg [[simdgroup_index_in_threadgroup]])
++{
++    constexpr int D           = 256;
++    constexpr int nthreads    = 128;
++    constexpr int nthreads_KQ = 8;
++    constexpr int nthreads_V  = 8;
++    constexpr int V_cols_per_iter   = 4;
++    constexpr int nwarps      = 4;
++
++    const int ic0     = (int)tgpig.x * args.ncols;
++    const int blk_z   = (int)tgpig.z;
++    const int sequence = blk_z / args.nHeadsQ;
++    const int head     = blk_z % args.nHeadsQ;
++    const int gqa_ratio = args.nHeadsQ / args.nKVHeads;
++    const int head_kv   = head / gqa_ratio;
++
++    const int tid = (int)sgitg * 32 + (int)tiisg;
++
++    device const float * Q = (device const float *)Q_data
++        + (long)sequence * (args.nb03 / sizeof(float))
++        + (long)head * (args.nb02 / sizeof(float))
++        + (long)ic0  * (args.nb01 / sizeof(float));
++
++    device const uint8_t * K_p = K_packed
++        + (long)args.firstCell * args.nKVHeads * args.packedBytes
++        + (long)head_kv * args.packedBytes;
++    device const float * K_sc = K_scales
++        + (long)args.firstCell * args.nKVHeads + head_kv;
++    device const float * K_zr = args.asymmetric
++        ? (K_zeros + (long)args.firstCell * args.nKVHeads + head_kv)
++        : nullptr;
++
++    device const half * V = V_data
++        + (long)sequence * (args.nb23 / sizeof(half))
++        + (long)head_kv  * (args.nb22 / sizeof(half));
++
++    device const half * maskh = args.hasMask
++        ? (mask_data + (long)ic0 * (args.nb31 / sizeof(half)))
++        : nullptr;
++
++    const int k_cb_mask = (1 << args.bits) - 1;
++    const float k_cb_lane = K_cb[tiisg & k_cb_mask];
++
++    const int tid_kq = (int)tiisg % nthreads_KQ;
++
++    // D=256: Q_reg holds 16 float2 per thread per query slot (D/(2*nthreads_KQ)).
++    float2 Q_reg[2][16];
++    for (int j = 0; j < args.ncols; j++) {
++        device const float2 * Q_j = (device const float2 *)(Q + (long)j * (args.nb01 / sizeof(float)));
++        for (int i = 0; i < 16; i++) {
++            const int elem = tid_kq * 16 + i;  // float2 index within [0, 127]
++            Q_reg[j][i] = (elem < D/2) ? Q_j[elem] : float2(0.0f, 0.0f);
++        }
++        for (int i = 0; i < 16; i++) {
++            Q_reg[j][i].x *= args.scale;
++            Q_reg[j][i].y *= args.scale;
++        }
++    }
++
++    // D=256: VKQ holds 4 passes × 4 float2 = 16 float2 per query slot.
++    // Precompute sum_q[j] = Σ_e scaled_Q[j][e] for asymmetric zero correction.
++    float sum_q[2] = { 0.0f, 0.0f };
++    if (args.asymmetric) {
++        for (int j = 0; j < args.ncols; j++) {
++            float local_sum = 0.0f;
++            for (int k = 0; k < D/(2*nthreads_KQ); k++) {
++                local_sum += Q_reg[j][k].x + Q_reg[j][k].y;
++            }
++            local_sum += simd_shuffle_xor(local_sum, 4);
++            local_sum += simd_shuffle_xor(local_sum, 2);
++            local_sum += simd_shuffle_xor(local_sum, 1);
++            sum_q[j] = local_sum;
++        }
++    }
++
++    float2 VKQ[2][16];
++    for (int j = 0; j < 2; j++)
++        for (int i = 0; i < 16; i++)
++            VKQ[j][i] = float2(0.0f, 0.0f);
++
++    float KQ_max[2] = { -FLT_MAX/2.0f, -FLT_MAX/2.0f };
++    float KQ_sum[2] = { 0.0f, 0.0f };
++
++    // D=256: KQ_tg sized nwarps*V_cols_per_iter*D = 4*4*256 = 4096 floats (16 KiB).
++    threadgroup float KQ_tg[4096];
++    threadgroup float KQ_max_tg[2][32];
++    threadgroup float KQ_sum_tg[2][32];
++
++    for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
++
++        float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
++
++        for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
++            const int kq_grp_start = ((int)tiisg & ~(nthreads_KQ - 1));
++            const int i_KQ = (int)sgitg * 32 + kq_grp_start + i_KQ_0;
++            const int cell_rel = k_VKQ_0 + i_KQ;
++            const bool in_range = (cell_rel < args.nCells);
++
++            // Hoist K decode out of the j loop. See kernel_tq_fattn_vec_f16
++            // for full rationale.
++            device const uint8_t * packed_row = K_p + (long)cell_rel * args.nKVHeads * args.packedBytes;
++            const float rms_scale = in_range ? K_sc[cell_rel * args.nKVHeads] : 0.0f;
++            const float zero_val = (args.asymmetric && K_zr && in_range)
++                ? K_zr[(long)cell_rel * args.nKVHeads] : 0.0f;
++
++            // D=256: 16 k-iterations × 2 elements each = 32 D-positions per thread.
++            float k_lane[16][2];
++            for (int k = 0; k < 16; k++) {
++                const int start_elem = tid_kq * 32 + k * 2;  // float index [0..254]
++                if (args.bits == 3) {
++                    const int bit_pos0 = start_elem * 3;
++                    const int byte0 = bit_pos0 >> 3, sh0 = bit_pos0 & 7;
++                    const uint w0 = (uint)packed_row[byte0] | ((uint)packed_row[byte0+1] << 8);
++                    int idx0 = (int)((w0 >> sh0) & 7);
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)idx0) * rms_scale;
++                    const int bit_pos1 = (start_elem + 1) * 3;
++                    const int byte1 = bit_pos1 >> 3, sh1 = bit_pos1 & 7;
++                    const uint w1 = (uint)packed_row[byte1] | ((uint)packed_row[byte1+1] << 8);
++                    int idx1 = (int)((w1 >> sh1) & 7);
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)idx1) * rms_scale;
++                } else if (args.bits == 4) {
++                    // 4-bit nibble decode: start_elem is always even, so both
++                    // nibbles for this pair live in the same byte.
++                    const int byte0 = start_elem >> 1;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)(packed_row[byte0] & 0xF)) * rms_scale;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> 4) & 0xF)) * rms_scale;
++                } else {
++                    // 2-bit: 4 elements per byte.
++                    const int byte0 = start_elem >> 2, sh0 = (start_elem & 3) * 2;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> sh0) & 3)) * rms_scale;
++                    const int byte1 = (start_elem + 1) >> 2, sh1 = ((start_elem + 1) & 3) * 2;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte1] >> sh1) & 3)) * rms_scale;
++                }
++            }
++
++            for (int j = 0; j < args.ncols; j++) {
++                float sum = 0.0f;
++                for (int k = 0; k < 16; k++) {
++                    sum += Q_reg[j][k].x * k_lane[k][0] + Q_reg[j][k].y * k_lane[k][1];
++                }
++                sum += simd_shuffle_xor(sum, 4);
++                sum += simd_shuffle_xor(sum, 2);
++                sum += simd_shuffle_xor(sum, 1);
++
++                // Asymmetric mean correction.
++                if (args.asymmetric && K_zr) {
++                    sum += zero_val * sum_q[j];
++                }
++
++                if (args.logit_softcap != 0.0f) {
++                    sum = args.logit_softcap * tanh(sum);
++                }
++
++                if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
++                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
++                }
++
++                if (!in_range) sum = -FLT_MAX/2.0f;
++
++                KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);
++
++                if (tid_kq == (uint)i_KQ_0) {
++                    KQ_tg[j * nthreads + tid] = sum;
++                }
++            }
++        }
++
++        for (int j = 0; j < args.ncols; j++) {
++            KQ_max_new[j] = simd_max(KQ_max_new[j]);
++
++            const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
++            KQ_max[j] = KQ_max_new[j];
++
++            const float kq_val = KQ_tg[j * nthreads + tid];
++            const float kq_exp = exp(kq_val - KQ_max[j]);
++            KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
++            KQ_tg[j * nthreads + tid] = kq_exp;
++
++            for (int i = 0; i < 16; i++) {
++                VKQ[j][i].x *= KQ_max_scale;
++                VKQ[j][i].y *= KQ_max_scale;
++            }
++        }
++
++        // D=256: 4 passes × 64 V-elements each = full 256-element coverage.
++        //   pass 0 → V[  0.. 63] → VKQ[ 0.. 3]
++        //   pass 1 → V[ 64..127] → VKQ[ 4.. 7]
++        //   pass 2 → V[128..191] → VKQ[ 8..11]
++        //   pass 3 → V[192..255] → VKQ[12..15]
++        for (int k0 = 0; k0 < 32; k0 += V_cols_per_iter) {
++            const int k = (int)sgitg * 32 + k0 + (int)tiisg / nthreads_V;
++            const int cell_rel = k_VKQ_0 + k;
++
++            float KQ_k[2];
++            for (int j = 0; j < args.ncols; j++) {
++                KQ_k[j] = KQ_tg[j * nthreads + k];
++            }
++
++            device const half * V_cell = (cell_rel < args.nCells)
++                ? V + (long)cell_rel * (args.nb21 / sizeof(half))
++                : nullptr;
++
++            const int v_tid = (int)tiisg % nthreads_V;
++            for (int pass = 0; pass < 4; pass++) {
++                for (int i = 0; i < 8; i++) {
++                    const int elem = pass * 64 + v_tid * 8 + i;
++                    float v_val = (V_cell && elem < D) ? float(V_cell[elem]) : 0.0f;
++                    const int vkq_idx = pass * 4 + i / 2;
++                    for (int j = 0; j < args.ncols; j++) {
++                        if (i % 2 == 0) VKQ[j][vkq_idx].x += v_val * KQ_k[j];
++                        else            VKQ[j][vkq_idx].y += v_val * KQ_k[j];
++                    }
++                }
++            }
++        }
++    } // end KV loop
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (sgitg == 0) {
++            KQ_max_tg[j][tiisg] = -FLT_MAX/2.0f;
++            KQ_sum_tg[j][tiisg] = 0.0f;
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (tiisg == 0) {
++            KQ_max_tg[j][sgitg] = KQ_max[j];
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (args.ncols > 1 && ic0 + j >= args.nTokensQ) break;
++
++        float kqmax_new = KQ_max_tg[j][tiisg];
++        kqmax_new = simd_max(kqmax_new);
++        const float kqmax_scale = exp(KQ_max[j] - kqmax_new);
++        KQ_max[j] = kqmax_new;
++
++        for (int i = 0; i < 16; i++) {
++            VKQ[j][i].x *= kqmax_scale;
++            VKQ[j][i].y *= kqmax_scale;
++        }
++
++        // D=256: VKQ_tg layout per (sgitg,v-group) region of D/2 = 128 float2:
++        //   VKQ[ 0.. 3] → VKQ_tg[v_tid*4 + 0..3]      (pass 0, float2 slots 0..31)
++        //   VKQ[ 4.. 7] → VKQ_tg[32 + v_tid*4 + 0..3] (pass 1, float2 slots 32..63)
++        //   VKQ[ 8..11] → VKQ_tg[64 + v_tid*4 + 0..3] (pass 2, float2 slots 64..95)
++        //   VKQ[12..15] → VKQ_tg[96 + v_tid*4 + 0..3] (pass 3, float2 slots 96..127)
++        const int v_tid = (int)tiisg % nthreads_V;
++        threadgroup float2 * VKQ_tg = (threadgroup float2 *)KQ_tg
++            + (long)sgitg * (V_cols_per_iter * D/2)
++            + (long)((int)tiisg / nthreads_V) * (D/2);
++        VKQ_tg[v_tid * 4 + 0]      = VKQ[j][0];
++        VKQ_tg[v_tid * 4 + 1]      = VKQ[j][1];
++        VKQ_tg[v_tid * 4 + 2]      = VKQ[j][2];
++        VKQ_tg[v_tid * 4 + 3]      = VKQ[j][3];
++        VKQ_tg[32 + v_tid * 4 + 0] = VKQ[j][4];
++        VKQ_tg[32 + v_tid * 4 + 1] = VKQ[j][5];
++        VKQ_tg[32 + v_tid * 4 + 2] = VKQ[j][6];
++        VKQ_tg[32 + v_tid * 4 + 3] = VKQ[j][7];
++        VKQ_tg[64 + v_tid * 4 + 0] = VKQ[j][8];
++        VKQ_tg[64 + v_tid * 4 + 1] = VKQ[j][9];
++        VKQ_tg[64 + v_tid * 4 + 2] = VKQ[j][10];
++        VKQ_tg[64 + v_tid * 4 + 3] = VKQ[j][11];
++        VKQ_tg[96 + v_tid * 4 + 0] = VKQ[j][12];
++        VKQ_tg[96 + v_tid * 4 + 1] = VKQ[j][13];
++        VKQ_tg[96 + v_tid * 4 + 2] = VKQ[j][14];
++        VKQ_tg[96 + v_tid * 4 + 3] = VKQ[j][15];
++
++        KQ_sum[j] *= kqmax_scale;
++        KQ_sum[j] = simd_sum(KQ_sum[j]);
++        if (tiisg == 0) {
++            KQ_sum_tg[j][sgitg] = KQ_sum[j];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++
++        // D=256: each thread writes 2 output positions (tid, tid+128). Compute
++        // KQ_sum with ALL lanes participating in the simd_sum (required for
++        // convergence), then two writes per thread.
++        KQ_sum[j] = KQ_sum_tg[j][tiisg];
++        KQ_sum[j] = simd_sum(KQ_sum[j]);
++
++        const long out_idx = ((long)sequence * args.nTokensQ + ic0 + j) * args.nHeadsQ + head;
++        for (int out_offset = 0; out_offset < D; out_offset += nthreads) {
++            const int out_elem = out_offset + tid;
++            float dst_val = 0.0f;
++            for (int w = 0; w < nwarps; w++) {
++                for (int v = 0; v < V_cols_per_iter; v++) {
++                    dst_val += ((threadgroup float *)KQ_tg)[w * V_cols_per_iter * D + v * D + out_elem];
++                }
++            }
++            dst_val /= KQ_sum[j];
++            dst[out_idx * D + out_elem] = dst_val;
++        }
++
++        if (j < args.ncols - 1) threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_fattn_vec_packed
++// TQ fused flash-attention: K packed i8, V packed i8.
++// Same thread layout as kernel_tq_fattn_vec_f16.
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_fattn_vec_packed(
++    constant   ggml_metal_kargs_tq_fattn_vec & args,
++    device const char    * Q_data    [[buffer(1)]],
++    device const uint8_t * K_packed  [[buffer(2)]],
++    device const uint8_t * V_packed  [[buffer(3)]],
++    device const half    * mask_data [[buffer(4)]],
++    device const float   * K_scales  [[buffer(5)]],
++    device const float   * K_cb      [[buffer(6)]],
++    device const float   * V_scales  [[buffer(7)]],
++    device const float   * V_cb      [[buffer(8)]],
++    device       float   * dst       [[buffer(9)]],
++    device const float   * K_zeros   [[buffer(10)]],
++    uint3 tgpig [[threadgroup_position_in_grid]],
++    uint  tiisg [[thread_index_in_simdgroup]],
++    uint  sgitg [[simdgroup_index_in_threadgroup]])
++{
++    constexpr int D           = 128;
++    constexpr int nthreads    = 128;
++    constexpr int nthreads_KQ = 8;
++    constexpr int nthreads_V  = 8;
++    constexpr int V_rows_per_thread = 8;
++    constexpr int V_cols_per_iter   = 4;
++    constexpr int nwarps      = 4;
++
++    const int ic0     = (int)tgpig.x * args.ncols;
++    const int blk_z   = (int)tgpig.z;
++    const int sequence = blk_z / args.nHeadsQ;
++    const int head     = blk_z % args.nHeadsQ;
++    const int gqa_ratio = args.nHeadsQ / args.nKVHeads;
++    const int head_kv   = head / gqa_ratio;
++
++    const int tid = (int)sgitg * 32 + (int)tiisg;
++
++    device const float * Q = (device const float *)Q_data
++        + (long)sequence * (args.nb03 / sizeof(float))
++        + (long)head * (args.nb02 / sizeof(float))
++        + (long)ic0  * (args.nb01 / sizeof(float));
++
++    device const uint8_t * K_p = K_packed
++        + (long)args.firstCell * args.nKVHeads * args.packedBytes
++        + (long)head_kv * args.packedBytes;
++    device const float * K_sc = K_scales
++        + (long)args.firstCell * args.nKVHeads + head_kv;
++    device const float * K_zr = args.asymmetric
++        ? (K_zeros + (long)args.firstCell * args.nKVHeads + head_kv)
++        : nullptr;
++
++    device const uint8_t * V_p = V_packed
++        + (long)args.firstCell * args.nKVHeads * args.v_packedBytes
++        + (long)head_kv * args.v_packedBytes;
++    device const float * V_sc = V_scales
++        + (long)args.firstCell * args.nKVHeads + head_kv;
++
++    device const half * maskh = args.hasMask
++        ? (mask_data + (long)ic0 * (args.nb31 / sizeof(half)))
++        : nullptr;
++
++    const int k_cb_mask = (1 << args.bits) - 1;
++    const float k_cb_lane = K_cb[tiisg & k_cb_mask];
++    const int v_cb_mask = (1 << args.v_bits) - 1;
++    const float v_cb_lane = V_cb[tiisg & v_cb_mask];
++
++    const int tid_kq = (int)tiisg % nthreads_KQ;
++
++    float2 Q_reg[2][8];
++    for (int j = 0; j < args.ncols; j++) {
++        device const float2 * Q_j = (device const float2 *)(Q + (long)j * (args.nb01 / sizeof(float)));
++        for (int i = 0; i < 8; i++) {
++            const int elem = tid_kq * 8 + i;
++            Q_reg[j][i] = (elem < D/2) ? Q_j[elem] : float2(0.0f, 0.0f);
++        }
++        for (int i = 0; i < 8; i++) {
++            Q_reg[j][i].x *= args.scale;
++            Q_reg[j][i].y *= args.scale;
++        }
++    }
++
++    // Precompute sum_q[j] = Σ_e scaled_Q[j][e] for asymmetric zero correction.
++    float sum_q[2] = { 0.0f, 0.0f };
++    if (args.asymmetric) {
++        for (int j = 0; j < args.ncols; j++) {
++            float local_sum = 0.0f;
++            for (int k = 0; k < D/(2*nthreads_KQ); k++) {
++                local_sum += Q_reg[j][k].x + Q_reg[j][k].y;
++            }
++            // Reduce within KQ group (same 8 threads share same Q elements).
++            local_sum += simd_shuffle_xor(local_sum, 4);
++            local_sum += simd_shuffle_xor(local_sum, 2);
++            local_sum += simd_shuffle_xor(local_sum, 1);
++            sum_q[j] = local_sum;
++        }
++    }
++
++    float2 VKQ[2][8];
++    for (int j = 0; j < 2; j++)
++        for (int i = 0; i < 8; i++)
++            VKQ[j][i] = float2(0.0f, 0.0f);
++
++    float KQ_max[2] = { -FLT_MAX/2.0f, -FLT_MAX/2.0f };
++    float KQ_sum[2] = { 0.0f, 0.0f };
++
++    threadgroup float KQ_tg[2048];
++    threadgroup float KQ_max_tg[2][32];
++    threadgroup float KQ_sum_tg[2][32];
++
++    for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
++
++        float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
++
++        for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
++            const int kq_grp_start = ((int)tiisg & ~(nthreads_KQ - 1));
++            const int i_KQ = (int)sgitg * 32 + kq_grp_start + i_KQ_0;
++            const int cell_rel = k_VKQ_0 + i_KQ;
++            const bool in_range = (cell_rel < args.nCells);
++
++            // Hoist K decode out of the j loop. See kernel_tq_fattn_vec_f16
++            // for full rationale.
++            device const uint8_t * packed_row = K_p + (long)cell_rel * args.nKVHeads * args.packedBytes;
++            const float rms_scale = in_range ? K_sc[cell_rel * args.nKVHeads] : 0.0f;
++            const float zero_val = (args.asymmetric && K_zr && in_range)
++                ? K_zr[(long)cell_rel * args.nKVHeads] : 0.0f;
++
++            float k_lane[8][2];
++            for (int k = 0; k < 8; k++) {
++                const int start_elem = tid_kq * 16 + k * 2;
++                if (args.bits == 3) {
++                    const int bit_pos0 = start_elem * 3;
++                    const int byte0 = bit_pos0 >> 3, sh0 = bit_pos0 & 7;
++                    const uint w0 = (uint)packed_row[byte0] | ((uint)packed_row[byte0+1] << 8);
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)((w0 >> sh0) & 7)) * rms_scale;
++                    const int bit_pos1 = (start_elem + 1) * 3;
++                    const int byte1 = bit_pos1 >> 3, sh1 = bit_pos1 & 7;
++                    const uint w1 = (uint)packed_row[byte1] | ((uint)packed_row[byte1+1] << 8);
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((w1 >> sh1) & 7)) * rms_scale;
++                } else if (args.bits == 4) {
++                    // 4-bit nibble decode: start_elem is always even, so both
++                    // nibbles for this pair live in the same byte.
++                    const int byte0 = start_elem >> 1;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)(packed_row[byte0] & 0xF)) * rms_scale;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> 4) & 0xF)) * rms_scale;
++                } else {
++                    // 2-bit: 4 elements per byte.
++                    const int byte0 = start_elem >> 2, sh0 = (start_elem & 3) * 2;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> sh0) & 3)) * rms_scale;
++                    const int byte1 = (start_elem + 1) >> 2, sh1 = ((start_elem + 1) & 3) * 2;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte1] >> sh1) & 3)) * rms_scale;
++                }
++            }
++
++            for (int j = 0; j < args.ncols; j++) {
++                float sum = 0.0f;
++                for (int k = 0; k < 8; k++) {
++                    sum += Q_reg[j][k].x * k_lane[k][0] + Q_reg[j][k].y * k_lane[k][1];
++                }
++                sum += simd_shuffle_xor(sum, 4);
++                sum += simd_shuffle_xor(sum, 2);
++                sum += simd_shuffle_xor(sum, 1);
++
++                // Asymmetric mean correction.
++                if (args.asymmetric && K_zr) {
++                    sum += zero_val * sum_q[j];
++                }
++
++                if (args.logit_softcap != 0.0f) {
++                    sum = args.logit_softcap * tanh(sum);
++                }
++                if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
++                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
++                }
++                if (!in_range) sum = -FLT_MAX/2.0f;
++
++                KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);  // FATTN_KQ_MAX_OFFSET = ln(2)
++
++                if (tid_kq == (uint)i_KQ_0) {
++                    KQ_tg[j * nthreads + tid] = sum;
++                }
++            }
++        }
++
++        for (int j = 0; j < args.ncols; j++) {
++            KQ_max_new[j] = simd_max(KQ_max_new[j]);
++
++            const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
++            KQ_max[j] = KQ_max_new[j];
++
++            const float kq_val = KQ_tg[j * nthreads + tid];
++            const float kq_exp = exp(kq_val - KQ_max[j]);
++            KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
++            KQ_tg[j * nthreads + tid] = kq_exp;
++
++            for (int i = 0; i < 8; i++) {
++                VKQ[j][i].x *= KQ_max_scale;
++                VKQ[j][i].y *= KQ_max_scale;
++            }
++        }
++
++        // Accumulate V packed contributions.
++        for (int k0 = 0; k0 < 32; k0 += V_cols_per_iter) {
++            const int k = (int)sgitg * 32 + k0 + (int)tiisg / nthreads_V;
++            const int cell_rel = k_VKQ_0 + k;
++            const bool in_range_v = (cell_rel < args.nCells);
++
++            float KQ_k[2];
++            for (int j = 0; j < args.ncols; j++) {
++                KQ_k[j] = KQ_tg[j * nthreads + k];
++            }
++
++            device const uint8_t * v_row = in_range_v
++                ? V_p + (long)cell_rel * args.nKVHeads * args.v_packedBytes
++                : nullptr;
++            const float v_rms = in_range_v ? V_sc[cell_rel * args.nKVHeads] : 0.0f;
++
++            const int v_tid = (int)tiisg % nthreads_V;
++            // Two passes: pass 0 → V elements [v_tid*8 .. v_tid*8+7] → VKQ[0..3]
++            //             pass 1 → V elements [64+v_tid*8 .. 64+v_tid*8+7] → VKQ[4..7]
++            for (int pass = 0; pass < 2; pass++) {
++                float v_dec[8];
++                const int start_elem = pass * 64 + v_tid * 8;
++                if (v_row && start_elem < D) {
++                    tq_decode_8_shfl(v_row, v_cb_lane, v_rms, start_elem, args.v_bits, v_dec);
++                } else {
++                    // Keep all lanes convergent for shuffle.
++                    tq_decode_8_shfl(K_p, v_cb_lane, 0.0f, 0, args.v_bits, v_dec);
++                }
++                for (int i = 0; i < 8; i++) {
++                    const int vkq_idx = pass * 4 + i / 2;
++                    for (int j = 0; j < args.ncols; j++) {
++                        if (i % 2 == 0) VKQ[j][vkq_idx].x += v_dec[i] * KQ_k[j];
++                        else            VKQ[j][vkq_idx].y += v_dec[i] * KQ_k[j];
++                    }
++                }
++            }
++        }
++    } // end KV loop
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (sgitg == 0) {
++            KQ_max_tg[j][tiisg] = -FLT_MAX/2.0f;
++            KQ_sum_tg[j][tiisg] = 0.0f;
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (tiisg == 0) {
++            KQ_max_tg[j][sgitg] = KQ_max[j];
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (args.ncols > 1 && ic0 + j >= args.nTokensQ) break;
++
++        float kqmax_new = KQ_max_tg[j][tiisg];
++        kqmax_new = simd_max(kqmax_new);
++        const float kqmax_scale = exp(KQ_max[j] - kqmax_new);
++        KQ_max[j] = kqmax_new;
++
++        for (int i = 0; i < 8; i++) {
++            VKQ[j][i].x *= kqmax_scale;
++            VKQ[j][i].y *= kqmax_scale;
++        }
++        const int v_tid = (int)tiisg % nthreads_V;
++        threadgroup float2 * VKQ_tg = (threadgroup float2 *)KQ_tg
++            + (long)sgitg * (V_cols_per_iter * D/2)
++            + (long)((int)tiisg / nthreads_V) * (D/2);
++        VKQ_tg[v_tid * 4 + 0] = VKQ[j][0];
++        VKQ_tg[v_tid * 4 + 1] = VKQ[j][1];
++        VKQ_tg[v_tid * 4 + 2] = VKQ[j][2];
++        VKQ_tg[v_tid * 4 + 3] = VKQ[j][3];
++        VKQ_tg[32 + v_tid * 4 + 0] = VKQ[j][4];
++        VKQ_tg[32 + v_tid * 4 + 1] = VKQ[j][5];
++        VKQ_tg[32 + v_tid * 4 + 2] = VKQ[j][6];
++        VKQ_tg[32 + v_tid * 4 + 3] = VKQ[j][7];
++
++        KQ_sum[j] *= kqmax_scale;
++        KQ_sum[j] = simd_sum(KQ_sum[j]);
++        if (tiisg == 0) {
++            KQ_sum_tg[j][sgitg] = KQ_sum[j];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++
++        if (tid < D) {
++            KQ_sum[j] = KQ_sum_tg[j][tiisg];
++            KQ_sum[j] = simd_sum(KQ_sum[j]);
++
++            float dst_val = 0.0f;
++            for (int w = 0; w < nwarps; w++) {
++                for (int v = 0; v < V_cols_per_iter; v++) {
++                    dst_val += ((threadgroup float *)KQ_tg)[w * V_cols_per_iter * D + v * D + tid];
++                }
++            }
++            dst_val /= KQ_sum[j];
++            const long out_idx = ((long)sequence * args.nTokensQ + ic0 + j) * args.nHeadsQ + head;
++            dst[out_idx * D + tid] = dst_val;
++        }
++        if (j < args.ncols - 1) threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_fattn_vec_packed_d64
++// TQ fused flash-attention at head dim 64: K packed i8, V packed i8.
++// Mirrors kernel_tq_fattn_vec_packed with 1 V-pass and only threads 0..63
++// writing output.
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_fattn_vec_packed_d64(
++    constant   ggml_metal_kargs_tq_fattn_vec & args,
++    device const char    * Q_data    [[buffer(1)]],
++    device const uint8_t * K_packed  [[buffer(2)]],
++    device const uint8_t * V_packed  [[buffer(3)]],
++    device const half    * mask_data [[buffer(4)]],
++    device const float   * K_scales  [[buffer(5)]],
++    device const float   * K_cb      [[buffer(6)]],
++    device const float   * V_scales  [[buffer(7)]],
++    device const float   * V_cb      [[buffer(8)]],
++    device       float   * dst       [[buffer(9)]],
++    device const float   * K_zeros   [[buffer(10)]],
++    uint3 tgpig [[threadgroup_position_in_grid]],
++    uint  tiisg [[thread_index_in_simdgroup]],
++    uint  sgitg [[simdgroup_index_in_threadgroup]])
++{
++    constexpr int D           = 64;
++    constexpr int nthreads    = 128;
++    constexpr int nthreads_KQ = 8;
++    constexpr int nthreads_V  = 8;
++    constexpr int V_cols_per_iter   = 4;
++    constexpr int nwarps      = 4;
++
++    const int ic0     = (int)tgpig.x * args.ncols;
++    const int blk_z   = (int)tgpig.z;
++    const int sequence = blk_z / args.nHeadsQ;
++    const int head     = blk_z % args.nHeadsQ;
++    const int gqa_ratio = args.nHeadsQ / args.nKVHeads;
++    const int head_kv   = head / gqa_ratio;
++
++    const int tid = (int)sgitg * 32 + (int)tiisg;
++
++    device const float * Q = (device const float *)Q_data
++        + (long)sequence * (args.nb03 / sizeof(float))
++        + (long)head * (args.nb02 / sizeof(float))
++        + (long)ic0  * (args.nb01 / sizeof(float));
++
++    device const uint8_t * K_p = K_packed
++        + (long)args.firstCell * args.nKVHeads * args.packedBytes
++        + (long)head_kv * args.packedBytes;
++    device const float * K_sc = K_scales
++        + (long)args.firstCell * args.nKVHeads + head_kv;
++    device const float * K_zr = args.asymmetric
++        ? (K_zeros + (long)args.firstCell * args.nKVHeads + head_kv)
++        : nullptr;
++
++    device const uint8_t * V_p = V_packed
++        + (long)args.firstCell * args.nKVHeads * args.v_packedBytes
++        + (long)head_kv * args.v_packedBytes;
++    device const float * V_sc = V_scales
++        + (long)args.firstCell * args.nKVHeads + head_kv;
++
++    device const half * maskh = args.hasMask
++        ? (mask_data + (long)ic0 * (args.nb31 / sizeof(half)))
++        : nullptr;
++
++    const int k_cb_mask = (1 << args.bits) - 1;
++    const float k_cb_lane = K_cb[tiisg & k_cb_mask];
++    const int v_cb_mask = (1 << args.v_bits) - 1;
++    const float v_cb_lane = V_cb[tiisg & v_cb_mask];
++
++    const int tid_kq = (int)tiisg % nthreads_KQ;
++
++    float2 Q_reg[2][4];
++    for (int j = 0; j < args.ncols; j++) {
++        device const float2 * Q_j = (device const float2 *)(Q + (long)j * (args.nb01 / sizeof(float)));
++        for (int i = 0; i < 4; i++) {
++            const int elem = tid_kq * 4 + i;
++            Q_reg[j][i] = (elem < D/2) ? Q_j[elem] : float2(0.0f, 0.0f);
++        }
++        for (int i = 0; i < 4; i++) {
++            Q_reg[j][i].x *= args.scale;
++            Q_reg[j][i].y *= args.scale;
++        }
++    }
++
++    // Precompute sum_q[j] = Σ_e scaled_Q[j][e] for asymmetric zero correction.
++    float sum_q[2] = { 0.0f, 0.0f };
++    if (args.asymmetric) {
++        for (int j = 0; j < args.ncols; j++) {
++            float local_sum = 0.0f;
++            for (int k = 0; k < D/(2*nthreads_KQ); k++) {
++                local_sum += Q_reg[j][k].x + Q_reg[j][k].y;
++            }
++            local_sum += simd_shuffle_xor(local_sum, 4);
++            local_sum += simd_shuffle_xor(local_sum, 2);
++            local_sum += simd_shuffle_xor(local_sum, 1);
++            sum_q[j] = local_sum;
++        }
++    }
++
++    float2 VKQ[2][4];
++    for (int j = 0; j < 2; j++)
++        for (int i = 0; i < 4; i++)
++            VKQ[j][i] = float2(0.0f, 0.0f);
++
++    float KQ_max[2] = { -FLT_MAX/2.0f, -FLT_MAX/2.0f };
++    float KQ_sum[2] = { 0.0f, 0.0f };
++
++    threadgroup float KQ_tg[1024];
++    threadgroup float KQ_max_tg[2][32];
++    threadgroup float KQ_sum_tg[2][32];
++
++    for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
++
++        float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
++
++        for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
++            const int kq_grp_start = ((int)tiisg & ~(nthreads_KQ - 1));
++            const int i_KQ = (int)sgitg * 32 + kq_grp_start + i_KQ_0;
++            const int cell_rel = k_VKQ_0 + i_KQ;
++            const bool in_range = (cell_rel < args.nCells);
++
++            // Hoist K decode out of the j loop. See kernel_tq_fattn_vec_f16
++            // for full rationale.
++            device const uint8_t * packed_row = K_p + (long)cell_rel * args.nKVHeads * args.packedBytes;
++            const float rms_scale = in_range ? K_sc[cell_rel * args.nKVHeads] : 0.0f;
++            const float zero_val = (args.asymmetric && K_zr && in_range)
++                ? K_zr[(long)cell_rel * args.nKVHeads] : 0.0f;
++
++            float k_lane[4][2];
++            for (int k = 0; k < 4; k++) {
++                const int start_elem = tid_kq * 8 + k * 2;
++                if (args.bits == 3) {
++                    const int bit_pos0 = start_elem * 3;
++                    const int byte0 = bit_pos0 >> 3, sh0 = bit_pos0 & 7;
++                    const uint w0 = (uint)packed_row[byte0] | ((uint)packed_row[byte0+1] << 8);
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)((w0 >> sh0) & 7)) * rms_scale;
++                    const int bit_pos1 = (start_elem + 1) * 3;
++                    const int byte1 = bit_pos1 >> 3, sh1 = bit_pos1 & 7;
++                    const uint w1 = (uint)packed_row[byte1] | ((uint)packed_row[byte1+1] << 8);
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((w1 >> sh1) & 7)) * rms_scale;
++                } else if (args.bits == 4) {
++                    // 4-bit nibble decode: start_elem is always even, so both
++                    // nibbles for this pair live in the same byte.
++                    const int byte0 = start_elem >> 1;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)(packed_row[byte0] & 0xF)) * rms_scale;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> 4) & 0xF)) * rms_scale;
++                } else {
++                    // 2-bit: 4 elements per byte.
++                    const int byte0 = start_elem >> 2, sh0 = (start_elem & 3) * 2;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> sh0) & 3)) * rms_scale;
++                    const int byte1 = (start_elem + 1) >> 2, sh1 = ((start_elem + 1) & 3) * 2;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte1] >> sh1) & 3)) * rms_scale;
++                }
++            }
++
++            for (int j = 0; j < args.ncols; j++) {
++                float sum = 0.0f;
++                for (int k = 0; k < 4; k++) {
++                    sum += Q_reg[j][k].x * k_lane[k][0] + Q_reg[j][k].y * k_lane[k][1];
++                }
++                sum += simd_shuffle_xor(sum, 4);
++                sum += simd_shuffle_xor(sum, 2);
++                sum += simd_shuffle_xor(sum, 1);
++
++                // Asymmetric mean correction.
++                if (args.asymmetric && K_zr) {
++                    sum += zero_val * sum_q[j];
++                }
++
++                if (args.logit_softcap != 0.0f) {
++                    sum = args.logit_softcap * tanh(sum);
++                }
++                if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
++                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
++                }
++                if (!in_range) sum = -FLT_MAX/2.0f;
++
++                KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);
++
++                if (tid_kq == (uint)i_KQ_0) {
++                    KQ_tg[j * nthreads + tid] = sum;
++                }
++            }
++        }
++
++        for (int j = 0; j < args.ncols; j++) {
++            KQ_max_new[j] = simd_max(KQ_max_new[j]);
++
++            const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
++            KQ_max[j] = KQ_max_new[j];
++
++            const float kq_val = KQ_tg[j * nthreads + tid];
++            const float kq_exp = exp(kq_val - KQ_max[j]);
++            KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
++            KQ_tg[j * nthreads + tid] = kq_exp;
++
++            for (int i = 0; i < 4; i++) {
++                VKQ[j][i].x *= KQ_max_scale;
++                VKQ[j][i].y *= KQ_max_scale;
++            }
++        }
++
++        // D=64: 1 pass, V[v_tid*8 .. v_tid*8+7] → VKQ[0..3].
++        for (int k0 = 0; k0 < 32; k0 += V_cols_per_iter) {
++            const int k = (int)sgitg * 32 + k0 + (int)tiisg / nthreads_V;
++            const int cell_rel = k_VKQ_0 + k;
++            const bool in_range_v = (cell_rel < args.nCells);
++
++            float KQ_k[2];
++            for (int j = 0; j < args.ncols; j++) {
++                KQ_k[j] = KQ_tg[j * nthreads + k];
++            }
++
++            device const uint8_t * v_row = in_range_v
++                ? V_p + (long)cell_rel * args.nKVHeads * args.v_packedBytes
++                : nullptr;
++            const float v_rms = in_range_v ? V_sc[cell_rel * args.nKVHeads] : 0.0f;
++
++            const int v_tid = (int)tiisg % nthreads_V;
++            // pass 0 only: V elements [v_tid*8 .. v_tid*8+7] → VKQ[0..3]
++            float v_dec[8];
++            const int start_elem = v_tid * 8;
++            if (v_row && start_elem < D) {
++                tq_decode_8_shfl(v_row, v_cb_lane, v_rms, start_elem, args.v_bits, v_dec);
++            } else {
++                tq_decode_8_shfl(K_p, v_cb_lane, 0.0f, 0, args.v_bits, v_dec);
++            }
++            for (int i = 0; i < 8; i++) {
++                const int vkq_idx = i / 2;
++                for (int j = 0; j < args.ncols; j++) {
++                    if (i % 2 == 0) VKQ[j][vkq_idx].x += v_dec[i] * KQ_k[j];
++                    else            VKQ[j][vkq_idx].y += v_dec[i] * KQ_k[j];
++                }
++            }
++        }
++    } // end KV loop
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (sgitg == 0) {
++            KQ_max_tg[j][tiisg] = -FLT_MAX/2.0f;
++            KQ_sum_tg[j][tiisg] = 0.0f;
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (tiisg == 0) {
++            KQ_max_tg[j][sgitg] = KQ_max[j];
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (args.ncols > 1 && ic0 + j >= args.nTokensQ) break;
++
++        float kqmax_new = KQ_max_tg[j][tiisg];
++        kqmax_new = simd_max(kqmax_new);
++        const float kqmax_scale = exp(KQ_max[j] - kqmax_new);
++        KQ_max[j] = kqmax_new;
++
++        for (int i = 0; i < 4; i++) {
++            VKQ[j][i].x *= kqmax_scale;
++            VKQ[j][i].y *= kqmax_scale;
++        }
++        const int v_tid = (int)tiisg % nthreads_V;
++        threadgroup float2 * VKQ_tg = (threadgroup float2 *)KQ_tg
++            + (long)sgitg * (V_cols_per_iter * D/2)
++            + (long)((int)tiisg / nthreads_V) * (D/2);
++        VKQ_tg[v_tid * 4 + 0] = VKQ[j][0];
++        VKQ_tg[v_tid * 4 + 1] = VKQ[j][1];
++        VKQ_tg[v_tid * 4 + 2] = VKQ[j][2];
++        VKQ_tg[v_tid * 4 + 3] = VKQ[j][3];
++
++        KQ_sum[j] *= kqmax_scale;
++        KQ_sum[j] = simd_sum(KQ_sum[j]);
++        if (tiisg == 0) {
++            KQ_sum_tg[j][sgitg] = KQ_sum[j];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++
++        if (tid < D) {
++            KQ_sum[j] = KQ_sum_tg[j][tiisg];
++            KQ_sum[j] = simd_sum(KQ_sum[j]);
++
++            float dst_val = 0.0f;
++            for (int w = 0; w < nwarps; w++) {
++                for (int v = 0; v < V_cols_per_iter; v++) {
++                    dst_val += ((threadgroup float *)KQ_tg)[w * V_cols_per_iter * D + v * D + tid];
++                }
++            }
++            dst_val /= KQ_sum[j];
++            const long out_idx = ((long)sequence * args.nTokensQ + ic0 + j) * args.nHeadsQ + head;
++            dst[out_idx * D + tid] = dst_val;
++        }
++        if (j < args.ncols - 1) threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++}
++
++// ─────────────────────────────────────────────────────────────────────────────
++// kernel_tq_fattn_vec_packed_d256
++// TQ fused flash-attention at head dim 256: K packed i8, V packed i8.
++// Mirrors kernel_tq_fattn_vec_packed with 4 V-passes and 2 outputs per thread.
++// ─────────────────────────────────────────────────────────────────────────────
++kernel void kernel_tq_fattn_vec_packed_d256(
++    constant   ggml_metal_kargs_tq_fattn_vec & args,
++    device const char    * Q_data    [[buffer(1)]],
++    device const uint8_t * K_packed  [[buffer(2)]],
++    device const uint8_t * V_packed  [[buffer(3)]],
++    device const half    * mask_data [[buffer(4)]],
++    device const float   * K_scales  [[buffer(5)]],
++    device const float   * K_cb      [[buffer(6)]],
++    device const float   * V_scales  [[buffer(7)]],
++    device const float   * V_cb      [[buffer(8)]],
++    device       float   * dst       [[buffer(9)]],
++    device const float   * K_zeros   [[buffer(10)]],
++    uint3 tgpig [[threadgroup_position_in_grid]],
++    uint  tiisg [[thread_index_in_simdgroup]],
++    uint  sgitg [[simdgroup_index_in_threadgroup]])
++{
++    constexpr int D           = 256;
++    constexpr int nthreads    = 128;
++    constexpr int nthreads_KQ = 8;
++    constexpr int nthreads_V  = 8;
++    constexpr int V_cols_per_iter   = 4;
++    constexpr int nwarps      = 4;
++
++    const int ic0     = (int)tgpig.x * args.ncols;
++    const int blk_z   = (int)tgpig.z;
++    const int sequence = blk_z / args.nHeadsQ;
++    const int head     = blk_z % args.nHeadsQ;
++    const int gqa_ratio = args.nHeadsQ / args.nKVHeads;
++    const int head_kv   = head / gqa_ratio;
++
++    const int tid = (int)sgitg * 32 + (int)tiisg;
++
++    device const float * Q = (device const float *)Q_data
++        + (long)sequence * (args.nb03 / sizeof(float))
++        + (long)head * (args.nb02 / sizeof(float))
++        + (long)ic0  * (args.nb01 / sizeof(float));
++
++    device const uint8_t * K_p = K_packed
++        + (long)args.firstCell * args.nKVHeads * args.packedBytes
++        + (long)head_kv * args.packedBytes;
++    device const float * K_sc = K_scales
++        + (long)args.firstCell * args.nKVHeads + head_kv;
++    device const float * K_zr = args.asymmetric
++        ? (K_zeros + (long)args.firstCell * args.nKVHeads + head_kv)
++        : nullptr;
++
++    device const uint8_t * V_p = V_packed
++        + (long)args.firstCell * args.nKVHeads * args.v_packedBytes
++        + (long)head_kv * args.v_packedBytes;
++    device const float * V_sc = V_scales
++        + (long)args.firstCell * args.nKVHeads + head_kv;
++
++    device const half * maskh = args.hasMask
++        ? (mask_data + (long)ic0 * (args.nb31 / sizeof(half)))
++        : nullptr;
++
++    const int k_cb_mask = (1 << args.bits) - 1;
++    const float k_cb_lane = K_cb[tiisg & k_cb_mask];
++    const int v_cb_mask = (1 << args.v_bits) - 1;
++    const float v_cb_lane = V_cb[tiisg & v_cb_mask];
++
++    const int tid_kq = (int)tiisg % nthreads_KQ;
++
++    float2 Q_reg[2][16];
++    for (int j = 0; j < args.ncols; j++) {
++        device const float2 * Q_j = (device const float2 *)(Q + (long)j * (args.nb01 / sizeof(float)));
++        for (int i = 0; i < 16; i++) {
++            const int elem = tid_kq * 16 + i;
++            Q_reg[j][i] = (elem < D/2) ? Q_j[elem] : float2(0.0f, 0.0f);
++        }
++        for (int i = 0; i < 16; i++) {
++            Q_reg[j][i].x *= args.scale;
++            Q_reg[j][i].y *= args.scale;
++        }
++    }
++
++    // Precompute sum_q[j] = Σ_e scaled_Q[j][e] for asymmetric zero correction.
++    float sum_q[2] = { 0.0f, 0.0f };
++    if (args.asymmetric) {
++        for (int j = 0; j < args.ncols; j++) {
++            float local_sum = 0.0f;
++            for (int k = 0; k < D/(2*nthreads_KQ); k++) {
++                local_sum += Q_reg[j][k].x + Q_reg[j][k].y;
++            }
++            local_sum += simd_shuffle_xor(local_sum, 4);
++            local_sum += simd_shuffle_xor(local_sum, 2);
++            local_sum += simd_shuffle_xor(local_sum, 1);
++            sum_q[j] = local_sum;
++        }
++    }
++
++    float2 VKQ[2][16];
++    for (int j = 0; j < 2; j++)
++        for (int i = 0; i < 16; i++)
++            VKQ[j][i] = float2(0.0f, 0.0f);
++
++    float KQ_max[2] = { -FLT_MAX/2.0f, -FLT_MAX/2.0f };
++    float KQ_sum[2] = { 0.0f, 0.0f };
++
++    threadgroup float KQ_tg[4096];
++    threadgroup float KQ_max_tg[2][32];
++    threadgroup float KQ_sum_tg[2][32];
++
++    for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
++
++        float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
++
++        for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
++            const int kq_grp_start = ((int)tiisg & ~(nthreads_KQ - 1));
++            const int i_KQ = (int)sgitg * 32 + kq_grp_start + i_KQ_0;
++            const int cell_rel = k_VKQ_0 + i_KQ;
++            const bool in_range = (cell_rel < args.nCells);
++
++            // Hoist K decode out of the j loop. See kernel_tq_fattn_vec_f16
++            // for full rationale.
++            device const uint8_t * packed_row = K_p + (long)cell_rel * args.nKVHeads * args.packedBytes;
++            const float rms_scale = in_range ? K_sc[cell_rel * args.nKVHeads] : 0.0f;
++            const float zero_val = (args.asymmetric && K_zr && in_range)
++                ? K_zr[(long)cell_rel * args.nKVHeads] : 0.0f;
++
++            float k_lane[16][2];
++            for (int k = 0; k < 16; k++) {
++                const int start_elem = tid_kq * 32 + k * 2;
++                if (args.bits == 3) {
++                    const int bit_pos0 = start_elem * 3;
++                    const int byte0 = bit_pos0 >> 3, sh0 = bit_pos0 & 7;
++                    const uint w0 = (uint)packed_row[byte0] | ((uint)packed_row[byte0+1] << 8);
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)((w0 >> sh0) & 7)) * rms_scale;
++                    const int bit_pos1 = (start_elem + 1) * 3;
++                    const int byte1 = bit_pos1 >> 3, sh1 = bit_pos1 & 7;
++                    const uint w1 = (uint)packed_row[byte1] | ((uint)packed_row[byte1+1] << 8);
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((w1 >> sh1) & 7)) * rms_scale;
++                } else if (args.bits == 4) {
++                    // 4-bit nibble decode: start_elem is always even, so both
++                    // nibbles for this pair live in the same byte.
++                    const int byte0 = start_elem >> 1;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)(packed_row[byte0] & 0xF)) * rms_scale;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> 4) & 0xF)) * rms_scale;
++                } else {
++                    // 2-bit: 4 elements per byte.
++                    const int byte0 = start_elem >> 2, sh0 = (start_elem & 3) * 2;
++                    k_lane[k][0] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte0] >> sh0) & 3)) * rms_scale;
++                    const int byte1 = (start_elem + 1) >> 2, sh1 = ((start_elem + 1) & 3) * 2;
++                    k_lane[k][1] = simd_shuffle(k_cb_lane, (ushort)((packed_row[byte1] >> sh1) & 3)) * rms_scale;
++                }
++            }
++
++            for (int j = 0; j < args.ncols; j++) {
++                float sum = 0.0f;
++                for (int k = 0; k < 16; k++) {
++                    sum += Q_reg[j][k].x * k_lane[k][0] + Q_reg[j][k].y * k_lane[k][1];
++                }
++                sum += simd_shuffle_xor(sum, 4);
++                sum += simd_shuffle_xor(sum, 2);
++                sum += simd_shuffle_xor(sum, 1);
++
++                // Asymmetric mean correction.
++                if (args.asymmetric && K_zr) {
++                    sum += zero_val * sum_q[j];
++                }
++
++                if (args.logit_softcap != 0.0f) {
++                    sum = args.logit_softcap * tanh(sum);
++                }
++                if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
++                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
++                }
++                if (!in_range) sum = -FLT_MAX/2.0f;
++
++                KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);
++
++                if (tid_kq == (uint)i_KQ_0) {
++                    KQ_tg[j * nthreads + tid] = sum;
++                }
++            }
++        }
++
++        for (int j = 0; j < args.ncols; j++) {
++            KQ_max_new[j] = simd_max(KQ_max_new[j]);
++
++            const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
++            KQ_max[j] = KQ_max_new[j];
++
++            const float kq_val = KQ_tg[j * nthreads + tid];
++            const float kq_exp = exp(kq_val - KQ_max[j]);
++            KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
++            KQ_tg[j * nthreads + tid] = kq_exp;
++
++            for (int i = 0; i < 16; i++) {
++                VKQ[j][i].x *= KQ_max_scale;
++                VKQ[j][i].y *= KQ_max_scale;
++            }
++        }
++
++        // D=256: 4 passes cover V[0..63], V[64..127], V[128..191], V[192..255].
++        for (int k0 = 0; k0 < 32; k0 += V_cols_per_iter) {
++            const int k = (int)sgitg * 32 + k0 + (int)tiisg / nthreads_V;
++            const int cell_rel = k_VKQ_0 + k;
++            const bool in_range_v = (cell_rel < args.nCells);
++
++            float KQ_k[2];
++            for (int j = 0; j < args.ncols; j++) {
++                KQ_k[j] = KQ_tg[j * nthreads + k];
++            }
++
++            device const uint8_t * v_row = in_range_v
++                ? V_p + (long)cell_rel * args.nKVHeads * args.v_packedBytes
++                : nullptr;
++            const float v_rms = in_range_v ? V_sc[cell_rel * args.nKVHeads] : 0.0f;
++
++            const int v_tid = (int)tiisg % nthreads_V;
++            for (int pass = 0; pass < 4; pass++) {
++                float v_dec[8];
++                const int start_elem = pass * 64 + v_tid * 8;
++                if (v_row && start_elem < D) {
++                    tq_decode_8_shfl(v_row, v_cb_lane, v_rms, start_elem, args.v_bits, v_dec);
++                } else {
++                    tq_decode_8_shfl(K_p, v_cb_lane, 0.0f, 0, args.v_bits, v_dec);
++                }
++                for (int i = 0; i < 8; i++) {
++                    const int vkq_idx = pass * 4 + i / 2;
++                    for (int j = 0; j < args.ncols; j++) {
++                        if (i % 2 == 0) VKQ[j][vkq_idx].x += v_dec[i] * KQ_k[j];
++                        else            VKQ[j][vkq_idx].y += v_dec[i] * KQ_k[j];
++                    }
++                }
++            }
++        }
++    } // end KV loop
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (sgitg == 0) {
++            KQ_max_tg[j][tiisg] = -FLT_MAX/2.0f;
++            KQ_sum_tg[j][tiisg] = 0.0f;
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (tiisg == 0) {
++            KQ_max_tg[j][sgitg] = KQ_max[j];
++        }
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    for (int j = 0; j < args.ncols; j++) {
++        if (args.ncols > 1 && ic0 + j >= args.nTokensQ) break;
++
++        float kqmax_new = KQ_max_tg[j][tiisg];
++        kqmax_new = simd_max(kqmax_new);
++        const float kqmax_scale = exp(KQ_max[j] - kqmax_new);
++        KQ_max[j] = kqmax_new;
++
++        for (int i = 0; i < 16; i++) {
++            VKQ[j][i].x *= kqmax_scale;
++            VKQ[j][i].y *= kqmax_scale;
++        }
++
++        const int v_tid = (int)tiisg % nthreads_V;
++        threadgroup float2 * VKQ_tg = (threadgroup float2 *)KQ_tg
++            + (long)sgitg * (V_cols_per_iter * D/2)
++            + (long)((int)tiisg / nthreads_V) * (D/2);
++        VKQ_tg[v_tid * 4 + 0]      = VKQ[j][0];
++        VKQ_tg[v_tid * 4 + 1]      = VKQ[j][1];
++        VKQ_tg[v_tid * 4 + 2]      = VKQ[j][2];
++        VKQ_tg[v_tid * 4 + 3]      = VKQ[j][3];
++        VKQ_tg[32 + v_tid * 4 + 0] = VKQ[j][4];
++        VKQ_tg[32 + v_tid * 4 + 1] = VKQ[j][5];
++        VKQ_tg[32 + v_tid * 4 + 2] = VKQ[j][6];
++        VKQ_tg[32 + v_tid * 4 + 3] = VKQ[j][7];
++        VKQ_tg[64 + v_tid * 4 + 0] = VKQ[j][8];
++        VKQ_tg[64 + v_tid * 4 + 1] = VKQ[j][9];
++        VKQ_tg[64 + v_tid * 4 + 2] = VKQ[j][10];
++        VKQ_tg[64 + v_tid * 4 + 3] = VKQ[j][11];
++        VKQ_tg[96 + v_tid * 4 + 0] = VKQ[j][12];
++        VKQ_tg[96 + v_tid * 4 + 1] = VKQ[j][13];
++        VKQ_tg[96 + v_tid * 4 + 2] = VKQ[j][14];
++        VKQ_tg[96 + v_tid * 4 + 3] = VKQ[j][15];
++
++        KQ_sum[j] *= kqmax_scale;
++        KQ_sum[j] = simd_sum(KQ_sum[j]);
++        if (tiisg == 0) {
++            KQ_sum_tg[j][sgitg] = KQ_sum[j];
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++
++        KQ_sum[j] = KQ_sum_tg[j][tiisg];
++        KQ_sum[j] = simd_sum(KQ_sum[j]);
++
++        const long out_idx = ((long)sequence * args.nTokensQ + ic0 + j) * args.nHeadsQ + head;
++        for (int out_offset = 0; out_offset < D; out_offset += nthreads) {
++            const int out_elem = out_offset + tid;
++            float dst_val = 0.0f;
++            for (int w = 0; w < nwarps; w++) {
++                for (int v = 0; v < V_cols_per_iter; v++) {
++                    dst_val += ((threadgroup float *)KQ_tg)[w * V_cols_per_iter * D + v * D + out_elem];
++                }
++            }
++            dst_val /= KQ_sum[j];
++            dst[out_idx * D + out_elem] = dst_val;
++        }
++
++        if (j < args.ncols - 1) threadgroup_barrier(mem_flags::mem_threadgroup);
++    }
++}

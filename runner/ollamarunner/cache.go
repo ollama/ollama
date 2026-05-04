@@ -46,7 +46,33 @@ func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots
 
 	cache := model.Config().Cache
 	if cache != nil {
-		cache.Init(model.Backend(), kvCacheTypeFromStr(kvCacheType), numSlots, int(numCtx), batchSize)
+		dtype := kvCacheTypeFromStr(kvCacheType)
+		if preset, ok := kvcache.PresetFromDType(dtype); ok {
+			wrapped, active := kvcache.WrapWithTurboQuant(cache, preset)
+			if active {
+				cache = wrapped
+				// Force f16 at Init. TurboQuantCache manages its preset
+				// internally and always passes f16 to its inner *Causal; any
+				// sibling sub-caches in a WrapperCache (e.g. the SWA side of
+				// gemma3/gemma4) need f16 too since they can't allocate the
+				// ggml-unknown TQ dtypes.
+				dtype = ml.DTypeF16
+				// For the top-level *Causal case, WrapWithTurboQuant returns
+				// a new *TurboQuantCache and the model must be re-pointed at
+				// it. For the *WrapperCache case, the same pointer is returned
+				// (mutated in place) and no SetCache is needed.
+				if tqc, ok := wrapped.(*kvcache.TurboQuantCache); ok {
+					model.SetCache(tqc)
+				}
+				slog.Info("using turboquant kv cache", "preset", preset.Name)
+			} else {
+				// Non-wrappable cache (recurrent, SWA-only, etc.); fall back
+				// to f16 so Init doesn't receive an unmapped dtype and panic.
+				dtype = ml.DTypeF16
+				slog.Warn("turboquant requested but cache is not wrappable, falling back to f16")
+			}
+		}
+		cache.Init(model.Backend(), dtype, numSlots, int(numCtx), batchSize)
 	}
 
 	return &InputCache{
@@ -64,6 +90,18 @@ func kvCacheTypeFromStr(s string) ml.DType {
 		return ml.DTypeQ80
 	case "q4_0":
 		return ml.DTypeQ40
+	case "tq2":
+		return ml.DTypeTQ2
+	case "tq3":
+		return ml.DTypeTQ3
+	case "tq3k":
+		return ml.DTypeTQ3K
+	case "tq2k":
+		return ml.DTypeTQ2K
+	case "tq4":
+		return ml.DTypeTQ4
+	case "tq4k":
+		return ml.DTypeTQ4K
 	default:
 		return ml.DTypeF16
 	}

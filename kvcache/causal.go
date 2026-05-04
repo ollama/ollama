@@ -18,7 +18,21 @@ type shiftFn func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, e
 // The tensors are of shape embed dim, kv heads, batch size
 // The mask is of shape history size, batch size
 type Causal struct {
-	DType ml.DType
+	// DTypeK and DTypeV are the storage dtypes for K and V respectively.
+	// Init takes a single dtype and assigns it to both unless a caller has
+	// explicitly set one or both before Init runs (e.g., TurboQuantCache
+	// which forces its inner Causal to f16 on both sides while routing
+	// compressed K through a separate manager via SkipK).
+	DTypeK ml.DType
+	DTypeV ml.DType
+
+	// SkipK suppresses K tensor allocation and writes. When true, an external
+	// manager (e.g., TurboQuantCache) handles K storage and returns K from Get.
+	SkipK bool
+
+	// SkipV suppresses V tensor allocation and writes. When true, an external
+	// manager (e.g., TurboQuantCache) handles V storage and returns V from Get.
+	SkipV bool
 
 	// swaWindowSize is the number of tokens that will be included in the mask
 	// during attention operations. swaMemorySize is the number of tokens that
@@ -44,6 +58,10 @@ type Causal struct {
 
 	// locations for data storage for this batch
 	curLoc ml.Tensor
+	// curLocs mirrors curLoc as a raw int slice for TurboQuant's per-cell
+	// byte-map indexing. Only populated when SkipK or SkipV is set — non-TQ
+	// users never pay the allocation cost.
+	curLocs []int
 
 	// mask of the cache as used by this batch
 	curMask ml.Tensor
@@ -175,7 +193,15 @@ func (c *Causal) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity
 	cacheSize = roundUp(cacheSize, c.config.CachePadding)
 	c.cells = make([]cacheCell, cacheSize)
 
-	c.DType = dtype
+	// Resolve effective K/V dtypes. If a caller (e.g. TurboQuantCache) hasn't
+	// already set DTypeK or DTypeV before Init runs, fall back to the single
+	// dtype parameter for both — the historical single-dtype behaviour.
+	if c.DTypeK == ml.DTypeOther {
+		c.DTypeK = dtype
+	}
+	if c.DTypeV == ml.DTypeOther {
+		c.DTypeV = dtype
+	}
 	c.cellRanges = make(map[int]cellRange)
 	c.backend = backend
 	c.maxBatch = maxBatch
@@ -242,6 +268,17 @@ func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) e
 	}
 
 	c.curLoc = ctx.Input().FromInts(locs, len(locs))
+	// curLocs is only needed by TurboQuantCache's per-cell byte-map indexing.
+	// Skip the allocation and conversion loop on the non-TQ path so vanilla
+	// users don't pay per-batch overhead for an unused slice.
+	if c.SkipK || c.SkipV {
+		c.curLocs = make([]int, len(locs))
+		for i, l := range locs {
+			c.curLocs[i] = int(l)
+		}
+	} else {
+		c.curLocs = nil
+	}
 	c.curMask = c.buildMask(ctx)
 
 	return nil
@@ -254,8 +291,39 @@ func newRange() cellRange {
 	}
 }
 
-// Returns a slice of locations where each token in the batch should be stored
+// Returns a slice of locations where each token in the batch should be stored.
+//
+// When SkipK/SkipV is set (TurboQuant's compressed path), the backing TQ
+// encode kernels write a contiguous run of cells starting at loc[0]; a
+// fragmented allocation would desynchronize the compressed K/V buffers
+// from the per-cell metadata. Require a contiguous empty run of the
+// required length and surface ErrKvCacheFull otherwise — the runner treats
+// that the same as an out-of-space condition, which lets a fragmented
+// cache recover as other sequences complete rather than crashing the
+// process on a gapped write.
 func (c *Causal) findLocs() ([]int32, error) {
+	if c.SkipK || c.SkipV {
+		runStart, runLen := -1, 0
+		for i := range c.cells {
+			if len(c.cells[i].sequences) == 0 {
+				if runLen == 0 {
+					runStart = i
+				}
+				runLen++
+				if runLen >= c.curBatchSize {
+					loc := make([]int32, c.curBatchSize)
+					for j := range loc {
+						loc[j] = int32(runStart + j)
+					}
+					return loc, nil
+				}
+			} else {
+				runLen = 0
+			}
+		}
+		return nil, fmt.Errorf("%w (cache: %v batch: %v, no contiguous run)", ErrKvCacheFull, len(c.cells), c.curBatchSize)
+	}
+
 	loc := make([]int32, 0, c.curBatchSize)
 
 	for i := range c.cells {
@@ -409,38 +477,45 @@ func (c *Causal) SetCausal(ctx ml.Context, opts CausalOptions) {
 }
 
 func (c *Causal) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
-	key := c.keys[c.curLayer]
-	value := c.values[c.curLayer]
-
-	kHeadDim := key.Dim(0)
-	numKVHeads := key.Dim(1)
-	rowSize := key.Stride(2)
 	cachedSize := c.curMask.Dim(0)
 
-	key = key.View(ctx, rowSize*c.curCellRange.min,
-		kHeadDim, key.Stride(1),
-		numKVHeads, key.Stride(2),
-		cachedSize,
-	)
-
-	if c.config.PermutedV {
-		vHeadDim := value.Dim(1)
-		elemSize := value.Stride(0)
-
-		value = value.View(ctx, elemSize*c.curCellRange.min,
-			cachedSize, value.Stride(1),
-			vHeadDim, value.Stride(2),
-			numKVHeads,
-		)
-	} else {
-		vHeadDim := value.Dim(0)
-		rowSize := value.Stride(2)
-
-		value = value.View(ctx, rowSize*c.curCellRange.min,
-			vHeadDim, value.Stride(1),
-			numKVHeads, value.Stride(2),
+	var key ml.Tensor
+	if !c.SkipK {
+		k := c.keys[c.curLayer]
+		kHeadDim := k.Dim(0)
+		numKVHeads := k.Dim(1)
+		rowSize := k.Stride(2)
+		key = k.View(ctx, rowSize*c.curCellRange.min,
+			kHeadDim, k.Stride(1),
+			numKVHeads, k.Stride(2),
 			cachedSize,
 		)
+	}
+
+	var value ml.Tensor
+	if !c.SkipV {
+		v := c.values[c.curLayer]
+		if c.config.PermutedV {
+			vHeadDim := v.Dim(1)
+			vKVHeads := v.Dim(2)
+			elemSize := v.Stride(0)
+
+			value = v.View(ctx, elemSize*c.curCellRange.min,
+				cachedSize, v.Stride(1),
+				vHeadDim, v.Stride(2),
+				vKVHeads,
+			)
+		} else {
+			vHeadDim := v.Dim(0)
+			vKVHeads := v.Dim(1)
+			rowSize := v.Stride(2)
+
+			value = v.View(ctx, rowSize*c.curCellRange.min,
+				vHeadDim, v.Stride(1),
+				vKVHeads, v.Stride(2),
+				cachedSize,
+			)
+		}
 	}
 
 	return key, value, c.curMask
@@ -460,38 +535,54 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 		c.ctxs[c.curLayer] = c.backend.NewContextSize(2).Layer(c.curLayer)
 	}
 
-	if _, ok := c.keys[c.curLayer]; !ok {
-		c.keys[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, kHeadDim, numKVHeads, len(c.cells))
-	}
-
-	if _, ok := c.values[c.curLayer]; !ok {
-		if c.config.PermutedV {
-			c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, len(c.cells), vHeadDim, numKVHeads)
-		} else {
-			c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, vHeadDim, numKVHeads, len(c.cells))
+	if !c.SkipK {
+		if _, ok := c.keys[c.curLayer]; !ok {
+			c.keys[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DTypeK, kHeadDim, numKVHeads, len(c.cells))
 		}
 	}
 
-	key = key.Reshape(ctx, kHeadDim*numKVHeads, batchSize)
-	keyCache := c.keys[c.curLayer]
-	keyCache = keyCache.Reshape(ctx, kHeadDim*numKVHeads, len(c.cells))
-	ctx.Forward(keyCache.SetRows(ctx, key, c.curLoc))
-
-	if c.config.PermutedV {
-		value = value.Reshape(ctx, vHeadDim*numKVHeads, 1, batchSize)
-		value = value.Permute(ctx, 2, 0, 1, 3)
-
-		valueCache := c.values[c.curLayer]
-		valueCache = valueCache.Reshape(ctx, 1, len(c.cells), vHeadDim*numKVHeads)
-
-		ctx.Forward(valueCache.SetRows(ctx, value, c.curLoc))
-	} else {
-		value = value.Reshape(ctx, vHeadDim*numKVHeads, batchSize)
-		valueCache := c.values[c.curLayer]
-		valueCache = valueCache.Reshape(ctx, vHeadDim*numKVHeads, len(c.cells))
-
-		ctx.Forward(valueCache.SetRows(ctx, value, c.curLoc))
+	if !c.SkipV {
+		if _, ok := c.values[c.curLayer]; !ok {
+			if c.config.PermutedV {
+				c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DTypeV, len(c.cells), vHeadDim, numKVHeads)
+			} else {
+				c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DTypeV, vHeadDim, numKVHeads, len(c.cells))
+			}
+		}
 	}
+
+	if !c.SkipK {
+		key = key.Reshape(ctx, kHeadDim*numKVHeads, batchSize)
+		keyCache := c.keys[c.curLayer]
+		keyCache = keyCache.Reshape(ctx, kHeadDim*numKVHeads, len(c.cells))
+		ctx.Forward(keyCache.SetRows(ctx, key, c.curLoc))
+	}
+
+	if !c.SkipV {
+		if c.config.PermutedV {
+			value = value.Reshape(ctx, vHeadDim*numKVHeads, 1, batchSize)
+			value = value.Permute(ctx, 2, 0, 1, 3)
+
+			valueCache := c.values[c.curLayer]
+			valueCache = valueCache.Reshape(ctx, 1, len(c.cells), vHeadDim*numKVHeads)
+
+			ctx.Forward(valueCache.SetRows(ctx, value, c.curLoc))
+		} else {
+			value = value.Reshape(ctx, vHeadDim*numKVHeads, batchSize)
+			valueCache := c.values[c.curLayer]
+			valueCache = valueCache.Reshape(ctx, vHeadDim*numKVHeads, len(c.cells))
+
+			ctx.Forward(valueCache.SetRows(ctx, value, c.curLoc))
+		}
+	}
+}
+
+// Keys returns the per-layer persistent K storage tensors. Shape is
+// [kHeadDim, numKVHeads, cacheCapacity]. Only populated layers (those that
+// have seen at least one Put call) are present in the map. Intended for
+// diagnostic use only — the returned tensors are live cache storage.
+func (c *Causal) Keys() map[int]ml.Tensor {
+	return c.keys
 }
 
 func (c *Causal) CopyPrefix(srcSeq, dstSeq int, len int32) {

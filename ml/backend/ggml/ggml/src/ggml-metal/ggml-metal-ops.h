@@ -89,6 +89,14 @@ int ggml_metal_op_tri               (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_opt_step_adamw    (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_opt_step_sgd      (ggml_metal_op_t ctx, int idx);
 
+// TurboQuant ops
+int ggml_metal_op_tq_encode         (ggml_metal_op_t ctx, int idx);
+int ggml_metal_op_tq_encode_v       (ggml_metal_op_t ctx, int idx);
+int ggml_metal_op_tq_encode_kv      (ggml_metal_op_t ctx, int idx);
+int ggml_metal_op_tq_dequant        (ggml_metal_op_t ctx, int idx);
+int ggml_metal_op_tq_dequant_kv     (ggml_metal_op_t ctx, int idx);
+int ggml_metal_op_tq_flash_attn_ext (ggml_metal_op_t ctx, int idx);
+
 #ifdef __cplusplus
 }
 #endif

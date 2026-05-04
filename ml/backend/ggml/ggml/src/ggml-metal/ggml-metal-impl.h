@@ -942,4 +942,99 @@ typedef struct {
     int64_t  np;
 } ggml_metal_kargs_opt_step_sgd;
 
+// TurboQuant (TQ) — dynamic KV-cache compression at inference time
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t bits;
+    int32_t firstCell;
+    int32_t packed_bytes;  // (headDim * bits + 7) / 8
+    int32_t codebook_len;
+} ggml_metal_kargs_tq_dequant;
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t bits;
+    int32_t firstCell;
+    int32_t reg_packed_bytes;  // padded: (reg_count * bits + 7) / 8, aligned to 4
+    int32_t outlier_bits;
+    int32_t outlier_count;
+    int32_t out_packed_bytes;  // padded: (outlierCount * outlierBits + 7) / 8, aligned to 4
+    int32_t asymmetric;        // 1 = subtract mean before quant, store zero
+    int32_t qjl_rows;          // 0 = no QJL residual sketch
+    int32_t qjl_packed_bytes;  // padded: (qjl_rows + 7) / 8, aligned to 4
+} ggml_metal_kargs_tq_dequant_outlier;
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t k_bits;
+    int32_t v_bits;
+    int32_t firstCell;
+    int32_t k_packed_bytes;
+    int32_t v_packed_bytes;
+    int32_t k_codebook_len;
+    int32_t v_codebook_len;
+} ggml_metal_kargs_tq_dequant_kv;
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t bits;
+    int32_t firstCell;
+    int32_t kIsF32;       // 1 = f32 input, 0 = f16
+    int32_t hasRotation;  // 1 = apply rotation matrix, 0 = skip
+    int32_t hasBias;      // 1 = K projection bias present in src[bias_slot]
+    int32_t hasCodebook;  // 1 = Lloyd-Max codebook provided, 0 = uniform quantization
+    int32_t asymmetric;   // 1 = compute mean, subtract before quant, write to zeros_out
+} ggml_metal_kargs_tq_encode;
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t bits;
+    int32_t firstCell;
+    int32_t kIsF32;
+    int32_t outlierBits;
+    int32_t outlierCount;
+    int32_t asymmetric;        // 1 = subtract mean before quant, store zero
+    int32_t qjl_rows;          // 0 = no QJL residual sketch
+    int32_t qjl_packed_bytes;  // padded: (qjl_rows + 7) / 8, aligned to 4
+    int32_t hasBias;           // 1 = K projection bias present in src[15]
+} ggml_metal_kargs_tq_encode_outlier;
+
+typedef struct {
+    int32_t  ncols;       // 1 or 2 (nTokensQ == 1 ? 1 : 2)
+    int32_t  nTokensQ;
+    int32_t  nHeadsQ;
+    int32_t  nSeq;
+    int32_t  nCells;
+    int32_t  nKVHeads;
+    int32_t  bits;        // K bits
+    int32_t  firstCell;
+    int32_t  packedBytes; // K packed bytes per head
+    int32_t  v_bits;      // 0 when V is f16
+    int32_t  v_packedBytes;
+    int32_t  hasMask;     // 1 = mask buffer valid
+    int32_t  ne31;        // mask row width (= nCells)
+    float    scale;
+    float    logit_softcap;
+    uint64_t nb01; // Q stride: bytes between consecutive tokens
+    uint64_t nb02; // Q stride: bytes between consecutive heads
+    uint64_t nb03; // Q stride: bytes between consecutive sequences
+    uint64_t nb21; // V stride: bytes between cells  (f16 path only)
+    uint64_t nb22; // V stride: bytes between heads  (f16 path only)
+    uint64_t nb23; // V stride: bytes between seqs   (f16 path only)
+    uint64_t nb31; // mask stride: bytes between token rows
+    // *qa extension fields (asymmetric primary + outlier-split + QJL residual)
+    int32_t  asymmetric;          // 1 = asymmetric primary quantization
+    int32_t  qjl_rows;            // 0 = no QJL residual sketch
+    int32_t  qjl_packedBytes;     // padded: (qjl_rows + 7) / 8, aligned to 4
+    int32_t  outlierCount;        // 0 = no outlier-split
+    int32_t  outlierBits;         // bits per outlier index
+    int32_t  outlierPackedBytes;  // padded outlier packed bytes per cell-head
+} ggml_metal_kargs_tq_fattn_vec;
+
 #endif // GGML_METAL_IMPL

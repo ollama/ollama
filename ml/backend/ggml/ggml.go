@@ -50,18 +50,8 @@ var initDevices = sync.OnceFunc(func() {
 	backends = make(map[C.ggml_backend_dev_t]C.ggml_backend_t)
 	for i := range C.ggml_backend_dev_count() {
 		d := C.ggml_backend_dev_get(i)
-		t := C.ggml_backend_dev_type(d)
-		name := C.GoString(C.ggml_backend_dev_name(d))
 
-		b := C.ggml_backend_dev_init(d, nil)
-		if b == nil {
-			slog.Error("failed to initialize ggml backend device", "device", name, "type", t)
-			panic(fmt.Sprintf("failed to initialize ggml backend device: %s", name))
-		}
-
-		backends[d] = b
-
-		switch t {
+		switch C.ggml_backend_dev_type(d) {
 		case C.GGML_BACKEND_DEVICE_TYPE_CPU:
 			if len(cpus) == 0 {
 				// only the first cpu device should be used
@@ -73,6 +63,8 @@ var initDevices = sync.OnceFunc(func() {
 			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
 			gpus = append(gpus, d)
 		}
+
+		backends[d] = C.ggml_backend_dev_init(d, nil)
 	}
 })
 
@@ -118,6 +110,30 @@ type Backend struct {
 	btDeviceMemory map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory
 
 	flashAttention ml.FlashAttentionType
+
+	// tqRotationMatrix is a per-call flag set by TurboQuantCache.Get() right
+	// before it returns rotated K. SDPA reads and clears it; if non-nil, SDPA
+	// applies R^T @ Q to match the K rotation. This per-call (not sticky)
+	// semantics is required for mixed-head-dim models like gemma3, where only
+	// the global sub-cache of a WrapperCache is TQ-wrapped and the SWA sub-
+	// cache passes through plain f16 K. A sticky rotation would be applied to
+	// every SDPA call and corrupt attention on the unwrapped SWA layers.
+	tqRotationMatrix ml.Tensor
+
+	// tqVRotationMatrix is a per-call flag set by TurboQuantCache.Get() right
+	// before returning K+V (tq3/tq2) when V was encoded with Hadamard rotation
+	// (R^T @ v). SDPA reads and clears it; if non-nil, SDPA applies R @
+	// attn_out after the attention op to undo the V rotation. Per-call (not
+	// sticky) semantics is required for mixed-head-dim models like gemma3,
+	// where only the global sub-cache of a WrapperCache is TQ-wrapped and the
+	// SWA sub-cache's V is plain f16. A sticky rotation would corrupt
+	// attention on unwrapped SWA layers.
+	tqVRotationMatrix ml.Tensor
+
+	// tqVRotFusedInDequant is true when DequantKV applies the V rotation undo
+	// internally (via the rotated V kernel).  When true, the stock FA path in
+	// SDPA skips the mulmat undo — V is already in the unrotated domain.
+	tqVRotFusedInDequant bool
 
 	// maxGraphNodes is the maximum allowed number of graph nodes in this scheduler
 	maxGraphNodes int
@@ -672,6 +688,126 @@ func (b *Backend) NewContext() ml.Context {
 	return b.NewContextSize(b.maxGraphNodes)
 }
 
+// GPUDeviceInfo holds identifying information about a GPU backend device.
+type GPUDeviceInfo struct {
+	Name    string
+	ID      string
+	Library string
+	CCMajor int
+	CCMinor int
+}
+
+// GPUDevices returns information about all GPU backend devices discovered at
+// init time. Useful for test harnesses that need to construct a BackendParams
+// with GPULayers.
+func GPUDevices() []GPUDeviceInfo {
+	initDevices()
+	var infos []GPUDeviceInfo
+	for _, d := range gpus {
+		var props C.struct_ggml_backend_dev_props
+		C.ggml_backend_dev_get_props(d, &props)
+		infos = append(infos, GPUDeviceInfo{
+			Name:    C.GoString(props.name),
+			ID:      C.GoString(props.id),
+			Library: C.GoString(props.library),
+			CCMajor: int(props.compute_major),
+			CCMinor: int(props.compute_minor),
+		})
+	}
+	return infos
+}
+
+// TQDeviceScan describes the GPU devices discovered in the scheduler from the
+// perspective of TurboQuant: which one TQ will use, plus the names of any GPUs
+// that were skipped because they're not wave32-capable (NVIDIA < Pascal, or
+// AMD wave64 Vega/GCN/CDNA). Used to emit actionable warnings and to avoid
+// dispatching TQ kernels to an unsupported card — either one that would hit
+// the compute-capability assert in tq-dequant.cu or one whose HIP __shfl_sync
+// shim would silently produce garbage on 64-lane warps.
+type TQDeviceScan struct {
+	// selected is the buffer type TQ will place its tensors on. Zero-valued
+	// if no TQ-capable GPU is present.
+	selected        C.ggml_backend_buffer_type_t
+	selectedOK      bool
+	SelectedName    string // e.g. "NVIDIA Tesla P40"
+	SelectedCC      string // e.g. "6.1"
+	SelectedLibrary string // e.g. "Metal", "CUDA", "ROCm"
+	// Accepted lists "<name> (cc X.Y)" for every TQ-capable GPU in schedBufts.
+	Accepted []string
+	// Skipped lists "<name> (cc X.Y, <library>): <reason>" for every non-host GPU
+	// in schedBufts that fails the wave32 gate (CUDA < Pascal, ROCm wave64, or a
+	// non-CUDA/ROCm backend). The reason is included so operators can diagnose
+	// without reading the source tree.
+	Skipped []string
+}
+
+// scanTQDevices walks the scheduler buffer types and classifies each GPU via
+// tqDeviceAccepted: accepted GPUs (NVIDIA Pascal+, AMD RDNA1+) are eligible to
+// host TQ tensors; others are skipped with a diagnosable reason. The first
+// accepted buffer type is marked as selected; TQ tensors will be placed there
+// regardless of which scheduler index it occupies.
+func (b *Backend) scanTQDevices() TQDeviceScan {
+	var scan TQDeviceScan
+	for _, buft := range b.schedBufts {
+		if C.ggml_backend_buft_is_host(buft) {
+			continue
+		}
+		dev := C.ggml_backend_buft_get_device(buft)
+		if dev == nil {
+			continue
+		}
+		var props C.struct_ggml_backend_dev_props
+		C.ggml_backend_dev_get_props(dev, &props)
+		name := C.GoString(props.name)
+		var library string
+		if props.library != nil {
+			library = C.GoString(props.library)
+		}
+		cc := fmt.Sprintf("%d.%d", int(props.compute_major), int(props.compute_minor))
+		accepted, skipReason := tqDeviceAccepted(library, int(props.compute_major))
+		if !accepted {
+			scan.Skipped = append(scan.Skipped,
+				fmt.Sprintf("%s (cc %s, %s): %s", name, cc, library, skipReason))
+			continue
+		}
+		scan.Accepted = append(scan.Accepted, fmt.Sprintf("%s (cc %s)", name, cc))
+		if !scan.selectedOK {
+			scan.selected = buft
+			scan.selectedOK = true
+			scan.SelectedName = name
+			scan.SelectedCC = cc
+			scan.SelectedLibrary = library
+		}
+	}
+	return scan
+}
+
+// newTQContext creates a GGML context whose tensors are allocated in GPU
+// memory (CUDA, HIP, or Metal). Used by the TQ compressed KV cache manager:
+// TQ encode/decode ops require their tensors (packed buffers, scales,
+// codebook, rotation matrix) to reside on the GPU regardless of which model
+// layers are on CPU vs GPU. TQ tensors always land on the first TQ-capable
+// GPU — NVIDIA Pascal (cc 6.0)+, AMD RDNA1 (gfx1010)+, or Apple Silicon
+// (Metal, always wave32) — in the scheduler. In a mixed rig, unsupported
+// cards are skipped: older NVIDIA would hit the compute-capability assert in
+// tq-dequant.cu, and wave64 AMD (Vega/CDNA) would silently corrupt through
+// the HIP __shfl_sync shim.
+func (b *Backend) newTQContext(n int) *Context {
+	var allocatedBuffers []C.ggml_backend_buffer_t
+	scan := b.scanTQDevices()
+	return &Context{
+		b: b,
+		ctx: C.ggml_init(C.struct_ggml_init_params{
+			mem_size: C.size_t(n)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(n), false),
+			no_alloc: true,
+		}),
+		buft:             scan.selected,
+		allocatedBuffers: &allocatedBuffers,
+		maxGraphNodes:    n,
+		layer:            -1,
+	}
+}
+
 func (b *Backend) NewContextSize(n int) ml.Context {
 	if n > b.maxGraphNodes {
 		panic(fmt.Errorf("requested number of graph nodes (%v) for new context exceeds maximum (%v)", n, b.maxGraphNodes))
@@ -689,6 +825,23 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 		allocatedBuffers: &allocatedBuffers,
 		layer:            -1,
 	}
+}
+
+// SetTQRotationMatrix registers the TQ rotation matrix for Q rotation in SDPA.
+// Called by TurboQuantCache when Phase 2 CUDA dequant activates.
+func (b *Backend) SetTQRotationMatrix(m ml.Tensor) {
+	b.tqRotationMatrix = m
+}
+
+// SetTQVRotationMatrix registers the rotation matrix used for V encoding.
+// When non-nil, SDPA applies R @ attn_out after the TQ fused flash attention
+// to undo the V rotation (V was stored as R^T @ v).
+func (b *Backend) SetTQVRotationMatrix(m ml.Tensor) {
+	b.tqVRotationMatrix = m
+}
+
+func (b *Backend) SetTQVRotFusedInDequant(fused bool) {
+	b.tqVRotFusedInDequant = fused
 }
 
 func (b *Backend) CacheConfig() ml.CacheConfig {
@@ -1126,6 +1279,8 @@ func (t *Tensor) DType() ml.DType {
 		return ml.DTypeQ40
 	case C.GGML_TYPE_I32:
 		return ml.DTypeI32
+	case C.GGML_TYPE_I8:
+		return ml.DTypeI8
 	case C.GGML_TYPE_MXFP4:
 		return ml.DTypeMXFP4
 	default:
@@ -1145,6 +1300,8 @@ func ggmlDType(dtype ml.DType) uint32 {
 		return C.GGML_TYPE_Q4_0
 	case ml.DTypeI32:
 		return C.GGML_TYPE_I32
+	case ml.DTypeI8:
+		return C.GGML_TYPE_I8
 	case ml.DTypeMXFP4:
 		return C.GGML_TYPE_MXFP4
 	default:
@@ -1372,6 +1529,326 @@ func (t *Tensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tenso
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_set_rows(ctx.(*Context).ctx, t.t, src.(*Tensor).t, idxs.(*Tensor).t),
+	}
+}
+
+// TQEncode creates a GGML_OP_TQ_ENCODE graph node.
+// t = packed buffer [packedBytes*numKVHeads, capacity] i8 (dst, view returned)
+// scales = [numKVHeads, capacity] f32 (written as side output via src[3])
+// k      = [headDim, numKVHeads, batchSize] f16
+// rot    = [headDim, headDim] f32 (R^T row-major)
+// bounds = [(1<<bits)-1] f32
+// zeros  = [numKVHeads, capacity] f32 for asymmetric primary, nil for symmetric
+func (t *Tensor) TQEncode(ctx ml.Context, scales, k, rot ml.Tensor, firstCell int, bounds ml.Tensor, bits int, zeros, kBias, codebook ml.Tensor) ml.Tensor {
+	var cZeros *C.struct_ggml_tensor
+	if zeros != nil {
+		cZeros = zeros.(*Tensor).t
+	}
+	var cKBias *C.struct_ggml_tensor
+	if kBias != nil {
+		cKBias = kBias.(*Tensor).t
+	}
+	var cCodebook *C.struct_ggml_tensor
+	if codebook != nil {
+		cCodebook = codebook.(*Tensor).t
+	}
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tq_encode(
+			ctx.(*Context).ctx,
+			t.t,
+			scales.(*Tensor).t,
+			k.(*Tensor).t,
+			rot.(*Tensor).t,
+			C.int32_t(firstCell),
+			bounds.(*Tensor).t,
+			C.int32_t(bits),
+			cZeros,
+			cKBias,
+			cCodebook,
+		),
+	}
+}
+
+// TQEncodeV creates a GGML_OP_TQ_ENCODE_V graph node.
+// t = packed buffer [packedBytes*numKVHeads, capacity] i8 (dst, view returned)
+// scales = [numKVHeads, capacity] f32 (written as side output via src[3])
+// v      = [headDim, numKVHeads, batchSize] f16 or f32
+// rot    = [headDim, headDim] f32 R^T row-major, or nil (no rotation)
+// bounds = [(1<<bits)-1] f32
+func (t *Tensor) TQEncodeV(ctx ml.Context, scales, v ml.Tensor, rot ml.Tensor, firstCell int, bounds ml.Tensor, bits int, codebook ml.Tensor) ml.Tensor {
+	var rotT *C.struct_ggml_tensor
+	if rot != nil {
+		rotT = rot.(*Tensor).t
+	}
+	var cCodebook *C.struct_ggml_tensor
+	if codebook != nil {
+		cCodebook = codebook.(*Tensor).t
+	}
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tq_encode_v(
+			ctx.(*Context).ctx,
+			t.t,
+			scales.(*Tensor).t,
+			v.(*Tensor).t,
+			rotT,
+			C.int32_t(firstCell),
+			bounds.(*Tensor).t,
+			C.int32_t(bits),
+			cCodebook,
+		),
+	}
+}
+
+// TQEncodeKV creates a GGML_OP_TQ_ENCODE_KV graph node encoding both K and V
+// in a single GGML op.  t = K packed buffer (view returned).  V packed buffer
+// is written as a side effect via src[5].
+func (t *Tensor) TQEncodeKV(ctx ml.Context,
+	kScales, k, rot, kBounds ml.Tensor,
+	vPacked, vScales, v, vBounds ml.Tensor,
+	firstCell, kBits, vBits int,
+	kBias, kCodebook, vCodebook ml.Tensor,
+) ml.Tensor {
+	var cKBias *C.struct_ggml_tensor
+	if kBias != nil {
+		cKBias = kBias.(*Tensor).t
+	}
+	var cKCodebook *C.struct_ggml_tensor
+	if kCodebook != nil {
+		cKCodebook = kCodebook.(*Tensor).t
+	}
+	var cVCodebook *C.struct_ggml_tensor
+	if vCodebook != nil {
+		cVCodebook = vCodebook.(*Tensor).t
+	}
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tq_encode_kv(
+			ctx.(*Context).ctx,
+			t.t,
+			kScales.(*Tensor).t,
+			k.(*Tensor).t,
+			rot.(*Tensor).t,
+			kBounds.(*Tensor).t,
+			vPacked.(*Tensor).t,
+			vScales.(*Tensor).t,
+			v.(*Tensor).t,
+			vBounds.(*Tensor).t,
+			C.int32_t(firstCell),
+			C.int32_t(kBits),
+			C.int32_t(vBits),
+			cKBias,
+			cKCodebook,
+			cVCodebook,
+		),
+	}
+}
+
+// TQDequant creates a GGML_OP_TQ_DEQUANT graph node.
+// t = encode result (view of packed, establishes graph dependency)
+// scales   = [numKVHeads, capacity] f32
+// codebook = [1<<bits] f32
+// Returns [headDim, numKVHeads, nCells] f16.
+func (t *Tensor) TQDequant(ctx ml.Context, scales, codebook ml.Tensor, headDim, numKVHeads, nCells, firstCell, bits int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tq_dequant(
+			ctx.(*Context).ctx,
+			t.t,
+			scales.(*Tensor).t,
+			codebook.(*Tensor).t,
+			C.int(headDim),
+			C.int(numKVHeads),
+			C.int(nCells),
+			C.int(firstCell),
+			C.int(bits),
+		),
+	}
+}
+
+// TQEncodeOutlier creates a GGML_OP_TQ_ENCODE graph node with the outlier
+// sub-block extension. op_params[3] (outlier_count) > 0 signals to the CUDA
+// dispatcher that the outlier kernel should run.
+func (t *Tensor) TQEncodeOutlier(ctx ml.Context, scales, k, rot ml.Tensor, firstCell int, bounds ml.Tensor, bits int,
+	outlierPacked, outlierScales, outlierIndices, outlierBounds ml.Tensor, outlierBits, outlierCount int,
+	zeros, outlierZeros ml.Tensor,
+	qjlPacked, qjlNorm, qjlProjection ml.Tensor, qjlRows int,
+	codebook, outlierCodebook ml.Tensor,
+	kBias ml.Tensor,
+) ml.Tensor {
+	var cZeros, cOutlierZeros, cQjlPacked, cQjlNorm, cQjlProjection, cCodebook, cOutlierCodebook, cKBias *C.struct_ggml_tensor
+	if zeros != nil {
+		cZeros = zeros.(*Tensor).t
+	}
+	if outlierZeros != nil {
+		cOutlierZeros = outlierZeros.(*Tensor).t
+	}
+	if qjlPacked != nil {
+		cQjlPacked = qjlPacked.(*Tensor).t
+	}
+	if qjlNorm != nil {
+		cQjlNorm = qjlNorm.(*Tensor).t
+	}
+	if qjlProjection != nil {
+		cQjlProjection = qjlProjection.(*Tensor).t
+	}
+	if codebook != nil {
+		cCodebook = codebook.(*Tensor).t
+	}
+	if outlierCodebook != nil {
+		cOutlierCodebook = outlierCodebook.(*Tensor).t
+	}
+	if kBias != nil {
+		cKBias = kBias.(*Tensor).t
+	}
+
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tq_encode_outlier(
+			ctx.(*Context).ctx,
+			t.t,
+			scales.(*Tensor).t,
+			k.(*Tensor).t,
+			rot.(*Tensor).t,
+			C.int32_t(firstCell),
+			bounds.(*Tensor).t,
+			C.int32_t(bits),
+			outlierPacked.(*Tensor).t,
+			outlierScales.(*Tensor).t,
+			outlierIndices.(*Tensor).t,
+			outlierBounds.(*Tensor).t,
+			C.int32_t(outlierBits),
+			C.int32_t(outlierCount),
+			cZeros,
+			cOutlierZeros,
+			cQjlPacked,
+			cQjlNorm,
+			cQjlProjection,
+			C.int32_t(qjlRows),
+			cCodebook,
+			cOutlierCodebook,
+			cKBias,
+		),
+	}
+}
+
+// TQDequantOutlier creates a GGML_OP_TQ_DEQUANT graph node with the outlier
+// overwrite pass. op_params[3] (outlier_count) > 0 signals the dispatcher.
+func (t *Tensor) TQDequantOutlier(ctx ml.Context, scales, codebook ml.Tensor, headDim, numKVHeads, nCells, firstCell, bits int,
+	outlierPacked, outlierScales, outlierIndices, outlierCodebook ml.Tensor, outlierBits, outlierCount int,
+	zeros, outlierZeros ml.Tensor,
+	qjlPacked, qjlNorm, qjlProjection ml.Tensor, qjlRows int,
+) ml.Tensor {
+	var cZeros, cOutlierZeros, cQjlPacked, cQjlNorm, cQjlProjection *C.struct_ggml_tensor
+	if zeros != nil {
+		cZeros = zeros.(*Tensor).t
+	}
+	if outlierZeros != nil {
+		cOutlierZeros = outlierZeros.(*Tensor).t
+	}
+	if qjlPacked != nil {
+		cQjlPacked = qjlPacked.(*Tensor).t
+	}
+	if qjlNorm != nil {
+		cQjlNorm = qjlNorm.(*Tensor).t
+	}
+	if qjlProjection != nil {
+		cQjlProjection = qjlProjection.(*Tensor).t
+	}
+
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tq_dequant_outlier(
+			ctx.(*Context).ctx,
+			t.t,
+			scales.(*Tensor).t,
+			codebook.(*Tensor).t,
+			C.int(headDim),
+			C.int(numKVHeads),
+			C.int(nCells),
+			C.int(firstCell),
+			C.int(bits),
+			outlierPacked.(*Tensor).t,
+			outlierScales.(*Tensor).t,
+			outlierIndices.(*Tensor).t,
+			outlierCodebook.(*Tensor).t,
+			C.int32_t(outlierBits),
+			C.int32_t(outlierCount),
+			cZeros,
+			cOutlierZeros,
+			cQjlPacked,
+			cQjlNorm,
+			cQjlProjection,
+			C.int32_t(qjlRows),
+		),
+	}
+}
+
+// TQDequantKV creates a GGML_OP_TQ_DEQUANT_KV graph node that dequants both
+// K and V in a single GGML op.  Returns a [headDim, numKVHeads, nCells, 2] f16
+// tensor; the caller splits it into K (ne[3]=0) and V (ne[3]=1) views.
+//
+// kOutlier* and kZeros/kOutlierZeros are nil for non-outlier presets. When
+// non-nil, the K plane is dequanted via the regular+outlier overwrite kernel.
+// V has no outliers in any ship preset, so its plane is always plain dequant.
+func TQDequantKV(ctx ml.Context, b *Backend,
+	kEncode, kScales, kCodebook *Tensor,
+	vEncode, vScales, vCodebook *Tensor,
+	vRotation *Tensor,
+	headDim, numKVHeads, nCells, firstCell, kBits, vBits int,
+	kOutlierPacked, kOutlierScales, kOutlierIndices, kOutlierCodebook *Tensor,
+	kZeros, kOutlierZeros *Tensor,
+	outlierBits, outlierCount int,
+) *Tensor {
+	var vRotT, kOutlPackedT, kOutlScalesT, kOutlIndicesT, kOutlCbT, kZerosT, kOutlZerosT *C.struct_ggml_tensor
+	if vRotation != nil {
+		vRotT = vRotation.t
+	}
+	if kOutlierPacked != nil {
+		kOutlPackedT = kOutlierPacked.t
+	}
+	if kOutlierScales != nil {
+		kOutlScalesT = kOutlierScales.t
+	}
+	if kOutlierIndices != nil {
+		kOutlIndicesT = kOutlierIndices.t
+	}
+	if kOutlierCodebook != nil {
+		kOutlCbT = kOutlierCodebook.t
+	}
+	if kZeros != nil {
+		kZerosT = kZeros.t
+	}
+	if kOutlierZeros != nil {
+		kOutlZerosT = kOutlierZeros.t
+	}
+	return &Tensor{
+		b: b,
+		t: C.ggml_tq_dequant_kv(
+			ctx.(*Context).ctx,
+			kEncode.t,
+			kScales.t,
+			kCodebook.t,
+			vEncode.t,
+			vScales.t,
+			vCodebook.t,
+			vRotT,
+			C.int(headDim),
+			C.int(numKVHeads),
+			C.int(nCells),
+			C.int(firstCell),
+			C.int(kBits),
+			C.int(vBits),
+			kOutlPackedT,
+			kOutlScalesT,
+			kOutlIndicesT,
+			kOutlCbT,
+			kZerosT,
+			kOutlZerosT,
+			C.int32_t(outlierBits),
+			C.int32_t(outlierCount),
+		),
 	}
 }
 
@@ -1752,9 +2229,60 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 	}
 
 	query := t.Permute(ctx, 0, 2, 1, 3)
+
+	// TQ consume-once state: TurboQuantCache.Get() sets tqRotationMatrix and
+	// tqVRotationMatrix right before returning rotated K/V for a TQ-wrapped
+	// layer. Read and clear here so the NEXT SDPA call (potentially for a
+	// non-TQ sub-cache of a WrapperCache, e.g. the SWA side of gemma3) doesn't
+	// see a stale rotation and corrupt attention on unrotated tensors. The
+	// nil pre-check keeps non-TQ workloads from dirtying the backend cache
+	// line on every attention op.
+	var rot, vRot ml.Tensor
+	if t.b.tqRotationMatrix != nil || t.b.tqVRotationMatrix != nil {
+		rot = t.b.tqRotationMatrix
+		vRot = t.b.tqVRotationMatrix
+		t.b.tqRotationMatrix = nil
+		t.b.tqVRotationMatrix = nil
+	}
+
+	// TQ: K is stored in rotated space (R^T @ k). Rotate Q to match so
+	// attention = (R^T q)^T (R^T k) = q^T k.
+	// rotTensor stores R^T row-major; ggml_mul_mat(rotTensor, Q) = R^T @ Q.
+	if rot != nil && query.Dim(0) == rot.Dim(0) {
+		// Make query contiguous before mul_mat; permuted (non-contiguous) tensors
+		// may cause incorrect results with cuBLAS batched matmul.
+		query = query.Contiguous(ctx)
+		query = rot.Mulmat(ctx, query)
+	}
+
 	key = key.Permute(ctx, 0, 2, 1, 3)
 
 	if t.b.flashAttention == ml.FlashAttentionEnabled {
+		// TQ fused flash attention: check for tqTensor BEFORE permuting value,
+		// because the K+V fused path passes packed V directly (no permute needed).
+		if tqk, ok := key.(*tqTensor); ok {
+			if sinks != nil || vmla != nil {
+				panic("ggml: TQ compressed K does not support sinks or vmla attention")
+			}
+			var attnOut ml.Tensor
+			if tqk.vPacked != nil {
+				// K+V fused: V is packed i8 inside tqTensor; pass it directly.
+				attnOut = t.b.tqFlashAttention(ctx, query.(*Tensor), tqk, tqk.vPacked, mask, scale, 0)
+			} else {
+				// K-only fused: V is f16, permute normally.
+				value = value.Permute(ctx, 0, 2, 1, 3)
+				attnOut = t.b.tqFlashAttention(ctx, query.(*Tensor), tqk, value.(*Tensor), mask, scale, 0)
+			}
+			// If V was encoded with Hadamard rotation (R^T @ v), the FA output is
+			// R^T @ output_orig. Recover output_orig by applying R.
+			// tqVRotationMatrix stores R (not R^T); mul_mat(R, x) = R @ x = output_orig.
+			// Uses the consumed vRot local from the top of SDPA.
+			if vRot != nil && attnOut.Dim(0) == vRot.Dim(0) {
+				attnOut = vRot.(*Tensor).Mulmat(ctx, attnOut)
+			}
+			return attnOut
+		}
+
 		value = value.Permute(ctx, 0, 2, 1, 3)
 
 		kqv := C.ggml_flash_attn_ext(ctx.(*Context).ctx, query.(*Tensor).t, key.(*Tensor).t, value.(*Tensor).t, kqMask, C.float(scale), 0, 0)
@@ -1772,7 +2300,17 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 			kqv = cur.(*Tensor).t
 		}
 
-		return &Tensor{b: t.b, t: kqv}
+		attnOut := ml.Tensor(&Tensor{b: t.b, t: kqv})
+
+		// Two-pass TQ path: if DequantKV fused the V rotation undo into the
+		// dequant kernel, V is already unrotated — skip the mulmat.
+		// Otherwise (no rotation fusion), apply R @ attn_out to undo rotation.
+		// Uses the consumed vRot local from the top of SDPA.
+		if vRot != nil && !t.b.tqVRotFusedInDequant && attnOut.Dim(0) == vRot.Dim(0) {
+			attnOut = vRot.(*Tensor).Mulmat(ctx, attnOut)
+		}
+
+		return attnOut
 	} else {
 		kq := key.MulmatFullPrec(ctx, query)
 		kq = &Tensor{

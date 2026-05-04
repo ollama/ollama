@@ -103,6 +103,27 @@ type Model struct {
 	Options
 }
 
+// SetCache overrides model.Base.SetCache to wire per-layer K projection biases
+// into caches that support bias-aware encoding (e.g. TurboQuantCache). Qwen2
+// includes a learnable bias on the K projection; without this wiring, TQ's
+// Householder rotation spreads the bias across all channels in a way that the
+// Lloyd-Max codebook cannot absorb, producing incoherent attention scores.
+func (m *Model) SetCache(cache kvcache.Cache) {
+	m.Base.SetCache(cache)
+	type kBiasSetter interface {
+		SetLayerKBias(layer int, bias ml.Tensor)
+	}
+	kbs, ok := cache.(kBiasSetter)
+	if !ok {
+		return
+	}
+	for i, layer := range m.Layers {
+		if layer.Attention != nil && layer.Attention.Key != nil {
+			kbs.SetLayerKBias(i, layer.Attention.Key.Bias)
+		}
+	}
+}
+
 // Forward implements model.Model.
 func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
