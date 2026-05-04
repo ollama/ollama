@@ -410,26 +410,6 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	}
 	defer root.Close()
 
-	if !isAdapter {
-		digest, ok := files["config.json"]
-		if !ok {
-			return nil, errors.New("not found config.json")
-		}
-
-		blobPath, err := manifest.BlobsPath(digest)
-		if err != nil {
-			return nil, err
-		}
-
-		bts, err := os.ReadFile(blobPath)
-		if err != nil {
-			return nil, err
-		}
-		if err := convert.ValidateArchitecture(bts); err != nil {
-			return nil, err
-		}
-	}
-
 	for fp, digest := range files {
 		if !fs.ValidPath(fp) {
 			return nil, fmt.Errorf("%w: %s", errFilePath, fp)
