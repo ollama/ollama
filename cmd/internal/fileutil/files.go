@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -48,7 +47,7 @@ func BackupDir() string {
 func writeBackupCopy(srcPath string, hint string) (string, error) {
 	dir := BackupDir()
 	name := filepath.Base(srcPath)
-	if hint := sanitizeBackupHint(hint); hint != "" {
+	if hint != "" {
 		dir = filepath.Join(dir, hint)
 	}
 
@@ -119,35 +118,4 @@ func writeWithBackup(path string, data []byte, hint string) error {
 	}
 
 	return nil
-}
-
-// sanitizeBackupHint converts a caller-provided integration label into one
-// stable path segment for BackupDir()/.../<hint>/.
-//
-// We keep only lowercase ASCII letters and digits, and collapse common
-// separators to "-". That lets callers pass human-readable names without
-// accidentally creating nested paths or platform-specific directory names.
-func sanitizeBackupHint(hint string) string {
-	hint = strings.TrimSpace(strings.ToLower(hint))
-	if hint == "" {
-		return ""
-	}
-
-	var b strings.Builder
-	b.Grow(len(hint))
-	lastDash := false
-	for _, r := range hint {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			lastDash = false
-		case r == '-', r == '_', r == ' ':
-			if b.Len() > 0 && !lastDash {
-				b.WriteByte('-')
-				lastDash = true
-			}
-		}
-	}
-
-	return strings.Trim(b.String(), "-")
 }

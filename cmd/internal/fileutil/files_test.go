@@ -132,7 +132,7 @@ func TestWriteWithBackup(t *testing.T) {
 		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
 
 		data := mustMarshal(t, map[string]bool{"updated": true})
-		if err := WriteWithBackup(path, data, "OpenClaw"); err != nil {
+		if err := WriteWithBackup(path, data, "openclaw"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -152,7 +152,7 @@ func TestWriteWithBackup(t *testing.T) {
 		}
 
 		if !found {
-			t.Error("backup file was not created under sanitized hint directory")
+			t.Error("backup file was not created under hint directory")
 		}
 	})
 
