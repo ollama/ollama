@@ -734,11 +734,11 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 	}
 
 	if needsConfigure || req.ModelOverride != "" || (current != "" && target != current) || !savedMatchesModels(saved, []string{target}) {
-		models, err := c.managedSingleConfigureModels(ctx, managed, target)
+		configureModels, err := c.managedSingleConfigureModels(ctx, managed, target)
 		if err != nil {
 			return err
 		}
-		if err := prepareManagedSingleIntegration(name, managed, target, models); err != nil {
+		if err := prepareManagedSingleIntegration(name, managed, target, configureModels); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
