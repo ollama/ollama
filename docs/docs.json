@@ -130,6 +130,7 @@
                   "/integrations/droid",
                   "/integrations/goose",
                   "/integrations/pi",
+                  "/integrations/qwen",
                   "/integrations/pool"
                 ]
               },

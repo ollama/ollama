@@ -1,0 +1,60 @@
+---
+title: Qwen Code
+---
+
+Qwen Code is Qwen's terminal-based coding agent for code editing, code review, and tool-assisted development workflows.
+
+## Install
+
+Install [Qwen Code](https://qwen.ai/qwencode).
+
+You can also use one of these install methods:
+
+<CodeGroup>
+
+```shell macOS / Linux (script)
+bash -c "$(curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh)"
+```
+
+```powershell Windows (PowerShell)
+powershell -Command "Invoke-WebRequest 'https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.bat' -OutFile (Join-Path $env:TEMP 'install-qwen.bat'); & (Join-Path $env:TEMP 'install-qwen.bat')"
+```
+
+```shell npm (all platforms)
+npm install -g @qwen-code/qwen-code@latest
+```
+
+```shell macOS / Linux (Homebrew)
+brew install qwen-code
+```
+
+</CodeGroup>
+
+## Usage with Ollama
+
+### Quick setup
+
+```bash
+ollama launch qwen
+```
+
+To configure Qwen without launching it:
+
+```bash
+ollama launch qwen --config
+```
+
+
+Run directly with a model: 
+```bash
+ollama launch qwen --model kimi-k2.5:cloud
+```
+
+`ollama launch qwen` updates `~/.qwen/settings.json` so Qwen Code uses Ollama's OpenAI-compatible endpoint.
+
+It sets:
+
+- `security.auth.selectedType` to `openai`
+- `env.OLLAMA_API_KEY` to `ollama`
+- `modelProviders.openai` to the selected Ollama model
+- `model.name` to the selected Ollama model

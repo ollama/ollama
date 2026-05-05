@@ -292,6 +292,7 @@ Supported integrations:
   pi              Pi
   pool            Pool
   cline           Cline
+  qwen            Qwen Code
   vscode          VS Code (aliases: code)
 
 Examples:
