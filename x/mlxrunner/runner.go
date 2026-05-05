@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -27,17 +28,19 @@ type Request struct {
 	Responses chan CompletionResponse
 	Pipeline  func(context.Context, Request) error
 
-	Ctx     context.Context //nolint:containedctx
-	Tokens  []int32
-	Sampler *sample.Sampler
+	Ctx         context.Context //nolint:containedctx
+	Tokens      []int32
+	SamplerOpts sample.Options
 }
 
 type Runner struct {
 	Model         base.Model
 	Tokenizer     *tokenizer.Tokenizer
 	Requests      chan Request
+	Sampler       *sample.Sampler
 	cache         kvCache
 	contextLength int
+	mlxThread     *mlxthread.Thread
 }
 
 func (r *Runner) Load(modelName string) error {
@@ -67,6 +70,7 @@ func (r *Runner) Load(modelName string) error {
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
 	r.contextLength = m.MaxContextLength()
+	r.Sampler = sample.New(r.contextLength)
 
 	mlx.EnableCompile()
 	return nil
@@ -135,7 +139,8 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 			case <-ctx.Done():
 				return nil
 			case request := <-r.Requests:
-				if err := request.Pipeline(request.Ctx, request); err != nil {
+				err := r.runRequest(request)
+				if err != nil {
 					slog.Info("Request terminated", "error", err)
 					var statusErr api.StatusError
 					if !errors.As(err, &statusErr) {
@@ -161,4 +166,14 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 	})
 
 	return g.Wait()
+}
+
+func (r *Runner) runRequest(request Request) error {
+	if r.mlxThread == nil {
+		return request.Pipeline(request.Ctx, request)
+	}
+
+	return r.mlxThread.Do(request.Ctx, func() error {
+		return request.Pipeline(request.Ctx, request)
+	})
 }

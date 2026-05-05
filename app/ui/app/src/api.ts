@@ -406,6 +406,31 @@ export async function* pullModel(
   }
 }
 
+export interface ModelRecommendation {
+  model: string;
+  description: string;
+  context_length?: number;
+  max_output_tokens?: number;
+  vram_bytes?: number;
+}
+
+export interface ModelRecommendationsResponse {
+  recommendations: ModelRecommendation[];
+}
+
+export async function getModelRecommendations(): Promise<ModelRecommendation[]> {
+  const response = await fetch(
+    `${API_BASE}/api/experimental/model-recommendations`,
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch model recommendations: ${response.statusText}`,
+    );
+  }
+  const data: ModelRecommendationsResponse = await response.json();
+  return data.recommendations || [];
+}
+
 export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
   const response = await fetch(`${API_BASE}/api/v1/inference-compute`);
   if (!response.ok) {

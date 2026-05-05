@@ -98,10 +98,11 @@ var useClient2 = experimentEnabled("client2")
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr          net.Addr
-	sched         *Scheduler
-	defaultNumCtx int
-	requestLogger *inferenceRequestLogger
+	addr                 net.Addr
+	sched                *Scheduler
+	defaultNumCtx        int
+	requestLogger        *inferenceRequestLogger
+	modelRecommendations *modelRecommendationsCache
 }
 
 func init() {
@@ -375,8 +376,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	var builtinParser parsers.Parser
-	if shouldUseHarmony(m) && m.Config.Parser == "" {
-		m.Config.Parser = "harmony"
+	if shouldUseHarmony(m) {
+		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
+		if req.Think != nil {
+			if s, ok := req.Think.Value.(string); ok && s == "max" {
+				req.Think.Value = "high"
+			}
+		}
+		if m.Config.Parser == "" {
+			m.Config.Parser = "harmony"
+		}
 	}
 
 	if !req.Raw && m.Config.Parser != "" {
@@ -610,8 +619,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if builtinParser != nil {
-				// only send messages with meaningful content (empty messages confuse clients)
-				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 {
+				// Emit chunks that carry logprobs even if the parser is still buffering
+				// visible content, otherwise generate logprobs disappear for models with
+				// builtin thinking/tool parsers.
+				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
 					ch <- res
 				}
 
@@ -1706,6 +1717,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/copy", s.CopyHandler)
 	r.POST("/api/experimental/web_search", s.WebSearchExperimentalHandler)
 	r.POST("/api/experimental/web_fetch", s.WebFetchExperimentalHandler)
+	r.GET("/api/experimental/model-recommendations", s.ModelRecommendationsExperimentalHandler)
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
@@ -1747,6 +1759,24 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	return r, nil
 }
 
+func (s *Server) ModelRecommendationsExperimentalHandler(c *gin.Context) {
+	recs := defaultModelRecommendations
+	source := "default"
+	if s.modelRecommendations != nil {
+		ctx := context.Background()
+		if c.Request != nil {
+			ctx = c.Request.Context()
+		}
+		recs = s.modelRecommendations.GetSWR(ctx)
+		source = "cache"
+	}
+
+	slog.Debug("serving model recommendations", "recommendation_source", source, "count", len(recs))
+	c.JSON(http.StatusOK, api.ModelRecommendationsResponse{
+		Recommendations: recs,
+	})
+}
+
 func Serve(ln net.Listener) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
@@ -1781,7 +1811,13 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
-	s := &Server{addr: ln.Addr()}
+	// TODO(parthsareen): If we add more runtime caches, prefer introducing a
+	// small cache manager owned by Server (for shared start/stop/health wiring)
+	// instead of adding one top-level field per cache here in Serve.
+	s := &Server{
+		addr:                 ln.Addr(),
+		modelRecommendations: newModelRecommendationsCache(),
+	}
 	if err := s.initRequestLogging(); err != nil {
 		return err
 	}
@@ -1806,6 +1842,7 @@ func Serve(ln net.Listener) error {
 	schedCtx, schedDone := context.WithCancel(ctx)
 	sched := InitScheduler(schedCtx)
 	s.sched = sched
+	s.modelRecommendations.Start(ctx)
 
 	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
 	srvr := &http.Server{
@@ -2320,8 +2357,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 	msgs = filterThinkTags(msgs, m)
 
-	if shouldUseHarmony(m) && m.Config.Parser == "" {
-		m.Config.Parser = "harmony"
+	if shouldUseHarmony(m) {
+		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
+		if req.Think != nil {
+			if s, ok := req.Think.Value.(string); ok && s == "max" {
+				req.Think.Value = "high"
+			}
+		}
+		if m.Config.Parser == "" {
+			m.Config.Parser = "harmony"
+		}
 	}
 
 	var builtinParser parsers.Parser

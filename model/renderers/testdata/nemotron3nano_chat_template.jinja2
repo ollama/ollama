@@ -1,0 +1,222 @@
+{% macro render_extra_keys(json_dict, handled_keys) %}
+    {%- if json_dict is mapping %}
+        {%- for json_key in json_dict if json_key not in handled_keys %}
+            {%- if json_dict[json_key] is mapping or (json_dict[json_key] is sequence and json_dict[json_key] is not string) %}
+                {{- '\n<' ~ json_key ~ '>' ~ (json_dict[json_key] | tojson | safe) ~ '</' ~ json_key ~ '>' }}
+            {%- else %}
+                {{- '\n<' ~ json_key ~ '>' ~ (json_dict[json_key] | string) ~ '</' ~ json_key ~ '>' }}
+            {%- endif %}
+        {%- endfor %}
+    {%- endif %}
+{% endmacro %}
+{%- set enable_thinking = enable_thinking if enable_thinking is defined else True %}
+{%- set reasoning_budget = reasoning_budget if reasoning_budget is defined else None %}
+{%- set truncate_history_thinking = truncate_history_thinking if truncate_history_thinking is defined else True %}
+{%- set response_format = response_format if response_format is defined else None %}
+
+{# Scan messages for VLM thinking toggles to override enable_thinking #}
+{%- set toggle = namespace(enable=enable_thinking) %}
+{%- for m in messages %}
+    {%- if m['role'] == 'user' or m['role'] == 'system' -%}
+        {%- if m['content'] is string -%}
+            {%- set c = m['content'] %}
+            {%- if '/think' in c.replace('</think>', '') -%}
+                {%- set toggle.enable = true -%}
+            {%- elif '/no_think' in c -%}
+                {%- set toggle.enable = false -%}
+            {%- endif -%}
+        {%- endif -%}
+    {%- endif -%}
+{%- endfor %}
+
+{# Prepare message iteration similar to LM template #}
+{%- set ns = namespace(last_user_idx = -1) %}
+{%- set loop_messages = messages %}
+{%- for m in loop_messages %}
+    {%- if m["role"] == "user" %}
+        {%- set ns.last_user_idx = loop.index0 %}
+    {%- endif %}
+{%- endfor %}
+
+{%- if messages[0]["role"] == "system" %}
+    {%- set system_message = messages[0]["content"] %}
+    {%- set loop_messages = messages[1:] %}
+{%- else %}
+    {%- set system_message = "" %}
+    {%- set loop_messages = messages %}
+{%- endif %}
+{%- if not tools is defined %}
+    {%- set tools = [] %}
+{%- endif %}
+{# Recompute last_user_idx relative to loop_messages after handling system #}
+{%- set ns = namespace(last_user_idx = -1) %}
+{%- for m in loop_messages %}
+    {%- if m["role"] == "user" %}
+        {%- set ns.last_user_idx = loop.index0 %}
+    {%- endif %}
+{%- endfor %}
+
+{# System preamble with LM formatting, sanitize thinking toggles #}
+{%- if system_message is defined %}
+    {%- set sys_content = system_message | string %}
+    {%- set sys_content = sys_content.replace('</think>', '<_end_think>').replace('/think', '').replace('/no_think', '').replace('<_end_think>', '</think>') %}
+    {{- "<|im_start|>system\n" + sys_content }}
+{%- else %}
+    {%- if tools is iterable and tools | length > 0 %}
+        {{- "<|im_start|>system\n" }}
+    {%- endif %}
+{%- endif %}
+{%- if tools is iterable and tools | length > 0 %}
+    {%- if system_message is defined and system_message | length > 0 %}
+        {{- "\n\n" }}
+    {%- endif %}
+    {{- "# Tools\n\nYou have access to the following functions:\n\n" }}
+    {{- "<tools>" }}
+    {%- for tool in tools %}
+        {%- if tool.function is defined %}
+            {%- set tool = tool.function %}
+        {%- endif %}
+        {{- "\n<function>\n<name>" ~ tool.name ~ "</name>" }}
+        {%- if tool.description is defined %}
+            {{- '\n<description>' ~ (tool.description | trim) ~ '</description>' }}
+        {%- endif %}
+        {{- '\n<parameters>' }}
+        {%- if tool.parameters is defined and tool.parameters is mapping and tool.parameters.properties is defined and tool.parameters.properties is mapping %}
+            {%- for param_name, param_fields in tool.parameters.properties|items %}
+                {{- '\n<parameter>' }}
+                {{- '\n<name>' ~ param_name ~ '</name>' }}
+                {%- if param_fields.type is defined %}
+                    {{- '\n<type>' ~ (param_fields.type | string) ~ '</type>' }}
+                {%- endif %}
+                {%- if param_fields.description is defined %}
+                    {{- '\n<description>' ~ (param_fields.description | trim) ~ '</description>' }}
+                {%- endif %}
+                {%- if param_fields.enum is defined %}
+                    {{- '\n<enum>' ~ (param_fields.enum | tojson | safe) ~ '</enum>' }}
+                {%- endif %}
+                {%- set handled_keys = ['name', 'type', 'description', 'enum'] %}
+                {{- render_extra_keys(param_fields, handled_keys) }}
+                {{- '\n</parameter>' }}
+            {%- endfor %}
+        {%- endif %}
+        {% set handled_keys = ['type', 'properties', 'required'] %}
+        {{- render_extra_keys(tool.parameters, handled_keys) }}
+        {%- if tool.parameters is defined and tool.parameters.required is defined %}
+            {{- '\n<required>' ~ (tool.parameters.required | tojson | safe) ~ '</required>' }}
+        {%- endif %}
+        {{- '\n</parameters>' }}
+        {%- set handled_keys = ['type', 'name', 'description', 'parameters'] %}
+        {{- render_extra_keys(tool, handled_keys) }}
+        {{- '\n</function>' }}
+    {%- endfor %}
+    {{- "\n</tools>" }}
+
+    {{- '\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>' }}
+{%- endif %}
+
+{%- if system_message is defined %}
+    {{- '<|im_end|>\n' }}
+{%- else %}
+    {%- if tools is iterable and tools | length > 0 %}
+        {{- '<|im_end|>\n' }}
+    {%- endif %}
+{%- endif %}
+
+{# Iterate conversation #}
+{%- for message in loop_messages %}
+    {%- if message.role == "assistant" %}
+        {# Use LM assistant handling #}
+        {%- if message.reasoning_content is defined and message.reasoning_content is string and message.reasoning_content | trim | length > 0 %}
+            {%- set content = "<think>\n" ~ message.reasoning_content ~ "\n</think>\n" ~ (message.content | default('', true)) %}
+        {%- else %}
+            {%- set content = message.content | default('', true) %}
+            {%- if content is string -%}
+                {%- if '<think>' not in content and '</think>' not in content -%}
+                    {%- set content = "<think></think>" ~ content -%}
+                {%- endif -%}
+            {%- else -%}
+                {%- set content = content -%}
+            {%- endif -%}
+        {%- endif %}
+        {%- if message.tool_calls is defined and message.tool_calls is iterable and message.tool_calls | length > 0 %}
+            {{- '<|im_start|>assistant\n' }}
+                {%- set include_content = not (truncate_history_thinking and loop.index0 < ns.last_user_idx) %}
+                {%- if content is string and content | trim | length > 0 %}
+                    {%- if include_content %}
+                        {{- (content | trim) ~ '\n' -}}
+                    {%- else %}
+                        {%- set c = (content | string) %}
+                        {%- if '</think>' in c %}
+                            {%- set c = c.split('</think>')[-1] %}
+                        {%- elif '<think>' in c %}
+                            {%- set c = c.split('<think>')[0] %}
+                        {%- endif %}
+                        {%- set c = "<think></think>" ~ c | trim %}
+                        {%- if c | length > 0 %}
+                            {{- c ~ '\n' -}}
+                        {%- endif %}
+                    {%- endif %}
+                {%- else %}
+                    {{- "<think></think>" -}}
+                {%- endif %}
+                {%- for tool_call in message.tool_calls %}
+                    {%- if tool_call.function is defined %}
+                        {%- set tool_call = tool_call.function %}
+                    {%- endif %}
+                    {{- '<tool_call>\n<function=' ~ tool_call.name ~ '>\n' -}}
+                        {%- if tool_call.arguments is defined %}
+                            {%- for args_name, args_value in tool_call.arguments|items %}
+                                {{- '<parameter=' ~ args_name ~ '>\n' -}}
+                                    {%- set args_value = args_value | tojson | safe if args_value is mapping or (args_value is sequence and args_value is not string) else args_value | string %}
+                                {{- args_value ~ '\n</parameter>\n' -}}
+                            {%- endfor %}
+                        {%- endif %}
+                    {{- '</function>\n</tool_call>\n' -}}
+                {%- endfor %}
+                {{- '<|im_end|>\n' }}
+        {%- else %}
+            {%- if not (truncate_history_thinking and loop.index0 < ns.last_user_idx) %}
+                {{- '<|im_start|>assistant\n' ~ (content | default('', true) | string | trim) ~ '<|im_end|>\n' }}
+            {%- else %}
+                {%- set c = (content | default('', true) | string) %}
+                {%- if '<think>' in c and '</think>' in c %}
+                    {%- set c = "<think></think>" ~ c.split('</think>')[-1] %}
+                {%- endif %}
+                {%- set c = c | trim %}
+                {%- if c | length > 0 %}
+                    {{- '<|im_start|>assistant\n' ~ c ~ '<|im_end|>\n' }}
+                {%- else %}
+                    {{- '<|im_start|>assistant\n<|im_end|>\n' }}
+                {%- endif %}
+            {%- endif %}
+        {%- endif %}
+    {%- elif message.role == "user" or message.role == "system" %}
+        {{- '<|im_start|>' + message.role + '\n' }}
+        {%- set content = message.content | string %}
+        {{- content }}
+        {{- '<|im_end|>\n' }}
+    {%- elif message.role == "tool" %}
+        {%- if loop.previtem and loop.previtem.role != "tool" %}
+            {{- '<|im_start|>user\n' }}
+        {%- endif %}
+        {{- '<tool_response>\n' }}
+        {{- message.content }}
+        {{- '\n</tool_response>\n' }}
+        {%- if not loop.last and loop.nextitem.role != "tool" %}
+            {{- '<|im_end|>\n' }}
+        {%- elif loop.last %}
+            {{- '<|im_end|>\n' }}
+        {%- endif %}
+    {%- else %}
+        {{- '<|im_start|>' + message.role + '\n' + message.content + '<|im_end|>\n' }}
+    {%- endif %}
+{%- endfor %}
+
+{# Generation prompt using computed thinking toggle #}
+{%- if add_generation_prompt %}
+    {%- if toggle.enable %}
+        {{- '<|im_start|>assistant\n<think>\n' }}
+    {%- else %}
+        {{- '<|im_start|>assistant\n<think></think>' }}
+    {%- endif %}
+{%- endif %}

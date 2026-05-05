@@ -278,7 +278,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		modelPath,
 		gpuLibs,
 		status,
-		ml.GetVisibleDevicesEnv(gpus, false),
+		ml.GetDevicesEnv(gpus, false),
 	)
 
 	s := llmServer{
@@ -298,8 +298,8 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	if err != nil {
 		var msg string
-		if s.status != nil && s.status.LastErrMsg != "" {
-			msg = s.status.LastErrMsg
+		if s.status != nil && s.status.LastError() != "" {
+			msg = s.status.LastError()
 		}
 		err := fmt.Errorf("error starting runner: %v %s", err, msg)
 		if llamaModel != nil {
@@ -312,12 +312,12 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	go func() {
 		err := s.cmd.Wait()
 		// Favor a more detailed message over the process exit status
-		if err != nil && s.status != nil && s.status.LastErrMsg != "" {
+		if err != nil && s.status != nil && s.status.LastError() != "" {
 			slog.Error("llama runner terminated", "error", err)
-			if strings.Contains(s.status.LastErrMsg, "unknown model") {
-				s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
+			if strings.Contains(s.status.LastError(), "unknown model") {
+				s.status.SetLastError("this model is not supported by your version of Ollama. You may need to upgrade")
 			}
-			s.doneErr = errors.New(s.status.LastErrMsg)
+			s.doneErr = errors.New(s.status.LastError())
 		} else {
 			s.doneErr = err
 		}
@@ -385,20 +385,9 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	cmd.Env = os.Environ()
 
 	if out != nil {
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to spawn server stdout pipe: %w", err)
-		}
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to spawn server stderr pipe: %w", err)
-		}
-		go func() {
-			io.Copy(out, stdout) //nolint:errcheck
-		}()
-		go func() {
-			io.Copy(out, stderr) //nolint:errcheck
-		}()
+		// os/exec serializes Write calls when shared
+		cmd.Stdout = out
+		cmd.Stderr = out
 	}
 	cmd.SysProcAttr = LlamaServerSysProcAttr
 
@@ -449,6 +438,38 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	}
 	err = nil
 	return
+}
+
+// Workaround possible runtime crash where the probe incorrectly
+// enables metal tensor, but fails at runtime
+func ShouldRetryWithMetalTensorDisabled(err error, status *StatusWriter) bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+
+	var msg strings.Builder
+	msg.WriteString(strings.ToLower(err.Error()))
+	if status != nil && status.LastError() != "" {
+		msg.WriteByte(' ')
+		msg.WriteString(strings.ToLower(status.LastError()))
+	}
+	text := msg.String()
+
+	for _, needle := range []string{
+		"failed to initialize ggml backend device: metal",
+		"failed to initialize metal backend",
+		"failed to initialize the metal library",
+		"failed to allocate context",
+		"unable to create llama context",
+		"signal arrived during cgo execution",
+		"input types must match cooperative tensor types",
+	} {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (s *llmServer) ModelPath() string {
@@ -723,7 +744,7 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 
 	// The llama engine does its memory allocations together with model loading, so we
 	// need to wait until it is done to ensure that we have accurate memory data before
-	// loading the next model
+	// loading the next model.
 	return uniqueDeviceIDs(s.loadRequest.GPULayers), s.WaitUntilRunning(ctx)
 }
 
@@ -1276,8 +1297,8 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 	// Fail fast if its exited
 	if s.cmd.ProcessState != nil {
 		msg := ""
-		if s.status != nil && s.status.LastErrMsg != "" {
-			msg = s.status.LastErrMsg
+		if s.status != nil && s.status.LastError() != "" {
+			msg = s.status.LastError()
 		}
 		if s.cmd.ProcessState.ExitCode() == -1 {
 			// Most likely a signal killed it, log some more details to try to help troubleshoot
@@ -1371,21 +1392,30 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 			slog.Warn("client connection closed before server finished loading, aborting load")
 			return fmt.Errorf("timed out waiting for llama runner to start: %w", ctx.Err())
 		case <-s.done:
-			return fmt.Errorf("llama runner process has terminated: %w", s.doneErr)
+			if s.status != nil && s.status.LastError() != "" {
+				return fmt.Errorf("llama runner process has terminated: %s", s.status.LastError())
+			}
+			if s.doneErr != nil {
+				return fmt.Errorf("llama runner process has terminated: %w", s.doneErr)
+			}
+			if s.cmd != nil && s.cmd.ProcessState != nil {
+				return fmt.Errorf("llama runner process has terminated with exit code %d", s.cmd.ProcessState.ExitCode())
+			}
+			return errors.New("llama runner process has terminated")
 		default:
 		}
 		if time.Now().After(stallTimer) {
 			// timeout
 			msg := ""
-			if s.status != nil && s.status.LastErrMsg != "" {
-				msg = s.status.LastErrMsg
+			if s.status != nil && s.status.LastError() != "" {
+				msg = s.status.LastError()
 			}
 			return fmt.Errorf("timed out waiting for llama runner to start - progress %0.2f - %s", s.loadProgress, msg)
 		}
 		if s.cmd.ProcessState != nil {
 			msg := ""
-			if s.status != nil && s.status.LastErrMsg != "" {
-				msg = s.status.LastErrMsg
+			if s.status != nil && s.status.LastError() != "" {
+				msg = s.status.LastError()
 			}
 			return fmt.Errorf("llama runner process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
 		}
@@ -1695,8 +1725,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
 			s.Close()
 			var msg string
-			if s.status != nil && s.status.LastErrMsg != "" {
-				msg = s.status.LastErrMsg
+			if s.status != nil && s.status.LastError() != "" {
+				msg = s.status.LastError()
 			} else {
 				msg = err.Error()
 			}
