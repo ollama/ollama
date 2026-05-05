@@ -287,7 +287,7 @@ func TestQwenRunDoesNotRewriteConfig(t *testing.T) {
 		t.Fatalf("failed to write initial config: %v", err)
 	}
 
-	if err := (&Qwen{}).Run("qwen3:32b", nil); err != nil {
+	if err := (&Qwen{}).Run("qwen3:32b", nil, nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 

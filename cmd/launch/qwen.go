@@ -186,7 +186,7 @@ func (q *Qwen) readConfig() (map[string]any, error) {
 
 	cfg := map[string]any{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return map[string]any{}, nil
+		return nil, fmt.Errorf("parse qwen config: %w", err)
 	}
 
 	return cfg, nil
