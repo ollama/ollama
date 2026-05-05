@@ -85,6 +85,12 @@ type MultimodalProcessor interface {
 	PostTokenize([]*input.Input) ([]*input.Input, error)
 }
 
+// MultimodalBudgetEncoder is implemented by models that support per-call
+// vision token budgets (e.g. Gemma 4 image_min_tokens / image_max_tokens).
+type MultimodalBudgetEncoder interface {
+	EncodeMultimodalWithBudgets(ctx ml.Context, multimodalData []byte, minTokens, maxTokens int) ([]input.Multimodal, error)
+}
+
 // Base implements the common fields and methods for all models
 type Base struct {
 	b ml.Backend

@@ -116,6 +116,12 @@ func Execute(args []string) error {
 			return
 		}
 
+		if request.Options.ImageMinTokens != 0 || request.Options.ImageMaxTokens != 0 {
+			slog.Debug("mlx runner: image token budget options present (vision not implemented on MLX engine)",
+				"image_min_tokens", request.Options.ImageMinTokens,
+				"image_max_tokens", request.Options.ImageMaxTokens)
+		}
+
 		request.Pipeline = runner.TextGenerationPipeline
 		request.SamplerOpts = sample.Options{
 			Temperature:      request.Options.Temperature,
