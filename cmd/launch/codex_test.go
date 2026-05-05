@@ -69,6 +69,9 @@ func TestWriteCodexProfile(t *testing.T) {
 		if !strings.Contains(content, `name = "Ollama"`) {
 			t.Error("missing model provider name")
 		}
+		if err := codexValidateConfigText(content); err != nil {
+			t.Fatalf("generated config should be valid TOML: %v\n%s", err, content)
+		}
 	})
 
 	t.Run("appends profile to existing file without profile", func(t *testing.T) {
@@ -113,6 +116,103 @@ func TestWriteCodexProfile(t *testing.T) {
 		}
 		if strings.Count(content, "[model_providers.ollama-launch]") != 1 {
 			t.Errorf("expected exactly one [model_providers.ollama-launch] section, got %d", strings.Count(content, "[model_providers.ollama-launch]"))
+		}
+		if err := codexValidateConfigText(content); err != nil {
+			t.Fatalf("generated config should be valid TOML: %v\n%s", err, content)
+		}
+	})
+
+	t.Run("replaces equivalent quoted profile table", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.toml")
+		existing := "" +
+			`profile = "default"` + "\n\n" +
+			`[profiles."ollama-launch"]` + "\n" +
+			`openai_base_url = "http://old:1234/v1/"` + "\n\n" +
+			`[model_providers."ollama-launch"]` + "\n" +
+			`name = "Old"` + "\n" +
+			`base_url = "http://old:1234/v1/"` + "\n\n" +
+			`[profiles.default]` + "\n" +
+			`model = "gpt-5.5"` + "\n"
+		os.WriteFile(configPath, []byte(existing), 0o644)
+
+		if err := writeCodexProfile(configPath); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		content := string(data)
+
+		if strings.Contains(content, `profiles."ollama-launch"`) {
+			t.Fatalf("quoted profile table should be replaced, got:\n%s", content)
+		}
+		if strings.Contains(content, "old:1234") {
+			t.Fatalf("old URL was not replaced, got:\n%s", content)
+		}
+		if got := codexSectionStringValue(content, codexProfileHeader(), "model_provider"); got != codexProfileName {
+			t.Fatalf("profile model_provider = %q, want %q", got, codexProfileName)
+		}
+		if got := codexSectionStringValue(content, codexProviderHeader(), "base_url"); !strings.Contains(got, "/v1/") {
+			t.Fatalf("provider base_url = %q, want /v1/ URL", got)
+		}
+		if err := codexValidateConfigText(content); err != nil {
+			t.Fatalf("generated config should be valid TOML: %v\n%s", err, content)
+		}
+	})
+
+	t.Run("rejects invalid existing toml without writing", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.toml")
+		existing := "profile = \n"
+		os.WriteFile(configPath, []byte(existing), 0o644)
+
+		err := writeCodexProfile(configPath)
+		if err == nil || !strings.Contains(err.Error(), "invalid Codex config TOML") {
+			t.Fatalf("writeCodexProfile error = %v, want invalid TOML", err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		if string(data) != existing {
+			t.Fatalf("invalid config should be left untouched, got:\n%s", data)
+		}
+	})
+
+	t.Run("updates equivalent quoted root keys", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.toml")
+		existing := "" +
+			`"profile" = "default"` + "\n" +
+			`"model" = "gpt-5.5"` + "\n" +
+			`"model_provider" = "openai"` + "\n\n" +
+			`[profiles.default]` + "\n" +
+			`model = "gpt-5.5"` + "\n"
+		os.WriteFile(configPath, []byte(existing), 0o644)
+
+		err := writeCodexLaunchProfile(configPath, codexLaunchProfileOptions{
+			activate:           true,
+			setRootModelConfig: true,
+			model:              "llama3.2",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		content := string(data)
+		for key, want := range map[string]string{
+			"profile":        codexProfileName,
+			"model":          "llama3.2",
+			"model_provider": codexProfileName,
+		} {
+			if got := codexRootStringValue(content, key); got != want {
+				t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, content)
+			}
+		}
+		if strings.Contains(content, `"profile"`) || strings.Contains(content, `"model_provider"`) {
+			t.Fatalf("quoted root keys should be rewritten once, got:\n%s", content)
+		}
+		if err := codexValidateConfigText(content); err != nil {
+			t.Fatalf("generated config should be valid TOML: %v\n%s", err, content)
 		}
 	})
 

@@ -287,6 +287,7 @@ Supported integrations:
   claude          Claude Code
   cline           Cline
   codex           Codex
+  codex-app       Codex App (aliases: codex-desktop, codex-gui)
   copilot         Copilot CLI (aliases: copilot-cli)
   droid           Droid
   hermes          Hermes Agent
@@ -301,6 +302,8 @@ Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
+  ollama launch codex-app
+  ollama launch codex-app --restore
   ollama launch hermes
   ollama launch droid --config (does not auto-launch)
   ollama launch codex -- -p myprofile (pass extra args to integration)
@@ -769,7 +772,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		return nil
 	}
 
-	if needsConfigure || req.ModelOverride != "" || (current != "" && target != current) || !savedMatchesModels(saved, []string{target}) {
+	if needsConfigure || req.ModelOverride != "" || target != current || !savedMatchesModels(saved, []string{target}) {
 		configureModels, err := c.managedSingleConfigureModels(ctx, managed, target)
 		if err != nil {
 			return err
@@ -941,7 +944,7 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, run
 		}
 	}
 
-	if needsConfigure {
+	if needsConfigure && req.ModelOverride == "" {
 		selected, err := c.selectSingleModelWithSelectorReady(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector, !skipReadiness)
 		if err != nil {
 			return "", false, err

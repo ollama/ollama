@@ -480,6 +480,38 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfigOnlySkipsFinalRun(t *te
 	}
 }
 
+func TestLaunchIntegration_ManagedSingleIntegrationForceConfigureUsesModelOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedRunner{
+		paths: nil,
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
+		return "", fmt.Errorf("selector should not run with an explicit model override")
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:           "stubmanaged",
+		ModelOverride:  "gemma4",
+		ForceConfigure: true,
+		ConfigureOnly:  true,
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
+		t.Fatalf("configured models mismatch: %s", diff)
+	}
+	if runner.ranModel != "" {
+		t.Fatalf("expected configure-only flow to skip final launch, got %q", runner.ranModel)
+	}
+}
+
 func TestLaunchIntegration_ManagedSingleIntegrationSkipsRewriteWhenSavedMatches(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
@@ -505,7 +537,9 @@ func TestLaunchIntegration_ManagedSingleIntegrationSkipsRewriteWhenSavedMatches(
 		t.Fatalf("failed to save managed integration config: %v", err)
 	}
 
-	runner := &launcherManagedRunner{}
+	runner := &launcherManagedRunner{
+		currentModel: "gemma4",
+	}
 	withIntegrationOverride(t, "stubmanaged", runner)
 
 	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
@@ -526,6 +560,53 @@ func TestLaunchIntegration_ManagedSingleIntegrationSkipsRewriteWhenSavedMatches(
 	}
 	if runner.refreshCalls != 0 {
 		t.Fatalf("expected no runtime refresh when config is unchanged, got %d", runner.refreshCalls)
+	}
+	if runner.ranModel != "gemma4" {
+		t.Fatalf("expected launch to run saved model, got %q", runner.ranModel)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationRewritesWhenSavedMatchesButLiveConfigMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := config.SaveIntegration("stubmanaged", []string{"gemma4"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+
+	runner := &launcherManagedRunner{}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
+		t.Fatal("selector should not be called when saved model is usable")
+		return "", nil
+	}
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
+		t.Fatalf("expected Configure to rewrite missing live config: %s", diff)
+	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected runtime refresh once after rewrite, got %d", runner.refreshCalls)
 	}
 	if runner.ranModel != "gemma4" {
 		t.Fatalf("expected launch to run saved model, got %q", runner.ranModel)

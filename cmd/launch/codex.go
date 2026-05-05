@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/semver"
 )
 
@@ -17,6 +19,7 @@ type Codex struct{}
 func (c *Codex) String() string { return "Codex" }
 
 const codexProfileName = "ollama-launch"
+const codexProviderName = "Ollama"
 
 func (c *Codex) args(model string, extra []string) []string {
 	args := []string{"--profile", codexProfileName}
@@ -49,76 +52,351 @@ func (c *Codex) Run(model string, args []string) error {
 // ensureCodexConfig writes a [profiles.ollama-launch] section to ~/.codex/config.toml
 // with openai_base_url pointing to the local Ollama server.
 func ensureCodexConfig() error {
-	home, err := os.UserHomeDir()
+	configPath, err := codexConfigPath()
 	if err != nil {
 		return err
 	}
 
-	codexDir := filepath.Join(home, ".codex")
-	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
-
-	configPath := filepath.Join(codexDir, "config.toml")
 	return writeCodexProfile(configPath)
+}
+
+func codexConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".codex", "config.toml"), nil
 }
 
 // writeCodexProfile ensures ~/.codex/config.toml has the ollama-launch profile
 // and model provider sections with the correct base URL.
 func writeCodexProfile(configPath string) error {
-	baseURL := envconfig.Host().String() + "/v1/"
+	return writeCodexLaunchProfile(configPath, codexLaunchProfileOptions{
+		forceAPIAuth: true,
+	})
+}
+
+type codexLaunchProfileOptions struct {
+	activate           bool
+	forceAPIAuth       bool
+	setRootModelConfig bool
+	model              string
+	modelCatalogPath   string
+}
+
+func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) error {
+	baseURL := codexBaseURL()
+
+	content, readErr := os.ReadFile(configPath)
+	text := ""
+	if readErr == nil {
+		text = string(content)
+	} else if !os.IsNotExist(readErr) {
+		return readErr
+	}
+	if err := codexValidateConfigText(text); err != nil {
+		return err
+	}
+
+	model := strings.TrimSpace(opts.model)
+	if model == "" {
+		model = codexSectionStringValue(text, codexProfileHeader(), "model")
+	}
+	modelCatalogPath := strings.TrimSpace(opts.modelCatalogPath)
+	if modelCatalogPath == "" {
+		modelCatalogPath = codexSectionStringValue(text, codexProfileHeader(), "model_catalog_json")
+	}
+
+	profileLines := []string{}
+	if model != "" {
+		profileLines = append(profileLines, fmt.Sprintf("model = %q", model))
+	}
+	profileLines = append(profileLines,
+		fmt.Sprintf("openai_base_url = %q", baseURL),
+		fmt.Sprintf("model_provider = %q", codexProfileName),
+	)
+	if opts.forceAPIAuth {
+		profileLines = append(profileLines, `forced_login_method = "api"`)
+	}
+	if modelCatalogPath != "" {
+		profileLines = append(profileLines, fmt.Sprintf("model_catalog_json = %q", modelCatalogPath))
+	}
 
 	sections := []struct {
 		header string
 		lines  []string
 	}{
 		{
-			header: fmt.Sprintf("[profiles.%s]", codexProfileName),
-			lines: []string{
-				fmt.Sprintf("openai_base_url = %q", baseURL),
-				`forced_login_method = "api"`,
-				fmt.Sprintf("model_provider = %q", codexProfileName),
-			},
+			header: codexProfileHeader(),
+			lines:  profileLines,
 		},
 		{
-			header: fmt.Sprintf("[model_providers.%s]", codexProfileName),
+			header: codexProviderHeader(),
 			lines: []string{
-				`name = "Ollama"`,
+				fmt.Sprintf("name = %q", codexProviderName),
 				fmt.Sprintf("base_url = %q", baseURL),
+				`wire_api = "responses"`,
 			},
 		},
 	}
 
-	content, readErr := os.ReadFile(configPath)
-	text := ""
-	if readErr == nil {
-		text = string(content)
+	if opts.activate {
+		text = codexSetRootStringValue(text, "profile", codexProfileName)
 	}
-
-	for _, s := range sections {
-		block := strings.Join(append([]string{s.header}, s.lines...), "\n") + "\n"
-
-		if idx := strings.Index(text, s.header); idx >= 0 {
-			// Replace the existing section up to the next section header.
-			rest := text[idx+len(s.header):]
-			if endIdx := strings.Index(rest, "\n["); endIdx >= 0 {
-				text = text[:idx] + block + rest[endIdx+1:]
-			} else {
-				text = text[:idx] + block
-			}
-		} else {
-			// Append the section.
-			if text != "" && !strings.HasSuffix(text, "\n") {
-				text += "\n"
-			}
-			if text != "" {
-				text += "\n"
-			}
-			text += block
+	if opts.setRootModelConfig {
+		if model != "" {
+			text = codexSetRootStringValue(text, "model", model)
+		}
+		text = codexSetRootStringValue(text, "model_provider", codexProfileName)
+		if modelCatalogPath != "" {
+			text = codexSetRootStringValue(text, "model_catalog_json", modelCatalogPath)
 		}
 	}
 
-	return os.WriteFile(configPath, []byte(text), 0o644)
+	for _, s := range sections {
+		text = codexUpsertSection(text, s.header, s.lines)
+	}
+	if err := codexValidateConfigText(text); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return err
+	}
+	return fileutil.WriteWithBackup(configPath, []byte(text))
+}
+
+func codexBaseURL() string {
+	return strings.TrimRight(envconfig.Host().String(), "/") + "/v1/"
+}
+
+func codexProfileHeader() string {
+	return fmt.Sprintf("[profiles.%s]", codexProfileName)
+}
+
+func codexProviderHeader() string {
+	return fmt.Sprintf("[model_providers.%s]", codexProfileName)
+}
+
+func codexUpsertSection(text, header string, lines []string) string {
+	block := strings.Join(append([]string{header}, lines...), "\n") + "\n"
+
+	if targetPath, ok := codexTableHeaderPath(header); ok {
+		if start, end, found := codexSectionRange(text, targetPath); found {
+			return text[:start] + block + text[end:]
+		}
+	}
+
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	if text != "" {
+		text += "\n"
+	}
+	return text + block
+}
+
+func codexRootStringValue(text, key string) string {
+	value, _ := codexStringValue(text, key)
+	return value
+}
+
+func codexRootStringValueOK(text, key string) (string, bool) {
+	return codexStringValue(text, key)
+}
+
+func codexStringValue(text string, path ...string) (string, bool) {
+	if len(path) == 0 {
+		return "", false
+	}
+	cfg, err := codexParseConfigText(text)
+	if err != nil {
+		return "", false
+	}
+	var current any = cfg
+	for _, part := range path {
+		table, ok := current.(map[string]any)
+		if !ok {
+			return "", false
+		}
+		current, ok = table[part]
+		if !ok {
+			return "", false
+		}
+	}
+	value, ok := current.(string)
+	if !ok {
+		return "", false
+	}
+	return value, true
+}
+
+func codexSectionStringValue(text, header, key string) string {
+	path, ok := codexTableHeaderPath(header)
+	if !ok {
+		return ""
+	}
+	value, _ := codexStringValue(text, append(path, key)...)
+	return value
+}
+
+func codexParseConfigText(text string) (map[string]any, error) {
+	cfg := map[string]any{}
+	if strings.TrimSpace(text) == "" {
+		return cfg, nil
+	}
+	if err := toml.Unmarshal([]byte(text), &cfg); err != nil {
+		return nil, fmt.Errorf("invalid Codex config TOML: %w", err)
+	}
+	return cfg, nil
+}
+
+func codexValidateConfigText(text string) error {
+	_, err := codexParseConfigText(text)
+	return err
+}
+
+func codexSectionRange(text string, targetPath []string) (int, int, bool) {
+	lines := strings.SplitAfter(text, "\n")
+	offset := 0
+	start := -1
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "#") {
+			offset += len(line)
+			continue
+		}
+		if start >= 0 {
+			return start, offset, true
+		}
+		if path, ok := codexTableHeaderPath(trimmed); ok && codexSamePath(path, targetPath) {
+			start = offset
+		}
+		offset += len(line)
+	}
+	if start >= 0 {
+		return start, len(text), true
+	}
+	return 0, 0, false
+}
+
+func codexTableHeaderPath(header string) ([]string, bool) {
+	trimmed := strings.TrimSpace(header)
+	if !strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "[[") {
+		return nil, false
+	}
+
+	const probeKey = "__ollama_launch_probe"
+	cfg := map[string]any{}
+	if err := toml.Unmarshal([]byte(trimmed+"\n"+probeKey+" = true\n"), &cfg); err != nil {
+		return nil, false
+	}
+	return codexFindProbePath(cfg, probeKey, nil)
+}
+
+func codexFindProbePath(value any, probeKey string, path []string) ([]string, bool) {
+	table, ok := value.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if probe, ok := table[probeKey].(bool); ok && probe {
+		return path, true
+	}
+	for key, child := range table {
+		if key == probeKey {
+			continue
+		}
+		if childPath, ok := codexFindProbePath(child, probeKey, append(path, key)); ok {
+			return childPath, true
+		}
+	}
+	return nil, false
+}
+
+func codexSamePath(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func codexSetRootStringValue(text, key, value string) string {
+	lines := strings.SplitAfter(text, "\n")
+	rootEnd := len(lines)
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			rootEnd = i
+			break
+		}
+	}
+
+	assignment := fmt.Sprintf("%s = %q", key, value)
+	for i := 0; i < rootEnd; i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if codexRootLineHasKey(trimmed, key) {
+			if strings.HasSuffix(line, "\n") {
+				lines[i] = assignment + "\n"
+			} else {
+				lines[i] = assignment
+			}
+			return strings.Join(lines, "")
+		}
+	}
+
+	insert := assignment + "\n"
+	root := strings.Join(lines[:rootEnd], "")
+	rest := strings.Join(lines[rootEnd:], "")
+	if root != "" && !strings.HasSuffix(root, "\n") {
+		root += "\n"
+	}
+	if rest != "" && !strings.HasSuffix(insert, "\n\n") {
+		insert += "\n"
+	}
+	return root + insert + rest
+}
+
+func codexRemoveRootValue(text, key string) string {
+	lines := strings.SplitAfter(text, "\n")
+	rootEnd := len(lines)
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			rootEnd = i
+			break
+		}
+	}
+
+	out := make([]string, 0, len(lines))
+	for i, line := range lines {
+		if i < rootEnd {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && !strings.HasPrefix(trimmed, "#") && codexRootLineHasKey(trimmed, key) {
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "")
+}
+
+func codexRootLineHasKey(line, key string) bool {
+	cfg := map[string]any{}
+	if err := toml.Unmarshal([]byte(line+"\n"), &cfg); err != nil {
+		return false
+	}
+	_, ok := cfg[key]
+	return ok
 }
 
 func checkCodexVersion() error {
