@@ -212,7 +212,9 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingSize int64) (int64, error) {
 	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
 	tmp := dest + ".tmp"
-	os.MkdirAll(filepath.Dir(dest), 0o755)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return 0, fmt.Errorf("creating destination directory: %w", err)
+	}
 
 	h := sha256.New()
 
