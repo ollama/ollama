@@ -9,8 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -43,31 +41,29 @@ in separate maps, so a local "qwen3.5" and an explicit "qwen3.5:cloud" cannot
 collide. The cloud suffix is request routing intent; api.ShowResponse does not
 carry a model-name field to reconstruct on the way out.
 
-Snapshots live under ~/.ollama/cache/show/. Startup loads snapshots
-synchronously so warm entries are immediately available, then hydrates local
-and cloud caches in the background without delaying server readiness.
+The cache is process-local. Startup hydration runs asynchronously from the
+current local manifests and cloud tags; no show responses are written to or read
+from ~/.ollama/cache/show. That keeps cache lifetime tied to the server process
+and avoids snapshot freshness and invalidation cases for this iteration.
 */
 
 const (
-	modelShowCloudFetchTimeout          = 3 * time.Second
-	modelShowCloudReadRefreshCooldown   = 5 * time.Second
-	modelShowCloudHydrationConcurrency  = 4
-	modelShowLocalSnapshotFilename      = "local.json"
-	modelShowCloudSnapshotFilename      = "cloud.json"
-	modelShowSnapshotDirectoryComponent = "show"
+	modelShowCloudFetchTimeout         = 3 * time.Second
+	modelShowCloudReadRefreshCooldown  = 5 * time.Second
+	modelShowCloudHydrationConcurrency = 4
 )
 
 var errModelShowNoCloud = errors.New("cloud disabled")
 
-// modelShowCache owns local and cloud show response caches plus their snapshot
-// persistence. All cached responses are cloned at read/write boundaries so
+// modelShowCache owns process-local show response caches for local and cloud
+// models. All cached responses are cloned at read/write boundaries so
 // handler-specific mutations, such as user-agent compatibility tweaks, cannot
 // leak back into the cache.
 type modelShowCache struct {
 	mu sync.RWMutex
 
-	local map[modelShowLocalKey]modelShowLocalEntry
-	cloud map[modelShowCloudKey]modelShowCloudEntry
+	local map[modelShowLocalKey]*api.ShowResponse
+	cloud map[modelShowCloudKey]*api.ShowResponse
 
 	cloudRefreshing           map[modelShowCloudKey]bool
 	cloudNextReadRefreshAfter map[modelShowCloudKey]time.Time
@@ -94,33 +90,10 @@ type modelShowCloudKey struct {
 	Verbose bool
 }
 
-type modelShowLocalEntry struct {
-	Model    string            `json:"model"`
-	Digest   string            `json:"digest"`
-	Verbose  bool              `json:"verbose"`
-	CachedAt time.Time         `json:"cached_at"`
-	Response *api.ShowResponse `json:"response"`
-}
-
-type modelShowCloudEntry struct {
-	Model    string            `json:"model"`
-	Verbose  bool              `json:"verbose"`
-	CachedAt time.Time         `json:"cached_at"`
-	Response *api.ShowResponse `json:"response"`
-}
-
-type modelShowLocalSnapshot struct {
-	Entries []modelShowLocalEntry `json:"entries"`
-}
-
-type modelShowCloudSnapshot struct {
-	Entries []modelShowCloudEntry `json:"entries"`
-}
-
 func newModelShowCache() *modelShowCache {
 	return &modelShowCache{
-		local:                     make(map[modelShowLocalKey]modelShowLocalEntry),
-		cloud:                     make(map[modelShowCloudKey]modelShowCloudEntry),
+		local:                     make(map[modelShowLocalKey]*api.ShowResponse),
+		cloud:                     make(map[modelShowCloudKey]*api.ShowResponse),
 		cloudRefreshing:           make(map[modelShowCloudKey]bool),
 		cloudNextReadRefreshAfter: make(map[modelShowCloudKey]time.Time),
 		client:                    http.DefaultClient,
@@ -135,13 +108,12 @@ func modelShowCacheable(req api.ShowRequest) bool {
 	return req.System == "" && len(req.Options) == 0
 }
 
-// Start loads persisted snapshots immediately and kicks off non-blocking
-// startup hydration. Snapshot loading is intentionally synchronous so cached
-// cloud and local entries are available to the first request after Serve starts.
+// Start kicks off non-blocking startup hydration. The cache remains
+// process-local; warm entries appear as the background local and cloud scans
+// populate the maps.
 func (c *modelShowCache) Start(ctx context.Context) {
 	c.once.Do(func() {
 		slog.Debug("starting model show cache")
-		c.loadSnapshots()
 		go c.runStartup(ctx)
 	})
 }
@@ -178,7 +150,7 @@ func (c *modelShowCache) runStartup(ctx context.Context) {
 
 // GetLocal returns a cached local show response when the current manifest
 // digest matches. On a miss, it falls back to GetModelInfo, stores non-remote
-// local responses, persists the snapshot, and returns a clone to the caller.
+// local responses, and returns a clone to the caller.
 func (c *modelShowCache) GetLocal(req api.ShowRequest) (*api.ShowResponse, error) {
 	key, err := modelShowLocalKeyForRequest(req)
 	if err != nil {
@@ -197,9 +169,6 @@ func (c *modelShowCache) GetLocal(req api.ShowRequest) (*api.ShowResponse, error
 
 	if resp.RemoteHost == "" {
 		c.setLocal(key, resp)
-		if err := c.persistLocalSnapshot(); err != nil {
-			slog.Warn("failed to persist local model show snapshot", "error", err)
-		}
 	}
 
 	return cloneShowResponse(resp), nil
@@ -221,62 +190,40 @@ func (c *modelShowCache) GetCloudSWR(ctx context.Context, req api.ShowRequest) (
 
 func (c *modelShowCache) getLocal(key modelShowLocalKey) (*api.ShowResponse, bool) {
 	c.mu.RLock()
-	entry, ok := c.local[key]
+	resp, ok := c.local[key]
 	c.mu.RUnlock()
-	if !ok || entry.Response == nil {
+	if !ok || resp == nil {
 		return nil, false
 	}
-	return cloneShowResponse(entry.Response), true
+	return cloneShowResponse(resp), true
 }
 
 func (c *modelShowCache) setLocal(key modelShowLocalKey, resp *api.ShowResponse) {
 	c.mu.Lock()
-	c.local[key] = modelShowLocalEntry{
-		Model:    key.Model,
-		Digest:   key.Digest,
-		Verbose:  key.Verbose,
-		CachedAt: time.Now(),
-		Response: cloneShowResponse(resp),
-	}
+	c.local[key] = cloneShowResponse(resp)
 	c.mu.Unlock()
 }
 
 func (c *modelShowCache) hasLocal(key modelShowLocalKey) bool {
 	c.mu.RLock()
-	entry, ok := c.local[key]
+	resp, ok := c.local[key]
 	c.mu.RUnlock()
-	return ok && entry.Response != nil
-}
-
-func (c *modelShowCache) hasLocalVerboseVariant(modelName string, verbose bool) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	for key, entry := range c.local {
-		if key.Model == modelName && key.Verbose == verbose && entry.Response != nil {
-			return true
-		}
-	}
-	return false
+	return ok && resp != nil
 }
 
 func (c *modelShowCache) getCloud(key modelShowCloudKey) (*api.ShowResponse, bool) {
 	c.mu.RLock()
-	entry, ok := c.cloud[key]
+	resp, ok := c.cloud[key]
 	c.mu.RUnlock()
-	if !ok || entry.Response == nil {
+	if !ok || resp == nil {
 		return nil, false
 	}
-	return cloneShowResponse(entry.Response), true
+	return cloneShowResponse(resp), true
 }
 
 func (c *modelShowCache) setCloud(key modelShowCloudKey, resp *api.ShowResponse) {
 	c.mu.Lock()
-	c.cloud[key] = modelShowCloudEntry{
-		Model:    key.Model,
-		Verbose:  key.Verbose,
-		CachedAt: time.Now(),
-		Response: cloneShowResponse(resp),
-	}
+	c.cloud[key] = cloneShowResponse(resp)
 	c.mu.Unlock()
 }
 
@@ -341,24 +288,18 @@ func (c *modelShowCache) refreshCloud(ctx context.Context, key modelShowCloudKey
 	}
 
 	c.setCloud(key, resp)
-	if err := c.persistCloudSnapshot(); err != nil {
-		slog.Warn("failed to persist cloud model show snapshot", "error", err)
-	}
 	return nil
 }
 
 // hydrateLocal scans manifests at startup and refreshes only entries missing
-// for the current digest. Non-verbose responses are hydrated for every local
-// model; verbose responses are hydrated only when a verbose snapshot already
-// exists, avoiding an expensive tensor walk for users who have never asked for
-// verbose show data.
+// for the current digest. It hydrates non-verbose responses only, avoiding an
+// expensive tensor walk for users who have never asked for verbose show data.
 func (c *modelShowCache) hydrateLocal(ctx context.Context) error {
 	manifests, err := manifest.Manifests(true)
 	if err != nil {
 		return err
 	}
 
-	changed := false
 	for name, mf := range manifests {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -369,39 +310,25 @@ func (c *modelShowCache) hydrateLocal(ctx context.Context) error {
 		}
 
 		modelName := name.String()
-		variants := []bool{false}
-		if c.hasLocalVerboseVariant(modelName, true) {
-			variants = append(variants, true)
+		key := modelShowLocalKey{
+			Model:   modelName,
+			Digest:  mf.Digest(),
+			Verbose: false,
+		}
+		if c.hasLocal(key) {
+			continue
 		}
 
-		for _, verbose := range variants {
-			key := modelShowLocalKey{
-				Model:   modelName,
-				Digest:  mf.Digest(),
-				Verbose: verbose,
-			}
-			if c.hasLocal(key) {
-				continue
-			}
-
-			resp, err := c.getModelInfo(api.ShowRequest{Model: modelName, Verbose: verbose})
-			if err != nil {
-				slog.Warn("failed to hydrate local model show cache", "model", modelName, "verbose", verbose, "error", err)
-				continue
-			}
-			if resp.RemoteHost != "" {
-				continue
-			}
-
-			c.setLocal(key, resp)
-			changed = true
+		resp, err := c.getModelInfo(api.ShowRequest{Model: modelName})
+		if err != nil {
+			slog.Warn("failed to hydrate local model show cache", "model", modelName, "error", err)
+			continue
 		}
-	}
-
-	if changed {
-		if err := c.persistLocalSnapshot(); err != nil {
-			slog.Warn("failed to persist local model show snapshot after hydration", "error", err)
+		if resp.RemoteHost != "" {
+			continue
 		}
+
+		c.setLocal(key, resp)
 	}
 	return nil
 }
@@ -422,8 +349,6 @@ func (c *modelShowCache) hydrateCloud(ctx context.Context) error {
 
 	jobs := make(chan string)
 	var wg sync.WaitGroup
-	var changed bool
-	var changedMu sync.Mutex
 
 	worker := func() {
 		defer wg.Done()
@@ -440,9 +365,6 @@ func (c *modelShowCache) hydrateCloud(ctx context.Context) error {
 			}
 
 			c.setCloud(key, resp)
-			changedMu.Lock()
-			changed = true
-			changedMu.Unlock()
 		}
 	}
 
@@ -465,15 +387,6 @@ sendLoop:
 
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-
-	changedMu.Lock()
-	shouldPersist := changed
-	changedMu.Unlock()
-	if shouldPersist {
-		if err := c.persistCloudSnapshot(); err != nil {
-			slog.Warn("failed to persist cloud model show snapshot after hydration", "error", err)
-		}
 	}
 
 	return nil
@@ -607,191 +520,6 @@ func modelShowStatusError(resp *http.Response, body []byte) error {
 		statusErr.ErrorMessage = strings.TrimSpace(string(body))
 	}
 	return statusErr
-}
-
-// loadSnapshots hydrates the in-memory cache from disk. Invalid, partial, or
-// missing snapshots are logged and ignored so /api/show continues to work even
-// when persistence is unavailable or corrupted.
-func (c *modelShowCache) loadSnapshots() {
-	c.loadLocalSnapshot()
-	c.loadCloudSnapshot()
-}
-
-func (c *modelShowCache) loadLocalSnapshot() {
-	path, err := modelShowSnapshotPath(modelShowLocalSnapshotFilename)
-	if err != nil {
-		slog.Warn("failed to resolve local model show snapshot path", "error", err)
-		return
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("failed to read local model show snapshot", "path", path, "error", err)
-		}
-		return
-	}
-
-	var snap modelShowLocalSnapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		slog.Warn("failed to parse local model show snapshot", "path", path, "error", err)
-		return
-	}
-
-	count := 0
-	c.mu.Lock()
-	for _, entry := range snap.Entries {
-		if entry.Model == "" || entry.Digest == "" || entry.Response == nil {
-			continue
-		}
-		if entry.Response.ModelInfo == nil {
-			entry.Response.ModelInfo = map[string]any{}
-		}
-		key := modelShowLocalKey{Model: entry.Model, Digest: entry.Digest, Verbose: entry.Verbose}
-		entry.Response = cloneShowResponse(entry.Response)
-		c.local[key] = entry
-		count++
-	}
-	c.mu.Unlock()
-
-	slog.Debug("loaded local model show snapshot", "path", path, "count", count)
-}
-
-func (c *modelShowCache) loadCloudSnapshot() {
-	path, err := modelShowSnapshotPath(modelShowCloudSnapshotFilename)
-	if err != nil {
-		slog.Warn("failed to resolve cloud model show snapshot path", "error", err)
-		return
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("failed to read cloud model show snapshot", "path", path, "error", err)
-		}
-		return
-	}
-
-	var snap modelShowCloudSnapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		slog.Warn("failed to parse cloud model show snapshot", "path", path, "error", err)
-		return
-	}
-
-	count := 0
-	c.mu.Lock()
-	for _, entry := range snap.Entries {
-		entry.Model = modelShowNormalizeCloudModel(entry.Model)
-		if entry.Model == "" || entry.Response == nil {
-			continue
-		}
-		if entry.Response.ModelInfo == nil {
-			entry.Response.ModelInfo = map[string]any{}
-		}
-		key := modelShowCloudKey{Model: entry.Model, Verbose: entry.Verbose}
-		entry.Response = cloneShowResponse(entry.Response)
-		c.cloud[key] = entry
-		count++
-	}
-	c.mu.Unlock()
-
-	slog.Debug("loaded cloud model show snapshot", "path", path, "count", count)
-}
-
-func (c *modelShowCache) persistLocalSnapshot() error {
-	entries := c.localSnapshotEntries()
-	return writeModelShowSnapshot(modelShowLocalSnapshotFilename, modelShowLocalSnapshot{Entries: entries})
-}
-
-func (c *modelShowCache) persistCloudSnapshot() error {
-	entries := c.cloudSnapshotEntries()
-	return writeModelShowSnapshot(modelShowCloudSnapshotFilename, modelShowCloudSnapshot{Entries: entries})
-}
-
-func (c *modelShowCache) localSnapshotEntries() []modelShowLocalEntry {
-	c.mu.RLock()
-	entries := make([]modelShowLocalEntry, 0, len(c.local))
-	for _, entry := range c.local {
-		entry.Response = cloneShowResponse(entry.Response)
-		entries = append(entries, entry)
-	}
-	c.mu.RUnlock()
-
-	slices.SortFunc(entries, func(a, b modelShowLocalEntry) int {
-		if c := strings.Compare(a.Model, b.Model); c != 0 {
-			return c
-		}
-		if c := strings.Compare(a.Digest, b.Digest); c != 0 {
-			return c
-		}
-		return compareBool(a.Verbose, b.Verbose)
-	})
-	return entries
-}
-
-func (c *modelShowCache) cloudSnapshotEntries() []modelShowCloudEntry {
-	c.mu.RLock()
-	entries := make([]modelShowCloudEntry, 0, len(c.cloud))
-	for _, entry := range c.cloud {
-		entry.Response = cloneShowResponse(entry.Response)
-		entries = append(entries, entry)
-	}
-	c.mu.RUnlock()
-
-	slices.SortFunc(entries, func(a, b modelShowCloudEntry) int {
-		if c := strings.Compare(a.Model, b.Model); c != 0 {
-			return c
-		}
-		return compareBool(a.Verbose, b.Verbose)
-	})
-	return entries
-}
-
-// writeModelShowSnapshot writes one snapshot using a temp file, fsync, close,
-// and rename sequence. This matches the recommendations cache pattern and
-// avoids leaving a partially written JSON file at the final path.
-func writeModelShowSnapshot(filename string, payload any) error {
-	path, err := modelShowSnapshotPath(filename)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".model-show-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-
-	return os.Rename(tmpPath, path)
-}
-
-func modelShowSnapshotPath(filename string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".ollama", "cache", modelShowSnapshotDirectoryComponent, filename), nil
 }
 
 // modelShowLocalKeyForRequest normalizes a local show request to the canonical
@@ -962,16 +690,5 @@ func cloneAny(v any) any {
 		return slices.Clone(v)
 	default:
 		return v
-	}
-}
-
-func compareBool(a, b bool) int {
-	switch {
-	case a == b:
-		return 0
-	case !a && b:
-		return -1
-	default:
-		return 1
 	}
 }

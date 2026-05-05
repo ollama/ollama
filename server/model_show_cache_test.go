@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -116,39 +114,34 @@ func TestModelShowCacheLocalVerboseVariantsAreSeparate(t *testing.T) {
 	}
 }
 
-func TestModelShowCacheLocalSnapshotHydrationSkipsUnchanged(t *testing.T) {
+func TestModelShowCacheLocalHydrationSkipsUnchangedInMemory(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
-	createShowCacheModel(t, "show-cache-snapshot", map[string]any{"test.context_length": uint32(1024)})
+	createShowCacheModel(t, "show-cache-hydrate", map[string]any{"test.context_length": uint32(1024)})
 
 	cache := newModelShowCache()
+	calls := 0
 	cache.getModelInfo = func(req api.ShowRequest) (*api.ShowResponse, error) {
-		return showCacheTestResponse(1, req.Verbose), nil
-	}
-	if _, err := cache.GetLocal(api.ShowRequest{Model: "show-cache-snapshot"}); err != nil {
-		t.Fatalf("initial GetLocal failed: %v", err)
+		calls++
+		return showCacheTestResponse(calls, req.Verbose), nil
 	}
 
-	reloaded := newModelShowCache()
-	calls := 0
-	reloaded.getModelInfo = func(req api.ShowRequest) (*api.ShowResponse, error) {
-		calls++
-		return showCacheTestResponse(2, req.Verbose), nil
+	if err := cache.hydrateLocal(context.Background()); err != nil {
+		t.Fatalf("first hydrateLocal failed: %v", err)
 	}
-	reloaded.loadSnapshots()
-	if err := reloaded.hydrateLocal(context.Background()); err != nil {
-		t.Fatalf("hydrateLocal failed: %v", err)
+	if err := cache.hydrateLocal(context.Background()); err != nil {
+		t.Fatalf("second hydrateLocal failed: %v", err)
 	}
-	resp, err := reloaded.GetLocal(api.ShowRequest{Model: "show-cache-snapshot"})
+	resp, err := cache.GetLocal(api.ShowRequest{Model: "show-cache-hydrate"})
 	if err != nil {
 		t.Fatalf("GetLocal after hydration failed: %v", err)
 	}
 
-	if calls != 0 {
-		t.Fatalf("getModelInfo calls after unchanged snapshot = %d, want 0", calls)
+	if calls != 1 {
+		t.Fatalf("getModelInfo calls after unchanged in-memory hydration = %d, want 1", calls)
 	}
-	if resp.ModelInfo["call"].(float64) != 1 {
-		t.Fatalf("snapshot call marker = %v, want 1", resp.ModelInfo["call"])
+	if resp.ModelInfo["call"] != 1 {
+		t.Fatalf("hydrated call marker = %v, want 1", resp.ModelInfo["call"])
 	}
 }
 
@@ -443,60 +436,6 @@ func TestModelShowCacheCloudDisabledDoesNotServeStale(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), internalcloud.DisabledError(cloudErrRemoteModelDetailsUnavailable)) {
 		t.Fatalf("unexpected disabled response: %s", w.Body.String())
-	}
-}
-
-func TestModelShowCacheInvalidSnapshotDoesNotBreakShow(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	setTestHome(t, t.TempDir())
-	createShowCacheModel(t, "show-cache-invalid-snapshot", map[string]any{"test.context_length": uint32(1024)})
-
-	path, err := modelShowSnapshotPath(modelShowLocalSnapshotFilename)
-	if err != nil {
-		t.Fatalf("snapshot path failed: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir snapshot dir failed: %v", err)
-	}
-	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
-		t.Fatalf("write invalid snapshot failed: %v", err)
-	}
-
-	cache := newModelShowCache()
-	cache.loadSnapshots()
-	cache.getModelInfo = func(req api.ShowRequest) (*api.ShowResponse, error) {
-		return showCacheTestResponse(1, req.Verbose), nil
-	}
-
-	if _, err := cache.GetLocal(api.ShowRequest{Model: "show-cache-invalid-snapshot"}); err != nil {
-		t.Fatalf("GetLocal failed after invalid snapshot: %v", err)
-	}
-}
-
-func TestModelShowCacheSnapshotWriteFailureDoesNotBreakShow(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	home := t.TempDir()
-	setTestHome(t, home)
-	createShowCacheModel(t, "show-cache-unwritable-snapshot", map[string]any{"test.context_length": uint32(1024)})
-
-	snapshotDir, err := modelShowSnapshotPath(modelShowLocalSnapshotFilename)
-	if err != nil {
-		t.Fatalf("snapshot path failed: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(filepath.Dir(snapshotDir)), 0o755); err != nil {
-		t.Fatalf("mkdir cache dir failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Dir(snapshotDir), []byte("not a directory"), 0o644); err != nil {
-		t.Fatalf("write blocking snapshot path failed: %v", err)
-	}
-
-	cache := newModelShowCache()
-	cache.getModelInfo = func(req api.ShowRequest) (*api.ShowResponse, error) {
-		return showCacheTestResponse(1, req.Verbose), nil
-	}
-
-	if _, err := cache.GetLocal(api.ShowRequest{Model: "show-cache-unwritable-snapshot"}); err != nil {
-		t.Fatalf("GetLocal failed after snapshot write failure: %v", err)
 	}
 }
 
