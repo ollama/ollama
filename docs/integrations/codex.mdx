@@ -21,6 +21,9 @@ npm install -g @openai/codex
 ollama launch codex
 ```
 
+When launched through `ollama launch codex`, Ollama refreshes the model catalog
+and passes it to Codex for that session.
+
 To configure without launching:
 
 ```shell
@@ -59,10 +62,12 @@ base_url = "http://localhost:11434/v1"
 [profiles.ollama-launch]
 model = "gpt-oss:120b"
 model_provider = "ollama-launch"
+model_catalog_json = "~/.codex/ollama-launch-models.json"
 
 [profiles.ollama-cloud]
 model = "gpt-oss:120b-cloud"
 model_provider = "ollama-launch"
+model_catalog_json = "~/.codex/ollama-launch-models.json"
 ```
 
 Then run:
