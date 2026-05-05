@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/fs"
+	"github.com/ollama/ollama/internal/gemma4vision"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -40,6 +41,7 @@ type Model struct {
 }
 
 var _ model.MultimodalProcessor = (*Model)(nil)
+var _ model.MultimodalBudgetEncoder = (*Model)(nil)
 
 type MultiModalProjector struct {
 	Projection *ClippableLinear `gguf:"input_projection"`
@@ -121,6 +123,15 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
+	minTok, maxTok := gemma4vision.NormalizeGemma4ImageBudgets(0, 0)
+	return m.encodeMultimodal(ctx, multimodalData, minTok, maxTok)
+}
+
+func (m *Model) EncodeMultimodalWithBudgets(ctx ml.Context, multimodalData []byte, minTokens, maxTokens int) ([]input.Multimodal, error) {
+	return m.encodeMultimodal(ctx, multimodalData, minTokens, maxTokens)
+}
+
+func (m *Model) encodeMultimodal(ctx ml.Context, multimodalData []byte, minTokens, maxTokens int) ([]input.Multimodal, error) {
 	// Audio input: detect WAV format and route to audio encoder.
 	if isAudioData(multimodalData) {
 		return m.encodeAudioMultimodal(ctx, multimodalData)
@@ -135,25 +146,36 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("vision: decode", "elapsed", time.Since(t0), "bounds", img.Bounds())
+	b := img.Bounds()
+	slog.Debug("vision: decode", "elapsed", time.Since(t0), "input_width", b.Dx(), "input_height", b.Dy())
 
 	t1 := time.Now()
-	f32s, imgW, imgH, err := m.ImageProcessor.ProcessImage(img)
+	f32s, imgW, imgH, err := m.ProcessImageWithBudgets(img, minTokens, maxTokens)
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("vision: preprocess", "elapsed", time.Since(t1), "size", [2]int{imgW, imgH})
+	slog.Debug("vision: preprocess", "elapsed", time.Since(t1), "preprocess_width", imgW, "preprocess_height", imgH)
 
 	pixelValues := ctx.Input().FromFloats(f32s, imgW, imgH, m.ImageProcessor.numChannels)
-	slog.Info("vision: pixelValues", "shape", pixelValues.Shape(), "dim0", pixelValues.Dim(0), "dim1", pixelValues.Dim(1), "dim2", pixelValues.Dim(2))
+	slog.Debug("vision: pixelValues", "shape", pixelValues.Shape(), "dim0", pixelValues.Dim(0), "dim1", pixelValues.Dim(1), "dim2", pixelValues.Dim(2))
 
 	numPatchesX := imgW / m.ImageProcessor.patchSize
 	numPatchesY := imgH / m.ImageProcessor.patchSize
-	slog.Info("vision: patches", "patchesX", numPatchesX, "patchesY", numPatchesY, "total", numPatchesX*numPatchesY, "patchSize", m.ImageProcessor.patchSize)
+	slog.Debug("vision: patches", "patchesX", numPatchesX, "patchesY", numPatchesY, "total", numPatchesX*numPatchesY, "patchSize", m.ImageProcessor.patchSize)
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues, numPatchesX, numPatchesY)
 	visionOutputs = visionPoolAndProject(ctx, visionOutputs, numPatchesX, numPatchesY, m.VisionModel.VisionModelOptions, m.MultiModalProjector, m.VisionModel.StdBias, m.VisionModel.StdScale)
-	slog.Info("vision: encoded", "elapsed", time.Since(t0), "shape", visionOutputs.Shape())
+	imageTokenCount := visionOutputs.Dim(1)
+	slog.Debug("vision: encoded", "elapsed", time.Since(t0), "shape", visionOutputs.Shape())
+	slog.Debug("gemma4 vision budget",
+		"image_min_tokens", minTokens,
+		"image_max_tokens", maxTokens,
+		"image_token_count", imageTokenCount,
+		"input_width", b.Dx(),
+		"input_height", b.Dy(),
+		"preprocess_width", imgW,
+		"preprocess_height", imgH,
+	)
 
 	return []input.Multimodal{{Tensor: visionOutputs}}, nil
 }

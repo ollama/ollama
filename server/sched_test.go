@@ -781,6 +781,13 @@ func TestSchedNeedsReload(t *testing.T) {
 	req.opts.NumGPU = -1
 	resp = runner.needsReload(ctx, req)
 	require.False(t, resp)
+	runner.Options.ImageMaxTokens = 560
+	req.opts.ImageMaxTokens = 560
+	resp = runner.needsReload(ctx, req)
+	require.False(t, resp)
+	req.opts.ImageMaxTokens = 280
+	resp = runner.needsReload(ctx, req)
+	require.True(t, resp)
 }
 
 func TestSchedUnloadAllRunners(t *testing.T) {

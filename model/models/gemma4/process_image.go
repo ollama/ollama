@@ -2,74 +2,87 @@ package gemma4
 
 import (
 	"image"
+	"log/slog"
 	"math"
 
 	"golang.org/x/image/draw"
 
 	"github.com/ollama/ollama/fs"
+	"github.com/ollama/ollama/internal/gemma4vision"
 )
 
 type ImageProcessor struct {
 	patchSize   int
 	numChannels int
 	nMerge      int
-	minPixels   int
-	maxPixels   int
+	patchArea   int
 }
 
 func newImageProcessor(c fs.Config) ImageProcessor {
 	patchSize := int(c.Uint("vision.patch_size", 16))
 	nMerge := int(c.Uint("vision.projector.scale_factor", 3))
 	numChannels := int(c.Uint("vision.num_channels", 3))
-
-	// Token limits from reference: min=40, max=280 output tokens after pooling.
-	// Convert to pixel counts: tokens * nMerge^2 * patchSize^2
-	minTokens := 40
-	maxTokens := 280
 	patchArea := patchSize * patchSize * nMerge * nMerge
-	minPixels := minTokens * patchArea
-	maxPixels := maxTokens * patchArea
 
 	return ImageProcessor{
 		patchSize:   patchSize,
 		numChannels: numChannels,
 		nMerge:      nMerge,
-		minPixels:   minPixels,
-		maxPixels:   maxPixels,
+		patchArea:   patchArea,
 	}
 }
 
 // ProcessImage resizes an image preserving aspect ratio, aligning dimensions
 // to (patchSize * nMerge) boundaries, and normalizes pixels to [-1, 1].
-// Returns the float32 pixel data and the actual output dimensions.
+// Uses default Gemma 4 visual token budgets (70 / 560).
 func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, int, int, error) {
-	// Compute target size preserving aspect ratio
-	alignSize := p.patchSize * p.nMerge
-	targetW, targetH := p.smartResize(img.Bounds().Dx(), img.Bounds().Dy(), alignSize)
+	minTok, maxTok := gemma4vision.NormalizeGemma4ImageBudgets(0, 0)
+	return p.ProcessImageWithBudgets(img, minTok, maxTok)
+}
 
-	// Resize directly without alpha compositing, matching MLX reference.
+// ProcessImageWithBudgets applies minTokens/maxTokens as visual token budgets
+// (see gemma4vision) converted through patchArea to pixel caps for resize.
+func (p *ImageProcessor) ProcessImageWithBudgets(img image.Image, minTokens, maxTokens int) ([]float32, int, int, error) {
+	minPixels := minTokens * p.patchArea
+	maxPixels := maxTokens * p.patchArea
+	return p.processImage(img, minPixels, maxPixels)
+}
+
+func (p *ImageProcessor) processImage(img image.Image, minPixels, maxPixels int) ([]float32, int, int, error) {
+	alignSize := p.patchSize * p.nMerge
+	targetW, targetH := p.smartResize(img.Bounds().Dx(), img.Bounds().Dy(), alignSize, minPixels, maxPixels)
+
 	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
 	draw.BiLinear.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Over, nil)
 
-	// Normalize to [-1, 1] using mean=0.5, std=0.5: (pixel/255 - 0.5) / 0.5 = 2*pixel/255 - 1
 	data := p.pack(dst)
 	return data, targetW, targetH, nil
 }
 
-// smartResize computes target dimensions that preserve aspect ratio and
-// align to alignSize boundaries. It scales the image to fill the maximum
-// patch budget (maxPixels), matching the MLX reference.
-func (p *ImageProcessor) smartResize(origW, origH, alignSize int) (int, int) {
+// smartResize picks output dimensions aligned to alignSize, scaled to respect
+// maxPixels, then grown if below minPixels when possible without exceeding maxPixels.
+func (p *ImageProcessor) smartResize(origW, origH, alignSize, minPixels, maxPixels int) (int, int) {
 	totalPx := origW * origH
 
 	var targetW, targetH int
-	if p.maxPixels > 0 && totalPx > 0 {
-		factor := math.Sqrt(float64(p.maxPixels) / float64(totalPx))
+	if maxPixels > 0 && totalPx > 0 {
+		factor := math.Sqrt(float64(maxPixels) / float64(totalPx))
 		targetH = max(alignSize, int(math.Floor(factor*float64(origH)/float64(alignSize)))*alignSize)
 		targetW = max(alignSize, int(math.Floor(factor*float64(origW)/float64(alignSize)))*alignSize)
 	} else {
 		targetH = max(alignSize, (origH/alignSize)*alignSize)
 		targetW = max(alignSize, (origW/alignSize)*alignSize)
+	}
+
+	if minPixels > 0 && targetW*targetH < minPixels {
+		growth := math.Sqrt(float64(minPixels) / float64(targetW*targetH))
+		tw := max(alignSize, int(math.Ceil(growth*float64(targetW)/float64(alignSize)))*alignSize)
+		th := max(alignSize, int(math.Ceil(growth*float64(targetH)/float64(alignSize)))*alignSize)
+		if tw*th <= maxPixels {
+			return tw, th
+		}
+		slog.Warn("gemma4 vision: min token budget could not be satisfied within max budget; using max-budget resize only",
+			"min_pixels", minPixels, "max_pixels", maxPixels, "target_w", targetW, "target_h", targetH)
 	}
 
 	return targetW, targetH

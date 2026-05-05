@@ -696,11 +696,15 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		optsNew.NumGPU = -1
 	}
 
+	runnerOptsChanged := !reflect.DeepEqual(optsExisting, optsNew)
+	imageBudgetsChanged := runner.Options.ImageMinTokens != req.opts.ImageMinTokens ||
+		runner.Options.ImageMaxTokens != req.opts.ImageMaxTokens
+
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
-		(!runner.model.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew)) || // have the runner options changed?
+		(!runner.model.IsMLX() && (runnerOptsChanged || imageBudgetsChanged)) || // have the runner options or image token budgets changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}

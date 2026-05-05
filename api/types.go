@@ -596,6 +596,10 @@ type Options struct {
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+
+	// Gemma 4 visual token budgets (https://ai.google.dev/gemma/docs/capabilities/vision). 0 = unset.
+	ImageMinTokens int `json:"image_min_tokens,omitempty"`
+	ImageMaxTokens int `json:"image_max_tokens,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory

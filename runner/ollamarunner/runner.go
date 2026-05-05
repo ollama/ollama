@@ -29,6 +29,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/internal/gemma4vision"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
@@ -125,6 +126,9 @@ type NewSequenceParams struct {
 	truncate    bool
 	logprobs    bool
 	topLogprobs int
+
+	imageMinTok int
+	imageMaxTok int
 }
 
 var errorInputTooLong = errors.New("the input length exceeds the context length")
@@ -132,7 +136,7 @@ var errorInputTooLong = errors.New("the input length exceeds the context length"
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
-	inputs, ctxs, mmStore, err := s.inputs(prompt, images)
+	inputs, ctxs, mmStore, err := s.inputs(prompt, images, params.imageMinTok, params.imageMaxTok)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
@@ -222,10 +226,11 @@ func calculateLogprobs(logits []float32, selectedToken int32, topK int, tok toke
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, []ml.Context, multimodalStore, error) {
+func (s *Server) inputs(prompt string, images []llm.ImageData, imageMinTok, imageMaxTok int) ([]*input.Input, []ml.Context, multimodalStore, error) {
 	var inputs []*input.Input
 	var ctxs []ml.Context
 	var mmStore multimodalStore
+	var err error
 
 	var parts []string
 	var matches [][]string
@@ -271,7 +276,12 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 			ctx := s.model.Backend().NewContext()
 			runtime.SetFinalizer(ctx, func(c ml.Context) { c.Close() })
 			ctxs = append(ctxs, ctx)
-			imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, images[imageIndex].Data)
+			var imageEmbeddings []input.Multimodal
+			if mb, ok := multimodalProcessor.(model.MultimodalBudgetEncoder); ok {
+				imageEmbeddings, err = mb.EncodeMultimodalWithBudgets(ctx, images[imageIndex].Data, imageMinTok, imageMaxTok)
+			} else {
+				imageEmbeddings, err = multimodalProcessor.EncodeMultimodal(ctx, images[imageIndex].Data)
+			}
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -287,7 +297,6 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 	}
 
 	if visionModel {
-		var err error
 		inputs, err = multimodalProcessor.PostTokenize(inputs)
 		if err != nil {
 			return nil, nil, nil, err
@@ -903,6 +912,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		grammar,
 	)
 
+	minTok, maxTok := gemma4vision.NormalizeGemma4ImageBudgets(req.Options.ImageMinTokens, req.Options.ImageMaxTokens)
+	slog.Debug("completion image token budgets", "raw_min", req.Options.ImageMinTokens, "raw_max", req.Options.ImageMaxTokens, "normalized_min", minTok, "normalized_max", maxTok)
+
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict:  req.Options.NumPredict,
 		stop:        req.Options.Stop,
@@ -913,6 +925,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		truncate:    req.Truncate,
 		logprobs:    req.Logprobs,
 		topLogprobs: req.TopLogprobs,
+		imageMinTok: minTok,
+		imageMaxTok: maxTok,
 	})
 	if err != nil {
 		if errors.Is(err, errorInputTooLong) {
@@ -1073,6 +1087,14 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func multimodalEncodeWorstCase(ctx ml.Context, multimodalProcessor model.MultimodalProcessor, data []byte) ([]input.Multimodal, error) {
+	if mb, ok := multimodalProcessor.(model.MultimodalBudgetEncoder); ok {
+		worstMin, worstMax := gemma4vision.NormalizeGemma4ImageBudgets(0, gemma4vision.MaxVisualTokens)
+		return mb.EncodeMultimodalWithBudgets(ctx, data, worstMin, worstMax)
+	}
+	return multimodalProcessor.EncodeMultimodal(ctx, data)
+}
+
 func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 	ctx := s.model.Backend().NewContext()
 	defer ctx.Close()
@@ -1108,7 +1130,7 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 		var buf bytes.Buffer
 		bmp.Encode(&buf, img)
 
-		if inputs[0].Multimodal, err = multimodalProcessor.EncodeMultimodal(mmCtx, buf.Bytes()); err == nil {
+		if inputs[0].Multimodal, err = multimodalEncodeWorstCase(mmCtx, multimodalProcessor, buf.Bytes()); err == nil {
 			mmStore.addMultimodal(inputs[0].Multimodal)
 
 			inputs, err = multimodalProcessor.PostTokenize(inputs)
