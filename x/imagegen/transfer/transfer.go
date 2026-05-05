@@ -85,6 +85,7 @@ type UploadOptions struct {
 	Manifest    []byte // Raw manifest JSON to push
 	ManifestRef string // Tag or digest for the manifest (e.g., "latest", "sha256:...")
 	Repository  string // Repository path for manifest URL (e.g., "library/model")
+	Private     bool   // If true, add ?private=1 to manifest PUT
 }
 
 // AuthChallenge represents a parsed WWW-Authenticate challenge.

@@ -325,6 +325,10 @@ type PushParams struct {
 	// From is an optional destination name for the model. If empty, the
 	// destination name is the same as the source name.
 	From string
+
+	// Private signals the registry to create the repository as private
+	// when it is first initialized during push.
+	Private bool
 }
 
 // Push pushes the model with the name in the cache to the remote registry.
@@ -431,6 +435,9 @@ func (r *Registry) Push(ctx context.Context, name string, p *PushParams) error {
 		n.Model(),
 		n.Tag(),
 	)
+	if p.Private {
+		path += "?private=1"
+	}
 	res, err := r.send(ctx, "PUT", path, bytes.NewReader(m.Data))
 	if err == nil {
 		res.Body.Close()
