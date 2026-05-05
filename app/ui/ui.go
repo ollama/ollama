@@ -868,6 +868,21 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	// inject them into the next request, and attach on first assistant content/thinking.
 	var pendingAssistantToolCalls []store.ToolCall
 
+	defer func() {
+		// handle cases where thinking started but didn't finish
+		// this can happen if the client disconnects or the request is cancelled
+		if thinkingTimeStart != nil && thinkingTimeEnd == nil {
+			now := time.Now()
+			thinkingTimeEnd = &now
+			if len(chat.Messages) > 0 && chat.Messages[len(chat.Messages)-1].Role == "assistant" {
+				lastMsg := &chat.Messages[len(chat.Messages)-1]
+				lastMsg.ThinkingTimeEnd = thinkingTimeEnd
+				lastMsg.UpdatedAt = time.Now()
+				s.Store.UpdateLastMessage(chat.ID, *lastMsg)
+			}
+		}
+	}()
+
 	passNum := 1
 
 	for {
@@ -1204,20 +1219,6 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 		}
 
 		passNum++
-	}
-
-	// handle cases where thinking started but didn't finish
-	// this can happen if the client disconnects or the request is cancelled
-	// TODO (jmorganca): this should be merged with code above
-	if thinkingTimeStart != nil && thinkingTimeEnd == nil {
-		now := time.Now()
-		thinkingTimeEnd = &now
-		if len(chat.Messages) > 0 && chat.Messages[len(chat.Messages)-1].Role == "assistant" {
-			lastMsg := &chat.Messages[len(chat.Messages)-1]
-			lastMsg.ThinkingTimeEnd = thinkingTimeEnd
-			lastMsg.UpdatedAt = time.Now()
-			s.Store.UpdateLastMessage(chat.ID, *lastMsg)
-		}
 	}
 
 	json.NewEncoder(w).Encode(responses.ChatEvent{EventName: "done"})
