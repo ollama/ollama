@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -298,5 +299,93 @@ func checkErrorResponse(t *testing.T, got *httptest.ResponseRecorder, status int
 	}
 	if !strings.Contains(e.Message, msg) {
 		errorf("Message = %q; want to contain %q", e.Message, msg)
+	}
+}
+
+func TestServerLoggingBehavior(t *testing.T) {
+	check := testutil.Checker(t)
+
+	tests := []struct {
+		name           string
+		method         string
+		path           string
+		body           io.Reader
+		expectedLevel  string
+		expectedStatus string
+	}{
+		{
+			name:           "Logs INFO for 200",
+			method:         "DELETE",
+			path:           "/api/delete",
+			body:           strings.NewReader(`{"model": "smol"}`),
+			expectedLevel:  "INFO",
+			expectedStatus: "200",
+		},
+		{
+			name:           "Logs WARN for 400",
+			method:         "DELETE",
+			path:           "/api/delete",
+			body:           strings.NewReader(`!`),
+			expectedLevel:  "WARN",
+			expectedStatus: "400",
+		},
+		{
+			name:           "Logs ERROR for 500",
+			method:         "DELETE",
+			path:           "/api/delete",
+			body:           &invalidReader{},
+			expectedLevel:  "ERROR",
+			expectedStatus: "500",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestServer(t, nil)
+
+			if tt.expectedStatus == "200" {
+				_, err := s.Client.ResolveLocal("smol")
+				check(err)
+			}
+
+			sl, logs := captureLogs(t, s)
+
+			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.path, tt.body)
+
+			req.RemoteAddr = "127.0.0.1:12345"
+			req.URL.RawQuery = "foo=bar"
+
+			sl.sendRequest(t, req)
+
+			logOutput := string(logs.Bytes())
+
+			if !strings.Contains(logOutput, fmt.Sprintf("level=%s", tt.expectedLevel)) {
+				t.Errorf("Expected log level %s, got:\n%s", tt.expectedLevel, logOutput)
+			}
+
+			if !strings.Contains(logOutput, fmt.Sprintf("status=%s", tt.expectedStatus)) {
+				t.Errorf("Expected status %s, got:\n%s", tt.expectedStatus, logOutput)
+			}
+
+			if !strings.Contains(logOutput, "msg=http") {
+				t.Errorf("Expected log msg 'http', got:\n%s", logOutput)
+			}
+
+			if !strings.Contains(logOutput, fmt.Sprintf("method=%s", tt.method)) {
+				t.Errorf("Expected method %s, got:\n%s", tt.method, logOutput)
+			}
+
+			if !strings.Contains(logOutput, fmt.Sprintf("path=%s", tt.path)) {
+				t.Errorf("Expected path %s, got:\n%s", tt.path, logOutput)
+			}
+
+			if !strings.Contains(logOutput, "remote=127.0.0.1:12345") {
+				t.Errorf("Expected remote IP in log, got:\n%s", logOutput)
+			}
+
+			if !strings.Contains(logOutput, `query="foo=bar"`) {
+				t.Errorf("Expected query string in log, got:\n%s", logOutput)
+			}
+		})
 	}
 }
