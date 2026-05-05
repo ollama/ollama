@@ -16,7 +16,6 @@ import (
 
 func TestCodexArgs(t *testing.T) {
 	c := &Codex{}
-	catalogPath := "/tmp/ollama-launch-models.json"
 
 	tests := []struct {
 		name  string
@@ -24,15 +23,15 @@ func TestCodexArgs(t *testing.T) {
 		args  []string
 		want  []string
 	}{
-		{"with model", "llama3.2", nil, []string{"--profile", "ollama-launch", "-c", `model_catalog_json="/tmp/ollama-launch-models.json"`, "-m", "llama3.2"}},
-		{"empty model", "", nil, []string{"--profile", "ollama-launch", "-c", `model_catalog_json="/tmp/ollama-launch-models.json"`}},
-		{"with model and extra args", "qwen3.5", []string{"-p", "myprofile"}, []string{"--profile", "ollama-launch", "-c", `model_catalog_json="/tmp/ollama-launch-models.json"`, "-m", "qwen3.5", "-p", "myprofile"}},
-		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, []string{"--profile", "ollama-launch", "-c", `model_catalog_json="/tmp/ollama-launch-models.json"`, "-m", "llama3.2", "--sandbox", "workspace-write"}},
+		{"with model", "llama3.2", nil, []string{"--profile", "ollama-launch", "-m", "llama3.2"}},
+		{"empty model", "", nil, []string{"--profile", "ollama-launch"}},
+		{"with model and extra args", "qwen3.5", []string{"-p", "myprofile"}, []string{"--profile", "ollama-launch", "-m", "qwen3.5", "-p", "myprofile"}},
+		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, []string{"--profile", "ollama-launch", "-m", "llama3.2", "--sandbox", "workspace-write"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := c.args(tt.model, catalogPath, tt.args)
+			got := c.args(tt.model, tt.args)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.args, got, tt.want)
 			}
@@ -44,8 +43,9 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("creates new file when none exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
+		catalogPath := filepath.Join(tmpDir, "model.json")
 
-		if err := writeCodexProfile(configPath); err != nil {
+		if err := writeCodexProfile(configPath, catalogPath); err != nil {
 			t.Fatal(err)
 		}
 
@@ -70,6 +70,9 @@ func TestWriteCodexProfile(t *testing.T) {
 		if !strings.Contains(content, `model_provider = "ollama-launch"`) {
 			t.Error("missing model_provider key")
 		}
+		if !strings.Contains(content, fmt.Sprintf("model_catalog_json = %q", catalogPath)) {
+			t.Error("missing model_catalog_json key")
+		}
 		if !strings.Contains(content, "[model_providers.ollama-launch]") {
 			t.Error("missing [model_providers.ollama-launch] section")
 		}
@@ -84,10 +87,11 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("appends profile to existing file without profile", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
+		catalogPath := filepath.Join(tmpDir, "model.json")
 		existing := "[some_other_section]\nkey = \"value\"\n"
 		os.WriteFile(configPath, []byte(existing), 0o644)
 
-		if err := writeCodexProfile(configPath); err != nil {
+		if err := writeCodexProfile(configPath, catalogPath); err != nil {
 			t.Fatal(err)
 		}
 
@@ -105,10 +109,11 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("replaces existing profile section", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
+		catalogPath := filepath.Join(tmpDir, "model.json")
 		existing := "[profiles.ollama-launch]\nopenai_base_url = \"http://old:1234/v1/\"\n\n[model_providers.ollama-launch]\nname = \"Ollama\"\nbase_url = \"http://old:1234/v1/\"\n"
 		os.WriteFile(configPath, []byte(existing), 0o644)
 
-		if err := writeCodexProfile(configPath); err != nil {
+		if err := writeCodexProfile(configPath, catalogPath); err != nil {
 			t.Fatal(err)
 		}
 
@@ -273,10 +278,11 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("replaces profile while preserving following sections", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
+		catalogPath := filepath.Join(tmpDir, "model.json")
 		existing := "[profiles.ollama-launch]\nopenai_base_url = \"http://old:1234/v1/\"\n[another_section]\nfoo = \"bar\"\n"
 		os.WriteFile(configPath, []byte(existing), 0o644)
 
-		if err := writeCodexProfile(configPath); err != nil {
+		if err := writeCodexProfile(configPath, catalogPath); err != nil {
 			t.Fatal(err)
 		}
 
@@ -297,10 +303,11 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("appends newline to file not ending with newline", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
+		catalogPath := filepath.Join(tmpDir, "model.json")
 		existing := "[other]\nkey = \"val\""
 		os.WriteFile(configPath, []byte(existing), 0o644)
 
-		if err := writeCodexProfile(configPath); err != nil {
+		if err := writeCodexProfile(configPath, catalogPath); err != nil {
 			t.Fatal(err)
 		}
 
@@ -320,8 +327,9 @@ func TestWriteCodexProfile(t *testing.T) {
 		t.Setenv("OLLAMA_HOST", "http://myhost:9999")
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
+		catalogPath := filepath.Join(tmpDir, "model.json")
 
-		if err := writeCodexProfile(configPath); err != nil {
+		if err := writeCodexProfile(configPath, catalogPath); err != nil {
 			t.Fatal(err)
 		}
 
@@ -359,8 +367,7 @@ func TestEnsureCodexConfig(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
-		catalogPath, err := ensureCodexConfig("llama3.2")
-		if err != nil {
+		if err := ensureCodexConfig("llama3.2"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -377,12 +384,8 @@ func TestEnsureCodexConfig(t *testing.T) {
 		if !strings.Contains(content, "openai_base_url") {
 			t.Error("missing openai_base_url key")
 		}
-		if strings.Contains(content, "model_catalog_json") {
-			t.Error("config.toml should not persist model_catalog_json")
-		}
-		if catalogPath != filepath.Join(tmpDir, ".codex", codexCatalogFileName) {
-			t.Fatalf("catalog path = %q, want %q", catalogPath, filepath.Join(tmpDir, ".codex", codexCatalogFileName))
-		}
+
+		catalogPath := filepath.Join(tmpDir, ".codex", "model.json")
 		data, err = os.ReadFile(catalogPath)
 		if err != nil {
 			t.Fatalf("model.json not created: %v", err)
@@ -396,10 +399,10 @@ func TestEnsureCodexConfig(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
-		if _, err := ensureCodexConfig("llama3.2"); err != nil {
+		if err := ensureCodexConfig("llama3.2"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ensureCodexConfig("llama3.2"); err != nil {
+		if err := ensureCodexConfig("llama3.2"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -412,126 +415,6 @@ func TestEnsureCodexConfig(t *testing.T) {
 		}
 		if strings.Count(content, "[model_providers.ollama-launch]") != 1 {
 			t.Errorf("expected exactly one [model_providers.ollama-launch] section after two calls, got %d", strings.Count(content, "[model_providers.ollama-launch]"))
-		}
-	})
-
-	t.Run("does not overwrite user's default model catalog", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		userCatalogPath := filepath.Join(tmpDir, ".codex", "model.json")
-		if err := os.MkdirAll(filepath.Dir(userCatalogPath), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		original := `{"models":[{"slug":"user-custom"}]}`
-		if err := os.WriteFile(userCatalogPath, []byte(original), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		if _, err := ensureCodexConfig("llama3.2"); err != nil {
-			t.Fatal(err)
-		}
-
-		data, err := os.ReadFile(userCatalogPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(data) != original {
-			t.Errorf("default model catalog was modified: got %q want %q", string(data), original)
-		}
-
-		ollamaCatalogPath := filepath.Join(tmpDir, ".codex", codexCatalogFileName)
-		if _, err := os.Stat(ollamaCatalogPath); err != nil {
-			t.Fatalf("ollama catalog not created: %v", err)
-		}
-	})
-
-	t.Run("merges additional models into ollama catalog", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		if _, err := ensureCodexConfig("llama3.2"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := ensureCodexConfig("qwen3.5"); err != nil {
-			t.Fatal(err)
-		}
-
-		catalogPath := filepath.Join(tmpDir, ".codex", codexCatalogFileName)
-		data, err := os.ReadFile(catalogPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		var catalog struct {
-			Models []struct {
-				Slug string `json:"slug"`
-			} `json:"models"`
-		}
-		if err := json.Unmarshal(data, &catalog); err != nil {
-			t.Fatalf("failed to parse catalog: %v", err)
-		}
-
-		if len(catalog.Models) != 2 {
-			t.Fatalf("expected 2 merged models, got %d", len(catalog.Models))
-		}
-		if catalog.Models[0].Slug != "llama3.2" {
-			t.Fatalf("first merged model = %q, want %q", catalog.Models[0].Slug, "llama3.2")
-		}
-		if catalog.Models[1].Slug != "qwen3.5" {
-			t.Fatalf("second merged model = %q, want %q", catalog.Models[1].Slug, "qwen3.5")
-		}
-	})
-
-	t.Run("refreshes existing model entry in place", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		catalogPath := filepath.Join(tmpDir, ".codex", codexCatalogFileName)
-		if err := os.MkdirAll(filepath.Dir(catalogPath), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		original := `{
-			"models": [
-				{"slug":"llama3.2","display_name":"stale","context_window":1},
-				{"slug":"qwen3.5","display_name":"keep","context_window":2}
-			]
-		}`
-		if err := os.WriteFile(catalogPath, []byte(original), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		if _, err := ensureCodexConfig("llama3.2"); err != nil {
-			t.Fatal(err)
-		}
-
-		data, err := os.ReadFile(catalogPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		var catalog struct {
-			Models []struct {
-				Slug          string `json:"slug"`
-				DisplayName   string `json:"display_name"`
-				ContextWindow int    `json:"context_window"`
-			} `json:"models"`
-		}
-		if err := json.Unmarshal(data, &catalog); err != nil {
-			t.Fatalf("failed to parse catalog: %v", err)
-		}
-
-		if len(catalog.Models) != 2 {
-			t.Fatalf("expected 2 models after refresh, got %d", len(catalog.Models))
-		}
-		if catalog.Models[0].Slug != "llama3.2" {
-			t.Fatalf("first refreshed model = %q, want %q", catalog.Models[0].Slug, "llama3.2")
-		}
-		if catalog.Models[0].DisplayName != "llama3.2" {
-			t.Fatalf("refreshed display_name = %q, want %q", catalog.Models[0].DisplayName, "llama3.2")
-		}
-		if catalog.Models[1].Slug != "qwen3.5" {
-			t.Fatalf("preserved second model = %q, want %q", catalog.Models[1].Slug, "qwen3.5")
 		}
 	})
 }

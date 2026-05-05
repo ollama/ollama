@@ -26,9 +26,8 @@ type Codex struct{}
 func (c *Codex) String() string { return "Codex" }
 
 const (
-	codexProfileName     = "ollama-launch"
-	codexProviderName    = "Ollama"
-	codexCatalogFileName = "ollama-launch-models.json"
+	codexProfileName  = "ollama-launch"
+	codexProviderName = "Ollama"
 
 	codexRootProfileKey          = "profile"
 	codexRootModelKey            = "model"
@@ -36,11 +35,8 @@ const (
 	codexRootModelCatalogJSONKey = "model_catalog_json"
 )
 
-func (c *Codex) args(model, catalogPath string, extra []string) []string {
+func (c *Codex) args(model string, extra []string) []string {
 	args := []string{"--profile", codexProfileName}
-	if catalogPath != "" {
-		args = append(args, "-c", fmt.Sprintf("model_catalog_json=%q", catalogPath))
-	}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
@@ -53,12 +49,11 @@ func (c *Codex) Run(model string, args []string) error {
 		return err
 	}
 
-	catalogPath, err := ensureCodexConfig(model)
-	if err != nil {
+	if err := ensureCodexConfig(model); err != nil {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
-	cmd := exec.Command("codex", c.args(model, catalogPath, args)...)
+	cmd := exec.Command("codex", c.args(model, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -68,29 +63,25 @@ func (c *Codex) Run(model string, args []string) error {
 	return cmd.Run()
 }
 
-// ensureCodexConfig writes a minimal Codex profile plus the model catalog used
-// for Ollama-managed launches.
-func ensureCodexConfig(modelName string) (string, error) {
+// ensureCodexConfig writes a Codex profile and model catalog so Codex uses the
+// local Ollama server and has model metadata available.
+func ensureCodexConfig(modelName string) error {
 	configPath, err := codexConfigPath()
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	codexDir := filepath.Dir(configPath)
 	if err := os.MkdirAll(codexDir, 0o755); err != nil {
-		return "", err
+		return err
 	}
 
-	catalogPath := filepath.Join(codexDir, codexCatalogFileName)
+	catalogPath := filepath.Join(codexDir, "model.json")
 	if err := writeCodexModelCatalog(catalogPath, modelName); err != nil {
-		return "", err
+		return err
 	}
 
-	if err := writeCodexProfile(configPath); err != nil {
-		return "", err
-	}
-
-	return catalogPath, nil
+	return writeCodexProfile(configPath, catalogPath)
 }
 
 func codexConfigPath() (string, error) {
@@ -103,10 +94,14 @@ func codexConfigPath() (string, error) {
 
 // writeCodexProfile ensures ~/.codex/config.toml has the ollama-launch profile
 // and model provider sections with the correct base URL.
-func writeCodexProfile(configPath string) error {
-	return writeCodexLaunchProfile(configPath, codexLaunchProfileOptions{
+func writeCodexProfile(configPath string, modelCatalogPath ...string) error {
+	opts := codexLaunchProfileOptions{
 		forceAPIAuth: true,
-	})
+	}
+	if len(modelCatalogPath) > 0 {
+		opts.modelCatalogPath = modelCatalogPath[0]
+	}
+	return writeCodexLaunchProfile(configPath, opts)
 }
 
 type codexLaunchProfileOptions struct {
@@ -142,6 +137,9 @@ func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) 
 		model = parsed.ProfileString(profileName, codexRootModelKey)
 	}
 	modelCatalogPath := strings.TrimSpace(opts.modelCatalogPath)
+	if modelCatalogPath == "" {
+		modelCatalogPath = parsed.ProfileString(profileName, codexRootModelCatalogJSONKey)
+	}
 
 	profileLines := []string{}
 	if model != "" {
@@ -561,14 +559,9 @@ func codexRootLineHasKey(line, key string) bool {
 func writeCodexModelCatalog(catalogPath, modelName string) error {
 	entry := buildCodexModelEntry(modelName)
 
-	catalog := map[string]any{}
-	if content, err := os.ReadFile(catalogPath); err == nil {
-		if err := json.Unmarshal(content, &catalog); err != nil {
-			catalog = map[string]any{}
-		}
+	catalog := map[string]any{
+		"models": []any{entry},
 	}
-
-	catalog["models"] = mergeCodexModelEntries(catalog["models"], entry)
 
 	data, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
@@ -576,32 +569,6 @@ func writeCodexModelCatalog(catalogPath, modelName string) error {
 	}
 
 	return os.WriteFile(catalogPath, data, 0o644)
-}
-
-func mergeCodexModelEntries(existing any, entry map[string]any) []any {
-	models, _ := existing.([]any)
-	merged := make([]any, 0, len(models)+1)
-	replaced := false
-	slug, _ := entry["slug"].(string)
-
-	for _, model := range models {
-		current, ok := model.(map[string]any)
-		if !ok {
-			continue
-		}
-		if currentSlug, _ := current["slug"].(string); currentSlug == slug {
-			merged = append(merged, entry)
-			replaced = true
-			continue
-		}
-		merged = append(merged, current)
-	}
-
-	if !replaced {
-		merged = append(merged, entry)
-	}
-
-	return merged
 }
 
 func buildCodexModelEntry(modelName string) map[string]any {
