@@ -204,7 +204,6 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 	defer resp.Body.Close()
 	etag = strings.Trim(resp.Header.Get("etag"), "\"")
 	if etag == "" {
-		slog.Debug("no etag detected, falling back to filename based dedup") // TODO probably can get rid of this redundant log
 		etag = "_"
 	}
 
