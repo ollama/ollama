@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude-desktop", "claude", "openclaw", "hermes", "opencode", "codex", "copilot", "droid", "pi", "pool"}
+var launcherIntegrationOrder = []string{"claude-desktop", "claude", "openclaw", "hermes", "opencode", "codex", "copilot", "droid", "pi", "pool", "paperclip"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -188,6 +188,24 @@ var integrationSpecs = []*IntegrationSpec{
 				return err == nil
 			},
 			URL: "https://github.com/poolsideai/pool",
+		},
+	},
+	{
+		Name:        "paperclip",
+		Aliases:     []string{"paperclipai"},
+		Runner:      &Paperclip{},
+		Description: "Control plane for AI-agent companies — orchestrates multi-agent runs",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := exec.LookPath("paperclipai")
+				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensurePaperclipInstalled()
+				return err
+			},
+			Command: []string{"npm", "install", "-g", "paperclipai@latest"},
+			URL:     "https://github.com/paperclipai/paperclip",
 		},
 	},
 	{
