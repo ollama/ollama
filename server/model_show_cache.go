@@ -27,11 +27,12 @@ The /api/show cache stores full api.ShowResponse values because callers use
 more than capabilities: launch flows also need context length, embeddings
 metadata, quantization details, remote metadata, and model-specific fields.
 
-Local model entries are content-addressed by canonical model name, manifest
-digest, and the verbose flag. The manifest digest is the freshness boundary:
-if the model content changes, the digest changes, so the previous entry is not
-used. Requests with System or Options overlays bypass the cache because those
-overlays mutate the effective show response.
+Local model entries are stored by canonical model name and verbose flag, with
+the manifest digest recorded in the entry. The manifest digest is the freshness
+boundary: if the model content changes, the digest changes, so the previous
+response is replaced instead of accumulating under an old digest key. Requests
+with System or Options overlays bypass the cache because those overlays mutate
+the effective show response.
 
 Cloud model entries are keyed by normalized cloud base model name and verbose.
 They use stale-while-revalidate behavior: a warm read returns the cached
@@ -62,7 +63,7 @@ var errModelShowNoCloud = errors.New("cloud disabled")
 type modelShowCache struct {
 	mu sync.RWMutex
 
-	local map[modelShowLocalKey]*api.ShowResponse
+	local map[modelShowLocalKey]modelShowLocalEntry
 	cloud map[modelShowCloudKey]*api.ShowResponse
 
 	cloudRefreshing           map[modelShowCloudKey]bool
@@ -73,14 +74,22 @@ type modelShowCache struct {
 	getModelInfo func(api.ShowRequest) (*api.ShowResponse, error)
 }
 
-// modelShowLocalKey describes the local cache freshness boundary. The
-// canonical model name handles aliases/casing, Digest tracks the manifest
-// content address, and Verbose separates compact metadata from tensor-heavy
-// responses.
+// modelShowLocalKey describes the local cache slot for a model response. The
+// manifest digest is stored in the entry instead of the key so a pulled or
+// recreated model overwrites the previous response for the same model/verbose
+// variant instead of leaving stale digest-keyed entries behind.
+//
+// Deleted models are not eagerly pruned from this process-local cache. Manifest
+// resolution happens before local cache lookup, so stale delete entries are not
+// served and disappear on process restart.
 type modelShowLocalKey struct {
 	Model   string
-	Digest  string
 	Verbose bool
+}
+
+type modelShowLocalEntry struct {
+	Digest   string
+	Response *api.ShowResponse
 }
 
 // modelShowCloudKey intentionally excludes any local digest because cloud
@@ -92,7 +101,7 @@ type modelShowCloudKey struct {
 
 func newModelShowCache() *modelShowCache {
 	return &modelShowCache{
-		local:                     make(map[modelShowLocalKey]*api.ShowResponse),
+		local:                     make(map[modelShowLocalKey]modelShowLocalEntry),
 		cloud:                     make(map[modelShowCloudKey]*api.ShowResponse),
 		cloudRefreshing:           make(map[modelShowCloudKey]bool),
 		cloudNextReadRefreshAfter: make(map[modelShowCloudKey]time.Time),
@@ -152,12 +161,12 @@ func (c *modelShowCache) runStartup(ctx context.Context) {
 // digest matches. On a miss, it falls back to GetModelInfo, stores non-remote
 // local responses, and returns a clone to the caller.
 func (c *modelShowCache) GetLocal(req api.ShowRequest) (*api.ShowResponse, error) {
-	key, err := modelShowLocalKeyForRequest(req)
+	key, digest, err := modelShowLocalKeyForRequest(req)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp, ok := c.getLocal(key); ok {
+	if resp, ok := c.getLocal(key, digest); ok {
 		return resp, nil
 	}
 
@@ -168,7 +177,7 @@ func (c *modelShowCache) GetLocal(req api.ShowRequest) (*api.ShowResponse, error
 	}
 
 	if resp.RemoteHost == "" {
-		c.setLocal(key, resp)
+		c.setLocal(key, digest, resp)
 	}
 
 	return cloneShowResponse(resp), nil
@@ -188,27 +197,30 @@ func (c *modelShowCache) GetCloudSWR(ctx context.Context, req api.ShowRequest) (
 	return resp, true
 }
 
-func (c *modelShowCache) getLocal(key modelShowLocalKey) (*api.ShowResponse, bool) {
+func (c *modelShowCache) getLocal(key modelShowLocalKey, digest string) (*api.ShowResponse, bool) {
 	c.mu.RLock()
-	resp, ok := c.local[key]
+	entry, ok := c.local[key]
 	c.mu.RUnlock()
-	if !ok || resp == nil {
+	if !ok || entry.Digest != digest || entry.Response == nil {
 		return nil, false
 	}
-	return cloneShowResponse(resp), true
+	return cloneShowResponse(entry.Response), true
 }
 
-func (c *modelShowCache) setLocal(key modelShowLocalKey, resp *api.ShowResponse) {
+func (c *modelShowCache) setLocal(key modelShowLocalKey, digest string, resp *api.ShowResponse) {
 	c.mu.Lock()
-	c.local[key] = cloneShowResponse(resp)
+	c.local[key] = modelShowLocalEntry{
+		Digest:   digest,
+		Response: cloneShowResponse(resp),
+	}
 	c.mu.Unlock()
 }
 
-func (c *modelShowCache) hasLocal(key modelShowLocalKey) bool {
+func (c *modelShowCache) hasLocal(key modelShowLocalKey, digest string) bool {
 	c.mu.RLock()
-	resp, ok := c.local[key]
+	entry, ok := c.local[key]
 	c.mu.RUnlock()
-	return ok && resp != nil
+	return ok && entry.Digest == digest && entry.Response != nil
 }
 
 func (c *modelShowCache) getCloud(key modelShowCloudKey) (*api.ShowResponse, bool) {
@@ -310,12 +322,12 @@ func (c *modelShowCache) hydrateLocal(ctx context.Context) error {
 		}
 
 		modelName := name.String()
+		digest := mf.Digest()
 		key := modelShowLocalKey{
 			Model:   modelName,
-			Digest:  mf.Digest(),
 			Verbose: false,
 		}
-		if c.hasLocal(key) {
+		if c.hasLocal(key, digest) {
 			continue
 		}
 
@@ -328,7 +340,7 @@ func (c *modelShowCache) hydrateLocal(ctx context.Context) error {
 			continue
 		}
 
-		c.setLocal(key, resp)
+		c.setLocal(key, digest, resp)
 	}
 	return nil
 }
@@ -523,28 +535,27 @@ func modelShowStatusError(resp *http.Response, body []byte) error {
 }
 
 // modelShowLocalKeyForRequest normalizes a local show request to the canonical
-// on-disk model name and current manifest digest. The manifest digest is what
-// makes local entries content-addressable.
-func modelShowLocalKeyForRequest(req api.ShowRequest) (modelShowLocalKey, error) {
+// on-disk model name and returns the current manifest digest used to validate
+// the cached entry.
+func modelShowLocalKeyForRequest(req api.ShowRequest) (modelShowLocalKey, string, error) {
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
-		return modelShowLocalKey{}, model.Unqualified(name)
+		return modelShowLocalKey{}, "", model.Unqualified(name)
 	}
 	name, err := getExistingName(name)
 	if err != nil {
-		return modelShowLocalKey{}, err
+		return modelShowLocalKey{}, "", err
 	}
 
 	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
-		return modelShowLocalKey{}, err
+		return modelShowLocalKey{}, "", err
 	}
 
 	return modelShowLocalKey{
 		Model:   name.String(),
-		Digest:  mf.Digest(),
 		Verbose: req.Verbose,
-	}, nil
+	}, mf.Digest(), nil
 }
 
 func modelShowCloudKeyForModel(modelName string, verbose bool) modelShowCloudKey {

@@ -79,6 +79,9 @@ func TestModelShowCacheLocalManifestDigestChangeRefreshes(t *testing.T) {
 	if refreshed.ModelInfo["call"] != 2 {
 		t.Fatalf("refreshed call marker = %v, want 2", refreshed.ModelInfo["call"])
 	}
+	if len(cache.local) != 1 {
+		t.Fatalf("local cache entries = %d, want 1", len(cache.local))
+	}
 }
 
 func TestModelShowCacheLocalVerboseVariantsAreSeparate(t *testing.T) {
@@ -151,11 +154,11 @@ func TestModelShowCacheBypassesSystemAndOptionsOverlays(t *testing.T) {
 	createShowCacheModel(t, "show-cache-overlay", map[string]any{"test.context_length": uint32(1024)})
 
 	cache := newModelShowCache()
-	key, err := modelShowLocalKeyForRequest(api.ShowRequest{Model: "show-cache-overlay"})
+	key, digest, err := modelShowLocalKeyForRequest(api.ShowRequest{Model: "show-cache-overlay"})
 	if err != nil {
 		t.Fatalf("local key failed: %v", err)
 	}
-	cache.setLocal(key, &api.ShowResponse{System: "cached", ModelInfo: map[string]any{}})
+	cache.setLocal(key, digest, &api.ShowResponse{System: "cached", ModelInfo: map[string]any{}})
 
 	s := Server{modelCaches: &modelCaches{show: cache}}
 	w := createRequest(t, s.ShowHandler, api.ShowRequest{
