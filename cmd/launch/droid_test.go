@@ -1172,7 +1172,7 @@ func TestDroidEdit_BackupCreated(t *testing.T) {
 
 	settingsDir := filepath.Join(tmpDir, ".factory")
 	settingsPath := filepath.Join(settingsDir, "settings.json")
-	backupDir := filepath.Join(os.TempDir(), "ollama-backups")
+	backupDir := fileutil.BackupDir()
 
 	os.MkdirAll(settingsDir, 0o755)
 
