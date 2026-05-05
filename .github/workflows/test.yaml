@@ -296,3 +296,164 @@ jobs:
         run: |
           make -f Makefile.sync clean checkout apply-patches sync
           git diff --compact-summary --exit-code
+
+  # TEMPORARY: mirrors release.yaml's linux-depends so we can time the
+  # parallel-stage Docker build on PRs before tagging a real release.
+  # Revert this job (and docker-build-test below) before merging to main.
+  linux-depends-timing:
+    needs: [changes]
+    if: needs.changes.outputs.changed == 'True'
+    environment: release
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            target: cpu
+          - arch: amd64
+            target: cuda-12
+          - arch: amd64
+            target: cuda-13
+          - arch: amd64
+            target: mlx
+          - arch: amd64
+            target: rocm-7
+          - arch: amd64
+            target: vulkan
+          - arch: arm64
+            target: cpu
+          - arch: arm64
+            target: cuda-12
+          - arch: arm64
+            target: cuda-13
+          - arch: arm64
+            target: jetpack-5
+          - arch: arm64
+            target: jetpack-6
+    runs-on: ${{ matrix.arch == 'arm64' && 'linux-arm64' || 'linux' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          target: ${{ matrix.target }}
+          build-args: |
+            CGO_CFLAGS=-O3
+            CGO_CXXFLAGS=-O3
+            APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+          # Per-PR cache namespace in the private release repo so we don't
+          # pollute the production image repo.
+          cache-from: |
+            type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-${{ matrix.arch }}-${{ matrix.target }}
+            type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+          cache-to: type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-${{ matrix.arch }}-${{ matrix.target }},mode=max
+
+  # TEMPORARY: mirrors release.yaml's docker-build-push but does NOT push the
+  # final image (push=false).  Exercises the cache-hit-only assembly + Go build
+  # path so we can see the full wall-clock time on a PR before tagging.
+  # Revert this job before merging to main.
+  docker-build-test:
+    needs: [changes, linux-depends-timing]
+    if: needs.changes.outputs.changed == 'True'
+    environment: release
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: arm64
+            build-args: |
+              CGO_CFLAGS=-O3
+              CGO_CXXFLAGS=-O3
+              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+            cache-from: |
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-arm64-cpu
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-arm64-cuda-12
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-arm64-cuda-13
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-arm64-jetpack-5
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-arm64-jetpack-6
+          - os: linux
+            arch: amd64
+            build-args: |
+              CGO_CFLAGS=-O3
+              CGO_CXXFLAGS=-O3
+              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+            cache-from: |
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-amd64-cpu
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-amd64-cuda-12
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-amd64-cuda-13
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-amd64-mlx
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-amd64-vulkan
+          - os: linux
+            arch: amd64
+            suffix: '-rocm'
+            build-args: |
+              CGO_CFLAGS=-O3
+              CGO_CXXFLAGS=-O3
+              FLAVOR=rocm
+              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+            cache-from: |
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-amd64-cpu
+              type=registry,ref=ollama/release:cache-pr${{ github.event.pull_request.number }}-amd64-rocm-7
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      # Build the full image (Go build + final assembly) but DO NOT push it.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          build-args: ${{ matrix.build-args }}
+          outputs: type=image,push=false
+          cache-from: ${{ matrix.cache-from }}
+          cache-to: type=inline
+      # Cache-hit-only second pass to extract the release directory layout.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          target: archive
+          build-args: ${{ matrix.build-args }}
+          outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
+          cache-from: ${{ matrix.cache-from }}
+      - name: Deduplicate CUDA libraries
+        run: |
+          ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
+      - run: |
+          for COMPONENT in bin/* lib/ollama/*; do
+            case "$COMPONENT" in
+              bin/ollama*)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
+              lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
+              lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
+              lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
+              lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+            esac
+          done
+        working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
+      - run: |
+          echo "Manifests"
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in ; do
+            echo $ARCHIVE
+            cat $ARCHIVE
+          done
+      - run: |
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd --ultra -22 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
+          done
+      - run: ls -lh *.tar.zst
