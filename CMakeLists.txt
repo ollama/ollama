@@ -136,6 +136,24 @@ check_language(HIP)
 if(CMAKE_HIP_COMPILER)
     set(HIP_PLATFORM "amd")
 
+    # find_package(hip) needs hip-config.cmake on CMAKE_PREFIX_PATH. ROCm is
+    # often installed under /opt/rocm without that path being set for CMake
+    # (e.g. plain `cmake --preset 'ROCm 7'` in a non-login shell).
+    if(NOT DEFINED ROCM_PATH OR ROCM_PATH STREQUAL "")
+        if(DEFINED ENV{ROCM_PATH} AND EXISTS "$ENV{ROCM_PATH}")
+            set(ROCM_PATH "$ENV{ROCM_PATH}")
+        elseif(EXISTS /opt/rocm)
+            set(ROCM_PATH /opt/rocm)
+        endif()
+    endif()
+    if(ROCM_PATH)
+        get_filename_component(_rocm_real "${ROCM_PATH}" REALPATH)
+        list(PREPEND CMAKE_PREFIX_PATH
+            "${_rocm_real}"
+            "${_rocm_real}/lib/cmake"
+            "${_rocm_real}/lib64/cmake")
+    endif()
+
     if(NOT AMDGPU_TARGETS)
         find_package(hip REQUIRED)
         list(FILTER AMDGPU_TARGETS INCLUDE REGEX "^gfx(94[012]|101[02]|1030|110[012]|120[01])$")
