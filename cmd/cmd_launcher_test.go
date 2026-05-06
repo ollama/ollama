@@ -215,7 +215,7 @@ func TestRunLauncherAction_GUIAppsExitTUILoop(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	for _, integration := range []string{"claude-desktop", "vscode"} {
+	for _, integration := range []string{"vscode"} {
 		continueLoop, err := runLauncherAction(cmd, tui.TUIAction{Kind: tui.TUIActionLaunchIntegration, Integration: integration}, launcherDeps{
 			resolveRunModel: unexpectedRunModelResolution(t),
 			launchIntegration: func(ctx context.Context, req launch.IntegrationLaunchRequest) error {

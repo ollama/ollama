@@ -269,7 +269,6 @@ Flags and extra arguments require an integration name.
 
 Supported integrations:
   claude          Claude Code
-  claude-desktop Claude Desktop (aliases: claude-app)
   cline           Cline
   codex           Codex
   copilot         Copilot CLI (aliases: copilot-cli)
@@ -286,8 +285,6 @@ Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
-  ollama launch claude-desktop
-  ollama launch claude-desktop --restore
   ollama launch hermes
   ollama launch droid --config (does not auto-launch)
   ollama launch codex -- -p myprofile (pass extra args to integration)
@@ -332,6 +329,10 @@ Examples:
 				}
 				runTUI(cmd)
 				return nil
+			}
+
+			if !restoreFlag && launchCommandIsClaudeDesktop(name) {
+				return errClaudeDesktopUnsupported()
 			}
 
 			if modelFlag != "" && isCloudModelName(modelFlag) {
@@ -379,8 +380,12 @@ func launchCommandCanSkipHeartbeat(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	name, _, err := LookupIntegration(args[0])
-	return err == nil && name == "claude-desktop"
+	return launchCommandIsClaudeDesktop(args[0])
+}
+
+func launchCommandIsClaudeDesktop(name string) bool {
+	canonical, _, err := LookupIntegration(name)
+	return err == nil && canonical == claudeDesktopIntegrationName
 }
 
 type launcherClient struct {
@@ -433,6 +438,10 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	name, runner, err := LookupIntegration(req.Name)
 	if err != nil {
 		return err
+	}
+
+	if name == claudeDesktopIntegrationName && !req.Restore {
+		return errClaudeDesktopUnsupported()
 	}
 
 	policy := launchIntegrationPolicy(req)

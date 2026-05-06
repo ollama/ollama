@@ -44,13 +44,6 @@ func launcherTestState() *launch.LauncherState {
 				Selectable:  true,
 				Changeable:  true,
 			},
-			"claude-desktop": {
-				Name:        "claude-desktop",
-				DisplayName: "Claude Desktop",
-				Description: "Claude Desktop with Ollama Cloud",
-				Selectable:  true,
-				Changeable:  true,
-			},
 			"hermes": {
 				Name:        "hermes",
 				DisplayName: "Hermes Agent",
@@ -135,12 +128,8 @@ func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
 			t.Fatalf("expected menu view to contain %q\n%s", want, view)
 		}
 	}
-	if findMenuCursorByIntegration(menu.items, "claude-desktop") == -1 {
-		if strings.Contains(view, "Launch Claude Desktop") {
-			t.Fatalf("expected Claude Desktop to be hidden on unsupported platforms\n%s", view)
-		}
-	} else if !strings.Contains(view, "Launch Claude Desktop") {
-		t.Fatalf("expected menu view to contain Claude Desktop\n%s", view)
+	if strings.Contains(view, "Launch Claude Desktop") {
+		t.Fatalf("expected hidden Claude Desktop to be absent\n%s", view)
 	}
 	wantOrder := expectedCollapsedSequence(state)
 	if diff := compareStrings(integrationSequence(menu.items), wantOrder); diff != "" {

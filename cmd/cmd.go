@@ -2173,7 +2173,7 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 
 func launcherActionExitsLoop(integration string) bool {
 	switch integration {
-	case "claude-desktop", "vscode":
+	case "vscode":
 		return true
 	default:
 		return false

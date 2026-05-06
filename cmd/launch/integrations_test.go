@@ -138,6 +138,23 @@ func TestLookupIntegration_UnknownIntegration(t *testing.T) {
 	}
 }
 
+func TestLookupIntegration_ClaudeDesktopResolvesForRestore(t *testing.T) {
+	for _, name := range []string{"claude-desktop", "claude-app"} {
+		t.Run(name, func(t *testing.T) {
+			canonical, runner, err := LookupIntegration(name)
+			if err != nil {
+				t.Fatalf("expected Claude Desktop lookup to resolve, got: %v", err)
+			}
+			if canonical != "claude-desktop" {
+				t.Fatalf("canonical name = %q, want claude-desktop", canonical)
+			}
+			if runner.String() != "Claude Desktop" {
+				t.Fatalf("runner = %q, want Claude Desktop", runner.String())
+			}
+		})
+	}
+}
+
 func TestIsIntegrationInstalled_UnknownIntegrationReturnsFalse(t *testing.T) {
 	stderr := captureStderr(t, func() {
 		if IsIntegrationInstalled("unknown-integration") {
@@ -1511,11 +1528,6 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantURL: "https://code.claude.com/docs/en/quickstart",
 		},
 		{
-			name:    "claude desktop has hint",
-			input:   "claude-desktop",
-			wantURL: "https://claude.com/download",
-		},
-		{
 			name:    "codex has hint",
 			input:   "codex",
 			wantURL: "https://developers.openai.com/codex/cli/",
@@ -1596,16 +1608,6 @@ func TestListIntegrationInfos(t *testing.T) {
 			}
 			want = filtered
 		}
-		if claudeDesktopSupported() != nil {
-			filtered := make([]string, 0, len(want))
-			for _, name := range want {
-				if name != "claude-desktop" {
-					filtered = append(filtered, name)
-				}
-			}
-			want = filtered
-		}
-
 		if diff := compareStrings(got, want); diff != "" {
 			t.Fatalf("launcher integration order mismatch: %s", diff)
 		}
@@ -1624,9 +1626,6 @@ func TestListIntegrationInfos(t *testing.T) {
 
 	t.Run("includes known integrations", func(t *testing.T) {
 		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
-		if claudeDesktopSupported() == nil {
-			known["claude-desktop"] = false
-		}
 		if poolsideGOOS != "windows" {
 			known["pool"] = false
 		}
@@ -1677,14 +1676,10 @@ func TestListIntegrationInfos_HidesPoolsideOnWindows(t *testing.T) {
 	}
 }
 
-func TestListIntegrationInfos_HidesClaudeDesktopOnUnsupportedPlatform(t *testing.T) {
-	prev := claudeDesktopGOOS
-	claudeDesktopGOOS = "linux"
-	t.Cleanup(func() { claudeDesktopGOOS = prev })
-
+func TestListIntegrationInfos_HidesClaudeDesktop(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		if info.Name == "claude-desktop" {
-			t.Fatal("expected claude-desktop to be hidden on unsupported platforms")
+			t.Fatal("expected hidden claude-desktop to be absent")
 		}
 	}
 }
