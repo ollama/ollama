@@ -3,6 +3,9 @@ package renderers
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -12,15 +15,15 @@ type Nemotron3NanoRenderer struct{}
 
 func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
+	imageOffset := 0
 
-	// thinking is enabled if user requests it
-	enableThinking := thinkValue != nil && thinkValue.Bool()
+	enableThinking := r.resolveThinking(messages, thinkValue)
 
 	// Extract system message if present
 	var systemMessage string
 	var loopMessages []api.Message
 	if len(messages) > 0 && messages[0].Role == "system" {
-		systemMessage = messages[0].Content
+		systemMessage = r.sanitizeSystemMessage(messages[0].Content)
 		loopMessages = messages[1:]
 	} else {
 		loopMessages = messages
@@ -34,6 +37,7 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 		}
 	}
 
+	sb.WriteString("\n\n\n")
 	sb.WriteString("<|im_start|>system\n")
 	if systemMessage != "" {
 		sb.WriteString(systemMessage)
@@ -45,28 +49,30 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 		}
 		sb.WriteString(r.renderTools(tools))
 	}
-	sb.WriteString("<|im_end|>\n")
+	sb.WriteString("<|im_end|>\n\n")
 
 	for i, message := range loopMessages {
 		switch message.Role {
 		case "assistant":
-			// Build content with thinking tags
 			content := r.buildContent(message)
 			shouldTruncate := i < lastUserIdx
 
 			if len(message.ToolCalls) > 0 {
 				sb.WriteString("<|im_start|>assistant\n")
-				sb.WriteString(r.formatContent(content, shouldTruncate, true))
+				sb.WriteString(r.formatToolCallContent(content, shouldTruncate))
 				r.writeToolCalls(&sb, message.ToolCalls)
 				sb.WriteString("<|im_end|>\n")
 			} else {
-				formatted := r.formatContent(content, shouldTruncate, false)
-				sb.WriteString("<|im_start|>assistant\n" + formatted + "<|im_end|>\n")
+				formatted := r.formatAssistantContent(content, shouldTruncate)
+				sb.WriteString("<|im_start|>assistant\n")
+				sb.WriteString(formatted)
+				sb.WriteString("<|im_end|>\n")
 			}
 
 		case "user", "system":
 			sb.WriteString("<|im_start|>" + message.Role + "\n")
-			sb.WriteString(message.Content)
+			sb.WriteString(r.renderMessageContent(message, imageOffset))
+			imageOffset += len(message.Images)
 			sb.WriteString("<|im_end|>\n")
 
 		case "tool":
@@ -89,6 +95,8 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 			sb.WriteString("<|im_start|>" + message.Role + "\n" + message.Content + "<|im_end|>\n")
 		}
 	}
+
+	sb.WriteString("\n")
 
 	// Add generation prompt
 	if enableThinking {
@@ -119,7 +127,7 @@ func (r *Nemotron3NanoRenderer) renderTools(tools []api.Tool) string {
 				sb.WriteString("\n<name>" + paramName + "</name>")
 
 				if len(paramFields.Type) > 0 {
-					sb.WriteString("\n<type>" + strings.Join(paramFields.Type, ", ") + "</type>")
+					sb.WriteString("\n<type>" + r.formatPropertyType(paramFields.Type) + "</type>")
 				}
 
 				if paramFields.Description != "" {
@@ -127,17 +135,17 @@ func (r *Nemotron3NanoRenderer) renderTools(tools []api.Tool) string {
 				}
 
 				if len(paramFields.Enum) > 0 {
-					enumJSON, _ := json.Marshal(paramFields.Enum)
-					sb.WriteString("\n<enum>" + string(enumJSON) + "</enum>")
+					sb.WriteString("\n<enum>" + r.pythonJSON(paramFields.Enum) + "</enum>")
 				}
 
+				r.renderToolPropertyExtraKeys(&sb, paramFields)
 				sb.WriteString("\n</parameter>")
 			}
 		}
 
+		r.renderToolParameterExtraKeys(&sb, fn.Parameters)
 		if len(fn.Parameters.Required) > 0 {
-			reqJSON, _ := json.Marshal(fn.Parameters.Required)
-			sb.WriteString("\n<required>" + string(reqJSON) + "</required>")
+			sb.WriteString("\n<required>" + r.pythonJSON(fn.Parameters.Required) + "</required>")
 		}
 
 		sb.WriteString("\n</parameters>")
@@ -159,27 +167,38 @@ func (r *Nemotron3NanoRenderer) renderTools(tools []api.Tool) string {
 }
 
 func (r *Nemotron3NanoRenderer) buildContent(message api.Message) string {
-	// The parser always extracts thinking into the Thinking field,
-	// so Content will never have <think> tags embedded
+	content := nemotron3NanoRenderContent(message.Content)
 	if message.Thinking != "" {
-		return "<think>\n" + message.Thinking + "\n</think>\n" + message.Content
+		return "<think>\n" + message.Thinking + "\n</think>\n" + content
 	}
-	return "<think></think>" + message.Content
+	if !strings.Contains(content, "<think>") && !strings.Contains(content, "</think>") {
+		return "<think></think>" + content
+	}
+	return content
 }
 
-func (r *Nemotron3NanoRenderer) formatContent(content string, truncate bool, addNewline bool) string {
-	if content == "" {
+func (r *Nemotron3NanoRenderer) formatAssistantContent(content string, truncate bool) string {
+	if !truncate {
+		return strings.TrimSpace(content)
+	}
+
+	c := content
+	if strings.Contains(c, "<think>") && strings.Contains(c, "</think>") {
+		parts := strings.Split(c, "</think>")
+		c = "<think></think>" + parts[len(parts)-1]
+	}
+	return strings.TrimSpace(c)
+}
+
+func (r *Nemotron3NanoRenderer) formatToolCallContent(content string, truncate bool) string {
+	if strings.TrimSpace(content) == "" {
 		return "<think></think>"
 	}
 
 	if !truncate {
-		if addNewline {
-			return strings.TrimSpace(content) + "\n"
-		}
-		return strings.TrimSpace(content)
+		return strings.TrimSpace(content) + "\n"
 	}
 
-	// Truncate thinking - keep only content after </think>
 	c := content
 	if strings.Contains(c, "</think>") {
 		parts := strings.Split(c, "</think>")
@@ -190,13 +209,7 @@ func (r *Nemotron3NanoRenderer) formatContent(content string, truncate bool, add
 	}
 	c = "<think></think>" + strings.TrimSpace(c)
 
-	if addNewline && len(c) > len("<think></think>") {
-		return c + "\n"
-	}
-	if c == "<think></think>" {
-		return c
-	}
-	return strings.TrimSpace(c)
+	return strings.TrimSpace(c) + "\n"
 }
 
 func (r *Nemotron3NanoRenderer) writeToolCalls(sb *strings.Builder, toolCalls []api.ToolCall) {
@@ -212,9 +225,225 @@ func (r *Nemotron3NanoRenderer) writeToolCalls(sb *strings.Builder, toolCalls []
 func (r *Nemotron3NanoRenderer) formatArgValue(value any) string {
 	switch v := value.(type) {
 	case map[string]any, []any:
-		jsonBytes, _ := json.Marshal(v)
-		return string(jsonBytes)
+		return r.pythonJSON(v)
 	default:
 		return fmt.Sprintf("%v", v)
+	}
+}
+
+func (r *Nemotron3NanoRenderer) renderMessageContent(message api.Message, imageOffset int) string {
+	content := nemotron3NanoRenderContent(message.Content)
+	if len(message.Images) == 0 {
+		return content
+	}
+
+	if strings.Contains(content, "[img-") {
+		return content
+	}
+
+	if strings.Contains(content, "[img]") {
+		for i := range message.Images {
+			content = strings.Replace(content, "[img]", fmt.Sprintf("[img-%d]", imageOffset+i), 1)
+		}
+		return content
+	}
+
+	var sb strings.Builder
+	for i := range message.Images {
+		sb.WriteString(fmt.Sprintf("[img-%d]", imageOffset+i))
+	}
+	sb.WriteString(content)
+	return sb.String()
+}
+
+func nemotron3NanoRenderContent(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		var sb strings.Builder
+		for _, item := range v {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				bts, _ := json.Marshal(item)
+				sb.Write(bts)
+				continue
+			}
+
+			switch obj["type"] {
+			case "image":
+				sb.WriteString("<image>")
+			case "text":
+				if text, ok := obj["text"].(string); ok {
+					sb.WriteString(text)
+				}
+			default:
+				bts, _ := json.Marshal(item)
+				sb.Write(bts)
+			}
+		}
+		return sb.String()
+	default:
+		bts, _ := json.Marshal(v)
+		return string(bts)
+	}
+}
+
+func (r *Nemotron3NanoRenderer) resolveThinking(messages []api.Message, thinkValue *api.ThinkValue) bool {
+	enableThinking := thinkValue == nil || thinkValue.Bool()
+	for _, message := range messages {
+		if message.Role != "user" && message.Role != "system" {
+			continue
+		}
+		content := message.Content
+		if strings.Contains(strings.ReplaceAll(content, "</think>", ""), "/think") {
+			enableThinking = true
+		} else if strings.Contains(content, "/no_think") {
+			enableThinking = false
+		}
+	}
+	return enableThinking
+}
+
+func (r *Nemotron3NanoRenderer) sanitizeSystemMessage(content string) string {
+	system := nemotron3NanoRenderContent(content)
+	system = strings.ReplaceAll(system, "</think>", "<_end_think>")
+	system = strings.ReplaceAll(system, "/think", "")
+	system = strings.ReplaceAll(system, "/no_think", "")
+	system = strings.ReplaceAll(system, "<_end_think>", "</think>")
+	return system
+}
+
+func (r *Nemotron3NanoRenderer) formatPropertyType(propertyType api.PropertyType) string {
+	if len(propertyType) == 1 {
+		return propertyType[0]
+	}
+	quoted := make([]string, 0, len(propertyType))
+	for _, v := range propertyType {
+		quoted = append(quoted, "'"+v+"'")
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+func (r *Nemotron3NanoRenderer) renderToolPropertyExtraKeys(sb *strings.Builder, prop api.ToolProperty) {
+	if len(prop.AnyOf) > 0 {
+		sb.WriteString("\n<anyOf>" + r.pythonJSON(prop.AnyOf) + "</anyOf>")
+	}
+	if prop.Items != nil {
+		sb.WriteString("\n<items>" + r.pythonJSON(prop.Items) + "</items>")
+	}
+	if prop.Properties != nil {
+		sb.WriteString("\n<properties>" + r.pythonJSON(prop.Properties) + "</properties>")
+	}
+	if len(prop.Required) > 0 {
+		sb.WriteString("\n<required>" + r.pythonJSON(prop.Required) + "</required>")
+	}
+}
+
+func (r *Nemotron3NanoRenderer) renderToolParameterExtraKeys(sb *strings.Builder, params api.ToolFunctionParameters) {
+	if params.Defs != nil {
+		sb.WriteString("\n<$defs>" + r.pythonJSON(params.Defs) + "</$defs>")
+	}
+	if params.Items != nil {
+		sb.WriteString("\n<items>" + r.pythonJSON(params.Items) + "</items>")
+	}
+}
+
+func (r *Nemotron3NanoRenderer) pythonJSON(v any) string {
+	switch value := v.(type) {
+	case nil:
+		return "null"
+	case string:
+		return strconv.Quote(value)
+	case bool:
+		if value {
+			return "true"
+		}
+		return "false"
+	case int, int8, int16, int32, int64:
+		return fmt.Sprintf("%d", reflect.ValueOf(value).Int())
+	case uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("%d", reflect.ValueOf(value).Uint())
+	case float32, float64:
+		b, _ := json.Marshal(value)
+		return string(b)
+	case api.PropertyType:
+		return r.pythonJSON([]string(value))
+	case []string:
+		parts := make([]string, 0, len(value))
+		for _, item := range value {
+			parts = append(parts, r.pythonJSON(item))
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case []any:
+		parts := make([]string, 0, len(value))
+		for _, item := range value {
+			parts = append(parts, r.pythonJSON(item))
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case []api.ToolProperty:
+		parts := make([]string, 0, len(value))
+		for _, item := range value {
+			parts = append(parts, r.pythonJSON(item))
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case map[string]any:
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			parts = append(parts, strconv.Quote(key)+": "+r.pythonJSON(value[key]))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	case *api.ToolPropertiesMap:
+		if value == nil {
+			return "null"
+		}
+		parts := make([]string, 0, value.Len())
+		for key, prop := range value.All() {
+			parts = append(parts, strconv.Quote(key)+": "+r.pythonJSON(prop))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	case api.ToolProperty:
+		parts := make([]string, 0, 6)
+		if len(value.AnyOf) > 0 {
+			parts = append(parts, `"anyOf": `+r.pythonJSON(value.AnyOf))
+		}
+		if len(value.Type) > 0 {
+			if len(value.Type) == 1 {
+				parts = append(parts, `"type": `+r.pythonJSON(value.Type[0]))
+			} else {
+				parts = append(parts, `"type": `+r.pythonJSON([]string(value.Type)))
+			}
+		}
+		if value.Items != nil {
+			parts = append(parts, `"items": `+r.pythonJSON(value.Items))
+		}
+		if value.Description != "" {
+			parts = append(parts, `"description": `+r.pythonJSON(value.Description))
+		}
+		if len(value.Enum) > 0 {
+			parts = append(parts, `"enum": `+r.pythonJSON(value.Enum))
+		}
+		if value.Properties != nil {
+			parts = append(parts, `"properties": `+r.pythonJSON(value.Properties))
+		}
+		if len(value.Required) > 0 {
+			parts = append(parts, `"required": `+r.pythonJSON(value.Required))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	default:
+		b, err := json.Marshal(value)
+		if err != nil {
+			return "null"
+		}
+		var generic any
+		if err := json.Unmarshal(b, &generic); err != nil {
+			return string(b)
+		}
+		return r.pythonJSON(generic)
 	}
 }

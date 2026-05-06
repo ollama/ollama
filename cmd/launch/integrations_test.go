@@ -53,10 +53,13 @@ func TestIntegrationLookup(t *testing.T) {
 		{"claude lowercase", "claude", true, "Claude Code"},
 		{"claude uppercase", "CLAUDE", true, "Claude Code"},
 		{"claude mixed case", "Claude", true, "Claude Code"},
+		{"claude desktop", "claude-desktop", true, "Claude Desktop"},
+		{"claude desktop alias", "claude-app", true, "Claude Desktop"},
 		{"codex", "codex", true, "Codex"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
 		{"droid", "droid", true, "Droid"},
 		{"opencode", "opencode", true, "OpenCode"},
+		{"pool", "pool", true, "Pool"},
 		{"unknown integration", "unknown", false, ""},
 		{"empty string", "", false, ""},
 	}
@@ -75,8 +78,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "codex", "kimi", "droid", "opencode", "hermes"}
-
+	expectedIntegrations := []string{"claude", "claude-desktop", "codex", "kimi", "droid", "opencode", "hermes", "pool"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -318,10 +320,18 @@ func names(items []ModelItem) []string {
 	return out
 }
 
+func recommendedNames(extra ...string) []string {
+	out := make([]string, 0, len(recommendedModels)+len(extra))
+	for _, item := range recommendedModels {
+		out = append(out, item.Name)
+	}
+	return append(out, extra...)
+}
+
 func TestBuildModelList_NoExistingModels(t *testing.T) {
 	items, _, _, _ := buildModelList(nil, nil, "")
 
-	want := []string{"kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5"}
+	want := recommendedNames()
 	if diff := cmp.Diff(want, names(items)); diff != "" {
 		t.Errorf("with no existing models, items should be recommended in order (-want +got):\n%s", diff)
 	}
@@ -350,7 +360,7 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsStillFirst(t *testing.T) {
 
 	// Cloud recs always come first among recommended, regardless of installed inventory.
 	// Cloud disablement is handled upstream in loadSelectableModels via filterCloudItems.
-	want := []string{"kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2", "qwen2.5"}
+	want := recommendedNames("llama3.2", "qwen2.5")
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("cloud recs pinned first even when no cloud models installed (-want +got):\n%s", diff)
 	}
@@ -366,13 +376,13 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	got := names(items)
 
 	// All recs pinned at top (cloud before local in mixed case), then non-recs
-	want := []string{"kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2"}
+	want := recommendedNames("llama3.2")
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud recs first in mixed case (-want +got):\n%s", diff)
 	}
 }
 
-func TestBuildModelList_PreCheckedFirst(t *testing.T) {
+func TestBuildModelList_PreCheckedNonRecommendedFirstInMore(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
@@ -381,8 +391,9 @@ func TestBuildModelList_PreCheckedFirst(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
 	got := names(items)
 
-	if got[0] != "llama3.2" {
-		t.Errorf("pre-checked model should be first, got %v", got)
+	want := recommendedNames("llama3.2")
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("recommended block should stay fixed while checked non-recommended models lead More (-want +got):\n%s", diff)
 	}
 }
 
@@ -457,7 +468,7 @@ func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	// gemma4 and glm-5.1:cloud are installed so they sort normally;
 	// qwen3.5:cloud and qwen3.5 are not installed so they go to the bottom
 	// All recs: cloud first in mixed case, then local, in rec order within each
-	want := []string{"kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5"}
+	want := recommendedNames()
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("all recs, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -475,7 +486,7 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 	// kimi-k2.6:cloud is installed so it sorts normally;
 	// the rest of the recommendations are not installed so they go to the bottom
 	// All recs pinned at top (cloud first in mixed case), then non-recs
-	want := []string{"kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2"}
+	want := recommendedNames("llama3.2")
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -641,17 +652,32 @@ func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
 	}
 }
 
-func TestBuildModelList_CheckedBeforeRecs(t *testing.T) {
+func TestBuildModelList_CheckedRecommendedDoesNotReshuffleRecommendedOrder(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
+	items, _, _, _ := buildModelList(existing, []string{"qwen3.5:cloud", "glm-5.1:cloud"}, "")
 	got := names(items)
 
-	if got[0] != "llama3.2" {
-		t.Errorf("checked model should be first even before recs, got %v", got)
+	want := recommendedNames("llama3.2")
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("checked recommended models should not reshuffle the fixed recommended order (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildModelList_StaleSavedKimiK25DoesNotReshuffleRecommendedOrder(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "kimi-k2.5:cloud", Remote: true},
+	}
+
+	items, _, _, _ := buildModelList(existing, []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud"}, "kimi-k2.5:cloud")
+	got := names(items)
+
+	want := recommendedNames("kimi-k2.5:cloud")
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("stale saved kimi-k2.5 should stay in More without reshuffling the fixed recommended order (-want +got):\n%s", diff)
 	}
 }
 
@@ -1340,6 +1366,30 @@ func TestEnsureAuth_SkipsWhenNoCloudSelected(t *testing.T) {
 	}
 }
 
+func TestEnsureAuth_EmptyWhoamiRequiresSignIn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"not found"}`)
+		case "/api/me":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ensureAuth(context.Background(), client, map[string]bool{"cloud-model:cloud": true}, []string{"cloud-model:cloud"})
+	if err == nil || !strings.Contains(err.Error(), "cloud-model:cloud requires sign in") {
+		t.Fatalf("ensureAuth error = %v, want sign-in required", err)
+	}
+}
+
 func TestEnsureAuth_PreservesCancelledSignInHook(t *testing.T) {
 	oldSignIn := DefaultSignIn
 	DefaultSignIn = func(modelName, signInURL string) (string, error) {
@@ -1461,6 +1511,11 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantURL: "https://code.claude.com/docs/en/quickstart",
 		},
 		{
+			name:    "claude desktop has hint",
+			input:   "claude-desktop",
+			wantURL: "https://claude.com/download",
+		},
+		{
 			name:    "codex has hint",
 			input:   "codex",
 			wantURL: "https://developers.openai.com/codex/cli/",
@@ -1469,6 +1524,11 @@ func TestIntegration_InstallHint(t *testing.T) {
 			name:    "openclaw has hint",
 			input:   "openclaw",
 			wantURL: "https://docs.openclaw.ai",
+		},
+		{
+			name:    "pool has hint",
+			input:   "pool",
+			wantURL: "https://github.com/poolsideai/pool",
 		},
 		{
 			name:      "unknown has no hint",
@@ -1525,7 +1585,28 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		if diff := compareStrings(got, integrationOrder); diff != "" {
+
+		want := append([]string(nil), integrationOrder...)
+		if poolsideGOOS == "windows" {
+			filtered := make([]string, 0, len(want))
+			for _, name := range want {
+				if name != "pool" {
+					filtered = append(filtered, name)
+				}
+			}
+			want = filtered
+		}
+		if claudeDesktopSupported() != nil {
+			filtered := make([]string, 0, len(want))
+			for _, name := range want {
+				if name != "claude-desktop" {
+					filtered = append(filtered, name)
+				}
+			}
+			want = filtered
+		}
+
+		if diff := compareStrings(got, want); diff != "" {
 			t.Fatalf("launcher integration order mismatch: %s", diff)
 		}
 	})
@@ -1543,6 +1624,12 @@ func TestListIntegrationInfos(t *testing.T) {
 
 	t.Run("includes known integrations", func(t *testing.T) {
 		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
+		if claudeDesktopSupported() == nil {
+			known["claude-desktop"] = false
+		}
+		if poolsideGOOS != "windows" {
+			known["pool"] = false
+		}
 		for _, info := range infos {
 			if _, ok := known[info.Name]; ok {
 				known[info.Name] = true
@@ -1578,6 +1665,30 @@ func TestListIntegrationInfos(t *testing.T) {
 	})
 }
 
+func TestListIntegrationInfos_HidesPoolsideOnWindows(t *testing.T) {
+	prev := poolsideGOOS
+	poolsideGOOS = "windows"
+	t.Cleanup(func() { poolsideGOOS = prev })
+
+	for _, info := range ListIntegrationInfos() {
+		if info.Name == "pool" {
+			t.Fatal("expected pool to be hidden on Windows")
+		}
+	}
+}
+
+func TestListIntegrationInfos_HidesClaudeDesktopOnUnsupportedPlatform(t *testing.T) {
+	prev := claudeDesktopGOOS
+	claudeDesktopGOOS = "linux"
+	t.Cleanup(func() { claudeDesktopGOOS = prev })
+
+	for _, info := range ListIntegrationInfos() {
+		if info.Name == "claude-desktop" {
+			t.Fatal("expected claude-desktop to be hidden on unsupported platforms")
+		}
+	}
+}
+
 func TestBuildModelList_Descriptions(t *testing.T) {
 	t.Run("installed recommended has base description", func(t *testing.T) {
 		existing := []modelInfo{
@@ -1604,7 +1715,7 @@ func TestBuildModelList_Descriptions(t *testing.T) {
 
 		for _, item := range items {
 			if item.Name == "qwen3.5" {
-				if !strings.Contains(item.Description, "~11GB") {
+				if !strings.Contains(item.Description, "~14GB") {
 					t.Errorf("not-installed qwen3.5 should show VRAM hint, got %q", item.Description)
 				}
 				return
@@ -1621,7 +1732,7 @@ func TestBuildModelList_Descriptions(t *testing.T) {
 
 		for _, item := range items {
 			if item.Name == "qwen3.5" {
-				if strings.Contains(item.Description, "~11GB") {
+				if strings.Contains(item.Description, "~14GB") {
 					t.Errorf("installed qwen3.5 should not show VRAM hint, got %q", item.Description)
 				}
 				return
@@ -1640,6 +1751,7 @@ func TestIntegration_Editor(t *testing.T) {
 		{"opencode", true},
 		{"openclaw", true},
 		{"claude", false},
+		{"claude-desktop", false},
 		{"codex", false},
 		{"nonexistent", false},
 	}
@@ -1666,6 +1778,7 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 		{"pi", true},
 		{"hermes", true},
 		{"claude", false},
+		{"claude-desktop", false},
 		{"codex", false},
 		{"opencode", false},
 	}
@@ -1680,6 +1793,20 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 				t.Errorf("integrationFor(%q).autoInstallable = %v, want %v", tt.name, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEnsureIntegrationInstalled_PoolsideUnsupportedOnWindows(t *testing.T) {
+	prev := poolsideGOOS
+	poolsideGOOS = "windows"
+	t.Cleanup(func() { poolsideGOOS = prev })
+
+	err := EnsureIntegrationInstalled("pool", &Poolside{})
+	if err == nil {
+		t.Fatal("expected Windows unsupported error")
+	}
+	if !strings.Contains(err.Error(), "not currently supported on Windows") {
+		t.Fatalf("expected Windows warning, got %v", err)
 	}
 }
 

@@ -117,9 +117,7 @@ func Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	return key, nil
 }
 
-func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
-
+func (m *Model) forwardHiddenStates(ctx ml.Context, batch input.Batch, hiddenStates ml.Tensor) (ml.Tensor, error) {
 	cache := m.Cache.(*HybridCache)
 
 	for i, layer := range m.Layers {
@@ -137,11 +135,24 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		}
 	}
 
-	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
+	return m.OutputNorm.Forward(ctx, hiddenStates, m.eps), nil
+}
+
+func (m *Model) forwardLogits(ctx ml.Context, batch input.Batch, hiddenStates ml.Tensor) (ml.Tensor, error) {
+	hiddenStates, err := m.forwardHiddenStates(ctx, batch, hiddenStates)
+	if err != nil {
+		return nil, err
+	}
+
 	return m.Output.Forward(ctx, hiddenStates), nil
 }
 
-func New(c fs.Config) (model.Model, error) {
+func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
+	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
+	return m.forwardLogits(ctx, batch, hiddenStates)
+}
+
+func newTextModel(c fs.Config) (*Model, error) {
 	numLayers := int(c.Uint("block_count"))
 	layers := make([]Layer, numLayers)
 
@@ -304,6 +315,10 @@ func New(c fs.Config) (model.Model, error) {
 
 	m.Cache = NewHybridCache(convDim, convChannels, ssmStateSize)
 	return &m, nil
+}
+
+func New(c fs.Config) (model.Model, error) {
+	return newTextModel(c)
 }
 
 func init() {

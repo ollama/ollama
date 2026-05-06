@@ -102,6 +102,36 @@ func createRequest(t *testing.T, fn func(*gin.Context), body any) *httptest.Resp
 	return w.ResponseRecorder
 }
 
+func readCreatedModelConfig(t *testing.T, name string) model.ConfigV2 {
+	t.Helper()
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName(name))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if mf.Config.Digest == "" {
+		t.Fatalf("unexpected empty config digest for manifest")
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("config blob path: %v", err)
+	}
+
+	cfgFile, err := os.Open(configPath)
+	if err != nil {
+		t.Fatalf("open config blob: %v", err)
+	}
+	defer cfgFile.Close()
+
+	var cfg model.ConfigV2
+	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+
+	return cfg
+}
+
 func checkFileExists(t *testing.T, p string, expect []string) {
 	t.Helper()
 
@@ -978,6 +1008,134 @@ func TestCreateGemma4KeepsDynamicRendererAlias(t *testing.T) {
 	}
 	if cfg.Parser != "gemma4" {
 		t.Fatalf("expected parser %q, got %q", "gemma4", cfg.Parser)
+	}
+}
+
+func TestCreateLagunaDetectsRendererParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":    "laguna",
+		"general.parameter_count": uint64(33_400_000_000),
+	}, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:   "test",
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("test"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if mf.Config.Digest == "" {
+		t.Fatalf("unexpected empty config digest for manifest")
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("config blob path: %v", err)
+	}
+
+	cfgFile, err := os.Open(configPath)
+	if err != nil {
+		t.Fatalf("open config blob: %v", err)
+	}
+	defer cfgFile.Close()
+
+	var cfg model.ConfigV2
+	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+
+	if cfg.Renderer != "laguna" {
+		t.Fatalf("expected renderer %q, got %q", "laguna", cfg.Renderer)
+	}
+	if cfg.Parser != "laguna" {
+		t.Fatalf("expected parser %q, got %q", "laguna", cfg.Parser)
+	}
+}
+
+func TestCreateNemotronHDefaultsRendererParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, arch := range []string{"nemotron_h", "nemotron_h_moe", "nemotron_h_omni"} {
+		t.Run(arch, func(t *testing.T) {
+			p := t.TempDir()
+			t.Setenv("OLLAMA_MODELS", p)
+			var s Server
+
+			_, digest := createBinFile(t, ggml.KV{
+				"general.architecture": arch,
+			}, nil)
+
+			name := strings.ReplaceAll(arch, "_", "-")
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Name:   name,
+				Files:  map[string]string{"test.gguf": digest},
+				Stream: &stream,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status code 200, actual %d", w.Code)
+			}
+
+			cfg := readCreatedModelConfig(t, name)
+			if cfg.Renderer != "nemotron-3-nano" {
+				t.Fatalf("expected renderer %q, got %q", "nemotron-3-nano", cfg.Renderer)
+			}
+			if cfg.Parser != "nemotron-3-nano" {
+				t.Fatalf("expected parser %q, got %q", "nemotron-3-nano", cfg.Parser)
+			}
+		})
+	}
+}
+
+func TestCreateNemotronHDefaultsKeepExplicitRendererParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, arch := range []string{"nemotron_h", "nemotron_h_moe", "nemotron_h_omni"} {
+		t.Run(arch, func(t *testing.T) {
+			p := t.TempDir()
+			t.Setenv("OLLAMA_MODELS", p)
+			var s Server
+
+			_, digest := createBinFile(t, ggml.KV{
+				"general.architecture": arch,
+			}, nil)
+
+			const (
+				renderer = "custom-renderer"
+				parser   = "custom-parser"
+			)
+
+			name := strings.ReplaceAll(arch, "_", "-") + "-custom"
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Name:     name,
+				Files:    map[string]string{"test.gguf": digest},
+				Renderer: renderer,
+				Parser:   parser,
+				Stream:   &stream,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status code 200, actual %d", w.Code)
+			}
+
+			cfg := readCreatedModelConfig(t, name)
+			if cfg.Renderer != renderer {
+				t.Fatalf("expected renderer %q, got %q", renderer, cfg.Renderer)
+			}
+			if cfg.Parser != parser {
+				t.Fatalf("expected parser %q, got %q", parser, cfg.Parser)
+			}
+		})
 	}
 }
 

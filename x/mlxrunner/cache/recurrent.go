@@ -1,6 +1,10 @@
 package cache
 
-import "github.com/ollama/ollama/x/mlxrunner/mlx"
+import (
+	"github.com/ollama/ollama/x/mlxrunner/batch"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/models/nn"
+)
 
 // RecurrentCache stores state for linear-recurrent layers.
 //
@@ -65,30 +69,24 @@ func (c *RecurrentCache) ensure(batch int, dtype mlx.DType) {
 	}
 }
 
-func (c *RecurrentCache) ConvState(batch int, dtype mlx.DType) *mlx.Array {
-	c.ensure(batch, dtype)
-	return c.convState
+// Get returns the current conv/delta state for the SSM layer's read
+// phase. Lazy-initializes zero-filled state tensors using b.InputIDs
+// for the batch size; reallocates if the existing state's batch size
+// or dtype no longer matches.
+func (c *RecurrentCache) Get(b *batch.Batch, dtype mlx.DType) *nn.RecurrentHistory {
+	c.ensure(b.InputIDs.Dim(0), dtype)
+	return nn.NewRecurrentHistory(c.convState, c.deltaState)
 }
 
-func (c *RecurrentCache) SetConvState(v *mlx.Array) {
-	c.convState = c.setState(c.convState, v, true)
-}
-
-func (c *RecurrentCache) DeltaState(batch int, dtype mlx.DType) *mlx.Array {
-	c.ensure(batch, dtype)
-	return c.deltaState
-}
-
-func (c *RecurrentCache) SetDeltaState(v *mlx.Array) {
-	c.deltaState = c.setState(c.deltaState, v, false)
-}
-
-func (c *RecurrentCache) Advance(n int) {
-	c.offset += n
-}
-
-func (c *RecurrentCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
-	return keys, values
+// Put stores the post-computation conv/delta states for the SSM
+// layer's write phase and advances the cache offset by the current
+// forward's real token count.
+//
+// Assumes B = 1; heterogeneous batches are not supported.
+func (c *RecurrentCache) Put(b *batch.Batch, newConv, newDelta *mlx.Array) {
+	c.convState = c.setState(c.convState, newConv, true)
+	c.deltaState = c.setState(c.deltaState, newDelta, false)
+	c.offset += int(b.SeqQueryLens[0])
 }
 
 func (c *RecurrentCache) State() []*mlx.Array {

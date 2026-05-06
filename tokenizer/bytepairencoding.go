@@ -84,7 +84,7 @@ func (bpe *BytePairEncoding) split(s string) iter.Seq[string] {
 				var offset int
 				for m, _ := re.FindRunesMatch(r); m != nil; m, _ = re.FindNextMatch(m) {
 					if offset-m.Index != 0 {
-						if !yield(string(r[:m.Index])) {
+						if !yield(string(r[offset:m.Index])) {
 							return
 						}
 					}

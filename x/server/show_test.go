@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestBuildModelInfo(t *testing.T) {
@@ -286,168 +287,7 @@ func TestBuildModelInfo_BytesPerParam(t *testing.T) {
 	}
 }
 
-func TestParseSafetensorsHeader(t *testing.T) {
-	tests := []struct {
-		name          string
-		header        map[string]any
-		wantDtype     string
-		wantShape     []int64
-		wantQuantType string
-		wantGroupSize string
-		wantErr       bool
-	}{
-		{
-			name: "simple tensor",
-			header: map[string]any{
-				"weight": map[string]any{
-					"dtype":        "BF16",
-					"shape":        []int64{2560, 262144},
-					"data_offsets": []int64{0, 1342177280},
-				},
-			},
-			wantDtype: "BF16",
-			wantShape: []int64{2560, 262144},
-		},
-		{
-			name: "tensor keyed by name",
-			header: map[string]any{
-				"model.layers.0.weight": map[string]any{
-					"dtype":        "BF16",
-					"shape":        []int64{2560, 2560},
-					"data_offsets": []int64{0, 13107200},
-				},
-			},
-			wantDtype: "BF16",
-			wantShape: []int64{2560, 2560},
-		},
-		{
-			name: "with int4 quant metadata",
-			header: map[string]any{
-				"__metadata__": map[string]any{
-					"quant_type": "int4",
-					"group_size": "32",
-				},
-				"model.layers.0.mlp.up_proj.weight": map[string]any{
-					"dtype":        "U32",
-					"shape":        []int64{2560, 320},
-					"data_offsets": []int64{0, 3276800},
-				},
-				"model.layers.0.mlp.up_proj.weight.scale": map[string]any{
-					"dtype":        "BF16",
-					"shape":        []int64{2560, 80},
-					"data_offsets": []int64{3276800, 3686400},
-				},
-				"model.layers.0.mlp.up_proj.weight.bias": map[string]any{
-					"dtype":        "BF16",
-					"shape":        []int64{2560, 80},
-					"data_offsets": []int64{3686400, 4096000},
-				},
-			},
-			wantDtype:     "U32",
-			wantShape:     []int64{2560, 320},
-			wantQuantType: "int4",
-			wantGroupSize: "32",
-		},
-		{
-			name: "int8 quant metadata",
-			header: map[string]any{
-				"__metadata__": map[string]any{
-					"quant_type": "int8",
-					"group_size": "64",
-				},
-				"model.layers.0.mlp.down_proj.weight": map[string]any{
-					"dtype":        "U32",
-					"shape":        []int64{2560, 640},
-					"data_offsets": []int64{0, 6553600},
-				},
-				"model.layers.0.mlp.down_proj.weight.scale": map[string]any{
-					"dtype":        "BF16",
-					"shape":        []int64{2560, 40},
-					"data_offsets": []int64{6553600, 6963200},
-				},
-			},
-			wantDtype:     "U32",
-			wantShape:     []int64{2560, 640},
-			wantQuantType: "int8",
-			wantGroupSize: "64",
-		},
-		{
-			name: "with old-style format metadata",
-			header: map[string]any{
-				"__metadata__": map[string]any{
-					"format": "pt",
-				},
-				"bias": map[string]any{
-					"dtype":        "F32",
-					"shape":        []int64{1024},
-					"data_offsets": []int64{0, 4096},
-				},
-			},
-			wantDtype: "F32",
-			wantShape: []int64{1024},
-		},
-		{
-			name: "float16 tensor",
-			header: map[string]any{
-				"layer.weight": map[string]any{
-					"dtype":        "F16",
-					"shape":        []int64{512, 512, 3, 3},
-					"data_offsets": []int64{0, 4718592},
-				},
-			},
-			wantDtype: "F16",
-			wantShape: []int64{512, 512, 3, 3},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create safetensors format: 8-byte size + JSON header
-			headerJSON, err := json.Marshal(tt.header)
-			if err != nil {
-				t.Fatalf("failed to marshal header: %v", err)
-			}
-
-			var buf bytes.Buffer
-			if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
-				t.Fatalf("failed to write header size: %v", err)
-			}
-			buf.Write(headerJSON)
-
-			info, err := parseSafetensorsHeader(&buf)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("parseSafetensorsHeader() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if tt.wantErr {
-				return
-			}
-
-			if info.Dtype != tt.wantDtype {
-				t.Errorf("Dtype = %v, want %v", info.Dtype, tt.wantDtype)
-			}
-
-			if len(info.Shape) != len(tt.wantShape) {
-				t.Errorf("Shape length = %v, want %v", len(info.Shape), len(tt.wantShape))
-			} else {
-				for i, s := range info.Shape {
-					if s != tt.wantShape[i] {
-						t.Errorf("Shape[%d] = %v, want %v", i, s, tt.wantShape[i])
-					}
-				}
-			}
-
-			if info.QuantType != tt.wantQuantType {
-				t.Errorf("QuantType = %v, want %v", info.QuantType, tt.wantQuantType)
-			}
-			if info.GroupSize != tt.wantGroupSize {
-				t.Errorf("GroupSize = %v, want %v", info.GroupSize, tt.wantGroupSize)
-			}
-		})
-	}
-}
-
-func TestParseSafetensorsHeader_Errors(t *testing.T) {
+func TestParseSafetensorsAllHeaders_Errors(t *testing.T) {
 	tests := []struct {
 		name    string
 		data    []byte
@@ -467,7 +307,7 @@ func TestParseSafetensorsHeader_Errors(t *testing.T) {
 			name: "header size too large",
 			data: func() []byte {
 				var buf bytes.Buffer
-				binary.Write(&buf, binary.LittleEndian, uint64(2*1024*1024)) // 2MB
+				binary.Write(&buf, binary.LittleEndian, uint64(200*1024*1024)) // 200 MiB
 				return buf.Bytes()
 			}(),
 			wantErr: "header size too large",
@@ -510,7 +350,7 @@ func TestParseSafetensorsHeader_Errors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := parseSafetensorsHeader(bytes.NewReader(tt.data))
+			_, err := parseSafetensorsAllHeaders(bytes.NewReader(tt.data))
 			if err == nil {
 				t.Error("expected error, got nil")
 				return
@@ -1209,44 +1049,77 @@ func TestGetTensorInfoFromManifest_Packed(t *testing.T) {
 	}
 }
 
-func TestReadSafetensorsHeader(t *testing.T) {
-	// Create a temp file with a valid safetensors header
-	tempDir := t.TempDir()
+func TestGetSafetensorsDtypeScansPastUnquantizedFirstBlob(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	header := map[string]any{
-		"test_tensor": map[string]any{
-			"dtype":        "BF16",
-			"shape":        []int64{1024, 768},
-			"data_offsets": []int64{0, 1572864},
-		},
+	writeSafetensorsLayer := func(t *testing.T, header map[string]any, name string) manifest.Layer {
+		t.Helper()
+
+		headerJSON, err := json.Marshal(header)
+		if err != nil {
+			t.Fatalf("failed to marshal header: %v", err)
+		}
+
+		var buf bytes.Buffer
+		if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
+			t.Fatalf("failed to write header size: %v", err)
+		}
+		buf.Write(headerJSON)
+
+		layer, err := manifest.NewLayer(&buf, manifest.MediaTypeImageTensor)
+		if err != nil {
+			t.Fatalf("failed to create tensor layer: %v", err)
+		}
+		layer.Name = name
+		return layer
 	}
-	headerJSON, _ := json.Marshal(header)
 
-	var buf bytes.Buffer
-	binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON)))
-	buf.Write(headerJSON)
-
-	filePath := filepath.Join(tempDir, "test.safetensors")
-	if err := os.WriteFile(filePath, buf.Bytes(), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
-
-	info, err := readSafetensorsHeader(filePath)
+	configData, err := json.Marshal(map[string]any{
+		"model_format": "safetensors",
+	})
 	if err != nil {
-		t.Fatalf("readSafetensorsHeader() error = %v", err)
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+	configLayer, err := manifest.NewLayer(bytes.NewReader(configData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
 	}
 
-	if info.Dtype != "BF16" {
-		t.Errorf("Dtype = %v, want BF16", info.Dtype)
-	}
-	if len(info.Shape) != 2 || info.Shape[0] != 1024 || info.Shape[1] != 768 {
-		t.Errorf("Shape = %v, want [1024, 768]", info.Shape)
-	}
-}
+	unquantized := writeSafetensorsLayer(t, map[string]any{
+		"model.embed_tokens.weight": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{16, 8},
+			"data_offsets": []int64{0, 256},
+		},
+	}, "model.embed_tokens.weight")
 
-func TestReadSafetensorsHeader_FileNotFound(t *testing.T) {
-	_, err := readSafetensorsHeader("/nonexistent/path/file.safetensors")
-	if err == nil {
-		t.Error("expected error for nonexistent file")
+	quantized := writeSafetensorsLayer(t, map[string]any{
+		"__metadata__": map[string]string{
+			"quant_type": "mxfp8",
+			"group_size": "32",
+		},
+		"model.layers.0.mlp.down_proj.weight": map[string]any{
+			"dtype":        "U32",
+			"shape":        []int64{16, 4},
+			"data_offsets": []int64{0, 256},
+		},
+		"model.layers.0.mlp.down_proj.weight.scale": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{16, 1},
+			"data_offsets": []int64{256, 288},
+		},
+	}, "model.layers.0.mlp.down_proj.weight")
+
+	name := model.ParseName("mixed-fp8-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{unquantized, quantized}); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	got, err := GetSafetensorsDtype(name)
+	if err != nil {
+		t.Fatalf("GetSafetensorsDtype() error = %v", err)
+	}
+	if got != "mxfp8" {
+		t.Fatalf("GetSafetensorsDtype() = %q, want mxfp8", got)
 	}
 }

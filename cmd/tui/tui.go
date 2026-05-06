@@ -45,7 +45,7 @@ type menuItem struct {
 	isOthers    bool
 }
 
-const pinnedIntegrationCount = 3
+const pinnedIntegrationCount = 4
 
 var runModelMenuItem = menuItem{
 	title:       "Chat with a model",

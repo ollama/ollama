@@ -73,6 +73,9 @@ func TestLaunchCmd(t *testing.T) {
 		if cmd.Flags().Lookup("config") == nil {
 			t.Error("--config flag should exist")
 		}
+		if cmd.Flags().Lookup("restore") == nil {
+			t.Error("--restore flag should exist")
+		}
 		if cmd.Flags().Lookup("yes") == nil {
 			t.Error("--yes flag should exist")
 		}
@@ -207,6 +210,27 @@ func TestLaunchCmdTUICallback(t *testing.T) {
 			t.Error("TUI callback should NOT be called when flags or extra args are provided without an integration")
 		}
 	})
+
+	t.Run("--restore flag without integration returns error", func(t *testing.T) {
+		tuiCalled := false
+		mockTUI := func(cmd *cobra.Command) {
+			tuiCalled = true
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{"--restore"})
+		err := cmd.Execute()
+
+		if err == nil {
+			t.Fatal("expected --restore without an integration to fail")
+		}
+		if !strings.Contains(err.Error(), "require an integration name") {
+			t.Fatalf("expected integration-name guidance, got %v", err)
+		}
+		if tuiCalled {
+			t.Error("TUI callback should NOT be called when --restore is provided without an integration")
+		}
+	})
 }
 
 func TestLaunchCmdNilHeartbeat(t *testing.T) {
@@ -273,6 +297,8 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/status":
 			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
 		case "/api/show":
@@ -326,6 +352,41 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
 		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLaunchCmdAutodiscoveryDefaultLaunchDoesNotForceConfigure(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedAutodiscoveryRunner{
+		autodiscoveryConfigured: true,
+	}
+	restore := OverrideIntegration("stubauto", runner)
+	defer restore()
+
+	if err := config.SaveIntegration("stubauto", []string{"Ollama Cloud"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+	if err := config.MarkIntegrationOnboarded("stubauto"); err != nil {
+		t.Fatalf("failed to mark integration onboarded: %v", err)
+	}
+
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {
+		t.Fatal("TUI callback should not run for direct integration launch")
+	})
+	cmd.SetArgs([]string{"stubauto"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("launch command failed: %v", err)
+	}
+
+	if runner.autodiscoveryConfigures != 0 {
+		t.Fatalf("expected default autodiscovery launch to reuse existing config, got %d configures", runner.autodiscoveryConfigures)
+	}
+	if runner.ranModel != "Ollama Cloud" {
+		t.Fatalf("expected launch to run autodiscovery label, got %q", runner.ranModel)
 	}
 }
 
@@ -474,6 +535,8 @@ func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) 
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"qwen3:8b"}]}`)
 		case "/api/show":
