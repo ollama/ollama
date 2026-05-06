@@ -538,16 +538,28 @@ func TestWriteWithBackup_RapidSuccessiveWrites(t *testing.T) {
 		t.Errorf("expected final content {\"v\": 3}, got %s", string(content))
 	}
 
-	// Verify at least one backup exists
+	// Verify each overwritten version has its own backup
 	entries, _ := os.ReadDir(BackupDir())
 	var backupCount int
+	backupContents := map[string]bool{}
 	for _, e := range entries {
 		if len(e.Name()) > len("rapid.json.") && e.Name()[:len("rapid.json.")] == "rapid.json." {
 			backupCount++
+			content, err := os.ReadFile(filepath.Join(BackupDir(), e.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			backupContents[string(content)] = true
 		}
 	}
-	if backupCount == 0 {
-		t.Error("expected at least one backup file from rapid writes")
+	if backupCount != 3 {
+		t.Fatalf("expected 3 backup files from rapid writes, got %d", backupCount)
+	}
+	for i := 0; i < 3; i++ {
+		content := fmt.Sprintf(`{"v": %d}`, i)
+		if !backupContents[content] {
+			t.Errorf("expected backup containing %s", content)
+		}
 	}
 }
 
