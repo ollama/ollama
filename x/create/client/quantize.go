@@ -71,8 +71,12 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, arrays map[string]
 		scaleKey := inputKey + ".scale_inv"
 		scaleInv := st.Get(scaleKey)
 		if scaleInv == nil {
+			scaleKey = inputKey + ".scale"
+			scaleInv = st.Get(scaleKey)
+		}
+		if scaleInv == nil {
 			st.Free()
-			return tmpPath, nil, nil, fmt.Errorf("missing companion tensor %q for fp8 source tensor %q", scaleKey, inputKey)
+			return tmpPath, nil, nil, fmt.Errorf("missing companion tensor %q or %q for fp8 source tensor %q", inputKey+".scale_inv", inputKey+".scale", inputKey)
 		}
 		arr, err = decodeSourceFP8Tensor(arr, scaleInv)
 		if err != nil {
@@ -560,13 +564,13 @@ func safetensorsKey(preferred string, header map[string]safetensorsHeaderEntry) 
 	return keys[0], nil
 }
 
-func decodeSourceFP8Tensor(weight, scaleInv *mlx.Array) (*mlx.Array, error) {
-	if weight == nil || scaleInv == nil {
+func decodeSourceFP8Tensor(weight, scale *mlx.Array) (*mlx.Array, error) {
+	if weight == nil || scale == nil {
 		return nil, fmt.Errorf("fp8 weight and scale tensors are required")
 	}
 
 	weightShape := weight.Dims()
-	scaleShape := scaleInv.Dims()
+	scaleShape := scale.Dims()
 	if len(weightShape) != 2 || len(scaleShape) != 2 {
 		return nil, fmt.Errorf("expected 2D fp8 weight and scale tensors, got %v and %v", weightShape, scaleShape)
 	}
@@ -596,7 +600,7 @@ func decodeSourceFP8Tensor(weight, scaleInv *mlx.Array) (*mlx.Array, error) {
 	}
 
 	decoded = mlx.Reshape(decoded, int32(scaleShape[0]), int32(blockRows), int32(scaleShape[1]), int32(blockCols))
-	decoded = mlx.Mul(decoded, mlx.ExpandDims(mlx.ExpandDims(scaleInv, 1), 3))
+	decoded = mlx.Mul(decoded, mlx.ExpandDims(mlx.ExpandDims(scale, 1), 3))
 	decoded = mlx.Reshape(decoded, int32(rows+padBottom), int32(cols+padSide))
 	if padBottom > 0 || padSide > 0 {
 		decoded = mlx.SliceStartStop(decoded, []int32{0, 0}, []int32{int32(rows), int32(cols)})

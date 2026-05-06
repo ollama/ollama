@@ -150,7 +150,7 @@ func closureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload 
 	traceScratch = nil
 	defer func() {
 		for _, a := range traceScratch {
-			if a.pinned > 0 {
+			if a.pinned.Load() > 0 {
 				panic("mlx: traced array was pinned during compilation")
 			}
 			if a.Valid() {

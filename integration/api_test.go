@@ -406,10 +406,6 @@ func TestAPIShowModel(t *testing.T) {
 }
 
 func TestAPIGenerateLogprobs(t *testing.T) {
-	if testModel != "" {
-		// Logprobs requires runner support (e.g. llama.cpp has it, MLX does not).
-		t.Skip("logprobs not supported by all runners")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -523,10 +519,6 @@ func TestAPIGenerateLogprobs(t *testing.T) {
 }
 
 func TestAPIChatLogprobs(t *testing.T) {
-	if testModel != "" {
-		// Logprobs requires runner support (e.g. llama.cpp has it, MLX does not).
-		t.Skip("logprobs not supported by all runners")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 

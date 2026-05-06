@@ -54,6 +54,7 @@ import (
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcmd "github.com/ollama/ollama/x/cmd"
+	xcreate "github.com/ollama/ollama/x/create"
 	xcreateclient "github.com/ollama/ollama/x/create/client"
 	"github.com/ollama/ollama/x/imagegen"
 )
@@ -145,6 +146,39 @@ func isLocalhost() bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
+func resolveExperimentalLocalModelDir(ref, filename string) string {
+	if ref == "" || filepath.IsAbs(ref) || filename == "" {
+		return ref
+	}
+
+	candidate := filepath.Join(filepath.Dir(filename), ref)
+	if xcreate.IsSafetensorsModelDir(candidate) || xcreate.IsTensorModelDir(candidate) {
+		return candidate
+	}
+
+	return ref
+}
+
+func resolveExperimentalDraftDir(ref, filename string) (string, error) {
+	if ref == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(ref) {
+		if xcreate.IsSafetensorsModelDir(ref) {
+			return ref, nil
+		}
+		return "", fmt.Errorf("draft %s is not a supported safetensors model directory", ref)
+	}
+	if filename != "" {
+		candidate := filepath.Join(filepath.Dir(filename), ref)
+		if xcreate.IsSafetensorsModelDir(candidate) {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("DRAFT model references are not supported with --experimental yet: %s", ref)
+}
+
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
@@ -159,6 +193,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	// Check for --experimental flag for safetensors model creation
 	// This gates both safetensors LLM and imagegen model creation
 	experimental, _ := cmd.Flags().GetBool("experimental")
+	draftQuantize, _ := cmd.Flags().GetString("draft-quantize")
+	if draftQuantize != "" && !experimental {
+		return errors.New("--draft-quantize requires --experimental")
+	}
 	if experimental {
 		if !isLocalhost() {
 			return errors.New("remote safetensor model creation not yet supported")
@@ -192,17 +230,22 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		// Resolve relative paths based on Modelfile location
-		if !filepath.IsAbs(modelDir) && filename != "" {
-			modelDir = filepath.Join(filepath.Dir(filename), modelDir)
+		modelDir = resolveExperimentalLocalModelDir(modelDir, filename)
+		if mfConfig.Draft != "" {
+			draftDir, err := resolveExperimentalDraftDir(mfConfig.Draft, filename)
+			if err != nil {
+				return err
+			}
+			mfConfig.Draft = draftDir
 		}
 
 		quantize, _ := cmd.Flags().GetString("quantize")
 		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
-			ModelName: modelName,
-			ModelDir:  modelDir,
-			Quantize:  quantize,
-			Modelfile: mfConfig,
+			ModelName:     modelName,
+			ModelDir:      modelDir,
+			Quantize:      quantize,
+			DraftQuantize: draftQuantize,
+			Modelfile:     mfConfig,
 		}, p)
 	}
 
@@ -582,10 +625,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			opts.Think = &api.ThinkValue{Value: true}
 		case "false":
 			opts.Think = &api.ThinkValue{Value: false}
-		case "high", "medium", "low":
+		case "high", "medium", "low", "max":
 			opts.Think = &api.ThinkValue{Value: thinkStr}
 		default:
-			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, or low)", thinkStr)
+			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
 		}
 	} else {
 		opts.Think = nil
@@ -1975,8 +2018,61 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 		Options:     map[string]any{},
 		ShowConnect: true,
 	}
-	// loadOrUnloadModel is cloud-safe here: remote/cloud models skip local preload
-	// and only validate auth/connectivity before interactive chat starts.
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	requestedCloud := modelref.HasExplicitCloudSource(modelName)
+
+	info, err := func() (*api.ShowResponse, error) {
+		showReq := &api.ShowRequest{Name: modelName}
+		info, err := client.Show(cmd.Context(), showReq)
+		var se api.StatusError
+		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
+			if requestedCloud {
+				return nil, err
+			}
+			if err := PullHandler(cmd, []string{modelName}); err != nil {
+				return nil, err
+			}
+			return client.Show(cmd.Context(), &api.ShowRequest{Name: modelName})
+		}
+		return info, err
+	}()
+	if err != nil {
+		if handleCloudAuthorizationError(err) {
+			return nil
+		}
+		return err
+	}
+
+	ensureCloudStub(cmd.Context(), client, modelName)
+
+	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, false)
+	if err != nil {
+		return err
+	}
+
+	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
+
+	// TODO: remove the projector info and vision info checks below,
+	// these are left in for backwards compatibility with older servers
+	// that don't have the capabilities field in the model info
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for k := range info.ModelInfo {
+		if strings.Contains(k, ".vision.") {
+			opts.MultiModal = true
+			break
+		}
+	}
+
+	applyShowResponseToRunOptions(&opts, info)
+
 	if err := loadOrUnloadModel(cmd, &opts); err != nil {
 		return fmt.Errorf("error loading model: %w", err)
 	}
@@ -2066,13 +2162,21 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 		if err != nil {
 			return true, fmt.Errorf("launching %s: %w", action.Integration, err)
 		}
-		// VS Code is a GUI app — exit the TUI loop after launching
-		if action.Integration == "vscode" {
+		if launcherActionExitsLoop(action.Integration) {
 			return false, nil
 		}
 		return true, nil
 	default:
 		return false, fmt.Errorf("unknown launcher action: %d", action.Kind)
+	}
+}
+
+func launcherActionExitsLoop(integration string) bool {
+	switch integration {
+	case "claude-desktop", "vscode":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -2115,6 +2219,9 @@ func NewCLI() *cobra.Command {
 			if experimental, _ := cmd.Flags().GetBool("experimental"); experimental {
 				return nil
 			}
+			if draftQuantize, _ := cmd.Flags().GetString("draft-quantize"); draftQuantize != "" {
+				return errors.New("--draft-quantize requires --experimental")
+			}
 			return checkServerHeartbeat(cmd, args)
 		},
 		RunE: CreateHandler,
@@ -2122,6 +2229,7 @@ func NewCLI() *cobra.Command {
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
+	createCmd.Flags().String("draft-quantize", "", "Quantize draft model to this level")
 	createCmd.Flags().Bool("experimental", false, "Enable experimental safetensors model creation")
 
 	showCmd := &cobra.Command{
