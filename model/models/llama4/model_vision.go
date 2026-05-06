@@ -16,7 +16,7 @@ type VisionAttention struct {
 }
 
 // applyVisionRotaryEmbedding applies 2D rotary embedding to the input tensor.
-// This is equivalent to the Pytorch implmentation using half rotations:
+// This is equivalent to the Pytorch implementation using half rotations:
 //
 //	cos, sin = torch.cos(freqs), torch.sin(freqs)
 //	cos = cos.unsqueeze(-1)
