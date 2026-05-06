@@ -33,31 +33,23 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude-desktop", "claude", "openclaw", "hermes", "opencode", "codex", "copilot", "droid", "pi", "pool"}
+var launcherIntegrationOrder = []string{"openclaw", "claude", "openclaude", "opencode", "hermes", "codex", "copilot", "droid", "pi"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
-		Name:        "claude",
-		Runner:      &Claude{},
-		Description: "Anthropic's coding tool with subagents",
-		Install: IntegrationInstallSpec{
-			CheckInstalled: func() bool {
-				_, err := (&Claude{}).findPath()
-				return err == nil
-			},
 			URL: "https://code.claude.com/docs/en/quickstart",
 		},
 	},
 	{
-		Name:        "claude-desktop",
-		Runner:      &ClaudeDesktop{},
-		Aliases:     []string{"claude-app"},
-		Description: "Claude Desktop with Ollama Cloud",
+		Name:        "openclaude",
+		Runner:      &Openclaude{},
+		Description: "Open-source coding agent fork of Claude Code",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
-				return claudeDesktopInstalled()
+				_, err := (&Openclaude{}).findPath()
+				return err == nil
 			},
-			URL: "https://claude.com/download",
+			URL: "https://github.com/gitlawbh/openclaude",
 		},
 	},
 	{
