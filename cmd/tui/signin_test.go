@@ -25,7 +25,6 @@ func TestRenderSignIn_ContainsURL(t *testing.T) {
 	}
 }
 
-
 func TestRenderSignIn_ContainsSpinner(t *testing.T) {
 	got := renderSignIn("test:cloud", "https://example.com", 0, 80)
 	if !strings.Contains(got, "Waiting for sign in to complete") {

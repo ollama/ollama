@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 )
 
 type Layer struct {
@@ -60,6 +61,9 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 			return Layer{}, err
 		}
 	}
+	if err := touchLayer(blob); err != nil {
+		return Layer{}, err
+	}
 
 	return Layer{
 		MediaType: mediatype,
@@ -83,6 +87,9 @@ func NewLayerFromLayer(digest, mediatype, from string) (Layer, error) {
 	if err != nil {
 		return Layer{}, err
 	}
+	if err := touchLayer(blob); err != nil {
+		return Layer{}, err
+	}
 
 	return Layer{
 		MediaType: mediatype,
@@ -91,6 +98,11 @@ func NewLayerFromLayer(digest, mediatype, from string) (Layer, error) {
 		From:      from,
 		Status:    fmt.Sprintf("using existing layer %s", digest),
 	}, nil
+}
+
+func touchLayer(path string) error {
+	now := time.Now()
+	return os.Chtimes(path, now, now)
 }
 
 func (l *Layer) Open() (io.ReadSeekCloser, error) {

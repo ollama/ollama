@@ -200,10 +200,15 @@ _build_macapp() {
         # Copy .so files from both architectures (names don't collide: arm64=libggml-cpu.so, amd64=libggml-cpu-*.so)
         cp dist/darwin-arm64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
         cp dist/darwin-amd64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
-        # Lipo common dylibs into universal binaries, copy amd64-only ones as-is
+        # Lipo common dylibs into universal binaries, copy amd64-only ones as-is.
+        # Skip MLX dylibs (libmlx*.dylib) — on arm64 these live in variant
+        # subdirs (mlx_metal_v3/) and are lipo'd there below. Copying the
+        # amd64 flat copy here would produce an x86_64-only dylib in
+        # Resources/ that shadows the variant subdirs.
         for F in dist/darwin-amd64/lib/ollama/*.dylib; do
             [ -f "$F" ] && [ ! -L "$F" ] || continue
             BASE=$(basename "$F")
+            case "$BASE" in libmlx*) continue ;; esac
             if [ -f "dist/darwin-arm64/lib/ollama/$BASE" ]; then
                 lipo -create -output "dist/Ollama.app/Contents/Resources/$BASE" "$F" "dist/darwin-arm64/lib/ollama/$BASE"
             else
@@ -228,9 +233,11 @@ _build_macapp() {
                         cp "$VARIANT$LIB" "$DEST/"
                     fi
                 done
-                # Copy remaining files (metallib) from arm64 v3
+                # Copy remaining files (metallib and auxiliary runtime dylibs)
+                # from arm64 v3. libmlx/libmlxc are handled above so v3 can
+                # be universal when an x86_64 build is available.
                 for F in "$VARIANT"*; do
-                    case "$(basename "$F")" in *.dylib) continue ;; esac
+                    case "$(basename "$F")" in libmlx.dylib|libmlxc.dylib) continue ;; esac
                     [ -f "$F" ] && [ ! -L "$F" ] || continue
                     cp "$F" "$DEST/"
                 done

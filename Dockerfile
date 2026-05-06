@@ -2,7 +2,7 @@
 
 ARG FLAVOR=${TARGETARCH}
 
-ARG ROCMVERSION=7.2
+ARG ROCMVERSION=7.2.1
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
@@ -212,8 +212,11 @@ COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:24.04
-RUN apt-get update \
+ARG APT_MIRROR=http://archive.ubuntu.com/ubuntu
+RUN sed -i "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g" /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
     && apt-get install -y ca-certificates libvulkan1 libopenblas0 \
+    && sed -i "s|$APT_MIRROR|http://archive.ubuntu.com/ubuntu|g" /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=archive /bin /usr/bin

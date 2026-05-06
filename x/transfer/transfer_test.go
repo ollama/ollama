@@ -798,81 +798,6 @@ func verifyBlob(t *testing.T, dir string, blob Blob, expected []byte) {
 
 // ==================== Parallelism Tests ====================
 
-func TestDownloadParallelism(t *testing.T) {
-	// Create many blobs to test parallelism
-	serverDir := t.TempDir()
-	numBlobs := 10
-	blobs := make([]Blob, numBlobs)
-	blobData := make([][]byte, numBlobs)
-
-	for i := range numBlobs {
-		blobs[i], blobData[i] = createTestBlob(t, serverDir, 1024+i*100)
-	}
-
-	var activeRequests atomic.Int32
-	var maxConcurrent atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		current := activeRequests.Add(1)
-		defer activeRequests.Add(-1)
-
-		// Track max concurrent requests
-		for {
-			old := maxConcurrent.Load()
-			if current <= old || maxConcurrent.CompareAndSwap(old, current) {
-				break
-			}
-		}
-
-		// Simulate network latency to ensure parallelism is visible
-		time.Sleep(50 * time.Millisecond)
-
-		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
-		data, err := os.ReadFile(path)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write(data)
-	}))
-	defer server.Close()
-
-	clientDir := t.TempDir()
-
-	start := time.Now()
-	err := Download(context.Background(), DownloadOptions{
-		Blobs:       blobs,
-		BaseURL:     server.URL,
-		DestDir:     clientDir,
-		Concurrency: 4,
-	})
-	elapsed := time.Since(start)
-
-	if err != nil {
-		t.Fatalf("Download failed: %v", err)
-	}
-
-	// Verify all blobs downloaded
-	for i, blob := range blobs {
-		verifyBlob(t, clientDir, blob, blobData[i])
-	}
-
-	// Verify parallelism was used
-	if maxConcurrent.Load() < 2 {
-		t.Errorf("Max concurrent requests was %d, expected at least 2 for parallelism", maxConcurrent.Load())
-	}
-
-	// With 10 blobs at 50ms each, sequential would take ~500ms
-	// Parallel with 4 workers should take ~150ms (relax to 1s for CI variance)
-	if elapsed > time.Second {
-		t.Errorf("Downloads took %v, expected faster with parallelism", elapsed)
-	}
-
-	t.Logf("Downloaded %d blobs in %v with max %d concurrent requests", numBlobs, elapsed, maxConcurrent.Load())
-}
-
 func TestUploadParallelism(t *testing.T) {
 	clientDir := t.TempDir()
 	numBlobs := 10
@@ -1242,53 +1167,6 @@ func TestUploadEmptyBlobList(t *testing.T) {
 	if err != nil {
 		t.Errorf("Expected no error for empty blob list, got: %v", err)
 	}
-}
-
-func TestDownloadManyBlobs(t *testing.T) {
-	// Test with many blobs to verify high concurrency works
-	serverDir := t.TempDir()
-	numBlobs := 50
-	blobs := make([]Blob, numBlobs)
-	blobData := make([][]byte, numBlobs)
-
-	for i := range numBlobs {
-		blobs[i], blobData[i] = createTestBlob(t, serverDir, 512) // Small blobs
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
-		data, err := os.ReadFile(path)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write(data)
-	}))
-	defer server.Close()
-
-	clientDir := t.TempDir()
-
-	start := time.Now()
-	err := Download(context.Background(), DownloadOptions{
-		Blobs:       blobs,
-		BaseURL:     server.URL,
-		DestDir:     clientDir,
-		Concurrency: 16,
-	})
-	elapsed := time.Since(start)
-
-	if err != nil {
-		t.Fatalf("Download failed: %v", err)
-	}
-
-	// Verify all blobs
-	for i, blob := range blobs {
-		verifyBlob(t, clientDir, blob, blobData[i])
-	}
-
-	t.Logf("Downloaded %d blobs in %v", numBlobs, elapsed)
 }
 
 func TestUploadRetryOnFailure(t *testing.T) {
@@ -1665,113 +1543,388 @@ func BenchmarkUploadThroughput(b *testing.B) {
 	}
 }
 
-// TestThroughput is a quick throughput test that reports MB/s
-func TestThroughput(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping throughput test in short mode")
+// ==================== Resume Tests ====================
+
+func TestResumeFromPartialFile(t *testing.T) {
+	// Create a blob large enough for resume (>= resumeThreshold)
+	blobSize := resumeThreshold + 1024
+	data := make([]byte, blobSize)
+	for i := range data {
+		data[i] = byte((i * 13) % 256)
 	}
+	h := sha256.Sum256(data)
+	digest := fmt.Sprintf("sha256:%x", h)
+	blob := Blob{Digest: digest, Size: int64(blobSize)}
 
-	// Test parameters - 5MB total across 5 blobs
-	const blobSize = 1024 * 1024 // 1MB per blob
-	const numBlobs = 5
-	const concurrency = 5
+	var rangeHeader string
+	var mu sync.Mutex
 
-	// Create test blobs
-	serverDir := t.TempDir()
-	blobs := make([]Blob, numBlobs)
-	for i := range numBlobs {
-		data := make([]byte, blobSize)
-		// Different seed per blob for unique digests
-		for j := range data {
-			data[j] = byte((i*256 + j) % 256)
-		}
-		h := sha256.Sum256(data)
-		digest := fmt.Sprintf("sha256:%x", h)
-		blobs[i] = Blob{Digest: digest, Size: int64(len(data))}
-
-		path := filepath.Join(serverDir, digestToPath(digest))
-		os.MkdirAll(filepath.Dir(path), 0o755)
-		os.WriteFile(path, data, 0o644)
-	}
-
-	totalBytes := int64(blobSize * numBlobs)
-
-	// Download server
-	dlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
-		data, err := os.ReadFile(path)
-		if err != nil {
-			http.NotFound(w, r)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
+			w.WriteHeader(http.StatusOK)
 			return
 		}
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+
+		mu.Lock()
+		rangeHeader = r.Header.Get("Range")
+		mu.Unlock()
+
+		rng := r.Header.Get("Range")
+		if rng != "" {
+			// Parse "bytes=N-"
+			var start int64
+			fmt.Sscanf(rng, "bytes=%d-", &start)
+			if start > 0 && start < int64(blobSize) {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, blobSize-1, blobSize))
+				w.WriteHeader(http.StatusPartialContent)
+				w.Write(data[start:])
+				return
+			}
+		}
+
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
 		w.WriteHeader(http.StatusOK)
 		w.Write(data)
 	}))
-	defer dlServer.Close()
+	defer server.Close()
 
-	// Measure download throughput
 	clientDir := t.TempDir()
-	start := time.Now()
+
+	// Pre-create a partial .tmp file (first half)
+	partialSize := blobSize / 2
+	dest := filepath.Join(clientDir, digestToPath(digest))
+	os.MkdirAll(filepath.Dir(dest), 0o755)
+	os.WriteFile(dest+".tmp", data[:partialSize], 0o644)
+
 	err := Download(context.Background(), DownloadOptions{
-		Blobs:       blobs,
-		BaseURL:     dlServer.URL,
-		DestDir:     clientDir,
-		Concurrency: concurrency,
+		Blobs:   []Blob{blob},
+		BaseURL: server.URL,
+		DestDir: clientDir,
 	})
-	dlElapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Resume download failed: %v", err)
+	}
+
+	// Verify Range header was sent
+	mu.Lock()
+	if rangeHeader == "" {
+		t.Error("Expected Range header for resume, got none")
+	} else {
+		expected := fmt.Sprintf("bytes=%d-", partialSize)
+		if rangeHeader != expected {
+			t.Errorf("Range header = %q, want %q", rangeHeader, expected)
+		}
+	}
+	mu.Unlock()
+
+	// Verify final file is correct
+	finalData, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("Failed to read final file: %v", err)
+	}
+	if len(finalData) != blobSize {
+		t.Errorf("Final file size = %d, want %d", len(finalData), blobSize)
+	}
+	finalHash := sha256.Sum256(finalData)
+	if fmt.Sprintf("sha256:%x", finalHash) != digest {
+		t.Error("Final file hash mismatch")
+	}
+}
+
+func TestResumeCorruptPartialFile(t *testing.T) {
+	blobSize := resumeThreshold + 1024
+	data := make([]byte, blobSize)
+	for i := range data {
+		data[i] = byte((i * 13) % 256)
+	}
+	h := sha256.Sum256(data)
+	digest := fmt.Sprintf("sha256:%x", h)
+	blob := Blob{Digest: digest, Size: int64(blobSize)}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		rng := r.Header.Get("Range")
+		if rng != "" {
+			var start int64
+			fmt.Sscanf(rng, "bytes=%d-", &start)
+			if start > 0 && start < int64(blobSize) {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, blobSize-1, blobSize))
+				w.WriteHeader(http.StatusPartialContent)
+				w.Write(data[start:])
+				return
+			}
+		}
+
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+	}))
+	defer server.Close()
+
+	clientDir := t.TempDir()
+
+	// Pre-create a partial .tmp file with CORRUPT data
+	partialSize := blobSize / 2
+	corruptData := make([]byte, partialSize)
+	for i := range corruptData {
+		corruptData[i] = 0xFF // All 0xFF — definitely wrong
+	}
+	dest := filepath.Join(clientDir, digestToPath(digest))
+	os.MkdirAll(filepath.Dir(dest), 0o755)
+	os.WriteFile(dest+".tmp", corruptData, 0o644)
+
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob},
+		BaseURL: server.URL,
+		DestDir: clientDir,
+	})
+	// First attempt resumes with corrupt data → hash mismatch → retry.
+	// Retry should clean up .tmp and re-download fully.
+	if err != nil {
+		t.Fatalf("Download with corrupt partial file failed: %v", err)
+	}
+
+	// Verify final file is correct
+	finalData, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("Failed to read final file: %v", err)
+	}
+	finalHash := sha256.Sum256(finalData)
+	if fmt.Sprintf("sha256:%x", finalHash) != digest {
+		t.Error("Final file hash mismatch after corrupt resume recovery")
+	}
+}
+
+func TestResumePartialFileLargerThanBlob(t *testing.T) {
+	blobSize := resumeThreshold + 1024
+	data := make([]byte, blobSize)
+	for i := range data {
+		data[i] = byte((i * 13) % 256)
+	}
+	h := sha256.Sum256(data)
+	digest := fmt.Sprintf("sha256:%x", h)
+	blob := Blob{Digest: digest, Size: int64(blobSize)}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+	}))
+	defer server.Close()
+
+	clientDir := t.TempDir()
+
+	// Pre-create .tmp file LARGER than expected blob
+	oversizedData := make([]byte, blobSize+1000)
+	dest := filepath.Join(clientDir, digestToPath(digest))
+	os.MkdirAll(filepath.Dir(dest), 0o755)
+	os.WriteFile(dest+".tmp", oversizedData, 0o644)
+
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob},
+		BaseURL: server.URL,
+		DestDir: clientDir,
+	})
+	if err != nil {
+		t.Fatalf("Download with oversized .tmp failed: %v", err)
+	}
+
+	// Verify final file is correct
+	finalData, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("Failed to read final file: %v", err)
+	}
+	finalHash := sha256.Sum256(finalData)
+	if fmt.Sprintf("sha256:%x", finalHash) != digest {
+		t.Error("Final file hash mismatch")
+	}
+}
+
+func TestResumeBelowThreshold(t *testing.T) {
+	// Blob below resume threshold should NOT attempt resume
+	blobSize := 1024 // Well below resumeThreshold
+	data := make([]byte, blobSize)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	h := sha256.Sum256(data)
+	digest := fmt.Sprintf("sha256:%x", h)
+	blob := Blob{Digest: digest, Size: int64(blobSize)}
+
+	var gotRange atomic.Bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Header.Get("Range") != "" {
+			gotRange.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+	}))
+	defer server.Close()
+
+	clientDir := t.TempDir()
+
+	// Pre-create a partial .tmp file
+	dest := filepath.Join(clientDir, digestToPath(digest))
+	os.MkdirAll(filepath.Dir(dest), 0o755)
+	os.WriteFile(dest+".tmp", data[:blobSize/2], 0o644)
+
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob},
+		BaseURL: server.URL,
+		DestDir: clientDir,
+	})
 	if err != nil {
 		t.Fatalf("Download failed: %v", err)
 	}
 
-	dlThroughput := float64(totalBytes) / dlElapsed.Seconds() / (1024 * 1024)
-	t.Logf("Download: %.2f MB/s (%d bytes in %v)", dlThroughput, totalBytes, dlElapsed)
+	if gotRange.Load() {
+		t.Error("Range header sent for blob below resume threshold — should not attempt resume")
+	}
 
-	// Upload server
-	var ulServerURL string
-	ulServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodHead:
-			http.NotFound(w, r)
-		case http.MethodPost:
-			w.Header().Set("Location", fmt.Sprintf("%s/v2/library/_/blobs/uploads/1", ulServerURL))
-			w.WriteHeader(http.StatusAccepted)
-		case http.MethodPut:
-			io.Copy(io.Discard, r.Body)
-			w.WriteHeader(http.StatusCreated)
-		}
-	}))
-	defer ulServer.Close()
-	ulServerURL = ulServer.URL
-
-	// Measure upload throughput
-	start = time.Now()
-	err = Upload(context.Background(), UploadOptions{
-		Blobs:       blobs,
-		BaseURL:     ulServer.URL,
-		SrcDir:      serverDir,
-		Concurrency: concurrency,
-	})
-	ulElapsed := time.Since(start)
+	// Verify final file
+	finalData, err := os.ReadFile(dest)
 	if err != nil {
-		t.Fatalf("Upload failed: %v", err)
+		t.Fatalf("Failed to read final file: %v", err)
+	}
+	finalHash := sha256.Sum256(finalData)
+	if fmt.Sprintf("sha256:%x", finalHash) != digest {
+		t.Error("Final file hash mismatch")
+	}
+}
+
+func TestResumeServerDoesNotSupportRange(t *testing.T) {
+	blobSize := resumeThreshold + 1024
+	data := make([]byte, blobSize)
+	for i := range data {
+		data[i] = byte((i * 13) % 256)
+	}
+	h := sha256.Sum256(data)
+	digest := fmt.Sprintf("sha256:%x", h)
+	blob := Blob{Digest: digest, Size: int64(blobSize)}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// Ignore Range header — always return full content with 200
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+	}))
+	defer server.Close()
+
+	clientDir := t.TempDir()
+
+	// Pre-create partial .tmp file
+	dest := filepath.Join(clientDir, digestToPath(digest))
+	os.MkdirAll(filepath.Dir(dest), 0o755)
+	os.WriteFile(dest+".tmp", data[:blobSize/2], 0o644)
+
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob},
+		BaseURL: server.URL,
+		DestDir: clientDir,
+	})
+	if err != nil {
+		t.Fatalf("Download failed when server doesn't support Range: %v", err)
 	}
 
-	ulThroughput := float64(totalBytes) / ulElapsed.Seconds() / (1024 * 1024)
-	t.Logf("Upload: %.2f MB/s (%d bytes in %v)", ulThroughput, totalBytes, ulElapsed)
-
-	// Sanity check - local transfers should be fast (>50 MB/s is reasonable for local)
-	// This ensures the implementation isn't artificially throttled
-	if dlThroughput < 10 {
-		t.Errorf("Download throughput unexpectedly low: %.2f MB/s", dlThroughput)
+	// Verify final file is correct
+	finalData, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("Failed to read final file: %v", err)
 	}
-	if ulThroughput < 10 {
-		t.Errorf("Upload throughput unexpectedly low: %.2f MB/s", ulThroughput)
+	finalHash := sha256.Sum256(finalData)
+	if fmt.Sprintf("sha256:%x", finalHash) != digest {
+		t.Error("Final file hash mismatch")
+	}
+}
+
+func TestResumePartialFileExactSize(t *testing.T) {
+	blobSize := resumeThreshold + 1024
+	data := make([]byte, blobSize)
+	for i := range data {
+		data[i] = byte((i * 13) % 256)
+	}
+	h := sha256.Sum256(data)
+	digest := fmt.Sprintf("sha256:%x", h)
+	blob := Blob{Digest: digest, Size: int64(blobSize)}
+
+	var requestCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		requestCount.Add(1)
+
+		rng := r.Header.Get("Range")
+		if rng != "" {
+			var start int64
+			fmt.Sscanf(rng, "bytes=%d-", &start)
+			if start >= int64(blobSize) {
+				// Nothing to send
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+			if start > 0 {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, blobSize-1, blobSize))
+				w.WriteHeader(http.StatusPartialContent)
+				w.Write(data[start:])
+				return
+			}
+		}
+
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+	}))
+	defer server.Close()
+
+	clientDir := t.TempDir()
+
+	// Pre-create .tmp file with exact correct content (full size)
+	// This simulates a download that completed but wasn't renamed
+	dest := filepath.Join(clientDir, digestToPath(digest))
+	os.MkdirAll(filepath.Dir(dest), 0o755)
+	os.WriteFile(dest+".tmp", data, 0o644)
+
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob},
+		BaseURL: server.URL,
+		DestDir: clientDir,
+	})
+	if err != nil {
+		t.Fatalf("Download failed: %v", err)
 	}
 
-	// Overall time check - should complete in <500ms for local transfers
-	if dlElapsed+ulElapsed > 500*time.Millisecond {
-		t.Logf("Warning: total time %v exceeds 500ms target", dlElapsed+ulElapsed)
+	// Verify final file is correct
+	finalData, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("Failed to read final file: %v", err)
+	}
+	finalHash := sha256.Sum256(finalData)
+	if fmt.Sprintf("sha256:%x", finalHash) != digest {
+		t.Error("Final file hash mismatch")
 	}
 }

@@ -3,6 +3,7 @@ package cache
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -13,6 +14,17 @@ func skipIfNoMLX(t *testing.T) {
 	}
 }
 
+// newKVBatch builds a B=1 batch at SeqOffsets=off with all-real
+// queries (SeqQueryLens=L) — the standard single-sequence cache
+// test shape.
+func newKVBatch(off, L int) *batch.Batch {
+	return &batch.Batch{
+		InputIDs:     mlx.Zeros(mlx.DTypeInt32, 1, L),
+		SeqOffsets:   []int32{int32(off)},
+		SeqQueryLens: []int32{int32(L)},
+	}
+}
+
 func TestKVCacheSnapshotRestoreNeedBase(t *testing.T) {
 	skipIfNoMLX(t)
 	c := NewKVCache()
@@ -20,7 +32,7 @@ func TestKVCacheSnapshotRestoreNeedBase(t *testing.T) {
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(k, v)
+		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	}
 
 	// Snapshot [5, 10).
@@ -44,7 +56,7 @@ func TestKVCacheDataSurvivesSnapshotRestore(t *testing.T) {
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(k, v)
+		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	}
 
 	snap := c.Snapshot(0)
@@ -84,7 +96,7 @@ func TestKVCacheSplitPreservesData(t *testing.T) {
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(k, v)
+		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	}
 
 	snap := c.Snapshot(0)
@@ -128,7 +140,7 @@ func TestKVCacheSplitMergeRoundTripData(t *testing.T) {
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(k, v)
+		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	}
 
 	snap := c.Snapshot(0)
@@ -163,7 +175,7 @@ func TestRotatingKVCacheRestoreOutsideWindow(t *testing.T) {
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(k, v)
+		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	}
 
 	// Offset 3 is outside the window.
@@ -182,7 +194,7 @@ func TestRotatingKVCacheSnapshotPreservesWindow(t *testing.T) {
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(k, v)
+		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	}
 
 	snap := c.Snapshot(0)
@@ -194,7 +206,7 @@ func TestRotatingKVCacheSnapshotPreservesWindow(t *testing.T) {
 	for range 5 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(k, v)
+		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	}
 
 	// Restore to offset 10.
@@ -228,7 +240,7 @@ func TestRotatingKVCacheRestoreFromSnapshot(t *testing.T) {
 	for range 6 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(k, v)
+		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	}
 	if c.Offset() != 6 {
 		t.Fatalf("offset = %d, want 6", c.Offset())
@@ -240,7 +252,7 @@ func TestRotatingKVCacheRestoreFromSnapshot(t *testing.T) {
 	for range 3 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(k, v)
+		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	}
 
 	// Restore to snapshot state.
@@ -255,7 +267,7 @@ func TestRotatingKVCacheRestoreFromSnapshot(t *testing.T) {
 	// produce a valid window of size 4 at offset 7.
 	k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 	v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-	c.Update(k, v)
+	c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 
 	if c.Offset() != 7 {
 		t.Fatalf("offset after post-restore update = %d, want 7", c.Offset())
