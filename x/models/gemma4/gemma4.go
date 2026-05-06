@@ -18,10 +18,15 @@ import (
 func init() {
 	base.Register("Gemma4ForCausalLM", newModel)
 	base.Register("Gemma4ForConditionalGeneration", newModel)
+	base.RegisterDraft("Gemma4AssistantForCausalLM", newAssistantModel)
+	base.RegisterDraft("gemma4_assistant", newAssistantModel)
 }
 
 // Compile-time interface checks.
-var _ base.Model = (*Model)(nil)
+var (
+	_ base.Model               = (*Model)(nil)
+	_ base.MTPDefaultsProvider = (*Model)(nil)
+)
 
 // RopeParams holds per-layer-type RoPE settings.
 type RopeParams struct {
@@ -464,6 +469,24 @@ func parseTextConfig(configData []byte) (TextConfig, error) {
 
 func (m *Model) EnableCompile() bool {
 	return true
+}
+
+func (m *Model) MTPDraftDefaults(_ bool) base.MTPDefaults {
+	defaults := base.MTPDefaults{
+		InitialDraftTokens: 4,
+		MaxDraftTokens:     16,
+		Enabled:            true,
+	}
+	if m == nil || m.TextConfig == nil {
+		return defaults
+	}
+	switch {
+	case !m.EnableMoeBlock && m.HiddenSize == 5376 && m.NumHiddenLayers == 60:
+		defaults.InitialDraftTokens = 14
+	case m.EnableMoeBlock && m.HiddenSize == 2816 && m.NumHiddenLayers == 30:
+		defaults.InitialDraftTokens = 8
+	}
+	return defaults
 }
 
 func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
@@ -1066,6 +1089,11 @@ func (m *Model) MaxContextLength() int {
 
 func (m *Model) Tokenizer() *tokenizer.Tokenizer {
 	return m.tok
+}
+
+// TokenEmbeddings returns the target model's scaled token embeddings for MTP.
+func (m *Model) TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array {
+	return mlx.MulScalar(m.EmbedTokens.Forward(inputIDs), m.EmbedScale)
 }
 
 // NewCaches creates cache objects for layers that own KV state.

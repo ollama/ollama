@@ -349,6 +349,159 @@ func (s *Sampler) Sample(seqIDs []int, logits *mlx.Array) Result {
 	return res
 }
 
+// SpeculativeScores applies this slot's non-sampling transforms to logits
+// without mutating sampler state. Row i is scored as if draftTokens[:i] had
+// already been appended to the slot history. logits must be [R,V] or [1,R,V].
+func (s *Sampler) SpeculativeScores(seqID int, logits *mlx.Array, draftTokens *mlx.Array) *mlx.Array {
+	slot, ok := s.byID[seqID]
+	if !ok {
+		panic(fmt.Sprintf("sample.Sampler.SpeculativeScores: seqID %d not registered", seqID))
+	}
+
+	if logits.NumDims() == 3 {
+		if logits.Dim(0) != 1 {
+			panic("sample.Sampler.SpeculativeScores: only batch size 1 is supported")
+		}
+		logits = logits.Squeeze(0)
+	}
+	if logits.NumDims() != 2 {
+		panic(fmt.Sprintf("sample.Sampler.SpeculativeScores: logits must be rank 2 or 3, got rank %d", logits.NumDims()))
+	}
+
+	if draftTokens != nil && draftTokens.NumDims() == 1 {
+		draftTokens = draftTokens.ExpandDims(0)
+	}
+	rows := logits.Dim(0)
+	var hist *mlx.Array
+	if slot.opts.usesHistory() {
+		if s.history == nil {
+			panic(fmt.Sprintf("sample.Sampler.SpeculativeScores: seqID %d has no history", seqID))
+		}
+		if slot.historyLen < slot.opts.RepeatLastN {
+			return s.speculativeScoresSerial(slot, logits, draftTokens)
+		}
+		hist = s.speculativeHistory(slot, draftTokens, rows)
+	}
+
+	return slot.speculativeScores(&slotCtx{opts: slot.opts, history: hist}, logits)
+}
+
+// Commit appends already-selected tokens to seqID's repeat-penalty history.
+// It is used after speculative sampling once the accepted continuation is
+// known. Normal Sample calls continue to mutate history themselves.
+func (s *Sampler) Commit(seqID int, tokens []int32) {
+	if len(tokens) == 0 {
+		return
+	}
+	slot, ok := s.byID[seqID]
+	if !ok {
+		panic(fmt.Sprintf("sample.Sampler.Commit: seqID %d not registered", seqID))
+	}
+	if !slot.opts.usesHistory() {
+		return
+	}
+	if s.history == nil {
+		panic(fmt.Sprintf("sample.Sampler.Commit: seqID %d has no history", seqID))
+	}
+
+	row := slices.Index(s.slots, slot)
+	width := s.historyWidth()
+	take := min(len(tokens), slot.opts.RepeatLastN)
+	startLen := slot.historyLen + len(tokens) - take
+	writeTokens := tokens[len(tokens)-take:]
+	flatOffsets := make([]int32, take)
+	for i := range take {
+		ringPos := (startLen + i) % slot.opts.RepeatLastN
+		flatOffsets[i] = int32(row*width + ringPos)
+	}
+
+	flatIdx := mlx.NewArrayInt32(flatOffsets, []int32{int32(take), 1})
+	values := mlx.NewArrayInt32(writeTokens, []int32{int32(take), 1})
+	flatHist := s.history.Reshape(s.history.Dim(0)*width, 1)
+	s.history.Set(flatHist.PutAlongAxis(flatIdx, values, 0).Reshape(s.history.Dim(0), width))
+	slot.historyLen += len(tokens)
+}
+
+func (s *Sampler) speculativeScoresSerial(slot *slotState, logits *mlx.Array, draftTokens *mlx.Array) *mlx.Array {
+	rows := logits.Dim(0)
+	draftCount := 0
+	if draftTokens != nil {
+		draftCount = draftTokens.Dim(1)
+	}
+	row := slices.Index(s.slots, slot)
+	baseFill := min(slot.historyLen, slot.opts.RepeatLastN)
+	var base *mlx.Array
+	if baseFill > 0 {
+		base = s.history.Slice(mlx.Slice(row, row+1), mlx.Slice(0, baseFill))
+	}
+
+	scored := make([]*mlx.Array, 0, rows)
+	for i := range rows {
+		rowLogits := logits.Slice(mlx.Slice(i, i+1), mlx.Slice())
+		hist := base
+		prefixLen := min(i, draftCount)
+		if prefixLen > 0 {
+			prefix := draftTokens.Slice(mlx.Slice(), mlx.Slice(0, prefixLen))
+			if hist == nil {
+				hist = prefix
+			} else {
+				hist = hist.Concatenate(1, prefix)
+			}
+			if hist.Dim(1) > slot.opts.RepeatLastN {
+				hist = hist.Slice(mlx.Slice(), mlx.Slice(hist.Dim(1)-slot.opts.RepeatLastN, mlx.End))
+			}
+		}
+		scored = append(scored, slot.speculativeScores(&slotCtx{opts: slot.opts, history: hist}, rowLogits))
+	}
+	return mlx.Concatenate(scored, 0)
+}
+
+func (s *Sampler) speculativeHistory(slot *slotState, draftTokens *mlx.Array, rows int) *mlx.Array {
+	row := slices.Index(s.slots, slot)
+	width := slot.opts.RepeatLastN
+	base := s.history.Slice(mlx.Slice(row, row+1), mlx.Slice(0, width))
+	base = mlx.Tile(base, []int32{int32(rows), 1})
+	next := slot.historyLen % width
+	draftCount := 0
+	if draftTokens != nil {
+		draftCount = draftTokens.Dim(1)
+	}
+	if draftCount == 0 {
+		return base
+	}
+
+	sourceIdx := make([]int32, rows*width)
+	writeMask := make([]bool, rows*width)
+	for i := range rows {
+		prefixLen := min(i, draftCount)
+		for j := range prefixLen {
+			pos := (next + j) % width
+			sourceIdx[i*width+pos] = int32(j)
+			writeMask[i*width+pos] = true
+		}
+	}
+
+	draftRows := mlx.Tile(draftTokens, []int32{int32(rows), 1})
+	idx := mlx.NewArrayInt32(sourceIdx, []int32{int32(rows), int32(width)})
+	mask := mlx.FromValues(writeMask, rows, width)
+	values := draftRows.TakeAlongAxis(idx, 1)
+	return mlx.Where(mask, values, base)
+}
+
+func (slot *slotState) speculativeScores(ctx *slotCtx, logits *mlx.Array) *mlx.Array {
+	scores := logits
+	// buildTransforms always appends the final selector transform
+	// (greedy or temperature sampling). Speculative validation needs the
+	// processed logits before that selector mutates the distribution.
+	for _, t := range slot.transforms[:len(slot.transforms)-1] {
+		scores = t(ctx, scores)
+	}
+	if slot.opts.Temperature > 0 {
+		scores = mlx.DivScalar(scores, slot.opts.Temperature)
+	}
+	return scores
+}
+
 // canBatch reports whether the call can take the uniform batched path.
 // All slots must share Options; when penalties are active the call must
 // additionally cover every registered slot in registration order with a

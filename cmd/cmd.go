@@ -54,6 +54,7 @@ import (
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcmd "github.com/ollama/ollama/x/cmd"
+	xcreate "github.com/ollama/ollama/x/create"
 	xcreateclient "github.com/ollama/ollama/x/create/client"
 	"github.com/ollama/ollama/x/imagegen"
 )
@@ -145,6 +146,39 @@ func isLocalhost() bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
+func resolveExperimentalLocalModelDir(ref, filename string) string {
+	if ref == "" || filepath.IsAbs(ref) || filename == "" {
+		return ref
+	}
+
+	candidate := filepath.Join(filepath.Dir(filename), ref)
+	if xcreate.IsSafetensorsModelDir(candidate) || xcreate.IsTensorModelDir(candidate) {
+		return candidate
+	}
+
+	return ref
+}
+
+func resolveExperimentalDraftDir(ref, filename string) (string, error) {
+	if ref == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(ref) {
+		if xcreate.IsSafetensorsModelDir(ref) {
+			return ref, nil
+		}
+		return "", fmt.Errorf("draft %s is not a supported safetensors model directory", ref)
+	}
+	if filename != "" {
+		candidate := filepath.Join(filepath.Dir(filename), ref)
+		if xcreate.IsSafetensorsModelDir(candidate) {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("DRAFT model references are not supported with --experimental yet: %s", ref)
+}
+
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
@@ -159,6 +193,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	// Check for --experimental flag for safetensors model creation
 	// This gates both safetensors LLM and imagegen model creation
 	experimental, _ := cmd.Flags().GetBool("experimental")
+	draftQuantize, _ := cmd.Flags().GetString("draft-quantize")
+	if draftQuantize != "" && !experimental {
+		return errors.New("--draft-quantize requires --experimental")
+	}
 	if experimental {
 		if !isLocalhost() {
 			return errors.New("remote safetensor model creation not yet supported")
@@ -192,17 +230,22 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		// Resolve relative paths based on Modelfile location
-		if !filepath.IsAbs(modelDir) && filename != "" {
-			modelDir = filepath.Join(filepath.Dir(filename), modelDir)
+		modelDir = resolveExperimentalLocalModelDir(modelDir, filename)
+		if mfConfig.Draft != "" {
+			draftDir, err := resolveExperimentalDraftDir(mfConfig.Draft, filename)
+			if err != nil {
+				return err
+			}
+			mfConfig.Draft = draftDir
 		}
 
 		quantize, _ := cmd.Flags().GetString("quantize")
 		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
-			ModelName: modelName,
-			ModelDir:  modelDir,
-			Quantize:  quantize,
-			Modelfile: mfConfig,
+			ModelName:     modelName,
+			ModelDir:      modelDir,
+			Quantize:      quantize,
+			DraftQuantize: draftQuantize,
+			Modelfile:     mfConfig,
 		}, p)
 	}
 
@@ -2176,6 +2219,9 @@ func NewCLI() *cobra.Command {
 			if experimental, _ := cmd.Flags().GetBool("experimental"); experimental {
 				return nil
 			}
+			if draftQuantize, _ := cmd.Flags().GetString("draft-quantize"); draftQuantize != "" {
+				return errors.New("--draft-quantize requires --experimental")
+			}
 			return checkServerHeartbeat(cmd, args)
 		},
 		RunE: CreateHandler,
@@ -2183,6 +2229,7 @@ func NewCLI() *cobra.Command {
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
+	createCmd.Flags().String("draft-quantize", "", "Quantize draft model to this level")
 	createCmd.Flags().Bool("experimental", false, "Enable experimental safetensors model creation")
 
 	showCmd := &cobra.Command{

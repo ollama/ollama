@@ -62,13 +62,15 @@ if echo $PLATFORM | grep "," > /dev/null ; then
         tar c -C ./dist/linux_arm64 --exclude cuda_jetpack5 --exclude cuda_jetpack6 . | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64.tar.zst
         tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack5  | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64-jetpack5.tar.zst
         tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack6  | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64-jetpack6.tar.zst
-        tar c -C ./dist/linux_amd64 --exclude rocm . | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64.tar.zst
+        tar c -C ./dist/linux_amd64 --exclude rocm --exclude 'mlx*' --exclude include . | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64.tar.zst
         tar c -C ./dist/linux_amd64 ./lib/ollama/rocm  | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
+        tar c -C ./dist/linux_amd64 ./lib/ollama/mlx_cuda_v13 ./lib/ollama/include  | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64-mlx.tar.zst
 elif echo $PLATFORM | grep "arm64" > /dev/null ; then
         tar c -C ./dist/ --exclude cuda_jetpack5 --exclude cuda_jetpack6 bin lib | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64.tar.zst
         tar c -C ./dist/ ./lib/ollama/cuda_jetpack5  | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64-jetpack5.tar.zst
         tar c -C ./dist/ ./lib/ollama/cuda_jetpack6  | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64-jetpack6.tar.zst
 elif echo $PLATFORM | grep "amd64" > /dev/null ; then
-        tar c -C ./dist/ --exclude rocm bin lib | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64.tar.zst
+        tar c -C ./dist/ --exclude rocm --exclude 'mlx*' --exclude include bin lib | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64.tar.zst
         tar c -C ./dist/ ./lib/ollama/rocm  | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
+        tar c -C ./dist/ ./lib/ollama/mlx_cuda_v13 ./lib/ollama/include  | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64-mlx.tar.zst
 fi

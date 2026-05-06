@@ -65,7 +65,12 @@ func (w *StatusWriter) AppendError(msg string) {
 // logs, add a small rolling buffer here to capture those fragments.
 
 var errorPrefixes = []string{
+	"mlx:",
+	"MLX:",
+	"panic:",
+	"fatal error:",
 	"error:",
+	"Error:",
 	"CUDA error",
 	"ROCm error",
 	"cudaMalloc failed",
@@ -79,14 +84,20 @@ var errorPrefixes = []string{
 
 func (w *StatusWriter) Write(b []byte) (int, error) {
 	var errMsg string
+	errStart := -1
+	var errPrefix string
 	for _, prefix := range errorPrefixes {
-		if _, after, ok := bytes.Cut(b, []byte(prefix)); ok {
-			line := after
-			if j := bytes.IndexByte(line, '\n'); j >= 0 {
-				line = line[:j]
-			}
-			errMsg = prefix + string(bytes.TrimRight(line, " \t\r"))
+		if i := bytes.Index(b, []byte(prefix)); i >= 0 && (errStart < 0 || i < errStart) {
+			errStart = i
+			errPrefix = prefix
 		}
+	}
+	if errStart >= 0 {
+		line := b[errStart+len(errPrefix):]
+		if j := bytes.IndexByte(line, '\n'); j >= 0 {
+			line = line[:j]
+		}
+		errMsg = errPrefix + string(bytes.TrimRight(line, " \t\r"))
 	}
 	if errMsg != "" {
 		w.AppendError(errMsg)
