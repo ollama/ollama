@@ -63,7 +63,7 @@ func (c *ClaudeDesktop) AutodiscoveredModel() string {
 	return claudeDesktopModelLabel
 }
 
-func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
+func (c *ClaudeDesktop) ConfigureAutodiscovery(forceReconfigure bool) error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 		return err
 	}
 
-	key, err := claudeDesktopValidatedAPIKey(context.Background(), claudeDesktopTargetProfilePaths(targets))
+	key, err := claudeDesktopValidatedAPIKey(context.Background(), claudeDesktopTargetProfilePaths(targets), forceReconfigure)
 	if err != nil {
 		return err
 	}
@@ -444,7 +444,11 @@ const (
 	claudeDesktopAPIKeySourceProfile
 )
 
-func claudeDesktopValidatedAPIKey(ctx context.Context, profilePaths []string) (string, error) {
+func claudeDesktopValidatedAPIKey(ctx context.Context, profilePaths []string, forcePrompt bool) (string, error) {
+	if forcePrompt {
+		return promptValidClaudeDesktopAPIKey(ctx)
+	}
+
 	key, source, err := claudeDesktopAPIKey(profilePaths)
 	if err != nil {
 		return "", err

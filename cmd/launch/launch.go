@@ -167,7 +167,7 @@ type ManagedAutodiscoveryIntegration interface {
 	Paths() []string
 	AutodiscoveredModel() string
 	AutodiscoveryConfigured() bool
-	ConfigureAutodiscovery() error
+	ConfigureAutodiscovery(forceReconfigure bool) error
 	Onboard() error
 }
 
@@ -777,7 +777,7 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 	needsConfigure := req.ForceConfigure || req.ConfigureOnly || !autodiscovery.AutodiscoveryConfigured() || !savedMatchesModels(saved, []string{target})
 
 	if needsConfigure {
-		if err := prepareManagedAutodiscoveryIntegration(name, runner, autodiscovery, target); err != nil {
+		if err := prepareManagedAutodiscoveryIntegration(name, runner, autodiscovery, target, req.ForceConfigure || req.ConfigureOnly); err != nil {
 			return err
 		}
 		if refresher, ok := autodiscovery.(ManagedRuntimeRefresher); ok {

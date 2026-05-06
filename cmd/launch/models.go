@@ -337,13 +337,13 @@ func prepareManagedSingleIntegration(name string, runner Runner, managed Managed
 	return nil
 }
 
-func prepareManagedAutodiscoveryIntegration(name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, model string) error {
+func prepareManagedAutodiscoveryIntegration(name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, model string, forceReconfigure bool) error {
 	if ok, err := confirmConfigEdit(runner, autodiscovery.Paths()); err != nil {
 		return err
 	} else if !ok {
 		return errCancelled
 	}
-	if err := autodiscovery.ConfigureAutodiscovery(); err != nil {
+	if err := autodiscovery.ConfigureAutodiscovery(forceReconfigure); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 	if err := config.SaveIntegration(name, []string{model}); err != nil {

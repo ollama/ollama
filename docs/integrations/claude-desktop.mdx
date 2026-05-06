@@ -15,7 +15,7 @@ Claude Desktop can use Ollama Cloud, including Claude Cowork and Claude Code ins
 - Claude Desktop for macOS or Windows
 - An [Ollama API key](https://ollama.com/settings/keys)
 
-Set the key in your shell before launching:
+Set the key in your shell before launching, or enter it when Ollama asks:
 
 ```shell
 export OLLAMA_API_KEY=your_api_key
@@ -46,6 +46,8 @@ The same models are also available to Claude Code inside Claude Desktop:
 ```shell
 ollama launch claude-desktop --config
 ```
+
+Use `--config` to re-enter your API key if setup was canceled or Claude Desktop opens without Ollama Cloud models.
 
 ## Restore normal Claude
 

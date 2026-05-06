@@ -127,11 +127,12 @@ func (r *launcherManagedListRunner) ConfigureWithModels(primary string, models [
 
 type launcherManagedAutodiscoveryRunner struct {
 	launcherManagedRunner
-	autodiscoveryConfigures int
-	autodiscoveryConfigured bool
-	usesCloud               bool
-	restoreHint             string
-	configSuccessMessage    string
+	autodiscoveryConfigures        int
+	autodiscoveryForceReconfigures []bool
+	autodiscoveryConfigured        bool
+	usesCloud                      bool
+	restoreHint                    string
+	configSuccessMessage           string
 }
 
 func (r *launcherManagedAutodiscoveryRunner) AutodiscoveredModel() string { return "Ollama Cloud" }
@@ -148,8 +149,9 @@ func (r *launcherManagedAutodiscoveryRunner) AutodiscoveryConfigured() bool {
 	return r.autodiscoveryConfigured
 }
 
-func (r *launcherManagedAutodiscoveryRunner) ConfigureAutodiscovery() error {
+func (r *launcherManagedAutodiscoveryRunner) ConfigureAutodiscovery(forceReconfigure bool) error {
 	r.autodiscoveryConfigures++
+	r.autodiscoveryForceReconfigures = append(r.autodiscoveryForceReconfigures, forceReconfigure)
 	r.autodiscoveryConfigured = true
 	return nil
 }
@@ -749,6 +751,9 @@ func TestLaunchIntegration_ManagedAutodiscoverySkipsModelPicker(t *testing.T) {
 	if runner.autodiscoveryConfigures != 1 {
 		t.Fatalf("expected one autodiscovery configure, got %d", runner.autodiscoveryConfigures)
 	}
+	if diff := cmp.Diff([]bool{false}, runner.autodiscoveryForceReconfigures); diff != "" {
+		t.Fatalf("force reconfigure mismatch (-want +got):\n%s", diff)
+	}
 	if runner.ranModel != "Ollama Cloud" {
 		t.Fatalf("expected launch to run autodiscovery label, got %q", runner.ranModel)
 	}
@@ -927,6 +932,9 @@ func TestLaunchIntegration_ManagedAutodiscoveryForceConfigureRerunsSetup(t *test
 
 	if runner.autodiscoveryConfigures != 1 {
 		t.Fatalf("expected forced autodiscovery configure to rerun setup, got %d configures", runner.autodiscoveryConfigures)
+	}
+	if diff := cmp.Diff([]bool{true}, runner.autodiscoveryForceReconfigures); diff != "" {
+		t.Fatalf("force reconfigure mismatch (-want +got):\n%s", diff)
 	}
 	if runner.ranModel != "Ollama Cloud" {
 		t.Fatalf("expected launch to run autodiscovery label, got %q", runner.ranModel)
