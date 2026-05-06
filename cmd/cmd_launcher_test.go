@@ -76,11 +76,18 @@ func TestRunInteractiveTUI_RunModelActionsUseResolveRunModel(t *testing.T) {
 
 			var gotReq launch.RunModelRequest
 			var launched string
+			prefetchedAccount := &launch.AccountState{}
+			accountUpdates := func(context.Context) <-chan *launch.AccountState { return nil }
 			deps := launcherDeps{
 				buildState: func(ctx context.Context) (*launch.LauncherState, error) {
 					return &launch.LauncherState{}, nil
 				},
-				runMenu: runMenu,
+				runMenu: func(state *launch.LauncherState) (tui.TUIAction, error) {
+					if state.AccountState != prefetchedAccount {
+						t.Fatalf("prefetched account state was not piped to menu state")
+					}
+					return runMenu(state)
+				},
 				resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
 					gotReq = req
 					return tt.wantModel, nil
@@ -90,6 +97,10 @@ func TestRunInteractiveTUI_RunModelActionsUseResolveRunModel(t *testing.T) {
 					launched = model
 					return nil
 				},
+				accountState: func() *launch.AccountState {
+					return prefetchedAccount
+				},
+				accountStateUpdates: accountUpdates,
 			}
 
 			cmd := &cobra.Command{}
@@ -106,6 +117,12 @@ func TestRunInteractiveTUI_RunModelActionsUseResolveRunModel(t *testing.T) {
 
 			if gotReq.ForcePicker != tt.wantForce {
 				t.Fatalf("expected ForcePicker=%v, got %v", tt.wantForce, gotReq.ForcePicker)
+			}
+			if gotReq.AccountState != prefetchedAccount {
+				t.Fatalf("expected prefetched account state to be passed to run model request")
+			}
+			if gotReq.AccountStateUpdates == nil {
+				t.Fatalf("expected account state updates to be passed to run model request")
 			}
 			if launched != tt.wantModel {
 				t.Fatalf("expected interactive launcher to run %q, got %q", tt.wantModel, launched)
@@ -148,17 +165,28 @@ func TestRunInteractiveTUI_IntegrationActionsUseLaunchIntegration(t *testing.T) 
 			}
 
 			var gotReq launch.IntegrationLaunchRequest
+			prefetchedAccount := &launch.AccountState{}
+			accountUpdates := func(context.Context) <-chan *launch.AccountState { return nil }
 			deps := launcherDeps{
 				buildState: func(ctx context.Context) (*launch.LauncherState, error) {
 					return &launch.LauncherState{}, nil
 				},
-				runMenu:         runMenu,
+				runMenu: func(state *launch.LauncherState) (tui.TUIAction, error) {
+					if state.AccountState != prefetchedAccount {
+						t.Fatalf("prefetched account state was not piped to menu state")
+					}
+					return runMenu(state)
+				},
 				resolveRunModel: unexpectedRunModelResolution(t),
 				launchIntegration: func(ctx context.Context, req launch.IntegrationLaunchRequest) error {
 					gotReq = req
 					return nil
 				},
 				runModel: unexpectedModelLaunch(t),
+				accountState: func() *launch.AccountState {
+					return prefetchedAccount
+				},
+				accountStateUpdates: accountUpdates,
 			}
 
 			cmd := &cobra.Command{}
@@ -178,6 +206,12 @@ func TestRunInteractiveTUI_IntegrationActionsUseLaunchIntegration(t *testing.T) 
 			}
 			if gotReq.ForceConfigure != tt.wantForce {
 				t.Fatalf("expected ForceConfigure=%v, got %v", tt.wantForce, gotReq.ForceConfigure)
+			}
+			if gotReq.AccountState != prefetchedAccount {
+				t.Fatalf("expected prefetched account state to be passed to integration request")
+			}
+			if gotReq.AccountStateUpdates == nil {
+				t.Fatalf("expected account state updates to be passed to integration request")
 			}
 			if got := config.LastSelection(); got != "claude" {
 				t.Fatalf("expected last selection to be claude, got %q", got)

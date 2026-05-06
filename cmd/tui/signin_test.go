@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ollama/ollama/cmd/launch"
 )
 
 func TestRenderSignIn_ContainsModelName(t *testing.T) {
@@ -50,6 +51,35 @@ func TestRenderSignIn_ContainsEscHelp(t *testing.T) {
 	}
 }
 
+func TestRenderUpgrade_AsksBeforeOpening(t *testing.T) {
+	got := renderUpgrade("kimi-k2.6:cloud", 0, 80, false, true)
+	if !strings.Contains(got, "kimi-k2.6:cloud") {
+		t.Error("should contain model name")
+	}
+	if !strings.Contains(got, launch.DefaultUpgradeURL) {
+		t.Error("should contain upgrade URL")
+	}
+	if !strings.Contains(got, "Open now?") {
+		t.Error("should ask before opening")
+	}
+	if !strings.Contains(got, "Yes") || !strings.Contains(got, "No") {
+		t.Error("should show yes/no selector")
+	}
+	if strings.Contains(got, "Waiting for upgrade to complete") {
+		t.Error("should not start waiting before open choice is confirmed")
+	}
+}
+
+func TestRenderUpgrade_PollingShowsWaiting(t *testing.T) {
+	got := renderUpgrade("kimi-k2.6:cloud", 0, 80, true, true)
+	if !strings.Contains(got, "Waiting for upgrade to complete") {
+		t.Error("should contain waiting message")
+	}
+	if strings.Contains(got, "Open now?") {
+		t.Error("should not show open prompt while polling")
+	}
+}
+
 func TestSignInModel_EscCancels(t *testing.T) {
 	m := signInModel{
 		modelName: "test:cloud",
@@ -63,6 +93,35 @@ func TestSignInModel_EscCancels(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("esc should return tea.Quit")
+	}
+}
+
+func TestUpgradeModel_NoCancelsWithoutPolling(t *testing.T) {
+	m := upgradeModel{
+		modelName:    "kimi-k2.6:cloud",
+		requiredPlan: "pro",
+		openNow:      true,
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	fm := updated.(upgradeModel)
+	if fm.openNow {
+		t.Error("right should select no")
+	}
+	if fm.polling {
+		t.Error("right should not start polling")
+	}
+
+	updated, cmd := fm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	fm = updated.(upgradeModel)
+	if !fm.cancelled {
+		t.Error("enter on no should cancel")
+	}
+	if fm.polling {
+		t.Error("enter on no should not start polling")
+	}
+	if cmd == nil {
+		t.Error("enter on no should quit")
 	}
 }
 

@@ -319,7 +319,7 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 
 	var selectorCalls int
 	var gotCurrent string
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		selectorCalls++
 		gotCurrent = current
 		return "llama3.2", nil
@@ -556,7 +556,7 @@ func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) 
 	defer func() { DefaultSingleSelector = oldSelector }()
 
 	var gotCurrent string
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		gotCurrent = current
 		return "qwen3:8b", nil
 	}
@@ -610,7 +610,7 @@ func TestLaunchCmdHeadlessYes_IntegrationRequiresModelEvenWhenSaved(t *testing.T
 
 	oldSelector := DefaultSingleSelector
 	defer func() { DefaultSingleSelector = oldSelector }()
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		t.Fatal("selector should not be called for headless --yes saved-model launch")
 		return "", nil
 	}
@@ -647,7 +647,7 @@ func TestLaunchCmdHeadlessYes_IntegrationWithoutSavedModelReturnsError(t *testin
 
 	oldSelector := DefaultSingleSelector
 	defer func() { DefaultSingleSelector = oldSelector }()
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		t.Fatal("selector should not be called for headless --yes without saved model")
 		return "", nil
 	}
