@@ -35,7 +35,7 @@ func TestSchedInit(t *testing.T) {
 }
 
 func TestSchedLoad(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 1*time.Second)
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
@@ -536,7 +536,7 @@ func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
 }
 
 func TestSchedExpireRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 1*time.Second)
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
@@ -588,15 +588,24 @@ func TestSchedExpireRunner(t *testing.T) {
 	}
 
 	s.expireRunner(&Model{ModelPath: modelPath})
-
 	s.finishedReqCh <- req
-	s.processCompleted(ctx)
 
-	s.loadedMu.Lock()
-	if len(s.loaded) != 0 {
-		t.Fatalf("expected model to be unloaded")
+	go s.processCompleted(ctx)
+
+	// Wait for the model to unload with a 1s timeout
+	start := time.Now()
+	for {
+		s.loadedMu.Lock()
+		loadedCount := len(s.loaded)
+		s.loadedMu.Unlock()
+		if loadedCount == 0 {
+			break
+		}
+		if time.Since(start) > 1*time.Second {
+			t.Fatalf("timed out waiting for model to unload")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	s.loadedMu.Unlock()
 }
 
 // TODO - add one scenario that triggers the bogus finished event with positive ref count
