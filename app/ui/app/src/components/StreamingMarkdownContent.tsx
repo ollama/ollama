@@ -2,7 +2,8 @@ import React from "react";
 import { Streamdown, defaultRemarkPlugins } from "streamdown";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
-import type { BundledLanguage, ThemedToken } from "shiki";
+import type { BundledLanguage } from "shiki";
+import type { ThemeRegistrationAny, ThemedToken } from "@shikijs/types";
 import { highlighter, THEME_LIGHT, THEME_DARK } from "@/lib/highlighter";
 import { useTheme } from "@/hooks/useTheme";
 
@@ -63,9 +64,10 @@ const CodeBlock = React.memo(
       }
 
       try {
+        const shikiTheme = theme === "dark" ? THEME_DARK : THEME_LIGHT;
         const result = highlighter.codeToTokensBase(codeText, {
           lang: language as BundledLanguage,
-          theme: theme === "dark" ? THEME_DARK : THEME_LIGHT,
+          theme: shikiTheme as ThemeRegistrationAny,
         });
         tokenCacheRef.current[themeKey] = result;
         return result;
