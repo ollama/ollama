@@ -50,8 +50,18 @@ var initDevices = sync.OnceFunc(func() {
 	backends = make(map[C.ggml_backend_dev_t]C.ggml_backend_t)
 	for i := range C.ggml_backend_dev_count() {
 		d := C.ggml_backend_dev_get(i)
+		t := C.ggml_backend_dev_type(d)
+		name := C.GoString(C.ggml_backend_dev_name(d))
 
-		switch C.ggml_backend_dev_type(d) {
+		b := C.ggml_backend_dev_init(d, nil)
+		if b == nil {
+			slog.Error("failed to initialize ggml backend device", "device", name, "type", t)
+			panic(fmt.Sprintf("failed to initialize ggml backend device: %s", name))
+		}
+
+		backends[d] = b
+
+		switch t {
 		case C.GGML_BACKEND_DEVICE_TYPE_CPU:
 			if len(cpus) == 0 {
 				// only the first cpu device should be used
@@ -63,8 +73,6 @@ var initDevices = sync.OnceFunc(func() {
 			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
 			gpus = append(gpus, d)
 		}
-
-		backends[d] = C.ggml_backend_dev_init(d, nil)
 	}
 })
 

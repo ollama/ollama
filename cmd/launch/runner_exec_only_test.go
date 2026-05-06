@@ -45,10 +45,30 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 				return filepath.Join(home, ".pi", "agent", "models.json")
 			},
 		},
+		{
+			name:   "pool",
+			binary: "pool",
+			runner: &Poolside{},
+			checkPath: func(home string) string {
+				return filepath.Join(home, ".poolside", "config")
+			},
+		},
+		{
+			name:   "kimi",
+			binary: "kimi",
+			runner: &Kimi{},
+			checkPath: func(home string) string {
+				return filepath.Join(home, ".kimi", "config.toml")
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.name == "pool" && poolsideGOOS == "windows" {
+				t.Skip("Poolside is intentionally unsupported on Windows")
+			}
+
 			home := t.TempDir()
 			setTestHome(t, home)
 
@@ -56,6 +76,10 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			writeFakeBinary(t, binDir, tt.binary)
 			if tt.name == "pi" {
 				writeFakeBinary(t, binDir, "npm")
+			}
+			if tt.name == "kimi" {
+				writeFakeBinary(t, binDir, "curl")
+				writeFakeBinary(t, binDir, "bash")
 			}
 			t.Setenv("PATH", binDir)
 
