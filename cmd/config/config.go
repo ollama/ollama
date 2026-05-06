@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/envconfig"
 )
 
 type integration struct {
@@ -29,19 +30,11 @@ type config struct {
 }
 
 func configPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".ollama", "config.json"), nil
+	return filepath.Join(envconfig.Home(), "config.json"), nil
 }
 
 func legacyConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".ollama", "config", "config.json"), nil
+	return filepath.Join(envconfig.Home(), "config", "config.json"), nil
 }
 
 // migrateConfig moves the config from the legacy path to ~/.ollama/config.json
