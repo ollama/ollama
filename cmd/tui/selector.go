@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -56,7 +55,7 @@ var (
 const maxSelectorItems = 10
 
 // ErrCancelled is returned when the user cancels the selection.
-var ErrCancelled = errors.New("cancelled")
+var ErrCancelled = launch.ErrCancelled
 
 type SelectItem struct {
 	Name        string
@@ -817,14 +816,18 @@ func (m multiSelectorModel) View() string {
 
 	s.WriteString("\n")
 
+	count := m.selectedCount()
 	if !m.multi {
+		if count > 0 {
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press tab to edit", count)))
+			s.WriteString("\n\n")
+		}
 		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • ← back"))
 	} else {
-		count := m.selectedCount()
 		if count == 0 {
-			s.WriteString(selectorDescStyle.Render("  Select at least one model."))
+			s.WriteString(sectionHeaderStyle.Render("Select at least one model."))
 		} else {
-			s.WriteString(selectorDescStyle.Render(fmt.Sprintf("  %d selected - press enter to continue", count)))
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press enter to continue", count)))
 		}
 		s.WriteString("\n\n")
 		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back"))

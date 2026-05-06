@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"opencode", "droid", "pi"}
+var launcherIntegrationOrder = []string{"claude-desktop", "claude", "openclaw", "hermes", "opencode", "codex", "copilot", "droid", "pi", "pool"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -46,6 +46,18 @@ var integrationSpecs = []*IntegrationSpec{
 				return err == nil
 			},
 			URL: "https://code.claude.com/docs/en/quickstart",
+		},
+	},
+	{
+		Name:        "claude-desktop",
+		Runner:      &ClaudeDesktop{},
+		Aliases:     []string{"claude-app"},
+		Description: "Claude Desktop with Ollama Cloud",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return claudeDesktopInstalled()
+			},
+			URL: "https://claude.com/download",
 		},
 	},
 	{
@@ -75,6 +87,36 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
+		Name:        "kimi",
+		Runner:      &Kimi{},
+		Description: "Moonshot's coding agent for terminal and IDEs",
+		Hidden:      true,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := exec.LookPath("kimi")
+				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureKimiInstalled()
+				return err
+			},
+			URL: "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
+		},
+	},
+	{
+		Name:        "copilot",
+		Runner:      &Copilot{},
+		Aliases:     []string{"copilot-cli"},
+		Description: "GitHub's AI coding agent for the terminal",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&Copilot{}).findPath()
+				return err == nil
+			},
+			URL: "https://github.com/features/copilot/cli/",
+		},
+	},
+	{
 		Name:        "droid",
 		Runner:      &Droid{},
 		Description: "Factory's coding agent across terminal and IDEs",
@@ -92,8 +134,8 @@ var integrationSpecs = []*IntegrationSpec{
 		Description: "Anomaly's open-source coding agent",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
-				_, err := exec.LookPath("opencode")
-				return err == nil
+				_, ok := findOpenCode()
+				return ok
 			},
 			URL: "https://opencode.ai",
 		},
@@ -134,6 +176,32 @@ var integrationSpecs = []*IntegrationSpec{
 				return err
 			},
 			Command: []string{"npm", "install", "-g", "@mariozechner/pi-coding-agent@latest"},
+		},
+	},
+	{
+		Name:        "pool",
+		Runner:      &Poolside{},
+		Description: "Poolside's software agent for enterprise development",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := exec.LookPath("pool")
+				return err == nil
+			},
+			URL: "https://github.com/poolsideai/pool",
+		},
+	},
+	{
+		Name:        "hermes",
+		Runner:      &Hermes{},
+		Description: "Self-improving AI agent built by Nous Research",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&Hermes{}).installed()
+			},
+			EnsureInstalled: func() error {
+				return (&Hermes{}).ensureInstalled()
+			},
+			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
 		},
 	},
 	{
@@ -241,6 +309,12 @@ func ListVisibleIntegrationSpecs() []IntegrationSpec {
 		if spec.Hidden {
 			continue
 		}
+		if supported, ok := spec.Runner.(SupportedIntegration); ok && supported.Supported() != nil {
+			continue
+		}
+		if spec.Name == "pool" && poolsideGOOS == "windows" {
+			continue
+		}
 		visible = append(visible, *spec)
 	}
 
@@ -255,10 +329,10 @@ func ListVisibleIntegrationSpecs() []IntegrationSpec {
 			return aRank - bRank
 		}
 		if aRank > 0 {
-			return 1
+			return -1
 		}
 		if bRank > 0 {
-			return -1
+			return 1
 		}
 		return strings.Compare(a.Name, b.Name)
 	})
@@ -353,6 +427,16 @@ func EnsureIntegrationInstalled(name string, runner Runner) error {
 	integration, err := integrationFor(name)
 	if err != nil {
 		return fmt.Errorf("%s is not installed", runner)
+	}
+
+	if supported, ok := runner.(SupportedIntegration); ok {
+		if err := supported.Supported(); err != nil {
+			return err
+		}
+	}
+
+	if integration.spec.Name == "pool" && poolsideGOOS == "windows" {
+		return poolsideUnsupportedError()
 	}
 
 	if integration.installed {

@@ -42,8 +42,10 @@ func (t tensorBase) Kind() uint32 {
 		strings.HasSuffix(t.name, ".bias") ||
 		strings.HasSuffix(t.name, ".shortconv.conv.weight") ||
 		strings.HasSuffix(t.name, ".ssm_conv1d.weight") || // SSM conv kernel must be F32 for Metal
-		strings.HasPrefix(t.name, "a.conv1d.") || // audio SSCP conv weights must be F32 for im2col
-		strings.Contains(t.name, ".conv_dw.") || // audio depthwise conv weights must be F32
+		strings.HasPrefix(t.name, "a.feature_extractor.") || // audio feature-extractor constants are read with BackendGet and must be real F32 values
+		strings.HasPrefix(t.name, "a.conv1d.") || // audio SSCP conv weights are kept F32 for im2col; this likely slows audio and should be revisited
+		strings.HasPrefix(t.name, "a.subsampling.") || // audio Parakeet subsampling weights are kept F32 for conv/linear stability; this likely slows audio and should be revisited
+		strings.Contains(t.name, ".conv_dw.") || // audio depthwise conv weights are kept F32; this likely slows audio and should be revisited
 		t.name == "token_types.weight" ||
 		t.name == "v.positional_embedding_vlm" ||
 		t.name == "v.position_embd.weight" ||

@@ -112,10 +112,9 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			}
 
 			ctx1stPass, cancel := context.WithTimeout(ctx, bootstrapTimeout)
-			defer cancel()
-
 			// For this pass, we retain duplicates in case any are incompatible with some libraries
-			devices = append(devices, bootstrapDevices(ctx1stPass, dirs, nil)...)
+			devices = append(devices, bootstrapDevicesWithMetalRetry(ctx1stPass, ctx, bootstrapTimeout, dirs, nil)...)
+			cancel()
 		}
 
 		// In the second pass, we more deeply initialize the GPUs to weed out devices that
@@ -147,9 +146,9 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				extraEnvs := ml.GetVisibleDevicesEnv(devices[i:i+1], true)
+				extraEnvs := ml.GetDevicesEnv(devices[i:i+1], true)
 				devices[i].AddInitValidation(extraEnvs)
-				if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, extraEnvs)) == 0 {
+				if len(bootstrapDevicesWithMetalRetry(ctx2ndPass, ctx, 30*time.Second, devices[i].LibraryPath, extraEnvs)) == 0 {
 					slog.Debug("filtering device which didn't fully initialize",
 						"id", devices[i].ID,
 						"libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
@@ -334,7 +333,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 
 			// Apply any dev filters to avoid re-discovering unsupported devices, and get IDs correct
 			// We avoid CUDA filters here to keep ROCm from failing to discover GPUs in a mixed environment
-			devFilter := ml.GetVisibleDevicesEnv(devices, false)
+			devFilter := ml.GetDevicesEnv(devices, false)
 
 			for dir := range libDirs {
 				updatedDevices := bootstrapDevices(ctx, []string{ml.LibOllamaPath, dir}, devFilter)
@@ -427,27 +426,84 @@ func (r *bootstrapRunner) HasExited() bool {
 	return false
 }
 
-func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
-	var out io.Writer
-	if envconfig.LogLevel() == logutil.LevelTrace {
-		out = os.Stderr
+func bootstrapDevicesWithMetalRetry(firstAttemptCtx, retryParentCtx context.Context, timeout time.Duration, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
+	runDiscovery := func(ctx context.Context, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, int, error) {
+		start := time.Now()
+		defer func() {
+			slog.Debug("bootstrap discovery took", "duration", time.Since(start), "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs)
+		}()
+		return bootstrapDevicesWithStatus(ctx, ollamaLibDirs, extraEnvs)
 	}
-	start := time.Now()
-	defer func() {
-		slog.Debug("bootstrap discovery took", "duration", time.Since(start), "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs)
-	}()
 
-	logutil.Trace("starting runner for device discovery", "libDirs", ollamaLibDirs, "extraEnvs", extraEnvs)
+	devices, status, exitCode, err := runDiscovery(firstAttemptCtx, extraEnvs)
+	if err == nil {
+		recordPersistentRunnerEnv(devices, extraEnvs)
+	}
+	if err != nil && llm.ShouldRetryWithMetalTensorDisabled(err, status) && (extraEnvs == nil || extraEnvs["GGML_METAL_TENSOR_DISABLE"] != "1") {
+		retryEnvs := map[string]string{}
+		for k, v := range extraEnvs {
+			retryEnvs[k] = v
+		}
+		retryEnvs["GGML_METAL_TENSOR_DISABLE"] = "1"
+		slog.Warn("retrying GPU discovery with Metal tensor API disabled", "error", err)
+		retryCtx, cancel := context.WithTimeout(retryParentCtx, timeout)
+		defer cancel()
+		devices, status, exitCode, err = runDiscovery(retryCtx, retryEnvs)
+		if err == nil {
+			recordPersistentRunnerEnv(devices, retryEnvs)
+		}
+	}
+
+	if err != nil {
+		if exitCode >= 0 {
+			// Expected during bootstrapping while we filter out unsupported GPUs.
+			logutil.Trace("runner exited", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "code", exitCode, "detail", status.LastError())
+		} else {
+			slog.Info("failure during GPU discovery", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "error", err, "detail", status.LastError())
+		}
+	}
+
+	return devices
+}
+
+func recordPersistentRunnerEnv(devices []ml.DeviceInfo, extraEnvs map[string]string) {
+	if extraEnvs["GGML_METAL_TENSOR_DISABLE"] != "1" {
+		return
+	}
+
+	for i := range devices {
+		if devices[i].Library != "Metal" {
+			continue
+		}
+		if devices[i].RunnerEnvOverrides == nil {
+			devices[i].RunnerEnvOverrides = map[string]string{}
+		}
+		devices[i].RunnerEnvOverrides["GGML_METAL_TENSOR_DISABLE"] = "1"
+	}
+}
+
+func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
+	devices, _, _, _ := bootstrapDevicesWithStatus(ctx, ollamaLibDirs, extraEnvs)
+	return devices
+}
+
+func bootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, int, error) {
+	var baseOut io.Writer = io.Discard
+	if envconfig.LogLevel() == logutil.LevelTrace {
+		baseOut = os.Stderr
+	}
+
+	status := llm.NewStatusWriter(baseOut)
 	cmd, port, err := llm.StartRunner(
 		true, // ollama engine
 		"",   // no model
 		ollamaLibDirs,
-		out,
+		status,
 		extraEnvs,
 	)
 	if err != nil {
 		slog.Debug("failed to start runner to discovery GPUs", "error", err)
-		return nil
+		return nil, status, -1, err
 	}
 
 	go func() {
@@ -455,18 +511,13 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map
 	}()
 
 	defer cmd.Process.Kill()
-	devices, err := ml.GetDevicesFromRunner(ctx, &bootstrapRunner{port: port, cmd: cmd})
-	if err != nil {
-		if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
-			// Expected during bootstrapping while we filter out unsupported AMD GPUs
-			logutil.Trace("runner exited", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "code", cmd.ProcessState.ExitCode())
-		} else {
-			slog.Info("failure during GPU discovery", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "error", err)
-		}
-	}
-	logutil.Trace("runner enumerated devices", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "devices", devices)
 
-	return devices
+	devices, err := ml.GetDevicesFromRunner(ctx, &bootstrapRunner{port: port, cmd: cmd})
+	exitCode := -1
+	if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+	return devices, status, exitCode, err
 }
 
 func overrideWarnings() {

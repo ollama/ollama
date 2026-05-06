@@ -12,6 +12,7 @@ import { CogIcon, RocketLaunchIcon } from "@heroicons/react/24/outline";
 // holding shift and clicking this many times within this many seconds
 const DEBUG_SHIFT_CLICKS_REQUIRED = 5;
 const DEBUG_SHIFT_CLICK_WINDOW_MS = 7000; // 7 seconds
+const launchSidebarRequestedKey = "ollama.launchSidebarRequested";
 
 interface ChatSidebarProps {
   currentChatId?: string;
@@ -285,6 +286,11 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
         <Link
           to="/c/$chatId"
           params={{ chatId: "launch" }}
+          onClick={() => {
+            if (currentChatId !== "launch") {
+              sessionStorage.setItem(launchSidebarRequestedKey, "1");
+            }
+          }}
           className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-100 cursor-pointer ${currentChatId === "launch"
             ? "bg-neutral-100 dark:bg-neutral-800"
             : ""
