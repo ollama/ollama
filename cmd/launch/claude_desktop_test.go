@@ -150,6 +150,10 @@ func TestLaunchIntegration_ClaudeDesktopRestoreStillWorks(t *testing.T) {
 	withClaudeDesktopPlatform(t, "darwin")
 	withClaudeDesktopProcessHooks(t, func() bool { return false }, func() error { return nil }, func() error { return nil })
 
+	if err := os.MkdirAll(filepath.Join(tmpDir, "Applications", "Claude.app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	paths, err := claudeDesktopConfigPaths()
 	if err != nil {
 		t.Fatal(err)
