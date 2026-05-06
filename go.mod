@@ -1,6 +1,6 @@
 module github.com/ollama/ollama
 
-go 1.24.1
+go 1.26.0
 
 require (
 	github.com/TheTitanrain/w32 v0.0.0-20180517000239-4f5cfb03fabf
@@ -106,5 +106,5 @@ require (
 	golang.org/x/term v0.36.0
 	golang.org/x/text v0.30.0
 	google.golang.org/protobuf v1.34.1
-	gopkg.in/yaml.v3 v3.0.1 // indirect
+	gopkg.in/yaml.v3 v3.0.1
 )

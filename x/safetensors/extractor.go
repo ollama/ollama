@@ -11,7 +11,6 @@ import (
 )
 
 // tensorInfo holds tensor metadata from safetensors headers.
-// This avoids depending on safetensors.go which requires the mlx tag.
 type tensorInfo struct {
 	Dtype       string  `json:"dtype"`
 	Shape       []int32 `json:"shape"`
@@ -108,6 +107,19 @@ func NewTensorDataFromBytes(name, dtype string, shape []int32, rawData []byte) *
 		Shape:  shape,
 		Size:   int64(len(rawData)),
 		reader: io.NewSectionReader(bytes.NewReader(rawData), 0, int64(len(rawData))),
+	}
+}
+
+// NewTensorDataFromReaderAt creates a TensorData backed by an arbitrary
+// io.ReaderAt. This is useful for constructing large synthetic tensors from
+// temporary files without loading the full payload into memory.
+func NewTensorDataFromReaderAt(name, dtype string, shape []int32, readerAt io.ReaderAt, size int64) *TensorData {
+	return &TensorData{
+		Name:   name,
+		Dtype:  dtype,
+		Shape:  shape,
+		Size:   size,
+		reader: io.NewSectionReader(readerAt, 0, size),
 	}
 }
 

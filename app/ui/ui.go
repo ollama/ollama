@@ -302,6 +302,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("HEAD /api/version", ollamaProxy)
 	mux.Handle("POST /api/me", ollamaProxy)
 	mux.Handle("POST /api/signout", ollamaProxy)
+	mux.Handle("GET /api/experimental/model-recommendations", ollamaProxy)
 
 	// React app - catch all non-API routes and serve the React app
 	mux.Handle("GET /", s.appHandler())

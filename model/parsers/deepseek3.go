@@ -33,6 +33,7 @@ const (
 type DeepSeek3Parser struct {
 	state              DeepSeek3ParserState
 	buffer             strings.Builder
+	callIndex          int
 	hasThinkingSupport bool
 }
 
@@ -64,6 +65,7 @@ func (p *DeepSeek3Parser) setInitialState(lastMessage *api.Message, tools []api.
 }
 
 func (p *DeepSeek3Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
+	p.callIndex = 0
 	p.setInitialState(lastMessage, tools, thinkValue)
 	return tools
 }
@@ -104,6 +106,11 @@ func (p *DeepSeek3Parser) Add(s string, done bool) (content string, thinking str
 		case deepseekEventContent:
 			contentSb.WriteString(event.content)
 		}
+	}
+
+	for i := range toolCalls {
+		toolCalls[i].Function.Index = p.callIndex
+		p.callIndex++
 	}
 
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil

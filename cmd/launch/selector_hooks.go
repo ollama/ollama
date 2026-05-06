@@ -25,7 +25,13 @@ var errCancelled = ErrCancelled
 
 // DefaultConfirmPrompt provides a TUI-based confirmation prompt.
 // When set, ConfirmPrompt delegates to it instead of using raw terminal I/O.
-var DefaultConfirmPrompt func(prompt string) (bool, error)
+var DefaultConfirmPrompt func(prompt string, options ConfirmOptions) (bool, error)
+
+// ConfirmOptions customizes labels for confirmation prompts.
+type ConfirmOptions struct {
+	YesLabel string
+	NoLabel  string
+}
 
 // SingleSelector is a function type for single item selection.
 // current is the name of the previously selected item to highlight; empty means no pre-selection.
@@ -65,6 +71,12 @@ func withLaunchConfirmPolicy(policy launchConfirmPolicy) func() {
 // Behavior is controlled by currentLaunchConfirmPolicy, typically scoped by
 // withLaunchConfirmPolicy in LaunchCmd (e.g. auto-approve with --yes).
 func ConfirmPrompt(prompt string) (bool, error) {
+	return ConfirmPromptWithOptions(prompt, ConfirmOptions{})
+}
+
+// ConfirmPromptWithOptions is the shared confirmation gate for launch flows
+// that need custom yes/no labels in interactive UIs.
+func ConfirmPromptWithOptions(prompt string, options ConfirmOptions) (bool, error) {
 	if currentLaunchConfirmPolicy.yes {
 		return true, nil
 	}
@@ -73,7 +85,7 @@ func ConfirmPrompt(prompt string) (bool, error) {
 	}
 
 	if DefaultConfirmPrompt != nil {
-		return DefaultConfirmPrompt(prompt)
+		return DefaultConfirmPrompt(prompt, options)
 	}
 
 	fd := int(os.Stdin.Fd())

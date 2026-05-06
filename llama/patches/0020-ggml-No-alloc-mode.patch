@@ -8,12 +8,13 @@ it does not allocate memory for tensors or operations. This can
 be used for calculating memory requirements. Tensors and graphs
 must be recreated with no-alloc set to false before loading data.
 ---
- ggml/include/ggml-backend.h     |   1 +
- ggml/src/ggml-backend-impl.h    |  16 +++
- ggml/src/ggml-backend.cpp       |  75 ++++++++++-
- ggml/src/ggml-cuda/common.cuh   |  62 ++++++++-
- ggml/src/ggml-cuda/ggml-cuda.cu | 224 ++++++++++++++++++++++++++------
- 5 files changed, 333 insertions(+), 45 deletions(-)
+ ggml/include/ggml-backend.h      |   1 +
+ ggml/src/ggml-backend-impl.h     |  16 +++
+ ggml/src/ggml-backend.cpp        |  75 ++++++++++-
+ ggml/src/ggml-cuda/common.cuh    |  85 +++++++++++-
+ ggml/src/ggml-cuda/ggml-cuda.cu  | 224 +++++++++++++++++++++++++------
+ ggml/src/ggml-cuda/vendors/hip.h |   1 +
+ 6 files changed, 357 insertions(+), 45 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
 index 93c95602d..dbbb61d9c 100644
@@ -226,10 +227,10 @@ index 498186a7c..7746e8b92 100644
  
  void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index 9fcb2f9fd..e800ee8f6 100644
+index 9fcb2f9fd..79673ac2e 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
-@@ -37,6 +37,41 @@
+@@ -37,6 +37,64 @@
  #include "vendors/cuda.h"
  #endif // defined(GGML_USE_HIP)
  
@@ -261,17 +262,40 @@ index 9fcb2f9fd..e800ee8f6 100644
 +    }
 +}
 +
++static cublasStatus_t cublasGemmBatchedExReserve(
++        cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb,
++        int m, int n, int k,
++        const void *alpha,
++        const void *const Aarray[], cudaDataType_t Atype, int lda,
++        const void *const Barray[], cudaDataType_t Btype, int ldb,
++        const void *beta,
++        void *const Carray[], cudaDataType_t Ctype, int ldc,
++        int batchCount,
++        cublasComputeType_t computeType, cublasGemmAlgo_t algo) {
++    if (!reserving_graph) {
++        return cublasGemmBatchedEx(handle, transa, transb, m, n, k,
++            alpha, const_cast<const void **>(Aarray), Atype, lda,
++            const_cast<const void **>(Barray), Btype, ldb,
++            beta, const_cast<void **>(Carray), Ctype, ldc,
++            batchCount, computeType, algo);
++    } else {
++        return CUBLAS_STATUS_SUCCESS;
++    }
++}
++
 +#undef cudaMemcpyAsync
 +#define cudaMemcpyAsync cudaMemcpyAsyncReserve
 +#undef cudaMemcpy2DAsync
 +#define cudaMemcpy2DAsync cudaMemcpy2DAsyncReserve
 +#undef cudaMemsetAsync
 +#define cudaMemsetAsync cudaMemsetAsyncReserve
++#undef cublasGemmBatchedEx
++#define cublasGemmBatchedEx cublasGemmBatchedExReserve
 +
  #define STRINGIZE_IMPL(...) #__VA_ARGS__
  #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
  
-@@ -941,6 +976,9 @@ struct ggml_cuda_pool {
+@@ -941,6 +999,9 @@ struct ggml_cuda_pool {
  
      virtual void * alloc(size_t size, size_t * actual_size) = 0;
      virtual void free(void * ptr, size_t size) = 0;
@@ -281,7 +305,7 @@ index 9fcb2f9fd..e800ee8f6 100644
  };
  
  template<typename T>
-@@ -1232,11 +1270,15 @@ struct ggml_backend_cuda_context {
+@@ -1232,11 +1293,15 @@ struct ggml_backend_cuda_context {
      // pool
      std::unique_ptr<ggml_cuda_pool> pools[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS];
  
@@ -299,7 +323,7 @@ index 9fcb2f9fd..e800ee8f6 100644
          }
          return *pools[device][curr_stream_no];
      }
-@@ -1244,6 +1286,22 @@ struct ggml_backend_cuda_context {
+@@ -1244,6 +1309,22 @@ struct ggml_backend_cuda_context {
      ggml_cuda_pool & pool() {
          return pool(device);
      }
@@ -682,3 +706,15 @@ index 25548629d..eeaae3fe4 100644
  };
  
  static ggml_guid_t ggml_backend_cuda_guid() {
+diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
+index 951a88d56..b9627eb8b 100644
+--- a/ggml/src/ggml-cuda/vendors/hip.h
++++ b/ggml/src/ggml-cuda/vendors/hip.h
+@@ -37,6 +37,7 @@
+ #define cublasCreate hipblasCreate
+ #define cublasDestroy hipblasDestroy
+ #define cublasGemmEx hipblasGemmEx
++#define cublasGemmAlgo_t hipblasGemmAlgo_t
+ #define cublasGemmBatchedEx hipblasGemmBatchedEx
+ #define cublasGemmStridedBatchedEx hipblasGemmStridedBatchedEx
+ #define cublasHandle_t hipblasHandle_t

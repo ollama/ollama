@@ -73,7 +73,7 @@ function MessageList({
                     ? String(args.url).trim()
                     : "";
               if (candidate) lastQuery = candidate;
-            } catch {}
+            } catch { /* ignored */ }
           }
         }
       }

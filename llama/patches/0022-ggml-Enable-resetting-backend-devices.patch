@@ -110,10 +110,10 @@ index eeaae3fe4..6852d2e20 100644
  
  // backend reg
 diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
-index 951a88d56..4e162258d 100644
+index b9627eb8b..e3310bdf3 100644
 --- a/ggml/src/ggml-cuda/vendors/hip.h
 +++ b/ggml/src/ggml-cuda/vendors/hip.h
-@@ -49,6 +49,7 @@
+@@ -50,6 +50,7 @@
  #define cudaDeviceDisablePeerAccess hipDeviceDisablePeerAccess
  #define cudaDeviceEnablePeerAccess hipDeviceEnablePeerAccess
  #define cudaDeviceProp hipDeviceProp_t

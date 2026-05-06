@@ -75,6 +75,10 @@
     {
       "source": "/integrations/clawdbot",
       "destination": "/integrations/openclaw"
+    },
+    {
+      "source": "/integrations/poolside",
+      "destination": "/integrations/pool"
     }
   ],
   "navigation": {
@@ -110,7 +114,9 @@
                 "group": "Assistants",
                 "expanded": true,
                 "pages": [
-                  "/integrations/openclaw"
+                  "/integrations/openclaw",
+                  "/integrations/hermes",
+                  "/integrations/claude-desktop"
                 ]
               },
               {
@@ -119,10 +125,12 @@
                 "pages": [
                   "/integrations/claude-code",
                   "/integrations/codex",
+                  "/integrations/copilot-cli",
                   "/integrations/opencode",
                   "/integrations/droid",
                   "/integrations/goose",
-                  "/integrations/pi"
+                  "/integrations/pi",
+                  "/integrations/pool"
                 ]
               },
               {

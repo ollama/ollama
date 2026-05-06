@@ -2,7 +2,6 @@ package mlxrunner
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,64 +39,9 @@ type Client struct {
 	done          chan struct{}
 	doneErr       error // valid after done is closed
 	client        *http.Client
-	status        *statusWriter
+	status        *llm.StatusWriter
 	mu            sync.Mutex
 	cmd           *exec.Cmd
-}
-
-// statusWriter captures the last stderr line from the subprocess while
-// forwarding all output to os.Stderr. Lines longer than maxStatusLen are
-// truncated to the first maxStatusLen bytes.
-type statusWriter struct {
-	lastErrMsg string
-	buf        []byte
-	discarding bool
-	mu         sync.Mutex
-	out        *os.File
-}
-
-const maxStatusLen = 256
-
-func (w *statusWriter) Write(b []byte) (int, error) {
-	n, err := w.out.Write(b)
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	w.buf = append(w.buf, b...)
-	for {
-		i := bytes.IndexByte(w.buf, '\n')
-		if i < 0 {
-			break
-		}
-		if !w.discarding {
-			line := bytes.TrimSpace(w.buf[:i])
-			if len(line) > 0 {
-				if len(line) > maxStatusLen {
-					line = line[:maxStatusLen]
-				}
-				w.lastErrMsg = string(line)
-			}
-		}
-		w.buf = w.buf[i+1:]
-		w.discarding = false
-	}
-	// if the buffer grows past maxStatusLen without a newline, keep the front
-	if len(w.buf) > maxStatusLen {
-		if !w.discarding {
-			w.lastErrMsg = string(bytes.TrimSpace(w.buf[:maxStatusLen]))
-			w.discarding = true
-		}
-		w.buf = w.buf[:0]
-	}
-
-	return n, err
-}
-
-func (w *statusWriter) getLastErr() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.lastErrMsg
 }
 
 // NewClient prepares a new MLX runner client for LLM models.
@@ -110,7 +54,7 @@ func NewClient(modelName string) (*Client, error) {
 	c := &Client{
 		modelName: modelName,
 		done:      make(chan struct{}),
-		client:    &http.Client{Timeout: 10 * time.Minute},
+		client:    http.DefaultClient,
 	}
 
 	modelManifest, err := manifest.LoadManifest(modelName)
@@ -133,12 +77,12 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-c.done:
-			if msg := c.status.getLastErr(); msg != "" {
+			if msg := c.status.LastError(); msg != "" {
 				return fmt.Errorf("mlx runner failed: %s (exit: %v)", msg, c.doneErr)
 			}
 			return fmt.Errorf("mlx runner exited unexpectedly: %w", c.doneErr)
 		case <-timeout:
-			if msg := c.status.getLastErr(); msg != "" {
+			if msg := c.status.LastError(); msg != "" {
 				return fmt.Errorf("timeout waiting for mlx runner: %s", msg)
 			}
 			return errors.New("timeout waiting for mlx runner to start")
@@ -151,20 +95,11 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 	}
 }
 
-// completionRequest is a properly-tagged version of llm.CompletionRequest for JSON serialization.
-type completionRequest struct {
-	Prompt  string          `json:"prompt"`
-	Options *completionOpts `json:"options,omitempty"`
-}
-
-type completionOpts struct {
-	Temperature     float32 `json:"temperature,omitempty"`
-	TopP            float32 `json:"top_p,omitempty"`
-	MinP            float32 `json:"min_p,omitempty"`
-	TopK            int     `json:"top_k,omitempty"`
-	RepeatLastN     int     `json:"repeat_last_n,omitempty"`
-	PresencePenalty float32 `json:"presence_penalty,omitempty"`
-	NumPredict      int     `json:"num_predict,omitempty"`
+type CompletionRequest struct {
+	Prompt      string
+	Options     api.Options
+	Logprobs    bool
+	TopLogprobs int
 }
 
 type CompletionResponse struct {
@@ -176,6 +111,8 @@ type CompletionResponse struct {
 	PromptEvalDuration time.Duration
 	EvalCount          int
 	EvalDuration       time.Duration
+
+	Logprobs []llm.Logprob
 
 	Error *api.StatusError
 }
@@ -201,19 +138,13 @@ func (c *Client) Close() error {
 
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
-	creq := completionRequest{
-		Prompt: req.Prompt,
+	creq := CompletionRequest{
+		Prompt:      req.Prompt,
+		Logprobs:    req.Logprobs,
+		TopLogprobs: req.TopLogprobs,
 	}
 	if req.Options != nil {
-		creq.Options = &completionOpts{
-			Temperature:     req.Options.Temperature,
-			TopP:            req.Options.TopP,
-			MinP:            req.Options.MinP,
-			TopK:            req.Options.TopK,
-			RepeatLastN:     req.Options.RepeatLastN,
-			PresencePenalty: req.Options.PresencePenalty,
-			NumPredict:      req.Options.NumPredict,
-		}
+		creq.Options = *req.Options
 	}
 
 	body, err := json.Marshal(creq)
@@ -230,7 +161,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		if errMsg := c.status.getLastErr(); errMsg != "" {
+		if errMsg := c.status.LastError(); errMsg != "" {
 			return fmt.Errorf("mlx runner failed: %s", errMsg)
 		}
 		return err
@@ -239,7 +170,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%s", strings.TrimSpace(string(respBody)))
+		return api.StatusError{StatusCode: resp.StatusCode, ErrorMessage: strings.TrimSpace(string(respBody))}
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -262,6 +193,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 			PromptEvalDuration: raw.PromptEvalDuration,
 			EvalCount:          raw.EvalCount,
 			EvalDuration:       raw.EvalDuration,
+			Logprobs:           raw.Logprobs,
 		}
 
 		fn(cresp)
@@ -271,7 +203,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	}
 
 	if err := scanner.Err(); err != nil {
-		if errMsg := c.status.getLastErr(); errMsg != "" {
+		if errMsg := c.status.LastError(); errMsg != "" {
 			return fmt.Errorf("mlx runner failed: %s", errMsg)
 		}
 		return err
@@ -417,17 +349,12 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 
 	c.cmd = cmd
 
-	// Forward subprocess stdout/stderr to server logs
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-	status := &statusWriter{out: os.Stderr}
+	status := llm.NewStatusWriter(os.Stderr)
 	c.status = status
-	go func() {
-		io.Copy(os.Stderr, stdout) //nolint:errcheck
-	}()
-	go func() {
-		io.Copy(status, stderr) //nolint:errcheck
-	}()
+	// os/exec serializes Write calls when shared, which keeps the status writer
+	// from seeing concurrent stdout/stderr fragments.
+	cmd.Stdout = status
+	cmd.Stderr = status
 
 	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
 	if err := cmd.Start(); err != nil {

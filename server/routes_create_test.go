@@ -102,6 +102,36 @@ func createRequest(t *testing.T, fn func(*gin.Context), body any) *httptest.Resp
 	return w.ResponseRecorder
 }
 
+func readCreatedModelConfig(t *testing.T, name string) model.ConfigV2 {
+	t.Helper()
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName(name))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if mf.Config.Digest == "" {
+		t.Fatalf("unexpected empty config digest for manifest")
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("config blob path: %v", err)
+	}
+
+	cfgFile, err := os.Open(configPath)
+	if err != nil {
+		t.Fatalf("open config blob: %v", err)
+	}
+	defer cfgFile.Close()
+
+	var cfg model.ConfigV2
+	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+
+	return cfg
+}
+
 func checkFileExists(t *testing.T, p string, expect []string) {
 	t.Helper()
 
@@ -928,6 +958,187 @@ func TestCreateDetectTemplate(t *testing.T) {
 	})
 }
 
+func TestCreateGemma4KeepsDynamicRendererAlias(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":    "gemma4",
+		"general.parameter_count": uint64(25_200_000_000),
+	}, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:   "test",
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("test"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if mf.Config.Digest == "" {
+		t.Fatalf("unexpected empty config digest for manifest")
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("config blob path: %v", err)
+	}
+
+	cfgFile, err := os.Open(configPath)
+	if err != nil {
+		t.Fatalf("open config blob: %v", err)
+	}
+	defer cfgFile.Close()
+
+	var cfg model.ConfigV2
+	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+
+	if cfg.Renderer != gemma4RendererLegacy {
+		t.Fatalf("expected renderer %q, got %q", gemma4RendererLegacy, cfg.Renderer)
+	}
+	if cfg.Parser != "gemma4" {
+		t.Fatalf("expected parser %q, got %q", "gemma4", cfg.Parser)
+	}
+}
+
+func TestCreateLagunaDetectsRendererParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":    "laguna",
+		"general.parameter_count": uint64(33_400_000_000),
+	}, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:   "test",
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("test"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if mf.Config.Digest == "" {
+		t.Fatalf("unexpected empty config digest for manifest")
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("config blob path: %v", err)
+	}
+
+	cfgFile, err := os.Open(configPath)
+	if err != nil {
+		t.Fatalf("open config blob: %v", err)
+	}
+	defer cfgFile.Close()
+
+	var cfg model.ConfigV2
+	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+
+	if cfg.Renderer != "laguna" {
+		t.Fatalf("expected renderer %q, got %q", "laguna", cfg.Renderer)
+	}
+	if cfg.Parser != "laguna" {
+		t.Fatalf("expected parser %q, got %q", "laguna", cfg.Parser)
+	}
+}
+
+func TestCreateNemotronHDefaultsRendererParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, arch := range []string{"nemotron_h", "nemotron_h_moe", "nemotron_h_omni"} {
+		t.Run(arch, func(t *testing.T) {
+			p := t.TempDir()
+			t.Setenv("OLLAMA_MODELS", p)
+			var s Server
+
+			_, digest := createBinFile(t, ggml.KV{
+				"general.architecture": arch,
+			}, nil)
+
+			name := strings.ReplaceAll(arch, "_", "-")
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Name:   name,
+				Files:  map[string]string{"test.gguf": digest},
+				Stream: &stream,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status code 200, actual %d", w.Code)
+			}
+
+			cfg := readCreatedModelConfig(t, name)
+			if cfg.Renderer != "nemotron-3-nano" {
+				t.Fatalf("expected renderer %q, got %q", "nemotron-3-nano", cfg.Renderer)
+			}
+			if cfg.Parser != "nemotron-3-nano" {
+				t.Fatalf("expected parser %q, got %q", "nemotron-3-nano", cfg.Parser)
+			}
+		})
+	}
+}
+
+func TestCreateNemotronHDefaultsKeepExplicitRendererParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, arch := range []string{"nemotron_h", "nemotron_h_moe", "nemotron_h_omni"} {
+		t.Run(arch, func(t *testing.T) {
+			p := t.TempDir()
+			t.Setenv("OLLAMA_MODELS", p)
+			var s Server
+
+			_, digest := createBinFile(t, ggml.KV{
+				"general.architecture": arch,
+			}, nil)
+
+			const (
+				renderer = "custom-renderer"
+				parser   = "custom-parser"
+			)
+
+			name := strings.ReplaceAll(arch, "_", "-") + "-custom"
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Name:     name,
+				Files:    map[string]string{"test.gguf": digest},
+				Renderer: renderer,
+				Parser:   parser,
+				Stream:   &stream,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status code 200, actual %d", w.Code)
+			}
+
+			cfg := readCreatedModelConfig(t, name)
+			if cfg.Renderer != renderer {
+				t.Fatalf("expected renderer %q, got %q", renderer, cfg.Renderer)
+			}
+			if cfg.Parser != parser {
+				t.Fatalf("expected parser %q, got %q", parser, cfg.Parser)
+			}
+		})
+	}
+}
+
 func TestDetectModelTypeFromFiles(t *testing.T) {
 	t.Run("gguf file", func(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
@@ -1023,4 +1234,273 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 			t.Fatalf("expected empty model type for small file, got %q", modelType)
 		}
 	})
+}
+
+// createTestBlob creates a blob in the blobs directory and returns its digest.
+func createTestBlob(t *testing.T, data []byte) string {
+	t.Helper()
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(blobPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blobPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return digest
+}
+
+// createSafetensorsTestModel creates a minimal safetensors model manifest for testing.
+func createSafetensorsTestModel(t *testing.T, modelName string, config model.ConfigV2, extraLayers []manifest.Layer) {
+	t.Helper()
+
+	// Create a fake tensor blob
+	tensorData := []byte("fake-tensor-data-for-testing")
+	tensorDigest := createTestBlob(t, tensorData)
+
+	layers := []manifest.Layer{
+		{
+			MediaType: manifest.MediaTypeImageTensor,
+			Digest:    tensorDigest,
+			Size:      int64(len(tensorData)),
+			Name:      "model.embed_tokens.weight",
+		},
+	}
+	layers = append(layers, extraLayers...)
+
+	configLayer, err := createConfigLayer(layers, config)
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName(modelName)
+	if err := manifest.WriteManifest(name, *configLayer, layers); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+}
+
+func TestCreateFromSafetensorsModel_PreservesConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	// Create a source safetensors model with specific config fields
+	createSafetensorsTestModel(t, "source-model", model.ConfigV2{
+		ModelFormat:  "safetensors",
+		Capabilities: []string{"completion"},
+		Requires:     "0.14.0",
+		Renderer:     "gemma3",
+		Parser:       "gemma3",
+	}, nil)
+
+	// Create a derived model FROM the source
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "derived-model",
+		From:   "source-model",
+		System: "You are a pirate.",
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Read the derived model's config
+	derivedName := model.ParseName("derived-model")
+	mf, err := manifest.ParseNamedManifest(derivedName)
+	if err != nil {
+		t.Fatalf("failed to parse derived manifest: %v", err)
+	}
+
+	configBlobPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("failed to get config blob path: %v", err)
+	}
+
+	configBlob, err := os.ReadFile(configBlobPath)
+	if err != nil {
+		t.Fatalf("failed to read config blob: %v", err)
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(configBlob, &cfg); err != nil {
+		t.Fatalf("failed to unmarshal config: %v", err)
+	}
+
+	// Verify safetensors-specific config fields are preserved
+	if cfg.ModelFormat != "safetensors" {
+		t.Errorf("ModelFormat = %q, want %q", cfg.ModelFormat, "safetensors")
+	}
+
+	if !slices.Contains(cfg.Capabilities, "completion") {
+		t.Errorf("Capabilities = %v, want to contain %q", cfg.Capabilities, "completion")
+	}
+
+	if cfg.Requires != "0.14.0" {
+		t.Errorf("Requires = %q, want %q", cfg.Requires, "0.14.0")
+	}
+
+	if cfg.Renderer != "gemma3" {
+		t.Errorf("Renderer = %q, want %q", cfg.Renderer, "gemma3")
+	}
+
+	if cfg.Parser != "gemma3" {
+		t.Errorf("Parser = %q, want %q", cfg.Parser, "gemma3")
+	}
+
+	// Verify system prompt was added
+	var hasSystem bool
+	for _, l := range mf.Layers {
+		if l.MediaType == "application/vnd.ollama.image.system" {
+			hasSystem = true
+			break
+		}
+	}
+	if !hasSystem {
+		t.Error("expected system prompt layer in derived model")
+	}
+
+	// Verify tensor layers were copied with names preserved
+	var tensorNames []string
+	for _, l := range mf.Layers {
+		if l.MediaType == manifest.MediaTypeImageTensor {
+			tensorNames = append(tensorNames, l.Name)
+		}
+	}
+	if len(tensorNames) == 0 {
+		t.Error("expected tensor layers in derived model")
+	}
+	for _, name := range tensorNames {
+		if name == "" {
+			t.Error("tensor layer has empty name — names must be preserved from source")
+		}
+	}
+}
+
+func TestCreateFromSafetensorsModel_OverrideSystem(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	// Create source with a system prompt
+	createSafetensorsTestModel(t, "source-with-system", model.ConfigV2{
+		ModelFormat:  "safetensors",
+		Capabilities: []string{"completion"},
+	}, nil)
+
+	// First create with system prompt
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "source-with-system",
+		From:   "source-with-system",
+		System: "Original system prompt",
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Now create a derived model with a different system prompt
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "derived-new-system",
+		From:   "source-with-system",
+		System: "New system prompt",
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify ModelFormat is preserved even after override
+	derivedName := model.ParseName("derived-new-system")
+	mf, err := manifest.ParseNamedManifest(derivedName)
+	if err != nil {
+		t.Fatalf("failed to parse derived manifest: %v", err)
+	}
+
+	configBlobPath, _ := manifest.BlobsPath(mf.Config.Digest)
+	configBlob, _ := os.ReadFile(configBlobPath)
+
+	var cfg model.ConfigV2
+	json.Unmarshal(configBlob, &cfg)
+
+	if cfg.ModelFormat != "safetensors" {
+		t.Errorf("ModelFormat = %q, want %q", cfg.ModelFormat, "safetensors")
+	}
+}
+
+func TestCreateFromSafetensorsModel_PreservesLayerNames(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	// Create JSON config blobs to include as layers
+	configJSON := []byte(`{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`)
+	configDigest := createTestBlob(t, configJSON)
+	tokenizerJSON := []byte(`{"version": "1.0"}`)
+	tokenizerDigest := createTestBlob(t, tokenizerJSON)
+
+	extraLayers := []manifest.Layer{
+		{
+			MediaType: "application/vnd.ollama.image.json",
+			Digest:    configDigest,
+			Size:      int64(len(configJSON)),
+			Name:      "config.json",
+		},
+		{
+			MediaType: "application/vnd.ollama.image.json",
+			Digest:    tokenizerDigest,
+			Size:      int64(len(tokenizerJSON)),
+			Name:      "tokenizer.json",
+		},
+	}
+
+	createSafetensorsTestModel(t, "source-named-layers", model.ConfigV2{
+		ModelFormat:  "safetensors",
+		Capabilities: []string{"completion"},
+	}, extraLayers)
+
+	// Create derived model
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "derived-named-layers",
+		From:   "source-named-layers",
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	derivedName := model.ParseName("derived-named-layers")
+	mf, err := manifest.ParseNamedManifest(derivedName)
+	if err != nil {
+		t.Fatalf("failed to parse derived manifest: %v", err)
+	}
+
+	// Check tensor layer names are preserved
+	for _, l := range mf.Layers {
+		if l.MediaType == manifest.MediaTypeImageTensor && l.Name == "" {
+			t.Error("tensor layer has empty name — names must be preserved from source")
+		}
+	}
+
+	// Check JSON layer names are preserved
+	jsonNames := make(map[string]bool)
+	for _, l := range mf.Layers {
+		if l.MediaType == "application/vnd.ollama.image.json" && l.Name != "" {
+			jsonNames[l.Name] = true
+		}
+	}
+
+	if !jsonNames["config.json"] {
+		t.Error("config.json layer name not preserved in derived model")
+	}
+	if !jsonNames["tokenizer.json"] {
+		t.Error("tokenizer.json layer name not preserved in derived model")
+	}
 }
