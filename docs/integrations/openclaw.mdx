@@ -15,7 +15,7 @@ Ollama handles everything automatically:
 1. **Install** — If OpenClaw isn't installed, Ollama prompts to install it via npm
 2. **Security** — On the first launch, a security notice explains the risks of tool access
 3. **Model** — Pick a model from the selector (local or cloud)
-4. **Onboarding** — Ollama configures the provider, installs the gateway daemon, sets your model as the primary, and installs the web search and fetch plugin
+4. **Onboarding** — Ollama configures the provider, installs the gateway daemon, sets your model as the primary, and enables OpenClaw's bundled Ollama web search
 5. **Gateway** — Starts in the background and opens the OpenClaw TUI
 
 <Note>OpenClaw requires a larger context window. It is recommended to use a context window of at least 64k tokens if using local models. See [Context length](/context-length) for more information.</Note>
@@ -24,19 +24,19 @@ Ollama handles everything automatically:
 
 ## Web search and fetch
 
-OpenClaw ships with a web search and fetch plugin that gives local or cloud models the ability to search the web and extract readable page content.
+OpenClaw ships with a bundled Ollama `web_search` provider that lets local or cloud-backed Ollama setups search the web through the configured Ollama host.
 
 ```bash
 ollama launch openclaw
 ```
 
-Web search and fetch is enabled automatically when launching OpenClaw through Ollama. To install the plugin directly:
+Ollama web search is enabled automatically when launching OpenClaw through Ollama. To configure it manually:
 
 ```bash
-openclaw plugins install @ollama/openclaw-web-search
+openclaw configure --section web
 ```
 
-<Note>Web search for local models requires `ollama signin`.</Note>
+<Note>Ollama web search for local models requires `ollama signin`.</Note>
 
 ## Configure without launching
 
@@ -93,4 +93,3 @@ Link WhatsApp, Telegram, Slack, Discord, or iMessage to chat with your local mod
 ```bash
 openclaw gateway stop
 ```
-

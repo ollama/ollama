@@ -606,11 +606,35 @@ func gatedDeltaCUDAKernelApply(q, k, v, g, beta, state *Array) (y, nextState *Ar
 	return y, nextState, true
 }
 
-// GatedDelta runs the recurrent update operation.
+// FastGatedDelta runs the recurrent update operation.
+//
+// When mask is non-nil, it must be a [B, T] bool tensor identifying real
+// (true) vs. padded (false) positions in q/k/v/g/beta. Padded positions
+// are substituted with neutral values (q=k=v=beta=0, g=1) so each padded
+// kernel iteration is a no-op — state passes through unchanged and the
+// final state equals the state after the last real token of each row.
 //
 // It tries the fused CUDA kernel first, then Metal, then falls back to a
 // backend-agnostic MLX implementation with identical inputs/outputs.
-func GatedDelta(q, k, v, g, beta, state *Array) (y, nextState *Array) {
+func FastGatedDelta(q, k, v, g, beta, state, mask *Array) (y, nextState *Array) {
+	// TODO: handle this more efficiently with a masked kernel (MLX-LM has one).
+	if mask != nil {
+		B := int32(mask.Dim(0))
+		T := int32(mask.Dim(1))
+		m4 := Reshape(mask, B, T, 1, 1)
+		m3 := Reshape(mask, B, T, 1)
+		zeroQ := FromValue(float32(0)).AsType(q.DType())
+		zeroK := FromValue(float32(0)).AsType(k.DType())
+		zeroV := FromValue(float32(0)).AsType(v.DType())
+		zeroBeta := FromValue(float32(0)).AsType(beta.DType())
+		oneG := FromValue(float32(1)).AsType(g.DType())
+		q = Where(m4, q, zeroQ)
+		k = Where(m4, k, zeroK)
+		v = Where(m4, v, zeroV)
+		beta = Where(m3, beta, zeroBeta)
+		g = Where(m3, g, oneG)
+	}
+
 	if y, nextState, ok := gatedDeltaCUDAKernelApply(q, k, v, g, beta, state); ok {
 		return y, nextState
 	}
@@ -619,7 +643,7 @@ func GatedDelta(q, k, v, g, beta, state *Array) (y, nextState *Array) {
 	}
 	y, nextState = gatedDeltaFallback(q, k, v, g, beta, state)
 	if y == nil || nextState == nil {
-		panic("mlx.GatedDelta: fallback failed (invalid inputs or unsupported shapes)")
+		panic("mlx.FastGatedDelta: fallback failed (invalid inputs or unsupported shapes)")
 	}
 	return y, nextState
 }

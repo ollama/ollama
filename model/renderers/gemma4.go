@@ -12,7 +12,8 @@ import (
 // <|turn>/<turn|> markers, <|"|> string delimiters, and <|tool>/
 // <|tool_call>/<|tool_response> tags for function calling.
 type Gemma4Renderer struct {
-	useImgTags bool
+	useImgTags          bool
+	emptyBlockOnNothink bool
 }
 
 const (
@@ -70,7 +71,6 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			continue
 		}
 
-		messageHadContent := r.messageHasContent(message)
 		prevMessageType = ""
 		role := message.Role
 		if role == "assistant" {
@@ -104,14 +104,18 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			}
 		}
 
+		messageHadContent := false
 		switch role {
 		case "model":
 			if message.Content != "" || len(message.Images) > 0 {
 				message.Content = stripThinking(message.Content)
 				r.renderContent(&sb, message, &imageOffset, false)
+				messageHadContent = r.messageHasContent(message)
 			}
 		default:
 			r.renderContent(&sb, message, &imageOffset, true)
+			message.Content = strings.TrimSpace(message.Content)
+			messageHadContent = r.messageHasContent(message)
 		}
 
 		if prevMessageType == "tool_call" && !toolResponsesEmitted {
@@ -124,6 +128,9 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	// Generation prompt.
 	if prevMessageType != "tool_response" && prevMessageType != "tool_call" {
 		sb.WriteString("<|turn>model\n")
+		if r.emptyBlockOnNothink && !hasThink {
+			sb.WriteString("<|channel>thought\n<channel|>")
+		}
 	}
 
 	return sb.String(), nil
@@ -176,7 +183,7 @@ func (r *Gemma4Renderer) previousNonToolRole(messages []api.Message, idx int) st
 }
 
 func (r *Gemma4Renderer) messageHasContent(message api.Message) bool {
-	return message.Content != "" || len(message.Images) > 0
+	return strings.TrimSpace(message.Content) != "" || len(message.Images) > 0
 }
 
 func (r *Gemma4Renderer) toolResponseName(message api.Message, toolCalls []api.ToolCall) string {

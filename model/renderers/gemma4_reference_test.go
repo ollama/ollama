@@ -3,9 +3,9 @@ package renderers
 // TestGemma4RendererMatchesReference verifies our renderer matches the checked-in
 // Gemma 4 reference template.
 //
-// Current upstream Gemma 4 chat templates differ by model size, so the checked-in
-// reference intentionally uses the shared baseline without an empty generation-time
-// thought channel until renderer selection is split by size.
+// Current upstream Gemma 4 chat templates differ by model size. The checked-in
+// reference cases below use the small (e2b/e4b-style) baseline, with large
+// (26b/31b-style) checks covered separately in this file.
 //
 // To regenerate expected values, save the E2B template to
 // gemma4_e2b_chat_template.jinja2 and run:
@@ -740,6 +740,18 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			expected: "<bos><|turn>system\n<|think|>\nYou are helpful." + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
+			name: "developer_tools_thinking_trimmed",
+			messages: []api.Message{
+				{Role: "developer", Content: "  Prefer terse answers.\nUse tools when needed.  "},
+				{Role: "user", Content: "Hi"},
+			},
+			tools: bashAndReadRefTools(),
+			think: thinkTrue(),
+			expected: "<bos><|turn>system\n<|think|>\nPrefer terse answers.\nUse tools when needed." +
+				bashDeclRef + readDeclRef + "<turn|>\n" +
+				"<|turn>user\nHi<turn|>\n<|turn>model\n",
+		},
+		{
 			name:     "thinking_explicitly_disabled",
 			messages: []api.Message{{Role: "user", Content: "Hi"}},
 			think:    thinkFalse(),
@@ -844,6 +856,40 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				"<|tool_response>response:bash{value:" + q + "file1.txt\nfile2.txt" + q + "}<tool_response|>" +
 				"<|tool_response>response:read{value:" + q + "module example.com/foo" + q + "}<tool_response|>",
 			skipJinja2: true,
+		},
+		{
+			// Multiple tool calls in one assistant round, with explicit thinking,
+			// tool_call_id resolution, out-of-order tool responses, and a final
+			// assistant continuation in the same model turn.
+			name: "multiple_tool_calls_with_thinking_ids_and_continuation",
+			messages: []api.Message{
+				{Role: "system", Content: "You are a coding assistant."},
+				{Role: "user", Content: "List files, then read config."},
+				{Role: "assistant", Thinking: "Need the directory listing before reading the config.", ToolCalls: []api.ToolCall{
+					{
+						ID:       "call_bash",
+						Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls -la"})},
+					},
+					{
+						ID:       "call_read",
+						Function: api.ToolCallFunction{Name: "read", Arguments: testArgs(map[string]any{"path": "config.json"})},
+					},
+				}},
+				{Role: "tool", ToolCallID: "call_read", Content: `{"debug": true}`},
+				{Role: "tool", ToolCallID: "call_bash", Content: "config.json\nmain.go"},
+				{Role: "assistant", Content: "Config loaded."},
+			},
+			tools: bashAndReadRefTools(),
+			think: thinkTrue(),
+			expected: "<bos><|turn>system\n<|think|>\nYou are a coding assistant." + bashDeclRef + readDeclRef + "<turn|>\n" +
+				"<|turn>user\nList files, then read config.<turn|>\n" +
+				"<|turn>model\n<|channel>thought\nNeed the directory listing before reading the config.\n<channel|>" +
+				"<|tool_call>call:bash{command:" + q + "ls -la" + q + "}<tool_call|>" +
+				"<|tool_call>call:read{path:" + q + "config.json" + q + "}<tool_call|>" +
+				"<|tool_response>response:read{value:" + q + `{"debug": true}` + q + "}<tool_response|>" +
+				"<|tool_response>response:bash{value:" + q + "config.json\nmain.go" + q + "}<tool_response|>" +
+				"Config loaded.<turn|>\n" +
+				"<|turn>model\n",
 		},
 		{
 			// Thinking content in assistant history should be stripped
@@ -1338,7 +1384,7 @@ Hi<turn|>
 				"<|turn>user\nList files<turn|>\n" +
 				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
 				"<|tool_response>response:bash{value:" + q + "file1.txt" + q + "}<tool_response|>" +
-				"<turn|>\nHere are the files.<turn|>\n" +
+				"Here are the files.<turn|>\n" +
 				"<|turn>user\nThanks<turn|>\n" +
 				"<|turn>model\n",
 		},
@@ -1472,6 +1518,47 @@ Hi<turn|>
 			}
 		})
 	}
+}
+
+func TestGemma4RendererVariantsMatchExpectedGenerationPrompt(t *testing.T) {
+	messages := []api.Message{{Role: "user", Content: "Hello"}}
+
+	tests := []struct {
+		name         string
+		rendererName string
+		expected     string
+	}{
+		{
+			name:         "legacy_alias",
+			rendererName: "gemma4",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:         "small",
+			rendererName: "gemma4-small",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:         "large",
+			rendererName: "gemma4-large",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := RenderWithRenderer(tt.rendererName, messages, nil, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestGemma4LargeRendererOmitsEmptyThoughtBlockWhenThinkingEnabled(t *testing.T) {
+	got, err := RenderWithRenderer("gemma4-large", []api.Message{{Role: "user", Content: "Hello"}}, nil, thinkTrue())
+	assert.NoError(t, err)
+	assert.Equal(t, "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHello<turn|>\n<|turn>model\n", got)
+	assert.NotContains(t, got, "<|channel>thought\n<channel|>")
 }
 
 func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
@@ -1616,15 +1703,35 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			renderer := &Gemma4Renderer{useImgTags: RenderImgTags}
-			got, err := renderer.Render(tt.messages, tt.tools, tt.think)
-			assert.NoError(t, err)
+	variants := []struct {
+		name        string
+		renderer    *Gemma4Renderer
+		templateRel string
+	}{
+		{
+			name:        "small",
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags},
+			templateRel: gemma4E2BTemplate,
+		},
+		{
+			name:        "large",
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true},
+			templateRel: gemma431BTemplate,
+		},
+	}
 
-			jinja2Output := renderWithJinja2(t, tt.messages, tt.tools, tt.think)
-			assert.Equal(t, jinja2Output, got,
-				"renderer output doesn't match Jinja2 template output")
+	for _, variant := range variants {
+		t.Run(variant.name, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					got, err := variant.renderer.Render(tt.messages, tt.tools, tt.think)
+					assert.NoError(t, err)
+
+					jinja2Output := renderWithJinja2Template(t, variant.templateRel, tt.messages, tt.tools, tt.think)
+					assert.Equal(t, jinja2Output, got,
+						"renderer output doesn't match Jinja2 template output")
+				})
+			}
 		})
 	}
 }
