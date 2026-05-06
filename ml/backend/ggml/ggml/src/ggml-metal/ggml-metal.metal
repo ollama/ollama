@@ -4300,7 +4300,7 @@ kernel void kernel_rope_multi(
             const int sec_w012  = args.sect_0 + args.sect_1 + args.sect_2; // end of section 2
             const int sector    = ic % sect_dims;
 
-            float theta_base;
+            float theta_base = 0.0;
             if (FC_rope_is_imrope) {
                 if (sector % 3 == 1 && sector < 1 + 3 * args.sect_1) { // h
                     theta_base = (float) pos[i2 + args.ne02 * 1];

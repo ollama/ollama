@@ -55,6 +55,57 @@ func TestFromChatRequest_Basic(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_ReasoningEffort(t *testing.T) {
+	effort := func(s string) *string { return &s }
+
+	cases := []struct {
+		name    string
+		effort  *string
+		want    any // expected ThinkValue.Value; nil means req.Think should be nil
+		wantErr bool
+	}{
+		{name: "unset", effort: nil, want: nil},
+		{name: "high", effort: effort("high"), want: "high"},
+		{name: "medium", effort: effort("medium"), want: "medium"},
+		{name: "low", effort: effort("low"), want: "low"},
+		{name: "max", effort: effort("max"), want: "max"},
+		{name: "none disables", effort: effort("none"), want: false},
+		{name: "invalid", effort: effort("extreme"), wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := ChatCompletionRequest{
+				Model:           "test-model",
+				Messages:        []Message{{Role: "user", Content: "hi"}},
+				ReasoningEffort: tc.effort,
+			}
+			result, err := FromChatRequest(req)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for effort=%v, got none", *tc.effort)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.want == nil {
+				if result.Think != nil {
+					t.Fatalf("expected nil Think, got %+v", result.Think)
+				}
+				return
+			}
+			if result.Think == nil {
+				t.Fatalf("expected Think=%v, got nil", tc.want)
+			}
+			if result.Think.Value != tc.want {
+				t.Fatalf("got Think.Value=%v, want %v", result.Think.Value, tc.want)
+			}
+		})
+	}
+}
+
 func TestFromChatRequest_WithImage(t *testing.T) {
 	imgData, _ := base64.StdEncoding.DecodeString(image)
 

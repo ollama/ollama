@@ -162,11 +162,13 @@ int (*mlx_distributed_recv_ptr)(mlx_array* res, const int* shape, size_t shape_n
 int (*mlx_distributed_recv_like_ptr)(mlx_array* res, const mlx_array x, int src, const mlx_distributed_group group , const mlx_stream s) = NULL;
 int (*mlx_distributed_send_ptr)(mlx_array* res, const mlx_array x, int dst, const mlx_distributed_group group , const mlx_stream s) = NULL;
 int (*mlx_distributed_sum_scatter_ptr)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream s) = NULL;
+mlx_distributed_group (*mlx_distributed_group_new_ptr)(void) = NULL;
+int (*mlx_distributed_group_free_ptr)(mlx_distributed_group group) = NULL;
+int (*mlx_distributed_init_ptr)(mlx_distributed_group* res, bool strict, const char* bk) = NULL;
 int (*mlx_distributed_group_rank_ptr)(mlx_distributed_group group) = NULL;
 int (*mlx_distributed_group_size_ptr)(mlx_distributed_group group) = NULL;
-mlx_distributed_group (*mlx_distributed_group_split_ptr)(mlx_distributed_group group, int color, int key) = NULL;
+int (*mlx_distributed_group_split_ptr)(mlx_distributed_group* res, mlx_distributed_group group, int color, int key) = NULL;
 bool (*mlx_distributed_is_available_ptr)(const char* bk) = NULL;
-mlx_distributed_group (*mlx_distributed_init_ptr)(bool strict, const char* bk) = NULL;
 void (*mlx_set_error_handler_ptr)(mlx_error_handler_func handler, void* data, void (*dtor)(void*)) = NULL;
 void (*_mlx_error_ptr)(const char* file, const int line, const char* fmt, ...) = NULL;
 int (*mlx_export_function_ptr)(const char* file, const mlx_closure fun, const mlx_vector_array args, bool shapeless) = NULL;
@@ -210,26 +212,35 @@ int (*mlx_fast_rms_norm_ptr)(mlx_array* res, const mlx_array x, const mlx_array 
 int (*mlx_fast_rope_ptr)(mlx_array* res, const mlx_array x, int dims, bool traditional, mlx_optional_float base, float scale, int offset, const mlx_array freqs , const mlx_stream s) = NULL;
 int (*mlx_fast_rope_dynamic_ptr)(mlx_array* res, const mlx_array x, int dims, bool traditional, mlx_optional_float base, float scale, const mlx_array offset, const mlx_array freqs , const mlx_stream s) = NULL;
 int (*mlx_fast_scaled_dot_product_attention_ptr)(mlx_array* res, const mlx_array queries, const mlx_array keys, const mlx_array values, float scale, const char* mask_mode, const mlx_array mask_arr , const mlx_array sinks , const mlx_stream s) = NULL;
-int (*mlx_fft_fft_ptr)(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s) = NULL;
-int (*mlx_fft_fft2_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
-int (*mlx_fft_fftn_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
+int (*mlx_fft_fft_ptr)(mlx_array* res, const mlx_array a, int n, int axis, mlx_fft_norm norm, const mlx_stream s) = NULL;
+int (*mlx_fft_fft2_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) = NULL;
+int (*mlx_fft_fftfreq_ptr)(mlx_array* res, int n, double d, const mlx_stream s) = NULL;
+int (*mlx_fft_fftn_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) = NULL;
 int (*mlx_fft_fftshift_ptr)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
-int (*mlx_fft_ifft_ptr)(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s) = NULL;
-int (*mlx_fft_ifft2_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
-int (*mlx_fft_ifftn_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
+int (*mlx_fft_ifft_ptr)(mlx_array* res, const mlx_array a, int n, int axis, mlx_fft_norm norm, const mlx_stream s) = NULL;
+int (*mlx_fft_ifft2_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) = NULL;
+int (*mlx_fft_ifftn_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) = NULL;
 int (*mlx_fft_ifftshift_ptr)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
-int (*mlx_fft_irfft_ptr)(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s) = NULL;
-int (*mlx_fft_irfft2_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
-int (*mlx_fft_irfftn_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
-int (*mlx_fft_rfft_ptr)(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s) = NULL;
-int (*mlx_fft_rfft2_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
-int (*mlx_fft_rfftn_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
+int (*mlx_fft_irfft_ptr)(mlx_array* res, const mlx_array a, int n, int axis, mlx_fft_norm norm, const mlx_stream s) = NULL;
+int (*mlx_fft_irfft2_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) = NULL;
+int (*mlx_fft_irfftn_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) = NULL;
+int (*mlx_fft_rfft_ptr)(mlx_array* res, const mlx_array a, int n, int axis, mlx_fft_norm norm, const mlx_stream s) = NULL;
+int (*mlx_fft_rfft2_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) = NULL;
+int (*mlx_fft_rfftfreq_ptr)(mlx_array* res, int n, double d, const mlx_stream s) = NULL;
+int (*mlx_fft_rfftn_ptr)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) = NULL;
+int (*mlx_node_namer_free_ptr)(mlx_node_namer namer) = NULL;
+int (*mlx_node_namer_set_name_ptr)(mlx_node_namer namer, const mlx_array arr, const char* name) = NULL;
+int (*mlx_node_namer_get_name_ptr)(const char** name, mlx_node_namer namer, const mlx_array arr) = NULL;
+int (*mlx_export_to_dot_ptr)(FILE* os, const mlx_node_namer namer, const mlx_vector_array outputs) = NULL;
+int (*mlx_print_graph_ptr)(FILE* os, const mlx_node_namer namer, const mlx_vector_array outputs) = NULL;
 int (*mlx_load_reader_ptr)(mlx_array* res, mlx_io_reader in_stream, const mlx_stream s) = NULL;
 int (*mlx_load_ptr)(mlx_array* res, const char* file, const mlx_stream s) = NULL;
+int (*mlx_load_gguf_ptr)(mlx_io_gguf* gguf, const char* file, const mlx_stream s) = NULL;
 int (*mlx_load_safetensors_reader_ptr)(mlx_map_string_to_array* res_0, mlx_map_string_to_string* res_1, mlx_io_reader in_stream, const mlx_stream s) = NULL;
 int (*mlx_load_safetensors_ptr)(mlx_map_string_to_array* res_0, mlx_map_string_to_string* res_1, const char* file, const mlx_stream s) = NULL;
 int (*mlx_save_writer_ptr)(mlx_io_writer out_stream, const mlx_array a) = NULL;
 int (*mlx_save_ptr)(const char* file, const mlx_array a) = NULL;
+int (*mlx_save_gguf_ptr)(const char* file, mlx_io_gguf gguf) = NULL;
 int (*mlx_save_safetensors_writer_ptr)(mlx_io_writer in_stream, const mlx_map_string_to_array param, const mlx_map_string_to_string metadata) = NULL;
 int (*mlx_save_safetensors_ptr)(const char* file, const mlx_map_string_to_array param, const mlx_map_string_to_string metadata) = NULL;
 mlx_io_reader (*mlx_io_reader_new_ptr)(void* desc, mlx_io_vtable vtable) = NULL;
@@ -240,6 +251,20 @@ mlx_io_writer (*mlx_io_writer_new_ptr)(void* desc, mlx_io_vtable vtable) = NULL;
 int (*mlx_io_writer_descriptor_ptr)(void** desc_, mlx_io_writer io) = NULL;
 int (*mlx_io_writer_tostring_ptr)(mlx_string* str_, mlx_io_writer io) = NULL;
 int (*mlx_io_writer_free_ptr)(mlx_io_writer io) = NULL;
+mlx_io_gguf (*mlx_io_gguf_new_ptr)(void) = NULL;
+int (*mlx_io_gguf_free_ptr)(mlx_io_gguf io) = NULL;
+int (*mlx_io_gguf_get_keys_ptr)(mlx_vector_string* keys, mlx_io_gguf io) = NULL;
+int (*mlx_io_gguf_get_array_ptr)(mlx_array* arr, mlx_io_gguf io, const char* key) = NULL;
+int (*mlx_io_gguf_get_metadata_array_ptr)(mlx_array* arr, mlx_io_gguf io, const char* key) = NULL;
+int (*mlx_io_gguf_get_metadata_string_ptr)(mlx_string* str, mlx_io_gguf io, const char* key) = NULL;
+int (*mlx_io_gguf_get_metadata_vector_string_ptr)(mlx_vector_string* vstr, mlx_io_gguf io, const char* key) = NULL;
+int (*mlx_io_gguf_has_metadata_array_ptr)(bool* flag, mlx_io_gguf io, const char* key) = NULL;
+int (*mlx_io_gguf_has_metadata_string_ptr)(bool* flag, mlx_io_gguf io, const char* key) = NULL;
+int (*mlx_io_gguf_has_metadata_vector_string_ptr)(bool* flag, mlx_io_gguf io, const char* key) = NULL;
+int (*mlx_io_gguf_set_array_ptr)(mlx_io_gguf io, const char* key, const mlx_array arr) = NULL;
+int (*mlx_io_gguf_set_metadata_array_ptr)(mlx_io_gguf io, const char* key, const mlx_array marr) = NULL;
+int (*mlx_io_gguf_set_metadata_string_ptr)(mlx_io_gguf io, const char* key, const char* mstr) = NULL;
+int (*mlx_io_gguf_set_metadata_vector_string_ptr)(mlx_io_gguf io, const char* key, const mlx_vector_string mvstr) = NULL;
 int (*mlx_linalg_cholesky_ptr)(mlx_array* res, const mlx_array a, bool upper, const mlx_stream s) = NULL;
 int (*mlx_linalg_cholesky_inv_ptr)(mlx_array* res, const mlx_array a, bool upper, const mlx_stream s) = NULL;
 int (*mlx_linalg_cross_ptr)(mlx_array* res, const mlx_array a, const mlx_array b, int axis, const mlx_stream s) = NULL;
@@ -474,6 +499,10 @@ int (*mlx_slice_ptr)(mlx_array* res, const mlx_array a, const int* start, size_t
 int (*mlx_slice_dynamic_ptr)(mlx_array* res, const mlx_array a, const mlx_array start, const int* axes, size_t axes_num, const int* slice_size, size_t slice_size_num, const mlx_stream s) = NULL;
 int (*mlx_slice_update_ptr)(mlx_array* res, const mlx_array src, const mlx_array update, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s) = NULL;
 int (*mlx_slice_update_dynamic_ptr)(mlx_array* res, const mlx_array src, const mlx_array update, const mlx_array start, const int* axes, size_t axes_num, const mlx_stream s) = NULL;
+int (*mlx_slice_update_add_ptr)(mlx_array* res, const mlx_array src, const mlx_array update, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s) = NULL;
+int (*mlx_slice_update_max_ptr)(mlx_array* res, const mlx_array src, const mlx_array update, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s) = NULL;
+int (*mlx_slice_update_min_ptr)(mlx_array* res, const mlx_array src, const mlx_array update, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s) = NULL;
+int (*mlx_slice_update_prod_ptr)(mlx_array* res, const mlx_array src, const mlx_array update, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s) = NULL;
 int (*mlx_softmax_axes_ptr)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool precise, const mlx_stream s) = NULL;
 int (*mlx_softmax_axis_ptr)(mlx_array* res, const mlx_array a, int axis, bool precise, const mlx_stream s) = NULL;
 int (*mlx_softmax_ptr)(mlx_array* res, const mlx_array a, bool precise, const mlx_stream s) = NULL;
@@ -1320,6 +1349,21 @@ int mlx_load_functions(void* handle) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_sum_scatter\n");
         return -1;
     }
+    mlx_distributed_group_new_ptr = GET_SYM(handle, "mlx_distributed_group_new");
+    if (mlx_distributed_group_new_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_group_new\n");
+        return -1;
+    }
+    mlx_distributed_group_free_ptr = GET_SYM(handle, "mlx_distributed_group_free");
+    if (mlx_distributed_group_free_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_group_free\n");
+        return -1;
+    }
+    mlx_distributed_init_ptr = GET_SYM(handle, "mlx_distributed_init");
+    if (mlx_distributed_init_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_init\n");
+        return -1;
+    }
     mlx_distributed_group_rank_ptr = GET_SYM(handle, "mlx_distributed_group_rank");
     if (mlx_distributed_group_rank_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_group_rank\n");
@@ -1338,11 +1382,6 @@ int mlx_load_functions(void* handle) {
     mlx_distributed_is_available_ptr = GET_SYM(handle, "mlx_distributed_is_available");
     if (mlx_distributed_is_available_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_is_available\n");
-        return -1;
-    }
-    mlx_distributed_init_ptr = GET_SYM(handle, "mlx_distributed_init");
-    if (mlx_distributed_init_ptr == NULL) {
-        fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_init\n");
         return -1;
     }
     mlx_set_error_handler_ptr = GET_SYM(handle, "mlx_set_error_handler");
@@ -1570,6 +1609,11 @@ int mlx_load_functions(void* handle) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_fft2\n");
         return -1;
     }
+    mlx_fft_fftfreq_ptr = GET_SYM(handle, "mlx_fft_fftfreq");
+    if (mlx_fft_fftfreq_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_fftfreq\n");
+        return -1;
+    }
     mlx_fft_fftn_ptr = GET_SYM(handle, "mlx_fft_fftn");
     if (mlx_fft_fftn_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_fftn\n");
@@ -1625,9 +1669,39 @@ int mlx_load_functions(void* handle) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_rfft2\n");
         return -1;
     }
+    mlx_fft_rfftfreq_ptr = GET_SYM(handle, "mlx_fft_rfftfreq");
+    if (mlx_fft_rfftfreq_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_rfftfreq\n");
+        return -1;
+    }
     mlx_fft_rfftn_ptr = GET_SYM(handle, "mlx_fft_rfftn");
     if (mlx_fft_rfftn_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_rfftn\n");
+        return -1;
+    }
+    mlx_node_namer_free_ptr = GET_SYM(handle, "mlx_node_namer_free");
+    if (mlx_node_namer_free_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_node_namer_free\n");
+        return -1;
+    }
+    mlx_node_namer_set_name_ptr = GET_SYM(handle, "mlx_node_namer_set_name");
+    if (mlx_node_namer_set_name_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_node_namer_set_name\n");
+        return -1;
+    }
+    mlx_node_namer_get_name_ptr = GET_SYM(handle, "mlx_node_namer_get_name");
+    if (mlx_node_namer_get_name_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_node_namer_get_name\n");
+        return -1;
+    }
+    mlx_export_to_dot_ptr = GET_SYM(handle, "mlx_export_to_dot");
+    if (mlx_export_to_dot_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_export_to_dot\n");
+        return -1;
+    }
+    mlx_print_graph_ptr = GET_SYM(handle, "mlx_print_graph");
+    if (mlx_print_graph_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_print_graph\n");
         return -1;
     }
     mlx_load_reader_ptr = GET_SYM(handle, "mlx_load_reader");
@@ -1638,6 +1712,11 @@ int mlx_load_functions(void* handle) {
     mlx_load_ptr = GET_SYM(handle, "mlx_load");
     if (mlx_load_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_load\n");
+        return -1;
+    }
+    mlx_load_gguf_ptr = GET_SYM(handle, "mlx_load_gguf");
+    if (mlx_load_gguf_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_load_gguf\n");
         return -1;
     }
     mlx_load_safetensors_reader_ptr = GET_SYM(handle, "mlx_load_safetensors_reader");
@@ -1658,6 +1737,11 @@ int mlx_load_functions(void* handle) {
     mlx_save_ptr = GET_SYM(handle, "mlx_save");
     if (mlx_save_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_save\n");
+        return -1;
+    }
+    mlx_save_gguf_ptr = GET_SYM(handle, "mlx_save_gguf");
+    if (mlx_save_gguf_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_save_gguf\n");
         return -1;
     }
     mlx_save_safetensors_writer_ptr = GET_SYM(handle, "mlx_save_safetensors_writer");
@@ -1708,6 +1792,76 @@ int mlx_load_functions(void* handle) {
     mlx_io_writer_free_ptr = GET_SYM(handle, "mlx_io_writer_free");
     if (mlx_io_writer_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_io_writer_free\n");
+        return -1;
+    }
+    mlx_io_gguf_new_ptr = GET_SYM(handle, "mlx_io_gguf_new");
+    if (mlx_io_gguf_new_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_new\n");
+        return -1;
+    }
+    mlx_io_gguf_free_ptr = GET_SYM(handle, "mlx_io_gguf_free");
+    if (mlx_io_gguf_free_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_free\n");
+        return -1;
+    }
+    mlx_io_gguf_get_keys_ptr = GET_SYM(handle, "mlx_io_gguf_get_keys");
+    if (mlx_io_gguf_get_keys_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_get_keys\n");
+        return -1;
+    }
+    mlx_io_gguf_get_array_ptr = GET_SYM(handle, "mlx_io_gguf_get_array");
+    if (mlx_io_gguf_get_array_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_get_array\n");
+        return -1;
+    }
+    mlx_io_gguf_get_metadata_array_ptr = GET_SYM(handle, "mlx_io_gguf_get_metadata_array");
+    if (mlx_io_gguf_get_metadata_array_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_get_metadata_array\n");
+        return -1;
+    }
+    mlx_io_gguf_get_metadata_string_ptr = GET_SYM(handle, "mlx_io_gguf_get_metadata_string");
+    if (mlx_io_gguf_get_metadata_string_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_get_metadata_string\n");
+        return -1;
+    }
+    mlx_io_gguf_get_metadata_vector_string_ptr = GET_SYM(handle, "mlx_io_gguf_get_metadata_vector_string");
+    if (mlx_io_gguf_get_metadata_vector_string_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_get_metadata_vector_string\n");
+        return -1;
+    }
+    mlx_io_gguf_has_metadata_array_ptr = GET_SYM(handle, "mlx_io_gguf_has_metadata_array");
+    if (mlx_io_gguf_has_metadata_array_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_has_metadata_array\n");
+        return -1;
+    }
+    mlx_io_gguf_has_metadata_string_ptr = GET_SYM(handle, "mlx_io_gguf_has_metadata_string");
+    if (mlx_io_gguf_has_metadata_string_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_has_metadata_string\n");
+        return -1;
+    }
+    mlx_io_gguf_has_metadata_vector_string_ptr = GET_SYM(handle, "mlx_io_gguf_has_metadata_vector_string");
+    if (mlx_io_gguf_has_metadata_vector_string_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_has_metadata_vector_string\n");
+        return -1;
+    }
+    mlx_io_gguf_set_array_ptr = GET_SYM(handle, "mlx_io_gguf_set_array");
+    if (mlx_io_gguf_set_array_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_set_array\n");
+        return -1;
+    }
+    mlx_io_gguf_set_metadata_array_ptr = GET_SYM(handle, "mlx_io_gguf_set_metadata_array");
+    if (mlx_io_gguf_set_metadata_array_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_set_metadata_array\n");
+        return -1;
+    }
+    mlx_io_gguf_set_metadata_string_ptr = GET_SYM(handle, "mlx_io_gguf_set_metadata_string");
+    if (mlx_io_gguf_set_metadata_string_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_set_metadata_string\n");
+        return -1;
+    }
+    mlx_io_gguf_set_metadata_vector_string_ptr = GET_SYM(handle, "mlx_io_gguf_set_metadata_vector_string");
+    if (mlx_io_gguf_set_metadata_vector_string_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_io_gguf_set_metadata_vector_string\n");
         return -1;
     }
     mlx_linalg_cholesky_ptr = GET_SYM(handle, "mlx_linalg_cholesky");
@@ -2878,6 +3032,26 @@ int mlx_load_functions(void* handle) {
     mlx_slice_update_dynamic_ptr = GET_SYM(handle, "mlx_slice_update_dynamic");
     if (mlx_slice_update_dynamic_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_slice_update_dynamic\n");
+        return -1;
+    }
+    mlx_slice_update_add_ptr = GET_SYM(handle, "mlx_slice_update_add");
+    if (mlx_slice_update_add_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_slice_update_add\n");
+        return -1;
+    }
+    mlx_slice_update_max_ptr = GET_SYM(handle, "mlx_slice_update_max");
+    if (mlx_slice_update_max_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_slice_update_max\n");
+        return -1;
+    }
+    mlx_slice_update_min_ptr = GET_SYM(handle, "mlx_slice_update_min");
+    if (mlx_slice_update_min_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_slice_update_min\n");
+        return -1;
+    }
+    mlx_slice_update_prod_ptr = GET_SYM(handle, "mlx_slice_update_prod");
+    if (mlx_slice_update_prod_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_slice_update_prod\n");
         return -1;
     }
     mlx_softmax_axes_ptr = GET_SYM(handle, "mlx_softmax_axes");
@@ -4144,6 +4318,18 @@ int mlx_distributed_sum_scatter(mlx_array* res, const mlx_array x, const mlx_dis
     return mlx_distributed_sum_scatter_ptr(res, x, group, s);
 }
 
+mlx_distributed_group mlx_distributed_group_new(void) {
+    return mlx_distributed_group_new_ptr();
+}
+
+int mlx_distributed_group_free(mlx_distributed_group group) {
+    return mlx_distributed_group_free_ptr(group);
+}
+
+int mlx_distributed_init(mlx_distributed_group* res, bool strict, const char* bk) {
+    return mlx_distributed_init_ptr(res, strict, bk);
+}
+
 int mlx_distributed_group_rank(mlx_distributed_group group) {
     return mlx_distributed_group_rank_ptr(group);
 }
@@ -4152,16 +4338,12 @@ int mlx_distributed_group_size(mlx_distributed_group group) {
     return mlx_distributed_group_size_ptr(group);
 }
 
-mlx_distributed_group mlx_distributed_group_split(mlx_distributed_group group, int color, int key) {
-    return mlx_distributed_group_split_ptr(group, color, key);
+int mlx_distributed_group_split(mlx_distributed_group* res, mlx_distributed_group group, int color, int key) {
+    return mlx_distributed_group_split_ptr(res, group, color, key);
 }
 
 bool mlx_distributed_is_available(const char* bk) {
     return mlx_distributed_is_available_ptr(bk);
-}
-
-mlx_distributed_group mlx_distributed_init(bool strict, const char* bk) {
-    return mlx_distributed_init_ptr(strict, bk);
 }
 
 void mlx_set_error_handler(mlx_error_handler_func handler, void* data, void (*dtor)(void*)) {
@@ -4336,60 +4518,88 @@ int mlx_fast_scaled_dot_product_attention(mlx_array* res, const mlx_array querie
     return mlx_fast_scaled_dot_product_attention_ptr(res, queries, keys, values, scale, mask_mode, mask_arr, sinks, s);
 }
 
-int mlx_fft_fft(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s) {
-    return mlx_fft_fft_ptr(res, a, n, axis, s);
+int mlx_fft_fft(mlx_array* res, const mlx_array a, int n, int axis, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_fft_ptr(res, a, n, axis, norm, s);
 }
 
-int mlx_fft_fft2(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) {
-    return mlx_fft_fft2_ptr(res, a, n, n_num, axes, axes_num, s);
+int mlx_fft_fft2(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_fft2_ptr(res, a, n, n_num, axes, axes_num, norm, s);
 }
 
-int mlx_fft_fftn(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) {
-    return mlx_fft_fftn_ptr(res, a, n, n_num, axes, axes_num, s);
+int mlx_fft_fftfreq(mlx_array* res, int n, double d, const mlx_stream s) {
+    return mlx_fft_fftfreq_ptr(res, n, d, s);
+}
+
+int mlx_fft_fftn(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_fftn_ptr(res, a, n, n_num, axes, axes_num, norm, s);
 }
 
 int mlx_fft_fftshift(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, const mlx_stream s) {
     return mlx_fft_fftshift_ptr(res, a, axes, axes_num, s);
 }
 
-int mlx_fft_ifft(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s) {
-    return mlx_fft_ifft_ptr(res, a, n, axis, s);
+int mlx_fft_ifft(mlx_array* res, const mlx_array a, int n, int axis, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_ifft_ptr(res, a, n, axis, norm, s);
 }
 
-int mlx_fft_ifft2(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) {
-    return mlx_fft_ifft2_ptr(res, a, n, n_num, axes, axes_num, s);
+int mlx_fft_ifft2(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_ifft2_ptr(res, a, n, n_num, axes, axes_num, norm, s);
 }
 
-int mlx_fft_ifftn(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) {
-    return mlx_fft_ifftn_ptr(res, a, n, n_num, axes, axes_num, s);
+int mlx_fft_ifftn(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_ifftn_ptr(res, a, n, n_num, axes, axes_num, norm, s);
 }
 
 int mlx_fft_ifftshift(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, const mlx_stream s) {
     return mlx_fft_ifftshift_ptr(res, a, axes, axes_num, s);
 }
 
-int mlx_fft_irfft(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s) {
-    return mlx_fft_irfft_ptr(res, a, n, axis, s);
+int mlx_fft_irfft(mlx_array* res, const mlx_array a, int n, int axis, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_irfft_ptr(res, a, n, axis, norm, s);
 }
 
-int mlx_fft_irfft2(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) {
-    return mlx_fft_irfft2_ptr(res, a, n, n_num, axes, axes_num, s);
+int mlx_fft_irfft2(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_irfft2_ptr(res, a, n, n_num, axes, axes_num, norm, s);
 }
 
-int mlx_fft_irfftn(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) {
-    return mlx_fft_irfftn_ptr(res, a, n, n_num, axes, axes_num, s);
+int mlx_fft_irfftn(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_irfftn_ptr(res, a, n, n_num, axes, axes_num, norm, s);
 }
 
-int mlx_fft_rfft(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s) {
-    return mlx_fft_rfft_ptr(res, a, n, axis, s);
+int mlx_fft_rfft(mlx_array* res, const mlx_array a, int n, int axis, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_rfft_ptr(res, a, n, axis, norm, s);
 }
 
-int mlx_fft_rfft2(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) {
-    return mlx_fft_rfft2_ptr(res, a, n, n_num, axes, axes_num, s);
+int mlx_fft_rfft2(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_rfft2_ptr(res, a, n, n_num, axes, axes_num, norm, s);
 }
 
-int mlx_fft_rfftn(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s) {
-    return mlx_fft_rfftn_ptr(res, a, n, n_num, axes, axes_num, s);
+int mlx_fft_rfftfreq(mlx_array* res, int n, double d, const mlx_stream s) {
+    return mlx_fft_rfftfreq_ptr(res, n, d, s);
+}
+
+int mlx_fft_rfftn(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, mlx_fft_norm norm, const mlx_stream s) {
+    return mlx_fft_rfftn_ptr(res, a, n, n_num, axes, axes_num, norm, s);
+}
+
+int mlx_node_namer_free(mlx_node_namer namer) {
+    return mlx_node_namer_free_ptr(namer);
+}
+
+int mlx_node_namer_set_name(mlx_node_namer namer, const mlx_array arr, const char* name) {
+    return mlx_node_namer_set_name_ptr(namer, arr, name);
+}
+
+int mlx_node_namer_get_name(const char** name, mlx_node_namer namer, const mlx_array arr) {
+    return mlx_node_namer_get_name_ptr(name, namer, arr);
+}
+
+int mlx_export_to_dot(FILE* os, const mlx_node_namer namer, const mlx_vector_array outputs) {
+    return mlx_export_to_dot_ptr(os, namer, outputs);
+}
+
+int mlx_print_graph(FILE* os, const mlx_node_namer namer, const mlx_vector_array outputs) {
+    return mlx_print_graph_ptr(os, namer, outputs);
 }
 
 int mlx_load_reader(mlx_array* res, mlx_io_reader in_stream, const mlx_stream s) {
@@ -4398,6 +4608,10 @@ int mlx_load_reader(mlx_array* res, mlx_io_reader in_stream, const mlx_stream s)
 
 int mlx_load(mlx_array* res, const char* file, const mlx_stream s) {
     return mlx_load_ptr(res, file, s);
+}
+
+int mlx_load_gguf(mlx_io_gguf* gguf, const char* file, const mlx_stream s) {
+    return mlx_load_gguf_ptr(gguf, file, s);
 }
 
 int mlx_load_safetensors_reader(mlx_map_string_to_array* res_0, mlx_map_string_to_string* res_1, mlx_io_reader in_stream, const mlx_stream s) {
@@ -4414,6 +4628,10 @@ int mlx_save_writer(mlx_io_writer out_stream, const mlx_array a) {
 
 int mlx_save(const char* file, const mlx_array a) {
     return mlx_save_ptr(file, a);
+}
+
+int mlx_save_gguf(const char* file, mlx_io_gguf gguf) {
+    return mlx_save_gguf_ptr(file, gguf);
 }
 
 int mlx_save_safetensors_writer(mlx_io_writer in_stream, const mlx_map_string_to_array param, const mlx_map_string_to_string metadata) {
@@ -4454,6 +4672,62 @@ int mlx_io_writer_tostring(mlx_string* str_, mlx_io_writer io) {
 
 int mlx_io_writer_free(mlx_io_writer io) {
     return mlx_io_writer_free_ptr(io);
+}
+
+mlx_io_gguf mlx_io_gguf_new(void) {
+    return mlx_io_gguf_new_ptr();
+}
+
+int mlx_io_gguf_free(mlx_io_gguf io) {
+    return mlx_io_gguf_free_ptr(io);
+}
+
+int mlx_io_gguf_get_keys(mlx_vector_string* keys, mlx_io_gguf io) {
+    return mlx_io_gguf_get_keys_ptr(keys, io);
+}
+
+int mlx_io_gguf_get_array(mlx_array* arr, mlx_io_gguf io, const char* key) {
+    return mlx_io_gguf_get_array_ptr(arr, io, key);
+}
+
+int mlx_io_gguf_get_metadata_array(mlx_array* arr, mlx_io_gguf io, const char* key) {
+    return mlx_io_gguf_get_metadata_array_ptr(arr, io, key);
+}
+
+int mlx_io_gguf_get_metadata_string(mlx_string* str, mlx_io_gguf io, const char* key) {
+    return mlx_io_gguf_get_metadata_string_ptr(str, io, key);
+}
+
+int mlx_io_gguf_get_metadata_vector_string(mlx_vector_string* vstr, mlx_io_gguf io, const char* key) {
+    return mlx_io_gguf_get_metadata_vector_string_ptr(vstr, io, key);
+}
+
+int mlx_io_gguf_has_metadata_array(bool* flag, mlx_io_gguf io, const char* key) {
+    return mlx_io_gguf_has_metadata_array_ptr(flag, io, key);
+}
+
+int mlx_io_gguf_has_metadata_string(bool* flag, mlx_io_gguf io, const char* key) {
+    return mlx_io_gguf_has_metadata_string_ptr(flag, io, key);
+}
+
+int mlx_io_gguf_has_metadata_vector_string(bool* flag, mlx_io_gguf io, const char* key) {
+    return mlx_io_gguf_has_metadata_vector_string_ptr(flag, io, key);
+}
+
+int mlx_io_gguf_set_array(mlx_io_gguf io, const char* key, const mlx_array arr) {
+    return mlx_io_gguf_set_array_ptr(io, key, arr);
+}
+
+int mlx_io_gguf_set_metadata_array(mlx_io_gguf io, const char* key, const mlx_array marr) {
+    return mlx_io_gguf_set_metadata_array_ptr(io, key, marr);
+}
+
+int mlx_io_gguf_set_metadata_string(mlx_io_gguf io, const char* key, const char* mstr) {
+    return mlx_io_gguf_set_metadata_string_ptr(io, key, mstr);
+}
+
+int mlx_io_gguf_set_metadata_vector_string(mlx_io_gguf io, const char* key, const mlx_vector_string mvstr) {
+    return mlx_io_gguf_set_metadata_vector_string_ptr(io, key, mvstr);
 }
 
 int mlx_linalg_cholesky(mlx_array* res, const mlx_array a, bool upper, const mlx_stream s) {
@@ -5390,6 +5664,22 @@ int mlx_slice_update(mlx_array* res, const mlx_array src, const mlx_array update
 
 int mlx_slice_update_dynamic(mlx_array* res, const mlx_array src, const mlx_array update, const mlx_array start, const int* axes, size_t axes_num, const mlx_stream s) {
     return mlx_slice_update_dynamic_ptr(res, src, update, start, axes, axes_num, s);
+}
+
+int mlx_slice_update_add(mlx_array* res, const mlx_array src, const mlx_array update, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s) {
+    return mlx_slice_update_add_ptr(res, src, update, start, start_num, stop, stop_num, strides, strides_num, s);
+}
+
+int mlx_slice_update_max(mlx_array* res, const mlx_array src, const mlx_array update, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s) {
+    return mlx_slice_update_max_ptr(res, src, update, start, start_num, stop, stop_num, strides, strides_num, s);
+}
+
+int mlx_slice_update_min(mlx_array* res, const mlx_array src, const mlx_array update, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s) {
+    return mlx_slice_update_min_ptr(res, src, update, start, start_num, stop, stop_num, strides, strides_num, s);
+}
+
+int mlx_slice_update_prod(mlx_array* res, const mlx_array src, const mlx_array update, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s) {
+    return mlx_slice_update_prod_ptr(res, src, update, start, start_num, stop, stop_num, strides, strides_num, s);
 }
 
 int mlx_softmax_axes(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool precise, const mlx_stream s) {
