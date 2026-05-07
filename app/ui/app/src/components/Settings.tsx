@@ -16,6 +16,7 @@ import {
   CogIcon,
   ArrowLeftIcon,
   ArrowDownTrayIcon,
+  LightBulbIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { useNavigate } from "@tanstack/react-router";
@@ -560,6 +561,29 @@ export default function Settings() {
                         ]}
                       />
                     </div>
+                  </div>
+                </div>
+              </Field>
+
+              {/* Reasoning / Thinking */}
+              <Field>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start space-x-3 flex-1">
+                    <LightBulbIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                    <div>
+                      <Label>Reasoning/Thinking</Label>
+                      <Description>
+                        Enable reasoning/thinking on all supported models.
+                      </Description>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <Switch
+                      checked={settings.ThinkEnabled}
+                      onChange={(checked) =>
+                        handleChange("ThinkEnabled", checked)
+                      }
+                    />
                   </div>
                 </div>
               </Field>

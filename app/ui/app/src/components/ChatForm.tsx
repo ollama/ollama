@@ -492,11 +492,13 @@ function ChatForm({
 
     const useWebSearch =
       supportsWebSearch && webSearchEnabled && !cloudDisabled;
-    const useThink = modelSupportsThinkingLevels
-      ? thinkLevel
-      : supportsThinkToggling
-        ? thinkEnabled
-        : undefined;
+    const useThink = !thinkEnabled
+      ? false
+      : modelSupportsThinkingLevels
+        ? thinkLevel
+        : supportsThinkToggling
+          ? thinkEnabled
+          : undefined;
 
     if (onSubmit) {
       onSubmit(message.content, {
