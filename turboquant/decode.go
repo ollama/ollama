@@ -24,7 +24,10 @@ func DecodeVector(data []byte) ([]float32, Preset, error) {
 		indices := unpackBits(block.RegularIndices, int(block.RegularBits), blockDim)
 		rotated := make([]float32, blockDim)
 		for i, idx := range indices {
-			rotated[i] = dequantizeScalar(idx, codebook) * block.Scale
+			// block.Zero is 0 for symmetric presets, so this term is a no-op
+			// on the legacy path; for asymmetric-primary presets it re-adds
+			// the per-block mean the encoder subtracted before quantization.
+			rotated[i] = dequantizeScalar(idx, codebook)*block.Scale + block.Zero
 		}
 		if vectorObjective(block.Objective) == objectiveProduct {
 			residual := reconstructResidual(blockDim, block.Residual)
@@ -34,13 +37,19 @@ func DecodeVector(data []byte) ([]float32, Preset, error) {
 		}
 		original := ApplyInverseRotation(rotated, BuildRotation(blockDim, block.RotationSeed))
 
-		if len(block.ChannelIndices) == blockDim {
-			// Scatter to original channel positions.
-			for i, chIdx := range block.ChannelIndices {
-				decoded[chIdx] = original[i]
-			}
+		if len(block.ChannelBitmap) > 0 {
+			// Scatter to original channel positions via the bitmap: the i'th
+			// set bit is the original-vector index of the i'th value in this
+			// sub-block.
+			i := 0
+			iterateBitmap(block.ChannelBitmap, ev.Dim, func(chIdx int) {
+				if i < blockDim {
+					decoded[chIdx] = original[i]
+				}
+				i++
+			})
 		} else {
-			// Legacy single-block: fill contiguous range.
+			// Single-block path: fill contiguous range.
 			copy(decoded[offset:], original)
 			offset += blockDim
 		}
@@ -93,6 +102,18 @@ func UnmarshalEncodedVector(data []byte) (EncodedVector, error) {
 		}
 		if block.Residual.SketchDim != block.QJLRows {
 			return EncodedVector{}, fmt.Errorf("residual sketch dim %d does not match qjl rows %d", block.Residual.SketchDim, block.QJLRows)
+		}
+		// If the block carries a channel bitmap, validate it covers the
+		// encoded-vector dim and has the right popcount. An empty bitmap
+		// indicates the single-block legacy path.
+		if len(block.ChannelBitmap) > 0 {
+			wantBytes := bitmapBytes(int(dim))
+			if len(block.ChannelBitmap) != wantBytes {
+				return EncodedVector{}, fmt.Errorf("channel bitmap %d bytes, expected %d for dim %d", len(block.ChannelBitmap), wantBytes, dim)
+			}
+			if pc := channelBitmapPopcount(block.ChannelBitmap, int(dim)); pc != int(block.OriginalDim) {
+				return EncodedVector{}, fmt.Errorf("channel bitmap popcount %d does not match block dim %d", pc, block.OriginalDim)
+			}
 		}
 		totalDim += int(block.OriginalDim)
 		blocks = append(blocks, block)

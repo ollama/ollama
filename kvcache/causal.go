@@ -577,6 +577,14 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 	}
 }
 
+// Keys returns the per-layer persistent K storage tensors. Shape is
+// [kHeadDim, numKVHeads, cacheCapacity]. Only populated layers (those that
+// have seen at least one Put call) are present in the map. Intended for
+// diagnostic use only — the returned tensors are live cache storage.
+func (c *Causal) Keys() map[int]ml.Tensor {
+	return c.keys
+}
+
 func (c *Causal) CopyPrefix(srcSeq, dstSeq int, len int32) {
 	seqRange := newRange()
 

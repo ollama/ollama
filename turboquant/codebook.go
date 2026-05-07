@@ -112,6 +112,12 @@ func buildLloydMaxCodebook(dim int, bits int) []float32 {
 	return codebook
 }
 
+// UnitVectorCoordSamples exports the theoretical coordinate distribution for
+// diagnostics. See unitVectorCoordSamples for the full description.
+func UnitVectorCoordSamples(dim, bits, count int) []float64 {
+	return unitVectorCoordSamples(dim, bits, count)
+}
+
 // unitVectorCoordSamples returns count samples from the exact marginal
 // distribution of a single coordinate of a uniformly random unit vector in R^d:
 //

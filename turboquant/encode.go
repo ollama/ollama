@@ -75,7 +75,8 @@ func encodeVectorWithOutliers(values []float32, preset Preset, role vectorRole, 
 	outlierSeed := preset.RotationSeed ^ outlierSeedXOR
 	regularSeed := preset.RotationSeed ^ regularSeedXOR
 
-	outlierBlock, err := encodeSubBlock(split.OutlierValues, split.OutlierIndices, preset, role, objective, outlierBits, outlierSeed)
+	fullDim := len(values)
+	outlierBlock, err := encodeSubBlock(split.OutlierValues, channelBitmapFromIndices(fullDim, split.OutlierIndices), preset, role, objective, outlierBits, outlierSeed)
 	if err != nil {
 		return EncodedVector{}, fmt.Errorf("outlier block: %w", err)
 	}
@@ -83,7 +84,7 @@ func encodeVectorWithOutliers(values []float32, preset Preset, role vectorRole, 
 	// Regular block always uses MSE (no QJL sketch) regardless of the key/value
 	// role. QJL is only applied to the outlier block, which concentrates the
 	// residual correction budget on the highest-magnitude channels.
-	regularBlock, err := encodeSubBlock(split.RegularValues, split.RegularIndices, preset, role, objectiveMSE, regularBits, regularSeed)
+	regularBlock, err := encodeSubBlock(split.RegularValues, channelBitmapFromIndices(fullDim, split.RegularIndices), preset, role, objectiveMSE, regularBits, regularSeed)
 	if err != nil {
 		return EncodedVector{}, fmt.Errorf("regular block: %w", err)
 	}
@@ -96,10 +97,11 @@ func encodeVectorWithOutliers(values []float32, preset Preset, role vectorRole, 
 	}, nil
 }
 
-// encodeSubBlock encodes a sub-vector (identified by channelIndices into the
-// original full-dim vector) as a single Block. If channelIndices is nil, the
-// block covers all channels (single-block legacy path).
-func encodeSubBlock(values []float32, channelIndices []uint16, preset Preset, role vectorRole, objective vectorObjective, bits int, rotationSeed uint64) (Block, error) {
+// encodeSubBlock encodes a sub-vector as a single Block. If channelBitmap is
+// nil the block covers all channels of the encoded vector (single-block
+// path); otherwise the set bits identify which channels of the full vector
+// this sub-block's data maps to.
+func encodeSubBlock(values []float32, channelBitmap []byte, preset Preset, role vectorRole, objective vectorObjective, bits int, rotationSeed uint64) (Block, error) {
 	dim := len(values)
 	if dim <= 0 {
 		return Block{}, fmt.Errorf("empty sub-block")
@@ -108,21 +110,40 @@ func encodeSubBlock(values []float32, channelIndices []uint16, preset Preset, ro
 	codebook, boundaries := scalarCodebook(dim, bits)
 	rotation := BuildRotation(dim, rotationSeed)
 	rotated := ApplyRotation(values, rotation)
-	scale := blockScale(rotated)
+
+	// Dispatch on preset.HasAsymmetricPrimary():
+	//   symmetric: zero = 0,            scale = RMS(rotated)
+	//   asymmetric: zero = mean(rotated), scale = RMS(rotated - zero)
+	// Downstream quantization normalises by (value - zero) / scale in both
+	// cases; for the symmetric path zero=0 so this collapses to the original
+	// value / scale formula.
+	var (
+		zero  float32
+		scale float32
+	)
+	if preset.HasAsymmetricPrimary() {
+		zero, scale = asymmetricBlockStats(rotated)
+	} else {
+		scale = blockScale(rotated)
+	}
+
 	primaryCodes := make([]uint8, dim)
-	reconRotated := make([]float32, dim)
 	if scale == 0 {
 		for i := range primaryCodes {
 			primaryCodes[i] = quantizeScalarByBoundary(0, codebook, boundaries)
-			reconRotated[i] = 0
 		}
 	} else {
 		for i, value := range rotated {
-			normalized := value / scale
-			idx := quantizeScalarByBoundary(normalized, codebook, boundaries)
-			primaryCodes[i] = idx
-			reconRotated[i] = dequantizeScalar(idx, codebook) * scale
+			normalized := (value - zero) / scale
+			primaryCodes[i] = quantizeScalarByBoundary(normalized, codebook, boundaries)
 		}
+		// EDEN biased scale refinement — uses centered values (rotated[i] - zero).
+		scale = edenRefineScale(rotated, primaryCodes, codebook, boundaries, scale, zero)
+	}
+
+	reconRotated := make([]float32, dim)
+	for i, idx := range primaryCodes {
+		reconRotated[i] = dequantizeScalar(idx, codebook)*scale + zero
 	}
 
 	qjlRows := 0
@@ -143,8 +164,9 @@ func encodeSubBlock(values []float32, channelIndices []uint16, preset Preset, ro
 		CodebookID:     uint16(bits),
 		QJLRows:        uint16(qjlRows),
 		AuxLayoutID:    1,
-		ChannelIndices: channelIndices,
+		ChannelBitmap:  channelBitmap,
 		Scale:          scale,
+		Zero:           zero,
 		RegularIndices: packBits(primaryCodes, bits),
 		Residual:       encodeResidual(rotated, reconRotated, qjlRows, rotationSeed^0x9e3779b97f4a7c15),
 	}
@@ -178,6 +200,12 @@ func EncodeKeyPerHead(values []float32, preset Preset) (packedIndices []byte, sc
 			codes[i] = quantizeScalarByBoundary(v/scale, codebook, boundaries)
 		}
 	}
+
+	// EDEN biased scale refinement (Option B: two-pass).
+	// Given assignment {codes[i]}, the MSE-optimal scale is
+	// S* = Σ(v[i]·c[codes[i]]) / Σ(c[codes[i]]²).
+	scale = edenRefineScale(rotated, codes, codebook, boundaries, scale, 0)
+
 	return packBits(codes, bits), scale, nil
 }
 
@@ -345,6 +373,32 @@ func DequantKeyPerHeadOutlier(enc OutlierPerHead, preset Preset, headDim int) []
 	return out
 }
 
+// edenRefineScale applies two-pass EDEN biased scale refinement (Option B).
+// Given current assignment codes[], the MSE-optimal scale is
+// S* = Σ((v[i]-zero)·c[codes[i]]) / Σ(c[codes[i]]²).
+// Pass 1: compute S1, re-quantize with S1.  Pass 2: compute S2, return S2.
+// Falls back to the initial scale if S* is non-positive or denominator is tiny.
+func edenRefineScale(rotated []float32, codes []uint8, codebook []float32, boundaries []float32, scale, zero float32) float32 {
+	for range 2 {
+		var num, den float64
+		for i, code := range codes {
+			ci := float64(codebook[code])
+			vi := float64(rotated[i]) - float64(zero)
+			num += vi * ci
+			den += ci * ci
+		}
+		if den < 1e-12 || num <= 0 {
+			break
+		}
+		scale = float32(num / den)
+		// Re-quantize with refined scale for the next pass.
+		for i, v := range rotated {
+			codes[i] = quantizeScalarByBoundary((v-zero)/scale, codebook, boundaries)
+		}
+	}
+	return scale
+}
+
 func blockScale(values []float32) float32 {
 	if len(values) == 0 {
 		return 0
@@ -357,6 +411,35 @@ func blockScale(values []float32) float32 {
 		return 0
 	}
 	return float32(math.Sqrt(sumSquares / float64(len(values))))
+}
+
+// asymmetricBlockStats returns (mean, RMS-of-centred) for use by the
+// centred-asymmetric-primary path. Symmetric presets still call blockScale
+// directly; this helper is a sibling, not a replacement.
+//
+// The returned scale is the RMS of `values - mean`, so downstream quantisation
+// normalises by (value - mean) / scale just like the symmetric path normalises
+// by value / scale — the Lloyd-Max codebook stays the same, the only change
+// is that we centre the distribution first.
+func asymmetricBlockStats(values []float32) (zero, scale float32) {
+	n := len(values)
+	if n == 0 {
+		return 0, 0
+	}
+	var sum float64
+	for _, v := range values {
+		sum += float64(v)
+	}
+	mean := sum / float64(n)
+	var sumSquares float64
+	for _, v := range values {
+		d := float64(v) - mean
+		sumSquares += d * d
+	}
+	if sumSquares < 1e-12 {
+		return float32(mean), 0
+	}
+	return float32(mean), float32(math.Sqrt(sumSquares / float64(n)))
 }
 
 func (e EncodedVector) MarshalBinary() ([]byte, error) {

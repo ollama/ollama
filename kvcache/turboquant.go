@@ -1,15 +1,31 @@
 package kvcache
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"sync"
 
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/turboquant"
 )
+
+// forceFused opts back into the K+V fused inline-decode path (path 2). The
+// default is the combined DequantKV + stock FA path (path 1), which is
+//   - faster on Pascal P40 (4.4× decode, 8.95× prefill measured),
+//   - the only correct option on RDNA3/HIP — the fused kernel there is
+//     producing wrong-but-low-PPL output (PPL below f16, which lossy
+//     quantization cannot achieve), and
+//   - functionally equivalent to path 2 on Pascal CUDA (PPL preserved
+//     bit-for-bit at ctx=16384 across llama3.1:8b, llama3.2:3b, qwen2.5:7b).
+//
+// OLLAMA_TQ_FORCE_FUSED=1 re-engages the fused kernel for benchmarking and
+// for resuming the path-2 correctness investigation on HIP. The kernel stays
+// in tree until that bug is rooted.
+var forceFused = os.Getenv("OLLAMA_TQ_FORCE_FUSED") != ""
 
 type TurboQuantCache struct {
 	meta      *Causal
@@ -37,15 +53,11 @@ type TurboQuantCache struct {
 	// cache instance (avoids log spam: Get() is called every layer every step).
 	logPathOnce [5]sync.Once
 
-	// fusedFallbackEligible gates the inline-decode fused-FA fallback paths
-	// (Get paths 2 and 4). The CUDA fused kernel is template-instantiated only
-	// at D=128, so models with a larger head dim (gemma4 D=512) must skip it
-	// to avoid a kernel-side GGML_ASSERT. The Metal fused kernel has both
-	// D=128 and D=256 variants (kernel_tq_fattn_vec_*{,_d256}), so gemma3
-	// D=256 is eligible on Metal but not on CUDA until the CUDA kernel gains
-	// a D=256 instantiation. The DequantK + stock FA path (Get paths 0/1/5)
-	// works at any head dim — this gate is specific to the inline-decode
-	// variants.
+	// fusedFallbackEligible gates the inline-decode fused-FA fallback paths (D=64, 128, 256)
+	// (Get paths 2 and 4). The CUDA fused kernel is template-instantiated at
+	// D=64, 128, 256 — covering llama3.2 (64), llama3.1/qwen2.5 (128), and
+	// Gemma (256). Models with D=512 or other unsupported dims fall back to the
+	// DequantK + stock FA path (Get paths 0/1/5), which works at any head dim.
 	fusedFallbackEligible bool
 
 	// preferFusedAttn is true on Metal. At long context, DequantKV + stock FA
@@ -83,6 +95,20 @@ type TurboQuantCache struct {
 	// rotation setter interface, populated once in activateGPUEncode. nil
 	// when the backend doesn't support TQ rotation hooks (the fallback case).
 	rotSetter tqRotSetter
+
+	// pendingKBiases buffers K projection biases set by SetLayerKBias before
+	// activateGPUEncode has initialised compressedK. Applied to compressedK
+	// once the manager is created.
+	pendingKBiases map[int]ml.Tensor
+
+	// reserveSkipVPlaceholder, when true, suppresses the SkipV synthesis block
+	// in the reserve graph for the current Get() call. Set when the K reserve
+	// branch placed a K+V fused tensor (which carries V internally as vPacked,
+	// so the inference-time value return is nil). The reserve graph must
+	// mirror that — synthesising a Zeros f16 V here would re-introduce the
+	// scratch buffer the K+V fused path was meant to eliminate. Read-and-cleared
+	// once per Get() call.
+	reserveSkipVPlaceholder bool
 }
 
 // tqRotSetter is the backend hook TurboQuantCache uses to arm the per-call
@@ -145,7 +171,7 @@ func WrapWithTurboQuant(cache Cache, preset turboquant.Preset) (Cache, bool) {
 		wrapped := 0
 		for i, sub := range c.caches {
 			inner, ok := sub.(*Causal)
-			if !ok || isSWACausal(inner) {
+			if !ok {
 				continue
 			}
 			c.caches[i] = &TurboQuantCache{
@@ -193,8 +219,7 @@ func WrapWithTurboQuant(cache Cache, preset turboquant.Preset) (Cache, bool) {
 func (c *TurboQuantCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {
 	// K is always compressed; suppress inner Causal from allocating it.
 	c.meta.SkipK = true
-	// V is compressed only when ValueBits > 0 (tq2/tq3). K-only presets
-	// (tq2k/tq3k) have ValueBits=0 and keep V in the f16 Causal cache.
+	// V is compressed when ValueBits > 0; skip the inner Causal V allocation.
 	if c.preset.ValueBits > 0 {
 		c.meta.SkipV = true
 	}
@@ -213,6 +238,36 @@ func (c *TurboQuantCache) Close() {
 
 func (c *TurboQuantCache) SetLayer(layer int)              { c.meta.SetLayer(layer) }
 func (c *TurboQuantCache) SetConfig(config ml.CacheConfig) { c.meta.SetConfig(config) }
+
+// FusedEligible reports whether the inline-decode fused kernel path is active.
+// Only valid after the first Put() call (which triggers activateGPUEncode).
+// Returns false if headDim is not in the supported set — DequantK slow path is active.
+func (c *TurboQuantCache) FusedEligible() bool { return c.fusedFallbackEligible }
+
+// SetLayerKBias passes the K projection bias tensor for the given layer to the
+// TQ compression manager. Called once per layer at model init for architectures
+// that include a bias on the K projection (e.g. Qwen2). The bias is subtracted
+// from K before rotation in the encoder; attention correctness is preserved
+// because a constant shift in K cancels out in softmax.
+func (c *TurboQuantCache) SetLayerKBias(layer int, bias ml.Tensor) {
+	if bias == nil {
+		return
+	}
+	if c.compressedK == nil {
+		// activateGPUEncode hasn't run yet — buffer for later application.
+		if c.pendingKBiases == nil {
+			c.pendingKBiases = make(map[int]ml.Tensor)
+		}
+		c.pendingKBiases[layer] = bias
+		return
+	}
+	type kBiasSetter interface {
+		SetLayerKBias(layer int, bias ml.Tensor)
+	}
+	if kbs, ok := c.compressedK.(kBiasSetter); ok {
+		kbs.SetLayerKBias(layer, bias)
+	}
+}
 
 func (c *TurboQuantCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
 	c.isReserve = reserve
@@ -243,19 +298,44 @@ func (c *TurboQuantCache) Put(ctx ml.Context, key, value ml.Tensor) {
 
 	if c.isReserve {
 		c.meta.Put(ctx, key, value)
-		// Eagerly allocate TQ persistent buffers during reserve so the scheduler's
-		// per-layer Cache totals reflect the real post-compression footprint. No
-		// encode kernels run on reserve — we only need the tensors in the layer
-		// context so newTensor's c.b.btDeviceMemory[...].Cache[layer] bump fires.
+		// Eagerly allocate TQ/i4 persistent buffers during reserve so the
+		// scheduler's per-layer Cache totals reflect the real post-compression
+		// footprint. Also create the encode graph node so the reserve graph has
+		// the same K-branch structure as the inference graph. Without the encode
+		// node, gallocr's live-range analysis sees a truncated graph and
+		// over-allocates scratch (measured: +222 MiB for asym+outliers presets).
 		if c.compressedK != nil {
 			layer := c.meta.curLayer
 			capacity := len(c.meta.cells)
 			c.compressedK.EnsureLayer(layer, capacity)
 			if c.preset.ValueBits > 0 {
 				c.compressedK.EnsureVLayer(layer, capacity)
+				kResult, vResult := c.compressedK.EncodeKV(ctx, layer, key, value, 0)
+				if kResult != nil {
+					ctx.Forward(kResult)
+					c.encodeResults[layer] = kResult
+					c.vEncodeResults[layer] = vResult
+				}
+			} else {
+				encodeResult := c.compressedK.EncodeK(ctx, layer, key, 0)
+				if encodeResult != nil {
+					ctx.Forward(encodeResult)
+					c.encodeResults[layer] = encodeResult
+				}
 			}
 		}
 		return
+	}
+
+	// Compute firstCell from contiguous curLocs (same invariant for both paths).
+	firstCell := 0
+	if len(c.meta.curLocs) > 0 {
+		firstCell = c.meta.curLocs[0]
+		for i := 1; i < len(c.meta.curLocs); i++ {
+			if c.meta.curLocs[i] != firstCell+i {
+				panic(fmt.Sprintf("turboquant: non-contiguous cache slots %v — findLocs invariant violated", c.meta.curLocs))
+			}
+		}
 	}
 
 	if c.compressedK != nil {
@@ -272,16 +352,6 @@ func (c *TurboQuantCache) Put(ctx ml.Context, key, value ml.Tensor) {
 		// contiguous run when SkipK/SkipV is set (otherwise it returns
 		// ErrKvCacheFull before we reach here); this loop is a defensive
 		// invariant check that should never fire in practice.
-		firstCell := 0
-		if len(c.meta.curLocs) > 0 {
-			firstCell = c.meta.curLocs[0]
-			for i := 1; i < len(c.meta.curLocs); i++ {
-				if c.meta.curLocs[i] != firstCell+i {
-					panic(fmt.Sprintf("turboquant: non-contiguous cache slots %v — findLocs invariant violated", c.meta.curLocs))
-				}
-			}
-		}
-
 		if c.preset.ValueBits > 0 {
 			// Combined K+V encode: single GGML op, two back-to-back kernels.
 			kResult, vResult := c.compressedK.EncodeKV(ctx, layer, key, value, firstCell)
@@ -311,21 +381,79 @@ func (c *TurboQuantCache) Put(ctx ml.Context, key, value ml.Tensor) {
 func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
 	if c.isReserve {
 		key, value, mask := c.meta.Get(ctx)
-		// SkipK: synthesize zero f16 K placeholder for graph sizing.
+		// SkipK: synthesize K for graph sizing, matching the node type that the
+		// inference path produces so gallocr pre-reserves the right scratch size.
+		// Each branch mirrors exactly the inference routing in Get() below.
 		if key == nil && c.headDim > 0 {
 			nCells := 1
 			if c.meta.curMask != nil {
 				nCells = c.meta.curMask.Dim(0)
 			}
-			key = ctx.Input().Zeros(ml.DTypeF16, c.headDim, c.numKVHeads, nCells)
+			if c.compressedK != nil {
+				layer := c.meta.curLayer
+				enc := c.encodeResults[layer]
+				switch {
+				case c.preset.ValueBits > 0:
+					// All tq* K+V presets: prefer fused K+V (no f16 scratch).
+					// GetAsTQTensorKV succeeds for non-outlier and K+V-outlier presets;
+					// returns false for K-only-outlier (blocked in fusedKernelSupports).
+					// Falls back to DequantKV only when fused is unavailable (D!=128).
+					vEnc := c.vEncodeResults[layer]
+					if enc != nil && vEnc != nil {
+						if gpuKV, ok := c.compressedK.GetAsTQTensorKV(ctx, layer, enc, vEnc, 0, nCells); ok {
+							key = gpuKV
+							// V carried inline — suppress f16 Zeros fallback in SkipV block.
+							c.reserveSkipVPlaceholder = true
+						}
+						if key == nil {
+							k, v := c.compressedK.DequantKV(ctx, layer, enc, vEnc, 0, nCells)
+							if k != nil {
+								key = k
+							}
+							if v != nil {
+								value = v
+							}
+						}
+						if key == nil {
+							key = c.compressedK.DequantK(ctx, layer, enc, 0, nCells)
+						}
+						if value == nil {
+							value = c.compressedK.DequantV(ctx, layer, vEnc, 0, nCells)
+						}
+					}
+				default:
+					// K-only (tq2k/tq3k/tq4k, with or without asymmetric): prefer
+					// fused K-only path (no f16 scratch); fall back to DequantK
+					// when fused is unavailable.
+					if enc != nil {
+						if gpuKey, ok := c.compressedK.GetAsTQTensor(ctx, layer, enc, 0, nCells); ok {
+							key = gpuKey
+						} else {
+							key = c.compressedK.DequantK(ctx, layer, enc, 0, nCells)
+						}
+					}
+				}
+			}
+			if key == nil {
+				key = ctx.Input().Zeros(ml.DTypeF16, c.headDim, c.numKVHeads, nCells)
+			}
 		}
-		// SkipV: synthesize zero f16 V placeholder for graph sizing.
-		if value == nil && c.headDim > 0 {
+		// SkipV: synthesize V placeholder when the K branch did not place a
+		// K+V fused tensor. For K+V TQ presets value was already set above by
+		// DequantKV, so this block is a no-op for those. For K-only presets
+		// value comes from Causal. If the K block placed a K+V fused tensor
+		// (value=nil, V carried inline), skip — otherwise we'd reintroduce
+		// the f16 V scratch.
+		skipVPlaceholder := c.reserveSkipVPlaceholder
+		c.reserveSkipVPlaceholder = false
+		if !skipVPlaceholder && value == nil && c.headDim > 0 {
 			nCells := 1
 			if c.meta.curMask != nil {
 				nCells = c.meta.curMask.Dim(0)
 			}
-			value = ctx.Input().Zeros(ml.DTypeF16, c.headDim, c.numKVHeads, nCells)
+			if value == nil {
+				value = ctx.Input().Zeros(ml.DTypeF16, c.headDim, c.numKVHeads, nCells)
+			}
 		}
 		return key, value, mask
 	}
@@ -338,13 +466,24 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 		encodeResult := c.encodeResults[layer]
 		vEncodeResult := c.vEncodeResults[layer]
 
-		// 0. K-only presets (tq2k/tq3k): DequantK + f16 V from Causal → stock FA.
-		//    Skips the fused FA kernel (slower than stock FA on Pascal).
-		if c.preset.ValueBits == 0 && encodeResult != nil {
+		// 0. K-only presets without asymmetric primary (tq2k/tq3k/tq4k under
+		//    OLLAMA_TQ_DISABLE_ASYMMETRIC=1): fused K-only (no scratch).
+		//    Falls back to DequantK only when fused is unavailable (D!=128).
+		if c.preset.ValueBits == 0 && !c.preset.AsymmetricPrimary && encodeResult != nil {
+			if c.fusedFallbackEligible {
+				if tqk, ok := c.compressedK.GetAsTQTensor(ctx, layer, encodeResult, firstCell, nCells); ok {
+					c.logPathOnce[0].Do(func() {
+						slog.Info("turboquant: using K-only fused path")
+					})
+					_, value, mask := c.meta.Get(ctx)
+					c.armRotationForNextSDPA()
+					return tqk, value, mask
+				}
+			}
 			key := c.compressedK.DequantK(ctx, layer, encodeResult, firstCell, nCells)
 			if key != nil {
 				c.logPathOnce[0].Do(func() {
-					slog.Info("turboquant: using K-only DequantK + f16 V path")
+					slog.Info("turboquant: using K-only DequantK + f16 V path (fused unavailable)")
 				})
 				_, value, mask := c.meta.Get(ctx)
 				c.armRotationForNextSDPA()
@@ -352,28 +491,23 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 			}
 		}
 
-		// Prefill vs decode routing on Metal: the fused inline-decode kernel
-		// re-decodes each packed K/V cell per Q-token, so its cost scales
-		// O(nCells × nTokensQ). For prefill (nTokensQ ≫ 1) DequantKV + stock
-		// FA wins by decoding each cell once and then letting stock FA
-		// amortise the read across all Q-tokens. For decode (nTokensQ=1) the
-		// fused path wins by avoiding the f16 intermediate write. This flag
-		// routes independently of preferFusedAttn so CUDA (preferFusedAttn=
-		// false) continues to take path 1 for everything.
-		useDequantKVForPrefill := c.preferFusedAttn && c.curQueryLen > 1
-
-		// 1. Combined K+V dequant → stock FA.
-		//    * CUDA/ROCm: always (preferFusedAttn=false).
-		//    * Metal: prefill only (batched Q). Metal decode drops to path 2.
-		if vEncodeResult != nil && (!c.preferFusedAttn || useDequantKVForPrefill) {
+		// 1. Combined K+V dequant → stock FA. Default for K+V outlier presets
+		//    on all backends. Outlier-aware: K plane uses the regular+outlier
+		//    overwrite kernel when outliers are present, V plane is plain
+		//    dequant. Single ggml op per layer; output is one [headDim,
+		//    numKVHeads, nCells, 2] f16 tensor split into K and V views.
+		//
+		//    Replaces the K+V fused inline-decode path (path 2 below) as the
+		//    default: faster on Pascal P40 (4.4× decode, 8.95× prefill measured
+		//    on llama3.1:8b ctx=16384) and correctness fix on RDNA3 — the HIP
+		//    build of the fused kernel produces wrong-but-low-PPL output (PPL
+		//    < f16, which lossy quant cannot achieve). PPL is preserved
+		//    bit-for-bit on Pascal CUDA between path 2 and path 1 here.
+		if vEncodeResult != nil && !forceFused {
 			key, value := c.compressedK.DequantKV(ctx, layer, encodeResult, vEncodeResult, firstCell, nCells)
 			if key != nil && value != nil {
 				c.logPathOnce[1].Do(func() {
-					if useDequantKVForPrefill {
-						slog.Info("turboquant: using combined DequantKV + stock FA path (Metal prefill)")
-					} else {
-						slog.Info("turboquant: using combined DequantKV + stock FA path")
-					}
+					slog.Info("turboquant: using combined DequantKV + stock FA path")
 				})
 				_, _, mask := c.meta.Get(ctx)
 				c.armRotationForNextSDPA()
@@ -381,35 +515,18 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 			}
 		}
 
-		// 2. K+V fused inline-decode: reads packed K+V directly, no f16 intermediate.
-		//    Primary path on Metal decode (Q=1); fallback on CUDA/ROCm.
-		//    Instantiated at D=128 always; D=256 on Metal only.
-		if vEncodeResult != nil && c.fusedFallbackEligible {
+		// 2. K+V fused inline-decode: opt-in via OLLAMA_TQ_FORCE_FUSED=1 only.
+		//    Kept in tree for benchmarking and for resuming the HIP correctness
+		//    investigation; the path-1 fallback above is the default since
+		//    the fused kernel is slower on Pascal and broken on RDNA3.
+		if vEncodeResult != nil && c.fusedFallbackEligible && forceFused {
 			if tqkv, ok := c.compressedK.GetAsTQTensorKV(ctx, layer, encodeResult, vEncodeResult, firstCell, nCells); ok {
 				c.logPathOnce[2].Do(func() {
-					if c.preferFusedAttn {
-						slog.Info("turboquant: using K+V fused inline-decode path (Metal decode: avoids f16 intermediate)")
-					} else {
-						slog.Warn("turboquant: falling back to K+V inline-decode fused kernel (slower)")
-					}
+					slog.Warn("turboquant: using K+V fused inline-decode path (forced via OLLAMA_TQ_FORCE_FUSED)")
 				})
 				_, _, mask := c.meta.Get(ctx)
 				c.armRotationForNextSDPA()
 				return tqkv, nil, mask
-			}
-		}
-
-		// 1b. DequantKV fallback when Metal decode tried path 2 and the fused
-		//     path was unavailable (e.g. headDim outside 128/256).
-		if vEncodeResult != nil && c.preferFusedAttn {
-			key, value := c.compressedK.DequantKV(ctx, layer, encodeResult, vEncodeResult, firstCell, nCells)
-			if key != nil && value != nil {
-				c.logPathOnce[1].Do(func() {
-					slog.Info("turboquant: using combined DequantKV + stock FA path (fused unavailable)")
-				})
-				_, _, mask := c.meta.Get(ctx)
-				c.armRotationForNextSDPA()
-				return key, value, mask
 			}
 		}
 
@@ -420,7 +537,10 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 		}
 
 		// 4. Try K-only fused: K decoded inline, V is dequanted f16. Gated on
-		//    fusedFallbackEligible for the same D=128 reason as path 2.
+		//    fusedFallbackEligible for the same D=128 reason as path 2. This
+		//    path uses the V_PACKED=false specialisation of the TQ FA kernel
+		//    (V is f16); the V_PACKED=true specialisation that path 2 used is
+		//    where the HIP correctness regression lives, so K-only is unaffected.
 		if c.fusedFallbackEligible {
 			if tqk, ok := c.compressedK.GetAsTQTensor(ctx, layer, encodeResult, firstCell, nCells); ok {
 				c.logPathOnce[3].Do(func() {
@@ -485,8 +605,56 @@ func (c *TurboQuantCache) activateGPUEncode() {
 		c.meta.SkipV = false
 	}
 
+	// QJL residual is only algorithmically active when the preset also uses
+	// outlier split (see turboquant.encodeVectorWithOutliers). The 6 ship
+	// presets all have QJLRowsDivisor=0 (no QJL); the runtime computation
+	// stays here so test-only Preset values that opt into QJL still work
+	// through this path.
+	qjlRows := 0
+	if c.preset.HasOutlierSplit() {
+		qjlRows = c.preset.KeyQJLRows(c.headDim)
+	}
+	// The user requested a measurement-grade preset if either asymmetric
+	// primary quantization or the QJL residual sketch is on. If we can't
+	// activate those on the GPU we produce exactly f16 output and any PPL
+	// measurement is a lie. Log that failure at ERROR with a distinctive
+	// marker so smoke tests and humans can both notice instead of silently
+	// reading bit-identical-to-f16 numbers and calling them success.
+	measurementRequested := c.preset.AsymmetricPrimary || qjlRows > 0
+	logActivation := func(gpuActive bool, path string) {
+		level := slog.LevelInfo
+		if measurementRequested && !gpuActive {
+			level = slog.LevelError
+		}
+		slog.Log(context.TODO(), level, "TQ_ACTIVATION",
+			"preset", c.preset.Name,
+			"asymmetric_requested", c.preset.AsymmetricPrimary,
+			"qjl_rows_requested", qjlRows,
+			"outlier_count", c.preset.OutlierCount,
+			"gpu_active", gpuActive,
+			"measurement_requested", measurementRequested,
+			"path", path,
+		)
+	}
+
+	// Architectural compatibility gate: the TQ encode kernel and fused fattn
+	// templates handle headDim ∈ {64, 128, 256, 512}. Models outside this set
+	// (e.g. glm-4.7 / DeepSeek-MLA at headDim=576) must skip TQ entirely and
+	// stay on f16 — the slow DequantK fallback also relies on encoder kernels
+	// that assume those dims.
+	if c.headDim != 64 && c.headDim != 128 && c.headDim != 256 && c.headDim != 512 {
+		slog.Warn("turboquant: headDim not supported, falling back to f16 KV cache",
+			"preset", c.preset.Name,
+			"headDim", c.headDim,
+			"supported", "{64, 128, 256, 512}")
+		logActivation(false, "f16-fallback-headdim-unsupported")
+		fallbackToF16()
+		return
+	}
+
 	tqb, ok := c.meta.backend.(ml.TQCompressedKBackend)
 	if !ok {
+		logActivation(false, "f16-fallback-no-tq-backend")
 		fallbackToF16()
 		return
 	}
@@ -498,13 +666,35 @@ func (c *TurboQuantCache) activateGPUEncode() {
 	mgr := tqb.NewTQCompressedKManager(
 		c.headDim, c.numKVHeads, c.preset.KeyPrimaryBits, c.preset.RotationSeed,
 		c.preset.ValueBits, c.preset.OutlierBits, c.preset.OutlierCount,
+		c.preset.AsymmetricPrimary, qjlRows,
 	)
 	if mgr == nil {
-		slog.Info("turboquant: GPU encode not available, using f16 K fallback")
+		if measurementRequested {
+			slog.Error("turboquant: GPU manager unavailable — SILENT F16 FALLBACK ACTIVE. Run on CUDA, or set OLLAMA_TQ_DISABLE_ASYMMETRIC=1 / OLLAMA_TQ_DISABLE_OUTLIERS=1 to drop to a backend-supported configuration.",
+				"preset", c.preset.Name,
+				"asymmetric", c.preset.AsymmetricPrimary,
+				"qjl_rows", qjlRows)
+		} else {
+			slog.Info("turboquant: GPU encode not available, using f16 K fallback")
+		}
+		logActivation(false, "f16-fallback-mgr-nil")
 		fallbackToF16()
 		return
 	}
 	c.compressedK = mgr
+	// Apply any K projection biases buffered before the manager was ready.
+	if len(c.pendingKBiases) > 0 {
+		type kBiasSetter interface {
+			SetLayerKBias(layer int, bias ml.Tensor)
+		}
+		if kbs, ok := mgr.(kBiasSetter); ok {
+			for layer, bias := range c.pendingKBiases {
+				kbs.SetLayerKBias(layer, bias)
+			}
+		}
+		c.pendingKBiases = nil
+	}
+	logActivation(true, "gpu-native")
 
 	type fusedAttnPreferrer interface {
 		PreferFusedAttention() bool
@@ -516,22 +706,10 @@ func (c *TurboQuantCache) activateGPUEncode() {
 		}
 	}
 
-	// The inline-decode fused-FA fallback paths (Get paths 2 and 4) dispatch
-	// to a kernel that is D-specialised. CUDA has only D=128 today; Metal has
-	// D=128 and D=256 (kernel_tq_fattn_vec_*{,_d256}). Models with an
-	// unsupported head dim (e.g. gemma4 D=512, or gemma3 D=256 on CUDA) must
-	// skip these fallbacks to avoid a kernel-side GGML_ASSERT; path 5
-	// (separate K+V dequant) handles them correctly.
-	c.fusedFallbackEligible = c.headDim == 128 ||
-		(c.headDim == 256 && c.preferFusedAttn)
-	if !c.fusedFallbackEligible {
-		reason := "headDim != 128"
-		if c.headDim == 256 {
-			reason = "headDim == 256 but backend lacks D=256 fused kernel"
-		}
-		slog.Info("turboquant: inline-decode fused-FA fallback paths disabled",
-			"reason", reason, "headDim", c.headDim)
-	}
+	// The headDim ∈ {64, 128, 256} gate at the top of this function ensures
+	// we only get here on supported dims, so the fused-FA fallback paths
+	// (Get paths 2 and 4) are always eligible.
+	c.fusedFallbackEligible = true
 
 	// Cache the rotation matrices and the backend's rotation-setter hook on
 	// TurboQuantCache so Get() can arm them per-call without re-running a
@@ -592,16 +770,23 @@ func (c *TurboQuantCache) SetCausal(ctx ml.Context, opts CausalOptions) {
 	c.meta.SetCausal(ctx, opts)
 }
 
+// PresetFromDType resolves a runtime KV-cache DType to a turboquant.Preset.
+// Returned presets pass through ApplyEnvOverrides so OLLAMA_TQ_DISABLE_*
+// takes effect in the cache encode/decode path.
 func PresetFromDType(dtype ml.DType) (turboquant.Preset, bool) {
 	switch dtype {
 	case ml.DTypeTQ2:
-		return turboquant.PresetTQ2, true
+		return turboquant.ApplyEnvOverrides(turboquant.PresetTQ2), true
 	case ml.DTypeTQ3:
-		return turboquant.PresetTQ3, true
+		return turboquant.ApplyEnvOverrides(turboquant.PresetTQ3), true
 	case ml.DTypeTQ3K:
-		return turboquant.PresetTQ3K, true
+		return turboquant.ApplyEnvOverrides(turboquant.PresetTQ3K), true
 	case ml.DTypeTQ2K:
-		return turboquant.PresetTQ2K, true
+		return turboquant.ApplyEnvOverrides(turboquant.PresetTQ2K), true
+	case ml.DTypeTQ4:
+		return turboquant.ApplyEnvOverrides(turboquant.PresetTQ4), true
+	case ml.DTypeTQ4K:
+		return turboquant.ApplyEnvOverrides(turboquant.PresetTQ4K), true
 	default:
 		return turboquant.Preset{}, false
 	}

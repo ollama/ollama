@@ -7,13 +7,10 @@ import (
 )
 
 // testOutlierPreset returns a copy of base with outlier split forced on
-// for testing. The shipped PresetTQ3 / PresetTQ3K default to
-// OutlierCount=0 (see comments on those presets in turboquant.go): the
-// paper-grounded outlier-split path is available in the kernels and Go
-// helpers but disabled in the default presets because on the models
-// this fork ships against it hurts decode throughput and PPL without
-// the Phase 2A asymmetric-quantization follow-up. Tests that exercise
-// the outlier-split code path explicitly opt in via this helper.
+// for testing. PresetTQ3 / PresetTQ3K default to OutlierCount=0 because
+// outlier-split alone (without asymmetric primary quantization) hurts
+// decode throughput and PPL on tested models. Tests that exercise the
+// outlier-split code path explicitly opt in via this helper.
 func testOutlierPreset(base Preset, count int) Preset {
 	out := base
 	out.OutlierCount = count
@@ -62,16 +59,29 @@ func TestMemoryFormulaMatchesMarshalSize(t *testing.T) {
 			t.Fatalf("%s dim=%d value marshal: %v", tc.preset.Name, tc.dim, err)
 		}
 
-		// Replicate the fs/ggml/ggml.go GraphSize formula.
+		// Memory formula for an outlier-split encoded vector. Each sub-block
+		// carries a dim-wide ChannelBitmap (1 bit per original-vector
+		// channel), not per-sub-block uint16 indices — a significant
+		// per-vector saving for dim ≫ outlier count.
 		const outlierCount = uint64(32)
 		outlierBits := uint64(tc.preset.OutlierBits)
 		regularKeyBits := uint64(tc.preset.KeyPrimaryBits)
 		regularValueBits := uint64(tc.preset.ValueBits)
 		dim := uint64(tc.dim)
 		outlierData := (outlierCount*outlierBits + 7) / 8
-		qjlData := (outlierCount + 7) / 8
-		wantKey := 122 + 2*dim + outlierData + ((dim-outlierCount)*regularKeyBits+7)/8 + qjlData
-		wantValue := 122 + 2*dim + outlierData + ((dim-outlierCount)*regularValueBits+7)/8
+		// QJL data is included only when QJLRowsDivisor > 0 (no ship preset
+		// uses QJL — the formula stays so test-only QJL fixtures stay valid).
+		qjlData := uint64(0)
+		if tc.preset.QJLRowsDivisor > 0 {
+			qjlData = (outlierCount + 7) / 8
+		}
+		bitmap := 2 * ((dim + 7) / 8) // one per sub-block
+		// Fixed-overhead constant per encoded vector with outlier split: 10
+		// bytes of EncodedVector header + 4 bytes blockLen per block (×2) +
+		// 56 bytes per-block fixed header (×2). The 56 = 52 pre-Zero + 4 for
+		// the new Zero float32 field.
+		wantKey := 130 + bitmap + outlierData + ((dim-outlierCount)*regularKeyBits+7)/8 + qjlData
+		wantValue := 130 + bitmap + outlierData + ((dim-outlierCount)*regularValueBits+7)/8
 
 		if uint64(len(keyData)) != wantKey {
 			t.Errorf("%s dim=%d: key MarshalBinary=%d bytes, formula=%d",
@@ -95,8 +105,8 @@ func TestOutlierSplitBoundaries(t *testing.T) {
 			t.Errorf("%s dim=%d: got %d blocks, want 1 (no split at exact boundary)",
 				preset.Name, preset.OutlierCount, len(encoded.Blocks))
 		}
-		if len(encoded.Blocks[0].ChannelIndices) != 0 {
-			t.Errorf("%s dim=%d: single-block should have no ChannelIndices", preset.Name, preset.OutlierCount)
+		if len(encoded.Blocks[0].ChannelBitmap) != 0 {
+			t.Errorf("%s dim=%d: single-block should have no ChannelBitmap", preset.Name, preset.OutlierCount)
 		}
 
 		minSplit := pseudoRandomVector(preset.OutlierCount+1, 0xbabe)
@@ -195,11 +205,14 @@ func TestEncodeVectorDeterministicBytes(t *testing.T) {
 
 func TestEncodeKeyAndValueUseDifferentObjectives(t *testing.T) {
 	values := pseudoRandomVector(32, 0x77)
-	keyEncoded, err := EncodeKeyVector(values, PresetTQ3)
+	// QJL-enabled inline preset: ship presets set QJLRowsDivisor=0, so a
+	// dedicated fixture is needed to exercise the residual-sketch code path.
+	qjlOn := newPreset(100, "qjl_on", 3, 3, 1, 0x35c0ffee, 4, 0)
+	keyEncoded, err := EncodeKeyVector(values, qjlOn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	valueEncoded, err := EncodeValueVector(values, PresetTQ3)
+	valueEncoded, err := EncodeValueVector(values, qjlOn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,31 +231,49 @@ func TestEncodeKeyAndValueUseDifferentObjectives(t *testing.T) {
 }
 
 func TestPresetNames(t *testing.T) {
-	for _, name := range []string{"tq2", "tq3", "tq3k", "tq2k"} {
+	// User-facing presets routable via OLLAMA_KV_CACHE_TYPE.
+	for _, name := range []string{
+		"tq2", "tq3", "tq4",
+		"tq2k", "tq3k", "tq4k",
+	} {
 		preset, err := PresetByName(name)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("user-facing preset %q rejected: %v", name, err)
 		}
 		if preset.Name != name {
 			t.Fatalf("preset %q resolved to %q", name, preset.Name)
 		}
 	}
+
+	// Names dropped in the 6-preset consolidation must NOT resolve. The
+	// equivalent ablations are now reachable via OLLAMA_TQ_DISABLE_OUTLIERS
+	// and OLLAMA_TQ_DISABLE_ASYMMETRIC env vars.
+	for _, name := range []string{
+		"tq3a", "tq3ka", "tq3q", "tq3kq", "tq3qa", "tq3kqa",
+		"tq2a", "tq2ka", "tq2q", "tq2kq", "tq2qa", "tq2kqa",
+		"tq4a", "tq4ka", "tq4qa",
+	} {
+		if _, err := PresetByName(name); err == nil {
+			t.Errorf("retired preset %q must not resolve via PresetByName", name)
+		}
+	}
 }
 
-// TestQJLDimMatchesPaperSpec verifies that the QJL sketch uses d random
-// projections (one per dimension), matching the paper's specification in
-// arXiv 2504.19874. With QJLRowsDivisor=1 this ensures the estimator variance
-// matches the paper's theoretical analysis and the bit accounting is exact:
-// tq2 = 2.5 bits/elem avg, tq3 = 3.5 bits/elem avg.
+// TestQJLDimMatchesPaperSpec verifies that a QJL-enabled preset (constructed
+// inline — no shipping preset uses QJL) sketches d random projections,
+// matching arXiv:2504.19874's spec. The shipping tq* presets set
+// QJLRowsDivisor=0, so the math is exercised here by direct construction.
 func TestQJLDimMatchesPaperSpec(t *testing.T) {
+	tq2qjl := newPreset(110, "tq2_qjl", 2, 2, 1, 0x25c0ffee, 3, 0)
+	tq3qjl := newPreset(100, "tq3_qjl", 3, 3, 1, 0x35c0ffee, 4, 0)
 	cases := []struct {
 		preset Preset
 		dim    int
 	}{
-		{PresetTQ2, 64},
-		{PresetTQ2, 128},
-		{PresetTQ3, 128},
-		{PresetTQ3, 256},
+		{tq2qjl, 64},
+		{tq2qjl, 128},
+		{tq3qjl, 128},
+		{tq3qjl, 256},
 	}
 	for _, tc := range cases {
 		got := tc.preset.KeyQJLRows(tc.dim)

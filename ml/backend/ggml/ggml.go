@@ -688,6 +688,35 @@ func (b *Backend) NewContext() ml.Context {
 	return b.NewContextSize(b.maxGraphNodes)
 }
 
+// GPUDeviceInfo holds identifying information about a GPU backend device.
+type GPUDeviceInfo struct {
+	Name    string
+	ID      string
+	Library string
+	CCMajor int
+	CCMinor int
+}
+
+// GPUDevices returns information about all GPU backend devices discovered at
+// init time. Useful for test harnesses that need to construct a BackendParams
+// with GPULayers.
+func GPUDevices() []GPUDeviceInfo {
+	initDevices()
+	var infos []GPUDeviceInfo
+	for _, d := range gpus {
+		var props C.struct_ggml_backend_dev_props
+		C.ggml_backend_dev_get_props(d, &props)
+		infos = append(infos, GPUDeviceInfo{
+			Name:    C.GoString(props.name),
+			ID:      C.GoString(props.id),
+			Library: C.GoString(props.library),
+			CCMajor: int(props.compute_major),
+			CCMinor: int(props.compute_minor),
+		})
+	}
+	return infos
+}
+
 // TQDeviceScan describes the GPU devices discovered in the scheduler from the
 // perspective of TurboQuant: which one TQ will use, plus the names of any GPUs
 // that were skipped because they're not wave32-capable (NVIDIA < Pascal, or
@@ -1252,6 +1281,8 @@ func (t *Tensor) DType() ml.DType {
 		return ml.DTypeI32
 	case C.GGML_TYPE_I8:
 		return ml.DTypeI8
+	case C.GGML_TYPE_I16:
+		return ml.DTypeI16
 	case C.GGML_TYPE_MXFP4:
 		return ml.DTypeMXFP4
 	default:
@@ -1273,6 +1304,8 @@ func ggmlDType(dtype ml.DType) uint32 {
 		return C.GGML_TYPE_I32
 	case ml.DTypeI8:
 		return C.GGML_TYPE_I8
+	case ml.DTypeI16:
+		return C.GGML_TYPE_I16
 	case ml.DTypeMXFP4:
 		return C.GGML_TYPE_MXFP4
 	default:
@@ -1508,9 +1541,21 @@ func (t *Tensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tenso
 // scales = [numKVHeads, capacity] f32 (written as side output via src[3])
 // k      = [headDim, numKVHeads, batchSize] f16
 // rot    = [headDim, headDim] f32 (R^T row-major)
-// cidx   = [batchSize] i32
 // bounds = [(1<<bits)-1] f32
-func (t *Tensor) TQEncode(ctx ml.Context, scales, k, rot ml.Tensor, firstCell int, bounds ml.Tensor, bits int) ml.Tensor {
+// zeros  = [numKVHeads, capacity] f32 for asymmetric primary, nil for symmetric
+func (t *Tensor) TQEncode(ctx ml.Context, scales, k, rot ml.Tensor, firstCell int, bounds ml.Tensor, bits int, zeros, kBias, codebook ml.Tensor) ml.Tensor {
+	var cZeros *C.struct_ggml_tensor
+	if zeros != nil {
+		cZeros = zeros.(*Tensor).t
+	}
+	var cKBias *C.struct_ggml_tensor
+	if kBias != nil {
+		cKBias = kBias.(*Tensor).t
+	}
+	var cCodebook *C.struct_ggml_tensor
+	if codebook != nil {
+		cCodebook = codebook.(*Tensor).t
+	}
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_tq_encode(
@@ -1522,6 +1567,9 @@ func (t *Tensor) TQEncode(ctx ml.Context, scales, k, rot ml.Tensor, firstCell in
 			C.int32_t(firstCell),
 			bounds.(*Tensor).t,
 			C.int32_t(bits),
+			cZeros,
+			cKBias,
+			cCodebook,
 		),
 	}
 }
@@ -1532,10 +1580,14 @@ func (t *Tensor) TQEncode(ctx ml.Context, scales, k, rot ml.Tensor, firstCell in
 // v      = [headDim, numKVHeads, batchSize] f16 or f32
 // rot    = [headDim, headDim] f32 R^T row-major, or nil (no rotation)
 // bounds = [(1<<bits)-1] f32
-func (t *Tensor) TQEncodeV(ctx ml.Context, scales, v ml.Tensor, rot ml.Tensor, firstCell int, bounds ml.Tensor, bits int) ml.Tensor {
+func (t *Tensor) TQEncodeV(ctx ml.Context, scales, v ml.Tensor, rot ml.Tensor, firstCell int, bounds ml.Tensor, bits int, codebook ml.Tensor) ml.Tensor {
 	var rotT *C.struct_ggml_tensor
 	if rot != nil {
 		rotT = rot.(*Tensor).t
+	}
+	var cCodebook *C.struct_ggml_tensor
+	if codebook != nil {
+		cCodebook = codebook.(*Tensor).t
 	}
 	return &Tensor{
 		b: t.b,
@@ -1548,6 +1600,7 @@ func (t *Tensor) TQEncodeV(ctx ml.Context, scales, v ml.Tensor, rot ml.Tensor, f
 			C.int32_t(firstCell),
 			bounds.(*Tensor).t,
 			C.int32_t(bits),
+			cCodebook,
 		),
 	}
 }
@@ -1559,7 +1612,20 @@ func (t *Tensor) TQEncodeKV(ctx ml.Context,
 	kScales, k, rot, kBounds ml.Tensor,
 	vPacked, vScales, v, vBounds ml.Tensor,
 	firstCell, kBits, vBits int,
+	kBias, kCodebook, vCodebook ml.Tensor,
 ) ml.Tensor {
+	var cKBias *C.struct_ggml_tensor
+	if kBias != nil {
+		cKBias = kBias.(*Tensor).t
+	}
+	var cKCodebook *C.struct_ggml_tensor
+	if kCodebook != nil {
+		cKCodebook = kCodebook.(*Tensor).t
+	}
+	var cVCodebook *C.struct_ggml_tensor
+	if vCodebook != nil {
+		cVCodebook = vCodebook.(*Tensor).t
+	}
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_tq_encode_kv(
@@ -1576,6 +1642,9 @@ func (t *Tensor) TQEncodeKV(ctx ml.Context,
 			C.int32_t(firstCell),
 			C.int32_t(kBits),
 			C.int32_t(vBits),
+			cKBias,
+			cKCodebook,
+			cVCodebook,
 		),
 	}
 }
@@ -1606,7 +1675,38 @@ func (t *Tensor) TQDequant(ctx ml.Context, scales, codebook ml.Tensor, headDim, 
 // sub-block extension. op_params[3] (outlier_count) > 0 signals to the CUDA
 // dispatcher that the outlier kernel should run.
 func (t *Tensor) TQEncodeOutlier(ctx ml.Context, scales, k, rot ml.Tensor, firstCell int, bounds ml.Tensor, bits int,
-	outlierPacked, outlierScales, outlierIndices, outlierBounds ml.Tensor, outlierBits, outlierCount int) ml.Tensor {
+	outlierPacked, outlierScales, outlierIndices, outlierBounds ml.Tensor, outlierBits, outlierCount int,
+	zeros, outlierZeros ml.Tensor,
+	qjlPacked, qjlNorm, qjlProjection ml.Tensor, qjlRows int,
+	codebook, outlierCodebook ml.Tensor,
+	kBias ml.Tensor,
+) ml.Tensor {
+	var cZeros, cOutlierZeros, cQjlPacked, cQjlNorm, cQjlProjection, cCodebook, cOutlierCodebook, cKBias *C.struct_ggml_tensor
+	if zeros != nil {
+		cZeros = zeros.(*Tensor).t
+	}
+	if outlierZeros != nil {
+		cOutlierZeros = outlierZeros.(*Tensor).t
+	}
+	if qjlPacked != nil {
+		cQjlPacked = qjlPacked.(*Tensor).t
+	}
+	if qjlNorm != nil {
+		cQjlNorm = qjlNorm.(*Tensor).t
+	}
+	if qjlProjection != nil {
+		cQjlProjection = qjlProjection.(*Tensor).t
+	}
+	if codebook != nil {
+		cCodebook = codebook.(*Tensor).t
+	}
+	if outlierCodebook != nil {
+		cOutlierCodebook = outlierCodebook.(*Tensor).t
+	}
+	if kBias != nil {
+		cKBias = kBias.(*Tensor).t
+	}
+
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_tq_encode_outlier(
@@ -1624,6 +1724,15 @@ func (t *Tensor) TQEncodeOutlier(ctx ml.Context, scales, k, rot ml.Tensor, first
 			outlierBounds.(*Tensor).t,
 			C.int32_t(outlierBits),
 			C.int32_t(outlierCount),
+			cZeros,
+			cOutlierZeros,
+			cQjlPacked,
+			cQjlNorm,
+			cQjlProjection,
+			C.int32_t(qjlRows),
+			cCodebook,
+			cOutlierCodebook,
+			cKBias,
 		),
 	}
 }
@@ -1631,7 +1740,27 @@ func (t *Tensor) TQEncodeOutlier(ctx ml.Context, scales, k, rot ml.Tensor, first
 // TQDequantOutlier creates a GGML_OP_TQ_DEQUANT graph node with the outlier
 // overwrite pass. op_params[3] (outlier_count) > 0 signals the dispatcher.
 func (t *Tensor) TQDequantOutlier(ctx ml.Context, scales, codebook ml.Tensor, headDim, numKVHeads, nCells, firstCell, bits int,
-	outlierPacked, outlierScales, outlierIndices, outlierCodebook ml.Tensor, outlierBits, outlierCount int) ml.Tensor {
+	outlierPacked, outlierScales, outlierIndices, outlierCodebook ml.Tensor, outlierBits, outlierCount int,
+	zeros, outlierZeros ml.Tensor,
+	qjlPacked, qjlNorm, qjlProjection ml.Tensor, qjlRows int,
+) ml.Tensor {
+	var cZeros, cOutlierZeros, cQjlPacked, cQjlNorm, cQjlProjection *C.struct_ggml_tensor
+	if zeros != nil {
+		cZeros = zeros.(*Tensor).t
+	}
+	if outlierZeros != nil {
+		cOutlierZeros = outlierZeros.(*Tensor).t
+	}
+	if qjlPacked != nil {
+		cQjlPacked = qjlPacked.(*Tensor).t
+	}
+	if qjlNorm != nil {
+		cQjlNorm = qjlNorm.(*Tensor).t
+	}
+	if qjlProjection != nil {
+		cQjlProjection = qjlProjection.(*Tensor).t
+	}
+
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_tq_dequant_outlier(
@@ -1650,6 +1779,12 @@ func (t *Tensor) TQDequantOutlier(ctx ml.Context, scales, codebook ml.Tensor, he
 			outlierCodebook.(*Tensor).t,
 			C.int32_t(outlierBits),
 			C.int32_t(outlierCount),
+			cZeros,
+			cOutlierZeros,
+			cQjlPacked,
+			cQjlNorm,
+			cQjlProjection,
+			C.int32_t(qjlRows),
 		),
 	}
 }
@@ -1657,15 +1792,40 @@ func (t *Tensor) TQDequantOutlier(ctx ml.Context, scales, codebook ml.Tensor, he
 // TQDequantKV creates a GGML_OP_TQ_DEQUANT_KV graph node that dequants both
 // K and V in a single GGML op.  Returns a [headDim, numKVHeads, nCells, 2] f16
 // tensor; the caller splits it into K (ne[3]=0) and V (ne[3]=1) views.
+//
+// kOutlier* and kZeros/kOutlierZeros are nil for non-outlier presets. When
+// non-nil, the K plane is dequanted via the regular+outlier overwrite kernel.
+// V has no outliers in any ship preset, so its plane is always plain dequant.
 func TQDequantKV(ctx ml.Context, b *Backend,
 	kEncode, kScales, kCodebook *Tensor,
 	vEncode, vScales, vCodebook *Tensor,
 	vRotation *Tensor,
 	headDim, numKVHeads, nCells, firstCell, kBits, vBits int,
+	kOutlierPacked, kOutlierScales, kOutlierIndices, kOutlierCodebook *Tensor,
+	kZeros, kOutlierZeros *Tensor,
+	outlierBits, outlierCount int,
 ) *Tensor {
-	var vRotT *C.struct_ggml_tensor
+	var vRotT, kOutlPackedT, kOutlScalesT, kOutlIndicesT, kOutlCbT, kZerosT, kOutlZerosT *C.struct_ggml_tensor
 	if vRotation != nil {
 		vRotT = vRotation.t
+	}
+	if kOutlierPacked != nil {
+		kOutlPackedT = kOutlierPacked.t
+	}
+	if kOutlierScales != nil {
+		kOutlScalesT = kOutlierScales.t
+	}
+	if kOutlierIndices != nil {
+		kOutlIndicesT = kOutlierIndices.t
+	}
+	if kOutlierCodebook != nil {
+		kOutlCbT = kOutlierCodebook.t
+	}
+	if kZeros != nil {
+		kZerosT = kZeros.t
+	}
+	if kOutlierZeros != nil {
+		kOutlZerosT = kOutlierZeros.t
 	}
 	return &Tensor{
 		b: b,
@@ -1684,6 +1844,14 @@ func TQDequantKV(ctx ml.Context, b *Backend,
 			C.int(firstCell),
 			C.int(kBits),
 			C.int(vBits),
+			kOutlPackedT,
+			kOutlScalesT,
+			kOutlIndicesT,
+			kOutlCbT,
+			kZerosT,
+			kOutlZerosT,
+			C.int32_t(outlierBits),
+			C.int32_t(outlierCount),
 		),
 	}
 }

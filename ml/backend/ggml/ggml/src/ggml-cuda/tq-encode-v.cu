@@ -14,7 +14,8 @@ __global__ void tq_encode_v_kernel(
     int              numKVHeads,
     int              bits,
     int              numBoundaries,
-    int              vIsF32
+    int              vIsF32,
+    const float     *codebook    // [1<<bits] f32, NULL = RMS only
 ) {
     int batch = blockIdx.x;
     int head  = blockIdx.y;
@@ -87,6 +88,44 @@ __global__ void tq_encode_v_kernel(
     }
     __syncthreads();
 
+    // EDEN biased scale refinement (two-pass). Uses s_v as second reduce buffer.
+    if (codebook != nullptr) {
+        float *s_reduce2 = s_v;
+        for (int pass = 0; pass < 2; pass++) {
+            float local_num = 0.0f, local_den = 0.0f;
+            for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
+                float ci = codebook[(int)s_idx[i]];
+                float vi = s_input[i];
+                local_num += vi * ci;
+                local_den += ci * ci;
+            }
+            s_reduce[threadIdx.x] = local_num;
+            __syncthreads();
+            for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+                if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
+                __syncthreads();
+            }
+            s_reduce2[threadIdx.x] = local_den;
+            __syncthreads();
+            for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+                if (threadIdx.x < stride) s_reduce2[threadIdx.x] += s_reduce2[threadIdx.x + stride];
+                __syncthreads();
+            }
+            float s_eden = (s_reduce2[0] > 1e-12f && s_reduce[0] > 0.0f) ? (s_reduce[0] / s_reduce2[0]) : scale;
+            scale = s_eden;
+            if (threadIdx.x == 0) scales_out[cell * numKVHeads + head] = scale;
+            if (pass == 0) {
+                for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
+                    float val = (scale > 0.0f) ? (s_input[i] / scale) : 0.0f;
+                    int idx = 0;
+                    for (int b = 0; b < numBoundaries; b++) { if (val >= boundaries[b]) idx++; }
+                    s_idx[i] = (uint8_t)idx;
+                }
+                __syncthreads();
+            }
+        }
+    }
+
     // Step 5: Pack bits LSB-first
     {
         int packed_bytes = (headDim * bits + 7) / 8;
@@ -130,6 +169,10 @@ void ggml_cuda_tq_encode_v(ggml_backend_cuda_context & ctx, struct ggml_tensor *
 
     const float * rotation_ptr = rotation ? (const float *)rotation->data : nullptr;
 
+    // src[5] = v_codebook for EDEN biased scale refinement; NULL = RMS only.
+    const struct ggml_tensor * v_codebook = dst->src[5];
+    const float * codebook_ptr = v_codebook ? (const float *)v_codebook->data : nullptr;
+
     dim3 grid(batchSize, numKVHeads);
     int block_size = (headDim < TQ_ENCODE_V_BLOCK_SIZE) ? headDim : TQ_ENCODE_V_BLOCK_SIZE;
     int bs = 1;
@@ -149,6 +192,7 @@ void ggml_cuda_tq_encode_v(ggml_backend_cuda_context & ctx, struct ggml_tensor *
         (float          *)scales->data,
         firstCell,
         (const float    *)boundaries->data,
-        headDim, numKVHeads, bits, numBoundaries, vIsF32
+        headDim, numKVHeads, bits, numBoundaries, vIsF32,
+        codebook_ptr
     );
 }

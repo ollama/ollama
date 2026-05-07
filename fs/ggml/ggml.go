@@ -852,7 +852,11 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 		return true
 	}
 
-	return slices.Contains([]string{"q8_0", "q4_0", "tq2", "tq3", "tq3k", "tq2k"}, cacheType)
+	return slices.Contains([]string{
+		"q8_0", "q4_0",
+		"tq2", "tq3", "tq4",
+		"tq2k", "tq3k", "tq4k",
+	}, cacheType)
 }
 
 // KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
@@ -871,7 +875,7 @@ func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
 // either FA or the standard attention path.
 func (f GGML) KVCacheTypeRequiresFlashAttention(cacheType string) bool {
 	switch cacheType {
-	case "tq2k", "tq3k":
+	case "tq2k", "tq3k", "tq4k":
 		return false
 	}
 	return f.KVCacheTypeIsQuantized(cacheType)
@@ -920,25 +924,27 @@ func (f GGML) FlashAttention() bool {
 	}, f.KV().String("general.architecture"))
 }
 
-// kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type
+// kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type.
+// TQ presets include outlier-split (32 ch at OutlierBits) + asymmetric Zero overhead;
+// the figures below assume headDim=128 where the overhead amortises to ~0.07 B/elem.
 func kvCacheBytesPerElement(cacheType string) float64 {
 	switch cacheType {
 	case "q8_0":
 		return 1 // 1/2 of fp16
 	case "q4_0":
 		return 0.5 // 1/4 of fp16
-	case "tq3":
-		// 3-bit TQ K (~0.41 B/elem) + 3-bit TQ V (~0.41 B/elem), averaged over K+V
-		return 0.41
-	case "tq3k":
-		// 3-bit TQ K (~0.41 B/elem) + f16 V (2 B/elem), averaged over K+V
-		return 1.205
 	case "tq2":
-		// 2-bit TQ K (~0.28 B/elem) + 2-bit TQ V (~0.28 B/elem), averaged over K+V
-		return 0.28
+		return 0.32 // 2-bit K + 2-bit V (outlier=32 at 3-bit + asymmetric)
 	case "tq2k":
-		// 2-bit TQ K (~0.28 B/elem) + f16 V (2 B/elem), averaged over K+V
-		return 1.14
+		return 1.16 // 2-bit K + f16 V averaged
+	case "tq3":
+		return 0.45 // 3-bit K + 3-bit V (outlier=32 at 4-bit + asymmetric)
+	case "tq3k":
+		return 1.225 // 3-bit K + f16 V averaged
+	case "tq4":
+		return 0.60 // 4-bit K + 4-bit V (outlier=32 at 5-bit + asymmetric)
+	case "tq4k":
+		return 1.30 // 4-bit K + f16 V averaged
 	case "f32":
 		return 4 // f32 (default for recurrent)
 	default:

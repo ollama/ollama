@@ -149,6 +149,19 @@ func gaussianProjectionEntry(seed uint64, row, col int) float32 {
 	return float32(gaussianFloat64(&local))
 }
 
+// BuildQJLProjection generates the deterministic random Gaussian projection
+// matrix used by the QJL residual sketch.  The returned slice is row-major
+// with shape [qjlRows, headDim] (each row is one projection vector).
+func BuildQJLProjection(headDim, qjlRows int, seed uint64) []float32 {
+	data := make([]float32, headDim*qjlRows)
+	for row := range qjlRows {
+		for col := range headDim {
+			data[row*headDim+col] = gaussianProjectionEntry(seed, row, col)
+		}
+	}
+	return data
+}
+
 func dotSelf(values []float32) float32 {
 	var out float32
 	for _, value := range values {

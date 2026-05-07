@@ -61,6 +61,8 @@ func TestOutlierEncodeDequantGPUCPUEquivalence(t *testing.T) {
 				tc.preset.RotationSeed,
 				0, // vBits (K-only)
 				tc.outlierBits, tc.outlierCount,
+				false, // asymmetricPrimary
+				0,     // qjlRows
 			)
 			if mgrAny == nil {
 				t.Skip("no TQ-capable GPU available (need NVIDIA Pascal cc 6.0+ or AMD RDNA1+)")

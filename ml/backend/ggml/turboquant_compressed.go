@@ -25,6 +25,17 @@ type ggmlTQCompressedK struct {
 	outlierBits  int
 	outlierCount int
 
+	// Asymmetric primary quantization: when true, each per-head rotated vector
+	// is centred by its mean before scalar quantization and that mean is stored
+	// alongside the RMS scale. Decoding unconditionally adds the mean back.
+	asymmetricPrimary bool
+
+	// QJL residual sketch dimension. When > 0, EnsureLayer allocates qjlPacked
+	// and qjlNorm tensors, and the encode/dequant kernels compute a random-
+	// Gaussian projection of the primary-quantization residual, storing sign
+	// bits and the residual L2 norm.
+	qjlRows int
+
 	mu sync.Mutex
 
 	// Per-layer ggml tensors, allocated lazily via EnsureLayer.
@@ -32,10 +43,23 @@ type ggmlTQCompressedK struct {
 	packedTensors map[int]*Tensor // regular sub-block: [regularPackedBytes*numKVHeads, capacity] i8
 	scalesTensors map[int]*Tensor // regular scales: [numKVHeads, capacity] f32
 
+	// Asymmetric zero tensors (populated only when asymmetricPrimary is true).
+	zerosTensors        map[int]*Tensor // regular zeros: [numKVHeads, capacity] f32
+	outlierZerosTensors map[int]*Tensor // outlier zeros: [numKVHeads, capacity] f32
+
 	// Outlier sub-block per-layer tensors (populated only when outlierCount > 0).
 	outlierPackedTensors  map[int]*Tensor // [outlierPackedBytes*numKVHeads, capacity] i8
 	outlierScalesTensors  map[int]*Tensor // [numKVHeads, capacity] f32
 	outlierIndicesTensors map[int]*Tensor // [outlierCount*numKVHeads, capacity] i8 (channel idx)
+
+	// QJL per-layer tensors (populated only when qjlRows > 0).
+	qjlPackedTensors map[int]*Tensor // [qjlPackedBytes*numKVHeads, capacity] i8
+	qjlNormTensors   map[int]*Tensor // [numKVHeads, capacity] f32
+
+	// Per-layer K projection bias tensors (populated when the model has K bias,
+	// e.g. Qwen2). Shape: [numKVHeads * headDim] f32. Subtracted from K before
+	// rotation in the CUDA encoder; the decoder requires no change (bias cancels in softmax).
+	kBiasTensors map[int]*Tensor
 
 	// Rotation matrix R^T, shared across layers: [headDim, headDim] f32.
 	rotCtx    ml.Context
@@ -44,6 +68,11 @@ type ggmlTQCompressedK struct {
 	// Rotation matrix R (transpose of R^T), for undoing V rotation in SDPA.
 	// mul_mat(rotInverseTensor, x) = R @ x (recovers original from R^T @ x).
 	rotInverseTensor *Tensor // stores R row-major
+
+	// QJL projection matrix, shared across layers: [qjlRows, headDim] f32.
+	// Generated on CPU from the preset's QJL seed and uploaded once.
+	qjlProjectionCtx    ml.Context
+	qjlProjectionTensor *Tensor
 
 	// Codebook and boundaries tensors, shared across layers.
 	sharedCtx        ml.Context
@@ -80,6 +109,33 @@ func (m *ggmlTQCompressedK) hasOutliers() bool {
 	return m.outlierCount > 0 && m.outlierBits > 0 && m.outlierCount < m.headDim
 }
 
+// hasQJL reports whether QJL residual sketch is active.
+func (m *ggmlTQCompressedK) hasQJL() bool {
+	return m.qjlRows > 0
+}
+
+// SetLayerKBias stores the K projection bias tensor for the given layer.
+// Called once per layer at model init when the model has a K bias (e.g. Qwen2).
+// The bias is subtracted from K before rotation in the CUDA encoder; the
+// decoder requires no change because the constant bias cancels in softmax.
+func (m *ggmlTQCompressedK) SetLayerKBias(layer int, bias ml.Tensor) {
+	if bias == nil {
+		return
+	}
+	if t, ok := bias.(*Tensor); ok {
+		m.kBiasTensors[layer] = t
+	}
+}
+
+// qjlPackedBytes is the padded per-head byte count for QJL sign bits.
+func (m *ggmlTQCompressedK) qjlPackedBytes() int {
+	if !m.hasQJL() {
+		return 0
+	}
+	raw := (m.qjlRows + 7) / 8
+	return (raw + 3) &^ 3
+}
+
 // PreferFusedAttention reports whether the fused flash-attention path
 // (packed K+V decoded inline) should be tried before DequantKV + stock FA.
 // True on Metal: the DequantKV path writes a full f16 intermediate buffer that
@@ -103,6 +159,10 @@ func (m *ggmlTQCompressedK) regularChannelCount() int {
 // boundary. Round the raw bit-count up to the next multiple of 4 so the
 // per-head stride is naturally aligned. The padding bytes are never read
 // during decode, and are zeroed by the encode kernel's init loop.
+//
+// Must match the stride computation in ggml-cuda/tq-encode.cu and
+// tq-dequant.cu (they recompute from regularCount and bits); changing
+// the formula here requires matching edits in those kernels.
 func (m *ggmlTQCompressedK) regularPackedBytes() int {
 	raw := (m.regularChannelCount()*m.bits + 7) / 8
 	return (raw + 3) &^ 3
@@ -111,6 +171,9 @@ func (m *ggmlTQCompressedK) regularPackedBytes() int {
 // outlierPackedBytes is the padded per-head byte count for the outlier
 // sub-block. Same 4-byte alignment as regularPackedBytes() for the same
 // reason: atomicOr-on-word in the encode kernel.
+//
+// Must match the stride computation in ggml-cuda/tq-encode.cu and
+// tq-dequant.cu (they recompute from outlierCount and outlierBits).
 func (m *ggmlTQCompressedK) outlierPackedBytes() int {
 	if !m.hasOutliers() {
 		return 0
@@ -119,7 +182,7 @@ func (m *ggmlTQCompressedK) outlierPackedBytes() int {
 	return (raw + 3) &^ 3
 }
 
-func (b *Backend) NewTQCompressedKManager(headDim, numKVHeads, bits int, rotationSeed uint64, vBits, outlierBits, outlierCount int) ml.TQCompressedKManager {
+func (b *Backend) NewTQCompressedKManager(headDim, numKVHeads, bits int, rotationSeed uint64, vBits, outlierBits, outlierCount int, asymmetricPrimary bool, qjlRows int) ml.TQCompressedKManager {
 	// TurboQuant ops run on CUDA (NVIDIA Pascal+), ROCm/HIP (AMD RDNA1+,
 	// gfx1010+), or Metal (Apple Silicon). The gate is wave32: the kernels
 	// hard-code a 32-lane shuffle for codebook lookup. On wave64 AMD (Vega/
@@ -146,6 +209,22 @@ func (b *Backend) NewTQCompressedKManager(headDim, numKVHeads, bits int, rotatio
 			"selected", scan.SelectedName+" (cc "+scan.SelectedCC+")",
 			"skipped", scan.Skipped)
 	}
+	if qjlRows > 0 && outlierCount == 0 {
+		slog.Warn("turboquant: QJL residual sketch requires outlier-split kernels "+
+			"and cannot be used without them. Falling back to f16 KV cache.",
+			"qjl_rows", qjlRows, "outlier_count", outlierCount)
+		return nil
+	}
+	// Metal's kernel_tq_encode_outlier supports asymmetric+outlier (since
+	// the asymmetric port). QJL is still not implemented on Metal; the host
+	// gates qjl-on configurations to f16. No ship preset uses QJL — only
+	// test fixtures opt into it directly.
+	if scan.SelectedLibrary == "Metal" && qjlRows > 0 {
+		slog.Warn("turboquant: QJL not yet implemented on Metal; falling back to f16 KV cache",
+			"qjl_rows", qjlRows, "outlier_count", outlierCount)
+		return nil
+	}
+
 	if len(scan.Accepted) > 1 {
 		slog.Warn("turboquant: multi-GPU detected; TQ compressed buffers live on the "+
 			"primary GPU only. Layers scheduled to other GPUs will incur per-step "+
@@ -174,11 +253,30 @@ func (b *Backend) NewTQCompressedKManager(headDim, numKVHeads, bits int, rotatio
 	// Size shared context for up to 6 tensors (codebook+bounds ×2 regular, ×2
 	// outlier, ×2 V); newTQContext takes a hint count.
 	sharedCtx := b.newTQContext(8)
-	codebookT := sharedCtx.FromFloats(codebook, len(codebook)).(*Tensor)
+
+	// When outlier split is active, concatenate the outlier codebook into the
+	// regular codebook tensor so the fused kernel can access both via a single
+	// src[] slot. Layout: [regular (1<<bits), outlier (1<<outlierBits)].
+	// Non-outlier paths read only the first 1<<bits entries — backwards compatible.
+	// Dequant/encode paths still take the separate outlierCodebookTensor below;
+	// only the fused flash-attn kernel consumes the concatenated layout.
+	var codebookT *Tensor
+	if outlierCount > 0 && outlierBits > 0 && outlierCount < headDim {
+		oCodebook := turboquant.ExportCodebook(headDim, outlierBits)
+		combined := make([]float32, len(codebook)+len(oCodebook))
+		copy(combined, codebook)
+		copy(combined[len(codebook):], oCodebook)
+		codebookT = sharedCtx.FromFloats(combined, len(combined)).(*Tensor)
+	} else {
+		codebookT = sharedCtx.FromFloats(codebook, len(codebook)).(*Tensor)
+	}
 	boundariesT := sharedCtx.FromFloats(boundaries, len(boundaries)).(*Tensor)
 
 	// Outlier codebook/boundaries at a different bit width. Use headDim as
 	// the codebook dim (same reason as regular codebook above).
+	// Note: outlierCodebookTensor remains a separate tensor for the
+	// encode/dequant kernels (they take a distinct src slot). The fused
+	// flash-attention kernel uses the concatenated codebookT above instead.
 	var outlierCodebookT, outlierBoundariesT *Tensor
 	if outlierCount > 0 && outlierBits > 0 && outlierCount < headDim {
 		oCodebook := turboquant.ExportCodebook(headDim, outlierBits)
@@ -209,6 +307,18 @@ func (b *Backend) NewTQCompressedKManager(headDim, numKVHeads, bits int, rotatio
 	rotTensor := rotCtx.FromFloats(rotData, headDim, headDim).(*Tensor)
 	rotInverseTensor := rotCtx.FromFloats(rotInverseData, headDim, headDim).(*Tensor)
 
+	// QJL projection matrix: [qjlRows, headDim] f32, generated on CPU from the
+	// preset's QJL seed and uploaded once.  The seed matches the CPU reference
+	// (rotationSeed ^ 0x9e3779b97f4a7c15).
+	var qjlProjectionCtx ml.Context
+	var qjlProjectionTensor *Tensor
+	if qjlRows > 0 {
+		qjlSeed := rotationSeed ^ 0x9e3779b97f4a7c15
+		qjlProjData := turboquant.BuildQJLProjection(headDim, qjlRows, qjlSeed)
+		qjlProjectionCtx = b.newTQContext(1)
+		qjlProjectionTensor = qjlProjectionCtx.FromFloats(qjlProjData, headDim, qjlRows).(*Tensor)
+	}
+
 	m := &ggmlTQCompressedK{
 		backend:                 b,
 		headDim:                 headDim,
@@ -216,15 +326,24 @@ func (b *Backend) NewTQCompressedKManager(headDim, numKVHeads, bits int, rotatio
 		bits:                    bits,
 		outlierBits:             outlierBits,
 		outlierCount:            outlierCount,
+		asymmetricPrimary:       asymmetricPrimary,
+		qjlRows:                 qjlRows,
+		kBiasTensors:            make(map[int]*Tensor),
 		layerCtxs:               make(map[int]ml.Context),
 		packedTensors:           make(map[int]*Tensor),
 		scalesTensors:           make(map[int]*Tensor),
+		zerosTensors:            make(map[int]*Tensor),
+		outlierZerosTensors:     make(map[int]*Tensor),
 		outlierPackedTensors:    make(map[int]*Tensor),
 		outlierScalesTensors:    make(map[int]*Tensor),
 		outlierIndicesTensors:   make(map[int]*Tensor),
+		qjlPackedTensors:        make(map[int]*Tensor),
+		qjlNormTensors:          make(map[int]*Tensor),
 		rotCtx:                  rotCtx,
 		rotTensor:               rotTensor,
 		rotInverseTensor:        rotInverseTensor,
+		qjlProjectionCtx:        qjlProjectionCtx,
+		qjlProjectionTensor:     qjlProjectionTensor,
 		sharedCtx:               sharedCtx,
 		codebookTensor:          codebookT,
 		boundariesTensor:        boundariesT,
@@ -259,10 +378,17 @@ func (m *ggmlTQCompressedK) EnsureLayer(layer, capacity int) {
 	packedBytes := m.regularPackedBytes()
 
 	// Size the per-layer context hint by how many tensors we're allocating.
-	// 2 (regular) + 3 (outlier) = 5 tensors when outlier split is on.
+	// Base: 2 (packed + scales). Outlier adds 3. Asymmetric adds 2 (zeros).
+	// QJL adds 2 (qjlPacked + qjlNorm).
 	ctxHint := 2
 	if m.hasOutliers() {
-		ctxHint = 5
+		ctxHint += 3
+	}
+	if m.asymmetricPrimary {
+		ctxHint += 2
+	}
+	if m.hasQJL() {
+		ctxHint += 2
 	}
 	// TQ tensors must always be GPU-resident; use newTQContext, not Layer(layer),
 	// which would allocate CPU memory for layers assigned to CPU.
@@ -282,11 +408,24 @@ func (m *ggmlTQCompressedK) EnsureLayer(layer, capacity int) {
 	m.packedTensors[layer] = packed
 	m.scalesTensors[layer] = scales
 
+	if m.asymmetricPrimary {
+		m.zerosTensors[layer] = ctx.Zeros(ml.DTypeF32, m.numKVHeads, capacity).(*Tensor)
+		if m.hasOutliers() {
+			m.outlierZerosTensors[layer] = ctx.Zeros(ml.DTypeF32, m.numKVHeads, capacity).(*Tensor)
+		}
+	}
+
 	if m.hasOutliers() {
 		oPackedBytes := m.outlierPackedBytes()
 		m.outlierPackedTensors[layer] = ctx.Zeros(ml.DTypeI8, oPackedBytes*m.numKVHeads, capacity).(*Tensor)
 		m.outlierScalesTensors[layer] = ctx.Zeros(ml.DTypeF32, m.numKVHeads, capacity).(*Tensor)
-		m.outlierIndicesTensors[layer] = ctx.Zeros(ml.DTypeI8, m.outlierCount*m.numKVHeads, capacity).(*Tensor)
+		m.outlierIndicesTensors[layer] = ctx.Zeros(ml.DTypeI16, m.outlierCount*m.numKVHeads, capacity).(*Tensor)
+	}
+
+	if m.hasQJL() {
+		qjlPackedBytes := m.qjlPackedBytes()
+		m.qjlPackedTensors[layer] = ctx.Zeros(ml.DTypeI8, qjlPackedBytes*m.numKVHeads, capacity).(*Tensor)
+		m.qjlNormTensors[layer] = ctx.Zeros(ml.DTypeF32, m.numKVHeads, capacity).(*Tensor)
 	}
 }
 
@@ -305,12 +444,39 @@ func (m *ggmlTQCompressedK) EncodeK(ctx ml.Context, layer int, key ml.Tensor, fi
 	scales := m.scalesTensors[layer]
 	if m.hasOutliers() {
 		if oPacked := m.outlierPackedTensors[layer]; oPacked != nil {
+			var zeros, outlierZeros ml.Tensor
+			if m.asymmetricPrimary {
+				zeros = m.zerosTensors[layer]
+				outlierZeros = m.outlierZerosTensors[layer]
+			}
+			var qjlPacked, qjlNorm, qjlProjection ml.Tensor
+			if m.hasQJL() {
+				qjlPacked = m.qjlPackedTensors[layer]
+				qjlNorm = m.qjlNormTensors[layer]
+				qjlProjection = m.qjlProjectionTensor
+			}
+			var kBias ml.Tensor
+			if t := m.kBiasTensors[layer]; t != nil {
+				kBias = t
+			}
 			return packed.TQEncodeOutlier(ctx, scales, key, m.rotTensor, firstCell, m.boundariesTensor, m.bits,
 				oPacked, m.outlierScalesTensors[layer], m.outlierIndicesTensors[layer], m.outlierBoundariesTensor,
-				m.outlierBits, m.outlierCount)
+				m.outlierBits, m.outlierCount,
+				zeros, outlierZeros,
+				qjlPacked, qjlNorm, qjlProjection, m.qjlRows,
+				m.codebookTensor, m.outlierCodebookTensor,
+				kBias)
 		}
 	}
-	return packed.TQEncode(ctx, scales, key, m.rotTensor, firstCell, m.boundariesTensor, m.bits)
+	var zeros ml.Tensor
+	if m.asymmetricPrimary {
+		zeros = m.zerosTensors[layer]
+	}
+	var kBias ml.Tensor
+	if t := m.kBiasTensors[layer]; t != nil {
+		kBias = t
+	}
+	return packed.TQEncode(ctx, scales, key, m.rotTensor, firstCell, m.boundariesTensor, m.bits, zeros, kBias, m.codebookTensor)
 }
 
 // DequantK creates a GGML_OP_TQ_DEQUANT graph node. encodeResult is the
@@ -323,10 +489,23 @@ func (m *ggmlTQCompressedK) DequantK(ctx ml.Context, layer int, encodeResult ml.
 	}
 	if m.hasOutliers() {
 		if oPacked := m.outlierPackedTensors[layer]; oPacked != nil {
+			var zeros, outlierZeros ml.Tensor
+			if m.asymmetricPrimary {
+				zeros = m.zerosTensors[layer]
+				outlierZeros = m.outlierZerosTensors[layer]
+			}
+			var qjlPacked, qjlNorm, qjlProjection ml.Tensor
+			if m.hasQJL() {
+				qjlPacked = m.qjlPackedTensors[layer]
+				qjlNorm = m.qjlNormTensors[layer]
+				qjlProjection = m.qjlProjectionTensor
+			}
 			return encodeResult.(*Tensor).TQDequantOutlier(ctx, scales, m.codebookTensor,
 				m.headDim, m.numKVHeads, nCells, firstCell, m.bits,
 				oPacked, m.outlierScalesTensors[layer], m.outlierIndicesTensors[layer], m.outlierCodebookTensor,
-				m.outlierBits, m.outlierCount)
+				m.outlierBits, m.outlierCount,
+				zeros, outlierZeros,
+				qjlPacked, qjlNorm, qjlProjection, m.qjlRows)
 		}
 	}
 	return encodeResult.(*Tensor).TQDequant(ctx, scales, m.codebookTensor,
@@ -354,20 +533,29 @@ func (m *ggmlTQCompressedK) fusedKernelSupports() bool {
 	default:
 		return false
 	}
-	if m.bits != 2 && m.bits != 3 {
+	if m.bits != 2 && m.bits != 3 && m.bits != 4 {
 		return false
 	}
-	// Outlier split changes the packed layout: the fused inline-decode FA
-	// kernel reads the packed buffer directly and doesn't know about outlier
-	// sub-blocks. Route to path 5 (separate dequant + stock FA) when outliers
-	// are active. Extending the fused kernel to handle outliers is deliberately
-	// NOT done — the fused inline-decode path is already documented as 17.6x
-	// slower than separate dequant + stock FA (feedback_cuda_kernel_optimization.md),
-	// so adding more ALU work (outlier scan / popcount / dual codebook shuffles)
-	// to that inner loop moves it further from the correct architecture.
-	if m.hasOutliers() {
+	// K-only fused path with outlier split is disabled: GetAsTQTensor with
+	// outlier data produces wrong results. K+V fused via GetAsTQTensorKV works.
+	// tq*kqa falls back to DequantK as a result.
+	if m.hasOutliers() && m.vBits == 0 {
 		return false
 	}
+	// Metal does not yet have outlier-aware fattn kernels (kernel_tq_fattn_vec*
+	// read only the regular packed buffer; there is no kernel_tq_fattn_vec_outlier
+	// or kernel_tq_fattn_vec_packed_outlier on Metal). Force outlier presets to
+	// the DequantK + stock-FA slow path, which is correct after the
+	// kernel_tq_dequant_outlier asymmetric port. Once outlier-aware fattn is
+	// ported to Metal, drop this guard.
+	if m.hasOutliers() && m.preferFusedAttention {
+		return false
+	}
+	// K+V outlier path (tq*qa): GetAsTQTensorKV handles outlier decode inline.
+	// On Pascal (P40, cc 6.1) it is slower than DequantK + stockFA for single-
+	// token decode due to shared-memory pressure from the dual-stream loop.
+	// On Ampere+ the performance gap narrows. For PPL measurement
+	// (prefill-dominated) the decode throughput does not matter.
 	return true
 }
 
@@ -382,7 +570,7 @@ func (m *ggmlTQCompressedK) GetAsTQTensor(ctx ml.Context, layer int, encodeResul
 	if scales == nil || encodeResult == nil || nCells <= 0 {
 		return nil, false
 	}
-	return &tqTensor{
+	t := &tqTensor{
 		Tensor:    encodeResult.(*Tensor),
 		scales:    scales,
 		codebook:  m.codebookTensor,
@@ -391,12 +579,35 @@ func (m *ggmlTQCompressedK) GetAsTQTensor(ctx ml.Context, layer int, encodeResul
 		nKVHeads:  m.numKVHeads,
 		nCells:    nCells,
 		firstCell: firstCell,
-	}, true
+	}
+	if m.asymmetricPrimary {
+		t.asymmetric = true
+		t.zeros = m.zerosTensors[layer]
+	}
+	if m.hasQJL() {
+		t.qjlRows = m.qjlRows
+		t.qjlPacked = m.qjlPackedTensors[layer]
+		t.qjlNorm = m.qjlNormTensors[layer]
+		t.qjlProjection = m.qjlProjectionTensor
+	}
+	if m.hasOutliers() {
+		t.outlierPacked = m.outlierPackedTensors[layer]
+		t.outlierScales = m.outlierScalesTensors[layer]
+		t.outlierIndices = m.outlierIndicesTensors[layer]
+		t.outlierCodebook = m.outlierCodebookTensor
+		t.outlierBits = m.outlierBits
+		t.outlierCount = m.outlierCount
+		t.outlierPackedBytes = m.outlierPackedBytes()
+		if m.asymmetricPrimary {
+			t.outlierZeros = m.outlierZerosTensors[layer]
+		}
+	}
+	return t, true
 }
 
 // GetAsTQTensorKV wraps both packed K and packed V buffers as a tqTensor for
 // the fully fused K+V TQ flash-attention path. Returns (nil, false) when
-// fused is not supported or V compression is not yet active for this layer.
+// fused is not supported or V compression is not enabled for this layer.
 func (m *ggmlTQCompressedK) GetAsTQTensorKV(ctx ml.Context, layer int, kEncodeResult, vEncodeResult ml.Tensor, firstCell, nCells int) (ml.Tensor, bool) {
 	if !m.fusedKernelSupports() {
 		return nil, false
@@ -409,7 +620,7 @@ func (m *ggmlTQCompressedK) GetAsTQTensorKV(ctx ml.Context, layer int, kEncodeRe
 	if vScales == nil || vEncodeResult == nil {
 		return nil, false
 	}
-	return &tqTensor{
+	t := &tqTensor{
 		Tensor:    kEncodeResult.(*Tensor),
 		scales:    kScales,
 		codebook:  m.codebookTensor,
@@ -422,7 +633,30 @@ func (m *ggmlTQCompressedK) GetAsTQTensorKV(ctx ml.Context, layer int, kEncodeRe
 		vScales:   vScales,
 		vCodebook: m.vCodebookTensor,
 		vBits:     m.vBits,
-	}, true
+	}
+	if m.asymmetricPrimary {
+		t.asymmetric = true
+		t.zeros = m.zerosTensors[layer]
+	}
+	if m.hasQJL() {
+		t.qjlRows = m.qjlRows
+		t.qjlPacked = m.qjlPackedTensors[layer]
+		t.qjlNorm = m.qjlNormTensors[layer]
+		t.qjlProjection = m.qjlProjectionTensor
+	}
+	if m.hasOutliers() {
+		t.outlierPacked = m.outlierPackedTensors[layer]
+		t.outlierScales = m.outlierScalesTensors[layer]
+		t.outlierIndices = m.outlierIndicesTensors[layer]
+		t.outlierCodebook = m.outlierCodebookTensor
+		t.outlierBits = m.outlierBits
+		t.outlierCount = m.outlierCount
+		t.outlierPackedBytes = m.outlierPackedBytes()
+		if m.asymmetricPrimary {
+			t.outlierZeros = m.outlierZerosTensors[layer]
+		}
+	}
+	return t, true
 }
 
 func (m *ggmlTQCompressedK) RotationMatrix(_ ml.Context, _ int) ml.Tensor {
@@ -469,7 +703,7 @@ func (m *ggmlTQCompressedK) EncodeV(ctx ml.Context, layer int, value ml.Tensor, 
 	}
 	// Pass the K rotation matrix so V outlier energy spreads evenly before
 	// quantization. SDPA's post-attention R @ output step undoes the rotation.
-	return packed.TQEncodeV(ctx, m.vScalesTensors[layer], value, m.rotTensor, firstCell, m.vBoundariesTensor, m.vBits)
+	return packed.TQEncodeV(ctx, m.vScalesTensors[layer], value, m.rotTensor, firstCell, m.vBoundariesTensor, m.vBits, m.vCodebookTensor)
 }
 
 // EncodeKV creates a single GGML_OP_TQ_ENCODE_KV graph node encoding both
@@ -481,7 +715,10 @@ func (m *ggmlTQCompressedK) EncodeV(ctx ml.Context, layer int, value ml.Tensor, 
 // because it only understands the uniform packed layout. Falls back to
 // separate EncodeK (outlier-aware) + EncodeV (uniform) calls.
 func (m *ggmlTQCompressedK) EncodeKV(ctx ml.Context, layer int, key, value ml.Tensor, firstCell int) (ml.Tensor, ml.Tensor) {
-	if m.hasOutliers() {
+	// Asymmetric presets write per-cell zeros (mean offset) into a separate tensor
+	// during K encode — TQEncodeKV has no zeros output, so it silently drops the
+	// mean-centering step. Route asymmetric presets through separate EncodeK + EncodeV.
+	if m.hasOutliers() || m.asymmetricPrimary {
 		return m.EncodeK(ctx, layer, key, firstCell), m.EncodeV(ctx, layer, value, firstCell)
 	}
 	kPacked := m.packedTensors[layer]
@@ -489,10 +726,14 @@ func (m *ggmlTQCompressedK) EncodeKV(ctx ml.Context, layer int, key, value ml.Te
 	if kPacked == nil || vPacked == nil {
 		return nil, nil
 	}
+	var kBias ml.Tensor
+	if t := m.kBiasTensors[layer]; t != nil {
+		kBias = t
+	}
 	kResult := kPacked.TQEncodeKV(ctx,
 		m.scalesTensors[layer], key, m.rotTensor, m.boundariesTensor,
 		vPacked, m.vScalesTensors[layer], value, m.vBoundariesTensor,
-		firstCell, m.bits, m.vBits)
+		firstCell, m.bits, m.vBits, kBias, m.codebookTensor, m.vCodebookTensor)
 
 	// kResult is the EncodeKV op output (K packed view); the scheduler uses it
 	// to order DequantKV after EncodeKV.  V packed buffer was written as a side
@@ -518,13 +759,10 @@ func (m *ggmlTQCompressedK) DequantV(ctx ml.Context, layer int, encodeResult ml.
 // both K and V in one op, halving scheduler overhead vs separate DequantK+DequantV.
 // Returns (kTensor, vTensor) as views into the combined output.
 //
-// When outlier-split is active, the combined kernel cannot be used because
-// its K reader assumes the uniform packed layout. Returns (nil, nil) to
-// force Get() to fall through to the separate DequantK + DequantV path.
+// When outlier-split is active the K plane is dequanted via the
+// regular+outlier overwrite kernel; V is always plain dequant (no V outliers
+// in any ship preset).
 func (m *ggmlTQCompressedK) DequantKV(ctx ml.Context, layer int, kEncodeResult, vEncodeResult ml.Tensor, firstCell, nCells int) (ml.Tensor, ml.Tensor) {
-	if m.hasOutliers() {
-		return nil, nil
-	}
 	kScales := m.scalesTensors[layer]
 	vScales := m.vScalesTensors[layer]
 	if kScales == nil || kEncodeResult == nil || nCells <= 0 {
@@ -533,11 +771,39 @@ func (m *ggmlTQCompressedK) DequantKV(ctx ml.Context, layer int, kEncodeResult, 
 	if vScales == nil || vEncodeResult == nil {
 		return nil, nil
 	}
+
+	var (
+		kOutlierPacked   *Tensor
+		kOutlierScales   *Tensor
+		kOutlierIndices  *Tensor
+		kOutlierCodebook *Tensor
+		kZeros           *Tensor
+		kOutlierZeros    *Tensor
+		outlierBits      int
+		outlierCount     int
+	)
+	if m.hasOutliers() {
+		kOutlierPacked = m.outlierPackedTensors[layer]
+		kOutlierScales = m.outlierScalesTensors[layer]
+		kOutlierIndices = m.outlierIndicesTensors[layer]
+		kOutlierCodebook = m.outlierCodebookTensor
+		kZeros = m.zerosTensors[layer]
+		kOutlierZeros = m.outlierZerosTensors[layer]
+		outlierBits = m.outlierBits
+		outlierCount = m.outlierCount
+		if kOutlierPacked == nil || kOutlierScales == nil || kOutlierIndices == nil || kOutlierCodebook == nil {
+			return nil, nil
+		}
+	}
+
 	combined := TQDequantKV(ctx, m.backend,
 		kEncodeResult.(*Tensor), kScales, m.codebookTensor,
 		vEncodeResult.(*Tensor), vScales, m.vCodebookTensor,
 		m.rotInverseTensor, // R matrix for fused V rotation undo
-		m.headDim, m.numKVHeads, nCells, firstCell, m.bits, m.vBits)
+		m.headDim, m.numKVHeads, nCells, firstCell, m.bits, m.vBits,
+		kOutlierPacked, kOutlierScales, kOutlierIndices, kOutlierCodebook,
+		kZeros, kOutlierZeros,
+		outlierBits, outlierCount)
 
 	// Split the [headDim, numKVHeads, nCells, 2] output into K and V views.
 	planeBytes := m.headDim * m.numKVHeads * nCells * 2 // f16 = 2 bytes
@@ -560,15 +826,26 @@ func (m *ggmlTQCompressedK) Close() {
 	if m.rotCtx != nil {
 		m.rotCtx.Close()
 	}
+	if m.qjlProjectionCtx != nil {
+		m.qjlProjectionCtx.Close()
+	}
 	if m.sharedCtx != nil {
 		m.sharedCtx.Close()
 	}
 	m.packedTensors = nil
 	m.scalesTensors = nil
+	m.zerosTensors = nil
+	m.outlierZerosTensors = nil
 	m.layerCtxs = nil
+	m.outlierPackedTensors = nil
+	m.outlierScalesTensors = nil
+	m.outlierIndicesTensors = nil
+	m.qjlPackedTensors = nil
+	m.qjlNormTensors = nil
 	m.vPackedTensors = nil
 	m.vScalesTensors = nil
 	m.vLayerCtxs = nil
 	m.rotCtx = nil
+	m.qjlProjectionCtx = nil
 	m.sharedCtx = nil
 }

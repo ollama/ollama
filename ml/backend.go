@@ -409,11 +409,14 @@ const (
 	DTypeQ40
 	DTypeI32
 	DTypeI8
+	DTypeI16
 	DTypeMXFP4
 	DTypeTQ2
 	DTypeTQ3
 	DTypeTQ3K
 	DTypeTQ2K
+	DTypeTQ4
+	DTypeTQ4K
 )
 
 // TQCompressedKManager manages GPU-resident packed N-bit key indices for
@@ -481,7 +484,7 @@ type TQCompressedKManager interface {
 // route through the outlier-aware path. Set outlierCount = 0 for pure uniform
 // per-channel Lloyd-Max at `bits` (historical behavior).
 type TQCompressedKBackend interface {
-	NewTQCompressedKManager(headDim, numKVHeads, bits int, rotationSeed uint64, vBits, outlierBits, outlierCount int) TQCompressedKManager
+	NewTQCompressedKManager(headDim, numKVHeads, bits int, rotationSeed uint64, vBits, outlierBits, outlierCount int, asymmetricPrimary bool, qjlRows int) TQCompressedKManager
 }
 
 type SamplingMode int
