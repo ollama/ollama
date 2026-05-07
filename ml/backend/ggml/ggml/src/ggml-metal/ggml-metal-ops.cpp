@@ -4772,7 +4772,14 @@ int ggml_metal_op_tq_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
     const int nHeadsQ  = (int)Q->ne[2];
     const int nSeq     = (int)Q->ne[3];
 
-    const int packedBytes   = (D * bits + 7) / 8;
+    int packedBytes;
+    if (outlier_count > 0) {
+        const int regular_count = D - outlier_count;
+        const int raw = (regular_count * bits + 7) / 8;
+        packedBytes = (raw + 3) & ~3;
+    } else {
+        packedBytes = (D * bits + 7) / 8;
+    }
     const int v_packedBytes = v_packed ? ((D * v_bits + 7) / 8) : 0;
     const int nKVHeads      = v_packed ? ((int)V->ne[0] / v_packedBytes) : (int)V->ne[2];
 
@@ -4826,15 +4833,25 @@ int ggml_metal_op_tq_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
 
     // Select pipeline by D. Supported: 64 (llama3.2:3b), 128 (llama3.1/qwen), 256 (gemma3), 512 (gemma4 global).
     GGML_ASSERT(D == 64 || D == 128 || D == 256 || D == 512);
-    auto pipeline = v_packed
-        ? (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d512(lib)
-         : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d256(lib)
-         : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d64(lib)
-                    : ggml_metal_library_get_pipeline_tq_fattn_vec_packed(lib))
-        : (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d512(lib)
-         : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d256(lib)
-         : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d64(lib)
-                    : ggml_metal_library_get_pipeline_tq_fattn_vec_f16(lib));
+    auto pipeline = (outlier_count > 0 && !v_packed)
+        ? (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d512(lib)
+         : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d256(lib)
+         : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d64(lib)
+                    : ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier(lib))
+        : (outlier_count > 0 && v_packed)
+            ? (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d512(lib)
+             : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d256(lib)
+             : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d64(lib)
+                        : ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier(lib))
+            : v_packed
+                ? (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d512(lib)
+                 : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d256(lib)
+                 : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d64(lib)
+                            : ggml_metal_library_get_pipeline_tq_fattn_vec_packed(lib))
+                : (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d512(lib)
+                 : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d256(lib)
+                 : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d64(lib)
+                            : ggml_metal_library_get_pipeline_tq_fattn_vec_f16(lib));
 
     ggml_metal_buffer_id bid_mask            = hasMask       ? ggml_metal_get_buffer_id(mask)        : ggml_metal_get_buffer_id(op);
     ggml_metal_buffer_id bid_v_scales        = v_packed      ? ggml_metal_get_buffer_id(op->src[6])  : ggml_metal_get_buffer_id(op);
