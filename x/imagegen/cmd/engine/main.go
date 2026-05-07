@@ -74,9 +74,9 @@ func main() {
 		return
 	}
 
-	// Check if MLX initialized successfully
-	if !mlx.IsMLXAvailable() {
-		log.Fatalf("MLX initialization failed: %v", mlx.GetMLXInitError())
+	// Initialize MLX only after the image generation CLI has parsed arguments.
+	if err := mlx.InitRuntime(); err != nil {
+		log.Fatalf("MLX initialization failed: %v", err)
 	}
 
 	// Restore strict error handling now that we know MLX is working.

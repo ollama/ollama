@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	if err := mlx.InitMLX(); err != nil {
+	if err := mlx.InitRuntime(); err != nil {
 		fmt.Printf("Skipping nn tests: %v\n", err)
 		os.Exit(0)
 	}

@@ -45,8 +45,9 @@ func Execute(args []string) error {
 		return fmt.Errorf("imagegen runner only supports image generation models")
 	}
 
-	// Initialize MLX only for image generation mode.
-	if err := mlx.InitMLX(); err != nil {
+	// Initialize MLX only for image generation mode. This does native MLX/CUDA
+	// work and must not happen during regular Ollama startup.
+	if err := mlx.InitRuntime(); err != nil {
 		slog.Error("unable to initialize MLX", "error", err)
 		return err
 	}
