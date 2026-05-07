@@ -63,8 +63,55 @@ func TestRecurrentCacheGetLazyInit(t *testing.T) {
 	if got := h.ConvState().DType(); got != mlx.DTypeBFloat16 {
 		t.Fatalf("conv state dtype = %v, want %v", got, mlx.DTypeBFloat16)
 	}
-	if got := h.DeltaState().DType(); got != mlx.DTypeBFloat16 {
-		t.Fatalf("delta state dtype = %v, want %v", got, mlx.DTypeBFloat16)
+	if got := h.DeltaState().DType(); got != mlx.DTypeFloat32 {
+		t.Fatalf("delta state dtype = %v, want %v", got, mlx.DTypeFloat32)
+	}
+}
+
+func TestSpeculativeRecurrentCacheUsesStagedState(t *testing.T) {
+	skipIfNoMLX(t)
+	target := NewRecurrentCache(2, 3, 1, 2, 3)
+	caches, ok := BeginIsolatedSpeculation([]Cache{target})
+	if !ok {
+		t.Fatal("BeginIsolatedSpeculation failed")
+	}
+	c := caches[0].(*speculativeRecurrentCache)
+	b := &batch.Batch{
+		InputIDs:     mlx.Zeros(mlx.DTypeInt32, 1, 1),
+		SeqOffsets:   []int32{0},
+		SeqQueryLens: []int32{1},
+	}
+
+	c.Get(b, mlx.DTypeFloat32)
+
+	convVals := []float32{1, 2, 3, 4, 5, 6}
+	deltaVals := []float32{7, 8, 9, 10, 11, 12}
+	nextConv := mlx.FromValues(convVals, 1, 2, 3)
+	nextDelta := mlx.FromValues(deltaVals, 1, 1, 2, 3)
+	c.Put(b, nextConv, nextDelta)
+
+	h := c.Get(b, mlx.DTypeFloat32)
+	state := c.State()
+	if len(state) != 2 {
+		t.Fatalf("State() returned %d arrays, want 2", len(state))
+	}
+
+	assertArray := func(name string, got, want *mlx.Array) {
+		t.Helper()
+		if got != want {
+			t.Fatalf("%s = %p, want %p", name, got, want)
+		}
+	}
+	assertArray("history conv", h.ConvState(), nextConv)
+	assertArray("history delta", h.DeltaState(), nextDelta)
+	assertArray("state conv", state[0], nextConv)
+	assertArray("state delta", state[1], nextDelta)
+
+	if got := c.Offset(); got != 1 {
+		t.Fatalf("speculative offset = %d, want 1", got)
+	}
+	if got := target.Offset(); got != 0 {
+		t.Fatalf("target offset = %d, want 0", got)
 	}
 }
 

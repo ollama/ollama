@@ -12,7 +12,9 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
+	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 	"github.com/ollama/ollama/x/tokenizer"
 )
@@ -79,29 +81,150 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	caches := session.caches
 	tokens := session.remaining
 	prefillChunk := prefillChunkSize()
-
-	// Request periodic snapshots during prefill and near the end of the
-	// prompt so that long prompts can be partially restored and
-	// thinking/generation can be retried without full reprocessing.
-	const snapshotInterval = 8192
-	for offset := snapshotInterval; offset < len(inputs); offset += snapshotInterval {
-		session.requestSnapshot(offset)
+	dflashMode, dflashDisabledReason := r.dflashGate(request.SamplerOpts)
+	dflashEnabled := dflashMode.enabled()
+	var dflashDraft base.DFlashDraftModel
+	var dflashTarget base.DFlashTargetModel
+	var dflashCaches []cache.Cache
+	var dflashSession *cacheSession
+	if dflashEnabled {
+		dflashDraft = r.Draft.(base.DFlashDraftModel)
+		dflashTarget = r.Model.(base.DFlashTargetModel)
+		targetCachedPrefix := len(inputs) - len(tokens)
+		dflashSession = r.dflashCache.beginWithFactoryLimit(inputs, dflashDraft.NewCaches, "DFlash draft", targetCachedPrefix, false)
+		dflashCaches = dflashSession.caches
+		defer func() {
+			dflashSession.outputs = append([]int32(nil), session.outputs...)
+			dflashSession.close()
+		}()
+	} else if _, ok := r.Draft.(base.DFlashDraftModel); ok {
+		slog.Info("DFlash decode disabled",
+			"reason", dflashDisabledReason,
+			"temperature", request.SamplerOpts.Temperature,
+			"top_p", request.SamplerOpts.TopP,
+			"top_k", request.SamplerOpts.TopK,
+			"min_p", request.SamplerOpts.MinP,
+			"repeat_penalty", request.SamplerOpts.RepeatPenalty,
+			"presence_penalty", request.SamplerOpts.PresencePenalty,
+			"frequency_penalty", request.SamplerOpts.FrequencyPenalty,
+			"logprobs", request.SamplerOpts.Logprobs,
+			"top_logprobs", request.SamplerOpts.TopLogprobs,
+		)
 	}
 
-	const preThinking = 4
-	if end := len(inputs) - preThinking; end > 0 {
-		session.requestSnapshot(end)
+	requestPipelineSnapshots := func(s *cacheSession) {
+		if s == nil {
+			return
+		}
+		// Request periodic snapshots during prefill and near the end of the
+		// prompt so that long prompts can be partially restored and
+		// thinking/generation can be retried without full reprocessing.
+		const snapshotInterval = 8192
+		for offset := snapshotInterval; offset < len(inputs); offset += snapshotInterval {
+			s.requestSnapshot(offset)
+		}
+
+		const preThinking = 4
+		if end := len(inputs) - preThinking; end > 0 {
+			s.requestSnapshot(end)
+		}
+	}
+	requestPipelineSnapshots(session)
+	requestPipelineSnapshots(dflashSession)
+
+	nextSnapshotOffset := func() int {
+		next := session.nextPendingSnapshot()
+		if dflashSession != nil {
+			if offset := dflashSession.nextPendingSnapshot(); offset > 0 && (next == 0 || offset < next) {
+				next = offset
+			}
+		}
+		return next
 	}
 
-	materializeCaches := func() {
+	snapshotReadySessions := func(position int) {
+		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 && position >= snapOffset {
+			session.snapshot()
+		}
+		if dflashSession != nil {
+			if snapOffset := dflashSession.nextPendingSnapshot(); snapOffset > 0 && position >= snapOffset {
+				dflashSession.snapshot()
+			}
+		}
+	}
+
+	materializeCaches := func(cacheSets ...[]cache.Cache) {
+		if len(cacheSets) == 0 {
+			cacheSets = [][]cache.Cache{caches}
+		}
 		state := make([]*mlx.Array, 0, 2*len(caches))
-		for _, c := range caches {
-			state = append(state, c.State()...)
+		for _, set := range cacheSets {
+			for _, c := range set {
+				if c == nil {
+					continue
+				}
+				state = append(state, c.State()...)
+			}
 		}
 		if len(state) == 0 {
 			return
 		}
 		mlx.Eval(state...)
+	}
+
+	if dflashEnabled {
+		targetCachedPrefix := len(inputs) - len(tokens)
+		dflashCachedPrefix := len(inputs) - len(dflashSession.remaining)
+		if targetCachedPrefix > dflashCachedPrefix {
+			t0 := time.Now()
+			rebuildCaches := newDFlashTargetCaches(r.Model)
+			rebuildProcessed := 0
+			for targetCachedPrefix-rebuildProcessed > 0 {
+				if err := ctx.Err(); err != nil {
+					freeCacheSet(rebuildCaches)
+					return err
+				}
+				n := min(prefillChunk, targetCachedPrefix-rebuildProcessed)
+				if snapOffset := dflashSession.nextPendingSnapshot(); snapOffset > rebuildProcessed && snapOffset < rebuildProcessed+n {
+					n = snapOffset - rebuildProcessed
+				}
+				start, end := rebuildProcessed, rebuildProcessed+n
+				b := &batch.Batch{
+					InputIDs:     mlx.FromValues(inputs[start:end], 1, n),
+					SeqOffsets:   []int32{int32(start)},
+					SeqQueryLens: []int32{int32(n)},
+				}
+				_, targetHidden := dflashTarget.ForwardDFlash(b, rebuildCaches, dflashDraft.TargetLayerIDs())
+				if end > dflashCachedPrefix {
+					appendHidden := targetHidden
+					if start < dflashCachedPrefix {
+						appendHidden = targetHidden.Slice(mlx.Slice(), mlx.Slice(dflashCachedPrefix-start, n), mlx.Slice())
+					}
+					dflashDraft.AppendContext(appendHidden, dflashCaches)
+				}
+				mlx.Sweep()
+				materializeCaches(rebuildCaches, dflashCaches)
+				rebuildProcessed = end
+				if snapOffset := dflashSession.nextPendingSnapshot(); snapOffset > 0 && rebuildProcessed >= snapOffset {
+					dflashSession.snapshot()
+				}
+				mlx.ClearCache()
+			}
+			freeCacheSet(rebuildCaches)
+			slog.Info("DFlash draft cache rebuild",
+				"target_cached", targetCachedPrefix,
+				"draft_cached", dflashCachedPrefix,
+				"rebuilt", targetCachedPrefix-dflashCachedPrefix,
+				"draft_offset", r.dflashCache.minCacheOffset(),
+				"duration", time.Since(t0),
+			)
+		} else {
+			slog.Info("DFlash draft cache restored",
+				"target_cached", targetCachedPrefix,
+				"draft_cached", dflashCachedPrefix,
+				"draft_offset", r.dflashCache.minCacheOffset(),
+			)
+		}
 	}
 
 	now := time.Now()
@@ -116,37 +239,49 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 		// If there's a pending snapshot, split the batch so we can
 		// capture it at the exact offset.
-		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
+		if snapOffset := nextSnapshotOffset(); snapOffset > 0 {
 			tokensUntilSnapshot := snapOffset - position
 			if tokensUntilSnapshot > 0 && tokensUntilSnapshot < n {
 				n = tokensUntilSnapshot
 			}
 		}
 
-		r.Model.Forward(&batch.Batch{
+		b := &batch.Batch{
 			InputIDs:     mlx.FromValues(tokens[processed:processed+n], 1, n),
 			SeqOffsets:   []int32{int32(position)},
 			SeqQueryLens: []int32{int32(n)},
-		}, caches)
+		}
+		if dflashEnabled {
+			_, targetHidden := dflashTarget.ForwardDFlash(b, caches, dflashDraft.TargetLayerIDs())
+			dflashDraft.AppendContext(targetHidden, dflashCaches)
+		} else {
+			r.Model.Forward(b, caches)
+		}
 		mlx.Sweep()
-		materializeCaches()
+		if dflashEnabled {
+			materializeCaches(caches, dflashCaches)
+		} else {
+			materializeCaches()
+		}
 		processed += n
 		position += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
 		logutil.TraceContext(ctx, "mlx prompt forward", "processed", processed, "total", total, "tokens", n, "memory", mlx.Memory{})
 
 		// Create snapshot if we've reached a pending offset.
-		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
-			if position >= snapOffset {
-				session.snapshot()
-			}
-		}
+		snapshotReadySessions(position)
 
 		mlx.ClearCache()
 	}
 
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
+	if dflashMode == dflashDecodeGreedy {
+		return r.runGreedyDFlashDecode(ctx, request, session, caches, dflashCaches, tokens[processed:], &position, now)
+	}
+	if dflashMode == dflashDecodeSample {
+		return r.runSampleDFlashDecode(ctx, request, session, caches, dflashCaches, tokens[processed:], &position, now)
+	}
 	if r.useGreedyMTP(request.SamplerOpts) {
 		return r.runGreedyMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
 	}
