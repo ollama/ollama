@@ -260,6 +260,35 @@ func TestCodexAppConfigureUsesAppSpecificProfileWithoutTouchingCLIProfile(t *tes
 	assertBackupContains(t, filepath.Join(fileutil.BackupDir(), codexAppIntegrationName, "config.toml.*"), `profile = "default"`)
 }
 
+func TestCodexAppConfigureUsesConnectableHostForUnspecifiedBindAddress(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"}); err != nil {
+		t.Fatalf("ConfigureWithModels returned error: %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if strings.Contains(content, "0.0.0.0") {
+		t.Fatalf("config should not write bind-only host, got:\n%s", content)
+	}
+	if got := codexSectionStringValue(content, codexProfileHeaderFor(codexAppProfileName), "openai_base_url"); got != "http://127.0.0.1:11434/v1/" {
+		t.Fatalf("app profile openai_base_url = %q, want connectable loopback URL", got)
+	}
+	if got := codexSectionStringValue(content, codexProviderHeaderFor(codexAppProfileName), "base_url"); got != "http://127.0.0.1:11434/v1/" {
+		t.Fatalf("app provider base_url = %q, want connectable loopback URL", got)
+	}
+	if got := codexRootStringValue(content, "model_provider"); got != codexAppProfileName {
+		t.Fatalf("root model_provider = %q, want %q", got, codexAppProfileName)
+	}
+}
+
 func TestCodexAppConfigureRejectsMalformedTomlBeforeSideEffects(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)

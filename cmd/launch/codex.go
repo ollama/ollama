@@ -185,7 +185,7 @@ func codexLaunchProfileName(opts codexLaunchProfileOptions) string {
 }
 
 func codexBaseURL() string {
-	return strings.TrimRight(envconfig.Host().String(), "/") + "/v1/"
+	return strings.TrimRight(envconfig.ConnectableHost().String(), "/") + "/v1/"
 }
 
 func codexProfileHeader() string {

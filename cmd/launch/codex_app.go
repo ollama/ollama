@@ -248,7 +248,7 @@ func writeCodexAppModelCatalog(path string, models []string) error {
 	if len(models) == 0 {
 		return fmt.Errorf("codex-app model catalog cannot be empty")
 	}
-	client := api.NewClient(envconfig.Host(), http.DefaultClient)
+	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -278,7 +278,7 @@ func codexAppCatalogModelNames(primary string, fallback []string) []string {
 }
 
 func codexAppTagModelNames() []string {
-	client := api.NewClient(envconfig.Host(), http.DefaultClient)
+	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

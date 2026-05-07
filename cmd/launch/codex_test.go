@@ -327,6 +327,26 @@ func TestWriteCodexProfile(t *testing.T) {
 			t.Errorf("expected custom host in URL, got:\n%s", content)
 		}
 	})
+
+	t.Run("uses connectable host for unspecified bind address", func(t *testing.T) {
+		t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.toml")
+
+		if err := writeCodexProfile(configPath); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		content := string(data)
+
+		if strings.Contains(content, "0.0.0.0") {
+			t.Fatalf("config should not write bind-only host, got:\n%s", content)
+		}
+		if !strings.Contains(content, "127.0.0.1:11434/v1/") {
+			t.Fatalf("expected connectable loopback URL, got:\n%s", content)
+		}
+	})
 }
 
 func TestEnsureCodexConfig(t *testing.T) {
