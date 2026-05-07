@@ -31,6 +31,14 @@ var errorPrefixes = []string{
 	"Deepseek2 does not support K-shift",
 }
 
+func (w *StatusWriter) LastError() string {
+	return w.LastErrMsg
+}
+
+func (w *StatusWriter) SetLastError(msg string) {
+	w.LastErrMsg = msg
+}
+
 func (w *StatusWriter) Write(b []byte) (int, error) {
 	var errMsg string
 	for _, prefix := range errorPrefixes {

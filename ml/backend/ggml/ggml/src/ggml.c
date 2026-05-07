@@ -1054,9 +1054,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "TQ_FLASH_ATTN_EXT",
     "TQ_ENCODE_V",
     "TQ_ENCODE_KV",
+    "TQ_WHT",
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1168,9 +1169,10 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "tq_flash_attn_ext(q,k_packed,v)->f32",
     "tq_encode_v(v)->packed",
     "tq_encode_kv(k,v)->packed",
+    "tq_wht(x,signs)->x",
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -7926,6 +7928,20 @@ struct ggml_tensor * ggml_tq_encode_kv(
     ggml_set_op_params_i32(result, 0, k_bits);
     ggml_set_op_params_i32(result, 1, v_bits);
     ggml_set_op_params_i32(result, 2, firstCell);
+    return result;
+}
+
+// Apply symmetric Walsh-Hadamard transform F(x)=S·H·S·x/√headDim to every
+// [headDim] vector in x.  F is self-inverse, so this serves as both apply
+// and undo.  src[0]=x (any shape), src[1]=signs ([headDim] f32 ±1).
+struct ggml_tensor * ggml_tq_wht(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * x,
+        struct ggml_tensor  * signs) {
+    struct ggml_tensor * result = ggml_dup_tensor(ctx, x);
+    result->op     = GGML_OP_TQ_WHT;
+    result->src[0] = x;
+    result->src[1] = signs;
     return result;
 }
 

@@ -573,6 +573,7 @@ extern "C" {
         GGML_OP_TQ_FLASH_ATTN_EXT,
         GGML_OP_TQ_ENCODE_V,
         GGML_OP_TQ_ENCODE_KV,
+        GGML_OP_TQ_WHT,
 
         GGML_OP_COUNT,
     };
@@ -2923,6 +2924,13 @@ GGML_API struct ggml_tensor * ggml_tq_encode_kv(
         struct ggml_tensor  * k_bias,       // NULL = no bias; [numKVHeads*headDim] f32
         struct ggml_tensor  * k_codebook,  // NULL = RMS scale; [1<<k_bits] f32 enables EDEN
         struct ggml_tensor  * v_codebook); // NULL = RMS scale; [1<<v_bits] f32 enables EDEN
+
+// Apply symmetric Walsh-Hadamard transform F(x)=S·H·S·x/√headDim to every
+// [ne[0]] vector in x.  F is self-inverse.  signs: [ne[0]] f32 ±1.
+GGML_API struct ggml_tensor * ggml_tq_wht(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * x,
+        struct ggml_tensor  * signs);
 
 #ifdef  __cplusplus
 }

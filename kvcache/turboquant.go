@@ -80,22 +80,6 @@ type TurboQuantCache struct {
 	// means decode; curQueryLen>1 means prefill (or a batched prompt chunk).
 	curQueryLen int
 
-	// rotMatrix is the R^T rotation matrix sized for this cache's headDim.
-	// Set in activateGPUEncode. Get() sets the backend's tqRotationMatrix to
-	// this value per-call (consume-once) right before returning rotated K.
-	rotMatrix ml.Tensor
-
-	// vRotMatrix is the R (inverse) matrix used to undo V rotation after
-	// attention in K+V presets (tq3/tq2). Nil for K-only presets. Get() sets
-	// the backend's tqVRotationMatrix to this value per-call along with
-	// rotMatrix so SDPA applies R @ attn_out after flash attention.
-	vRotMatrix ml.Tensor
-
-	// rotSetter is the cached type assertion of c.meta.backend onto the TQ
-	// rotation setter interface, populated once in activateGPUEncode. nil
-	// when the backend doesn't support TQ rotation hooks (the fallback case).
-	rotSetter tqRotSetter
-
 	// pendingKBiases buffers K projection biases set by SetLayerKBias before
 	// activateGPUEncode has initialised compressedK. Applied to compressedK
 	// once the manager is created.
@@ -109,13 +93,6 @@ type TurboQuantCache struct {
 	// scratch buffer the K+V fused path was meant to eliminate. Read-and-cleared
 	// once per Get() call.
 	reserveSkipVPlaceholder bool
-}
-
-// tqRotSetter is the backend hook TurboQuantCache uses to arm the per-call
-// rotation matrices SDPA consumes. Implemented by ml/backend/ggml.Backend.
-type tqRotSetter interface {
-	SetTQRotationMatrix(ml.Tensor)
-	SetTQVRotationMatrix(ml.Tensor)
 }
 
 // isSWACausal reports whether a *Causal has sliding-window attention
@@ -394,31 +371,39 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 				enc := c.encodeResults[layer]
 				switch {
 				case c.preset.ValueBits > 0:
-					// All tq* K+V presets: prefer fused K+V (no f16 scratch).
-					// GetAsTQTensorKV succeeds for non-outlier and K+V-outlier presets;
-					// returns false for K-only-outlier (blocked in fusedKernelSupports).
-					// Falls back to DequantKV only when fused is unavailable (D!=128).
+					// K+V presets. For WHT presets (HasRotation), DequantKV + stock FA
+					// is broken (WHT-domain K/Q mismatch), so we mirror the inference
+					// path: K-only fused tqTensor + DequantV f16. For non-WHT presets
+					// use the legacy GetAsTQTensorKV / DequantKV / DequantK fallback chain.
 					vEnc := c.vEncodeResults[layer]
 					if enc != nil && vEnc != nil {
-						if gpuKV, ok := c.compressedK.GetAsTQTensorKV(ctx, layer, enc, vEnc, 0, nCells); ok {
-							key = gpuKV
-							// V carried inline — suppress f16 Zeros fallback in SkipV block.
-							c.reserveSkipVPlaceholder = true
-						}
-						if key == nil {
-							k, v := c.compressedK.DequantKV(ctx, layer, enc, vEnc, 0, nCells)
-							if k != nil {
-								key = k
+						if c.compressedK.HasRotation() {
+							// Mirror inference path 4: K-only fused + DequantV.
+							if gpuKey, ok := c.compressedK.GetAsTQTensor(ctx, layer, enc, 0, nCells); ok {
+								key = gpuKey
 							}
-							if v != nil {
-								value = v
-							}
-						}
-						if key == nil {
-							key = c.compressedK.DequantK(ctx, layer, enc, 0, nCells)
-						}
-						if value == nil {
 							value = c.compressedK.DequantV(ctx, layer, vEnc, 0, nCells)
+						} else {
+							if gpuKV, ok := c.compressedK.GetAsTQTensorKV(ctx, layer, enc, vEnc, 0, nCells); ok {
+								key = gpuKV
+								// V carried inline — suppress f16 Zeros fallback in SkipV block.
+								c.reserveSkipVPlaceholder = true
+							}
+							if key == nil {
+								k, v := c.compressedK.DequantKV(ctx, layer, enc, vEnc, 0, nCells)
+								if k != nil {
+									key = k
+								}
+								if v != nil {
+									value = v
+								}
+							}
+							if key == nil {
+								key = c.compressedK.DequantK(ctx, layer, enc, 0, nCells)
+							}
+							if value == nil {
+								value = c.compressedK.DequantV(ctx, layer, vEnc, 0, nCells)
+							}
 						}
 					}
 				default:
@@ -476,7 +461,6 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 						slog.Info("turboquant: using K-only fused path")
 					})
 					_, value, mask := c.meta.Get(ctx)
-					c.armRotationForNextSDPA()
 					return tqk, value, mask
 				}
 			}
@@ -486,7 +470,6 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 					slog.Info("turboquant: using K-only DequantK + f16 V path (fused unavailable)")
 				})
 				_, value, mask := c.meta.Get(ctx)
-				c.armRotationForNextSDPA()
 				return key, value, mask
 			}
 		}
@@ -503,14 +486,17 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 		//    build of the fused kernel produces wrong-but-low-PPL output (PPL
 		//    < f16, which lossy quant cannot achieve). PPL is preserved
 		//    bit-for-bit on Pascal CUDA between path 2 and path 1 here.
-		if vEncodeResult != nil && !forceFused {
+		//
+		//    Gated on !HasRotation(): WHT-encoded K/V from DequantKV are in the
+		//    WHT domain; stock FA uses unrotated Q and would produce wrong Q·K^T.
+		//    WHT presets fall through to path 4 (K-only fused) + DequantV + undo.
+		if vEncodeResult != nil && !forceFused && !c.compressedK.HasRotation() {
 			key, value := c.compressedK.DequantKV(ctx, layer, encodeResult, vEncodeResult, firstCell, nCells)
 			if key != nil && value != nil {
 				c.logPathOnce[1].Do(func() {
 					slog.Info("turboquant: using combined DequantKV + stock FA path")
 				})
 				_, _, mask := c.meta.Get(ctx)
-				c.armRotationForNextSDPA()
 				return key, value, mask
 			}
 		}
@@ -525,7 +511,6 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 					slog.Warn("turboquant: using K+V fused inline-decode path (forced via OLLAMA_TQ_FORCE_FUSED)")
 				})
 				_, _, mask := c.meta.Get(ctx)
-				c.armRotationForNextSDPA()
 				return tqkv, nil, mask
 			}
 		}
@@ -536,21 +521,24 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 			value = c.compressedK.DequantV(ctx, layer, vEncodeResult, firstCell, nCells)
 		}
 
-		// 4. Try K-only fused: K decoded inline, V is dequanted f16. Gated on
-		//    fusedFallbackEligible for the same D=128 reason as path 2. This
-		//    path uses the V_PACKED=false specialisation of the TQ FA kernel
-		//    (V is f16); the V_PACKED=true specialisation that path 2 used is
-		//    where the HIP correctness regression lives, so K-only is unaffected.
+		// 4. K-only fused: K decoded inline, V is dequanted f16. For WHT presets
+		//    this is the DEFAULT path (path 1 is gated off when HasRotation()).
+		//    Also the fallback when path 1+2+3 are unavailable (D≠128 etc).
+		//    V_PACKED=false specialisation of TQ FA (V is f16; attnOut WHT undo
+		//    applied by SDPA when tqTensor.vIsWHT=true).
 		if c.fusedFallbackEligible {
 			if tqk, ok := c.compressedK.GetAsTQTensor(ctx, layer, encodeResult, firstCell, nCells); ok {
 				c.logPathOnce[3].Do(func() {
-					slog.Warn("turboquant: falling back to K-only inline-decode fused kernel")
+					if c.compressedK.HasRotation() && vEncodeResult != nil {
+						slog.Info("turboquant: using K-only inline-decode fused + DequantV path (WHT preset)")
+					} else {
+						slog.Warn("turboquant: falling back to K-only inline-decode fused kernel")
+					}
 				})
 				_, metaValue, mask := c.meta.Get(ctx)
 				if value == nil {
 					value = metaValue
 				}
-				c.armRotationForNextSDPA()
 				return tqk, value, mask
 			}
 		}
@@ -564,30 +552,10 @@ func (c *TurboQuantCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) 
 		if value == nil {
 			value = metaValue
 		}
-		c.armRotationForNextSDPA()
 		return key, value, mask
 	}
 
 	return c.meta.Get(ctx)
-}
-
-// armRotationForNextSDPA sets the backend's tqRotationMatrix (and
-// tqVRotationMatrix for K+V presets) so the next SDPA call — which happens
-// immediately after this Get returns — rotates Q to match the TQ-rotated K
-// and applies the V rotation undo after attention. SDPA reads-and-clears the
-// flags, so non-TQ sub-cache layers in a WrapperCache (e.g. gemma3 SWA
-// layers) are unaffected.
-func (c *TurboQuantCache) armRotationForNextSDPA() {
-	if c.rotMatrix == nil || c.rotSetter == nil {
-		return
-	}
-	c.rotSetter.SetTQRotationMatrix(c.rotMatrix)
-	// For K+V presets (tq3/tq2), also arm the V rotation undo on the next
-	// SDPA call. For K-only presets (tq3k/tq2k), c.vRotMatrix is nil so the
-	// V rotation is not armed and SDPA's consumed vRot stays nil.
-	if c.vRotMatrix != nil {
-		c.rotSetter.SetTQVRotationMatrix(c.vRotMatrix)
-	}
 }
 
 // activateGPUEncode initialises the TQ compressed-K manager if the backend
@@ -710,34 +678,6 @@ func (c *TurboQuantCache) activateGPUEncode() {
 	// ensures we only get here on supported dims, so the fused-FA fallback
 	// paths (Get paths 2 and 4) are always eligible.
 	c.fusedFallbackEligible = true
-
-	// Cache the rotation matrices and the backend's rotation-setter hook on
-	// TurboQuantCache so Get() can arm them per-call without re-running a
-	// type assertion every layer. We do NOT set them at activate time — a
-	// sticky backend-global rotation would corrupt attention on unwrapped
-	// SWA layers in mixed-head-dim models like gemma3.
-	c.rotMatrix = mgr.RotationMatrix(nil, 0)
-	if rs, ok := c.meta.backend.(tqRotSetter); ok {
-		c.rotSetter = rs
-	}
-
-	type vRotFusedSetter interface {
-		SetTQVRotFusedInDequant(bool)
-	}
-	type vRotProvider interface {
-		RotationMatrixR() ml.Tensor
-	}
-	if c.preset.ValueBits > 0 {
-		if vp, ok := mgr.(vRotProvider); ok {
-			c.vRotMatrix = vp.RotationMatrixR()
-		}
-		// DequantKV outputs R^T @ v (still rotated). SDPA applies the rotation
-		// undo as R @ attn_out via mulmat, which is dramatically faster than
-		// the per-cell matmul of the fused dequant kernel.
-		if rs, ok := c.meta.backend.(vRotFusedSetter); ok {
-			rs.SetTQVRotFusedInDequant(false)
-		}
-	}
 
 	slog.Info("turboquant: GPU-native encode active",
 		"headDim", c.headDim, "numKVHeads", c.numKVHeads,

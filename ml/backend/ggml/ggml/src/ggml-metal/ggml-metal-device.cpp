@@ -1715,6 +1715,7 @@ static struct ggml_metal_pipeline_with_params tq_get_pipeline(ggml_metal_library
     return res;
 }
 
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_wht           (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_wht");            }
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_dequant       (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_dequant");        }
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_dequant_outlier(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_dequant_outlier"); }
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_encode        (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_encode");          }

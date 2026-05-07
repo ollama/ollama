@@ -1037,4 +1037,14 @@ typedef struct {
     int32_t  outlierPackedBytes;  // padded outlier packed bytes per cell-head
 } ggml_metal_kargs_tq_fattn_vec;
 
+typedef struct {
+    int32_t  headDim;  // ne[0], must be power-of-2
+    int32_t  ne1;      // src->ne[1]
+    int32_t  ne2;      // src->ne[2]
+    int32_t  ne3;      // src->ne[3]
+    uint64_t nb1;      // src->nb[1] in bytes
+    uint64_t nb2;      // src->nb[2] in bytes
+    uint64_t nb3;      // src->nb[3] in bytes
+} ggml_metal_kargs_tq_wht;
+
 #endif // GGML_METAL_IMPL

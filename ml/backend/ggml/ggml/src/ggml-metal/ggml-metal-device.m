@@ -1181,6 +1181,7 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         case GGML_OP_OPT_STEP_ADAMW:
         case GGML_OP_OPT_STEP_SGD:
             return has_simdgroup_reduction;
+        case GGML_OP_TQ_WHT:
         case GGML_OP_TQ_ENCODE:
         case GGML_OP_TQ_ENCODE_V:
         case GGML_OP_TQ_ENCODE_KV:

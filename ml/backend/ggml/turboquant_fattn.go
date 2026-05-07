@@ -33,6 +33,11 @@ type tqTensor struct {
 	qjlPacked     *Tensor // QJL sign bits (nil if no QJL)
 	qjlNorm       *Tensor // QJL residual L2 norm [nKVHeads, capacity] f32 (nil if no QJL)
 	qjlProjection *Tensor // [qjlRows, headDim] f32 projection matrix (nil if no QJL)
+	// WHT rotation sign vector [headDim] f32 ±1 (nil if no rotation).
+	// The symmetric WHT F(x)=S·H·S·x/√n is self-inverse; same vector rotates Q
+	// and undoes V rotation on the attention output.
+	signs  *Tensor
+	vIsWHT bool // V is WHT-encoded; K-only fused path must undo WHT on attnOut
 	// Outlier-split fields (populated when outlierCount > 0).
 	// The fused kernel decodes the dual-stream (regular + outlier) packed K
 	// inline to eliminate the separate DequantK materialisation on *qa/*q presets.
@@ -66,6 +71,8 @@ func (t *tqTensor) Permute(ctx ml.Context, shape ...int) ml.Tensor {
 		vBits:              t.vBits,
 		asymmetric:         t.asymmetric,
 		zeros:              t.zeros,
+		signs:              t.signs,
+		vIsWHT:             t.vIsWHT,
 		qjlRows:            t.qjlRows,
 		qjlPacked:          t.qjlPacked,
 		qjlNorm:            t.qjlNorm,

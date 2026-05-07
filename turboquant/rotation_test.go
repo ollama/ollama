@@ -6,19 +6,19 @@ import (
 	"testing"
 )
 
-// testDims covers small, medium, and the primary production dims.
+// testDims covers small and production dims. WHT requires powers of 2.
 var testDims = []int{4, 8, 16, 32, 64, 128}
 
 func TestBuildRotationDeterministic(t *testing.T) {
 	for _, dim := range testDims {
 		a := BuildRotation(dim, 123)
 		b := BuildRotation(dim, 123)
-		if a.Dim != b.Dim || a.Seed != b.Seed || len(a.Matrix) != len(b.Matrix) {
+		if a.Dim != b.Dim || a.Seed != b.Seed || len(a.Signs) != len(b.Signs) {
 			t.Fatalf("rotation metadata mismatch for dim %d", dim)
 		}
-		for i := range a.Matrix {
-			if a.Matrix[i] != b.Matrix[i] {
-				t.Fatalf("rotation mismatch at dim=%d idx=%d", dim, i)
+		for i := range a.Signs {
+			if a.Signs[i] != b.Signs[i] {
+				t.Fatalf("rotation sign mismatch at dim=%d idx=%d", dim, i)
 			}
 		}
 	}
@@ -28,17 +28,29 @@ func TestBuildRotationDifferentSeedsDiffer(t *testing.T) {
 	a := BuildRotation(16, 111)
 	b := BuildRotation(16, 222)
 	different := false
-	for i := range a.Matrix {
-		if a.Matrix[i] != b.Matrix[i] {
+	for i := range a.Signs {
+		if a.Signs[i] != b.Signs[i] {
 			different = true
 			break
 		}
 	}
 	if !different {
-		t.Fatal("different seeds produced the same orthogonal matrix")
+		t.Fatal("different seeds produced the same sign vector")
 	}
 }
 
+func TestBuildRotationSignsArePlusMinus1(t *testing.T) {
+	for _, dim := range testDims {
+		rot := BuildRotation(dim, uint64(dim)*31)
+		for i, s := range rot.Signs {
+			if s != 1.0 && s != -1.0 {
+				t.Fatalf("dim=%d idx=%d sign=%v, want ±1", dim, i, s)
+			}
+		}
+	}
+}
+
+// TestApplyInverseRotation verifies self-inverse property: F(F(x)) == x.
 func TestApplyInverseRotation(t *testing.T) {
 	for _, dim := range testDims {
 		values := pseudoRandomVector(dim, uint64(dim)*17)
@@ -64,13 +76,11 @@ func TestRotationPreservesNorm(t *testing.T) {
 	}
 }
 
-// TestAttentionScoreRotationInvariance verifies the exact mathematical
-// invariant: dot(Q,K) == dot(R@Q, R@K) for an orthogonal matrix R. Because R
-// is orthogonal, R^T R = I, so the inner product is preserved exactly (up to
-// floating-point rounding). This is the property that makes rotating K before
-// quantization safe when Q is also rotated at attention time.
+// TestAttentionScoreRotationInvariance verifies dot(F(q), F(k)) == dot(q, k).
+// Because F is orthogonal, the inner product is preserved. This is the core
+// property that makes rotating K before quantization safe when Q is also rotated.
 func TestAttentionScoreRotationInvariance(t *testing.T) {
-	for _, dim := range []int{64, 128, 256} {
+	for _, dim := range []int{64, 128, 256, 512} {
 		t.Run(fmt.Sprintf("dim=%d", dim), func(t *testing.T) {
 			seed := uint64(0x42c0ffee)
 			q := pseudoRandomVector(dim, seed)
@@ -92,19 +102,13 @@ func TestAttentionScoreRotationInvariance(t *testing.T) {
 
 			relErr := math.Abs(dotOrig-dotRot) / (math.Abs(dotOrig) + 1e-10)
 			if relErr > 1e-4 {
-				t.Errorf("dim=%d: dot(Q,K)=%.6f dot(RQ,RK)=%.6f relErr=%.2e",
+				t.Errorf("dim=%d: dot(q,k)=%.6f dot(F(q),F(k))=%.6f relErr=%.2e",
 					dim, dotOrig, dotRot, relErr)
 			}
 		})
 	}
 }
 
-// TestQuantizedAttentionScorePreservation verifies the practical end-to-end
-// path: encode K per-head (which stores R@k), rotate Q (giving R@q), then
-// compute (R@q)·(R@k_quant) and compare against the true dot(Q,K). Single
-// trials can have high per-sample error from quantization noise, so we average
-// over many trials and check the mean relative error, matching the pattern used
-// by TestEncodeKeyPerHeadRoundTrip.
 func TestQuantizedAttentionScorePreservation(t *testing.T) {
 	const dim = 128
 	const trials = 100
@@ -149,8 +153,6 @@ func TestQuantizedAttentionScorePreservation(t *testing.T) {
 			avgRelErr := totalAbsErr / (totalAbsDot + 1e-10)
 			t.Logf("preset=%s avg relative dot error = %.4f over %d trials", preset.Name, avgRelErr, trials)
 
-			// tq3 (3-bit) is tighter than tq2 (2-bit); these thresholds match the
-			// codec quality validated by TestEncodeKeyPerHeadRoundTrip.
 			maxRelErr := 0.45
 			if preset.KeyPrimaryBits >= 3 {
 				maxRelErr = 0.25
@@ -160,30 +162,5 @@ func TestQuantizedAttentionScorePreservation(t *testing.T) {
 					preset.Name, avgRelErr, maxRelErr)
 			}
 		})
-	}
-}
-
-// TestBuildRotationIsOrthogonal verifies that Q satisfies Q*Q^T = I (rows are
-// orthonormal). This is the core invariant required by the TurboQuant encoding
-// and is guaranteed unconditionally by the Householder QR algorithm.
-func TestBuildRotationIsOrthogonal(t *testing.T) {
-	// Include dim=256 to exercise the algorithm well beyond typical head_dim.
-	for _, dim := range append(testDims, 256) {
-		rot := BuildRotation(dim, uint64(dim)*31)
-		for i := range dim {
-			for j := i; j < dim; j++ {
-				var dot float32
-				for k := range dim {
-					dot += rot.Matrix[i*dim+k] * rot.Matrix[j*dim+k]
-				}
-				if i == j {
-					if math.Abs(float64(dot-1)) > 5e-5 {
-						t.Fatalf("dim=%d row %d: self-dot=%.6f, want 1.0", dim, i, dot)
-					}
-				} else if math.Abs(float64(dot)) > 5e-5 {
-					t.Fatalf("dim=%d rows %d,%d: cross-dot=%.6f, want 0.0", dim, i, j, dot)
-				}
-			}
-		}
 	}
 }

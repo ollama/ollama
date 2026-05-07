@@ -4,3 +4,4 @@
 
 void ggml_cuda_tq_encode(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst);
 void ggml_cuda_tq_encode_kv(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst);
+void ggml_cuda_tq_wht(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst);

@@ -1,4 +1,5 @@
 #include "tq-encode.cuh"
+#include "tq-wht.cuh"
 #include <math.h>
 
 #define TQ_ENCODE_BLOCK_SIZE 128
@@ -13,7 +14,7 @@
 template<bool kAsymmetric>
 __global__ void tq_encode_kernel(
     const void      *k,            // f16 or f32, ggml layout [headDim, numKVHeads, batchSize]
-    const float     *rotation,     // [headDim, headDim] R^T stored row-major
+    const float     *rotation,     // [headDim] f32 ±1 WHT sign vector
     uint8_t         *packed_out,   // [(c*numKVHeads+h)*packedBytes] interleaved
     float           *scales_out,   // [c*numKVHeads+h] interleaved
     int              firstCell,    // first cache cell index (cell = firstCell + batch)
@@ -32,14 +33,12 @@ __global__ void tq_encode_kernel(
     int cell  = firstCell + batch;
 
     // Shared memory layout:
-    //   s_k[headDim]       – K values as f32
-    //   s_rot[headDim]     – rotated values
+    //   s_k[headDim]       – K values as f32; WHT runs in-place, leaving rotated values
     //   s_reduce[BLOCK]    – warp reduction scratch
     //   s_idx[headDim]     – quantized indices (uint8)
     extern __shared__ char s_mem[];
     float   *s_k      = (float *)s_mem;
-    float   *s_rot    = s_k + headDim;
-    float   *s_reduce = s_rot + headDim;
+    float   *s_reduce = s_k + headDim;
     uint8_t *s_idx    = (uint8_t *)(s_reduce + blockDim.x);
 
     // ── Step 1: Load K[batch, head] into shared memory as f32 ────────────────
@@ -63,22 +62,15 @@ __global__ void tq_encode_kernel(
     }
     __syncthreads();
 
-    // ── Step 2: Rotation matmul: rotated = R^T @ k ───────────────────────────
-    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-        float sum = 0.0f;
-        for (int j = 0; j < headDim; j++) {
-            sum += rotation[i * headDim + j] * s_k[j];
-        }
-        s_rot[i] = sum;
-    }
-    __syncthreads();
+    // ── Step 2: WHT rotation F(x) = S·H·S·x/√n (self-inverse) ─────────────
+    apply_shs_wht(s_k, rotation, headDim, threadIdx.x, blockDim.x);
 
     // ── Step 3: Mean (kAsymmetric only) then RMS scale ───────────────────────
     float regMean = 0.0f;
     if (kAsymmetric) {
         float local_sum = 0.0f;
         for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-            local_sum += s_rot[i];
+            local_sum += s_k[i];
         }
         s_reduce[threadIdx.x] = local_sum;
         __syncthreads();
@@ -98,7 +90,7 @@ __global__ void tq_encode_kernel(
 
     float local_sq = 0.0f;
     for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-        float v = s_rot[i] - regMean;  // regMean==0 when !kAsymmetric
+        float v = s_k[i] - regMean;  // regMean==0 when !kAsymmetric
         local_sq += v * v;
     }
     s_reduce[threadIdx.x] = local_sq;
@@ -124,7 +116,7 @@ __global__ void tq_encode_kernel(
 
     // ── Step 4: Quantize each element via boundary binary search ─────────────
     for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-        float v = (scale > 0.0f) ? ((s_rot[i] - regMean) / scale) : 0.0f;
+        float v = (scale > 0.0f) ? ((s_k[i] - regMean) / scale) : 0.0f;
         int idx = 0;
         for (int b = 0; b < numBoundaries; b++) {
             if (v >= boundaries[b]) idx++;
@@ -134,20 +126,14 @@ __global__ void tq_encode_kernel(
     __syncthreads();
 
     // ── EDEN scale refinement (Option B: two-pass MSE-optimal scale) ────────────
-    // Given current assignment {s_idx[i]}, the scale minimising ||v - S·c||²
-    // is S* = Σ(v[i]·c[idx[i]]) / Σ(c[idx[i]]²)  (EDEN biased estimator).
-    // Two passes: compute S₁ with initial assignment → re-quantize → compute S₂
-    // with updated assignment → write S₂ as final scale.
-    // Reuses s_k (dead after step 2 rotation) as a second reduction buffer.
-    // V and outlier-split paths still use the RMS scale set in step 3.
+    // S* = Σ(v[i]·c[idx[i]]) / Σ(c[idx[i]]²).  Serial reductions reuse s_reduce
+    // for numerator then denominator, so no second scratch buffer is needed.
     if (codebook != nullptr) {
-        float *s_reduce2 = s_k;  // headDim ≥ blockDim.x; safe to alias dead buffer
-
         for (int pass = 0; pass < 2; pass++) {
             float local_num = 0.0f, local_den = 0.0f;
             for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
                 float ci = codebook[(int)s_idx[i]];
-                float vi = s_rot[i] - regMean;
+                float vi = s_k[i] - regMean;
                 local_num += vi * ci;
                 local_den += ci * ci;
             }
@@ -159,28 +145,25 @@ __global__ void tq_encode_kernel(
                     s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
                 __syncthreads();
             }
+            float eden_num = s_reduce[0];
 
-            s_reduce2[threadIdx.x] = local_den;
+            s_reduce[threadIdx.x] = local_den;
             __syncthreads();
             for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
                 if (threadIdx.x < stride)
-                    s_reduce2[threadIdx.x] += s_reduce2[threadIdx.x + stride];
+                    s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
                 __syncthreads();
             }
-
-            float eden_num = s_reduce[0];
-            float eden_den = s_reduce2[0];
-            float s_eden = (eden_den > 1e-12f && eden_num > 0.0f)
-                           ? (eden_num / eden_den) : scale;
+            float s_eden = (s_reduce[0] > 1e-12f && eden_num > 0.0f)
+                           ? (eden_num / s_reduce[0]) : scale;
             scale = s_eden;
 
             if (threadIdx.x == 0)
                 scales_out[cell * numKVHeads + head] = scale;
 
             if (pass == 0) {
-                // Re-quantize with S₁ to get the assignment used in pass 1 and packing.
                 for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-                    float v = (scale > 0.0f) ? ((s_rot[i] - regMean) / scale) : 0.0f;
+                    float v = (scale > 0.0f) ? ((s_k[i] - regMean) / scale) : 0.0f;
                     int idx = 0;
                     for (int b = 0; b < numBoundaries; b++) {
                         if (v >= boundaries[b]) idx++;
@@ -236,7 +219,7 @@ __global__ void tq_encode_kernel(
 
 __global__ void tq_encode_kernel_outlier(
     const void      *k,                  // f16 or f32, [headDim, numKVHeads, batchSize]
-    const float     *rotation,           // [headDim, headDim] R^T row-major
+    const float     *rotation,           // [headDim] f32 ±1 WHT sign vector
     uint8_t         *packed_out,         // regular packed [regularPackedBytes*numKVHeads*cells]
     float           *scales_out,         // regular scales [numKVHeads*cells]
     uint8_t         *outlier_packed,     // outlier packed [outlierPackedBytes*numKVHeads*cells]
@@ -268,8 +251,7 @@ __global__ void tq_encode_kernel_outlier(
     int cell  = firstCell + batch;
 
     // Shared memory layout (laid out contiguously — launch passes total size):
-    //   s_k[headDim]              - f32 K values
-    //   s_rot[headDim]             - f32 rotated values
+    //   s_k[headDim]              - f32 K values; WHT runs in-place, leaving rotated values
     //   s_reduce[blockDim.x]       - reduction scratch (float)
     //   s_idx[headDim]             - regular quantized indices (uint8)
     //   s_is_outlier[headDim]      - 1 = outlier, 0 = regular (uint8)
@@ -280,8 +262,7 @@ __global__ void tq_encode_kernel_outlier(
 
     extern __shared__ char s_mem[];
     float   *s_k          = (float *)s_mem;
-    float   *s_rot        = s_k + headDim;
-    float   *s_reduce     = s_rot + headDim;
+    float   *s_reduce     = s_k + headDim;
     uint8_t *s_idx        = (uint8_t *)(s_reduce + blockDim.x);
     uint8_t *s_is_outlier = s_idx + headDim;
     int     *s_reg_pos    = (int *)(s_is_outlier + headDim);
@@ -306,15 +287,8 @@ __global__ void tq_encode_kernel_outlier(
     }
     __syncthreads();
 
-    // Step 2: Rotate: s_rot[i] = sum_j rotation[i*headDim+j] * s_k[j] = (R^T @ k)[i].
-    for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-        float sum = 0.0f;
-        for (int j = 0; j < headDim; j++) {
-            sum += rotation[i * headDim + j] * s_k[j];
-        }
-        s_rot[i] = sum;
-    }
-    __syncthreads();
+    // Step 2: WHT rotation F(x) = S·H·S·x/√n (self-inverse).
+    apply_shs_wht(s_k, rotation, headDim, threadIdx.x, blockDim.x);
 
     // Step 3: Clear outlier mask.
     for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
@@ -324,8 +298,8 @@ __global__ void tq_encode_kernel_outlier(
 
     // Step 4: Top-K outlier selection (serial on thread 0). O(K * headDim)
     // comparisons. At outlierCount=32, headDim=128 that's ~4k ops on one
-    // thread — negligible next to the rotation matmul (16k ops) that ran
-    // in parallel above. Also builds s_reg_pos as the ordered list of
+    // thread — negligible next to the WHT rotation that ran in parallel above.
+    // Also builds s_reg_pos as the ordered list of
     // regular (non-outlier) channel positions, and s_outl_pos for outliers.
     if (threadIdx.x == 0) {
         for (int r = 0; r < outlierCount; r++) {
@@ -333,7 +307,7 @@ __global__ void tq_encode_kernel_outlier(
             int   best_idx = 0;
             for (int i = 0; i < headDim; i++) {
                 if (s_is_outlier[i]) continue;
-                float a = fabsf(s_rot[i]);
+                float a = fabsf(s_k[i]);
                 if (a > best_val) {
                     best_val = a;
                     best_idx = i;
@@ -341,7 +315,7 @@ __global__ void tq_encode_kernel_outlier(
             }
             s_is_outlier[best_idx] = 1;
             s_outl_pos[r]          = best_idx;
-            s_outl_val[r]          = s_rot[best_idx];
+            s_outl_val[r]          = s_k[best_idx];
         }
         // Build regular position map after outlier selection is complete.
         int pos = 0;
@@ -363,7 +337,7 @@ __global__ void tq_encode_kernel_outlier(
     float local_sq_reg = 0.0f;
     float local_sq_out = 0.0f;
     for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-        float v = s_rot[i];
+        float v = s_k[i];
         if (s_is_outlier[i]) {
             local_sum_out += v;
             local_sq_out += v * v;
@@ -458,7 +432,7 @@ __global__ void tq_encode_kernel_outlier(
     // For asymmetric presets we centre by regMean before scaling.
     for (int r = threadIdx.x; r < regularCount; r += blockDim.x) {
         int orig = s_reg_pos[r];
-        float v = (regScale > 0.0f) ? ((s_rot[orig] - regMean) / regScale) : 0.0f;
+        float v = (regScale > 0.0f) ? ((s_k[orig] - regMean) / regScale) : 0.0f;
         int idx = 0;
         for (int b = 0; b < numBoundaries; b++) {
             if (v >= boundaries[b]) idx++;
@@ -468,15 +442,14 @@ __global__ void tq_encode_kernel_outlier(
     __syncthreads();
 
     // EDEN biased scale refinement for regular channels (two-pass).
-    // Uses s_k as a second reduction buffer — it is dead after step 2.
+    // Serial reductions reuse s_reduce for numerator then denominator.
     if (codebook != nullptr) {
-        float *s_reduce2 = s_k;
         for (int pass = 0; pass < 2; pass++) {
             float local_num = 0.0f, local_den = 0.0f;
             for (int r = threadIdx.x; r < regularCount; r += blockDim.x) {
                 int orig = s_reg_pos[r];
                 float ci = codebook[(int)s_idx[r]];
-                float vi = s_rot[orig] - regMean;
+                float vi = s_k[orig] - regMean;
                 local_num += vi * ci;
                 local_den += ci * ci;
             }
@@ -486,19 +459,20 @@ __global__ void tq_encode_kernel_outlier(
                 if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
                 __syncthreads();
             }
-            s_reduce2[threadIdx.x] = local_den;
+            float eden_num = s_reduce[0];
+            s_reduce[threadIdx.x] = local_den;
             __syncthreads();
             for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
-                if (threadIdx.x < stride) s_reduce2[threadIdx.x] += s_reduce2[threadIdx.x + stride];
+                if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
                 __syncthreads();
             }
-            float s_eden = (s_reduce2[0] > 1e-12f && s_reduce[0] > 0.0f) ? (s_reduce[0] / s_reduce2[0]) : regScale;
+            float s_eden = (s_reduce[0] > 1e-12f && eden_num > 0.0f) ? (eden_num / s_reduce[0]) : regScale;
             regScale = s_eden;
             if (threadIdx.x == 0) scales_out[cell * numKVHeads + head] = regScale;
             if (pass == 0) {
                 for (int r = threadIdx.x; r < regularCount; r += blockDim.x) {
                     int orig = s_reg_pos[r];
-                    float v = (regScale > 0.0f) ? ((s_rot[orig] - regMean) / regScale) : 0.0f;
+                    float v = (regScale > 0.0f) ? ((s_k[orig] - regMean) / regScale) : 0.0f;
                     int idx = 0;
                     for (int b = 0; b < numBoundaries; b++) { if (v >= boundaries[b]) idx++; }
                     s_idx[r] = (uint8_t)idx;
@@ -551,8 +525,8 @@ __global__ void tq_encode_kernel_outlier(
     __syncthreads();
 
     // EDEN biased scale refinement for outlier channels (two-pass).
+    // Serial reductions reuse s_reduce for numerator then denominator.
     if (outlier_codebook != nullptr) {
-        float *s_reduce2 = s_k;
         for (int pass = 0; pass < 2; pass++) {
             float local_num = 0.0f, local_den = 0.0f;
             for (int r = threadIdx.x; r < outlierCount; r += blockDim.x) {
@@ -567,13 +541,14 @@ __global__ void tq_encode_kernel_outlier(
                 if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
                 __syncthreads();
             }
-            s_reduce2[threadIdx.x] = local_den;
+            float eden_num = s_reduce[0];
+            s_reduce[threadIdx.x] = local_den;
             __syncthreads();
             for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
-                if (threadIdx.x < stride) s_reduce2[threadIdx.x] += s_reduce2[threadIdx.x + stride];
+                if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
                 __syncthreads();
             }
-            float s_eden = (s_reduce2[0] > 1e-12f && s_reduce[0] > 0.0f) ? (s_reduce[0] / s_reduce2[0]) : outScale;
+            float s_eden = (s_reduce[0] > 1e-12f && eden_num > 0.0f) ? (eden_num / s_reduce[0]) : outScale;
             outScale = s_eden;
             if (threadIdx.x == 0) outlier_scales[cell * numKVHeads + head] = outScale;
             if (pass == 0) {
@@ -624,32 +599,24 @@ __global__ void tq_encode_kernel_outlier(
     // residual = rotated - reconstructed, project onto Gaussian matrix rows,
     // store sign bits and L2 norm.
     if (qjlRows > 0 && qjl_packed_out && qjl_norm_out && qjl_projection) {
-        // Reconstruct in shared memory using s_k as scratch (original K no longer needed).
-        float *s_recon = s_k;
-        for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-            s_recon[i] = 0.0f;
-        }
-        __syncthreads();
-
-        // Reconstruct regular channels.
+        // Compute residual = rotated - reconstructed in-place in s_k.
+        // Every position in [0, headDim) is covered exactly once (regular ∪ outlier).
+        // Subtract reconstruction from each position's rotated value.
         for (int r = threadIdx.x; r < regularCount; r += blockDim.x) {
             int orig = s_reg_pos[r];
             float recon = (regScale > 0.0f) ? (codebook[s_idx[r]] * regScale + regMean) : regMean;
-            s_recon[orig] = recon;
+            s_k[orig] -= recon;
         }
-        // Reconstruct outlier channels.
         for (int r = threadIdx.x; r < outlierCount; r += blockDim.x) {
             int orig = s_outl_pos[r];
             float recon = (outScale > 0.0f) ? (outlier_codebook[s_outl_idx[r]] * outScale + outMean) : outMean;
-            s_recon[orig] = recon;
+            s_k[orig] -= recon;
         }
         __syncthreads();
 
-        // Compute residual = s_rot - s_recon, then L2 norm and projection signs.
         float local_l2 = 0.0f;
         for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-            float diff = s_rot[i] - s_recon[i];
-            s_recon[i] = diff;  // reuse s_recon as residual scratch
+            float diff = s_k[i];
             local_l2 += diff * diff;
         }
         s_reduce[threadIdx.x] = local_l2;
@@ -665,15 +632,12 @@ __global__ void tq_encode_kernel_outlier(
         }
         __syncthreads();
 
-        // Compute projection dot products and store sign bits.
-        // qjl_projection is [qjlRows, headDim] row-major.
-        // Each thread handles one or more rows.
         if (residualNorm > 1e-12f) {
             for (int row = threadIdx.x; row < qjlRows; row += blockDim.x) {
                 float dot = 0.0f;
                 const float *proj_row = qjl_projection + row * headDim;
                 for (int col = 0; col < headDim; col++) {
-                    dot += s_recon[col] * proj_row[col];
+                    dot += s_k[col] * proj_row[col];
                 }
                 int bit_idx = row;
                 int byte_idx = bit_idx >> 3;
@@ -685,7 +649,6 @@ __global__ void tq_encode_kernel_outlier(
                 }
             }
         } else if (threadIdx.x == 0) {
-            // Zero residual: clear QJL packed bytes for this head.
             int qjl_packed_bytes = (qjlRows + 7) / 8;
             uint8_t *qp = qjl_packed_out + (cell * numKVHeads + head) * qjl_packed_bytes;
             for (int p = 0; p < qjl_packed_bytes; p++) qp[p] = 0;
@@ -746,8 +709,7 @@ void ggml_cuda_tq_encode(ggml_backend_cuda_context & ctx, struct ggml_tensor * d
         const int numOutlierBoundaries = (1 << outlierBits) - 1;
 
         // Shared memory layout for outlier kernel:
-        //   s_k[headDim]              f32
-        //   s_rot[headDim]             f32
+        //   s_k[headDim]              f32 (rotated in-place)
         //   s_reduce[block_size]       f32
         //   s_idx[headDim]             u8
         //   s_is_outlier[headDim]      u8
@@ -755,7 +717,7 @@ void ggml_cuda_tq_encode(ggml_backend_cuda_context & ctx, struct ggml_tensor * d
         //   s_outl_pos[outlierCount]   i32
         //   s_outl_val[outlierCount]   f32
         //   s_outl_idx[outlierCount]   u8
-        size_t smem = (size_t)headDim * 2 * sizeof(float)               // s_k + s_rot
+        size_t smem = (size_t)headDim * sizeof(float)                    // s_k
                     + (size_t)block_size * sizeof(float)                 // s_reduce
                     + (size_t)headDim * 2 * sizeof(uint8_t)              // s_idx + s_is_outlier
                     + (size_t)headDim * sizeof(int)                      // s_reg_pos
@@ -787,9 +749,9 @@ void ggml_cuda_tq_encode(ggml_backend_cuda_context & ctx, struct ggml_tensor * d
         return;
     }
 
-    size_t smem = (size_t)headDim * 2 * sizeof(float)
-                + (size_t)block_size * sizeof(float)
-                + (size_t)headDim * sizeof(uint8_t);
+    size_t smem = (size_t)headDim * sizeof(float)       // s_k
+                + (size_t)block_size * sizeof(float)    // s_reduce
+                + (size_t)headDim * sizeof(uint8_t);    // s_idx
 
     const struct ggml_tensor * k_bias = dst->src[5];
     const float * k_bias_ptr = k_bias ? (const float *)k_bias->data : nullptr;
@@ -856,9 +818,9 @@ void ggml_cuda_tq_encode_kv(ggml_backend_cuda_context & ctx, struct ggml_tensor 
     while (bs < block_size) bs <<= 1;
     block_size = bs;
 
-    size_t smem = (size_t)headDim * 2 * sizeof(float)
-                + (size_t)block_size * sizeof(float)
-                + (size_t)headDim * sizeof(uint8_t);
+    size_t smem = (size_t)headDim * sizeof(float)       // s_k
+                + (size_t)block_size * sizeof(float)    // s_reduce
+                + (size_t)headDim * sizeof(uint8_t);    // s_idx
 
     cudaStream_t stream = ctx.stream();
 

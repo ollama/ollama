@@ -1,11 +1,12 @@
 #include "tq-encode-v.cuh"
+#include "tq-wht.cuh"
 #include <math.h>
 
 #define TQ_ENCODE_V_BLOCK_SIZE 128
 
 __global__ void tq_encode_v_kernel(
     const void      *v,
-    const float     *rotation,   // [headDim, headDim] R^T row-major, or NULL for no rotation
+    const float     *rotation,   // [headDim] f32 ±1 WHT sign vector, or NULL for no rotation
     uint8_t         *packed_out,
     float           *scales_out,
     int              firstCell,
@@ -23,8 +24,7 @@ __global__ void tq_encode_v_kernel(
 
     extern __shared__ char s_mem[];
     float   *s_v      = (float *)s_mem;
-    float   *s_rot    = s_v + headDim;
-    float   *s_reduce = s_rot + headDim;
+    float   *s_reduce = s_v + headDim;
     uint8_t *s_idx    = (uint8_t *)(s_reduce + blockDim.x);
 
     // Step 1: Load V[batch, head] into shared memory as f32
@@ -38,24 +38,15 @@ __global__ void tq_encode_v_kernel(
     }
     __syncthreads();
 
-    // Step 2: Apply Hadamard rotation if provided (R^T @ v spreads outlier energy evenly)
-    float *s_input = s_v;
+    // Step 2: WHT rotation F(x) = S·H·S·x/√n in-place (self-inverse; NULL = no rotation)
     if (rotation != NULL) {
-        for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-            float sum = 0.0f;
-            for (int j = 0; j < headDim; j++) {
-                sum += rotation[i * headDim + j] * s_v[j];
-            }
-            s_rot[i] = sum;
-        }
-        __syncthreads();
-        s_input = s_rot;
+        apply_shs_wht(s_v, rotation, headDim, threadIdx.x, blockDim.x);
     }
 
     // Step 3: RMS scale = sqrt(mean(v^2))
     float local_sq = 0.0f;
     for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-        local_sq += s_input[i] * s_input[i];
+        local_sq += s_v[i] * s_v[i];
     }
     s_reduce[threadIdx.x] = local_sq;
     __syncthreads();
@@ -79,7 +70,7 @@ __global__ void tq_encode_v_kernel(
 
     // Step 4: Quantize via boundary binary search
     for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-        float val = (scale > 0.0f) ? (s_input[i] / scale) : 0.0f;
+        float val = (scale > 0.0f) ? (s_v[i] / scale) : 0.0f;
         int idx = 0;
         for (int b = 0; b < numBoundaries; b++) {
             if (val >= boundaries[b]) idx++;
@@ -88,14 +79,14 @@ __global__ void tq_encode_v_kernel(
     }
     __syncthreads();
 
-    // EDEN biased scale refinement (two-pass). Uses s_v as second reduce buffer.
+    // EDEN biased scale refinement (two-pass). Serial reductions reuse s_reduce
+    // for both numerator and denominator, so no second scratch buffer is needed.
     if (codebook != nullptr) {
-        float *s_reduce2 = s_v;
         for (int pass = 0; pass < 2; pass++) {
             float local_num = 0.0f, local_den = 0.0f;
             for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
                 float ci = codebook[(int)s_idx[i]];
-                float vi = s_input[i];
+                float vi = s_v[i];
                 local_num += vi * ci;
                 local_den += ci * ci;
             }
@@ -105,18 +96,19 @@ __global__ void tq_encode_v_kernel(
                 if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
                 __syncthreads();
             }
-            s_reduce2[threadIdx.x] = local_den;
+            float eden_num = s_reduce[0];
+            s_reduce[threadIdx.x] = local_den;
             __syncthreads();
             for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
-                if (threadIdx.x < stride) s_reduce2[threadIdx.x] += s_reduce2[threadIdx.x + stride];
+                if (threadIdx.x < stride) s_reduce[threadIdx.x] += s_reduce[threadIdx.x + stride];
                 __syncthreads();
             }
-            float s_eden = (s_reduce2[0] > 1e-12f && s_reduce[0] > 0.0f) ? (s_reduce[0] / s_reduce2[0]) : scale;
+            float s_eden = (s_reduce[0] > 1e-12f && eden_num > 0.0f) ? (eden_num / s_reduce[0]) : scale;
             scale = s_eden;
             if (threadIdx.x == 0) scales_out[cell * numKVHeads + head] = scale;
             if (pass == 0) {
                 for (int i = threadIdx.x; i < headDim; i += blockDim.x) {
-                    float val = (scale > 0.0f) ? (s_input[i] / scale) : 0.0f;
+                    float val = (scale > 0.0f) ? (s_v[i] / scale) : 0.0f;
                     int idx = 0;
                     for (int b = 0; b < numBoundaries; b++) { if (val >= boundaries[b]) idx++; }
                     s_idx[i] = (uint8_t)idx;
@@ -179,9 +171,9 @@ void ggml_cuda_tq_encode_v(ggml_backend_cuda_context & ctx, struct ggml_tensor *
     while (bs < block_size) bs <<= 1;
     block_size = bs;
 
-    size_t smem = (size_t)headDim * 2 * sizeof(float)  // s_v + s_rot
-                + (size_t)block_size * sizeof(float)
-                + (size_t)headDim * sizeof(uint8_t);
+    size_t smem = (size_t)headDim * sizeof(float)       // s_v
+                + (size_t)block_size * sizeof(float)    // s_reduce
+                + (size_t)headDim * sizeof(uint8_t);    // s_idx
 
     cudaStream_t stream = ctx.stream();
 

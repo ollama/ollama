@@ -2894,6 +2894,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_TQ_ENCODE_KV:
             ggml_cuda_tq_encode_kv(ctx, dst);
             break;
+        case GGML_OP_TQ_WHT:
+            ggml_cuda_tq_wht(ctx, dst);
+            break;
         default:
             return false;
     }
@@ -4938,6 +4941,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_TQ_FLASH_ATTN_EXT:
         case GGML_OP_TQ_ENCODE_V:
         case GGML_OP_TQ_ENCODE_KV:
+        case GGML_OP_TQ_WHT:
             return true;
 
         default:

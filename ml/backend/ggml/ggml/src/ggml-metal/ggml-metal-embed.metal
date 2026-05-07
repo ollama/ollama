@@ -2865,6 +2865,16 @@ typedef struct {
 } ggml_metal_kargs_tq_dequant_kv;
 
 typedef struct {
+    int32_t  headDim;
+    int32_t  ne1;
+    int32_t  ne2;
+    int32_t  ne3;
+    uint64_t nb1;  // src stride dim-1 in bytes
+    uint64_t nb2;  // src stride dim-2 in bytes
+    uint64_t nb3;  // src stride dim-3 in bytes
+} ggml_metal_kargs_tq_wht;
+
+typedef struct {
     int32_t headDim;
     int32_t numKVHeads;
     int32_t bits;
@@ -13330,6 +13340,120 @@ kernel void kernel_tq_dequant_outlier(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// apply_shs_wht — symmetric randomised Walsh-Hadamard transform F(x)=S·H·S·x/√n.
+// Operates in-place on s (threadgroup float array, size n, must be power of 2).
+// signs: [n] f32 ±1 in device memory.
+//
+// kTrailingBarrier: emit a threadgroup barrier after the final write-back so
+// callers that immediately read s[] after returning are correct.  Pass false
+// when the caller owns all elements it will subsequently read (e.g. kernel_tq_wht
+// write-back is fully thread-local).
+//
+// Fast path (nthreads ≥ n, i.e. one thread per element):
+//   • strides 1..16 (< simdgroup size 32): simd_shuffle_xor — zero extra barriers
+//   • strides 32..n/2: two barriers per iteration (write→read and read→write)
+//     preventing the RAW race where a faster simdgroup writes s[tid^stride] for
+//     stride N+1 before a slower simdgroup reads it for stride N.
+// Eliminates up to 3 of 7 barriers for D=128, 4 of 6 for D=64.
+//
+// General path (nthreads < n, multiple elements per thread): original
+// barrier-based implementation, used for D=256 / D=512.
+template<bool kTrailingBarrier = true>
+inline void apply_shs_wht(
+    threadgroup float      * s,
+    device  const float    * signs,
+    int n, uint tid, uint nthreads)
+{
+    // First S: x[i] *= signs[i]
+    for (int i = (int)tid; i < n; i += (int)nthreads) { s[i] *= signs[i]; }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if ((int)nthreads >= n) {
+        // Fast path: one thread owns exactly one element (tid < n guaranteed).
+        float val = s[(int)tid];
+
+        // Small strides (1..16): exchange within the simdgroup — no shared mem write.
+        for (int stride = 1; stride < n && stride < 32; stride <<= 1) {
+            float nbr = simd_shuffle_xor(val, (ushort)stride);
+            val = ((int)tid & stride) ? (nbr - val) : (val + nbr);
+        }
+
+        // Large strides (32+): two barriers per iteration.
+        // Barrier 1 (before read): ensures all threads' writes are visible.
+        // Barrier 2 (after read): prevents the next stride's write from racing
+        // with this stride's read on a faster simdgroup.
+        for (int stride = 32; stride < n; stride <<= 1) {
+            s[(int)tid] = val;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            float other = s[(int)tid ^ stride];
+            val = ((int)tid & stride) ? (other - val) : (val + other);
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+
+        // Second S and normalise; write result back to shared memory.
+        float scale = rsqrt((float)n);
+        s[(int)tid] = val * signs[(int)tid] * scale;
+    } else {
+        // General path: multiple elements per thread (D=256 / D=512).
+        for (int stride = 1; stride < n; stride <<= 1) {
+            for (int pair = (int)tid; pair < n / 2; pair += (int)nthreads) {
+                int lo = (pair / stride) * (2 * stride) + (pair % stride);
+                int hi = lo + stride;
+                float a = s[lo], b = s[hi];
+                s[lo] = a + b; s[hi] = a - b;
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+        float scale = rsqrt((float)n);
+        for (int i = (int)tid; i < n; i += (int)nthreads) { s[i] *= signs[i] * scale; }
+    }
+
+    if constexpr (kTrailingBarrier) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+}
+
+// kernel_tq_wht — apply the symmetric Walsh-Hadamard transform F(x)=S·H·S·x/√n
+// to every [headDim] f32 vector in src.  F is self-inverse so this also undoes it.
+// src[0]: input tensor (any shape, f32, headDim=ne[0] must be power-of-2, nb[0]=4)
+// src[1]: signs tensor [headDim] f32 ±1
+// dst:    same shape as src[0], always contiguous (ggml_dup_tensor)
+// Grid:  (ne1*ne2*ne3, 1, 1)   — one threadgroup per [headDim] vector
+// Block: (min(headDim,128), 1, 1)
+// ─────────────────────────────────────────────────────────────────────────────
+kernel void kernel_tq_wht(
+    constant   ggml_metal_kargs_tq_wht & args [[buffer(0)]],
+    device const float * src   [[buffer(1)]],
+    device const float * signs [[buffer(2)]],
+    device       float * dst   [[buffer(3)]],
+    threadgroup  float * s_x   [[threadgroup(0)]],
+    uint3 gid  [[threadgroup_position_in_grid]],
+    uint3 tpitg_v [[thread_position_in_threadgroup]],
+    uint3 ntpitg_v[[threads_per_threadgroup]])
+{
+    const uint tid    = tpitg_v.x;
+    const uint ntg    = ntpitg_v.x;
+    const int  flat   = (int)gid.x;
+    const int  ne1    = args.ne1;
+    const int  ne2    = args.ne2;
+    const int  i1     = flat % ne1;
+    const int  i2     = (flat / ne1) % ne2;
+    const int  i3     = (flat / ne1 / ne2);
+    const int  hd     = args.headDim;
+
+    // src may be non-contiguous (permuted Q view); strides in bytes → /4 for float
+    const uint64_t src_off = ((uint64_t)i1 * args.nb1 + (uint64_t)i2 * args.nb2 +
+                              (uint64_t)i3 * args.nb3) / 4;
+    const uint64_t dst_off = (uint64_t)flat * (uint64_t)hd;
+
+    for (int i = (int)tid; i < hd; i += (int)ntg) { s_x[i] = src[src_off + i]; }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    apply_shs_wht<false>(s_x, signs, hd, tid, ntg);
+
+    for (int i = (int)tid; i < hd; i += (int)ntg) { dst[dst_off + i] = s_x[i]; }
+}
+
 // kernel_tq_encode  (K encode; also used by kernel_tq_encode_kv K phase)
 // Grid:  (batchSize, numKVHeads, 1)
 // Block: (block_size, 1, 1) where block_size = next power-of-2 ≤ 128
@@ -13354,13 +13478,12 @@ kernel void kernel_tq_encode(
     const int head  = (int)tgpig.y;
     const int cell  = args.firstCell + batch;
 
-    // Threadgroup memory layout (max headDim=128, block_size≤128):
-    //   s_k[128], s_rot[128], s_reduce[128], s_idx[128], tg_packed[16 uint]
-    threadgroup float    s_k[128];
-    threadgroup float    s_rot[128];
-    threadgroup float    s_reduce[128];
-    threadgroup uint8_t  s_idx[128];
-    threadgroup uint tg_packed[16];
+    // Threadgroup memory layout (max headDim=512, block_size≤128):
+    //   s_k[512] (WHT applied in-place), s_reduce[512], s_idx[512], tg_packed[64 uint]
+    threadgroup float    s_k[512];
+    threadgroup float    s_reduce[512];
+    threadgroup uint8_t  s_idx[512];
+    threadgroup uint tg_packed[64];
 
     const int headDim    = args.headDim;
     const int numKVHeads = args.numKVHeads;
@@ -13388,29 +13511,18 @@ kernel void kernel_tq_encode(
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    // Step 2: Rotation matmul (optional).
+    // Step 2: WHT rotation F(x) = S·H·S·x/√n (self-inverse), applied in-place on s_k.
+    // rotation is [headDim] ±1 f32 sign vector.
     if (args.hasRotation) {
-        for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-            float sum = 0.0f;
-            for (int j = 0; j < headDim; j++) {
-                sum += rotation[i * headDim + j] * s_k[j];
-            }
-            s_rot[i] = sum;
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    } else {
-        for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-            s_rot[i] = s_k[i];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
+        apply_shs_wht(s_k, rotation, headDim, tpitg, ntpitg);
     }
 
-    // Step 2b: Asymmetric mean centering — subtract per-vector mean from s_rot,
+    // Step 2b: Asymmetric mean centering — subtract per-vector mean from s_k,
     //          write mean to zeros_out so the decode kernel can add it back.
     if (args.asymmetric) {
         float local_sum = 0.0f;
         for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-            local_sum += s_rot[i];
+            local_sum += s_k[i];
         }
         s_reduce[tpitg] = local_sum;
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -13428,7 +13540,7 @@ kernel void kernel_tq_encode(
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-            s_rot[i] -= mean_val;
+            s_k[i] -= mean_val;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
@@ -13436,7 +13548,7 @@ kernel void kernel_tq_encode(
     // Step 3: RMS scale via parallel reduction.
     float local_sq = 0.0f;
     for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-        local_sq += s_rot[i] * s_rot[i];
+        local_sq += s_k[i] * s_k[i];
     }
     s_reduce[tpitg] = local_sq;
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -13459,7 +13571,7 @@ kernel void kernel_tq_encode(
     // Step 4: Quantize via boundary binary search.
     const int numBoundaries = (1 << bits) - 1;
     for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-        float v = (scale > 0.0f) ? (s_rot[i] / scale) : 0.0f;
+        float v = (scale > 0.0f) ? (s_k[i] / scale) : 0.0f;
         int idx = 0;
         for (int b = 0; b < numBoundaries; b++) {
             if (v >= boundaries[b]) idx++;
@@ -13521,11 +13633,10 @@ kernel void kernel_tq_encode_v(
     const int head  = (int)tgpig.y;
     const int cell  = args.firstCell + batch;
 
-    threadgroup float    s_v[128];
-    threadgroup float    s_rot[128];
-    threadgroup float    s_reduce[128];
-    threadgroup uint8_t  s_idx[128];
-    threadgroup uint tg_packed[16];
+    threadgroup float    s_v[512];
+    threadgroup float    s_reduce[512];
+    threadgroup uint8_t  s_idx[512];
+    threadgroup uint tg_packed[64];
 
     const int headDim    = args.headDim;
     const int numKVHeads = args.numKVHeads;
@@ -13543,25 +13654,14 @@ kernel void kernel_tq_encode_v(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
+    // WHT rotation F(x) = S·H·S·x/√n (self-inverse), applied in-place on s_v.
     if (args.hasRotation) {
-        for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-            float sum = 0.0f;
-            for (int j = 0; j < headDim; j++) {
-                sum += rotation[i * headDim + j] * s_v[j];
-            }
-            s_rot[i] = sum;
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    } else {
-        for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-            s_rot[i] = s_v[i];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
+        apply_shs_wht(s_v, rotation, headDim, tpitg, ntpitg);
     }
 
     float local_sq = 0.0f;
     for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-        local_sq += s_rot[i] * s_rot[i];
+        local_sq += s_v[i] * s_v[i];
     }
     s_reduce[tpitg] = local_sq;
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -13583,7 +13683,7 @@ kernel void kernel_tq_encode_v(
 
     const int numBoundaries = (1 << bits) - 1;
     for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-        float v = (scale > 0.0f) ? (s_rot[i] / scale) : 0.0f;
+        float v = (scale > 0.0f) ? (s_v[i] / scale) : 0.0f;
         int idx = 0;
         for (int b = 0; b < numBoundaries; b++) {
             if (v >= boundaries[b]) idx++;
@@ -13663,16 +13763,15 @@ kernel void kernel_tq_encode_outlier(
         return;
     }
 
-    threadgroup float    s_k[128];
-    threadgroup float    s_rot[128];
-    threadgroup float    s_reduce[128];
-    threadgroup uint8_t  s_idx[128];       // regular quantized indices
-    threadgroup uint8_t  s_is_outlier[128];
-    threadgroup int      s_reg_pos[128];
+    threadgroup float    s_k[512];
+    threadgroup float    s_reduce[512];
+    threadgroup uint8_t  s_idx[512];       // regular quantized indices
+    threadgroup uint8_t  s_is_outlier[512];
+    threadgroup int      s_reg_pos[512];
     threadgroup int      s_outl_pos[32];   // max outlierCount assumed ≤ 32
     threadgroup float    s_outl_val[32];
     threadgroup uint8_t  s_outl_idx[32];
-    threadgroup uint tg_packed[16];
+    threadgroup uint tg_packed[64];
 
     const int headDim      = args.headDim;
     const int numKVHeads   = args.numKVHeads;
@@ -13697,18 +13796,11 @@ kernel void kernel_tq_encode_outlier(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    // Step 2: Rotate.
-    for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-        float sum = 0.0f;
-        for (int j = 0; j < headDim; j++) {
-            sum += rotation[i * headDim + j] * s_k[j];
-        }
-        s_rot[i] = sum;
-    }
-    for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-        s_is_outlier[i] = 0;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+    // Step 2: Zero s_is_outlier then WHT rotation in-place on s_k.
+    // WHT's first internal barrier synchronizes both the s_is_outlier writes
+    // (independent array) and the s_k sign-multiplication across all threads.
+    for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) { s_is_outlier[i] = 0; }
+    apply_shs_wht(s_k, rotation, headDim, tpitg, ntpitg);
 
     // Step 3: Top-K outlier selection (serial on thread 0).
     if (tpitg == 0) {
@@ -13717,12 +13809,12 @@ kernel void kernel_tq_encode_outlier(
             int   best_idx = 0;
             for (int i = 0; i < headDim; i++) {
                 if (s_is_outlier[i]) continue;
-                float a = fabs(s_rot[i]);
+                float a = fabs(s_k[i]);
                 if (a > best_val) { best_val = a; best_idx = i; }
             }
             s_is_outlier[best_idx] = 1;
             s_outl_pos[r]          = best_idx;
-            s_outl_val[r]          = s_rot[best_idx];
+            s_outl_val[r]          = s_k[best_idx];
         }
         int pos = 0;
         for (int i = 0; i < headDim; i++) {
@@ -13742,7 +13834,7 @@ kernel void kernel_tq_encode_outlier(
     float local_sum_reg = 0.0f, local_sum_out = 0.0f;
     float local_sq_reg  = 0.0f, local_sq_out  = 0.0f;
     for (int i = (int)tpitg; i < headDim; i += (int)ntpitg) {
-        float v  = s_rot[i];
+        float v  = s_k[i];
         float sq = v * v;
         if (s_is_outlier[i]) { local_sum_out += v; local_sq_out += sq; }
         else                 { local_sum_reg += v; local_sq_reg += sq; }
@@ -13827,7 +13919,7 @@ kernel void kernel_tq_encode_outlier(
     const int numBoundaries = (1 << bits) - 1;
     for (int r = (int)tpitg; r < regularCount; r += (int)ntpitg) {
         const int orig = s_reg_pos[r];
-        float v = (regScale > 0.0f) ? ((s_rot[orig] - regMean) / regScale) : 0.0f;
+        float v = (regScale > 0.0f) ? ((s_k[orig] - regMean) / regScale) : 0.0f;
         int idx = 0;
         for (int b = 0; b < numBoundaries; b++) { if (v >= boundaries[b]) idx++; }
         s_idx[r] = (uint8_t)idx;

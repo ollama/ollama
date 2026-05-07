@@ -452,6 +452,10 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
             {
                 n_fuse = ggml_metal_op_opt_step_sgd(ctx, idx);
             } break;
+        case GGML_OP_TQ_WHT:
+            {
+                n_fuse = ggml_metal_op_tq_wht(ctx, idx);
+            } break;
         case GGML_OP_TQ_ENCODE:
             {
                 n_fuse = ggml_metal_op_tq_encode(ctx, idx);
@@ -4414,6 +4418,50 @@ static int tq_encode_block_size(int headDim) {
     int target = std::min(headDim, 128);
     while (bs < target) bs <<= 1;
     return bs;
+}
+
+int ggml_metal_op_tq_wht(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    const struct ggml_tensor * src   = op->src[0];
+    const struct ggml_tensor * signs = op->src[1];
+
+    GGML_ASSERT(src->nb[0] == sizeof(float));
+    GGML_ASSERT(ggml_is_contiguous(op));
+
+    const int headDim = (int)src->ne[0];
+    const int ne1     = (int)src->ne[1];
+    const int ne2     = (int)src->ne[2];
+    const int ne3     = (int)src->ne[3];
+
+    ggml_metal_kargs_tq_wht args = {
+        /*.headDim =*/ headDim,
+        /*.ne1     =*/ ne1,
+        /*.ne2     =*/ ne2,
+        /*.ne3     =*/ ne3,
+        /*.nb1     =*/ (uint64_t)src->nb[1],
+        /*.nb2     =*/ (uint64_t)src->nb[2],
+        /*.nb3     =*/ (uint64_t)src->nb[3],
+    };
+
+    const int    n_vecs     = ne1 * ne2 * ne3;
+    const int    block_size = headDim < 128 ? headDim : 128;
+    const size_t smem       = (size_t)headDim * sizeof(float);
+
+    auto pipeline = ggml_metal_library_get_pipeline_tq_wht(lib);
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes  (enc, &args,                          sizeof(args), 0);
+    ggml_metal_encoder_set_buffer (enc, ggml_metal_get_buffer_id(src),   1); // src
+    ggml_metal_encoder_set_buffer (enc, ggml_metal_get_buffer_id(signs), 2); // signs
+    ggml_metal_encoder_set_buffer (enc, ggml_metal_get_buffer_id(op),    3); // dst
+
+    ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
+    ggml_metal_encoder_dispatch_threadgroups(enc, n_vecs, 1, 1, block_size, 1, 1);
+    return 1;
 }
 
 int ggml_metal_op_tq_encode(ggml_metal_op_t ctx, int idx) {

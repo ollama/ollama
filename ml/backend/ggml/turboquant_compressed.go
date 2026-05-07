@@ -61,13 +61,16 @@ type ggmlTQCompressedK struct {
 	// rotation in the CUDA encoder; the decoder requires no change (bias cancels in softmax).
 	kBiasTensors map[int]*Tensor
 
-	// Rotation matrix R^T, shared across layers: [headDim, headDim] f32.
-	rotCtx    ml.Context
-	rotTensor *Tensor // stores R^T row-major (used for K encode and Q rotate)
+	// rotationSeed is the per-manager WHT seed. Each layer's sign vector is
+	// derived as BuildRotation(headDim, rotationSeed ^ uint64(layer+1)), giving
+	// an independent rotation per model layer. Nil (zero-value) headDim or
+	// non-power-of-2 headDim means no rotation is applied.
+	rotationSeed uint64
 
-	// Rotation matrix R (transpose of R^T), for undoing V rotation in SDPA.
-	// mul_mat(rotInverseTensor, x) = R @ x (recovers original from R^T @ x).
-	rotInverseTensor *Tensor // stores R row-major
+	// Per-layer WHT sign tensors: [headDim] f32 ±1, one per model layer.
+	// Allocated lazily in EnsureLayer alongside the K packed/scales tensors.
+	// Stored in the same per-layer context as packed/scales so Close() frees them.
+	rotTensors map[int]*Tensor
 
 	// QJL projection matrix, shared across layers: [qjlRows, headDim] f32.
 	// Generated on CPU from the preset's QJL seed and uploaded once.
@@ -291,21 +294,9 @@ func (b *Backend) NewTQCompressedKManager(headDim, numKVHeads, bits int, rotatio
 	vCodebookT := sharedCtx.FromFloats(vCodebook, len(vCodebook)).(*Tensor)
 	vBoundariesT := sharedCtx.FromFloats(vBoundaries, len(vBoundaries)).(*Tensor)
 
-	// Rotation matrix R^T: rotData[i*headDim+j] = R[j][i]. Built via
-	// Householder QR on a random Gaussian matrix per TurboQuant paper (arXiv
-	// 2504.19874) Algorithm 1.
-	rot := turboquant.BuildRotation(headDim, rotationSeed)
-	rotData := make([]float32, headDim*headDim)
-	for i := range headDim {
-		for j := range headDim {
-			rotData[i*headDim+j] = rot.Matrix[j*headDim+i]
-		}
-	}
-	rotInverseData := make([]float32, headDim*headDim)
-	copy(rotInverseData, rot.Matrix)
-	rotCtx := b.newTQContext(2)
-	rotTensor := rotCtx.FromFloats(rotData, headDim, headDim).(*Tensor)
-	rotInverseTensor := rotCtx.FromFloats(rotInverseData, headDim, headDim).(*Tensor)
+	// WHT sign vectors are allocated per-layer in EnsureLayer using
+	// BuildRotation(headDim, rotationSeed ^ uint64(layer+1)). The seed is
+	// stored here for later use.
 
 	// QJL projection matrix: [qjlRows, headDim] f32, generated on CPU from the
 	// preset's QJL seed and uploaded once.  The seed matches the CPU reference
@@ -339,9 +330,8 @@ func (b *Backend) NewTQCompressedKManager(headDim, numKVHeads, bits int, rotatio
 		outlierIndicesTensors:   make(map[int]*Tensor),
 		qjlPackedTensors:        make(map[int]*Tensor),
 		qjlNormTensors:          make(map[int]*Tensor),
-		rotCtx:                  rotCtx,
-		rotTensor:               rotTensor,
-		rotInverseTensor:        rotInverseTensor,
+		rotationSeed:            rotationSeed,
+		rotTensors:              make(map[int]*Tensor),
 		qjlProjectionCtx:        qjlProjectionCtx,
 		qjlProjectionTensor:     qjlProjectionTensor,
 		sharedCtx:               sharedCtx,
@@ -379,7 +369,7 @@ func (m *ggmlTQCompressedK) EnsureLayer(layer, capacity int) {
 
 	// Size the per-layer context hint by how many tensors we're allocating.
 	// Base: 2 (packed + scales). Outlier adds 3. Asymmetric adds 2 (zeros).
-	// QJL adds 2 (qjlPacked + qjlNorm).
+	// QJL adds 2 (qjlPacked + qjlNorm). WHT rotation adds 1 (signs vector).
 	ctxHint := 2
 	if m.hasOutliers() {
 		ctxHint += 3
@@ -389,6 +379,9 @@ func (m *ggmlTQCompressedK) EnsureLayer(layer, capacity int) {
 	}
 	if m.hasQJL() {
 		ctxHint += 2
+	}
+	if m.HasRotation() {
+		ctxHint++
 	}
 	// TQ tensors must always be GPU-resident; use newTQContext, not Layer(layer),
 	// which would allocate CPU memory for layers assigned to CPU.
@@ -427,6 +420,13 @@ func (m *ggmlTQCompressedK) EnsureLayer(layer, capacity int) {
 		m.qjlPackedTensors[layer] = ctx.Zeros(ml.DTypeI8, qjlPackedBytes*m.numKVHeads, capacity).(*Tensor)
 		m.qjlNormTensors[layer] = ctx.Zeros(ml.DTypeF32, m.numKVHeads, capacity).(*Tensor)
 	}
+
+	// Per-layer WHT sign vector. Seed is XOR'd with layer+1 so each layer
+	// gets an independent random rotation (same as HH generated per-layer).
+	if m.HasRotation() {
+		rot := turboquant.BuildRotation(m.headDim, m.rotationSeed^uint64(layer+1))
+		m.rotTensors[layer] = ctx.FromFloats(rot.Signs, m.headDim).(*Tensor)
+	}
 }
 
 // EncodeK creates a GGML_OP_TQ_ENCODE graph node.
@@ -459,7 +459,7 @@ func (m *ggmlTQCompressedK) EncodeK(ctx ml.Context, layer int, key ml.Tensor, fi
 			if t := m.kBiasTensors[layer]; t != nil {
 				kBias = t
 			}
-			return packed.TQEncodeOutlier(ctx, scales, key, m.rotTensor, firstCell, m.boundariesTensor, m.bits,
+			return packed.TQEncodeOutlier(ctx, scales, key, m.rotFor(layer), firstCell, m.boundariesTensor, m.bits,
 				oPacked, m.outlierScalesTensors[layer], m.outlierIndicesTensors[layer], m.outlierBoundariesTensor,
 				m.outlierBits, m.outlierCount,
 				zeros, outlierZeros,
@@ -476,7 +476,7 @@ func (m *ggmlTQCompressedK) EncodeK(ctx ml.Context, layer int, key ml.Tensor, fi
 	if t := m.kBiasTensors[layer]; t != nil {
 		kBias = t
 	}
-	return packed.TQEncode(ctx, scales, key, m.rotTensor, firstCell, m.boundariesTensor, m.bits, zeros, kBias, m.codebookTensor)
+	return packed.TQEncode(ctx, scales, key, m.rotFor(layer), firstCell, m.boundariesTensor, m.bits, zeros, kBias, m.codebookTensor)
 }
 
 // DequantK creates a GGML_OP_TQ_DEQUANT graph node. encodeResult is the
@@ -557,6 +557,10 @@ func (m *ggmlTQCompressedK) GetAsTQTensor(ctx ml.Context, layer int, encodeResul
 		nKVHeads:  m.numKVHeads,
 		nCells:    nCells,
 		firstCell: firstCell,
+		signs:     m.rotFor(layer),
+		// vIsWHT=true when V is WHT-encoded (K+V preset); K-only fused path
+		// must apply WHT undo to attnOut so Σwᵢ·WHT(Vᵢ) → Σwᵢ·Vᵢ.
+		vIsWHT: m.HasRotation() && m.vBits > 0,
 	}
 	if m.asymmetricPrimary {
 		t.asymmetric = true
@@ -611,6 +615,7 @@ func (m *ggmlTQCompressedK) GetAsTQTensorKV(ctx ml.Context, layer int, kEncodeRe
 		vScales:   vScales,
 		vCodebook: m.vCodebookTensor,
 		vBits:     m.vBits,
+		signs:     m.rotFor(layer),
 	}
 	if m.asymmetricPrimary {
 		t.asymmetric = true
@@ -637,14 +642,25 @@ func (m *ggmlTQCompressedK) GetAsTQTensorKV(ctx ml.Context, layer int, kEncodeRe
 	return t, true
 }
 
-func (m *ggmlTQCompressedK) RotationMatrix(_ ml.Context, _ int) ml.Tensor {
-	return m.rotTensor
+// rotFor returns the per-layer WHT sign tensor (nil for non-power-of-2 headDim).
+// EnsureLayer must have been called for this layer before rotFor is used.
+func (m *ggmlTQCompressedK) rotFor(layer int) *Tensor {
+	return m.rotTensors[layer]
 }
 
-// RotationMatrixR returns R (not R^T) for use as the V rotation undo matrix.
-// mul_mat(R, R^T @ v) = v (recovers original from rotated V).
+// HasRotation reports whether WHT rotation is active (headDim is a power of 2).
+func (m *ggmlTQCompressedK) HasRotation() bool {
+	return m.headDim > 0 && m.headDim&(m.headDim-1) == 0
+}
+
+func (m *ggmlTQCompressedK) RotationMatrix(_ ml.Context, layer int) ml.Tensor {
+	return m.rotFor(layer)
+}
+
+// RotationMatrixR returns the WHT sign vector for layer 0.
+// Retained for interface compatibility; callers should prefer rotFor(layer).
 func (m *ggmlTQCompressedK) RotationMatrixR() ml.Tensor {
-	return m.rotInverseTensor
+	return m.rotFor(0)
 }
 
 // EnsureVLayer allocates per-layer V packed and scales tensors on first use.
@@ -681,7 +697,7 @@ func (m *ggmlTQCompressedK) EncodeV(ctx ml.Context, layer int, value ml.Tensor, 
 	}
 	// Pass the K rotation matrix so V outlier energy spreads evenly before
 	// quantization. SDPA's post-attention R @ output step undoes the rotation.
-	return packed.TQEncodeV(ctx, m.vScalesTensors[layer], value, m.rotTensor, firstCell, m.vBoundariesTensor, m.vBits, m.vCodebookTensor)
+	return packed.TQEncodeV(ctx, m.vScalesTensors[layer], value, m.rotFor(layer), firstCell, m.vBoundariesTensor, m.vBits, m.vCodebookTensor)
 }
 
 // EncodeKV creates a single GGML_OP_TQ_ENCODE_KV graph node encoding both
@@ -709,7 +725,7 @@ func (m *ggmlTQCompressedK) EncodeKV(ctx ml.Context, layer int, key, value ml.Te
 		kBias = t
 	}
 	kResult := kPacked.TQEncodeKV(ctx,
-		m.scalesTensors[layer], key, m.rotTensor, m.boundariesTensor,
+		m.scalesTensors[layer], key, m.rotFor(layer), m.boundariesTensor,
 		vPacked, m.vScalesTensors[layer], value, m.vBoundariesTensor,
 		firstCell, m.bits, m.vBits, kBias, m.codebookTensor, m.vCodebookTensor)
 
@@ -777,7 +793,7 @@ func (m *ggmlTQCompressedK) DequantKV(ctx ml.Context, layer int, kEncodeResult, 
 	combined := TQDequantKV(ctx, m.backend,
 		kEncodeResult.(*Tensor), kScales, m.codebookTensor,
 		vEncodeResult.(*Tensor), vScales, m.vCodebookTensor,
-		m.rotInverseTensor, // R matrix for fused V rotation undo
+		m.rotFor(layer), // WHT sign vector [headDim] for V dequant undo
 		m.headDim, m.numKVHeads, nCells, firstCell, m.bits, m.vBits,
 		kOutlierPacked, kOutlierScales, kOutlierIndices, kOutlierCodebook,
 		kZeros, kOutlierZeros,
@@ -801,9 +817,6 @@ func (m *ggmlTQCompressedK) Close() {
 	for _, ctx := range m.vLayerCtxs {
 		ctx.Close()
 	}
-	if m.rotCtx != nil {
-		m.rotCtx.Close()
-	}
 	if m.qjlProjectionCtx != nil {
 		m.qjlProjectionCtx.Close()
 	}
@@ -823,7 +836,7 @@ func (m *ggmlTQCompressedK) Close() {
 	m.vPackedTensors = nil
 	m.vScalesTensors = nil
 	m.vLayerCtxs = nil
-	m.rotCtx = nil
+	m.rotTensors = nil
 	m.qjlProjectionCtx = nil
 	m.sharedCtx = nil
 }

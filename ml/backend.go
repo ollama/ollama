@@ -472,6 +472,10 @@ type TQCompressedKManager interface {
 	// K and V, halving scheduler overhead vs separate EncodeK + EncodeV.
 	EncodeKV(ctx Context, layer int, key, value Tensor, firstCell int) (Tensor, Tensor)
 
+	// HasRotation reports whether a WHT rotation is active. When true, DequantK
+	// and DequantV produce WHT-domain tensors that require undo before stock FA.
+	HasRotation() bool
+
 	// Close frees all GPU buffers.
 	Close()
 }

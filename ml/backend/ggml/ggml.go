@@ -111,29 +111,6 @@ type Backend struct {
 
 	flashAttention ml.FlashAttentionType
 
-	// tqRotationMatrix is a per-call flag set by TurboQuantCache.Get() right
-	// before it returns rotated K. SDPA reads and clears it; if non-nil, SDPA
-	// applies R^T @ Q to match the K rotation. This per-call (not sticky)
-	// semantics is required for mixed-head-dim models like gemma3, where only
-	// the global sub-cache of a WrapperCache is TQ-wrapped and the SWA sub-
-	// cache passes through plain f16 K. A sticky rotation would be applied to
-	// every SDPA call and corrupt attention on the unwrapped SWA layers.
-	tqRotationMatrix ml.Tensor
-
-	// tqVRotationMatrix is a per-call flag set by TurboQuantCache.Get() right
-	// before returning K+V (tq3/tq2) when V was encoded with Hadamard rotation
-	// (R^T @ v). SDPA reads and clears it; if non-nil, SDPA applies R @
-	// attn_out after the attention op to undo the V rotation. Per-call (not
-	// sticky) semantics is required for mixed-head-dim models like gemma3,
-	// where only the global sub-cache of a WrapperCache is TQ-wrapped and the
-	// SWA sub-cache's V is plain f16. A sticky rotation would corrupt
-	// attention on unwrapped SWA layers.
-	tqVRotationMatrix ml.Tensor
-
-	// tqVRotFusedInDequant is true when DequantKV applies the V rotation undo
-	// internally (via the rotated V kernel).  When true, the stock FA path in
-	// SDPA skips the mulmat undo — V is already in the unrotated domain.
-	tqVRotFusedInDequant bool
 
 	// maxGraphNodes is the maximum allowed number of graph nodes in this scheduler
 	maxGraphNodes int
@@ -785,7 +762,7 @@ func (b *Backend) scanTQDevices() TQDeviceScan {
 // newTQContext creates a GGML context whose tensors are allocated in GPU
 // memory (CUDA, HIP, or Metal). Used by the TQ compressed KV cache manager:
 // TQ encode/decode ops require their tensors (packed buffers, scales,
-// codebook, rotation matrix) to reside on the GPU regardless of which model
+// codebook, WHT sign vector) to reside on the GPU regardless of which model
 // layers are on CPU vs GPU. TQ tensors always land on the first TQ-capable
 // GPU — NVIDIA Pascal (cc 6.0)+, AMD RDNA1 (gfx1010)+, or Apple Silicon
 // (Metal, always wave32) — in the scheduler. In a mixed rig, unsupported
@@ -825,23 +802,6 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 		allocatedBuffers: &allocatedBuffers,
 		layer:            -1,
 	}
-}
-
-// SetTQRotationMatrix registers the TQ rotation matrix for Q rotation in SDPA.
-// Called by TurboQuantCache when Phase 2 CUDA dequant activates.
-func (b *Backend) SetTQRotationMatrix(m ml.Tensor) {
-	b.tqRotationMatrix = m
-}
-
-// SetTQVRotationMatrix registers the rotation matrix used for V encoding.
-// When non-nil, SDPA applies R @ attn_out after the TQ fused flash attention
-// to undo the V rotation (V was stored as R^T @ v).
-func (b *Backend) SetTQVRotationMatrix(m ml.Tensor) {
-	b.tqVRotationMatrix = m
-}
-
-func (b *Backend) SetTQVRotFusedInDequant(fused bool) {
-	b.tqVRotFusedInDequant = fused
 }
 
 func (b *Backend) CacheConfig() ml.CacheConfig {
@@ -1856,6 +1816,16 @@ func TQDequantKV(ctx ml.Context, b *Backend,
 	}
 }
 
+// TQApplyWHT applies the symmetric Walsh-Hadamard Transform F(x)=S·H·S·x/√n to
+// every [headDim] vector in x. signs is the [headDim] f32 ±1 sign vector.
+// The WHT is self-inverse, so calling this twice recovers the original tensor.
+func (t *Tensor) TQApplyWHT(ctx ml.Context, signs ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tq_wht(ctx.(*Context).ctx, t.t, signs.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) SetInplace(ctx ml.Context, src ml.Tensor, nb1, nb2, nb3, offset int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -2234,31 +2204,6 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 
 	query := t.Permute(ctx, 0, 2, 1, 3)
 
-	// TQ consume-once state: TurboQuantCache.Get() sets tqRotationMatrix and
-	// tqVRotationMatrix right before returning rotated K/V for a TQ-wrapped
-	// layer. Read and clear here so the NEXT SDPA call (potentially for a
-	// non-TQ sub-cache of a WrapperCache, e.g. the SWA side of gemma3) doesn't
-	// see a stale rotation and corrupt attention on unrotated tensors. The
-	// nil pre-check keeps non-TQ workloads from dirtying the backend cache
-	// line on every attention op.
-	var rot, vRot ml.Tensor
-	if t.b.tqRotationMatrix != nil || t.b.tqVRotationMatrix != nil {
-		rot = t.b.tqRotationMatrix
-		vRot = t.b.tqVRotationMatrix
-		t.b.tqRotationMatrix = nil
-		t.b.tqVRotationMatrix = nil
-	}
-
-	// TQ: K is stored in rotated space (R^T @ k). Rotate Q to match so
-	// attention = (R^T q)^T (R^T k) = q^T k.
-	// rotTensor stores R^T row-major; ggml_mul_mat(rotTensor, Q) = R^T @ Q.
-	if rot != nil && query.Dim(0) == rot.Dim(0) {
-		// Make query contiguous before mul_mat; permuted (non-contiguous) tensors
-		// may cause incorrect results with cuBLAS batched matmul.
-		query = query.Contiguous(ctx)
-		query = rot.Mulmat(ctx, query)
-	}
-
 	key = key.Permute(ctx, 0, 2, 1, 3)
 
 	if t.b.flashAttention == ml.FlashAttentionEnabled {
@@ -2268,21 +2213,29 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 			if sinks != nil || vmla != nil {
 				panic("ggml: TQ compressed K does not support sinks or vmla attention")
 			}
+			// WHT rotation: K is encoded in WHT domain; rotate Q into the same space
+			// so that Q·K^T is preserved (orthogonal transforms preserve dot products).
+			queryT := query.(*Tensor)
+			if tqk.signs != nil {
+				queryT = queryT.TQApplyWHT(ctx, tqk.signs).(*Tensor)
+			}
 			var attnOut ml.Tensor
 			if tqk.vPacked != nil {
-				// K+V fused: V is packed i8 inside tqTensor; pass it directly.
-				attnOut = t.b.tqFlashAttention(ctx, query.(*Tensor), tqk, tqk.vPacked, mask, scale, 0)
+				// K+V fused: V is packed in WHT domain; pass it directly.
+				// attnOut = softmax(Q·K^T)·V_rot — apply WHT to undo V rotation.
+				attnOut = t.b.tqFlashAttention(ctx, queryT, tqk, tqk.vPacked, mask, scale, 0)
+				if tqk.signs != nil {
+					attnOut = attnOut.(*Tensor).TQApplyWHT(ctx, tqk.signs)
+				}
 			} else {
-				// K-only fused: V is f16, permute normally.
+				// K-only fused: V is f16; may be in WHT domain if preset encodes V.
 				value = value.Permute(ctx, 0, 2, 1, 3)
-				attnOut = t.b.tqFlashAttention(ctx, query.(*Tensor), tqk, value.(*Tensor), mask, scale, 0)
-			}
-			// If V was encoded with Hadamard rotation (R^T @ v), the FA output is
-			// R^T @ output_orig. Recover output_orig by applying R.
-			// tqVRotationMatrix stores R (not R^T); mul_mat(R, x) = R @ x = output_orig.
-			// Uses the consumed vRot local from the top of SDPA.
-			if vRot != nil && attnOut.Dim(0) == vRot.Dim(0) {
-				attnOut = vRot.(*Tensor).Mulmat(ctx, attnOut)
+				attnOut = t.b.tqFlashAttention(ctx, queryT, tqk, value.(*Tensor), mask, scale, 0)
+				// When V was WHT-encoded (vIsWHT), attnOut=Σwᵢ·WHT(Vᵢ); apply
+				// WHT undo (self-inverse) to recover Σwᵢ·Vᵢ.
+				if tqk.vIsWHT && tqk.signs != nil {
+					attnOut = attnOut.(*Tensor).TQApplyWHT(ctx, tqk.signs)
+				}
 			}
 			return attnOut
 		}
@@ -2304,17 +2257,7 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 			kqv = cur.(*Tensor).t
 		}
 
-		attnOut := ml.Tensor(&Tensor{b: t.b, t: kqv})
-
-		// Two-pass TQ path: if DequantKV fused the V rotation undo into the
-		// dequant kernel, V is already unrotated — skip the mulmat.
-		// Otherwise (no rotation fusion), apply R @ attn_out to undo rotation.
-		// Uses the consumed vRot local from the top of SDPA.
-		if vRot != nil && !t.b.tqVRotFusedInDequant && attnOut.Dim(0) == vRot.Dim(0) {
-			attnOut = vRot.(*Tensor).Mulmat(ctx, attnOut)
-		}
-
-		return attnOut
+		return ml.Tensor(&Tensor{b: t.b, t: kqv})
 	} else {
 		kq := key.MulmatFullPrec(ctx, query)
 		kq = &Tensor{

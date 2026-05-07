@@ -2086,6 +2086,7 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         case GGML_OP_TQ_FLASH_ATTN_EXT:
         case GGML_OP_TQ_ENCODE_V:
         case GGML_OP_TQ_ENCODE_KV:
+        case GGML_OP_TQ_WHT:
             {
                 // CUDA-only ops. If these reach CPU, it means the scheduler
                 // incorrectly assigned them to CPU — abort to diagnose.
@@ -2421,6 +2422,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_TQ_FLASH_ATTN_EXT:
         case GGML_OP_TQ_ENCODE_V:
         case GGML_OP_TQ_ENCODE_KV:
+        case GGML_OP_TQ_WHT:
             {
                 n_tasks = 1; // CUDA-only; handled as no-op in compute_forward
             } break;

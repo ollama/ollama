@@ -5,10 +5,15 @@ import (
 	"sync"
 )
 
+// Rotation holds the randomised Walsh-Hadamard sign vector for TurboQuant.
+// The transform F(x) = S·H·S·x/√Dim (symmetric variant) is self-inverse:
+// F(F(x)) = x. This eliminates the separate R / R^T pair from the Householder
+// QR path and keeps the dot-product invariant F(q)·F(k) = q·k.
+// Signs are ±1.0 float32 derived from Seed via splitmix64.
 type Rotation struct {
-	Dim    int
-	Seed   uint64
-	Matrix []float32 // row-major orthogonal matrix
+	Dim   int
+	Seed  uint64
+	Signs []float32 // [Dim] ±1.0
 }
 
 type rotationCacheKey struct {
@@ -24,169 +29,96 @@ func BuildRotation(dim int, seed uint64) Rotation {
 		return cached.(Rotation)
 	}
 
-	rot := Rotation{
-		Dim:    dim,
-		Seed:   seed,
-		Matrix: buildOrthogonalMatrix(dim, seed),
+	var signs []float32
+	if dim > 0 && (dim&(dim-1)) == 0 {
+		signs = buildSignVector(dim, seed)
 	}
+	// Non-power-of-2 dims: Signs == nil → identity (no rotation).
+
+	rot := Rotation{Dim: dim, Seed: seed, Signs: signs}
 	actual, _ := rotationCache.LoadOrStore(key, rot)
 	return actual.(Rotation)
 }
 
+// ApplyRotation applies the symmetric randomised WHT F(x) = S·H·S·x/√Dim.
+// F is self-inverse, so ApplyInverseRotation calls this function.
+// If rot.Signs is nil (non-power-of-2 dim), returns a copy with no rotation.
 func ApplyRotation(x []float32, rot Rotation) []float32 {
 	if len(x) != rot.Dim {
 		panic("turboquant: vector length does not match rotation dimension")
 	}
-
 	out := make([]float32, rot.Dim)
-	for row := range rot.Dim {
-		base := row * rot.Dim
-		var sum float32
-		for col, value := range x {
-			sum += rot.Matrix[base+col] * value
-		}
-		out[row] = sum
+	copy(out, x)
+	if rot.Signs != nil {
+		applySHSInPlace(out, rot.Signs)
 	}
 	return out
 }
 
+// ApplyInverseRotation is identical to ApplyRotation because F is self-inverse.
 func ApplyInverseRotation(y []float32, rot Rotation) []float32 {
-	if len(y) != rot.Dim {
-		panic("turboquant: vector length does not match rotation dimension")
-	}
-
-	out := make([]float32, rot.Dim)
-	for row := range rot.Dim {
-		yVal := y[row]
-		base := row * rot.Dim
-		// The inverse rotation accumulates in float32 on the reconstruction path; keep this FP32-accumulate behavior explicit while long-generation corruption audits remain active.
-		for col := range rot.Dim {
-			out[col] += rot.Matrix[base+col] * yVal
-		}
-	}
-	return out
+	return ApplyRotation(y, rot)
 }
 
-// buildOrthogonalMatrix returns a dim×dim orthogonal matrix derived from the
-// given seed using Householder QR factorisation. The input is the same seeded
-// Gaussian matrix used by the previous Gram-Schmidt path, but the QR Q-factor
-// is numerically unconditionally orthogonal. This algorithm replaced the
-// classical Gram-Schmidt used through BlockVersion 3; the Householder path was
-// introduced at BlockVersion 4 (current: BlockVersion 6).
-//
-// Algorithm: apply dim-1 Householder reflectors H_1…H_{dim-1} from the left
-// to reduce A to upper triangular form R. Simultaneously accumulate
-// Q = H_1 * H_2 * … * H_{dim-1} by right-multiplying each reflector into Q,
-// starting from the identity. The resulting Q is the orthogonal factor in
-// A = QR and has orthonormal rows and columns.
-func buildOrthogonalMatrix(dim int, seed uint64) []float32 {
-	if dim <= 0 {
-		return nil
+// applySHSInPlace applies S·H·S·x/√n in-place where S = diag(signs).
+func applySHSInPlace(x []float32, signs []float32) {
+	n := len(x)
+	scale := float32(1.0 / math.Sqrt(float64(n)))
+
+	// First S: elementwise multiply by signs
+	for i := range n {
+		x[i] *= signs[i]
 	}
 
-	// Initialise A with the same seeded Gaussian rows as before.
-	a := make([][]float64, dim)
-	for row := range dim {
-		a[row] = make([]float64, dim)
-		rng := splitmix64(seed ^ uint64(dim)<<32 ^ uint64(row+1)*0x9e3779b97f4a7c15)
-		for col := range dim {
-			a[row][col] = gaussianFloat64(&rng)
-		}
+	// H: Walsh-Hadamard butterfly
+	whtInPlace(x)
+
+	// Second S and normalise
+	for i := range n {
+		x[i] *= signs[i] * scale
 	}
-
-	// Q starts as the identity; we accumulate Q = H_1 * … * H_{dim-1}.
-	q := make([][]float64, dim)
-	for i := range q {
-		q[i] = make([]float64, dim)
-		q[i][i] = 1.0
-	}
-
-	v := make([]float64, dim) // scratch buffer for the Householder vector
-
-	for k := range dim - 1 {
-		n := dim - k
-
-		// Build Householder vector for column k, rows k..dim-1.
-		// Sign chosen to avoid cancellation: sigma = −sign(a[k][k]) * ||x||.
-		for i := range n {
-			v[i] = a[k+i][k]
-		}
-		sigma := vectorNorm64(v[:n])
-		if v[0] >= 0 {
-			sigma = -sigma
-		}
-		v[0] -= sigma
-		vnorm2 := dotFloat64(v[:n], v[:n])
-		if vnorm2 < 1e-28 {
-			continue // column already zeroed — no reflector needed
-		}
-		beta := 2.0 / vnorm2
-
-		// Apply H_k to a[k:, k:] from the left.
-		for j := k; j < dim; j++ {
-			var dot float64
-			for i := range n {
-				dot += v[i] * a[k+i][j]
-			}
-			dot *= beta
-			for i := range n {
-				a[k+i][j] -= dot * v[i]
-			}
-		}
-
-		// Apply H_k to q[:, k:] from the right: q ← q * H_k.
-		for i := range dim {
-			var dot float64
-			for j := range n {
-				dot += q[i][k+j] * v[j]
-			}
-			dot *= beta
-			for j := range n {
-				q[i][k+j] -= dot * v[j]
-			}
-		}
-	}
-
-	// Sign-normalise each row so the first non-negligible element is positive.
-	// This convention matches the previous Gram-Schmidt path and makes the
-	// output deterministic despite the reflector sign ambiguity.
-	for row := range dim {
-		for _, value := range q[row] {
-			if math.Abs(value) <= 1e-12 {
-				continue
-			}
-			if value < 0 {
-				for col := range dim {
-					q[row][col] = -q[row][col]
-				}
-			}
-			break
-		}
-	}
-
-	out := make([]float32, dim*dim)
-	for row := range dim {
-		for col := range dim {
-			out[row*dim+col] = float32(q[row][col])
-		}
-	}
-	return out
 }
 
-func dotFloat64(a, b []float64) float64 {
-	var out float64
-	for i := range a {
-		out += a[i] * b[i]
+// whtInPlace applies the unnormalised Walsh-Hadamard transform in-place.
+// n must be a power of 2.
+func whtInPlace(x []float32) {
+	n := len(x)
+	for stride := 1; stride < n; stride <<= 1 {
+		for i := 0; i < n; i += stride * 2 {
+			for j := i; j < i+stride; j++ {
+				a, b := x[j], x[j+stride]
+				x[j], x[j+stride] = a+b, a-b
+			}
+		}
 	}
-	return out
 }
 
-func vectorNorm64(values []float64) float64 {
-	var sum float64
-	for _, value := range values {
-		sum += value * value
+// buildSignVector generates a [dim] ±1 float32 sign vector from seed.
+// Each bit of the splitmix64 output maps to one sign.
+func buildSignVector(dim int, seed uint64) []float32 {
+	signs := make([]float32, dim)
+	rng := splitmix64(seed ^ uint64(dim)<<32 ^ 0x9e3779b97f4a7c15)
+	for i := 0; i < dim; i += 64 {
+		bits := rng.next()
+		for j := 0; j < 64 && i+j < dim; j++ {
+			if (bits>>j)&1 == 1 {
+				signs[i+j] = 1.0
+			} else {
+				signs[i+j] = -1.0
+			}
+		}
 	}
-	return math.Sqrt(sum)
+	return signs
+}
+
+type splitmix64 uint64
+
+func (s *splitmix64) next() uint64 {
+	*s += 0x9e3779b97f4a7c15
+	z := uint64(*s)
+	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+	return z ^ (z >> 31)
 }
 
 func gaussianFloat64(rng *splitmix64) float64 {
@@ -198,14 +130,4 @@ func gaussianFloat64(rng *splitmix64) float64 {
 func unitUniform64(rng *splitmix64) float64 {
 	const scale = 1.0 / (1 << 53)
 	return (float64(rng.next()>>11) + 0.5) * scale
-}
-
-type splitmix64 uint64
-
-func (s *splitmix64) next() uint64 {
-	*s += 0x9e3779b97f4a7c15
-	z := uint64(*s)
-	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
-	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
-	return z ^ (z >> 31)
 }

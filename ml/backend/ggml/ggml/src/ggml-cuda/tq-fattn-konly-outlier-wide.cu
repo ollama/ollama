@@ -1,13 +1,11 @@
 #include "tq-fattn.cuh"
 #include "tq-fattn-vec.cuh"
 
-// K-only fused flash-attention with outlier-split for D=64 and D=128
-// (V_PACKED=false, HAS_OUTLIERS=true).  Split from tq-fattn.cu and further
-// split from D=256/512 (tq-fattn-konly-outlier-wide.cu) to stay under the
-// gas single-object size limit (~2 GiB) for 10-arch fatbinaries.
-// Handles D=64 and D=128.  D=256/512 dispatched via
-// ggml_cuda_tq_flash_attn_ext_konly_outlier_wide.
-void ggml_cuda_tq_flash_attn_ext_konly_outlier(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+// K-only fused flash-attention with outlier-split for D=256
+// (V_PACKED=false, HAS_OUTLIERS=true).  Split from tq-fattn-konly-outlier.cu
+// so each TU stays under the gas single-object size limit (~2 GiB).
+// D=512 is handled by tq-fattn-d512.cu.
+void ggml_cuda_tq_flash_attn_ext_konly_outlier_wide(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q    = dst->src[0];
     const ggml_tensor * V    = dst->src[2];
     const ggml_tensor * zeros_t          = dst->src[8];
@@ -39,7 +37,7 @@ void ggml_cuda_tq_flash_attn_ext_konly_outlier(ggml_backend_cuda_context & ctx, 
     memcpy(&outlier_count,        (const int32_t *)dst->op_params + 8, sizeof(int32_t));
     memcpy(&outlier_packed_bytes, (const int32_t *)dst->op_params + 9, sizeof(int32_t));
 
-    GGML_ASSERT(outlier_count > 0 && "konly-outlier path requires outlier_count > 0");
+    GGML_ASSERT(outlier_count > 0 && "konly-outlier-wide path requires outlier_count > 0");
 
     const int D        = (int)Q->ne[0];
     const int nTokensQ = (int)Q->ne[1];
@@ -83,14 +81,9 @@ void ggml_cuda_tq_flash_attn_ext_konly_outlier(ggml_backend_cuda_context & ctx, 
         else if (ncols == 2) { DISPATCH_KO(DIM, 2, SOFTCAP); } \
         else                 { DISPATCH_KO(DIM, 8, SOFTCAP); }
 
-    if (D == 64) {
-        if (logit_softcap == 0.0f) { DISPATCH_KO_NCOLS(64,  false); }
-        else                       { DISPATCH_KO_NCOLS(64,  true);  }
-    } else {
-        // D=128 (default); D=256/512 routed to konly_outlier_wide at call site.
-        if (logit_softcap == 0.0f) { DISPATCH_KO_NCOLS(128, false); }
-        else                       { DISPATCH_KO_NCOLS(128, true);  }
-    }
+    // D=256 only; D=512 handled by tq-fattn-d512.cu.
+    if (logit_softcap == 0.0f) { DISPATCH_KO_NCOLS(256, false); }
+    else                       { DISPATCH_KO_NCOLS(256, true);  }
 
     #undef DISPATCH_KO_NCOLS
     #undef DISPATCH_KO

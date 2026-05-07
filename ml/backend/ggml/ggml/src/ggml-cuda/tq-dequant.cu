@@ -1,4 +1,5 @@
 #include "tq-dequant.cuh"
+#include "tq-wht.cuh"
 #include <cstdlib>
 
 // Read OLLAMA_TQ_DEQUANT_BLOCK_SIZE once and clamp to {32, 64, 128}. Used for
@@ -560,7 +561,7 @@ __global__ void tq_dequant_v_rotated_kernel(
     const uint8_t * __restrict__ packed,
     const float   * __restrict__ scales,
     const float   * __restrict__ codebook,
-    const float   * __restrict__ rotation,  // R [headDim, headDim] row-major
+    const float   * __restrict__ rotation,  // [headDim] f32 ±1 WHT sign vector
     uint16_t      * __restrict__ output,
     int headDim, int numKVHeads, int bits, int packed_bytes,
     int codebook_len, int firstCell)
@@ -589,16 +590,11 @@ __global__ void tq_dequant_v_rotated_kernel(
     s_rotV[elem] = __shfl_sync(0xFFFFFFFF, cb_lane, idx, 32) * scale;
     __syncthreads();
 
-    // Phase 2: each thread computes one output element = dot(R[elem,:], s_rotV).
-    // R is in L2 (64KB, fits in P40's 3MB L2; read-only, broadcast across blocks).
-    const float *R_row = rotation + elem * headDim;
-    float sum = 0.0f;
-    for (int j = 0; j < headDim; j++) {
-        sum += R_row[j] * s_rotV[j];
-    }
+    // Phase 2: WHT undo — F is self-inverse so applying it again recovers original V.
+    apply_shs_wht(s_rotV, rotation, headDim, threadIdx.x, blockDim.x);
 
     __half *cell_out = (__half *)(output + ((size_t)c * numKVHeads + h) * headDim);
-    cell_out[elem] = __float2half_rn(sum);
+    cell_out[elem] = __float2half_rn(s_rotV[elem]);
 }
 #else
 // Stub for sm < 600 (no __shfl_sync).  Not currently launched, but kept

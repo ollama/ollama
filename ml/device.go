@@ -521,6 +521,11 @@ func (f FlashAttentionType) String() string {
 // Given the list of GPUs this instantiation is targeted for,
 // figure out the visible devices environment variables
 // Set mustFilter true to enable filtering of CUDA devices
+// GetDevicesEnv is an alias for GetVisibleDevicesEnv (main-branch name).
+func GetDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
+	return GetVisibleDevicesEnv(l, mustFilter)
+}
+
 func GetVisibleDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
 	if len(l) == 0 {
 		return nil
