@@ -59,6 +59,19 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		for _, file := range files {
 			libDirs[filepath.Dir(file)] = struct{}{}
 		}
+		if envconfig.AllowExternalLibraryPath() {
+			for _, dir := range filepath.SplitList(envconfig.Var("OLLAMA_LIBRARY_PATH")) {
+				if dir == "" {
+					continue
+				}
+				abspath, err := filepath.Abs(dir)
+				if err != nil {
+					slog.Debug("unable to resolve external runner library directory", "path", dir, "error", err)
+					continue
+				}
+				libDirs[abspath] = struct{}{}
+			}
+		}
 
 		if len(libDirs) == 0 {
 			libDirs[""] = struct{}{}

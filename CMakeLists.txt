@@ -43,6 +43,13 @@ set(GGML_CUDA_GRAPHS ON)
 set(GGML_CUDA_FA ON)
 set(GGML_CUDA_COMPRESSION_MODE default)
 
+option(OLLAMA_ENABLE_SYCL "Enable the ggml SYCL backend for Intel oneAPI GPUs" OFF)
+if(OLLAMA_ENABLE_SYCL)
+    set(GGML_SYCL ON)
+    set(GGML_SYCL_F16 ON)
+    set(GGML_SYCL_TARGET "INTEL")
+endif()
+
 if((CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
     OR (NOT CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64|ARM64|ARMv[0-9]+"))
     set(GGML_CPU_ALL_VARIANTS ON)
@@ -107,6 +114,40 @@ install(TARGETS ggml-base ${CPU_VARIANTS}
     LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
     FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
 )
+
+if(TARGET ggml-sycl)
+    target_include_directories(ggml-sycl PRIVATE ${GGML_INCLUDE_DIRS})
+    set(OLLAMA_SYCL_RUNTIME_DIRS)
+    foreach(dir "$ENV{ONEAPI_ROOT}/bin" "$ENV{CMPLR_ROOT}/bin" "$ENV{MKLROOT}/bin" "$ENV{TBBROOT}/bin" "C:/Program Files (x86)/Intel/oneAPI/2025.1/bin")
+        if(EXISTS "${dir}")
+            file(TO_CMAKE_PATH "${dir}" dir_cmake)
+            list(APPEND OLLAMA_SYCL_RUNTIME_DIRS "${dir_cmake}")
+        endif()
+    endforeach()
+    if(WIN32)
+        set(OLLAMA_SYCL_SPV_FILES)
+        foreach(dir ${OLLAMA_SYCL_RUNTIME_DIRS})
+            if(NOT OLLAMA_SYCL_SPV_FILES)
+                file(GLOB OLLAMA_SYCL_SPV_FILES_IN_DIR "${dir}/libsycl-*.spv")
+                foreach(spv_file ${OLLAMA_SYCL_SPV_FILES_IN_DIR})
+                    file(TO_CMAKE_PATH "${spv_file}" spv_file_cmake)
+                    list(APPEND OLLAMA_SYCL_SPV_FILES "${spv_file_cmake}")
+                endforeach()
+            endif()
+        endforeach()
+        if(OLLAMA_SYCL_SPV_FILES)
+            install(FILES ${OLLAMA_SYCL_SPV_FILES} DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT SYCL)
+        endif()
+    endif()
+    install(TARGETS ggml-sycl
+        RUNTIME_DEPENDENCIES
+            DIRECTORIES ${OLLAMA_SYCL_RUNTIME_DIRS}
+            PRE_INCLUDE_REGEXES "sycl|ur_|ze_|pi_|mkl|dnnl|tbb|iomp|omp|svml|imf|libmmd|hwloc|umf|tcm"
+            PRE_EXCLUDE_REGEXES ".*"
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT SYCL
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT SYCL
+    )
+endif()
 
 check_language(CUDA)
 if(CMAKE_CUDA_COMPILER)

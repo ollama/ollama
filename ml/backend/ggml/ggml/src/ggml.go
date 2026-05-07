@@ -36,6 +36,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/ollama/ollama/envconfig"
 	_ "github.com/ollama/ollama/ml/backend/ggml/ggml/src/ggml-cpu"
 )
 
@@ -74,6 +75,7 @@ var OnceLoad = sync.OnceFunc(func() {
 		slog.Debug("OLLAMA_LIBRARY_PATH not set, falling back to default", "search", value)
 		paths = value
 	}
+	allowExternalLibraryPath := ok && envconfig.AllowExternalLibraryPath()
 
 	libPaths = filepath.SplitList(paths)
 	visited := make(map[string]struct{}, len(libPaths))
@@ -84,18 +86,21 @@ var OnceLoad = sync.OnceFunc(func() {
 			continue
 		}
 
-		if abspath != filepath.Dir(exe) && !strings.Contains(abspath, filepath.FromSlash("lib/ollama")) {
+		isOllamaPath := abspath == filepath.Dir(exe) || strings.Contains(abspath, filepath.FromSlash("lib/ollama"))
+		if !allowExternalLibraryPath && !isOllamaPath {
 			slog.Debug("skipping path which is not part of ollama", "path", abspath)
 			continue
 		}
 
 		if _, ok := visited[abspath]; !ok {
-			func() {
+			if allowExternalLibraryPath && !isOllamaPath {
+				loadExternalBackends(abspath)
+			} else {
 				slog.Debug("ggml backend load all from path", "path", abspath)
 				cpath := C.CString(abspath)
 				defer C.free(unsafe.Pointer(cpath))
 				C.ggml_backend_load_all_from_path(cpath)
-			}()
+			}
 
 			visited[abspath] = struct{}{}
 		}
@@ -106,6 +111,30 @@ var OnceLoad = sync.OnceFunc(func() {
 
 var libPaths []string
 
+func loadExternalBackends(dir string) {
+	path := filepath.Join(dir, backendLibraryName("sycl"))
+	if _, err := os.Stat(path); err != nil {
+		slog.Debug("external ggml backend not found", "path", path, "error", err)
+		return
+	}
+
+	slog.Debug("ggml external backend load", "path", path)
+	cpath := C.CString(path)
+	defer C.free(unsafe.Pointer(cpath))
+	C.ggml_backend_load(cpath)
+}
+
+func backendLibraryName(name string) string {
+	switch runtime.GOOS {
+	case "windows":
+		return "ggml-" + name + ".dll"
+	case "darwin":
+		return "libggml-" + name + ".dylib"
+	default:
+		return "libggml-" + name + ".so"
+	}
+}
+
 func LibPaths() []string {
 	return libPaths
 }
@@ -114,6 +143,10 @@ type system struct{}
 
 func (system) LogValue() slog.Value {
 	var attrs []slog.Attr
+	if envconfig.AllowExternalLibraryPath() {
+		return slog.GroupValue(append(attrs, compilerAttr())...)
+	}
+
 	names := make(map[string]int)
 	for i := range C.ggml_backend_dev_count() {
 		r := C.ggml_backend_dev_backend_reg(C.ggml_backend_dev_get(i))
@@ -135,14 +168,17 @@ func (system) LogValue() slog.Value {
 		}()
 	}
 
+	attrs = append(attrs, compilerAttr())
+	return slog.GroupValue(attrs...)
+}
+
+func compilerAttr() slog.Attr {
 	switch C.compiler_name() {
 	case C.COMPILER_CLANG:
-		attrs = append(attrs, slog.String("compiler", "cgo(clang)"))
+		return slog.String("compiler", "cgo(clang)")
 	case C.COMPILER_GNUC:
-		attrs = append(attrs, slog.String("compiler", "cgo(gcc)"))
+		return slog.String("compiler", "cgo(gcc)")
 	default:
-		attrs = append(attrs, slog.String("compiler", "cgo(unknown)"))
+		return slog.String("compiler", "cgo(unknown)")
 	}
-
-	return slog.GroupValue(attrs...)
 }
