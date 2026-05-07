@@ -81,14 +81,19 @@ func writeCodexProfile(configPath string) error {
 
 type codexLaunchProfileOptions struct {
 	activate           bool
+	profileName        string
 	forceAPIAuth       bool
 	setRootModelConfig bool
 	model              string
 	modelCatalogPath   string
+	backupIntegration  string
 }
 
 func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) error {
 	baseURL := codexBaseURL()
+	profileName := codexLaunchProfileName(opts)
+	profileHeader := codexProfileHeaderFor(profileName)
+	providerHeader := codexProviderHeaderFor(profileName)
 
 	content, readErr := os.ReadFile(configPath)
 	text := ""
@@ -103,11 +108,11 @@ func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) 
 
 	model := strings.TrimSpace(opts.model)
 	if model == "" {
-		model = codexSectionStringValue(text, codexProfileHeader(), "model")
+		model = codexSectionStringValue(text, profileHeader, "model")
 	}
 	modelCatalogPath := strings.TrimSpace(opts.modelCatalogPath)
 	if modelCatalogPath == "" {
-		modelCatalogPath = codexSectionStringValue(text, codexProfileHeader(), "model_catalog_json")
+		modelCatalogPath = codexSectionStringValue(text, profileHeader, "model_catalog_json")
 	}
 
 	profileLines := []string{}
@@ -116,7 +121,7 @@ func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) 
 	}
 	profileLines = append(profileLines,
 		fmt.Sprintf("openai_base_url = %q", baseURL),
-		fmt.Sprintf("model_provider = %q", codexProfileName),
+		fmt.Sprintf("model_provider = %q", profileName),
 	)
 	if opts.forceAPIAuth {
 		profileLines = append(profileLines, `forced_login_method = "api"`)
@@ -130,11 +135,11 @@ func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) 
 		lines  []string
 	}{
 		{
-			header: codexProfileHeader(),
+			header: profileHeader,
 			lines:  profileLines,
 		},
 		{
-			header: codexProviderHeader(),
+			header: providerHeader,
 			lines: []string{
 				fmt.Sprintf("name = %q", codexProviderName),
 				fmt.Sprintf("base_url = %q", baseURL),
@@ -144,13 +149,13 @@ func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) 
 	}
 
 	if opts.activate {
-		text = codexSetRootStringValue(text, "profile", codexProfileName)
+		text = codexSetRootStringValue(text, "profile", profileName)
 	}
 	if opts.setRootModelConfig {
 		if model != "" {
 			text = codexSetRootStringValue(text, "model", model)
 		}
-		text = codexSetRootStringValue(text, "model_provider", codexProfileName)
+		text = codexSetRootStringValue(text, "model_provider", profileName)
 		if modelCatalogPath != "" {
 			text = codexSetRootStringValue(text, "model_catalog_json", modelCatalogPath)
 		}
@@ -162,11 +167,21 @@ func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) 
 	if err := codexValidateConfigText(text); err != nil {
 		return err
 	}
+	if err := codexValidateLaunchProfileText(text, profileName, opts, model, modelCatalogPath, baseURL); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(configPath, []byte(text))
+	return codexWriteWithBackup(configPath, []byte(text), opts.backupIntegration)
+}
+
+func codexLaunchProfileName(opts codexLaunchProfileOptions) string {
+	if name := strings.TrimSpace(opts.profileName); name != "" {
+		return name
+	}
+	return codexProfileName
 }
 
 func codexBaseURL() string {
@@ -174,11 +189,79 @@ func codexBaseURL() string {
 }
 
 func codexProfileHeader() string {
-	return fmt.Sprintf("[profiles.%s]", codexProfileName)
+	return codexProfileHeaderFor(codexProfileName)
 }
 
 func codexProviderHeader() string {
-	return fmt.Sprintf("[model_providers.%s]", codexProfileName)
+	return codexProviderHeaderFor(codexProfileName)
+}
+
+func codexProfileHeaderFor(profileName string) string {
+	return fmt.Sprintf("[profiles.%s]", profileName)
+}
+
+func codexProviderHeaderFor(profileName string) string {
+	return fmt.Sprintf("[model_providers.%s]", profileName)
+}
+
+func codexValidateLaunchProfileText(text, profileName string, opts codexLaunchProfileOptions, model, modelCatalogPath, baseURL string) error {
+	for _, check := range []struct {
+		path []string
+		want string
+	}{
+		{[]string{"profiles", profileName, "openai_base_url"}, baseURL},
+		{[]string{"profiles", profileName, "model_provider"}, profileName},
+		{[]string{"model_providers", profileName, "name"}, codexProviderName},
+		{[]string{"model_providers", profileName, "base_url"}, baseURL},
+		{[]string{"model_providers", profileName, "wire_api"}, "responses"},
+	} {
+		if got, ok := codexStringValue(text, check.path...); !ok || got != check.want {
+			return fmt.Errorf("generated Codex config missing %s = %q", strings.Join(check.path, "."), check.want)
+		}
+	}
+	if opts.forceAPIAuth {
+		if got, ok := codexStringValue(text, "profiles", profileName, "forced_login_method"); !ok || got != "api" {
+			return fmt.Errorf("generated Codex config missing profiles.%s.forced_login_method = %q", profileName, "api")
+		}
+	}
+	if model != "" {
+		if got, ok := codexStringValue(text, "profiles", profileName, "model"); !ok || got != model {
+			return fmt.Errorf("generated Codex config missing profiles.%s.model = %q", profileName, model)
+		}
+	}
+	if modelCatalogPath != "" {
+		if got, ok := codexStringValue(text, "profiles", profileName, "model_catalog_json"); !ok || got != modelCatalogPath {
+			return fmt.Errorf("generated Codex config missing profiles.%s.model_catalog_json = %q", profileName, modelCatalogPath)
+		}
+	}
+	if opts.activate {
+		if got := codexRootStringValue(text, "profile"); got != profileName {
+			return fmt.Errorf("generated Codex config missing profile = %q", profileName)
+		}
+	}
+	if opts.setRootModelConfig {
+		if model != "" {
+			if got := codexRootStringValue(text, "model"); got != model {
+				return fmt.Errorf("generated Codex config missing model = %q", model)
+			}
+		}
+		if got := codexRootStringValue(text, "model_provider"); got != profileName {
+			return fmt.Errorf("generated Codex config missing model_provider = %q", profileName)
+		}
+		if modelCatalogPath != "" {
+			if got := codexRootStringValue(text, "model_catalog_json"); got != modelCatalogPath {
+				return fmt.Errorf("generated Codex config missing model_catalog_json = %q", modelCatalogPath)
+			}
+		}
+	}
+	return nil
+}
+
+func codexWriteWithBackup(path string, data []byte, integration string) error {
+	if strings.TrimSpace(integration) != "" {
+		return fileutil.WriteWithBackup(path, data, integration)
+	}
+	return fileutil.WriteWithBackup(path, data)
 }
 
 func codexUpsertSection(text, header string, lines []string) string {
@@ -197,6 +280,18 @@ func codexUpsertSection(text, header string, lines []string) string {
 		text += "\n"
 	}
 	return text + block
+}
+
+func codexRemoveSection(text, header string) string {
+	targetPath, ok := codexTableHeaderPath(header)
+	if !ok {
+		return text
+	}
+	start, end, found := codexSectionRange(text, targetPath)
+	if !found {
+		return text
+	}
+	return text[:start] + text[end:]
 }
 
 func codexRootStringValue(text, key string) string {

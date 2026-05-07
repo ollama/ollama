@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
 func TestCodexArgs(t *testing.T) {
@@ -177,6 +179,53 @@ func TestWriteCodexProfile(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects malformed existing toml variants without writing", func(t *testing.T) {
+		tests := map[string]string{
+			"duplicate root key":  "profile = \"default\"\nprofile = \"other\"\n",
+			"unterminated string": "model = \"gpt-5.5\n",
+			"bad table":           "[profiles.ollama-launch\nmodel = \"llama3.2\"\n",
+			"duplicate table key": "[profiles.ollama-launch]\nmodel = \"a\"\nmodel = \"b\"\n",
+		}
+		for name, existing := range tests {
+			t.Run(name, func(t *testing.T) {
+				tmpDir := t.TempDir()
+				configPath := filepath.Join(tmpDir, "config.toml")
+				if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+					t.Fatal(err)
+				}
+
+				err := writeCodexProfile(configPath)
+				if err == nil || !strings.Contains(err.Error(), "invalid Codex config TOML") {
+					t.Fatalf("writeCodexProfile error = %v, want invalid TOML", err)
+				}
+
+				data, _ := os.ReadFile(configPath)
+				if string(data) != existing {
+					t.Fatalf("invalid config should be left untouched, got:\n%s", data)
+				}
+			})
+		}
+	})
+
+	t.Run("backs up previous config before overwrite", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		existing := "# original-codex-backup-marker\n[profiles.default]\nmodel = \"gpt-5.5\"\n"
+		if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := writeCodexProfile(configPath); err != nil {
+			t.Fatal(err)
+		}
+
+		assertBackupContains(t, filepath.Join(fileutil.BackupDir(), "config.toml.*"), "original-codex-backup-marker")
+	})
+
 	t.Run("updates equivalent quoted root keys", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
@@ -326,4 +375,22 @@ func TestEnsureCodexConfig(t *testing.T) {
 			t.Errorf("expected exactly one [model_providers.ollama-launch] section after two calls, got %d", strings.Count(content, "[model_providers.ollama-launch]"))
 		}
 	})
+}
+
+func assertBackupContains(t *testing.T, pattern, marker string) {
+	t.Helper()
+	backups, err := filepath.Glob(pattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, backupPath := range backups {
+		data, err := os.ReadFile(backupPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), marker) {
+			return
+		}
+	}
+	t.Fatalf("backup matching %q with marker %q not found", pattern, marker)
 }

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
 func withCodexAppPlatform(t *testing.T, goos string) {
@@ -161,16 +163,16 @@ func TestCodexAppConfigureActivatesOllamaProfile(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		`profile = "ollama-launch"`,
+		fmt.Sprintf(`profile = %q`, codexAppProfileName),
 		`model = "llama3.2"`,
-		`model_provider = "ollama-launch"`,
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName),
 		fmt.Sprintf(`model_catalog_json = %q`, catalogPath),
-		`[profiles.ollama-launch]`,
+		codexProfileHeaderFor(codexAppProfileName),
 		`model = "llama3.2"`,
 		`openai_base_url = "http://127.0.0.1:9999/v1/"`,
-		`model_provider = "ollama-launch"`,
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName),
 		`model_catalog_json = "`,
-		`[model_providers.ollama-launch]`,
+		codexProviderHeaderFor(codexAppProfileName),
 		`name = "Ollama"`,
 		`base_url = "http://127.0.0.1:9999/v1/"`,
 		`wire_api = "responses"`,
@@ -206,6 +208,134 @@ func TestCodexAppConfigureActivatesOllamaProfile(t *testing.T) {
 	}
 }
 
+func TestCodexAppConfigureUsesAppSpecificProfileWithoutTouchingCLIProfile(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:9999")
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "" +
+		`profile = "default"` + "\n\n" +
+		"[profiles.ollama-launch]\n" +
+		`model = "cli-model"` + "\n" +
+		`openai_base_url = "http://cli.invalid/v1/"` + "\n" +
+		`model_provider = "ollama-launch"` + "\n\n" +
+		"[model_providers.ollama-launch]\n" +
+		`name = "CLI Ollama"` + "\n" +
+		`base_url = "http://cli.invalid/v1/"` + "\n" +
+		`wire_api = "responses"` + "\n\n" +
+		"[profiles.default]\n" +
+		`model = "gpt-5.5"` + "\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"}); err != nil {
+		t.Fatalf("ConfigureWithModels returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if got := codexRootStringValue(content, "profile"); got != codexAppProfileName {
+		t.Fatalf("root profile = %q, want %q", got, codexAppProfileName)
+	}
+	if got := codexSectionStringValue(content, codexProfileHeader(), "openai_base_url"); got != "http://cli.invalid/v1/" {
+		t.Fatalf("CLI profile base URL = %q, want preserved CLI URL in:\n%s", got, content)
+	}
+	if got := codexSectionStringValue(content, codexProviderHeader(), "name"); got != "CLI Ollama" {
+		t.Fatalf("CLI provider name = %q, want preserved CLI provider in:\n%s", got, content)
+	}
+	if got := codexSectionStringValue(content, codexProfileHeaderFor(codexAppProfileName), "model"); got != "llama3.2" {
+		t.Fatalf("app profile model = %q, want llama3.2", got)
+	}
+	if got := codexSectionStringValue(content, codexProviderHeaderFor(codexAppProfileName), "base_url"); got != "http://127.0.0.1:9999/v1/" {
+		t.Fatalf("app provider base URL = %q", got)
+	}
+	assertBackupContains(t, filepath.Join(fileutil.BackupDir(), codexAppIntegrationName, "config.toml.*"), `profile = "default"`)
+}
+
+func TestCodexAppConfigureRejectsMalformedTomlBeforeSideEffects(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "profile = \n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"})
+	if err == nil || !strings.Contains(err.Error(), "invalid Codex config TOML") {
+		t.Fatalf("ConfigureWithModels error = %v, want invalid TOML", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != existing {
+		t.Fatalf("malformed config should be left untouched, got:\n%s", data)
+	}
+	if _, err := os.Stat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
+		t.Fatalf("restore state should not be written before config validation, err=%v", err)
+	}
+	catalogPath, err := codexAppModelCatalogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
+		t.Fatalf("model catalog should not be written before config validation, err=%v", err)
+	}
+}
+
+func TestCodexAppConfigureRejectsMalformedTomlEvenWithExistingRestoreState(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "[profiles.ollama-launch\nmodel = \"llama3.2\"\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(codexAppRestoreStatePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restoreState := `{"had_profile":true,"profile":"default","had_model":true,"model":"gpt-5.5","had_model_provider":true,"model_provider":"openai","had_model_catalog_json":false}`
+	if err := os.WriteFile(codexAppRestoreStatePath(), []byte(restoreState), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"})
+	if err == nil || !strings.Contains(err.Error(), "invalid Codex config TOML") {
+		t.Fatalf("ConfigureWithModels error = %v, want invalid TOML", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != existing {
+		t.Fatalf("malformed config should be left untouched, got:\n%s", data)
+	}
+	stateData, err := os.ReadFile(codexAppRestoreStatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stateData) != restoreState {
+		t.Fatalf("restore state should be left untouched, got:\n%s", stateData)
+	}
+}
+
 func TestCodexAppCurrentModelRequiresManagedActiveProfile(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -217,10 +347,10 @@ func TestCodexAppCurrentModelRequiresManagedActiveProfile(t *testing.T) {
 	}
 	content := "" +
 		"profile = \"default\"\n\n" +
-		"[profiles.ollama-launch]\n" +
+		codexProfileHeaderFor(codexAppProfileName) + "\n" +
 		"model = \"llama3.2\"\n" +
-		"model_provider = \"ollama-launch\"\n\n" +
-		"[model_providers.ollama-launch]\n" +
+		fmt.Sprintf("model_provider = %q\n\n", codexAppProfileName) +
+		codexProviderHeaderFor(codexAppProfileName) + "\n" +
 		"base_url = \"http://127.0.0.1:11434/v1/\"\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -242,8 +372,8 @@ func TestCodexAppCurrentModelReadsManagedRootConfig(t *testing.T) {
 	}
 	content := "" +
 		`model = "qwen3:8b"` + "\n" +
-		`model_provider = "ollama-launch"` + "\n\n" +
-		"[model_providers.ollama-launch]\n" +
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n\n" +
+		codexProviderHeaderFor(codexAppProfileName) + "\n" +
 		`base_url = "http://127.0.0.1:11434/v1/"` + "\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -410,10 +540,13 @@ func TestCodexAppRestoreRestoresPreviousProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `profile = "default"`) || strings.Contains(string(data), `profile = "ollama-launch"`) {
+	if !strings.Contains(string(data), `profile = "default"`) || strings.Contains(string(data), fmt.Sprintf(`profile = %q`, codexAppProfileName)) {
 		t.Fatalf("restore should restore previous active profile, got:\n%s", data)
 	}
 	restored := string(data)
+	if strings.Contains(restored, codexProfileHeaderFor(codexAppProfileName)) || strings.Contains(restored, codexProviderHeaderFor(codexAppProfileName)) {
+		t.Fatalf("restore should remove owned app sections, got:\n%s", restored)
+	}
 	for key, want := range map[string]string{
 		"profile":            "default",
 		"model":              "gpt-5.5",
@@ -429,6 +562,173 @@ func TestCodexAppRestoreRestoresPreviousProfile(t *testing.T) {
 	}
 	if _, err := os.Stat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
 		t.Fatalf("restore state should be removed, got err=%v", err)
+	}
+}
+
+func TestCodexAppRestoreRejectsMalformedTomlWithoutWriting(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "model = \"unterminated\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(codexAppRestoreStatePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codexAppRestoreStatePath(), []byte(`{"had_profile":false,"had_model":false,"had_model_provider":false,"had_model_catalog_json":false}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := (&CodexApp{}).Restore()
+	if err == nil || !strings.Contains(err.Error(), "invalid Codex config TOML") {
+		t.Fatalf("Restore error = %v, want invalid TOML", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != existing {
+		t.Fatalf("malformed config should be left untouched, got:\n%s", data)
+	}
+	if _, err := os.Stat(codexAppRestoreStatePath()); err != nil {
+		t.Fatalf("restore state should remain after failed restore: %v", err)
+	}
+}
+
+func TestCodexAppRestoreDoesNotStompUserChangedRootConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+
+	var openCalls int
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { return nil },
+		func() error {
+			openCalls++
+			return nil
+		},
+	)
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	catalogPath, err := codexAppModelCatalogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := "" +
+		`profile = "manual"` + "\n" +
+		`model = "gpt-5.5"` + "\n" +
+		`model_provider = "openai"` + "\n\n" +
+		codexProfileHeaderFor(codexAppProfileName) + "\n" +
+		`model = "llama3.2"` + "\n" +
+		fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n\n" +
+		codexProviderHeaderFor(codexAppProfileName) + "\n" +
+		`base_url = "http://127.0.0.1:11434/v1/"` + "\n\n" +
+		"[profiles.manual]\n" +
+		`model = "gpt-5.5"` + "\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(catalogPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalogPath, []byte(`{"models":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(codexAppRestoreStatePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restoreState := `{"had_profile":true,"profile":"default","had_model":true,"model":"old","had_model_provider":true,"model_provider":"old-provider","had_model_catalog_json":false}`
+	if err := os.WriteFile(codexAppRestoreStatePath(), []byte(restoreState), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&CodexApp{}).Restore(); err != nil {
+		t.Fatalf("Restore returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	for key, want := range map[string]string{
+		"profile":        "manual",
+		"model":          "gpt-5.5",
+		"model_provider": "openai",
+	} {
+		if got := codexRootStringValue(content, key); got != want {
+			t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, content)
+		}
+	}
+	if strings.Contains(content, codexProfileHeaderFor(codexAppProfileName)) || strings.Contains(content, codexProviderHeaderFor(codexAppProfileName)) {
+		t.Fatalf("owned app sections should be removed when no longer active, got:\n%s", content)
+	}
+	if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
+		t.Fatalf("owned catalog should be removed when unused, err=%v", err)
+	}
+	if openCalls != 1 {
+		t.Fatalf("open calls = %d, want 1", openCalls)
+	}
+}
+
+func TestCodexAppRestoreDoesNotTreatCLIProfileAsOwned(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { return nil },
+		func() error { return nil },
+	)
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "" +
+		`profile = "ollama-launch"` + "\n" +
+		`model = "cli-model"` + "\n" +
+		`model_provider = "ollama-launch"` + "\n\n" +
+		"[profiles.ollama-launch]\n" +
+		`model = "cli-model"` + "\n" +
+		`openai_base_url = "http://cli.invalid/v1/"` + "\n" +
+		`model_provider = "ollama-launch"` + "\n\n" +
+		"[model_providers.ollama-launch]\n" +
+		`name = "CLI Ollama"` + "\n" +
+		`base_url = "http://cli.invalid/v1/"` + "\n" +
+		`wire_api = "responses"` + "\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(codexAppRestoreStatePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restoreState := `{"had_profile":true,"profile":"default","had_model":true,"model":"gpt-5.5","had_model_provider":true,"model_provider":"openai","had_model_catalog_json":false}`
+	if err := os.WriteFile(codexAppRestoreStatePath(), []byte(restoreState), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&CodexApp{}).Restore(); err != nil {
+		t.Fatalf("Restore returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != existing {
+		t.Fatalf("CLI Codex profile should be left untouched, got:\n%s", data)
 	}
 }
 

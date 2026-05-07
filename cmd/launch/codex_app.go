@@ -16,12 +16,12 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
-	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
 
 const (
 	codexAppIntegrationName      = "codex-app"
+	codexAppProfileName          = "ollama-launch-codex-app"
 	codexAppBundleID             = "com.openai.codex"
 	codexAppModelCatalogFilename = "ollama-launch-models.json"
 	codexAppRestoreHint          = "To restore your usual Codex profile, run: ollama launch codex-app --restore"
@@ -85,9 +85,11 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []string) error {
 	}
 	return writeCodexLaunchProfile(configPath, codexLaunchProfileOptions{
 		activate:           true,
+		profileName:        codexAppProfileName,
 		setRootModelConfig: true,
 		model:              primary,
 		modelCatalogPath:   catalogPath,
+		backupIntegration:  codexAppIntegrationName,
 	})
 }
 
@@ -101,23 +103,44 @@ func (c *CodexApp) CurrentModel() string {
 		return ""
 	}
 	text := string(data)
-	if codexRootStringValue(text, "model_provider") == codexProfileName {
-		baseURL := codexSectionStringValue(text, codexProviderHeader(), "base_url")
-		if codexNormalizeURL(baseURL) == codexNormalizeURL(codexBaseURL()) {
-			return strings.TrimSpace(codexRootStringValue(text, "model"))
+	for _, profileName := range codexAppManagedProfileNames() {
+		if codexRootStringValue(text, "model_provider") == profileName {
+			baseURL := codexSectionStringValue(text, codexProviderHeaderFor(profileName), "base_url")
+			if codexNormalizeURL(baseURL) == codexNormalizeURL(codexBaseURL()) {
+				return strings.TrimSpace(codexRootStringValue(text, "model"))
+			}
 		}
 	}
-	if codexRootStringValue(text, "profile") != codexProfileName {
+
+	profileName := codexRootStringValue(text, "profile")
+	if !codexAppIsManagedProfileName(profileName) {
 		return ""
 	}
-	if codexSectionStringValue(text, codexProfileHeader(), "model_provider") != codexProfileName {
+	if codexSectionStringValue(text, codexProfileHeaderFor(profileName), "model_provider") != profileName {
 		return ""
 	}
-	baseURL := codexSectionStringValue(text, codexProviderHeader(), "base_url")
+	baseURL := codexSectionStringValue(text, codexProviderHeaderFor(profileName), "base_url")
 	if codexNormalizeURL(baseURL) != codexNormalizeURL(codexBaseURL()) {
 		return ""
 	}
-	return strings.TrimSpace(codexSectionStringValue(text, codexProfileHeader(), "model"))
+	return strings.TrimSpace(codexSectionStringValue(text, codexProfileHeaderFor(profileName), "model"))
+}
+
+func codexAppManagedProfileNames() []string {
+	return []string{codexAppProfileName, codexProfileName}
+}
+
+func codexAppIsManagedProfileName(profileName string) bool {
+	for _, candidate := range codexAppManagedProfileNames() {
+		if profileName == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func codexAppIsOwnedProfileName(profileName string) bool {
+	return profileName == codexAppProfileName
 }
 
 func (c *CodexApp) Onboard() error {
@@ -173,26 +196,23 @@ func (c *CodexApp) Restore() error {
 
 	state, stateErr := loadCodexAppRestoreState()
 	if stateErr == nil {
-		text = codexRestoreRootStringValue(text, "profile", state.HadProfile, state.Profile)
-		text = codexRestoreRootStringValue(text, "model", state.HadModel, state.Model)
-		text = codexRestoreRootStringValue(text, "model_provider", state.HadModelProvider, state.ModelProvider)
-		text = codexRestoreRootStringValue(text, "model_catalog_json", state.HadModelCatalogJSON, state.ModelCatalogJSON)
-	} else if codexRootStringValue(text, "profile") == codexProfileName {
-		text = codexRemoveRootValue(text, "profile")
-		if codexRootStringValue(text, "model_provider") == codexProfileName {
-			text = codexRemoveRootValue(text, "model_provider")
-		}
-		if catalogPath, err := codexAppModelCatalogPath(); err == nil && codexRootStringValue(text, "model_catalog_json") == catalogPath {
-			text = codexRemoveRootValue(text, "model_catalog_json")
-		}
+		text = codexAppRestoreRootValues(text, state)
+	} else if os.IsNotExist(stateErr) {
+		text = codexAppRemoveOwnedRootValues(text)
+	} else {
+		return stateErr
+	}
+	if !codexAppRootReferencesOwnedConfig(text) {
+		text = codexAppRemoveOwnedSections(text)
 	}
 
 	if err := codexValidateConfigText(text); err != nil {
 		return err
 	}
-	if err := fileutil.WriteWithBackup(configPath, []byte(text)); err != nil {
+	if err := codexWriteWithBackup(configPath, []byte(text), codexAppIntegrationName); err != nil {
 		return err
 	}
+	codexAppRemoveOwnedCatalogIfUnused(text)
 	_ = os.Remove(codexAppRestoreStatePath())
 	return codexAppLaunchOrRestart("Restart Codex to use your usual profile?")
 }
@@ -246,7 +266,7 @@ func writeCodexAppModelCatalog(path string, models []string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(path, append(data, '\n'))
+	return codexWriteWithBackup(path, append(data, '\n'), codexAppIntegrationName)
 }
 
 func codexAppCatalogModelNames(primary string, fallback []string) []string {
@@ -711,6 +731,69 @@ func codexNormalizeURL(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
+func codexAppRootStillManaged(text string) bool {
+	if codexAppIsOwnedProfileName(codexRootStringValue(text, "profile")) {
+		return true
+	}
+	if codexAppIsOwnedProfileName(codexRootStringValue(text, "model_provider")) {
+		return true
+	}
+	return false
+}
+
+func codexAppRootReferencesOwnedConfig(text string) bool {
+	return codexRootStringValue(text, "profile") == codexAppProfileName ||
+		codexRootStringValue(text, "model_provider") == codexAppProfileName
+}
+
+func codexAppRootReferencesCatalog(text string) bool {
+	catalogPath, err := codexAppModelCatalogPath()
+	if err != nil {
+		return false
+	}
+	return codexRootStringValue(text, "model_catalog_json") == catalogPath
+}
+
+func codexAppRemoveOwnedSections(text string) string {
+	text = codexRemoveSection(text, codexProfileHeaderFor(codexAppProfileName))
+	text = codexRemoveSection(text, codexProviderHeaderFor(codexAppProfileName))
+	return text
+}
+
+func codexAppRemoveOwnedCatalogIfUnused(text string) {
+	if codexAppRootReferencesCatalog(text) {
+		return
+	}
+	if catalogPath, err := codexAppModelCatalogPath(); err == nil {
+		_ = os.Remove(catalogPath)
+	}
+}
+
+func codexAppRemoveOwnedRootValues(text string) string {
+	if !codexAppRootStillManaged(text) {
+		return text
+	}
+	text = codexRemoveRootValue(text, "profile")
+	if codexAppIsOwnedProfileName(codexRootStringValue(text, "model_provider")) {
+		text = codexRemoveRootValue(text, "model_provider")
+	}
+	if catalogPath, err := codexAppModelCatalogPath(); err == nil && codexRootStringValue(text, "model_catalog_json") == catalogPath {
+		text = codexRemoveRootValue(text, "model_catalog_json")
+	}
+	return text
+}
+
+func codexAppRestoreRootValues(text string, state codexAppRestoreState) string {
+	if !codexAppRootStillManaged(text) {
+		return text
+	}
+	text = codexRestoreRootStringValue(text, "profile", state.HadProfile, state.Profile)
+	text = codexRestoreRootStringValue(text, "model", state.HadModel, state.Model)
+	text = codexRestoreRootStringValue(text, "model_provider", state.HadModelProvider, state.ModelProvider)
+	text = codexRestoreRootStringValue(text, "model_catalog_json", state.HadModelCatalogJSON, state.ModelCatalogJSON)
+	return text
+}
+
 type codexAppRestoreState struct {
 	HadProfile          bool   `json:"had_profile"`
 	Profile             string `json:"profile,omitempty"`
@@ -723,21 +806,35 @@ type codexAppRestoreState struct {
 }
 
 func saveCodexAppRestoreState(configPath string) error {
-	statePath := codexAppRestoreStatePath()
-	if stateData, err := os.ReadFile(statePath); err == nil {
-		if codexAppRestoreStateHasRootConfig(stateData) {
-			return nil
-		}
-		configData, err := os.ReadFile(configPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
+	configText := ""
+	configExists := false
+	if configData, err := os.ReadFile(configPath); err == nil {
+		configText = string(configData)
+		if err := codexValidateConfigText(configText); err != nil {
 			return err
 		}
+		configExists = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	statePath := codexAppRestoreStatePath()
+	if stateData, err := os.ReadFile(statePath); err == nil {
+		hasRootConfig, err := codexAppRestoreStateHasRootConfig(stateData)
+		if err != nil {
+			return err
+		}
+		if hasRootConfig {
+			return nil
+		}
+		if !configExists {
+			return nil
+		}
 		var existing codexAppRestoreState
-		_ = json.Unmarshal(stateData, &existing)
-		upgraded := codexAppRestoreStateFromText(string(configData))
+		if err := json.Unmarshal(stateData, &existing); err != nil {
+			return err
+		}
+		upgraded := codexAppRestoreStateFromText(configText)
 		upgraded.HadProfile = existing.HadProfile
 		upgraded.Profile = existing.Profile
 		return writeCodexAppRestoreState(upgraded)
@@ -745,26 +842,21 @@ func saveCodexAppRestoreState(configPath string) error {
 		return err
 	}
 
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return writeCodexAppRestoreState(codexAppRestoreState{})
-		}
-		return err
+	if !configExists {
+		return writeCodexAppRestoreState(codexAppRestoreState{})
 	}
-
-	return writeCodexAppRestoreState(codexAppRestoreStateFromText(string(data)))
+	return writeCodexAppRestoreState(codexAppRestoreStateFromText(configText))
 }
 
-func codexAppRestoreStateHasRootConfig(data []byte) bool {
+func codexAppRestoreStateHasRootConfig(data []byte) (bool, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return true
+		return false, err
 	}
 	_, hasModel := raw["had_model"]
 	_, hasModelProvider := raw["had_model_provider"]
 	_, hasModelCatalogJSON := raw["had_model_catalog_json"]
-	return hasModel && hasModelProvider && hasModelCatalogJSON
+	return hasModel && hasModelProvider && hasModelCatalogJSON, nil
 }
 
 func codexAppRestoreStateFromText(text string) codexAppRestoreState {
@@ -800,7 +892,7 @@ func writeCodexAppRestoreState(state codexAppRestoreState) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(path, data)
+	return codexWriteWithBackup(path, data, codexAppIntegrationName)
 }
 
 func loadCodexAppRestoreState() (codexAppRestoreState, error) {
