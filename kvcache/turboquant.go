@@ -53,11 +53,11 @@ type TurboQuantCache struct {
 	// cache instance (avoids log spam: Get() is called every layer every step).
 	logPathOnce [5]sync.Once
 
-	// fusedFallbackEligible gates the inline-decode fused-FA fallback paths (D=64, 128, 256)
-	// (Get paths 2 and 4). The CUDA fused kernel is template-instantiated at
-	// D=64, 128, 256 — covering llama3.2 (64), llama3.1/qwen2.5 (128), and
-	// Gemma (256). Models with D=512 or other unsupported dims fall back to the
-	// DequantK + stock FA path (Get paths 0/1/5), which works at any head dim.
+	// fusedFallbackEligible gates the inline-decode fused-FA fallback paths
+	// (Get paths 2 and 4). CUDA/ROCm supports D=64, 128, 512; Metal supports
+	// D=64, 128, 256, 512 — covering llama3.2 (64), llama3.1/qwen2.5 (128),
+	// Gemma3 (256), and gemma4 global-attention layers (512). Other dims fall
+	// back to the DequantK + stock FA path (Get paths 0/1/5).
 	fusedFallbackEligible bool
 
 	// preferFusedAttn is true on Metal. At long context, DequantKV + stock FA
@@ -165,9 +165,9 @@ func WrapWithTurboQuant(cache Cache, preset turboquant.Preset) (Cache, bool) {
 		}, true
 
 	case *WrapperCache:
-		// Mutate sub-caches in place: replace every non-SWA *Causal with a
-		// *TurboQuantCache wrapping it. SWA sub-caches (SWACache, SWAMemCache)
-		// are left untouched — they still allocate f16 K/V as before.
+		// Mutate sub-caches in place: replace every *Causal with a
+		// *TurboQuantCache wrapping it. This includes SWA layers — all 60
+		// gemma4 layers compress regardless of attention window type.
 		wrapped := 0
 		for i, sub := range c.caches {
 			inner, ok := sub.(*Causal)
@@ -706,9 +706,9 @@ func (c *TurboQuantCache) activateGPUEncode() {
 		}
 	}
 
-	// The headDim ∈ {64, 128, 256} gate at the top of this function ensures
-	// we only get here on supported dims, so the fused-FA fallback paths
-	// (Get paths 2 and 4) are always eligible.
+	// The headDim ∈ {64, 128, 256, 512} gate at the top of this function
+	// ensures we only get here on supported dims, so the fused-FA fallback
+	// paths (Get paths 2 and 4) are always eligible.
 	c.fusedFallbackEligible = true
 
 	// Cache the rotation matrices and the backend's rotation-setter hook on

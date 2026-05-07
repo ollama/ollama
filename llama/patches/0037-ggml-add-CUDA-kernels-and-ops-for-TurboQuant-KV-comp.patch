@@ -571,7 +571,7 @@ index 000000000..1c7ccbba9
 +    const float   *reg_codebook,
 +    const uint8_t *out_packed,
 +    const float   *out_scales,
-+    const uint8_t *out_indices,
++    const uint16_t *out_indices,
 +    const float   *out_codebook,
 +    uint16_t      *output,
 +    int headDim,
@@ -597,9 +597,9 @@ index 000000000..1c7ccbba9
 +
 +    float regScale = reg_scales[slot];
 +    float outScale = out_scales[slot];
-+    const uint8_t *cell_reg  = reg_packed  + (size_t)slot * reg_packed_bytes;
-+    const uint8_t *cell_outl = out_packed  + (size_t)slot * out_packed_bytes;
-+    const uint8_t *cell_idx  = out_indices + (size_t)slot * outlier_count;
++    const uint8_t  *cell_reg  = reg_packed  + (size_t)slot * reg_packed_bytes;
++    const uint8_t  *cell_outl = out_packed  + (size_t)slot * out_packed_bytes;
++    const uint16_t *cell_idx  = out_indices + (size_t)slot * outlier_count;
 +    __half *cell_out = (__half *)(output + ((size_t)c * numKVHeads + h) * headDim);
 +
 +    // Shared memory layout:
@@ -792,7 +792,7 @@ index 000000000..1c7ccbba9
 +        __syncthreads();
 +
 +        if ((int)threadIdx.x < k_outl_count) {
-+            const uint8_t *cell_idx = k_outl_indices + (size_t)slot * k_outl_count;
++            const uint16_t *cell_idx = k_outl_indices + (size_t)slot * k_outl_count;
 +            int pos = (int)cell_idx[threadIdx.x];
 +            s_outl_slot[pos] = (int8_t)threadIdx.x;
 +            atomicOr(&s_mask[pos >> 5], 1u << (pos & 31));
@@ -965,9 +965,9 @@ index 000000000..1c7ccbba9
 +            (const uint8_t *)encode_result->data,
 +            (const float   *)scales->data,
 +            (const float   *)codebook->data,
-+            (const uint8_t *)outlier_packed->data,
-+            (const float   *)outlier_scales->data,
-+            (const uint8_t *)outlier_indices->data,
++            (const uint8_t  *)outlier_packed->data,
++            (const float    *)outlier_scales->data,
++            (const uint16_t *)outlier_indices->data,
 +            (const float   *)outlier_codebook->data,
 +            (uint16_t      *)dst->data,
 +            headDim, numKVHeads, bits, reg_packed_bytes,
@@ -1678,7 +1678,7 @@ index 000000000..1c800f785
 +    float           *scales_out,         // regular scales [numKVHeads*cells]
 +    uint8_t         *outlier_packed,     // outlier packed [outlierPackedBytes*numKVHeads*cells]
 +    float           *outlier_scales,     // outlier scales [numKVHeads*cells]
-+    uint8_t         *outlier_indices,    // outlier channel idx [outlierCount*numKVHeads*cells] (interpreted as uint8 so positions 0..255 fit)
++    uint16_t        *outlier_indices,    // outlier channel idx [outlierCount*numKVHeads*cells]
 +    int              firstCell,
 +    const float     *boundaries,         // regular boundaries [(1<<bits)-1]
 +    const float     *outlier_boundaries, // outlier boundaries [(1<<outlierBits)-1]
@@ -2050,10 +2050,10 @@ index 000000000..1c800f785
 +        }
 +    }
 +
-+    // Step 10: Write outlier channel indices. uint8_t covers 0..255 safely.
-+    uint8_t *idx_out = outlier_indices + (cell * numKVHeads + head) * outlierCount;
++    // Step 10: Write outlier channel indices. uint16_t covers 0..headDim-1 for any headDim.
++    uint16_t *idx_out = outlier_indices + (cell * numKVHeads + head) * outlierCount;
 +    for (int r = threadIdx.x; r < outlierCount; r += blockDim.x) {
-+        idx_out[r] = (uint8_t)s_outl_pos[r];
++        idx_out[r] = (uint16_t)s_outl_pos[r];
 +    }
 +
 +    // Step 11: QJL residual sketch (optional).
@@ -2205,7 +2205,7 @@ index 000000000..1c800f785
 +            (float       *)scales->data,
 +            (uint8_t     *)outlier_packed->data,
 +            (float       *)outlier_scales->data,
-+            (uint8_t     *)outlier_indices->data,
++            (uint16_t    *)outlier_indices->data,
 +            firstCell,
 +            (const float *)boundaries->data,
 +            (const float *)outlier_boundaries->data,

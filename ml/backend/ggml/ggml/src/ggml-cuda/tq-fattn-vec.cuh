@@ -317,7 +317,7 @@ static __global__ void tq_flash_attn_ext_vec(
 {
 #ifdef FLASH_ATTN_AVAILABLE
     // Skip logit_softcap variants for unsupported D values (mirrors original kernel guard).
-    if (use_logit_softcap && D != 64 && D != 128 && D != 256) {
+    if (use_logit_softcap && D != 64 && D != 128 && D != 256 && D != 512) {
         GGML_UNUSED_VARS(Q, K_packed, V, mask, dst, dst_meta, scales, codebook,
             scale, logit_softcap, bits, firstCell, nCells, nKVHeads, packedBytes,
             ne00, ne01, ne02, ne03, nb01, nb02, nb03,
@@ -961,4 +961,148 @@ static __global__ void tq_flash_attn_ext_vec(
         outlier_bits, outlier_count, outlier_packedBytes);
     NO_DEVICE_CODE;
 #endif // FLASH_ATTN_AVAILABLE
+}
+
+// Host-side launch wrapper. Included here (rather than tq-fattn.cu) so that
+// tq-fattn-konly-outlier.cu can share it without duplicating the function body.
+template<int D, int ncols, bool use_logit_softcap, bool V_PACKED, bool HAS_OUTLIERS>
+void tq_fattn_vec_launch(ggml_backend_cuda_context & ctx, ggml_tensor * dst,
+                         float scale, float logit_softcap,
+                         int bits, int firstCell, int nCells, int nKVHeads, int packedBytes,
+                         int v_bits, int v_packedBytes,
+                         const float * v_scales_ptr, const float * v_codebook_ptr,
+                         const float   * zeros_ptr,
+                         int             asymmetric,
+                         const uint8_t * qjl_packed_ptr,
+                         const float   * qjl_norm_ptr,
+                         const float   * qjl_projection_ptr,
+                         int             qjl_rows,
+                         int             qjl_packedBytes,
+                         const uint8_t * outlier_packed_ptr,
+                         const float   * outlier_scales_ptr,
+                         const int16_t * outlier_indices_ptr,
+                         const float   * outlier_zeros_ptr,
+                         int             outlier_bits,
+                         int             outlier_count,
+                         int             outlier_packed_bytes)
+{
+    const ggml_tensor * Q    = dst->src[0];
+    const ggml_tensor * K_p  = dst->src[1];
+    const ggml_tensor * V    = dst->src[2];
+    const ggml_tensor * mask = dst->src[3];
+    const ggml_tensor * scales   = dst->src[4];
+    const ggml_tensor * codebook = dst->src[5];
+
+    GGML_ASSERT(Q->ne[0] == D);
+    GGML_ASSERT(Q->type  == GGML_TYPE_F32);
+    if constexpr (!V_PACKED) {
+        GGML_ASSERT(V->type  == GGML_TYPE_F16);
+    } else {
+        GGML_ASSERT(V->type  == GGML_TYPE_I8);
+    }
+
+    const int nTokensQ = (int)Q->ne[1];
+    const int nHeadsQ  = (int)Q->ne[2];
+    const int nSeq     = (int)Q->ne[3];
+
+    GGML_ASSERT(!mask || mask->type == GGML_TYPE_F16);
+
+    const uint3 ne01 = init_fastdiv_values((uint64_t)nTokensQ);
+
+    const int ntiles_x = (nTokensQ + ncols - 1) / ncols;
+    dim3 threads(WARP_SIZE, 4);
+
+    constexpr int ne_KQ      = ncols * D;
+    constexpr int ne_combine = 16 * D;
+    constexpr size_t smem    = ((ne_KQ > ne_combine ? ne_KQ : ne_combine)
+                                + ncols * D
+                                + ncols * 256) * sizeof(float);
+
+    constexpr int nthreads = 128;
+    const int ntiles_total = ntiles_x * nHeadsQ * nSeq;
+    const int ntiles_KQ = std::max(1, (nCells + nthreads - 1) / nthreads);
+
+    auto kernel_ptr = tq_flash_attn_ext_vec<D, ncols, use_logit_softcap, V_PACKED, HAS_OUTLIERS>;
+
+    int max_blocks_per_sm = 1;
+    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &max_blocks_per_sm, kernel_ptr,
+        (int)(threads.x * threads.y * threads.z), smem));
+    GGML_ASSERT(max_blocks_per_sm > 0);
+
+    const int dev_id = ggml_cuda_get_device();
+    const int nsm    = ggml_cuda_info().devices[dev_id].nsm;
+    const int blocks_per_wave = nsm * max_blocks_per_sm;
+
+    int parallel_blocks = 1;
+    if (ntiles_total < blocks_per_wave && ntiles_KQ > 1) {
+        int nwaves_best = 1;
+        int eff_best    = (100 * ntiles_total) / blocks_per_wave;
+        for (int test = std::min(max_blocks_per_sm, ntiles_KQ); test <= ntiles_KQ; ++test) {
+            const int nblocks_total = ntiles_total * test;
+            const int nwaves        = (nblocks_total + blocks_per_wave - 1) / blocks_per_wave;
+            const int eff_pct       = nwaves > 0 ? (100 * nblocks_total) / (nwaves * blocks_per_wave) : 0;
+            if (eff_best >= 95 && nwaves > nwaves_best) { break; }
+            if (eff_pct > eff_best) {
+                nwaves_best     = nwaves;
+                eff_best        = eff_pct;
+                parallel_blocks = test;
+            }
+        }
+    }
+
+    ggml_cuda_pool & pool = ctx.pool();
+    ggml_cuda_pool_alloc<float>  dst_tmp(pool);
+    ggml_cuda_pool_alloc<float2> dst_tmp_meta(pool);
+    if (parallel_blocks > 1) {
+        const size_t kqv_n    = (size_t)D * nHeadsQ * nTokensQ * nSeq;
+        const size_t kqv_rows = (size_t)nHeadsQ * nTokensQ * nSeq;
+        dst_tmp.alloc((size_t)parallel_blocks * kqv_n);
+        dst_tmp_meta.alloc((size_t)parallel_blocks * kqv_rows);
+    }
+
+    dim3 blocks(ntiles_x, parallel_blocks, nHeadsQ * nSeq);
+
+    float  * kernel_dst      = (parallel_blocks > 1) ? dst_tmp.ptr      : (float  *)dst->data;
+    float2 * kernel_dst_meta = (parallel_blocks > 1) ? dst_tmp_meta.ptr : (float2 *)nullptr;
+
+    kernel_ptr<<<blocks, threads, smem, ctx.stream()>>>(
+        (const char    *)Q->data,
+        (const uint8_t *)K_p->data,
+        (const char    *)V->data,
+        mask ? (const char *)mask->data : nullptr,
+        kernel_dst,
+        kernel_dst_meta,
+        (const float *)scales->data,
+        (const float *)codebook->data,
+        scale, logit_softcap, bits, firstCell, nCells, nKVHeads, packedBytes,
+        (int32_t)Q->ne[0],
+        ne01,
+        (int32_t)Q->ne[2],
+        (int32_t)Q->ne[3],
+        (int32_t)Q->nb[1],
+        (int32_t)Q->nb[2],
+        (int64_t)Q->nb[3],
+        (int32_t)V->nb[1],
+        (int32_t)V->nb[2],
+        (int64_t)V->nb[3],
+        mask ? (int32_t)mask->ne[0] : 0,
+        mask ? (int32_t)mask->nb[1] : 0,
+        v_scales_ptr, v_codebook_ptr, v_bits, v_packedBytes,
+        zeros_ptr, asymmetric,
+        qjl_packed_ptr, qjl_norm_ptr, qjl_projection_ptr, qjl_rows, qjl_packedBytes,
+        outlier_packed_ptr, outlier_scales_ptr, outlier_indices_ptr, outlier_zeros_ptr,
+        outlier_bits, outlier_count, outlier_packed_bytes
+    );
+    CUDA_CHECK(cudaGetLastError());
+
+    if (parallel_blocks > 1) {
+        const dim3 block_dim_combine(D, 1, 1);
+        const dim3 blocks_num_combine((unsigned)nTokensQ, (unsigned)nHeadsQ, (unsigned)nSeq);
+        const size_t nbytes_shared_combine = (size_t)parallel_blocks * sizeof(float2);
+        flash_attn_combine_results<D>
+            <<<blocks_num_combine, block_dim_combine, nbytes_shared_combine, ctx.stream()>>>(
+                dst_tmp.ptr, dst_tmp_meta.ptr, (float *)dst->data, parallel_blocks);
+        CUDA_CHECK(cudaGetLastError());
+    }
 }

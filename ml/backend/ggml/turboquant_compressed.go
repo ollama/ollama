@@ -50,7 +50,7 @@ type ggmlTQCompressedK struct {
 	// Outlier sub-block per-layer tensors (populated only when outlierCount > 0).
 	outlierPackedTensors  map[int]*Tensor // [outlierPackedBytes*numKVHeads, capacity] i8
 	outlierScalesTensors  map[int]*Tensor // [numKVHeads, capacity] f32
-	outlierIndicesTensors map[int]*Tensor // [outlierCount*numKVHeads, capacity] i8 (channel idx)
+	outlierIndicesTensors map[int]*Tensor // [outlierCount*numKVHeads, capacity] i16 (channel idx)
 
 	// QJL per-layer tensors (populated only when qjlRows > 0).
 	qjlPackedTensors map[int]*Tensor // [qjlPackedBytes*numKVHeads, capacity] i8
@@ -521,11 +521,9 @@ func (m *ggmlTQCompressedK) DequantK(ctx ml.Context, layer int, encodeResult ml.
 // inline-decode path is slower than DequantKV + stock FA on all measured
 // hardware — DequantKV is always preferred when available.
 func (m *ggmlTQCompressedK) fusedKernelSupports() bool {
-	// D=128 on all backends; D=256 only on Metal (kernel_tq_fattn_vec_*{,_d256}).
-	// CUDA still has only the D=128 kernel, so gemma3 (D=256) stays off the
-	// fused path on CUDA.
+	// D=64/128/512 on CUDA/ROCm; D=256 Metal-only (untested on CUDA); D=512 all backends.
 	switch m.headDim {
-	case 128:
+	case 64, 128, 512:
 	case 256:
 		if !m.preferFusedAttention {
 			return false
@@ -536,26 +534,6 @@ func (m *ggmlTQCompressedK) fusedKernelSupports() bool {
 	if m.bits != 2 && m.bits != 3 && m.bits != 4 {
 		return false
 	}
-	// K-only fused path with outlier split is disabled: GetAsTQTensor with
-	// outlier data produces wrong results. K+V fused via GetAsTQTensorKV works.
-	// tq*kqa falls back to DequantK as a result.
-	if m.hasOutliers() && m.vBits == 0 {
-		return false
-	}
-	// Metal does not yet have outlier-aware fattn kernels (kernel_tq_fattn_vec*
-	// read only the regular packed buffer; there is no kernel_tq_fattn_vec_outlier
-	// or kernel_tq_fattn_vec_packed_outlier on Metal). Force outlier presets to
-	// the DequantK + stock-FA slow path, which is correct after the
-	// kernel_tq_dequant_outlier asymmetric port. Once outlier-aware fattn is
-	// ported to Metal, drop this guard.
-	if m.hasOutliers() && m.preferFusedAttention {
-		return false
-	}
-	// K+V outlier path (tq*qa): GetAsTQTensorKV handles outlier decode inline.
-	// On Pascal (P40, cc 6.1) it is slower than DequantK + stockFA for single-
-	// token decode due to shared-memory pressure from the dual-stream loop.
-	// On Ampere+ the performance gap narrows. For PPL measurement
-	// (prefill-dominated) the decode throughput does not matter.
 	return true
 }
 

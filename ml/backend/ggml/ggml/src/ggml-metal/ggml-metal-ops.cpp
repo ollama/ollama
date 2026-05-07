@@ -4776,13 +4776,15 @@ int ggml_metal_op_tq_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
         /*.outlierPackedBytes=*/ outlier_packed_bytes,
     };
 
-    // Select pipeline by D. Supported: 64 (llama3.2:3b), 128 (llama3.1/qwen), 256 (gemma3).
-    GGML_ASSERT(D == 64 || D == 128 || D == 256);
+    // Select pipeline by D. Supported: 64 (llama3.2:3b), 128 (llama3.1/qwen), 256 (gemma3), 512 (gemma4 global).
+    GGML_ASSERT(D == 64 || D == 128 || D == 256 || D == 512);
     auto pipeline = v_packed
-        ? (D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d256(lib)
+        ? (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d512(lib)
+         : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d256(lib)
          : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d64(lib)
                     : ggml_metal_library_get_pipeline_tq_fattn_vec_packed(lib))
-        : (D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d256(lib)
+        : (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d512(lib)
+         : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d256(lib)
          : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d64(lib)
                     : ggml_metal_library_get_pipeline_tq_fattn_vec_f16(lib));
 

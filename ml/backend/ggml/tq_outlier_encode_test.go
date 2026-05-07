@@ -49,6 +49,10 @@ func TestOutlierEncodeDequantGPUCPUEquivalence(t *testing.T) {
 		{"d128_h4_tq3k", 128, 4, 3, 4, 32, turboquant.PresetTQ3K},
 		{"d128_h1_tq3k", 128, 1, 3, 4, 32, turboquant.PresetTQ3K},
 		{"d256_h1_tq3k", 256, 1, 3, 4, 32, turboquant.PresetTQ3K},
+		// D=512 regression: with 32 outliers across 512 channels, many indices
+		// land in 256–511 and would silently wrap to 0–255 under uint8_t storage.
+		// This case would have caught that bug (gemma4:31b global attention layers).
+		{"d512_h1_tq3k", 512, 1, 3, 4, 32, turboquant.PresetTQ3K},
 	}
 
 	for _, tc := range cases {
