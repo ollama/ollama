@@ -29,6 +29,7 @@ import (
 	"unicode"
 	"unsafe"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs"
 	fsggml "github.com/ollama/ollama/fs/ggml"
@@ -163,6 +164,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	blocks := int(meta.KV().BlockCount())
+	externalLibraryPath := envconfig.AllowExternalLibraryPath()
 
 	// create list of buffer types for the cpu
 	cpuDeviceBufferType := deviceBufferType{d: C.ggml_backend_dev_by_type(C.GGML_BACKEND_DEVICE_TYPE_CPU)}
@@ -197,10 +199,15 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 
 		btDeviceMemory[bt] = &requiredMemory.GPUs[i]
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
-		var props C.struct_ggml_backend_dev_props
-		C.ggml_backend_dev_get_props(d, &props)
-		requiredMemory.GPUs[i].ID = C.GoString(props.id)
-		requiredMemory.GPUs[i].Library = C.GoString(props.library)
+		if externalLibraryPath {
+			requiredMemory.GPUs[i].ID = strconv.Itoa(i)
+			requiredMemory.GPUs[i].Library = "SYCL"
+		} else {
+			var props C.struct_ggml_backend_dev_props
+			C.ggml_backend_dev_get_props(d, &props)
+			requiredMemory.GPUs[i].ID = C.GoString(props.id)
+			requiredMemory.GPUs[i].Library = C.GoString(props.library)
+		}
 		requiredMemory.GPUs[i].Weights = make([]uint64, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]uint64, blocks+1)
 	}
@@ -366,7 +373,12 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	var schedBufts []C.ggml_backend_buffer_type_t
 	for _, d := range append(gpus, append(accels, cpus...)...) {
 		b := backends[d]
-		bt := C.ggml_backend_get_default_buffer_type(b)
+		var bt C.ggml_backend_buffer_type_t
+		if externalLibraryPath && (C.ggml_backend_dev_type(d) == C.GGML_BACKEND_DEVICE_TYPE_GPU || C.ggml_backend_dev_type(d) == C.GGML_BACKEND_DEVICE_TYPE_IGPU) {
+			bt = C.ggml_backend_dev_buffer_type(d)
+		} else {
+			bt = C.ggml_backend_get_default_buffer_type(b)
+		}
 
 		// Always include CPU as a fallback but otherwise, just use the devices where we assigned layers
 		if !slices.Contains(cpuDeviceBufferType.bts, bt) {
@@ -701,7 +713,8 @@ func (b *Backend) CacheConfig() ml.CacheConfig {
 
 func (b *Backend) BackendDevices() []ml.DeviceInfo {
 	deviceInfos := []ml.DeviceInfo{}
-	for _, dev := range gpus {
+	externalLibraryPath := envconfig.AllowExternalLibraryPath()
+	for i, dev := range gpus {
 		// If we have a model loaded, and it's only loaded on a subset of the devices
 		// skip idle/unused devices to avoid initializing them and causing VRAM allocations
 		if b.allocMemory {
@@ -719,27 +732,37 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		}
 
 		info := ml.DeviceInfo{}
-		props := C.struct_ggml_backend_dev_props{}
-		C.ggml_backend_dev_get_props(dev, &props)
-		info.Name = C.GoString(props.name)
-		info.Description = C.GoString(props.description)
-		info.ID = C.GoString(props.id)
-		info.Library = C.GoString(props.library)
-		info.ComputeMajor = (int)(props.compute_major)
-		info.ComputeMinor = (int)(props.compute_minor)
-		info.DriverMajor = (int)(props.driver_major)
-		info.DriverMinor = (int)(props.driver_minor)
-		info.Integrated = props.integrated != 0
-		if props.library != nil {
+		if externalLibraryPath {
+			info.Name = C.GoString(C.ggml_backend_dev_name(dev))
+			info.Description = C.GoString(C.ggml_backend_dev_description(dev))
+			info.ID = strconv.Itoa(i)
+			info.Library = "SYCL"
+			info.ComputeMajor = -1
+			info.ComputeMinor = -1
+		} else {
+			props := C.struct_ggml_backend_dev_props{}
+			C.ggml_backend_dev_get_props(dev, &props)
+			info.Name = C.GoString(props.name)
+			info.Description = C.GoString(props.description)
+			info.ID = C.GoString(props.id)
 			info.Library = C.GoString(props.library)
-		}
-		if props.device_id != nil {
-			info.PCIID = C.GoString(props.device_id)
+			info.ComputeMajor = (int)(props.compute_major)
+			info.ComputeMinor = (int)(props.compute_minor)
+			info.DriverMajor = (int)(props.driver_major)
+			info.DriverMinor = (int)(props.driver_minor)
+			info.Integrated = props.integrated != 0
+			if props.library != nil {
+				info.Library = C.GoString(props.library)
+			}
+			if props.device_id != nil {
+				info.PCIID = C.GoString(props.device_id)
+			}
 		}
 		info.LibraryPath = ggml.LibPaths()
-		C.ggml_backend_dev_memory(dev, &props.memory_free, &props.memory_total)
-		info.TotalMemory = (uint64)(props.memory_total)
-		info.FreeMemory = (uint64)(props.memory_free)
+		var free, total C.size_t
+		C.ggml_backend_dev_memory(dev, &free, &total)
+		info.TotalMemory = uint64(total)
+		info.FreeMemory = uint64(free)
 
 		deviceInfos = append(deviceInfos, info)
 	}
