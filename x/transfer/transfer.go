@@ -7,20 +7,24 @@
 // TODO (jmorganca): Integrate into server/download.go and server/upload.go when stable.
 //
 // Design Philosophy:
-// This package is intentionally simpler than the main server's download/upload code.
-// Key simplifications for many-small-blob workloads:
+// This package is intentionally simpler than the main server's download/upload
+// code. Key simplifications for many-small-blob workloads:
 //
-//   - Whole-blob transfers: No part-based chunking. Each blob downloads/uploads as one unit.
-//   - Resume for large blobs: Blobs >= 64MB preserve partial .tmp files on failure
-//     and use HTTP Range requests on retry. Small blobs restart from scratch.
-//   - Inline hashing: SHA256 computed during streaming, not asynchronously after parts complete.
-//   - Stall and speed detection: Cancels on no data (stall) or speed below 10% of median.
+//   - Whole-blob downloads: Each blob downloads as one unit, with HTTP Range
+//     resume for blobs >= 64MB on retry; small blobs restart from scratch.
+//   - Whole-blob uploads by default: A single PUT per blob. When the server
+//     returns a direct-upload URL the body goes straight to the storage
+//     backend; otherwise the body goes to the registry in one shot.
+//   - Multi-part upload fallback: If the server requires it, blobs are split
+//     into parts and sent via PATCH with a finalize PUT carrying a composite
+//     etag. This is a server-side compatibility path, not the fast path.
+//   - Inline hashing: digests computed during streaming.
+//   - Stall and speed detection (downloads): cancels on no data (stall) or
+//     speed below 10% of median.
 //
-// For large models (multi-GB), use the server's download/upload code which has:
-//   - Part-based transfers with 64MB chunks
-//   - Resumable downloads with JSON state files
-//   - Async streamHasher that hashes from OS page cache as parts complete
-//   - Speed tracking with rolling median to detect and restart slow parts
+// For large models (multi-GB), use the server's download/upload code which
+// has resumable downloads with JSON state files, async hashing from OS page
+// cache, and per-part speed tracking with rolling median.
 package transfer
 
 import (
