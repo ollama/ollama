@@ -148,7 +148,8 @@ function(ollama_install_windows_runtime_dlls dest)
         list(APPEND _runtime_dir_patterns
             "${_vc_tools_redist_dir}/x64/Microsoft.VC*.CRT"
             "${_vc_tools_redist_dir}/x64/Microsoft.VC*.OpenMP*"
-            "${_vc_tools_redist_dir}/x64/Microsoft.VC*.OPENMP*")
+            "${_vc_tools_redist_dir}/x64/Microsoft.VC*.OPENMP*"
+            "${_vc_tools_redist_dir}/debug_nonredist/x64/Microsoft.VC*.OpenMP.LLVM")
     endif()
 
     if(MSVC)
@@ -162,7 +163,8 @@ function(ollama_install_windows_runtime_dlls dest)
         list(APPEND _runtime_dir_patterns
             "${_msvc_ver_dir}/../../../Redist/MSVC/*/x64/Microsoft.VC*.CRT"
             "${_msvc_ver_dir}/../../../Redist/MSVC/*/x64/Microsoft.VC*.OpenMP*"
-            "${_msvc_ver_dir}/../../../Redist/MSVC/*/x64/Microsoft.VC*.OPENMP*")
+            "${_msvc_ver_dir}/../../../Redist/MSVC/*/x64/Microsoft.VC*.OPENMP*"
+            "${_msvc_ver_dir}/../../../Redist/MSVC/*/debug_nonredist/x64/Microsoft.VC*.OpenMP.LLVM")
     endif()
 
     set(_runtime_dll_dirs)
