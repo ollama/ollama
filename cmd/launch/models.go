@@ -188,7 +188,7 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 		return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
 	}
 
-	user, err := client.Whoami(ctx)
+	user, err := whoamiWithTimeout(ctx, client)
 	if err == nil && user != nil && user.Name != "" {
 		return nil
 	}
@@ -243,7 +243,7 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 			fmt.Fprintf(os.Stderr, "\r\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[frame%len(spinnerFrames)])
 
 			if frame%10 == 0 {
-				u, err := client.Whoami(ctx)
+				u, err := whoamiWithTimeout(ctx, client)
 				if err == nil && u != nil && u.Name != "" {
 					fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1msigned in:\033[0m %s\n", u.Name)
 					return nil
@@ -348,9 +348,11 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 	var hasLocalModel, hasCloudModel bool
 
 	recDesc := make(map[string]string)
+	recByName := make(map[string]ModelItem)
 	for _, rec := range recommendations {
 		recommended[rec.Name] = true
 		recDesc[rec.Name] = rec.Description
+		recByName[rec.Name] = rec
 	}
 
 	for _, m := range existing {
@@ -364,6 +366,9 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 		displayName := strings.TrimSuffix(m.Name, ":latest")
 		existingModels[displayName] = true
 		item := ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}
+		if rec, ok := recByName[displayName]; ok {
+			item = copyModelRecommendationFields(displayName, rec)
+		}
 		items = append(items, item)
 	}
 
@@ -470,6 +475,12 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 	}
 
 	return items, preChecked, existingModels, cloudModels
+}
+
+func copyModelRecommendationFields(name string, rec ModelItem) ModelItem {
+	rec.Name = name
+	rec.Recommended = true
+	return rec
 }
 
 // isCloudModelName reports whether the model name has an explicit cloud source.

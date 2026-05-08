@@ -61,28 +61,20 @@ import (
 
 func init() {
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
-	launch.DefaultSingleSelector = func(title string, items []launch.ModelItem, current string) (string, error) {
-		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-			return "", fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
-		}
-		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
-		result, err := tui.SelectSingle(title, tuiItems, current)
-		if errors.Is(err, tui.ErrCancelled) {
-			return "", launch.ErrCancelled
-		}
-		return result, err
+	launch.DefaultSingleSelector = func(title string, items []launch.SelectionItem, current string) (string, error) {
+		return runTUISingleSelector(title, items, current, nil)
 	}
 
-	launch.DefaultMultiSelector = func(title string, items []launch.ModelItem, preChecked []string) ([]string, error) {
-		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-			return nil, fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
-		}
-		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
-		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
-		if errors.Is(err, tui.ErrCancelled) {
-			return nil, launch.ErrCancelled
-		}
-		return result, err
+	launch.DefaultSingleSelectorWithUpdates = func(title string, items []launch.SelectionItem, current string, updates <-chan []launch.SelectionItem) (string, error) {
+		return runTUISingleSelector(title, items, current, updates)
+	}
+
+	launch.DefaultMultiSelector = func(title string, items []launch.SelectionItem, preChecked []string) ([]string, error) {
+		return runTUIMultiSelector(title, items, preChecked, nil)
+	}
+
+	launch.DefaultMultiSelectorWithUpdates = func(title string, items []launch.SelectionItem, preChecked []string, updates <-chan []launch.SelectionItem) ([]string, error) {
+		return runTUIMultiSelector(title, items, preChecked, updates)
 	}
 
 	launch.DefaultSignIn = func(modelName, signInURL string) (string, error) {
@@ -93,7 +85,53 @@ func init() {
 		return userName, err
 	}
 
+	launch.DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
+		plan, err := tui.RunUpgrade(modelName, requiredPlan)
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", launch.ErrCancelled
+		}
+		return plan, err
+	}
+
 	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
+}
+
+func runTUISingleSelector(title string, items []launch.SelectionItem, current string, updates <-chan []launch.SelectionItem) (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return "", fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+	}
+	tuiItems := tui.ReorderItems(tui.ConvertItems(items))
+	result, err := tui.SelectSingleWithUpdates(title, tuiItems, current, convertSelectionItemUpdates(updates))
+	if errors.Is(err, tui.ErrCancelled) {
+		return "", launch.ErrCancelled
+	}
+	return result, err
+}
+
+func runTUIMultiSelector(title string, items []launch.SelectionItem, preChecked []string, updates <-chan []launch.SelectionItem) ([]string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return nil, fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+	}
+	tuiItems := tui.ReorderItems(tui.ConvertItems(items))
+	result, err := tui.SelectMultipleWithUpdates(title, tuiItems, preChecked, convertSelectionItemUpdates(updates))
+	if errors.Is(err, tui.ErrCancelled) {
+		return nil, launch.ErrCancelled
+	}
+	return result, err
+}
+
+func convertSelectionItemUpdates(updates <-chan []launch.SelectionItem) <-chan []tui.SelectItem {
+	if updates == nil {
+		return nil
+	}
+	out := make(chan []tui.SelectItem, 1)
+	go func() {
+		defer close(out)
+		for items := range updates {
+			out <- tui.ReorderItems(tui.ConvertItems(items))
+		}
+	}()
+	return out
 }
 
 const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
@@ -2090,12 +2128,15 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		return
 	}
 
+	accountPrefetch := launch.StartAccountStatePrefetch(cmd.Context())
 	deps := launcherDeps{
-		buildState:        launch.BuildLauncherState,
-		runMenu:           tui.RunMenu,
-		resolveRunModel:   launch.ResolveRunModel,
-		launchIntegration: launch.LaunchIntegration,
-		runModel:          launchInteractiveModel,
+		buildState:          launch.BuildLauncherState,
+		runMenu:             tui.RunMenu,
+		resolveRunModel:     launch.ResolveRunModel,
+		launchIntegration:   launch.LaunchIntegration,
+		runModel:            launchInteractiveModel,
+		accountState:        accountPrefetch.StateIfReady,
+		accountStateUpdates: accountPrefetch.StateUpdates,
 	}
 
 	for {
@@ -2110,17 +2151,22 @@ func runInteractiveTUI(cmd *cobra.Command) {
 }
 
 type launcherDeps struct {
-	buildState        func(context.Context) (*launch.LauncherState, error)
-	runMenu           func(*launch.LauncherState) (tui.TUIAction, error)
-	resolveRunModel   func(context.Context, launch.RunModelRequest) (string, error)
-	launchIntegration func(context.Context, launch.IntegrationLaunchRequest) error
-	runModel          func(*cobra.Command, string) error
+	buildState          func(context.Context) (*launch.LauncherState, error)
+	runMenu             func(*launch.LauncherState) (tui.TUIAction, error)
+	resolveRunModel     func(context.Context, launch.RunModelRequest) (string, error)
+	launchIntegration   func(context.Context, launch.IntegrationLaunchRequest) error
+	runModel            func(*cobra.Command, string) error
+	accountState        func() *launch.AccountState
+	accountStateUpdates func(context.Context) <-chan *launch.AccountState
 }
 
 func runInteractiveTUIStep(cmd *cobra.Command, deps launcherDeps) (bool, error) {
 	state, err := deps.buildState(cmd.Context())
 	if err != nil {
 		return false, fmt.Errorf("build launcher state: %w", err)
+	}
+	if state != nil && deps.accountState != nil {
+		state.AccountState = deps.accountState()
 	}
 
 	action, err := deps.runMenu(state)
@@ -2142,7 +2188,13 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 		return false, nil
 	case tui.TUIActionRunModel:
 		saveLauncherSelection(action)
-		modelName, err := deps.resolveRunModel(cmd.Context(), action.RunModelRequest())
+		req := action.RunModelRequest()
+		if deps.accountState != nil {
+			req.AccountState = deps.accountState()
+			req.AccountStateProvider = deps.accountState
+		}
+		req.AccountStateUpdates = deps.accountStateUpdates
+		modelName, err := deps.resolveRunModel(cmd.Context(), req)
 		if errors.Is(err, launch.ErrCancelled) {
 			return true, nil
 		}
@@ -2155,7 +2207,13 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 		return true, nil
 	case tui.TUIActionLaunchIntegration:
 		saveLauncherSelection(action)
-		err := deps.launchIntegration(cmd.Context(), action.IntegrationLaunchRequest())
+		req := action.IntegrationLaunchRequest()
+		if deps.accountState != nil {
+			req.AccountState = deps.accountState()
+			req.AccountStateProvider = deps.accountState
+		}
+		req.AccountStateUpdates = deps.accountStateUpdates
+		err := deps.launchIntegration(cmd.Context(), req)
 		if errors.Is(err, launch.ErrCancelled) {
 			return true, nil
 		}
@@ -2173,7 +2231,7 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 
 func launcherActionExitsLoop(integration string) bool {
 	switch integration {
-	case "claude-desktop", "vscode":
+	case "vscode":
 		return true
 	default:
 		return false
