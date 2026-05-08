@@ -20,6 +20,8 @@ import { useSelectedModel } from "@/hooks/useSelectedModel";
 import {
   useHasVisionCapability,
   useHasToolsCapability,
+  useCanToggleThinking,
+  useHasThinkingLevels,
 } from "@/hooks/useModelCapabilities";
 import { useUser } from "@/hooks/useUser";
 import { DisplayLogin } from "@/components/DisplayLogin";
@@ -153,6 +155,10 @@ function ChatForm({
   const { cloudDisabled } = useCloudStatus();
 
   const supportsWebSearch = useHasToolsCapability(selectedModel?.model);
+  const supportsThinkToggling = useCanToggleThinking(selectedModel?.model);
+  const modelSupportsThinkingLevels = useHasThinkingLevels(
+    selectedModel?.model,
+  );
   // Use per-chat thinking level instead of global
   const thinkLevel: ThinkingLevel =
     settingsThinkLevel === "none" || !settingsThinkLevel
@@ -161,12 +167,6 @@ function ChatForm({
   const setThinkingLevel = (newLevel: ThinkingLevel) => {
     setSettings({ ThinkLevel: newLevel });
   };
-
-  const modelSupportsThinkingLevels =
-    selectedModel?.model.toLowerCase().startsWith("gpt-oss") || false;
-  const supportsThinkToggling =
-    selectedModel?.model.toLowerCase().startsWith("deepseek-v3.1") || false;
-
   useEffect(() => {
     if (supportsThinkToggling && thinkEnabled && webSearchEnabled) {
       setSettings({ WebSearchEnabled: false });
@@ -228,7 +228,7 @@ function ChatForm({
         }));
       }
     },
-    [],
+    [modelSupportsThinkingLevels],
   );
 
   useEffect(() => {
@@ -466,7 +466,13 @@ function ChatForm({
       window.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("paste", handlePaste);
     };
-  }, [isStreaming, editingMessage, onCancelEdit, navigateToNextElement]);
+  }, [
+    isStreaming,
+    editingMessage,
+    onCancelEdit,
+    navigateToNextElement,
+    modelSupportsThinkingLevels,
+  ]);
 
   const handleSubmit = async () => {
     if (!message.content.trim() || isStreaming || isDownloading) return;
@@ -492,13 +498,13 @@ function ChatForm({
 
     const useWebSearch =
       supportsWebSearch && webSearchEnabled && !cloudDisabled;
-    const useThink = !thinkEnabled
-      ? false
-      : modelSupportsThinkingLevels
-        ? thinkLevel
-        : supportsThinkToggling
-          ? thinkEnabled
-          : undefined;
+    const useThink = supportsThinkToggling
+      ? thinkEnabled
+        ? modelSupportsThinkingLevels
+          ? thinkLevel
+          : true
+        : false
+      : undefined;
 
     if (onSubmit) {
       onSubmit(message.content, {

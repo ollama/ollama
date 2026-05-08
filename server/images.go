@@ -146,17 +146,21 @@ func (m *Model) Capabilities() []model.Capability {
 		capabilities = append(capabilities, model.CapabilityVision)
 	}
 
-	// Skip the thinking check if it's already set
-	if slices.Contains(capabilities, "thinking") {
-		return capabilities
-	}
-
 	// Check for thinking capability
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
 	hasTags := openingTag != "" && closingTag != ""
 	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
 	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
-		capabilities = append(capabilities, model.CapabilityThinking)
+		if !slices.Contains(capabilities, model.CapabilityThinking) {
+			capabilities = append(capabilities, model.CapabilityThinking)
+		}
+		canToggleThinking := hasTags || isGptoss || (builtinParser != nil && builtinParser.CanToggleThinking())
+		if !slices.Contains(capabilities, model.CapabilityThinkingToggle) && canToggleThinking {
+			capabilities = append(capabilities, model.CapabilityThinkingToggle)
+		}
+		if !slices.Contains(capabilities, model.CapabilityThinkingLevels) && isGptoss {
+			capabilities = append(capabilities, model.CapabilityThinkingLevels)
+		}
 	}
 
 	// Temporary workaround — suppress vision/audio for gemma4 MLX models

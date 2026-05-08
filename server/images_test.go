@@ -90,6 +90,11 @@ func TestModelCapabilities(t *testing.T) {
 		t.Fatalf("Failed to parse template: %v", err)
 	}
 
+	thinkingTemplate, err := template.Parse("{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ end }}{{ .prompt }}")
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
 	testModels := []struct {
 		name         string
 		model        Model
@@ -161,6 +166,39 @@ func TestModelCapabilities(t *testing.T) {
 				Template:  chatTemplate,
 			},
 			expectedCaps: []model.Capability{model.CapabilityEmbedding},
+		},
+		{
+			name: "parser thinking support with toggle support",
+			model: Model{
+				ModelPath: completionModelPath,
+				Template:  chatTemplate,
+				Config: model.ConfigV2{
+					Parser: "gemma4",
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking, model.CapabilityThinkingToggle},
+		},
+		{
+			name: "parser thinking support without toggle support",
+			model: Model{
+				ModelPath: completionModelPath,
+				Template:  chatTemplate,
+				Config: model.ConfigV2{
+					Parser: "qwen3-vl-thinking",
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking},
+		},
+		{
+			name: "config thinking support with template toggle support",
+			model: Model{
+				ModelPath: completionModelPath,
+				Template:  thinkingTemplate,
+				Config: model.ConfigV2{
+					Capabilities: []string{"thinking"},
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityThinkingToggle},
 		},
 		{
 			name: "gemma4 small safetensors suppresses vision and audio",

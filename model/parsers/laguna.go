@@ -45,6 +45,10 @@ func (p *LagunaParser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *LagunaParser) CanToggleThinking() bool {
+	return true
+}
+
 func (p *LagunaParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
