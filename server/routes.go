@@ -102,11 +102,11 @@ var useClient2 = experimentEnabled("client2")
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr                 net.Addr
-	sched                *Scheduler
-	defaultNumCtx        int
-	requestLogger        *inferenceRequestLogger
-	modelRecommendations *modelRecommendationsCache
+	addr          net.Addr
+	sched         *Scheduler
+	defaultNumCtx int
+	requestLogger *inferenceRequestLogger
+	modelCaches   *modelCaches
 	metrics       *telemetry.Metrics
 }
 
@@ -1170,13 +1170,33 @@ func (s *Server) ShowHandler(c *gin.Context) {
 
 	if modelRef.Source == modelSourceCloud {
 		req.Model = modelRef.Base
+		if modelShowCacheable(req) && s.modelCaches != nil && s.modelCaches.show != nil {
+			if disabled, _ := internalcloud.Status(); disabled {
+				c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(cloudErrRemoteModelDetailsUnavailable)})
+				return
+			}
+
+			ctx := context.Background()
+			if c.Request != nil {
+				ctx = c.Request.Context()
+			}
+			if resp, ok := s.modelCaches.show.GetCloudSWR(ctx, req); ok {
+				c.JSON(http.StatusOK, resp)
+				return
+			}
+		}
 		proxyCloudJSONRequest(c, req, cloudErrRemoteModelDetailsUnavailable)
 		return
 	}
 
 	req.Model = modelRef.Base
 
-	resp, err := GetModelInfo(req)
+	var resp *api.ShowResponse
+	if modelShowCacheable(req) && s.modelCaches != nil && s.modelCaches.show != nil {
+		resp, err = s.modelCaches.show.GetLocal(req)
+	} else {
+		resp, err = GetModelInfo(req)
+	}
 	if err != nil {
 		var statusErr api.StatusError
 		switch {
@@ -1801,12 +1821,12 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 func (s *Server) ModelRecommendationsExperimentalHandler(c *gin.Context) {
 	recs := defaultModelRecommendations
 	source := "default"
-	if s.modelRecommendations != nil {
+	if s.modelCaches != nil && s.modelCaches.recommendations != nil {
 		ctx := context.Background()
 		if c.Request != nil {
 			ctx = c.Request.Context()
 		}
-		recs = s.modelRecommendations.GetSWR(ctx)
+		recs = s.modelCaches.recommendations.GetSWR(ctx)
 		source = "cache"
 	}
 
@@ -1850,12 +1870,9 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
-	// TODO(parthsareen): If we add more runtime caches, prefer introducing a
-	// small cache manager owned by Server (for shared start/stop/health wiring)
-	// instead of adding one top-level field per cache here in Serve.
 	s := &Server{
-		addr:                 ln.Addr(),
-		modelRecommendations: newModelRecommendationsCache(),
+		addr:        ln.Addr(),
+		modelCaches: newModelCaches(),
 	}
 	if err := s.initRequestLogging(); err != nil {
 		return err
@@ -1881,7 +1898,7 @@ func Serve(ln net.Listener) error {
 	schedCtx, schedDone := context.WithCancel(ctx)
 	sched := InitScheduler(schedCtx)
 	s.sched = sched
-	s.modelRecommendations.Start(ctx)
+	s.modelCaches.Start(ctx)
 
 	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
 	srvr := &http.Server{
@@ -2066,11 +2083,30 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 	client := api.NewClient(u, http.DefaultClient)
 	user, err := client.Whoami(c)
 	if err != nil {
+		var authErr api.AuthorizationError
+		if errors.As(err, &authErr) && authErr.StatusCode == http.StatusUnauthorized {
+			// Preserve an actionable sign-in response for launch; other failures
+			// below mean account or plan verification is temporarily unavailable.
+			sURL := authErr.SigninURL
+			if sURL == "" {
+				var sErr error
+				sURL, sErr = signinURL()
+				if sErr != nil {
+					slog.Error(sErr.Error())
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
+					return
+				}
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": sURL})
+			return
+		}
+
 		slog.Error(err.Error())
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account unavailable"})
+		return
 	}
 
-	// user isn't signed in
-	if user != nil && user.Name == "" {
+	if user == nil || user.Name == "" {
 		sURL, sErr := signinURL()
 		if sErr != nil {
 			slog.Error(sErr.Error())
@@ -2082,6 +2118,10 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 		return
 	}
 
+	if strings.TrimSpace(user.Plan) == "" {
+		slog.Warn("account plan was not set; defaulting to free")
+		user.Plan = "free"
+	}
 	c.JSON(http.StatusOK, user)
 }
 

@@ -272,7 +272,7 @@ func (p *Pi) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := fileutil.WriteWithBackup(configPath, configData); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, configData, "pi"); err != nil {
 		return err
 	}
 
@@ -290,7 +290,7 @@ func (p *Pi) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(settingsPath, settingsData)
+	return fileutil.WriteWithBackup(settingsPath, settingsData, "pi")
 }
 
 func (p *Pi) Models() []string {

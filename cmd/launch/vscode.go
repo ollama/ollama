@@ -273,7 +273,7 @@ func (v *VSCode) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := fileutil.WriteWithBackup(clmPath, data); err != nil {
+	if err := fileutil.WriteWithBackup(clmPath, data, "vscode"); err != nil {
 		return err
 	}
 
@@ -350,7 +350,7 @@ func (v *VSCode) updateSettings() {
 	if err != nil {
 		return
 	}
-	_ = fileutil.WriteWithBackup(settingsPath, updated)
+	_ = fileutil.WriteWithBackup(settingsPath, updated, "vscode")
 }
 
 func (v *VSCode) statePath() string {
