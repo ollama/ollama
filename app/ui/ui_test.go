@@ -661,6 +661,56 @@ func TestWebSearchToolRegistration(t *testing.T) {
 	}
 }
 
+func TestResolveChatThinkValue(t *testing.T) {
+	tests := []struct {
+		name                  string
+		settings              store.Settings
+		requestThink          any
+		modelSupportsThinking bool
+		want                  any
+	}{
+		{
+			name:                  "global setting off overrides model thinking default",
+			settings:              store.Settings{ThinkEnabled: false},
+			modelSupportsThinking: true,
+			want:                  false,
+		},
+		{
+			name:         "global setting off overrides explicit request",
+			settings:     store.Settings{ThinkEnabled: false},
+			requestThink: true,
+			want:         false,
+		},
+		{
+			name:                  "global setting on uses explicit request",
+			settings:              store.Settings{ThinkEnabled: true},
+			requestThink:          "high",
+			modelSupportsThinking: true,
+			want:                  "high",
+		},
+		{
+			name:                  "global setting on defaults to model thinking capability",
+			settings:              store.Settings{ThinkEnabled: true},
+			modelSupportsThinking: true,
+			want:                  true,
+		},
+		{
+			name:                  "global setting on defaults to false without model thinking capability",
+			settings:              store.Settings{ThinkEnabled: true},
+			modelSupportsThinking: false,
+			want:                  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveChatThinkValue(tt.settings, tt.requestThink, tt.modelSupportsThinking); got != tt.want {
+				t.Errorf("resolveChatThinkValue() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSettingsToggleAutoUpdateOff_CancelsDownload(t *testing.T) {
 	testStore := &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),

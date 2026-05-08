@@ -816,14 +816,15 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	think := slices.Contains(details.Capabilities, model.CapabilityThinking)
-
-	var thinkValue any
-
-	if req.Think != nil {
-		thinkValue = req.Think
-	} else {
-		thinkValue = think
+	settings, err := s.Store.Settings()
+	if err != nil {
+		errorEvent := s.getError(err)
+		json.NewEncoder(w).Encode(errorEvent)
+		flusher.Flush()
+		return fmt.Errorf("failed to get settings: %w", err)
 	}
+
+	thinkValue := resolveChatThinkValue(settings, req.Think, think)
 
 	// Check if the last user message has attachments
 	// TODO (parthsareen): this logic will change with directory drag and drop
@@ -1687,6 +1688,16 @@ func ptr[T any](v T) *T { return &v }
 // Browser tools simulate a full browser environment, allowing for actions like searching, opening, and interacting with web pages (e.g., "browser_search", "browser_open", "browser_find"). Currently only gpt-oss models support browser tools.
 func supportsBrowserTools(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "gpt-oss")
+}
+
+func resolveChatThinkValue(settings store.Settings, requestThink any, modelSupportsThinking bool) any {
+	if !settings.ThinkEnabled {
+		return false
+	}
+	if requestThink != nil {
+		return requestThink
+	}
+	return modelSupportsThinking
 }
 
 // buildChatRequest converts store.Chat to api.ChatRequest

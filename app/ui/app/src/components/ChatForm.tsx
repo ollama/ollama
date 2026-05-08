@@ -20,6 +20,7 @@ import { useSelectedModel } from "@/hooks/useSelectedModel";
 import {
   useHasVisionCapability,
   useHasToolsCapability,
+  useHasThinkingCapability,
   useCanToggleThinking,
   useHasThinkingLevels,
 } from "@/hooks/useModelCapabilities";
@@ -155,6 +156,7 @@ function ChatForm({
   const { cloudDisabled } = useCloudStatus();
 
   const supportsWebSearch = useHasToolsCapability(selectedModel?.model);
+  const supportsThinking = useHasThinkingCapability(selectedModel?.model);
   const supportsThinkToggling = useCanToggleThinking(selectedModel?.model);
   const modelSupportsThinkingLevels = useHasThinkingLevels(
     selectedModel?.model,
@@ -498,13 +500,15 @@ function ChatForm({
 
     const useWebSearch =
       supportsWebSearch && webSearchEnabled && !cloudDisabled;
-    const useThink = supportsThinkToggling
-      ? thinkEnabled
+    const useThink = thinkEnabled
+      ? supportsThinkToggling
         ? modelSupportsThinkingLevels
           ? thinkLevel
           : true
-        : false
-      : undefined;
+        : undefined
+      : supportsThinking
+        ? false
+        : undefined;
 
     if (onSubmit) {
       onSubmit(message.content, {
