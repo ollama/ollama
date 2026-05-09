@@ -11257,7 +11257,7 @@ kernel void kernel_tq_fattn_vec_f16(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -11571,7 +11571,7 @@ kernel void kernel_tq_fattn_vec_f16_d64(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -11871,7 +11871,7 @@ kernel void kernel_tq_fattn_vec_f16_d256(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -12310,7 +12310,7 @@ kernel void kernel_tq_fattn_vec_packed(
                     sum = args.logit_softcap * tanh(sum);
                 }
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
                 if (!in_range) sum = -FLT_MAX/2.0f;
 
@@ -12721,7 +12721,7 @@ kernel void kernel_tq_fattn_vec_packed_d64(
                     sum = args.logit_softcap * tanh(sum);
                 }
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
                 if (!in_range) sum = -FLT_MAX/2.0f;
 
@@ -13134,7 +13134,7 @@ kernel void kernel_tq_fattn_vec_packed_d256(
                     sum = args.logit_softcap * tanh(sum);
                 }
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
                 if (!in_range) sum = -FLT_MAX/2.0f;
 
@@ -13443,7 +13443,7 @@ kernel void kernel_tq_fattn_vec_f16_d512(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -13881,7 +13881,7 @@ kernel void kernel_tq_fattn_vec_packed_d512(
                     sum = args.logit_softcap * tanh(sum);
                 }
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
                 if (!in_range) sum = -FLT_MAX/2.0f;
 
@@ -14330,7 +14330,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -14734,7 +14734,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d64(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -15135,7 +15135,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d256(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -15554,7 +15554,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d512(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -15973,7 +15973,7 @@ kernel void kernel_tq_fattn_vec_packed_outlier(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -16387,7 +16387,7 @@ kernel void kernel_tq_fattn_vec_packed_outlier_d64(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -16797,7 +16797,7 @@ kernel void kernel_tq_fattn_vec_packed_outlier_d256(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
@@ -17225,7 +17225,7 @@ kernel void kernel_tq_fattn_vec_packed_outlier_d512(
                 }
 
                 if (maskh && (args.ncols == 1 || ic0 + j < args.nTokensQ)) {
-                    sum += float(maskh[(long)j * args.ne31 + i_KQ]);
+                    sum += float(maskh[(long)j * args.ne31 + cell_rel]);
                 }
 
                 if (!in_range) sum = -FLT_MAX/2.0f;
