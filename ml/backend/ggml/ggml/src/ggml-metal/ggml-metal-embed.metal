@@ -14194,6 +14194,7 @@ kernel void kernel_tq_fattn_vec_f16(
     // KV loop: process nthreads=128 cells per outer iteration.
     for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
 
+        float KQ_reg[2] = { 0.0f, 0.0f };
         float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
 
         // Each warp (sgitg=0..3) computes nthreads_KQ=8 cells.
@@ -14275,6 +14276,7 @@ kernel void kernel_tq_fattn_vec_f16(
                 KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);  // FATTN_KQ_MAX_OFFSET = ln(2)
 
                 if (tid_kq == (uint)i_KQ_0) {
+                    KQ_reg[j] = sum;
                     KQ_tg[j * nthreads + tid] = sum;
                 }
             }
@@ -14287,8 +14289,7 @@ kernel void kernel_tq_fattn_vec_f16(
             const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
             KQ_max[j] = KQ_max_new[j];
 
-            const float kq_val = KQ_tg[j * nthreads + tid];
-            const float kq_exp = exp(kq_val - KQ_max[j]);
+            const float kq_exp = exp(KQ_reg[j] - KQ_max[j]);
             KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
             KQ_tg[j * nthreads + tid] = kq_exp;
 
@@ -14549,6 +14550,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier(
 
     for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
 
+        float KQ_reg[2] = { 0.0f, 0.0f };
         float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
 
         for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
@@ -14719,6 +14721,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier(
                 KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);
 
                 if (tid_kq == (uint)i_KQ_0) {
+                    KQ_reg[j] = sum;
                     KQ_tg[j * nthreads + tid] = sum;
                 }
             }
@@ -14730,8 +14733,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier(
             const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
             KQ_max[j] = KQ_max_new[j];
 
-            const float kq_val = KQ_tg[j * nthreads + tid];
-            const float kq_exp = exp(kq_val - KQ_max[j]);
+            const float kq_exp = exp(KQ_reg[j] - KQ_max[j]);
             KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
             KQ_tg[j * nthreads + tid] = kq_exp;
 
@@ -14973,6 +14975,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d64(
 
     for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
 
+        float KQ_reg[2] = { 0.0f, 0.0f };
         float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
 
         for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
@@ -15123,6 +15126,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d64(
                 KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);
 
                 if (tid_kq == (uint)i_KQ_0) {
+                    KQ_reg[j] = sum;
                     KQ_tg[j * nthreads + tid] = sum;
                 }
             }
@@ -15134,8 +15138,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d64(
             const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
             KQ_max[j] = KQ_max_new[j];
 
-            const float kq_val = KQ_tg[j * nthreads + tid];
-            const float kq_exp = exp(kq_val - KQ_max[j]);
+            const float kq_exp = exp(KQ_reg[j] - KQ_max[j]);
             KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
             KQ_tg[j * nthreads + tid] = kq_exp;
 
@@ -15374,6 +15377,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d256(
 
     for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
 
+        float KQ_reg[2] = { 0.0f, 0.0f };
         float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
 
         for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
@@ -15524,6 +15528,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d256(
                 KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);
 
                 if (tid_kq == (uint)i_KQ_0) {
+                    KQ_reg[j] = sum;
                     KQ_tg[j * nthreads + tid] = sum;
                 }
             }
@@ -15535,8 +15540,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d256(
             const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
             KQ_max[j] = KQ_max_new[j];
 
-            const float kq_val = KQ_tg[j * nthreads + tid];
-            const float kq_exp = exp(kq_val - KQ_max[j]);
+            const float kq_exp = exp(KQ_reg[j] - KQ_max[j]);
             KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
             KQ_tg[j * nthreads + tid] = kq_exp;
 
@@ -15793,6 +15797,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d512(
 
     for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
 
+        float KQ_reg[2] = { 0.0f, 0.0f };
         float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
 
         for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
@@ -15943,6 +15948,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d512(
                 KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);
 
                 if (tid_kq == (uint)i_KQ_0) {
+                    KQ_reg[j] = sum;
                     KQ_tg[j * nthreads + tid] = sum;
                 }
             }
@@ -15954,8 +15960,7 @@ kernel void kernel_tq_fattn_vec_f16_outlier_d512(
             const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
             KQ_max[j] = KQ_max_new[j];
 
-            const float kq_val = KQ_tg[j * nthreads + tid];
-            const float kq_exp = exp(kq_val - KQ_max[j]);
+            const float kq_exp = exp(KQ_reg[j] - KQ_max[j]);
             KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
             KQ_tg[j * nthreads + tid] = kq_exp;
 
@@ -16185,6 +16190,7 @@ kernel void kernel_tq_fattn_vec_f16_d64(
 
     for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
 
+        float KQ_reg[2] = { 0.0f, 0.0f };
         float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
 
         for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
@@ -16258,6 +16264,7 @@ kernel void kernel_tq_fattn_vec_f16_d64(
                 KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);
 
                 if (tid_kq == (uint)i_KQ_0) {
+                    KQ_reg[j] = sum;
                     KQ_tg[j * nthreads + tid] = sum;
                 }
             }
@@ -16269,8 +16276,7 @@ kernel void kernel_tq_fattn_vec_f16_d64(
             const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
             KQ_max[j] = KQ_max_new[j];
 
-            const float kq_val = KQ_tg[j * nthreads + tid];
-            const float kq_exp = exp(kq_val - KQ_max[j]);
+            const float kq_exp = exp(KQ_reg[j] - KQ_max[j]);
             KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
             KQ_tg[j * nthreads + tid] = kq_exp;
 
@@ -16486,6 +16492,7 @@ kernel void kernel_tq_fattn_vec_f16_d256(
 
     for (int k_VKQ_0 = 0; k_VKQ_0 < args.nCells; k_VKQ_0 += nthreads) {
 
+        float KQ_reg[2] = { 0.0f, 0.0f };
         float KQ_max_new[2] = { KQ_max[0], KQ_max[1] };
 
         for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; i_KQ_0++) {
@@ -16558,6 +16565,7 @@ kernel void kernel_tq_fattn_vec_f16_d256(
                 KQ_max_new[j] = max(KQ_max_new[j], sum + 0.6931f);
 
                 if (tid_kq == (uint)i_KQ_0) {
+                    KQ_reg[j] = sum;
                     KQ_tg[j * nthreads + tid] = sum;
                 }
             }
@@ -16569,8 +16577,7 @@ kernel void kernel_tq_fattn_vec_f16_d256(
             const float KQ_max_scale = exp(KQ_max[j] - KQ_max_new[j]);
             KQ_max[j] = KQ_max_new[j];
 
-            const float kq_val = KQ_tg[j * nthreads + tid];
-            const float kq_exp = exp(kq_val - KQ_max[j]);
+            const float kq_exp = exp(KQ_reg[j] - KQ_max[j]);
             KQ_sum[j] = KQ_sum[j] * KQ_max_scale + kq_exp;
             KQ_tg[j * nthreads + tid] = kq_exp;
 
