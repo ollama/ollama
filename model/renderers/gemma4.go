@@ -20,6 +20,10 @@ const (
 	g4Q = `<|"|>` // Gemma 4 string delimiter
 )
 
+func (r *Gemma4Renderer) LeadingBOS() string {
+	return "<bos>"
+}
+
 func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 	imageOffset := 0

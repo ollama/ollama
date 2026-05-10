@@ -156,6 +156,7 @@ type CompletionRequest struct {
 	Shift           bool
 	Truncate        bool
 	PreservedTokens []string // special tokens to render as text (not strip) during detokenization
+	LeadingBOS      string   // textual BOS emitted by Go rendering, if any
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool

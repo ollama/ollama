@@ -12,6 +12,10 @@ type GlmOcrRenderer struct {
 	useImgTags bool
 }
 
+func (r *GlmOcrRenderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *GlmOcrRenderer) renderContent(message api.Message, imageOffset int) (string, int) {
 	var sb strings.Builder
 	for range message.Images {

@@ -491,9 +491,7 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
-			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 &&
-				gpu.ComputeMajor >= 7 &&
-				!(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
+			cudaFlashAttentionSupported(gpu) ||
 			gpu.Library == "ROCm" ||
 			gpu.Library == "Vulkan"
 
@@ -502,6 +500,22 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 		}
 	}
 	return true
+}
+
+func cudaFlashAttentionSupported(gpu DeviceInfo) bool {
+	if gpu.Library != "CUDA" ||
+		gpu.ComputeMajor < 7 ||
+		(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2) {
+		return false
+	}
+
+	if gpu.DriverMajor == 0 {
+		slog.Warn("CUDA driver version unavailable; allowing flash attention based on compute capability",
+			"device", gpu.Description, "compute", gpu.Compute())
+		return true
+	}
+
+	return gpu.DriverMajor >= 7
 }
 
 type FlashAttentionType int32

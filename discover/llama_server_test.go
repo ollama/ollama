@@ -3,6 +3,8 @@ package discover
 import (
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/ollama/ollama/logutil"
@@ -32,6 +34,7 @@ func TestLlamaServerDiscovery(t *testing.T) {
 			library         string
 			totalMiB        uint64
 			compute         string
+			driver          string
 			gfxTarget       string
 			checkIntegrated bool
 			integrated      bool
@@ -54,6 +57,7 @@ Available devices:
 					name:     "NVIDIA GeForce RTX 4090",
 					library:  "CUDA",
 					totalMiB: 24564,
+					driver:   "12.0",
 				}},
 			},
 			{
@@ -248,6 +252,9 @@ Available devices:
 					if want.compute != "" && got.Compute() != want.compute {
 						t.Errorf("device %d compute = %q, want %q", i, got.Compute(), want.compute)
 					}
+					if want.driver != "" && got.Driver() != want.driver {
+						t.Errorf("device %d driver = %q, want %q", i, got.Driver(), want.driver)
+					}
 					if want.gfxTarget != "" && got.GFXTarget != want.gfxTarget {
 						t.Errorf("device %d gfx target = %q, want %q", i, got.GFXTarget, want.gfxTarget)
 					}
@@ -256,6 +263,23 @@ Available devices:
 					}
 				}
 			})
+		}
+	})
+
+	t.Run("cuda runtime version", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "libcudart.so.12.8.90"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		major, minor, ok := cudaRuntimeVersion([]string{dir})
+		if !ok || major != 12 || minor != 8 {
+			t.Fatalf("cudaRuntimeVersion = %d.%d, %v, want 12.8, true", major, minor, ok)
+		}
+
+		major, minor, ok = cudaRuntimeVersion([]string{filepath.Join(t.TempDir(), "cuda_v13")})
+		if !ok || major != 13 || minor != 0 {
+			t.Fatalf("cudaRuntimeVersion fallback = %d.%d, %v, want 13.0, true", major, minor, ok)
 		}
 	})
 }

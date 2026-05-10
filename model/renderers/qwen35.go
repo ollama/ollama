@@ -44,6 +44,10 @@ type Qwen35Renderer struct {
 	useImgTags              bool
 }
 
+func (r *Qwen35Renderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *Qwen35Renderer) renderContent(content api.Message, imageOffset int) (string, int) {
 	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
 	var subSb strings.Builder

@@ -256,6 +256,10 @@ var cudaArchsRegex = regexp.MustCompile(
 	`CUDA\s*:\s*ARCHS\s*=\s*([\d,]+)`,
 )
 
+var cudaRuntimeSORegex = regexp.MustCompile(`^libcudart\.so\.(\d+)(?:\.(\d+))?`)
+var cudaRuntimeDLLRegex = regexp.MustCompile(`^cudart64_(\d{2})(\d)\.dll$`)
+var cudaRuntimeDirRegex = regexp.MustCompile(`^cuda_v(\d+)$`)
+
 // parseLlamaServerDevices parses the combined output of llama-server discovery.
 // It extracts device info, ROCm gfx targets, CUDA compute capabilities, and
 // CUDA compiled architecture lists.
@@ -297,6 +301,7 @@ func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 	for _, arch := range cudaArchs {
 		cudaArchSet[strings.TrimSpace(arch)] = true
 	}
+	cudaRuntimeMajor, cudaRuntimeMinor, hasCUDARuntime := cudaRuntimeVersion(libDirs)
 
 	// Parse stdout device lines
 	var devices []ml.DeviceInfo
@@ -363,12 +368,65 @@ func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 			GFXTarget:    gfxByIndex[deviceIndex],
 			Integrated:   isIntegratedLlamaServerDevice(library, deviceIndex, integratedByIndex),
 		}
+		if library == "CUDA" && hasCUDARuntime {
+			dev.DriverMajor = cudaRuntimeMajor
+			dev.DriverMinor = cudaRuntimeMinor
+		}
 
 		devices = append(devices, dev)
 		deviceIndex++
 	}
 
 	return devices
+}
+
+func cudaRuntimeVersion(libDirs []string) (int, int, bool) {
+	bestMajor, bestMinor := -1, -1
+	update := func(major, minor int) {
+		if major > bestMajor || (major == bestMajor && minor > bestMinor) {
+			bestMajor, bestMinor = major, minor
+		}
+	}
+
+	for _, dir := range libDirs {
+		for _, entry := range readDirNames(dir) {
+			if matches := cudaRuntimeSORegex.FindStringSubmatch(entry); matches != nil {
+				major, _ := strconv.Atoi(matches[1])
+				minor := 0
+				if matches[2] != "" {
+					minor, _ = strconv.Atoi(matches[2])
+				}
+				update(major, minor)
+			}
+			if matches := cudaRuntimeDLLRegex.FindStringSubmatch(entry); matches != nil {
+				major, _ := strconv.Atoi(matches[1])
+				minor, _ := strconv.Atoi(matches[2])
+				update(major, minor)
+			}
+		}
+
+		if matches := cudaRuntimeDirRegex.FindStringSubmatch(filepath.Base(dir)); matches != nil {
+			major, _ := strconv.Atoi(matches[1])
+			update(major, 0)
+		}
+	}
+
+	if bestMajor < 0 {
+		return 0, 0, false
+	}
+	return bestMajor, bestMinor, true
+}
+
+func readDirNames(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
 }
 
 type cudaComputeCapability struct {
@@ -433,6 +491,12 @@ func isIntegratedLlamaServerDevice(library string, deviceIndex int, integratedBy
 	// --list-devices output. On Apple Silicon the Metal device is unified
 	// memory, while discrete Metal devices are not supported by this arm64
 	// path.
+	//
+	// Windows AMD ROCm discovery has also been observed reporting integrated
+	// GPUs as discrete. Leave those devices unclassified for now: unsupported
+	// ROCm targets are filtered separately, and if users report supported
+	// AMD iGPUs being preferred over dGPUs we will need a stronger backend
+	// signal than device names or HIP's integrated-device attribute.
 	return library == "Metal" && runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 }
 
@@ -440,9 +504,6 @@ func llamaServerBootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []
 	devices, status, err := llamaServerDiscoverDevices(ctx, ollamaLibDirs, extraEnvs)
 	if err != nil {
 		return devices, status, err
-	}
-	if runtime.GOOS != "linux" {
-		return devices, status, nil
 	}
 
 	hasROCm := false

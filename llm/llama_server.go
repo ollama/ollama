@@ -105,9 +105,6 @@ type llamaServerRunner struct {
 	// llama.cpp randomizes this by default; Ollama renders stable [img-N] markers
 	// and rewrites them before forwarding the request.
 	mediaMarker string
-	// stripLeadingBOS handles known renderers that emit a textual BOS while
-	// llama-server's tokenizer also auto-adds BOS for the model.
-	stripLeadingBOS bool
 
 	// Per-device VRAM tracking, populated from llama-server log parsing.
 	// Keys are device names from llama-server output (e.g., "CUDA0", "ROCm0", "MTL0").
@@ -187,9 +184,15 @@ func newLlamaServerMediaMarker() string {
 	return fmt.Sprintf("<__ollama_media_%d_%d__>", time.Now().UnixNano(), rand.Int63())
 }
 
-func (s *llamaServerRunner) completionPrompt(prompt string) string {
-	if strings.HasPrefix(prompt, "<bos>") && (s.stripLeadingBOS || s.tokenizerAddsBOS()) {
-		return strings.TrimPrefix(prompt, "<bos>")
+func (s *llamaServerRunner) completionPrompt(prompt, leadingBOS string) string {
+	if s.tokenizerAddsBOS() {
+		if leadingBOS != "" && strings.HasPrefix(prompt, leadingBOS) {
+			return strings.TrimPrefix(prompt, leadingBOS)
+		}
+
+		if strings.HasPrefix(prompt, "<bos>") {
+			return strings.TrimPrefix(prompt, "<bos>")
+		}
 	}
 
 	return prompt
@@ -204,7 +207,7 @@ func (s *llamaServerRunner) tokenizerAddsBOS() bool {
 }
 
 func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req CompletionRequest) (any, error) {
-	prompt := s.completionPrompt(req.Prompt)
+	prompt := s.completionPrompt(req.Prompt, req.LeadingBOS)
 	if !req.Truncate || len(req.Images) > 0 || s.options.NumCtx <= 1 || len(prompt) < s.options.NumCtx {
 		return prompt, nil
 	}
@@ -527,19 +530,19 @@ func embeddingBatchSize(opts api.Options, numParallel int) int {
 }
 
 func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
-	if !ml.FlashAttentionSupported(gpus) {
+	enabled := envconfig.FlashAttention(false)
+	userSet := enabled == envconfig.FlashAttention(true)
+	if userSet {
+		if enabled {
+			return append(params, "--flash-attn", "on")
+		}
 		return append(params, "--flash-attn", "off")
 	}
 
-	enabled := envconfig.FlashAttention(false)
-	userSet := enabled == envconfig.FlashAttention(true)
-	if !userSet {
-		return append(params, "--flash-attn", "auto")
+	if !ml.FlashAttentionSupported(gpus) {
+		return append(params, "--flash-attn", "off")
 	}
-	if enabled {
-		return append(params, "--flash-attn", "on")
-	}
-	return append(params, "--flash-attn", "off")
+	return append(params, "--flash-attn", "auto")
 }
 
 func appendMainGPUArgs(params []string, opts api.Options) []string {
@@ -631,7 +634,6 @@ func NewLlamaServerRunner(
 		options:          opts,
 		modelPath:        modelPath,
 		mediaMarker:      mediaMarker,
-		stripLeadingBOS:  arch == "gemma4",
 		vramByDevice:     make(map[string]uint64),
 		systemFreeAtLoad: make(map[string]uint64),
 		gpus:             gpus,

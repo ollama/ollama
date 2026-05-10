@@ -39,13 +39,8 @@ func TestModelsChat(t *testing.T) {
 		slog.Warn("No VRAM info available, testing all models, so larger ones might timeout...")
 	}
 
-	var chatModels []string
-	if s := os.Getenv("OLLAMA_NEW_ENGINE"); s != "" {
-		chatModels = append(ollamaEngineChatModels, mlxEngineChatModels...)
-	} else {
-		chatModels = append(ollamaEngineChatModels, llamaRunnerChatModels...)
-		chatModels = append(chatModels, mlxEngineChatModels...)
-	}
+	chatModels := append(ollamaEngineChatModels, llamaRunnerChatModels...)
+	chatModels = append(chatModels, mlxEngineChatModels...)
 
 	for _, model := range testModels(chatModels) {
 		t.Run(model, func(t *testing.T) {

@@ -128,6 +128,11 @@ func TestFlashAttentionSupported(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "cuda unknown driver supported by compute",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, ComputeMajor: 8, ComputeMinor: 9}},
+			want: true,
+		},
+		{
 			name: "cuda unknown compute unsupported",
 			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: -1, ComputeMinor: -1}},
 		},
@@ -151,5 +156,28 @@ func TestFlashAttentionSupported(t *testing.T) {
 				t.Fatalf("FlashAttentionSupported = %t, want %t", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFlashAttentionSupportedWarnsWhenCUDADriverUnknown(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() {
+		slog.SetDefault(oldLogger)
+	})
+
+	gpus := []DeviceInfo{{
+		DeviceID:     DeviceID{Library: "CUDA"},
+		Description:  "NVIDIA RTX",
+		ComputeMajor: 8,
+		ComputeMinor: 9,
+	}}
+
+	if !FlashAttentionSupported(gpus) {
+		t.Fatal("expected unknown-driver modern CUDA GPU to allow flash attention")
+	}
+	if !strings.Contains(logs.String(), "CUDA driver version unavailable") {
+		t.Fatalf("expected unknown driver warning, got %q", logs.String())
 	}
 }

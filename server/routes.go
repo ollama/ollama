@@ -481,6 +481,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	prompt := req.Prompt
+	var leadingBOS string
 	if !req.Raw {
 		tmpl := m.Template
 		if req.Template != "" {
@@ -549,6 +550,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				b.WriteString(prompt)
 				prompt = b.String()
 			}
+			leadingBOS = leadingBOSForModel(m)
 		} else {
 			// legacy flow
 			if err := tmpl.Execute(&b, values); err != nil {
@@ -602,6 +604,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Logprobs:        req.Logprobs,
 			TopLogprobs:     req.TopLogprobs,
 			PreservedTokens: preservedTokensForCompletion(builtinParser, nil),
+			LeadingBOS:      leadingBOS,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -2296,6 +2299,14 @@ func preservedTokensForCompletion(builtinParser parsers.Parser, toolParser *tool
 	return preservedTokens
 }
 
+func leadingBOSForModel(m *Model) string {
+	if m == nil || m.Config.Renderer == "" {
+		return ""
+	}
+
+	return renderers.LeadingBOSForRenderer(resolveRendererName(m))
+}
+
 func optionsForPrompt(opts *api.Options, runner llm.LlamaServer) *api.Options {
 	if opts == nil || runner == nil {
 		return opts
@@ -2730,6 +2741,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Logprobs:        req.Logprobs,
 				TopLogprobs:     req.TopLogprobs,
 				PreservedTokens: preservedTokensForCompletion(builtinParser, toolParser),
+				LeadingBOS:      leadingBOSForModel(m),
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
 					Model:     req.Model,

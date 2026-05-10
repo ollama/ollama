@@ -606,19 +606,19 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 	}
 }
 
-func TestLlamaServerCompletionStripsLeadingBOS(t *testing.T) {
+func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 	tests := []struct {
 		name             string
-		stripLeadingBOS  bool
+		leadingBOS       string
 		tokenizerAddsBOS bool
 		prompt           string
 		wantPrompt       string
 	}{
 		{
-			name:            "gemma4 llama server path",
-			stripLeadingBOS: true,
-			prompt:          "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
-			wantPrompt:      "<|turn>user\nhello<turn|>\n<|turn>model\n",
+			name:       "renderer owns bos when tokenizer does not add bos",
+			leadingBOS: "<bos>",
+			prompt:     "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+			wantPrompt: "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
 		},
 		{
 			name:             "tokenizer auto bos path",
@@ -627,16 +627,28 @@ func TestLlamaServerCompletionStripsLeadingBOS(t *testing.T) {
 			wantPrompt:       "<start_of_turn>user\nhello<end_of_turn>\n<start_of_turn>model\n",
 		},
 		{
-			name:            "other model keeps prompt",
-			stripLeadingBOS: false,
-			prompt:          "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
-			wantPrompt:      "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+			name:             "tokenizer auto bos path uses configured token",
+			tokenizerAddsBOS: true,
+			leadingBOS:       "<|startoftext|>",
+			prompt:           "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+			wantPrompt:       "<|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
-			name:            "only leading bos is stripped",
-			stripLeadingBOS: true,
-			prompt:          "prefix <bos>",
-			wantPrompt:      "prefix <bos>",
+			name:             "tokenizer auto bos keeps unknown token",
+			tokenizerAddsBOS: true,
+			prompt:           "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+			wantPrompt:       "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			name:       "other model keeps prompt",
+			prompt:     "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+			wantPrompt: "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:             "only leading bos is stripped when tokenizer owns bos",
+			tokenizerAddsBOS: true,
+			prompt:           "<bos>hello<bos>",
+			wantPrompt:       "hello<bos>",
 		},
 	}
 
@@ -649,6 +661,12 @@ func TestLlamaServerCompletionStripsLeadingBOS(t *testing.T) {
 					fmt.Fprint(w, `{"status":"ok"}`)
 					return
 				}
+				if r.URL.Path == "/tokenize" {
+					t.Errorf("unexpected tokenize request")
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+
 				json.NewDecoder(r.Body).Decode(&capturedReq)
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
@@ -660,11 +678,10 @@ func TestLlamaServerCompletionStripsLeadingBOS(t *testing.T) {
 			fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
 
 			runner := &llamaServerRunner{
-				port:            portInt,
-				cmd:             fakeRunningCmd(),
-				sem:             semaphore.NewWeighted(1),
-				options:         api.Options{Runner: api.Runner{NumCtx: 2048}},
-				stripLeadingBOS: tt.stripLeadingBOS,
+				port:    portInt,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
 			}
 			if tt.tokenizerAddsBOS {
 				runner.ggml = loadTestGGML(t, ggml.KV{
@@ -675,8 +692,9 @@ func TestLlamaServerCompletionStripsLeadingBOS(t *testing.T) {
 
 			opts := api.DefaultOptions()
 			err := runner.Completion(t.Context(), CompletionRequest{
-				Prompt:  tt.prompt,
-				Options: &opts,
+				Prompt:     tt.prompt,
+				Options:    &opts,
+				LeadingBOS: tt.leadingBOS,
 			}, func(cr CompletionResponse) {})
 			if err != nil {
 				t.Fatalf("Completion error: %v", err)
@@ -1004,7 +1022,7 @@ func TestEmbeddingBatchSize(t *testing.T) {
 }
 
 func TestAppendFlashAttentionArgs(t *testing.T) {
-	supportedGPU := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9}}
+	supportedGPU := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 13, ComputeMajor: 8, ComputeMinor: 9}}
 	oldGPU := []ml.DeviceInfo{
 		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9},
 		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2},
@@ -1069,11 +1087,11 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 			want: []string{"base", "--flash-attn", "off"},
 		},
 		{
-			name: "explicit enable is clamped off on old cuda",
+			name: "explicit enable overrides old cuda default",
 			env:  "1",
 			set:  true,
 			gpus: oldGPU,
-			want: []string{"base", "--flash-attn", "off"},
+			want: []string{"base", "--flash-attn", "on"},
 		},
 	}
 
