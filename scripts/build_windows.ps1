@@ -95,10 +95,10 @@ function checkEnv {
     $arm64CCPath = (Get-Command -Name "aarch64-w64-mingw32-gcc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).Path
     $arm64CXXPath = (Get-Command -Name "aarch64-w64-mingw32-g++.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).Path
     if (-not $arm64CCPath -or -not $arm64CXXPath) {
-        $arm64Toolchain = Get-ChildItem "C:\Program Files\llvm-mingw-*-x86_64*\bin" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+        $arm64Toolchain = Resolve-Path "C:\Program Files\llvm-mingw-*-x86_64*\bin" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($arm64Toolchain) {
-            $arm64CCPath = (Get-Item (Join-Path $arm64Toolchain.FullName "aarch64-w64-mingw32-gcc.exe") -ErrorAction SilentlyContinue).FullName
-            $arm64CXXPath = (Get-Item (Join-Path $arm64Toolchain.FullName "aarch64-w64-mingw32-g++.exe") -ErrorAction SilentlyContinue).FullName
+            $arm64CCPath = (Get-Item (Join-Path $arm64Toolchain.Path "aarch64-w64-mingw32-gcc.exe") -ErrorAction SilentlyContinue).FullName
+            $arm64CXXPath = (Get-Item (Join-Path $arm64Toolchain.Path "aarch64-w64-mingw32-g++.exe") -ErrorAction SilentlyContinue).FullName
         }
     }
     # TODO: support other Windows ARM64 cross-compile toolchain layouts as needed.

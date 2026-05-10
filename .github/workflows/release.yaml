@@ -73,6 +73,7 @@ jobs:
             dist/*.dmg
 
   windows-depends:
+    needs: setup-environment
     strategy:
       matrix:
         os: [windows]
@@ -141,6 +142,7 @@ jobs:
     environment: release
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
+      VERSION: ${{ needs.setup-environment.outputs.VERSION }}
     steps:
       - if: startsWith(matrix.preset, 'MLX ')
         name: Increase pagefile to 200 GB
@@ -154,6 +156,15 @@ jobs:
           choco install -y --no-progress ccache ninja
           if (Get-Command ccache -ErrorAction SilentlyContinue) {
             ccache -o cache_dir=${{ github.workspace }}\.ccache
+          }
+      - if: matrix.preset == 'CPU'
+        name: Install Windows ARM64 cross compiler
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
+          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-x86_64").path
+          if (!(Test-Path "$installPath\bin\aarch64-w64-mingw32-gcc.exe")) {
+            throw "llvm-mingw x86_64 package is missing the aarch64 cross compiler"
           }
       - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ') || startsWith(matrix.preset, 'Vulkan') || startsWith(matrix.preset, 'MLX ')
         id: cache-install
@@ -253,6 +264,18 @@ jobs:
       - name: Log build results
         run: |
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
+      - if: matrix.preset == 'CPU'
+        name: Verify Windows CPU payloads
+        run: |
+          $expected = @(
+            ".\dist\windows-amd64\lib\ollama\llama-server.exe",
+            ".\dist\windows-arm64\lib\ollama\llama-server.exe"
+          )
+          foreach ($payload in $expected) {
+            if (!(Test-Path $payload)) {
+              throw "Missing expected Windows CPU payload: $payload"
+            }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: depends-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
@@ -324,7 +347,7 @@ jobs:
   windows-app:
     runs-on: windows
     environment: release
-    needs: [windows-build, windows-depends]
+    needs: [setup-environment, windows-build, windows-depends]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
       VERSION: ${{ needs.setup-environment.outputs.VERSION }}
@@ -364,6 +387,19 @@ jobs:
       - name: Log dist contents after download
         run: |
           gci -path .\dist -recurse
+      - name: Verify Windows package inputs
+        run: |
+          $expected = @(
+            ".\dist\windows-amd64\ollama.exe",
+            ".\dist\windows-amd64\lib\ollama\llama-server.exe",
+            ".\dist\windows-arm64\ollama.exe",
+            ".\dist\windows-arm64\lib\ollama\llama-server.exe"
+          )
+          foreach ($payload in $expected) {
+            if (!(Test-Path $payload)) {
+              throw "Missing expected Windows package input: $payload"
+            }
+          }
       - run: |
           ./scripts/build_windows.ps1 deps sign installer zip
       - name: Log contents after build
@@ -683,6 +719,21 @@ jobs:
       - name: Copy install scripts to dist
         run: |
           cp scripts/install.sh dist/install.sh
+      - name: Verify release artifacts
+        run: |
+          required=(
+            dist/OllamaSetup.exe
+            dist/install.ps1
+            dist/install.sh
+            dist/ollama-windows-amd64.zip
+            dist/ollama-windows-arm64.zip
+          )
+          for payload in "${required[@]}"; do
+            if [ ! -f "$payload" ]; then
+              echo "::error::Missing expected release artifact: $payload"
+              exit 1
+            fi
+          done
       - name: Generate checksum file
         run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
         working-directory: dist
