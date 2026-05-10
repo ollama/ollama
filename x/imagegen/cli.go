@@ -122,12 +122,13 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 	}
 
 	req := &api.GenerateRequest{
-		Model:  modelName,
-		Prompt: prompt,
-		Images: images,
-		Width:  int32(opts.Width),
-		Height: int32(opts.Height),
-		Steps:  int32(opts.Steps),
+		Model:    modelName,
+		Prompt:   prompt,
+		Images:   images,
+		Width:    int32(opts.Width),
+		Height:   int32(opts.Height),
+		Steps:    int32(opts.Steps),
+		Negative: opts.NegativePrompt,
 	}
 	if opts.Seed != 0 {
 		req.Options = map[string]any{"seed": opts.Seed}
@@ -289,12 +290,13 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 
 		// Generate image with current options
 		req := &api.GenerateRequest{
-			Model:  modelName,
-			Prompt: prompt,
-			Images: images,
-			Width:  int32(opts.Width),
-			Height: int32(opts.Height),
-			Steps:  int32(opts.Steps),
+			Model:    modelName,
+			Prompt:   prompt,
+			Images:   images,
+			Width:    int32(opts.Width),
+			Height:   int32(opts.Height),
+			Steps:    int32(opts.Steps),
+			Negative: opts.NegativePrompt,
 		}
 		if opts.Seed != 0 {
 			req.Options = map[string]any{"seed": opts.Seed}

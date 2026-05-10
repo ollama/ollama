@@ -20,6 +20,16 @@ type ImageModel interface {
 	GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64, progress func(step, total int)) (*mlx.Array, error)
 }
 
+// cfgImageModel is implemented by image models that support classifier-free
+// guidance with a negative prompt. The signature matches zimage.Model.GenerateWithCFG.
+type cfgImageModel interface {
+	GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress func(step, totalSteps int)) (*mlx.Array, error)
+}
+
+// defaultCFGScale matches the in-model default in x/imagegen/models/zimage and
+// is used when the runner request does not override it.
+const defaultCFGScale float32 = 4.0
+
 var imageGenMu sync.Mutex
 
 // loadImageModel loads an image generation model.
@@ -91,8 +101,21 @@ func (s *server) handleImageCompletion(w http.ResponseWriter, r *http.Request, r
 		flusher.Flush()
 	}
 
-	// Generate image
-	img, err := s.imageModel.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
+	// Generate image. When the request carries a negative prompt, prefer the
+	// CFG entry point on models that implement it; non-CFG models fall through
+	// to the legacy GenerateImage path.
+	var img *mlx.Array
+	var err error
+	if req.Negative != "" {
+		if cfgModel, ok := s.imageModel.(cfgImageModel); ok {
+			img, err = cfgModel.GenerateWithCFG(req.Prompt, req.Negative, req.Width, req.Height, req.Steps, req.Seed, defaultCFGScale, progress)
+		} else {
+			slog.Warn("image model does not support classifier-free guidance; ignoring negative prompt", "model", s.modelName)
+			img, err = s.imageModel.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
+		}
+	} else {
+		img, err = s.imageModel.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
+	}
 	if err != nil {
 		// Don't send error for cancellation
 		if ctx.Err() != nil {
