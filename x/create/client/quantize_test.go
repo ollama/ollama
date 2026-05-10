@@ -10,14 +10,13 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/x/create"
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/safetensors"
 )
 
 func TestDecodeSourceFP8TensorAcceptsWeightScale(t *testing.T) {
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX unavailable: %v", err)
-	}
+	mlxtest.SkipIfUnavailable(t)
 
 	weight := mlx.FromValues([]uint8{0, 1, 2, 3}, 2, 2)
 	scale := mlx.FromValues([]float32{1}, 1, 1).AsType(mlx.DTypeBFloat16)
@@ -28,6 +27,69 @@ func TestDecodeSourceFP8TensorAcceptsWeightScale(t *testing.T) {
 	mlx.Eval(got)
 	if dims := got.Dims(); len(dims) != 2 || dims[0] != 2 || dims[1] != 2 {
 		t.Fatalf("decoded dims = %v, want [2 2]", dims)
+	}
+}
+
+func TestQuantizeTensorFromGoroutine(t *testing.T) {
+	if err := mlx.CheckInit(); err != nil {
+		t.Skipf("MLX unavailable: %v", err)
+	}
+
+	blobData, err := io.ReadAll(safetensors.BuildPackedSafetensorsReader([]*safetensors.TensorData{
+		safetensors.NewTensorDataFromBytes(
+			"model.layers.0.mlp.gate_proj.weight",
+			"F32",
+			[]int32{64, 64},
+			float32Bytes(64*64, 1),
+		),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resultCh := make(chan []byte, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		out, err := QuantizeTensor(
+			bytes.NewReader(blobData),
+			"model.layers.0.mlp.gate_proj.weight",
+			"F32",
+			[]int32{64, 64},
+			"int4",
+		)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- out
+	}()
+
+	var out []byte
+	select {
+	case err := <-errCh:
+		t.Fatal(err)
+	case out = <-resultCh:
+	}
+
+	path := filepath.Join(t.TempDir(), "quantized.safetensors")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	metas, err := safetensors.ReadBlobMetas(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]bool{
+		"model.layers.0.mlp.gate_proj.weight":       true,
+		"model.layers.0.mlp.gate_proj.weight.scale": true,
+	}
+	for _, meta := range metas {
+		delete(want, meta.Name)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing quantized tensors: %v", want)
 	}
 }
 

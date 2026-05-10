@@ -58,6 +58,7 @@ func (p *quantizeThreadPool) getThreads() ([]*mlxthread.Thread, error) {
 				if err := mlx.CheckInit(); err != nil {
 					return err
 				}
+				mlx.BindCurrentThread()
 				if mlx.GPUIsAvailable() {
 					mlx.SetDefaultDeviceGPU()
 				}

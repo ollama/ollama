@@ -3,6 +3,7 @@ package gemma4
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -581,6 +582,7 @@ func TestResolveWeightPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			skipIfNoMLX(t)
 			dummy := mlx.FromValue(float32(1.0))
 			mlx.Eval(dummy)
 			tensors := map[string]*mlx.Array{tt.key: dummy}
@@ -594,7 +596,5 @@ func TestResolveWeightPrefix(t *testing.T) {
 
 func skipIfNoMLX(t *testing.T) {
 	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
+	mlxtest.SkipIfUnavailable(t)
 }

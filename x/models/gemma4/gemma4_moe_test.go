@@ -12,8 +12,6 @@ func onesLike(shape ...int) *mlx.Array {
 }
 
 func TestMoEForward(t *testing.T) {
-	skipIfNoMLX(t)
-
 	// Small config matching 26b architecture pattern.
 	cfg := &TextConfig{
 		HiddenSize:             16, // tiny for testing
@@ -32,16 +30,14 @@ func TestMoEForward(t *testing.T) {
 		FullScale:              1.0,
 	}
 
-	B, L := int32(1), int32(3)
-	x := onesLike(int(B), int(L), int(cfg.HiddenSize))
-
-	// Test Router.Forward.
-	router := &Router{
-		Proj:  linearFromWeight(onesLike(int(cfg.NumExperts), int(cfg.HiddenSize))),
-		Scale: onesLike(int(cfg.HiddenSize)),
-	}
-
 	t.Run("Router", func(t *testing.T) {
+		skipIfNoMLX(t)
+		B, L := int32(1), int32(3)
+		x := onesLike(int(B), int(L), int(cfg.HiddenSize))
+		router := &Router{
+			Proj:  linearFromWeight(onesLike(int(cfg.NumExperts), int(cfg.HiddenSize))),
+			Scale: onesLike(int(cfg.HiddenSize)),
+		}
 		scores, inds := router.Forward(x, cfg)
 		mlx.Eval(scores, inds)
 
@@ -57,15 +53,20 @@ func TestMoEForward(t *testing.T) {
 		}
 	})
 
-	// Test MoEBlock.Forward.
-	moe := &MoEBlock{
-		GateWeight:     onesLike(int(cfg.NumExperts), int(cfg.HiddenSize), int(cfg.ExpertIntermediateSize)),
-		UpWeight:       onesLike(int(cfg.NumExperts), int(cfg.HiddenSize), int(cfg.ExpertIntermediateSize)),
-		DownWeight:     onesLike(int(cfg.NumExperts), int(cfg.ExpertIntermediateSize), int(cfg.HiddenSize)),
-		PerExpertScale: onesLike(int(cfg.NumExperts)),
-	}
-
 	t.Run("MoEBlock", func(t *testing.T) {
+		skipIfNoMLX(t)
+		B, L := int32(1), int32(3)
+		x := onesLike(int(B), int(L), int(cfg.HiddenSize))
+		router := &Router{
+			Proj:  linearFromWeight(onesLike(int(cfg.NumExperts), int(cfg.HiddenSize))),
+			Scale: onesLike(int(cfg.HiddenSize)),
+		}
+		moe := &MoEBlock{
+			GateWeight:     onesLike(int(cfg.NumExperts), int(cfg.HiddenSize), int(cfg.ExpertIntermediateSize)),
+			UpWeight:       onesLike(int(cfg.NumExperts), int(cfg.HiddenSize), int(cfg.ExpertIntermediateSize)),
+			DownWeight:     onesLike(int(cfg.NumExperts), int(cfg.ExpertIntermediateSize), int(cfg.HiddenSize)),
+			PerExpertScale: onesLike(int(cfg.NumExperts)),
+		}
 		scores, inds := router.Forward(x, cfg)
 		mlx.Eval(scores, inds)
 
@@ -82,8 +83,19 @@ func TestMoEForward(t *testing.T) {
 
 	// Test with larger batch to exercise the sorted GatherMM path (B*L >= 64).
 	t.Run("MoEBlock_sorted", func(t *testing.T) {
+		skipIfNoMLX(t)
 		bigB, bigL := int32(1), int32(128)
 		bigX := onesLike(int(bigB), int(bigL), int(cfg.HiddenSize))
+		router := &Router{
+			Proj:  linearFromWeight(onesLike(int(cfg.NumExperts), int(cfg.HiddenSize))),
+			Scale: onesLike(int(cfg.HiddenSize)),
+		}
+		moe := &MoEBlock{
+			GateWeight:     onesLike(int(cfg.NumExperts), int(cfg.HiddenSize), int(cfg.ExpertIntermediateSize)),
+			UpWeight:       onesLike(int(cfg.NumExperts), int(cfg.HiddenSize), int(cfg.ExpertIntermediateSize)),
+			DownWeight:     onesLike(int(cfg.NumExperts), int(cfg.ExpertIntermediateSize), int(cfg.HiddenSize)),
+			PerExpertScale: onesLike(int(cfg.NumExperts)),
+		}
 
 		scores, inds := router.Forward(bigX, cfg)
 		mlx.Eval(scores, inds)

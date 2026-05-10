@@ -33,6 +33,20 @@ package mlx
 // static const char* mlx_get_last_error(void) {
 //     return _mlx_last_error_flag ? _mlx_last_error_msg : "";
 // }
+//
+// static __thread int _mlx_thread_bound = 0;
+//
+// static void mlx_bind_current_thread(void) {
+//     _mlx_thread_bound = 1;
+// }
+//
+// static void mlx_unbind_current_thread(void) {
+//     _mlx_thread_bound = 0;
+// }
+//
+// static int mlx_is_current_thread_bound(void) {
+//     return _mlx_thread_bound;
+// }
 import "C"
 
 import "runtime"
@@ -51,6 +65,25 @@ func Version() string {
 	return C.GoString(C.mlx_string_data(str))
 }
 
+// BindCurrentThread marks the current locked OS thread as allowed to execute
+// MLX stream-bound operations. Callers should only use this on a goroutine that
+// will remain locked to the same OS thread for the lifetime of its MLX work.
+func BindCurrentThread() {
+	C.mlx_bind_current_thread()
+}
+
+// UnbindCurrentThread clears the MLX thread-ownership marker from the current
+// OS thread.
+func UnbindCurrentThread() {
+	C.mlx_unbind_current_thread()
+}
+
+func requireBoundThread(op string) {
+	if C.mlx_is_current_thread_bound() == 0 {
+		panic("mlx: " + op + " called outside a bound MLX thread; use x/internal/mlxthread or lock and bind the current OS thread first")
+	}
+}
+
 // mlxCheck locks the goroutine to its OS thread, clears the captured error
 // state, calls fn, and panics with the captured message if fn returns non-zero.
 // The thread lock ensures the thread-local error state is read from the same
@@ -58,6 +91,7 @@ func Version() string {
 func mlxCheck(fallback string, fn func() C.int) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
+	requireBoundThread(fallback)
 
 	C.mlx_clear_last_error()
 	if fn() != 0 {

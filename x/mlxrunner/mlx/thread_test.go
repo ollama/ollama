@@ -3,6 +3,7 @@ package mlx
 import (
 	"context"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
@@ -23,6 +24,7 @@ func startMLXThread(t *testing.T) *mlxthread.Thread {
 		if err := CheckInit(); err != nil {
 			return err
 		}
+		BindCurrentThread()
 		if GPUIsAvailable() {
 			SetDefaultDeviceGPU()
 		}
@@ -101,4 +103,27 @@ func TestThreadedMLXOperations(t *testing.T) {
 	for err := range errCh {
 		t.Fatal(err)
 	}
+}
+
+func TestDefaultStreamRequiresBoundThread(t *testing.T) {
+	skipIfNoMLX(t)
+	if GPUIsAvailable() {
+		SetDefaultDeviceGPU()
+	}
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic from unbound MLX thread")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("expected string panic, got %T: %v", r, r)
+		}
+		if !strings.Contains(msg, "bound MLX thread") {
+			t.Fatalf("unexpected panic %q", msg)
+		}
+	}()
+
+	_ = DefaultStream()
 }

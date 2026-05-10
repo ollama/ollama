@@ -18,6 +18,7 @@ type SafetensorsFile struct {
 }
 
 func loadSafetensorsStream() C.mlx_stream {
+	requireBoundThread("LoadSafetensorsNative")
 	if runtime.GOOS == "darwin" {
 		return C.mlx_default_cpu_stream_new()
 	}

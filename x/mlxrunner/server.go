@@ -38,6 +38,7 @@ func Execute(args []string) error {
 		if err := mlx.CheckInit(); err != nil {
 			return fmt.Errorf("MLX not available: %w", err)
 		}
+		mlx.BindCurrentThread()
 
 		if mlx.GPUIsAvailable() {
 			mlx.SetDefaultDeviceGPU()
