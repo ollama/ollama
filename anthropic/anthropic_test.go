@@ -1670,3 +1670,68 @@ func TestCitation(t *testing.T) {
 		t.Errorf("cited_text mismatch: expected 'Some cited text...', got %q", unmarshaled.CitedText)
 	}
 }
+
+func TestFromMessagesRequest_WithNumCtx(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		NumCtx:    8192,
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if numCtx, ok := result.Options["num_ctx"].(int); !ok || numCtx != 8192 {
+		t.Errorf("expected num_ctx 8192, got %v", result.Options["num_ctx"])
+	}
+}
+
+func TestFromMessagesRequest_NumCtxZeroOmitted(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		// NumCtx not set (zero value)
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := result.Options["num_ctx"]; ok {
+		t.Errorf("expected num_ctx to be absent when zero, but it was set to %v", result.Options["num_ctx"])
+	}
+}
+
+func TestFromMessagesRequest_NumCtxJSONOmitEmpty(t *testing.T) {
+	// Verify num_ctx is omitted from JSON when zero
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal MessagesRequest: %v", err)
+	}
+
+	if strings.Contains(string(data), "num_ctx") {
+		t.Errorf("expected num_ctx to be absent in JSON when zero, got: %s", data)
+	}
+
+	// With num_ctx set it should appear in JSON
+	req.NumCtx = 4096
+	data, err = json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal MessagesRequest with num_ctx: %v", err)
+	}
+
+	if !strings.Contains(string(data), `"num_ctx":4096`) {
+		t.Errorf("expected num_ctx in JSON, got: %s", data)
+	}
+}
