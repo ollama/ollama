@@ -55,6 +55,8 @@ func Execute(args []string) error {
 		mlx.Sweep()
 		mlx.ClearCache()
 	})
+	runnerCtx, cancelRunner := context.WithCancel(context.Background())
+	defer cancelRunner()
 
 	runner := Runner{
 		Requests:  make(chan Request),
@@ -67,22 +69,30 @@ func Execute(args []string) error {
 		return err
 	}
 
+	readMemory := func() (uint64, error) {
+		return uint64(mlx.ActiveMemory() + mlx.CacheMemory()), nil
+	}
+	initialMemory, err := mlxthread.Call(context.Background(), worker, readMemory)
+	if err != nil {
+		return err
+	}
+	memoryCache := newStatusMemoryCache(
+		runnerCtx,
+		initialMemory,
+		time.Now(),
+		statusMemoryRefreshWait,
+		func() (uint64, error) {
+			return mlxthread.Call(runnerCtx, worker, readMemory)
+		},
+	)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		memory, err := mlxthread.Call(r.Context(), worker, func() (uint64, error) {
-			return uint64(mlx.ActiveMemory() + mlx.CacheMemory()), nil
-		})
-		if err != nil {
-			slog.Error("Failed to read MLX memory status", "error", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
 		if err := json.NewEncoder(w).Encode(statusResponse{
 			Status:        0,
 			Progress:      100,
 			ContextLength: runner.contextLength,
-			Memory:        memory,
+			Memory:        memoryCache.Memory(),
 		}); err != nil {
 			slog.Error("Failed to encode response", "error", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
