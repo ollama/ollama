@@ -48,11 +48,10 @@ VerifyDownload func() error
 type UpdateResponse struct {
 UpdateURL     string `json:"url"`
 UpdateVersion string `json:"version"`
-// UpdateChecksum is the expected SHA-256 digest of the installer artifact,
-// expressed as a bare hex string or with a "sha256:" prefix.
-// When present, it is verified against the downloaded file before any
-// platform-specific signature check (Authenticode / notarisation) runs.
-// Omitted on older server versions — verification degrades gracefully.
+// UpdateChecksum optionally provides the expected SHA-256 digest of the
+// installer artifact (bare hex or "sha256:<hex>").  When absent the updater
+// falls back to fetching the digest from the GitHub Releases API, which
+// already publishes per-asset SHA-256 values.
 UpdateChecksum string `json:"checksum,omitempty"`
 }
 
@@ -140,15 +139,82 @@ slog.Info("New update available at " + updateResp.UpdateURL)
 return true, updateResp
 }
 
+// githubReleaseAsset is the subset of the GitHub Releases API asset object
+// that we care about.
+type githubReleaseAsset struct {
+Name   string `json:"name"`
+Digest string `json:"digest"` // "sha256:<hex>" — set by GitHub for every asset
+}
+
+// fetchGitHubReleaseChecksum derives the GitHub Releases API URL from a
+// standard GitHub release download URL and returns the SHA-256 digest for the
+// matching asset.
+//
+// downloadURL is expected to be of the form:
+//
+//https://github.com/{owner}/{repo}/releases/download/{tag}/{filename}
+//
+// The digest is returned as a bare lowercase hex string so it can be passed
+// directly to verifySHA256.
+func fetchGitHubReleaseChecksum(ctx context.Context, downloadURL string) (string, error) {
+u, err := url.Parse(downloadURL)
+if err != nil {
+return "", fmt.Errorf("parse download URL: %w", err)
+}
+
+// path segments: ["", owner, repo, "releases", "download", tag, filename]
+parts := strings.Split(u.Path, "/")
+if len(parts) < 7 || parts[3] != "releases" || parts[4] != "download" {
+return "", fmt.Errorf("not a GitHub release download URL: %s", downloadURL)
+}
+owner, repo, tag, filename := parts[1], parts[2], parts[5], parts[6]
+
+apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/tags/%s", owner, repo, tag)
+req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+if err != nil {
+return "", err
+}
+req.Header.Set("Accept", "application/vnd.github+json")
+req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+resp, err := http.DefaultClient.Do(req)
+if err != nil {
+return "", fmt.Errorf("GitHub releases API request: %w", err)
+}
+defer resp.Body.Close()
+if resp.StatusCode != http.StatusOK {
+return "", fmt.Errorf("GitHub releases API returned %d for %s", resp.StatusCode, apiURL)
+}
+
+var release struct {
+Assets []githubReleaseAsset `json:"assets"`
+}
+if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+return "", fmt.Errorf("decode GitHub releases response: %w", err)
+}
+
+for _, asset := range release.Assets {
+if asset.Name == filename {
+// GitHub returns "sha256:<hex>"; strip the prefix.
+digest := strings.TrimPrefix(asset.Digest, "sha256:")
+if digest == "" {
+return "", fmt.Errorf("GitHub asset %q has empty digest", filename)
+}
+return digest, nil
+}
+}
+return "", fmt.Errorf("asset %q not found in GitHub release %s", filename, tag)
+}
+
 // verifySHA256 checks the SHA-256 digest of the file at path against expected.
 // expected may be a bare hex string or carry a "sha256:" prefix.
-// Returns nil when the digest matches or when expected is empty (server did not
-// supply a checksum — maintains backward compatibility).
+// Returns nil when the digest matches or when expected is empty (no checksum
+// available — maintains backward compatibility).
 func verifySHA256(path, expected string) error {
 if expected == "" {
 return nil
 }
-want := strings.TrimPrefix(strings.ToLower(expected), "sha256:")
+want := strings.ToLower(strings.TrimPrefix(expected, "sha256:"))
 f, err := os.Open(path)
 if err != nil {
 return fmt.Errorf("open for SHA-256 check: %w", err)
@@ -266,9 +332,23 @@ return fmt.Errorf("write payload %s: %d vs %d -- %w", stageFilename, n, len(payl
 }
 slog.Info("new update downloaded " + stageFilename)
 
+// Determine the expected SHA-256 checksum.  Prefer an explicit value from
+// the update-check response; fall back to fetching it from the GitHub
+// Releases API (which publishes per-asset digests for every release).
+checksum := updateResp.UpdateChecksum
+if checksum == "" {
+if digest, err := fetchGitHubReleaseChecksum(downloadCtx, updateResp.UpdateURL); err != nil {
+// Non-fatal: log and continue so a transient GitHub API outage
+// does not block users from receiving security updates.
+slog.Warn("unable to fetch checksum from GitHub releases API, skipping SHA-256 check", "error", err)
+} else {
+checksum = digest
+}
+}
+
 // SHA-256 integrity check runs on all platforms before the platform-specific
 // signature verification (Authenticode on Windows, notarisation on macOS).
-if err := verifySHA256(stageFilename, updateResp.UpdateChecksum); err != nil {
+if err := verifySHA256(stageFilename, checksum); err != nil {
 _ = os.Remove(stageFilename)
 return fmt.Errorf("integrity check failed for %s: %w", resp.Request.URL.String(), err)
 }
