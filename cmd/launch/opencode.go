@@ -163,7 +163,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(statePath, stateData)
+	return fileutil.WriteWithBackup(statePath, stateData, "opencode")
 }
 
 func (o *OpenCode) Models() []string {

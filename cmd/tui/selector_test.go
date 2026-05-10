@@ -311,6 +311,91 @@ func TestRenderContent_SelectedItemIndicator(t *testing.T) {
 	}
 }
 
+func TestRenderContent_AvailabilityBadgeOnlyOnCursor(t *testing.T) {
+	m := selectorModel{
+		title: "Pick:",
+		items: []SelectItem{
+			{Name: "kimi-k2.6:cloud", AvailabilityBadge: "Upgrade required"},
+			{Name: "qwen3.5:cloud", AvailabilityBadge: "Sign in required"},
+			{Name: "glm-5:cloud", AvailabilityBadge: "Included"},
+		},
+		cursor: 0,
+	}
+	content := m.renderContent()
+
+	if !strings.Contains(content, "(Upgrade required)") {
+		t.Fatalf("cursor badge missing:\n%s", content)
+	}
+	if strings.Contains(content, "(Sign in required)") {
+		t.Fatalf("non-cursor badge should not render:\n%s", content)
+	}
+	if strings.Contains(content, "Included") {
+		t.Fatalf("included badge should not render:\n%s", content)
+	}
+}
+
+func TestSelectorModel_ItemsUpdatedPreservesCursorAndRendersBadge(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", []SelectItem{
+		{Name: "kimi-k2.6:cloud", Recommended: true},
+		{Name: "llama3.2"},
+	}, "kimi-k2.6:cloud")
+
+	updated, _ := m.Update(selectorItemsUpdatedMsg{items: []SelectItem{
+		{Name: "kimi-k2.6:cloud", Recommended: true, AvailabilityBadge: "Upgrade required"},
+		{Name: "llama3.2"},
+	}})
+	fm := updated.(selectorModel)
+	if fm.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0", fm.cursor)
+	}
+	content := fm.renderContent()
+	if !strings.Contains(content, "(Upgrade required)") {
+		t.Fatalf("updated badge missing:\n%s", content)
+	}
+}
+
+func TestMultiSelector_AvailabilityBadgePreservesDefaultSuffix(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", []SelectItem{
+		{Name: "kimi-k2.6:cloud", AvailabilityBadge: "Upgrade required"},
+		{Name: "qwen3.5:cloud"},
+	}, []string{"kimi-k2.6:cloud"})
+	m.multi = true
+	m.cursor = 0
+
+	content := m.View()
+	if !strings.Contains(content, "(Upgrade required)") {
+		t.Fatalf("cursor badge missing:\n%s", content)
+	}
+	if !strings.Contains(content, "(default)") {
+		t.Fatalf("default suffix missing:\n%s", content)
+	}
+}
+
+func TestMultiSelector_ItemsUpdatedPreservesCheckedStateAndRendersBadge(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", []SelectItem{
+		{Name: "kimi-k2.6:cloud", Recommended: true},
+		{Name: "llama3.2"},
+	}, []string{"kimi-k2.6:cloud"})
+	m.multi = true
+
+	updated, _ := m.Update(selectorItemsUpdatedMsg{items: []SelectItem{
+		{Name: "kimi-k2.6:cloud", Recommended: true, AvailabilityBadge: "Upgrade required"},
+		{Name: "llama3.2"},
+	}})
+	fm := updated.(multiSelectorModel)
+	idx := fm.itemIndex["kimi-k2.6:cloud"]
+	if !fm.checked[idx] {
+		t.Fatalf("checked state was not preserved: %#v", fm.checked)
+	}
+	content := fm.View()
+	if !strings.Contains(content, "(Upgrade required)") {
+		t.Fatalf("updated badge missing:\n%s", content)
+	}
+	if !strings.Contains(content, "(default)") {
+		t.Fatalf("default suffix missing after update:\n%s", content)
+	}
+}
+
 func TestRenderContent_Description(t *testing.T) {
 	m := selectorModel{
 		title: "Pick:",

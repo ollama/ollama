@@ -137,9 +137,27 @@ func (t *Array) LogsumexpAxis(axis int, keepDims bool) *Array {
 	return out
 }
 
+func (t *Array) Equal(other *Array) *Array {
+	out := New("EQUAL")
+	C.mlx_equal(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) Greater(other *Array) *Array {
+	out := New("GREATER")
+	C.mlx_greater(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) Less(other *Array) *Array {
 	out := New("LESS")
 	C.mlx_less(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) LessEqual(other *Array) *Array {
+	out := New("LESS_EQUAL")
+	C.mlx_less_equal(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
 	return out
 }
 

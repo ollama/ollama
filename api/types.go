@@ -814,6 +814,7 @@ type ModelRecommendation struct {
 	ContextLength   int    `json:"context_length,omitempty"`
 	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
 	VRAMBytes       int64  `json:"vram_bytes,omitempty"`
+	RequiredPlan    string `json:"required_plan,omitempty"`
 }
 
 // ProcessResponse is the response from [Client.Process].

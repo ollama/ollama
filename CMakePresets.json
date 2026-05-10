@@ -41,7 +41,7 @@
       "inherits": [ "CUDA" ],
       "cacheVariables": {
         "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;87-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual",
-        "CMAKE_CUDA_FLAGS": "-t 4",
+        "CMAKE_CUDA_FLAGS": "-t 2",
         "OLLAMA_RUNNER_DIR": "cuda_v13"
       }
     },

@@ -26,6 +26,7 @@ const (
 	claudeDesktopGatewayBaseURL  = "https://ollama.com"
 	claudeDesktopAPIKeyURL       = "https://ollama.com/settings/keys"
 	claudeDesktopModelLabel      = "Ollama Cloud"
+	claudeDesktopUnsupported     = "Claude Desktop is no longer supported. Existing installations can be restored with 'ollama launch claude-desktop --restore'."
 	claudeDesktopSuccessMessage  = "Claude Desktop profile changed to Ollama Cloud."
 	claudeDesktopRestoreMessage  = "To restore the usual Claude profile, run: ollama launch claude-desktop --restore"
 	claudeDesktopRestoredMessage = "Claude Desktop restored to the usual Claude profile."
@@ -129,14 +130,8 @@ func (c *ClaudeDesktop) SkipModelReadiness() bool {
 	return true
 }
 
-func (c *ClaudeDesktop) Run(_ string, args []string) error {
-	if err := claudeDesktopSupported(); err != nil {
-		return err
-	}
-	if len(args) > 0 {
-		return fmt.Errorf("claude-desktop does not accept extra arguments")
-	}
-	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use Ollama?")
+func (c *ClaudeDesktop) Run(_ string, _ []string) error {
+	return errClaudeDesktopUnsupported()
 }
 
 func (c *ClaudeDesktop) Restore() error {
@@ -165,6 +160,10 @@ func (c *ClaudeDesktop) Restore() error {
 		}
 	}
 	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use the usual Claude profile?")
+}
+
+func errClaudeDesktopUnsupported() error {
+	return errors.New(claudeDesktopUnsupported)
 }
 
 func claudeDesktopSupported() error {
@@ -838,7 +837,7 @@ func defaultClaudeDesktopOpenApp() error {
 		if path := claudeDesktopRunningAppPath(); path != "" {
 			return claudeDesktopOpenAppPath(path)
 		}
-		return fmt.Errorf("Claude Desktop executable was not found; open Claude Desktop manually once and re-run 'ollama launch claude-desktop'")
+		return fmt.Errorf("Claude Desktop executable was not found; open Claude Desktop manually once and re-run 'ollama launch claude-desktop --restore'")
 	case "darwin":
 		return openClaudeDesktopDarwin()
 	default:

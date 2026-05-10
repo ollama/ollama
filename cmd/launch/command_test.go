@@ -233,6 +233,31 @@ func TestLaunchCmdTUICallback(t *testing.T) {
 	})
 }
 
+func TestLaunchCmdClaudeDesktopLaunchReturnsUnsupported(t *testing.T) {
+	for _, name := range []string{"claude-desktop", "claude-app"} {
+		t.Run(name, func(t *testing.T) {
+			cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error {
+				t.Fatal("heartbeat check should not run before Claude Desktop unsupported error")
+				return nil
+			}, func(cmd *cobra.Command) {
+				t.Fatal("TUI callback should not run for direct integration launch")
+			})
+			cmd.SetArgs([]string{name})
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected Claude Desktop launch command to fail")
+			}
+			if !strings.Contains(err.Error(), "Claude Desktop is no longer supported") {
+				t.Fatalf("expected unsupported guidance, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "ollama launch claude-desktop --restore") {
+				t.Fatalf("expected restore guidance, got %v", err)
+			}
+		})
+	}
+}
+
 func TestLaunchCmdNilHeartbeat(t *testing.T) {
 	cmd := LaunchCmd(nil, nil)
 	if cmd == nil {
@@ -319,7 +344,7 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 
 	var selectorCalls int
 	var gotCurrent string
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		selectorCalls++
 		gotCurrent = current
 		return "llama3.2", nil
@@ -479,7 +504,7 @@ func TestLaunchCmdHeadlessWithYes_AutoPullsMissingLocalModel(t *testing.T) {
 	}
 }
 
-func TestLaunchCmdHeadlessWithoutYes_ReturnsActionableConfirmError(t *testing.T) {
+func TestLaunchCmdHeadlessWithoutYes_AllowsConfiguredLaunch(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -511,17 +536,14 @@ func TestLaunchCmdHeadlessWithoutYes_ReturnsActionableConfirmError(t *testing.T)
 	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
 	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected launch command to fail without --yes in headless mode")
+	if err != nil {
+		t.Fatalf("expected launch command to succeed without --yes when an explicit model is provided, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "re-run with --yes") {
-		t.Fatalf("expected actionable --yes guidance, got %v", err)
+	if diff := compareStringSlices(stub.edited, [][]string{{"llama3.2"}}); diff != "" {
+		t.Fatalf("unexpected editor writes (-want +got):\n%s", diff)
 	}
-	if len(stub.edited) != 0 {
-		t.Fatalf("expected no editor writes when confirmation is blocked, got %v", stub.edited)
-	}
-	if stub.ranModel != "" {
-		t.Fatalf("expected launch to abort before run, got %q", stub.ranModel)
+	if stub.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to run configured model, got %q", stub.ranModel)
 	}
 }
 
@@ -556,7 +578,7 @@ func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) 
 	defer func() { DefaultSingleSelector = oldSelector }()
 
 	var gotCurrent string
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		gotCurrent = current
 		return "qwen3:8b", nil
 	}
@@ -610,7 +632,7 @@ func TestLaunchCmdHeadlessYes_IntegrationRequiresModelEvenWhenSaved(t *testing.T
 
 	oldSelector := DefaultSingleSelector
 	defer func() { DefaultSingleSelector = oldSelector }()
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		t.Fatal("selector should not be called for headless --yes saved-model launch")
 		return "", nil
 	}
@@ -647,7 +669,7 @@ func TestLaunchCmdHeadlessYes_IntegrationWithoutSavedModelReturnsError(t *testin
 
 	oldSelector := DefaultSingleSelector
 	defer func() { DefaultSingleSelector = oldSelector }()
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		t.Fatal("selector should not be called for headless --yes without saved model")
 		return "", nil
 	}
