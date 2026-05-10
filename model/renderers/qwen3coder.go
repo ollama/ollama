@@ -1,10 +1,12 @@
 package renderers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode"
 
 	"github.com/ollama/ollama/api"
 )
@@ -56,6 +58,83 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 }
 
 type Qwen3CoderRenderer struct{}
+
+func escapeQwenXMLText(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s))
+
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '&':
+			if entityLen := existingEntityLength(s[i:]); entityLen > 0 {
+				sb.WriteString(s[i : i+entityLen])
+				i += entityLen - 1
+			} else {
+				sb.WriteString("&amp;")
+			}
+		case '<':
+			sb.WriteString("&lt;")
+		case '>':
+			sb.WriteString("&gt;")
+		default:
+			sb.WriteByte(s[i])
+		}
+	}
+
+	return sb.String()
+}
+
+func existingEntityLength(s string) int {
+	if len(s) < 4 || s[0] != '&' {
+		return 0
+	}
+
+	end := strings.IndexByte(s, ';')
+	if end == -1 || end > 10 {
+		return 0
+	}
+
+	entity := s[1:end]
+	switch entity {
+	case "lt", "gt", "amp", "quot", "apos":
+		return end + 1
+	}
+
+	if len(entity) < 2 || entity[0] != '#' {
+		return 0
+	}
+
+	if entity[1] == 'x' || entity[1] == 'X' {
+		if len(entity) == 2 {
+			return 0
+		}
+		for _, r := range entity[2:] {
+			if !unicode.Is(unicode.ASCII_Hex_Digit, r) {
+				return 0
+			}
+		}
+		return end + 1
+	}
+
+	for _, r := range entity[1:] {
+		if !unicode.IsDigit(r) {
+			return 0
+		}
+	}
+
+	return end + 1
+}
+
+func marshalToolArgument(value any) (string, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(value); err != nil {
+		return "", err
+	}
+
+	return strings.TrimSuffix(buf.String(), "\n"), nil
+}
 
 func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
@@ -171,7 +250,7 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ 
 			}
 
 			sb.WriteString("\n<tool_response>\n")
-			sb.WriteString(message.Content)
+			sb.WriteString(escapeQwenXMLText(message.Content))
 			sb.WriteString("\n</tool_response>")
 
 			// close the user block only if this is the last tool response
@@ -197,23 +276,28 @@ func formatToolCallArgument(value any) string {
 		return "null"
 	}
 
+	var rendered string
 	switch v := value.(type) {
 	case string:
-		return v
+		rendered = v
 	case []byte:
-		return string(v)
+		rendered = string(v)
 	}
 
-	if reflect.TypeOf(value) != nil {
+	if rendered == "" && reflect.TypeOf(value) != nil {
 		kind := reflect.TypeOf(value).Kind()
 		if kind == reflect.Map || kind == reflect.Slice || kind == reflect.Array {
-			if marshalled, err := json.Marshal(value); err == nil {
-				return string(marshalled)
+			if marshalled, err := marshalToolArgument(value); err == nil {
+				rendered = marshalled
 			}
 		}
 	}
 
-	return fmt.Sprintf("%v", value)
+	if rendered == "" {
+		rendered = fmt.Sprintf("%v", value)
+	}
+
+	return escapeQwenXMLText(rendered)
 }
 
 func formatToolDefinitionType(tp api.PropertyType) string {

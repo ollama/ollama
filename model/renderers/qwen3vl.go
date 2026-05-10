@@ -126,7 +126,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think
 			if i == 0 || messages[i-1].Role != "tool" {
 				sb.WriteString("<|im_start|>user")
 			}
-			sb.WriteString("\n<tool_response>\n" + message.Content + "\n</tool_response>")
+			sb.WriteString("\n<tool_response>\n" + escapeQwenXMLText(message.Content) + "\n</tool_response>")
 			if i == len(messages)-1 || messages[i+1].Role != "tool" {
 				sb.WriteString("<|im_end|>\n")
 			}

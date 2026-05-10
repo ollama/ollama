@@ -128,9 +128,9 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 
 	imageOffset := 0
 	for i, message := range messages {
-		content, nextImageOffset := r.renderContent(message, imageOffset)
+		contentRaw, nextImageOffset := r.renderContent(message, imageOffset)
 		imageOffset = nextImageOffset
-		content = strings.TrimSpace(content)
+		content := strings.TrimSpace(contentRaw)
 
 		lastMessage := i == len(messages)-1
 		prefill := lastMessage && message.Role == "assistant"
@@ -173,7 +173,7 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 			if i == 0 || messages[i-1].Role != "tool" {
 				sb.WriteString(imStartTag + "user")
 			}
-			sb.WriteString("\n<tool_response>\n" + content + "\n</tool_response>")
+			sb.WriteString("\n<tool_response>\n" + escapeQwenXMLText(contentRaw) + "\n</tool_response>")
 			if i == len(messages)-1 || messages[i+1].Role != "tool" {
 				sb.WriteString(imEndTag + "\n")
 			}

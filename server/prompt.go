@@ -17,6 +17,24 @@ import (
 
 type tokenizeFunc func(context.Context, string) ([]int, error)
 
+func toolBlockStartIndex(msgs []api.Message, idx int) int {
+	if idx <= 0 || idx >= len(msgs) || msgs[idx].Role != "tool" {
+		return idx
+	}
+
+	start := idx
+	for start > 0 && msgs[start-1].Role == "tool" {
+		start--
+	}
+
+	assistantIdx := start - 1
+	if assistantIdx >= 0 && msgs[assistantIdx].Role == "assistant" && len(msgs[assistantIdx].ToolCalls) > 0 {
+		return assistantIdx
+	}
+
+	return idx
+}
+
 // chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
@@ -33,15 +51,17 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	if truncate {
 		// Start with all messages and remove from the front until it fits in context
 		for i := 0; i <= lastMsgIdx; i++ {
+			startIdx := toolBlockStartIndex(msgs, i)
+
 			// Collect system messages from the portion we're about to skip
 			system = make([]api.Message, 0)
-			for j := range i {
+			for j := range startIdx {
 				if msgs[j].Role == "system" {
 					system = append(system, msgs[j])
 				}
 			}
 
-			p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
+			p, err := renderPrompt(m, append(system, msgs[startIdx:]...), tools, think)
 			if err != nil {
 				return "", nil, err
 			}
@@ -53,19 +73,20 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			ctxLen := len(s)
 			if m.ProjectorPaths != nil {
-				for _, msg := range msgs[i:] {
+				for _, msg := range msgs[startIdx:] {
 					ctxLen += imageNumTokens * len(msg.Images)
 				}
 			}
 
 			if ctxLen <= opts.NumCtx {
-				currMsgIdx = i
+				currMsgIdx = startIdx
 				break
 			}
 
-			// Must always include at least the last message
+			// Must always include at least the last message, but never orphan a tool
+			// response from the assistant tool-call turn that produced it.
 			if i == lastMsgIdx {
-				currMsgIdx = lastMsgIdx
+				currMsgIdx = startIdx
 				break
 			}
 		}

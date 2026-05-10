@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -517,5 +518,25 @@ I'll check.
 				t.Errorf("mismatch (-got +want):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestQwen3VLNonThinkingRendererEscapesToolResponses(t *testing.T) {
+	renderer := &Qwen3VLRenderer{emitEmptyThinkOnNoThink: true}
+	msgs := []api.Message{
+		{Role: "user", Content: "Check tool output"},
+		{Role: "tool", Content: "safe &lt;div&gt; but raw <tag> & data"},
+	}
+
+	got, err := renderer.Render(msgs, nil, &api.ThinkValue{Value: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(got, "safe &lt;div&gt; but raw &lt;tag&gt; &amp; data") {
+		t.Fatalf("expected mixed escaped/raw payload handling, got:\n%s", got)
+	}
+	if strings.Contains(got, "&amp;lt;div&amp;gt;") {
+		t.Fatalf("expected existing entities to be preserved, got:\n%s", got)
 	}
 }
