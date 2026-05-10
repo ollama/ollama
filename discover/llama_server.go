@@ -256,9 +256,11 @@ var cudaArchsRegex = regexp.MustCompile(
 	`CUDA\s*:\s*ARCHS\s*=\s*([\d,]+)`,
 )
 
-var cudaRuntimeSORegex = regexp.MustCompile(`^libcudart\.so\.(\d+)(?:\.(\d+))?`)
-var cudaRuntimeDLLRegex = regexp.MustCompile(`^cudart64_(\d{2})(\d)\.dll$`)
-var cudaRuntimeDirRegex = regexp.MustCompile(`^cuda_v(\d+)$`)
+var (
+	cudaRuntimeSORegex  = regexp.MustCompile(`^libcudart\.so\.(\d+)(?:\.(\d+))?`)
+	cudaRuntimeDLLRegex = regexp.MustCompile(`^cudart64_(\d{2})(\d)\.dll$`)
+	cudaRuntimeDirRegex = regexp.MustCompile(`^cuda_v(\d+)$`)
+)
 
 // parseLlamaServerDevices parses the combined output of llama-server discovery.
 // It extracts device info, ROCm gfx targets, CUDA compute capabilities, and
