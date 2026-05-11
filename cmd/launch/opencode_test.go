@@ -268,6 +268,49 @@ func TestBuildModelEntries(t *testing.T) {
 	})
 }
 
+func TestBuildModelEntries(t *testing.T) {
+	t.Run("defaults to model name when capabilities cannot be probed", func(t *testing.T) {
+		models := buildModelEntries(context.Background(), nil, []string{"llama3.2"})
+		entry, _ := models["llama3.2"].(map[string]any)
+		if entry["name"] != "llama3.2" {
+			t.Fatalf("name = %v, want llama3.2", entry["name"])
+		}
+		if _, ok := entry["reasoning"]; ok {
+			t.Fatalf("reasoning should not be set without an API client, got %v", entry["reasoning"])
+		}
+	})
+
+	t.Run("uses timeout when probing capabilities with background context", func(t *testing.T) {
+		u, err := url.Parse("http://ollama.example")
+		if err != nil {
+			t.Fatalf("parse test URL: %v", err)
+		}
+
+		client := api.NewClient(u, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		})})
+
+		done := make(chan map[string]any, 1)
+		go func() {
+			done <- buildModelEntries(context.Background(), client, []string{"gpt-oss:120b-cloud"})
+		}()
+
+		select {
+		case models := <-done:
+			entry, _ := models["gpt-oss:120b-cloud"].(map[string]any)
+			if _, ok := entry["reasoning"]; ok {
+				t.Fatalf("reasoning should not be set after timed out capability probe, got %v", entry["reasoning"])
+			}
+			if entry["limit"] == nil {
+				t.Fatalf("cloud model limit should still be set after timed out capability probe")
+			}
+		case <-time.After(openCodeModelShowTimeout + time.Second):
+			t.Fatalf("buildModelEntries did not return within %v", openCodeModelShowTimeout+time.Second)
+		}
+	})
+}
+
 func TestOpenCodeModels_ReturnsNil(t *testing.T) {
 	o := &OpenCode{}
 	if models := o.Models(); models != nil {
@@ -413,12 +456,12 @@ func TestOpenCodeEdit_ReasoningOnThinkingModel(t *testing.T) {
 	}
 }
 
-func TestOpenCodeEdit_ReasoningLevelsOnGptOss(t *testing.T) {
+func TestOpenCodeEdit_ReasoningLevelsOnGptOssFamily(t *testing.T) {
 	setTestHome(t, t.TempDir())
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/show" {
-			fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
+			fmt.Fprintf(w, `{"capabilities":["thinking"],"details":{"family":"gptoss"},"model_info":{"general.architecture":"gptoss"}}`)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -427,23 +470,23 @@ func TestOpenCodeEdit_ReasoningLevelsOnGptOss(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
 	o := &OpenCode{}
-	if err := o.Edit([]string{"gpt-oss:120b-cloud"}); err != nil {
+	if err := o.Edit([]string{"my-gpt-alias"}); err != nil {
 		t.Fatal(err)
 	}
 
-	entry := inlineConfigModel(t, o.configContent, "gpt-oss:120b-cloud")
+	entry := inlineConfigModel(t, o.configContent, "my-gpt-alias")
 	if entry["reasoning"] != true {
 		t.Error("expected reasoning = true")
 	}
-	// GPT-OSS cannot turn thinking off and supports levels,
-	// so no custom variants should be written.
+	// GPT-OSS cannot turn thinking off and supports levels, even when
+	// launched through an alias.
 	if entry["variants"] != nil {
-		t.Errorf("expected no variants for gpt-oss, got %v", entry["variants"])
+		t.Errorf("expected no variants for gpt-oss family, got %v", entry["variants"])
 	}
 	// Should default to medium reasoning effort
 	opts, ok := entry["options"].(map[string]any)
 	if !ok {
-		t.Fatal("expected options to be set for gpt-oss")
+		t.Fatal("expected options to be set for gpt-oss family")
 	}
 	if opts["reasoningEffort"] != "medium" {
 		t.Errorf("reasoningEffort = %v, want medium", opts["reasoningEffort"])
