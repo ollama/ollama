@@ -382,7 +382,7 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	if r.OutputConfig != nil {
 		normalizedEffort = strings.ToLower(strings.TrimSpace(r.OutputConfig.Effort))
 		if normalizedEffort == "xhigh" {
-			normalizedEffort = "high"
+			normalizedEffort = "max"
 		}
 	}
 
