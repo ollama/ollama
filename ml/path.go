@@ -38,8 +38,13 @@ var LibOllamaPath string = func() string {
 		return ""
 	}
 
+	distPath := filepath.Join("dist", runtime.GOOS+"-"+runtime.GOARCH, "lib", "ollama")
 	paths := []string{
 		libPath,
+
+		// release build paths for local development
+		filepath.Join(filepath.Dir(exe), distPath),
+		filepath.Join(cwd, distPath),
 
 		// build paths for development
 		filepath.Join(filepath.Dir(exe), "build", "lib", "ollama"),

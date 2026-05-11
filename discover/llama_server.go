@@ -379,7 +379,7 @@ func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 		deviceIndex++
 	}
 
-	return devices
+	return refineLlamaServerDevices(devices)
 }
 
 func cudaRuntimeVersion(libDirs []string) (int, int, bool) {

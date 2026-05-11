@@ -8,9 +8,18 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/ml"
 )
 
 func TestLlamaServerDiscovery(t *testing.T) {
+	originalProbe := probeLlamaServerVulkanDevices
+	probeLlamaServerVulkanDevices = func() ([]vulkanPhysicalDevice, error) {
+		return nil, errWindowsVulkanProbeUnsupported
+	}
+	t.Cleanup(func() {
+		probeLlamaServerVulkanDevices = originalProbe
+	})
+
 	t.Run("output only trace", func(t *testing.T) {
 		original := slog.Default()
 		t.Cleanup(func() {
@@ -280,6 +289,81 @@ Available devices:
 		major, minor, ok = cudaRuntimeVersion([]string{filepath.Join(t.TempDir(), "cuda_v13")})
 		if !ok || major != 13 || minor != 0 {
 			t.Fatalf("cudaRuntimeVersion fallback = %d.%d, %v, want 13.0, true", major, minor, ok)
+		}
+	})
+
+	t.Run("refine windows vulkan devices", func(t *testing.T) {
+		makeDevices := func() []ml.DeviceInfo {
+			return []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "Vulkan"}, Description: "AMD Radeon(TM) Graphics"},
+				{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Description: "AMD Radeon RX 7900 XTX"},
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Description: "NVIDIA GeForce RTX 4090"},
+			}
+		}
+
+		tests := []struct {
+			name    string
+			devices []ml.DeviceInfo
+			probed  []vulkanPhysicalDevice
+			want    []bool
+			applied bool
+		}{
+			{
+				name: "fills missing integrated bit",
+				probed: []vulkanPhysicalDevice{
+					{Name: "AMD Radeon(TM) Graphics", Integrated: true},
+					{Name: "AMD Radeon RX 7900 XTX", Integrated: false},
+				},
+				want:    []bool{true, false, false},
+				applied: true,
+			},
+			{
+				name: "skips when names do not line up",
+				probed: []vulkanPhysicalDevice{
+					{Name: "Wrong GPU", Integrated: true},
+					{Name: "AMD Radeon RX 7900 XTX", Integrated: false},
+				},
+				want: []bool{false, false, false},
+			},
+			{
+				name:   "skips when counts do not line up",
+				probed: []vulkanPhysicalDevice{{Name: "AMD Radeon(TM) Graphics", Integrated: true}},
+				want:   []bool{false, false, false},
+			},
+			{
+				name: "skips when already classified",
+				devices: []ml.DeviceInfo{
+					{DeviceID: ml.DeviceID{ID: "0", Library: "Vulkan"}, Description: "AMD Radeon(TM) Graphics", Integrated: true},
+					{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Description: "AMD Radeon RX 7900 XTX"},
+				},
+				probed: []vulkanPhysicalDevice{
+					{Name: "AMD Radeon(TM) Graphics", Integrated: false},
+					{Name: "AMD Radeon RX 7900 XTX", Integrated: false},
+				},
+				want: []bool{true, false},
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				devices := tt.devices
+				if devices == nil {
+					devices = makeDevices()
+				}
+				applied := applyWindowsVulkanRefinement(devices, tt.probed)
+				if applied != tt.applied {
+					t.Fatalf("applied = %v, want %v", applied, tt.applied)
+				}
+				got := devices
+				if len(got) != len(tt.want) {
+					t.Fatalf("got %d devices, want %d", len(got), len(tt.want))
+				}
+				for i, want := range tt.want {
+					if got[i].Integrated != want {
+						t.Fatalf("device %d integrated = %v, want %v", i, got[i].Integrated, want)
+					}
+				}
+			})
 		}
 	})
 }
