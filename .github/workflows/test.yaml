@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.changes.outputs.changed }}
+      app_changed: ${{ steps.changes.outputs.app_changed }}
       vendorsha: ${{ steps.changes.outputs.vendorsha }}
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +39,7 @@ jobs:
           }
 
           echo changed=$(changed 'llama/llama.cpp/**/*' 'ml/backend/ggml/ggml/**/*' '.github/**/*') | tee -a $GITHUB_OUTPUT
+          echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
           echo vendorsha=$(make -f Makefile.sync print-base) | tee -a $GITHUB_OUTPUT
 
   linux:
@@ -250,6 +252,7 @@ jobs:
         run: go mod tidy --diff || (echo "Please run 'go mod tidy'." && exit 1)
 
   test:
+    needs: [changes]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -283,6 +286,10 @@ jobs:
       - name: go test
         if: always()
         run: go test -count=1 -benchtime=1x ./...
+
+      - name: go test app with live updater tag
+        if: ${{ needs.changes.outputs.app_changed == 'True' && contains(fromJSON('["macos-latest","windows-latest"]'), matrix.os) }}
+        run: go test -count=1 -tags updater_live ./app/...
 
       - uses: golangci/golangci-lint-action@v9
         with:
