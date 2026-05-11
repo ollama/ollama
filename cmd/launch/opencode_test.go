@@ -211,12 +211,6 @@ func TestOpenCodeEdit(t *testing.T) {
 	})
 }
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
-
 func TestBuildModelEntries(t *testing.T) {
 	t.Run("defaults to model name when capabilities cannot be probed", func(t *testing.T) {
 		models := buildModelEntries(context.Background(), nil, []string{"llama3.2"})
