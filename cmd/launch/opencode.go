@@ -297,7 +297,7 @@ func applyOpenCodeReasoning(resp *api.ShowResponse, modelName string, entry map[
 	if slices.Contains(resp.Capabilities, model.CapabilityThinking) {
 		entry["reasoning"] = true
 
-		if openCodeSupportsReasoningLevels(resp, modelName) {
+		if strings.Contains(modelName, "gpt-oss") {
 			// GPT-OSS models support variable thinking effort levels
 			// and cannot turn thinking off. Keep the built-in
 			// low/medium/high variants as-is and default to medium.
@@ -318,21 +318,4 @@ func applyOpenCodeReasoning(resp *api.ShowResponse, modelName string, entry map[
 			}
 		}
 	}
-}
-
-func openCodeSupportsReasoningLevels(resp *api.ShowResponse, modelName string) bool {
-	if resp != nil {
-		families := append([]string{resp.Details.Family}, resp.Details.Families...)
-		if arch, ok := resp.ModelInfo["general.architecture"].(string); ok {
-			families = append(families, arch)
-		}
-		for _, family := range families {
-			if family == "gptoss" || family == "gpt-oss" {
-				return true
-			}
-		}
-	}
-
-	// Fallback for older servers or sparse test responses that do not include family data.
-	return strings.Contains(modelName, "gpt-oss")
 }

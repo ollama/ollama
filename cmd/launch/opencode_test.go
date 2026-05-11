@@ -456,12 +456,12 @@ func TestOpenCodeEdit_ReasoningOnThinkingModel(t *testing.T) {
 	}
 }
 
-func TestOpenCodeEdit_ReasoningLevelsOnGptOssFamily(t *testing.T) {
+func TestOpenCodeEdit_ReasoningLevelsOnGptOss(t *testing.T) {
 	setTestHome(t, t.TempDir())
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/show" {
-			fmt.Fprintf(w, `{"capabilities":["thinking"],"details":{"family":"gptoss"},"model_info":{"general.architecture":"gptoss"}}`)
+			fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -470,23 +470,23 @@ func TestOpenCodeEdit_ReasoningLevelsOnGptOssFamily(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
 	o := &OpenCode{}
-	if err := o.Edit([]string{"my-gpt-alias"}); err != nil {
+	if err := o.Edit([]string{"gpt-oss:120b-cloud"}); err != nil {
 		t.Fatal(err)
 	}
 
-	entry := inlineConfigModel(t, o.configContent, "my-gpt-alias")
+	entry := inlineConfigModel(t, o.configContent, "gpt-oss:120b-cloud")
 	if entry["reasoning"] != true {
 		t.Error("expected reasoning = true")
 	}
-	// GPT-OSS cannot turn thinking off and supports levels, even when
-	// launched through an alias.
+	// GPT-OSS cannot turn thinking off and supports levels,
+	// so no custom variants should be written.
 	if entry["variants"] != nil {
-		t.Errorf("expected no variants for gpt-oss family, got %v", entry["variants"])
+		t.Errorf("expected no variants for gpt-oss, got %v", entry["variants"])
 	}
 	// Should default to medium reasoning effort
 	opts, ok := entry["options"].(map[string]any)
 	if !ok {
-		t.Fatal("expected options to be set for gpt-oss family")
+		t.Fatal("expected options to be set for gpt-oss")
 	}
 	if opts["reasoningEffort"] != "medium" {
 		t.Errorf("reasoningEffort = %v, want medium", opts["reasoningEffort"])
