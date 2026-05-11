@@ -32,7 +32,7 @@ func TestRenderContentWithImageTags(t *testing.T) {
 			content:     "compare [img]",
 			imageCount:  2,
 			imageOffset: 0,
-			want:        "[img-1]compare [img-0]",
+			want:        "[img-1] compare [img-0]",
 			wantOffset:  2,
 		},
 		{

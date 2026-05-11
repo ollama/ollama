@@ -413,7 +413,7 @@ func TestFromMessagesRequest_WithOutputConfigEffort(t *testing.T) {
 	}
 }
 
-func TestFromMessagesRequest_WithOutputConfigEffortXHighMapsToMax(t *testing.T) {
+func TestFromMessagesRequest_WithOutputConfigEffortXHighMapsToHigh(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "gemma4",
 		MaxTokens: 32000,
@@ -437,8 +437,8 @@ func TestFromMessagesRequest_WithOutputConfigEffortXHighMapsToMax(t *testing.T) 
 		t.Fatal("expected think to be set from output_config.effort")
 	}
 
-	if got := result.Think.String(); got != "max" {
-		t.Fatalf("expected think level 'max' for xhigh effort, got %q", got)
+	if got := result.Think.String(); got != "high" {
+		t.Fatalf("expected think level 'high' for xhigh effort, got %q", got)
 	}
 }
 
