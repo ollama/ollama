@@ -239,23 +239,8 @@ func (r *Nemotron3NanoRenderer) renderMessageContent(message api.Message, imageO
 		return content
 	}
 
-	if strings.Contains(content, "[img-") {
-		return content
-	}
-
-	if strings.Contains(content, "[img]") {
-		for i := range message.Images {
-			content = strings.Replace(content, "[img]", fmt.Sprintf("[img-%d]", imageOffset+i), 1)
-		}
-		return content
-	}
-
-	var sb strings.Builder
-	for i := range message.Images {
-		sb.WriteString(fmt.Sprintf("[img-%d]", imageOffset+i))
-	}
-	sb.WriteString(content)
-	return sb.String()
+	content, _ = renderContentWithImageTags(content, len(message.Images), imageOffset)
+	return content
 }
 
 func nemotron3NanoRenderContent(content any) string {

@@ -3,7 +3,6 @@ package renderers
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -199,19 +198,18 @@ func (r *LFM2Renderer) renderMessageContent(message api.Message, imageOffset int
 		return content
 	}
 
-	var sb strings.Builder
 	if r.useImgTags {
-		for i := range message.Images {
-			sb.WriteString(fmt.Sprintf("[img-%d]", imageOffset+i))
-		}
-	} else {
-		placeholder := lfm2ImagePlaceholder(false)
-		if strings.Contains(content, placeholder) {
-			return content
-		}
-		for range message.Images {
-			sb.WriteString(placeholder)
-		}
+		content, _ = renderContentWithImageTags(content, len(message.Images), imageOffset)
+		return content
+	}
+
+	var sb strings.Builder
+	placeholder := lfm2ImagePlaceholder(false)
+	if strings.Contains(content, placeholder) {
+		return content
+	}
+	for range message.Images {
+		sb.WriteString(placeholder)
 	}
 	sb.WriteString(content)
 	return sb.String()

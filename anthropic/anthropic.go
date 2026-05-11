@@ -391,7 +391,7 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 	if think == nil && r.OutputConfig != nil {
 		switch normalizedEffort {
-		case "high", "medium", "low", "max":
+		case "xhigh", "high", "medium", "low", "max":
 			think = &api.ThinkValue{Value: normalizedEffort}
 		case "none":
 			think = &api.ThinkValue{Value: false}

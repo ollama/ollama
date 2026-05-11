@@ -161,15 +161,12 @@ func stripThinking(text string) string {
 // When trim is true, leading/trailing whitespace is stripped (matching the Jinja2
 // template's | trim filter applied to non-model content).
 func (r *Gemma4Renderer) renderContent(sb *strings.Builder, msg api.Message, imageOffset *int, trim bool) {
-	if len(msg.Images) > 0 && r.useImgTags {
-		for range msg.Images {
-			sb.WriteString(fmt.Sprintf("[img-%d]", *imageOffset))
-			*imageOffset++
-		}
-	}
 	content := msg.Content
 	if trim {
 		content = strings.TrimSpace(content)
+	}
+	if len(msg.Images) > 0 && r.useImgTags {
+		content, *imageOffset = renderContentWithImageTags(content, len(msg.Images), *imageOffset)
 	}
 	sb.WriteString(content)
 }

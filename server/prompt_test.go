@@ -499,6 +499,72 @@ func TestChatPromptRendererAddsToolImageTags(t *testing.T) {
 	}
 }
 
+func TestChatPromptRendererPreservesExplicitImagePlaceholders(t *testing.T) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: "compare [img] and [img]",
+			Images:  []api.ImageData{[]byte("img-1"), []byte("img-2")},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		renderer    string
+		wantSnippet string
+	}{
+		{
+			name:        "gemma4",
+			renderer:    "gemma4",
+			wantSnippet: "<|turn>user\ncompare [img-0] and [img-1]<turn|>\n",
+		},
+		{
+			name:        "qwen3-vl",
+			renderer:    "qwen3-vl-instruct",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
+		{
+			name:        "qwen3.5",
+			renderer:    "qwen3.5",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
+		{
+			name:        "glm-ocr",
+			renderer:    "glm-ocr",
+			wantSnippet: "<|user|>\ncompare [img-0] and [img-1]",
+		},
+		{
+			name:        "nemotron-3-nano",
+			renderer:    "nemotron-3-nano",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				Config:         model.ConfigV2{Renderer: tt.renderer},
+				ProjectorPaths: []string{"vision"},
+			}
+			opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+			think := false
+
+			prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got, want := len(images), 2; got != want {
+				t.Fatalf("len(images) = %d, want %d", got, want)
+			}
+
+			if !strings.Contains(prompt, tt.wantSnippet) {
+				t.Fatalf("prompt missing replaced placeholders, got: %q", prompt)
+			}
+		})
+	}
+}
+
 func TestRenderPromptResolvesDynamicGemma4Renderer(t *testing.T) {
 	msgs := []api.Message{{Role: "user", Content: "Hello"}}
 

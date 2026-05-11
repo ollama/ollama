@@ -13,15 +13,11 @@ type GlmOcrRenderer struct {
 }
 
 func (r *GlmOcrRenderer) renderContent(message api.Message, imageOffset int) (string, int) {
-	var sb strings.Builder
-	for range message.Images {
-		if r.useImgTags {
-			sb.WriteString(fmt.Sprintf("[img-%d]", imageOffset))
-			imageOffset++
-		}
+	if r.useImgTags {
+		return renderContentWithImageTags(message.Content, len(message.Images), imageOffset)
 	}
-	sb.WriteString(message.Content)
-	return sb.String(), imageOffset
+
+	return message.Content, imageOffset
 }
 
 func (r *GlmOcrRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
