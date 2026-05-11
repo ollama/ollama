@@ -48,6 +48,14 @@ describe("fileValidation", () => {
       expect(result.valid).toBe(true);
     });
 
+    it("should accept videos regardless of vision capability", () => {
+      const file = createMockFile("test.mp4", 1024, "video/mp4");
+      const result = validateFile(file, {
+        hasVisionCapability: false,
+      });
+      expect(result.valid).toBe(true);
+    });
+
     it("should accept JPEG images when vision capability is enabled", () => {
       const file = createMockFile("test.jpg", 1024, "image/jpeg");
       const result = validateFile(file, {

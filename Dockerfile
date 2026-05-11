@@ -142,6 +142,15 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --preset 'Vulkan' -- -l $(nproc) \
         && cmake --install build --component Vulkan --strip
 
+# Build minimal LGPL FFmpeg libraries for embedded video support
+FROM base AS ffmpeg-build
+RUN yum install -y wget tar xz gcc gcc-c++ make perl pkgconfig autoconf automake libtool \
+    && if [ "$(uname -m)" = "x86_64" ]; then yum install -y nasm yasm; fi
+WORKDIR /tmp/ffmpeg-build
+ENV INSTALL_PREFIX=/usr/local/ffmpeg-minimal
+COPY third_party/ffmpeg/build.sh .
+RUN chmod +x build.sh && ./build.sh
+
 FROM base AS mlx
 ARG CUDA13VERSION=13.0
 RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
@@ -181,6 +190,11 @@ RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
 COPY . .
+# Copy FFmpeg libraries from ffmpeg-build stage
+COPY --from=ffmpeg-build /usr/local/ffmpeg-minimal /usr/local/ffmpeg-minimal
+ENV PKG_CONFIG_PATH=/usr/local/ffmpeg-minimal/lib/pkgconfig
+# Clone mlx-c headers for CGO (version from MLX_VERSION file)
+RUN git clone --depth 1 --branch "$(cat MLX_VERSION)" https://github.com/ml-explore/mlx-c.git build/_deps/mlx-c-src
 ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
 ARG CGO_CFLAGS
@@ -188,7 +202,7 @@ ARG CGO_CXXFLAGS
 ENV CGO_CFLAGS="${CGO_CFLAGS}"
 ENV CGO_CXXFLAGS="${CGO_CXXFLAGS}"
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -buildmode=pie -o /bin/ollama .
+    go build -trimpath -buildmode=pie -tags "ffmpeg,cgo" -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/

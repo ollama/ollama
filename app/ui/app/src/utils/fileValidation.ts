@@ -43,6 +43,8 @@ export const TEXT_FILE_EXTENSIONS = [
 
 export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp"];
 
+export const VIDEO_EXTENSIONS = ["mp4", "mov", "avi", "mkv", "webm", "m4v"];
+
 export interface FileValidationOptions {
   maxFileSize?: number; // in MB
   allowedExtensions?: string[];
@@ -62,7 +64,7 @@ export function validateFile(
 ): ValidationResult {
   const {
     maxFileSize = 10,
-    allowedExtensions = [...TEXT_FILE_EXTENSIONS, ...IMAGE_EXTENSIONS],
+    allowedExtensions = [...TEXT_FILE_EXTENSIONS, ...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS],
     customValidator,
   } = options;
 
