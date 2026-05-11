@@ -401,7 +401,7 @@ func TestChatPromptGLMOcrRendererAddsImageTags(t *testing.T) {
 		t.Fatalf("len(images) = %d, want %d", got, want)
 	}
 
-	if !strings.Contains(prompt, "<|user|>\n[img-0][img-1]extract text") {
+	if !strings.Contains(prompt, "<|user|>\n[img-0][img-1] extract text") {
 		t.Fatalf("prompt missing glm-ocr image tags, got: %q", prompt)
 	}
 }
@@ -441,32 +441,32 @@ func TestChatPromptRendererAddsToolImageTags(t *testing.T) {
 		{
 			name:            "gemma4",
 			renderer:        "gemma4",
-			wantUserTag:     "<|turn>user\n[img-0]look at this file<turn|>\n",
-			wantToolContent: "[img-1]attached image",
+				wantUserTag:     "<|turn>user\n[img-0] look at this file<turn|>\n",
+				wantToolContent: "[img-1] attached image",
 		},
 		{
 			name:            "qwen3-vl",
 			renderer:        "qwen3-vl-instruct",
-			wantUserTag:     "<|im_start|>user\n[img-0]look at this file<|im_end|>\n",
-			wantToolContent: "<tool_response>\n[img-1]attached image\n</tool_response>",
+				wantUserTag:     "<|im_start|>user\n[img-0] look at this file<|im_end|>\n",
+				wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
 		},
 		{
 			name:            "qwen3.5",
 			renderer:        "qwen3.5",
-			wantUserTag:     "<|im_start|>user\n[img-0]look at this file<|im_end|>\n",
-			wantToolContent: "<tool_response>\n[img-1]attached image\n</tool_response>",
+				wantUserTag:     "<|im_start|>user\n[img-0] look at this file<|im_end|>\n",
+				wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
 		},
 		{
 			name:            "glm-ocr",
 			renderer:        "glm-ocr",
-			wantUserTag:     "<|user|>\n[img-0]look at this file",
-			wantToolContent: "<tool_response>\n[img-1]attached image\n</tool_response>",
+				wantUserTag:     "<|user|>\n[img-0] look at this file",
+				wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
 		},
 		{
 			name:            "nemotron-3-nano",
 			renderer:        "nemotron-3-nano",
-			wantUserTag:     "<|im_start|>user\n[img-0]look at this file<|im_end|>\n",
-			wantToolContent: "<tool_response>\n[img-1]attached image\n</tool_response>",
+				wantUserTag:     "<|im_start|>user\n[img-0] look at this file<|im_end|>\n",
+				wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
 		},
 	}
 

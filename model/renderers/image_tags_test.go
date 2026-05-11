@@ -16,7 +16,7 @@ func TestRenderContentWithImageTags(t *testing.T) {
 			content:     "describe this image",
 			imageCount:  2,
 			imageOffset: 0,
-			want:        "[img-0][img-1]describe this image",
+			want:        "[img-0][img-1] describe this image",
 			wantOffset:  2,
 		},
 		{

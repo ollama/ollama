@@ -3,6 +3,8 @@ package renderers
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // renderContentWithImageTags preserves the legacy server-side placeholder
@@ -24,6 +26,12 @@ func renderContentWithImageTags(content string, imageCount int, imageOffset int)
 			content = strings.Replace(content, "[img]", imgTag, 1)
 		} else {
 			prefix.WriteString(imgTag)
+		}
+	}
+
+	if prefix.Len() > 0 && content != "" {
+		if r, _ := utf8.DecodeRuneInString(content); r != utf8.RuneError && !unicode.IsSpace(r) {
+			prefix.WriteByte(' ')
 		}
 	}
 

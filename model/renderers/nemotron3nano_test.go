@@ -19,7 +19,7 @@ func TestNemotron3NanoRenderer_Images(t *testing.T) {
 			msgs: []api.Message{
 				{Role: "user", Content: "Describe this image.", Images: []api.ImageData{api.ImageData("img1")}},
 			},
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\n[img-0]Describe this image.<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\n[img-0] Describe this image.<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "generic image placeholder is rewritten",
@@ -35,7 +35,7 @@ func TestNemotron3NanoRenderer_Images(t *testing.T) {
 				{Role: "assistant", Content: "It shows something."},
 				{Role: "user", Content: "Compare these.", Images: []api.ImageData{api.ImageData("img2"), api.ImageData("img3")}},
 			},
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\n[img-0]Describe the first image.<|im_end|>\n<|im_start|>assistant\n<think></think>It shows something.<|im_end|>\n<|im_start|>user\n[img-1][img-2]Compare these.<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\n[img-0] Describe the first image.<|im_end|>\n<|im_start|>assistant\n<think></think>It shows something.<|im_end|>\n<|im_start|>user\n[img-1][img-2] Compare these.<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
 		},
 	}
 
