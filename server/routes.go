@@ -3127,8 +3127,12 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		s.sched.expireRunnersForRuntimeOOM(m, err)
 		// Only send JSON error if streaming hasn't started yet
 		// (once streaming starts, headers are committed and we can't change status code)
-		if !streamStarted {
+		if !isStreaming || !streamStarted {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		} else {
+			data, _ := json.Marshal(gin.H{"error": err.Error()})
+			c.Writer.Write(append(data, '\n'))
+			c.Writer.Flush()
 		}
 		return
 	}
