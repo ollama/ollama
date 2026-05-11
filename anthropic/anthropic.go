@@ -381,6 +381,9 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	normalizedEffort := ""
 	if r.OutputConfig != nil {
 		normalizedEffort = strings.ToLower(strings.TrimSpace(r.OutputConfig.Effort))
+		if normalizedEffort == "xhigh" {
+			normalizedEffort = "high"
+		}
 	}
 
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
@@ -391,7 +394,7 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 	if think == nil && r.OutputConfig != nil {
 		switch normalizedEffort {
-		case "xhigh", "high", "medium", "low", "max":
+		case "high", "medium", "low", "max":
 			think = &api.ThinkValue{Value: normalizedEffort}
 		case "none":
 			think = &api.ThinkValue{Value: false}

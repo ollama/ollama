@@ -18,7 +18,7 @@ func renderContentWithImageTags(content string, imageCount int, imageOffset int)
 	}
 
 	var prefix strings.Builder
-	for i := 0; i < imageCount; i++ {
+	for i := range imageCount {
 		imgTag := fmt.Sprintf("[img-%d]", imageOffset+i)
 		if strings.Contains(content, "[img]") {
 			content = strings.Replace(content, "[img]", imgTag, 1)
