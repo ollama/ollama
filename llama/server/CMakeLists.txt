@@ -180,6 +180,10 @@ function(ollama_install_windows_runtime_dlls dest)
     endforeach()
     if(_runtime_dll_dirs)
         list(REMOVE_DUPLICATES _runtime_dll_dirs)
+        # Multiple VS redists can be installed; use one CRT set so older DLLs
+        # do not overwrite newer DLLs with the same names.
+        list(SORT _runtime_dll_dirs COMPARE NATURAL ORDER DESCENDING)
+        list(GET _runtime_dll_dirs 0 _runtime_dll_dirs)
     endif()
 
     set(_runtime_dlls)
