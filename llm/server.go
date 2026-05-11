@@ -1175,15 +1175,15 @@ func greedyFit(layers []uint64, gpus []ml.DeviceInfo, capacity float32, requeste
 	device := len(gpus) - 1
 	gpuLayers = ml.GPULayersList{{DeviceID: gpus[device].DeviceID}}
 	freeSpace := uint64(float32(gpus[device].FreeMemory) * capacity)
-	for i := len(layers) - 1; i >= 0; i-- {
+	for i, layer := range slices.Backward(layers) {
 		if requestedLayers >= 0 && len(layers)-1-i >= requestedLayers {
 			break
 		}
 
 		for {
-			if layers[i] <= freeSpace {
+			if layer <= freeSpace {
 				gpuLayers[0].Layers = append([]int{i}, gpuLayers[0].Layers...)
-				freeSpace -= layers[i]
+				freeSpace -= layer
 				break
 			}
 

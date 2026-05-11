@@ -1,6 +1,7 @@
 package thinking
 
 import (
+	"slices"
 	"strings"
 	"text/template"
 	"text/template/parse"
@@ -72,8 +73,8 @@ func InferTags(t *template.Template) (string, string) {
 		case *parse.FieldNode:
 			if len(x.Ident) > 0 && x.Ident[0] == "Thinking" {
 				var mostRecentRange *parse.RangeNode
-				for i := len(ancestors) - 1; i >= 0; i-- {
-					if r, ok := ancestors[i].(*parse.RangeNode); ok {
+				for _, ancestor := range slices.Backward(ancestors) {
+					if r, ok := ancestor.(*parse.RangeNode); ok {
 						mostRecentRange = r
 						break
 					}
@@ -88,8 +89,8 @@ func InferTags(t *template.Template) (string, string) {
 				// necessary for our heuristic
 
 				// go up to the nearest ancestor that is a *parse.ListNode
-				for i := len(ancestors) - 1; i >= 0; i-- {
-					if l, ok := ancestors[i].(*parse.ListNode); ok {
+				for _, ancestor := range slices.Backward(ancestors) {
+					if l, ok := ancestor.(*parse.ListNode); ok {
 						firstNode := l.Nodes[0]
 						if t, ok := firstNode.(*parse.TextNode); ok {
 							openingTag = strings.TrimSpace(t.String())

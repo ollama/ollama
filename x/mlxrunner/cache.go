@@ -232,8 +232,8 @@ pageIn:
 			}
 		}
 	}
-	for i := len(c.activePath) - 1; i >= 0; i-- {
-		if c.activePath[i].endOffset <= minOff {
+	for i, c0 := range slices.Backward(c.activePath) {
+		if c0.endOffset <= minOff {
 			c.activePath = c.activePath[:i+1]
 			break
 		}
