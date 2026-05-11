@@ -115,7 +115,7 @@ if(CMAKE_CUDA_COMPILER)
     endif()
 
     find_package(CUDAToolkit)
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cuda)
+#    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cuda)
     target_include_directories(ggml-cuda PRIVATE ${GGML_INCLUDE_DIRS})
     install(TARGETS ggml-cuda
         RUNTIME_DEPENDENCIES
