@@ -241,28 +241,27 @@ func readModelJSONModels() []string {
 }
 
 func buildModelEntries(ctx context.Context, client *api.Client, modelList []string) map[string]any {
+	if client != nil {
+		var cancel context.CancelFunc
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			ctx, cancel = context.WithTimeout(ctx, openCodeModelShowTimeout)
+			defer cancel()
+		}
+	}
+
 	models := make(map[string]any)
 	for _, modelID := range modelList {
 		entry := map[string]any{
 			"name": modelID,
 		}
 		if client != nil {
-			showCtx := ctx
-			var cancel context.CancelFunc
-			if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-				showCtx, cancel = context.WithTimeout(ctx, openCodeModelShowTimeout)
-			}
-
-			if resp, err := client.Show(showCtx, &api.ShowRequest{Model: modelID}); err == nil {
+			if resp, err := client.Show(ctx, &api.ShowRequest{Model: modelID}); err == nil {
 				if slices.Contains(resp.Capabilities, model.CapabilityVision) {
 					entry["modalities"] = map[string]any{
 						"input":  []string{"text", "image"},
 						"output": []string{"text"},
 					}
 				}
-			}
-			if cancel != nil {
-				cancel()
 			}
 		}
 		if isCloudModelName(modelID) {

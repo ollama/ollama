@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 )
@@ -220,6 +222,47 @@ func TestBuildModelEntries(t *testing.T) {
 		}
 		if _, ok := entry["modalities"]; ok {
 			t.Fatalf("modalities should not be set without an API client, got %v", entry["modalities"])
+		}
+	})
+
+	t.Run("uses one timeout budget across capability probes", func(t *testing.T) {
+		u, err := url.Parse("http://ollama.example")
+		if err != nil {
+			t.Fatalf("parse test URL: %v", err)
+		}
+
+		var mu sync.Mutex
+		waited := 0
+
+		client := api.NewClient(u, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			mu.Lock()
+			if req.Context().Err() == nil {
+				waited++
+			}
+			mu.Unlock()
+
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		})})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+		defer cancel()
+
+		models := buildModelEntries(ctx, client, []string{"slow-1", "slow-2"})
+		for _, modelID := range []string{"slow-1", "slow-2"} {
+			entry, _ := models[modelID].(map[string]any)
+			if entry["name"] != modelID {
+				t.Fatalf("name for %q = %v, want %q", modelID, entry["name"], modelID)
+			}
+			if _, ok := entry["modalities"]; ok {
+				t.Fatalf("modalities for %q should not be set after probe timeout, got %v", modelID, entry["modalities"])
+			}
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		if waited != 1 {
+			t.Fatalf("expected shared timeout to block one probe, waited on %d probes", waited)
 		}
 	})
 }
