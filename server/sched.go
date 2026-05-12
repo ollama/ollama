@@ -20,6 +20,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/server/internal/wakelock"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/mlxrunner"
@@ -56,6 +57,10 @@ type Scheduler struct {
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
+
+	// wakeLock prevents the host OS from sleeping while at least one
+	// inference request is in flight. See issue #4072.
+	wakeLock *wakelock.WakeLock
 }
 
 // Default automatic value for number of models we allow per GPU
@@ -77,6 +82,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		getGpuFn:        discover.GPUDevices,
 		getSystemInfoFn: discover.GetSystemInfo,
 		waitForRecovery: 5 * time.Second,
+		wakeLock:        wakelock.New("ollama inference"),
 	}
 	sched.loadFn = sched.load
 	return sched
@@ -129,7 +135,7 @@ func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, ses
 	runner := s.loaded[key]
 	s.loadedMu.Unlock()
 	if runner != nil && !runner.needsReload(c, req) {
-		req.useLoadedRunner(runner, s.finishedReqCh)
+		req.useLoadedRunner(runner, s.finishedReqCh, s.wakeLock)
 	} else {
 		select {
 		case s.pendingReqCh <- req:
@@ -189,7 +195,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					} else {
 						// Runner is usable, return it
 						logutil.Trace("using existing loaded runner", "model", pendingKey)
-						pending.useLoadedRunner(runner, s.finishedReqCh)
+						pending.useLoadedRunner(runner, s.finishedReqCh, s.wakeLock)
 						break
 					}
 				} else if maxRunners > 0 && loadedCount >= int(maxRunners) {
@@ -287,6 +293,12 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			slog.Debug("shutting down scheduler completed loop")
 			return
 		case finished := <-s.finishedReqCh:
+			// Every finished request corresponds to a wake-lock Acquire from
+			// useLoadedRunner or load; release even if the runner was already
+			// unloaded so the count stays balanced.
+			if s.wakeLock != nil {
+				s.wakeLock.Release()
+			}
 			finishedKey := schedulerModelKey(finished.model)
 			s.loadedMu.Lock()
 			runner := s.loaded[finishedKey]
@@ -387,10 +399,13 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 // Complete the pending request and send the runner back to the requester
 // Wires up a finished event after the request context is completed
 // Updates session duration, and resets expiration timer
-func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *LlmRequest) {
+func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *LlmRequest, wake *wakelock.WakeLock) {
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
 	runner.refCount++
+	if wake != nil {
+		wake.Acquire()
+	}
 	if runner.expireTimer != nil {
 		runner.expireTimer.Stop()
 		runner.expireTimer = nil
@@ -575,6 +590,9 @@ iGPUScan:
 			runner.pid = llama.Pid()
 		}
 		runner.refCount++
+		if s.wakeLock != nil {
+			s.wakeLock.Acquire()
+		}
 		runner.loading = false
 		go func() {
 			<-req.ctx.Done()
@@ -908,6 +926,12 @@ func (s *Scheduler) unloadAllRunners() {
 			slog.Debug("shutting down runner", "model", model)
 			runner.llama.Close()
 		}
+	}
+
+	// Drop any held wake-lock so we don't leave a caffeinate subprocess
+	// (or future platform assertion) orphaned after shutdown.
+	if s.wakeLock != nil {
+		s.wakeLock.Close()
 	}
 }
 
