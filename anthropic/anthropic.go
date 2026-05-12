@@ -380,7 +380,8 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 
 	var think *api.ThinkValue
 	if r.Thinking != nil {
-		switch r.Thinking.Type {
+		normalizedType := strings.ToLower(strings.TrimSpace(r.Thinking.Type))
+		switch normalizedType {
 		case "disabled":
 			think = &api.ThinkValue{Value: false}
 		case "adaptive", "enabled":
