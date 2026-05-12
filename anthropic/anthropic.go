@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -386,17 +385,18 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 			think = &api.ThinkValue{Value: false}
 		case "adaptive", "enabled":
 			effort := "high" // default effort level for adaptive thinking
-
 			if r.OutputConfig != nil {
-				effort = r.OutputConfig.Effort
-
-				if effort == "xhigh" {
-					effort = "high" // map "xhigh" to "high" in the API, as "xhigh" is an Anthropic-specific value
-				} else if !slices.Contains([]string{"max", "high", "medium", "low"}, effort) {
-					return nil, fmt.Errorf("invalid effort value: '%s' (must be \"max\", \"xhigh\", \"high\", \"medium\", or \"low\")", effort)
+				normalizedEffort := strings.ToLower(strings.TrimSpace(r.OutputConfig.Effort))
+				switch normalizedEffort {
+				case "max", "high", "medium", "low":
+					effort = normalizedEffort
+				case "xhigh":
+					// map "xhigh" to "high", as "xhigh" is an Anthropic-specific value
+					effort = "high"
+				default:
+					return nil, fmt.Errorf("invalid effort value: '%s' (must be \"max\", \"xhigh\", \"high\", \"medium\", or \"low\")", r.OutputConfig.Effort)
 				}
 			}
-
 			think = &api.ThinkValue{Value: effort}
 		default:
 			return nil, fmt.Errorf("invalid thinking type: '%s' (must be \"enabled\", \"disabled\", or \"adaptive\")", r.Thinking.Type)
