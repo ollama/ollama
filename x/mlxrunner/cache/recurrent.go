@@ -48,6 +48,10 @@ func NewRecurrentCache(convTail, convDim, numVHeads, headVDim, headKDim int32) *
 	}
 }
 
+func (c *RecurrentCache) RequiresExactRestorePoint() bool {
+	return true
+}
+
 func (c *RecurrentCache) ensure(batch int, dtype mlx.DType) {
 	if batch <= 0 {
 		batch = 1

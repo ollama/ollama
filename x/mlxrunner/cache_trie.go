@@ -18,7 +18,36 @@ type trieNode struct {
 	children  []*trieNode
 	lastUsed  time.Time        // for LRU eviction
 	snapshots []cache.Snapshot // per-layer paged-out snapshot data (nil if not paged out)
-	user      bool             // true = explicit restore point (resist auto-merge)
+	restore   restorePointKind // explicit restore point kind, if any
+}
+
+type restorePointKind uint8
+
+const (
+	restorePointNone restorePointKind = iota
+	restorePointEphemeral
+	restorePointDurable
+)
+
+func (k restorePointKind) String() string {
+	switch k {
+	case restorePointEphemeral:
+		return "ephemeral"
+	case restorePointDurable:
+		return "durable"
+	default:
+		return "none"
+	}
+}
+
+func (n *trieNode) isRestorePoint() bool {
+	return n.restore != restorePointNone
+}
+
+func (n *trieNode) markRestorePoint(kind restorePointKind) {
+	if kind > n.restore {
+		n.restore = kind
+	}
 }
 
 // startOffset returns the cumulative token offset at the start of this node's edge.
@@ -262,8 +291,9 @@ func mergeWithChild(node *trieNode, caches []cache.Cache, counter *int64) {
 		gc.parent = node
 	}
 
-	// Inherit user flag from child if child was a user-created snapshot node.
-	node.user = child.user
+	// After merging, the node's endOffset moves to the child boundary, so only
+	// the child's restore point can remain semantically valid.
+	node.restore = child.restore
 
 	// Update lastUsed to the more recent of the two.
 	if child.lastUsed.After(node.lastUsed) {

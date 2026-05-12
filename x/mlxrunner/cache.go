@@ -41,7 +41,7 @@ type kvCache struct {
 // pendingSnapshot is a snapshot scheduled to be taken during prefill.
 type pendingSnapshot struct {
 	offset int
-	user   bool
+	kind   restorePointKind
 }
 
 // cacheSession manages caches for a single pipeline run.
@@ -59,6 +59,8 @@ type cacheSession struct {
 	// during prefill, sorted by offset. Entries are consumed as the
 	// cache advances past them.
 	pendingSnapshots []pendingSnapshot
+
+	lastDecodeCheckpointOffset int
 }
 
 func (c *kvCache) ensureCaches(m base.Model) {
@@ -101,6 +103,7 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 
 	// Switch to the matched path, paging in/out as needed.
 	c.switchToPath(matchPath, matched)
+	c.pruneInactiveEphemeralRestorePoints()
 
 	// switchToPath aligns caches to a common offset
 	prefix := c.minCacheOffset()
@@ -116,7 +119,7 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 	// Schedule a snapshot at the branch point during prefill so future
 	// requests diverging here can restore instead of re-evaluating.
 	if prefix < matched {
-		session.pendingSnapshots = append(session.pendingSnapshots, pendingSnapshot{offset: matched, user: false})
+		session.pendingSnapshots = append(session.pendingSnapshots, pendingSnapshot{offset: matched, kind: restorePointNone})
 	}
 
 	msg := "cache hit"
@@ -251,6 +254,80 @@ pageIn:
 	}
 }
 
+// pruneInactiveEphemeralRestorePoints releases decode checkpoints that were
+// useful for the previous active branch but are not on the newly matched path.
+// Token edges are left in place; only expensive snapshot arrays and ephemeral
+// restore-point marks are cleared. Durable restore-point subtrees are kept
+// intact because KV snapshots in descendants may rely on ancestor snapshots.
+func (c *kvCache) pruneInactiveEphemeralRestorePoints() {
+	if c.root == nil {
+		return
+	}
+
+	activeSet := make(map[*trieNode]bool, len(c.activePath))
+	for _, n := range c.activePath {
+		activeSet[n] = true
+	}
+
+	durableMemo := make(map[*trieNode]bool)
+	var subtreeHasDurable func(*trieNode) bool
+	subtreeHasDurable = func(n *trieNode) bool {
+		if v, ok := durableMemo[n]; ok {
+			return v
+		}
+		if n.restore == restorePointDurable {
+			durableMemo[n] = true
+			return true
+		}
+		for _, child := range n.children {
+			if subtreeHasDurable(child) {
+				durableMemo[n] = true
+				return true
+			}
+		}
+		durableMemo[n] = false
+		return false
+	}
+
+	var prunedNodes, prunedSnapshotNodes int
+	var freedBytes int64
+
+	var pruneSubtree func(*trieNode)
+	pruneSubtree = func(n *trieNode) {
+		if activeSet[n] || subtreeHasDurable(n) {
+			return
+		}
+		if n.restore == restorePointEphemeral {
+			n.restore = restorePointNone
+			prunedNodes++
+		}
+		if n.hasSnapshots() {
+			freedBytes += n.snapshotBytes()
+			prunedSnapshotNodes++
+			n.setSnapshots(nil, &c.pagedOutBytes)
+		}
+		for _, child := range n.children {
+			pruneSubtree(child)
+		}
+	}
+
+	var walk func(*trieNode)
+	walk = func(n *trieNode) {
+		for _, child := range n.children {
+			if child.restore == restorePointEphemeral && !activeSet[child] && !subtreeHasDurable(child) {
+				pruneSubtree(child)
+				continue
+			}
+			walk(child)
+		}
+	}
+	walk(c.root)
+
+	if prunedNodes > 0 || prunedSnapshotNodes > 0 {
+		slog.Debug("pruned ephemeral decode checkpoints", "nodes", prunedNodes, "snapshot_nodes", prunedSnapshotNodes, "freed", mlx.PrettyBytes(int(freedBytes)))
+	}
+}
+
 // requestSnapshot schedules a user snapshot at the given absolute token
 // offset. The snapshot will be captured during prefill when the cache
 // reaches this offset.
@@ -259,14 +336,16 @@ func (s *cacheSession) requestSnapshot(offset int) {
 	if offset <= baseOffset || offset > len(s.inputs) {
 		return
 	}
-	// Deduplicate: if this offset already exists, upgrade to user.
+	// Deduplicate: if this offset already exists, upgrade to durable.
 	for i := range s.pendingSnapshots {
 		if s.pendingSnapshots[i].offset == offset {
-			s.pendingSnapshots[i].user = true
+			if s.pendingSnapshots[i].kind < restorePointDurable {
+				s.pendingSnapshots[i].kind = restorePointDurable
+			}
 			return
 		}
 	}
-	s.pendingSnapshots = append(s.pendingSnapshots, pendingSnapshot{offset: offset, user: true})
+	s.pendingSnapshots = append(s.pendingSnapshots, pendingSnapshot{offset: offset, kind: restorePointDurable})
 	slices.SortFunc(s.pendingSnapshots, func(a, b pendingSnapshot) int {
 		return a.offset - b.offset
 	})
@@ -281,24 +360,66 @@ func (s *cacheSession) nextPendingSnapshot() int {
 	return s.pendingSnapshots[0].offset
 }
 
+func (s *cacheSession) tokenCount() int {
+	return len(s.inputs) + len(s.outputs)
+}
+
+func (s *cacheSession) tokensBetween(start, end int) []int32 {
+	if start < 0 || end < start || end > s.tokenCount() {
+		return nil
+	}
+	if end <= len(s.inputs) {
+		return s.inputs[start:end]
+	}
+	if start >= len(s.inputs) {
+		return s.outputs[start-len(s.inputs) : end-len(s.inputs)]
+	}
+
+	tokens := make([]int32, 0, end-start)
+	tokens = append(tokens, s.inputs[start:]...)
+	tokens = append(tokens, s.outputs[:end-len(s.inputs)]...)
+	return tokens
+}
+
 // snapshot creates a snapshot at the current cache position. It determines
-// whether this is a user snapshot by consuming pending entries whose offset
-// has been reached.
+// the restore point kind by consuming pending entries whose offset has been
+// reached.
 func (s *cacheSession) snapshot() {
+	// Consume pending snapshots up to the current offset and derive
+	// the strongest restore point kind from them.
+	kind := restorePointNone
+	cacheOffset := s.cache.minCacheOffset()
+	for len(s.pendingSnapshots) > 0 && cacheOffset >= s.pendingSnapshots[0].offset {
+		if s.pendingSnapshots[0].kind > kind {
+			kind = s.pendingSnapshots[0].kind
+		}
+		s.pendingSnapshots = s.pendingSnapshots[1:]
+	}
+
+	s.snapshotCurrent(kind)
+}
+
+func (s *cacheSession) decodeCheckpoint() bool {
+	cacheOffset := s.cache.minCacheOffset()
+	if cacheOffset <= 0 || cacheOffset == s.lastDecodeCheckpointOffset {
+		return false
+	}
+	if !s.snapshotCurrent(restorePointEphemeral) {
+		return false
+	}
+	s.lastDecodeCheckpointOffset = cacheOffset
+	return true
+}
+
+func (s *cacheSession) snapshotCurrent(kind restorePointKind) bool {
 	c := s.cache
 	cacheOffset := c.minCacheOffset()
 	if cacheOffset <= 0 {
-		return
+		return false
 	}
-
-	// Consume pending snapshots up to the current offset and derive
-	// the user flag from them.
-	user := false
-	for len(s.pendingSnapshots) > 0 && cacheOffset >= s.pendingSnapshots[0].offset {
-		if s.pendingSnapshots[0].user {
-			user = true
-		}
-		s.pendingSnapshots = s.pendingSnapshots[1:]
+	if cacheOffset > s.tokenCount() {
+		slog.Warn("snapshot skipped: cacheOffset is beyond stored tokens", "cacheOffset", cacheOffset, "storedTokens", s.tokenCount())
+		return false
 	}
 
 	// The last node in activePath is the frontier where caches are advancing.
@@ -308,32 +429,29 @@ func (s *cacheSession) snapshot() {
 
 	// If the frontier already ends at cacheOffset, just ensure it has snapshots.
 	if frontier.endOffset == cacheOffset {
-		if user {
-			frontier.user = true
-		}
+		frontier.markRestorePoint(kind)
 		if !frontier.hasAllSnapshots() {
 			s.attachSnapshots(frontier, cacheOffset)
 		}
-		return
+		return true
 	}
 
 	if frontier.endOffset > cacheOffset {
 		slog.Warn("snapshot skipped: cacheOffset is behind frontier", "cacheOffset", cacheOffset, "frontierEndOffset", frontier.endOffset)
-		return
+		return false
 	}
 
 	// Advance the trie to cacheOffset — find or create a node there.
-	edgeTokens := append(s.inputs, s.outputs...)[frontier.endOffset:cacheOffset]
+	edgeTokens := s.tokensBetween(frontier.endOffset, cacheOffset)
 	frontier = c.advancePath(frontier, edgeTokens, cacheOffset)
 
 	// Attach fresh snapshots from the live caches. Always use fresh
 	// snapshots even if the node already has some (e.g. from splitNode's
 	// Cache.Split which may be incomplete for non-splittable caches
 	// like RecurrentCache).
-	if user {
-		frontier.user = true
-	}
+	frontier.markRestorePoint(kind)
 	s.attachSnapshots(frontier, cacheOffset)
+	return true
 }
 
 // advancePath advances the active path from the current frontier by matching
@@ -361,9 +479,9 @@ func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int)
 	dest := matchPath[len(matchPath)-1]
 
 	if len(remaining) > 0 {
-		// Drop non-user snapshots so appendTokens can extend in-place
+		// Drop non-restore-point snapshots so appendTokens can extend in-place
 		// rather than creating a new child node.
-		if len(dest.children) == 0 && !dest.user {
+		if len(dest.children) == 0 && !dest.isRestorePoint() {
 			dest.setSnapshots(nil, &c.pagedOutBytes)
 		}
 		newDest := dest.appendTokens(c.root, remaining, endOffset)
@@ -449,10 +567,9 @@ func (s *cacheSession) close() {
 	c := s.cache
 	if len(c.activePath) > 0 {
 		frontier := c.activePath[len(c.activePath)-1]
-		stored := append(s.inputs, s.outputs...)
 
 		if offset > frontier.endOffset {
-			newTokens := stored[frontier.endOffset:offset]
+			newTokens := s.tokensBetween(frontier.endOffset, offset)
 			c.advancePath(frontier, newTokens, offset)
 		}
 		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
@@ -473,7 +590,7 @@ func (c *kvCache) enforceEvictionPolicy() {
 	for c.pagedOutBytes > maxPagedOutBytes {
 		var best *trieNode
 		walkNodes(c.root, func(n *trieNode) bool {
-			if n == c.root || activeSet[n] || len(n.children) > 1 {
+			if n == c.root || activeSet[n] || n.isRestorePoint() || len(n.children) > 1 {
 				return true
 			}
 			// Evict: oldest, then deepest, then largest.
@@ -562,8 +679,8 @@ func (c *kvCache) dumpTree() {
 			label += fmt.Sprintf(" %s ago", time.Since(n.lastUsed).Truncate(time.Millisecond))
 		}
 		var flags []string
-		if n.user {
-			flags = append(flags, "user")
+		if n.restore != restorePointNone {
+			flags = append(flags, n.restore.String())
 		}
 		if n.hasAllSnapshots() {
 			snapshotCount++

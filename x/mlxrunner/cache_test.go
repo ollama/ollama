@@ -177,6 +177,9 @@ func (c *fakeSlidingWindowCache) Update(keys, values *mlx.Array) (*mlx.Array, *m
 }
 func (c *fakeSlidingWindowCache) State() []*mlx.Array { return nil }
 func (c *fakeSlidingWindowCache) Offset() int         { return len(c.tokens) }
+func (c *fakeSlidingWindowCache) RequiresExactRestorePoint() bool {
+	return true
+}
 
 func (c *fakeSlidingWindowCache) Free() {
 	c.tokens = nil
@@ -257,6 +260,9 @@ func (c *fakeRecurrentCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.A
 }
 func (c *fakeRecurrentCache) State() []*mlx.Array { return nil }
 func (c *fakeRecurrentCache) Offset() int         { return len(c.tokens) }
+func (c *fakeRecurrentCache) RequiresExactRestorePoint() bool {
+	return true
+}
 
 func (c *fakeRecurrentCache) Free() {
 	c.tokens = nil
@@ -385,6 +391,16 @@ type requestResult struct {
 // a user snapshot is requested at that offset during prefill.
 func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, userSnapshotAt ...int) requestResult {
 	t.Helper()
+	return simulateRequestWithOptions(t, kvc, inputs, generated, false, userSnapshotAt...)
+}
+
+func simulateRequestWithDecodeCheckpoints(t *testing.T, kvc *kvCache, inputs, generated []int32, userSnapshotAt ...int) requestResult {
+	t.Helper()
+	return simulateRequestWithOptions(t, kvc, inputs, generated, true, userSnapshotAt...)
+}
+
+func simulateRequestWithOptions(t *testing.T, kvc *kvCache, inputs, generated []int32, decodeCheckpoints bool, userSnapshotAt ...int) requestResult {
+	t.Helper()
 
 	session := kvc.begin(nil, inputs)
 	for _, at := range userSnapshotAt {
@@ -426,10 +442,28 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 
 	assertCacheOffsetAlignment(t, kvc, "after prefill")
 
+	decodeCheckpointBaseOffset := 0
+	if decodeCheckpoints && cache.RequiresExactRestorePoint(kvc.caches) && len(kvc.activePath) > 0 {
+		decodeCheckpointBaseOffset = kvc.activePath[len(kvc.activePath)-1].endOffset
+	}
+
 	// Generate tokens.
 	if len(generated) > 0 {
-		session.outputs = generated
-		feedAll(kvc.caches, generated)
+		if decodeCheckpoints && cache.RequiresExactRestorePoint(kvc.caches) {
+			for _, token := range generated {
+				session.outputs = append(session.outputs, token)
+				feedAll(kvc.caches, []int32{token})
+				if shouldDecodeCheckpoint(kvc.minCacheOffset() - decodeCheckpointBaseOffset) {
+					session.decodeCheckpoint()
+				}
+			}
+			if shouldFinalDecodeCheckpoint(len(session.outputs)) {
+				session.decodeCheckpoint()
+			}
+		} else {
+			session.outputs = generated
+			feedAll(kvc.caches, generated)
+		}
 	}
 
 	assertCacheOffsetAlignment(t, kvc, "before close")
@@ -832,11 +866,146 @@ func TestUserSnapshotResistsAutoMerge(t *testing.T) {
 	})
 }
 
+func TestDecodeCheckpointsRestoreExactCachesInsideGeneratedBranch(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		newEnv func() *testEnv
+	}{
+		{name: "SlidingWindow", newEnv: newSlidingWindowEnv},
+		{name: "Recurrent", newEnv: newRecurrentEnv},
+	} {
+		for _, tc := range []struct {
+			name        string
+			matchTokens int
+			wantCached  int
+		}{
+			{name: "first checkpoint", matchTokens: 2500, wantCached: 2048},
+			{name: "second checkpoint", matchTokens: 4300, wantCached: 4096},
+		} {
+			t.Run(tt.name+"/"+tc.name, func(t *testing.T) {
+				env := tt.newEnv()
+				t.Cleanup(func() {
+					checkSnapshotLeaks(t, env.tracker, env.kvc.root)
+				})
+
+				prompt := int32Range(1, 30)
+				generated := int32Range(1000, 4600)
+				simulateRequestWithDecodeCheckpoints(t, env.kvc, prompt, generated, len(prompt))
+
+				followup := slices.Clone(prompt)
+				followup = append(followup, generated[:tc.matchTokens]...)
+				followup = append(followup, 9999)
+
+				res := simulateRequestWithDecodeCheckpoints(t, env.kvc, followup, nil)
+				wantCached := len(prompt) + tc.wantCached
+				if got, want := len(res.remaining), len(followup)-wantCached; got != want {
+					t.Fatalf("remaining = %d, want %d (restore to decode checkpoint %d)", got, want, wantCached)
+				}
+				if countEphemeralNodesAt(env.kvc, wantCached) != 1 {
+					t.Fatalf("active decode checkpoint at offset %d was pruned", wantCached)
+				}
+				env.assertAllTokens(t, "after followup", followup)
+				checkTrieInvariants(t, env.kvc.root)
+			})
+		}
+	}
+}
+
+func TestInactiveEphemeralDecodeCheckpointsArePruned(t *testing.T) {
+	env := newRecurrentEnv()
+	t.Cleanup(func() {
+		checkSnapshotLeaks(t, env.tracker, env.kvc.root)
+	})
+
+	prompt := int32Range(1, 30)
+	generated := int32Range(1000, 4200)
+	simulateRequestWithDecodeCheckpoints(t, env.kvc, prompt, generated, len(prompt))
+
+	for _, offset := range []int{len(prompt) + 2048, len(prompt) + 4096, len(prompt) + len(generated)} {
+		if countEphemeralNodesAt(env.kvc, offset) != 1 {
+			t.Fatalf("decode checkpoint at offset %d not found before cleanup", offset)
+		}
+	}
+
+	followup := append(slices.Clone(prompt), 9999)
+	simulateRequestWithDecodeCheckpoints(t, env.kvc, followup, nil)
+
+	for _, offset := range []int{len(prompt) + 2048, len(prompt) + 4096, len(prompt) + len(generated)} {
+		if countEphemeralNodesAt(env.kvc, offset) != 0 {
+			t.Fatalf("stale decode checkpoint at offset %d survived cleanup", offset)
+		}
+		if countSnapshotNodesAt(env.kvc, offset) != 0 {
+			t.Fatalf("stale decode checkpoint snapshot at offset %d survived cleanup", offset)
+		}
+	}
+	if countUserNodesAt(env.kvc, len(prompt)) != 1 {
+		t.Fatalf("durable prompt checkpoint at offset %d was pruned", len(prompt))
+	}
+	checkTrieInvariants(t, env.kvc.root)
+}
+
+func TestDecodeCheckpointsSkippedForTransformerCaches(t *testing.T) {
+	env := newTransformerEnv()
+	t.Cleanup(func() {
+		checkSnapshotLeaks(t, env.tracker, env.kvc.root)
+	})
+
+	prompt := int32Range(1, 30)
+	generated := int32Range(1000, 2200)
+	simulateRequestWithDecodeCheckpoints(t, env.kvc, prompt, generated, len(prompt))
+
+	if countEphemeralNodesAt(env.kvc, len(prompt)+2048) != 0 {
+		t.Fatalf("unexpected decode checkpoint at offset %d for pure KV cache", len(prompt)+2048)
+	}
+	if countEphemeralNodesAt(env.kvc, len(prompt)+len(generated)) != 0 {
+		t.Fatalf("unexpected final decode checkpoint at offset %d for pure KV cache", len(prompt)+len(generated))
+	}
+	checkTrieInvariants(t, env.kvc.root)
+}
+
+func TestFinalDecodeCheckpointPreservesGeneratedTail(t *testing.T) {
+	env := newRecurrentEnv()
+	t.Cleanup(func() {
+		checkSnapshotLeaks(t, env.tracker, env.kvc.root)
+	})
+
+	prompt := int32Range(1, 30)
+	generated := int32Range(1000, 90)
+	simulateRequestWithDecodeCheckpoints(t, env.kvc, prompt, generated, len(prompt))
+
+	if countEphemeralNodesAt(env.kvc, len(prompt)+64) != 0 {
+		t.Fatalf("unexpected periodic decode checkpoint at offset %d", len(prompt)+64)
+	}
+	if countEphemeralNodesAt(env.kvc, len(prompt)+len(generated)) != 1 {
+		t.Fatalf("final decode checkpoint at offset %d not found", len(prompt)+len(generated))
+	}
+	checkTrieInvariants(t, env.kvc.root)
+}
+
+func TestDecodeCheckpointProgressStartsAtActiveFrontier(t *testing.T) {
+	env := newRecurrentEnv()
+	t.Cleanup(func() {
+		checkSnapshotLeaks(t, env.tracker, env.kvc.root)
+	})
+
+	prompt := int32Range(1, 34)
+	generated := int32Range(1000, 2044)
+	simulateRequestWithDecodeCheckpoints(t, env.kvc, prompt, generated, 30)
+
+	if countEphemeralNodesAt(env.kvc, 2078) != 1 {
+		t.Fatalf("decode checkpoint at offset 2078 not found")
+	}
+	if countEphemeralNodesAt(env.kvc, len(prompt)+2048) != 0 {
+		t.Fatalf("unexpected generated-token based checkpoint at offset %d", len(prompt)+2048)
+	}
+	checkTrieInvariants(t, env.kvc.root)
+}
+
 func findUserNode(t *testing.T, kvc *kvCache) *trieNode {
 	t.Helper()
 	var found *trieNode
 	walkNodes(kvc.root, func(n *trieNode) bool {
-		if n.user {
+		if n.restore == restorePointDurable {
 			found = n
 		}
 		return true
@@ -851,7 +1020,7 @@ func assertUserNodeExists(t *testing.T, kvc *kvCache, label string) {
 	t.Helper()
 	var exists bool
 	walkNodes(kvc.root, func(n *trieNode) bool {
-		if n.user {
+		if n.restore == restorePointDurable {
 			exists = true
 		}
 		return true
@@ -859,6 +1028,44 @@ func assertUserNodeExists(t *testing.T, kvc *kvCache, label string) {
 	if !exists {
 		t.Fatalf("%s: no user-marked node found", label)
 	}
+}
+
+func countUserNodesAt(kvc *kvCache, offset int) int {
+	return countRestorePointNodesAt(kvc, offset, restorePointDurable)
+}
+
+func countEphemeralNodesAt(kvc *kvCache, offset int) int {
+	return countRestorePointNodesAt(kvc, offset, restorePointEphemeral)
+}
+
+func countRestorePointNodesAt(kvc *kvCache, offset int, kind restorePointKind) int {
+	var count int
+	walkNodes(kvc.root, func(n *trieNode) bool {
+		if n.restore == kind && n.endOffset == offset {
+			count++
+		}
+		return true
+	})
+	return count
+}
+
+func countSnapshotNodesAt(kvc *kvCache, offset int) int {
+	var count int
+	walkNodes(kvc.root, func(n *trieNode) bool {
+		if n.endOffset == offset && n.hasSnapshots() {
+			count++
+		}
+		return true
+	})
+	return count
+}
+
+func int32Range(start, count int) []int32 {
+	values := make([]int32, count)
+	for i := range values {
+		values[i] = int32(start + i)
+	}
+	return values
 }
 
 // TestBranchSwitchRestoresCorrectState exercises switching back to an older

@@ -138,7 +138,7 @@ func TestSplitNodeWithSnapshots(t *testing.T) {
 
 	rc := &fakeRewindableCache{tracker: &snapshotTracker{}, tokens: []int32{1, 2, 3, 4, 5}}
 	child.snapshots = []cache.Snapshot{rc.Snapshot(0)}
-	child.user = true
+	child.restore = restorePointDurable
 
 	caches := []cache.Cache{rc}
 
@@ -147,14 +147,14 @@ func TestSplitNodeWithSnapshots(t *testing.T) {
 	if !newParent.hasSnapshots() {
 		t.Fatal("newParent should have snapshots after split")
 	}
-	if newParent.user {
-		t.Fatal("newParent should not be a user snapshot after splitNode")
+	if newParent.restore != restorePointNone {
+		t.Fatal("newParent should not be a restore point after splitNode")
 	}
 	if !child.hasSnapshots() {
 		t.Fatal("child should have snapshots after split")
 	}
-	if !child.user {
-		t.Fatal("child should remain a user snapshot")
+	if child.restore != restorePointDurable {
+		t.Fatal("child should remain a durable restore point")
 	}
 }
 
@@ -291,23 +291,23 @@ func TestMergeWithChild(t *testing.T) {
 		checkTrieInvariants(t, root)
 	})
 
-	t.Run("UserFlag", func(t *testing.T) {
+	t.Run("RestorePointKind", func(t *testing.T) {
 		root := &trieNode{lastUsed: time.Now()}
 		parent := &trieNode{
 			tokens: []int32{1, 2}, endOffset: 2, parent: root,
-			lastUsed: time.Now(), user: false,
+			lastUsed: time.Now(),
 		}
 		child := &trieNode{
 			tokens: []int32{3, 4}, endOffset: 4, parent: parent,
-			lastUsed: time.Now(), user: true,
+			lastUsed: time.Now(), restore: restorePointEphemeral,
 		}
 		root.children = []*trieNode{parent}
 		parent.children = []*trieNode{child}
 
 		mergeWithChild(parent, nil, nil)
 
-		if !parent.user {
-			t.Fatal("merged node should inherit user=true from child")
+		if parent.restore != restorePointEphemeral {
+			t.Fatal("merged node should inherit restore point from child")
 		}
 	})
 
