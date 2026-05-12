@@ -224,6 +224,9 @@ func TestBuildModelEntries(t *testing.T) {
 		if _, ok := entry["modalities"]; ok {
 			t.Fatalf("modalities should not be set without an API client, got %v", entry["modalities"])
 		}
+		if _, ok := entry["reasoning"]; ok {
+			t.Fatalf("reasoning should not be set without an API client, got %v", entry["reasoning"])
+		}
 	})
 
 	t.Run("uses one timeout budget across capability probes", func(t *testing.T) {
@@ -268,18 +271,7 @@ func TestBuildModelEntries(t *testing.T) {
 	})
 }
 
-func TestBuildModelEntries(t *testing.T) {
-	t.Run("defaults to model name when capabilities cannot be probed", func(t *testing.T) {
-		models := buildModelEntries(context.Background(), nil, []string{"llama3.2"})
-		entry, _ := models["llama3.2"].(map[string]any)
-		if entry["name"] != "llama3.2" {
-			t.Fatalf("name = %v, want llama3.2", entry["name"])
-		}
-		if _, ok := entry["reasoning"]; ok {
-			t.Fatalf("reasoning should not be set without an API client, got %v", entry["reasoning"])
-		}
-	})
-
+func TestBuildModelEntriesTimeoutWithBackgroundContext(t *testing.T) {
 	t.Run("uses timeout when probing capabilities with background context", func(t *testing.T) {
 		u, err := url.Parse("http://ollama.example")
 		if err != nil {
