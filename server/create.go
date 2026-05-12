@@ -16,7 +16,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -343,17 +345,43 @@ func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isA
 			return nil, errOnlyOneAdapterSupported
 		}
 
-		var digest string
+		filePaths := make([]string, 0, len(files))
+		for filePath := range files {
+			filePaths = append(filePaths, filePath)
+		}
+		slices.Sort(filePaths)
+
 		var allLayers []*layerGGML
-		for _, v := range files {
-			digest = v
-			layers, err := ggufLayers(digest, fn)
+		var splitGroupKeys []string
+		splitGroups := map[string][]*layerGGML{}
+		for _, filePath := range filePaths {
+			layers, err := ggufLayers(files[filePath], filePath, fn)
 			if err != nil {
 				return nil, err
 			}
-			allLayers = append(allLayers, layers...)
+			for _, layer := range layers {
+				if key, ok, err := splitGGUFGroupKey(layer); err != nil {
+					return nil, err
+				} else if ok {
+					if _, exists := splitGroups[key]; !exists {
+						splitGroupKeys = append(splitGroupKeys, key)
+					}
+					splitGroups[key] = append(splitGroups[key], layer)
+					continue
+				}
+				allLayers = append(allLayers, layer)
+			}
 		}
-		return allLayers, nil
+
+		for _, key := range splitGroupKeys {
+			layer, err := mergeSplitGGUFLayers(splitGroups[key])
+			if err != nil {
+				return nil, err
+			}
+			allLayers = append(allLayers, layer)
+		}
+
+		return detectChatTemplate(allLayers)
 	default:
 		return nil, errUnknownType
 	}
@@ -434,11 +462,20 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	}
 	defer t.Close()
 
+	var projFile *os.File
+	if !isAdapter {
+		projFile, err = os.CreateTemp(tmpDir, "projector")
+		if err != nil {
+			return nil, err
+		}
+		defer projFile.Close()
+	}
+
 	var mediaType string
 	if !isAdapter {
 		fn(api.ProgressResponse{Status: "converting model"})
 		mediaType = "application/vnd.ollama.image.model"
-		if err := convert.ConvertModel(os.DirFS(tmpDir), t); err != nil {
+		if err := convert.ConvertModel(os.DirFS(tmpDir), t, projFile); err != nil {
 			return nil, err
 		}
 	} else {
@@ -472,9 +509,39 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	if err != nil {
 		return nil, err
 	}
-	layers := []*layerGGML{{layer, f}}
+	layers := []*layerGGML{{Layer: layer, GGML: f, rewriteForCreate: true}}
 
 	if !isAdapter {
+		projSize, err := projFile.Seek(0, io.SeekEnd)
+		if err != nil {
+			return nil, err
+		}
+		if projSize > 0 {
+			if _, err := projFile.Seek(0, io.SeekStart); err != nil {
+				return nil, err
+			}
+			projLayer, err := manifest.NewLayer(projFile, "application/vnd.ollama.image.projector")
+			if err != nil {
+				return nil, err
+			}
+			projBin, err := projLayer.Open()
+			if err != nil {
+				return nil, err
+			}
+			defer projBin.Close()
+			projGGML, err := ggml.Decode(projBin, -1)
+			if err != nil {
+				return nil, err
+			}
+			projectorLayer := &layerGGML{Layer: projLayer, GGML: projGGML, rewriteForCreate: true}
+			if needsDefaultLlavaProjectorType(projGGML) {
+				projectorLayer, err = addDefaultLlavaProjectorType(projectorLayer)
+				if err != nil {
+					return nil, err
+				}
+			}
+			layers = append(layers, projectorLayer)
+		}
 		return detectChatTemplate(layers)
 	}
 	return layers, nil
@@ -495,6 +562,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		if layer.GGML != nil {
 			quantType := strings.ToUpper(cmp.Or(r.Quantize, r.Quantization))
 			ft := layer.GGML.KV().FileType()
+			rewroteLayer := false
 			if quantType == "" && hasSourceFP8Tensors(layer.GGML.KV()) && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" && slices.Contains([]string{"F16", "BF16", "F32"}, ft.String()) {
 				quantType = "Q8_0"
 			}
@@ -511,6 +579,22 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 					if err != nil {
 						return err
 					}
+					rewroteLayer = true
+				}
+			}
+			if !rewroteLayer && layer.rewriteForCreate && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" && !hasEmbeddedCompatibilityTensors(layer.GGML) {
+				var err error
+				layer, err = copyLayerWithLlamaQuantize(layer, fn)
+				if err != nil {
+					return err
+				}
+			}
+			if layer.rewriteForCreate && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.projector" && needsDefaultLlavaProjectorType(layer.GGML) {
+				var err error
+				fn(api.ProgressResponse{Status: "updating GGUF projector metadata"})
+				layer, err = addDefaultLlavaProjectorType(layer)
+				if err != nil {
+					return err
 				}
 			}
 			config.ModelFormat = cmp.Or(config.ModelFormat, layer.GGML.Name())
@@ -619,18 +703,57 @@ func hasSourceFP8Tensors(kv ggml.KV) bool {
 	return kv.String("source_quantization") == "hf_fp8" && len(kv.Strings("source_fp8_tensors")) > 0
 }
 
+func hasEmbeddedCompatibilityTensors(f *ggml.GGML) bool {
+	for _, t := range f.Tensors().Items() {
+		if isEmbeddedCompatibilityTensor(t.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func isEmbeddedCompatibilityTensor(name string) bool {
+	for _, prefix := range []string{"a.", "mm.", "mtp.", "s.", "v."} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.ProgressResponse)) (*layerGGML, error) {
+	ftype, err := ggml.ParseFileType(quantizeType)
+	if err != nil {
+		return nil, err
+	}
+
+	return rewriteLayerWithLlamaQuantize(layer, quantizeType, fn, func(in, out *os.File, progressFn func(uint64)) error {
+		return quantize(in, out, layer.GGML, ftype, progressFn)
+	})
+}
+
+func copyLayerWithLlamaQuantize(layer *layerGGML, fn func(resp api.ProgressResponse)) (*layerGGML, error) {
+	newLayer, err := rewriteLayerWithLlamaQuantize(layer, "COPY", fn, func(in, out *os.File, progressFn func(uint64)) error {
+		return copyGGUFWithLlamaQuantize(in, out, layer.GGML, progressFn)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate GGUF with llama-quantize without compatibility patches: %w", err)
+	}
+	return newLayer, nil
+}
+
+func rewriteLayerWithLlamaQuantize(layer *layerGGML, typeName string, fn func(resp api.ProgressResponse), rewrite func(in, out *os.File, progressFn func(uint64)) error) (*layerGGML, error) {
 	ft := layer.GGML.KV().FileType()
 	var doneBytes atomic.Uint64
 	totalBytes := uint64(layer.Size) - layer.GGML.Tensors().Offset
 	fnWrap := func(n uint64) {
 		done := doneBytes.Add(n)
 		progress := float32(done) / float32(totalBytes)
-		fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantizeType), Digest: "0000000000000000000", Total: layer.Size, Completed: int64(progress * float32(layer.Size))})
-	}
-	ftype, err := ggml.ParseFileType(quantizeType)
-	if err != nil {
-		return nil, err
+		status := fmt.Sprintf("quantizing %s model to %s", ft, typeName)
+		if typeName == "COPY" {
+			status = "validating GGUF model"
+		}
+		fn(api.ProgressResponse{Status: status, Digest: "0000000000000000000", Total: layer.Size, Completed: int64(progress * float32(layer.Size))})
 	}
 
 	blob, err := manifest.BlobsPath(layer.Digest)
@@ -643,17 +766,30 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 	}
 	defer fp.Close()
 
-	temp, err := os.CreateTemp(filepath.Dir(blob), quantizeType)
+	in := fp
+	if len(layer.splitParts) > 0 {
+		splitInput, cleanup, err := prepareSplitGGUFInput(layer, filepath.Dir(blob))
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup()
+		defer splitInput.Close()
+		in = splitInput
+	}
+
+	temp, err := os.CreateTemp(filepath.Dir(blob), typeName)
 	if err != nil {
 		return nil, err
 	}
 	defer temp.Close()
 	defer os.Remove(temp.Name())
 
-	if err := quantize(fp, temp, layer.GGML, ftype, fnWrap); err != nil {
+	if err := rewrite(in, temp, fnWrap); err != nil {
 		return nil, err
 	}
-	temp.Seek(0, io.SeekStart)
+	if _, err := temp.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
 	fn(api.ProgressResponse{Status: "verifying conversion"})
 	newLayer, err := manifest.NewLayer(temp, layer.MediaType)
 	if err != nil {
@@ -668,10 +804,167 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 		slog.Error(fmt.Sprintf("error decoding ggml: %s\n", err))
 		return nil, err
 	}
-	return &layerGGML{newLayer, f}, nil
+	return &layerGGML{Layer: newLayer, GGML: f}, nil
 }
 
-func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func prepareSplitGGUFInput(layer *layerGGML, dir string) (*os.File, func(), error) {
+	tempDir, err := os.MkdirTemp(dir, "split-gguf-")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cleanup := func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			slog.Warn("failed to remove temporary split GGUF links", "dir", tempDir, "error", err)
+		}
+	}
+
+	var firstPath string
+	for i, part := range layer.splitParts {
+		blobPath, err := manifest.BlobsPath(part.Digest)
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		linkPath := filepath.Join(tempDir, path.Base(part.Name))
+		if err := os.Link(blobPath, linkPath); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		if i == 0 {
+			firstPath = linkPath
+		}
+	}
+
+	f, err := os.Open(firstPath)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return f, cleanup, nil
+}
+
+var splitGGUFNameRe = regexp.MustCompile(`^(.*)-(\d{5})-of-(\d{5})\.gguf$`)
+
+func splitGGUFName(name string) (prefix string, index, count uint16, ok bool) {
+	matches := splitGGUFNameRe.FindStringSubmatch(path.Base(name))
+	if len(matches) != 4 {
+		return "", 0, 0, false
+	}
+
+	idx, err := strconv.ParseUint(matches[2], 10, 16)
+	if err != nil || idx == 0 {
+		return "", 0, 0, false
+	}
+	n, err := strconv.ParseUint(matches[3], 10, 16)
+	if err != nil || n == 0 {
+		return "", 0, 0, false
+	}
+	return matches[1], uint16(idx - 1), uint16(n), true
+}
+
+func splitGGUFGroupKey(layer *layerGGML) (string, bool, error) {
+	count, ok := splitGGUFUint(layer.GGML.KV(), "split.count")
+	if !ok {
+		return "", false, nil
+	}
+	if count <= 1 {
+		return "", false, nil
+	}
+
+	prefix, index, nameCount, ok := splitGGUFName(layer.From)
+	if !ok {
+		return "", false, fmt.Errorf("split GGUF %q must use llama.cpp split filename pattern", layer.From)
+	}
+	if nameCount != count {
+		return "", false, fmt.Errorf("split GGUF %q filename count %d does not match metadata count %d", layer.From, nameCount, count)
+	}
+	splitNo, ok := splitGGUFUint(layer.GGML.KV(), "split.no")
+	if !ok {
+		return "", false, fmt.Errorf("split GGUF %q is missing split.no metadata", layer.From)
+	}
+	if splitNo != index {
+		return "", false, fmt.Errorf("split GGUF %q filename index %d does not match metadata index %d", layer.From, index, splitNo)
+	}
+
+	return fmt.Sprintf("%s:%s:%d", layer.MediaType, prefix, count), true, nil
+}
+
+func mergeSplitGGUFLayers(layers []*layerGGML) (*layerGGML, error) {
+	if len(layers) == 0 {
+		return nil, fmt.Errorf("empty split GGUF group")
+	}
+
+	count, ok := splitGGUFUint(layers[0].GGML.KV(), "split.count")
+	if !ok {
+		return nil, fmt.Errorf("split GGUF %q is missing split.count metadata", layers[0].From)
+	}
+	if int(count) != len(layers) {
+		return nil, fmt.Errorf("split GGUF %q has %d shards, expected %d", layers[0].From, len(layers), count)
+	}
+
+	byIndex := make([]*layerGGML, count)
+	for _, layer := range layers {
+		index, ok := splitGGUFUint(layer.GGML.KV(), "split.no")
+		if !ok {
+			return nil, fmt.Errorf("split GGUF %q is missing split.no metadata", layer.From)
+		}
+		if index >= count {
+			return nil, fmt.Errorf("split GGUF %q has invalid shard index %d", layer.From, index)
+		}
+		if byIndex[index] != nil {
+			return nil, fmt.Errorf("split GGUF has duplicate shard index %d", index)
+		}
+		byIndex[index] = layer
+	}
+
+	primary := byIndex[0]
+	if primary == nil {
+		return nil, fmt.Errorf("split GGUF is missing first shard")
+	}
+
+	primary.splitParts = make([]splitGGUFPart, 0, count)
+	for i, layer := range byIndex {
+		if layer == nil {
+			return nil, fmt.Errorf("split GGUF %q is missing shard %d", primary.From, i)
+		}
+		primary.splitParts = append(primary.splitParts, splitGGUFPart{Digest: layer.Digest, Name: layer.From})
+	}
+
+	return primary, nil
+}
+
+func splitGGUFUint(kv ggml.KV, key string) (uint16, bool) {
+	keys := []string{key}
+	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
+		keys = append(keys, kv.Architecture()+"."+key)
+	}
+	for _, k := range keys {
+		switch v := kv.Value(k).(type) {
+		case uint16:
+			return v, true
+		case uint32:
+			if v <= uint32(^uint16(0)) {
+				return uint16(v), true
+			}
+		case uint64:
+			if v <= uint64(^uint16(0)) {
+				return uint16(v), true
+			}
+		case int32:
+			if v >= 0 && v <= int32(^uint16(0)) {
+				return uint16(v), true
+			}
+		case int64:
+			if v >= 0 && v <= int64(^uint16(0)) {
+				return uint16(v), true
+			}
+		}
+	}
+	return 0, false
+}
+
+func ggufLayers(digest, sourceName string, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	var layers []*layerGGML
 
 	fn(api.ProgressResponse{Status: "parsing GGUF"})
@@ -710,15 +1003,15 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 		mediatype = "application/vnd.ollama.image.projector"
 	}
 
-	layer, err := manifest.NewLayerFromLayer(digest, mediatype, blob.Name())
+	layer, err := manifest.NewLayerFromLayer(digest, mediatype, sourceName)
 	if err != nil {
 		slog.Debug("could not create new layer from layer", "error", err)
 		return nil, err
 	}
 
-	layers = append(layers, &layerGGML{layer, f})
+	layers = append(layers, &layerGGML{Layer: layer, GGML: f, rewriteForCreate: true})
 
-	return detectChatTemplate(layers)
+	return layers, nil
 }
 
 func removeLayer(layers []manifest.Layer, mediatype string) []manifest.Layer {

@@ -12,6 +12,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -606,6 +608,110 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 	}
 }
 
+func TestLlamaServerPreservedTokens(t *testing.T) {
+	tests := []struct {
+		name         string
+		parserTokens []string
+		toolCallTag  string
+		want         []string
+	}{
+		{
+			name:         "parser tokens only",
+			parserTokens: []string{"<|channel>"},
+			want:         []string{"<|channel>"},
+		},
+		{
+			name:        "tool tag special token plus json punctuation",
+			toolCallTag: "[TOOL_CALLS][",
+			want:        []string{"[TOOL_CALLS]"},
+		},
+		{
+			name:        "json array tool parser does not preserve array punctuation",
+			toolCallTag: "[",
+			want:        nil,
+		},
+		{
+			name:        "ordinary tool tag",
+			toolCallTag: "tool_call:",
+			want:        []string{"tool_call:"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := llamaServerPreservedTokens(tt.parserTokens, tt.toolCallTag)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("llamaServerPreservedTokens = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetupLlamaServerCommandEnv(t *testing.T) {
+	exeDir := t.TempDir()
+	exe := filepath.Join(exeDir, "llama-server")
+	if err := os.WriteFile(exe, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	gpuDir := t.TempDir()
+	backendName := "libggml-futuregpu.so"
+	ignoredBackendNames := []string{"libggml-base.so", "libggml-cpu.so"}
+	if runtime.GOOS == "darwin" {
+		backendName = "libggml-futuregpu.dylib"
+		ignoredBackendNames = []string{"libggml-base.dylib", "libggml-cpu.dylib"}
+	}
+	if runtime.GOOS == "windows" {
+		backendName = "ggml-futuregpu.dll"
+		ignoredBackendNames = []string{"ggml-base.dll", "ggml-cpu.dll"}
+	}
+	for _, name := range ignoredBackendNames {
+		if err := os.WriteFile(filepath.Join(gpuDir, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backendPath := filepath.Join(gpuDir, backendName)
+	if err := os.WriteFile(backendPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pathEnv := llamaServerLibraryPathEnv()
+	userLibDir := t.TempDir()
+	t.Setenv(pathEnv, userLibDir)
+
+	cmd := exec.Command("echo")
+	SetupLlamaServerCommandEnv(cmd, exe, []string{ml.LibOllamaPath, gpuDir}, map[string]string{"OLLAMA_DEBUG": "1"})
+
+	env := make(map[string]string)
+	for _, kv := range cmd.Env {
+		key, value, ok := strings.Cut(kv, "=")
+		if ok {
+			env[strings.ToUpper(key)] = value
+		}
+	}
+
+	if got := env["GGML_BACKEND_PATH"]; got != backendPath {
+		t.Fatalf("GGML_BACKEND_PATH = %q, want %q", got, backendPath)
+	}
+	if got := env["OLLAMA_DEBUG"]; got != "1" {
+		t.Fatalf("OLLAMA_DEBUG = %q, want %q", got, "1")
+	}
+
+	paths := filepath.SplitList(env[strings.ToUpper(pathEnv)])
+	if len(paths) < 3 {
+		t.Fatalf("%s entries = %v, want at least 3 entries", pathEnv, paths)
+	}
+	if paths[0] != exeDir {
+		t.Fatalf("%s[0] = %q, want %q", pathEnv, paths[0], exeDir)
+	}
+	if paths[1] != gpuDir {
+		t.Fatalf("%s[1] = %q, want %q", pathEnv, paths[1], gpuDir)
+	}
+	if paths[2] != userLibDir {
+		t.Fatalf("%s[2] = %q, want %q", pathEnv, paths[2], userLibDir)
+	}
+}
+
 func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -1134,6 +1240,115 @@ func TestAppendMainGPUArgs(t *testing.T) {
 			got := appendMainGPUArgs([]string{"base"}, tt.opts)
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("appendMainGPUArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAppendMMProjArgs(t *testing.T) {
+	defaultOpts := api.DefaultOptions()
+	partialOpts := api.DefaultOptions()
+	partialOpts.NumGPU = 10
+	fullOpts := api.DefaultOptions()
+	fullOpts.NumGPU = 81
+	cpuOpts := api.DefaultOptions()
+	cpuOpts.NumGPU = 0
+
+	tests := []struct {
+		name        string
+		projectors  []string
+		opts        api.Options
+		gpus        []ml.DeviceInfo
+		modelLayers uint64
+		want        []string
+	}{
+		{
+			name: "no projector leaves args unchanged",
+			opts: defaultOpts,
+			want: []string{"base"},
+		},
+		{
+			name:        "large discrete gpu keeps projector offload",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			modelLayers: 81,
+			want:        []string{"base", "--mmproj", "model.gguf"},
+		},
+		{
+			name:        "small discrete gpu disables projector offload",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, TotalMemory: 8 << 30}},
+			modelLayers: 81,
+			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:        "integrated gpu disables projector offload",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
+			modelLayers: 81,
+			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:        "cpu only request disables projector offload",
+			projectors:  []string{"model.gguf"},
+			opts:        cpuOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			modelLayers: 81,
+			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:        "partial text offload disables projector offload",
+			projectors:  []string{"model.gguf"},
+			opts:        partialOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			modelLayers: 81,
+			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:        "explicit full text offload keeps projector offload",
+			projectors:  []string{"model.gguf"},
+			opts:        fullOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			modelLayers: 81,
+			want:        []string{"base", "--mmproj", "model.gguf"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendMMProjArgs([]string{"base"}, "model.gguf", tt.projectors, tt.opts, tt.gpus, tt.modelLayers)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendMMProjArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAppendJinjaArgs(t *testing.T) {
+	tests := []struct {
+		name   string
+		config LlamaServerConfig
+		want   []string
+	}{
+		{
+			name: "native llama-server template path leaves jinja enabled",
+			want: []string{"base"},
+		},
+		{
+			name:   "ollama rendered path disables unused jinja template",
+			config: LlamaServerConfig{DisableJinja: true},
+			want:   []string{"base", "--no-jinja", "--chat-template", "chatml"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendJinjaArgs([]string{"base"}, tt.config)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendJinjaArgs = %v, want %v", got, tt.want)
 			}
 		})
 	}

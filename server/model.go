@@ -23,6 +23,17 @@ var intermediateBlobs map[string]string = make(map[string]string)
 type layerGGML struct {
 	manifest.Layer
 	*ggml.GGML
+	// rewriteForCreate marks GGUF model layers that came from user-supplied
+	// files or safetensors conversion. Text-only GGUFs are validated with
+	// llama-quantize. GGUFs with embedded compatibility tensors stay in their
+	// existing layout so create does not drop tensors needed by the patch.
+	rewriteForCreate bool
+	splitParts       []splitGGUFPart
+}
+
+type splitGGUFPart struct {
+	Digest string
+	Name   string
 }
 
 func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
@@ -68,9 +79,9 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 				return nil, err
 			}
 
-			layers = append(layers, &layerGGML{layer, f})
+			layers = append(layers, &layerGGML{Layer: layer, GGML: f})
 		default:
-			layers = append(layers, &layerGGML{layer, nil})
+			layers = append(layers, &layerGGML{Layer: layer})
 		}
 	}
 
@@ -89,7 +100,7 @@ func detectChatTemplate(layers []*layerGGML) ([]*layerGGML, error) {
 				}
 
 				layer.Status = fmt.Sprintf("using autodetected template %s", t.Name)
-				layers = append(layers, &layerGGML{layer, nil})
+				layers = append(layers, &layerGGML{Layer: layer})
 
 				if t.Parameters != nil {
 					var b bytes.Buffer
@@ -102,7 +113,7 @@ func detectChatTemplate(layers []*layerGGML) ([]*layerGGML, error) {
 						return nil, err
 					}
 
-					layers = append(layers, &layerGGML{layer, nil})
+					layers = append(layers, &layerGGML{Layer: layer})
 				}
 			}
 		}

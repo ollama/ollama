@@ -1,162 +1,137 @@
-# llama.cpp compatibility shim
+# llama.cpp compatibility layer
 
-This directory holds an in-process compatibility layer that lets upstream
-`llama-server` load GGUFs produced by older versions of Ollama (and files
-pulled from the Ollama registry) without re-converting or re-downloading.
+This directory holds a temporary in-process compatibility layer for existing
+published Ollama GGUFs whose metadata or tensor layout does not yet match what
+llama.cpp expects directly. The layer translates those files in memory at load
+time so users do not need to re-pull or re-create models during the transition
+to llama-server.
+
+This patch model is intended to be short lived. The target end state is that
+published models and newly created models use llama.cpp-compatible metadata and
+tensor layouts on disk, and this directory can be removed.
 
 The layer is applied automatically at build time via CMake `FetchContent`'s
-`PATCH_COMMAND` for normal fetched builds — there is no separate "apply
-patches" step. If CMake is pointed at a source override through
-`FETCHCONTENT_SOURCE_DIR_LLAMA_CPP`, the same patch is applied directly during
-configure. If `OLLAMA_LLAMA_CPP_SOURCE` is set, the patch is intentionally not
-applied so a developer can iterate on a local llama.cpp tree explicitly.
+`PATCH_COMMAND` for normal fetched builds. If CMake is pointed at a source
+override through `FETCHCONTENT_SOURCE_DIR_LLAMA_CPP`, the same patch is applied
+during configure. If `OLLAMA_LLAMA_CPP_SOURCE` is set, the patch is
+intentionally skipped so a developer can iterate on a local llama.cpp tree.
 
 ## Files
 
-- `llama-ollama-compat.h`, `llama-ollama-compat.cpp` — the shim itself. These
-  are regular source files owned by Ollama; they are linked into the fetched
-  `llama` and `mtmd` targets from this directory with `target_sources`.
-- `llama-ollama-compat-util.h`, `llama-ollama-compat-util.cpp` — shared helper
-  code for KV edits, tensor renames, skip-prefix tracking, tensor load ops,
-  and small tensor repacking primitives.
-- `upstream-edits.patch` — small additive edits to upstream files so the
-  shim gets called. It currently touches only `src/llama-model-loader.cpp`
-  and `tools/mtmd/clip.cpp`. Kept as a real `git` patch so re-generation on
-  upstream bumps is one command.
-- `compat.cmake`, `apply-patch.cmake` — CMake glue and an idempotent patch
+- `llama-ollama-compat.h`, `llama-ollama-compat.cpp` - the compatibility
+  entry points and per-architecture handlers.
+- `llama-ollama-compat-util.h`, `llama-ollama-compat-util.cpp` - helpers for
+  KV edits, tensor renames, skip-prefix tracking, tensor load operations, and
+  small tensor repacking primitives.
+- `llama-cpp-hooks.patch` - small additive call-site edits in llama.cpp files.
+  It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/clip.cpp`.
+- `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent patch
   applier used by `llama/server/CMakeLists.txt`.
 
-This directory replaces the old `llama/patches` stack for llama-server builds;
-the active upstream edit surface is `upstream-edits.patch` plus the
-Ollama-owned source files above.
+The compatibility source files stay in this directory and are linked into the
+fetched llama.cpp targets. The patch file only adds call sites.
 
-## What the shim does
+## Load-Time Hooks
 
-The shim runs at a small set of loader hook points:
+The layer runs at a small set of loader hook points:
 
-1. **Main model constructor, after the architecture is read**:
-   `translate_metadata` inspects the just-parsed metadata and decides whether
-   the file is an Ollama-format GGUF. If so, it mutates the in-memory
-   `gguf_context` and `ggml_context` (KV names, tensor names, tensor types,
-   tensor shapes, and selected tokenizer metadata) so the rest of the loader
-   sees an upstream-shape file. It can also request mmap disablement when a
-   handler needs writable backend buffers for transformed tensor data.
-
-2. **Main model tensor indexing**: `should_skip_tensor` hides embedded
-   projector, vision, audio, MTP, or other Ollama-only tensors from the text
-   loader's weights map.
-
-3. **Main model tensor load loop**: `maybe_load_text_tensor` applies registered
+1. Main model constructor: `translate_metadata` inspects the parsed metadata
+   and mutates the in-memory `gguf_context` and `ggml_context` when a handler
+   recognizes an existing published model format. It can also request mmap
+   disablement when a handler needs writable backend buffers for transformed
+   tensor data.
+2. Main model tensor indexing: `should_skip_tensor` hides embedded projector,
+   vision, audio, MTP, or other tensors that the text loader should not claim.
+3. Main model tensor reads: `maybe_load_text_tensor` applies registered
    text-side load operations, such as FFN concat or dtype promotion, before
-   the normal upstream file read.
+   the normal llama.cpp file read. This is wired into both full model loading
+   and single-tensor reads used by tools such as `llama-quantize`.
+4. `mtmd/clip` constructor: `translate_clip_metadata` rewrites a clip-facing
+   view of monolithic GGUFs into the mmproj form expected by llama.cpp.
+5. `mtmd/clip` tensor load loop: `maybe_load_tensor` applies clip-side load
+   operations, such as F16 to F32 promotion, QKV merge, tensor repack, tensor
+   split, or zero-fill.
 
-4. **`mtmd/clip` constructor**: `translate_clip_metadata` rewrites a
-   clip-facing view of monolithic Ollama GGUFs into upstream mmproj shape.
-   It also handles legacy LLaVA/BakLLaVA projectors that need a default
-   `clip.projector_type`.
+Files that do not match a supported published-model marker are left unchanged.
+Setting `OLLAMA_LLAMA_CPP_COMPAT=0` disables the hook bodies for internal
+create-time validation and for models that are already known to be
+llama.cpp-compatible on disk.
 
-5. **`mtmd/clip` tensor load loop**: `maybe_load_tensor` applies clip-side
-   load operations, such as F16 to F32 promotion, QKV merge, tensor repack,
-   tensor split, or zero-fill.
+## Supported Transformations
 
-Non-Ollama files are detected per architecture by the absence of the legacy
-Ollama markers each handler expects. When no handler matches, every compat
-entry point is a no-op.
+This table tracks the dispatch surface. Keep it brief; the handler comments in
+`llama-ollama-compat.cpp` are the source of truth for exact KV and tensor maps.
 
-## Currently supported architectures
-
-This table tracks the dispatch surface. The per-handler comments in
-`llama-ollama-compat.cpp` are the source of truth for exact KV/tensor maps.
-
-| Internal arch / marker | Text loader handling | Clip/mmproj handling |
+| Internal arch / marker | Text handling | Clip/mmproj handling |
 |---|---|---|
-| `gemma3` | Legacy Gemma 3 metadata, tokenizer, and embedded vision/projector cleanup. | `gemma3` projector translation. |
-| `gemma3` + embedding markers (`embeddinggemma`) | Rewrites to upstream `gemma-embedding`, fixes embedding-specific KVs and dense/norm tensors. | n/a |
-| `bert` + Snowflake markers (`snowflake-arctic-embed2`) | Fixes legacy Snowflake Arctic Embed 2 tokenizer metadata. | n/a |
-| `gemma3n` | Normalizes tokenizer/EOS metadata, truncates vocab-shaped tensors, and drops unused embedded vision/audio/projector tensors. | n/a |
-| `gemma4` | Drops audio/vision/projector tensors from the text view while audio remains unsupported upstream. | `gemma4` projector translation. |
-| `gptoss` | Renames to upstream `gpt-oss`, copies KVs, injects missing expert FFN metadata, and renames tensors. | n/a |
-| `lfm2` | Renames stale norm tensors and fixes feed-forward metadata. | n/a |
-| `olmo3` | Rewrites to the upstream OLMo2-compatible loader path. | n/a |
+| `gemma3` | Normalizes Gemma 3 metadata, tokenizer fields, and embedded vision/projector tensors. | Gemma 3 projector translation. |
+| `gemma3` + embedding markers (`embeddinggemma`) | Maps to `gemma-embedding` metadata and fixes embedding dense/norm tensors. | n/a |
+| `bert` + Snowflake markers (`snowflake-arctic-embed2`) | Fixes Snowflake Arctic Embed 2 tokenizer metadata. | n/a |
+| `gemma3n` | Normalizes tokenizer/EOS metadata, truncates vocab-shaped tensors, and hides unused embedded vision/audio/projector tensors. | n/a |
+| `gemma4` | Normalizes tokenizer metadata and hides embedded audio/vision/projector tensors from the text loader. | Gemma 4 projector translation; audio remains disabled. |
+| `gptoss` | Maps to `gpt-oss`, copies KVs, injects missing expert FFN metadata, and renames tensors. | n/a |
+| `lfm2` | Renames norm tensors and fixes feed-forward metadata. | n/a |
+| `olmo3` | Maps to the OLMo2-compatible loader path. | n/a |
 | `mistral3` | Fixes RoPE/YaRN metadata and hides embedded vision/projector tensors. | Pixtral-style projector translation. |
 | `qwen35`, `qwen35moe` | Fixes Qwen3.5/Qwen3-VL-style text metadata and hides embedded vision/projector/MTP tensors. | Qwen3-VL merger-style projector translation. |
-| `qwen25vl` | Rewrites to upstream `qwen2vl` metadata conventions. | Qwen2.5-VL projector translation. |
+| `qwen3next` | Renames SSM dt tensors to the names expected by llama.cpp. | n/a |
+| `qwen25vl` | Maps to `qwen2vl` metadata conventions. | Qwen2.5-VL projector translation. |
 | `qwen3vl`, `qwen3vlmoe` | Adds missing Qwen3-VL metadata and hides embedded vision/projector tensors. | Qwen3-VL projector translation, including QKV merge and patch-embedding split/repack. |
-| `deepseekocr` | Rewrites to upstream `deepseek2-ocr`, injects missing OCR/MoE metadata, and hides embedded SAM/vision/projector tensors. | DeepSeek OCR projector translation. |
-| `glmocr` | Rewrites GLM OCR metadata/tensors to the upstream-compatible view. | GLM OCR projector translation. |
-| `glm4moelite` | Rewrites GLM-4.7 Flash MLA metadata to the upstream `deepseek2` path and fixes special-token metadata. | n/a |
+| `deepseekocr` | Maps to `deepseek2-ocr`, injects missing OCR/MoE metadata, and hides embedded SAM/vision/projector tensors. | DeepSeek OCR projector translation. |
+| `glmocr` | Maps GLM OCR metadata/tensors to the llama.cpp-compatible view. | GLM OCR projector translation. |
+| `glm4moelite` | Maps GLM-4.7 Flash MLA metadata to the `deepseek2` path and fixes special-token metadata. | n/a |
 | `nemotron_h_moe` | Fixes latent-FFN variants and hides MTP tensors. | n/a |
-| `nemotron_h_omni` | Rewrites to the selected Nemotron text loader and hides audio/vision/projector tensors; audio remains intentionally hidden. | Nemotron V2 VL projector translation with audio disabled. |
-| `llama` legacy Llama 3 markers | Fixes legacy tokenizer metadata. | n/a |
-| `llama4` | Hides embedded vision/projector tensors from the text view. | Llama 4 projector translation. |
-| legacy `clip` projector without `clip.projector_type` | n/a | Defaults legacy LLaVA/BakLLaVA projectors to `clip.projector_type=mlp`. |
+| `nemotron_h_omni` | Selects the Nemotron text loader and hides audio/vision/projector tensors from the text loader. | Nemotron V2 VL projector translation; audio remains disabled. |
+| `llama` with Llama 3 markers | Fixes Llama 3 tokenizer metadata. | n/a |
+| `llama4` | Hides embedded vision/projector tensors from the text loader. | Llama 4 projector translation. |
+| `clip` projector without `clip.projector_type` | n/a | Defaults LLaVA/BakLLaVA projectors to `clip.projector_type=mlp`. |
 
 Usage:
 
-```
+```sh
 llama-server --model /path/to/ollama-blob --mmproj /path/to/ollama-blob
 ```
 
-Passing the same monolithic GGUF as both `--model` and `--mmproj` works —
+Passing the same monolithic GGUF as both `--model` and `--mmproj` works because
 each loader applies its own translation.
 
-Additional architectures are added by implementing a `handle_<arch>()`
-and (for vision models) `handle_<arch>_clip()` in `llama-ollama-compat.cpp`
-and dispatching them from `translate_metadata` / `translate_clip_metadata`.
-For monolithic vision models, also update the `compatClipArches` allowlist in
+Additional architectures are added by implementing a `handle_<arch>()` and,
+for vision models, `handle_<arch>_clip()` in `llama-ollama-compat.cpp`, then
+dispatching them from `translate_metadata` / `translate_clip_metadata`. For
+monolithic vision models, also update the `compatClipArches` allowlist in
 `llm/llama_server.go` so Ollama passes the main GGUF as `--mmproj`.
 
-## Regenerating `upstream-edits.patch`
+## Regenerating the Patch File
 
-After upstream changes the insertion points (rare), re-apply the edits to
-a fresh checkout and run:
+After a llama.cpp bump moves the insertion points, re-apply the edits to a
+fresh checkout and run:
 
-```
+```sh
 cd /path/to/llama.cpp
 git diff -- \
     src/llama-model-loader.cpp \
     tools/mtmd/clip.cpp \
-    > /path/to/ollama/llama/compat/upstream-edits.patch
+    > /path/to/ollama/llama/compat/llama-cpp-hooks.patch
 ```
 
-## Why not fork llama.cpp or vendor it?
+## Implementation Notes
 
-Forking means tracking upstream manually. Vendoring means snapshotting all of
-llama.cpp's source in the Ollama tree (the old `llama/llama.cpp/` layout).
-This shim keeps upstream unmodified on disk and the Ollama-specific logic
-isolated in a few Ollama-owned source files plus a small diff — upstream bumps
-are usually just `LLAMA_CPP_VERSION` changes and, when insertion points move,
-`upstream-edits.patch` regeneration.
+The compatibility code is mostly written against public APIs (`gguf.h`,
+`ggml.h`, `ggml-backend.h`). A few operations rely on implementation details
+because the public API does not expose equivalent mutators:
 
-## Maintenance: non-public API dependencies
-
-The compat code is mostly written against stable public APIs (`gguf.h`,
-`ggml.h`, `ggml-backend.h`). There are three places where we lean on
-something that isn't strictly public:
-
-| Hack | Why | Escape hatch if upstream changes |
+| Dependency | Use | Replacement if needed |
 |---|---|---|
-| Direct writes to `ggml_tensor::type` / `ne[]` / `nb[]` | No sanctioned mutator exists for post-creation tensor reshape/retype. Struct is public so this works today. | Ask upstream to expose `ggml_tensor_set_{type,shape}` helpers, or introduce them in our compat util and submit a PR. |
-| `const_cast<char *>(gguf_get_tensor_name(...))` in `rename_tensor` | Pointer aims into a mutable `char[GGML_MAX_NAME]` buffer inside a `std::vector` element; the const is API hygiene. Lets us rename gguf tensors without a new public helper. | Add `gguf_rename_tensor` to `gguf.h` (10 lines) and drop the `const_cast`. |
-| `llama_model_loader` forward-decl from `src/llama-model-loader.h` | Used only as an opaque pointer key for per-loader skip-prefix, mmap-disable, and source-path registries. Never dereferenced. | Replace with `const void *` in our registry signatures. Zero behavioral change. |
+| Direct writes to `ggml_tensor::type` / `ne[]` / `nb[]` | Post-creation tensor reshape/retype for in-memory translation. | Add public tensor shape/type mutators. |
+| `const_cast<char *>(gguf_get_tensor_name(...))` in `rename_tensor` | Renames gguf tensors in place. | Add a public `gguf_rename_tensor` helper. |
+| `llama_model_loader` forward declaration from `src/llama-model-loader.h` | Opaque key for per-loader registries. The pointer is never dereferenced. | Replace registry keys with `const void *`. |
 
-None of these have changed in years. If an upstream bump breaks any of
-them, each has a trivial workaround. See the top of
-`llama-ollama-compat-util.h` for the inline notes.
+Two helpers need extra context:
 
-## Documented hacks inside per-arch handlers
-
-- **`reclaim_slot_as` (patch-embedding splits)** — repurposes an orphaned
-  tensor slot as a newly synthesized tensor when a clip handler must split a
-  source tensor into multiple upstream-facing tensors. Needed because
-  clip.cpp's `ctx_meta` is sized for exactly the original tensor count
-  (no_alloc branch of `gguf_init_from_file` uses
-  `n_tensors * ggml_tensor_overhead()` with zero slack). Comment in the helper
-  and call sites explains the reasoning; replacement would be a small upstream
-  patch that adds slack to the ctx size.
-
-- **Load-op registry overrides `file_offset`** — `maybe_load_tensor` gets
-  passed the gguf offset by its caller but ignores it when a registered
-  op exists. Intentional: the ops capture their own source offsets at
-  translate time (before our renames invalidate them). Documented in the
-  op-registration helpers.
+- `reclaim_slot_as` repurposes an orphaned tensor slot as a synthesized tensor
+  when a clip handler splits one source tensor into multiple destination
+  tensors. This is needed because clip metadata loading allocates exactly enough
+  tensor slots for the source file.
+- Load-op registry overrides ignore the caller-provided `file_offset` when a
+  registered operation exists. The operations capture their own source offsets
+  at translation time, before renames change tensor names.

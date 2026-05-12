@@ -118,8 +118,6 @@ COPY llama/server llama/server
 COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset rocm \
-        -DAMDGPU_TARGETS="gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-" \
-        -DCMAKE_HIP_FLAGS="-parallel-jobs=4" \
         && cmake --build build/llama-server-rocm -- -l $(nproc) \
         && cmake --install build/llama-server-rocm --component llama-server --strip
 RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*

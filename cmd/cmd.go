@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -339,29 +340,27 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
 
 	files := syncmap.NewSyncMap[string, string]()
+	fileNames := createRequestFileNames(req.Files)
 	for f, digest := range req.Files {
 		g.Go(func() error {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
 				return err
 			}
 
-			// TODO: this is incorrect since the file might be in a subdirectory
-			//       instead this should take the path relative to the model directory
-			//       but the current implementation does not allow this
-			files.Store(filepath.Base(f), digest)
+			files.Store(fileNames[f], digest)
 			return nil
 		})
 	}
 
 	adapters := syncmap.NewSyncMap[string, string]()
+	adapterNames := createRequestFileNames(req.Adapters)
 	for f, digest := range req.Adapters {
 		g.Go(func() error {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
 				return err
 			}
 
-			// TODO: same here
-			adapters.Store(filepath.Base(f), digest)
+			adapters.Store(adapterNames[f], digest)
 			return nil
 		})
 	}
@@ -407,6 +406,65 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func createRequestFileNames(files map[string]string) map[string]string {
+	names := make(map[string]string, len(files))
+	root, ok := commonFileRoot(files)
+	for f := range files {
+		name := filepath.Base(f)
+		if ok {
+			abs, err := filepath.Abs(f)
+			if err == nil {
+				if rel, err := filepath.Rel(root, abs); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					name = rel
+				}
+			}
+		}
+		names[f] = path.Clean(filepath.ToSlash(name))
+	}
+	return names
+}
+
+func commonFileRoot(files map[string]string) (string, bool) {
+	if len(files) < 2 {
+		return "", false
+	}
+
+	var root string
+	var volume string
+	for f := range files {
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			return "", false
+		}
+		if nextVolume := filepath.VolumeName(abs); volume == "" {
+			volume = nextVolume
+		} else if !strings.EqualFold(volume, nextVolume) {
+			return "", false
+		}
+
+		dir := filepath.Dir(abs)
+		if root == "" {
+			root = dir
+			continue
+		}
+
+		for {
+			rel, err := filepath.Rel(root, dir)
+			if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+				break
+			}
+
+			parent := filepath.Dir(root)
+			if parent == root {
+				return "", false
+			}
+			root = parent
+		}
+	}
+
+	return root, root != ""
 }
 
 func createBlob(cmd *cobra.Command, client *api.Client, path string, digest string, p *progress.Progress) (string, error) {
@@ -2485,6 +2543,8 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_KV_CACHE_TYPE"],
 				envVars["OLLAMA_LLM_LIBRARY"],
 				envVars["OLLAMA_GPU_OVERHEAD"],
+				envVars["LLAMA_ARG_FIT"],
+				envVars["LLAMA_ARG_FIT_TARGET"],
 				envVars["OLLAMA_LOAD_TIMEOUT"],
 			})
 		default:

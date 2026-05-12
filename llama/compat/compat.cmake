@@ -1,7 +1,7 @@
 # llama.cpp compatibility shim — CMake integration
 #
 # Include this file BEFORE calling FetchContent_Declare(llama_cpp ...) to
-# patch the fetched upstream llama.cpp with Ollama's in-process compat
+# patch the fetched llama.cpp with Ollama's in-process compatibility
 # layer. Example usage:
 #
 #     include(${CMAKE_CURRENT_SOURCE_DIR}/../compat/compat.cmake)
@@ -18,8 +18,7 @@
 # The compat layer consists of:
 #   1. Ollama-owned compat source files linked into the fetched llama.cpp
 #      targets from this directory.
-#   2. A small patch (upstream-edits.patch) that adds call-sites in upstream
-#      loaders.
+#   2. A small patch file that adds call-sites in llama.cpp loaders.
 
 set(_compat_dir ${CMAKE_CURRENT_LIST_DIR})
 
@@ -34,7 +33,7 @@ set(_compat_dir ${CMAKE_CURRENT_LIST_DIR})
 # Ollama's tree and makes the patch pure call-site insertions.
 set(OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND
     ${CMAKE_COMMAND}
-        -DPATCH_FILE=${_compat_dir}/upstream-edits.patch
+        -DPATCH_FILE=${_compat_dir}/llama-cpp-hooks.patch
         -P ${_compat_dir}/apply-patch.cmake
     CACHE INTERNAL "llama.cpp compat patch command for FetchContent")
 
@@ -47,7 +46,7 @@ set(OLLAMA_LLAMA_CPP_COMPAT_DIR
 # Also export the individual paths in case callers want to do something
 # custom (e.g. emit a dependency on the patch so reconfigures re-apply).
 set(OLLAMA_LLAMA_CPP_COMPAT_PATCH_FILE
-    "${_compat_dir}/upstream-edits.patch"
+    "${_compat_dir}/llama-cpp-hooks.patch"
     CACHE INTERNAL "Path to the llama.cpp compat patch")
 
 set(OLLAMA_LLAMA_CPP_COMPAT_SOURCES

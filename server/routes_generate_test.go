@@ -127,8 +127,8 @@ func TestOptionsForPromptLeavesLargerRunnerContext(t *testing.T) {
 	}
 }
 
-func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int, llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
@@ -209,12 +209,20 @@ func TestChatModeForModel(t *testing.T) {
 	}
 
 	t.Setenv("OLLAMA_GO_TEMPLATE", "0")
-	if got := chatModeForModel(&Model{Config: model.ConfigV2{Parser: "gemma4"}, HasChatTemplate: true}); got != chatExecutionModeRendered {
+	parserModel := &Model{Config: model.ConfigV2{Parser: "gemma4"}, HasChatTemplate: true}
+	if got := chatModeForModel(parserModel); got != chatExecutionModeRendered {
 		t.Fatalf("chatModeForModel with parser = %v, want rendered", got)
 	}
+	if got := llamaServerConfigForModel(parserModel); !got.DisableJinja {
+		t.Fatalf("llamaServerConfigForModel with parser should disable jinja")
+	}
 
-	if got := chatModeForModel(&Model{Config: model.ConfigV2{Renderer: "gemma3"}, HasChatTemplate: true}); got != chatExecutionModeRendered {
+	rendererModel := &Model{Config: model.ConfigV2{Renderer: "gemma3"}, HasChatTemplate: true}
+	if got := chatModeForModel(rendererModel); got != chatExecutionModeRendered {
 		t.Fatalf("chatModeForModel with renderer = %v, want rendered", got)
+	}
+	if got := llamaServerConfigForModel(rendererModel); !got.DisableJinja {
+		t.Fatalf("llamaServerConfigForModel with renderer should disable jinja")
 	}
 
 	if got := chatModeForModel(&Model{Config: model.ConfigV2{ModelFormat: "safetensors"}, HasChatTemplate: true}); got != chatExecutionModeRendered {
@@ -233,9 +241,16 @@ func TestChatModeForModel(t *testing.T) {
 	if got := chatModeForModel(&Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasChatTemplate: true}); got != chatExecutionModeNative {
 		t.Fatalf("chatModeForModel without legacy template = %v, want native", got)
 	}
+	if got := llamaServerConfigForModel(&Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasChatTemplate: true}); got.DisableJinja {
+		t.Fatalf("llamaServerConfigForModel with native chat template should not disable jinja")
+	}
 
-	if got := chatModeForModel(&Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasLegacyTemplate: true}); got != chatExecutionModeRendered {
+	legacyModel := &Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasLegacyTemplate: true}
+	if got := chatModeForModel(legacyModel); got != chatExecutionModeRendered {
 		t.Fatalf("chatModeForModel with generic legacy template = %v, want rendered", got)
+	}
+	if got := llamaServerConfigForModel(legacyModel); !got.DisableJinja {
+		t.Fatalf("llamaServerConfigForModel with Go TEMPLATE should disable jinja")
 	}
 }
 

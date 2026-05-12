@@ -114,6 +114,24 @@
       "cacheVariables": {
         "GGML_HIP": "ON",
         "CMAKE_HIP_PLATFORM": "amd",
+        "AMDGPU_TARGETS": "gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-",
+        "CMAKE_HIP_FLAGS": "-parallel-jobs=4",
+        "OLLAMA_RUNNER_DIR": "rocm",
+        "OLLAMA_GPU_BACKEND": "hip"
+      }
+    },
+    {
+      "name": "rocm-windows",
+      "inherits": ["default"],
+      "description": "Reduced ROCm target set for Windows HIP, which does not support XNACK target variants",
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm",
+      "cacheVariables": {
+        "GGML_HIP": "ON",
+        "CMAKE_HIP_PLATFORM": "amd",
+        "AMDGPU_TARGETS": "gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201",
+        "CMAKE_HIP_FLAGS": "-parallel-jobs=4",
+        "CMAKE_C_FLAGS": "-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma",
+        "CMAKE_CXX_FLAGS": "-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma",
         "OLLAMA_RUNNER_DIR": "rocm",
         "OLLAMA_GPU_BACKEND": "hip"
       }
@@ -158,6 +176,11 @@
     {
       "name": "rocm",
       "configurePreset": "rocm",
+      "targets": ["ggml-hip"]
+    },
+    {
+      "name": "rocm-windows",
+      "configurePreset": "rocm-windows",
       "targets": ["ggml-hip"]
     },
     {

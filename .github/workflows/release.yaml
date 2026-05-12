@@ -58,6 +58,8 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            MLX_VERSION
+            MLX_C_VERSION
       - run: |
           ./scripts/build_darwin.sh
       - name: Log build results
@@ -266,16 +268,15 @@ jobs:
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
       - if: matrix.preset == 'CPU'
         name: Verify Windows CPU payloads
+        shell: bash
         run: |
-          $expected = @(
-            ".\dist\windows-amd64\lib\ollama\llama-server.exe",
-            ".\dist\windows-arm64\lib\ollama\llama-server.exe"
-          )
-          foreach ($payload in $expected) {
-            if (!(Test-Path $payload)) {
-              throw "Missing expected Windows CPU payload: $payload"
-            }
-          }
+          set -euo pipefail
+          for payload in \
+            dist/windows-amd64/lib/ollama/llama-server.exe \
+            dist/windows-arm64/lib/ollama/llama-server.exe
+          do
+            [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: depends-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
@@ -307,6 +308,8 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            MLX_VERSION
+            MLX_C_VERSION
       - name: Verify gcc is actually clang
         run: |
           $ErrorActionPreference='Continue'
@@ -325,16 +328,15 @@ jobs:
       - run: |
           ./scripts/build_windows ollama ollamaArm64 app appArm64
       - name: Verify Windows build payloads
+        shell: bash
         run: |
-          $expected = @(
-            ".\dist\windows-amd64\ollama.exe",
-            ".\dist\windows-arm64\ollama.exe"
-          )
-          foreach ($payload in $expected) {
-            if (!(Test-Path $payload)) {
-              throw "Missing expected Windows build payload: $payload"
-            }
-          }
+          set -euo pipefail
+          for payload in \
+            dist/windows-amd64/ollama.exe \
+            dist/windows-arm64/ollama.exe
+          do
+            [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
       - name: Log build results
         run: |
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
@@ -374,6 +376,8 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            MLX_VERSION
+            MLX_C_VERSION
       - uses: actions/download-artifact@v4
         with:
           pattern: depends-windows*
@@ -388,18 +392,17 @@ jobs:
         run: |
           gci -path .\dist -recurse
       - name: Verify Windows package inputs
+        shell: bash
         run: |
-          $expected = @(
-            ".\dist\windows-amd64\ollama.exe",
-            ".\dist\windows-amd64\lib\ollama\llama-server.exe",
-            ".\dist\windows-arm64\ollama.exe",
-            ".\dist\windows-arm64\lib\ollama\llama-server.exe"
-          )
-          foreach ($payload in $expected) {
-            if (!(Test-Path $payload)) {
-              throw "Missing expected Windows package input: $payload"
-            }
-          }
+          set -euo pipefail
+          for payload in \
+            dist/windows-amd64/ollama.exe \
+            dist/windows-amd64/lib/ollama/llama-server.exe \
+            dist/windows-arm64/ollama.exe \
+            dist/windows-arm64/lib/ollama/llama-server.exe
+          do
+            [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
       - run: |
           ./scripts/build_windows.ps1 deps sign installer zip
       - name: Log contents after build
@@ -546,6 +549,17 @@ jobs:
       - name: Deduplicate CUDA libraries
         run: |
           ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
+      - name: Verify Linux build payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="dist/${{ matrix.os }}-${{ matrix.arch }}"
+          for payload in \
+            "$base/bin/ollama" \
+            "$base/lib/ollama/llama-server"
+          do
+            [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
       - run: |
           for COMPONENT in bin/* lib/ollama/*; do
             case "$COMPONENT" in
@@ -570,7 +584,7 @@ jobs:
           done
       - run: |
           for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
-            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd -9 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd -19 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
           done
       - uses: actions/upload-artifact@v4
         with:

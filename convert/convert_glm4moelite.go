@@ -39,46 +39,70 @@ type glm4MoeLiteModel struct {
 	ExpertWeightsScale     float32 `json:"routed_scaling_factor"`
 
 	LeadingDenseBlockCount uint32 `json:"first_k_dense_replace"`
+
+	ExpertGroupCount     uint32 `json:"n_group"`
+	ExpertGroupUsedCount uint32 `json:"topk_group"`
 }
 
 func (p *glm4MoeLiteModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "glm4moelite"
+	kv["general.architecture"] = "deepseek2"
 	kv["general.type"] = "model"
-	kv["glm4moelite.block_count"] = p.HiddenLayers
+	kv["deepseek2.block_count"] = p.HiddenLayers
 
 	numHeads := p.NumAttentionHeads
-	numKVHeads := p.NumKeyValueHeads
 
-	kv["glm4moelite.attention.head_count"] = numHeads
-	kv["glm4moelite.attention.head_count_kv"] = numKVHeads
-	kv["glm4moelite.attention.key_length"] = p.QKNopeHeadDim + p.QKRopeHeadDim
-	kv["glm4moelite.attention.kv_lora_rank"] = p.KVLoraRank
-	kv["glm4moelite.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
-	kv["glm4moelite.attention.q_lora_rank"] = p.QLoraRank
-	kv["glm4moelite.attention.value_length"] = p.VHeadDim
-	kv["glm4moelite.context_length"] = p.MaxPositionEmbeddings
-	kv["glm4moelite.embedding_length"] = p.HiddenSize
-	kv["glm4moelite.expert_count"] = p.ExpertCount
-	kv["glm4moelite.expert_feed_forward_length"] = p.ExpertIntermediateSize
-	kv["glm4moelite.expert_shared_count"] = p.ExpertSharedCount
+	kv["deepseek2.attention.head_count"] = numHeads
+	kv["deepseek2.attention.head_count_kv"] = uint32(1)
+	kv["deepseek2.attention.key_length"] = p.KVLoraRank + p.QKRopeHeadDim
+	kv["deepseek2.attention.kv_lora_rank"] = p.KVLoraRank
+	kv["deepseek2.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
+	kv["deepseek2.attention.q_lora_rank"] = p.QLoraRank
+	kv["deepseek2.attention.value_length"] = p.KVLoraRank
+	kv["deepseek2.context_length"] = p.MaxPositionEmbeddings
+	kv["deepseek2.embedding_length"] = p.HiddenSize
+	kv["deepseek2.expert_count"] = p.ExpertCount
+	kv["deepseek2.expert_feed_forward_length"] = p.ExpertIntermediateSize
+	kv["deepseek2.expert_shared_count"] = p.ExpertSharedCount
 
-	kv["glm4moelite.expert_gating_func"] = uint32(2)
-	kv["glm4moelite.expert_used_count"] = p.ExpertUsedCount
-	kv["glm4moelite.expert_weights_norm"] = p.ExpertWeightsNorm
-	kv["glm4moelite.expert_weights_scale"] = p.ExpertWeightsScale
-	kv["glm4moelite.feed_forward_length"] = p.IntermediateSize
-	kv["glm4moelite.leading_dense_block_count"] = p.LeadingDenseBlockCount
+	kv["deepseek2.expert_gating_func"] = uint32(2)
+	kv["deepseek2.expert_group_count"] = cmp.Or(p.ExpertGroupCount, uint32(1))
+	kv["deepseek2.expert_group_used_count"] = cmp.Or(p.ExpertGroupUsedCount, uint32(1))
+	kv["deepseek2.expert_used_count"] = p.ExpertUsedCount
+	kv["deepseek2.expert_weights_norm"] = p.ExpertWeightsNorm
+	kv["deepseek2.expert_weights_scale"] = p.ExpertWeightsScale
+	kv["deepseek2.feed_forward_length"] = p.IntermediateSize
+	kv["deepseek2.leading_dense_block_count"] = p.LeadingDenseBlockCount
 
-	kv["glm4moelite.rope.dimension_count"] = p.QKRopeHeadDim
-	kv["glm4moelite.rope.freq_base"] = cmp.Or(p.RopeTheta, float32(1000000.0))
+	kv["deepseek2.rope.dimension_count"] = p.QKRopeHeadDim
+	kv["deepseek2.rope.freq_base"] = cmp.Or(p.RopeTheta, float32(1000000.0))
 
-	kv["glm4moelite.attention.key_length_mla"] = p.KVLoraRank + p.QKRopeHeadDim
-	kv["glm4moelite.attention.value_length_mla"] = p.KVLoraRank
+	kv["deepseek2.attention.key_length_mla"] = p.QKNopeHeadDim + p.QKRopeHeadDim
+	kv["deepseek2.attention.value_length_mla"] = p.VHeadDim
 
 	kv["tokenizer.ggml.pre"] = "glm4"
+	setGLM4MoeLiteExtraEOGFromEOSIDs(kv)
 
 	return kv
+}
+
+func setGLM4MoeLiteExtraEOGFromEOSIDs(kv KV) {
+	switch ids := kv["tokenizer.ggml.eos_token_ids"].(type) {
+	case []int32:
+		if len(ids) >= 2 && ids[1] >= 0 {
+			kv["tokenizer.ggml.eot_token_id"] = uint32(ids[1])
+		}
+		if len(ids) >= 3 && ids[2] >= 0 {
+			kv["tokenizer.ggml.eom_token_id"] = uint32(ids[2])
+		}
+	case []uint32:
+		if len(ids) >= 2 {
+			kv["tokenizer.ggml.eot_token_id"] = ids[1]
+		}
+		if len(ids) >= 3 {
+			kv["tokenizer.ggml.eom_token_id"] = ids[2]
+		}
+	}
 }
 
 func (p *glm4MoeLiteModel) Replacements() []string {

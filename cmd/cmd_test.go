@@ -1525,6 +1525,49 @@ func TestCreateHandler(t *testing.T) {
 	}
 }
 
+func TestCreateRequestFileNamesPreservesModelDirectoryLayout(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		filepath.Join(root, "model.safetensors"):            "sha256:model",
+		filepath.Join(root, "config.json"):                  "sha256:config",
+		filepath.Join(root, "2_Dense", "config.json"):       "sha256:dense-config",
+		filepath.Join(root, "2_Dense", "model.safetensors"): "sha256:dense-model",
+	}
+
+	got := createRequestFileNames(files)
+	want := map[string]string{
+		filepath.Join(root, "model.safetensors"):            "model.safetensors",
+		filepath.Join(root, "config.json"):                  "config.json",
+		filepath.Join(root, "2_Dense", "config.json"):       "2_Dense/config.json",
+		filepath.Join(root, "2_Dense", "model.safetensors"): "2_Dense/model.safetensors",
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCreateRequestFileNamesPreservesRelativeModelDirectoryLayout(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	files := map[string]string{
+		"model.safetensors":         "sha256:model",
+		"config.json":               "sha256:config",
+		"2_Dense/config.json":       "sha256:dense-config",
+		"2_Dense/model.safetensors": "sha256:dense-model",
+		"3_Dense/config.json":       "sha256:dense-config",
+		"3_Dense/model.safetensors": "sha256:dense-model",
+	}
+
+	got := createRequestFileNames(files)
+	for file := range files {
+		if got[file] != filepath.ToSlash(file) {
+			t.Fatalf("%s = %q, want %q", file, got[file], filepath.ToSlash(file))
+		}
+	}
+}
+
 func TestCreateHandlerDraftQuantizeRequiresExperimental(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().Bool("experimental", false, "")

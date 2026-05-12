@@ -2,7 +2,11 @@ package convert
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
+	"strings"
+
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 type gemma3Model struct {
@@ -177,4 +181,43 @@ func (p *gemma3Model) Replacements() []string {
 		"input_projection_weight", "input_projection.weight",
 		"multi_modal_projector", "mm",
 	}
+}
+
+func (p *gemma3Model) TensorsWithTokenizer(ts []Tensor, t *Tokenizer) []*ggml.Tensor {
+	vocabSize := uint64(0)
+	if t != nil && t.Vocabulary != nil {
+		vocabSize = uint64(len(t.Vocabulary.Tokens))
+	}
+
+	var out []*ggml.Tensor
+	for _, tensor := range ts {
+		name := tensor.Name()
+		gt := &ggml.Tensor{
+			Name:     name,
+			Kind:     tensor.Kind(),
+			Shape:    tensor.Shape(),
+			WriterTo: tensor,
+		}
+
+		if !strings.HasPrefix(name, "v.") && strings.HasSuffix(name, "_norm.weight") {
+			tensor.SetRepacker(p.addOne)
+		}
+
+		if vocabSize > 0 && name == "token_embd.weight" && len(gt.Shape) >= 2 && gt.Shape[0] > vocabSize {
+			gt.Shape = slices.Clone(gt.Shape)
+			embdDim := gt.Shape[1]
+			gt.Shape[0] = vocabSize
+			tensor.SetRepacker(func(_ string, data []float32, _ []uint64) ([]float32, error) {
+				n := vocabSize * embdDim
+				if uint64(len(data)) < n {
+					return nil, fmt.Errorf("gemma3 token_embd.weight has %d values, need %d", len(data), n)
+				}
+				return data[:n], nil
+			})
+		}
+
+		out = append(out, gt)
+	}
+
+	return out
 }

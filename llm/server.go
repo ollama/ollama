@@ -67,6 +67,10 @@ type LlamaServer interface {
 	ContextLength() int
 }
 
+type LlamaServerConfig struct {
+	DisableJinja bool
+}
+
 // LoadModel will load a model from disk. The model must be in the GGML format.
 //
 // It collects array values for arrays with a size less than or equal to
@@ -88,7 +92,7 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 
 // NewLlamaServer creates a new llama-server runner for the given model.
 // All GGML models are served via the upstream llama-server subprocess.
-func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int, config LlamaServerConfig) (LlamaServer, error) {
 	slog.Info("using llama-server for model", "model", modelPath)
 
 	// Verify the requested context size is <= the model training size
@@ -99,7 +103,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
-	return NewLlamaServerRunner(gpus, modelPath, f, adapters, projectors, opts, numParallel, kvct)
+	return NewLlamaServerRunner(gpus, modelPath, f, adapters, projectors, opts, numParallel, kvct, config)
 }
 
 // Server status types
@@ -155,7 +159,8 @@ type CompletionRequest struct {
 	Grammar         string // set before sending the request to the subprocess
 	Shift           bool
 	Truncate        bool
-	PreservedTokens []string // special tokens to render as text (not strip) during detokenization
+	PreservedTokens []string // parser tokens to render as text; ignored by non-llama-server runners
+	ToolCallTag     string   // raw generic tool parser tag, if any
 	LeadingBOS      string   // textual BOS emitted by Go rendering, if any
 
 	// Logprobs specifies whether to include log probabilities in the response

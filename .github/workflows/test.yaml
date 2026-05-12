@@ -23,7 +23,7 @@ jobs:
     outputs:
       changed: ${{ steps.changes.outputs.changed }}
       app_changed: ${{ steps.changes.outputs.app_changed }}
-      vendorsha: ${{ steps.changes.outputs.vendorsha }}
+      enginehash: ${{ steps.changes.outputs.enginehash }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,7 +40,7 @@ jobs:
 
           echo changed=$(changed 'llama/server/**/*' 'llama/compat/**/*' 'LLAMA_CPP_VERSION' 'llama/llama.cpp/**/*' 'ml/backend/ggml/ggml/**/*' '.github/**/*') | tee -a $GITHUB_OUTPUT
           echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
-          echo vendorsha=$(cat LLAMA_CPP_VERSION) | tee -a $GITHUB_OUTPUT
+          echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
 
   linux:
     needs: [changes]
@@ -109,7 +109,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: /github/home/.cache/ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.vendorsha }}
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.enginehash }}
       - name: Build llama-server
         if: matrix.server_preset
         run: |
@@ -147,8 +147,8 @@ jobs:
           - preset: ROCm
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe
             rocm-version: '7.1'
-            flags: '-DAMDGPU_TARGETS=gfx1010 -DGGML_OPENMP=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
-            server_preset: rocm
+            flags: '-DAMDGPU_TARGETS=gfx1010'
+            server_preset: rocm-windows
             server_build_dir: build\llama-server-rocm
           - preset: Vulkan
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
@@ -259,7 +259,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\.ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.vendorsha }}
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.enginehash }}
       - name: Build llama-server
         if: matrix.server_preset
         run: |
@@ -302,6 +302,8 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            MLX_VERSION
+            MLX_C_VERSION
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

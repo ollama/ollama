@@ -1,13 +1,43 @@
+// Vulkan discovery needs a small amount of normalization around device type.
+// llama-server discovery output does not currently expose a stable structured
+// backend type field, so we use explicit Vulkan UMA metadata when it is
+// present and, on Windows, refine the result with a direct Vulkan API query.
+// The goal is to preserve correct integrated-vs-discrete scheduling decisions
+// without relying on device-name heuristics.
 package discover
 
 import (
+	"bufio"
 	"errors"
 	"log/slog"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/ml"
 )
+
+// vulkanUMARegex matches Vulkan debug lines like:
+//
+//	ggml_vulkan: 0 = Intel(R) Graphics (...) | uma: 1 | fp16: 1 |
+var vulkanUMARegex = regexp.MustCompile(
+	`ggml_vulkan:\s+(\d+)\s+=.*\|\s+uma:\s+([01])\s+\|`,
+)
+
+func parseVulkanUMA(output string) map[int]bool {
+	integratedByIndex := make(map[int]bool)
+
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		if matches := vulkanUMARegex.FindStringSubmatch(scanner.Text()); matches != nil {
+			idx, _ := strconv.Atoi(matches[1])
+			integratedByIndex[idx] = matches[2] == "1"
+		}
+	}
+
+	return integratedByIndex
+}
 
 var errWindowsVulkanProbeUnsupported = errors.New("windows vulkan probe unsupported")
 

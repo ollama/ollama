@@ -280,6 +280,11 @@ func filesForModel(path string) ([]string, error) {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
 		files = append(files, st...)
+		nested, err := glob(filepath.Join(path, "*", "model*.safetensors"), "")
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, nested...)
 	} else if st, _ := glob(filepath.Join(path, "consolidated*.safetensors"), ""); len(st) > 0 {
 		// covers consolidated.safetensors
 		files = append(files, st...)

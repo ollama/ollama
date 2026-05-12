@@ -216,8 +216,6 @@ var (
 	FlashAttention = BoolWithDefault("OLLAMA_FLASH_ATTENTION")
 	// GoTemplate enables legacy Modelfile TEMPLATE rendering when a model has one.
 	GoTemplate = BoolWithDefault("OLLAMA_GO_TEMPLATE")
-	// NewEngine enables the new Ollama engine.
-	NewEngine = Bool("OLLAMA_NEW_ENGINE")
 	// DebugLogRequests logs inference requests to disk for replay/debugging.
 	DebugLogRequests = Bool("OLLAMA_DEBUG_LOG_REQUESTS")
 	// KvCacheType is the quantization type for the K/V cache.
@@ -228,8 +226,6 @@ var (
 	NoPrune = Bool("OLLAMA_NOPRUNE")
 	// SchedSpread allows scheduling models across all GPUs.
 	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
-	// MultiUserCache optimizes prompt caching for multi-user scenarios
-	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
 	// ContextLength sets the default context length
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 0)
 	// Auth enables authentication between the Ollama client and server
@@ -318,6 +314,8 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_FLASH_ATTENTION":      {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"LLAMA_ARG_FIT":               {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},
+		"LLAMA_ARG_FIT_TARGET":        {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},
 		"OLLAMA_HOST":                 {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
@@ -332,10 +330,8 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NUM_PARALLEL":         {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":              {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
 		"OLLAMA_SCHED_SPREAD":         {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
-		"OLLAMA_MULTIUSER_CACHE":      {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
 		"OLLAMA_CONTEXT_LENGTH":       {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},
 		"OLLAMA_EDITOR":               {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
-		"OLLAMA_NEW_ENGINE":           {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
 		"OLLAMA_REMOTES":              {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 
 		// Informational

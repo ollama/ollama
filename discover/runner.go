@@ -526,14 +526,3 @@ func detectIncompatibleLibraries() {
 		slog.Warn("potentially incompatible library detected in PATH", "location", basePath)
 	}
 }
-
-func detectOldAMDDriverWindows() {
-	if runtime.GOOS != "windows" {
-		return
-	}
-	_, errV6 := exec.LookPath("amdhip64_6.dll")
-	_, errV7 := exec.LookPath("amdhip64_7.dll")
-	if errV6 == nil && errV7 != nil {
-		slog.Warn("AMD driver is too old. Update your AMD driver to enable GPU inference.")
-	}
-}

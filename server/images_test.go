@@ -139,6 +139,11 @@ func TestModelCapabilities(t *testing.T) {
 		"general.architecture": "llama",
 	}, []*ggml.Tensor{})
 
+	nativeToolTemplateModelPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":    "llama",
+		"tokenizer.chat_template": `{% if tools %}<tool_call>{{ tools }}</tool_call>{% endif %}<think>{{ messages[0]['content'] }}</think>`,
+	}, []*ggml.Tensor{})
+
 	// Create vision model (llama architecture with vision block count)
 	visionModelPath, _ := createBinFile(t, ggml.KV{
 		"general.architecture":     "llama",
@@ -237,6 +242,23 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools},
 		},
 		{
+			name: "model with native chat template tools and thinking",
+			model: Model{
+				ModelPath: nativeToolTemplateModelPath,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking},
+		},
+		{
+			name: "model with Go template ignores native chat template capabilities",
+			model: Model{
+				ModelPath:         nativeToolTemplateModelPath,
+				Template:          chatTemplate,
+				HasLegacyTemplate: true,
+				HasChatTemplate:   true,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion},
+		},
+		{
 			name: "model with vision capability",
 			model: Model{
 				ModelPath: visionModelPath,
@@ -268,6 +290,17 @@ func TestModelCapabilities(t *testing.T) {
 				Template:       chatTemplate,
 			},
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio},
+		},
+		{
+			name: "model with parser and projector capabilities without template",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioProjectorPath},
+				Config: model.ConfigV2{
+					Parser: "functiongemma",
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio, model.CapabilityTools},
 		},
 		{
 			name: "gemma4 projector suppresses audio capability",

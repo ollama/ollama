@@ -248,73 +248,11 @@ func (s *llamaServerRunner) ContextLength() int {
 // FindLlamaServer locates the llama-server binary in lib/ollama/.
 // There is a single binary that dynamically loads GPU backends at runtime.
 func FindLlamaServer() (string, error) {
-	suffix := "llama-server"
-	if runtime.GOOS == "windows" {
-		suffix += ".exe"
+	path, candidates, err := findLlamaCppBinary("llama-server", defaultLlamaCppBinarySearch())
+	if err != nil {
+		return "", fmt.Errorf("llama-server binary not found (checked: %s). Run 'cmake -S llama/server --preset cpu && cmake --build --preset cpu' first", strings.Join(candidates, ", "))
 	}
-
-	// Deduplicate candidates while preserving order
-	seen := map[string]bool{}
-	var candidates []string
-	add := func(dir string) {
-		path := filepath.Join(dir, suffix)
-		if !seen[path] {
-			seen[path] = true
-			candidates = append(candidates, path)
-		}
-	}
-
-	// 1. lib/ollama/ (distribution layout)
-	add(ml.LibOllamaPath)
-
-	// 2. Dev build paths (cmake install destination)
-	exe, err := os.Executable()
-	if err == nil {
-		if eval, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = eval
-		}
-		add(filepath.Join(filepath.Dir(exe), "build", "lib", "ollama"))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		add(filepath.Join(cwd, "build", "lib", "ollama"))
-	}
-
-	// 3. Dev build paths (cmake build output, before install)
-	// Prefer platform-specific static builds (darwin) over dynamic CPU builds
-	addGlob := func(base string) {
-		matches, _ := filepath.Glob(filepath.Join(base, "build", "llama-server-*", "bin"))
-		slices.SortFunc(matches, func(a, b string) int {
-			aIsPlatform := strings.Contains(a, "llama-server-darwin") || strings.Contains(a, "llama-server-cuda") || strings.Contains(a, "llama-server-rocm")
-			bIsPlatform := strings.Contains(b, "llama-server-darwin") || strings.Contains(b, "llama-server-cuda") || strings.Contains(b, "llama-server-rocm")
-			if aIsPlatform && !bIsPlatform {
-				return -1
-			}
-			if !aIsPlatform && bIsPlatform {
-				return 1
-			}
-			return strings.Compare(a, b)
-		})
-		for _, m := range matches {
-			add(m)
-		}
-	}
-	if exe, err := os.Executable(); err == nil {
-		if eval, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = eval
-		}
-		addGlob(filepath.Dir(exe))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		addGlob(cwd)
-	}
-
-	for _, path := range candidates {
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-
-	return "", fmt.Errorf("llama-server binary not found (checked: %s). Run 'cmake -S llama/server --preset cpu && cmake --build --preset cpu' first", strings.Join(candidates, ", "))
+	return path, nil
 }
 
 // startLlamaServer spawns the upstream llama-server process with appropriate CLI flags.
@@ -322,11 +260,13 @@ func startLlamaServer(
 	modelPath string,
 	modelArch string,
 	projectors []string,
+	modelLayers uint64,
 	adapters []string,
 	opts api.Options,
 	numParallel int,
 	kvCacheType string,
 	embedding bool,
+	config LlamaServerConfig,
 	gpus []ml.DeviceInfo,
 	gpuLibs []string,
 	extraEnvs map[string]string,
@@ -361,11 +301,9 @@ func startLlamaServer(
 		"-c", strconv.Itoa(opts.NumCtx * numParallel),
 		"-np", strconv.Itoa(numParallel),
 	}
+	params = appendJinjaArgs(params, config)
 
-	// Multimodal projectors
-	if len(projectors) > 0 {
-		params = append(params, "--mmproj", projectors[0])
-	}
+	params = appendMMProjArgs(params, modelPath, projectors, opts, gpus, modelLayers)
 
 	params = append(params, qwenVLServerArgs(modelArch)...)
 
@@ -429,47 +367,7 @@ func startLlamaServer(
 	}
 
 	// Set up library paths for GPU backend discovery
-	var pathEnv string
-	switch runtime.GOOS {
-	case "windows":
-		pathEnv = "PATH"
-	case "darwin":
-		pathEnv = "DYLD_LIBRARY_PATH"
-	default:
-		pathEnv = "LD_LIBRARY_PATH"
-	}
-
-	// Library path ordering:
-	// 1. llama-server's own directory (lib/ollama/) — for ggml-base, ggml-cpu, libllama
-	// 2. GPU variant directories (lib/ollama/cuda_v12/) — for cublas, cudart, GPU backend
-	//
-	// llama-server scans its own directory for CPU backends but not subdirectories.
-	// We use GGML_BACKEND_PATH to point it at the specific GPU backend .so file.
-	llamaDir := filepath.Dir(exe)
-	libraryPaths := []string{llamaDir}
-	for _, dir := range gpuLibs {
-		if dir == ml.LibOllamaPath {
-			continue
-		}
-		// Check for GPU backend .so in the variant directory
-		entries, _ := filepath.Glob(filepath.Join(dir, "libggml-*"))
-		if len(entries) == 0 {
-			entries, _ = filepath.Glob(filepath.Join(dir, "ggml-*.dll"))
-		}
-		if len(entries) > 0 {
-			if extraEnvs == nil {
-				extraEnvs = make(map[string]string)
-			}
-			extraEnvs["GGML_BACKEND_PATH"] = entries[0]
-		}
-		libraryPaths = append(libraryPaths, dir)
-	}
-	if libraryPath, ok := os.LookupEnv(pathEnv); ok {
-		libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
-	}
-
 	cmd = exec.Command(exe, params...)
-	cmd.Env = os.Environ()
 
 	if out != nil {
 		// os/exec serializes Write calls when stdout and stderr share a writer.
@@ -477,37 +375,7 @@ func startLlamaServer(
 		cmd.Stderr = out
 	}
 	cmd.SysProcAttr = LlamaServerSysProcAttr
-
-	pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
-
-	// Set environment variables
-	pathNeeded := true
-	extraEnvsDone := map[string]bool{}
-	for k := range extraEnvs {
-		extraEnvsDone[k] = false
-	}
-	for i := range cmd.Env {
-		cmp := strings.SplitN(cmd.Env[i], "=", 2)
-		if strings.EqualFold(cmp[0], pathEnv) {
-			cmd.Env[i] = pathEnv + "=" + pathEnvVal
-			pathNeeded = false
-		} else if len(extraEnvs) != 0 {
-			for k, v := range extraEnvs {
-				if strings.EqualFold(cmp[0], k) {
-					cmd.Env[i] = k + "=" + v
-					extraEnvsDone[k] = true
-				}
-			}
-		}
-	}
-	if pathNeeded {
-		cmd.Env = append(cmd.Env, pathEnv+"="+pathEnvVal)
-	}
-	for k, done := range extraEnvsDone {
-		if !done {
-			cmd.Env = append(cmd.Env, k+"="+extraEnvs[k])
-		}
-	}
+	SetupLlamaServerCommandEnv(cmd, exe, gpuLibs, extraEnvs)
 
 	slog.Info("starting llama-server", "cmd", cmd)
 	slog.Debug("subprocess", "", filteredEnv(cmd.Env))
@@ -516,6 +384,125 @@ func startLlamaServer(
 		return nil, 0, err
 	}
 	return cmd, port, nil
+}
+
+// SetupLlamaServerCommandEnv configures the environment for a llama-server
+// subprocess so discovery and real model runners use the same library search
+// paths and GPU backend selection.
+func SetupLlamaServerCommandEnv(cmd *exec.Cmd, exe string, gpuLibs []string, extraEnvs map[string]string) {
+	cmd.Env = os.Environ()
+
+	envUpdates := make(map[string]string, len(extraEnvs)+2)
+	for k, v := range extraEnvs {
+		envUpdates[k] = v
+	}
+
+	libraryPaths := llamaServerLibraryPaths(exe, gpuLibs, envUpdates)
+	pathEnv := llamaServerLibraryPathEnv()
+	envUpdates[pathEnv] = strings.Join(libraryPaths, string(filepath.ListSeparator))
+
+	applied := make(map[string]bool, len(envUpdates))
+	for i := range cmd.Env {
+		key, _, ok := strings.Cut(cmd.Env[i], "=")
+		if !ok {
+			continue
+		}
+		for updateKey, updateVal := range envUpdates {
+			if strings.EqualFold(key, updateKey) {
+				cmd.Env[i] = updateKey + "=" + updateVal
+				applied[updateKey] = true
+			}
+		}
+	}
+	for key, val := range envUpdates {
+		if !applied[key] {
+			cmd.Env = append(cmd.Env, key+"="+val)
+		}
+	}
+}
+
+func llamaServerLibraryPathEnv() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "PATH"
+	case "darwin":
+		return "DYLD_LIBRARY_PATH"
+	default:
+		return "LD_LIBRARY_PATH"
+	}
+}
+
+func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string]string) []string {
+	llamaDir := filepath.Dir(exe)
+	seen := map[string]bool{}
+	var libraryPaths []string
+	addPath := func(path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		libraryPaths = append(libraryPaths, path)
+	}
+
+	// Library path ordering:
+	// 1. llama-server's own directory — ggml-base, ggml-cpu, libllama
+	// 2. GPU variant directories — cublas, cudart, backend DLL/.so
+	// 3. User/system library path
+	addPath(llamaDir)
+	for _, dir := range gpuLibs {
+		if dir == ml.LibOllamaPath || dir == llamaDir {
+			continue
+		}
+		if envUpdates["GGML_BACKEND_PATH"] == "" {
+			if backend := findLlamaServerGPUBackend(dir); backend != "" {
+				envUpdates["GGML_BACKEND_PATH"] = backend
+			}
+		}
+		addPath(dir)
+	}
+	if libraryPath, ok := os.LookupEnv(llamaServerLibraryPathEnv()); ok {
+		for _, dir := range filepath.SplitList(libraryPath) {
+			addPath(dir)
+		}
+	}
+	return libraryPaths
+}
+
+func findLlamaServerGPUBackend(dir string) string {
+	patterns := []string{
+		"libggml-*.so*",
+		"libggml-*.dylib",
+		"libggml-*.dll",
+		"ggml-*.dll",
+	}
+	var candidates []string
+	for _, pattern := range patterns {
+		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+		candidates = append(candidates, matches...)
+	}
+	slices.Sort(candidates)
+
+	for _, match := range candidates {
+		if isLlamaServerGPUBackend(match) {
+			return match
+		}
+	}
+	return ""
+}
+
+func isLlamaServerGPUBackend(path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	for _, prefix := range []string{
+		"libggml-base",
+		"ggml-base",
+		"libggml-cpu",
+		"ggml-cpu",
+	} {
+		if strings.HasPrefix(name, prefix) {
+			return false
+		}
+	}
+	return true
 }
 
 func embeddingBatchSize(opts api.Options, numParallel int) int {
@@ -553,6 +540,59 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
 }
 
+const limitedMMProjOffloadMemory = 10 << 30
+
+func appendMMProjArgs(params []string, modelPath string, projectors []string, opts api.Options, gpus []ml.DeviceInfo, modelLayers uint64) []string {
+	if len(projectors) == 0 {
+		return params
+	}
+
+	params = append(params, "--mmproj", projectors[0])
+	if disable, reason := shouldDisableMMProjOffload(opts, gpus, modelLayers); disable {
+		slog.Info("disabling multimodal projector offload", "reason", reason, "model", modelPath, "projector", projectors[0])
+		params = append(params, "--no-mmproj-offload")
+	}
+
+	return params
+}
+
+func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLayers uint64) (bool, string) {
+	if opts.NumGPU == 0 {
+		return true, "cpu-only"
+	}
+	if opts.NumGPU > 0 && modelLayers > 0 && uint64(opts.NumGPU) < modelLayers {
+		return true, "partial-text-offload"
+	}
+
+	for _, gpu := range gpus {
+		if gpu.Integrated {
+			return true, "shared-memory-gpu"
+		}
+		memory := gpu.FreeMemory
+		if memory == 0 || (gpu.TotalMemory > 0 && gpu.TotalMemory < memory) {
+			memory = gpu.TotalMemory
+		}
+		if memory > 0 && memory <= limitedMMProjOffloadMemory {
+			return true, "limited-vram"
+		}
+	}
+
+	return false, ""
+}
+
+func appendJinjaArgs(params []string, config LlamaServerConfig) []string {
+	if config.DisableJinja {
+		// Go-rendered chat paths send already-rendered prompts through completion
+		// endpoints. Override any GGUF chat template so llama-server startup
+		// does not parse an unused model template. llama-server still requires a
+		// template name, so chatml is a startup-only placeholder and must not be
+		// used for request routing.
+		return append(params, "--no-jinja", "--chat-template", "chatml")
+	}
+
+	return params
+}
+
 // NewLlamaServerRunner creates a new llama-server runner that wraps the upstream llama-server binary.
 func NewLlamaServerRunner(
 	gpus []ml.DeviceInfo,
@@ -562,6 +602,7 @@ func NewLlamaServerRunner(
 	opts api.Options,
 	numParallel int,
 	kvCacheType string,
+	config LlamaServerConfig,
 ) (LlamaServer, error) {
 	// Check if this is an embedding model
 	arch := f.KV().Architecture()
@@ -615,11 +656,13 @@ func NewLlamaServerRunner(
 		modelPath,
 		arch,
 		projectors,
+		f.KV().BlockCount()+1,
 		adapters,
 		opts,
 		numParallel,
 		kvCacheType,
 		isEmbedding,
+		config,
 		gpus,
 		gpuLibs,
 		serverEnvs,
@@ -893,6 +936,50 @@ type llamaServerCompletionRequest struct {
 	PreservedTokens []string        `json:"preserved_tokens,omitempty"`
 }
 
+func llamaServerPreservedTokens(parserTokens []string, toolCallTag string) []string {
+	tokens := append([]string{}, parserTokens...)
+	tokens = append(tokens, llamaServerPreservedTokensForToolTag(toolCallTag)...)
+	return tokens
+}
+
+// llama-server only preserves strings that tokenize to one special token. Some
+// Go templates use a parser tag like "[TOOL_CALLS][", where the first segment
+// is the special token and the trailing "[" is regular JSON punctuation.
+func llamaServerPreservedTokensForToolTag(tag string) []string {
+	if tag == "" || tag == "{" || tag == "[" {
+		return nil
+	}
+
+	if token := leadingSpecialTokenCandidate(tag); token != "" {
+		return []string{token}
+	}
+
+	return []string{tag}
+}
+
+func leadingSpecialTokenCandidate(tag string) string {
+	if len(tag) == 0 {
+		return ""
+	}
+
+	var close byte
+	switch tag[0] {
+	case '[':
+		close = ']'
+	case '<':
+		close = '>'
+	default:
+		return ""
+	}
+
+	end := strings.IndexByte(tag, close)
+	if end <= 0 {
+		return ""
+	}
+
+	return tag[:end+1]
+}
+
 // optimizedSamplerOrder mirrors llama-server's default sampler chain but moves
 // "penalties" after "top_k". The upstream default runs penalties first, which
 // iterates and does a hashmap lookup over the entire vocabulary (~128k tokens
@@ -1030,7 +1117,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		TypicalP:        req.Options.TypicalP,
 		Seed:            req.Options.Seed,
 		Samplers:        optimizedSamplerOrder,
-		PreservedTokens: req.PreservedTokens,
+		PreservedTokens: llamaServerPreservedTokens(req.PreservedTokens, req.ToolCallTag),
 	}
 
 	if req.Logprobs {

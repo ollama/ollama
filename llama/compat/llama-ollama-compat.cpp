@@ -3,15 +3,15 @@
 
 #include "llama-impl.h"
 
-// Temporary compatibility layer for Ollama specific GGUFs whose metadata or
-// tensor layout does not match llama.cpp's current loaders. The goal is to
+// Temporary compatibility layer for existing published GGUFs whose metadata
+// or tensor layout does not match llama.cpp's current loaders. The goal is to
 // minimize user disruption during a transition phase to llama.cpp-compatible
-// GGUFs with manifest-list support. Ultimately this patch should be removed and
-// Ollama should run against unmodified upstream loaders.
+// GGUFs with manifest-list support. Ultimately this patch should be removed.
 
 #include <cmath>
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -62,6 +62,11 @@ TransformTiming record_transform_timing(size_t bytes, double ms) {
     g_transform_timing.bytes += bytes;
     g_transform_timing.ms += ms;
     return g_transform_timing;
+}
+
+bool compat_disabled() {
+    const char * value = std::getenv("OLLAMA_LLAMA_CPP_COMPAT");
+    return value && std::strcmp(value, "0") == 0;
 }
 
 // Per-loader file path registry — set by translate_metadata, read by
@@ -184,8 +189,8 @@ void handle_gemma3(const llama_model_loader * ml, gguf_context * meta, ggml_cont
 
     OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format gemma3 GGUF; applying compatibility fixes\n", __func__);
 
-    // Old Ollama converters sometimes used nested rope key names. Copy
-    // them to the flat names upstream expects BEFORE injecting defaults.
+    // Some published files use nested rope key names. Copy them to the flat
+    // names llama.cpp expects before injecting defaults.
     copy_f32_kv(meta, "gemma3.rope.global.freq_base", "gemma3.rope.freq_base");
     copy_f32_kv(meta, "gemma3.rope.local.freq_base",  "gemma3.rope.freq_base_swa");
 
@@ -196,9 +201,9 @@ void handle_gemma3(const llama_model_loader * ml, gguf_context * meta, ggml_cont
     inject_str_if_missing(meta, "tokenizer.chat_template",                 kGemma3ChatTemplate);
 
     // Gemma3 4B/12B/27B ship with {type: "linear", factor: 8.0} rope scaling
-    // in their HF config to extend the 16k trained context to 131072. Ollama's
-    // old converter didn't write these. The 1B has no scaling — detect by
-    // context length.
+    // in their HF config to extend the 16k trained context to 131072. Some
+    // published files do not have these KVs. The 1B has no scaling; detect it
+    // by context length.
     const int64_t ctx_key = gguf_find_key(meta, "gemma3.context_length");
     if (ctx_key >= 0 && gguf_get_val_u32(meta, ctx_key) >= 131072) {
         inject_str_if_missing(meta, "gemma3.rope.scaling.type",   "linear");
@@ -223,28 +228,27 @@ void handle_gemma3(const llama_model_loader * ml, gguf_context * meta, ggml_cont
     add_skip_prefix(ml, "v.");
     add_skip_prefix(ml, "mm.");
 
-    // Note: no RMSNorm weight shift needed. Ollama's published gemma3 blobs
-    // already have the +1 shift baked in, same as upstream's convert_hf.
+    // Note: no RMSNorm weight shift needed. Published Gemma 3 blobs already
+    // have the +1 shift baked in, matching llama.cpp's converter.
 }
 
 // =========================================================================
 // gemma3n (text side — vocab mismatch between token_embd and per_layer_token_embd)
 // =========================================================================
 //
-// Ollama publishes gemma-3n with the multimodal vocab (262400 tokens) for
-// the main token_embd and tokenizer arrays, but the per-layer token embed
-// only has the text vocab (262144 tokens). Upstream's loader expects both
-// embedding tensors to have the same n_vocab, and reads n_vocab from the
-// tokenizer.tokens array length — so the larger value wins and per_layer
-// fails the dim check:
+// Existing Gemma 3n files can store the multimodal vocab (262400 tokens) for
+// the main token_embd and tokenizer arrays, while per-layer token embeddings
+// only have the text vocab (262144 tokens). The loader expects both embedding
+// tensors to have the same n_vocab, and reads n_vocab from the tokenizer.tokens
+// array length, so the larger value wins and per_layer fails the dim check:
 //
 //   tensor 'per_layer_token_embd.weight' has wrong shape;
 //     expected 8960, 262400, got 8960, 262144
 //
 // Fix (mirroring handle_gemma3): truncate the tokenizer arrays AND the
 // token_embd tensor's vocab dim down to the per_layer count. The dropped
-// 256 entries are multimodal special tokens (image/audio markers); upstream
-// gemma3n is text-only, so they're unused anyway.
+// 256 entries are multimodal special tokens (image/audio markers); the
+// llama.cpp Gemma 3n text path does not use them.
 //
 // Note: tensor data isn't read at this point — the loader reads ggml_nbytes
 // from the (newly-shrunk) tensor shape, so it just reads fewer rows from
@@ -322,12 +326,12 @@ void handle_gemma3n(const llama_model_loader * ml, gguf_context * meta, ggml_con
 // embeddinggemma (text side — sentence-transformer dense projection)
 // =========================================================================
 //
-// Ollama publishes embeddinggemma:300m with general.architecture=gemma3 and
+// Existing embeddinggemma:300m files use general.architecture=gemma3 and
 // two extra dense layers stored as `dense.0.weight` / `dense.1.weight`
 // (the sentence-transformers post-pooling projection that maps the 768-dim
 // pooled embedding through 768→3072→768 for the matryoshka head).
 //
-// Upstream loads this model under arch=gemma-embedding, which:
+// llama.cpp loads this model under arch=gemma-embedding, which:
 //   * disables causal attention (embeddings are bidirectional)
 //   * loads `dense_2.weight` and `dense_3.weight` by name (with shapes
 //     derived from gemma-embedding.dense_2_feat_in/out etc.)
@@ -355,7 +359,7 @@ void handle_embeddinggemma(const llama_model_loader * ml, gguf_context * meta,
 
     OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format embeddinggemma; translating to gemma-embedding\n", __func__);
 
-    // Switch architecture so upstream loads the embedding-specific code path
+    // Switch architecture so llama.cpp loads the embedding-specific code path
     // (no causal attention, dense_2/dense_3 loaded by name).
     arch_name = "gemma-embedding";
     gguf_set_val_str(meta, "general.architecture", "gemma-embedding");
@@ -388,7 +392,7 @@ void handle_embeddinggemma(const llama_model_loader * ml, gguf_context * meta,
 // snowflake-arctic-embed2 (text side)
 // =========================================================================
 //
-// The legacy Ollama GGUF stores tokenizer.ggml.precompiled_charsmap as an
+// Some published GGUFs store tokenizer.ggml.precompiled_charsmap as an
 // array of single-character base64 strings. llama.cpp now expects this KV as a
 // raw int8/uint8 byte array and aborts while loading the vocab otherwise.
 
@@ -462,17 +466,38 @@ void handle_snowflake_arctic_embed2(gguf_context * meta) {
 // qwen35moe (text side)
 // =========================================================================
 
-// Shared text-side fixes for Ollama-format qwen35 / qwen35moe GGUFs.
+std::vector<std::string> qwen_ssm_dt_tensors(const gguf_context * meta) {
+    std::vector<std::string> targets;
+    const int64_t n = gguf_get_n_tensors(meta);
+    static const char suffix[] = ".ssm_dt";
+    const size_t slen = sizeof(suffix) - 1;
+    for (int64_t i = 0; i < n; ++i) {
+        std::string name(gguf_get_tensor_name(meta, i));
+        if (name.size() >= slen
+                && name.compare(name.size() - slen, slen, suffix) == 0) {
+            targets.push_back(std::move(name));
+        }
+    }
+    return targets;
+}
+
+void rename_qwen_ssm_dt_bias_tensors(gguf_context * meta, ggml_context * ctx) {
+    for (const auto & from : qwen_ssm_dt_tensors(meta)) {
+        rename_tensor(meta, ctx, from.c_str(), (from + ".bias").c_str());
+    }
+}
+
+// Shared text-side fixes for qwen35 / qwen35moe published-model layouts.
 // Both arches use the same SSM-hybrid + M-RoPE + MTP+vision-monolithic
-// converter quirks; only the arch name (and KV prefix) differs.
+// layout differences; only the arch name and KV prefix differ.
 void apply_qwen35_text_fixes(const llama_model_loader * ml, gguf_context * meta,
                              ggml_context * ctx, const char * arch_prefix) {
     auto kv = [arch_prefix](const char * suffix) {
         return std::string(arch_prefix) + suffix;
     };
 
-    // 1. attention.head_count_kv — upstream expects UINT32; Ollama wrote
-    //    an array (one entry per layer, 0 for SSM layers, 2/4 for attention).
+    // 1. attention.head_count_kv — llama.cpp expects UINT32; published files
+    //    can store an array (one entry per layer, 0 for SSM layers, 2/4 for attention).
     //    Collapse to the max non-zero value.
     {
         const std::string key = kv(".attention.head_count_kv");
@@ -488,8 +513,8 @@ void apply_qwen35_text_fixes(const llama_model_loader * ml, gguf_context * meta,
         }
     }
 
-    // 2. rope.dimension_sections — upstream expects a 4-element array
-    //    (M-RoPE convention); Ollama wrote 3 elements. Pad with a trailing 0.
+    // 2. rope.dimension_sections — llama.cpp expects a 4-element array
+    //    (M-RoPE convention); published files can store 3 elements. Pad with a trailing 0.
     {
         const std::string key = kv(".rope.dimension_sections");
         const int64_t kid = gguf_find_key(meta, key.c_str());
@@ -500,24 +525,9 @@ void apply_qwen35_text_fixes(const llama_model_loader * ml, gguf_context * meta,
         }
     }
 
-    // 3. Tensor rename: Ollama's `blk.N.ssm_dt` is upstream's
+    // 3. Tensor rename: `blk.N.ssm_dt` maps to llama.cpp's
     //    `blk.N.ssm_dt.bias` (same shape).
-    {
-        std::vector<std::string> targets;
-        const int64_t n = gguf_get_n_tensors(meta);
-        static const char suffix[] = ".ssm_dt";
-        const size_t slen = sizeof(suffix) - 1;
-        for (int64_t i = 0; i < n; ++i) {
-            std::string name(gguf_get_tensor_name(meta, i));
-            if (name.size() >= slen
-                    && name.compare(name.size() - slen, slen, suffix) == 0) {
-                targets.push_back(std::move(name));
-            }
-        }
-        for (const auto & from : targets) {
-            rename_tensor(meta, ctx, from.c_str(), (from + ".bias").c_str());
-        }
-    }
+    rename_qwen_ssm_dt_bias_tensors(meta, ctx);
 
     // 4. Drop embedded vision + MTP + projector tensors from the text loader.
     add_skip_prefix(ml, "v.");
@@ -530,10 +540,10 @@ bool detect_ollama_qwen35moe(const gguf_context * meta, const ggml_context * ctx
     if (arch_kid < 0) return false;
     if (std::strcmp(gguf_get_val_str(meta, arch_kid), "qwen35moe") != 0) return false;
 
-    // Any Ollama-ism. Upstream qwen35moe files have none of these — the
-    // vision KVs live in a separate mmproj, MTP tensors are dropped,
-    // head_count_kv is a scalar, and the extra rope / ssm / feed_forward
-    // KVs are either absent or stored differently.
+    // Published-model markers. llama.cpp-converted qwen35moe files have none
+    // of these: vision KVs live in a separate mmproj, MTP tensors are dropped,
+    // head_count_kv is a scalar, and the extra rope / ssm / feed_forward KVs
+    // are either absent or stored differently.
     return has_key(meta, "qwen35moe.vision.block_count")
         || has_key(meta, "qwen35moe.image_token_id")
         || has_key(meta, "qwen35moe.ssm.v_head_reordered")
@@ -553,7 +563,7 @@ void handle_qwen35moe(const llama_model_loader * ml, gguf_context * meta, ggml_c
 // qwen35 (text side — non-MoE, e.g. qwen3.5:9b)
 // =========================================================================
 //
-// Same converter quirks as qwen35moe but the arch name has no "moe" suffix.
+// Same layout differences as qwen35moe but the arch name has no "moe" suffix.
 // All the SSM-hybrid / M-RoPE / MTP / monolithic-vision fix-ups apply.
 
 bool detect_ollama_qwen35(const gguf_context * meta, const ggml_context * ctx) {
@@ -575,13 +585,31 @@ void handle_qwen35(const llama_model_loader * ml, gguf_context * meta, ggml_cont
 }
 
 // =========================================================================
+// qwen3next (text side)
+// =========================================================================
+
+bool detect_ollama_qwen3next(const gguf_context * meta) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    if (std::strcmp(gguf_get_val_str(meta, arch_kid), "qwen3next") != 0) return false;
+
+    return !qwen_ssm_dt_tensors(meta).empty();
+}
+
+void handle_qwen3next(gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_qwen3next(meta)) return;
+    OLLAMA_COMPAT_LOG_INFO("%s: detected qwen3next GGUF with ssm_dt tensors; applying compatibility fixes\n", __func__);
+    rename_qwen_ssm_dt_bias_tensors(meta, ctx);
+}
+
+// =========================================================================
 // gemma4 (text side)
 // =========================================================================
 //
-// Same arch name on both sides. Ollama publishes a monolithic GGUF that
-// embeds the vision encoder + audio encoder + projector inline. Text-side
-// KVs/tensor names match upstream verbatim — only fix is to hide the
-// `a.*` / `v.*` / `mm.*` tensors from the text loader so n_tensors lines up.
+// Same arch name on both sides. Existing published models can use a monolithic
+// GGUF that embeds the vision encoder + audio encoder + projector inline.
+// Some MoE variants also store expert gate/up tensors split while llama.cpp's
+// Gemma4 loader reads the fused gate_up tensor.
 
 bool detect_ollama_gemma4(const gguf_context * meta, const ggml_context * ctx) {
     const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
@@ -589,17 +617,70 @@ bool detect_ollama_gemma4(const gguf_context * meta, const ggml_context * ctx) {
     if (std::strcmp(gguf_get_val_str(meta, arch_kid), "gemma4") != 0) return false;
     return any_tensor_with_prefix(ctx, "a.")
         || any_tensor_with_prefix(ctx, "v.")
-        || any_tensor_with_prefix(ctx, "mm.");
+        || any_tensor_with_prefix(ctx, "mm.")
+        || any_tensor_with_prefix(ctx, "blk.0.ffn_gate_exps.weight");
+}
+
+bool register_gemma4_moe_gate_up_load(gguf_context * meta,
+                                      ggml_context * ctx,
+                                      const char * gate_n,
+                                      const char * up_n,
+                                      const char * gate_up_n) {
+    ggml_tensor * gate = ggml_get_tensor(ctx, gate_n);
+    ggml_tensor * up   = ggml_get_tensor(ctx, up_n);
+    if (!gate || !up) return false;
+    if (ggml_get_tensor(ctx, gate_up_n)) return false;
+    if (gate->type != up->type) return false;
+    if (gate->ne[0] != up->ne[0] || gate->ne[1] != up->ne[1] || gate->ne[2] != up->ne[2]) return false;
+    if (gate->ne[2] <= 0) return false;
+
+    const int64_t n_expert = gate->ne[2];
+    const int64_t n_embd   = gate->ne[0];
+    const int64_t n_ff     = gate->ne[1];
+
+    const int64_t gate_id = gguf_find_tensor(meta, gate_n);
+    const int64_t up_id   = gguf_find_tensor(meta, up_n);
+    if (gate_id < 0 || up_id < 0) return false;
+
+    const size_t gate_offset = tensor_file_offset(meta, gate_n);
+    const size_t up_offset   = tensor_file_offset(meta, up_n);
+    const size_t gate_size   = gguf_get_tensor_size(meta, gate_id);
+    const size_t up_size     = gguf_get_tensor_size(meta, up_id);
+    if (gate_size != up_size || gate_size % (size_t) n_expert != 0) return false;
+
+    const size_t expert_size = gate_size / (size_t) n_expert;
+    register_load_op(gate_up_n, LoadOp{
+        [gate_offset, up_offset, expert_size, n_expert](const char * path, void * dst, size_t dst_size) {
+            if (dst_size != expert_size * (size_t) n_expert * 2) return false;
+
+            uint8_t * p = static_cast<uint8_t *>(dst);
+            for (int64_t e = 0; e < n_expert; ++e) {
+                const size_t off = (size_t) e * expert_size;
+                if (!read_at(path, gate_offset + off, p, expert_size)) return false;
+                p += expert_size;
+                if (!read_at(path, up_offset + off, p, expert_size)) return false;
+                p += expert_size;
+            }
+            return true;
+        },
+        "gemma4 MoE gate/up interleave",
+    });
+
+    rename_tensor(meta, ctx, gate_n, gate_up_n);
+    if (ggml_tensor * t = ggml_get_tensor(ctx, gate_up_n)) {
+        set_tensor_shape(t, {n_embd, n_ff * 2, n_expert});
+    }
+    return true;
 }
 
 void handle_gemma4(const llama_model_loader * ml, gguf_context * meta, ggml_context * ctx) {
     if (!detect_ollama_gemma4(meta, ctx)) return;
-    (void) ctx;
 
     OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format gemma4 GGUF; applying compatibility fixes\n", __func__);
 
-    // Tokenizer fix: Ollama writes `tokenizer.ggml.model = 'llama'` (SPM) on
-    // gemma4 GGUFs, but gemma4 actually uses BPE — upstream-converted GGUFs
+    // Tokenizer fix: published Gemma 4 GGUFs can write
+    // `tokenizer.ggml.model = 'llama'` (SPM), but Gemma 4 uses BPE. GGUFs
+    // produced by the llama.cpp converter
     // use `'gemma4'` which selects LLAMA_VOCAB_TYPE_BPE in src/llama-vocab.cpp.
     // With the wrong tokenizer type, gemma4's special tokens (e.g.
     // `<|thought|>`, `<|turn>`, `<|channel>`) get split into multiple SPM
@@ -622,22 +703,43 @@ void handle_gemma4(const llama_model_loader * ml, gguf_context * meta, ggml_cont
     add_skip_prefix(ml, "a.");
     add_skip_prefix(ml, "v.");
     add_skip_prefix(ml, "mm.");
+    add_skip_prefix(ml, "model.vision_tower.");
+
+    const int64_t n_blocks_key = gguf_find_key(meta, "gemma4.block_count");
+    const uint32_t n_blocks = n_blocks_key >= 0 ? gguf_get_val_u32(meta, n_blocks_key) : 0;
+    bool transformed_moe = false;
+    for (uint32_t b = 0; b < n_blocks; ++b) {
+        char gate[64], up[64], gate_up[64], scale[64], down_scale[64];
+        std::snprintf(gate,    sizeof(gate),    "blk.%u.ffn_gate_exps.weight",    b);
+        std::snprintf(up,      sizeof(up),      "blk.%u.ffn_up_exps.weight",      b);
+        std::snprintf(gate_up, sizeof(gate_up), "blk.%u.ffn_gate_up_exps.weight", b);
+        std::snprintf(scale,      sizeof(scale),      "blk.%u.ffn_gate_inp.per_expert_scale", b);
+        std::snprintf(down_scale, sizeof(down_scale), "blk.%u.ffn_down_exps.scale",           b);
+
+        if (register_gemma4_moe_gate_up_load(meta, ctx, gate, up, gate_up)) {
+            add_skip_prefix(ml, up);
+            transformed_moe = true;
+        }
+        rename_tensor(meta, ctx, scale, down_scale);
+    }
+    if (transformed_moe) {
+        disable_mmap_for(ml);
+    }
 }
 
 // =========================================================================
 // deepseek-ocr (text side)
 // =========================================================================
 //
-// Ollama uses arch name "deepseekocr" / KV prefix "deepseekocr.*".
-// Upstream uses "deepseek2-ocr" (with hyphen) / "deepseek2-ocr.*".
+// Existing files use arch name "deepseekocr" / KV prefix "deepseekocr.*".
+// llama.cpp uses "deepseek2-ocr" (with hyphen) / "deepseek2-ocr.*".
 //
 // Aside from the prefix rename:
 //   * Inject `expert_feed_forward_length` from the per-expert ffn_down_exps
-//     shape (Ollama omits it; the value is the inner FFN dim of one expert,
-//     896 for the 3B model).
-//   * Inject `expert_shared_count` from the ffn_down_shexp shape (Ollama
-//     omits it; the shared experts share their FFN dim with regular experts,
-//     so count = shexp_dim / expert_feed_forward_length).
+//     shape (the value is the inner FFN dim of one expert, 896 for the 3B model).
+//   * Inject `expert_shared_count` from the ffn_down_shexp shape. The shared
+//     experts use the same FFN dim as regular experts, so count =
+//     shexp_dim / expert_feed_forward_length.
 //   * Skip embedded vision (`v.*`), projector (`mm.*`), and the SAM encoder
 //     (`s.*`) tensors from the text loader.
 
@@ -657,7 +759,7 @@ void handle_deepseekocr(const llama_model_loader * ml, gguf_context * meta,
     rename_kv_prefix(meta, "deepseekocr.", "deepseek2-ocr.");
     arch_name = "deepseek2-ocr";
 
-    // Inject defaults Ollama omitted entirely.
+    // Inject defaults needed by the llama.cpp loader.
     inject_f32_if_missing(meta, "deepseek2-ocr.attention.layer_norm_rms_epsilon",
                           1e-6f);
 
@@ -730,15 +832,14 @@ void handle_nemotron_h_moe(const llama_model_loader * ml, gguf_context * meta, g
         }
     }
 
-    // Rename the latent projection tensors to upstream's naming (no-op when
+    // Rename the latent projection tensors to llama.cpp's naming (no-op when
     // the file has no latent tensors).
     rename_tensors_containing(meta, ctx, ".ffn_latent_in",  ".ffn_latent_down");
     rename_tensors_containing(meta, ctx, ".ffn_latent_out", ".ffn_latent_up");
 
-    // Drop MTP (Multi-Token Prediction) tensors — Ollama's converter emits
-    // them as one-tensor-per-expert (`mtp.layers.X.mixer.experts.Y.{up,down}_proj`)
-    // which upstream's nemotron_h_moe loader doesn't claim. Total: ~1040 extra
-    // tensors on super 120B.
+    // Drop MTP (Multi-Token Prediction) tensors. Existing files can include
+    // one tensor per expert (`mtp.layers.X.mixer.experts.Y.{up,down}_proj`);
+    // the nemotron_h_moe loader does not claim these tensors.
     add_skip_prefix(ml, "mtp.");
 }
 
@@ -746,10 +847,10 @@ void handle_nemotron_h_moe(const llama_model_loader * ml, gguf_context * meta, g
 // nemotron_h_omni (text side)
 // =========================================================================
 //
-// The official Ollama nemotron3:33b GGUF is a unified text+vision+audio
-// `nemotron_h_omni` blob. Upstream llama.cpp currently loads the runnable
-// pieces as `nemotron_h_moe` text plus a `clip` / `nemotron_v2_vl` projector.
-// Audio is intentionally hidden until upstream can skip or load it safely.
+// The published nemotron3:33b GGUF is a unified text+vision+audio
+// `nemotron_h_omni` blob. llama.cpp currently loads the runnable pieces as
+// `nemotron_h_moe` text plus a `clip` / `nemotron_v2_vl` projector. Audio is
+// intentionally hidden until llama.cpp can skip or load it safely.
 
 bool detect_ollama_nemotron_h_omni(const gguf_context * meta, const ggml_context * ctx) {
     const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
@@ -819,9 +920,9 @@ void handle_nemotron_h_omni(const llama_model_loader * ml,
 // llama3-family metadata (text side)
 // =========================================================================
 //
-// Some legacy Ollama Llama 3-family GGUFs omit the pre-tokenizer and leave the
+// Some published Llama 3-family GGUFs omit the pre-tokenizer and leave the
 // scalar EOS/EOT pointed at <|end_of_text|>. Instruct variants terminate turns
-// with <|eot_id|>; with the old metadata, llama-server can miss the stop token
+// with <|eot_id|>; with that metadata, llama-server can miss the stop token
 // and run until the request timeout.
 
 bool detect_ollama_llama3_metadata_gap(const gguf_context * meta) {
@@ -837,15 +938,15 @@ bool detect_ollama_llama3_metadata_gap(const gguf_context * meta) {
     const bool missing_or_default_pre = string_kv_missing_or_default(meta, "tokenizer.ggml.pre");
 
     uint32_t eos = 0;
-    const bool legacy_eos = get_u32_kv(meta, "tokenizer.ggml.eos_token_id", eos) && eos == 128001;
+    const bool end_of_text_eos = get_u32_kv(meta, "tokenizer.ggml.eos_token_id", eos) && eos == 128001;
 
-    return has_llama3_chat_markers && (missing_or_default_pre || legacy_eos);
+    return has_llama3_chat_markers && (missing_or_default_pre || end_of_text_eos);
 }
 
 void handle_llama3_metadata(gguf_context * meta) {
     if (!detect_ollama_llama3_metadata_gap(meta)) return;
 
-    OLLAMA_COMPAT_LOG_INFO("%s: detected legacy Ollama-format llama3 tokenizer metadata; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Llama 3 tokenizer metadata gap; applying compatibility fixes\n", __func__);
 
     if (string_kv_missing_or_default(meta, "tokenizer.ggml.pre")) {
         gguf_set_val_str(meta, "tokenizer.ggml.pre", "llama-bpe");
@@ -869,9 +970,9 @@ void handle_llama3_metadata(gguf_context * meta) {
 // llama4 (text side)
 // =========================================================================
 //
-// Same arch name on both sides. Ollama publishes a monolithic GGUF that
+// Same arch name on both sides. Existing published models use a monolithic GGUF that
 // embeds the vision encoder + projector inline. Text-side KVs/tensor
-// names match upstream verbatim — only fix is to hide `v.*`/`mm.*` from
+// names already match llama.cpp; only fix is to hide `v.*`/`mm.*` from
 // the text loader so n_tensors lines up.
 
 bool detect_ollama_llama4(const gguf_context * meta, const ggml_context * ctx) {
@@ -897,20 +998,20 @@ void handle_llama4(const llama_model_loader * ml, gguf_context * meta, ggml_cont
 // glm-ocr (text side)
 // =========================================================================
 //
-// Ollama uses arch name "glmocr" / KV prefix "glmocr.*" with 16 blocks.
-// Upstream uses "glm4" / "glm4.*" — the GLM-OCR variant of LLM_ARCH_GLM4
-// is identified by `n_layer = 17` (16 main + 1 nextn predict layer).
-// Ollama drops the nextn layer entirely, so we report n_layer = 16 and
-// leave `nextn_predict_layers` absent (defaults to 0 = no nextn path).
+// Existing files use arch name "glmocr" / KV prefix "glmocr.*" with 16
+// blocks. llama.cpp uses "glm4" / "glm4.*"; the GLM-OCR variant of
+// LLM_ARCH_GLM4 is identified by `n_layer = 17` for models with 16 main
+// layers plus one nextn prediction layer. Some existing files omit nextn and
+// report 16 layers; newer created files can include it.
 //
 // Bigger surgery: GLM4 expects fused gate+up MLP weights stored at
-// `blk.X.ffn_up.weight` with shape `[n_embd, n_ff*2]`. Ollama writes
+// `blk.X.ffn_up.weight` with shape `[n_embd, n_ff*2]`. Existing files store
 // the gate and up halves as separate `ffn_gate.weight` / `ffn_up.weight`
 // tensors (each `[n_embd, n_ff]`). We register a concat load op that
-// reads gate+up bytes and stitches them into the fused upstream slot.
+// reads gate+up bytes and stitches them into the fused llama.cpp slot.
 
-// Per-block: register a concat load that fuses Ollama's separate
-// ffn_gate + ffn_up into upstream's single `blk.X.ffn_up.weight`
+// Per-block: register a concat load that fuses separate ffn_gate + ffn_up
+// tensors into llama.cpp's single `blk.X.ffn_up.weight`
 // tensor with doubled out dim. Capture source file offsets BEFORE any
 // renames invalidate them (same pattern as qwen35moe QKV merge).
 void register_glm4_ffn_concat(gguf_context * meta, ggml_context * ctx, int block_idx) {
@@ -945,8 +1046,8 @@ void handle_glmocr(const llama_model_loader * ml, gguf_context * meta,
     rename_kv_prefix(meta, "glmocr.", "glm4.");
     arch_name = "glm4";
 
-    // M-RoPE: Ollama writes a 3-element `rope.mrope_section`, upstream expects
-    // a 4-element `rope.dimension_sections` (pad trailing 0).
+    // M-RoPE: existing files can store a 3-element `rope.mrope_section`;
+    // llama.cpp expects a 4-element `rope.dimension_sections`.
     {
         const int64_t kid = gguf_find_key(meta, "glm4.rope.mrope_section");
         if (kid >= 0 && gguf_get_arr_n(meta, kid) == 3) {
@@ -965,7 +1066,7 @@ void handle_glmocr(const llama_model_loader * ml, gguf_context * meta,
         }
     }
 
-    // Tokenizer pre-tokenizer: Ollama wrote `llama-bpe`, but glm-ocr uses
+    // Tokenizer pre-tokenizer: some files wrote `llama-bpe`, but glm-ocr uses
     // `chatglm-bpe` (different regex split — wrong pre-tokenization can
     // fragment GLM's special tokens).
     {
@@ -979,9 +1080,9 @@ void handle_glmocr(const llama_model_loader * ml, gguf_context * meta,
     }
     // Tensor renames (substring): each leaf appears once per block and
     // doesn't overlap the others.
-    rename_tensors_containing(meta, ctx, ".attn_out",       ".attn_output");
-    rename_tensors_containing(meta, ctx, ".post_attn_norm", ".post_attention_norm");
-    rename_tensors_containing(meta, ctx, ".post_ffn_norm",  ".post_ffw_norm");
+    rename_tensors_containing(meta, ctx, ".attn_out.",       ".attn_output.");
+    rename_tensors_containing(meta, ctx, ".post_attn_norm.", ".post_attention_norm.");
+    rename_tensors_containing(meta, ctx, ".post_ffn_norm.",  ".post_ffw_norm.");
 
     // Fuse ffn_gate + ffn_up → ffn_up[:, 2*n_ff] for every block, then mark
     // the orphan ffn_gate tensors as skip so n_tensors lines up.
@@ -1011,8 +1112,8 @@ void handle_glmocr(const llama_model_loader * ml, gguf_context * meta,
 // gpt-oss (text only)
 // =========================================================================
 //
-// Ollama uses arch name "gptoss" (no hyphen) and KV prefix "gptoss.*".
-// Upstream uses "gpt-oss" / "gpt-oss.*". Same tensor layout otherwise,
+// Existing files use arch name "gptoss" (no hyphen) and KV prefix "gptoss.*".
+// llama.cpp uses "gpt-oss" / "gpt-oss.*". Same tensor layout otherwise,
 // except:
 //   * `blk.X.attn_sinks` -> `blk.X.attn_sinks.weight` (missing suffix)
 //   * `blk.X.ffn_norm.weight` -> `blk.X.post_attention_norm.weight`
@@ -1037,8 +1138,8 @@ void handle_gptoss(const llama_model_loader * ml, gguf_context * meta,
     rename_kv_prefix(meta, "gptoss.", "gpt-oss.");
     arch_name = "gpt-oss";
 
-    // Upstream's gpt-oss loader requires `gpt-oss.expert_feed_forward_length`
-    // (n_ff_exp). Ollama omitted it; recover from the ffn_gate_exps tensor
+    // The gpt-oss loader requires `gpt-oss.expert_feed_forward_length`
+    // (n_ff_exp). Recover it from the ffn_gate_exps tensor
     // shape — for gpt-oss the tensor is created as {n_embd, n_ff_exp, n_expert}
     // so ne[1] is the per-expert FFN dim.
     if (!has_key(meta, "gpt-oss.expert_feed_forward_length")) {
@@ -1048,9 +1149,9 @@ void handle_gptoss(const llama_model_loader * ml, gguf_context * meta,
     }
     inject_str_if_missing(meta, "gpt-oss.rope.scaling.type", "yarn");
 
-    // The published Ollama GGUFs predate llama.cpp's gpt-oss support and use
-    // the generic/default GPT-2 pre-tokenizer marker. Upstream gpt-oss GGUFs
-    // use the gpt-4o pre-tokenizer; without it, prompts tokenize differently
+    // Existing published GGUFs use the generic/default GPT-2 pre-tokenizer
+    // marker. gpt-oss needs the gpt-4o pre-tokenizer; without it, prompts
+    // tokenize differently
     // and the model produces malformed Harmony headers.
     gguf_set_val_str(meta, "tokenizer.ggml.pre", "gpt-4o");
 
@@ -1070,16 +1171,16 @@ void handle_gptoss(const llama_model_loader * ml, gguf_context * meta,
 // =========================================================================
 //
 // Same arch name ("lfm2") on both sides. Only difference is the
-// pre-output-projection norm: Ollama writes `output_norm.weight`,
-// upstream writes `token_embd_norm.weight` (with the LFM2-specific
+// pre-output-projection norm: existing files use `output_norm.weight`,
+// while llama.cpp reads `token_embd_norm.weight` (with the LFM2-specific
 // LLM_TENSOR_OUTPUT_NORM_LFM2 mapping). One tensor rename.
 
 bool detect_ollama_lfm2(const gguf_context * meta, const ggml_context * ctx) {
     const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
     if (arch_kid < 0) return false;
     if (std::strcmp(gguf_get_val_str(meta, arch_kid), "lfm2") != 0) return false;
-    // Marker: Ollama-converted lfm2 has output_norm.weight, upstream has
-    // token_embd_norm.weight instead.
+    // Marker: existing files have output_norm.weight; llama.cpp-compatible
+    // files have token_embd_norm.weight instead.
     return ggml_get_tensor(const_cast<ggml_context *>(ctx), "output_norm.weight") != nullptr
         && ggml_get_tensor(const_cast<ggml_context *>(ctx), "token_embd_norm.weight") == nullptr;
 }
@@ -1093,7 +1194,7 @@ void handle_lfm2(const llama_model_loader * ml, gguf_context * meta, ggml_contex
     rename_tensor(meta, ctx, "output_norm.weight", "token_embd_norm.weight");
     gguf_set_val_str(meta, "tokenizer.ggml.pre", "lfm2");
 
-    // Older Ollama converters wrote a stale `lfm2.feed_forward_length` that
+    // Some files have a `lfm2.feed_forward_length` value that
     // didn't match the actual ffn_gate tensor shape (e.g. claimed 12288 on
     // a model whose ffn_gate is [2048, 8192]). Fix from the tensor shape.
     if (ggml_tensor * t = ggml_get_tensor(ctx, "blk.0.ffn_gate.weight")) {
@@ -1125,30 +1226,29 @@ void handle_olmo3(gguf_context * meta, std::string & arch_name) {
 // mistral3 (text only — for now)
 // =========================================================================
 //
-// Same arch name on both sides. Ollama publishes a monolithic GGUF that
-// embeds the vision encoder + projector inline, similar to gemma3 and
-// qwen35moe. Differences this handler addresses:
+// Same arch name on both sides. Existing published models use a monolithic
+// GGUF that embeds the vision encoder + projector inline, similar to gemma3
+// and qwen35moe. Differences this handler addresses:
 //
 //   * Embedded `v.*` / `mm.*` tensors must be hidden from the text
 //     loader (otherwise n_tensors mismatch).
-//   * RoPE YaRN parameters use unprefixed names: Ollama writes
-//     `rope.scaling.beta_fast`/`beta_slow`, upstream wants
-//     `rope.scaling.yarn_beta_fast`/`yarn_beta_slow`.
-//   * Attention temperature scale: Ollama writes `rope.scaling_beta`,
-//     upstream reads `attention.temperature_scale`. Same numeric value.
-//
-// Vision/clip translation is not implemented yet — the user has to skip
-// `--mmproj` until a clip handler lands.
+//   * RoPE YaRN parameters use different names:
+//     `rope.scaling.beta_fast`/`beta_slow` maps to
+//     `rope.scaling.yarn_beta_fast`/`yarn_beta_slow`; mscale_all_dim maps
+//     to `rope.scaling.yarn_log_multiplier`.
+//   * Attention temperature scale: `rope.scaling_beta` maps to
+//     `attention.temperature_scale`. Same numeric value.
 
 bool detect_ollama_mistral3(const gguf_context * meta, const ggml_context * ctx) {
     const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
     if (arch_kid < 0) return false;
     if (std::strcmp(gguf_get_val_str(meta, arch_kid), "mistral3") != 0) return false;
-    // Marker: Ollama-style monolithic file embeds v.*/mm.* tensors;
-    // upstream HF mistral3 ships these in a separate mmproj.
+    // Marker: published monolithic files embed v.*/mm.* tensors; files
+    // produced by the llama.cpp HF converter keep them in a separate mmproj.
     return any_tensor_with_prefix(ctx, "v.")
         || any_tensor_with_prefix(ctx, "mm.")
         || has_key(meta, "mistral3.rope.scaling.beta_fast")
+        || has_key(meta, "mistral3.rope.scaling.mscale_all_dim")
         || has_key(meta, "mistral3.rope.scaling_beta");
 }
 
@@ -1163,7 +1263,7 @@ void handle_mistral3(const llama_model_loader * ml, gguf_context * meta, ggml_co
                   "mistral3.rope.scaling.yarn_beta_fast");
     copy_kv(meta, "mistral3.rope.scaling.beta_slow",
                   "mistral3.rope.scaling.yarn_beta_slow");
-    copy_kv(meta, "mistral3.rope.scaling.mscale",
+    copy_kv(meta, "mistral3.rope.scaling.mscale_all_dim",
                   "mistral3.rope.scaling.yarn_log_multiplier");
     // Attention temperature scale: same value, different home.
     copy_kv(meta, "mistral3.rope.scaling_beta",
@@ -1182,12 +1282,12 @@ void handle_mistral3(const llama_model_loader * ml, gguf_context * meta, ggml_co
 // glm4moelite (text side — GLM-4.x-Flash, arch translation to deepseek2)
 // =========================================================================
 //
-// Ollama publishes GLM-4.7-Flash (and similar Flash variants) with
+// Existing GLM-4.7-Flash (and similar Flash variants) files use
 // general.architecture=glm4moelite using DeepSeek-V2 style MLA attention,
 // but with the older convention of writing PER-HEAD key/value dims.
-// Upstream collapsed all of these into the deepseek2 arch with the
-// MLA-absorbed convention (head_count_kv=1, key/value dims = the
-// kv_lora_rank-relative absorbed sizes).
+// llama.cpp loads these through the deepseek2 arch with the MLA-absorbed
+// convention (head_count_kv=1, key/value dims = the kv_lora_rank-relative
+// absorbed sizes).
 //
 // Tensor structure is identical to deepseek2 (844 tensors, exact name
 // match including attn_kv_a_mqa, attn_k_b, attn_v_b, attn_q_a/b, etc.) —
@@ -1202,7 +1302,7 @@ void handle_mistral3(const llama_model_loader * ml, gguf_context * meta, ggml_co
 //   * value_length: head_dim → kv_lora_rank
 //                              (e.g. 256 → 512)
 //   * key_length_mla / value_length_mla: were the absorbed dims (576/512);
-//                              upstream's _mla variants are per-head dims
+//                              the _mla variants are per-head dims
 //                              (256/256). Swap to head_dim.
 //   * expert_group_count / expert_group_used_count: required by deepseek2
 //                              loader; default to 1 (no group routing).
@@ -1229,7 +1329,7 @@ void handle_glm4moelite(const llama_model_loader * ml, gguf_context * meta,
     // "original head_dim" source below).
     rename_kv_prefix(meta, "glm4moelite.", "deepseek2.");
 
-    // MLA absorbs all KV heads — upstream uses 1.
+    // MLA absorbs all KV heads; llama.cpp uses 1.
     gguf_set_val_u32(meta, "deepseek2.attention.head_count_kv", 1);
 
     // key/value lengths to MLA-absorbed dims, derived from kv_lora_rank
@@ -1245,9 +1345,9 @@ void handle_glm4moelite(const llama_model_loader * ml, gguf_context * meta,
         }
     }
 
-    // *_mla variants: upstream wants per-head dims (head_dim). Read original
+    // *_mla variants: llama.cpp wants per-head dims (head_dim). Read original
     // head_dim from the un-renamed glm4moelite.attention.key_length (which
-    // held the per-head dim in Ollama's convention).
+    // held the per-head dim in the published-file convention).
     {
         const int64_t hd_kid = gguf_find_key(meta, "glm4moelite.attention.key_length");
         if (hd_kid >= 0) {
@@ -1269,8 +1369,8 @@ void handle_glm4moelite(const llama_model_loader * ml, gguf_context * meta,
 // qwen25vl (text side — Qwen2.5-VL, arch translation to qwen2vl)
 // =========================================================================
 //
-// Ollama publishes Qwen2.5-VL with general.architecture=qwen25vl, but
-// upstream loads both Qwen2-VL and Qwen2.5-VL under arch=qwen2vl
+// Existing Qwen2.5-VL files use general.architecture=qwen25vl, but
+// llama.cpp loads both Qwen2-VL and Qwen2.5-VL under arch=qwen2vl
 // (which reads the rope.dimension_sections KV for M-RoPE).
 //
 // Translation:
@@ -1318,8 +1418,8 @@ void handle_qwen25vl(const llama_model_loader * ml, gguf_context * meta,
 // qwen3vl/qwen3vlmoe (text side — Qwen3-VL)
 // =========================================================================
 //
-// Ollama publishes Qwen3-VL with general.architecture=qwen3vl or qwen3vlmoe
-// (matches upstream). Two missing KVs that the upstream loader requires:
+// Existing Qwen3-VL files use general.architecture=qwen3vl or qwen3vlmoe.
+// Two missing KVs are required by the llama.cpp loader:
 //
 //   * <arch>.rope.dimension_sections — M-RoPE section sizes. Derived from
 //     the HF config (rope_scaling.mrope_section). Hardcoded here as
@@ -1350,8 +1450,8 @@ bool detect_ollama_qwen3vl(const gguf_context * meta, const ggml_context * ctx) 
     (void) ctx;
     const char * arch = qwen3vl_arch(meta);
     if (!arch) return false;
-    // Marker: upstream-converted qwen3vl/qwen3vlmoe always has
-    // rope.dimension_sections; Ollama's legacy blob doesn't.
+    // Marker: llama.cpp-compatible qwen3vl/qwen3vlmoe files have
+    // rope.dimension_sections; affected published files do not.
     return !has_key(meta, qwen3vl_key(arch, ".rope.dimension_sections").c_str());
 }
 
@@ -1419,9 +1519,9 @@ void handle_gemma3_clip(gguf_context * meta, ggml_context * ctx) {
         rename_tensors_containing(meta, ctx, from, to);
     }
 
-    // Upstream stores patch_embd/position_embd as F32 (Gemma3VisionModel
-    // tensor_force_quant); Ollama stored F16. Metal's IM2COL convolution
-    // requires F32, so promote both at load time.
+    // llama.cpp-compatible Gemma 3 projectors store patch_embd/position_embd
+    // as F32 (Gemma3VisionModel tensor_force_quant). Metal's IM2COL
+    // convolution requires F32, so promote both at load time.
     promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
     promote_tensor_to_f32(meta, ctx, "v.position_embd.weight");
 }
@@ -1442,9 +1542,10 @@ constexpr std::pair<const char *, const char *> kQwen35moeClipRenames[] = {
     {".norm2",               ".ln2"},
 };
 
-// Register a QKV merge for a single vision block: Ollama has separate
-// attn_q, attn_k, attn_v tensors; upstream wants them concatenated along
-// their slow axis. Capture source file offsets BEFORE renaming attn_q.
+// Register a QKV merge for a single vision block. Existing files have
+// separate attn_q, attn_k, and attn_v tensors; llama.cpp expects them
+// concatenated along their slow axis. Capture source file offsets before
+// renaming attn_q.
 void register_qwen35moe_qkv_merge(gguf_context * meta, ggml_context * ctx, int block_idx) {
     char q[64], k[64], v[64], qbias[64], kbias[64], vbias[64], qkv_w[64], qkv_b[64];
     std::snprintf(q,     sizeof(q),     "v.blk.%d.attn_q.weight",   block_idx);
@@ -1471,12 +1572,12 @@ void register_qwen35moe_qkv_merge(gguf_context * meta, ggml_context * ctx, int b
 
 // Register the patch_embed reshape + split + F16->F32.
 //
-// Source: one Ollama tensor `v.patch_embed.weight`, ggml shape
+// Source: one tensor `v.patch_embed.weight`, ggml shape
 //   [h, w, t=2, packed=out_c*in_c] F16
 // where `packed` is the PyTorch row-major flattening of HF's
 // [out_c, in_c, ...] dim pair, so packed_c = c_out*in_c + c_in.
 //
-// Destination: two upstream tensors with ggml shape
+// Destination: two llama.cpp tensors with ggml shape
 //   [h, w, c_in, c_out] F32 each, one per temporal slice.
 //
 // For each output element (h, w, c_in, c_out):
@@ -1634,7 +1735,8 @@ void handle_qwen35_like_clip(gguf_context * meta, ggml_context * ctx, const char
     // projection_dim = text model's embedding_length.
     copy_u32_kv(meta, kv(".embedding_length").c_str(),                     "clip.vision.projection_dim");
 
-    // Defaults for KVs Ollama omitted (match the Qwen3.5-35B-A3B reference mmproj).
+    // Defaults for KVs absent from existing files. Values match the
+    // Qwen3.5-35B-A3B reference mmproj.
     inject_u32_if_missing(meta, "clip.vision.feed_forward_length",          4304);
     inject_u32_if_missing(meta, "clip.vision.image_size",                   768);
     inject_f32_if_missing(meta, "clip.vision.attention.layer_norm_epsilon", 1e-6f);
@@ -1687,11 +1789,11 @@ void handle_qwen35_clip(gguf_context * meta, ggml_context * ctx) {
 // deepseek-ocr (clip side — SAM + CLIP + projector)
 // =========================================================================
 //
-// Ollama's monolithic deepseek-ocr GGUF embeds three vision components:
+// The monolithic DeepSeek OCR GGUF embeds three vision components:
 //   * SAM encoder under the `s.*` prefix (12 blocks)
 //   * CLIP encoder under the `v.*` prefix (24 blocks)
 //   * MLP projector under `mm.*`
-// Upstream's PROJECTOR_TYPE_DEEPSEEKOCR loader expects:
+// The PROJECTOR_TYPE_DEEPSEEKOCR loader expects:
 //   * SAM under `v.sam.*`
 //   * CLIP under `v.*` (different leaf names than Ollama)
 //   * Projector as `mm.model.fc.*` plus `v.image_newline` / `v.view_seperator`
@@ -1704,7 +1806,7 @@ constexpr std::pair<const char *, const char *> kDeepseekocrClipRenames[] = {
     {".layer_norm2",        ".ln2"},
     {".mlp.fc1",            ".ffn_up"},
     {".mlp.fc2",            ".ffn_down"},
-    {"v.pre_layrnorm",      "v.pre_ln"}, // Ollama typo
+    {"v.pre_layrnorm",      "v.pre_ln"}, // published tensor spelling
 
     // SAM block leaf renames (after `s.*` -> `v.sam.*` is applied).
     {".attn.proj",          ".attn.out"},
@@ -1734,7 +1836,7 @@ void handle_deepseekocr_clip(gguf_context * meta, ggml_context * ctx) {
     copy_u32_kv(meta, "deepseekocr.sam.embedding_length",    "clip.vision.sam.embedding_length");
     copy_u32_kv(meta, "deepseekocr.sam.head_count",          "clip.vision.sam.head_count");
 
-    // Defaults pulled from the upstream-converted reference mmproj.
+    // Defaults pulled from a llama.cpp-compatible reference mmproj.
     inject_u32_if_missing(meta, "clip.vision.feed_forward_length",          64);
     inject_u32_if_missing(meta, "clip.vision.projection_dim",               1280);
     inject_u32_if_missing(meta, "clip.vision.projector.scale_factor",       1);
@@ -1779,7 +1881,7 @@ void handle_deepseekocr_clip(gguf_context * meta, ggml_context * ctx) {
     // Metal IM2COL needs F32 patch_embd (same issue as gemma3 / mistral3).
     promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
     promote_tensor_to_f32(meta, ctx, "v.sam.patch_embd.weight");
-    // CLIP position embedding too — Ollama stores F16, upstream stores F32.
+    // CLIP position embedding too; llama.cpp-compatible files store F32.
     promote_tensor_to_f32(meta, ctx, "v.position_embd.weight");
 }
 
@@ -2063,9 +2165,9 @@ void handle_nemotron_h_omni_clip(gguf_context * meta, ggml_context * ctx) {
 // gemma4 (clip side — gemma4v projector)
 // =========================================================================
 //
-// Ollama's monolithic gemma4 GGUF embeds a SigLIP-style ViT plus the
+// The monolithic Gemma 4 GGUF embeds a SigLIP-style ViT plus the
 // gemma4v projector (a single `mm.input_projection`). All v.* / mm.*
-// tensor names already match upstream's PROJECTOR_TYPE_GEMMA4V — this
+// tensor names already match PROJECTOR_TYPE_GEMMA4V; this
 // handler only needs KV translation and an F32 promote of the patch
 // embedding (Metal IM2COL).
 //
@@ -2121,14 +2223,14 @@ void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
         copy_u32_kv(meta, "gemma4.audio.feed_forward_length",           "clip.audio.feed_forward_length");
         copy_u32_kv(meta, "gemma4.audio.attention.head_count",          "clip.audio.attention.head_count");
         copy_f32_kv(meta, "gemma4.audio.attention.layer_norm_epsilon",  "clip.audio.attention.layer_norm_epsilon");
-        // Defaults from the upstream-converted reference E2B mmproj.
+        // Defaults from a llama.cpp-compatible reference E2B mmproj.
         inject_u32_if_missing(meta, "clip.audio.num_mel_bins",   128);
         inject_u32_if_missing(meta, "clip.audio.projection_dim", 1536);
 
         inject_bool_if_missing(meta, "clip.has_audio_encoder", true);
         gguf_set_val_str(meta, "clip.audio.projector_type", "gemma4a");
 
-        // Top-level tensor renames. Ollama uses different leaf names for the
+        // Top-level tensor renames. Existing files use different leaf names for the
         // SSCP input projection and the encoder output projection:
         //   a.pre_encode.out.weight   →  a.input_projection.weight (SSCP proj)
         //   mm.a.fc.{weight,bias}     →  a.pre_encode.out.{weight,bias}
@@ -2141,7 +2243,7 @@ void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
         // have ln1/ln2). Order matters: ln2 → attn_post_norm must run before
         // layer_pre_norm → ln2 (otherwise the second rename collides).
         //
-        // Semantic mapping (from Ollama's model_audio.go vs upstream gemma4a.cpp):
+        // Semantic mapping (from Ollama's model_audio.go and gemma4a.cpp):
         //   ln1            → attn_pre_norm    (pre-attention norm)
         //   ln2            → attn_post_norm   (post-attention norm; NOT block out)
         //   layer_pre_norm → ln2              (final block output norm)
@@ -2167,12 +2269,12 @@ void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
 // glm-ocr (clip side — glm4v projector)
 // =========================================================================
 //
-// Ollama stores the GLM4V vision tower with v.blk.X.* tensor names that
-// already match upstream's expectations (`attn_qkv`, `attn_out`,
+// The GLM4V vision tower uses v.blk.X.* tensor names that already match
+// llama.cpp expectations (`attn_qkv`, `attn_out`,
 // `attn_q_norm`, `attn_k_norm`, `ln1`/`ln2`, `ffn_{gate,up,down}`).
 // Most of mm.* (mm.model.fc, mm.up/gate/down, mm.post_norm,
 // mm.patch_merger) is also already named correctly. The two diffs:
-//   * `v.patch_embd_0.weight` / `v.patch_embd_1.weight` → upstream's
+//   * `v.patch_embd_0.weight` / `v.patch_embd_1.weight` →
 //     pixel-shuffle patch-embed pair `v.patch_embd.weight` /
 //     `v.patch_embd.weight.1`.
 //   * F32 promote of patch_embd weights (Metal IM2COL).
@@ -2190,7 +2292,7 @@ void handle_glmocr_clip(gguf_context * meta, ggml_context * ctx) {
     copy_u32_kv(meta, "glmocr.vision.spatial_merge_size",            "clip.vision.spatial_merge_size");
     copy_u32_kv(meta, "glmocr.vision.out_hidden_size",               "clip.vision.projection_dim");
 
-    // Ollama already shipped image_mean / image_std under glmocr.vision.*;
+    // Existing files already have image_mean / image_std under glmocr.vision.*;
     // copy them through.
     {
         const int64_t kid = gguf_find_key(meta, "glmocr.vision.image_mean");
@@ -2214,7 +2316,7 @@ void handle_glmocr_clip(gguf_context * meta, ggml_context * ctx) {
     gguf_set_val_str(meta, "clip.projector_type",  "glm4v");
     gguf_set_val_str(meta, "general.architecture", "clip");
 
-    // Patch-embed temporal pair: Ollama uses _0/_1 suffixes, upstream uses
+    // Patch-embed temporal pair: existing files use _0/_1 suffixes; llama.cpp uses
     // unsuffixed/.1.
     rename_tensor(meta, ctx, "v.patch_embd_0.weight", "v.patch_embd.weight");
     rename_tensor(meta, ctx, "v.patch_embd_1.weight", "v.patch_embd.weight.1");
@@ -2228,13 +2330,13 @@ void handle_glmocr_clip(gguf_context * meta, ggml_context * ctx) {
 // llama4 (clip side)
 // =========================================================================
 //
-// Ollama's monolithic llama4 GGUF embeds the CLIP-style ViT and a 3-layer
-// projector (`mm.linear_1` + `v.vision_adapter.mlp.fc1/fc2`). Upstream's
+// The monolithic Llama 4 GGUF embeds the CLIP-style ViT and a 3-layer
+// projector (`mm.linear_1` + `v.vision_adapter.mlp.fc1/fc2`). The
 // PROJECTOR_TYPE_LLAMA4 expects the projector under `mm.model.fc` /
 // `mm.model.mlp.{1,2}` and standard CLIP block leaf names.
 
 constexpr std::pair<const char *, const char *> kLlama4ClipRenames[] = {
-    // Vision-adapter MLP -> upstream's MM-MLP slots. Run BEFORE the generic
+    // Vision-adapter MLP -> MM-MLP slots. Run before the generic
     // `.mlp.fc{1,2}` -> `.ffn_{up,down}` rename so the substring match stays
     // pinned to the adapter prefix.
     {"v.vision_adapter.mlp.fc1", "mm.model.mlp.1"},
@@ -2270,7 +2372,7 @@ void handle_llama4_clip(gguf_context * meta, ggml_context * ctx) {
     // projection_dim = LM embedding length (= mm.model.fc output dim).
     copy_u32_kv(meta, "llama4.embedding_length",                      "clip.vision.projection_dim");
 
-    // Defaults (match the upstream-converted reference mmproj).
+    // Defaults match a llama.cpp-compatible reference mmproj.
     uint32_t projector_scale = 2;
     const int64_t ratio_kid = gguf_find_key(meta, "llama4.vision.pixel_shuffle_ratio");
     if (ratio_kid >= 0) {
@@ -2294,7 +2396,7 @@ void handle_llama4_clip(gguf_context * meta, ggml_context * ctx) {
     gguf_set_val_str(meta, "clip.vision.projector_type", "llama4");
     gguf_set_val_str(meta, "general.architecture", "clip");
 
-    // Position embedding has no `.weight` suffix in Ollama; rename exactly.
+    // Position embedding has no `.weight` suffix in existing files; rename exactly.
     rename_tensor(meta, ctx, "v.positional_embedding_vlm", "v.position_embd.weight");
 
     for (const auto & [from, to] : kLlama4ClipRenames) {
@@ -2306,7 +2408,7 @@ void handle_llama4_clip(gguf_context * meta, ggml_context * ctx) {
 // mistral3 (clip side — pixtral projector)
 // =========================================================================
 //
-// Tensor renames Ollama → upstream pixtral:
+// Tensor renames for Pixtral projector compatibility:
 //   v.patch_conv                       -> v.patch_embd
 //   v.encoder_norm                     -> v.pre_ln
 //   v.blk.X.attn_output                -> v.blk.X.attn_out
@@ -2319,7 +2421,7 @@ void handle_llama4_clip(gguf_context * meta, ggml_context * ctx) {
 //
 // img_break: pixtral's loader requires `v.token_embd.img_break` (the
 // embedding row for the [IMG_BREAK] token, used as a row separator).
-// Ollama's monolithic blob doesn't ship it as a separate tensor; the
+// Existing monolithic files do not ship it as a separate tensor; the
 // "ideal" value is row 12 of token_embd.weight, but token_embd is
 // quantized (Q4_K) and per-row dequant is heavyweight. Reclaim the
 // orphan output_norm.weight slot (already [n_embd] F32) and zero-fill
@@ -2338,13 +2440,13 @@ constexpr std::pair<const char *, const char *> kMistral3ClipRenames[] = {
     {"mm.norm",                       "mm.input_norm"},
 };
 
-// Apply the LLaMA-style RoPE permutation to Ollama's vision Q/K weight.
+// Apply the LLaMA-style RoPE permutation to the vision Q/K weight.
 //
-// Ollama's mistral3 converter (convert/convert_mistral.go) only applies
+// The existing Mistral 3 conversion path only applies
 // its repack to TEXT-side attn_q/attn_k (the `if !HasPrefix(name, "v.")`
 // guard skips vision tensors). So vision Q/K leave the converter in raw
-// HF/PyTorch order. Upstream's HF→GGUF flow (convert_hf_to_gguf.py
-// Mistral3 path) DOES permute vision Q/K with the vision head count,
+// HF/PyTorch order. The llama.cpp HF-to-GGUF flow permutes vision Q/K with
+// the vision head count,
 // because pixtral's clip graph uses `ggml_rope_ext` in mode 0 which
 // expects the [n_head, head_dim/2, 2, ...] layout.
 //
@@ -2358,7 +2460,7 @@ constexpr std::pair<const char *, const char *> kMistral3ClipRenames[] = {
 //                      copy row ob in src → row oa in dst.
 //
 // Only F16 Q/K rows handled (V is not RoPE'd; quantized rows would need
-// block-aware shuffling — Ollama keeps Q/K F16 for mistral3 8B).
+// block-aware shuffling; published Mistral 3 8B files keep Q/K F16).
 void register_mistral3_vision_qk_permute(gguf_context * meta, ggml_context * ctx,
                                          const char * tensor_name, int n_head) {
     ggml_tensor * t = ggml_get_tensor(ctx, tensor_name);
@@ -2438,10 +2540,10 @@ void handle_mistral3_clip(gguf_context * meta, ggml_context * ctx) {
         });
     }
 
-    // Apply LLaMA-style RoPE permutation to vision Q/K BEFORE renames
-    // (we capture offsets by current name). Ollama's converter only
-    // repacks TEXT-side q/k (skipping `v.*`), but pixtral's clip graph
-    // expects HF→GGUF's permuted layout for vision Q/K.
+    // Apply LLaMA-style RoPE permutation to vision Q/K before renames
+    // (we capture offsets by current name). The published-file conversion
+    // path only repacks text-side q/k (skipping `v.*`), but pixtral's clip
+    // graph expects the HF-to-GGUF permuted layout for vision Q/K.
     {
         const int64_t v_hk    = gguf_find_key(meta, "mistral3.vision.attention.head_count");
         const int64_t n_blk_k = gguf_find_key(meta, "mistral3.vision.block_count");
@@ -2462,9 +2564,8 @@ void handle_mistral3_clip(gguf_context * meta, ggml_context * ctx) {
         rename_tensors_containing(meta, ctx, from, to);
     }
 
-    // Upstream stores patch_embd as F32; Ollama stored F16. Metal's
-    // IM2COL convolution silently produces garbage with F16 weights
-    // (same issue as gemma3 — see handle_gemma3_clip). Promote to F32.
+    // llama.cpp-compatible files store patch_embd as F32. Metal's IM2COL
+    // convolution requires F32 weights, same as gemma3.
     promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
 }
 
@@ -2472,8 +2573,8 @@ void handle_mistral3_clip(gguf_context * meta, ggml_context * ctx) {
 // qwen25vl (clip side — Qwen2.5-VL vision tower + merger)
 // =========================================================================
 //
-// Ollama qwen25vl has a vision tower with mostly upstream-compatible
-// tensor names. Five tensor renames + KV translation:
+// Qwen2.5-VL published files have a vision tower with mostly
+// llama.cpp-compatible tensor names. Five tensor renames + KV translation:
 //
 //   v.merger.ln_q.weight         → v.post_ln.weight       (post-tower norm)
 //   v.merger.mlp.0.{weight,bias} → mm.0.{weight,bias}     (LLaVA proj 0)
@@ -2483,7 +2584,7 @@ void handle_mistral3_clip(gguf_context * meta, ggml_context * ctx) {
 //
 // The KV side maps qwen25vl.vision.* → clip.vision.*, sets the projector
 // type and use_silu, derives n_wa_pattern from fullatt_block_indexes[0]+1
-// (per upstream's qwen2.5vl converter), and supplies image_size=560 and
+// (matching llama.cpp's Qwen2.5-VL converter), and supplies image_size=560 and
 // projection_dim (= text embedding_length, qwen25vl.embedding_length).
 
 void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
@@ -2506,7 +2607,7 @@ void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
         }
     }
 
-    // Derive n_wa_pattern from fullatt_block_indexes[0]+1 (upstream convention).
+    // Derive n_wa_pattern from fullatt_block_indexes[0]+1.
     {
         const int64_t kid = gguf_find_key(meta, "qwen25vl.vision.fullatt_block_indexes");
         if (kid >= 0 && gguf_get_arr_n(meta, kid) >= 1) {
@@ -2547,9 +2648,9 @@ void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
 // qwen3vl/qwen3vlmoe (clip side — Qwen3-VL vision tower + deepstack adapters)
 // =========================================================================
 //
-// Ollama qwen3vl/qwen3vlmoe monolithic GGUFs embed the vision tower (27 blocks),
+// Qwen3-VL monolithic GGUFs embed the vision tower (27 blocks),
 // deepstack merger adapters (3 of them, indexed 0/1/2), and the merger
-// MLP. Compared to upstream's qwen3vl_merger expectations:
+// MLP. Compared to qwen3vl_merger expectations:
 //
 //   * Per-block leaf renames: norm1→ln1, norm2→ln2, mlp.linear_fc1→ffn_up,
 //     mlp.linear_fc2→ffn_down.
@@ -2559,8 +2660,8 @@ void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
 //     where indexes is <arch>.vision.deepstack_visual_indexes (e.g.
 //     [8, 16, 24] for Qwen3-VL-8B). The leaf names also rename:
 //     linear_fc1→fc1, linear_fc2→fc2.
-//   * Per-block QKV merge: upstream's qwen3vl graph reads a single
-//     attn_qkv tensor (shape [hidden, 3*hidden]); Ollama stores separate
+//   * Per-block QKV merge: qwen3vl reads a single attn_qkv tensor
+//     (shape [hidden, 3*hidden]); existing files store separate
 //     Q/K/V. Same merge as qwen35moe — reuse that helper.
 //   * Patch embed: split the merged Conv3D weight [W,H,T,OUT*IN] into two
 //     Conv2D weights [W,H,IN,OUT], one per temporal slice. Same logic and
@@ -2641,11 +2742,10 @@ void handle_qwen3vl_clip(gguf_context * meta, ggml_context * ctx) {
     gguf_set_val_str(meta, "clip.projector_type",  "qwen3vl_merger");
     gguf_set_val_str(meta, "general.architecture", "clip");
 
-    // Per-block QKV merge: upstream's qwen3vl_merger graph reads a single
-    // `v.blk.X.attn_qkv.weight` (shape [hidden, 3*hidden]) — Ollama stores
-    // separate Q/K/V. Unlike qwen35moe (where Q/K/V are uniformly F16), the
-    // qwen3vl Ollama blob can mix F16 (Q/K) with Q8_0 (V), so a raw byte
-    // concat fails. Dequantize all three to F32 and concat in F32 instead.
+    // Per-block QKV merge: qwen3vl_merger reads a single
+    // `v.blk.X.attn_qkv.weight` (shape [hidden, 3*hidden]). Existing files
+    // store separate Q/K/V and can mix F16 (Q/K) with Q8_0 (V), so a raw byte
+    // concat is not valid. Dequantize all three to F32 and concat in F32.
     // After the merge, attn_k/attn_v become orphaned in the clip ctx, which
     // the patch_embed split then reclaims for `v.patch_embd.weight.1`.
     const int64_t n_blocks_key = gguf_find_key(meta, "clip.vision.block_count");
@@ -2695,7 +2795,7 @@ void handle_qwen3vl_clip(gguf_context * meta, ggml_context * ctx) {
 
     // Deepstack remap: v.deepstack_merger.X.{norm,linear_fc1,linear_fc2}.{weight,bias}
     // → v.deepstack.{deepstack_visual_indexes[X]}.{norm,fc1,fc2}.{weight,bias}.
-    // Upstream stores deepstack tensors at the absolute clip layer index
+    // Deepstack tensors use the absolute clip layer index
     // (e.g. v.deepstack.8.* for the adapter that fires after layer 8).
     {
         const int64_t ds_kid = gguf_find_key(meta, qwen3vl_key(arch.c_str(), ".vision.deepstack_visual_indexes").c_str());
@@ -2730,7 +2830,7 @@ void handle_qwen3vl_clip(gguf_context * meta, ggml_context * ctx) {
     promote_tensor_to_f32(meta, ctx, "v.position_embd.weight");
 }
 
-bool is_legacy_llava_projector(const gguf_context * meta) {
+bool needs_default_llava_projector_type(const gguf_context * meta) {
     const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
     if (arch_kid < 0) return false;
     if (std::strcmp(gguf_get_val_str(meta, arch_kid), "clip") != 0) return false;
@@ -2742,10 +2842,10 @@ bool is_legacy_llava_projector(const gguf_context * meta) {
         && !has_key(meta, "clip.vision.projector_type");
 }
 
-void handle_legacy_llava_projector(gguf_context * meta) {
-    if (!is_legacy_llava_projector(meta)) return;
+void handle_missing_llava_projector_type(gguf_context * meta) {
+    if (!needs_default_llava_projector_type(meta)) return;
 
-    OLLAMA_COMPAT_LOG_INFO("%s: detected legacy LLaVA/BakLLaVA projector; defaulting projector type to mlp\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected LLaVA/BakLLaVA projector without projector type; defaulting to mlp\n", __func__);
     gguf_set_val_str(meta, "clip.projector_type", "mlp");
 }
 
@@ -2761,6 +2861,7 @@ bool translate_metadata(const llama_model_loader * ml,
                         std::string & arch_name,
                         const char * fname) {
     if (!meta) return false;
+    if (compat_disabled()) return false;
     {
         std::lock_guard<std::mutex> lk(g_loader_path_mutex);
         g_loader_paths[ml] = fname ? fname : "";
@@ -2775,6 +2876,7 @@ bool translate_metadata(const llama_model_loader * ml,
     if (arch_name == "gemma4")    handle_gemma4   (ml, meta, ctx);
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
     if (arch_name == "qwen35")    handle_qwen35   (ml, meta, ctx);
+    if (arch_name == "qwen3next") handle_qwen3next(meta, ctx);
     if (arch_name == "gptoss")        handle_gptoss        (ml, meta, ctx, arch_name);
     if (arch_name == "lfm2")          handle_lfm2          (ml, meta, ctx);
     if (arch_name == "olmo3")         handle_olmo3         (meta, arch_name);
@@ -2803,8 +2905,9 @@ bool translate_metadata(const llama_model_loader * ml,
 
 void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     if (!meta) return;
+    if (compat_disabled()) return;
 
-    handle_legacy_llava_projector(meta);
+    handle_missing_llava_projector_type(meta);
 
     if (!any_tensor_with_prefix(ctx, "v.")) return; // nothing to translate
 
@@ -2856,6 +2959,7 @@ void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
 }
 
 bool should_skip_tensor(const llama_model_loader * ml, const char * tensor_name) {
+    if (compat_disabled()) return false;
     return should_skip_tensor_prefix(ml, tensor_name);
 }
 
@@ -2864,6 +2968,7 @@ bool maybe_load_tensor(ggml_tensor * cur,
                        size_t file_offset,
                        ggml_backend_buffer_type_t buft) {
     (void) file_offset; // registered ops capture their own offsets
+    if (compat_disabled()) return false;
 
     LoadOp op;
     if (!take_load_op(ggml_get_name(cur), op)) return false;
@@ -2902,6 +3007,7 @@ bool maybe_load_tensor(ggml_tensor * cur,
 bool maybe_load_text_tensor(const llama_model_loader * ml,
                             ggml_tensor * cur,
                             size_t file_offset) {
+    if (compat_disabled()) return false;
     std::string path;
     {
         std::lock_guard<std::mutex> lk(g_loader_path_mutex);

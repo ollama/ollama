@@ -17,9 +17,14 @@ endif()
 
 find_package(Git QUIET REQUIRED)
 
+get_filename_component(_patch_workdir "." ABSOLUTE)
+get_filename_component(_git_ceiling "${_patch_workdir}" DIRECTORY)
+set(_git_apply_env GIT_CEILING_DIRECTORIES=${_git_ceiling})
+
 # If the patch can be REVERSED cleanly, it's already applied. Skip.
 execute_process(
-    COMMAND ${GIT_EXECUTABLE} apply --reverse --check "${PATCH_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E env ${_git_apply_env}
+        ${GIT_EXECUTABLE} apply --reverse --check "${PATCH_FILE}"
     RESULT_VARIABLE _reverse_check
     OUTPUT_QUIET ERROR_QUIET
 )
@@ -30,13 +35,14 @@ endif()
 
 # Otherwise, apply forward.
 execute_process(
-    COMMAND ${GIT_EXECUTABLE} apply --whitespace=nowarn "${PATCH_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E env ${_git_apply_env}
+        ${GIT_EXECUTABLE} apply --whitespace=nowarn "${PATCH_FILE}"
     RESULT_VARIABLE _apply_result
 )
 if(NOT _apply_result EQUAL 0)
     message(FATAL_ERROR
         "llama/compat: failed to apply ${PATCH_FILE}\n"
-        "This usually means upstream llama.cpp has drifted. "
+        "This usually means the pinned llama.cpp source has changed. "
         "Regenerate the patch (see llama/compat/README.md) against the "
         "pinned LLAMA_CPP_VERSION and retry.")
 endif()

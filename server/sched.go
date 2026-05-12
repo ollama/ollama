@@ -62,7 +62,7 @@ type Scheduler struct {
 	loaded        map[string]*runnerRef
 
 	loadFn          func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
-	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
+	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, config llm.LlamaServerConfig) (llm.LlamaServer, error)
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
@@ -506,10 +506,9 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 					"system_limited", systemLimited)
 			}
 
-			s.maybeDisableMmapForHostPressure(req, launchOpts, systemInfo, loadGpus, f, numParallel)
-			launchOpts.UseMMap = req.opts.UseMMap
+			launchOpts = s.applyLlamaServerMmapDefaults(req, launchOpts, systemInfo, loadGpus, f, numParallel)
 
-			llama, err = s.newServerFn(systemInfo, loadGpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, launchOpts, numParallel)
+			llama, err = s.newServerFn(systemInfo, loadGpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, launchOpts, numParallel, llamaServerConfigForModel(req.model))
 			if err != nil {
 				// some older models are not compatible with newer versions of llama.cpp
 				// show a generalized compatibility error until there is a better way to
@@ -936,6 +935,67 @@ func logSelectedGPUGroup(all, selected []ml.DeviceInfo) {
 		"library", selected[0].Library,
 		"gpu_count", len(selected),
 		"available_gpu_count", len(all))
+}
+
+func (s *Scheduler) applyLlamaServerMmapDefaults(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *ggml.GGML, numParallel int) api.Options {
+	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
+	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
+	availableVRAM, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
+
+	if reason := disableMmapDefaultReason(runtime.GOOS, req.opts, gpus, f.KV().BlockCount(), predictedVRAM, availableVRAM); reason != "" {
+		useMmap := false
+		req.opts.UseMMap = &useMmap
+		slog.Info("disabling mmap for llama-server load by default",
+			"model", req.model.ModelPath,
+			"reason", reason)
+	} else {
+		s.maybeDisableMmapForHostPressure(req, launchOpts, systemInfo, gpus, f, numParallel)
+	}
+
+	launchOpts.UseMMap = req.opts.UseMMap
+	return launchOpts
+}
+
+func disableMmapDefaultReason(goos string, opts api.Options, gpus []ml.DeviceInfo, blockCount, predictedVRAM, availableVRAM uint64) string {
+	if opts.UseMMap != nil {
+		return ""
+	}
+	if opts.NumGPU == 0 || len(gpus) == 0 || allDevicesLibrary(gpus, "cpu") {
+		return "cpu"
+	}
+	if goos == "windows" && hasDeviceLibrary(gpus, "cuda") {
+		return "windows_cuda"
+	}
+	if hasDeviceLibrary(gpus, "metal") {
+		if opts.NumGPU > 0 && blockCount > 0 && uint64(opts.NumGPU) < blockCount+1 {
+			return "metal_partial_offload"
+		}
+		if opts.NumGPU < 0 && predictedVRAM > 0 && availableVRAM > 0 && predictedVRAM > availableVRAM {
+			return "metal_partial_offload"
+		}
+	}
+	return ""
+}
+
+func hasDeviceLibrary(gpus []ml.DeviceInfo, library string) bool {
+	for _, gpu := range gpus {
+		if strings.EqualFold(gpu.Library, library) {
+			return true
+		}
+	}
+	return false
+}
+
+func allDevicesLibrary(gpus []ml.DeviceInfo, library string) bool {
+	if len(gpus) == 0 {
+		return false
+	}
+	for _, gpu := range gpus {
+		if !strings.EqualFold(gpu.Library, library) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Scheduler) maybeDisableMmapForHostPressure(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *ggml.GGML, numParallel int) {

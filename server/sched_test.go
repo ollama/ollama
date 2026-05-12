@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,7 +66,7 @@ func TestSchedLoad(t *testing.T) {
 		sessionDuration: &api.Duration{Duration: 2 * time.Second},
 	}
 	// Fail to load model first
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return nil, errors.New("something failed to load model blah")
 	}
 	gpus := []ml.DeviceInfo{}
@@ -80,7 +81,7 @@ func TestSchedLoad(t *testing.T) {
 	require.Contains(t, err.Error(), "this model may be incompatible")
 
 	server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		server.modelPath = model
 		return server, nil
 	}
@@ -213,7 +214,7 @@ type reqBundle struct {
 	req     *LlmRequest
 }
 
-func (scenario *reqBundle) newServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+func (scenario *reqBundle) newServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 	scenario.srv.modelPath = model
 	return scenario.srv, nil
 }
@@ -322,7 +323,16 @@ func TestSchedRequestsSimpleReloadSameModel(t *testing.T) {
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
-	s.getGpuFn = getGpuFn
+	g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+	g.TotalMemory = 24 * format.GigaByte
+	g.FreeMemory = 12 * format.GigaByte
+	gMu := sync.Mutex{}
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		slog.Info("test getGpuFn called", "runners", runners)
+		gMu.Lock()
+		defer gMu.Unlock()
+		return []ml.DeviceInfo{g}
+	}
 	s.getSystemInfoFn = getSystemInfoFn
 	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond}, nil)
 	b := newScenarioRequest(t, ctx, "ollama-model-1", 20, &api.Duration{Duration: 5 * time.Millisecond}, nil)
@@ -355,13 +365,9 @@ func TestSchedRequestsSimpleReloadSameModel(t *testing.T) {
 	a.ctxDone()
 	// Report recovered VRAM usage
 	time.Sleep(1 * time.Millisecond)
-	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
-		slog.Info("altered getGpuFn called")
-		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
-		g.TotalMemory = 24 * format.GigaByte
-		g.FreeMemory = 24 * format.GigaByte
-		return []ml.DeviceInfo{g}
-	}
+	gMu.Lock()
+	g.FreeMemory = 24 * format.GigaByte
+	gMu.Unlock()
 	select {
 	case resp := <-b.req.successCh:
 		require.Equal(t, resp.llama, b.srv)
@@ -380,7 +386,16 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
-	s.getGpuFn = getGpuFn // 1 Metal GPU
+	g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+	g.TotalMemory = 24 * format.GigaByte
+	g.FreeMemory = 12 * format.GigaByte
+	gMu := sync.Mutex{}
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		slog.Info("test getGpuFn called", "runners", runners)
+		gMu.Lock()
+		defer gMu.Unlock()
+		return []ml.DeviceInfo{g}
+	}
 	s.getSystemInfoFn = getSystemInfoFn
 
 	// Multiple loaded models
@@ -466,12 +481,9 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	b.ctxDone()
 	// Report recovered VRAM usage so scheduler will finish waiting and unload
 	time.Sleep(1 * time.Millisecond)
-	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
-		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
-		g.TotalMemory = 24 * format.GigaByte
-		g.FreeMemory = 24 * format.GigaByte
-		return []ml.DeviceInfo{g}
-	}
+	gMu.Lock()
+	g.FreeMemory = 24 * format.GigaByte
+	gMu.Unlock()
 	select {
 	case resp := <-d.req.successCh:
 		require.Equal(t, resp.llama, d.srv)
@@ -650,7 +662,7 @@ func TestSchedExpireRunner(t *testing.T) {
 	gpus := []ml.DeviceInfo{}
 	systemInfo := ml.SystemInfo{}
 	server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		server.modelPath = model
 		return server, nil
 	}
@@ -983,7 +995,7 @@ func TestSchedLlamaServerEvictsWhenVRAMInsufficient(t *testing.T) {
 	// Create a request — the model file + KV cache will exceed 100 MiB
 	scenario := newScenarioRequest(t, ctx, "llama-server-model", 1*format.GigaByte, nil, nil)
 
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model}, nil
 	}
 
@@ -1057,7 +1069,7 @@ func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
 	scenario.req.opts.NumCtx = 32768
 
 	called := false
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		called = true
 		return scenario.srv, nil
 	}
@@ -1283,6 +1295,91 @@ func testIntPtr(v int) *int {
 	return &v
 }
 
+func TestDisableMmapDefaultReason(t *testing.T) {
+	useMmap := true
+	tests := []struct {
+		name          string
+		goos          string
+		opts          api.Options
+		gpus          []ml.DeviceInfo
+		blockCount    uint64
+		predictedVRAM uint64
+		availableVRAM uint64
+		want          string
+	}{
+		{
+			name: "explicit use_mmap true wins",
+			goos: "windows",
+			opts: api.Options{Runner: api.Runner{NumGPU: -1, UseMMap: &useMmap}},
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}},
+		},
+		{
+			name: "cpu-only request disables mmap",
+			goos: "linux",
+			opts: api.Options{Runner: api.Runner{NumGPU: 0}},
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}},
+			want: "cpu",
+		},
+		{
+			name: "no GPU devices disables mmap",
+			goos: "linux",
+			opts: api.Options{Runner: api.Runner{NumGPU: -1}},
+			want: "cpu",
+		},
+		{
+			name: "windows cuda disables mmap",
+			goos: "windows",
+			opts: api.Options{Runner: api.Runner{NumGPU: -1}},
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}},
+			want: "windows_cuda",
+		},
+		{
+			name:       "metal partial offload disables mmap",
+			goos:       "darwin",
+			opts:       api.Options{Runner: api.Runner{NumGPU: 10}},
+			gpus:       []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}}},
+			blockCount: 20,
+			want:       "metal_partial_offload",
+		},
+		{
+			name:       "metal full offload keeps default",
+			goos:       "darwin",
+			opts:       api.Options{Runner: api.Runner{NumGPU: 21}},
+			gpus:       []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}}},
+			blockCount: 20,
+		},
+		{
+			name:          "metal auto partial offload disables mmap",
+			goos:          "darwin",
+			opts:          api.Options{Runner: api.Runner{NumGPU: -1}},
+			gpus:          []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}}},
+			predictedVRAM: 30 * format.GigaByte,
+			availableVRAM: 20 * format.GigaByte,
+			want:          "metal_partial_offload",
+		},
+		{
+			name:          "metal auto full offload keeps default",
+			goos:          "darwin",
+			opts:          api.Options{Runner: api.Runner{NumGPU: -1}},
+			gpus:          []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}}},
+			predictedVRAM: 10 * format.GigaByte,
+			availableVRAM: 20 * format.GigaByte,
+		},
+		{
+			name: "linux cuda keeps default",
+			goos: "linux",
+			opts: api.Options{Runner: api.Runner{NumGPU: -1}},
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, disableMmapDefaultReason(tt.goos, tt.opts, tt.gpus, tt.blockCount, tt.predictedVRAM, tt.availableVRAM))
+		})
+	}
+}
+
 func TestDisableMmapForHostPressure(t *testing.T) {
 	gpus := []ml.DeviceInfo{{
 		DeviceID:    ml.DeviceID{Library: "CUDA"},
@@ -1379,7 +1476,7 @@ func TestSchedLoadCrashTriggersEvictAllAndRetry(t *testing.T) {
 
 	// newServerFn returns a mockLlm that crashes in Load()
 	loadCrash := errors.New("cudaMalloc failed: out of memory")
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
 
@@ -1433,7 +1530,7 @@ func TestSchedLoadOOMReducesAutomaticContextBeforeRetry(t *testing.T) {
 
 	loadCrash := errors.New("cudaMalloc failed: out of memory")
 	var seenNumCtx []int
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		seenNumCtx = append(seenNumCtx, opts.NumCtx)
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
@@ -1486,7 +1583,7 @@ func TestSchedLoadOOMKeepsExplicitContextBeforeRetry(t *testing.T) {
 	s.loadedMu.Unlock()
 
 	loadCrash := errors.New("cudaMalloc failed: out of memory")
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
 
@@ -1522,7 +1619,7 @@ func TestSchedFirstLoadOOMReducesAutomaticContextAndRetries(t *testing.T) {
 
 	loadCrash := errors.New("cudaMalloc failed: out of memory")
 	var seenNumCtx []int
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		seenNumCtx = append(seenNumCtx, opts.NumCtx)
 		if len(seenNumCtx) == 1 {
 			return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
@@ -1564,7 +1661,7 @@ func TestSchedLoadCrashNoOtherModelsFailsFast(t *testing.T) {
 	s.getSystemInfoFn = getSystemInfoFn
 
 	loadCrash := errors.New("simulated llama-server OOM crash")
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
 
@@ -1604,7 +1701,7 @@ func TestSchedLoadNonOOMWithOtherModelsFailsFast(t *testing.T) {
 	s.loadedMu.Unlock()
 
 	loadCrash := errors.New("server parse failed")
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
 

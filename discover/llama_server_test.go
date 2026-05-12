@@ -275,6 +275,116 @@ Available devices:
 		}
 	})
 
+	t.Run("parse fixtures", func(t *testing.T) {
+		type wantDevice struct {
+			name       string
+			library    string
+			totalMiB   uint64
+			compute    string
+			gfxTarget  string
+			integrated bool
+		}
+
+		tests := []struct {
+			name     string
+			output   string
+			libDirs  []string
+			want     []wantDevice
+			wantSkip string
+		}{
+			{
+				name: "cuda mixed archs filters unsupported device",
+				output: `ggml_cuda_init: found 2 CUDA devices:
+  Device 0: NVIDIA GeForce GTX 1060, compute capability 6.1, VMM: yes, VRAM: 6063 MiB
+  Device 1: NVIDIA GeForce RTX 4060 Ti, compute capability 8.9, VMM: yes, VRAM: 16379 MiB
+system_info: n_threads = 8 | CUDA : ARCHS = 750,800,860,890 |
+Available devices:
+  CUDA0: NVIDIA GeForce GTX 1060 (6063 MiB, 5900 MiB free)
+  CUDA1: NVIDIA GeForce RTX 4060 Ti (16379 MiB, 14900 MiB free)
+`,
+				want: []wantDevice{{
+					name:     "CUDA1",
+					library:  "CUDA",
+					totalMiB: 16379,
+					compute:  "8.9",
+				}},
+			},
+			{
+				name: "rocm gfx targets preserve suffix-free compute",
+				output: `ggml_cuda_init: found 2 ROCm devices (Total VRAM: 32736 MiB):
+  Device 0: AMD Radeon RX 6800, gfx1030 (0x1030), VMM: no, Wave Size: 32, VRAM: 16368 MiB
+  Device 1: AMD Radeon Pro VII, gfx906:sramecc+:xnack- (0x906), VMM: no, Wave Size: 64, VRAM: 16368 MiB
+Available devices:
+  ROCm0: AMD Radeon RX 6800 (16368 MiB, 16342 MiB free)
+  ROCm1: AMD Radeon Pro VII (16368 MiB, 16348 MiB free)
+`,
+				want: []wantDevice{
+					{name: "ROCm0", library: "ROCm", totalMiB: 16368, compute: "gfx1030", gfxTarget: "gfx1030"},
+					{name: "ROCm1", library: "ROCm", totalMiB: 16368, compute: "gfx906", gfxTarget: "gfx906"},
+				},
+			},
+			{
+				name: "vulkan uma marks integrated",
+				output: `ggml_vulkan: 0 = Intel(R) Graphics (Intel open-source Mesa driver) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 32 | shared memory: 65536 | int dot: 1 | matrix cores: none
+Available devices:
+  Vulkan0: Intel(R) Graphics (16384 MiB, 12288 MiB free)
+`,
+				want: []wantDevice{{
+					name:       "Vulkan0",
+					library:    "Vulkan",
+					totalMiB:   16384,
+					integrated: true,
+				}},
+			},
+			{
+				name: "windows vulkan without uma stays unclassified",
+				output: `load_backend: loaded Vulkan backend from C:\ollama\lib\ollama\vulkan\ggml-vulkan.dll
+Available devices:
+  Vulkan0: AMD Radeon(TM) Graphics (32768 MiB, 31000 MiB free)
+  Vulkan1: AMD Radeon RX 7900 XTX (24564 MiB, 23000 MiB free)
+`,
+				want: []wantDevice{
+					{name: "Vulkan0", library: "Vulkan", totalMiB: 32768},
+					{name: "Vulkan1", library: "Vulkan", totalMiB: 24564},
+				},
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				libDirs := tt.libDirs
+				if libDirs == nil {
+					libDirs = []string{"/lib/ollama"}
+				}
+
+				got := parseLlamaServerDevices(tt.output, libDirs)
+				if len(got) != len(tt.want) {
+					t.Fatalf("got %d devices, want %d", len(got), len(tt.want))
+				}
+				for i, want := range tt.want {
+					if got[i].Name != want.name {
+						t.Fatalf("device %d name = %q, want %q", i, got[i].Name, want.name)
+					}
+					if got[i].Library != want.library {
+						t.Fatalf("device %d library = %q, want %q", i, got[i].Library, want.library)
+					}
+					if got[i].TotalMemory != want.totalMiB*1024*1024 {
+						t.Fatalf("device %d total memory = %d, want %d MiB", i, got[i].TotalMemory, want.totalMiB)
+					}
+					if want.compute != "" && got[i].Compute() != want.compute {
+						t.Fatalf("device %d compute = %q, want %q", i, got[i].Compute(), want.compute)
+					}
+					if want.gfxTarget != "" && got[i].GFXTarget != want.gfxTarget {
+						t.Fatalf("device %d gfx target = %q, want %q", i, got[i].GFXTarget, want.gfxTarget)
+					}
+					if got[i].Integrated != want.integrated {
+						t.Fatalf("device %d integrated = %v, want %v", i, got[i].Integrated, want.integrated)
+					}
+				}
+			})
+		}
+	})
+
 	t.Run("cuda runtime version", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "libcudart.so.12.8.90"), nil, 0o644); err != nil {

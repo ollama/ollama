@@ -603,7 +603,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Truncate:        req.Truncate == nil || *req.Truncate,
 			Logprobs:        req.Logprobs,
 			TopLogprobs:     req.TopLogprobs,
-			PreservedTokens: preservedTokensForCompletion(builtinParser, nil),
+			PreservedTokens: preservedTokensForCompletion(builtinParser),
 			LeadingBOS:      leadingBOS,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
@@ -2288,15 +2288,18 @@ func toolCallId() string {
 	return "call_" + strings.ToLower(string(b))
 }
 
-func preservedTokensForCompletion(builtinParser parsers.Parser, toolParser *tools.Parser) []string {
-	var preservedTokens []string
+func preservedTokensForCompletion(builtinParser parsers.Parser) []string {
 	if builtinParser != nil {
-		preservedTokens = append(preservedTokens, builtinParser.PreservedTokens()...)
+		return builtinParser.PreservedTokens()
 	}
-	if toolParser != nil {
-		preservedTokens = append(preservedTokens, toolParser.PreservedTokens()...)
+	return nil
+}
+
+func toolCallTagForCompletion(toolParser *tools.Parser) string {
+	if toolParser == nil {
+		return ""
 	}
-	return preservedTokens
+	return toolParser.Tag()
 }
 
 func leadingBOSForModel(m *Model) string {
@@ -2329,15 +2332,21 @@ const (
 )
 
 func chatModeForModel(m *Model) chatExecutionMode {
-	if m.IsMLX() || m.Config.Renderer != "" || m.Config.Parser != "" || shouldUseHarmony(m) {
-		return chatExecutionModeRendered
-	}
-
-	if shouldUseLegacyTemplate(m) {
+	if m.IsMLX() || usesOllamaRenderedChat(m) {
 		return chatExecutionModeRendered
 	}
 
 	return chatExecutionModeNative
+}
+
+func llamaServerConfigForModel(m *Model) llm.LlamaServerConfig {
+	return llm.LlamaServerConfig{
+		DisableJinja: usesOllamaRenderedChat(m),
+	}
+}
+
+func usesOllamaRenderedChat(m *Model) bool {
+	return m != nil && (m.Config.Renderer != "" || m.Config.Parser != "" || shouldUseHarmony(m) || shouldUseLegacyTemplate(m))
 }
 
 func shouldUseLegacyTemplate(m *Model) bool {
@@ -2740,7 +2749,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Truncate:        truncate,
 				Logprobs:        req.Logprobs,
 				TopLogprobs:     req.TopLogprobs,
-				PreservedTokens: preservedTokensForCompletion(builtinParser, toolParser),
+				PreservedTokens: preservedTokensForCompletion(builtinParser),
+				ToolCallTag:     toolCallTagForCompletion(toolParser),
 				LeadingBOS:      leadingBOSForModel(m),
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{

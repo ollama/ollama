@@ -35,6 +35,25 @@ function findVisualStudioInstall {
     return $null
 }
 
+function findDumpbin {
+    $dumpbin = Get-Command -Name "dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($dumpbin) {
+        return $dumpbin.Path
+    }
+
+    $vsInstall = findVisualStudioInstall
+    if ($vsInstall) {
+        $candidate = Get-ChildItem -Path (Join-Path $vsInstall "VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe") -ErrorAction SilentlyContinue |
+            Sort-Object -Property FullName -Descending |
+            Select-Object -First 1
+        if ($candidate) {
+            return $candidate.FullName
+        }
+    }
+
+    return $null
+}
+
 function ensureMsvcForNinja {
     if ($env:CMAKE_GENERATOR -notlike "Ninja*") {
         return
@@ -356,14 +375,7 @@ function rocm7 {
             $env:CMAKE_PREFIX_PATH="${script:HIP_PATH_V7}"
             $env:CC="${script:HIP_PATH_V7}\bin\clang.exe"
             $env:CXX="${script:HIP_PATH_V7}\bin\clang++.exe"
-            # GGML_OPENMP=OFF: ROCm clang on Windows supports OpenMP syntax but
-            # doesn't ship the runtime library (libomp), causing link failures.
-            & cmake -S llama\server --preset rocm -G Ninja `
-                -DGGML_OPENMP=OFF `
-                -DCMAKE_HIP_FLAGS="-parallel-jobs=4" `
-                -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
-                -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
-                -DAMDGPU_TARGETS="gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-" `
+            & cmake -S llama\server --preset rocm-windows -G Ninja `
                 --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             $env:HIPCXX=$oldHIPCXX
@@ -667,6 +679,98 @@ function newZipJob($sourceDir, $destZip) {
     } -ArgumentList $sourceDir, $destZip, $use7z
 }
 
+function newDependencyAuditJob($payloadDir, $label, $reportPath, $dependencyDirs = @()) {
+    $dumpbin = findDumpbin
+    if (-not $dumpbin) {
+        throw "Unable to locate dumpbin.exe for dependency audit"
+    }
+
+    $dependencyDirText = [string]::Join([IO.Path]::PathSeparator, @($dependencyDirs))
+    Start-Job -ScriptBlock {
+        param($root, $name, $report, $dumpbinPath, $dependencyRootText)
+
+        $ErrorActionPreference = "Stop"
+
+        $systemDlls = @(
+            "advapi32.dll", "bcrypt.dll", "cfgmgr32.dll", "combase.dll",
+            "comctl32.dll", "comdlg32.dll", "crypt32.dll", "d3d12.dll",
+            "dbghelp.dll", "dxcore.dll", "dxgi.dll", "gdi32.dll",
+            "gdi32full.dll", "imm32.dll", "iphlpapi.dll", "kernel32.dll",
+            "mpr.dll", "msasn1.dll", "msvcrt.dll", "ncrypt.dll",
+            "normaliz.dll", "ntdll.dll", "ole32.dll", "oleaut32.dll",
+            "powrprof.dll", "propsys.dll", "rpcrt4.dll", "sechost.dll",
+            "secur32.dll", "setupapi.dll", "shell32.dll", "shlwapi.dll",
+            "ucrtbase.dll", "user32.dll", "userenv.dll", "version.dll",
+            "winhttp.dll", "winmm.dll", "ws2_32.dll"
+        )
+        $driverDlls = @(
+            "nvcuda.dll", "nvml.dll", "vulkan-1.dll"
+        )
+
+        $dependencyRoots = @()
+        if ($dependencyRootText) {
+            $dependencyRoots = $dependencyRootText -split [regex]::Escape([IO.Path]::PathSeparator)
+        }
+
+        $availableRoots = @($root) + $dependencyRoots | Where-Object { $_ -and (Test-Path -Path $_) } | Select-Object -Unique
+        $binaries = Get-ChildItem -Path $root -Recurse -File -Include *.dll,*.exe | Sort-Object FullName
+        $available = @{}
+        foreach ($availableRoot in $availableRoots) {
+            foreach ($binary in (Get-ChildItem -Path $availableRoot -Recurse -File -Include *.dll,*.exe)) {
+                $available[$binary.Name.ToLowerInvariant()] = $true
+            }
+        }
+
+        $reportLines = [System.Collections.Generic.List[string]]::new()
+        $reportLines.Add("Dependency roots:")
+        foreach ($availableRoot in $availableRoots) {
+            $reportLines.Add("  $availableRoot")
+        }
+        $reportLines.Add("")
+        $missing = [System.Collections.Generic.List[string]]::new()
+
+        foreach ($binary in $binaries) {
+            $reportLines.Add("[$($binary.FullName)]")
+            $output = & $dumpbinPath /nologo /dependents $binary.FullName 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "dumpbin failed for $($binary.FullName) with exit code $LASTEXITCODE"
+            }
+
+            foreach ($line in $output) {
+                if ($line -match '^\s+([A-Za-z0-9._-]+\.dll)\s*$') {
+                    $dep = $matches[1]
+                    $depLower = $dep.ToLowerInvariant()
+                    $reportLines.Add("  $dep")
+                    if ($available.ContainsKey($depLower)) {
+                        continue
+                    }
+                    if ($systemDlls -contains $depLower) {
+                        continue
+                    }
+                    if ($driverDlls -contains $depLower) {
+                        continue
+                    }
+                    if ($depLower -like 'api-ms-win-*.dll' -or $depLower -like 'ext-ms-*.dll') {
+                        continue
+                    }
+                    $missing.Add("$($binary.FullName) -> $dep")
+                }
+            }
+        }
+
+        $reportDir = Split-Path -Parent $report
+        if ($reportDir) {
+            New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
+        }
+        Set-Content -Path $report -Value $reportLines
+
+        if ($missing.Count -gt 0) {
+            $summary = [System.String]::Join([Environment]::NewLine, $missing)
+            throw "Dependency audit failed for $name`n$summary"
+        }
+    } -ArgumentList $payloadDir, $label, $reportPath, $dumpbin, $dependencyDirText
+}
+
 function stageComponents($mainDir, $stagingDir, $pattern, $readmePrefix) {
     $components = Get-ChildItem -Path "${mainDir}\lib\ollama" -Directory -Filter $pattern -ErrorAction SilentlyContinue
     if ($components) {
@@ -705,17 +809,20 @@ function zip {
             if (stageComponents $amd64Dir "${distDir}\windows-amd64-rocm" "rocm*" "ROCm") {
                 Write-Output "Generating ${distDir}\ollama-windows-amd64-rocm.zip"
                 $jobs += newZipJob "${distDir}\windows-amd64-rocm" "${distDir}\ollama-windows-amd64-rocm.zip"
+                $jobs += newDependencyAuditJob "${distDir}\windows-amd64-rocm" "windows-amd64-rocm" "${distDir}\dependency-audit-windows-amd64-rocm.txt" $amd64Dir
             }
 
             # Stage MLX into its own directory for independent compression
             if (stageComponents $amd64Dir "${distDir}\windows-amd64-mlx" "mlx_*" "MLX") {
                 Write-Output "Generating ${distDir}\ollama-windows-amd64-mlx.zip"
                 $jobs += newZipJob "${distDir}\windows-amd64-mlx" "${distDir}\ollama-windows-amd64-mlx.zip"
+                $jobs += newDependencyAuditJob "${distDir}\windows-amd64-mlx" "windows-amd64-mlx" "${distDir}\dependency-audit-windows-amd64-mlx.txt" $amd64Dir
             }
 
             # Compress the main amd64 zip (without rocm/mlx)
             Write-Output "Generating ${distDir}\ollama-windows-amd64.zip"
             $jobs += newZipJob $amd64Dir "${distDir}\ollama-windows-amd64.zip"
+            $jobs += newDependencyAuditJob $amd64Dir "windows-amd64" "${distDir}\dependency-audit-windows-amd64.txt"
         }
 
         $arm64Dir = "${distDir}\windows-arm64"
@@ -723,6 +830,7 @@ function zip {
             if ((Test-Path -Path "${arm64Dir}\ollama.exe") -and (Test-Path -Path "${arm64Dir}\lib\ollama\llama-server.exe")) {
                 Write-Output "Generating ${distDir}\ollama-windows-arm64.zip"
                 $jobs += newZipJob $arm64Dir "${distDir}\ollama-windows-arm64.zip"
+                $jobs += newDependencyAuditJob $arm64Dir "windows-arm64" "${distDir}\dependency-audit-windows-arm64.txt"
             } else {
                 Write-Output "Skipping ${distDir}\ollama-windows-arm64.zip; missing ARM64 ollama.exe or llama-server.exe"
             }

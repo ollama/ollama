@@ -27,7 +27,7 @@ endif()
 
 include(FetchContent)
 
-# Read pinned upstream commit from version file (shared with Dockerfile)
+# Read pinned llama.cpp commit from version file (shared with Dockerfile)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../LLAMA_CPP_VERSION" LLAMA_CPP_GIT_TAG)
 string(STRIP "${LLAMA_CPP_GIT_TAG}" LLAMA_CPP_GIT_TAG)
 
@@ -38,9 +38,8 @@ if(DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
     message(STATUS "Using local llama.cpp source: ${_src}")
 endif()
 
-# Ollama-compat shim: overlays the fetched llama.cpp source with a tiny
-# in-memory translation layer that lets upstream llama-server load GGUFs
-# produced by older Ollama versions (e.g. existing ~/.ollama/models/blobs).
+# Ollama-compat shim: overlays the fetched llama.cpp source with a small
+# in-memory translation layer for existing published model blobs.
 # See llama/compat/README.md for details.
 #
 # The patch only runs when fetching from GitHub — if a local source override
@@ -71,7 +70,7 @@ if(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
     endif()
 endif()
 
-# Configure upstream build options BEFORE FetchContent_MakeAvailable.
+# Configure llama.cpp build options BEFORE FetchContent_MakeAvailable.
 # When included via FetchContent, llama.cpp sets LLAMA_STANDALONE=OFF
 # so all optional builds default to OFF. We explicitly enable what we need.
 set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
@@ -94,7 +93,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(llama_cpp)
 
 # Link the Ollama-compat source files into the fetched llama target.
-# Kept separate from the upstream-edits patch so our .cpp/.h stay
+# Kept separate from the hook patch so our .cpp/.h stay
 # on-disk in llama/compat/ rather than being copied into _deps/.
 if(DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     file(GLOB _compat_sources CONFIGURE_DEPENDS
@@ -113,7 +112,7 @@ if(DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
 endif()
 
 # Find GPU toolkits for runtime dependency bundling.
-# The upstream llama.cpp build finds these internally, but we need the
+# The llama.cpp build finds these internally, but we need the
 # variables (CUDAToolkit_LIBRARY_DIR, etc.) in our install scope.
 if(GGML_CUDA)
     find_package(CUDAToolkit)
@@ -205,15 +204,22 @@ function(ollama_install_windows_runtime_dlls dest)
 endfunction()
 
 if(OLLAMA_RUNNER_DIR)
-    # GPU backend build — install the GPU backend .so/.dll module.
-    # install(CODE) runs at install time to handle both single-config and
-    # multi-config generator layouts.
+    # GPU backend build: install the GPU backend .so/.dll module.
+    # install(CODE) runs at install time so CMAKE_INSTALL_CONFIG_NAME is
+    # available for multi-config generators.
     install(CODE "
-        file(GLOB _gpu_backends
-            \"${CMAKE_BINARY_DIR}/bin/libggml-${OLLAMA_GPU_BACKEND}*\"
-            \"${CMAKE_BINARY_DIR}/bin/Release/ggml-${OLLAMA_GPU_BACKEND}*.dll\"
-            \"${CMAKE_BINARY_DIR}/bin/ggml-${OLLAMA_GPU_BACKEND}*.dll\"
-        )
+        set(_backend_dirs \"${CMAKE_BINARY_DIR}/bin\")
+        if(DEFINED CMAKE_INSTALL_CONFIG_NAME AND NOT CMAKE_INSTALL_CONFIG_NAME STREQUAL \"\")
+            list(PREPEND _backend_dirs \"${CMAKE_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}\")
+        endif()
+        foreach(_dir IN LISTS _backend_dirs)
+            file(GLOB _dir_gpu_backends
+                LIST_DIRECTORIES false
+                \"\${_dir}/libggml-${OLLAMA_GPU_BACKEND}*\"
+                \"\${_dir}/ggml-${OLLAMA_GPU_BACKEND}*.dll\"
+            )
+            list(APPEND _gpu_backends \${_dir_gpu_backends})
+        endforeach()
         foreach(_f \${_gpu_backends})
             file(INSTALL \${_f} DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${_base_dest}/${OLLAMA_RUNNER_DIR}\")
         endforeach()
@@ -291,18 +297,23 @@ else()
     ollama_install_windows_runtime_dlls("${_base_dest}")
 
     # CPU backend modules (multiple variants from GGML_CPU_ALL_VARIANTS).
-    # install(CODE) runs at install time (not configure time) so the glob
-    # finds the built files. Handles both single-config (bin/) and
-    # multi-config (bin/Release/) generator layouts.
+    # install(CODE) runs at install time so CMAKE_INSTALL_CONFIG_NAME is
+    # available for multi-config generators.
     install(CODE "
-        file(GLOB _cpu_backends
-            \"${CMAKE_BINARY_DIR}/bin/libggml-cpu*\"
-            \"${CMAKE_BINARY_DIR}/bin/libggml-blas*\"
-            \"${CMAKE_BINARY_DIR}/bin/Release/ggml-cpu*.dll\"
-            \"${CMAKE_BINARY_DIR}/bin/Release/ggml-blas*.dll\"
-            \"${CMAKE_BINARY_DIR}/bin/ggml-cpu*.dll\"
-            \"${CMAKE_BINARY_DIR}/bin/ggml-blas*.dll\"
-        )
+        set(_backend_dirs \"${CMAKE_BINARY_DIR}/bin\")
+        if(DEFINED CMAKE_INSTALL_CONFIG_NAME AND NOT CMAKE_INSTALL_CONFIG_NAME STREQUAL \"\")
+            list(PREPEND _backend_dirs \"${CMAKE_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}\")
+        endif()
+        foreach(_dir IN LISTS _backend_dirs)
+            file(GLOB _dir_cpu_backends
+                LIST_DIRECTORIES false
+                \"\${_dir}/libggml-cpu*\"
+                \"\${_dir}/libggml-blas*\"
+                \"\${_dir}/ggml-cpu*.dll\"
+                \"\${_dir}/ggml-blas*.dll\"
+            )
+            list(APPEND _cpu_backends \${_dir_cpu_backends})
+        endforeach()
         foreach(_f \${_cpu_backends})
             file(INSTALL \${_f} DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${_base_dest}\")
         endforeach()

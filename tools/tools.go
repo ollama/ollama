@@ -30,30 +30,10 @@ func (p *Parser) GetBuffer() []byte {
 	return p.buffer
 }
 
-// Tag returns the tool-call tag string the parser is looking for in the
-// output stream. Callers can pass this to llama-server's preserved_tokens
-// field so the tag is rendered as text instead of being stripped during
-// detokenization.
+// Tag returns the tool-call tag string the parser looks for in the output
+// stream.
 func (p *Parser) Tag() string {
 	return p.tag
-}
-
-// PreservedTokens returns the token strings that should be preserved during
-// llama-server detokenization so the parser can still observe its opening tag.
-// Some templates glue a special token directly to plain JSON punctuation, e.g.
-// "[TOOL_CALLS][", where only the leading special token can be stripped by the
-// detokenizer. In those cases we preserve just the leading special token while
-// still parsing against the full tag.
-func (p *Parser) PreservedTokens() []string {
-	if p.tag == "" || p.tag == "{" || p.tag == "[" {
-		return nil
-	}
-
-	if token := leadingSpecialToken(p.tag); token != "" {
-		return []string{token}
-	}
-
-	return []string{p.tag}
 }
 
 // NewParser creates a new tool call parser from a model's chat
@@ -405,27 +385,4 @@ func (p *Parser) Content() string {
 	}
 
 	return ""
-}
-
-func leadingSpecialToken(tag string) string {
-	if len(tag) == 0 {
-		return ""
-	}
-
-	var close byte
-	switch tag[0] {
-	case '[':
-		close = ']'
-	case '<':
-		close = '>'
-	default:
-		return ""
-	}
-
-	end := strings.IndexByte(tag, close)
-	if end <= 0 {
-		return ""
-	}
-
-	return tag[:end+1]
 }

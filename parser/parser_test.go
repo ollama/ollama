@@ -947,6 +947,38 @@ func TestFilesForModel(t *testing.T) {
 			},
 		},
 		{
+			name: "safetensors sentence transformers module weights",
+			setup: func(dir string) error {
+				files := []string{
+					"model.safetensors",
+					"config.json",
+					"modules.json",
+					filepath.Join("2_Dense", "config.json"),
+					filepath.Join("2_Dense", "model.safetensors"),
+					filepath.Join("3_Dense", "config.json"),
+					filepath.Join("3_Dense", "model.safetensors"),
+				}
+				for _, file := range files {
+					if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, file)), 0o755); err != nil {
+						return err
+					}
+					if err := os.WriteFile(filepath.Join(dir, file), []byte("test content"), 0o644); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			wantFiles: []string{
+				"model.safetensors",
+				"config.json",
+				"modules.json",
+				filepath.Join("2_Dense", "config.json"),
+				filepath.Join("2_Dense", "model.safetensors"),
+				filepath.Join("3_Dense", "config.json"),
+				filepath.Join("3_Dense", "model.safetensors"),
+			},
+		},
+		{
 			name: "safetensors with consolidated files - prefers model files",
 			setup: func(dir string) error {
 				files := []string{

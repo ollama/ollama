@@ -2,12 +2,12 @@
 
 // Ollama-format GGUF compatibility shim.
 //
-// Older Ollama builds ship GGUFs that differ from upstream in a handful of
-// ways per-architecture (arch names, KV keys, tensor names, file layout).
-// This shim detects those files during load and translates them in-memory
-// so the rest of llama.cpp can load them unmodified.
+// Existing published GGUFs can differ from what llama.cpp expects in a
+// handful of per-architecture details: arch names, KV keys, tensor names, or
+// file layout. This shim detects those files during load and translates them
+// in memory so the rest of llama.cpp can load them unchanged.
 //
-// Three upstream hook points call into this namespace — one per insertion:
+// Two llama.cpp loader paths call into this namespace:
 //
 //   1. llama-model-loader.cpp (main model load):
 //        translate_metadata()        — mutate KVs / tensor metadata
@@ -41,7 +41,7 @@ namespace llama_ollama_compat {
 // Returns true if the caller must disable mmap for this loader. Some
 // handlers transform tensor data via load_op (e.g. glm-ocr's gate+up
 // FFN concat), which is incompatible with the default mmap path:
-// the upstream loader binds tensors directly to the mmap'd file region,
+// the llama.cpp loader binds tensors directly to the mmap'd file region,
 // so there's nowhere to write the transformed bytes. Disabling mmap
 // makes the loader pre-allocate real backend buffers, after which our
 // load_op overrides land in writable memory.
@@ -58,7 +58,7 @@ bool should_skip_tensor(const llama_model_loader * ml, const char * tensor_name)
 
 // Called from clip_model_loader's constructor. Rewrites the clip-facing
 // view of the metadata (arch=clip, clip.vision.* KVs, renamed tensors)
-// so the rest of clip.cpp can load an Ollama monolithic GGUF unchanged.
+// so the rest of clip.cpp can load a monolithic GGUF unchanged.
 void translate_clip_metadata(gguf_context * meta, ggml_context * ctx);
 
 // Called from clip.cpp's tensor-loading loop, before the normal file read.
@@ -74,7 +74,7 @@ bool maybe_load_tensor(ggml_tensor * cur,
 // Text-side counterpart to maybe_load_tensor. Self-contained: looks up
 // the model file path from the per-loader registry populated by
 // translate_metadata, and derives the buffer type from cur->buffer
-// internally — keeps the call site (and the upstream patch) to one line.
+// internally, which keeps the call site in the patch to one line.
 bool maybe_load_text_tensor(const llama_model_loader * ml,
                             ggml_tensor * cur,
                             size_t file_offset);

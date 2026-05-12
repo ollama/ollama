@@ -1,15 +1,21 @@
 package convert
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"math"
 	"slices"
 	"strings"
 
+	"github.com/d4l3k/go-bfloat16"
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
+	"github.com/x448/float16"
 
 	"github.com/ollama/ollama/fs/ggml"
 )
@@ -66,8 +72,11 @@ type qwen3NextTextConfig struct {
 type qwen3NextVisionConfig struct {
 	Depth                  uint32  `json:"depth"`
 	HiddenSize             uint32  `json:"hidden_size"`
+	IntermediateSize       uint32  `json:"intermediate_size"`
 	NumHeads               uint32  `json:"num_heads"`
+	NumPositionEmbeddings  uint32  `json:"num_position_embeddings"`
 	InChannels             uint32  `json:"in_channels"`
+	OutHiddenSize          uint32  `json:"out_hidden_size"`
 	PatchSize              uint32  `json:"patch_size"`
 	SpatialMergeSize       uint32  `json:"spatial_merge_size"`
 	RMSNormEps             float32 `json:"layer_norm_epsilon"`
@@ -97,6 +106,7 @@ type qwen3NextModel struct {
 }
 
 var _ ModelConverter = (*qwen3NextModel)(nil)
+var _ MultimodalConverter = (*qwen3NextModel)(nil)
 
 func (q *qwen3NextModel) parseMore(fsys fs.FS) error {
 	if q.TextConfig != nil {
@@ -282,7 +292,11 @@ func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 	if sections := q.ropeSections(); len(sections) > 0 {
 		kv["mrope_sections"] = sections
 		kv["rope.mrope_section"] = sections
-		kv["rope.dimension_sections"] = sections
+		dimensionSections := append([]int32(nil), sections...)
+		if len(dimensionSections) == 3 {
+			dimensionSections = append(dimensionSections, 0)
+		}
+		kv["rope.dimension_sections"] = dimensionSections
 	}
 	if q.RopeParameters.MRopeInterleaved {
 		kv["rope.mrope_interleaved"] = true
@@ -321,12 +335,21 @@ func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 	}
 
 	if headCounts, err := q.kvHeadCounts(); err == nil {
-		kv["attention.head_count_kv"] = headCounts
+		var maxKV uint32
+		for _, count := range headCounts {
+			if count > maxKV {
+				maxKV = count
+			}
+		}
+		kv["attention.head_count_kv"] = maxKV
 	}
 
 	if q.VisionModel.Depth > 0 {
 		kv["vision.block_count"] = q.VisionModel.Depth
 		kv["vision.embedding_length"] = q.VisionModel.HiddenSize
+		if q.VisionModel.IntermediateSize > 0 {
+			kv["vision.feed_forward_length"] = q.VisionModel.IntermediateSize
+		}
 		kv["vision.attention.head_count"] = q.VisionModel.NumHeads
 		kv["vision.num_channels"] = q.VisionModel.InChannels
 		if q.VisionModel.PatchSize > 0 {
@@ -370,6 +393,378 @@ func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 	}
 
 	return kv
+}
+
+func (q *qwen3NextModel) TextKV(t *Tokenizer) KV {
+	kv := q.KV(t)
+
+	for _, key := range []string{
+		"vision.block_count",
+		"vision.embedding_length",
+		"vision.feed_forward_length",
+		"vision.attention.head_count",
+		"vision.num_channels",
+		"vision.patch_size",
+		"vision.spatial_merge_size",
+		"vision.attention.layer_norm_epsilon",
+		"vision.rope.freq_base",
+		"vision.temporal_patch_size",
+		"vision.deepstack_visual_indexes",
+		"vision.shortest_edge",
+		"vision.longest_edge",
+		"vision.image_mean",
+		"vision.image_std",
+		"image_token_id",
+		"vision_start_token_id",
+		"vision_end_token_id",
+		"mrope_sections",
+		"rope.mrope_section",
+		"rope.mrope_interleaved",
+		"ssm.v_head_reordered",
+	} {
+		delete(kv, key)
+	}
+
+	return kv
+}
+
+func (q *qwen3NextModel) ProjectorKV(*Tokenizer) KV {
+	depth := q.VisionModel.Depth
+	deepstack := make([]bool, depth)
+	for _, idx := range q.VisionModel.DeepstackVisualIndexes {
+		if idx >= 0 && uint32(idx) < depth {
+			deepstack[idx] = true
+		}
+	}
+
+	imageSize := uint32(768)
+	if q.VisionModel.NumPositionEmbeddings > 0 && q.VisionModel.PatchSize > 0 {
+		root := uint32(math.Sqrt(float64(q.VisionModel.NumPositionEmbeddings)))
+		if root*root == q.VisionModel.NumPositionEmbeddings {
+			imageSize = root * q.VisionModel.PatchSize
+		}
+	}
+
+	projectionDim := q.VisionModel.OutHiddenSize
+	if projectionDim == 0 {
+		projectionDim = q.HiddenSize
+	}
+	layerNormEps := q.VisionModel.RMSNormEps
+	if layerNormEps == 0 {
+		layerNormEps = 1e-6
+	}
+
+	kv := KV{
+		"general.architecture":                     "clip",
+		"general.type":                             "mmproj",
+		"general.file_type":                        uint32(1),
+		"general.quantization_version":             uint32(2),
+		"clip.has_vision_encoder":                  true,
+		"clip.projector_type":                      "qwen3vl_merger",
+		"clip.use_gelu":                            true,
+		"clip.vision.block_count":                  depth,
+		"clip.vision.embedding_length":             q.VisionModel.HiddenSize,
+		"clip.vision.feed_forward_length":          q.VisionModel.IntermediateSize,
+		"clip.vision.attention.head_count":         q.VisionModel.NumHeads,
+		"clip.vision.image_size":                   imageSize,
+		"clip.vision.patch_size":                   q.VisionModel.PatchSize,
+		"clip.vision.projection_dim":               projectionDim,
+		"clip.vision.spatial_merge_size":           q.VisionModel.SpatialMergeSize,
+		"clip.vision.attention.layer_norm_epsilon": layerNormEps,
+		"clip.vision.is_deepstack_layers":          deepstack,
+	}
+	if len(q.VisionModel.ImageMean) > 0 {
+		kv["clip.vision.image_mean"] = q.VisionModel.ImageMean
+	}
+	if len(q.VisionModel.ImageStd) > 0 {
+		kv["clip.vision.image_std"] = q.VisionModel.ImageStd
+	}
+
+	return kv
+}
+
+func (q *qwen3NextModel) TextTensors(ts []Tensor, _ *Tokenizer) []*ggml.Tensor {
+	var text []Tensor
+	for _, t := range ts {
+		if qwen3NextVisionTensor(t.Name()) || strings.HasPrefix(t.Name(), "mtp.") {
+			continue
+		}
+		text = append(text, t)
+	}
+
+	return q.Tensors(text)
+}
+
+func (q *qwen3NextModel) ProjectorTensors(ts []Tensor) []*ggml.Tensor {
+	if q.VisionModel.Depth == 0 {
+		return nil
+	}
+
+	rename := strings.NewReplacer(
+		"v.pos_embed", "v.position_embd",
+		"v.patch_embed", "v.patch_embd",
+		"v.merger.norm", "v.post_ln",
+		"v.merger.linear_fc1", "mm.0",
+		"v.merger.linear_fc2", "mm.2",
+		".mlp.linear_fc1", ".ffn_up",
+		".mlp.linear_fc2", ".ffn_down",
+		".norm1", ".ln1",
+		".norm2", ".ln2",
+	)
+
+	var out []*ggml.Tensor
+	for _, t := range ts {
+		name := t.Name()
+		if !qwen3NextVisionTensor(name) {
+			continue
+		}
+
+		if name == "v.patch_embed.weight" {
+			out = append(out, q.qwen35PatchEmbedTensors(t)...)
+			continue
+		}
+
+		outName := rename.Replace(name)
+		kind := t.Kind()
+		writer := io.WriterTo(t)
+		if outName == "v.position_embd.weight" {
+			kind = tensorKindFP32
+			writer = tensorFloat32Writer{tensor: t}
+		} else if sourceDType(t) == "BF16" && kind == tensorKindFP16 {
+			kind = tensorKindBF16
+			writer = tensorBF16Writer{tensor: t}
+		}
+		out = append(out, &ggml.Tensor{
+			Name:     outName,
+			Kind:     kind,
+			Shape:    slices.Clone(t.Shape()),
+			WriterTo: writer,
+		})
+	}
+
+	return out
+}
+
+func qwen3NextVisionTensor(name string) bool {
+	return strings.HasPrefix(name, "v.")
+}
+
+func (q *qwen3NextModel) qwen35PatchEmbedTensors(t Tensor) []*ggml.Tensor {
+	shape := t.Shape()
+	if len(shape) != 5 || shape[2] != 2 {
+		return nil
+	}
+
+	outShape := []uint64{shape[0], shape[1], shape[3], shape[4]}
+	return []*ggml.Tensor{
+		{
+			Name:     "v.patch_embd.weight",
+			Kind:     tensorKindFP32,
+			Shape:    slices.Clone(outShape),
+			WriterTo: tensorFloat32Writer{tensor: t, repacker: q.qwen35PatchEmbedSlice(0)},
+		},
+		{
+			Name:     "v.patch_embd.weight.1",
+			Kind:     tensorKindFP32,
+			Shape:    slices.Clone(outShape),
+			WriterTo: tensorFloat32Writer{tensor: t, repacker: q.qwen35PatchEmbedSlice(1)},
+		},
+	}
+}
+
+func (q *qwen3NextModel) qwen35PatchEmbedSlice(slice int) Repacker {
+	return func(_ string, data []float32, shape []uint64) ([]float32, error) {
+		if len(shape) != 5 || shape[2] != 2 {
+			return nil, fmt.Errorf("qwen3next: unexpected patch_embed shape %v", shape)
+		}
+
+		outChannels := int(shape[0])
+		inChannels := int(shape[1])
+		frames := int(shape[2])
+		height := int(shape[3])
+		width := int(shape[4])
+		if slice < 0 || slice >= frames {
+			return nil, fmt.Errorf("qwen3next: patch_embed slice %d out of range", slice)
+		}
+
+		expected := outChannels * inChannels * frames * height * width
+		if len(data) != expected {
+			return nil, fmt.Errorf("qwen3next: patch_embed data size %d, expected %d", len(data), expected)
+		}
+
+		out := make([]float32, outChannels*inChannels*height*width)
+		for oc := range outChannels {
+			for ic := range inChannels {
+				for y := range height {
+					for x := range width {
+						src := ((((oc*inChannels+ic)*frames+slice)*height + y) * width) + x
+						dst := (((oc*inChannels+ic)*height + y) * width) + x
+						out[dst] = data[src]
+					}
+				}
+			}
+		}
+
+		return out, nil
+	}
+}
+
+type tensorBF16Writer struct {
+	tensor   Tensor
+	repacker Repacker
+}
+
+func (w tensorBF16Writer) WriteTo(dst io.Writer) (int64, error) {
+	data, err := tensorFloat32Data(w.tensor)
+	if err != nil {
+		return 0, err
+	}
+	if w.repacker != nil {
+		data, err = w.repacker(w.tensor.Name(), data, w.tensor.Shape())
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	u8s := bfloat16.EncodeFloat32(data)
+	if _, err := dst.Write(u8s); err != nil {
+		return 0, err
+	}
+	return int64(len(u8s)), nil
+}
+
+type tensorFloat32Writer struct {
+	tensor   Tensor
+	repacker Repacker
+}
+
+func (w tensorFloat32Writer) WriteTo(dst io.Writer) (int64, error) {
+	data, err := tensorFloat32Data(w.tensor)
+	if err != nil {
+		return 0, err
+	}
+	if w.repacker != nil {
+		data, err = w.repacker(w.tensor.Name(), data, w.tensor.Shape())
+		if err != nil {
+			return 0, err
+		}
+	}
+	if err := binary.Write(dst, binary.LittleEndian, data); err != nil {
+		return 0, err
+	}
+	return int64(len(data) * 4), nil
+}
+
+func tensorFloat32Data(t Tensor) ([]float32, error) {
+	if st, ok := tensorSafetensor(t); ok {
+		return safetensorFloat32Data(st)
+	}
+
+	var buf bytes.Buffer
+	if _, err := t.WriteTo(&buf); err != nil {
+		return nil, err
+	}
+
+	switch t.Kind() {
+	case tensorKindFP32:
+		out := make([]float32, buf.Len()/4)
+		if err := binary.Read(bytes.NewReader(buf.Bytes()), binary.LittleEndian, out); err != nil {
+			return nil, err
+		}
+		return out, nil
+	case tensorKindFP16:
+		raw := make([]uint16, buf.Len()/2)
+		if err := binary.Read(bytes.NewReader(buf.Bytes()), binary.LittleEndian, raw); err != nil {
+			return nil, err
+		}
+		out := make([]float32, len(raw))
+		for i, v := range raw {
+			out[i] = float16.Frombits(v).Float32()
+		}
+		return out, nil
+	case tensorKindBF16:
+		return bfloat16.DecodeFloat32(buf.Bytes()), nil
+	default:
+		return nil, fmt.Errorf("unsupported tensor kind %d for F32 writer", t.Kind())
+	}
+}
+
+func tensorSafetensor(t Tensor) (safetensor, bool) {
+	switch t := t.(type) {
+	case safetensor:
+		return t, true
+	case *safetensor:
+		return *t, true
+	default:
+		return safetensor{}, false
+	}
+}
+
+func safetensorFloat32Data(st safetensor) ([]float32, error) {
+	f, err := st.fs.Open(st.path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var r io.Reader
+	if readerAt, ok := f.(io.ReaderAt); ok {
+		r = io.NewSectionReader(readerAt, st.offset, st.size)
+	} else if seeker, ok := f.(io.Seeker); ok {
+		if _, err := seeker.Seek(st.offset, io.SeekStart); err != nil {
+			return nil, err
+		}
+		r = f
+	} else {
+		if _, err := io.CopyN(io.Discard, f, st.offset); err != nil {
+			return nil, err
+		}
+		r = f
+	}
+
+	br := bufio.NewReaderSize(r, min(32<<10, int(st.size)))
+	var out []float32
+	switch st.dtype {
+	case "F32":
+		out = make([]float32, st.size/4)
+		if err := binary.Read(br, binary.LittleEndian, out); err != nil {
+			return nil, err
+		}
+	case "F16":
+		raw := make([]uint16, st.size/2)
+		if err := binary.Read(br, binary.LittleEndian, raw); err != nil {
+			return nil, err
+		}
+		out = make([]float32, len(raw))
+		for i, v := range raw {
+			out[i] = float16.Frombits(v).Float32()
+		}
+	case "BF16":
+		raw := make([]uint8, st.size)
+		if err := binary.Read(br, binary.LittleEndian, raw); err != nil {
+			return nil, err
+		}
+		out = bfloat16.DecodeFloat32(raw)
+	case "F8_E4M3":
+		raw := make([]uint8, st.size)
+		if err := binary.Read(br, binary.LittleEndian, raw); err != nil {
+			return nil, err
+		}
+		out, err = st.decodeFP8E4M3(raw)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unsupported safetensor dtype %q", st.dtype)
+	}
+
+	if st.repacker != nil {
+		out, err = st.repacker(st.Name(), out, st.Shape())
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
@@ -464,7 +859,7 @@ func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
 			}
 			out = append(out, &ggml.Tensor{Name: name, Kind: t.Kind(), Shape: slices.Clone(shape), WriterTo: t})
 
-		case strings.HasSuffix(name, ".ssm_dt"):
+		case strings.HasSuffix(name, ".ssm_dt"), strings.HasSuffix(name, ".ssm_dt.bias"):
 			if q.shouldReorderVHeads() {
 				t.SetRepacker(q.repackReorderDim(0, 1))
 			}
@@ -925,7 +1320,7 @@ func (q *qwen3NextModel) Replacements() []string {
 		"linear_attn.in_proj_b", "ssm_beta",
 
 		"linear_attn.conv1d", "ssm_conv1d",
-		"linear_attn.dt_bias", "ssm_dt",
+		"linear_attn.dt_bias", "ssm_dt.bias",
 		"linear_attn.dt_proj", "ssm_dt",
 		"linear_attn.A_log", "ssm_a",
 		"linear_attn.norm", "ssm_norm",

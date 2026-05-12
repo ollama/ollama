@@ -122,7 +122,7 @@ func TestRoutes(t *testing.T) {
 
 		modelName := model.ParseName(name)
 
-		baseLayers, err := ggufLayers(digest, fn)
+		baseLayers, err := ggufLayers(digest, "test.gguf", fn)
 		if err != nil {
 			t.Fatalf("failed to create model: %v", err)
 		}
