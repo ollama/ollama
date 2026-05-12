@@ -39,6 +39,26 @@ func Register(name string, constructor ParserConstructor) {
 	registry.Register(name, constructor)
 }
 
+func ParserNameForArchitecture(arch string) string {
+	switch strings.TrimSpace(arch) {
+	case "gemma4":
+		return "gemma4"
+	case "laguna":
+		return "laguna"
+	case "nemotron_h", "nemotron_h_moe", "nemotron_h_omni":
+		return "nemotron-3-nano"
+	default:
+		return ""
+	}
+}
+
+func ParserForArchitecture(arch string) Parser {
+	if name := ParserNameForArchitecture(arch); name != "" {
+		return ParserForName(name)
+	}
+	return nil
+}
+
 func ParserForName(name string) Parser {
 	if parser, ok := registry.constructors[name]; ok {
 		return parser()

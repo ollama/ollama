@@ -789,6 +789,82 @@ func TestShow(t *testing.T) {
 	}
 }
 
+func TestNormalizeShowCapabilitiesThinkingControls(t *testing.T) {
+	tests := []struct {
+		name string
+		resp api.ShowResponse
+		want []model.Capability
+	}{
+		{
+			name: "known qwen3.5 cloud family gets toggle",
+			resp: api.ShowResponse{
+				Details:      api.ModelDetails{Family: "qwen3.5"},
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityThinkingToggle},
+		},
+		{
+			name: "known gemma4 parent model gets toggle",
+			resp: api.ShowResponse{
+				Details:      api.ModelDetails{ParentModel: "gemma4:31b"},
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityThinkingToggle},
+		},
+		{
+			name: "known nemotron architecture gets toggle",
+			resp: api.ShowResponse{
+				Details:      api.ModelDetails{Family: "nemotron_h_moe"},
+				ModelInfo:    map[string]any{"general.architecture": "nemotron_h_moe"},
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityTools},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityTools, model.CapabilityThinkingToggle},
+		},
+		{
+			name: "gpt oss gets toggle and levels",
+			resp: api.ShowResponse{
+				Details:      api.ModelDetails{Family: "gptoss"},
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityThinkingToggle, model.CapabilityThinkingLevels},
+		},
+		{
+			name: "known non-toggle parser stays thinking only",
+			resp: api.ShowResponse{
+				Details:      api.ModelDetails{Family: "qwen3-vl-thinking"},
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+		},
+		{
+			name: "unknown cloud thinking architecture stays unchanged",
+			resp: api.ShowResponse{
+				Details:      api.ModelDetails{Family: "kimi-k2"},
+				ModelInfo:    map[string]any{"general.architecture": "kimi-k2"},
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityTools},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityTools},
+		},
+		{
+			name: "non-thinking model is unchanged",
+			resp: api.ShowResponse{
+				Details:      api.ModelDetails{Family: "gemma4"},
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+			},
+			want: []model.Capability{model.CapabilityCompletion},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			normalizeShowCapabilities(&tt.resp)
+			if !slices.Equal(tt.resp.Capabilities, tt.want) {
+				t.Fatalf("capabilities = %v, want %v", tt.resp.Capabilities, tt.want)
+			}
+		})
+	}
+}
+
 func TestShowCopilotUserAgentOverwritesExistingBasename(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 

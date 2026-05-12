@@ -73,6 +73,44 @@ func TestCanToggleThinking(t *testing.T) {
 	}
 }
 
+func TestParserForArchitecture(t *testing.T) {
+	tests := []struct {
+		arch       string
+		wantParser string
+		wantToggle bool
+	}{
+		{arch: "gemma4", wantParser: "gemma4", wantToggle: true},
+		{arch: "laguna", wantParser: "laguna", wantToggle: true},
+		{arch: "nemotron_h", wantParser: "nemotron-3-nano", wantToggle: true},
+		{arch: "nemotron_h_moe", wantParser: "nemotron-3-nano", wantToggle: true},
+		{arch: "nemotron_h_omni", wantParser: "nemotron-3-nano", wantToggle: true},
+		{arch: "glm5.1"},
+		{arch: "kimi-k2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.arch, func(t *testing.T) {
+			if got := ParserNameForArchitecture(tt.arch); got != tt.wantParser {
+				t.Fatalf("ParserNameForArchitecture() = %q, want %q", got, tt.wantParser)
+			}
+
+			parser := ParserForArchitecture(tt.arch)
+			if tt.wantParser == "" {
+				if parser != nil {
+					t.Fatalf("ParserForArchitecture() = %#v, want nil", parser)
+				}
+				return
+			}
+			if parser == nil {
+				t.Fatalf("ParserForArchitecture() = nil, want parser")
+			}
+			if got := parser.CanToggleThinking(); got != tt.wantToggle {
+				t.Fatalf("CanToggleThinking() = %v, want %v", got, tt.wantToggle)
+			}
+		})
+	}
+}
+
 func TestRegisterCustomParser(t *testing.T) {
 	// Register a custom parser
 	Register("custom-parser", func() Parser {

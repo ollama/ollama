@@ -1154,6 +1154,14 @@ func (s *Server) ShowHandler(c *gin.Context) {
 				ctx = c.Request.Context()
 			}
 			if resp, ok := s.modelCaches.show.GetCloudSWR(ctx, req); ok {
+				normalizeShowCapabilities(resp)
+				c.JSON(http.StatusOK, resp)
+				return
+			}
+			resp, err := s.modelCaches.show.fetchCloudShow(ctx, req.Model, req.Verbose)
+			if err == nil {
+				normalizeShowCapabilities(resp)
+				s.modelCaches.show.setCloud(modelShowCloudKeyForModel(req.Model, req.Verbose), resp)
 				c.JSON(http.StatusOK, resp)
 				return
 			}
@@ -1184,6 +1192,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		}
 		return
 	}
+	normalizeShowCapabilities(resp)
 
 	if modelRef.Source == modelSourceLocal && resp.RemoteHost != "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", modelRef.Original)})
@@ -1202,6 +1211,87 @@ func (s *Server) ShowHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func normalizeShowCapabilities(resp *api.ShowResponse) {
+	if resp == nil || !slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+		return
+	}
+
+	if isGptOSSFamily(resp) {
+		appendCapability(resp, model.CapabilityThinkingToggle)
+		appendCapability(resp, model.CapabilityThinkingLevels)
+		return
+	}
+
+	if slices.Contains(resp.Capabilities, model.CapabilityThinkingToggle) {
+		return
+	}
+
+	for _, parserName := range showCapabilityParserCandidates(resp) {
+		parser := parsers.ParserForName(parserName)
+		if parser == nil {
+			parser = parsers.ParserForArchitecture(parserName)
+		}
+		if parser == nil {
+			continue
+		}
+		if parser.HasThinkingSupport() && parser.CanToggleThinking() {
+			appendCapability(resp, model.CapabilityThinkingToggle)
+			return
+		}
+	}
+}
+
+func appendCapability(resp *api.ShowResponse, cap model.Capability) {
+	if !slices.Contains(resp.Capabilities, cap) {
+		resp.Capabilities = append(resp.Capabilities, cap)
+	}
+}
+
+func isGptOSSFamily(resp *api.ShowResponse) bool {
+	for _, candidate := range showCapabilityParserCandidates(resp) {
+		if candidate == "gptoss" || candidate == "gpt-oss" {
+			return true
+		}
+	}
+	return false
+}
+
+func showCapabilityParserCandidates(resp *api.ShowResponse) []string {
+	rawCandidates := []string{
+		resp.Parser,
+		resp.Details.Family,
+		resp.Details.ParentModel,
+		resp.RemoteModel,
+	}
+	for _, key := range []string{"general.architecture", "general.basename"} {
+		if value, ok := resp.ModelInfo[key].(string); ok {
+			rawCandidates = append(rawCandidates, value)
+		}
+	}
+
+	candidates := make([]string, 0, len(rawCandidates)*2)
+	seen := map[string]struct{}{}
+	add := func(s string) {
+		s = strings.TrimSpace(strings.ToLower(s))
+		if s == "" {
+			return
+		}
+		if base, _, ok := strings.Cut(s, ":"); ok {
+			s = base
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		candidates = append(candidates, s)
+	}
+
+	for _, candidate := range rawCandidates {
+		add(candidate)
+	}
+	return candidates
 }
 
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {

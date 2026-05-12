@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/updater"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestHandlePostApiSettings(t *testing.T) {
@@ -676,9 +678,15 @@ func TestResolveChatThinkValue(t *testing.T) {
 			want:                  false,
 		},
 		{
-			name:         "global setting off overrides explicit request",
+			name:         "explicit request overrides global setting off",
 			settings:     store.Settings{ThinkEnabled: false},
 			requestThink: true,
+			want:         true,
+		},
+		{
+			name:         "explicit false overrides global setting on",
+			settings:     store.Settings{ThinkEnabled: true},
+			requestThink: false,
 			want:         false,
 		},
 		{
@@ -706,6 +714,82 @@ func TestResolveChatThinkValue(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := resolveChatThinkValue(tt.settings, tt.requestThink, tt.modelSupportsThinking); got != tt.want {
 				t.Errorf("resolveChatThinkValue() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeAppShowCapabilitiesThinkingControls(t *testing.T) {
+	tests := []struct {
+		name string
+		resp *api.ShowResponse
+		want []model.Capability
+	}{
+		{
+			name: "qwen adds thinking toggle",
+			resp: &api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+				Details:      api.ModelDetails{Family: "qwen3.5"},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityThinkingToggle},
+		},
+		{
+			name: "gemma parent adds thinking toggle",
+			resp: &api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+				Details:      api.ModelDetails{ParentModel: "gemma4:31b"},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityThinkingToggle},
+		},
+		{
+			name: "nemotron architecture adds thinking toggle",
+			resp: &api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityTools},
+				Details:      api.ModelDetails{Family: "nemotron_h_moe"},
+				ModelInfo:    map[string]any{"general.architecture": "nemotron_h_moe"},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityTools, model.CapabilityThinkingToggle},
+		},
+		{
+			name: "gpt oss adds thinking toggle and levels",
+			resp: &api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+				Details:      api.ModelDetails{Family: "gptoss"},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityThinkingToggle, model.CapabilityThinkingLevels},
+		},
+		{
+			name: "non-toggle thinking model stays unchanged",
+			resp: &api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+				Details:      api.ModelDetails{Family: "qwen3-vl-thinking"},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+		},
+		{
+			name: "unknown cloud thinking architecture stays unchanged",
+			resp: &api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityTools},
+				Details:      api.ModelDetails{Family: "kimi-k2"},
+				ModelInfo:    map[string]any{"general.architecture": "kimi-k2"},
+			},
+			want: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityTools},
+		},
+		{
+			name: "non-thinking model stays unchanged",
+			resp: &api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+				Details:      api.ModelDetails{Family: "gemma4"},
+			},
+			want: []model.Capability{model.CapabilityCompletion},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			normalizeAppShowCapabilities(tt.resp)
+			if !slices.Equal(tt.resp.Capabilities, tt.want) {
+				t.Fatalf("capabilities = %v, want %v", tt.resp.Capabilities, tt.want)
 			}
 		})
 	}

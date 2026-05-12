@@ -148,7 +148,7 @@ function ChatForm({
   const {
     settings: {
       webSearchEnabled,
-      thinkEnabled,
+      thinkEnabled: defaultThinkEnabled,
       thinkLevel: settingsThinkLevel,
     },
     setSettings,
@@ -161,22 +161,32 @@ function ChatForm({
   const modelSupportsThinkingLevels = useHasThinkingLevels(
     selectedModel?.model,
   );
-  // Use per-chat thinking level instead of global
-  const thinkLevel: ThinkingLevel =
+  const defaultThinkLevel: ThinkingLevel =
     settingsThinkLevel === "none" || !settingsThinkLevel
       ? "medium"
       : (settingsThinkLevel as ThinkingLevel);
+  const [chatThinkEnabled, setChatThinkEnabled] =
+    useState(defaultThinkEnabled);
+  const [chatThinkLevel, setChatThinkLevel] =
+    useState<ThinkingLevel>(defaultThinkLevel);
+
+  useEffect(() => {
+    setChatThinkEnabled(defaultThinkEnabled);
+    setChatThinkLevel(defaultThinkLevel);
+  }, [chatId, defaultThinkEnabled, defaultThinkLevel]);
+
   const setThinkingLevel = (newLevel: ThinkingLevel) => {
-    setSettings({ ThinkLevel: newLevel });
+    setChatThinkEnabled(true);
+    setChatThinkLevel(newLevel);
   };
   useEffect(() => {
-    if (supportsThinkToggling && thinkEnabled && webSearchEnabled) {
+    if (supportsThinkToggling && chatThinkEnabled && webSearchEnabled) {
       setSettings({ WebSearchEnabled: false });
     }
   }, [
     selectedModel?.model,
     supportsThinkToggling,
-    thinkEnabled,
+    chatThinkEnabled,
     webSearchEnabled,
     setSettings,
   ]);
@@ -500,10 +510,10 @@ function ChatForm({
 
     const useWebSearch =
       supportsWebSearch && webSearchEnabled && !cloudDisabled;
-    const useThink = thinkEnabled
+    const useThink = chatThinkEnabled
       ? supportsThinkToggling
         ? modelSupportsThinkingLevels
-          ? thinkLevel
+          ? chatThinkLevel
           : true
         : undefined
       : supportsThinking
@@ -906,7 +916,9 @@ function ChatForm({
                       mode="thinkingLevel"
                       ref={thinkingLevelButtonRef}
                       isVisible={modelSupportsThinkingLevels}
-                      currentLevel={thinkLevel}
+                      isActive={chatThinkEnabled}
+                      currentLevel={chatThinkLevel}
+                      onToggle={() => setChatThinkEnabled(false)}
                       onLevelChange={setThinkingLevel}
                       onDropdownToggle={handleThinkingLevelDropdownToggle}
                     />
@@ -921,18 +933,16 @@ function ChatForm({
                       isVisible={
                         supportsThinkToggling && !modelSupportsThinkingLevels
                       }
-                      isActive={thinkEnabled}
+                      isActive={chatThinkEnabled}
                       onToggle={() => {
                         // DeepSeek-v3 specific - thinking and web search are mutually exclusive
                         if (supportsThinkToggling) {
-                          const enable = !thinkEnabled;
-                          setSettings({
-                            ThinkEnabled: enable,
-                            ...(enable ? { WebSearchEnabled: false } : {}),
-                          });
+                          const enable = !chatThinkEnabled;
+                          setChatThinkEnabled(enable);
+                          if (enable) setSettings({ WebSearchEnabled: false });
                           return;
                         }
-                        setSettings({ ThinkEnabled: !thinkEnabled });
+                        setChatThinkEnabled(!chatThinkEnabled);
                       }}
                     />
                   </>
@@ -947,9 +957,9 @@ function ChatForm({
                     }
                     const enable = !webSearchEnabled;
                     if (supportsThinkToggling && enable) {
+                      setChatThinkEnabled(false);
                       setSettings({
                         WebSearchEnabled: true,
-                        ThinkEnabled: false,
                       });
                       return;
                     }
