@@ -126,11 +126,13 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
-# Function to download and extract with fallback from zst to tgz
+# Function to download and extract with fallback from zst to tgz.
+# Any extra arguments after the filename are forwarded to tar (e.g. --exclude).
 download_and_extract() {
     local url_base="$1"
     local dest_dir="$2"
     local filename="$3"
+    shift 3
 
     # Check if .tar.zst is available
     if curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${VER_PARAM}" >/dev/null 2>&1; then
@@ -145,7 +147,7 @@ download_and_extract() {
         status "Downloading ${filename}.tar.zst"
         curl --fail --show-error --location --progress-bar \
             "${url_base}/${filename}.tar.zst${VER_PARAM}" | \
-            zstd -d | $SUDO tar -xf - -C "${dest_dir}"
+            zstd -d | $SUDO tar "$@" -xf - -C "${dest_dir}"
         return 0
     fi
 
@@ -153,7 +155,27 @@ download_and_extract() {
     status "Downloading ${filename}.tgz"
     curl --fail --show-error --location --progress-bar \
         "${url_base}/${filename}.tgz${VER_PARAM}" | \
-        $SUDO tar -xzf - -C "${dest_dir}"
+        $SUDO tar "$@" -xzf - -C "${dest_dir}"
+}
+
+# check_gpu detects supported GPUs by vendor ID.
+# Usage: check_gpu <method> <vendor>
+#   method = lspci|lshw|nvidia-smi
+#   vendor = nvidia|amdgpu (ignored for nvidia-smi)
+check_gpu() {
+    case $1 in
+        lspci)
+            case $2 in
+                nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
+                amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
+            esac ;;
+        lshw)
+            case $2 in
+                nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
+                amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
+            esac ;;
+        nvidia-smi) available nvidia-smi || return 1 ;;
+    esac
 }
 
 for BINDIR in /usr/local/bin /usr/bin /bin; do
@@ -168,7 +190,33 @@ fi
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
-download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
+
+# Detect host GPUs up-front so the base archive only extracts libraries the
+# detected hardware can actually use. Jetson devices and WSL2 are handled
+# below via separate archives / NVIDIA passthrough, so they always keep the
+# bundled CUDA libraries. Set OLLAMA_INSTALL_ALL_LIBS=1 to opt out and keep
+# every library (useful when planning to swap GPU hardware later).
+BASE_EXCLUDES=
+if [ -z "${OLLAMA_INSTALL_ALL_LIBS:-}" ] \
+        && [ ! -f /etc/nv_tegra_release ] \
+        && [ "$IS_WSL2" != true ] \
+        && (available lspci || available lshw || available nvidia-smi); then
+    if ! check_gpu nvidia-smi \
+            && ! check_gpu lspci nvidia \
+            && ! check_gpu lshw nvidia; then
+        status "No NVIDIA GPU detected, skipping CUDA libraries"
+        BASE_EXCLUDES="$BASE_EXCLUDES --exclude=cuda_v*"
+    fi
+    if [ -z "${OLLAMA_VULKAN:-}" ] \
+            && ! check_gpu lspci amdgpu \
+            && ! check_gpu lshw amdgpu \
+            && ! check_gpu lspci nvidia \
+            && ! check_gpu lshw nvidia; then
+        status "No GPU detected and OLLAMA_VULKAN unset, skipping Vulkan libraries"
+        BASE_EXCLUDES="$BASE_EXCLUDES --exclude=vulkan*"
+    fi
+fi
+download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}" $BASE_EXCLUDES
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
@@ -273,23 +321,6 @@ if ! available lspci && ! available lshw; then
     warning "Unable to detect NVIDIA/AMD GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
     exit 0
 fi
-
-check_gpu() {
-    # Look for devices based on vendor ID for NVIDIA and AMD
-    case $1 in
-        lspci)
-            case $2 in
-                nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
-                amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
-            esac ;;
-        lshw)
-            case $2 in
-                nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
-                amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
-            esac ;;
-        nvidia-smi) available nvidia-smi || return 1 ;;
-    esac
-}
 
 if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
