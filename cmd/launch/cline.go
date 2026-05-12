@@ -100,5 +100,8 @@ func (c *Cline) Models() []string {
 	if modelID == "" {
 		return nil
 	}
+	if cfg, err := loadStoredIntegrationConfig("cline"); err == nil && len(cfg.Models) > 0 && cfg.Models[0] == modelID {
+		return cfg.Models
+	}
 	return []string{modelID}
 }

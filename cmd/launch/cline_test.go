@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ollama/ollama/cmd/config"
 )
 
 func TestClineIntegration(t *testing.T) {
@@ -177,6 +179,25 @@ func TestClineModels(t *testing.T) {
 			t.Errorf("Models() = %v, want [kimi-k2.5:cloud]", models)
 		}
 	})
+
+	t.Run("returns saved model list when primary matches", func(t *testing.T) {
+		os.MkdirAll(configDir, 0o755)
+		if err := config.SaveIntegration("cline", []string{"kimi-k2.5:cloud", "glm-5:cloud"}); err != nil {
+			t.Fatal(err)
+		}
+		config := map[string]any{
+			"actModeApiProvider":   "ollama",
+			"actModeOllamaModelId": "kimi-k2.5:cloud",
+		}
+		data, _ := json.Marshal(config)
+		os.WriteFile(configPath, data, 0o644)
+
+		models := c.Models()
+		want := []string{"kimi-k2.5:cloud", "glm-5:cloud"}
+		if len(models) != len(want) || models[0] != want[0] || models[1] != want[1] {
+			t.Errorf("Models() = %v, want %v", models, want)
+		}
+	})
 }
 
 func TestClinePaths(t *testing.T) {
@@ -184,7 +205,7 @@ func TestClinePaths(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	t.Run("returns nil when no config exists", func(t *testing.T) {
+	t.Run("returns nil when config is missing", func(t *testing.T) {
 		if paths := c.Paths(); paths != nil {
 			t.Errorf("Paths() = %v, want nil", paths)
 		}

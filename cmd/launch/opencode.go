@@ -167,7 +167,21 @@ func (o *OpenCode) Edit(modelList []string) error {
 }
 
 func (o *OpenCode) Models() []string {
-	return nil
+	models := readModelJSONModels()
+	if models == nil {
+		return nil
+	}
+	if cfg, err := loadStoredIntegrationConfig("opencode"); err == nil && len(cfg.Models) > 0 && hasModelPrefix(models, cfg.Models) {
+		return cfg.Models
+	}
+	return models
+}
+
+func hasModelPrefix(models, prefix []string) bool {
+	if len(prefix) > len(models) {
+		return false
+	}
+	return slices.Equal(models[:len(prefix)], prefix)
 }
 
 // buildInlineConfig produces the JSON string for OPENCODE_CONFIG_CONTENT.

@@ -221,8 +221,8 @@ func TestVSCodePaths(t *testing.T) {
 		os.MkdirAll(filepath.Dir(clmPath), 0o755)
 		os.WriteFile(clmPath, []byte(`[]`), 0o644)
 
-		if paths := v.Paths(); len(paths) != 1 {
-			t.Errorf("expected 1 path, got %d", len(paths))
+		if paths := v.Paths(); len(paths) != 1 || paths[0] != clmPath {
+			t.Errorf("expected [%s], got %v", clmPath, paths)
 		}
 	})
 }

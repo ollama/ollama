@@ -222,46 +222,36 @@ func (p *Pi) Edit(models []string) error {
 		existingModels = make([]any, 0)
 	}
 
-	// Build set of selected models to track which need to be added
-	selectedSet := make(map[string]bool, len(models))
-	for _, m := range models {
-		selectedSet[m] = true
-	}
-
-	// Build new models list:
-	// 1. Keep user-managed models (no _launch marker) - untouched
-	// 2. Keep ollama-managed models (_launch marker) that are still selected,
-	//    except stale cloud entries that should be rebuilt below
-	// 3. Add new ollama-managed models
-	var newModels []any
+	var userModels []any
+	existingByID := make(map[string]map[string]any)
 	for _, m := range existingModels {
 		if modelObj, ok := m.(map[string]any); ok {
 			if id, ok := modelObj["id"].(string); ok {
-				// User-managed model (no _launch marker) - always preserve
 				if !isPiOllamaModel(modelObj) {
-					newModels = append(newModels, m)
-				} else if selectedSet[id] {
-					// Rebuild stale managed cloud entries so createConfig refreshes
-					// the whole entry instead of patching it in place.
-					if !hasContextWindow(modelObj) {
-						if _, ok := lookupCloudModelLimit(id); ok {
-							continue
-						}
-					}
-					newModels = append(newModels, m)
-					selectedSet[id] = false
+					userModels = append(userModels, m)
+					continue
 				}
+				// Rebuild stale managed cloud entries so createConfig refreshes
+				// the whole entry instead of patching it in place.
+				if !hasContextWindow(modelObj) {
+					if _, ok := lookupCloudModelLimit(id); ok {
+						continue
+					}
+				}
+				existingByID[id] = modelObj
 			}
 		}
 	}
 
-	// Add newly selected models that weren't already in the list
 	client := api.NewClient(envconfig.Host(), http.DefaultClient)
 	ctx := context.Background()
+	newModels := append([]any(nil), userModels...)
 	for _, model := range models {
-		if selectedSet[model] {
-			newModels = append(newModels, createConfig(ctx, client, model))
+		if existing, ok := existingByID[model]; ok {
+			newModels = append(newModels, existing)
+			continue
 		}
+		newModels = append(newModels, createConfig(ctx, client, model))
 	}
 
 	ollama["models"] = newModels
@@ -299,6 +289,19 @@ func (p *Pi) Models() []string {
 		return nil
 	}
 
+	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
+	settings, err := fileutil.ReadJSON(settingsPath)
+	if err != nil {
+		return nil
+	}
+	if settings["defaultProvider"] != "ollama" {
+		return nil
+	}
+	defaultModel, _ := settings["defaultModel"].(string)
+	if defaultModel == "" {
+		return nil
+	}
+
 	configPath := filepath.Join(home, ".pi", "agent", "models.json")
 	config, err := fileutil.ReadJSON(configPath)
 	if err != nil {
@@ -310,14 +313,31 @@ func (p *Pi) Models() []string {
 	models, _ := ollama["models"].([]any)
 
 	var result []string
+	defaultIndex := -1
 	for _, m := range models {
 		if modelObj, ok := m.(map[string]any); ok {
 			if id, ok := modelObj["id"].(string); ok {
+				if !isPiOllamaModel(modelObj) {
+					continue
+				}
+				if id == defaultModel {
+					defaultIndex = len(result)
+				}
 				result = append(result, id)
 			}
 		}
 	}
-	slices.Sort(result)
+	if len(result) == 0 || defaultIndex == -1 {
+		return nil
+	}
+	if defaultIndex > 0 {
+		defaultModel := result[defaultIndex]
+		ordered := make([]string, 0, len(result))
+		ordered = append(ordered, defaultModel)
+		ordered = append(ordered, result[:defaultIndex]...)
+		ordered = append(ordered, result[defaultIndex+1:]...)
+		result = ordered
+	}
 	return result
 }
 

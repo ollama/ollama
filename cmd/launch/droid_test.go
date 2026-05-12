@@ -28,6 +28,16 @@ func TestDroidIntegration(t *testing.T) {
 	})
 }
 
+func TestDroidPathsReturnsNilWhenConfigMissing(t *testing.T) {
+	d := &Droid{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if got := d.Paths(); got != nil {
+		t.Fatalf("expected nil paths, got %v", got)
+	}
+}
+
 func TestDroidEdit(t *testing.T) {
 	d := &Droid{}
 	tmpDir := t.TempDir()
