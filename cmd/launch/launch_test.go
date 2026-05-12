@@ -68,15 +68,18 @@ func (r *launcherRestorableRunner) RestoreSuccessMessage() string {
 }
 
 type launcherManagedRunner struct {
-	paths              []string
-	currentModel       string
-	configured         []string
-	ranModel           string
-	onboarded          bool
-	onboardCalls       int
-	onboardingComplete bool
-	refreshCalls       int
-	refreshErr         error
+	paths                []string
+	currentModel         string
+	configured           []string
+	ranModel             string
+	onboarded            bool
+	onboardCalls         int
+	onboardingComplete   bool
+	refreshCalls         int
+	refreshErr           error
+	restoreHint          string
+	configSuccessMessage string
+	skipModelReadiness   bool
 }
 
 func (r *launcherManagedRunner) Run(model string, args []string) error {
@@ -109,6 +112,14 @@ func (r *launcherManagedRunner) RefreshRuntimeAfterConfigure() error {
 	r.refreshCalls++
 	return r.refreshErr
 }
+
+func (r *launcherManagedRunner) RestoreHint() string { return r.restoreHint }
+
+func (r *launcherManagedRunner) ConfigurationSuccessMessage() string {
+	return r.configSuccessMessage
+}
+
+func (r *launcherManagedRunner) SkipModelReadiness() bool { return r.skipModelReadiness }
 
 type launcherHeadlessManagedRunner struct {
 	launcherManagedRunner
@@ -477,6 +488,83 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfigOnlySkipsFinalRun(t *te
 	}
 	if runner.onboardCalls != 1 {
 		t.Fatalf("expected configure-only flow to onboard once, got %d", runner.onboardCalls)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationPrintsConfigurationSuccessAfterConfigure(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedRunner{
+		configSuccessMessage: "configured successfully\nrestore via success message",
+		restoreHint:          "run restore command",
+		skipModelReadiness:   true,
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	stderr := captureStderr(t, func() {
+		if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+			Name:           "stubmanaged",
+			ModelOverride:  "gemma4",
+			ForceConfigure: true,
+			ConfigureOnly:  true,
+		}); err != nil {
+			t.Fatalf("LaunchIntegration returned error: %v", err)
+		}
+	})
+
+	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
+		t.Fatalf("configured models mismatch: %s", diff)
+	}
+	if !strings.Contains(stderr, "configured successfully") {
+		t.Fatalf("expected configuration success in stderr, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "restore via success message") {
+		t.Fatalf("expected restore guidance in configuration success, got %q", stderr)
+	}
+	if strings.Contains(stderr, "run restore command") {
+		t.Fatalf("restore hint should not print separately after configure, got %q", stderr)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationDoesNotPrintRestoreHintWhenUnchanged(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedRunner{
+		currentModel:         "gemma4",
+		onboardingComplete:   true,
+		configSuccessMessage: "configured successfully",
+		restoreHint:          "run restore command",
+		skipModelReadiness:   true,
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	if err := config.SaveIntegration("stubmanaged", []string{"gemma4"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+	if err := config.MarkIntegrationOnboarded("stubmanaged"); err != nil {
+		t.Fatalf("failed to mark integration onboarded: %v", err)
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+			t.Fatalf("LaunchIntegration returned error: %v", err)
+		}
+	})
+
+	if len(runner.configured) != 0 {
+		t.Fatalf("expected Configure to be skipped when saved matches, got %v", runner.configured)
+	}
+	if strings.Contains(stderr, "configured successfully") {
+		t.Fatalf("configuration success should not print when config is unchanged, got %q", stderr)
+	}
+	if strings.Contains(stderr, "run restore command") {
+		t.Fatalf("restore hint should not print when config is unchanged, got %q", stderr)
 	}
 }
 

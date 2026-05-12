@@ -1831,6 +1831,23 @@ func TestListIntegrationInfos(t *testing.T) {
 		}
 	})
 
+	t.Run("prioritizes primary launcher integrations", func(t *testing.T) {
+		got := make([]string, 0, len(infos))
+		for _, info := range infos {
+			got = append(got, info.Name)
+		}
+		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw"}
+		if codexAppSupported() != nil {
+			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode"}
+		}
+		if len(got) < len(wantPrefix) {
+			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
+		}
+		if diff := compareStrings(got[:len(wantPrefix)], wantPrefix); diff != "" {
+			t.Fatalf("unexpected primary launcher order: %s", diff)
+		}
+	})
+
 	t.Run("all fields populated", func(t *testing.T) {
 		for _, info := range infos {
 			if info.Name == "" {

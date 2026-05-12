@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
@@ -31,6 +32,7 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 	oldOpenStart := codexAppOpenStart
 	oldRunPath := codexAppRunPath
 	oldStartID := codexAppStartID
+	oldCanOpenID := codexAppCanOpenID
 	codexAppIsRunning = isRunning
 	codexAppQuitApp = quit
 	codexAppOpenApp = open
@@ -42,6 +44,7 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 		codexAppOpenStart = oldOpenStart
 		codexAppRunPath = oldRunPath
 		codexAppStartID = oldStartID
+		codexAppCanOpenID = oldCanOpenID
 	})
 }
 
@@ -126,6 +129,23 @@ func TestCodexAppInstalledUsesWindowsStartMenuFallback(t *testing.T) {
 
 	if !codexAppInstalled() {
 		t.Fatal("expected Windows Start menu app id to count as installed")
+	}
+}
+
+func TestCodexAppInstalledUsesMacBundleIDFallback(t *testing.T) {
+	withCodexAppPlatform(t, "darwin")
+
+	oldCanOpenID := codexAppCanOpenID
+	oldStat := codexAppStat
+	codexAppCanOpenID = func() bool { return true }
+	codexAppStat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	t.Cleanup(func() {
+		codexAppCanOpenID = oldCanOpenID
+		codexAppStat = oldStat
+	})
+
+	if !codexAppInstalled() {
+		t.Fatal("expected macOS LaunchServices bundle id fallback to count as installed")
 	}
 }
 
@@ -402,6 +422,10 @@ func TestCodexAppCurrentModelReadsManagedRootConfig(t *testing.T) {
 	content := "" +
 		`model = "qwen3:8b"` + "\n" +
 		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n\n" +
+		fmt.Sprintf(`model_catalog_json = %q`, mustWriteCodexAppTestCatalog(t, "qwen3:8b")) + "\n\n" +
+		codexProfileHeaderFor(codexAppProfileName) + "\n" +
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n" +
+		fmt.Sprintf(`model_catalog_json = %q`, mustCodexAppModelCatalogPath(t)) + "\n\n" +
 		codexProviderHeaderFor(codexAppProfileName) + "\n" +
 		`base_url = "http://127.0.0.1:11434/v1/"` + "\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
@@ -410,6 +434,92 @@ func TestCodexAppCurrentModelReadsManagedRootConfig(t *testing.T) {
 
 	if got := (&CodexApp{}).CurrentModel(); got != "qwen3:8b" {
 		t.Fatalf("CurrentModel = %q, want qwen3:8b", got)
+	}
+}
+
+func TestCodexAppCurrentModelRequiresHealthyCatalog(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		rootCatalog    bool
+		profileCatalog bool
+		writeCatalog   bool
+		catalogData    string
+	}{
+		{
+			name:           "missing catalog reference",
+			rootCatalog:    false,
+			profileCatalog: true,
+			writeCatalog:   true,
+			catalogData:    `{"models":[{"slug":"llama3.2"}]}`,
+		},
+		{
+			name:           "deleted catalog file",
+			rootCatalog:    true,
+			profileCatalog: true,
+			writeCatalog:   false,
+			catalogData:    `{"models":[{"slug":"llama3.2"}]}`,
+		},
+		{
+			name:           "missing profile catalog reference",
+			rootCatalog:    true,
+			profileCatalog: false,
+			writeCatalog:   true,
+			catalogData:    `{"models":[{"slug":"llama3.2"}]}`,
+		},
+		{
+			name:           "corrupt catalog file",
+			rootCatalog:    true,
+			profileCatalog: true,
+			writeCatalog:   true,
+			catalogData:    `{"models":`,
+		},
+		{
+			name:           "empty catalog",
+			rootCatalog:    true,
+			profileCatalog: true,
+			writeCatalog:   true,
+			catalogData:    `{"models":[]}`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setTestHome(t, tmpDir)
+			t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+			configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			catalogPath := mustCodexAppModelCatalogPath(t)
+			if tt.writeCatalog {
+				if err := os.WriteFile(catalogPath, []byte(tt.catalogData), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var rootCatalogLine, profileCatalogLine string
+			if tt.rootCatalog {
+				rootCatalogLine = fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n"
+			}
+			if tt.profileCatalog {
+				profileCatalogLine = fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n"
+			}
+			content := "" +
+				`model = "llama3.2"` + "\n" +
+				fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n" +
+				rootCatalogLine + "\n" +
+				codexProfileHeaderFor(codexAppProfileName) + "\n" +
+				fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n" +
+				profileCatalogLine + "\n" +
+				codexProviderHeaderFor(codexAppProfileName) + "\n" +
+				`base_url = "http://127.0.0.1:11434/v1/"` + "\n"
+			if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := (&CodexApp{}).CurrentModel(); got != "" {
+				t.Fatalf("CurrentModel = %q, want empty when catalog is unhealthy", got)
+			}
+		})
 	}
 }
 
@@ -430,7 +540,7 @@ func TestCodexAppConfigurePopulatesCatalogFromTagsAndShow(t *testing.T) {
 				t.Fatalf("decode show request: %v", err)
 			}
 			showCalls[req.Model]++
-			fmt.Fprintf(w, `{"model_info":{"general.context_length":%d}}`, 65536+len(req.Model))
+			fmt.Fprintf(w, `{"model_info":{"general.context_length":%d},"capabilities":["vision"]}`, 65536+len(req.Model))
 		default:
 			http.NotFound(w, r)
 		}
@@ -475,11 +585,22 @@ func TestCodexAppConfigurePopulatesCatalogFromTagsAndShow(t *testing.T) {
 		if !ok || len(levels) != 0 {
 			t.Fatalf("supported_reasoning_levels for %q = %v, want empty list", slug, model["supported_reasoning_levels"])
 		}
-		if model["context_window"] != float64(65536+len(slug)) {
-			t.Fatalf("context_window for %q = %v", slug, model["context_window"])
+		wantContext := float64(272000)
+		wantModalities := []string{"text"}
+		wantShowCalls := 0
+		if slug == "gemma4" {
+			wantContext = float64(65536 + len(slug))
+			wantModalities = []string{"text", "image"}
+			wantShowCalls = 1
 		}
-		if showCalls[slug] != 1 {
-			t.Fatalf("show calls for %q = %d, want 1", slug, showCalls[slug])
+		if model["context_window"] != wantContext {
+			t.Fatalf("context_window for %q = %v, want %v", slug, model["context_window"], wantContext)
+		}
+		if got := catalogInputModalities(model); strings.Join(got, ",") != strings.Join(wantModalities, ",") {
+			t.Fatalf("input_modalities for %q = %v, want %v", slug, got, wantModalities)
+		}
+		if showCalls[slug] != wantShowCalls {
+			t.Fatalf("show calls for %q = %d, want %d", slug, showCalls[slug], wantShowCalls)
 		}
 	}
 }
@@ -594,6 +715,137 @@ func TestCodexAppRestoreRestoresPreviousProfile(t *testing.T) {
 	}
 }
 
+func TestCodexAppRestoreMissingConfigRemovesRestoreState(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+
+	var openCalls int
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { return nil },
+		func() error {
+			openCalls++
+			return nil
+		},
+	)
+
+	if err := os.MkdirAll(filepath.Dir(codexAppRestoreStatePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restoreState := `{"had_profile":true,"profile":"stale","had_model":true,"model":"old","had_model_provider":true,"model_provider":"openai","had_model_catalog_json":false}`
+	if err := os.WriteFile(codexAppRestoreStatePath(), []byte(restoreState), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&CodexApp{}).Restore(); err != nil {
+		t.Fatalf("Restore returned error: %v", err)
+	}
+
+	if _, err := os.Stat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
+		t.Fatalf("restore state should be removed when config is missing, got err=%v", err)
+	}
+	if openCalls != 1 {
+		t.Fatalf("open calls = %d, want 1", openCalls)
+	}
+}
+
+func TestCodexAppConfigureMissingConfigReplacesStaleRestoreState(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:9999")
+
+	if err := os.MkdirAll(filepath.Dir(codexAppRestoreStatePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restoreState := `{"had_profile":true,"profile":"stale","had_model":true,"model":"old","had_model_provider":true,"model_provider":"openai","had_model_catalog_json":false}`
+	if err := os.WriteFile(codexAppRestoreStatePath(), []byte(restoreState), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"}); err != nil {
+		t.Fatalf("ConfigureWithModels returned error: %v", err)
+	}
+
+	state, err := loadCodexAppRestoreState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.HadProfile || state.HadModel || state.HadModelProvider || state.HadModelCatalogJSON {
+		t.Fatalf("restore state = %+v, want empty snapshot when config was missing", state)
+	}
+}
+
+func TestCodexAppConfigureRefreshesRestoreStateAfterManualProfileSwitch(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:9999")
+	withCodexAppPlatform(t, "darwin")
+
+	var openCalls int
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { return nil },
+		func() error {
+			openCalls++
+			return nil
+		},
+	)
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "" +
+		`profile = "default"` + "\n" +
+		`model = "gpt-5.5"` + "\n" +
+		`model_provider = "openai"` + "\n\n" +
+		"[profiles.default]\n" +
+		`model = "gpt-5.5"` + "\n"
+	if err := os.WriteFile(configPath, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"}); err != nil {
+		t.Fatalf("first ConfigureWithModels returned error: %v", err)
+	}
+
+	manual := "" +
+		`profile = "manual"` + "\n" +
+		`model = "manual-model"` + "\n" +
+		`model_provider = "openai"` + "\n\n" +
+		"[profiles.manual]\n" +
+		`model = "manual-model"` + "\n"
+	if err := os.WriteFile(configPath, []byte(manual), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&CodexApp{}).ConfigureWithModels("qwen3:8b", []string{"qwen3:8b"}); err != nil {
+		t.Fatalf("second ConfigureWithModels returned error: %v", err)
+	}
+	if err := (&CodexApp{}).Restore(); err != nil {
+		t.Fatalf("Restore returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := string(data)
+	for key, want := range map[string]string{
+		"profile":        "manual",
+		"model":          "manual-model",
+		"model_provider": "openai",
+	} {
+		if got := codexRootStringValue(restored, key); got != want {
+			t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, restored)
+		}
+	}
+	if openCalls != 1 {
+		t.Fatalf("open calls = %d, want 1", openCalls)
+	}
+}
+
 func TestCodexAppRestoreRejectsMalformedTomlWithoutWriting(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -627,6 +879,74 @@ func TestCodexAppRestoreRejectsMalformedTomlWithoutWriting(t *testing.T) {
 	}
 	if _, err := os.Stat(codexAppRestoreStatePath()); err != nil {
 		t.Fatalf("restore state should remain after failed restore: %v", err)
+	}
+}
+
+func TestCodexAppRestoreWithoutStateRemovesManagedRootModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+
+	var openCalls int
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { return nil },
+		func() error {
+			openCalls++
+			return nil
+		},
+	)
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	catalogPath, err := codexAppModelCatalogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := "" +
+		fmt.Sprintf(`profile = %q`, codexAppProfileName) + "\n" +
+		`model = "llama3.2"` + "\n" +
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n" +
+		fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n\n" +
+		codexProfileHeaderFor(codexAppProfileName) + "\n" +
+		`model = "llama3.2"` + "\n" +
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n\n" +
+		codexProviderHeaderFor(codexAppProfileName) + "\n" +
+		`base_url = "http://127.0.0.1:11434/v1/"` + "\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(catalogPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalogPath, []byte(`{"models":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&CodexApp{}).Restore(); err != nil {
+		t.Fatalf("Restore returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	for _, key := range []string{"profile", "model", "model_provider", "model_catalog_json"} {
+		if got, ok := codexRootStringValueOK(content, key); ok {
+			t.Fatalf("root %s should be removed, got %q in:\n%s", key, got, content)
+		}
+	}
+	if strings.Contains(content, codexProfileHeaderFor(codexAppProfileName)) || strings.Contains(content, codexProviderHeaderFor(codexAppProfileName)) {
+		t.Fatalf("owned app sections should be removed, got:\n%s", content)
+	}
+	if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
+		t.Fatalf("owned catalog should be removed when unused, err=%v", err)
+	}
+	if openCalls != 1 {
+		t.Fatalf("open calls = %d, want 1", openCalls)
 	}
 }
 
@@ -789,6 +1109,47 @@ func TestCodexAppRunRestartsRunningAppWhenConfirmed(t *testing.T) {
 	}
 }
 
+func TestCodexAppRunWaitsForGracefulExitBeforeReopening(t *testing.T) {
+	withCodexAppPlatform(t, "darwin")
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	oldSleep := codexAppSleep
+	t.Cleanup(func() {
+		codexAppSleep = oldSleep
+	})
+
+	running := true
+	var quitCalls, openCalls, sleepCalls int
+	codexAppSleep = func(time.Duration) {
+		sleepCalls++
+		if sleepCalls == 2 {
+			running = false
+		}
+	}
+	withCodexAppProcessHooks(t,
+		func() bool { return running },
+		func() error {
+			quitCalls++
+			return nil
+		},
+		func() error {
+			openCalls++
+			return nil
+		},
+	)
+
+	if err := (&CodexApp{}).Run("qwen3.5", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if quitCalls != 1 || openCalls != 1 {
+		t.Fatalf("quit/open calls = %d/%d, want 1/1", quitCalls, openCalls)
+	}
+	if sleepCalls == 0 {
+		t.Fatal("expected restart to wait for Codex to exit before reopening")
+	}
+}
+
 func TestCodexAppRunOpensOnWindowsWhenNotRunning(t *testing.T) {
 	withCodexAppPlatform(t, "windows")
 
@@ -899,4 +1260,44 @@ func catalogSlugs(models []map[string]any) []string {
 		}
 	}
 	return slugs
+}
+
+func catalogInputModalities(entry map[string]any) []string {
+	raw, _ := entry["input_modalities"].([]any)
+	modalities := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if modality, _ := item.(string); modality != "" {
+			modalities = append(modalities, modality)
+		}
+	}
+	return modalities
+}
+
+func mustCodexAppModelCatalogPath(t *testing.T) string {
+	t.Helper()
+	catalogPath, err := codexAppModelCatalogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return catalogPath
+}
+
+func mustWriteCodexAppTestCatalog(t *testing.T, slugs ...string) string {
+	t.Helper()
+	catalogPath := mustCodexAppModelCatalogPath(t)
+	if err := os.MkdirAll(filepath.Dir(catalogPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	models := make([]map[string]string, 0, len(slugs))
+	for _, slug := range slugs {
+		models = append(models, map[string]string{"slug": slug})
+	}
+	data, err := json.Marshal(map[string]any{"models": models})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalogPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return catalogPath
 }

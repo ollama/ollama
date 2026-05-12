@@ -285,17 +285,17 @@ Flags and extra arguments require an integration name.
 
 Supported integrations:
   claude          Claude Code
-  cline           Cline
-  codex           Codex
   codex-app       Codex App (aliases: codex-desktop, codex-gui)
+  hermes          Hermes Agent
+  openclaw        OpenClaw (aliases: clawdbot, moltbot)
+  opencode        OpenCode
+  codex           Codex
   copilot         Copilot CLI (aliases: copilot-cli)
   droid           Droid
-  hermes          Hermes Agent
   kimi            Kimi Code CLI
-  opencode        OpenCode
-  openclaw        OpenClaw (aliases: clawdbot, moltbot)
   pi              Pi
   pool            Pool
+  cline           Cline
   vscode          VS Code (aliases: code)
 
 Examples:
@@ -772,7 +772,13 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		return nil
 	}
 
-	if needsConfigure || req.ModelOverride != "" || target != current || !savedMatchesModels(saved, []string{target}) {
+	// current is the live managed app config; target may come from saved launch
+	// state. Rewrite when the live config is missing or has drifted so the app
+	// config converges with the model which launch is about to use.
+	liveConfigMissing := current == ""
+	liveConfigDrifted := current != "" && target != current
+	configured := false
+	if needsConfigure || req.ModelOverride != "" || liveConfigMissing || liveConfigDrifted || !savedMatchesModels(saved, []string{target}) {
 		configureModels, err := c.managedSingleConfigureModels(ctx, managed, target)
 		if err != nil {
 			return err
@@ -785,6 +791,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 				return err
 			}
 		}
+		configured = true
 	}
 
 	if !managedIntegrationOnboarded(saved, managed) {
@@ -793,6 +800,12 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		}
 		if err := managed.Onboard(); err != nil {
 			return err
+		}
+	}
+
+	if configured {
+		if !printConfigurationSuccess(managed) {
+			printRestoreHint(managed)
 		}
 	}
 

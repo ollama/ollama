@@ -18,8 +18,15 @@ type Codex struct{}
 
 func (c *Codex) String() string { return "Codex" }
 
-const codexProfileName = "ollama-launch"
-const codexProviderName = "Ollama"
+const (
+	codexProfileName  = "ollama-launch"
+	codexProviderName = "Ollama"
+
+	codexRootProfileKey          = "profile"
+	codexRootModelKey            = "model"
+	codexRootModelProviderKey    = "model_provider"
+	codexRootModelCatalogJSONKey = "model_catalog_json"
+)
 
 func (c *Codex) args(model string, extra []string) []string {
 	args := []string{"--profile", codexProfileName}
@@ -102,32 +109,33 @@ func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) 
 	} else if !os.IsNotExist(readErr) {
 		return readErr
 	}
-	if err := codexValidateConfigText(text); err != nil {
+	parsed, err := codexParseConfig(text)
+	if err != nil {
 		return err
 	}
 
 	model := strings.TrimSpace(opts.model)
 	if model == "" {
-		model = codexSectionStringValue(text, profileHeader, "model")
+		model = parsed.ProfileString(profileName, codexRootModelKey)
 	}
 	modelCatalogPath := strings.TrimSpace(opts.modelCatalogPath)
 	if modelCatalogPath == "" {
-		modelCatalogPath = codexSectionStringValue(text, profileHeader, "model_catalog_json")
+		modelCatalogPath = parsed.ProfileString(profileName, codexRootModelCatalogJSONKey)
 	}
 
 	profileLines := []string{}
 	if model != "" {
-		profileLines = append(profileLines, fmt.Sprintf("model = %q", model))
+		profileLines = append(profileLines, fmt.Sprintf("%s = %q", codexRootModelKey, model))
 	}
 	profileLines = append(profileLines,
 		fmt.Sprintf("openai_base_url = %q", baseURL),
-		fmt.Sprintf("model_provider = %q", profileName),
+		fmt.Sprintf("%s = %q", codexRootModelProviderKey, profileName),
 	)
 	if opts.forceAPIAuth {
 		profileLines = append(profileLines, `forced_login_method = "api"`)
 	}
 	if modelCatalogPath != "" {
-		profileLines = append(profileLines, fmt.Sprintf("model_catalog_json = %q", modelCatalogPath))
+		profileLines = append(profileLines, fmt.Sprintf("%s = %q", codexRootModelCatalogJSONKey, modelCatalogPath))
 	}
 
 	sections := []struct {
@@ -149,32 +157,33 @@ func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) 
 	}
 
 	if opts.activate {
-		text = codexSetRootStringValue(text, "profile", profileName)
+		text = codexSetRootStringValue(text, codexRootProfileKey, profileName)
 	}
 	if opts.setRootModelConfig {
 		if model != "" {
-			text = codexSetRootStringValue(text, "model", model)
+			text = codexSetRootStringValue(text, codexRootModelKey, model)
 		}
-		text = codexSetRootStringValue(text, "model_provider", profileName)
+		text = codexSetRootStringValue(text, codexRootModelProviderKey, profileName)
 		if modelCatalogPath != "" {
-			text = codexSetRootStringValue(text, "model_catalog_json", modelCatalogPath)
+			text = codexSetRootStringValue(text, codexRootModelCatalogJSONKey, modelCatalogPath)
 		}
 	}
 
 	for _, s := range sections {
 		text = codexUpsertSection(text, s.header, s.lines)
 	}
-	if err := codexValidateConfigText(text); err != nil {
+	parsed, err = codexParseConfig(text)
+	if err != nil {
 		return err
 	}
-	if err := codexValidateLaunchProfileText(text, profileName, opts, model, modelCatalogPath, baseURL); err != nil {
+	if err := codexValidateLaunchProfileText(parsed, profileName, opts, model, modelCatalogPath, baseURL); err != nil {
 		return err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
-	return codexWriteWithBackup(configPath, []byte(text), opts.backupIntegration)
+	return fileutil.WriteWithBackup(configPath, []byte(text), opts.backupIntegration)
 }
 
 func codexLaunchProfileName(opts codexLaunchProfileOptions) string {
@@ -204,64 +213,57 @@ func codexProviderHeaderFor(profileName string) string {
 	return fmt.Sprintf("[model_providers.%s]", profileName)
 }
 
-func codexValidateLaunchProfileText(text, profileName string, opts codexLaunchProfileOptions, model, modelCatalogPath, baseURL string) error {
+func codexValidateLaunchProfileText(config codexParsedConfig, profileName string, opts codexLaunchProfileOptions, model, modelCatalogPath, baseURL string) error {
 	for _, check := range []struct {
 		path []string
 		want string
 	}{
 		{[]string{"profiles", profileName, "openai_base_url"}, baseURL},
-		{[]string{"profiles", profileName, "model_provider"}, profileName},
+		{[]string{"profiles", profileName, codexRootModelProviderKey}, profileName},
 		{[]string{"model_providers", profileName, "name"}, codexProviderName},
 		{[]string{"model_providers", profileName, "base_url"}, baseURL},
 		{[]string{"model_providers", profileName, "wire_api"}, "responses"},
 	} {
-		if got, ok := codexStringValue(text, check.path...); !ok || got != check.want {
+		if got, ok := config.String(check.path...); !ok || got != check.want {
 			return fmt.Errorf("generated Codex config missing %s = %q", strings.Join(check.path, "."), check.want)
 		}
 	}
 	if opts.forceAPIAuth {
-		if got, ok := codexStringValue(text, "profiles", profileName, "forced_login_method"); !ok || got != "api" {
+		if got, ok := config.String("profiles", profileName, "forced_login_method"); !ok || got != "api" {
 			return fmt.Errorf("generated Codex config missing profiles.%s.forced_login_method = %q", profileName, "api")
 		}
 	}
 	if model != "" {
-		if got, ok := codexStringValue(text, "profiles", profileName, "model"); !ok || got != model {
+		if got, ok := config.String("profiles", profileName, codexRootModelKey); !ok || got != model {
 			return fmt.Errorf("generated Codex config missing profiles.%s.model = %q", profileName, model)
 		}
 	}
 	if modelCatalogPath != "" {
-		if got, ok := codexStringValue(text, "profiles", profileName, "model_catalog_json"); !ok || got != modelCatalogPath {
+		if got, ok := config.String("profiles", profileName, codexRootModelCatalogJSONKey); !ok || got != modelCatalogPath {
 			return fmt.Errorf("generated Codex config missing profiles.%s.model_catalog_json = %q", profileName, modelCatalogPath)
 		}
 	}
 	if opts.activate {
-		if got := codexRootStringValue(text, "profile"); got != profileName {
+		if got := config.RootString(codexRootProfileKey); got != profileName {
 			return fmt.Errorf("generated Codex config missing profile = %q", profileName)
 		}
 	}
 	if opts.setRootModelConfig {
 		if model != "" {
-			if got := codexRootStringValue(text, "model"); got != model {
+			if got := config.RootString(codexRootModelKey); got != model {
 				return fmt.Errorf("generated Codex config missing model = %q", model)
 			}
 		}
-		if got := codexRootStringValue(text, "model_provider"); got != profileName {
+		if got := config.RootString(codexRootModelProviderKey); got != profileName {
 			return fmt.Errorf("generated Codex config missing model_provider = %q", profileName)
 		}
 		if modelCatalogPath != "" {
-			if got := codexRootStringValue(text, "model_catalog_json"); got != modelCatalogPath {
+			if got := config.RootString(codexRootModelCatalogJSONKey); got != modelCatalogPath {
 				return fmt.Errorf("generated Codex config missing model_catalog_json = %q", modelCatalogPath)
 			}
 		}
 	}
 	return nil
-}
-
-func codexWriteWithBackup(path string, data []byte, integration string) error {
-	if strings.TrimSpace(integration) != "" {
-		return fileutil.WriteWithBackup(path, data, integration)
-	}
-	return fileutil.WriteWithBackup(path, data)
 }
 
 func codexUpsertSection(text, header string, lines []string) string {
@@ -294,24 +296,15 @@ func codexRemoveSection(text, header string) string {
 	return text[:start] + text[end:]
 }
 
-func codexRootStringValue(text, key string) string {
-	value, _ := codexStringValue(text, key)
-	return value
+type codexParsedConfig struct {
+	values map[string]any
 }
 
-func codexRootStringValueOK(text, key string) (string, bool) {
-	return codexStringValue(text, key)
-}
-
-func codexStringValue(text string, path ...string) (string, bool) {
+func (c codexParsedConfig) String(path ...string) (string, bool) {
 	if len(path) == 0 {
 		return "", false
 	}
-	cfg, err := codexParseConfigText(text)
-	if err != nil {
-		return "", false
-	}
-	var current any = cfg
+	var current any = c.values
 	for _, part := range path {
 		table, ok := current.(map[string]any)
 		if !ok {
@@ -329,6 +322,49 @@ func codexStringValue(text string, path ...string) (string, bool) {
 	return value, true
 }
 
+func (c codexParsedConfig) RootString(key string) string {
+	value, _ := c.RootStringOK(key)
+	return value
+}
+
+func (c codexParsedConfig) RootStringOK(key string) (string, bool) {
+	return c.String(key)
+}
+
+func (c codexParsedConfig) ProfileString(profileName, key string) string {
+	value, _ := c.String("profiles", profileName, key)
+	return value
+}
+
+func (c codexParsedConfig) ProviderString(profileName, key string) string {
+	value, _ := c.String("model_providers", profileName, key)
+	return value
+}
+
+func codexRootStringValue(text, key string) string {
+	config, err := codexParseConfig(text)
+	if err != nil {
+		return ""
+	}
+	return config.RootString(key)
+}
+
+func codexRootStringValueOK(text, key string) (string, bool) {
+	config, err := codexParseConfig(text)
+	if err != nil {
+		return "", false
+	}
+	return config.RootStringOK(key)
+}
+
+func codexStringValue(text string, path ...string) (string, bool) {
+	config, err := codexParseConfig(text)
+	if err != nil {
+		return "", false
+	}
+	return config.String(path...)
+}
+
 func codexSectionStringValue(text, header, key string) string {
 	path, ok := codexTableHeaderPath(header)
 	if !ok {
@@ -336,6 +372,14 @@ func codexSectionStringValue(text, header, key string) string {
 	}
 	value, _ := codexStringValue(text, append(path, key)...)
 	return value
+}
+
+func codexParseConfig(text string) (codexParsedConfig, error) {
+	values, err := codexParseConfigText(text)
+	if err != nil {
+		return codexParsedConfig{}, err
+	}
+	return codexParsedConfig{values: values}, nil
 }
 
 func codexParseConfigText(text string) (map[string]any, error) {
@@ -350,7 +394,7 @@ func codexParseConfigText(text string) (map[string]any, error) {
 }
 
 func codexValidateConfigText(text string) error {
-	_, err := codexParseConfigText(text)
+	_, err := codexParseConfig(text)
 	return err
 }
 

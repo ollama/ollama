@@ -29,6 +29,13 @@ func launcherTestState() *launch.LauncherState {
 				Selectable:  true,
 				Changeable:  true,
 			},
+			"codex-app": {
+				Name:        "codex-app",
+				DisplayName: "Codex App",
+				Description: "OpenAI's desktop coding agent",
+				Selectable:  true,
+				Changeable:  true,
+			},
 			"openclaw": {
 				Name:            "openclaw",
 				DisplayName:     "OpenClaw",
@@ -122,11 +129,24 @@ func expectedExpandedSequence(state *launch.LauncherState) []string {
 func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
 	state := launcherTestState()
 	menu := newModel(state)
+	wantPrefix := []string{"run", "claude", "codex-app", "hermes", "openclaw"}
+	if findMenuCursorByIntegration(menu.items, "codex-app") == -1 {
+		wantPrefix = []string{"run", "claude", "hermes", "openclaw", "opencode"}
+	}
+	if got := integrationSequence(menu.items); len(got) < len(wantPrefix) {
+		t.Fatalf("expected at least %d menu items, got %v", len(wantPrefix), got)
+	} else if diff := compareStrings(got[:len(wantPrefix)], wantPrefix); diff != "" {
+		t.Fatalf("unexpected primary TUI order: %s", diff)
+	}
+
 	view := menu.View()
-	for _, want := range []string{"Chat with a model", "Launch Claude Code", "Launch OpenClaw", "Launch Hermes Agent", "More..."} {
+	for _, want := range []string{"Chat with a model", "Launch Claude Code", "Launch Hermes Agent", "Launch OpenClaw", "More..."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected menu view to contain %q\n%s", want, view)
 		}
+	}
+	if findMenuCursorByIntegration(menu.items, "codex-app") != -1 && !strings.Contains(view, "Launch Codex App") {
+		t.Fatalf("expected menu view to contain Codex App\n%s", view)
 	}
 	if strings.Contains(view, "Launch Claude Desktop") {
 		t.Fatalf("expected hidden Claude Desktop to be absent\n%s", view)
