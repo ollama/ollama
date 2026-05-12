@@ -125,12 +125,6 @@ Lastly, run Ollama:
 go run . serve
 ```
 
-However, if you are running on LoongArch64, currently you need to run:
-
-```
-CGO_CFLAGS_ALLOW=-mlasx CGO_CPPFLAGS_ALLOW=-mlasx go run . serve
-```
-
 ## MLX Engine (Optional)
 
 The MLX engine enables running safetensor based models. It requires building the [MLX](https://github.com/ml-explore/mlx) and [MLX-C](https://github.com/ml-explore/mlx-c) shared libraries separately via CMake.  On MacOS, MLX leverages the Metal library to run on the GPU, and on Windows and Linux, runs on NVIDIA GPUs via CUDA v13.
