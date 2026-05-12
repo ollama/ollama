@@ -224,7 +224,7 @@ static void ggml_backend_blas_free(ggml_backend_t backend) {
     delete backend;
 }
 
-static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
+static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size) {
     ggml_backend_blas_context * ctx = (ggml_backend_blas_context *)backend->context;
 
     for (int i = 0; i < cgraph->n_nodes; i++) {
@@ -254,6 +254,7 @@ static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, 
     return GGML_STATUS_SUCCESS;
 
     GGML_UNUSED(backend);
+    GGML_UNUSED(batch_size);
 }
 
 static struct ggml_backend_i blas_backend_i = {
@@ -270,6 +271,7 @@ static struct ggml_backend_i blas_backend_i = {
     /* .graph_compute           = */ ggml_backend_blas_graph_compute,
     /* .event_record            = */ NULL,
     /* .event_wait              = */ NULL,
+    /* .graph_optimize          = */ NULL,
 };
 
 static ggml_guid_t ggml_backend_blas_guid(void) {
@@ -281,10 +283,10 @@ ggml_backend_t ggml_backend_blas_init(void) {
     ggml_backend_blas_context * ctx = new ggml_backend_blas_context;
 
     ggml_backend_t backend = new ggml_backend {
-        /* .guid      = */ ggml_backend_blas_guid(),
-        /* .interface = */ blas_backend_i,
-        /* .device    = */ ggml_backend_reg_dev_get(ggml_backend_blas_reg(), 0),
-        /* .context   = */ ctx,
+        /* .guid    = */ ggml_backend_blas_guid(),
+        /* .iface   = */ blas_backend_i,
+        /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_blas_reg(), 0),
+        /* .context = */ ctx,
     };
 
 #if defined(OPENBLAS_VERSION) && defined(GGML_USE_OPENMP)

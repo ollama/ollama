@@ -1,0 +1,118 @@
+#version 450
+#extension GL_EXT_control_flow_attributes : enable
+
+#include "types.glsl"
+
+layout(constant_id = 0) const int BLOCK_SIZE = 1024;
+layout(constant_id = 1) const int NCOLS_PADDED_LOG2 = 10;
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+// Input can either be the source (A) or intermediate values (S).
+// Similarly, output can be either destination (D) or intermediate values (S).
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 0) readonly buffer S {ivec2 data_s[];};
+layout (binding = 1) writeonly buffer D {int data_d[];};
+layout (binding = 1) writeonly buffer T {ivec2 data_t[];};
+
+layout (push_constant) uniform parameter {
+    uint orig_ncols;
+    uint ncols_input;
+    uint ncols_output;
+    uint k;
+    uint nrows;
+    uint first_pass;
+    uint last_pass;
+} p;
+
+// pairs of (gid, value)
+shared ivec2 dst_row[BLOCK_SIZE];
+
+void topk(bool needs_bounds_check, const uint row) {
+    const int col = int(gl_LocalInvocationID.x);
+
+    // initialize indices
+    if (gl_GlobalInvocationID.x < p.ncols_input) {
+        if (p.first_pass != 0) {
+            const uint row_offset = row * p.ncols_input;
+            dst_row[col] = ivec2(gl_GlobalInvocationID.x, floatBitsToInt(data_a[row_offset + gl_GlobalInvocationID.x]));
+        } else {
+            const uint row_offset = row * p.ncols_input;
+            dst_row[col] = data_s[row_offset + gl_GlobalInvocationID.x];
+        }
+    } else {
+        dst_row[col] = ivec2(p.orig_ncols, 0);
+    }
+    barrier();
+
+    if (p.k == 1) {
+        // Fast path for single output - just do a max reduction
+        [[unroll]] for (int s = BLOCK_SIZE / 2; s >= 1; s /= 2) {
+            if (col < s) {
+                ivec2 a = dst_row[col];
+                ivec2 b = dst_row[col + s];
+                if (a.x >= p.orig_ncols ||
+                    b.x < p.orig_ncols && b.y > a.y) {
+                    dst_row[col] = b;
+                }
+            }
+            barrier();
+        }
+    } else {
+        // bitonic sort on this group of elements
+        uint num_outer_loop_iters = NCOLS_PADDED_LOG2;
+        for (uint k = 2, outer_idx = 0; outer_idx < num_outer_loop_iters; k *= 2, outer_idx++) {
+            uint num_inner_loop_iters = outer_idx + 1;
+            for (uint j = k / 2, inner_idx = 0; inner_idx < num_inner_loop_iters; j /= 2, inner_idx++) {
+                const int ixj = int(col ^ j);
+
+                int idx_0 = (col & k) == 0 ? col : ixj;
+                int idx_1 = (col & k) == 0 ? ixj : col;
+
+                ivec2 sh_idx_0 = dst_row[idx_0];
+                ivec2 sh_idx_1 = dst_row[idx_1];
+                bool idx_0_oob = needs_bounds_check ? sh_idx_0.x >= p.orig_ncols : false;
+                bool idx_1_oob = needs_bounds_check ? sh_idx_1.x >= p.orig_ncols : false;
+
+                if ((idx_0_oob ||
+                    (!idx_1_oob && intBitsToFloat(sh_idx_0.y) < intBitsToFloat(sh_idx_1.y))) && (ixj > col)) {
+                    dst_row[idx_0] = sh_idx_1;
+                    dst_row[idx_1] = sh_idx_0;
+                }
+
+                barrier();
+            }
+        }
+    }
+
+    if (col < p.k) {
+        if (p.last_pass != 0) {
+            if (gl_GlobalInvocationID.x < p.ncols_input) {
+                const uint row_offset = row * p.k;
+                data_d[row_offset + col] = dst_row[col].x;
+            }
+        } else {
+            if (gl_WorkGroupID.x * p.k + col < p.ncols_output) {
+                const uint row_offset = row * p.ncols_output + gl_WorkGroupID.x * p.k;
+                data_t[row_offset + col] = dst_row[col];
+            }
+        }
+    }
+}
+
+void main() {
+    // Fast path for fully occupied workgroups
+    if ((p.ncols_input % BLOCK_SIZE) == 0) {
+        uint row = gl_WorkGroupID.y;
+        while (row < p.nrows) {
+            topk(false, row);
+            row += gl_WorkGroupSize.y * gl_NumWorkGroups.y;
+        }
+    } else {
+        uint row = gl_WorkGroupID.y;
+        while (row < p.nrows) {
+            topk(true, row);
+            row += gl_WorkGroupSize.y * gl_NumWorkGroups.y;
+        }
+    }
+}

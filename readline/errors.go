@@ -5,6 +5,7 @@ import (
 )
 
 var ErrInterrupt = errors.New("Interrupt")
+var ErrEditPrompt = errors.New("EditPrompt")
 
 type InterruptError struct {
 	Line []rune

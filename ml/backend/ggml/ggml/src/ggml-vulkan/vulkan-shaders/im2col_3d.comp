@@ -1,0 +1,125 @@
+#version 450
+
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+
+#include "rte.glsl"
+#include "types.glsl"
+
+layout (push_constant) uniform parameter
+{
+    BDA_STORAGE_T dst_addr;
+    uint32_t nb10;
+    uint32_t nb11;
+    uint32_t nb12;
+    uint32_t nb13;
+    uint32_t s0;
+    uint32_t s1;
+    uint32_t s2;
+    uint32_t p0;
+    uint32_t p1;
+    uint32_t p2;
+    uint32_t d0;
+    uint32_t d1;
+    uint32_t d2;
+    uint32_t IW;
+    uint32_t IH;
+    uint32_t ID;
+    uint32_t IC;
+    uint32_t KW;
+    uint32_t OH;
+    uint32_t KD_KH_KW;
+    uint32_t KH_KW;
+    uint32_t IC_KD_KH_KW;
+    uint32_t N_OD_OH;
+    uint32_t OD_OH;
+    uint32_t OD_OH_OW_IC_KD_KH_KW;
+    uint32_t OH_OW_IC_KD_KH_KW;
+    uint32_t OW_IC_KD_KH_KW;
+    uint32_t misalign_offsets;
+} p;
+
+uint get_aoffset() { return p.misalign_offsets >> 16; }
+uint get_doffset() { return p.misalign_offsets & 0xFFFF; }
+
+layout(constant_id = 0) const uint BLOCK_SIZE = 32;
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+#if BDA
+layout (buffer_reference) buffer D_ptr {D_TYPE d;};
+#endif
+
+void main() {
+    const uint32_t i = gl_GlobalInvocationID.x;
+
+    uint32_t nb10 = p.nb10;
+    uint32_t nb11 = p.nb11;
+    uint32_t nb12 = p.nb12;
+    uint32_t nb13 = p.nb13;
+    uint32_t s0 = p.s0;
+    uint32_t s1 = p.s1;
+    uint32_t s2 = p.s2;
+    uint32_t p0 = p.p0;
+    uint32_t p1 = p.p1;
+    uint32_t p2 = p.p2;
+    uint32_t d0 = p.d0;
+    uint32_t d1 = p.d1;
+    uint32_t d2 = p.d2;
+    uint32_t IW = p.IW;
+    uint32_t IH = p.IH;
+    uint32_t ID = p.ID;
+    uint32_t IC = p.IC;
+    uint32_t KW = p.KW;
+    uint32_t OH = p.OH;
+    uint32_t KD_KH_KW = p.KD_KH_KW;
+    uint32_t KH_KW = p.KH_KW;
+    uint32_t IC_KD_KH_KW = p.IC_KD_KH_KW;
+    uint32_t N_OD_OH = p.N_OD_OH;
+    uint32_t OD_OH = p.OD_OH;
+    uint32_t OD_OH_OW_IC_KD_KH_KW = p.OD_OH_OW_IC_KD_KH_KW;
+    uint32_t OH_OW_IC_KD_KH_KW = p.OH_OW_IC_KD_KH_KW;
+    uint32_t OW_IC_KD_KH_KW = p.OW_IC_KD_KH_KW;
+
+    if (i >= IC_KD_KH_KW) {
+        return;
+    }
+
+    const uint32_t iic = i / KD_KH_KW;
+    const uint32_t ikd = (i - iic * KD_KH_KW) / KH_KW;
+    const uint32_t ikh = (i - iic * KD_KH_KW - ikd * KH_KW) / KW;
+    const uint32_t ikw = i % KW;
+
+    const uint32_t iow = gl_GlobalInvocationID.y;
+    for (uint32_t iz = gl_GlobalInvocationID.z; iz < N_OD_OH; iz += gl_NumWorkGroups.z) {
+        const uint32_t in_ = iz / OD_OH;
+        const uint32_t iod = (iz - in_*OD_OH) / OH;
+        const uint32_t ioh = iz % OH;
+
+        const uint32_t iiw = iow * s0 + ikw * d0 - p0;
+        const uint32_t iih = ioh * s1 + ikh * d1 - p1;
+        const uint32_t iid = iod * s2 + ikd * d2 - p2;
+
+        const BDA_OFFSET_T offset_dst = BDA_OFFSET_T(in_)*OD_OH_OW_IC_KD_KH_KW + BDA_OFFSET_T(iod)*OH_OW_IC_KD_KH_KW + BDA_OFFSET_T(ioh)*OW_IC_KD_KH_KW + BDA_OFFSET_T(iow)*IC_KD_KH_KW + iic*KD_KH_KW + ikd * KH_KW + ikh*KW + ikw;
+
+        const uint32_t offset_src = (in_*IC + iic)*nb13 + iid*nb12 + iih*nb11 + iiw*nb10;
+#if BDA
+        D_ptr dst_addr = D_ptr(p.dst_addr + D_SIZE * offset_dst);
+        if (iih >= IH || iiw >= IW || iid >= ID) {
+            dst_addr.d = D_TYPE(0.0f);
+        } else {
+            dst_addr.d = D_TYPE(data_a[offset_src + get_aoffset()]);
+        }
+#else
+        if (iih >= IH || iiw >= IW || iid >= ID) {
+            data_d[offset_dst + get_doffset()] = D_TYPE(0.0f);
+        } else {
+            data_d[offset_dst + get_doffset()] = D_TYPE(data_a[offset_src + get_aoffset()]);
+        }
+#endif
+    }
+}

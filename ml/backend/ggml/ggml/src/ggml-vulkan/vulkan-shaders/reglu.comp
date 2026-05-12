@@ -1,0 +1,9 @@
+#version 450
+
+#include "glu_head.glsl"
+
+float op(float a, float b) {
+    return max(a, 0.0f) * b;
+}
+
+#include "glu_main.glsl"

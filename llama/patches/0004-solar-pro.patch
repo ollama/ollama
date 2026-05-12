@@ -1,0 +1,455 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Sun, 20 Apr 2025 16:11:09 -0700
+Subject: [PATCH] solar-pro
+
+adds support for the Solar Pro architecture
+---
+ src/CMakeLists.txt         |   1 +
+ src/llama-arch.cpp         |  20 +++++
+ src/llama-arch.h           |   3 +
+ src/llama-hparams.cpp      |   8 ++
+ src/llama-hparams.h        |   5 ++
+ src/llama-model-loader.cpp |   2 +-
+ src/llama-model.cpp        |  48 +++++++++++
+ src/llama-model.h          |   3 +
+ src/models/models.h        |   5 ++
+ src/models/solar.cpp       | 158 +++++++++++++++++++++++++++++++++++++
+ 10 files changed, 252 insertions(+), 1 deletion(-)
+ create mode 100644 src/models/solar.cpp
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 4192af7c0..bd44d73e7 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -125,6 +125,7 @@ add_library(llama
+             models/seed-oss.cpp
+             models/smallthinker.cpp
+             models/smollm3.cpp
++            models/solar.cpp
+             models/stablelm.cpp
+             models/starcoder.cpp
+             models/starcoder2.cpp
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index 8caf80afc..2ce8ffec0 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -87,6 +87,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+     { LLM_ARCH_GRANITE_MOE,      "granitemoe"       },
+     { LLM_ARCH_GRANITE_HYBRID,   "granitehybrid"    },
+     { LLM_ARCH_CHAMELEON,        "chameleon"        },
++    { LLM_ARCH_SOLAR,            "solar"            },
+     { LLM_ARCH_WAVTOKENIZER_DEC, "wavtokenizer-dec" },
+     { LLM_ARCH_PLM,              "plm"              },
+     { LLM_ARCH_BAILINGMOE,       "bailingmoe"       },
+@@ -208,6 +209,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+     { LLM_KV_ATTENTION_OUTPUT_SCALE,                 "%s.attention.output_scale"                 },
+     { LLM_KV_ATTENTION_TEMPERATURE_LENGTH,           "%s.attention.temperature_length"           },
+     { LLM_KV_ATTENTION_TEMPERATURE_SCALE,            "%s.attention.temperature_scale"            },
++    { LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,        "%s.attention.block_skip_connection"        },
+     { LLM_KV_ATTENTION_KEY_LENGTH_MLA,               "%s.attention.key_length_mla"               },
+     { LLM_KV_ATTENTION_VALUE_LENGTH_MLA,             "%s.attention.value_length_mla"             },
+ 
+@@ -339,6 +341,7 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
+     { LLM_TENSOR_ATTN_QKV,                               "blk.%d.attn_qkv" },
+     { LLM_TENSOR_LAYER_OUT_NORM,                         "blk.%d.layer_output_norm" },
+     { LLM_TENSOR_ATTN_OUT_NORM,                          "blk.%d.attn_output_norm" },
++    { LLM_TENSOR_BSKCN_TV,                               "bskcn_tv" },
+     { LLM_TENSOR_POS_EMBD,                               "position_embd" },
+     { LLM_TENSOR_FFN_ACT,                                "blk.%d.ffn.act" },
+     { LLM_TENSOR_TOKEN_EMBD_NORM,                        "token_embd_norm" },
+@@ -2176,6 +2179,22 @@ static std::set<llm_tensor> llm_get_tensor_names(llm_arch arch) {
+             return {
+                 LLM_TENSOR_TOKEN_EMBD,
+             };
++        case LLM_ARCH_SOLAR:
++            return {
++                LLM_TENSOR_TOKEN_EMBD,
++                LLM_TENSOR_OUTPUT_NORM,
++                LLM_TENSOR_OUTPUT,
++                LLM_TENSOR_ATTN_NORM,
++                LLM_TENSOR_ATTN_Q,
++                LLM_TENSOR_ATTN_K,
++                LLM_TENSOR_ATTN_V,
++                LLM_TENSOR_ATTN_OUT,
++                LLM_TENSOR_FFN_NORM,
++                LLM_TENSOR_FFN_GATE,
++                LLM_TENSOR_FFN_DOWN,
++                LLM_TENSOR_FFN_UP,
++                LLM_TENSOR_BSKCN_TV,
++            };
+         default:
+             GGML_ABORT("unknown architecture for tensor mapping");
+     }
+@@ -2344,6 +2363,7 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+     {LLM_TENSOR_LAUREL_POST_NORM,           {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+     // this tensor is loaded for T5, but never used
+     {LLM_TENSOR_DEC_CROSS_ATTN_REL_B,       {LLM_TENSOR_LAYER_REPEATING, GGML_OP_NONE}},
++    {LLM_TENSOR_BSKCN_TV,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+     {LLM_TENSOR_CONV1D,                     {LLM_TENSOR_LAYER_INPUT,     GGML_OP_IM2COL}},
+     {LLM_TENSOR_POS_NET_NORM,               {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+     {LLM_TENSOR_POS_NET_NORM1,              {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+diff --git a/src/llama-arch.h b/src/llama-arch.h
+index 6cbf9b1f8..14d461c76 100644
+--- a/src/llama-arch.h
++++ b/src/llama-arch.h
+@@ -91,6 +91,7 @@ enum llm_arch {
+     LLM_ARCH_GRANITE_MOE,
+     LLM_ARCH_GRANITE_HYBRID,
+     LLM_ARCH_CHAMELEON,
++    LLM_ARCH_SOLAR,
+     LLM_ARCH_WAVTOKENIZER_DEC,
+     LLM_ARCH_PLM,
+     LLM_ARCH_BAILINGMOE,
+@@ -212,6 +213,7 @@ enum llm_kv {
+     LLM_KV_ATTENTION_OUTPUT_SCALE,
+     LLM_KV_ATTENTION_TEMPERATURE_LENGTH,
+     LLM_KV_ATTENTION_TEMPERATURE_SCALE,
++    LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,
+     LLM_KV_ATTENTION_KEY_LENGTH_MLA,
+     LLM_KV_ATTENTION_VALUE_LENGTH_MLA,
+ 
+@@ -465,6 +467,7 @@ enum llm_tensor {
+     LLM_TENSOR_ENC_OUTPUT_NORM,
+     LLM_TENSOR_CLS,
+     LLM_TENSOR_CLS_OUT,
++    LLM_TENSOR_BSKCN_TV,
+     LLM_TENSOR_CONV1D,
+     LLM_TENSOR_CONVNEXT_DW,
+     LLM_TENSOR_CONVNEXT_NORM,
+diff --git a/src/llama-hparams.cpp b/src/llama-hparams.cpp
+index fe1fa4341..aabff2f06 100644
+--- a/src/llama-hparams.cpp
++++ b/src/llama-hparams.cpp
+@@ -163,6 +163,14 @@ uint32_t llama_hparams::n_pos_per_embd() const {
+     return rope_type == LLAMA_ROPE_TYPE_MROPE || rope_type == LLAMA_ROPE_TYPE_IMROPE ? 4 : 1;
+ }
+ 
++bool llama_hparams::n_bskcn(uint32_t n, uint32_t il) const {
++    if (il < n_layer) {
++        return n_bskcn_arr[n][il] > 0;
++    }
++
++    GGML_ABORT("fatal error");
++}
++
+ bool llama_hparams::is_swa(uint32_t il) const {
+     if (il < n_layer) {
+         return swa_layers[il];
+diff --git a/src/llama-hparams.h b/src/llama-hparams.h
+index f6e95b5d2..c6e673276 100644
+--- a/src/llama-hparams.h
++++ b/src/llama-hparams.h
+@@ -65,6 +65,8 @@ struct llama_hparams {
+     std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
+     std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
+ 
++    std::array<std::array<uint32_t, LLAMA_MAX_LAYERS>, 4> n_bskcn_arr = {};
++
+     uint32_t n_layer_dense_lead = 0;
+     uint32_t n_lora_q           = 0;
+     uint32_t n_lora_kv          = 0;
+@@ -259,6 +261,9 @@ struct llama_hparams {
+ 
+     uint32_t n_pos_per_embd() const;
+ 
++    // Block skip connection
++    bool n_bskcn(uint32_t n, uint32_t il) const;
++
+     bool is_swa(uint32_t il) const;
+ 
+     bool has_kv(uint32_t il) const;
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index ca2ea2461..8916a6242 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -466,7 +466,7 @@ namespace GGUFMeta {
+     template bool llama_model_loader::get_key_or_arr<std::array<int, 4>>(enum llm_kv kid, std::array<int, 4> & result, uint32_t n, bool required);
+     template bool llama_model_loader::get_key_or_arr<std::array<uint32_t, 512>>(enum llm_kv kid, std::array<uint32_t, 512> & result, uint32_t n, bool required);
+     template bool llama_model_loader::get_key_or_arr<std::array<float, 512>>(enum llm_kv kid, std::array<float, 512> & result, uint32_t n, bool required);
+-
++    template bool llama_model_loader::get_key_or_arr<uint32_t>(const std::string & key, std::array<uint32_t, 512> & result, uint32_t n, bool required);
+ 
+ llama_model_loader::llama_model_loader(
+         const std::string & fname,
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index ae8207ee1..00cd579e0 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1995,6 +1995,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
+                     default: type = LLM_TYPE_UNKNOWN;
+                }
+             } break;
++        case LLM_ARCH_SOLAR:
++            {
++                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
++                for (size_t i = 0; i < hparams.n_bskcn_arr.max_size(); ++i) {
++                    auto & bskcn = hparams.n_bskcn_arr[i];
++                    bskcn.fill(0);
++                    auto kv = LLM_KV(arch);
++                    ml.get_key_or_arr(format((kv(LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION) + ".%d").c_str(), i), bskcn, hparams.n_layer, false);
++                }
++
++                switch (hparams.n_layer) {
++                    case 64: type = LLM_TYPE_22B; break;
++                    default: type = LLM_TYPE_UNKNOWN;
++                }
++            } break;
+         case LLM_ARCH_WAVTOKENIZER_DEC:
+             {
+                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_EPS,    hparams.f_norm_eps);
+@@ -5429,6 +5444,34 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+ 
+                         layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
+ 
++                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
++                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
++                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
++                    }
++                } break;
++            case LLM_ARCH_SOLAR:
++                {
++                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
++
++                    // output
++                    {
++                        output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
++                        output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, llama_model_loader::TENSOR_NOT_REQUIRED);
++                    }
++
++                    for (int i = 0; i < n_layer; ++i) {
++                        auto & layer = layers[i];
++
++                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
++
++                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
++                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
++                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
++                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
++
++                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
++
++                        layer.bskcn_tv = create_tensor(tn(LLM_TENSOR_BSKCN_TV, "weight", i), {2}, llama_model_loader::TENSOR_NOT_REQUIRED | (i != 0 ? llama_model_loader::TENSOR_DUPLICATED : 0));
+                         layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                         layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                         layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+@@ -7534,6 +7577,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+             {
+                 llm = std::make_unique<llm_build_chameleon>(*this, params);
+             } break;
++        case LLM_ARCH_SOLAR:
++            {
++                llm = std::make_unique<llm_build_solar>(*this, params);
++            } break;
+         case LLM_ARCH_WAVTOKENIZER_DEC:
+             {
+                 llm = std::make_unique<llm_build_wavtokenizer_dec>(*this, params);
+@@ -7798,6 +7845,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+         case LLM_ARCH_GRANITE_MOE:
+         case LLM_ARCH_GRANITE_HYBRID:
+         case LLM_ARCH_CHAMELEON:
++        case LLM_ARCH_SOLAR:
+         case LLM_ARCH_BAILINGMOE:
+         case LLM_ARCH_NEO_BERT:
+         case LLM_ARCH_SMOLLM3:
+diff --git a/src/llama-model.h b/src/llama-model.h
+index c6eb95318..b378b23ec 100644
+--- a/src/llama-model.h
++++ b/src/llama-model.h
+@@ -76,6 +76,7 @@ enum llm_type {
+     LLM_TYPE_15B,
+     LLM_TYPE_16B,
+     LLM_TYPE_20B,
++    LLM_TYPE_22B,
+     LLM_TYPE_26B,
+     LLM_TYPE_27B,
+     LLM_TYPE_30B,
+@@ -405,6 +406,8 @@ struct llama_layer {
+     struct ggml_tensor * ffn_act_beta    = nullptr;
+     struct ggml_tensor * ffn_act_eps     = nullptr;
+ 
++    struct ggml_tensor * bskcn_tv = nullptr;
++
+     struct llama_layer_posnet posnet;
+ 
+     struct llama_layer_convnext convnext;
+diff --git a/src/models/models.h b/src/models/models.h
+index ffb36acc6..6d84a185d 100644
+--- a/src/models/models.h
++++ b/src/models/models.h
+@@ -515,6 +515,11 @@ struct llm_build_smollm3 : public llm_graph_context {
+     llm_build_smollm3(const llama_model & model, const llm_graph_params & params);
+ };
+ 
++struct llm_build_solar : public llm_graph_context {
++    llm_build_solar(const llama_model & model, const llm_graph_params & params);
++};
++
++
+ struct llm_build_stablelm : public llm_graph_context {
+     llm_build_stablelm(const llama_model & model, const llm_graph_params & params);
+ };
+diff --git a/src/models/solar.cpp b/src/models/solar.cpp
+new file mode 100644
+index 000000000..97383928c
+--- /dev/null
++++ b/src/models/solar.cpp
+@@ -0,0 +1,158 @@
++#include "models.h"
++
++llm_build_solar::llm_build_solar(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
++        const int64_t n_embd_head = hparams.n_embd_head_v;
++        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
++        GGML_ASSERT(n_embd_head == hparams.n_rot);
++
++        struct ggml_tensor * cur;
++        struct ggml_tensor * inpL;
++
++        inpL = build_inp_embd(model.tok_embd);
++
++        // inp_pos - contains the positions
++        struct ggml_tensor * inp_pos = build_inp_pos();
++
++        // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
++        auto * inp_attn = build_attn_inp_kv();
++
++        const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
++
++        struct ggml_tensor * bskcn_1;
++        struct ggml_tensor * bskcn_2;
++
++        for (int il = 0; il < n_layer; ++il) {
++            struct ggml_tensor * inpSA = inpL;
++
++            if (hparams.n_bskcn(0, il)) {
++                bskcn_1 = inpSA;
++            }
++
++            if (hparams.n_bskcn(1, il)) {
++                bskcn_2 = inpSA;
++            }
++
++            if (hparams.n_bskcn(2, il)) {
++                inpSA = ggml_add(
++                   ctx0,
++                   ggml_mul(ctx0, bskcn_1, ggml_view_1d(ctx0, model.layers[il].bskcn_tv, 1, 0)),
++                   ggml_mul(ctx0, inpSA, ggml_view_1d(ctx0, model.layers[il].bskcn_tv, 1, ggml_element_size(model.layers[il].bskcn_tv))));
++            }
++
++            if (hparams.n_bskcn(3, il)) {
++                inpSA = ggml_add(
++                   ctx0,
++                   ggml_mul(ctx0, bskcn_2, ggml_view_1d(ctx0, model.layers[il].bskcn_tv, 1, 0)),
++                   ggml_mul(ctx0, inpSA, ggml_view_1d(ctx0, model.layers[il].bskcn_tv, 1, ggml_element_size(model.layers[il].bskcn_tv))));
++            }
++
++            // norm
++            cur = build_norm(inpL,
++                    model.layers[il].attn_norm, NULL,
++                    LLM_NORM_RMS, il);
++            cb(cur, "attn_norm", il);
++
++            // self-attention
++            {
++                // rope freq factors for llama3; may return nullptr for llama2 and other models
++                ggml_tensor * rope_factors = model.get_rope_factors(cparams, il);
++
++                // compute Q and K and RoPE them
++                ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq, cur);
++                cb(Qcur, "Qcur", il);
++                if (model.layers[il].bq) {
++                    Qcur = ggml_add(ctx0, Qcur, model.layers[il].bq);
++                    cb(Qcur, "Qcur", il);
++                }
++
++                ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk, cur);
++                cb(Kcur, "Kcur", il);
++                if (model.layers[il].bk) {
++                    Kcur = ggml_add(ctx0, Kcur, model.layers[il].bk);
++                   cb(Kcur, "Kcur", il);
++                }
++
++                ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur);
++                cb(Vcur, "Vcur", il);
++                if (model.layers[il].bv) {
++                    Vcur = ggml_add(ctx0, Vcur, model.layers[il].bv);
++                    cb(Vcur, "Vcur", il);
++                }
++
++                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
++                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
++                Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
++
++                Qcur = ggml_rope_ext(
++                        ctx0, Qcur, inp_pos, rope_factors,
++                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
++                        ext_factor, attn_factor, beta_fast, beta_slow
++                        );
++
++                Kcur = ggml_rope_ext(
++                        ctx0, Kcur, inp_pos, rope_factors,
++                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
++                        ext_factor, attn_factor, beta_fast, beta_slow
++                        );
++
++                cb(Qcur, "Qcur", il);
++                cb(Kcur, "Kcur", il);
++                cb(Vcur, "Vcur", il);
++
++                cur = build_attn(inp_attn,
++                        model.layers[il].wo, model.layers[il].bo,
++                        Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, kq_scale, il);
++                cb(cur, "attn_out", il);
++            }
++
++            if (il == n_layer - 1) {
++                // skip computing output for unused tokens
++                ggml_tensor * inp_out_ids = build_inp_out_ids();
++                cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
++                inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
++            }
++
++            ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
++            cb(ffn_inp, "ffn_inp", il);
++
++            // feed-forward network
++            cur = build_norm(ffn_inp,
++                    model.layers[il].ffn_norm, NULL,
++                    LLM_NORM_RMS, il);
++            cb(cur, "ffn_norm", il);
++
++            cur = build_ffn(cur,
++                    model.layers[il].ffn_up,   model.layers[il].ffn_up_b,   NULL,
++                    model.layers[il].ffn_gate, model.layers[il].ffn_gate_b, NULL,
++                    model.layers[il].ffn_down, model.layers[il].ffn_down_b, NULL,
++                    NULL,
++                    LLM_FFN_SILU, LLM_FFN_PAR, il);
++            cb(cur, "ffn_out", il);
++
++            cur = ggml_add(ctx0, cur, ffn_inp);
++            cb(cur, "ffn_out", il);
++
++            cur = build_cvec(cur, il);
++            cb(cur, "l_out", il);
++
++            // input for next layer
++            inpL = cur;
++        }
++
++        cur = inpL;
++
++        cur = build_norm(cur,
++                model.output_norm, NULL,
++                LLM_NORM_RMS, -1);
++
++        cb(cur, "result_norm", -1);
++        res->t_embd = cur;
++
++        // lm_head
++        cur = build_lora_mm(model.output, cur);
++
++        cb(cur, "result_output", -1);
++        res->t_logits = cur;
++
++        ggml_build_forward_expand(gf, cur);
++}

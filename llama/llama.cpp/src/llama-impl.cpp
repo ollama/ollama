@@ -1,5 +1,6 @@
 #include "llama-impl.h"
 
+#include "gguf.h"
 #include "llama.h"
 
 #include <cinttypes>
@@ -19,10 +20,14 @@ static llama_logger_state g_logger_state;
 time_meas::time_meas(int64_t & t_acc, bool disable) : t_start_us(disable ? -1 : ggml_time_us()), t_acc(t_acc) {}
 
 time_meas::~time_meas() {
-        if (t_start_us >= 0) {
-            t_acc += ggml_time_us() - t_start_us;
-        }
+    if (t_start_us >= 0) {
+        t_acc += ggml_time_us() - t_start_us;
     }
+}
+
+void llama_log_get(ggml_log_callback * log_callback, void ** user_data) {
+    ggml_log_get(log_callback, user_data);
+}
 
 void llama_log_set(ggml_log_callback log_callback, void * user_data) {
     ggml_log_set(log_callback, user_data);
@@ -138,7 +143,7 @@ std::string gguf_kv_to_str(const struct gguf_context * ctx_gguf, int i) {
             {
                 const enum gguf_type arr_type = gguf_get_arr_type(ctx_gguf, i);
                 int arr_n = gguf_get_arr_n(ctx_gguf, i);
-                const void * data = gguf_get_arr_data(ctx_gguf, i);
+                const void * data = arr_type == GGUF_TYPE_STRING ? nullptr : gguf_get_arr_data(ctx_gguf, i);
                 std::stringstream ss;
                 ss << "[";
                 for (int j = 0; j < arr_n; j++) {

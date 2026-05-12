@@ -18,6 +18,7 @@ const (
 	CharCtrlL     = 12
 	CharEnter     = 13
 	CharNext      = 14
+	CharCtrlO     = 15 // Ctrl+O - used for expanding tool output
 	CharPrev      = 16
 	CharBckSearch = 18
 	CharFwdSearch = 19
@@ -60,6 +61,8 @@ const (
 
 	ColorGrey    = Esc + "[38;5;245m"
 	ColorDefault = Esc + "[0m"
+
+	ColorBold = Esc + "[1m"
 
 	StartBracketedPaste = Esc + "[?2004h"
 	EndBracketedPaste   = Esc + "[?2004l"

@@ -1,11 +1,15 @@
 package envconfig
 
 import (
+	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/logutil"
 )
 
 func TestHost(t *testing.T) {
@@ -35,12 +39,44 @@ func TestHost(t *testing.T) {
 		"https":               {"https://1.2.3.4", "https://1.2.3.4:443"},
 		"https port":          {"https://1.2.3.4:4321", "https://1.2.3.4:4321"},
 		"proxy path":          {"https://example.com/ollama", "https://example.com:443/ollama"},
+		"ollama.com":          {"ollama.com", "https://ollama.com:443"},
 	}
 
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", tt.value)
 			if host := Host(); host.String() != tt.expect {
+				t.Errorf("%s: expected %s, got %s", name, tt.expect, host.String())
+			}
+		})
+	}
+}
+
+func TestConnectableHost(t *testing.T) {
+	cases := map[string]struct {
+		value  string
+		expect string
+	}{
+		"empty":                    {"", "http://127.0.0.1:11434"},
+		"localhost":                {"127.0.0.1", "http://127.0.0.1:11434"},
+		"localhost and port":       {"127.0.0.1:1234", "http://127.0.0.1:1234"},
+		"ipv4 unspecified":         {"0.0.0.0", "http://127.0.0.1:11434"},
+		"ipv4 unspecified + port":  {"0.0.0.0:1234", "http://127.0.0.1:1234"},
+		"ipv6 unspecified":         {"[::]", "http://[::1]:11434"},
+		"ipv6 unspecified + port":  {"[::]:1234", "http://[::1]:1234"},
+		"ipv6 localhost":           {"[::1]", "http://[::1]:11434"},
+		"ipv6 localhost + port":    {"[::1]:1234", "http://[::1]:1234"},
+		"specific address":         {"192.168.1.5", "http://192.168.1.5:11434"},
+		"specific address + port":  {"192.168.1.5:8080", "http://192.168.1.5:8080"},
+		"hostname":                 {"example.com", "http://example.com:11434"},
+		"hostname and port":        {"example.com:1234", "http://example.com:1234"},
+		"https unspecified + port": {"https://0.0.0.0:4321", "https://127.0.0.1:4321"},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_HOST", tt.value)
+			if host := ConnectableHost(); host.String() != tt.expect {
 				t.Errorf("%s: expected %s, got %s", name, tt.expect, host.String())
 			}
 		})
@@ -69,6 +105,7 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://10.0.0.1", []string{
 			"http://10.0.0.1",
@@ -88,6 +125,7 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://172.16.0.1,https://192.168.0.1", []string{
 			"http://172.16.0.1",
@@ -108,6 +146,7 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://totally.safe,http://definitely.legit", []string{
 			"http://totally.safe",
@@ -128,13 +167,14 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.value, func(t *testing.T) {
 			t.Setenv("OLLAMA_ORIGINS", tt.value)
 
-			if diff := cmp.Diff(Origins(), tt.expect); diff != "" {
+			if diff := cmp.Diff(AllowedOrigins(), tt.expect); diff != "" {
 				t.Errorf("%s: mismatch (-want +got):\n%s", tt.value, diff)
 			}
 		})
@@ -268,6 +308,131 @@ func TestVar(t *testing.T) {
 			t.Setenv("OLLAMA_VAR", k)
 			if s := Var("OLLAMA_VAR"); s != v {
 				t.Errorf("%s: expected %q, got %q", k, v, s)
+			}
+		})
+	}
+}
+
+func TestContextLength(t *testing.T) {
+	cases := map[string]uint{
+		"":     0,
+		"2048": 2048,
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_LENGTH", k)
+			if i := ContextLength(); i != v {
+				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}
+
+func TestLogLevel(t *testing.T) {
+	cases := map[string]slog.Level{
+		// Default to INFO
+		"":      slog.LevelInfo,
+		"false": slog.LevelInfo,
+		"f":     slog.LevelInfo,
+		"0":     slog.LevelInfo,
+
+		// True values enable Debug
+		"true": slog.LevelDebug,
+		"t":    slog.LevelDebug,
+
+		// Positive values increase verbosity
+		"1": slog.LevelDebug,
+		"2": logutil.LevelTrace,
+
+		// Negative values decrease verbosity
+		"-1": slog.LevelWarn,
+		"-2": slog.LevelError,
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_DEBUG", k)
+			if i := LogLevel(); i != v {
+				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}
+
+func TestNoCloud(t *testing.T) {
+	tests := []struct {
+		name          string
+		envValue      string
+		configContent string
+		wantDisabled  bool
+		wantSource    string
+	}{
+		{
+			name:         "neither env nor config",
+			wantDisabled: false,
+			wantSource:   "none",
+		},
+		{
+			name:         "env only",
+			envValue:     "1",
+			wantDisabled: true,
+			wantSource:   "env",
+		},
+		{
+			name:          "config only",
+			configContent: `{"disable_ollama_cloud": true}`,
+			wantDisabled:  true,
+			wantSource:    "config",
+		},
+		{
+			name:          "both env and config",
+			envValue:      "1",
+			configContent: `{"disable_ollama_cloud": true}`,
+			wantDisabled:  true,
+			wantSource:    "both",
+		},
+		{
+			name:          "config false",
+			configContent: `{"disable_ollama_cloud": false}`,
+			wantDisabled:  false,
+			wantSource:    "none",
+		},
+		{
+			name:          "invalid config ignored",
+			configContent: `{invalid json`,
+			wantDisabled:  false,
+			wantSource:    "none",
+		},
+		{
+			name:         "no config file",
+			wantDisabled: false,
+			wantSource:   "none",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tt.configContent != "" {
+				configDir := filepath.Join(home, ".ollama")
+				if err := os.MkdirAll(configDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(configDir, "server.json"), []byte(tt.configContent), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			setTestHome(t, home)
+			t.Setenv("OLLAMA_NO_CLOUD", tt.envValue)
+
+			if got := NoCloud(); got != tt.wantDisabled {
+				t.Errorf("NoCloud() = %v, want %v", got, tt.wantDisabled)
+			}
+
+			if got := NoCloudSource(); got != tt.wantSource {
+				t.Errorf("NoCloudSource() = %q, want %q", got, tt.wantSource)
 			}
 		})
 	}

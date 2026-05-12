@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 19:43:40 -0700
+Subject: [PATCH] maintain ordering for rules for grammar
+
+---
+ common/json-schema-to-grammar.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/common/json-schema-to-grammar.cpp b/common/json-schema-to-grammar.cpp
+index 2f67c74d7..acf00e2d2 100644
+--- a/common/json-schema-to-grammar.cpp
++++ b/common/json-schema-to-grammar.cpp
+@@ -311,7 +311,7 @@ private:
+     friend std::string build_grammar(const std::function<void(const common_grammar_builder &)> & cb, const common_grammar_options & options);
+     std::function<json(const std::string &)> _fetch_json;
+     bool _dotall;
+-    std::map<std::string, std::string> _rules;
++    std::unordered_map<std::string, std::string> _rules;
+     std::unordered_map<std::string, json> _refs;
+     std::unordered_set<std::string> _refs_being_resolved;
+     std::vector<std::string> _errors;

@@ -32,10 +32,11 @@ func TestParseNameParts(t *testing.T) {
 		{
 			in: "scheme://host:port/namespace/model:tag",
 			want: Name{
-				Host:      "host:port",
-				Namespace: "namespace",
-				Model:     "model",
-				Tag:       "tag",
+				Host:           "host:port",
+				Namespace:      "namespace",
+				Model:          "model",
+				Tag:            "tag",
+				ProtocolScheme: "scheme",
 			},
 			wantFilepath: filepath.Join("host:port", "namespace", "model", "tag"),
 		},

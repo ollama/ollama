@@ -1,1 +1,11 @@
 ollama.syso
+*.crt
+*.exe
+/app/app
+/app/squirrel
+ollama
+*cover*
+.vscode
+.env
+.DS_Store
+.claude

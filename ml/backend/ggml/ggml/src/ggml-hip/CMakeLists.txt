@@ -28,9 +28,12 @@ if (CXX_IS_HIPCC)
                 " Prefer setting the HIP compiler directly. See README for details.")
     endif()
 else()
-    # Forward AMDGPU_TARGETS to CMAKE_HIP_ARCHITECTURES.
-    if (AMDGPU_TARGETS AND NOT CMAKE_HIP_ARCHITECTURES)
-        set(CMAKE_HIP_ARCHITECTURES ${AMDGPU_TARGETS})
+    # Forward (AMD)GPU_TARGETS to CMAKE_HIP_ARCHITECTURES.
+    if(AMDGPU_TARGETS AND NOT GPU_TARGETS)
+        set(GPU_TARGETS ${AMDGPU_TARGETS})
+    endif()
+    if(GPU_TARGETS AND NOT CMAKE_HIP_ARCHITECTURES)
+        set(CMAKE_HIP_ARCHITECTURES ${GPU_TARGETS})
     endif()
     cmake_minimum_required(VERSION 3.21)
     enable_language(HIP)
@@ -40,13 +43,22 @@ find_package(hip     REQUIRED)
 find_package(hipblas REQUIRED)
 find_package(rocblas REQUIRED)
 
+if (${hip_VERSION} VERSION_LESS 6.1)
+    message(FATAL_ERROR "At least ROCM/HIP V6.1 is required")
+endif()
+
 message(STATUS "HIP and hipBLAS found")
+
+# Workaround old compilers
+set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} --gpu-max-threads-per-block=1024")
 
 file(GLOB   GGML_HEADERS_ROCM "../ggml-cuda/*.cuh")
 list(APPEND GGML_HEADERS_ROCM "../../include/ggml-cuda.h")
 
 file(GLOB   GGML_SOURCES_ROCM "../ggml-cuda/*.cu")
-file(GLOB   SRCS "../ggml-cuda/template-instances/fattn-wmma*.cu")
+file(GLOB   SRCS "../ggml-cuda/template-instances/fattn-tile*.cu")
+list(APPEND GGML_SOURCES_ROCM ${SRCS})
+file(GLOB   SRCS "../ggml-cuda/template-instances/fattn-mma*.cu")
 list(APPEND GGML_SOURCES_ROCM ${SRCS})
 file(GLOB   SRCS "../ggml-cuda/template-instances/mmq*.cu")
 list(APPEND GGML_SOURCES_ROCM ${SRCS})
@@ -70,13 +82,11 @@ ggml_add_backend_library(ggml-hip
                         )
 
 # TODO: do not use CUDA definitions for HIP
-target_compile_definitions(ggml PUBLIC GGML_USE_CUDA)
+if (NOT GGML_BACKEND_DL)
+    target_compile_definitions(ggml PUBLIC GGML_USE_CUDA)
+endif()
 
 add_compile_definitions(GGML_USE_HIP)
-
-if (GGML_HIP_UMA)
-    add_compile_definitions(GGML_HIP_UMA)
-endif()
 
 if (GGML_CUDA_FORCE_MMQ)
     add_compile_definitions(GGML_CUDA_FORCE_MMQ)
@@ -88,6 +98,30 @@ endif()
 
 if (GGML_CUDA_NO_PEER_COPY)
     add_compile_definitions(GGML_CUDA_NO_PEER_COPY)
+endif()
+
+if (GGML_HIP_GRAPHS)
+    add_compile_definitions(GGML_HIP_GRAPHS)
+endif()
+
+if (GGML_HIP_NO_VMM)
+    add_compile_definitions(GGML_HIP_NO_VMM)
+endif()
+
+if (GGML_HIP_ROCWMMA_FATTN)
+    add_compile_definitions(GGML_HIP_ROCWMMA_FATTN)
+endif()
+
+if (NOT GGML_HIP_MMQ_MFMA)
+    add_compile_definitions(GGML_HIP_NO_MMQ_MFMA)
+endif()
+
+if (GGML_HIP_EXPORT_METRICS)
+    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Rpass-analysis=kernel-resource-usage --save-temps")
+endif()
+
+if (NOT GGML_CUDA_FA)
+    add_compile_definitions(GGML_CUDA_NO_FA)
 endif()
 
 if (CXX_IS_HIPCC)

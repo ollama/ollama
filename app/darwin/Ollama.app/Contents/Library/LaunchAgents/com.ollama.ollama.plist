@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ollama.ollama</string>
+    <key>BundleProgram</key>
+	<string>Contents/Frameworks/Squirrel.framework/Versions/A/Squirrel</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>Contents/Frameworks/Squirrel.framework/Versions/A/Squirrel</string>
+        <string>background</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>POSIXSpawnType</key>
+	<string>Interactive</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>LSBackgroundOnly</key>
+	<false/>
+</dict>
+</plist>

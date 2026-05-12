@@ -1,0 +1,151 @@
+#version 450
+
+#include "generic_binary_head.glsl"
+#include "types.glsl"
+
+#if RMS_NORM_ROPE_FUSION
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) readonly buffer B {B_TYPE data_b[];};
+
+// data is passed from rms_norm -> rope through shared memory.
+// rms_norm calls this data_d, rope calls this rope_data_a.
+// Binding 2 is not used
+shared FLOAT_TYPE rope_data_a[1024];
+#define data_d rope_data_a
+
+layout (binding = 3) readonly buffer R_Y {int rope_data_pos[];};
+layout (binding = 4) readonly buffer R_Z {float rope_data_ff[];};
+layout (binding = 5) writeonly buffer R_D {ROPE_D_TYPE rope_data_d[];};
+layout (binding = 6) readonly buffer R_I {uvec2 rope_data_i[];}; // indices for set_rows
+
+#include "rope_params.glsl"
+#include "rope_funcs.glsl"
+
+#define GGML_ROPE_TYPE_NORMAL 0
+#define GGML_ROPE_TYPE_NEOX   2
+#define GGML_ROPE_TYPE_MROPE  8
+#define GGML_ROPE_TYPE_VISION 24
+
+#endif
+
+#extension GL_EXT_control_flow_attributes : enable
+#define BLOCK_SIZE 512
+
+layout (constant_id = 1) const bool do_multiply = false;
+
+layout(local_size_x = BLOCK_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+shared FLOAT_TYPE sumsh[BLOCK_SIZE];
+
+void rms_norm(uint num_iters) {
+    const uint ncols     = p.ne00;
+    const uint nrows     = gl_NumWorkGroups.x;
+    const uint nchannels = gl_NumWorkGroups.y;
+
+    const uint row       = gl_WorkGroupID.x;
+    const uint channel   = gl_WorkGroupID.y;
+    const uint samp      = gl_WorkGroupID.z;
+    const uint tid       = gl_LocalInvocationID.x;
+
+    const uint stride_row       = p.nb01;
+    const uint stride_channel   = p.nb02;
+    const uint stride_sample    = p.nb03;
+
+    uint32_t a_offset = samp*stride_sample + channel*stride_channel + row*stride_row + get_aoffset();
+    uint32_t b_offset = src1_idx(0, row, channel, samp) + get_boffset();
+#if RMS_NORM_ROPE_FUSION
+    // Per-row offset in shared memory
+    uint32_t d_offset = 0;
+#else
+    uint32_t d_offset = ((samp*nchannels + channel)*nrows + row)*ncols + get_doffset();
+#endif
+    FLOAT_TYPE sum = FLOAT_TYPE(0.0f); // partial sum for thread in warp
+
+    [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
+        FLOAT_TYPE xi = FLOAT_TYPE(0);
+        if (col < ncols) {
+            xi = FLOAT_TYPE(data_a[a_offset + col]);
+        }
+        sum += xi * xi;
+    }
+
+    sumsh[tid] = sum;
+    // sum up partial sums and write back result
+    barrier();
+    [[unroll]] for (int s = BLOCK_SIZE / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            sum += sumsh[tid + s];
+            sumsh[tid] = sum;
+        }
+        barrier();
+    }
+    sum = sumsh[0];
+
+    const FLOAT_TYPE mean = sum / FLOAT_TYPE(ncols);
+    const FLOAT_TYPE scale = inversesqrt(mean + FLOAT_TYPE(p.param1));
+
+    if (do_multiply) {
+        if (ncols > p.ne10) {
+            [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
+                if (col >= ncols) {
+                    continue;
+                }
+                data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]) * FLOAT_TYPE(data_b[b_offset + fastmod(col, p.ne10)]));
+            }
+        } else {
+            [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
+                if (col >= ncols) {
+                    continue;
+                }
+                data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]) * FLOAT_TYPE(data_b[b_offset + col]));
+            }
+        }
+    } else {
+        [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
+            if (col >= ncols) {
+                continue;
+            }
+            data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]));
+        }
+    }
+#if RMS_NORM_ROPE_FUSION
+    barrier();
+    rope_params rp = p.rope;
+    uint rope_row = (samp*nchannels + channel)*nrows + row;
+    for (uint t = 2*tid; t < ncols; t += 2*BLOCK_SIZE) {
+        if (rp.rope_mode == GGML_ROPE_TYPE_NEOX) {
+            rope_neox(t, rope_row, rp);
+        } else if (rp.rope_mode == GGML_ROPE_TYPE_NORMAL) {
+            rope_norm(t, rope_row, rp);
+        }
+    }
+#endif
+}
+
+void main() {
+    // instantiate the rms_norm function for several different
+    // dimensions, to allow loop unrolling
+    uint num_blocks = (p.ne00 + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    if (num_blocks > 32) {
+        rms_norm(num_blocks);
+    } else if (num_blocks > 16) {
+        rms_norm(32);
+    } else if (num_blocks > 12) {
+        rms_norm(16);
+    } else if (num_blocks > 10) {
+        rms_norm(12);
+    } else if (num_blocks > 8) {
+        rms_norm(10);
+    } else if (num_blocks > 4) {
+        rms_norm(8);
+    } else if (num_blocks == 4) {
+        rms_norm(4);
+    } else if (num_blocks == 3) {
+        rms_norm(3);
+    } else if (num_blocks == 2) {
+        rms_norm(2);
+    } else if (num_blocks == 1) {
+        rms_norm(1);
+    }
+}

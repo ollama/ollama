@@ -1,62 +1,19 @@
 package discover
 
 import (
-	"fmt"
 	"log/slog"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/ml"
 )
 
 type memInfo struct {
 	TotalMemory uint64 `json:"total_memory,omitempty"`
 	FreeMemory  uint64 `json:"free_memory,omitempty"`
 	FreeSwap    uint64 `json:"free_swap,omitempty"` // TODO split this out for system only
-}
-
-// Beginning of an `ollama info` command
-type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
-	memInfo
-	Library string `json:"library,omitempty"`
-
-	// Optional variant to select (e.g. versions, cpu feature flags)
-	Variant string `json:"variant"`
-
-	// MinimumMemory represents the minimum memory required to use the GPU
-	MinimumMemory uint64 `json:"-"`
-
-	// Any extra PATH/LD_LIBRARY_PATH dependencies required for the Library to operate properly
-	DependencyPath []string `json:"lib_path,omitempty"`
-
-	// Extra environment variables specific to the GPU as list of [key,value]
-	EnvWorkarounds [][2]string `json:"envs,omitempty"`
-
-	// Set to true if we can NOT reliably discover FreeMemory.  A value of true indicates
-	// the FreeMemory is best effort, and may over or under report actual memory usage
-	// False indicates FreeMemory can generally be trusted on this GPU
-	UnreliableFreeMemory bool
-
-	// GPU information
-	ID      string `json:"gpu_id"`  // string to use for selection of this specific GPU
-	Name    string `json:"name"`    // user friendly name if available
-	Compute string `json:"compute"` // Compute Capability or gfx
-
-	// Driver Information - TODO no need to put this on each GPU
-	DriverMajor int `json:"driver_major,omitempty"`
-	DriverMinor int `json:"driver_minor,omitempty"`
-
-	// TODO other performance capability info to help in scheduling decisions
-}
-
-func (gpu GpuInfo) RunnerName() string {
-	if gpu.Variant != "" {
-		return gpu.Library + "_" + gpu.Variant
-	}
-	return gpu.Library
-}
-
-type CPUInfo struct {
-	GpuInfo
-	CPUs []CPU
 }
 
 // CPU type represents a CPU Package occupying a socket
@@ -69,115 +26,49 @@ type CPU struct {
 	ThreadCount         int
 }
 
-type CudaGPUInfo struct {
-	GpuInfo
-	OSOverhead   uint64 // Memory overhead between the driver library and management library
-	index        int    //nolint:unused,nolintlint
-	computeMajor int    //nolint:unused,nolintlint
-	computeMinor int    //nolint:unused,nolintlint
-}
-type CudaGPUInfoList []CudaGPUInfo
-
-type RocmGPUInfo struct {
-	GpuInfo
-	usedFilepath string //nolint:unused,nolintlint
-	index        int    //nolint:unused,nolintlint
-}
-type RocmGPUInfoList []RocmGPUInfo
-
-type OneapiGPUInfo struct {
-	GpuInfo
-	driverIndex int //nolint:unused,nolintlint
-	gpuIndex    int //nolint:unused,nolintlint
-}
-type OneapiGPUInfoList []OneapiGPUInfo
-
-type GpuInfoList []GpuInfo
-
-type UnsupportedGPUInfo struct {
-	GpuInfo
-	Reason string `json:"reason"`
-}
-
-// Split up the set of gpu info's by Library and variant
-func (l GpuInfoList) ByLibrary() []GpuInfoList {
-	resp := []GpuInfoList{}
-	libs := []string{}
-	for _, info := range l {
-		found := false
-		requested := info.Library
-		if info.Variant != "" {
-			requested += "_" + info.Variant
-		}
-		for i, lib := range libs {
-			if lib == requested {
-				resp[i] = append(resp[i], info)
-				found = true
-				break
+func LogDetails(devices []ml.DeviceInfo) {
+	sort.Sort(sort.Reverse(ml.ByFreeMemory(devices))) // Report devices in order of scheduling preference
+	for _, dev := range devices {
+		var libs []string
+		for _, dir := range dev.LibraryPath {
+			if strings.Contains(dir, filepath.Join("lib", "ollama")) {
+				libs = append(libs, filepath.Base(dir))
 			}
 		}
-		if !found {
-			libs = append(libs, requested)
-			resp = append(resp, []GpuInfo{info})
+		typeStr := "discrete"
+		if dev.Integrated {
+			typeStr = "iGPU"
 		}
-	}
-	return resp
-}
-
-// Report the GPU information into the log an Info level
-func (l GpuInfoList) LogDetails() {
-	for _, g := range l {
 		slog.Info("inference compute",
-			"id", g.ID,
-			"library", g.Library,
-			"variant", g.Variant,
-			"compute", g.Compute,
-			"driver", fmt.Sprintf("%d.%d", g.DriverMajor, g.DriverMinor),
-			"name", g.Name,
-			"total", format.HumanBytes2(g.TotalMemory),
-			"available", format.HumanBytes2(g.FreeMemory),
+			"id", dev.ID,
+			"filter_id", dev.FilterID,
+			"library", dev.Library,
+			"compute", dev.Compute(),
+			"name", dev.Name,
+			"description", dev.Description,
+			"libdirs", strings.Join(libs, ","),
+			"driver", dev.Driver(),
+			"pci_id", dev.PCIID,
+			"type", typeStr,
+			"total", format.HumanBytes2(dev.TotalMemory),
+			"available", format.HumanBytes2(dev.FreeMemory),
 		)
 	}
-}
-
-// Sort by Free Space
-type ByFreeMemory []GpuInfo
-
-func (a ByFreeMemory) Len() int           { return len(a) }
-func (a ByFreeMemory) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByFreeMemory) Less(i, j int) bool { return a[i].FreeMemory < a[j].FreeMemory }
-
-type SystemInfo struct {
-	System          CPUInfo              `json:"system"`
-	GPUs            []GpuInfo            `json:"gpus"`
-	UnsupportedGPUs []UnsupportedGPUInfo `json:"unsupported_gpus"`
-	DiscoveryErrors []string             `json:"discovery_errors"`
-}
-
-// Return the optimal number of threads to use for inference
-func (si SystemInfo) GetOptimalThreadCount() int {
-	if len(si.System.CPUs) == 0 {
-		return 0
+	// CPU inference
+	if len(devices) == 0 {
+		dev, _ := GetCPUMem()
+		slog.Info("inference compute",
+			"id", "cpu",
+			"library", "cpu",
+			"compute", "",
+			"name", "cpu",
+			"description", "cpu",
+			"libdirs", "ollama",
+			"driver", "",
+			"pci_id", "",
+			"type", "",
+			"total", format.HumanBytes2(dev.TotalMemory),
+			"available", format.HumanBytes2(dev.FreeMemory),
+		)
 	}
-
-	coreCount := 0
-	for _, c := range si.System.CPUs {
-		coreCount += c.CoreCount - c.EfficiencyCoreCount
-	}
-
-	return coreCount
-}
-
-// For each GPU, check if it does NOT support flash attention
-func (l GpuInfoList) FlashAttentionSupported() bool {
-	for _, gpu := range l {
-		supportsFA := gpu.Library == "metal" ||
-			(gpu.Library == "cuda" && gpu.DriverMajor >= 7) ||
-			gpu.Library == "rocm"
-
-		if !supportsFA {
-			return false
-		}
-	}
-	return true
 }

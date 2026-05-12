@@ -1,0 +1,73 @@
+---
+title: marimo
+---
+
+## Install
+
+Install [marimo](https://marimo.io). You can use `pip` or `uv` for this. You 
+can also use `uv` to create a sandboxed environment for marimo by running:
+
+```
+uvx marimo edit --sandbox notebook.py
+```
+
+## Usage with Ollama
+
+1. In marimo, go to the user settings and go to the AI tab. From here
+you can find and configure Ollama as an AI provider. For local use you
+would typically point the base url to `http://localhost:11434/v1`.
+
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/marimo-settings.png" 
+    alt="Ollama settings in marimo"
+    width="50%"
+  />
+</div>
+
+2. Once the AI provider is set up, you can turn on/off specific AI models you'd like to access. 
+
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/marimo-models.png" 
+    alt="Selecting an Ollama model"
+    width="50%"
+  />
+</div>
+
+3. You can also add a model to the list of available models by scrolling to the bottom and using the UI there. 
+
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/marimo-add-model.png" 
+    alt="Adding a new Ollama model"
+    width="50%"
+  />
+</div>
+
+4. Once configured, you can now use Ollama for AI chats in marimo.
+
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/marimo-chat.png" 
+    alt="Configure code completion"
+    width="50%"
+  />
+</div>
+
+4. Alternatively, you can now use Ollama for **inline code completion** in marimo. This can be configured in the "AI Features" tab. 
+
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/marimo-code-completion.png" 
+    alt="Configure code completion"
+    width="50%"
+  />
+</div>
+
+
+## Connecting to ollama.com
+
+1. Sign in to ollama cloud via `ollama signin` 
+2. In the ollama model settings add a model that ollama hosts, like `gpt-oss:120b`.
+3. You can now refer to this model in marimo!

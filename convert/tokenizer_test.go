@@ -192,6 +192,84 @@ func TestParseTokenizer(t *testing.T) {
 			},
 		},
 		{
+			name: "llama-bpe pretokenizer and control tokens",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"added_tokens": [
+						{"id": 1, "content": "<|startoftext|>", "special": true},
+						{"id": 6, "content": "<|im_start|>", "special": true},
+						{"id": 7, "content": "<|im_end|>", "special": true},
+						{"id": 8, "content": "<|tool_list_start|>", "special": true},
+						{"id": 9, "content": "<|tool_list_end|>", "special": true},
+						{"id": 10, "content": "<|tool_call_start|>", "special": true},
+						{"id": 11, "content": "<|tool_call_end|>", "special": true},
+						{"id": 12, "content": "<|tool_response_start|>", "special": true},
+						{"id": 13, "content": "<|tool_response_end|>", "special": true},
+						{"id": 396, "content": "<image>", "special": true},
+						{"id": 64400, "content": "<think>", "special": true},
+						{"id": 64401, "content": "</think>", "special": true}
+					],
+					"model": {
+						"vocab": {
+							"<|startoftext|>": 1,
+							"<|im_start|>": 6,
+							"<|im_end|>": 7,
+							"<|tool_list_start|>": 8,
+							"<|tool_list_end|>": 9,
+							"<|tool_call_start|>": 10,
+							"<|tool_call_end|>": 11,
+							"<|tool_response_start|>": 12,
+							"<|tool_response_end|>": 13,
+							"<image>": 396,
+							"<think>": 64400,
+							"</think>": 64401
+						}
+					},
+					"pre_tokenizer": {
+						"type": "Sequence",
+						"pretokenizers": [
+							{
+								"type": "Split",
+								"pattern": {
+									"Regex": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+								},
+								"behavior": "Isolated",
+								"invert": false
+							},
+							{
+								"type": "ByteLevel",
+								"add_prefix_space": false,
+								"trim_offsets": true,
+								"use_regex": false
+							}
+						]
+					}
+				}`),
+			}),
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{
+					Model: "gpt2",
+					Tokens: []string{
+						"<|startoftext|>",
+						"<|im_start|>",
+						"<|im_end|>",
+						"<|tool_list_start|>",
+						"<|tool_list_end|>",
+						"<|tool_call_start|>",
+						"<|tool_call_end|>",
+						"<|tool_response_start|>",
+						"<|tool_response_end|>",
+						"<image>",
+						"<think>",
+						"</think>",
+					},
+					Scores: []float32{1, 6, 7, 8, 9, 10, 11, 12, 13, 396, 64400, 64401},
+					Types:  []int32{3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
+				},
+				Pre: "llama-bpe",
+			},
+		},
+		{
 			name: "list string merges",
 			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
 				"tokenizer.json": strings.NewReader(`{
@@ -245,6 +323,89 @@ func TestParseTokenizer(t *testing.T) {
 					"e f",
 				},
 				Pre: "default",
+			},
+		},
+		{
+			name: "generation config eos token ids",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"added_tokens": [
+						{
+							"id": 0,
+							"content": "<bos>",
+							"special": true
+						},
+						{
+							"id": 1,
+							"content": "<eos>",
+							"special": true
+						},
+						{
+							"id": 2,
+							"content": "<eot>",
+							"special": true
+						},
+						{
+							"id": 3,
+							"content": "<eom>",
+							"special": true
+						}
+					],
+					"model": {
+						"vocab": {
+							"<bos>": 0,
+							"<eos>": 1,
+							"<eot>": 2,
+							"<eom>": 3
+						}
+					}
+				}`),
+				"tokenizer_config.json": strings.NewReader(`{
+					"add_bos_token": true,
+					"add_eos_token": false,
+					"bos_token": "<bos>",
+					"eos_token": "<eos>"
+				}`),
+				"generation_config.json": strings.NewReader(`{
+					"bos_token_id": 0,
+					"eos_token_id": [1, 2, 3]
+				}`),
+			}),
+			specialTokenTypes: []string{"pad", "eos", "bos", "unk"},
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{
+					Model:  "gpt2",
+					Tokens: []string{"<bos>", "<eos>", "<eot>", "<eom>"},
+					Scores: []float32{0, 1, 2, 3},
+					Types:  []int32{3, 3, 3, 3},
+				},
+				SpecialVocabulary: []*SpecialVocabulary{
+					{Type: "eos", Content: "<eos>", ID: 1, IDs: []int32{1, 2, 3}, AddToken: false},
+					{Type: "bos", Content: "<bos>", ID: 0, AddToken: true},
+				},
+				Pre: "default",
+			},
+		},
+		{
+			name: "qwen35 pretokenizer",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"pre_tokenizer": {
+						"type": "Sequence",
+						"pretokenizers": [
+							{
+								"type": "Split",
+								"pattern": {
+									"Regex": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?[\\p{L}\\p{M}]+|\\p{N}| ?[^\\s\\p{L}\\p{M}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+								}
+							}
+						]
+					}
+				}`),
+			}),
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{Model: "gpt2"},
+				Pre:        "qwen35",
 			},
 		},
 	}

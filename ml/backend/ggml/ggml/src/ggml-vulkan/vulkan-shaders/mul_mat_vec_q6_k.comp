@@ -1,0 +1,130 @@
+#version 450
+
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+
+#include "mul_mat_vec_base.glsl"
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+shared FLOAT_TYPE sccache[2][BLOCK_SIZE/16][16];
+
+FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+uint csel = 0;
+
+void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, const uint ix, const uint ql_offset, const uint qh_offset, const uint s_offset, const uint y_offset, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows, const bool all_threads) {
+    const uint y_idx = i * QUANT_K + y_offset;
+
+    [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+        const uint ib0 = a_offset / QUANT_K + (first_row+n)*num_blocks_per_row;
+        csel ^= 1;
+
+        if (!all_threads) { // when we don't have enough blocks to use all threads
+            if (i < num_blocks_per_row)
+                sccache[csel][ix][itid] = FLOAT_TYPE(data_a[ib0 + i].scales[itid]);
+            barrier();
+
+            if (i >= num_blocks_per_row)
+                continue;
+        }
+
+        const uint32_t ql0_u32 =  uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2]) | (uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2 + 1]) << 16);
+        const uint32_t ql32_u32 = uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2 + 16]) | (uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2 + 17]) << 16);
+
+        const uint32_t ql0_u32_lo4 = ql0_u32 & 0x0F0F0F0F;
+        const uint32_t ql0_u32_hi4 = (ql0_u32 >> 4) & 0x0F0F0F0F;
+        const uint32_t ql32_u32_lo4 = ql32_u32 & 0x0F0F0F0F;
+        const uint32_t ql32_u32_hi4 = (ql32_u32 >> 4) & 0x0F0F0F0F;
+
+        const uint32_t qh_u32 = uint32_t(data_a_packed16[ib0 + i].qh[qh_offset / 2]) | (uint32_t(data_a_packed16[ib0 + i].qh[qh_offset / 2 + 1]) << 16);
+        const uint32_t qh0_u32 = (qh_u32 & 0x03030303) << 4;
+        const uint32_t qh2_u32 = (qh_u32 & 0x0C0C0C0C) << 2;
+        const uint32_t qh4_u32 = (qh_u32 & 0x30303030);
+        const uint32_t qh6_u32 = (qh_u32 & 0xC0C0C0C0) >> 2;
+
+        const uint32_t q0_u32 = ql0_u32_lo4  | qh0_u32;
+        const uint32_t q1_u32 = ql32_u32_lo4 | qh2_u32;
+        const uint32_t q2_u32 = ql0_u32_hi4  | qh4_u32;
+        const uint32_t q3_u32 = ql32_u32_hi4 | qh6_u32;
+
+        const vec4 q0 = vec4(unpack8(q0_u32)) - 32;
+        const vec4 q1 = vec4(unpack8(q1_u32)) - 32;
+        const vec4 q2 = vec4(unpack8(q2_u32)) - 32;
+        const vec4 q3 = vec4(unpack8(q3_u32)) - 32;
+
+        if (all_threads) {
+            sccache[csel][ix][itid] = FLOAT_TYPE(data_a[ib0 + i].scales[itid]);
+            barrier();
+        }
+
+        const FLOAT_TYPE d = FLOAT_TYPE(data_a[ib0 + i].d);
+
+        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+            vec4 by0  = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4     ]);
+            vec4 by32 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 +  8]);
+            vec4 by64 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 16]);
+            vec4 by96 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 24]);
+
+            FLOAT_TYPE sum[4] = {0, 0, 0, 0};
+            [[unroll]] for (uint l = 0; l < 4; ++l) {
+                sum[0] = fma(FLOAT_TYPE(by0[l]), q0[l], sum[0]);
+                sum[1] = fma(FLOAT_TYPE(by32[l]), q1[l], sum[1]);
+                sum[2] = fma(FLOAT_TYPE(by64[l]), q2[l], sum[2]);
+                sum[3] = fma(FLOAT_TYPE(by96[l]), q3[l], sum[3]);
+            }
+            temp[j][n] = fma(fma(sum[0], sccache[csel][ix][s_offset], fma(sum[1], sccache[csel][ix][s_offset + 2], fma(sum[2], sccache[csel][ix][s_offset + 4], sum[3] * sccache[csel][ix][s_offset + 6]))), d, temp[j][n]);
+        }
+    }
+}
+
+void compute_outputs(const uint first_row, const uint num_rows) {
+    uint a_offset, b_offset, d_offset;
+    get_offsets(a_offset, b_offset, d_offset);
+
+    const uint num_blocks_per_row = p.ncols / QUANT_K;
+
+    // 16 threads are used to process each block
+    const uint it_size = gl_WorkGroupSize.x/16;
+    const uint tid = gl_LocalInvocationID.x;
+    const uint itid = tid%16;  // 0...15
+    const uint ix = tid/16;
+
+    const uint v_im = itid/8;                               // 0 or 1. 0 computes 0..., 1 computes 128...
+    const uint v_in = itid - 8*v_im;                        // 0...7
+
+    const uint l0 = 4 * v_in;                               // 0, 4, 8, ..., 28
+    const uint is = v_in / 4;
+
+    const uint ql_offset = 64*v_im + l0;
+    const uint qh_offset = 32*v_im + l0;
+    const uint s_offset  =  8*v_im + is;
+    const uint y_offset = 128*v_im + l0;
+
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint i = 0; i < NUM_ROWS; ++i) {
+            temp[j][i] = FLOAT_TYPE(0);
+        }
+    }
+
+    const uint nbr_par_th = num_blocks_per_row%it_size;
+    const uint nbr_all_th = num_blocks_per_row - nbr_par_th;
+    uint i0 = 0;
+    [[unroll]] for (; i0 < nbr_all_th; i0 += it_size)
+        calc_superblock(a_offset, b_offset, itid, ix, ql_offset, qh_offset, s_offset, y_offset, i0 + ix, num_blocks_per_row, first_row, num_rows, true);
+    calc_superblock(a_offset, b_offset, itid, ix, ql_offset, qh_offset, s_offset, y_offset, i0 + ix, num_blocks_per_row, first_row, num_rows, false);
+
+    reduce_result(temp, d_offset, first_row, num_rows, tid);
+}
+
+void main() {
+    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+
+    // do NUM_ROWS at a time, unless there aren't enough remaining rows
+    if (first_row + NUM_ROWS <= p.stride_d) {
+        compute_outputs(first_row, NUM_ROWS);
+    } else {
+        if (first_row >= p.stride_d) {
+            return;
+        }
+        compute_outputs(first_row, p.stride_d - first_row);
+    }
+}

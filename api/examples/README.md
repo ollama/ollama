@@ -2,9 +2,10 @@
 
 Run the examples in this directory with:
 
-```
+```shell
 go run example_name/main.go
 ```
+
 ## Chat - Chat with a model
 - [chat/main.go](chat/main.go)
 

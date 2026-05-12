@@ -9,7 +9,7 @@
 #include "llama.h"
 
 struct llama_model_deleter {
-    void operator()(llama_model * model) { llama_free_model(model); }
+    void operator()(llama_model * model) { llama_model_free(model); }
 };
 
 struct llama_context_deleter {
@@ -20,11 +20,11 @@ struct llama_sampler_deleter {
     void operator()(llama_sampler * sampler) { llama_sampler_free(sampler); }
 };
 
-struct llama_lora_adapter_deleter {
-    void operator()(llama_lora_adapter * lora_adapter) { llama_lora_adapter_free(lora_adapter); }
+struct llama_adapter_lora_deleter {
+    void operator()(llama_adapter_lora * adapter) { llama_adapter_lora_free(adapter); }
 };
 
 typedef std::unique_ptr<llama_model, llama_model_deleter> llama_model_ptr;
 typedef std::unique_ptr<llama_context, llama_context_deleter> llama_context_ptr;
 typedef std::unique_ptr<llama_sampler, llama_sampler_deleter> llama_sampler_ptr;
-typedef std::unique_ptr<llama_lora_adapter, llama_lora_adapter_deleter> llama_lora_adapter_ptr;
+typedef std::unique_ptr<llama_adapter_lora, llama_adapter_lora_deleter> llama_adapter_lora_ptr;
