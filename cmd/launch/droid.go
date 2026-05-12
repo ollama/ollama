@@ -96,7 +96,7 @@ func (d *Droid) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(settingsPath, data)
+	return fileutil.WriteWithBackup(settingsPath, data, "droid")
 }
 
 func updateDroidSettings(settingsMap map[string]any, settings droidSettings, models []string) map[string]any {

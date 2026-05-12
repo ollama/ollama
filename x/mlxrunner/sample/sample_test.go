@@ -176,6 +176,65 @@ func TestSampleHistoryWindow(t *testing.T) {
 	}
 }
 
+func TestSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
+	skipIfNoMLX(t)
+
+	s := New(128)
+	t.Cleanup(func() {
+		s.Free()
+		mlx.Sweep()
+	})
+
+	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{1, 2})
+	draftTokens := mlx.NewArrayInt32([]int32{3, 4}, []int32{1, 2})
+	scores := s.SpeculativeScores(0, batchLogits(
+		[]float32{0, 9, 9, 8, 0}, // history {1,2}; token 3 wins
+		[]float32{0, 0, 9, 9, 8}, // history {2,3}; token 4 wins
+		[]float32{0, 0, 9, 9, 8}, // history {3,4}; token 2 wins
+	), draftTokens)
+	tokens := scores.Argmax(-1, false).AsType(mlx.DTypeInt32)
+	mlx.Eval(tokens)
+
+	if got, want := tokens.Ints(), []int{3, 4, 2}; len(got) != len(want) {
+		t.Fatalf("tokens = %v, want %v", got, want)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("tokens = %v, want %v", got, want)
+			}
+		}
+	}
+	if s.byID[0].historyLen != 2 {
+		t.Fatalf("historyLen = %d, want 2", s.byID[0].historyLen)
+	}
+}
+
+func TestCommitBatchesRingWrites(t *testing.T) {
+	skipIfNoMLX(t)
+
+	s := New(128)
+	t.Cleanup(func() {
+		s.Free()
+		mlx.Sweep()
+	})
+
+	s.Add(0, Options{RepeatLastN: 4, RepeatPenalty: 1.1}, []int32{10, 11, 12})
+	s.Commit(0, []int32{20, 21, 22})
+	s.Commit(0, []int32{30, 31, 32, 33, 34})
+	mlx.Eval(s.history)
+
+	got := s.history.Ints()
+	want := []int{32, 33, 34, 31}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("history = %v, want %v", got, want)
+		}
+	}
+	if s.byID[0].historyLen != 11 {
+		t.Fatalf("historyLen = %d, want 11", s.byID[0].historyLen)
+	}
+}
+
 // TestBatchSamplingPreservesPerSlotBehavior is the core equivalence test:
 // for every representative dispatch branch (uniform, serial on mixed opts,
 // serial on partial ring, subset/out-of-order), a batched Sample call must

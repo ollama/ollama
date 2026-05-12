@@ -28,6 +28,24 @@ usage() {
 
 mkdir -p dist
 
+# Work around MLX's v3 metallib link leaking the macOS 26 deployment target.
+_relink_mlx_metallib() {
+    BUILD_DIR="$1"
+    KERNEL_DIR="$BUILD_DIR/_deps/mlx-build/mlx/backend/metal/kernels"
+    AIR_LIST="$BUILD_DIR/mlx-air-files.txt"
+    METALLIB="$KERNEL_DIR/mlx.metallib"
+
+    find "$KERNEL_DIR" -type f -name '*.air' | sort > "$AIR_LIST"
+    if [ ! -s "$AIR_LIST" ]; then
+        echo "error: could not find MLX AIR files in $KERNEL_DIR" >&2
+        exit 1
+    fi
+
+    status "Relinking MLX metallib"
+    rm -f "$METALLIB"
+    xargs xcrun -sdk macosx metallib -o "$METALLIB" < "$AIR_LIST"
+}
+
 
 ARCHS="arm64 amd64"
 while getopts "a:h" OPTION; do
@@ -83,6 +101,7 @@ _build_darwin() {
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
                 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
             cmake --build $BUILD_DIR --target mlx mlxc --parallel
+            _relink_mlx_metallib $BUILD_DIR
             cmake --install $BUILD_DIR --component MLX
 
             # Metal 4.x build (NAX-enabled, macOS 26+)

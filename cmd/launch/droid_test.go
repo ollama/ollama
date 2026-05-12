@@ -1172,7 +1172,7 @@ func TestDroidEdit_BackupCreated(t *testing.T) {
 
 	settingsDir := filepath.Join(tmpDir, ".factory")
 	settingsPath := filepath.Join(settingsDir, "settings.json")
-	backupDir := filepath.Join(os.TempDir(), "ollama-backups")
+	backupDir := fileutil.BackupDir()
 
 	os.MkdirAll(settingsDir, 0o755)
 
@@ -1186,7 +1186,7 @@ func TestDroidEdit_BackupCreated(t *testing.T) {
 	}
 
 	// Find backup containing our unique marker
-	backups, _ := filepath.Glob(filepath.Join(backupDir, "settings.json.*"))
+	backups, _ := filepath.Glob(filepath.Join(backupDir, "droid", "settings.json.*"))
 	foundBackup := false
 	for _, backup := range backups {
 		data, err := os.ReadFile(backup)

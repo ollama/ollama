@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -885,6 +886,62 @@ func TestPiEdit(t *testing.T) {
 			t.Errorf("defaultModel = %v, want test-model", settings["defaultModel"])
 		}
 	})
+}
+
+func TestPiEdit_CreatesDistinctBackupsForEachManagedFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprint(w, `{"capabilities":[],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	pi := &Pi{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".pi", "agent")
+	modelsPath := filepath.Join(configDir, "models.json")
+	settingsPath := filepath.Join(configDir, "settings.json")
+	backupDir := fileutil.BackupDir()
+
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	modelsOriginal := fmt.Sprintf(`{"marker":"models-%d","providers":{"ollama":{"models":[]}}}`, os.Getpid())
+	settingsOriginal := fmt.Sprintf(`{"marker":"settings-%d","defaultProvider":"other","defaultModel":"old"}`, os.Getpid())
+	if err := os.WriteFile(modelsPath, []byte(modelsOriginal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(settingsOriginal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pi.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+
+	assertBackupMatches := func(pattern, want string) {
+		t.Helper()
+		backups, err := filepath.Glob(filepath.Join(backupDir, pattern))
+		if err != nil {
+			t.Fatalf("glob %q failed: %v", pattern, err)
+		}
+		for _, backup := range backups {
+			data, err := os.ReadFile(backup)
+			if err == nil && string(data) == want {
+				return
+			}
+		}
+		t.Fatalf("backup matching %q with expected content not found", pattern)
+	}
+
+	assertBackupMatches(filepath.Join("pi", "models.json.*"), modelsOriginal)
+	assertBackupMatches(filepath.Join("pi", "settings.json.*"), settingsOriginal)
 }
 
 func TestPiModels(t *testing.T) {

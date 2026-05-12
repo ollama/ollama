@@ -41,3 +41,36 @@ func TestFromValues(t *testing.T) {
 		}
 	})
 }
+
+func TestComparisonOpsAndBernoulli(t *testing.T) {
+	skipIfNoMLX(t)
+
+	a := FromValues([]float32{1, 2, 3}, 3)
+	b := FromValues([]float32{1, 1, 4}, 3)
+	eq := a.Equal(b).AsType(DTypeInt32)
+	gt := a.Greater(b).AsType(DTypeInt32)
+	le := a.LessEqual(b).AsType(DTypeInt32)
+	bern := Bernoulli(FromValues([]float32{1, 0}, 2)).AsType(DTypeInt32)
+	Eval(eq, gt, le, bern)
+
+	for name, tc := range map[string]struct {
+		got  []int
+		want []int
+	}{
+		"equal":     {eq.Ints(), []int{1, 0, 0}},
+		"greater":   {gt.Ints(), []int{0, 1, 0}},
+		"lessEqual": {le.Ints(), []int{1, 0, 1}},
+		"bernoulli": {bern.Ints(), []int{1, 0}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if len(tc.got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", tc.got, tc.want)
+			}
+			for i := range tc.want {
+				if tc.got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", tc.got, tc.want)
+				}
+			}
+		})
+	}
+}

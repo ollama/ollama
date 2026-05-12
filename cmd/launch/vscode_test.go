@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
 func TestVSCodeIntegration(t *testing.T) {
@@ -154,6 +155,52 @@ func TestVSCodeEditCleansUpOldSettings(t *testing.T) {
 	if settings["editor.fontSize"] != float64(14) {
 		t.Error("editor.fontSize should have been preserved")
 	}
+}
+
+func TestVSCodeEdit_CreatesDistinctBackupsForManagedFiles(t *testing.T) {
+	v := &VSCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	clmPath := testVSCodePath(t, tmpDir, "chatLanguageModels.json")
+	settingsPath := testVSCodePath(t, tmpDir, "settings.json")
+	backupDir := fileutil.BackupDir()
+
+	if err := os.MkdirAll(filepath.Dir(clmPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	clmOriginal := `[{"vendor":"ollama","name":"Ollama","url":"http://old:11434"}]`
+	settingsOriginal := `{"github.copilot.chat.byok.ollamaEndpoint":"http://old:11434","ollama.launch.configured":true,"editor.fontSize":14}`
+	if err := os.WriteFile(clmPath, []byte(clmOriginal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(settingsOriginal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := v.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertBackupMatches := func(pattern, want string) {
+		t.Helper()
+		backups, err := filepath.Glob(filepath.Join(backupDir, pattern))
+		if err != nil {
+			t.Fatalf("glob %q failed: %v", pattern, err)
+		}
+		for _, backup := range backups {
+			data, err := os.ReadFile(backup)
+			if err == nil && string(data) == want {
+				return
+			}
+		}
+		t.Fatalf("backup matching %q with expected content not found", pattern)
+	}
+
+	assertBackupMatches(filepath.Join("vscode", "chatLanguageModels.json.*"), clmOriginal)
+	assertBackupMatches(filepath.Join("vscode", "settings.json.*"), settingsOriginal)
 }
 
 func TestVSCodePaths(t *testing.T) {
