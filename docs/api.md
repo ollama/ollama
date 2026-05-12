@@ -32,6 +32,41 @@ All durations are returned in nanoseconds.
 
 Certain endpoints stream responses as JSON objects. Streaming can be disabled by providing `{"stream": false}` for these endpoints.
 
+### Errors
+
+When a request fails, the server responds with a JSON body containing an `error` field describing what went wrong:
+
+```json
+{
+  "error": "model 'llama3.99' not found"
+}
+```
+
+Standard HTTP status codes are used to indicate the kind of failure:
+
+- `400 Bad Request` — the request body is missing, malformed, references an invalid model name, or otherwise fails validation
+- `401 Unauthorized` — the request requires authentication. The response body includes a `signin_url` field that points to the page where the user can sign in
+- `403 Forbidden` — the requested operation isn't permitted (for example, remote inference is not available for the model)
+- `404 Not Found` — the referenced model or blob does not exist
+- `500 Internal Server Error` — an unexpected server-side failure
+
+A `401 Unauthorized` response has the following shape:
+
+```json
+{
+  "error": "unauthorized",
+  "signin_url": "https://ollama.com/signin/..."
+}
+```
+
+For [streaming endpoints](#streaming-responses), an error that occurs **before** any chunk has been written is delivered as a regular HTTP error (the body has the same `{"error": "..."}` shape). An error that occurs **after** the response has already started is appended to the stream as a JSON object with an `error` field:
+
+```json
+{"error": "<message>"}
+```
+
+Clients should treat any streamed object containing an `error` field as terminal and stop reading from the stream.
+
 ## Generate a completion
 
 ```
