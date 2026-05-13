@@ -104,6 +104,7 @@ type Sequence struct {
 	generationDuration time.Duration
 	numDecoded         int
 	numPromptInputs    int
+	numCachedInputs    int
 }
 
 type NewSequenceParams struct {
@@ -698,6 +699,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			seq.numCachedInputs = len(seq.cache.Inputs)
 			s.seqs[i] = seq
 			s.cond.Signal()
 			found = true
@@ -733,6 +735,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
 					Done:               true,
 					DoneReason:         seq.doneReason,
+					PromptCachedCount:  seq.numCachedInputs,
 					PromptEvalCount:    seq.numPromptInputs,
 					PromptEvalDuration: seq.processingDuration,
 					EvalCount:          seq.numDecoded,

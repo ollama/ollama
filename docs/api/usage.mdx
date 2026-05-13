@@ -6,6 +6,7 @@ Ollama's API responses include metrics that can be used for measuring performanc
 
 * `total_duration`: How long the response took to generate
 * `load_duration`: How long the model took to load
+* `prompt_cached_count`: How many input tokens were served from KV cache
 * `prompt_eval_count`: How many input tokens were processed
 * `prompt_eval_duration`: How long it took to evaluate the prompt
 * `eval_count`: How many output tokens were processes
@@ -26,6 +27,7 @@ For endpoints that return usage metrics, the response body will include the usag
   "done_reason": "stop",
   "total_duration": 174560334,
   "load_duration": 101397084,
+  "prompt_cached_count": 5,
   "prompt_eval_count": 11,
   "prompt_eval_duration": 13074791,
   "eval_count": 18,

@@ -571,6 +571,7 @@ type DebugInfo struct {
 type Metrics struct {
 	TotalDuration      time.Duration `json:"total_duration,omitempty"`
 	LoadDuration       time.Duration `json:"load_duration,omitempty"`
+	PromptCachedCount  int           `json:"prompt_cached_count,omitempty"`
 	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
 	EvalCount          int           `json:"eval_count,omitempty"`
@@ -952,6 +953,10 @@ func (m *Metrics) Summary() {
 
 	if m.LoadDuration > 0 {
 		fmt.Fprintf(os.Stderr, "load duration:        %v\n", m.LoadDuration)
+	}
+
+	if m.PromptCachedCount > 0 {
+		fmt.Fprintf(os.Stderr, "prompt cached count:  %d token(s)\n", m.PromptCachedCount)
 	}
 
 	if m.PromptEvalCount > 0 {

@@ -144,9 +144,12 @@ components:
         load_duration:
           type: integer
           description: Time spent loading the model in nanoseconds
+        prompt_cached_count:
+          type: integer
+          description: Number of input tokens served from KV cache
         prompt_eval_count:
           type: integer
-          description: Number of input tokens in the prompt
+          description: Total number of input tokens in the prompt
         prompt_eval_duration:
           type: integer
           description: Time spent evaluating the prompt in nanoseconds
@@ -188,9 +191,12 @@ components:
         load_duration:
           type: integer
           description: Time spent loading the model in nanoseconds
+        prompt_cached_count:
+          type: integer
+          description: Number of input tokens served from KV cache
         prompt_eval_count:
           type: integer
-          description: Number of input tokens in the prompt
+          description: Total number of input tokens in the prompt
         prompt_eval_duration:
           type: integer
           description: Time spent evaluating the prompt in nanoseconds
@@ -349,9 +355,12 @@ components:
         load_duration:
           type: integer
           description: Time spent loading the model in nanoseconds
+        prompt_cached_count:
+          type: integer
+          description: Number of input tokens served from KV cache
         prompt_eval_count:
           type: integer
-          description: Number of tokens in the prompt
+          description: Total number of tokens in the prompt
         prompt_eval_duration:
           type: integer
           description: Time spent evaluating the prompt in nanoseconds
@@ -887,6 +896,7 @@ paths:
                 done_reason: "stop"
                 total_duration: 174560334
                 load_duration: 101397084
+                prompt_cached_count: 5
                 prompt_eval_count: 11
                 prompt_eval_duration: 13074791
                 eval_count: 18
@@ -1045,6 +1055,7 @@ paths:
                 done_reason: "stop"
                 total_duration: 174560334
                 load_duration: 101397084
+                prompt_cached_count: 5
                 prompt_eval_count: 11
                 prompt_eval_duration: 13074791
                 eval_count: 18
