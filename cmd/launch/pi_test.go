@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -31,6 +32,18 @@ func TestPiIntegration(t *testing.T) {
 	t.Run("implements Editor", func(t *testing.T) {
 		var _ Editor = pi
 	})
+}
+
+func TestPiInstallSpec_UsesOfficialPackage(t *testing.T) {
+	spec, err := LookupIntegrationSpec("pi")
+	if err != nil {
+		t.Fatalf("LookupIntegrationSpec(pi) error = %v", err)
+	}
+
+	want := []string{"npm", "install", "-g", piNpmPackage + "@latest"}
+	if got := spec.Install.Command; !slices.Equal(got, want) {
+		t.Fatalf("pi install command = %v, want %v", got, want)
+	}
 }
 
 func TestPiRun_InstallAndWebSearchLifecycle(t *testing.T) {
@@ -73,6 +86,40 @@ exit 0
 	seedNpmNoop := func(t *testing.T, dir string) {
 		t.Helper()
 		writeScript(t, filepath.Join(dir, "npm"), "#!/bin/sh\nexit 0\n")
+	}
+
+	seedLegacyPiNpm := func(t *testing.T, dir string) {
+		t.Helper()
+		npmPath := filepath.Join(dir, "npm")
+		npmScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "ls" ] && [ "$2" = "-g" ] && [ "$4" = "--depth=0" ] && [ "$5" = "--json" ]; then
+  if [ "$3" = %q ]; then
+    printf '{"name":"lib"}\n'
+    exit 1
+  fi
+  if [ "$3" = %q ]; then
+    printf '{"name":"lib","dependencies":{"%s":{"version":"0.57.1","overridden":false}}}\n'
+    exit 0
+  fi
+fi
+exit 0
+`, filepath.Join(dir, "npm.log"), piNpmPackage, piLegacyNpmPackage, piLegacyNpmPackage)
+		writeScript(t, npmPath, npmScript)
+	}
+
+	seedBrokenPiProbeNpm := func(t *testing.T, dir string) {
+		t.Helper()
+		npmPath := filepath.Join(dir, "npm")
+		npmScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "ls" ] && [ "$2" = "-g" ] && [ "$4" = "--depth=0" ] && [ "$5" = "--json" ]; then
+  echo "npm probe failed" >&2
+  exit 1
+fi
+exit 0
+`, filepath.Join(dir, "npm.log"))
+		writeScript(t, npmPath, npmScript)
 	}
 
 	withConfirm := func(t *testing.T, fn func(prompt string) (bool, error)) {
@@ -128,7 +175,7 @@ exit 0
 		writeScript(t, filepath.Join(tmpDir, "npm"), npmScript)
 
 		withConfirm(t, func(prompt string) (bool, error) {
-			if strings.Contains(prompt, "Pi is not installed.") {
+			if strings.Contains(prompt, "Install Pi with npm?") {
 				return true, nil
 			}
 			return true, nil
@@ -171,7 +218,7 @@ exit 0
 		writeScript(t, filepath.Join(tmpDir, "npm"), "#!/bin/sh\nexit 0\n")
 
 		withConfirm(t, func(prompt string) (bool, error) {
-			if strings.Contains(prompt, "Pi is not installed.") {
+			if strings.Contains(prompt, "Install Pi with npm?") {
 				return false, nil
 			}
 			return true, nil
@@ -181,6 +228,134 @@ exit 0
 		err := p.Run("ignored", nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "pi installation cancelled") {
 			t.Fatalf("expected install cancellation error, got %v", err)
+		}
+	})
+
+	t.Run("legacy pi package prompts migration and installs official package", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n  "+piWebSearchSource+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		seedPiScript(t, tmpDir)
+		seedLegacyPiNpm(t, tmpDir)
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			if strings.Contains(prompt, "official package") && strings.Contains(prompt, "settings and extensions") {
+				return true, nil
+			}
+			t.Fatalf("unexpected prompt %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		if err := p.Run("ignored", nil, []string{"--version"}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+
+		npmCalls, err := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotNPM := string(npmCalls)
+		if !strings.Contains(gotNPM, "ls -g "+piNpmPackage+" --depth=0 --json\n") {
+			t.Fatalf("expected official npm probe, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "ls -g "+piLegacyNpmPackage+" --depth=0 --json\n") {
+			t.Fatalf("expected legacy npm probe, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "uninstall -g "+piLegacyNpmPackage+"\n") {
+			t.Fatalf("expected legacy npm uninstall call, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "install -g "+piNpmPackage+"@latest\n") {
+			t.Fatalf("expected official npm install call, got:\n%s", gotNPM)
+		}
+		if strings.Index(gotNPM, "uninstall -g "+piLegacyNpmPackage+"\n") > strings.Index(gotNPM, "install -g "+piNpmPackage+"@latest\n") {
+			t.Fatalf("expected legacy uninstall before official install, got:\n%s", gotNPM)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotPi := string(piCalls)
+		if !strings.Contains(gotPi, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("expected pi update call, got:\n%s", gotPi)
+		}
+		if !strings.Contains(gotPi, "--version\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", gotPi)
+		}
+	})
+
+	t.Run("legacy pi package can decline migration", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		seedPiScript(t, tmpDir)
+		seedLegacyPiNpm(t, tmpDir)
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			if strings.Contains(prompt, "official package") && strings.Contains(prompt, "settings and extensions") {
+				return false, nil
+			}
+			t.Fatalf("unexpected prompt %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		err := p.Run("ignored", nil, nil)
+		if err == nil || !strings.Contains(err.Error(), "pi migration cancelled") {
+			t.Fatalf("expected migration cancellation error, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "npm uninstall -g "+piLegacyNpmPackage) {
+			t.Fatalf("expected legacy uninstall command in error, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "npm install -g "+piNpmPackage) {
+			t.Fatalf("expected official install command in error, got %v", err)
+		}
+	})
+
+	t.Run("pi installed + package probe failure warns and still launches", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n  "+piWebSearchSource+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		seedPiScript(t, tmpDir)
+		seedBrokenPiProbeNpm(t, tmpDir)
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect confirmation prompt, got %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		stderr := captureStderr(t, func() {
+			if err := p.Run("ignored", nil, []string{"--version"}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+		})
+		if !strings.Contains(stderr, "Could not verify which Pi package is installed") {
+			t.Fatalf("expected package probe warning, got:\n%s", stderr)
+		}
+		if !strings.Contains(stderr, "npm uninstall -g "+piLegacyNpmPackage) {
+			t.Fatalf("expected manual migration steps in warning, got:\n%s", stderr)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotPi := string(piCalls)
+		if !strings.Contains(gotPi, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("expected pi update call, got:\n%s", gotPi)
+		}
+		if !strings.Contains(gotPi, "--version\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", gotPi)
 		}
 	})
 
