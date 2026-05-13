@@ -408,7 +408,7 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		case "adaptive", "enabled":
 			// `enabled` + `budget_tokens` is deprecated and will be removed in the future. Treat `enabled` as `adaptive` for now.
 			// Actually, `adaptive` thinking will be the **only** supported thinking mode in the future.
-			think = &api.ThinkValue{Value: normalizedType}
+			think = &api.ThinkValue{Value: normalizedEffort}
 		default:
 			err := fmt.Errorf("invalid thinking type: '%s' (must be \"enabled\", \"disabled\", or \"adaptive\")", r.Thinking.Type)
 			logutil.Trace("anthropic: normalizing thinking type failed", "err", err)

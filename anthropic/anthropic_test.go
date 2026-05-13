@@ -639,7 +639,7 @@ func TestFromMessagesRequest_EffortAcrossThinkingModes(t *testing.T) {
 		wantValue    any
 		wantErr      string
 	}{
-		// enabled + effort: effort string overrides bool.
+		// enabled + effort: Think.Value is set to the effort string.
 		{
 			name:         "enabled + effort high",
 			thinking:     &ThinkingConfig{Type: "enabled"},
@@ -671,7 +671,7 @@ func TestFromMessagesRequest_EffortAcrossThinkingModes(t *testing.T) {
 			wantValue:    "high",
 		},
 		{
-			name:         "enabled + no effort stays bool true",
+			name:         "enabled + no effort defaults to high",
 			thinking:     &ThinkingConfig{Type: "enabled"},
 			outputConfig: nil,
 			wantValue:    "high",
@@ -683,7 +683,7 @@ func TestFromMessagesRequest_EffortAcrossThinkingModes(t *testing.T) {
 			wantErr:      `invalid effort value: 'turbo'`,
 		},
 
-		// adaptive + effort: effort string overrides bool.
+		// adaptive + effort: Think.Value is set to the effort string.
 		{
 			name:         "adaptive + effort high",
 			thinking:     &ThinkingConfig{Type: "adaptive"},
@@ -715,7 +715,7 @@ func TestFromMessagesRequest_EffortAcrossThinkingModes(t *testing.T) {
 			wantValue:    "high",
 		},
 		{
-			name:         "adaptive + no effort stays bool true",
+			name:         "adaptive + no effort defaults to high",
 			thinking:     &ThinkingConfig{Type: "adaptive"},
 			outputConfig: nil,
 			wantValue:    "high",
@@ -727,15 +727,16 @@ func TestFromMessagesRequest_EffortAcrossThinkingModes(t *testing.T) {
 			wantErr:      `invalid effort value: 'turbo'`,
 		},
 
-		// disabled: effort is silently ignored, value stays false.
+		// disabled: effort is ignored for the Think value (always false),
+		// but invalid effort still errors because effort validation runs first.
 		{
-			name:         "disabled + effort silently ignored",
+			name:         "disabled + effort low ignored, value stays false",
 			thinking:     &ThinkingConfig{Type: "disabled"},
 			outputConfig: &OutputConfig{Effort: "low"},
 			wantValue:    false,
 		},
 		{
-			name:         "disabled + no effort stays bool false",
+			name:         "disabled + no effort stays false",
 			thinking:     &ThinkingConfig{Type: "disabled"},
 			outputConfig: nil,
 			wantValue:    false,
@@ -744,15 +745,51 @@ func TestFromMessagesRequest_EffortAcrossThinkingModes(t *testing.T) {
 			name:         "disabled + invalid effort still errors",
 			thinking:     &ThinkingConfig{Type: "disabled"},
 			outputConfig: &OutputConfig{Effort: "turbo"},
-			wantValue:    false,
+			wantErr:      `invalid effort value: 'turbo'`,
 		},
 
-		// no thinking field: effort is silently ignored, Think stays nil.
+		// no thinking field: Think is set only when (defaulted/normalized) effort is "max" or "high".
 		{
-			name:         "no thinking + effort is silently ignored",
+			name:         "nil thinking + no effort defaults to high",
+			thinking:     nil,
+			outputConfig: nil,
+			wantValue:    "high",
+		},
+		{
+			name:         "nil thinking + effort high",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "high"},
+			wantValue:    "high",
+		},
+		{
+			name:         "nil thinking + effort max",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "max"},
+			wantValue:    "max",
+		},
+		{
+			name:         "nil thinking + effort xhigh maps to high",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "xhigh"},
+			wantValue:    "high",
+		},
+		{
+			name:         "nil thinking + effort medium leaves Think nil",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "medium"},
+			wantThinkNil: true,
+		},
+		{
+			name:         "nil thinking + effort low leaves Think nil",
 			thinking:     nil,
 			outputConfig: &OutputConfig{Effort: "low"},
 			wantThinkNil: true,
+		},
+		{
+			name:         "nil thinking + invalid effort errors",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "turbo"},
+			wantErr:      `invalid effort value: 'turbo'`,
 		},
 	}
 
