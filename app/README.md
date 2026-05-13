@@ -20,7 +20,7 @@ go run ./cmd/app
 
 Install required tools:
 
-1. Make sure the C++ compiler is installed for your machine. Read [../README.md] to install it
+1. Make sure the C++ compiler is installed for your machine. Read the [root README](../README.md) to install it
 
 2. Install the typescriptify structs for golang:
 
