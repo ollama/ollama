@@ -85,7 +85,6 @@ type OutputConfig struct {
 	Effort string `json:"effort,omitempty"` // "max", "xhigh", "high"(default), "medium", "low"
 }
 
-
 // MessageParam represents a message in the request
 type MessageParam struct {
 	Role    string         `json:"role"`    // "user" or "assistant"
@@ -378,29 +377,42 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		tools = append(tools, tool)
 	}
 
+	normalizedEffort := "high" // > Setting `effort` to "high" produces exactly the same behavior as omitting the `effort` parameter entirely.
+	if r.OutputConfig != nil {
+		normalizedEffort = strings.ToLower(strings.TrimSpace(r.OutputConfig.Effort))
+		switch normalizedEffort {
+		case "max", "high", "medium", "low":
+			// effort is already set correctly
+		case "xhigh":
+			// map "xhigh" to "high", as "xhigh" is an Anthropic-specific value
+			normalizedEffort = "high"
+		default:
+			err := fmt.Errorf("invalid effort value: '%s' (must be \"max\", \"xhigh\", \"high\", \"medium\", or \"low\")", r.OutputConfig.Effort)
+			logutil.Trace("anthropic: normalizing effort failed", "err", err)
+			return nil, err
+		}
+	}
+
 	var think *api.ThinkValue
-	if r.Thinking != nil {
+	if r.Thinking == nil {
+		// >  At `high` (default) and `max` effort, Claude will almost always think.
+		if normalizedEffort == "max" || normalizedEffort == "high" {
+			think = &api.ThinkValue{Value: normalizedEffort}
+		}
+		// else we leave think as nil to allow the model to decide when to think.
+	} else {
 		normalizedType := strings.ToLower(strings.TrimSpace(r.Thinking.Type))
 		switch normalizedType {
 		case "disabled":
 			think = &api.ThinkValue{Value: false}
 		case "adaptive", "enabled":
-			effort := "high" // default effort level for adaptive thinking
-			if r.OutputConfig != nil {
-				normalizedEffort := strings.ToLower(strings.TrimSpace(r.OutputConfig.Effort))
-				switch normalizedEffort {
-				case "max", "high", "medium", "low":
-					effort = normalizedEffort
-				case "xhigh":
-					// map "xhigh" to "high", as "xhigh" is an Anthropic-specific value
-					effort = "high"
-				default:
-					return nil, fmt.Errorf("invalid effort value: '%s' (must be \"max\", \"xhigh\", \"high\", \"medium\", or \"low\")", r.OutputConfig.Effort)
-				}
-			}
-			think = &api.ThinkValue{Value: effort}
+			// `enabled` + `budget_tokens` is deprecated and will be removed in the future. Treat `enabled` as `adaptive` for now.
+			// Actually, `adaptive` thinking will be the **only** supported thinking mode in the future.
+			think = &api.ThinkValue{Value: normalizedType}
 		default:
-			return nil, fmt.Errorf("invalid thinking type: '%s' (must be \"enabled\", \"disabled\", or \"adaptive\")", r.Thinking.Type)
+			err := fmt.Errorf("invalid thinking type: '%s' (must be \"enabled\", \"disabled\", or \"adaptive\")", r.Thinking.Type)
+			logutil.Trace("anthropic: normalizing thinking type failed", "err", err)
+			return nil, err
 		}
 	}
 
