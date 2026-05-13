@@ -478,7 +478,7 @@ func codexSetRootStringValue(text, key, value string) string {
 	}
 
 	assignment := fmt.Sprintf("%s = %q", key, value)
-	for i := 0; i < rootEnd; i++ {
+	for i := range rootEnd {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
