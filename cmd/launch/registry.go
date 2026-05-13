@@ -176,7 +176,7 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := ensurePiInstalled()
 				return err
 			},
-			Command: []string{"npm", "install", "-g", "@mariozechner/pi-coding-agent@latest"},
+			Command: []string{"npm", "install", "-g", "@earendil-works/pi-coding-agent@latest"},
 		},
 	},
 	{

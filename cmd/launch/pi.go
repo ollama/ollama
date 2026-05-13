@@ -21,9 +21,10 @@ import (
 type Pi struct{}
 
 const (
-	piNpmPackage      = "@mariozechner/pi-coding-agent"
-	piWebSearchSource = "npm:@ollama/pi-web-search"
-	piWebSearchPkg    = "@ollama/pi-web-search"
+	piNpmPackage       = "@earendil-works/pi-coding-agent"
+	piLegacyNpmPackage = "@mariozechner/pi-coding-agent"
+	piWebSearchSource  = "npm:@ollama/pi-web-search"
+	piWebSearchPkg     = "@ollama/pi-web-search"
 )
 
 func (p *Pi) String() string { return "Pi" }
@@ -60,6 +61,32 @@ func ensureNpmInstalled() error {
 
 func ensurePiInstalled() (string, error) {
 	if _, err := exec.LookPath("pi"); err == nil {
+		pkg, pkgErr := installedPiPackage()
+		if pkgErr != nil {
+			fmt.Fprintf(os.Stderr, "%sCould not verify which Pi package is installed: %v%s\n", ansiYellow, pkgErr, ansiReset)
+			fmt.Fprintf(os.Stderr, "Pi will still launch, but if you previously installed the old package you can migrate manually:\n  npm uninstall -g %s\n  npm install -g %s\n\n", piLegacyNpmPackage, piNpmPackage)
+			return "pi", nil
+		}
+
+		if pkg == piLegacyNpmPackage {
+			ok, err := ConfirmPrompt("Pi is installed from the old unmaintained package. Install the official package with npm?")
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				return "", fmt.Errorf("pi migration cancelled\n\nTo migrate later, re-run:\n  ollama launch pi\n\nOr migrate manually:\n  npm uninstall -g %s\n  npm install -g %s", piLegacyNpmPackage, piNpmPackage)
+			}
+
+			fmt.Fprintf(os.Stderr, "\nRemoving legacy Pi package...\n")
+			if err := uninstallLegacyPiPackage(); err != nil {
+				return "", err
+			}
+			fmt.Fprintf(os.Stderr, "Installing official Pi package...\n")
+			if err := installPiPackage(); err != nil {
+				return "", err
+			}
+			fmt.Fprintf(os.Stderr, "%sPi updated successfully%s\n\n", ansiGreen, ansiReset)
+		}
 		return "pi", nil
 	}
 
@@ -76,11 +103,8 @@ func ensurePiInstalled() (string, error) {
 	}
 
 	fmt.Fprintf(os.Stderr, "\nInstalling Pi...\n")
-	cmd := exec.Command("npm", "install", "-g", piNpmPackage+"@latest")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install pi: %w", err)
+	if err := installPiPackage(); err != nil {
+		return "", err
 	}
 
 	if _, err := exec.LookPath("pi"); err != nil {
@@ -89,6 +113,87 @@ func ensurePiInstalled() (string, error) {
 
 	fmt.Fprintf(os.Stderr, "%sPi installed successfully%s\n\n", ansiGreen, ansiReset)
 	return "pi", nil
+}
+
+func installPiPackage() error {
+	cmd := exec.Command("npm", "install", "-g", piNpmPackage+"@latest")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install pi: %w", err)
+	}
+	return nil
+}
+
+func uninstallLegacyPiPackage() error {
+	cmd := exec.Command("npm", "uninstall", "-g", piLegacyNpmPackage)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to remove legacy pi package: %w", err)
+	}
+	return nil
+}
+
+func installedPiPackage() (string, error) {
+	if _, err := exec.LookPath("npm"); err != nil {
+		return "", err
+	}
+
+	installed, err := npmPackageInstalled(piNpmPackage)
+	if err != nil {
+		return "", err
+	}
+	if installed {
+		return piNpmPackage, nil
+	}
+
+	installed, err = npmPackageInstalled(piLegacyNpmPackage)
+	if err != nil {
+		return "", err
+	}
+	if installed {
+		return piLegacyNpmPackage, nil
+	}
+
+	return "", nil
+}
+
+func npmPackageInstalled(pkg string) (bool, error) {
+	cmd := exec.Command("npm", "ls", "-g", pkg, "--depth=0", "--json")
+	out, err := cmd.Output()
+
+	var payload struct {
+		Dependencies map[string]json.RawMessage `json:"dependencies"`
+	}
+
+	if parseErr := json.Unmarshal(out, &payload); parseErr == nil {
+		_, ok := payload.Dependencies[pkg]
+		if ok {
+			return true, nil
+		}
+		if err != nil {
+			return false, nil
+		}
+		return false, nil
+	}
+
+	if err == nil {
+		return false, nil
+	}
+
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		msg := strings.TrimSpace(string(exitErr.Stderr))
+		if msg == "" {
+			msg = strings.TrimSpace(string(out))
+		}
+		if msg == "" {
+			return false, err
+		}
+		return false, fmt.Errorf("%w: %s", err, msg)
+	}
+
+	return false, err
 }
 
 func ensurePiWebSearchPackage(bin string) {
