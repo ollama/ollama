@@ -247,6 +247,7 @@ jobs:
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
           cmake --build --preset "${{ matrix.preset }}" -- -l $([Environment]::ProcessorCount)
           cmake --install build --component "${{ startsWith(matrix.preset, 'MLX ') && 'MLX' || startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || startsWith(matrix.preset, 'Vulkan') && 'Vulkan' || 'CPU' }}" --strip
+          if ('${{ matrix.preset }}'.StartsWith('MLX ')) { cmake --install build --component MLX_VENDOR }
           Remove-Item -Path dist\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
         env:
           CMAKE_GENERATOR: Ninja
@@ -586,6 +587,11 @@ jobs:
             esac
           done
         working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
+      # rocm builds cpu + rocm libs for the container image, which
+      # creates a CPU-only amd64 tarball that would collide with the full
+      # bundle when the release job merges artifacts.
+      - if: matrix.suffix == '-rocm'
+        run: rm -f dist/${{ matrix.os }}-${{ matrix.arch }}/ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in
       - run: |
           echo "Manifests"
           for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in ; do
