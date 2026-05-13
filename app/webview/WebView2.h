@@ -1613,7 +1613,7 @@ typedef interface ICoreWebView2PermissionSettingCollectionView ICoreWebView2Perm
 /* header files for imported files */
 #include "objidl.h"
 #include "oaidl.h"
-#include "EventToken.h"
+#include "eventtoken.h"
 
 #ifdef __cplusplus
 extern "C"
