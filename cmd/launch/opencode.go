@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,9 +9,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration.
@@ -19,6 +23,8 @@ import (
 type OpenCode struct {
 	configContent string // JSON config built by Edit, passed to Run via env var
 }
+
+const openCodeModelShowTimeout = 2 * time.Second
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
@@ -176,6 +182,12 @@ func buildInlineConfig(primary string, models []string) (string, error) {
 	if primary == "" || len(models) == 0 {
 		return "", fmt.Errorf("buildInlineConfig: primary and models are required")
 	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		client = nil
+	}
+
 	config := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
 		"provider": map[string]any{
@@ -185,7 +197,7 @@ func buildInlineConfig(primary string, models []string) (string, error) {
 				"options": map[string]any{
 					"baseURL": envconfig.Host().String() + "/v1",
 				},
-				"models": buildModelEntries(models),
+				"models": buildModelEntries(context.Background(), client, models),
 			},
 		},
 		"model": "ollama/" + primary,
@@ -228,21 +240,39 @@ func readModelJSONModels() []string {
 	return models
 }
 
-func buildModelEntries(modelList []string) map[string]any {
-	models := make(map[string]any)
-	for _, model := range modelList {
-		entry := map[string]any{
-			"name": model,
+func buildModelEntries(ctx context.Context, client *api.Client, modelList []string) map[string]any {
+	if client != nil {
+		var cancel context.CancelFunc
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			ctx, cancel = context.WithTimeout(ctx, openCodeModelShowTimeout)
+			defer cancel()
 		}
-		if isCloudModelName(model) {
-			if l, ok := lookupCloudModelLimit(model); ok {
+	}
+
+	models := make(map[string]any)
+	for _, modelID := range modelList {
+		entry := map[string]any{
+			"name": modelID,
+		}
+		if client != nil {
+			if resp, err := client.Show(ctx, &api.ShowRequest{Model: modelID}); err == nil {
+				if slices.Contains(resp.Capabilities, model.CapabilityVision) {
+					entry["modalities"] = map[string]any{
+						"input":  []string{"text", "image"},
+						"output": []string{"text"},
+					}
+				}
+			}
+		}
+		if isCloudModelName(modelID) {
+			if l, ok := lookupCloudModelLimit(modelID); ok {
 				entry["limit"] = map[string]any{
 					"context": l.Context,
 					"output":  l.Output,
 				}
 			}
 		}
-		models[model] = entry
+		models[modelID] = entry
 	}
 	return models
 }
