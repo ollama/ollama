@@ -575,7 +575,8 @@ func TestLaunchIntegration_ManagedSingleIntegrationForceConfigureUsesModelOverri
 	withLauncherHooks(t)
 
 	runner := &launcherManagedRunner{
-		paths: nil,
+		paths:              nil,
+		skipModelReadiness: true,
 	}
 	withIntegrationOverride(t, "stubmanaged", runner)
 
