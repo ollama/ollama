@@ -220,15 +220,15 @@ func (c *CodexApp) Restore() error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			if err := removeCodexAppRestoreState(); err != nil {
-				return err
+				return codexAppRestoreFailure(configPath, err)
 			}
 			return codexAppLaunchOrRestart("Restart Codex to use your usual profile?")
 		}
-		return err
+		return codexAppRestoreFailure(configPath, err)
 	}
 	text := string(data)
 	if err := codexValidateConfigText(text); err != nil {
-		return err
+		return codexAppRestoreFailure(configPath, err)
 	}
 
 	state, stateErr := loadCodexAppRestoreState()
@@ -237,21 +237,35 @@ func (c *CodexApp) Restore() error {
 	} else if os.IsNotExist(stateErr) {
 		text = codexAppRemoveOwnedRootValues(text)
 	} else {
-		return stateErr
+		return codexAppRestoreFailure(configPath, stateErr)
 	}
 	if !codexAppRootReferencesOwnedConfig(text) {
 		text = codexAppRemoveOwnedSections(text)
 	}
 
 	if err := codexValidateConfigText(text); err != nil {
-		return err
+		return codexAppRestoreFailure(configPath, err)
 	}
 	if err := fileutil.WriteWithBackup(configPath, []byte(text), codexAppIntegrationName); err != nil {
-		return err
+		return codexAppRestoreFailure(configPath, err)
 	}
-	codexAppRemoveOwnedCatalogIfUnused(text)
-	_ = os.Remove(codexAppRestoreStatePath())
+	if err := codexAppRemoveOwnedCatalogIfUnused(text); err != nil {
+		return codexAppRestoreFailure(configPath, err)
+	}
+	if err := removeCodexAppRestoreState(); err != nil {
+		return codexAppRestoreFailure(configPath, err)
+	}
 	return codexAppLaunchOrRestart("Restart Codex to use your usual profile?")
+}
+
+func codexAppRestoreFailure(configPath string, err error) error {
+	return fmt.Errorf("restore Codex App config: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  Restore state: %s\n  Model catalog: %s\n  Backups: %s",
+		err,
+		configPath,
+		codexAppRestoreStatePath(),
+		codexAppModelCatalogPathForConfig(configPath),
+		filepath.Join(fileutil.BackupDir(), codexAppIntegrationName),
+	)
 }
 
 func codexAppSupported() error {
@@ -282,7 +296,11 @@ func codexAppModelCatalogPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(filepath.Dir(configPath), codexAppModelCatalogFilename), nil
+	return codexAppModelCatalogPathForConfig(configPath), nil
+}
+
+func codexAppModelCatalogPathForConfig(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), codexAppModelCatalogFilename)
 }
 
 func writeCodexAppModelCatalog(path, primary string, models []string) error {
@@ -791,13 +809,18 @@ func codexAppRemoveOwnedSections(text string) string {
 	return text
 }
 
-func codexAppRemoveOwnedCatalogIfUnused(text string) {
+func codexAppRemoveOwnedCatalogIfUnused(text string) error {
 	if codexAppRootReferencesCatalog(text) {
-		return
+		return nil
 	}
 	if catalogPath, err := codexAppModelCatalogPath(); err == nil {
-		_ = os.Remove(catalogPath)
+		if err := os.Remove(catalogPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	} else {
+		return err
 	}
+	return nil
 }
 
 func codexAppRemoveOwnedRootValues(text string) string {

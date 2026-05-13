@@ -870,6 +870,21 @@ func TestCodexAppRestoreRejectsMalformedTomlWithoutWriting(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid Codex config TOML") {
 		t.Fatalf("Restore error = %v, want invalid TOML", err)
 	}
+	catalogPath, pathErr := codexAppModelCatalogPath()
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
+	for _, want := range []string{
+		"Restore did not complete",
+		"Codex config: " + configPath,
+		"Restore state: " + codexAppRestoreStatePath(),
+		"Model catalog: " + catalogPath,
+		"Backups: " + filepath.Join(fileutil.BackupDir(), codexAppIntegrationName),
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Restore error missing %q:\n%v", want, err)
+		}
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
