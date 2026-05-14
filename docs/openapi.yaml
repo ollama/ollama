@@ -635,6 +635,12 @@ components:
             quantization_level:
               type: string
               description: Quantization level used (for example `Q4_0`)
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [completion, tools, insert, vision, embedding, thinking]
+          description: Capabilities the model supports (for example `completion`, `tools`, `embedding`)
     ListResponse:
       type: object
       properties:
@@ -1160,6 +1166,10 @@ paths:
                         - "gemma"
                       parameter_size: "4.3B"
                       quantization_level: "Q4_K_M"
+                    capabilities:
+                      - "completion"
+                      - "tools"
+                      - "vision"
   /api/ps:
     get:
       summary: List running models
