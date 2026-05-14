@@ -12,9 +12,13 @@ package rpc
 // #cgo windows CFLAGS: -Wno-dll-attribute-on-redeclaration
 // #cgo windows LDFLAGS: -lws2_32
 // #include "ggml-rpc.h"
+// #include "ggml-backend.h"
 // #include <stdlib.h>
 import "C"
-import "unsafe"
+import (
+	"errors"
+	"unsafe"
+)
 
 // AddServer registers a remote RPC server as a ggml backend device.
 // endpoint is "host:port", e.g. "192.168.1.50:50052".
@@ -41,7 +45,8 @@ func GetDeviceMemory(endpoint string, device uint32) (free, total uint64) {
 // endpoint is "host:port" to bind on, e.g. "0.0.0.0:50052".
 // cacheDir is a path for tensor caching (use "" for no caching).
 // nThreads controls CPU thread count (0 = auto).
-func StartServer(endpoint, cacheDir string, nThreads int) {
+// Returns an error if no local compute devices are available to expose.
+func StartServer(endpoint, cacheDir string, nThreads int) error {
 	cEndpoint := C.CString(endpoint)
 	defer C.free(unsafe.Pointer(cEndpoint))
 
@@ -51,6 +56,26 @@ func StartServer(endpoint, cacheDir string, nThreads int) {
 		defer C.free(unsafe.Pointer(cCacheDir))
 	}
 
-	// Passing nil devices makes the server expose all locally available devices.
-	C.ggml_backend_rpc_start_server(cEndpoint, cCacheDir, C.size_t(nThreads), 0, nil)
+	// Enumerate local compute devices (CPU on the Pi, plus any GPUs). Skip
+	// devices contributed by the RPC backend itself to avoid recursive exposure.
+	n := C.ggml_backend_dev_count()
+	devices := make([]C.ggml_backend_dev_t, 0, int(n))
+	for i := C.size_t(0); i < n; i++ {
+		dev := C.ggml_backend_dev_get(i)
+		switch C.ggml_backend_dev_type(dev) {
+		case C.GGML_BACKEND_DEVICE_TYPE_CPU,
+			C.GGML_BACKEND_DEVICE_TYPE_GPU,
+			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
+			devices = append(devices, dev)
+		}
+	}
+	if len(devices) == 0 {
+		return errors.New("no local compute devices available to expose via RPC")
+	}
+
+	C.ggml_backend_rpc_start_server(cEndpoint, cCacheDir,
+		C.size_t(nThreads),
+		C.size_t(len(devices)),
+		(*C.ggml_backend_dev_t)(unsafe.Pointer(&devices[0])))
+	return nil
 }

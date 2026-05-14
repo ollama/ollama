@@ -41,6 +41,5 @@ func Execute(args []string) error {
 	slog.Info("starting RPC server", "endpoint", endpoint, "threads", *threads)
 
 	// Blocks until the server is shut down.
-	rpc.StartServer(endpoint, *cacheDir, *threads)
-	return nil
+	return rpc.StartServer(endpoint, *cacheDir, *threads)
 }
