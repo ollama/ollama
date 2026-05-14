@@ -38,6 +38,32 @@ type containerGGUF struct {
 	}
 
 	maxArraySize int
+
+	// fileSize is the size in bytes of the underlying GGUF file. It is used
+	// to bound attacker-controlled length fields (KV array counts, string
+	// lengths, tensor dimensions) so a malformed header cannot trigger an
+	// out-of-range slice allocation or an unbounded memory allocation.
+	// A value of 0 means the size is unknown.
+	fileSize int64
+}
+
+// maxGGUFTensorDims is a defensive cap on the number of dimensions any
+// tensor may declare. The GGUF format in practice uses 1-4 dimensions; 16
+// is far beyond any legitimate value and protects shape-array allocation.
+const maxGGUFTensorDims = 16
+
+// validateLength returns an error if n cannot be a valid count of elements
+// or bytes for this GGUF file: it must be non-negative when cast to int64
+// (guards uint64→int sign flip on 64-bit hosts) and must not exceed the
+// declared file size when known.
+func (c *containerGGUF) validateLength(n uint64) error {
+	if int64(n) < 0 {
+		return fmt.Errorf("invalid gguf length: %d", n)
+	}
+	if c.fileSize > 0 && int64(n) > c.fileSize {
+		return fmt.Errorf("gguf length %d exceeds file size %d", n, c.fileSize)
+	}
+	return nil
 }
 
 func (c *containerGGUF) Name() string {
@@ -203,11 +229,18 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			return fmt.Errorf("failed to read tensor dimensions: %w", err)
 		}
 
+		if dims > maxGGUFTensorDims {
+			return fmt.Errorf("invalid tensor dimensions: %d", dims)
+		}
+
 		shape := make([]uint64, dims)
 		for i := 0; uint32(i) < dims; i++ {
 			shape[i], err = readGGUF[uint64](llm, rs)
 			if err != nil {
 				return fmt.Errorf("failed to read tensor shape: %w", err)
+			}
+			if err := llm.validateLength(shape[i]); err != nil {
+				return fmt.Errorf("invalid tensor shape: %w", err)
 			}
 		}
 
@@ -299,6 +332,10 @@ func readGGUFV1String(llm *gguf, r io.Reader) (string, error) {
 		return "", err
 	}
 
+	if err := llm.validateLength(length); err != nil {
+		return "", fmt.Errorf("invalid v1 string length: %w", err)
+	}
+
 	var b bytes.Buffer
 	if _, err := io.CopyN(&b, r, int64(length)); err != nil {
 		return "", err
@@ -356,7 +393,11 @@ func readGGUFString(llm *gguf, r io.Reader) (string, error) {
 		return "", err
 	}
 
-	length := int(llm.ByteOrder.Uint64(buf))
+	rawLength := llm.ByteOrder.Uint64(buf)
+	if err := llm.validateLength(rawLength); err != nil {
+		return "", fmt.Errorf("invalid string length: %w", err)
+	}
+	length := int(rawLength)
 	if length > len(llm.scratch) {
 		buf = make([]byte, length)
 	} else {
@@ -430,6 +471,10 @@ func readGGUFArray(llm *gguf, r io.Reader) (any, error) {
 	n, err := readGGUF[uint64](llm, r)
 	if err != nil {
 		return nil, err
+	}
+
+	if err := llm.validateLength(n); err != nil {
+		return nil, fmt.Errorf("invalid array length: %w", err)
 	}
 
 	switch t {

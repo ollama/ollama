@@ -97,7 +97,19 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 	ch := make(chan any)
 	go func() {
-		defer close(ch)
+		defer func() {
+			// A panic in this worker (e.g. a malformed GGUF blob that
+			// slips past the parser's length checks) would otherwise
+			// terminate the entire ollama process — gin's recovery
+			// middleware only protects the request goroutine, not the
+			// goroutines it launches. Recover here so the request
+			// fails with an error instead of taking the server down.
+			if r := recover(); r != nil {
+				slog.Error("panic in create worker", "err", r)
+				ch <- gin.H{"error": fmt.Sprintf("internal error: %v", r), "status": http.StatusInternalServerError}
+			}
+			close(ch)
+		}()
 		fn := func(resp api.ProgressResponse) {
 			ch <- resp
 		}

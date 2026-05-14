@@ -31,6 +31,12 @@ const (
 
 var ErrUnsupported = errors.New("unsupported")
 
+// maxTensorDims is a defensive cap on the number of dimensions any tensor
+// may declare. The GGUF format in practice uses 1-4 dimensions; 16 is far
+// beyond any legitimate value and protects shape-array allocation from a
+// malformed header that would otherwise allocate gigabytes of memory.
+const maxTensorDims = 16
+
 type File struct {
 	Magic   [4]byte
 	Version uint32
@@ -42,6 +48,27 @@ type File struct {
 	file   *os.File
 	reader *bufferedReader
 	bts    []byte
+
+	// fileSize is the size in bytes of the underlying GGUF file. Length
+	// fields read out of the file (string lengths, array counts, tensor
+	// shape dims) are bounded by this value so an attacker cannot supply
+	// e.g. 0xFFFFFFFFFFFFFFFF and trigger an out-of-range or unbounded
+	// allocation. A value of 0 means the size is unknown.
+	fileSize int64
+}
+
+// validateLength returns an error if n cannot be a valid count of bytes or
+// elements for this file: it must be non-negative when cast to int64
+// (guards uint64→int sign flip on 64-bit hosts) and must not exceed the
+// declared file size when known.
+func (f *File) validateLength(n uint64) error {
+	if int64(n) < 0 {
+		return fmt.Errorf("invalid gguf length: %d", n)
+	}
+	if f.fileSize > 0 && int64(n) > f.fileSize {
+		return fmt.Errorf("gguf length %d exceeds file size %d", n, f.fileSize)
+	}
+	return nil
 }
 
 func Open(path string) (f *File, err error) {
@@ -49,6 +76,10 @@ func Open(path string) (f *File, err error) {
 	f.file, err = os.Open(path)
 	if err != nil {
 		return nil, err
+	}
+
+	if fi, statErr := f.file.Stat(); statErr == nil {
+		f.fileSize = fi.Size()
 	}
 
 	f.reader = newBufferedReader(f.file, 32<<10)
@@ -101,11 +132,18 @@ func (f *File) readTensor() (TensorInfo, error) {
 		return TensorInfo{}, err
 	}
 
+	if dims > maxTensorDims {
+		return TensorInfo{}, fmt.Errorf("invalid tensor dimensions: %d", dims)
+	}
+
 	shape := make([]uint64, dims)
 	for i := range dims {
 		shape[i], err = read[uint64](f)
 		if err != nil {
 			return TensorInfo{}, err
+		}
+		if err := f.validateLength(shape[i]); err != nil {
+			return TensorInfo{}, fmt.Errorf("invalid tensor shape: %w", err)
 		}
 	}
 
@@ -191,6 +229,10 @@ func readString(f *File) (string, error) {
 		return "", err
 	}
 
+	if err := f.validateLength(n); err != nil {
+		return "", fmt.Errorf("invalid string length: %w", err)
+	}
+
 	if int(n) > len(f.bts) {
 		f.bts = make([]byte, n)
 	}
@@ -213,6 +255,10 @@ func readArray(f *File) (any, error) {
 	n, err := read[uint64](f)
 	if err != nil {
 		return nil, err
+	}
+
+	if err := f.validateLength(n); err != nil {
+		return nil, fmt.Errorf("invalid array length: %w", err)
 	}
 
 	switch t {
