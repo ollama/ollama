@@ -5,6 +5,7 @@ package ggml
 // #cgo CPPFLAGS: -I${SRCDIR}/../include -I${SRCDIR}/ggml-cpu
 // #cgo windows CFLAGS: -Wno-dll-attribute-on-redeclaration
 // #cgo windows LDFLAGS: -lmsvcrt -static -static-libgcc -static-libstdc++
+// #cgo windows linux CPPFLAGS: -DGGML_FP16_TO_FP32=ggml_compute_fp16_to_fp32
 // #include <stdlib.h>
 // #include "ggml-backend.h"
 // extern void sink(int level, char *text, void *user_data);
