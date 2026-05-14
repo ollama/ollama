@@ -42,6 +42,25 @@ jobs:
           echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
 
+  patches:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify patches apply cleanly
+        shell: bash
+        run: |
+          cmake -S llama/server -B "$RUNNER_TEMP/llama-server-patch-check" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DGGML_BACKEND_DL=ON \
+            -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=OFF \
+            -DGGML_CPU_ALL_VARIANTS=ON \
+            -DOLLAMA_RUNNER_DIR=
+
   linux:
     needs: [changes]
     if: needs.changes.outputs.changed == 'True'

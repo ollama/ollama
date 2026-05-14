@@ -409,16 +409,6 @@ func TestQwen35ProjectorTensors(t *testing.T) {
 	}
 }
 
-func readTensorBF16Data(t *testing.T, tensor *ggml.Tensor) []float32 {
-	t.Helper()
-
-	var b bytes.Buffer
-	if _, err := tensor.WriteTo(&b); err != nil {
-		t.Fatal(err)
-	}
-	return bfloat16.DecodeFloat32(b.Bytes())
-}
-
 func TestQwen35BF16ProjectorWriterPreservesSource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tensor.bin")
