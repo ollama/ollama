@@ -3,15 +3,14 @@ package model
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/models/nn"
 )
 
 func skipIfNoMLX(t *testing.T) {
 	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
+	mlxtest.SkipIfUnavailable(t)
 }
 
 func TestMakeEmbeddingLayerDense(t *testing.T) {

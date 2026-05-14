@@ -3,15 +3,14 @@ package cache
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 func skipIfNoMLX(t *testing.T) {
 	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
+	mlxtest.SkipIfUnavailable(t)
 }
 
 // newKVBatch builds a B=1 batch at SeqOffsets=off with all-real

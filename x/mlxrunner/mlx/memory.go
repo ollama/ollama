@@ -87,3 +87,8 @@ type (
 func ClearCache() {
 	C.mlx_clear_cache()
 }
+
+// Synchronize waits for all operations on the default stream to complete.
+func Synchronize() {
+	C.mlx_synchronize(DefaultStream().ctx)
+}

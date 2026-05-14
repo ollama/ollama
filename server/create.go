@@ -32,6 +32,9 @@ import (
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/x/create"
+	xcreateclient "github.com/ollama/ollama/x/create/client"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 var (
@@ -101,8 +104,23 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		fn := func(resp api.ProgressResponse) {
 			ch <- resp
 		}
-
 		oldManifest, _ := manifest.ParseNamedManifest(name)
+
+		// Safetensors format: assemble manifest from pre-uploaded blobs
+		if r.ModelFormat == "safetensors" {
+			if err := createSafetensorsModel(r, name, config, fn); err != nil {
+				ch <- gin.H{"error": err.Error()}
+				return
+			}
+			if !envconfig.NoPrune() && oldManifest != nil {
+				if err := oldManifest.RemoveLayers(); err != nil {
+					ch <- gin.H{"error": err.Error()}
+					return
+				}
+			}
+			ch <- api.ProgressResponse{Status: "success"}
+			return
+		}
 
 		var baseLayers []*layerGGML
 		var err error
@@ -280,6 +298,383 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+// createSafetensorsModel assembles a safetensors model manifest from pre-uploaded blobs.
+// The client has already split tensors into individual blobs and uploaded them via /api/blobs/:digest.
+// This function validates all blobs exist, builds the manifest layers, and writes the manifest.
+// When r.Quantize is set and the client uploaded unquantized tensors, the server quantizes
+// eligible tensor blobs using MLX before building the manifest.
+//
+// Keep this path aligned with the local/CLI safetensors flow in
+// x/create/client/create.go and x/create/client/remote.go. The shared create
+// package owns source-model analysis, base-overlay planning, and final config
+// mutations; this server path intentionally stays as the blob-store-specific
+// shim that validates uploaded blobs, optionally rewrites them, and writes the
+// final manifest.
+func createSafetensorsModel(r api.CreateRequest, name model.Name, config *model.ConfigV2, fn func(resp api.ProgressResponse)) error {
+	if len(r.Files) == 0 {
+		return errNoFilesProvided
+	}
+
+	quantize := strings.ToLower(cmp.Or(r.Quantize, r.Quantization))
+	clientQuantized := strings.ToLower(strings.TrimSpace(r.ClientQuantized))
+	if quantize != "" && clientQuantized != "" {
+		return fmt.Errorf("quantize and client_quantized are mutually exclusive")
+	}
+	if quantize != "" && !safetensorsQuantizeSupported() {
+		return fmt.Errorf("quantization to %s requested but MLX is not available on this server", quantize)
+	}
+
+	fn(api.ProgressResponse{Status: "validating blobs"})
+
+	var err error
+	var baseModel *create.StoredModelSnapshot
+	if r.From != "" {
+		fromRef, err := parseAndValidateModelRef(r.From)
+		if err != nil {
+			return fmt.Errorf("invalid base model %q: %w", r.From, err)
+		}
+		if fromRef.Source == modelSourceCloud || r.RemoteHost != "" {
+			return fmt.Errorf("safetensors manifest assembly only supports local base models")
+		}
+
+		baseModel, err = create.LoadStoredSafetensorsLLMBaseModel(fromRef.Base)
+		if err != nil {
+			return fmt.Errorf("failed to load base model %s: %w", r.From, err)
+		}
+		create.ApplyStoredBaseConfig(config, baseModel.Config)
+	}
+
+	configFiles := make(map[string][]byte)
+	filePaths := make([]string, 0, len(r.Files))
+	for filePath := range r.Files {
+		filePaths = append(filePaths, filePath)
+	}
+	slices.Sort(filePaths)
+
+	files := make([]safetensorsManifestFile, 0, len(filePaths))
+	for _, filePath := range filePaths {
+		digest := r.Files[filePath]
+		if !fs.ValidPath(filePath) {
+			return fmt.Errorf("%w: %s", errFilePath, filePath)
+		}
+
+		blobPath, err := manifest.BlobsPath(digest)
+		if err != nil {
+			return fmt.Errorf("invalid digest for %s: %w", filePath, err)
+		}
+
+		info, err := os.Stat(blobPath)
+		if err != nil {
+			return fmt.Errorf("blob not found for %s (digest %s): %w", filePath, digest, err)
+		}
+
+		mediaType := safetensorsMediaType(filePath)
+		files = append(files, safetensorsManifestFile{
+			name:      filePath,
+			digest:    digest,
+			blobPath:  blobPath,
+			mediaType: mediaType,
+			size:      info.Size(),
+		})
+
+		if mediaType == "application/vnd.ollama.image.json" && create.IsSourceMetadataFile(filePath) {
+			data, err := os.ReadFile(blobPath)
+			if err != nil {
+				return fmt.Errorf("failed to read config blob for %s: %w", filePath, err)
+			}
+			configFiles[filePath] = data
+		}
+	}
+
+	assemblyPlan, err := create.AnalyzeUploadedSafetensorsAssembly(baseModel, filePaths, configFiles, quantize, config.Parser)
+	if err != nil {
+		return fmt.Errorf("failed to analyze uploaded safetensors source: %w", err)
+	}
+
+	// Build manifest layers after shared source analysis. Unlike the local
+	// create path, this flow starts from already-uploaded blobs rather than a
+	// source directory, so the remaining work here is intentionally limited to
+	// blob-backed layer assembly and optional server-side quantization.
+	baseLayerCount := 0
+	if baseModel != nil {
+		baseLayerCount = len(baseModel.Layers)
+	}
+	layers := make([]manifest.Layer, 0, len(files)+baseLayerCount)
+	if baseModel != nil {
+		for _, layer := range baseModel.Layers {
+			layers = append(layers, manifest.Layer{
+				MediaType: layer.MediaType,
+				Digest:    layer.Digest,
+				Size:      layer.Size,
+				Name:      layer.Name,
+			})
+		}
+	}
+	for _, file := range files {
+		layer := manifest.Layer{
+			MediaType: file.mediaType,
+			Digest:    file.digest,
+			Size:      file.size,
+			Name:      file.name,
+		}
+
+		if assemblyPlan.EffectiveQuantize == "" || file.mediaType != manifest.MediaTypeImageTensor {
+			layers = append(layers, layer)
+			continue
+		}
+
+		metas, err := safetensors.ReadBlobMetas(file.blobPath)
+		if err != nil {
+			return fmt.Errorf("server-side quantization of %s: failed to read tensor metadata: %w", file.name, err)
+		}
+		if len(metas) > 1 {
+			quantizedLayer, quantized, err := maybeQuantizePackedTensorBlob(file.blobPath, file.name, assemblyPlan.EffectiveQuantize, assemblyPlan.QuantizationPlanner, metas, fn)
+			if err != nil {
+				return fmt.Errorf("server-side quantization of %s: %w", file.name, err)
+			}
+			if quantized {
+				layer = quantizedLayer
+			}
+			layers = append(layers, layer)
+			continue
+		}
+
+		meta := metas[0]
+		quantType := tensorQuantizationType(file.name, meta, assemblyPlan.EffectiveQuantize, assemblyPlan.QuantizationPlanner)
+		if quantType == "" {
+			layers = append(layers, layer)
+			continue
+		}
+
+		quantizedLayer, quantized, err := maybeQuantizeTensorBlob(file.blobPath, file.name, assemblyPlan.EffectiveQuantize, assemblyPlan.QuantizationPlanner, fn)
+		if err != nil {
+			return fmt.Errorf("server-side quantization of %s: %w", file.name, err)
+		}
+		if quantized {
+			layer = quantizedLayer
+		}
+		layers = append(layers, layer)
+	}
+
+	// Set safetensors-specific config
+	create.ApplyUploadedSafetensorsAssemblyConfig(config, assemblyPlan, clientQuantized)
+
+	// Add Modelfile-derived layers
+	if r.Template != "" {
+		layers, err = setTemplate(layers, r.Template)
+		if err != nil {
+			return err
+		}
+	}
+
+	if r.System != "" {
+		layers, err = setSystem(layers, r.System)
+		if err != nil {
+			return err
+		}
+	}
+
+	if r.License != nil {
+		switch l := r.License.(type) {
+		case string:
+			if l != "" {
+				layers, err = setLicense(layers, l)
+				if err != nil {
+					return err
+				}
+			}
+		case any:
+			var licenses []string
+			b, _ := json.Marshal(l)
+			if err := json.Unmarshal(b, &licenses); err != nil {
+				return err
+			}
+			for _, v := range licenses {
+				layers, err = setLicense(layers, v)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	layers, err = setParameters(layers, r.Parameters)
+	if err != nil {
+		return err
+	}
+
+	layers, err = setMessages(layers, r.Messages)
+	if err != nil {
+		return err
+	}
+
+	fn(api.ProgressResponse{Status: "writing manifest"})
+
+	configLayer, err := createConfigLayer(layers, *config)
+	if err != nil {
+		return fmt.Errorf("failed to create config layer: %w", err)
+	}
+
+	return manifest.WriteManifest(name, *configLayer, layers)
+}
+
+var (
+	safetensorsQuantizeSupported  = xcreateclient.QuantizeSupported
+	quantizeSafetensorsTensor     = xcreateclient.QuantizeTensor
+	quantizeSafetensorsTensorPath = xcreateclient.QuantizeTensorPath
+	quantizeSafetensorsPacked     = xcreateclient.QuantizePackedGroup
+	quantizeSafetensorsPackedPath = xcreateclient.QuantizePackedGroupToFile
+)
+
+type safetensorsManifestFile struct {
+	name      string
+	digest    string
+	blobPath  string
+	mediaType string
+	size      int64
+}
+
+// maybeQuantizeTensorBlob reads a tensor blob, checks if it should be quantized,
+// and if so, quantizes it and writes the result as a new blob.
+// Returns the new manifest layer and true if quantized, or zero-value and false if not.
+func maybeQuantizeTensorBlob(blobPath, tensorName, quantize string, planner *create.SafetensorsQuantizationPlanner, fn func(resp api.ProgressResponse)) (manifest.Layer, bool, error) {
+	metas, err := safetensors.ReadBlobMetas(blobPath)
+	if err != nil {
+		return manifest.Layer{}, false, fmt.Errorf("failed to read tensor metadata: %w", err)
+	}
+	if len(metas) > 1 {
+		return maybeQuantizePackedTensorBlob(blobPath, tensorName, quantize, planner, metas, fn)
+	}
+	meta := metas[0]
+
+	quantType := tensorQuantizationType(tensorName, meta, quantize, planner)
+	if quantType == "" {
+		return manifest.Layer{}, false, nil
+	}
+
+	fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s to %s", tensorName, quantType)})
+
+	if quantizeSafetensorsTensorPath != nil {
+		outPath, cleanup, err := quantizeSafetensorsTensorPath(blobPath, tensorName, meta.Dtype, meta.Shape, quantType)
+		if err != nil {
+			return manifest.Layer{}, false, err
+		}
+		defer cleanup()
+
+		f, err := os.Open(outPath)
+		if err != nil {
+			return manifest.Layer{}, false, err
+		}
+		defer f.Close()
+
+		layer, err := manifest.NewLayer(f, manifest.MediaTypeImageTensor)
+		if err != nil {
+			return manifest.Layer{}, false, err
+		}
+		layer.Name = tensorName
+		return layer, true, nil
+	}
+
+	f, err := os.Open(blobPath)
+	if err != nil {
+		return manifest.Layer{}, false, err
+	}
+	defer f.Close()
+
+	blobData, err := quantizeSafetensorsTensor(f, tensorName, meta.Dtype, meta.Shape, quantType)
+	if err != nil {
+		return manifest.Layer{}, false, err
+	}
+
+	layer, err := manifest.NewLayer(bytes.NewReader(blobData), manifest.MediaTypeImageTensor)
+	if err != nil {
+		return manifest.Layer{}, false, err
+	}
+	layer.Name = tensorName
+	return layer, true, nil
+}
+
+func maybeQuantizePackedTensorBlob(blobPath, groupName, quantize string, planner *create.SafetensorsQuantizationPlanner, metas []safetensors.TensorMeta, fn func(resp api.ProgressResponse)) (manifest.Layer, bool, error) {
+	extractor, err := safetensors.OpenForExtraction(blobPath)
+	if err != nil {
+		return manifest.Layer{}, false, err
+	}
+	defer extractor.Close()
+
+	inputs := make([]create.PackedTensorInput, 0, len(metas))
+	hasQuantized := false
+	for _, meta := range metas {
+		quantType := tensorQuantizationType(meta.Name, meta, quantize, planner)
+		if quantType != "" {
+			hasQuantized = true
+		}
+
+		td, err := extractor.GetTensor(meta.Name)
+		if err != nil {
+			return manifest.Layer{}, false, err
+		}
+
+		inputs = append(inputs, create.PackedTensorInput{
+			Name:       meta.Name,
+			Dtype:      meta.Dtype,
+			Shape:      meta.Shape,
+			Quantize:   quantType,
+			Reader:     td.SafetensorsReader(),
+			TensorData: td,
+		})
+	}
+
+	if !hasQuantized {
+		return manifest.Layer{}, false, nil
+	}
+
+	fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s", groupName)})
+	if quantizeSafetensorsPackedPath != nil {
+		outPath, cleanup, err := quantizeSafetensorsPackedPath(groupName, inputs)
+		if err != nil {
+			return manifest.Layer{}, false, err
+		}
+		defer cleanup()
+
+		f, err := os.Open(outPath)
+		if err != nil {
+			return manifest.Layer{}, false, err
+		}
+		defer f.Close()
+
+		layer, err := manifest.NewLayer(f, manifest.MediaTypeImageTensor)
+		if err != nil {
+			return manifest.Layer{}, false, err
+		}
+		layer.Name = groupName
+		return layer, true, nil
+	}
+
+	blobData, err := quantizeSafetensorsPacked(groupName, inputs)
+	if err != nil {
+		return manifest.Layer{}, false, err
+	}
+
+	layer, err := manifest.NewLayer(bytes.NewReader(blobData), manifest.MediaTypeImageTensor)
+	if err != nil {
+		return manifest.Layer{}, false, err
+	}
+	layer.Name = groupName
+	return layer, true, nil
+}
+
+func tensorQuantizationType(name string, meta safetensors.TensorMeta, quantize string, planner *create.SafetensorsQuantizationPlanner) string {
+	return planner.QuantizationType(name, meta.Shape, quantize)
+}
+
+// safetensorsMediaType returns the appropriate media type for a file in a safetensors model.
+func safetensorsMediaType(filePath string) string {
+	if strings.HasSuffix(filePath, ".json") {
+		return "application/vnd.ollama.image.json"
+	}
+	return manifest.MediaTypeImageTensor
 }
 
 func remoteURL(raw string) (string, error) {

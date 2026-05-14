@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
+	xcreateclient "github.com/ollama/ollama/x/create/client"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 func TestConvertFromSafetensors(t *testing.T) {
@@ -226,6 +231,86 @@ func TestRemoteURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMaybeQuantizePackedTensorBlobUsesThreadSafeMLXQuantization(t *testing.T) {
+	if !xcreateclient.QuantizeSupported() {
+		t.Skip("MLX unavailable")
+	}
+
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	groupName := "model.layers.0.moe.experts"
+	blobData, err := io.ReadAll(safetensors.BuildPackedSafetensorsReader([]*safetensors.TensorData{
+		safetensors.NewTensorDataFromBytes(
+			groupName+".0.gate_proj.weight",
+			"F32",
+			[]int32{64, 64},
+			float32Bytes(64*64, 1),
+		),
+		safetensors.NewTensorDataFromBytes(
+			groupName+".1.gate_proj.weight",
+			"F32",
+			[]int32{64, 64},
+			float32Bytes(64*64, 4097),
+		),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blobPath := filepath.Join(t.TempDir(), "experts.safetensors")
+	if err := os.WriteFile(blobPath, blobData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	metas, err := safetensors.ReadBlobMetas(blobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layer, quantized, err := maybeQuantizePackedTensorBlob(blobPath, groupName, "int4", nil, metas, func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quantized {
+		t.Fatal("expected packed tensor blob to be quantized")
+	}
+	if layer.Name != groupName {
+		t.Fatalf("layer.Name = %q, want %q", layer.Name, groupName)
+	}
+
+	quantizedBlobPath, err := manifest.BlobsPath(layer.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quantizedMetas, err := safetensors.ReadBlobMetas(quantizedBlobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotNames := make([]string, 0, len(quantizedMetas))
+	for _, meta := range quantizedMetas {
+		gotNames = append(gotNames, meta.Name)
+	}
+	slices.Sort(gotNames)
+	requiredNames := []string{
+		"model.layers.0.moe.switch_mlp.gate_proj.weight",
+		"model.layers.0.moe.switch_mlp.gate_proj.weight.scale",
+	}
+	for _, want := range requiredNames {
+		if !slices.Contains(gotNames, want) {
+			t.Fatalf("quantized tensor names = %v, missing %q", gotNames, want)
+		}
+	}
+}
+
+func float32Bytes(n int, start float32) []byte {
+	data := make([]byte, n*4)
+	for i := range n {
+		binary.LittleEndian.PutUint32(data[i*4:], math.Float32bits(start+float32(i)))
+	}
+	return data
 }
 
 func TestRemoteURL_Idempotent(t *testing.T) {

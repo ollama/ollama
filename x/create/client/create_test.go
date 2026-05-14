@@ -1,17 +1,23 @@
 package client
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 func TestModelfileConfig(t *testing.T) {
@@ -169,6 +175,36 @@ func TestCreateModel_DraftQuantizeRequiresDraft(t *testing.T) {
 	}
 }
 
+func TestCreateModelFromBaseWithDraftRejectsMismatchedQuantize(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	createStoredSafetensorsLLMModel(t, "base", model.ConfigV2{
+		ModelFormat:  "safetensors",
+		FileType:     "nvfp4",
+		Capabilities: []string{"completion"},
+		Architecture: "amd64",
+		OS:           "linux",
+		RootFS:       model.RootFS{Type: "layers"},
+	})
+
+	draftDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(draftDir, "config.json"), []byte(`{"architectures":["LlamaForCausalLM"],"model_type":"llama"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeTestSafetensors(t, filepath.Join(draftDir, "draft.safetensors"), "test_tensor", []int{2, 2})
+	p := progress.NewProgress(io.Discard)
+	defer p.Stop()
+
+	err := CreateModel(CreateOptions{
+		ModelName: "child",
+		ModelDir:  "base",
+		Quantize:  "int4",
+		Modelfile: &ModelfileConfig{Draft: draftDir},
+	}, p)
+	if err == nil || !strings.Contains(err.Error(), "preserves the base model quantization") {
+		t.Fatalf("error = %v, want mismatched base quantize error", err)
+	}
+}
+
 func TestCreateOptions(t *testing.T) {
 	opts := CreateOptions{
 		ModelName:     "my-model",
@@ -316,7 +352,7 @@ func TestCreateOptions_Defaults(t *testing.T) {
 	}
 }
 
-func TestInferSafetensorsCapabilities(t *testing.T) {
+func TestInferSafetensorsCapabilitiesFromDir(t *testing.T) {
 	tests := []struct {
 		name       string
 		configJSON string
@@ -375,8 +411,8 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got := inferSafetensorsCapabilities(dir, ""); !slices.Equal(got, tt.want) {
-				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
+			if got := create.InferSafetensorsCapabilitiesFromDir(dir); !slices.Equal(got, tt.want) {
+				t.Fatalf("InferSafetensorsCapabilitiesFromDir() = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
@@ -458,6 +494,53 @@ func TestQuantizeSupported(t *testing.T) {
 	// In non-mlx builds, this should be false
 	// We can't easily test both cases, so just verify it returns something
 	_ = supported
+}
+
+func TestQuantizeTempOutputPathIsPerOperation(t *testing.T) {
+	path1, cleanup1, err := quantizeTempOutputPath("combined.safetensors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup1()
+
+	path2, cleanup2, err := quantizeTempOutputPath("combined.safetensors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup2()
+
+	if path1 == path2 {
+		t.Fatalf("quantizeTempOutputPath returned the same path twice: %s", path1)
+	}
+
+	for _, path := range []string{path1, path2} {
+		info, err := os.Stat(filepath.Dir(path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.GOOS == "windows" {
+			continue
+		}
+		if got := info.Mode().Perm(); got != 0o700 {
+			t.Fatalf("temp dir permissions = %o, want 700", got)
+		}
+	}
+}
+
+func TestReadSafetensorsHeaderRejectsHugeHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "huge-header.safetensors")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint64(safetensors.MaxHeaderSize+1)); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	if _, err := readSafetensorsHeader(path); err == nil {
+		t.Fatal("readSafetensorsHeader succeeded, want huge header error")
+	}
 }
 
 func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
@@ -583,11 +666,83 @@ func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
 	}
 }
 
-func TestSupportsThinking(t *testing.T) {
+type failingPackedReader struct{}
+
+func (failingPackedReader) Read([]byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+func TestNewPackedTensorLayerCreatorStreamsFileBackedTensors(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	sourceNames := []string{"source.0.weight", "source.1.weight"}
+	source := []*safetensors.TensorData{
+		safetensors.NewTensorDataFromBytes(sourceNames[0], "F32", []int32{2, 2}, []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}),
+		safetensors.NewTensorDataFromBytes(sourceNames[1], "F32", []int32{2, 2}, []byte{17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}),
+	}
+	sourceData, err := io.ReadAll(safetensors.BuildPackedSafetensorsReader(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "model.safetensors")
+	if err := os.WriteFile(path, sourceData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	extractor, err := safetensors.OpenForExtraction(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extractor.Close()
+
+	td0, err := extractor.GetTensor(sourceNames[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	td1, err := extractor.GetTensor(sourceNames[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	groupName := "model.layers.0.mlp.experts"
+	layer, err := newPackedTensorLayerCreator()(groupName, []create.PackedTensorInput{
+		{Name: groupName + ".0.gate_proj.weight", Dtype: td0.Dtype, Shape: td0.Shape, Reader: failingPackedReader{}, TensorData: td0},
+		{Name: groupName + ".1.gate_proj.weight", Dtype: td1.Dtype, Shape: td1.Shape, Reader: failingPackedReader{}, TensorData: td1},
+	})
+	if err != nil {
+		t.Fatalf("newPackedTensorLayerCreator failed: %v", err)
+	}
+
+	blobPath, err := manifest.BlobsPath(layer.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metas, err := safetensors.ReadBlobMetas(blobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotNames := make([]string, 0, len(metas))
+	for _, meta := range metas {
+		gotNames = append(gotNames, meta.Name)
+	}
+	slices.Sort(gotNames)
+	wantNames := []string{
+		groupName + ".0.gate_proj.weight",
+		groupName + ".1.gate_proj.weight",
+	}
+	if !slices.Equal(gotNames, wantNames) {
+		t.Fatalf("packed tensor names = %v, want %v", gotNames, wantNames)
+	}
+}
+
+func TestSupportsThinkingConfig(t *testing.T) {
 	tests := []struct {
 		name       string
 		configJSON string
 		want       bool
+		wantErr    bool
 	}{
 		{
 			name:       "qwen3 architecture",
@@ -632,25 +787,32 @@ func TestSupportsThinking(t *testing.T) {
 		{
 			name:       "invalid json",
 			configJSON: `not json`,
-			want:       false,
+			wantErr:    true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
-
-			if got := supportsThinking(dir); got != tt.want {
-				t.Errorf("supportsThinking() = %v, want %v", got, tt.want)
+			got, err := create.SupportsThinkingConfig([]byte(tt.configJSON))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("SupportsThinkingConfig() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestSupportsThinking_NoConfig(t *testing.T) {
-	if supportsThinking(t.TempDir()) {
-		t.Error("supportsThinking should return false for missing config.json")
+	if got := create.InferSafetensorsCapabilitiesFromDir(t.TempDir()); !slices.Equal(got, []string{"completion"}) {
+		t.Fatalf("InferSafetensorsCapabilitiesFromDir() = %#v, want completion fallback", got)
 	}
 }
 
@@ -679,8 +841,8 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got := inferSafetensorsCapabilities(dir, tt.parserName); !slices.Equal(got, tt.want) {
-				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
+			if got := create.InferSafetensorsCapabilitiesFromDirWithParser(dir, tt.parserName); !slices.Equal(got, tt.want) {
+				t.Fatalf("InferSafetensorsCapabilitiesFromDirWithParser() = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
@@ -692,7 +854,7 @@ func TestInferSafetensorsCapabilitiesLaguna(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := inferSafetensorsCapabilities(dir, "laguna")
+	got := create.InferSafetensorsCapabilitiesFromDirWithParser(dir, "laguna")
 	for _, want := range []string{"completion", "tools", "thinking"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("capabilities %v missing %q", got, want)
@@ -800,5 +962,65 @@ func TestGetRendererName(t *testing.T) {
 				t.Errorf("getRendererName() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func writeTestSafetensors(t *testing.T, path, name string, shape []int) {
+	t.Helper()
+	size := 4
+	for _, dim := range shape {
+		size *= dim
+	}
+	header := map[string]any{
+		name: map[string]any{
+			"dtype":        "F32",
+			"shape":        shape,
+			"data_offsets": []int{0, size},
+		},
+	}
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerJSON = append(headerJSON, bytes.Repeat([]byte(" "), (8-len(headerJSON)%8)%8)...)
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := binary.Write(f, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(headerJSON); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(make([]byte, size)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createStoredSafetensorsLLMModel(t *testing.T, modelName string, cfg model.ConfigV2) {
+	t.Helper()
+
+	tensorData := []byte("fake-tensor-data-for-testing")
+	tensorLayer, err := manifest.NewLayer(bytes.NewReader(tensorData), manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tensorLayer.Name = "model.embed_tokens.weight"
+
+	configJSON, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := manifest.NewLayer(bytes.NewReader(configJSON), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := model.ParseName(modelName)
+	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{tensorLayer}); err != nil {
+		t.Fatal(err)
 	}
 }

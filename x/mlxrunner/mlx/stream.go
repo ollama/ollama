@@ -1,6 +1,39 @@
 package mlx
 
 // #include "generated.h"
+//
+// static __thread mlx_stream _mlx_default_stream;
+// static __thread int _mlx_default_stream_set = 0;
+// static __thread mlx_stream _mlx_default_cpu_stream;
+// static __thread int _mlx_default_cpu_stream_set = 0;
+//
+// static void mlx_reset_thread_stream_cache(void) {
+//     if (_mlx_default_stream_set) {
+//         mlx_stream_free(_mlx_default_stream);
+//         _mlx_default_stream_set = 0;
+//     }
+//     if (_mlx_default_cpu_stream_set) {
+//         mlx_stream_free(_mlx_default_cpu_stream);
+//         _mlx_default_cpu_stream_set = 0;
+//     }
+// }
+//
+// static void mlx_get_thread_default_stream(mlx_stream* out, mlx_device dev) {
+//     if (!_mlx_default_stream_set) {
+//         _mlx_default_stream = mlx_stream_new();
+//         mlx_get_default_stream(&_mlx_default_stream, dev);
+//         _mlx_default_stream_set = 1;
+//     }
+//     *out = _mlx_default_stream;
+// }
+//
+// static void mlx_get_thread_default_cpu_stream(mlx_stream* out) {
+//     if (!_mlx_default_cpu_stream_set) {
+//         _mlx_default_cpu_stream = mlx_default_cpu_stream_new();
+//         _mlx_default_cpu_stream_set = 1;
+//     }
+//     *out = _mlx_default_cpu_stream;
+// }
 import "C"
 
 import "log/slog"
@@ -16,27 +49,14 @@ func (d Device) LogValue() slog.Value {
 	return slog.StringValue(C.GoString(C.mlx_string_data(str)))
 }
 
-var (
-	defaultDevice    Device
-	defaultDeviceSet bool
-	defaultStream    Stream
-	defaultStreamSet bool
-)
-
 func resetDefaultStreamCache() {
-	defaultDeviceSet = false
-	defaultStreamSet = false
+	C.mlx_reset_thread_stream_cache()
 }
 
 func DefaultDevice() Device {
-	if !defaultDeviceSet {
-		d := C.mlx_device_new()
-		C.mlx_get_default_device(&d)
-		defaultDevice = Device{d}
-		defaultDeviceSet = true
-	}
-
-	return defaultDevice
+	d := C.mlx_device_new()
+	C.mlx_get_default_device(&d)
+	return Device{d}
 }
 
 // GPUIsAvailable returns true if a GPU device is available.
@@ -68,12 +88,16 @@ func (s Stream) LogValue() slog.Value {
 }
 
 func DefaultStream() Stream {
-	if !defaultStreamSet {
-		s := C.mlx_stream_new()
-		C.mlx_get_default_stream(&s, DefaultDevice().ctx)
-		defaultStream = Stream{s}
-		defaultStreamSet = true
-	}
+	requireBoundThread("DefaultStream")
+	s := C.mlx_stream_new()
+	C.mlx_get_thread_default_stream(&s, DefaultDevice().ctx)
+	return Stream{s}
+}
 
-	return defaultStream
+// DefaultCPUStream returns a cached CPU stream for load operations.
+func DefaultCPUStream() Stream {
+	requireBoundThread("DefaultCPUStream")
+	s := C.mlx_stream_new()
+	C.mlx_get_thread_default_cpu_stream(&s)
+	return Stream{s}
 }

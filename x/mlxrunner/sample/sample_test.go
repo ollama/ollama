@@ -7,14 +7,13 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 func skipIfNoMLX(t *testing.T) {
 	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
+	mlxtest.SkipIfUnavailable(t)
 }
 
 // slotLogits builds a [1, V] logits tensor for a single-slot Sample call.

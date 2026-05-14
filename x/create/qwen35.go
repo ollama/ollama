@@ -21,6 +21,12 @@ type qwen35SourceInfo struct {
 }
 
 func newQwen35ImportTransform(modelDir string, cfg sourceModelConfig) (tensorImportTransform, error) {
+	if modelDir == "" {
+		return qwen35ImportTransform{
+			rewriteLanguageModel: strings.Contains(cfg.Architecture(), "ConditionalGeneration"),
+		}, nil
+	}
+
 	sourceInfo, err := qwen35InspectSource(modelDir)
 	if err != nil {
 		return qwen35ImportTransform{}, err

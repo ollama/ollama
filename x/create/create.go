@@ -1,8 +1,10 @@
 package create
 
 import (
+	"cmp"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -16,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
+	modeltypes "github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/safetensors"
 )
 
@@ -39,6 +42,25 @@ type ManifestLayer struct {
 	Digest    string `json:"digest"`
 	Size      int64  `json:"size"`
 	Name      string `json:"name,omitempty"`
+}
+
+// StoredModelSnapshot captures the full config blob and manifest layers for an
+// already-created local model so local and server-side overlay flows can share
+// the same base-model inspection.
+type StoredModelSnapshot struct {
+	Config *modeltypes.ConfigV2
+	Layers []LayerInfo
+}
+
+// UploadedSafetensorsAssemblyPlan captures the shared source-analysis and
+// overlay state needed to turn uploaded safetensors blobs into a final model.
+// The server still owns blob validation and blob rewrites, but client/server
+// should share this planning and config-finalization logic.
+type UploadedSafetensorsAssemblyPlan struct {
+	Capabilities        []string
+	EffectiveQuantize   string
+	QuantizationPlanner *SafetensorsQuantizationPlanner
+	HasDraftOverlay     bool
 }
 
 // defaultManifestDir returns the manifest storage directory.
@@ -118,6 +140,56 @@ func loadModelConfig(modelName string) (*ModelConfig, error) {
 	return &config, nil
 }
 
+// LoadStoredModelSnapshot loads the full config blob and manifest layers for an
+// already-created local model.
+func LoadStoredModelSnapshot(modelName string) (*StoredModelSnapshot, error) {
+	manifest, err := loadManifest(modelName)
+	if err != nil {
+		return nil, err
+	}
+
+	blobName := strings.Replace(manifest.Config.Digest, ":", "-", 1)
+	blobPath := filepath.Join(defaultBlobDir(), blobName)
+
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var config modeltypes.ConfigV2
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+
+	layers := make([]LayerInfo, 0, len(manifest.Layers))
+	for _, layer := range manifest.Layers {
+		layers = append(layers, LayerInfo{
+			Digest:    layer.Digest,
+			Size:      layer.Size,
+			MediaType: layer.MediaType,
+			Name:      layer.Name,
+		})
+	}
+
+	return &StoredModelSnapshot{
+		Config: &config,
+		Layers: layers,
+	}, nil
+}
+
+// LoadStoredSafetensorsLLMBaseModel loads a stored base model and validates
+// that it is a safetensors completion model suitable for draft/base overlays.
+func LoadStoredSafetensorsLLMBaseModel(modelName string) (*StoredModelSnapshot, error) {
+	snapshot, err := LoadStoredModelSnapshot(modelName)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.Config.ModelFormat != "safetensors" || !slices.Contains(snapshot.Config.Capabilities, "completion") {
+		return nil, fmt.Errorf("base model %s is not a safetensors LLM model", modelName)
+	}
+	return snapshot, nil
+}
+
 // IsSafetensorsModel checks if a model was created with the experimental
 // safetensors builder by checking the model format in the config.
 func IsSafetensorsModel(modelName string) bool {
@@ -146,6 +218,60 @@ func IsImageGenModel(modelName string) bool {
 		return false
 	}
 	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "image")
+}
+
+// ResolveBaseModelQuantization validates that a base-model overlay flow is not
+// pretending to requantize stored main-model tensors. These flows only append
+// auxiliary layers, so the main model must already be in the requested format.
+func ResolveBaseModelQuantization(cfg *modeltypes.ConfigV2, requested string) (string, error) {
+	if cfg == nil {
+		return "", fmt.Errorf("missing base model config")
+	}
+
+	baseFileType := normalizeQuantType(strings.TrimSpace(cfg.FileType))
+	requested = normalizeQuantType(strings.TrimSpace(requested))
+	if requested == "" {
+		return baseFileType, nil
+	}
+
+	if baseFileType == "" {
+		return "", fmt.Errorf("cannot apply --quantize %q when the base model is unquantized; this flow does not requantize base tensors", requested)
+	}
+	if requested != baseFileType {
+		return "", fmt.Errorf("cannot apply --quantize %q when the base model is %q; this flow preserves the base model quantization", requested, baseFileType)
+	}
+
+	return baseFileType, nil
+}
+
+// ApplyStoredBaseConfig overlays a stored base model config onto config while
+// preserving explicit create-time parser, renderer, and requires overrides.
+func ApplyStoredBaseConfig(config, base *modeltypes.ConfigV2) {
+	if config == nil || base == nil {
+		return
+	}
+	explicitRenderer := config.Renderer
+	explicitParser := config.Parser
+	explicitRequires := config.Requires
+	*config = *base
+	if explicitRenderer != "" {
+		config.Renderer = explicitRenderer
+	}
+	if explicitParser != "" {
+		config.Parser = explicitParser
+	}
+	if explicitRequires != "" {
+		config.Requires = explicitRequires
+	}
+}
+
+func DraftModelConfig() *modeltypes.Draft {
+	return &modeltypes.Draft{
+		ModelFormat:  "safetensors",
+		Architecture: "Gemma4AssistantForCausalLM",
+		TensorPrefix: "draft.",
+		Config:       "draft/config.json",
+	}
 }
 
 // GetModelArchitecture returns the architecture from the model's config.json layer.
@@ -502,11 +628,12 @@ func ExpertGroupPrefix(tensorName string) string {
 
 // PackedTensorInput holds metadata for a tensor that will be packed into a multi-tensor blob.
 type PackedTensorInput struct {
-	Name     string
-	Dtype    string
-	Shape    []int32
-	Quantize string    // per-tensor quantization type (may differ within group)
-	Reader   io.Reader // safetensors-wrapped tensor data
+	Name       string
+	Dtype      string
+	Shape      []int32
+	Quantize   string                  // per-tensor quantization type (may differ within group)
+	Reader     io.Reader               // safetensors-wrapped tensor data
+	TensorData *safetensors.TensorData // raw file-backed tensor data, when available
 }
 
 // PackedTensorLayerCreator creates a single blob layer containing multiple packed tensors.
@@ -533,24 +660,126 @@ type sourceQuantization struct {
 type sourceModelConfig struct {
 	ModelType          string             `json:"model_type"`
 	Architectures      []string           `json:"architectures"`
+	NumHiddenLayers    int                `json:"num_hidden_layers"`
+	NumExperts         int                `json:"num_experts"`
 	Quantization       sourceQuantization `json:"quantization"`
 	QuantizationConfig sourceQuantization `json:"quantization_config"`
 	CompressionConfig  sourceQuantization `json:"compression_config"`
 	TextConfig         struct {
 		ModelType          string             `json:"model_type"`
+		NumHiddenLayers    int                `json:"num_hidden_layers"`
+		NumExperts         int                `json:"num_experts"`
 		Quantization       sourceQuantization `json:"quantization"`
 		QuantizationConfig sourceQuantization `json:"quantization_config"`
 		CompressionConfig  sourceQuantization `json:"compression_config"`
 	} `json:"text_config"`
 }
 
-func readSourceModelConfig(modelDir string) (sourceModelConfig, error) {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
+const (
+	sourceConfigFileName         = "config.json"
+	sourceModelIndexFileName     = "model_index.json"
+	sourceModelOptConfigFileName = "hf_quant_config.json"
+)
+
+type sourceModelView interface {
+	ConfigData() ([]byte, error)
+	OptionalFileData(name string) ([]byte, bool, error)
+	TensorNames() ([]string, error)
+}
+
+type dirSourceModelView struct {
+	modelDir string
+}
+
+func (v dirSourceModelView) ConfigData() ([]byte, error) {
+	data, err := os.ReadFile(filepath.Join(v.modelDir, sourceConfigFileName))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("config.json or model_index.json not found")
+	}
+	return data, err
+}
+
+func (v dirSourceModelView) OptionalFileData(name string) ([]byte, bool, error) {
+	data, err := os.ReadFile(filepath.Join(v.modelDir, name))
+	if err == nil {
+		return data, true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	return nil, false, err
+}
+
+func (v dirSourceModelView) TensorNames() ([]string, error) {
+	entries, err := os.ReadDir(v.modelDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var tensorNames []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".safetensors") {
+			continue
+		}
+
+		extractor, err := safetensors.OpenForExtraction(filepath.Join(v.modelDir, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		tensorNames = append(tensorNames, extractor.ListTensors()...)
+		extractor.Close()
+	}
+
+	return tensorNames, nil
+}
+
+type uploadedSourceModelView struct {
+	fileNames []string
+	files     map[string][]byte
+}
+
+func (v uploadedSourceModelView) ConfigData() ([]byte, error) {
+	data, ok := v.files[sourceConfigFileName]
+	if !ok {
+		return nil, fmt.Errorf("config.json or model_index.json not found")
+	}
+	return data, nil
+}
+
+func (v uploadedSourceModelView) OptionalFileData(name string) ([]byte, bool, error) {
+	data, ok := v.files[name]
+	return data, ok, nil
+}
+
+func (v uploadedSourceModelView) TensorNames() ([]string, error) {
+	names := make([]string, 0, len(v.fileNames))
+	for _, name := range v.fileNames {
+		if name == sourceConfigFileName || name == sourceModelIndexFileName || name == sourceModelOptConfigFileName {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+func readSourceModelConfigView(view sourceModelView) (sourceModelConfig, error) {
+	data, err := view.ConfigData()
 	if err != nil {
 		return sourceModelConfig{}, err
 	}
 
+	return parseSourceModelConfig(data)
+}
+
+type safetensorsSourceAnalysis struct {
+	config              sourceModelConfig
+	capabilities        []string
+	sourceQuantKind     sourceQuantizedKind
+	effectiveQuantize   string
+	quantizationPlanner *SafetensorsQuantizationPlanner
+}
+
+func parseSourceModelConfig(data []byte) (sourceModelConfig, error) {
 	var cfg sourceModelConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return sourceModelConfig{}, err
@@ -645,44 +874,53 @@ func (cfg sourceModelConfig) hasPackedNVFP4Format() bool {
 	return false
 }
 
-func inspectSourceQuantization(modelDir string, cfg sourceModelConfig) (sourceQuantizedKind, error) {
-	// Check for NVIDIA ModelOpt hf_quant_config.json (NVFP4)
-	if detectModelOptQuantization(modelDir) {
+// modelOptQuantConfig represents the hf_quant_config.json format from
+// NVIDIA ModelOpt (TensorRT Model Optimizer).
+type modelOptQuantConfig struct {
+	Producer struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	} `json:"producer"`
+	Quantization struct {
+		QuantAlgo      string   `json:"quant_algo"`
+		GroupSize      int      `json:"group_size"`
+		ExcludeModules []string `json:"exclude_modules"`
+	} `json:"quantization"`
+}
+
+func detectModelOptQuantizationData(data []byte) bool {
+	var cfg modelOptQuantConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	return strings.ToUpper(cfg.Quantization.QuantAlgo) == "NVFP4"
+}
+
+func inspectSourceQuantizationView(view sourceModelView, cfg sourceModelConfig) (sourceQuantizedKind, error) {
+	if data, ok, err := view.OptionalFileData(sourceModelOptConfigFileName); err != nil {
+		return sourceQuantizedKindNone, err
+	} else if ok && detectModelOptQuantizationData(data) {
 		return sourceQuantizedKindPrequantized, nil
 	}
 
-	entries, err := os.ReadDir(modelDir)
+	tensorNames, err := view.TensorNames()
 	if err != nil {
 		return sourceQuantizedKindNone, err
 	}
 
 	hasFP8Scale := false
 	hasPackedNVFP4 := false
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".safetensors") {
-			continue
+	for _, fileName := range tensorNames {
+		switch {
+		case strings.HasSuffix(fileName, ".scales"):
+			return sourceQuantizedKindPrequantized, nil
+		case strings.HasSuffix(fileName, ".weight_packed"):
+			hasPackedNVFP4 = true
+		case strings.HasSuffix(fileName, ".weight_scale_inv"):
+			hasFP8Scale = true
+		case strings.HasSuffix(fileName, ".weight_scale"):
+			hasFP8Scale = true
 		}
-
-		extractor, err := safetensors.OpenForExtraction(filepath.Join(modelDir, entry.Name()))
-		if err != nil {
-			return sourceQuantizedKindNone, err
-		}
-
-		for _, name := range extractor.ListTensors() {
-			switch {
-			case strings.HasSuffix(name, ".scales"):
-				extractor.Close()
-				return sourceQuantizedKindPrequantized, nil
-			case strings.HasSuffix(name, ".weight_packed"):
-				hasPackedNVFP4 = true
-			case strings.HasSuffix(name, ".weight_scale_inv"):
-				hasFP8Scale = true
-			case strings.HasSuffix(name, ".weight_scale"):
-				hasFP8Scale = true
-			}
-		}
-
-		extractor.Close()
 	}
 
 	if hasPackedNVFP4 && cfg.hasPackedNVFP4Format() {
@@ -698,34 +936,149 @@ func inspectSourceQuantization(modelDir string, cfg sourceModelConfig) (sourceQu
 	return sourceQuantizedKindNone, nil
 }
 
-// modelOptQuantConfig represents the hf_quant_config.json format from
-// NVIDIA ModelOpt (TensorRT Model Optimizer).
-type modelOptQuantConfig struct {
-	Producer struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-	} `json:"producer"`
-	Quantization struct {
-		QuantAlgo      string   `json:"quant_algo"`
-		GroupSize      int      `json:"group_size"`
-		ExcludeModules []string `json:"exclude_modules"`
-	} `json:"quantization"`
+func IsSourceMetadataFile(filePath string) bool {
+	switch filePath {
+	case sourceConfigFileName, sourceModelIndexFileName, sourceModelOptConfigFileName:
+		return true
+	default:
+		return false
+	}
 }
 
-func detectModelOptQuantization(modelDir string) bool {
-	data, err := os.ReadFile(filepath.Join(modelDir, "hf_quant_config.json"))
+func isDraftOverlayFile(filePath string) bool {
+	return strings.HasPrefix(filePath, "draft.") || strings.HasPrefix(filePath, "draft/")
+}
+
+func allDraftOverlayFiles(filePaths []string) bool {
+	if len(filePaths) == 0 {
+		return false
+	}
+	for _, filePath := range filePaths {
+		if !isDraftOverlayFile(filePath) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasDraftOverlayFiles(filePaths []string) bool {
+	for _, filePath := range filePaths {
+		if isDraftOverlayFile(filePath) {
+			return true
+		}
+	}
+	return false
+}
+
+func analyzeSafetensorsSourceView(view sourceModelView, requested, flagName string) (safetensorsSourceAnalysis, error) {
+	capabilities, err := inferSafetensorsCapabilitiesView(view)
 	if err != nil {
-		return false
+		return safetensorsSourceAnalysis{}, err
 	}
-	var cfg modelOptQuantConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
+
+	cfg, err := readSourceModelConfigView(view)
+	if err != nil {
+		return safetensorsSourceAnalysis{}, err
 	}
-	return strings.ToUpper(cfg.Quantization.QuantAlgo) == "NVFP4"
+
+	sourceKind, err := inspectSourceQuantizationView(view, cfg)
+	if err != nil {
+		return safetensorsSourceAnalysis{}, err
+	}
+
+	effectiveQuantize, err := resolveEffectiveQuantizationForFlag(cfg, sourceKind, requested, flagName)
+	if err != nil {
+		return safetensorsSourceAnalysis{}, err
+	}
+
+	transform, err := newTensorQuantizationTransform(cfg)
+	if err != nil {
+		return safetensorsSourceAnalysis{}, err
+	}
+
+	return safetensorsSourceAnalysis{
+		config:              cfg,
+		capabilities:        capabilities,
+		sourceQuantKind:     sourceKind,
+		effectiveQuantize:   effectiveQuantize,
+		quantizationPlanner: &SafetensorsQuantizationPlanner{transform: transform},
+	}, nil
 }
 
-func resolveEffectiveQuantization(cfg sourceModelConfig, sourceKind sourceQuantizedKind, requested string) (string, error) {
-	return resolveEffectiveQuantizationForFlag(cfg, sourceKind, requested, "--quantize")
+// UploadedSafetensorsSourceAnalysis captures the server-side safetensors source
+// policy derived from uploaded metadata. Client/server wiring should collect
+// the uploaded metadata files and rely on this shared analysis.
+type UploadedSafetensorsSourceAnalysis struct {
+	Capabilities        []string
+	EffectiveQuantize   string
+	QuantizationPlanner *SafetensorsQuantizationPlanner
+}
+
+// AnalyzeUploadedSafetensorsSource derives the shared source-model policy for
+// server-side safetensors creates from uploaded logical files and metadata.
+func AnalyzeUploadedSafetensorsSource(fileNames []string, files map[string][]byte, requested, parserName string) (*UploadedSafetensorsSourceAnalysis, error) {
+	view := uploadedSourceModelView{fileNames: fileNames, files: files}
+	analysis, err := analyzeSafetensorsSourceView(view, requested, "--quantize")
+	if err != nil {
+		return nil, err
+	}
+
+	return &UploadedSafetensorsSourceAnalysis{
+		Capabilities:        AugmentSafetensorsCapabilitiesForParser(analysis.capabilities, parserName),
+		EffectiveQuantize:   analysis.effectiveQuantize,
+		QuantizationPlanner: analysis.quantizationPlanner,
+	}, nil
+}
+
+// AnalyzeUploadedSafetensorsAssembly derives the shared source-model plan for
+// server-side safetensors manifest assembly. When base is non-nil and the
+// upload only contains draft overlay files, quantization is resolved against
+// the stored base model and no uploaded source analysis is needed.
+func AnalyzeUploadedSafetensorsAssembly(base *StoredModelSnapshot, fileNames []string, files map[string][]byte, requested, parserName string) (*UploadedSafetensorsAssemblyPlan, error) {
+	plan := &UploadedSafetensorsAssemblyPlan{
+		HasDraftOverlay: hasDraftOverlayFiles(fileNames),
+	}
+	if base != nil && allDraftOverlayFiles(fileNames) {
+		if _, err := ResolveBaseModelQuantization(base.Config, requested); err != nil {
+			return nil, err
+		}
+		return plan, nil
+	}
+
+	analysis, err := AnalyzeUploadedSafetensorsSource(fileNames, files, requested, parserName)
+	if err != nil {
+		return nil, err
+	}
+	plan.Capabilities = analysis.Capabilities
+	plan.EffectiveQuantize = analysis.EffectiveQuantize
+	plan.QuantizationPlanner = analysis.QuantizationPlanner
+	return plan, nil
+}
+
+// ApplyUploadedSafetensorsAssemblyConfig applies the shared config mutations
+// derived from uploaded safetensors assembly planning.
+func ApplyUploadedSafetensorsAssemblyConfig(config *modeltypes.ConfigV2, plan *UploadedSafetensorsAssemblyPlan, clientQuantized string) {
+	if config == nil || plan == nil {
+		return
+	}
+	config.ModelFormat = "safetensors"
+	if plan.Capabilities != nil {
+		config.Capabilities = plan.Capabilities
+	}
+	config.FileType = cmp.Or(strings.ToLower(strings.TrimSpace(clientQuantized)), plan.EffectiveQuantize, config.FileType)
+	if plan.HasDraftOverlay {
+		config.Draft = DraftModelConfig()
+	}
+}
+
+// ResolveUploadedSourceQuantization derives the effective quantization mode for
+// server-side safetensors creates from the uploaded logical file set.
+func ResolveUploadedSourceQuantization(fileNames []string, files map[string][]byte, requested string) (string, error) {
+	analysis, err := AnalyzeUploadedSafetensorsSource(fileNames, files, requested, "")
+	if err != nil {
+		return "", err
+	}
+	return analysis.EffectiveQuantize, nil
 }
 
 func resolveEffectiveQuantizationForFlag(cfg sourceModelConfig, sourceKind sourceQuantizedKind, requested, flagName string) (string, error) {
@@ -825,6 +1178,55 @@ func newTensorImportTransform(modelDir string, cfg sourceModelConfig) (tensorImp
 	return noopImportTransform{}, nil
 }
 
+// SafetensorsQuantizationPlanner selects the per-tensor quantization type for
+// server-side safetensors quantization. It intentionally reuses the same
+// architecture-aware import transforms as local creation so remote server-side
+// quantization does not silently fall back to generic tensor rules.
+type SafetensorsQuantizationPlanner struct {
+	transform tensorImportTransform
+}
+
+// NewSafetensorsQuantizationPlannerFromFiles builds a quantization planner from
+// uploaded config blobs. Non-Hugging Face safetensors models fall back to the
+// generic planner. Source-quantization resolution for uploaded creates is
+// handled separately by ResolveUploadedSourceQuantization.
+func NewSafetensorsQuantizationPlannerFromFiles(files map[string][]byte) (*SafetensorsQuantizationPlanner, error) {
+	view := uploadedSourceModelView{files: files}
+	cfg, err := readSourceModelConfigView(view)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return &SafetensorsQuantizationPlanner{transform: noopImportTransform{}}, nil
+		}
+		return nil, err
+	}
+
+	return newSafetensorsQuantizationPlanner(cfg)
+}
+
+func newSafetensorsQuantizationPlanner(cfg sourceModelConfig) (*SafetensorsQuantizationPlanner, error) {
+	transform, err := newTensorQuantizationTransform(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &SafetensorsQuantizationPlanner{transform: transform}, nil
+}
+
+func newTensorQuantizationTransform(cfg sourceModelConfig) (tensorImportTransform, error) {
+	if factory, ok := tensorImportTransformRegistry[cfg.Architecture()]; ok {
+		return factory("", cfg)
+	}
+	return noopImportTransform{}, nil
+}
+
+// QuantizationType returns the concrete quantization type for a tensor, or an
+// empty string when the tensor should remain in source precision.
+func (p *SafetensorsQuantizationPlanner) QuantizationType(name string, shape []int32, quantize string) string {
+	if p == nil || p.transform == nil {
+		return GetTensorQuantization(name, shape, quantize)
+	}
+	return p.transform.quantizationType(name, shape, quantize)
+}
+
 // CreateSafetensorsModel imports a standard safetensors model from a directory.
 // This handles Hugging Face style models with config.json and *.safetensors files.
 // Stores each tensor as a separate blob for fine-grained deduplication.
@@ -833,18 +1235,13 @@ func newTensorImportTransform(modelDir string, cfg sourceModelConfig) (tensorImp
 func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer LayerCreator, createTensorLayer QuantizingTensorLayerCreator, writeManifest ManifestWriter, fn func(status string), createPackedLayer ...PackedTensorLayerCreator) error {
 	var layers []LayerInfo
 	var configLayer LayerInfo
-	sourceConfig, err := readSourceModelConfig(modelDir)
+	sourceAnalysis, err := analyzeSafetensorsSourceView(dirSourceModelView{modelDir: modelDir}, quantize, "--quantize")
 	if err != nil {
-		return fmt.Errorf("failed to read source config.json: %w", err)
+		return fmt.Errorf("failed to analyze source model: %w", err)
 	}
-	sourceQuantKind, err := inspectSourceQuantization(modelDir, sourceConfig)
-	if err != nil {
-		return fmt.Errorf("failed to inspect source quantization: %w", err)
-	}
-	effectiveQuantize, err := resolveEffectiveQuantization(sourceConfig, sourceQuantKind, quantize)
-	if err != nil {
-		return err
-	}
+	sourceConfig := sourceAnalysis.config
+	sourceQuantKind := sourceAnalysis.sourceQuantKind
+	effectiveQuantize := sourceAnalysis.effectiveQuantize
 	sourceQuantMetadata := sourceConfig.QuantMetadata()
 	sourceTensorFiles, err := readSourceTensorFiles(modelDir)
 	if err != nil {
@@ -1054,11 +1451,12 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 						expertGroupOrder = append(expertGroupOrder, groupPrefix)
 					}
 					expertGroups[groupPrefix] = append(expertGroups[groupPrefix], PackedTensorInput{
-						Name:     outTD.Name,
-						Dtype:    outTD.Dtype,
-						Shape:    outTD.Shape,
-						Quantize: quantizeType,
-						Reader:   reader,
+						Name:       outTD.Name,
+						Dtype:      outTD.Dtype,
+						Shape:      outTD.Shape,
+						Quantize:   quantizeType,
+						Reader:     reader,
+						TensorData: outTD,
 					})
 				} else {
 					// Store as minimal safetensors format (88 bytes header overhead)
@@ -1201,21 +1599,14 @@ func CreateDraftSafetensorsLayers(modelDir, tensorPrefix, configPrefix, draftQua
 
 	var importTransform tensorImportTransform = noopImportTransform{}
 	if effectiveQuantize != "" {
-		sourceConfig, err := readSourceModelConfig(modelDir)
+		sourceAnalysis, err := analyzeSafetensorsSourceView(dirSourceModelView{modelDir: modelDir}, effectiveQuantize, "--draft-quantize")
 		if err != nil {
-			return nil, fmt.Errorf("failed to read draft config.json: %w", err)
+			return nil, fmt.Errorf("failed to analyze draft model: %w", err)
 		}
-		sourceQuantKind, err := inspectSourceQuantization(modelDir, sourceConfig)
+		effectiveQuantize = sourceAnalysis.effectiveQuantize
+		importTransform, err = newTensorImportTransform(modelDir, sourceAnalysis.config)
 		if err != nil {
-			return nil, fmt.Errorf("failed to inspect draft quantization: %w", err)
-		}
-		effectiveQuantize, err = resolveEffectiveQuantizationForFlag(sourceConfig, sourceQuantKind, effectiveQuantize, "--draft-quantize")
-		if err != nil {
-			return nil, err
-		}
-		importTransform, err = newTensorImportTransform(modelDir, sourceConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to construct draft import transform for architecture %q: %w", sourceConfig.Architecture(), err)
+			return nil, fmt.Errorf("failed to construct draft import transform for architecture %q: %w", sourceAnalysis.config.Architecture(), err)
 		}
 	}
 

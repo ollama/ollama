@@ -39,69 +39,82 @@ func TestRotatingKVCacheDecodeParity(t *testing.T) {
 		return
 	}
 
-	q := mlx.FromValues([]float32{0.7, -0.4, 0.2, 0.9}, 1, H, 1, D)
-	mlx.Eval(q)
-
-	// Drive the cache: write positions 0..totalWrites-2 as a "history",
-	// then position totalWrites-1 is the actual L=1 decode under test.
-	c := NewRotatingKVCache(window)
-	for pos := range totalWrites - 1 {
-		k, v := perPosKV(pos)
-		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
-	}
-
-	finalPos := totalWrites - 1
-	kFinal, vFinal := perPosKV(finalPos)
-	b := &batch.Batch{
-		InputIDs:     mlx.Zeros(mlx.DTypeInt32, 1, 1),
-		SeqOffsets:   []int32{int32(finalPos)},
-		SeqQueryLens: []int32{1},
-	}
-	history := c.Update(b, kFinal, vFinal)
-
-	// Reference: the in-window logical-position-ordered K and V are
-	// the last `window` per-position values (positions
-	// [finalPos-window+1, finalPos]). Build them in that order.
-	startPos := max(finalPos-window+1, 0)
-	logicalKs := make([]*mlx.Array, 0, window)
-	logicalVs := make([]*mlx.Array, 0, window)
-	for pos := startPos; pos <= finalPos; pos++ {
-		kp, vp := perPosKV(pos)
-		logicalKs = append(logicalKs, kp)
-		logicalVs = append(logicalVs, vp)
-	}
-	kLogical := mlx.Concatenate(logicalKs, 2)
-	vLogical := mlx.Concatenate(logicalVs, 2)
-
-	// A logical-order ArrayMask with distinct, non-trivial values per
-	// key column. Picked so each column's contribution to softmax is
-	// distinct — the test fails if the cache's gather permutes the
-	// columns wrong before the kernel sees them.
-	maskVals := []float32{0.1, -0.3, 0.7, -0.2}
-	logicalMask := mlx.FromValues(maskVals, 1, 1, 1, window)
-
 	cases := []struct {
-		name  string
-		model nn.AttentionMask
-		// reference mask uses the same coordinates the model mask
-		// represents; for ArrayMask it's the same tensor (since the
-		// reference K/V is in logical order).
-		refMode string
-		refMask *mlx.Array
+		name    string
+		useMask bool
 	}{
-		{"zero", nn.AttentionMask{}, "", nil},
-		{"causal-at-L1", nn.CausalMask(), "", nil},
-		{"array", nn.ArrayMask(logicalMask), "array", logicalMask},
+		{"zero", false},
+		{"causal-at-L1", false},
+		{"array", true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			skipIfNoMLX(t)
+			q := mlx.FromValues([]float32{0.7, -0.4, 0.2, 0.9}, 1, H, 1, D)
+			mlx.Eval(q)
+
+			// Drive the cache: write positions 0..totalWrites-2 as a
+			// "history", then position totalWrites-1 is the actual L=1
+			// decode under test.
+			c := NewRotatingKVCache(window)
+			for pos := range totalWrites - 1 {
+				k, v := perPosKV(pos)
+				c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
+			}
+
+			finalPos := totalWrites - 1
+			kFinal, vFinal := perPosKV(finalPos)
+			b := &batch.Batch{
+				InputIDs:     mlx.Zeros(mlx.DTypeInt32, 1, 1),
+				SeqOffsets:   []int32{int32(finalPos)},
+				SeqQueryLens: []int32{1},
+			}
+			history := c.Update(b, kFinal, vFinal)
+
+			// Reference: the in-window logical-position-ordered K and V are
+			// the last `window` per-position values (positions
+			// [finalPos-window+1, finalPos]). Build them in that order.
+			startPos := max(finalPos-window+1, 0)
+			logicalKs := make([]*mlx.Array, 0, window)
+			logicalVs := make([]*mlx.Array, 0, window)
+			for pos := startPos; pos <= finalPos; pos++ {
+				kp, vp := perPosKV(pos)
+				logicalKs = append(logicalKs, kp)
+				logicalVs = append(logicalVs, vp)
+			}
+			kLogical := mlx.Concatenate(logicalKs, 2)
+			vLogical := mlx.Concatenate(logicalVs, 2)
+
+			// A logical-order ArrayMask with distinct, non-trivial values
+			// per key column. Picked so each column's contribution to
+			// softmax is distinct — the test fails if the cache's gather
+			// permutes the columns wrong before the kernel sees them.
+			var (
+				modelMask nn.AttentionMask
+				refMode   string
+				refMask   *mlx.Array
+			)
+			switch tc.name {
+			case "zero":
+				modelMask = nn.AttentionMask{}
+			case "causal-at-L1":
+				modelMask = nn.CausalMask()
+			case "array":
+				maskVals := []float32{0.1, -0.3, 0.7, -0.2}
+				refMask = mlx.FromValues(maskVals, 1, 1, 1, window)
+				modelMask = nn.ArrayMask(refMask)
+				refMode = "array"
+			default:
+				t.Fatalf("unknown case %q", tc.name)
+			}
+
 			got := nn.ScaledDotProductAttention(b, q, scale,
 				nn.WithKVHistory(history),
-				nn.WithMask(tc.model))
+				nn.WithMask(modelMask))
 
 			want := mlx.FastScaledDotProductAttention(q, kLogical, vLogical, scale,
-				tc.refMode, tc.refMask)
+				refMode, refMask)
 
 			mlx.Eval(got, want)
 			gs, ws := got.Floats(), want.Floats()
@@ -124,39 +137,51 @@ func TestAssistantSharedHistoryL1MasksMatchNoMask(t *testing.T) {
 	const total = 7
 	const scale = 1.0
 
-	q := mlx.FromValues([]float32{0.7, -0.4, 0.2, 0.9}, 1, H, 1, D)
-	mlx.Eval(q)
-
-	full := NewKVCache()
-	sliding := NewRotatingKVCache(window)
-	for pos := range total {
-		kVals := make([]float32, H*D)
-		vVals := make([]float32, H*D)
-		for i := range kVals {
-			kVals[i] = 0.1*float32(pos+1) + 0.01*float32(i)
-			vVals[i] = -0.1*float32(pos+1) + 0.01*float32(i)
-		}
-		k := mlx.FromValues(kVals, 1, H, 1, D)
-		v := mlx.FromValues(vVals, 1, H, 1, D)
-		full.Update(newKVBatch(full.Offset(), 1), k, v)
-		sliding.Update(newKVBatch(sliding.Offset(), 1), k, v)
-	}
-
-	b := newKVBatch(total-1, 1)
-	slidingHistory := sliding.View(b)
-	cases := []struct {
-		name string
-		h    *nn.KVHistory
-		mask nn.AttentionMask
-	}{
-		{name: "full", h: full.View(b), mask: nn.CausalMask()},
-		{name: "sliding", h: slidingHistory, mask: nn.CausalMask().Intersect(nn.SlidingWindowMask(b, slidingHistory.K().Dim(2), window, q.DType()))},
-	}
+	cases := []struct{ name string }{{"full"}, {"sliding"}}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(tc.h), nn.WithMask(tc.mask))
-			want := mlx.FastScaledDotProductAttention(q, tc.h.K(), tc.h.V(), scale, "", nil)
+			skipIfNoMLX(t)
+			q := mlx.FromValues([]float32{0.7, -0.4, 0.2, 0.9}, 1, H, 1, D)
+			mlx.Eval(q)
+
+			full := NewKVCache()
+			sliding := NewRotatingKVCache(window)
+			for pos := range total {
+				kVals := make([]float32, H*D)
+				vVals := make([]float32, H*D)
+				for i := range kVals {
+					kVals[i] = 0.1*float32(pos+1) + 0.01*float32(i)
+					vVals[i] = -0.1*float32(pos+1) + 0.01*float32(i)
+				}
+				k := mlx.FromValues(kVals, 1, H, 1, D)
+				v := mlx.FromValues(vVals, 1, H, 1, D)
+				full.Update(newKVBatch(full.Offset(), 1), k, v)
+				sliding.Update(newKVBatch(sliding.Offset(), 1), k, v)
+			}
+
+			b := newKVBatch(total-1, 1)
+			slidingHistory := sliding.View(b)
+			var history *nn.KVHistory
+			var mask nn.AttentionMask
+			switch tc.name {
+			case "full":
+				history = full.View(b)
+				mask = nn.CausalMask()
+			case "sliding":
+				// Assistant/shared-history decode uses a caller mask that
+				// already describes the logical visible window. Once
+				// WithKVHistory has composed that back into storage order,
+				// the result should match the kernel's implicit no-mask
+				// path over the same reordered K/V.
+				history = slidingHistory
+				mask = nn.CausalMask().Intersect(nn.SlidingWindowMask(b, slidingHistory.K().Dim(2), window, q.DType()))
+			default:
+				t.Fatalf("unknown case %q", tc.name)
+			}
+
+			got := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(history), nn.WithMask(mask))
+			want := mlx.FastScaledDotProductAttention(q, history.K(), history.V(), scale, "", nil)
 
 			mlx.Eval(got, want)
 			gs, ws := got.Floats(), want.Floats()
@@ -179,19 +204,6 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 	const window = 4
 	const scale = 1.0
 
-	qVals := make([]float32, 1*H*L*D)
-	kVals := make([]float32, 1*H*L*D)
-	vVals := make([]float32, 1*H*L*D)
-	for i := range qVals {
-		qVals[i] = 0.5 + 0.05*float32(i)
-		kVals[i] = -0.3 + 0.07*float32(i)
-		vVals[i] = 0.3 + 0.03*float32(i)
-	}
-	q := mlx.FromValues(qVals, 1, H, L, D)
-	k := mlx.FromValues(kVals, 1, H, L, D)
-	v := mlx.FromValues(vVals, 1, H, L, D)
-	b := newKVBatch(0, L)
-
 	cases := []struct {
 		name string
 		mask nn.AttentionMask
@@ -207,6 +219,19 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 	negInf := float32(math.Inf(-1))
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			skipIfNoMLX(t)
+			qVals := make([]float32, 1*H*L*D)
+			kVals := make([]float32, 1*H*L*D)
+			vVals := make([]float32, 1*H*L*D)
+			for i := range qVals {
+				qVals[i] = 0.5 + 0.05*float32(i)
+				kVals[i] = -0.3 + 0.07*float32(i)
+				vVals[i] = 0.3 + 0.03*float32(i)
+			}
+			q := mlx.FromValues(qVals, 1, H, L, D)
+			k := mlx.FromValues(kVals, 1, H, L, D)
+			v := mlx.FromValues(vVals, 1, H, L, D)
+			b := newKVBatch(0, L)
 			c := NewRotatingKVCache(window)
 			history := c.Update(b, k, v)
 
@@ -215,7 +240,10 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 				nn.WithMask(tc.mask))
 
 			// Reference mask: causal blocks k > absQ; relax rectangles
-			// release causal-blocked cells; window blocks k < absQ - window + 1.
+			// release causal-blocked cells; window blocks
+			// k < absQ - window + 1. This is the manual composition of the
+			// model mask and rotating-window restriction that WithKVHistory
+			// performs for the real path.
 			refVals := make([]float32, L*L)
 			for qi := range L {
 				absQ := qi

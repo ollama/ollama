@@ -103,10 +103,6 @@ func TestAttentionMaskRelaxLazy(t *testing.T) {
 func TestAttentionMaskRelaxNoopRectsMatchCausal(t *testing.T) {
 	skipIfNoMLX(t)
 	L, K := 4, 6
-	b := newBatch([]int32{0}, L, nil)
-	want := CausalMask().AsArray(b, K, mlx.DTypeFloat32)
-	mlx.Eval(want)
-	wantF := want.Floats()
 
 	cases := []struct {
 		name               string
@@ -118,6 +114,11 @@ func TestAttentionMaskRelaxNoopRectsMatchCausal(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			skipIfNoMLX(t)
+			b := newBatch([]int32{0}, L, nil)
+			want := CausalMask().AsArray(b, K, mlx.DTypeFloat32)
+			mlx.Eval(want)
+			wantF := want.Floats()
 			m := CausalMask().Relax(0, tc.qLo, tc.qHi, tc.kLo, tc.kHi)
 			arr := m.AsArray(b, K, mlx.DTypeFloat32)
 			mlx.Eval(arr)
