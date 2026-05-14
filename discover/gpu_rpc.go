@@ -25,6 +25,14 @@ const (
 	rpcCmdGetDeviceMemory byte = 11
 	rpcCmdHello           byte = 14
 	rpcDialTimeout             = 5 * time.Second
+
+	// Wire-protocol sizes (ggml-rpc v3.x). Must stay in sync with
+	// ml/backend/ggml/ggml/src/ggml-rpc/ggml-rpc.cpp.
+	rpcConnCapsSize       = 24 // RPC_CONN_CAPS_SIZE
+	rpcHelloReqSize       = rpcConnCapsSize
+	rpcHelloRspSize       = 4 + rpcConnCapsSize // major+minor+patch+padding+conn_caps
+	rpcGetDevMemReqSize   = 4                   // uint32_t device
+	rpcGetDevMemRspSize   = 16                  // free + total (u64 each)
 )
 
 // rpcServerMemory queries free and total memory of a remote ggml-rpc server.
@@ -36,26 +44,32 @@ func rpcServerMemory(endpoint string) (free, total uint64, err error) {
 	}
 	defer conn.Close()
 
-	// Handshake: RPC_CMD_HELLO. Response is 3 bytes (major, minor, patch).
-	if err := rpcCall(conn, rpcCmdHello, nil, 3); err != nil {
+	// Handshake: RPC_CMD_HELLO. v3.x expects 24 bytes of conn_caps (zeros are
+	// fine for a "no special features" client) and replies with 28 bytes:
+	// major + minor + patch + padding + 24 bytes of server conn_caps.
+	helloReq := make([]byte, rpcHelloReqSize)
+	if err := rpcCall(conn, rpcCmdHello, helloReq, rpcHelloRspSize); err != nil {
 		return 0, 0, fmt.Errorf("hello: %w", err)
 	}
-	version := make([]byte, 3)
-	if _, err := conn.Read(version); err != nil {
-		return 0, 0, fmt.Errorf("read version: %w", err)
+	helloRsp := make([]byte, rpcHelloRspSize)
+	if _, err := conn.Read(helloRsp); err != nil {
+		return 0, 0, fmt.Errorf("read hello: %w", err)
 	}
-	slog.Debug("rpc server version", "endpoint", endpoint, "version", fmt.Sprintf("%d.%d.%d", version[0], version[1], version[2]))
+	slog.Debug("rpc server version", "endpoint", endpoint,
+		"version", fmt.Sprintf("%d.%d.%d", helloRsp[0], helloRsp[1], helloRsp[2]))
 
-	// Query device 0 memory. Response is 16 bytes: free (u64) + total (u64).
-	if err := rpcCall(conn, rpcCmdGetDeviceMemory, nil, 16); err != nil {
+	// Query device 0 memory. Request is 4 bytes (uint32 device index, LE),
+	// response is 16 bytes (free u64 + total u64).
+	memReq := make([]byte, rpcGetDevMemReqSize) // device = 0
+	if err := rpcCall(conn, rpcCmdGetDeviceMemory, memReq, rpcGetDevMemRspSize); err != nil {
 		return 0, 0, fmt.Errorf("get_device_memory: %w", err)
 	}
-	buf := make([]byte, 16)
-	if _, err := conn.Read(buf); err != nil {
+	memRsp := make([]byte, rpcGetDevMemRspSize)
+	if _, err := conn.Read(memRsp); err != nil {
 		return 0, 0, fmt.Errorf("read memory: %w", err)
 	}
-	return binary.LittleEndian.Uint64(buf[:8]),
-		binary.LittleEndian.Uint64(buf[8:]),
+	return binary.LittleEndian.Uint64(memRsp[:8]),
+		binary.LittleEndian.Uint64(memRsp[8:]),
 		nil
 }
 
