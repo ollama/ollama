@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "openclaw", "hermes", "opencode", "codex", "copilot", "droid", "pi", "pool"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "codex", "copilot", "droid", "pi", "pool"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -85,6 +85,18 @@ var integrationSpecs = []*IntegrationSpec{
 			},
 			URL:     "https://developers.openai.com/codex/cli/",
 			Command: []string{"npm", "install", "-g", "@openai/codex"},
+		},
+	},
+	{
+		Name:        "codex-app",
+		Runner:      &CodexApp{},
+		Aliases:     []string{"codex-desktop", "codex-gui"},
+		Description: "OpenAI's desktop coding agent",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return codexAppInstalled()
+			},
+			URL: "https://developers.openai.com/codex/app/overview/",
 		},
 	},
 	{

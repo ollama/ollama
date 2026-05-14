@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -375,9 +374,11 @@ func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, sessio
 		t0 = time.Now()
 		candidates := r.generateMTPDraftCandidates(draft, targetEmbeddings, current.Token, hidden, caches, int32(*position-1), maxDraft)
 		draftCount := 0
+		var candidateArrays []*mlx.Array
 		if candidates != nil {
 			draftCount = candidates.tokens.Dim(1)
-			mlx.Pin(baseLogits, candidates.tokens, candidates.logits)
+			candidateArrays = append([]*mlx.Array{baseLogits}, candidates.Arrays()...)
+			mlx.Pin(candidateArrays...)
 			mlx.Sweep()
 		}
 		stats.draftDuration += time.Since(t0)
@@ -391,7 +392,7 @@ func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, sessio
 			t0 = time.Now()
 			next, accepted, done, err = r.acceptSampleMTPDrafts(ctx, request, session, &dec, caches, position, baseLogits, candidates, &final, &generated, &stats)
 			stats.validateDuration += time.Since(t0)
-			mlx.Unpin(baseLogits, candidates.tokens, candidates.logits)
+			mlx.Unpin(candidateArrays...)
 			if err != nil {
 				return err
 			}
@@ -456,8 +457,15 @@ func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, sessio
 
 type mtpDraftCandidates struct {
 	tokens *mlx.Array
-	// logits are the processed proposal scores used to sample tokens.
-	logits *mlx.Array
+	// dist is the proposal distribution used to sample each drafted token.
+	dist sampler.Distribution
+}
+
+func (c *mtpDraftCandidates) Arrays() []*mlx.Array {
+	if c == nil {
+		return nil
+	}
+	return append([]*mlx.Array{c.tokens}, c.dist.Arrays()...)
 }
 
 func (r *Runner) generateMTPDrafts(draft base.MTPDraftModel, target base.MTPEmbeddingModel, token *mlx.Array, hidden *mlx.Array, caches []cache.Cache, position int32, maxDraft int) *mlx.Array {
@@ -497,7 +505,7 @@ func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target bas
 	lastToken := mtpTokenInput(token)
 	lastHidden := hidden
 	draftTokens := make([]*mlx.Array, 0, maxDraft)
-	draftLogits := make([]*mlx.Array, 0, maxDraft)
+	draftDists := make([]sampler.Distribution, 0, maxDraft)
 	var prefix *mlx.Array
 
 	// Gemma4 assistant MTP is trained as "single-position" drafting:
@@ -508,13 +516,13 @@ func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target bas
 		inputs := tokenEmbedding.Concatenate(-1, lastHidden)
 		logits, projected := draft.Draft(inputs, position, caches)
 		stepLogits := r.lastLogitsFromLogits(logits)
-		stepScores := r.Sampler.SpeculativeScores(pipelineSlot, stepLogits, prefix)
-		nextToken := stepScores.Categorical(-1).AsType(mlx.DTypeInt32)
+		dist := r.Sampler.Distribution(pipelineSlot, stepLogits, prefix)
+		nextToken := r.Sampler.SampleDistribution(pipelineSlot, dist)
 
 		lastToken = mtpTokenInput(nextToken)
 		lastHidden = projected
 		draftTokens = append(draftTokens, lastToken)
-		draftLogits = append(draftLogits, stepScores.ExpandDims(1))
+		draftDists = append(draftDists, dist)
 		if prefix == nil {
 			prefix = lastToken
 		} else {
@@ -526,7 +534,7 @@ func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target bas
 	}
 	return &mtpDraftCandidates{
 		tokens: mlx.Concatenate(draftTokens, 1),
-		logits: mlx.Concatenate(draftLogits, 1),
+		dist:   sampler.ConcatenateDistributions(draftDists),
 	}
 }
 
@@ -630,12 +638,9 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 		SeqQueryLens: []int32{int32(draftCount)},
 	}, specCaches)
 
-	targetScores := r.Sampler.SpeculativeScores(pipelineSlot, r.mtpValidationLogits(baseLogits, hiddenSeq), candidates.tokens)
-	draftScores := candidates.logits
-	if draftScores.NumDims() == 3 {
-		draftScores = draftScores.Squeeze(0)
-	}
-	acceptedMask := mtpSampleAcceptedMask(targetScores, draftScores, candidates.tokens, draftCount)
+	targetDist := r.Sampler.Distribution(pipelineSlot, r.mtpValidationLogits(baseLogits, hiddenSeq), candidates.tokens)
+	draftDist := candidates.dist
+	acceptedMask := r.mtpSampleAcceptedMask(targetDist.SliceRows(0, draftCount), draftDist, candidates.tokens)
 	mlx.Eval(candidates.tokens, acceptedMask)
 
 	draftIDs := candidates.tokens.Ints()
@@ -692,9 +697,9 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 
 	var nextToken *mlx.Array
 	if accepted == draftCount {
-		nextToken = mtpSampleTokenAt(targetScores, draftCount)
+		nextToken = r.mtpSampleTokenAt(targetDist, draftCount)
 	} else {
-		nextToken = mtpSampleResidualToken(targetScores, draftScores, accepted)
+		nextToken = r.mtpSampleResidualToken(targetDist, draftDist, accepted)
 	}
 	mlx.Eval(nextToken)
 	nextID := int32(tokenID(nextToken))
@@ -704,32 +709,20 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 	return sampler.Result{Token: nextToken}, accepted, false, nil
 }
 
-func mtpSampleAcceptedMask(targetScores, draftScores, draftTokens *mlx.Array, draftCount int) *mlx.Array {
-	targetProbs := mlx.SoftmaxAxis(targetScores.Slice(mlx.Slice(0, draftCount), mlx.Slice()), -1, true)
-	draftProbs := mlx.SoftmaxAxis(draftScores, -1, true)
-	if draftTokens.NumDims() == 2 {
-		draftTokens = draftTokens.Squeeze(0)
-	}
-	indices := draftTokens.ExpandDims(-1)
-	p := targetProbs.TakeAlongAxis(indices, -1).Squeeze(-1)
-	q := draftProbs.TakeAlongAxis(indices, -1).Squeeze(-1)
+func (r *Runner) mtpSampleAcceptedMask(targetDist, draftDist sampler.Distribution, draftTokens *mlx.Array) *mlx.Array {
+	p := targetDist.Prob(draftTokens)
+	q := draftDist.Prob(draftTokens)
 	acceptP := mlx.Minimum(p.Divide(q), mlx.FromValue(float32(1)))
-	return mlx.Bernoulli(acceptP).AsType(mlx.DTypeInt32)
+	return r.Sampler.Bernoulli(pipelineSlot, acceptP).AsType(mlx.DTypeInt32)
 }
 
-func mtpSampleTokenAt(scores *mlx.Array, index int) *mlx.Array {
-	row := scores.Slice(mlx.Slice(index, index+1), mlx.Slice())
-	return mtpTokenVector(row.Categorical(-1).AsType(mlx.DTypeInt32))
+func (r *Runner) mtpSampleTokenAt(dist sampler.Distribution, index int) *mlx.Array {
+	return mtpTokenVector(r.Sampler.SampleDistribution(pipelineSlot, dist.SliceRows(index, index+1)))
 }
 
-func mtpSampleResidualToken(targetScores, draftScores *mlx.Array, index int) *mlx.Array {
-	p := mlx.SoftmaxAxis(targetScores.Slice(mlx.Slice(index, index+1), mlx.Slice()), -1, true)
-	q := mlx.SoftmaxAxis(draftScores.Slice(mlx.Slice(index, index+1), mlx.Slice()), -1, true)
-	diff := p.Subtract(q)
-	positive := mlx.Maximum(diff, mlx.FromValue(float32(1e-20)))
-	logits := mlx.Log(positive)
-	logits = mlx.Where(diff.LessEqual(mlx.FromValue(float32(0))), mlx.FromValue(float32(math.Inf(-1))), logits)
-	return mtpTokenVector(logits.Categorical(-1).AsType(mlx.DTypeInt32))
+func (r *Runner) mtpSampleResidualToken(targetDist, draftDist sampler.Distribution, index int) *mlx.Array {
+	residual := targetDist.SliceRows(index, index+1).ResidualAgainst(draftDist.SliceRows(index, index+1))
+	return mtpTokenVector(r.Sampler.SampleDistribution(pipelineSlot, residual))
 }
 
 func mtpTokenInput(token *mlx.Array) *mlx.Array {

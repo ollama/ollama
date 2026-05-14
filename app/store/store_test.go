@@ -122,6 +122,21 @@ func TestStore(t *testing.T) {
 		}
 	})
 
+	t.Run("settings codex app home view is accepted", func(t *testing.T) {
+		if err := s.SetSettings(Settings{LastHomeView: "codex-app"}); err != nil {
+			t.Fatal(err)
+		}
+
+		loaded, err := s.Settings()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if loaded.LastHomeView != "codex-app" {
+			t.Fatalf("expected codex-app LastHomeView to be preserved, got %q", loaded.LastHomeView)
+		}
+	})
+
 	t.Run("window size", func(t *testing.T) {
 		if err := s.SetWindowSize(1024, 768); err != nil {
 			t.Fatal(err)

@@ -22,11 +22,12 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     iconClassName: "h-7 w-7",
   },
   {
-    id: "openclaw",
-    name: "OpenClaw",
-    command: "ollama launch openclaw",
-    description: "Personal AI with 100+ skills",
-    icon: "/launch-icons/openclaw.svg",
+    id: "codex-app",
+    name: "Codex App",
+    command: "ollama launch codex-app",
+    description: "OpenAI's desktop coding agent",
+    icon: "/launch-icons/codex-app.png",
+    iconClassName: "h-full w-full",
   },
   {
     id: "hermes",
@@ -35,6 +36,13 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     description: "Self-improving AI agent built by Nous Research",
     icon: "/launch-icons/hermes-agent.svg",
     iconClassName: "h-7 w-7",
+  },
+  {
+    id: "openclaw",
+    name: "OpenClaw",
+    command: "ollama launch openclaw",
+    description: "Personal AI with 100+ skills",
+    icon: "/launch-icons/openclaw.svg",
   },
   {
     id: "opencode",

@@ -1,0 +1,39 @@
+---
+title: Codex App
+---
+
+## Install
+
+Install the [Codex App](https://developers.openai.com/codex/app/overview/) for macOS or Windows.
+
+## Usage with Ollama
+
+<Note>Codex works best with a larger context window. It is recommended to use a context window of at least 64k tokens.</Note>
+
+### Quick setup
+
+```shell
+ollama launch codex-app
+```
+
+To choose a model:
+
+```shell
+ollama launch codex-app --model gpt-oss:120b
+```
+
+To configure without launching:
+
+```shell
+ollama launch codex-app --config
+```
+
+To restore your usual Codex profile:
+
+```shell
+ollama launch codex-app --restore
+```
+
+## Backups
+
+Before overwriting Codex App config files, Ollama Launch saves backups under `~/.ollama/backup/codex-app/`. On Windows, `~` resolves to your user profile directory.

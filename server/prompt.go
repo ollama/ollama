@@ -75,7 +75,9 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[currMsgIdx:]))
 	}
 
-	for cnt, msg := range msgs[currMsgIdx:] {
+	renderMsgs := slices.Clone(msgs)
+
+	for cnt, msg := range renderMsgs[currMsgIdx:] {
 		if slices.Contains(m.Config.ModelFamilies, "mllama") && len(msg.Images) > 1 {
 			return "", nil, errors.New("this model only supports one image while more than one image requested")
 		}
@@ -101,11 +103,16 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 				prompt = strings.Replace(prompt, "[img]", imgTag, 1)
 			}
 		}
-		msgs[currMsgIdx+cnt].Content = prefix + prompt
+
+		if m.Config.Renderer != "" {
+			continue
+		}
+
+		renderMsgs[currMsgIdx+cnt].Content = prefix + prompt
 	}
 
 	// truncate any messages that do not fit into the context window
-	p, err := renderPrompt(m, append(system, msgs[currMsgIdx:]...), tools, think)
+	p, err := renderPrompt(m, append(system, renderMsgs[currMsgIdx:]...), tools, think)
 	if err != nil {
 		return "", nil, err
 	}
