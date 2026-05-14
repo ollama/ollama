@@ -30,6 +30,16 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		return -1, errors.New("sample: no logits provided to sample")
 	}
 
+	if s.temperature == 0 && s.grammar == nil {
+		max := 0
+		for i := 1; i < len(logits); i++ {
+			if logits[i] > logits[max] {
+				max = i
+			}
+		}
+		return int32(max), nil
+	}
+
 	tokens := make([]token, len(logits))
 	for i := range logits {
 		tokens[i].id = int32(i)

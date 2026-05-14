@@ -160,6 +160,26 @@ func TestTopK(t *testing.T) {
 	}
 }
 
+func TestTopKTieOrder(t *testing.T) {
+	input := []float32{5, 1, 5, 4, 5, 3}
+	tokens := topK(toTokens(input), 3)
+	wantIDs := []int32{0, 2, 4}
+	for i, want := range wantIDs {
+		if tokens[i].id != want {
+			t.Fatalf("topK tie id at index %d: want %d, got %d", i, want, tokens[i].id)
+		}
+	}
+
+	input = []float32{4, 4, 4, 3, 4, 2}
+	tokens = topK(toTokens(input), 3)
+	wantIDs = []int32{1, 2, 0}
+	for i, want := range wantIDs {
+		if tokens[i].id != want {
+			t.Fatalf("topK tie id at index %d: want %d, got %d", i, want, tokens[i].id)
+		}
+	}
+}
+
 func TestTopP(t *testing.T) {
 	input := []float32{-3, -2, -1, 0, 1, 2, 4}
 	tokens := toTokens(input)
