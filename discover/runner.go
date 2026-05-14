@@ -357,7 +357,13 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		}
 	}
 
-	return append([]ml.DeviceInfo{}, devices...)
+	// Append any RPC-discovered devices so the scheduler can route layers to
+	// them. Re-queried every call so free-memory tracking stays current.
+	out := append([]ml.DeviceInfo{}, devices...)
+	if rpcEndpoints := envconfig.RPCServers(); len(rpcEndpoints) > 0 {
+		out = append(out, discoverRPCDevices(rpcEndpoints)...)
+	}
+	return out
 }
 
 func filterOverlapByLibrary(supported map[string]map[string]map[string]int, needsDelete []bool) {
