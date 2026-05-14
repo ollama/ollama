@@ -124,7 +124,6 @@
                 "pages": [
                   "/integrations/claude-code",
                   "/integrations/codex",
-                  "/integrations/codex-app",
                   "/integrations/copilot-cli",
                   "/integrations/opencode",
                   "/integrations/droid",
