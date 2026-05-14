@@ -909,36 +909,37 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 		gpuIDs := llama.EnumerateGPUs()
 		sort.Sort(req.GPULayers)
-		assigned := map[uint64]bool{}
 		for _, layers := range req.GPULayers {
 			for i := range gpuIDs {
 				if gpuIDs[i].DeviceID == layers.DeviceID {
 					numGPU += len(layers.Layers)
 					tensorSplit = append(tensorSplit, float32(len(layers.Layers)))
 					llamaIDs = append(llamaIDs, gpuIDs[i].LlamaID)
-					assigned[gpuIDs[i].LlamaID] = true
 				}
 			}
 		}
 
-		// The Ollama scheduler doesn't know about OLLAMA_RPC_SERVERS — remote
-		// devices only appear in EnumerateGPUs() inside this subprocess. If we
-		// see any RPC devices that weren't already assigned, fold them in here
-		// so layers actually get offloaded to the remote machine. This forces
-		// RPC usage even when the model would otherwise fit locally.
-		for i := range gpuIDs {
-			if assigned[gpuIDs[i].LlamaID] || gpuIDs[i].Library != "RPC" {
-				continue
+		// If the scheduler reserved an RPC device but assigned zero layers to
+		// it (which it does today — discover knows the Pi's memory but the
+		// layer-assignment heuristic doesn't yet account for it), llama.cpp
+		// ends up with TensorSplit=[0] and silently keeps everything on CPU.
+		// Detect that case and rebuild the device list with RPC devices given
+		// an equal share, so the model actually gets offloaded.
+		if numGPU == 0 {
+			var rpcIDs []uint64
+			var rpcSplit []float32
+			for i := range gpuIDs {
+				if gpuIDs[i].Library == "RPC" {
+					slog.Info("force-including RPC device", "id", gpuIDs[i].ID)
+					rpcIDs = append(rpcIDs, gpuIDs[i].LlamaID)
+					rpcSplit = append(rpcSplit, 1)
+				}
 			}
-			slog.Info("force-including RPC device", "id", gpuIDs[i].ID)
-			llamaIDs = append(llamaIDs, gpuIDs[i].LlamaID)
-			tensorSplit = append(tensorSplit, 1)
-		}
-		if len(llamaIDs) > 0 && numGPU == 0 {
-			// No layers were assigned by the scheduler, but we have at least
-			// one RPC device. Offload everything so the remote machine actually
-			// participates in the forward pass.
-			numGPU = 999
+			if len(rpcIDs) > 0 {
+				llamaIDs = rpcIDs
+				tensorSplit = rpcSplit
+				numGPU = 999 // offload everything to RPC devices
+			}
 		}
 
 		params := llama.ModelParams{
