@@ -1160,15 +1160,15 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 		}, -1)
 	}
 	convTail := cfg.LinearConvKernelDim - 1
-	var rc *cache.RecurrentCache
+	var rc cache.Recurrent
 	var rec nn.RecurrentOption
-	if typed, ok := c.(*cache.RecurrentCache); ok {
+	if typed, ok := c.(cache.Recurrent); ok {
 		rc = typed
 		rec = nn.WithRecurrentHistory(rc.Get(b, x.DType()))
 	} else {
 		rec = nn.WithRecurrentState(
 			mlx.Zeros(x.DType(), int(B), int(convTail), qkv.Dim(2)),
-			mlx.Zeros(x.DType(), int(B), int(cfg.LinearNumValueHeads), int(cfg.LinearValueHeadDim), int(cfg.LinearKeyHeadDim)),
+			mlx.Zeros(mlx.DTypeFloat32, int(B), int(cfg.LinearNumValueHeads), int(cfg.LinearValueHeadDim), int(cfg.LinearKeyHeadDim)),
 		)
 	}
 
@@ -1193,6 +1193,9 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 	gDecay = gDecay.AsType(alpha.DType())
 
 	betaGate := mlx.Sigmoid(beta)
+	if recorder, ok := rc.(cache.RecurrentRecorder); ok {
+		recorder.Record(qkv, q, k, v, gDecay, betaGate)
+	}
 
 	out, state := nn.GatedDelta(b, q, k, v, gDecay, betaGate, rec)
 	outDType := out.DType()
@@ -1300,24 +1303,46 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 }
 
 func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+	out, _ := m.forward(b, caches, nil)
+	return out
+}
+
+func (m *Model) ForwardDFlash(b *batch.Batch, caches []cache.Cache, layerIDs []int) (hidden, targetHidden *mlx.Array) {
+	return m.forward(b, caches, layerIDs)
+}
+
+func (m *Model) forward(b *batch.Batch, caches []cache.Cache, captureLayerIDs []int) (*mlx.Array, *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
 	h := m.EmbedTokens.Forward(b.InputIDs)
+	captured := make([]*mlx.Array, 0, len(captureLayerIDs))
+	nextCapture := 0
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
 		h = layer.Forward(h, b, c, positions, B, L, m.Config)
+		if nextCapture < len(captureLayerIDs) && i == captureLayerIDs[nextCapture] {
+			captured = append(captured, h)
+			nextCapture++
+		}
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
-	return out
+	if len(captured) == 0 {
+		return out, nil
+	}
+	return out, mlx.Concatenate(captured, -1)
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
+}
+
+func (m *Model) TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array {
+	return m.EmbedTokens.Forward(inputIDs)
 }
 
 func (m *Model) NumLayers() int {

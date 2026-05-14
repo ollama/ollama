@@ -38,6 +38,8 @@ type kvCache struct {
 	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
 }
 
+type cacheFactoryFunc func() []cache.Cache
+
 // pendingSnapshot is a snapshot scheduled to be taken during prefill.
 type pendingSnapshot struct {
 	offset int
@@ -61,18 +63,22 @@ type cacheSession struct {
 	pendingSnapshots []pendingSnapshot
 }
 
-func (c *kvCache) ensureCaches(m base.Model) {
+func (c *kvCache) ensureCachesWithFactory(newCaches cacheFactoryFunc) {
 	if len(c.caches) != 0 {
 		return
 	}
+	c.caches = newCaches()
+}
+
+func newModelCaches(m base.Model) []cache.Cache {
 	if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
-		c.caches = cacheFactory.NewCaches()
-		return
+		return cacheFactory.NewCaches()
 	}
-	c.caches = make([]cache.Cache, m.NumLayers())
-	for i := range c.caches {
-		c.caches[i] = cache.NewKVCache()
+	caches := make([]cache.Cache, m.NumLayers())
+	for i := range caches {
+		caches[i] = cache.NewKVCache()
 	}
+	return caches
 }
 
 func (c *kvCache) ensureRoot() {
@@ -87,15 +93,29 @@ func (c *kvCache) ensureRoot() {
 // begin prepares caches for a new request. It finds the nearest
 // matching cache or creates new caches if none match.
 func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
-	c.ensureCaches(m)
+	return c.beginWithFactory(inputs, func() []cache.Cache { return newModelCaches(m) }, "")
+}
+
+func (c *kvCache) beginWithFactory(inputs []int32, newCaches cacheFactoryFunc, logPrefix string) *cacheSession {
+	return c.beginWithFactoryLimit(inputs, newCaches, logPrefix, -1, true)
+}
+
+func (c *kvCache) beginWithFactoryLimit(inputs []int32, newCaches cacheFactoryFunc, logPrefix string, maxCachedPrefix int, keepSeedToken bool) *cacheSession {
+	c.ensureCachesWithFactory(newCaches)
 	c.ensureRoot()
 
 	matchPath, matched := findBestMatch(c.root, inputs)
 	originalMatched := matched
+	if maxCachedPrefix >= 0 {
+		maxCachedPrefix = min(maxCachedPrefix, len(inputs))
+		if matched > maxCachedPrefix {
+			matchPath, matched = findBestMatch(c.root, inputs[:maxCachedPrefix])
+		}
+	}
 
 	// Always keep at least one token to re-evaluate so the
 	// pipeline can seed token generation from it.
-	if matched == len(inputs) && matched > 0 {
+	if keepSeedToken && matched == len(inputs) && matched > 0 {
 		matchPath, matched = findBestMatch(c.root, inputs[:len(inputs)-1])
 	}
 
@@ -122,6 +142,9 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 	msg := "cache hit"
 	if prefix == 0 {
 		msg = "cache miss"
+	}
+	if logPrefix != "" {
+		msg = logPrefix + " " + msg
 	}
 	slog.Info(msg, "total", len(inputs), "matched", originalMatched, "cached", prefix, "left", len(remaining))
 
