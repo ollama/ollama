@@ -75,6 +75,7 @@ type Model struct {
 	Messages       []api.Message
 
 	Template *template.Template
+	cachedCapabilities []model.Capability
 }
 
 func (m *Model) IsMLX() bool {
@@ -83,6 +84,9 @@ func (m *Model) IsMLX() bool {
 
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
+	if m.cachedCapabilities != nil {
+		return m.cachedCapabilities
+	}
 	capabilities := []model.Capability{}
 
 	if m.ModelPath != "" {
@@ -123,7 +127,8 @@ func (m *Model) Capabilities() []model.Capability {
 	}
 
 	if m.Template == nil {
-		return capabilities
+		m.cachedCapabilities = capabilities
+	return capabilities
 	}
 
 	builtinParser := parsers.ParserForName(m.Config.Parser)
