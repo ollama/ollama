@@ -29,22 +29,27 @@ func GetSystemInfo() ml.SystemInfo {
 	if err != nil {
 		slog.Warn("error looking up system memory", "error", err)
 	}
-	var threadCount int
+	var threadCount, totalCoreCount int
 	cpus := GetCPUDetails()
 	for _, c := range cpus {
 		threadCount += c.CoreCount - c.EfficiencyCoreCount
+		totalCoreCount += c.CoreCount
 	}
 
 	if threadCount == 0 {
 		// Fall back to Go's num CPU
 		threadCount = runtime.NumCPU()
 	}
+	if totalCoreCount == 0 {
+		totalCoreCount = runtime.NumCPU()
+	}
 
 	return ml.SystemInfo{
-		ThreadCount: threadCount,
-		TotalMemory: memInfo.TotalMemory,
-		FreeMemory:  memInfo.FreeMemory,
-		FreeSwap:    memInfo.FreeSwap,
+		ThreadCount:    threadCount,
+		TotalCoreCount: totalCoreCount,
+		TotalMemory:    memInfo.TotalMemory,
+		FreeMemory:     memInfo.FreeMemory,
+		FreeSwap:       memInfo.FreeSwap,
 	}
 }
 

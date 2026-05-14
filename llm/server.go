@@ -175,6 +175,24 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
 
 	defaultThreads := systemInfo.ThreadCount
+	if n := envconfig.NumThread(); n > 0 {
+		requested := int(n)
+		if systemInfo.TotalCoreCount > 0 {
+			maxAllowed := (systemInfo.TotalCoreCount * 85) / 100
+			switch {
+			case requested > maxAllowed && maxAllowed > 0:
+				slog.Warn("OLLAMA_NUM_THREAD exceeds 85% of physical core count, clamping", "requested", requested, "max", maxAllowed, "total_cores", systemInfo.TotalCoreCount)
+				defaultThreads = maxAllowed
+			case requested > maxAllowed && maxAllowed == 0:
+				slog.Warn("OLLAMA_NUM_THREAD exceeds 85% of physical core count (limit rounds down to zero for this system), ignoring OLLAMA_NUM_THREAD", "requested", requested, "total_cores", systemInfo.TotalCoreCount)
+				// defaultThreads remains systemInfo.ThreadCount
+			default:
+				defaultThreads = requested
+			}
+		} else {
+			defaultThreads = requested
+		}
+	}
 	if opts.NumThread > 0 {
 		loadRequest.NumThreads = opts.NumThread
 	} else if defaultThreads > 0 {
