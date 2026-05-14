@@ -409,6 +409,7 @@ curl http://localhost:11434/api/generate -d '{
     "frequency_penalty": 1.0,
     "penalize_newline": true,
     "stop": ["\n", "user:"],
+    "token_repeat_limit": 0,
     "numa": false,
     "num_ctx": 1024,
     "num_batch": 2,
