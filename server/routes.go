@@ -126,6 +126,10 @@ var (
 )
 
 func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
+	return s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, shouldApplyEmbeddingBatchDefault(model, requestOpts))
+}
+
+func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts map[string]any, applyEmbeddingBatchDefault bool) (api.Options, error) {
 	opts := api.DefaultOptions()
 	if opts.NumCtx == 0 {
 		opts.NumCtx = s.defaultNumCtx
@@ -141,7 +145,7 @@ func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Opt
 		return api.Options{}, err
 	}
 
-	if shouldApplyEmbeddingBatchDefault(model, requestOpts) {
+	if applyEmbeddingBatchDefault {
 		opts = llm.WithDefaultEmbeddingNumBatch(opts)
 	}
 
@@ -175,6 +179,18 @@ func usesAutomaticNumCtx(model *Model, requestOpts map[string]any) bool {
 	return envconfig.ContextLength() == 0
 }
 
+func usesAutomaticNumBatch(model *Model, requestOpts map[string]any) bool {
+	if _, ok := requestOpts["num_batch"]; ok {
+		return false
+	}
+	if model != nil {
+		if _, ok := model.Options["num_batch"]; ok {
+			return false
+		}
+	}
+	return true
+}
+
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
 // It returns the allocated runner, model instance, and consolidated options if successful and error otherwise.
 func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, *Model, *api.Options, error) {
@@ -199,12 +215,14 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	delete(requestOpts, "use_imagegen_runner")
 
 	numCtxAuto := usesAutomaticNumCtx(model, requestOpts)
-	opts, err := s.modelOptions(model, requestOpts)
+	embeddingBatchDefault := shouldApplyEmbeddingBatchDefault(model, requestOpts)
+	numBatchAuto := usesAutomaticNumBatch(model, requestOpts) && !embeddingBatchDefault
+	opts, err := s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, embeddingBatchDefault)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto)
+	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchAuto)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:

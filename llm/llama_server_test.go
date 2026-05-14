@@ -1127,6 +1127,45 @@ func TestEmbeddingBatchSize(t *testing.T) {
 	}
 }
 
+func TestAppendBatchArgs(t *testing.T) {
+	tests := []struct {
+		name        string
+		opts        api.Options
+		embedding   bool
+		numParallel int
+		want        []string
+	}{
+		{
+			name:        "generation sets logical and physical batch",
+			opts:        api.Options{Runner: api.Runner{NumBatch: 1024}},
+			numParallel: 1,
+			want:        []string{"-b", "1024", "-ub", "1024"},
+		},
+		{
+			name:        "generation omits unset batch",
+			opts:        api.Options{},
+			numParallel: 1,
+			want:        nil,
+		},
+		{
+			name:        "embedding caps batch to parallel context",
+			opts:        api.Options{Runner: api.Runner{NumCtx: 512, NumBatch: 2048}},
+			embedding:   true,
+			numParallel: 2,
+			want:        []string{"--embedding", "-b", "1024", "-ub", "1024"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendBatchArgs(nil, tt.opts, tt.embedding, tt.numParallel)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendBatchArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppendFlashAttentionArgs(t *testing.T) {
 	supportedGPU := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 13, ComputeMajor: 8, ComputeMinor: 9}}
 	oldGPU := []ml.DeviceInfo{

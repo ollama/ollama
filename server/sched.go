@@ -43,6 +43,14 @@ type LlmRequest struct {
 	// numCtxAuto is true when NumCtx came from Ollama's automatic VRAM-tier
 	// default rather than explicit request, model, or environment config.
 	numCtxAuto bool
+
+	// numBatchAuto is true when NumBatch came from Ollama's default options
+	// rather than an explicit request or model option.
+	numBatchAuto bool
+
+	// useMMapAuto is true when UseMMap was derived by the scheduler rather than
+	// explicitly requested.
+	useMMapAuto bool
 }
 
 type Scheduler struct {
@@ -116,10 +124,10 @@ func schedulerModelKey(m *Model) string {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
-	return s.getRunner(c, m, opts, sessionDuration, false)
+	return s.getRunner(c, m, opts, sessionDuration, false, false)
 }
 
-func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool) (chan *runnerRef, chan error) {
+func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool, numBatchAuto bool) (chan *runnerRef, chan error) {
 	if opts.NumCtx < 4 {
 		opts.NumCtx = 4
 	}
@@ -137,6 +145,7 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
 		numCtxAuto:      numCtxAuto,
+		numBatchAuto:    numBatchAuto,
 	}
 
 	key := schedulerModelKey(req.model)
@@ -440,9 +449,10 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 // (if any). Returns whether the scheduler needs to evict a model to make this one fit.
 func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool {
 	numParallel := max(int(envconfig.NumParallel()), 1)
+	completion := req.model.CheckCapabilities(model.CapabilityCompletion) == nil
 
 	// Embedding models should always be loaded with parallel=1
-	if req.model.CheckCapabilities(model.CapabilityCompletion) != nil {
+	if !completion {
 		numParallel = 1
 	}
 
@@ -479,6 +489,10 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
 			predicted := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
 			loadGpus, launchOpts = selectLlamaServerPlacement(systemInfo, gpus, predicted, req.opts)
+			availableForBatch, _, _ := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
+			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch)
+			launchOpts.NumBatch = req.opts.NumBatch
+			predictedForLoad := predicted + generationBatchSurchargeForCompletion(completion, launchOpts.NumBatch)
 
 			// Pre-flight check: estimate whether the model fits in remaining memory.
 			// llama-server auto-detects layers based on available VRAM, so if
@@ -486,10 +500,11 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			if requireFull && len(s.loaded) > 0 && len(loadGpus) > 0 {
 				freeMemory, gpuFreeMemory, systemLimited := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
 				// Use 80% of free memory as threshold to leave headroom.
-				if predicted > freeMemory*80/100 {
+				if predictedForLoad > freeMemory*80/100 {
 					slog.Info("llama-server model predicted to exceed available memory, evicting",
-						"predicted", format.HumanBytes2(predicted),
+						"predicted", format.HumanBytes2(predictedForLoad),
 						"predicted_num_ctx", predictedCtx,
+						"num_batch", launchOpts.NumBatch,
 						"available", format.HumanBytes2(freeMemory),
 						"gpu_free", format.HumanBytes2(gpuFreeMemory),
 						"system_free", format.HumanBytes2(systemInfo.FreeMemory),
@@ -498,8 +513,9 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 					return true
 				}
 				slog.Info("llama-server model fits alongside existing models",
-					"predicted", format.HumanBytes2(predicted),
+					"predicted", format.HumanBytes2(predictedForLoad),
 					"predicted_num_ctx", predictedCtx,
+					"num_batch", launchOpts.NumBatch,
 					"available", format.HumanBytes2(freeMemory),
 					"gpu_free", format.HumanBytes2(gpuFreeMemory),
 					"system_free", format.HumanBytes2(systemInfo.FreeMemory),
@@ -585,13 +601,15 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 		s.loadedMu.Unlock()
 		otherLoaded := loadedCount > 0
 		if !req.oomRetryAttempted && llm.IsOutOfMemory(err) {
-			if oldNumCtx, effectiveNumCtx, newNumCtx, ok := req.reduceAutoNumCtxForLoadOOM(f); ok {
+			if oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch, ok := req.reduceAutoNumCtxForLoadOOM(f, numParallel, completion, systemInfo, loadGpus, launchOpts); ok {
 				req.oomRetryAttempted = true
 				slog.Warn("llama-server load failed; reducing automatic context and retrying once",
 					"model", req.model.ModelPath,
 					"old_num_ctx", oldNumCtx,
 					"effective_num_ctx", effectiveNumCtx,
 					"new_num_ctx", newNumCtx,
+					"old_num_batch", oldNumBatch,
+					"new_num_batch", newNumBatch,
 					"loaded_count", loadedCount,
 					"evict_all", otherLoaded,
 					"error", err)
@@ -641,6 +659,8 @@ iGPUScan:
 		loading:         true,
 		pid:             llama.Pid(),
 		numCtxAuto:      req.numCtxAuto,
+		numBatchAuto:    req.numBatchAuto,
+		useMMapAuto:     req.useMMapAuto,
 	}
 	runner.numParallel = numParallel
 	runner.refMu.Lock() // hold lock until running or aborted
@@ -684,12 +704,13 @@ iGPUScan:
 	return false
 }
 
-func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *ggml.GGML) (oldNumCtx, effectiveNumCtx, newNumCtx int, ok bool) {
+func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *ggml.GGML, numParallel int, completion bool, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, launchOpts api.Options) (oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch int, ok bool) {
 	if !req.numCtxAuto {
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, 0, false
 	}
 
 	oldNumCtx = req.opts.NumCtx
+	oldNumBatch = req.opts.NumBatch
 	effectiveNumCtx = oldNumCtx
 	if f != nil {
 		if trainCtx := int(f.KV().ContextLength()); trainCtx > 0 && effectiveNumCtx > trainCtx {
@@ -699,11 +720,16 @@ func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *ggml.GGML) (oldNumCtx, effe
 
 	newNumCtx, ok = nextLowerAutoNumCtx(effectiveNumCtx)
 	if !ok || newNumCtx >= oldNumCtx {
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, 0, false
 	}
 
 	req.opts.NumCtx = newNumCtx
-	return oldNumCtx, effectiveNumCtx, newNumCtx, true
+	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
+	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
+	available, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
+	req.applyAutomaticGenerationBatch(completion, predictedCtx, predictedVRAM, available)
+	newNumBatch = req.opts.NumBatch
+	return oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch, true
 }
 
 func effectiveLlamaServerContext(numCtx int, f *ggml.GGML, numParallel int) int {
@@ -714,6 +740,79 @@ func effectiveLlamaServerContext(numCtx int, f *ggml.GGML, numParallel int) int 
 	}
 
 	return numCtx * max(numParallel, 1)
+}
+
+const (
+	llamaServerGenerationBatchDefault = 512
+	llamaServerGenerationBatchMedium  = 1024
+	llamaServerGenerationBatchLarge   = 2048
+)
+
+func (req *LlmRequest) applyAutomaticGenerationBatch(completion bool, effectiveCtx int, predictedVRAM, availableMemory uint64) {
+	if !completion || !req.numBatchAuto {
+		return
+	}
+
+	req.opts.NumBatch = automaticGenerationBatch(effectiveCtx, predictedVRAM, availableMemory)
+}
+
+func generationBatchSurchargeForCompletion(completion bool, batch int) uint64 {
+	if !completion {
+		return 0
+	}
+	return generationBatchSurcharge(batch)
+}
+
+func automaticGenerationBatch(effectiveCtx int, predictedVRAM, availableMemory uint64) int {
+	batch := generationBatchForContext(effectiveCtx)
+	for batch > llamaServerGenerationBatchDefault && !generationBatchFits(batch, predictedVRAM, availableMemory) {
+		batch = nextLowerGenerationBatch(batch)
+	}
+	return batch
+}
+
+func generationBatchForContext(effectiveCtx int) int {
+	switch {
+	case effectiveCtx > 32768:
+		return llamaServerGenerationBatchLarge
+	case effectiveCtx > 4096:
+		return llamaServerGenerationBatchMedium
+	default:
+		return llamaServerGenerationBatchDefault
+	}
+}
+
+func generationBatchFits(batch int, predictedVRAM, availableMemory uint64) bool {
+	if predictedVRAM == 0 || availableMemory == 0 {
+		return true
+	}
+
+	threshold := availableMemory * 80 / 100
+	if predictedVRAM > threshold {
+		return false
+	}
+
+	return generationBatchSurcharge(batch) <= threshold-predictedVRAM
+}
+
+func nextLowerGenerationBatch(batch int) int {
+	switch {
+	case batch > llamaServerGenerationBatchMedium:
+		return llamaServerGenerationBatchMedium
+	default:
+		return llamaServerGenerationBatchDefault
+	}
+}
+
+func generationBatchSurcharge(batch int) uint64 {
+	switch {
+	case batch >= llamaServerGenerationBatchLarge:
+		return 2 * format.GibiByte
+	case batch >= llamaServerGenerationBatchMedium:
+		return 768 * format.MebiByte
+	default:
+		return 0
+	}
 }
 
 func nextLowerAutoNumCtx(numCtx int) (int, bool) {
@@ -945,6 +1044,7 @@ func (s *Scheduler) applyLlamaServerMmapDefaults(req *LlmRequest, launchOpts api
 	if reason := disableMmapDefaultReason(runtime.GOOS, req.opts, gpus, f.KV().BlockCount(), predictedVRAM, availableVRAM); reason != "" {
 		useMmap := false
 		req.opts.UseMMap = &useMmap
+		req.useMMapAuto = true
 		slog.Info("disabling mmap for llama-server load by default",
 			"model", req.model.ModelPath,
 			"reason", reason)
@@ -1012,6 +1112,7 @@ func (s *Scheduler) maybeDisableMmapForHostPressure(req *LlmRequest, launchOpts 
 
 	useMmap := false
 	req.opts.UseMMap = &useMmap
+	req.useMMapAuto = true
 	slog.Info("disabling mmap for llama-server load due to host memory pressure",
 		"model", req.model.ModelPath,
 		"model_size", format.HumanBytes2(modelSize),
@@ -1152,11 +1253,13 @@ type runnerRef struct {
 	expireTimer     *time.Timer
 	expiresAt       time.Time
 
-	model       *Model
-	modelPath   string
-	modelKey    string
-	numParallel int
-	numCtxAuto  bool
+	model        *Model
+	modelPath    string
+	modelKey     string
+	numParallel  int
+	numCtxAuto   bool
+	numBatchAuto bool
+	useMMapAuto  bool
 	*api.Options
 }
 
@@ -1199,6 +1302,12 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	optsNew := req.opts.Runner
 	if runner.numCtxAuto && req.numCtxAuto {
 		optsNew.NumCtx = optsExisting.NumCtx
+	}
+	if runner.numBatchAuto && req.numBatchAuto {
+		optsNew.NumBatch = optsExisting.NumBatch
+	}
+	if runner.useMMapAuto && optsNew.UseMMap == nil {
+		optsNew.UseMMap = optsExisting.UseMMap
 	}
 	if optsNew.NumGPU < 0 {
 		optsExisting.NumGPU = -1

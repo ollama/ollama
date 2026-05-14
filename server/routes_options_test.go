@@ -191,3 +191,36 @@ func TestModelOptionsEmbeddingNumBatchDefault(t *testing.T) {
 		})
 	}
 }
+
+func TestUsesAutomaticNumBatch(t *testing.T) {
+	tests := []struct {
+		name        string
+		modelOpts   map[string]any
+		requestOpts map[string]any
+		want        bool
+	}{
+		{
+			name: "default is automatic",
+			want: true,
+		},
+		{
+			name:        "model num_batch is explicit",
+			modelOpts:   map[string]any{"num_batch": float64(1024)},
+			requestOpts: nil,
+			want:        false,
+		},
+		{
+			name:        "request num_batch is explicit",
+			requestOpts: map[string]any{"num_batch": float64(2048)},
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := usesAutomaticNumBatch(&Model{Options: tt.modelOpts}, tt.requestOpts); got != tt.want {
+				t.Fatalf("usesAutomaticNumBatch = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

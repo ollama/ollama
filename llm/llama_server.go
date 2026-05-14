@@ -324,16 +324,7 @@ func startLlamaServer(
 
 	params = appendFlashAttentionArgs(params, gpus)
 
-	// Batch size — match the old engine default (512) instead of
-	// llama-server's default (2048) to avoid generation regressions
-	if embedding {
-		params = append(params, "--embedding")
-		if batchSize := embeddingBatchSize(opts, numParallel); batchSize > 0 {
-			params = append(params, "-b", strconv.Itoa(batchSize), "-ub", strconv.Itoa(batchSize))
-		}
-	} else if opts.NumBatch > 0 {
-		params = append(params, "-b", strconv.Itoa(opts.NumBatch))
-	}
+	params = appendBatchArgs(params, opts, embedding, numParallel)
 
 	// GPU layer offloading — only pass if user explicitly set it (non-default).
 	// Default behavior: let llama-server auto-detect via -ngl auto.
@@ -514,6 +505,21 @@ func embeddingBatchSize(opts api.Options, numParallel int) int {
 		batchSize = min(batchSize, opts.NumCtx*max(numParallel, 1))
 	}
 	return batchSize
+}
+
+func appendBatchArgs(params []string, opts api.Options, embedding bool, numParallel int) []string {
+	if embedding {
+		params = append(params, "--embedding")
+		if batchSize := embeddingBatchSize(opts, numParallel); batchSize > 0 {
+			params = append(params, "-b", strconv.Itoa(batchSize), "-ub", strconv.Itoa(batchSize))
+		}
+		return params
+	}
+
+	if opts.NumBatch > 0 {
+		params = append(params, "-b", strconv.Itoa(opts.NumBatch), "-ub", strconv.Itoa(opts.NumBatch))
+	}
+	return params
 }
 
 func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {

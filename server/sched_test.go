@@ -187,7 +187,7 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
 
-		s.getRunner(ctx, visionModel, opts, nil, true)
+		s.getRunner(ctx, visionModel, opts, nil, true, false)
 
 		req := <-s.pendingReqCh
 		require.Equal(t, 2048, req.opts.NumCtx)
@@ -199,7 +199,7 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
 
-		s.getRunner(ctx, visionModel, opts, nil, false)
+		s.getRunner(ctx, visionModel, opts, nil, false, false)
 
 		req := <-s.pendingReqCh
 		require.Equal(t, 2048, req.opts.NumCtx)
@@ -905,6 +905,117 @@ func TestSchedNeedsReloadIgnoresAutomaticNumCtxClamp(t *testing.T) {
 	require.True(t, runner.needsReload(ctx, req))
 }
 
+func TestSchedNeedsReloadIgnoresAutomaticNumBatchDerivation(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	llm := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
+	opts := api.DefaultOptions()
+	opts.NumBatch = 1024
+	model := &Model{}
+	runner := &runnerRef{
+		model:        model,
+		Options:      &opts,
+		llama:        llm,
+		numParallel:  1,
+		numBatchAuto: true,
+	}
+	req := &LlmRequest{
+		model:        model,
+		opts:         api.DefaultOptions(),
+		numBatchAuto: true,
+	}
+	req.opts.NumBatch = 512
+
+	require.False(t, runner.needsReload(ctx, req))
+
+	req.numBatchAuto = false
+	require.True(t, runner.needsReload(ctx, req))
+}
+
+func TestSchedNeedsReloadIgnoresAutomaticUseMMapDefault(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	llm := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
+	useMmap := false
+	opts := api.DefaultOptions()
+	opts.UseMMap = &useMmap
+	model := &Model{}
+	runner := &runnerRef{
+		model:       model,
+		Options:     &opts,
+		llama:       llm,
+		numParallel: 1,
+		useMMapAuto: true,
+	}
+	req := &LlmRequest{
+		model: model,
+		opts:  api.DefaultOptions(),
+	}
+
+	require.False(t, runner.needsReload(ctx, req))
+
+	explicitUseMmap := true
+	req.opts.UseMMap = &explicitUseMmap
+	require.True(t, runner.needsReload(ctx, req))
+
+	req.opts.UseMMap = &useMmap
+	require.False(t, runner.needsReload(ctx, req))
+
+	runner.useMMapAuto = false
+	req.opts.UseMMap = nil
+	require.True(t, runner.needsReload(ctx, req))
+}
+
+func TestAutomaticGenerationBatch(t *testing.T) {
+	tests := []struct {
+		name         string
+		effectiveCtx int
+		predicted    uint64
+		available    uint64
+		want         int
+	}{
+		{
+			name:         "small context keeps default",
+			effectiveCtx: 4096,
+			want:         512,
+		},
+		{
+			name:         "medium context uses 1024 with unknown memory",
+			effectiveCtx: 32768,
+			want:         1024,
+		},
+		{
+			name:         "large context uses 2048 with headroom",
+			effectiveCtx: 131072,
+			predicted:    8 * format.GibiByte,
+			available:    14 * format.GibiByte,
+			want:         2048,
+		},
+		{
+			name:         "large context steps down to 1024 for headroom",
+			effectiveCtx: 131072,
+			predicted:    8 * format.GibiByte,
+			available:    11 * format.GibiByte,
+			want:         1024,
+		},
+		{
+			name:         "medium context steps down to 512 for headroom",
+			effectiveCtx: 32768,
+			predicted:    8500 * format.MebiByte,
+			available:    11 * format.GibiByte,
+			want:         512,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, automaticGenerationBatch(tt.effectiveCtx, tt.predicted, tt.available))
+		})
+	}
+}
+
 func TestSchedUnloadAllRunners(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
@@ -1530,14 +1641,17 @@ func TestSchedLoadOOMReducesAutomaticContextBeforeRetry(t *testing.T) {
 
 	loadCrash := errors.New("cudaMalloc failed: out of memory")
 	var seenNumCtx []int
+	var seenNumBatch []int
 	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		seenNumCtx = append(seenNumCtx, opts.NumCtx)
+		seenNumBatch = append(seenNumBatch, opts.NumBatch)
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
 
 	scenario := newScenarioRequestWithContext(t, ctx, "crashing-model", 1*format.GigaByte, nil, nil, 131072)
 	scenario.req.opts.NumCtx = 262144
 	scenario.req.numCtxAuto = true
+	scenario.req.numBatchAuto = true
 	systemInfo := getSystemInfoFn()
 	gpus := s.getGpuFn(ctx, nil)
 
@@ -1545,6 +1659,7 @@ func TestSchedLoadOOMReducesAutomaticContextBeforeRetry(t *testing.T) {
 	require.True(t, needEvict, "first automatic-context load OOM should signal eviction and retry")
 	require.True(t, scenario.req.oomRetryAttempted)
 	require.Equal(t, 32768, scenario.req.opts.NumCtx)
+	require.Equal(t, 1024, scenario.req.opts.NumBatch)
 	select {
 	case err := <-scenario.req.errCh:
 		t.Fatalf("errCh should be empty on first crash, got %v", err)
@@ -1554,6 +1669,7 @@ func TestSchedLoadOOMReducesAutomaticContextBeforeRetry(t *testing.T) {
 	needEvict = s.load(scenario.req, systemInfo, gpus, true)
 	require.False(t, needEvict, "second load OOM should not ask for another eviction")
 	require.Equal(t, []int{262144, 32768}, seenNumCtx)
+	require.Equal(t, []int{2048, 1024}, seenNumBatch)
 	select {
 	case err := <-scenario.req.errCh:
 		require.ErrorIs(t, err, loadCrash)
