@@ -32,7 +32,7 @@ func launcherTestState() *launch.LauncherState {
 			"codex-app": {
 				Name:        "codex-app",
 				DisplayName: "Codex App",
-				Description: "OpenAI's desktop coding agent",
+				Description: "An AI agent you can delegate real work to, by OpenAI",
 				Selectable:  true,
 				Changeable:  true,
 			},

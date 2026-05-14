@@ -25,7 +25,7 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     id: "codex-app",
     name: "Codex App",
     command: "ollama launch codex-app",
-    description: "OpenAI's desktop coding agent",
+    description: "An AI agent you can delegate real work to, by OpenAI",
     icon: "/launch-icons/codex-app.png",
     iconClassName: "h-full w-full",
   },
