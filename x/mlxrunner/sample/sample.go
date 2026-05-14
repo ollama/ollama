@@ -649,7 +649,7 @@ func (s *Sampler) canBatch(slots []*slotState) (Options, bool) {
 	// slots is non-empty (Sample guards) and every slot is registered,
 	// so s.slots[0].opts is the canonical shared value.
 	shared := s.slots[0].opts
-	// TODO: Before using multi-slot batching with seeded stochastic sampling,
+	// TODO(pdevine): Before using multi-slot batching with seeded stochastic sampling,
 	// make sure each row gets its own per-slot random key instead of sharing
 	// slots[0]'s key through one batched categorical op.
 	if !shared.usesHistory() {
