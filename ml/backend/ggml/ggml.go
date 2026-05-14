@@ -799,6 +799,35 @@ func (c *Context) Layer(i int) ml.Context {
 	return c
 }
 
+func (c *Context) SupportsGatedDeltaNet(layer, headDim int) bool {
+	layerDevice, ok := c.b.layers[layer]
+	if !ok {
+		return false
+	}
+
+	dev := layerDevice.d
+	switch C.ggml_backend_dev_type(dev) {
+	case C.GGML_BACKEND_DEVICE_TYPE_CPU:
+		return true
+	case C.GGML_BACKEND_DEVICE_TYPE_GPU,
+		C.GGML_BACKEND_DEVICE_TYPE_IGPU:
+		var props C.struct_ggml_backend_dev_props
+		C.ggml_backend_dev_get_props(dev, &props)
+		if C.GoString(props.library) != "CUDA" {
+			return false
+		}
+
+		switch headDim {
+		case 16, 32, 64, 128:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
 func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 	if c.graph == nil {
 		c.graph = C.ggml_new_graph_custom(c.ctx, C.size_t(c.maxGraphNodes), false)
@@ -1718,6 +1747,13 @@ func (t *Tensor) SSMScan(ctx ml.Context, x, dt, A, B, C, ids ml.Tensor) ml.Tenso
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_ssm_scan(ctx.(*Context).ctx, t.t, x.(*Tensor).t, dt.(*Tensor).t, A.(*Tensor).t, B.(*Tensor).t, C.(*Tensor).t, ids.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) GatedDeltaNet(ctx ml.Context, k, v, gate, beta, state ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_gated_delta_net(ctx.(*Context).ctx, t.t, k.(*Tensor).t, v.(*Tensor).t, gate.(*Tensor).t, beta.(*Tensor).t, state.(*Tensor).t),
 	}
 }
 

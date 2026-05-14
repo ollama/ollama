@@ -214,33 +214,27 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	}
 	state = state.Reshape(ctx, headVDim, headVDim*numVHeads, 1, nSeqs)
 
-	// Repeat interleave Q and K if numKHeads != numVHeads
-	if numKHeads != numVHeads {
-		if opts.vHeadReordered {
-			qConv = qConv.Repeat4D(ctx, headKDim, numVHeads, nSeqTokens, nSeqs)
-			kConv = kConv.Repeat4D(ctx, headKDim, numVHeads, nSeqTokens, nSeqs)
-		} else {
-			repeatFactor := numVHeads / numKHeads
-			qReshaped := qConv.Reshape(ctx, headKDim, 1, numKHeads*nSeqTokens*nSeqs)
-			kReshaped := kConv.Reshape(ctx, headKDim, 1, numKHeads*nSeqTokens*nSeqs)
-
-			qRepeated := qReshaped.Repeat4D(ctx, headKDim, repeatFactor, numKHeads*nSeqTokens*nSeqs, 1)
-			kRepeated := kReshaped.Repeat4D(ctx, headKDim, repeatFactor, numKHeads*nSeqTokens*nSeqs, 1)
-
-			qConv = qRepeated.Reshape(ctx, headKDim, numKHeads*repeatFactor, nSeqTokens, nSeqs)
-			kConv = kRepeated.Reshape(ctx, headKDim, numKHeads*repeatFactor, nSeqTokens, nSeqs)
-		}
+	if numVHeads%numKHeads != 0 {
+		return nil, errors.New("qwen3next: value heads must be divisible by key heads")
 	}
 
-	// Choose computation mode based on sequence length
 	var attnOut ml.Tensor
-	if nSeqTokens == 1 {
-		attnOut = gdn.deltaNetAutoregressive(ctx, qConv, kConv, vConv, gate, beta, state, opts, layer, cache)
+
+	if useFusedDeltaNet(supportsFusedDeltaNet(ctx, layer, headVDim), nSeqTokens, numKHeads, numVHeads, opts.vHeadReordered) {
+		attnOut = gdn.deltaNetAutoregressiveFused(ctx, qConv, kConv, vConv, gate, beta, state, opts, layer, cache)
 	} else {
-		if opts.masks == nil {
-			opts.masks = createMasks(ctx)
+		if numKHeads != numVHeads {
+			qConv, kConv = repeatQKToVHeads(ctx, qConv, kConv, headKDim, numKHeads, numVHeads, nSeqTokens, nSeqs, opts.vHeadReordered)
 		}
-		attnOut = gdn.deltaNetChunked(ctx, qConv, kConv, vConv, gate, beta, state, opts.masks, opts, layer, cache)
+
+		if nSeqTokens == 1 {
+			attnOut = gdn.deltaNetAutoregressive(ctx, qConv, kConv, vConv, gate, beta, state, opts, layer, cache)
+		} else {
+			if opts.masks == nil {
+				opts.masks = createMasks(ctx)
+			}
+			attnOut = gdn.deltaNetChunked(ctx, qConv, kConv, vConv, gate, beta, state, opts.masks, opts, layer, cache)
+		}
 	}
 
 	// Apply gated normalization
@@ -257,6 +251,88 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 
 	out := gdn.SSMOut.Forward(ctx, finalOutput)
 	return out.Reshape(ctx, out.Dim(0), nSeqTokens*nSeqs), nil
+}
+
+type gatedDeltaNetSupport interface {
+	SupportsGatedDeltaNet(layer, headDim int) bool
+}
+
+func supportsFusedDeltaNet(ctx ml.Context, layer, headDim int) bool {
+	support, ok := ctx.(gatedDeltaNetSupport)
+	return ok && support.SupportsGatedDeltaNet(layer, headDim)
+}
+
+func useFusedDeltaNet(supported bool, nSeqTokens, numKHeads, numVHeads int, vHeadReordered bool) bool {
+	return supported && nSeqTokens == 1 && (numKHeads == numVHeads || vHeadReordered)
+}
+
+func repeatQKToVHeads(ctx ml.Context, q, k ml.Tensor, headKDim, numKHeads, numVHeads, nSeqTokens, nSeqs int, vHeadReordered bool) (ml.Tensor, ml.Tensor) {
+	if vHeadReordered {
+		q = q.Repeat4D(ctx, headKDim, numVHeads, nSeqTokens, nSeqs)
+		k = k.Repeat4D(ctx, headKDim, numVHeads, nSeqTokens, nSeqs)
+		return q, k
+	}
+
+	repeatFactor := numVHeads / numKHeads
+	qReshaped := q.Reshape(ctx, headKDim, 1, numKHeads*nSeqTokens*nSeqs)
+	kReshaped := k.Reshape(ctx, headKDim, 1, numKHeads*nSeqTokens*nSeqs)
+
+	qRepeated := qReshaped.Repeat4D(ctx, headKDim, repeatFactor, numKHeads*nSeqTokens*nSeqs, 1)
+	kRepeated := kReshaped.Repeat4D(ctx, headKDim, repeatFactor, numKHeads*nSeqTokens*nSeqs, 1)
+
+	q = qRepeated.Reshape(ctx, headKDim, numKHeads*repeatFactor, nSeqTokens, nSeqs)
+	k = kRepeated.Reshape(ctx, headKDim, numKHeads*repeatFactor, nSeqTokens, nSeqs)
+	return q, k
+}
+
+func (gdn *GatedDeltaNet) deltaNetAutoregressiveFused(
+	ctx ml.Context,
+	q, k, v, gate, beta, state ml.Tensor,
+	opts *Options,
+	layer int,
+	cache *HybridCache,
+) ml.Tensor {
+	numVHeads := v.Dim(1)
+	headVDim := v.Dim(0)
+	nSeqTokens := q.Dim(2)
+	nSeqs := q.Dim(3)
+
+	q = q.L2Norm(ctx, opts.eps)
+	k = k.L2Norm(ctx, opts.eps)
+	beta = beta.Sigmoid(ctx)
+	state = state.Reshape(ctx, headVDim, headVDim, numVHeads, nSeqs)
+	state = state.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx, headVDim, headVDim, numVHeads, nSeqs)
+
+	result := q.GatedDeltaNet(ctx, k, v, gate, beta, state)
+
+	elemSize := result.Stride(0)
+	outputStride1 := elemSize * headVDim
+	outputStride2 := outputStride1 * numVHeads
+	outputStride3 := outputStride2 * nSeqTokens
+	output := result.View(ctx,
+		0,
+		headVDim, outputStride1,
+		numVHeads, outputStride2,
+		nSeqTokens, outputStride3,
+		nSeqs,
+	)
+
+	stateOffset := elemSize * headVDim * numVHeads * nSeqTokens * nSeqs
+	stateStride1 := elemSize * headVDim
+	stateStride2 := stateStride1 * headVDim
+	stateStride3 := stateStride2 * numVHeads
+	newState := result.View(ctx,
+		stateOffset,
+		headVDim, stateStride1,
+		headVDim, stateStride2,
+		numVHeads, stateStride3,
+		nSeqs,
+	)
+
+	newState = newState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx, headVDim, headVDim, numVHeads, nSeqs)
+	cache.UpdateDeltaState(ctx, layer, newState.Reshape(ctx, headVDim, headVDim*numVHeads, nSeqs))
+
+	return output
 }
 
 // deltaNetAutoregressive implements single-token state update.
