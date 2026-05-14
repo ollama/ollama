@@ -76,6 +76,7 @@ struct llama_vocab * llama_load_vocab_from_file(const char * fname) {
         vocab->load(ml, kv);
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
+        delete vocab;
         return nullptr;
     }
 
