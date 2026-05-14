@@ -13,6 +13,7 @@ package llama
 
 #include <stdlib.h>
 #include "ggml.h"
+#include "ggml-rpc.h"
 #include "llama.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
@@ -791,4 +792,14 @@ func (g *Grammar) Accept(token int32) {
 	}
 
 	C.grammar_accept(g.c, C.llama_token(token))
+}
+
+// AddRPCServer registers a remote RPC server endpoint as a ggml backend device.
+// After this call the remote machine's memory appears in ggml_backend_dev_count()
+// and will be visible to EnumerateGPUs(). Call before BackendInit or immediately
+// after — certainly before any model load.
+func AddRPCServer(endpoint string) {
+	cs := C.CString(endpoint)
+	defer C.free(unsafe.Pointer(cs))
+	C.ggml_backend_rpc_add_server(cs)
 }

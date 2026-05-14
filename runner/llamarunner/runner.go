@@ -966,6 +966,11 @@ func Execute(args []string) error {
 
 	llama.BackendInit()
 
+	for _, ep := range envconfig.RPCServers() {
+		slog.Info("registering RPC server", "endpoint", ep)
+		llama.AddRPCServer(ep)
+	}
+
 	server := &Server{
 		modelPath: *mpath,
 		status:    llm.ServerStatusLaunched,

@@ -244,6 +244,22 @@ func String(s string) func() string {
 	}
 }
 
+// RPCServers returns the list of remote RPC server endpoints configured via
+// OLLAMA_RPC_SERVERS (comma-separated "host:port" values, e.g. "pi:50052,nas:50052").
+func RPCServers() []string {
+	s := Var("OLLAMA_RPC_SERVERS")
+	if s == "" {
+		return nil
+	}
+	var servers []string
+	for _, part := range strings.Split(s, ",") {
+		if ep := strings.TrimSpace(part); ep != "" {
+			servers = append(servers, ep)
+		}
+	}
+	return servers
+}
+
 var (
 	LLMLibrary = String("OLLAMA_LLM_LIBRARY")
 	Editor     = String("OLLAMA_EDITOR")
@@ -334,6 +350,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_EDITOR":               {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
 		"OLLAMA_NEW_ENGINE":           {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
 		"OLLAMA_REMOTES":              {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
+		"OLLAMA_RPC_SERVERS":          {"OLLAMA_RPC_SERVERS", RPCServers(), "Comma-separated list of RPC server endpoints (e.g. \"192.168.1.50:50052\") for distributed inference"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
