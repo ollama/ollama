@@ -57,19 +57,6 @@ func freeCacheSet(caches []cache.Cache) {
 	}
 }
 
-func (r *Runner) useGreedyDFlash(opts sampler.Options) bool {
-	mode, _ := r.dflashGate(opts)
-	return mode == dflashDecodeGreedy
-}
-
-func (r *Runner) greedyDFlashGate(opts sampler.Options) (bool, string) {
-	mode, reason := r.dflashGate(opts)
-	if mode == dflashDecodeSample {
-		return false, "sampler_non_greedy"
-	}
-	return mode == dflashDecodeGreedy, reason
-}
-
 func (r *Runner) dflashGate(opts sampler.Options) (dflashDecodeMode, string) {
 	if r.Draft == nil {
 		return dflashDecodeDisabled, "no_draft"

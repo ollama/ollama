@@ -248,7 +248,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		return fmt.Errorf("missing dflash norm weights")
 	}
 
-	for i := int32(0); i < m.NumHiddenLayers; i++ {
+	for i := range m.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", prefix, i)
 		layer := &Layer{
 			Attention: &Attention{Sliding: strings.ToLower(m.LayerTypes[i]) == "sliding_attention"},
