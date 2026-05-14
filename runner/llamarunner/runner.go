@@ -909,14 +909,36 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 		gpuIDs := llama.EnumerateGPUs()
 		sort.Sort(req.GPULayers)
+		assigned := map[uint64]bool{}
 		for _, layers := range req.GPULayers {
 			for i := range gpuIDs {
 				if gpuIDs[i].DeviceID == layers.DeviceID {
 					numGPU += len(layers.Layers)
 					tensorSplit = append(tensorSplit, float32(len(layers.Layers)))
 					llamaIDs = append(llamaIDs, gpuIDs[i].LlamaID)
+					assigned[gpuIDs[i].LlamaID] = true
 				}
 			}
+		}
+
+		// The Ollama scheduler doesn't know about OLLAMA_RPC_SERVERS — remote
+		// devices only appear in EnumerateGPUs() inside this subprocess. If we
+		// see any RPC devices that weren't already assigned, fold them in here
+		// so layers actually get offloaded to the remote machine. This forces
+		// RPC usage even when the model would otherwise fit locally.
+		for i := range gpuIDs {
+			if assigned[gpuIDs[i].LlamaID] || gpuIDs[i].Library != "RPC" {
+				continue
+			}
+			slog.Info("force-including RPC device", "id", gpuIDs[i].ID)
+			llamaIDs = append(llamaIDs, gpuIDs[i].LlamaID)
+			tensorSplit = append(tensorSplit, 1)
+		}
+		if len(llamaIDs) > 0 && numGPU == 0 {
+			// No layers were assigned by the scheduler, but we have at least
+			// one RPC device. Offload everything so the remote machine actually
+			// participates in the forward pass.
+			numGPU = 999
 		}
 
 		params := llama.ModelParams{
