@@ -36,6 +36,11 @@ func TestHumanBytes(t *testing.T) {
 		{1500000000000, "1.5 TB"},
 		{1999999999999, "2.0 TB"},
 
+		// Test values >= 10 TB with decimals (bug fix)
+		{15500000000000, "15.5 TB"},
+		{10500000000000, "10.5 TB"},
+		{9999999999999, "10.0 TB"},
+
 		// Test fractional values
 		{1234, "1.2 KB"},
 		{1234567, "1.2 MB"},
