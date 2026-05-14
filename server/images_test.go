@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
@@ -371,6 +373,59 @@ func TestModelCheckCapabilities(t *testing.T) {
 	}
 }
 
+func TestPullModelKeepsCopiedManifestTimestamp(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	manifestData := `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"sha256:0000000000000000000000000000000000000000000000000000000000000001","mediaType":"application/vnd.docker.container.image.v1+json","size":0},"layers":[{"digest":"sha256:0000000000000000000000000000000000000000000000000000000000000002","mediaType":"application/vnd.ollama.image.model","size":0}]}`
+
+	for _, digest := range []string{
+		"sha256:0000000000000000000000000000000000000000000000000000000000000001",
+		"sha256:0000000000000000000000000000000000000000000000000000000000000002",
+	} {
+		p, err := manifest.BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(manifestData))
+	}))
+	defer ts.Close()
+
+	n := model.ParseName(strings.TrimPrefix(ts.URL, "http://") + "/test/model:latest")
+	manifestPath, err := manifest.PathForName(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(manifestData), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldTime := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(manifestPath, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := PullModel(t.Context(), "http://"+n.String(), &registryOptions{Insecure: true}, func(api.ProgressResponse) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(oldTime) {
+		t.Fatalf("manifest timestamp changed: got %s, want %s", info.ModTime(), oldTime)
+	}
+}
+
 func TestPullModelManifest(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -396,7 +451,7 @@ func TestPullModelManifest(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			n := model.ParseName("test/model:latest")
+			n := model.ParseName(strings.TrimPrefix(ts.URL, "http://") + "/test/model:latest")
 			n.ProtocolScheme = "http"
 			n.Host = strings.TrimPrefix(ts.URL, "http://")
 
