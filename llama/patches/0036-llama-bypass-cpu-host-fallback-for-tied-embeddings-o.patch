@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CaffeinatedBits <caffeinatedbits@gmail.com>
+Date: Thu, 12 Mar 2026 20:25:10 +0000
+Subject: [PATCH] llama: bypass cpu host fallback for tied embeddings on
+ unified memory architectures
+
+---
+ src/llama-model.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 00cd579e0..7c3c92eba 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -2587,6 +2587,10 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+                 }
+             }
+ 
++            if (tn.tensor == LLM_TENSOR_TOKEN_EMBD || tn.tensor == LLM_TENSOR_OUTPUT) {
++                buft = pimpl->dev_layer.at(0).buft_list->front().second;
++            }
++
+             if (!buft) {
+                 buft = select_weight_buft(hparams, t_meta, op, *buft_list);
+                 if (!buft) {
