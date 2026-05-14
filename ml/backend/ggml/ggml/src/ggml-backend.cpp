@@ -14,6 +14,7 @@
 #include "ggml-impl.h"
 
 #include <assert.h>
+#include <ctype.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -698,6 +699,36 @@ static bool ggml_is_view_op(enum ggml_op op) {
 #define GGML_SCHED_MAX_COPIES 4
 #endif
 
+typedef void *(*moe_stream_fn_t)(void * backend);
+typedef void  (*moe_stream_synchronize_fn_t)(void *);
+typedef bool  (*moe_staging_init_fn_t)(void * backend, size_t max_size);
+typedef void  (*moe_staging_destroy_fn_t)(void * backend);
+typedef bool  (*moe_staging_h2d_fn_t)(void * backend, void * prefetch_stream, int slot, struct ggml_tensor * input);
+typedef bool  (*moe_staging_d2d_fn_t)(void * backend, int slot, struct ggml_tensor * input_cpy);
+
+struct moe_expert_range {
+    int32_t first_id;
+    int32_t last_id;
+};
+typedef bool  (*moe_staging_h2d_ranges_fn_t)(void * backend, void * prefetch_stream, int slot,
+                                             struct ggml_tensor * input,
+                                             const struct moe_expert_range * ranges, int n_ranges);
+typedef bool  (*moe_staging_d2d_ranges_fn_t)(void * backend, int slot,
+                                             struct ggml_tensor * input_cpy,
+                                             const struct moe_expert_range * ranges, int n_ranges);
+
+struct moe_prefetch_fns {
+    moe_stream_fn_t              stream              = nullptr;
+    moe_stream_synchronize_fn_t  stream_synchronize  = nullptr;
+    moe_staging_init_fn_t        staging_init        = nullptr;
+    moe_staging_destroy_fn_t     staging_destroy     = nullptr;
+    moe_staging_h2d_fn_t         staging_h2d         = nullptr;
+    moe_staging_d2d_fn_t         staging_d2d         = nullptr;
+    moe_staging_h2d_ranges_fn_t  staging_h2d_ranges  = nullptr;
+    moe_staging_d2d_ranges_fn_t  staging_d2d_ranges  = nullptr;
+    bool                         resolved            = false;
+};
+
 struct ggml_backend_sched_split {
     int backend_id;
     int i_start;
@@ -770,6 +801,13 @@ struct ggml_backend_sched {
     // the scheduler needs to be recreated with allocated buffers before it can be used
     // for computation
     bool alloc_buffers;
+
+    bool moe_prefetch_requested;
+    bool moe_prefetch_initialized;
+    void * moe_prefetch_stream;
+    ggml_backend_t moe_cuda_backend;
+    size_t moe_max_split_size;
+    struct moe_prefetch_fns moe_fns;
 };
 
 #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
@@ -1476,38 +1514,9 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// MoE prefetch: function pointer types for CUDA helpers via proc address
-// ---------------------------------------------------------------------------
-
-typedef void *(*moe_stream_create_fn_t)();
-typedef void  (*moe_stream_destroy_fn_t)(void *);
-typedef void  (*moe_stream_synchronize_fn_t)(void *);
-
-// Staging buffer helpers (overlap-safe prefetch)
-typedef bool  (*moe_staging_init_fn_t)(void * backend, size_t max_size);
-typedef void  (*moe_staging_destroy_fn_t)(void * backend);
-typedef bool  (*moe_staging_h2d_fn_t)(void * backend, void * prefetch_stream, int slot, struct ggml_tensor * input);
-typedef bool  (*moe_staging_d2d_fn_t)(void * backend, int slot, struct ggml_tensor * input_cpy);
-
-// Selective variant range descriptor — must match the struct in ggml-cuda.cu.
-struct moe_expert_range {
-    int32_t first_id;
-    int32_t last_id;
-};
-typedef bool  (*moe_staging_h2d_ranges_fn_t)(void * backend, void * prefetch_stream, int slot,
-                                             struct ggml_tensor * input,
-                                             const struct moe_expert_range * ranges, int n_ranges);
-typedef bool  (*moe_staging_d2d_ranges_fn_t)(void * backend, int slot,
-                                             struct ggml_tensor * input_cpy,
-                                             const struct moe_expert_range * ranges, int n_ranges);
-
 // Looks up a MoE prefetch proc address via the ggml backend registry.
 // Iterates sched->backends to find the first GPU backend, then calls
-// ggml_backend_reg_get_proc_address on its reg. This is the correct path
-// for proc addresses registered in ggml-cuda.cu via the proc-address table —
-// static helper functions are not exported from the DLL, so OS-level
-// GetProcAddress / dlsym would fail.
+// ggml_backend_reg_get_proc_address on its reg.
 static void * moe_get_proc(ggml_backend_sched_t sched, const char * name) {
     for (int i = 0; i < sched->n_backends; i++) {
         ggml_backend_t backend = sched->backends[i];
@@ -1521,6 +1530,60 @@ static void * moe_get_proc(ggml_backend_sched_t sched, const char * name) {
         if (fn) return fn;
     }
     return nullptr;
+}
+
+static bool moe_resolve_prefetch_fns(ggml_backend_sched_t sched) {
+    struct moe_prefetch_fns * fns = &sched->moe_fns;
+    if (fns->resolved) {
+        return fns->stream && fns->staging_init && fns->staging_h2d && fns->staging_d2d;
+    }
+
+    fns->stream             = (moe_stream_fn_t)             moe_get_proc(sched, "ggml_backend_cuda_moe_stream");
+    fns->stream_synchronize = (moe_stream_synchronize_fn_t) moe_get_proc(sched, "ggml_backend_cuda_moe_stream_synchronize");
+    fns->staging_init       = (moe_staging_init_fn_t)       moe_get_proc(sched, "ggml_backend_cuda_moe_staging_init");
+    fns->staging_destroy    = (moe_staging_destroy_fn_t)    moe_get_proc(sched, "ggml_backend_cuda_moe_staging_destroy");
+    fns->staging_h2d        = (moe_staging_h2d_fn_t)        moe_get_proc(sched, "ggml_backend_cuda_moe_staging_h2d");
+    fns->staging_d2d        = (moe_staging_d2d_fn_t)        moe_get_proc(sched, "ggml_backend_cuda_moe_staging_d2d");
+    fns->staging_h2d_ranges = (moe_staging_h2d_ranges_fn_t) moe_get_proc(sched, "ggml_backend_cuda_moe_staging_h2d_ranges");
+    fns->staging_d2d_ranges = (moe_staging_d2d_ranges_fn_t) moe_get_proc(sched, "ggml_backend_cuda_moe_staging_d2d_ranges");
+    fns->resolved = true;
+
+    return fns->stream && fns->staging_init && fns->staging_h2d && fns->staging_d2d;
+}
+
+static bool moe_env_enabled(const char * name) {
+    const char * value = getenv(name);
+    if (value == nullptr) {
+        return false;
+    }
+
+    while (isspace((unsigned char) *value)) {
+        value++;
+    }
+
+    const char * end = value + strlen(value);
+    while (end > value && isspace((unsigned char) end[-1])) {
+        end--;
+    }
+
+    const size_t len = end - value;
+    if (len == 0) {
+        return false;
+    }
+    if (len == 1 && value[0] == '0') {
+        return false;
+    }
+    if (len == 5) {
+        const char false_value[] = "false";
+        for (size_t i = 0; i < len; i++) {
+            if (tolower((unsigned char) value[i]) != false_value[i]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    return true;
 }
 
 // Returns true if split_id refers to a CPU-side MoE expert weight split.
@@ -1558,7 +1621,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
     std::vector<ggml_bitset_t> used_ids;
 
     // MoE prefetch (staging path): initialize independent prefetch stream
-    // and double staging buffers if OLLAMA_MOE_PREFETCH is set.
+    // and double staging buffers only when the runner set the internal
+    // OLLAMA_MOE_PREFETCH_ENABLED gate.
     //
     // Architecture:
     //   prefetch stream: H2D pinned_CPU -> staging[slot], record h2d_done[slot]
@@ -1585,29 +1649,11 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
     struct moe_expert_range prefetch_ranges[2][MOE_MAX_EXPERTS_PER_LAYER] = {};
     int    prefetch_n_ranges[2] = {0, 0};
 
-    moe_stream_destroy_fn_t     fn_prefetch_stream_destroy = nullptr;
-    moe_stream_synchronize_fn_t fn_prefetch_stream_sync    = nullptr;
-    moe_staging_init_fn_t       fn_staging_init            = nullptr;
-    moe_staging_destroy_fn_t    fn_staging_destroy         = nullptr;
-    moe_staging_h2d_fn_t        fn_staging_h2d             = nullptr;
-    moe_staging_d2d_fn_t        fn_staging_d2d             = nullptr;
-    moe_staging_h2d_ranges_fn_t fn_staging_h2d_ranges      = nullptr;
-    moe_staging_d2d_ranges_fn_t fn_staging_d2d_ranges      = nullptr;
+    struct moe_prefetch_fns * fns = &sched->moe_fns;
 
-    static bool prefetch_init_logged = false;
-    if (getenv("OLLAMA_MOE_PREFETCH") != nullptr) {
-        auto fn_stream_create = (moe_stream_create_fn_t)moe_get_proc(sched, "ggml_backend_cuda_moe_stream_create");
-        fn_prefetch_stream_destroy = (moe_stream_destroy_fn_t)moe_get_proc(sched, "ggml_backend_cuda_moe_stream_destroy");
-        fn_prefetch_stream_sync    = (moe_stream_synchronize_fn_t)moe_get_proc(sched, "ggml_backend_cuda_moe_stream_synchronize");
-        fn_staging_init        = (moe_staging_init_fn_t)       moe_get_proc(sched, "ggml_backend_cuda_moe_staging_init");
-        fn_staging_destroy     = (moe_staging_destroy_fn_t)    moe_get_proc(sched, "ggml_backend_cuda_moe_staging_destroy");
-        fn_staging_h2d         = (moe_staging_h2d_fn_t)        moe_get_proc(sched, "ggml_backend_cuda_moe_staging_h2d");
-        fn_staging_d2d         = (moe_staging_d2d_fn_t)        moe_get_proc(sched, "ggml_backend_cuda_moe_staging_d2d");
-        fn_staging_h2d_ranges  = (moe_staging_h2d_ranges_fn_t) moe_get_proc(sched, "ggml_backend_cuda_moe_staging_h2d_ranges");
-        fn_staging_d2d_ranges  = (moe_staging_d2d_ranges_fn_t) moe_get_proc(sched, "ggml_backend_cuda_moe_staging_d2d_ranges");
-
-        if (fn_stream_create && fn_staging_init && fn_staging_h2d && fn_staging_d2d) {
-            // Walk splits to find the max MoE weight tensor size and the CUDA backend
+    if (sched->moe_prefetch_requested && moe_resolve_prefetch_fns(sched)) {
+        if (!sched->moe_prefetch_initialized) {
+            // Walk splits once to find the max MoE weight tensor size and CUDA backend.
             size_t max_moe_split_size = 0;
             for (int s = 0; s < sched->n_splits; s++) {
                 if (!is_moe_cpu_split(sched, s)) continue;
@@ -1619,41 +1665,30 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         ggml_backend_buffer_get_usage(inp->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS) {
                         size_t nb = ggml_nbytes(inp);
                         if (nb > max_moe_split_size) max_moe_split_size = nb;
-                        if (!moe_cuda_backend) moe_cuda_backend = sched->backends[sp->backend_id];
+                        if (!sched->moe_cuda_backend) sched->moe_cuda_backend = sched->backends[sp->backend_id];
                     }
                 }
             }
-            if (max_moe_split_size > 0 && moe_cuda_backend) {
-                prefetch_stream = fn_stream_create();
-                if (prefetch_stream && fn_staging_init((void *)moe_cuda_backend, max_moe_split_size)) {
-                    prefetch_enabled = true;
-                    if (!prefetch_init_logged) {
-                        GGML_LOG_INFO("%s: MoE lookahead prefetch enabled (staging 2x%zu MiB)\n",
-                                      __func__, max_moe_split_size / (1024 * 1024));
-                        prefetch_init_logged = true;
-                    }
+            sched->moe_max_split_size = max_moe_split_size;
+            if (max_moe_split_size > 0 && sched->moe_cuda_backend) {
+                sched->moe_prefetch_stream = fns->stream((void *)sched->moe_cuda_backend);
+                if (sched->moe_prefetch_stream && fns->staging_init((void *)sched->moe_cuda_backend, max_moe_split_size)) {
+                    GGML_LOG_DEBUG("%s: MoE lookahead prefetch enabled (staging 2x%zu MiB)\n",
+                                   __func__, max_moe_split_size / (1024 * 1024));
                 } else {
-                    if (fn_prefetch_stream_destroy && prefetch_stream) {
-                        fn_prefetch_stream_destroy(prefetch_stream);
-                    }
-                    prefetch_stream = nullptr;
-                    if (!prefetch_init_logged) {
-                        GGML_LOG_WARN("%s: MoE prefetch disabled — staging allocation failed\n", __func__);
-                        prefetch_init_logged = true;
-                    }
+                    sched->moe_prefetch_stream = nullptr;
+                    GGML_LOG_DEBUG("%s: MoE prefetch disabled - staging allocation failed\n", __func__);
                 }
             } else {
-                if (!prefetch_init_logged) {
-                    GGML_LOG_INFO("%s: MoE prefetch inactive — no CPU-MoE splits in graph\n", __func__);
-                    prefetch_init_logged = true;
-                }
+                GGML_LOG_DEBUG("%s: MoE prefetch inactive - no CPU-MoE splits in graph\n", __func__);
             }
-        } else {
-            if (!prefetch_init_logged) {
-                GGML_LOG_WARN("%s: MoE prefetch disabled — proc lookup failed\n", __func__);
-                prefetch_init_logged = true;
-            }
+            sched->moe_prefetch_initialized = true;
         }
+        prefetch_stream = sched->moe_prefetch_stream;
+        moe_cuda_backend = sched->moe_cuda_backend;
+        prefetch_enabled = prefetch_stream != nullptr && moe_cuda_backend != nullptr && sched->moe_max_split_size > 0;
+    } else if (sched->moe_prefetch_requested && !sched->moe_fns.resolved) {
+        GGML_LOG_DEBUG("%s: MoE prefetch disabled - proc lookup failed\n", __func__);
     }
 
     for (int split_id = 0; split_id < sched->n_splits; split_id++) {
@@ -1761,14 +1796,14 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         const int n_ranges = prefetch_n_ranges[moe_prefetch_slot];
                         bool d2d_ok = false;
                         const char * mode_str = "full";
-                        if (n_ranges > 0 && fn_staging_d2d_ranges) {
-                            d2d_ok = fn_staging_d2d_ranges((void *)split_backend,
+                        if (n_ranges > 0 && fns->staging_d2d_ranges) {
+                            d2d_ok = fns->staging_d2d_ranges((void *)split_backend,
                                                            moe_prefetch_slot, input_cpy,
                                                            prefetch_ranges[moe_prefetch_slot],
                                                            n_ranges);
                             mode_str = "selective";
-                        } else if (fn_staging_d2d) {
-                            d2d_ok = fn_staging_d2d((void *)split_backend, moe_prefetch_slot, input_cpy);
+                        } else if (fns->staging_d2d) {
+                            d2d_ok = fns->staging_d2d((void *)split_backend, moe_prefetch_slot, input_cpy);
                         }
                         prefetch_n_ranges[moe_prefetch_slot] = 0;  // invalidate cached ranges
                         if (d2d_ok) {
@@ -1776,7 +1811,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                                            __func__, split_id, moe_prefetch_slot, mode_str, n_ranges);
                             continue;
                         }
-                        GGML_LOG_WARN("%s: staging D2D failed split=%d slot=%d — falling back to selective copy\n",
+                        GGML_LOG_WARN("%s: staging D2D failed split=%d slot=%d - falling back to selective copy\n",
                                       __func__, split_id, moe_prefetch_slot);
                     }
 
@@ -1838,8 +1873,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph, sched->batch_size);
             if (ec != GGML_STATUS_SUCCESS) {
                 if (prefetch_enabled) {
-                    if (fn_prefetch_stream_sync)    fn_prefetch_stream_sync(prefetch_stream);
-                    if (fn_prefetch_stream_destroy) fn_prefetch_stream_destroy(prefetch_stream);
+                    if (fns->stream_synchronize) fns->stream_synchronize(prefetch_stream);
                 }
                 return ec;
             }
@@ -1864,8 +1898,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv, sched->batch_size);
                 if (ec != GGML_STATUS_SUCCESS) {
                     if (prefetch_enabled) {
-                        if (fn_prefetch_stream_sync)    fn_prefetch_stream_sync(prefetch_stream);
-                        if (fn_prefetch_stream_destroy) fn_prefetch_stream_destroy(prefetch_stream);
+                        if (fns->stream_synchronize) fns->stream_synchronize(prefetch_stream);
                     }
                     return ec;
                 }
@@ -1902,7 +1935,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             if (is_moe_cpu_split(sched, next_id)) {
                 struct ggml_backend_sched_split * next_split = &sched->splits[next_id];
                 struct ggml_tensor * next_node = next_split->graph.nodes[0];
-                if (fn_staging_h2d) {
+                if (fns->staging_h2d) {
                     bool fired = false;
                     int  slot  = prefetch_counter & 1;
                     const char * mode_str = "full";
@@ -1911,8 +1944,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
 
                     struct ggml_tensor * next_ids = next_node->src[2];
                     const bool can_selective =
-                        (fn_staging_h2d_ranges != nullptr) &&
-                        (fn_staging_d2d_ranges != nullptr) &&
+                        (fns->staging_h2d_ranges != nullptr) &&
+                        (fns->staging_d2d_ranges != nullptr) &&
                         (prev_ids_tensor != nullptr) &&
                         (next_ids == prev_ids_tensor) &&
                         !used_ids.empty();
@@ -1964,7 +1997,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                                 }
 
                                 if (n_ranges > 0 &&
-                                    fn_staging_h2d_ranges((void *)moe_cuda_backend, prefetch_stream,
+                                    fns->staging_h2d_ranges((void *)moe_cuda_backend, prefetch_stream,
                                                           slot, inp, ranges, n_ranges)) {
                                     memcpy(prefetch_ranges[slot], ranges, sizeof(ranges[0]) * n_ranges);
                                     prefetch_n_ranges[slot] = n_ranges;
@@ -1978,7 +2011,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                             }
 
                             if (!fired) {
-                                if (fn_staging_h2d((void *)moe_cuda_backend, prefetch_stream, slot, inp)) {
+                                if (fns->staging_h2d((void *)moe_cuda_backend, prefetch_stream, slot, inp)) {
                                     prefetch_n_ranges[slot] = 0;  // flag as full-tensor
                                     fired = true;
                                     mode_str = "full";
@@ -2011,14 +2044,6 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 ggml_backend_event_record(sched->events[split_backend_id][sched->cur_copy], split_backend);
             }
         }
-    }
-
-    // Cleanup: drain the prefetch stream and destroy it.
-    // (Staging buffers + per-slot events live on the CUDA backend context and
-    // are torn down in ggml_backend_sched_free / ~ggml_backend_cuda_context.)
-    if (prefetch_enabled) {
-        if (fn_prefetch_stream_sync)    fn_prefetch_stream_sync(prefetch_stream);
-        if (fn_prefetch_stream_destroy) fn_prefetch_stream_destroy(prefetch_stream);
     }
 
     return GGML_STATUS_SUCCESS;
@@ -2060,6 +2085,7 @@ ggml_backend_sched_t ggml_backend_sched_new_ext(
 
     sched->n_backends = n_backends;
     sched->n_copies = parallel ? GGML_SCHED_MAX_COPIES : 1;
+    sched->moe_prefetch_requested = moe_env_enabled("OLLAMA_MOE_PREFETCH_ENABLED");
 
     // initialize hash table
     // FIXME: needs to be size*2 to account for leafs (do it in graph_split instead)
@@ -2125,7 +2151,6 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
             ggml_backend_dev_t dev = ggml_backend_get_device(backend);
             if (!dev || ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_GPU) continue;
             fn_staging_destroy((void *)backend);
-            break;
         }
     }
 

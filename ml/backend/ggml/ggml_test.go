@@ -1,9 +1,11 @@
 package ggml
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -37,6 +39,63 @@ func setup(tb testing.TB) ml.Context {
 	})
 
 	return ctx
+}
+
+func TestMoEExpertTensorDetection(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{name: "blk.0.ffn_gate_exps.weight", want: true},
+		{name: "blk.0.ffn_up_exps", want: true},
+		{name: "blk.0.ffn_down_exps.bias", want: true},
+		{name: "blk.0.ffn_down_exps.scale", want: true},
+		{name: "blk.0.ffn_gate_up_exps.weight", want: true},
+		{name: "blk.0.ffn_gate_up_exps.bias", want: true},
+		{name: "blk.0.ffn_gate_chexps.weight", want: true},
+		{name: "blk.0.ffn_up_chexps", want: true},
+		{name: "blk.0.ffn_down_ch_exps.weight", want: true},
+		{name: "blk.0.ffn_gate_inp.weight"},
+		{name: "blk.0.ffn_up.weight"},
+		{name: "token_embd.weight"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isMoEExpertTensor(tt.name); got != tt.want {
+				t.Fatalf("isMoEExpertTensor(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewMoESplitRejectsModelsWithoutDetectedExperts(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "*.gguf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	tensors := []*ggml.Tensor{{
+		Name:     "blk.0.ffn_up.weight",
+		Shape:    []uint64{1},
+		WriterTo: bytes.NewReader(make([]byte, 4)),
+	}}
+	if err := ggml.WriteGGUF(f, ggml.KV{
+		"general.architecture": "test",
+		"block_count":          uint32(1),
+	}, tensors); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := New(f.Name(), ml.BackendParams{MoESplit: true})
+	if err == nil {
+		b.Close()
+		t.Fatal("New succeeded, want MoE detection error")
+	}
+	if !strings.Contains(err.Error(), "no MoE expert tensors were detected") {
+		t.Fatalf("New error = %v, want missing MoE expert tensor error", err)
+	}
 }
 
 func TestInferShape(t *testing.T) {

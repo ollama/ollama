@@ -51,7 +51,7 @@ index 79673ac2e..034c61d6d 100644
  
      cudaStream_t stream(int device, int stream) {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index b8ed3709b..4d95365f5 100644
+index b8ed3709b..33a8fadcf 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -671,6 +671,17 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {

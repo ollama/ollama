@@ -672,6 +672,10 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
         CUDA_CHECK(cudaEventDestroy(copy_event));
     }
     // MoE staging safety-net cleanup (sched normally destroys first)
+    if (moe_staging.stream != nullptr) {
+        CUDA_CHECK(cudaStreamDestroy(moe_staging.stream));
+        moe_staging.stream = nullptr;
+    }
     for (int i = 0; i < 2; i++) {
         if (moe_staging.buffers[i] != nullptr) {
             CUDA_CHECK(cudaFree(moe_staging.buffers[i]));
@@ -5085,21 +5089,22 @@ static ggml_backend_feature * ggml_backend_cuda_get_features(ggml_backend_reg_t 
 }
 
 // ---------------------------------------------------------------------------
-// MoE prefetch CUDA helpers — exposed via proc address as void* handles
+// MoE prefetch CUDA helpers exposed via proc address as void* handles.
 // ---------------------------------------------------------------------------
 
-static void * ggml_backend_cuda_moe_stream_create() {
-    cudaStream_t stream;
-    if (cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking) != cudaSuccess) {
+static void * ggml_backend_cuda_moe_stream(void * backend_handle) {
+    if (!backend_handle) return nullptr;
+    ggml_backend_t backend = (ggml_backend_t)backend_handle;
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+    if (cuda_ctx->moe_staging.stream != nullptr) {
+        return (void *)cuda_ctx->moe_staging.stream;
+    }
+    ggml_cuda_set_device(cuda_ctx->device);
+    if (cudaStreamCreateWithFlags(&cuda_ctx->moe_staging.stream, cudaStreamNonBlocking) != cudaSuccess) {
+        cuda_ctx->moe_staging.stream = nullptr;
         return nullptr;
     }
-    return (void *)stream;
-}
-
-static void ggml_backend_cuda_moe_stream_destroy(void * stream_handle) {
-    if (stream_handle) {
-        cudaStreamDestroy((cudaStream_t)stream_handle);
-    }
+    return (void *)cuda_ctx->moe_staging.stream;
 }
 
 static void ggml_backend_cuda_moe_stream_synchronize(void * stream_handle) {
@@ -5109,7 +5114,7 @@ static void ggml_backend_cuda_moe_stream_synchronize(void * stream_handle) {
 }
 
 // ---------------------------------------------------------------------------
-// MoE prefetch — staging buffer path (overlap-safe)
+// MoE prefetch staging buffer path (overlap-safe).
 //
 // Two dedicated VRAM buffers (double-buffered) receive H2D copies on the
 // independent prefetch stream; the main compute stream later D2D-copies from
@@ -5120,7 +5125,7 @@ static void ggml_backend_cuda_moe_stream_synchronize(void * stream_handle) {
 
 // Initialize double staging buffers of `max_size` bytes each on the given
 // backend's device. Returns true on success; leaves staging empty on failure.
-// Safe to call repeatedly — grows (but never shrinks) capacity.
+// Safe to call repeatedly, growing but never shrinking capacity.
 static bool ggml_backend_cuda_moe_staging_init(void * backend_handle, size_t max_size) {
     if (!backend_handle || max_size == 0) return false;
     ggml_backend_t backend = (ggml_backend_t)backend_handle;
@@ -5169,6 +5174,10 @@ static void ggml_backend_cuda_moe_staging_destroy(void * backend_handle) {
     ggml_backend_t backend = (ggml_backend_t)backend_handle;
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
     ggml_cuda_set_device(cuda_ctx->device);
+    if (cuda_ctx->moe_staging.stream != nullptr) {
+        cudaStreamDestroy(cuda_ctx->moe_staging.stream);
+        cuda_ctx->moe_staging.stream = nullptr;
+    }
     for (int i = 0; i < 2; i++) {
         if (cuda_ctx->moe_staging.buffers[i] != nullptr) {
             cudaFree(cuda_ctx->moe_staging.buffers[i]);
@@ -5329,11 +5338,8 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     if (strcmp(name, "ggml_backend_get_features") == 0) {
         return (void *)ggml_backend_cuda_get_features;
     }
-    if (strcmp(name, "ggml_backend_cuda_moe_stream_create") == 0) {
-        return (void *)ggml_backend_cuda_moe_stream_create;
-    }
-    if (strcmp(name, "ggml_backend_cuda_moe_stream_destroy") == 0) {
-        return (void *)ggml_backend_cuda_moe_stream_destroy;
+    if (strcmp(name, "ggml_backend_cuda_moe_stream") == 0) {
+        return (void *)ggml_backend_cuda_moe_stream;
     }
     if (strcmp(name, "ggml_backend_cuda_moe_stream_synchronize") == 0) {
         return (void *)ggml_backend_cuda_moe_stream_synchronize;

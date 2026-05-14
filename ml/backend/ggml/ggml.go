@@ -91,6 +91,25 @@ var (
 	backends           map[C.ggml_backend_dev_t]C.ggml_backend_t
 )
 
+// moeExpertTensorRE matches MoE expert tensors within a block. Channel-separated
+// tensors are named chexps in llama.cpp; ch_exps is accepted for compatibility
+// with existing GGUF variants.
+var moeExpertTensorRE = regexp.MustCompile(`\.ffn_(up|down|gate|gate_up)_(exps|chexps|ch_exps)(\.(weight|bias|scale))?$`)
+
+func isMoEExpertTensor(name string) bool {
+	return moeExpertTensorRE.MatchString(name)
+}
+
+func layerIndexFromTensorName(name string) (int, bool) {
+	fields := strings.FieldsFunc(name, func(r rune) bool { return !unicode.IsNumber(r) })
+	if len(fields) == 0 {
+		return 0, false
+	}
+
+	i, err := strconv.Atoi(fields[0])
+	return i, err == nil
+}
+
 var initDevices = sync.OnceFunc(func() {
 	ggml.OnceLoad()
 
@@ -206,15 +225,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 
 	initDevices()
 
-	// moeExpertRE matches MoE expert weight tensors within a block
-	// (the per-layer ffn_{up,down,gate}_exps projections, optionally
-	// suffixed with .weight or prefixed with ch_ for channel-separated
-	// variants).
-	var moeExpertRE = regexp.MustCompile(`\.ffn_(up|down|gate)_(ch_)?exps(\.weight)?$`)
-	isMoEExpertTensor := func(name string) bool {
-		return moeExpertRE.MatchString(name)
-	}
-
 	var requiredMemory ml.BackendMemory
 	btDeviceMemory := make(map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory)
 
@@ -224,6 +234,15 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	blocks := int(meta.KV().BlockCount())
+	moeExpertTensorCount := 0
+	for _, t := range meta.Tensors().Items() {
+		if isMoEExpertTensor(t.Name) {
+			moeExpertTensorCount++
+		}
+	}
+	if params.MoESplit && moeExpertTensorCount == 0 {
+		return nil, errors.New("moe split requested but no MoE expert tensors were detected")
+	}
 
 	// create list of buffer types for the cpu
 	cpuDeviceBufferType := deviceBufferType{d: C.ggml_backend_dev_by_type(C.GGML_BACKEND_DEVICE_TYPE_CPU)}
@@ -245,6 +264,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	requiredMemory.CPU.Library = C.GoString(props.library)
 	requiredMemory.CPU.Weights = make([]uint64, blocks+1)
 	requiredMemory.CPU.MoEWeights = make([]uint64, blocks+1)
+	requiredMemory.CPU.MoEMaxTensor = make([]uint64, blocks+1)
 	requiredMemory.CPU.Cache = make([]uint64, blocks+1)
 
 	// create list of buffer types for each gpu
@@ -265,6 +285,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory.GPUs[i].Library = C.GoString(props.library)
 		requiredMemory.GPUs[i].Weights = make([]uint64, blocks+1)
 		requiredMemory.GPUs[i].MoEWeights = make([]uint64, blocks+1)
+		requiredMemory.GPUs[i].MoEMaxTensor = make([]uint64, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]uint64, blocks+1)
 	}
 
@@ -325,7 +346,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	// Used after buffer allocation to register them as pinned when OLLAMA_MOE_PINNED=1.
 	cpuMoEBufTypes := make(map[C.ggml_backend_buffer_type_t]struct{})
 
-	// Log routing summary on formal allocation (AllocMemory=true) when MoE split is active
+	// Keep per-layer routing at debug; large MoE models emit one line per block.
 	if params.AllocMemory && params.MoESplit {
 		moeGPUSet := make(map[int]bool)
 		for _, p := range params.MoEGPULayers {
@@ -338,7 +359,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			if moeGPUSet[i] {
 				moeLocation = "gpu"
 			}
-			slog.Info("moe split: tensor routing",
+			slog.Debug("moe split: tensor routing",
 				"layer", i,
 				"dense", "gpu",
 				"moe", moeLocation)
@@ -406,6 +427,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 				btDeviceMemory[bt].Weights[layer] += uint64(size)
 				if isMoEExpertTensor(t.source.Name) {
 					btDeviceMemory[bt].MoEWeights[layer] += uint64(size)
+					btDeviceMemory[bt].MoEMaxTensor[layer] = max(btDeviceMemory[bt].MoEMaxTensor[layer], uint64(size))
 					logutil.Trace("moe split: tracked MoE tensor",
 						"name", t.source.Name,
 						"layer", layer,
@@ -456,10 +478,8 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			}
 		default:
 			layerIndex := -1
-			if fields := strings.FieldsFunc(t.Name, func(r rune) bool { return !unicode.IsNumber(r) }); len(fields) > 0 {
-				if i, err := strconv.Atoi(fields[0]); err == nil {
-					layerIndex = i
-				}
+			if i, ok := layerIndexFromTensorName(t.Name); ok {
+				layerIndex = i
 			}
 
 			if layerIndex >= 0 {

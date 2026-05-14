@@ -273,25 +273,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
-	runnerEnvs := ml.GetVisibleDevicesEnv(gpus, false)
-	// When OLLAMA_MOE_PINNED is enabled, the ggml CUDA backend's internal
-	// cudaHostRegister wrapper checks getenv("GGML_CUDA_REGISTER_HOST") from
-	// the DLL's own CRT instance. Go's os.Setenv and CGo _putenv_s both update
-	// different CRT copies and are invisible to the DLL. The only reliable way
-	// to set a variable for all CRT instances in a process is to inject it into
-	// the child process env block before launch, which all CRTs read at init.
-	if envconfig.MoePinned() && envconfig.MoeGpuLayers() != 0 {
-		if runnerEnvs == nil {
-			runnerEnvs = map[string]string{}
-		}
-		runnerEnvs["GGML_CUDA_REGISTER_HOST"] = "1"
-	}
-	if envconfig.MoePrefetch() && envconfig.MoePinned() && envconfig.MoeGpuLayers() != 0 {
-		if runnerEnvs == nil {
-			runnerEnvs = map[string]string{}
-		}
-		runnerEnvs["OLLAMA_MOE_PREFETCH"] = "1"
-	}
+	runnerEnvs := runnerEnvOverrides(gpus)
 	cmd, port, err := StartRunner(
 		tok != nil,
 		modelPath,
@@ -1001,6 +983,126 @@ func uniqueDeviceIDs(gpuLayers ml.GPULayersList) []ml.DeviceID {
 	return devices
 }
 
+func moeSplitConfigured() bool {
+	return envconfig.MoeGpuLayers() != 0 || envconfig.MoeCpuLayers() != 0
+}
+
+func moePrefetchConfigured() bool {
+	return envconfig.MoePrefetch() && envconfig.MoePinned()
+}
+
+func runnerEnvOverrides(gpus []ml.DeviceInfo) map[string]string {
+	runnerEnvs := ml.GetDevicesEnv(gpus, false)
+	// When OLLAMA_MOE_PINNED is enabled, the ggml CUDA backend's internal
+	// cudaHostRegister wrapper checks getenv("GGML_CUDA_REGISTER_HOST") from
+	// the DLL's own CRT instance. Go's os.Setenv and CGo _putenv_s both update
+	// different CRT copies and are invisible to the DLL. The only reliable way
+	// to set a variable for all CRT instances in a process is to inject it into
+	// the child process env block before launch, which all CRTs read at init.
+	if envconfig.MoePinned() && moeSplitConfigured() {
+		if runnerEnvs == nil {
+			runnerEnvs = map[string]string{}
+		}
+		runnerEnvs["GGML_CUDA_REGISTER_HOST"] = "1"
+	}
+	if moePrefetchConfigured() && moeSplitConfigured() {
+		if runnerEnvs == nil {
+			runnerEnvs = map[string]string{}
+		}
+		runnerEnvs["OLLAMA_MOE_PREFETCH_ENABLED"] = "1"
+	}
+
+	return runnerEnvs
+}
+
+func requestedMoEGPULayers(totalLayers int, moeLayers []int) ([]int, string, error) {
+	gpuLayers := envconfig.MoeGpuLayers()
+	cpuLayers := envconfig.MoeCpuLayers()
+	if gpuLayers != 0 && cpuLayers != 0 {
+		return nil, "", errors.New("OLLAMA_MOE_GPU_LAYERS and OLLAMA_MOE_CPU_LAYERS are mutually exclusive")
+	}
+	if gpuLayers < -1 {
+		return nil, "", errors.New("OLLAMA_MOE_GPU_LAYERS must be -1 or greater")
+	}
+	if cpuLayers < 0 {
+		return nil, "", errors.New("OLLAMA_MOE_CPU_LAYERS must be greater than or equal to 0")
+	}
+	if cpuLayers > totalLayers {
+		return nil, "", fmt.Errorf("OLLAMA_MOE_CPU_LAYERS=%d exceeds model layer count %d", cpuLayers, totalLayers)
+	}
+	if cpuLayers > 0 {
+		gpuMoELayers := make([]int, 0, len(moeLayers))
+		for _, layer := range moeLayers {
+			if layer >= cpuLayers {
+				gpuMoELayers = append(gpuMoELayers, layer)
+			}
+		}
+		return gpuMoELayers, "user-cpu-override", nil
+	}
+	if gpuLayers > len(moeLayers) {
+		return nil, "", fmt.Errorf("OLLAMA_MOE_GPU_LAYERS=%d exceeds MoE expert layer count %d", gpuLayers, len(moeLayers))
+	}
+	if gpuLayers > 0 {
+		return slices.Clone(moeLayers[len(moeLayers)-gpuLayers:]), "user-gpu-override", nil
+	}
+	return nil, "auto", nil
+}
+
+func moeLayerIndexes(moeSize []uint64) []int {
+	layers := make([]int, 0, len(moeSize))
+	for i, size := range moeSize {
+		if size > 0 {
+			layers = append(layers, i)
+		}
+	}
+	return layers
+}
+
+func deviceMoEMaxTensor(device ml.DeviceMemory, layer int) uint64 {
+	if layer >= 0 && layer < len(device.MoEMaxTensor) {
+		return device.MoEMaxTensor[layer]
+	}
+	return 0
+}
+
+func moePrefetchReserve(memory *ml.BackendMemory, moeSize []uint64, moeLayers []int) uint64 {
+	if !moePrefetchConfigured() {
+		return 0
+	}
+	var maxSize uint64
+	for _, layer := range moeLayers {
+		for _, gpu := range memory.GPUs {
+			maxSize = max(maxSize, deviceMoEMaxTensor(gpu, layer))
+		}
+		maxSize = max(maxSize, deviceMoEMaxTensor(memory.CPU, layer))
+	}
+	if maxSize == 0 {
+		for _, layer := range moeLayers {
+			maxSize = max(maxSize, moeSize[layer])
+		}
+	}
+	return 2 * maxSize
+}
+
+func remapMoELayers(gpuLayers ml.GPULayersList, moeLayers []int) ml.GPULayersList {
+	for i := range gpuLayers {
+		for j, layer := range gpuLayers[i].Layers {
+			if layer >= 0 && layer < len(moeLayers) {
+				gpuLayers[i].Layers[j] = moeLayers[layer]
+			}
+		}
+	}
+	return gpuLayers
+}
+
+func moeGPUSetFromLayers(moeLayers []int) map[int]struct{} {
+	gpuSet := make(map[int]struct{}, len(moeLayers))
+	for _, layer := range moeLayers {
+		gpuSet[layer] = struct{}{}
+	}
+	return gpuSet
+}
+
 // createLayout uses the current best view of memory requirements and creates a layout of model layers on GPUs.
 // It does this by:
 // - Calculating how much space each layer requires
@@ -1010,13 +1112,17 @@ func uniqueDeviceIDs(gpuLayers ml.GPULayersList) []ml.DeviceID {
 func (s *llmServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, ml.GPULayersList, error) {
 	if memory == nil {
 		memory = &ml.BackendMemory{CPU: ml.DeviceMemory{
-			Weights:    make([]uint64, s.totalLayers),
-			MoEWeights: make([]uint64, s.totalLayers),
-			Cache:      make([]uint64, s.totalLayers),
+			Weights:      make([]uint64, s.totalLayers),
+			MoEWeights:   make([]uint64, s.totalLayers),
+			MoEMaxTensor: make([]uint64, s.totalLayers),
+			Cache:        make([]uint64, s.totalLayers),
 		}}
 	}
-	gpuLayers, denseGPULayers, layers := s.buildLayout(systemGPUs, memory, requireFull, backoff)
-	err := s.verifyLayout(systemInfo, systemGPUs, memory, requireFull, gpuLayers, denseGPULayers, layers)
+	gpuLayers, denseGPULayers, layers, err := s.buildLayout(systemGPUs, memory, requireFull, backoff)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = s.verifyLayout(systemInfo, systemGPUs, memory, requireFull, gpuLayers, denseGPULayers, layers)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1029,7 +1135,7 @@ func (s *llmServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.Devic
 //	gpuLayers      - layers used for iteration convergence (MoE-on-GPU count if MoE split active)
 //	denseGPULayers - layers with dense weights on GPU (all layers when MoE split active); nil otherwise
 //	layers         - total per-layer memory sizes
-func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (gpuLayers ml.GPULayersList, denseGPULayers ml.GPULayersList, layers []uint64) {
+func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (gpuLayers ml.GPULayersList, denseGPULayers ml.GPULayersList, layers []uint64, err error) {
 	gpus := append(make([]ml.DeviceInfo, 0, len(systemGPUs)), systemGPUs...)
 	sort.Sort(sort.Reverse(ml.ByFreeMemory(gpus)))
 
@@ -1044,9 +1150,10 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 		logutil.Trace("layer to assign", "layer", i, "size", format.HumanBytes2(layers[i]))
 	}
 
-	// ── MoE split logic ───────────────────────────────────────────────────────
-	// Compute per-layer MoE sizes (sum across all devices, since probe puts weights
-	// on one device but we need the logical per-layer total).
+	// MoE split logic.
+	// Compute per-layer MoE sizes, summing across all devices. The probe can
+	// place weights on one device, but split planning needs the logical
+	// per-layer total.
 	moeSize := make([]uint64, len(layers))
 	for i := range moeSize {
 		for j := range memory.GPUs {
@@ -1066,9 +1173,23 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 		cacheSize[i] += memory.CPU.Cache[i]
 	}
 
-	isMoEModel := slices.ContainsFunc(moeSize, func(s uint64) bool { return s > 0 })
+	moeExpertLayers := moeLayerIndexes(moeSize)
+	isMoEModel := len(moeExpertLayers) > 0
 
-	if isMoEModel && envconfig.MoeGpuLayers() != 0 {
+	if !isMoEModel && moeSplitConfigured() && slices.ContainsFunc(layers, func(size uint64) bool { return size > 0 }) {
+		return nil, nil, nil, errors.New("moe split requested but no MoE expert tensors were detected")
+	}
+
+	if isMoEModel && moeSplitConfigured() {
+		if len(gpus) > 1 {
+			return nil, nil, nil, fmt.Errorf("moe split currently supports one GPU; found %d", len(gpus))
+		}
+
+		requestedMoELayers, source, err := requestedMoEGPULayers(len(layers), moeExpertLayers)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
 		// Dense/cache is the baseline reservation; MoE expert weights are assigned separately.
 		denseSize := make([]uint64, len(layers))
 		for i := range denseSize {
@@ -1097,45 +1218,49 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 			}
 		}
 
-		if totalDenseOverhead > availableVRAM {
+		prefetchReserve := moePrefetchReserve(memory, moeSize, moeExpertLayers)
+		totalDenseAndPrefetch := totalDenseOverhead + prefetchReserve
+
+		if totalDenseAndPrefetch > availableVRAM {
 			slog.Warn("moe split: dense weights and cache exceed available VRAM, falling back to standard layout",
 				"dense_cache_total", format.HumanBytes2(totalDenseOverhead),
+				"prefetch_reserve", format.HumanBytes2(prefetchReserve),
 				"available_vram", format.HumanBytes2(availableVRAM))
+			if source != "auto" {
+				return nil, nil, nil, fmt.Errorf("moe split cannot allocate requested %s; dense/cache/prefetch need %s but only %s is available",
+					source, format.HumanBytes2(totalDenseAndPrefetch), format.HumanBytes2(availableVRAM))
+			}
 			// Fall through to standard assignLayers below
 		} else {
 			slog.Info("moe split: dense weights and cache fit, activating split",
 				"dense_cache_total", format.HumanBytes2(totalDenseOverhead),
-				"vram_for_moe", format.HumanBytes2(availableVRAM-totalDenseOverhead))
+				"prefetch_reserve", format.HumanBytes2(prefetchReserve),
+				"vram_for_moe", format.HumanBytes2(availableVRAM-totalDenseAndPrefetch))
 
-			moeGPUCount := envconfig.MoeGpuLayers()
-			source := "auto"
-			if moeGPUCount >= 0 {
-				if moeGPUCount > len(moeSize) {
-					slog.Warn("moe split: OLLAMA_MOE_GPU_LAYERS exceeds total layers, clamped",
-						"requested", moeGPUCount, "clamped", len(moeSize))
-					moeGPUCount = len(moeSize)
-				}
-				source = "user-override"
-			} else {
-				remainingVRAM := availableVRAM - totalDenseOverhead
-				moeGPUCount = 0
-				for i := range moeSize {
-					if moeSize[i] > remainingVRAM {
+			if source == "auto" {
+				remainingVRAM := availableVRAM - totalDenseAndPrefetch
+				moeGPUCount := 0
+				for i := len(moeExpertLayers) - 1; i >= 0; i-- {
+					layer := moeExpertLayers[i]
+					if moeSize[layer] > remainingVRAM {
 						break
 					}
-					remainingVRAM -= moeSize[i]
+					remainingVRAM -= moeSize[layer]
 					moeGPUCount++
 				}
+				requestedMoELayers = slices.Clone(moeExpertLayers[len(moeExpertLayers)-moeGPUCount:])
 			}
 
 			slog.Info("moe split: layer budget",
-				"moe_gpu_layers", moeGPUCount,
-				"moe_cpu_layers", len(moeSize)-moeGPUCount,
+				"moe_layers", len(moeExpertLayers),
+				"moe_gpu_layers", len(requestedMoELayers),
+				"moe_cpu_layers", len(moeExpertLayers)-len(requestedMoELayers),
 				"cfg", source)
 
+			intendedMoEGPUSet := moeGPUSetFromLayers(requestedMoELayers)
 			for i := range layers {
 				loc := "cpu"
-				if i < moeGPUCount {
+				if _, ok := intendedMoEGPUSet[i]; ok {
 					loc = "gpu"
 				}
 				slog.Debug("moe split: layer layout",
@@ -1147,8 +1272,10 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 			}
 
 			// Build adjusted layer sizes (MoE-only cost) and adjusted GPU free memory
-			adjustedLayers := make([]uint64, len(layers))
-			copy(adjustedLayers, moeSize)
+			adjustedLayers := make([]uint64, len(moeExpertLayers))
+			for i, layer := range moeExpertLayers {
+				adjustedLayers[i] = moeSize[layer]
+			}
 
 			adjustedGPUs := make([]ml.DeviceInfo, len(gpus))
 			copy(adjustedGPUs, gpus)
@@ -1167,26 +1294,25 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 				} else {
 					adjustedGPUs[i].FreeMemory = 0
 				}
-				// Then subtract dense overhead (pre-allocated for all layers)
-				if adjustedGPUs[i].FreeMemory > totalDenseOverhead {
-					adjustedGPUs[i].FreeMemory -= totalDenseOverhead
+				// Then subtract dense overhead (pre-allocated for all layers) and staging reserve.
+				if adjustedGPUs[i].FreeMemory > totalDenseAndPrefetch {
+					adjustedGPUs[i].FreeMemory -= totalDenseAndPrefetch
 				} else {
 					adjustedGPUs[i].FreeMemory = 0
 				}
 			}
 
-			gpuLayersMoE := assignLayers(adjustedLayers, adjustedGPUs, requireFull, s.options.NumGPU, 0)
-
-			// Honor user-specified moe GPU layer count exactly.
-			// assignLayers always greedily fills; cap it when the user set a hard limit.
-			if source == "user-override" && gpuLayersMoE.Sum() > moeGPUCount {
-				var all []int
-				for _, g := range gpuLayersMoE {
-					all = append(all, g.Layers...)
+			gpuLayersMoE := findBestFit(adjustedLayers, adjustedGPUs, len(requestedMoELayers), false)
+			gpuLayersMoE = remapMoELayers(gpuLayersMoE, moeExpertLayers)
+			if gpuLayersMoE.Sum() != len(requestedMoELayers) {
+				if source != "auto" {
+					return nil, nil, nil, fmt.Errorf("moe split cannot allocate requested %d GPU MoE layers; allocated %d", len(requestedMoELayers), gpuLayersMoE.Sum())
 				}
-				slices.Sort(all)
-				gpuLayersMoE = ml.GPULayersList{{DeviceID: gpuLayersMoE[0].DeviceID, Layers: all[:moeGPUCount]}}
+				requestedMoELayers = requestedMoELayers[:gpuLayersMoE.Sum()]
 			}
+			slog.Info("moe split: actual layer assignment",
+				"moe_gpu_layers", gpuLayersMoE.Sum(),
+				"moe_cpu_layers", len(moeExpertLayers)-gpuLayersMoE.Sum())
 
 			// denseGPULayers: all layers on the same GPU(s) used by gpuLayersMoE
 			allLayerIndices := make([]int, len(layers))
@@ -1204,10 +1330,9 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 				Layers:   allLayerIndices,
 			}}
 
-			return gpuLayersMoE, denseGPULayers, layers
+			return gpuLayersMoE, denseGPULayers, layers, nil
 		}
 	}
-	// ── End MoE split logic ──────────────────────────────────────────────────
 
 	gpuLayers = ml.GPULayersList{}
 	for _, gl := range ml.ByLibrary(gpus) {
@@ -1252,7 +1377,7 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 			gpuLayers = libraryGpuLayers
 		}
 	}
-	return gpuLayers, nil, layers
+	return gpuLayers, nil, layers, nil
 }
 
 // verifyLayout ensures that we don't exceed limits, such as requirements about partial offloading or system memory
@@ -1312,7 +1437,10 @@ func (s *llmServer) verifyLayout(systemInfo ml.SystemInfo, systemGPUs []ml.Devic
 				moeSize += memory.CPU.MoEWeights[i]
 			}
 
-			denseSize := weightSize - moeSize
+			denseSize := uint64(0)
+			if weightSize > moeSize {
+				denseSize = weightSize - moeSize
+			}
 			if gpuLayer(denseGPULayers, i) {
 				vramSize += denseSize + cacheSize
 			} else {

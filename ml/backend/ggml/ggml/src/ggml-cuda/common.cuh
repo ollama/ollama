@@ -1272,6 +1272,7 @@ struct ggml_backend_cuda_context {
         void *       buffers[2]    = {nullptr, nullptr};
         cudaEvent_t  h2d_done[2]   = {nullptr, nullptr};
         size_t       capacity      = 0;
+        cudaStream_t stream        = nullptr;
     } moe_staging;
 
     ~ggml_backend_cuda_context();

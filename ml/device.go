@@ -153,10 +153,14 @@ type DeviceMemory struct {
 	// Weights is the per-layer memory needed for the model weights.
 	Weights []uint64
 
-	// MoEWeights is the per-layer memory for MoE expert tensors only
-	// (matching \.ffn_(up|down|gate)_(ch_)?exps$). Always a subset of
-	// Weights. Zero for non-MoE models or layers with MoE fully on GPU.
+	// MoEWeights is the per-layer memory for MoE expert tensors only.
+	// Always a subset of Weights. Zero for non-MoE models or layers with
+	// MoE fully on GPU.
 	MoEWeights []uint64
+
+	// MoEMaxTensor is the largest single MoE expert tensor in each layer.
+	// It is accounting metadata only and is not included in Size.
+	MoEMaxTensor []uint64
 
 	// Cache is the per-layer memory needed for the KV cache.
 	Cache []uint64

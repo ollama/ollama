@@ -218,15 +218,18 @@ var (
 	DebugLogRequests = Bool("OLLAMA_DEBUG_LOG_REQUESTS")
 	// KvCacheType is the quantization type for the K/V cache.
 	KvCacheType = String("OLLAMA_KV_CACHE_TYPE")
-	// MoeGpuLayers controls how many layers have MoE expert weights resident on GPU.
+	// MoeGpuLayers controls how many MoE expert layers have expert weights resident on GPU.
 	//    0 (default) = disable MoE split (default weight layout, useful for baseline comparison)
 	//   -1           = auto-compute from remaining VRAM after dense allocation
-	//   >0           = force this many layers to have MoE on GPU
+	//   >0           = force this many MoE expert layers to have MoE on GPU
 	MoeGpuLayers = Int("OLLAMA_MOE_GPU_LAYERS", 0)
+	// MoeCpuLayers keeps expert weights for the first N model layers on CPU.
+	// This mirrors llama.cpp --n-cpu-moe. It is mutually exclusive with OLLAMA_MOE_GPU_LAYERS.
+	MoeCpuLayers = Int("OLLAMA_MOE_CPU_LAYERS", 0)
 	// MoePinned enables cudaHostRegister for CPU-side MoE expert weight buffers.
 	// When enabled, the CUDA Copy Engine can DMA directly from mmap memory
 	// without CPU-side staging.
-	// Requires MoE split to be active (OLLAMA_MOE_GPU_LAYERS != 0).
+	// Requires MoE split to be active.
 	// Default: false (original pageable behavior).
 	MoePinned = Bool("OLLAMA_MOE_PINNED")
 	// MoePrefetch enables lookahead copy inside ggml_backend_sched_compute_splits:
@@ -345,6 +348,10 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_DEBUG":                {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_DEBUG_LOG_REQUESTS":   {"OLLAMA_DEBUG_LOG_REQUESTS", DebugLogRequests(), "Log inference request bodies and replay curl commands to a temp directory"},
 		"OLLAMA_FLASH_ATTENTION":      {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
+		"OLLAMA_MOE_GPU_LAYERS":       {"OLLAMA_MOE_GPU_LAYERS", MoeGpuLayers(), "MoE split GPU expert layer count: 0 disables, -1 chooses automatically, >0 forces that many expert layers on GPU; errors if no MoE experts are detected"},
+		"OLLAMA_MOE_CPU_LAYERS":       {"OLLAMA_MOE_CPU_LAYERS", MoeCpuLayers(), "MoE split CPU layer count matching llama.cpp --n-cpu-moe; mutually exclusive with OLLAMA_MOE_GPU_LAYERS and errors if no MoE experts are detected"},
+		"OLLAMA_MOE_PINNED":           {"OLLAMA_MOE_PINNED", MoePinned(), "Pin CPU-resident MoE expert buffers for CUDA copy overlap when MoE split is active"},
+		"OLLAMA_MOE_PREFETCH":         {"OLLAMA_MOE_PREFETCH", MoePrefetch(), "Prefetch CPU-resident MoE expert tensors into CUDA staging buffers; requires OLLAMA_MOE_PINNED"},
 		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_HOST":                 {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
