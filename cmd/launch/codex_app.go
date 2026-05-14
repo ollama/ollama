@@ -47,7 +47,7 @@ var (
 	codexAppCanOpenID = defaultCodexAppCanOpenBundleID
 	codexAppSleep     = time.Sleep
 
-	codexAppExitTimeout      = 30 * time.Second
+	codexAppExitTimeout      = 5 * time.Second
 	codexAppForceExitTimeout = 5 * time.Second
 )
 
@@ -572,15 +572,20 @@ func codexAppLaunchOrRestart(prompt string) error {
 	if err := codexAppQuitApp(); err != nil {
 		return fmt.Errorf("quit Codex: %w", err)
 	}
-	if err := waitForCodexAppGracefulExit(codexAppExitTimeout); err != nil {
-		return err
+	gracefulErr := waitForCodexAppGracefulExit(codexAppExitTimeout)
+	if gracefulErr != nil && !codexAppForceQuitSupported() {
+		return gracefulErr
 	}
-	if codexAppGOOS == "windows" && codexAppIsRunning() {
+	if codexAppForceQuitSupported() && codexAppIsRunning() {
 		if forceErr := codexAppForceQuit(); forceErr != nil {
 			return fmt.Errorf("force stop Codex: %w", forceErr)
 		}
 		if err := waitForCodexAppExit(codexAppForceExitTimeout); err != nil {
 			return err
+		}
+	} else if gracefulErr != nil {
+		if codexAppIsRunning() {
+			return gracefulErr
 		}
 	}
 	if restartAppID != "" {
@@ -590,6 +595,10 @@ func codexAppLaunchOrRestart(prompt string) error {
 		return codexAppOpenPath(restartAppPath)
 	}
 	return codexAppOpenApp()
+}
+
+func codexAppForceQuitSupported() bool {
+	return codexAppGOOS == "darwin" || codexAppGOOS == "windows"
 }
 
 func waitForCodexAppGracefulExit(timeout time.Duration) error {
@@ -679,7 +688,7 @@ func defaultCodexAppQuitApp() error {
 }
 
 func defaultCodexAppForceQuitApp() error {
-	if codexAppGOOS != "windows" {
+	if !codexAppForceQuitSupported() {
 		return nil
 	}
 	pids := codexAppMatchingProcessIDs()
@@ -690,8 +699,23 @@ func defaultCodexAppForceQuitApp() error {
 	for _, pid := range pids {
 		pidArgs = append(pidArgs, strconv.Itoa(pid))
 	}
-	script := "Stop-Process -Id " + strings.Join(pidArgs, ",") + " -Force -ErrorAction SilentlyContinue"
-	return exec.Command("powershell.exe", "-NoProfile", "-Command", script).Run()
+	switch codexAppGOOS {
+	case "windows":
+		script := "Stop-Process -Id " + strings.Join(pidArgs, ",") + " -Force -ErrorAction SilentlyContinue"
+		return runCodexAppForceQuitCommand(exec.Command("powershell.exe", "-NoProfile", "-Command", script))
+	case "darwin":
+		return runCodexAppForceQuitCommand(exec.Command("kill", append([]string{"-TERM"}, pidArgs...)...))
+	default:
+		return nil
+	}
+}
+
+func runCodexAppForceQuitCommand(cmd *exec.Cmd) error {
+	err := cmd.Run()
+	if err != nil && !codexAppIsRunning() {
+		return nil
+	}
+	return err
 }
 
 func defaultCodexAppHasOpenWindow() bool {

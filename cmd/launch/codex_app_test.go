@@ -1174,6 +1174,64 @@ func TestCodexAppRunWaitsForGracefulExitBeforeReopening(t *testing.T) {
 	}
 }
 
+func TestCodexAppRunForceStopsMacAfterGracefulTimeout(t *testing.T) {
+	withCodexAppPlatform(t, "darwin")
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	running := true
+	calls := make([]string, 0)
+	withCodexAppProcessHooks(t,
+		func() bool { return running },
+		func() error {
+			calls = append(calls, "quit")
+			return nil
+		},
+		func() error {
+			calls = append(calls, "open")
+			return nil
+		},
+	)
+	codexAppExitTimeout = 0
+	codexAppForceQuit = func() error {
+		calls = append(calls, "force")
+		running = false
+		return nil
+	}
+
+	if err := (&CodexApp{}).Run("qwen3.5", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	want := []string{"quit", "force", "open"}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
+func TestCodexAppRunReturnsMacForceStopError(t *testing.T) {
+	withCodexAppPlatform(t, "darwin")
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	withCodexAppProcessHooks(t,
+		func() bool { return true },
+		func() error { return nil },
+		func() error {
+			t.Fatal("app should not reopen when force stop fails")
+			return nil
+		},
+	)
+	codexAppExitTimeout = 0
+	codexAppForceQuit = func() error {
+		return fmt.Errorf("operation not permitted")
+	}
+
+	err := (&CodexApp{}).Run("qwen3.5", nil)
+	if err == nil || !strings.Contains(err.Error(), "force stop Codex") || !strings.Contains(err.Error(), "operation not permitted") {
+		t.Fatalf("Run error = %v, want force stop failure", err)
+	}
+}
+
 func TestCodexAppRunOpensOnWindowsWhenNotRunning(t *testing.T) {
 	withCodexAppPlatform(t, "windows")
 
