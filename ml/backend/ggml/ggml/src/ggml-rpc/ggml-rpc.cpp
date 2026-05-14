@@ -70,7 +70,6 @@ enum rpc_cmd {
     RPC_CMD_GET_ALLOC_SIZE,
     RPC_CMD_HELLO,
     RPC_CMD_DEVICE_COUNT,
-    RPC_CMD_GRAPH_RECOMPUTE,
     RPC_CMD_COUNT,
 };
 
@@ -186,10 +185,6 @@ struct rpc_msg_get_device_memory_rsp {
     uint64_t total_mem;
 };
 
-struct rpc_msg_graph_recompute_req {
-    uint32_t device;
-};
-
 #pragma pack(pop)
 
 // RPC data structures
@@ -211,7 +206,6 @@ struct ggml_backend_rpc_context {
     std::string endpoint;
     uint32_t    device;
     std::string name;
-    uint64_t    last_graph_uid;
 };
 
 struct ggml_backend_rpc_buffer_context {
@@ -527,8 +521,6 @@ static ggml_backend_buffer_i ggml_backend_rpc_buffer_interface = {
     /* .memset_tensor   = */ NULL,
     /* .set_tensor      = */ ggml_backend_rpc_buffer_set_tensor,
     /* .get_tensor      = */ ggml_backend_rpc_buffer_get_tensor,
-    /* .set_tensor_2d   = */ NULL,
-    /* .get_tensor_2d   = */ NULL,
     /* .cpy_tensor      = */ ggml_backend_rpc_buffer_cpy_tensor,
     /* .clear           = */ ggml_backend_rpc_buffer_clear,
     /* .reset           = */ NULL,
@@ -689,25 +681,16 @@ static void serialize_graph(uint32_t device, const ggml_cgraph * cgraph, std::ve
     memcpy(out_tensors, tensors.data(), n_tensors * sizeof(rpc_tensor));
 }
 
-static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+    (void) batch_size;
     ggml_backend_rpc_context * rpc_ctx = (ggml_backend_rpc_context *)backend->context;
 
     GGML_ASSERT(cgraph->n_nodes > 0);
-    bool reuse = cgraph->uid != 0 && rpc_ctx->last_graph_uid == cgraph->uid;
-    if (reuse) {
-        rpc_msg_graph_recompute_req request;
-        request.device = rpc_ctx->device;
-        auto sock = get_socket(rpc_ctx->endpoint);
-        bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE, &request, sizeof(request));
-        RPC_STATUS_ASSERT(status);
-    } else {
-        rpc_ctx->last_graph_uid = cgraph->uid;
-        std::vector<uint8_t> input;
-        serialize_graph(rpc_ctx->device, cgraph, input);
-        auto sock = get_socket(rpc_ctx->endpoint);
-        bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE, input.data(), input.size());
-        RPC_STATUS_ASSERT(status);
-    }
+    std::vector<uint8_t> input;
+    serialize_graph(rpc_ctx->device, cgraph, input);
+    auto sock = get_socket(rpc_ctx->endpoint);
+    bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE, input.data(), input.size());
+    RPC_STATUS_ASSERT(status);
     return GGML_STATUS_SUCCESS;
 }
 
@@ -716,8 +699,6 @@ static ggml_backend_i ggml_backend_rpc_interface = {
     /* .free                    = */ ggml_backend_rpc_free,
     /* .set_tensor_async        = */ NULL,
     /* .get_tensor_async        = */ NULL,
-    /* .set_tensor_2d_async     = */ NULL,
-    /* .get_tensor_2d_async     = */ NULL,
     /* .cpy_tensor_async        = */ NULL,
     /* .synchronize             = */ ggml_backend_rpc_synchronize,
     /* .graph_plan_create       = */ NULL,
@@ -728,6 +709,9 @@ static ggml_backend_i ggml_backend_rpc_interface = {
     /* .event_record            = */ NULL,
     /* .event_wait              = */ NULL,
     /* .graph_optimize          = */ NULL,
+    /* .graph_reserve           = */ NULL,
+    /* .buffer_size             = */ NULL,
+    /* .reset                   = */ NULL,
 };
 
 ggml_backend_buffer_type_t ggml_backend_rpc_buffer_type(const char * endpoint, uint32_t device) {
@@ -770,7 +754,6 @@ ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
         /* .endpoint       = */ endpoint,
         /* .device         = */ device,
         /* .name           = */ dev_name,
-        /* .last_graph_uid = */ 0,
     };
     auto reg = ggml_backend_rpc_add_server(endpoint);
     ggml_backend_t backend = new ggml_backend {
@@ -828,14 +811,12 @@ public:
     bool get_tensor(const rpc_msg_get_tensor_req & request, std::vector<uint8_t> & response);
     bool copy_tensor(const rpc_msg_copy_tensor_req & request, rpc_msg_copy_tensor_rsp & response);
     bool graph_compute(const std::vector<uint8_t> & input);
-    bool graph_recompute(const rpc_msg_graph_recompute_req & request);
     bool init_tensor(const rpc_msg_init_tensor_req & request);
     bool get_alloc_size(const rpc_msg_get_alloc_size_req & request, rpc_msg_get_alloc_size_rsp & response);
     bool get_device_memory(const rpc_msg_get_device_memory_req & request, rpc_msg_get_device_memory_rsp & response);
 
     struct stored_graph {
         std::vector<uint8_t>   buffer;
-        ggml_cgraph          * graph;
     };
 
 private:
@@ -1378,22 +1359,6 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     }
     ggml_status status = ggml_backend_graph_compute(backends[device], graph);
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
-    stored_graphs[device].graph = graph;
-    return true;
-}
-
-bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
-    uint32_t device = request.device;
-    if (device >= backends.size()) {
-        return false;
-    }
-    if (stored_graphs[device].graph == nullptr) {
-        return false;
-    }
-    ggml_cgraph * graph = stored_graphs[device].graph;
-    LOG_DBG("[%s] device: %u\n", __func__, device);
-    ggml_status status = ggml_backend_graph_compute(backends[device], graph);
-    GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
     return true;
 }
 
@@ -1648,16 +1613,6 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 if (!server.graph_compute(input)) {
-                    return;
-                }
-                break;
-            }
-            case RPC_CMD_GRAPH_RECOMPUTE: {
-                rpc_msg_graph_recompute_req request;
-                if (!recv_msg(sock, &request, sizeof(request))) {
-                    return;
-                }
-                if (!server.graph_recompute(request)) {
                     return;
                 }
                 break;
