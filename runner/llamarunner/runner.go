@@ -712,6 +712,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	jsonEncoder := json.NewEncoder(w)
 	for {
 		select {
 		case <-r.Context().Done():
@@ -719,7 +720,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case resp, ok := <-seq.responses:
 			if ok {
-				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
+				if err := jsonEncoder.Encode(&llm.CompletionResponse{
 					Content:  resp.content,
 					Logprobs: resp.logprobs,
 				}); err != nil {
@@ -730,7 +731,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 				flusher.Flush()
 			} else {
-				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
+				if err := jsonEncoder.Encode(&llm.CompletionResponse{
 					Done:               true,
 					DoneReason:         seq.doneReason,
 					PromptEvalCount:    seq.numPromptInputs,
