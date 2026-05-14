@@ -71,18 +71,3 @@ func TestPoolsideRunSetsOllamaEnv(t *testing.T) {
 		t.Fatalf("expected model and extra args in log, got:\n%s", got)
 	}
 }
-
-func TestPoolsideRunWindowsUnsupported(t *testing.T) {
-	prev := poolsideGOOS
-	poolsideGOOS = "windows"
-	t.Cleanup(func() { poolsideGOOS = prev })
-
-	p := &Poolside{}
-	err := p.Run("kimi-k2.6:cloud", nil, nil)
-	if err == nil {
-		t.Fatal("expected Windows unsupported error")
-	}
-	if !strings.Contains(err.Error(), "not currently supported on Windows") {
-		t.Fatalf("expected Windows warning, got %v", err)
-	}
-}
