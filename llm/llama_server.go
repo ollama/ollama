@@ -301,6 +301,7 @@ func startLlamaServer(
 		"-c", strconv.Itoa(opts.NumCtx * numParallel),
 		"-np", strconv.Itoa(numParallel),
 	}
+	params = appendLlamaServerLogArgs(params)
 	params = appendJinjaArgs(params, config)
 
 	params = appendMMProjArgs(params, modelPath, projectors, opts, gpus, modelLayers)
@@ -505,6 +506,15 @@ func embeddingBatchSize(opts api.Options, numParallel int) int {
 		batchSize = min(batchSize, opts.NumCtx*max(numParallel, 1))
 	}
 	return batchSize
+}
+
+func appendLlamaServerLogArgs(params []string) []string {
+	// Keep startup memory/offload lines visible for scheduler accounting.
+	return append(params,
+		"--log-verbosity", "4",
+		"--no-log-prefix",
+		"--no-log-timestamps",
+	)
 }
 
 func appendBatchArgs(params []string, opts api.Options, embedding bool, numParallel int) []string {
