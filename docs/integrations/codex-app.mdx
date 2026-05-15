@@ -2,38 +2,81 @@
 title: Codex App
 ---
 
+Codex App is OpenAI's desktop coding agent for macOS and Windows. Ollama configures the app to use Ollama's OpenAI-compatible endpoint, so Codex can work with local models and Ollama Cloud models in the desktop app.
+
+<img
+  src="/images/codex-app-home.png"
+  alt="Codex App with Ollama selected"
+  style={{ borderRadius: "12px" }}
+/>
+
 ## Install
 
-Install the [Codex App](https://developers.openai.com/codex/app/overview/) for macOS or Windows.
+Install the [Codex App](https://developers.openai.com/codex/quickstart/) for macOS or Windows.
 
-## Usage with Ollama
+<Note>Codex App support is available in Ollama v0.24.0 and newer.</Note>
 
-<Note>Codex works best with a larger context window. It is recommended to use a context window of at least 64k tokens.</Note>
 
-### Quick setup
+## Quick setup
 
 ```shell
 ollama launch codex-app
 ```
 
-To choose a model:
+Once Codex App opens, start a task or open a repository as usual.
+
+## Built-in browser
+
+Codex App can open local servers and sites in its built-in browser. Annotate directly on the page to request changes.
+
+<img
+  src="/images/codex-app-annotate.png"
+  alt="Codex App browser annotations"
+  style={{ borderRadius: "12px" }}
+/>
+
+## Review mode
+
+Use review mode to inspect code changes, leave comments, and iterate on fixes without leaving the app.
+
+<img
+  src="/images/codex-app-review.png"
+  alt="Codex App review comments"
+  style={{ borderRadius: "12px" }}
+/>
+
+### Run directly with a model
 
 ```shell
-ollama launch codex-app --model gpt-oss:120b
+ollama launch codex-app --model kimi-k2.6:cloud
 ```
 
-To configure without launching:
+Use a local model by passing its model name:
 
 ```shell
-ollama launch codex-app --config
+ollama launch codex-app --model gemma4:31b
 ```
 
-To restore your usual Codex profile:
+Running `ollama launch codex-app` is persistent and will have your model selected next time you open Codex.
+
+
+### Restore Codex App
+
+To switch Codex App back to the profile you were using before `ollama launch codex-app`, run:
 
 ```shell
 ollama launch codex-app --restore
 ```
 
-## Backups
+Ollama restores Codex App's settings and configs. If Codex App is open, Ollama asks before restarting it.
+
+
+The Codex CLI profile managed by `ollama launch codex` is left separate from the Codex App profile.
 
 Before overwriting Codex App config files, Ollama Launch saves backups under `~/.ollama/backup/codex-app/`. On Windows, `~` resolves to your user profile directory.
+
+## Troubleshooting
+
+If Codex App does not open after setup, open Codex manually once and run `ollama launch codex-app` again.
+
+If Codex App is already running and does not switch models, allow Ollama to restart it when prompted, or quit Codex App and run `ollama launch codex-app` again.
