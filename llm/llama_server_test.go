@@ -1142,6 +1142,12 @@ func TestAppendBatchArgs(t *testing.T) {
 			want:        []string{"-b", "1024", "-ub", "1024"},
 		},
 		{
+			name:        "generation sets physical batch for default options",
+			opts:        api.DefaultOptions(),
+			numParallel: 1,
+			want:        []string{"-b", "512", "-ub", "512"},
+		},
+		{
 			name:        "generation omits unset batch",
 			opts:        api.Options{},
 			numParallel: 1,
