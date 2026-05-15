@@ -24,7 +24,7 @@ jobs:
         run: |
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" | tee -a $GITHUB_OUTPUT
           echo VERSION="${GITHUB_REF_NAME#v}" | tee -a $GITHUB_OUTPUT
-          echo vendorsha=$(cat LLAMA_CPP_VERSION) | tee -a $GITHUB_OUTPUT
+          echo vendorsha=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
 
   darwin-build:
     runs-on: macos-26-xlarge

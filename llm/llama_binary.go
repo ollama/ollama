@@ -94,12 +94,16 @@ func llamaCppBinaryCandidates(name string, search llamaCppBinarySearch) []string
 			add(base)
 			// Per-architecture local dist output keeps helpers under lib/ollama.
 			add(filepath.Join(base, "lib", "ollama"))
+			// Standard CMake installs put ollama in bin/ and helpers in ../lib/ollama/.
+			add(filepath.Join(base, "..", "lib", "ollama"))
 		case "linux":
 			// Linux packages install ollama in bin/ and helpers in ../lib/ollama/.
 			add(filepath.Join(base, "..", "lib", "ollama"))
 		case "windows":
 			// Windows packages keep ollama.exe at top level with lib/ as a peer.
 			add(filepath.Join(base, "lib", "ollama"))
+			// Standard CMake installs put ollama.exe in bin/ and helpers in ../lib/ollama/.
+			add(filepath.Join(base, "..", "lib", "ollama"))
 		default:
 			add(filepath.Join(base, "lib", "ollama"))
 			add(filepath.Join(base, "..", "lib", "ollama"))

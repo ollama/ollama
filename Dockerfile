@@ -187,6 +187,7 @@ ENV LAPACK_INCLUDE_DIRS=/usr/include/openblas
 ENV CGO_LDFLAGS="-L/usr/local/cuda-13/lib64 -L/usr/local/cuda-13/targets/x86_64-linux/lib/stubs"
 WORKDIR /go/src/github.com/ollama/ollama
 COPY CMakeLists.txt CMakePresets.json .
+COPY cmake cmake
 COPY x/imagegen/mlx x/imagegen/mlx
 COPY go.mod go.sum .
 COPY MLX_VERSION MLX_C_VERSION .

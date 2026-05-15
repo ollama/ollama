@@ -151,12 +151,12 @@
     {
       "name": "cpu",
       "configurePreset": "cpu",
-      "targets": ["llama-server", "llama-quantize", "ggml-cpu"]
+      "targets": ["llama-server", "llama-quantize"]
     },
     {
       "name": "cpu-arm64",
       "configurePreset": "cpu-arm64",
-      "targets": ["llama-server", "llama-quantize", "ggml-cpu"]
+      "targets": ["llama-server", "llama-quantize"]
     },
     {
       "name": "darwin",

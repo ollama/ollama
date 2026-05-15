@@ -6,56 +6,118 @@ import (
 	"runtime"
 )
 
-// LibPath is a path to lookup dynamic libraries
-// in development it's usually 'build/lib/ollama'
-// in distribution builds it's 'lib/ollama' on Windows
-// '../lib/ollama' on Linux and the executable's directory on macOS
-// note: distribution builds, additional GPU-specific libraries are
-// found in subdirectories of the returned path, such as
-// 'cuda_v12', 'rocm', etc.
-var LibOllamaPath string = func() string {
+type libOllamaPathSearch struct {
+	executable string
+	workingDir string
+	goos       string
+	goarch     string
+}
+
+// LibOllamaPath is the root used to find bundled llama.cpp and MLX runtime
+// libraries. GPU-specific libraries live in backend subdirectories such as
+// cuda_v12, rocm, vulkan, and mlx_cuda_v13.
+var LibOllamaPath = func() string {
 	exe, err := os.Executable()
 	if err != nil {
 		return ""
 	}
-
 	if eval, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = eval
 	}
 
-	var libPath string
-	switch runtime.GOOS {
-	case "windows":
-		libPath = filepath.Join(filepath.Dir(exe), "lib", "ollama")
-	case "linux":
-		libPath = filepath.Join(filepath.Dir(exe), "..", "lib", "ollama")
-	case "darwin":
-		libPath = filepath.Dir(exe)
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
-		return ""
+		cwd = ""
 	}
 
-	distPath := filepath.Join("dist", runtime.GOOS+"-"+runtime.GOARCH, "lib", "ollama")
-	paths := []string{
-		libPath,
+	return findLibOllamaPath(libOllamaPathSearch{
+		executable: exe,
+		workingDir: cwd,
+		goos:       runtime.GOOS,
+		goarch:     runtime.GOARCH,
+	})
+}()
 
-		// release build paths for local development
-		filepath.Join(filepath.Dir(exe), distPath),
-		filepath.Join(cwd, distPath),
-
-		// build paths for development
-		filepath.Join(filepath.Dir(exe), "build", "lib", "ollama"),
-		filepath.Join(cwd, "build", "lib", "ollama"),
-	}
-
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p
+func findLibOllamaPath(search libOllamaPathSearch) string {
+	candidates := libOllamaPathCandidates(search)
+	for _, path := range candidates {
+		if libOllamaPathExists(path) {
+			return path
 		}
 	}
 
-	return filepath.Dir(exe)
-}()
+	if search.executable != "" {
+		return filepath.Dir(search.executable)
+	}
+	return ""
+}
+
+func libOllamaPathCandidates(search libOllamaPathSearch) []string {
+	goos := search.goos
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	goarch := search.goarch
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+
+	seen := map[string]bool{}
+	var candidates []string
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		if !seen[path] {
+			seen[path] = true
+			candidates = append(candidates, path)
+		}
+	}
+
+	if search.executable != "" {
+		exeDir := filepath.Dir(search.executable)
+		switch goos {
+		case "darwin":
+			// Local dist output and standard installs keep helpers under lib/ollama.
+			add(filepath.Join(exeDir, "lib", "ollama"))
+			add(filepath.Join(exeDir, "..", "lib", "ollama"))
+		case "linux":
+			add(filepath.Join(exeDir, "..", "lib", "ollama"))
+			add(filepath.Join(exeDir, "lib", "ollama"))
+		case "windows":
+			add(filepath.Join(exeDir, "lib", "ollama"))
+			add(filepath.Join(exeDir, "..", "lib", "ollama"))
+		default:
+			add(filepath.Join(exeDir, "lib", "ollama"))
+			add(filepath.Join(exeDir, "..", "lib", "ollama"))
+		}
+		addLocalLibOllamaPaths(add, exeDir, goos, goarch)
+		if goos == "darwin" {
+			// macOS release artifacts colocate native helpers with ollama.
+			add(exeDir)
+		}
+	}
+	addLocalLibOllamaPaths(add, search.workingDir, goos, goarch)
+
+	return candidates
+}
+
+func addLocalLibOllamaPaths(add func(string), base, goos, goarch string) {
+	if base == "" {
+		return
+	}
+	add(filepath.Join(base, "build", "lib", "ollama"))
+	add(filepath.Join(base, "dist", goos+"-"+goarch, "lib", "ollama"))
+	if goos+"_"+goarch != goos+"-"+goarch {
+		add(filepath.Join(base, "dist", goos+"_"+goarch, "lib", "ollama"))
+	}
+	if goos == "darwin" {
+		add(filepath.Join(base, "dist", "darwin"))
+	}
+}
+
+func libOllamaPathExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}

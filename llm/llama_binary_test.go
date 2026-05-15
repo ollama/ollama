@@ -12,9 +12,10 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 	root := t.TempDir()
 
 	tests := []struct {
-		name   string
-		search llamaCppBinarySearch
-		want   []string
+		name      string
+		search    llamaCppBinarySearch
+		want      []string
+		wantFirst string
 	}{
 		{
 			name: "linux production layout",
@@ -24,6 +25,7 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 				goarch:     "amd64",
 			},
 			want: []string{filepath.Join(root, "linux", "lib", "ollama", "llama-server")},
+			wantFirst: filepath.Join(root, "linux", "lib", "ollama", "llama-server"),
 		},
 		{
 			name: "windows production layout",
@@ -33,6 +35,7 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 				goarch:     "amd64",
 			},
 			want: []string{filepath.Join(root, "windows", "lib", "ollama", "llama-server.exe")},
+			wantFirst: filepath.Join(root, "windows", "lib", "ollama", "llama-server.exe"),
 		},
 		{
 			name: "darwin production layout",
@@ -42,6 +45,25 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 				goarch:     "arm64",
 			},
 			want: []string{filepath.Join(root, "Ollama.app", "Contents", "Resources", "llama-server")},
+			wantFirst: filepath.Join(root, "Ollama.app", "Contents", "Resources", "llama-server"),
+		},
+		{
+			name: "darwin standard install layout",
+			search: llamaCppBinarySearch{
+				executable: filepath.Join(root, "darwin", "bin", "ollama"),
+				goos:       "darwin",
+				goarch:     "arm64",
+			},
+			want: []string{filepath.Join(root, "darwin", "lib", "ollama", "llama-server")},
+		},
+		{
+			name: "windows standard install layout",
+			search: llamaCppBinarySearch{
+				executable: filepath.Join(root, "windows", "bin", "ollama.exe"),
+				goos:       "windows",
+				goarch:     "amd64",
+			},
+			want: []string{filepath.Join(root, "windows", "lib", "ollama", "llama-server.exe")},
 		},
 		{
 			name: "local per-architecture dist layout",
@@ -109,6 +131,9 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			candidates := llamaCppBinaryCandidates("llama-server", tt.search)
+			if tt.wantFirst != "" && candidates[0] != tt.wantFirst {
+				t.Fatalf("first candidate = %q, want %q; all candidates: %v", candidates[0], tt.wantFirst, candidates)
+			}
 			if tt.search.libOllamaPath != "" && candidates[0] != tt.want[0] {
 				t.Fatalf("first candidate = %q, want %q; all candidates: %v", candidates[0], tt.want[0], candidates)
 			}

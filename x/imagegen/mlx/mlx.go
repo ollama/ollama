@@ -1719,6 +1719,28 @@ func mlxLibName() string {
 	}
 }
 
+func findMLXLibraryInDir(dir, libName string) string {
+	if dir == "" {
+		return ""
+	}
+
+	candidate := filepath.Join(dir, libName)
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+
+	if mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx*")); err == nil {
+		for _, mlxDir := range mlxDirs {
+			candidate = filepath.Join(mlxDir, libName)
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+	}
+
+	return ""
+}
+
 // findMLXLibrary searches for the MLX shared library in standard locations.
 // Returns the path to the library, or empty string if not found.
 func findMLXLibrary() string {
@@ -1727,17 +1749,8 @@ func findMLXLibrary() string {
 	// 1. OLLAMA_LIBRARY_PATH — check each dir and mlx_* subdirs
 	if paths, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH"); ok {
 		for _, dir := range filepath.SplitList(paths) {
-			candidate := filepath.Join(dir, libName)
-			if _, err := os.Stat(candidate); err == nil {
+			if candidate := findMLXLibraryInDir(dir, libName); candidate != "" {
 				return candidate
-			}
-			if mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx*")); err == nil {
-				for _, mlxDir := range mlxDirs {
-					candidate = filepath.Join(mlxDir, libName)
-					if _, err := os.Stat(candidate); err == nil {
-						return candidate
-					}
-				}
 			}
 		}
 	}
@@ -1750,8 +1763,7 @@ func findMLXLibrary() string {
 		exeDir := filepath.Dir(exe)
 
 		// Check exe dir directly (macOS copies dylib here)
-		candidate := filepath.Join(exeDir, libName)
-		if _, err := os.Stat(candidate); err == nil {
+		if candidate := findMLXLibraryInDir(exeDir, libName); candidate != "" {
 			return candidate
 		}
 
@@ -1761,22 +1773,27 @@ func findMLXLibrary() string {
 			filepath.Join(exeDir, "lib", "ollama"),
 			filepath.Join(exeDir, "..", "lib", "ollama"),
 		} {
-			if mlxDirs, err := filepath.Glob(filepath.Join(libOllamaDir, "mlx*")); err == nil {
-				for _, mlxDir := range mlxDirs {
-					candidate = filepath.Join(mlxDir, libName)
-					if _, err := os.Stat(candidate); err == nil {
-						return candidate
-					}
-				}
+			if candidate := findMLXLibraryInDir(libOllamaDir, libName); candidate != "" {
+				return candidate
 			}
 		}
 	}
 
 	// 3. Build directory (for tests run from repo root)
 	if cwd, err := os.Getwd(); err == nil {
-		candidate := filepath.Join(cwd, "build", "lib", "ollama", libName)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
+		for _, dir := range []string{
+			filepath.Join(cwd, "build", "lib", "ollama"),
+			filepath.Join(cwd, "dist", runtime.GOOS+"-"+runtime.GOARCH, "lib", "ollama"),
+			filepath.Join(cwd, "dist", runtime.GOOS+"_"+runtime.GOARCH, "lib", "ollama"),
+		} {
+			if candidate := findMLXLibraryInDir(dir, libName); candidate != "" {
+				return candidate
+			}
+		}
+		if runtime.GOOS == "darwin" {
+			if candidate := findMLXLibraryInDir(filepath.Join(cwd, "dist", "darwin"), libName); candidate != "" {
+				return candidate
+			}
 		}
 	}
 

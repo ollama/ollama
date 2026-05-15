@@ -70,7 +70,8 @@ func tryLoadFromDir(dir string) bool {
 }
 
 // libOllamaRoots returns candidate directories for MLX dynamic libraries.
-// Production: exe_dir/lib/ollama (dist tarball) and exe_dir (app bundle).
+// Production: exe_dir/lib/ollama (Windows release layout),
+// exe_dir/../lib/ollama (standard bin/lib layout), and exe_dir (macOS bundle).
 // Development: build/lib/ollama and build/*/lib/ollama.
 func libOllamaRoots() []string {
 	var roots []string
@@ -84,11 +85,13 @@ func libOllamaRoots() []string {
 		switch runtime.GOOS {
 		case "darwin":
 			roots = append(roots, filepath.Join(exeDir, "lib", "ollama"))
+			roots = append(roots, filepath.Join(exeDir, "..", "lib", "ollama"))
 			roots = append(roots, exeDir) // app bundle: Contents/Resources/
 		case "linux":
 			roots = append(roots, filepath.Join(exeDir, "..", "lib", "ollama"))
 		case "windows":
 			roots = append(roots, filepath.Join(exeDir, "lib", "ollama"))
+			roots = append(roots, filepath.Join(exeDir, "..", "lib", "ollama"))
 		}
 	}
 
