@@ -94,10 +94,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(mlx-c)
 
-# MLX CUDA builds have a long tail across many architecture variants. Using
-# higher NVCC thread counts helps, but every .cu can then spawn multiple
-# memory-heavy compiler processes. Keep those compiles in a Ninja pool sized
-# from host RAM so CI can use more threads without falling over.
+# To avoid a "long tail" when building MLX with a large set of GPU
+# architectures, utilize a higher --threads (-t) setting. At high -t
+# every .cu spawns concurrent cicc instances; each cicc can consume several GB
+# compiling MLX's CUTLASS-using kernels.  This in turn can cause OOMs.
+#
+# We use a pool to cover all MLX CUDA sources. Pool size is derived from total
+# host RAM via a per-file memory budget.
+#
+# This was calibrated with `-t 6`.  Higher -t may require overriding
+# MLX_CUDA_RAM_MB
 if(CMAKE_GENERATOR STREQUAL "Ninja")
     file(GLOB_RECURSE _mlx_cu
         "${mlx_SOURCE_DIR}/mlx/backend/cuda/*.cu"
@@ -105,7 +111,7 @@ if(CMAKE_GENERATOR STREQUAL "Ninja")
     )
     if(_mlx_cu)
         set(MLX_CUDA_RAM_MB 22000 CACHE STRING
-            "Per-file memory budget in MB for the MLX CUDA compile job pool.")
+            "Per-file memory budget (MB) for the cuda_compile JOB_POOL.  Override for higher -t.")
         cmake_host_system_information(RESULT _ram_mb QUERY TOTAL_PHYSICAL_MEMORY)
         math(EXPR _cuda_pool "${_ram_mb} / ${MLX_CUDA_RAM_MB}")
         if(_cuda_pool LESS 2)
@@ -113,6 +119,11 @@ if(CMAKE_GENERATOR STREQUAL "Ninja")
         endif()
         set_property(GLOBAL APPEND PROPERTY JOB_POOLS cuda_compile=${_cuda_pool})
         list(LENGTH _mlx_cu _cu_count)
+        # SOURCE properties default to directory-scoped, which means a plain
+        # set_property(SOURCE ...) here would NOT affect the build rules
+        # generated for the mlx target (defined in mlx_SOURCE_DIR after
+        # FetchContent).  TARGET_DIRECTORY mlx puts the property in the
+        # directory where mlx was defined, so it actually applies.
         foreach(f ${_mlx_cu})
             set_property(SOURCE "${f}"
                 TARGET_DIRECTORY mlx
@@ -120,7 +131,7 @@ if(CMAKE_GENERATOR STREQUAL "Ninja")
         endforeach()
         message(STATUS "MLX cuda_compile JOB_POOL: ${_cu_count} files, pool size ${_cuda_pool} (host RAM ${_ram_mb} MB / ${MLX_CUDA_RAM_MB} MB per file)")
     else()
-        message(WARNING "MLX cuda_compile JOB_POOL: no CUDA sources found under mlx/backend/cuda")
+        message(WARNING "MLX cuda_compile JOB_POOL: no .cu files found under mlx/backend/cuda/ - check MLX layout")
     endif()
 endif()
 

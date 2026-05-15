@@ -91,12 +91,12 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "codex-app",
 		Runner:      &CodexApp{},
 		Aliases:     []string{"codex-desktop", "codex-gui"},
-		Description: "OpenAI's desktop coding agent",
+		Description: "An AI agent you can delegate real work to, by OpenAI",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return codexAppInstalled()
 			},
-			URL: "https://developers.openai.com/codex/app/overview/",
+			URL: "https://developers.openai.com/codex/quickstart",
 		},
 	},
 	{

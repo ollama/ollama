@@ -30,10 +30,15 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 	oldOpen := codexAppOpenApp
 	oldOpenPath := codexAppOpenPath
 	oldOpenStart := codexAppOpenStart
+	oldForceQuit := codexAppForceQuit
+	oldHasWindow := codexAppHasWindow
 	oldRunPath := codexAppRunPath
 	oldStartID := codexAppStartID
 	oldCanOpenID := codexAppCanOpenID
+	oldExitTimeout := codexAppExitTimeout
+	oldForceExitTimeout := codexAppForceExitTimeout
 	codexAppIsRunning = isRunning
+	codexAppHasWindow = isRunning
 	codexAppQuitApp = quit
 	codexAppOpenApp = open
 	t.Cleanup(func() {
@@ -42,9 +47,13 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 		codexAppOpenApp = oldOpen
 		codexAppOpenPath = oldOpenPath
 		codexAppOpenStart = oldOpenStart
+		codexAppForceQuit = oldForceQuit
+		codexAppHasWindow = oldHasWindow
 		codexAppRunPath = oldRunPath
 		codexAppStartID = oldStartID
 		codexAppCanOpenID = oldCanOpenID
+		codexAppExitTimeout = oldExitTimeout
+		codexAppForceExitTimeout = oldForceExitTimeout
 	})
 }
 
@@ -585,7 +594,7 @@ func TestCodexAppConfigurePopulatesCatalogFromTagsAndShow(t *testing.T) {
 		if !ok || len(levels) != 0 {
 			t.Fatalf("supported_reasoning_levels for %q = %v, want empty list", slug, model["supported_reasoning_levels"])
 		}
-		wantContext := float64(272000)
+		wantContext := float64(128000)
 		wantModalities := []string{"text"}
 		wantShowCalls := 0
 		if slug == "gemma4" {
@@ -1165,6 +1174,64 @@ func TestCodexAppRunWaitsForGracefulExitBeforeReopening(t *testing.T) {
 	}
 }
 
+func TestCodexAppRunForceStopsMacAfterGracefulTimeout(t *testing.T) {
+	withCodexAppPlatform(t, "darwin")
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	running := true
+	calls := make([]string, 0)
+	withCodexAppProcessHooks(t,
+		func() bool { return running },
+		func() error {
+			calls = append(calls, "quit")
+			return nil
+		},
+		func() error {
+			calls = append(calls, "open")
+			return nil
+		},
+	)
+	codexAppExitTimeout = 0
+	codexAppForceQuit = func() error {
+		calls = append(calls, "force")
+		running = false
+		return nil
+	}
+
+	if err := (&CodexApp{}).Run("qwen3.5", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	want := []string{"quit", "force", "open"}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
+func TestCodexAppRunReturnsMacForceStopError(t *testing.T) {
+	withCodexAppPlatform(t, "darwin")
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	withCodexAppProcessHooks(t,
+		func() bool { return true },
+		func() error { return nil },
+		func() error {
+			t.Fatal("app should not reopen when force stop fails")
+			return nil
+		},
+	)
+	codexAppExitTimeout = 0
+	codexAppForceQuit = func() error {
+		return fmt.Errorf("operation not permitted")
+	}
+
+	err := (&CodexApp{}).Run("qwen3.5", nil)
+	if err == nil || !strings.Contains(err.Error(), "force stop Codex") || !strings.Contains(err.Error(), "operation not permitted") {
+		t.Fatalf("Run error = %v, want force stop failure", err)
+	}
+}
+
 func TestCodexAppRunOpensOnWindowsWhenNotRunning(t *testing.T) {
 	withCodexAppPlatform(t, "windows")
 
@@ -1231,6 +1298,79 @@ func TestCodexAppRunRestartsWindowsStartAppID(t *testing.T) {
 	}
 	if openedPath != "" {
 		t.Fatalf("opened path = %q, want Start AppID path only", openedPath)
+	}
+}
+
+func TestCodexAppRunForceStopsWindowsBackgroundProcessesBeforeReopening(t *testing.T) {
+	withCodexAppPlatform(t, "windows")
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	windowOpen := true
+	running := true
+	calls := make([]string, 0)
+	withCodexAppProcessHooks(t,
+		func() bool { return running },
+		func() error {
+			calls = append(calls, "quit")
+			windowOpen = false
+			return nil
+		},
+		func() error {
+			t.Fatal("open app fallback should not be used")
+			return nil
+		},
+	)
+	codexAppHasWindow = func() bool { return windowOpen }
+	codexAppForceQuit = func() error {
+		calls = append(calls, "force")
+		running = false
+		return nil
+	}
+	codexAppStartID = func() string { return "OpenAI.Codex_2p2nqsd0c76g0!App" }
+	codexAppOpenStart = func(appID string) error {
+		calls = append(calls, "open:"+appID)
+		return nil
+	}
+
+	if err := (&CodexApp{}).Run("qwen3.5", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	want := []string{"quit", "force", "open:OpenAI.Codex_2p2nqsd0c76g0!App"}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
+func TestCodexAppRunReturnsWindowsForceStopError(t *testing.T) {
+	withCodexAppPlatform(t, "windows")
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	windowOpen := true
+	withCodexAppProcessHooks(t,
+		func() bool { return true },
+		func() error {
+			windowOpen = false
+			return nil
+		},
+		func() error {
+			t.Fatal("open app fallback should not be used")
+			return nil
+		},
+	)
+	codexAppHasWindow = func() bool { return windowOpen }
+	codexAppForceQuit = func() error {
+		return fmt.Errorf("access denied")
+	}
+	codexAppOpenStart = func(string) error {
+		t.Fatal("app should not reopen when force stop fails")
+		return nil
+	}
+
+	err := (&CodexApp{}).Run("qwen3.5", nil)
+	if err == nil || !strings.Contains(err.Error(), "force stop Codex") || !strings.Contains(err.Error(), "access denied") {
+		t.Fatalf("Run error = %v, want force stop failure", err)
 	}
 }
 

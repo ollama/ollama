@@ -39,11 +39,16 @@ var (
 	codexAppOpenPath  = defaultCodexAppOpenAppPath
 	codexAppOpenStart = defaultCodexAppOpenStartAppID
 	codexAppQuitApp   = defaultCodexAppQuitApp
+	codexAppForceQuit = defaultCodexAppForceQuitApp
+	codexAppHasWindow = defaultCodexAppHasOpenWindow
 	codexAppIsRunning = defaultCodexAppIsRunning
 	codexAppRunPath   = defaultCodexAppRunningAppPath
 	codexAppStartID   = defaultCodexAppStartAppID
 	codexAppCanOpenID = defaultCodexAppCanOpenBundleID
 	codexAppSleep     = time.Sleep
+
+	codexAppExitTimeout      = 5 * time.Second
+	codexAppForceExitTimeout = 5 * time.Second
 )
 
 // CodexApp configures the desktop Codex app with one launch-selected default
@@ -367,7 +372,7 @@ type codexAppModelMetadata struct {
 
 func codexAppDefaultModelMetadata() codexAppModelMetadata {
 	return codexAppModelMetadata{
-		contextWindow:   272_000,
+		contextWindow:   128_000,
 		inputModalities: []string{"text"},
 	}
 }
@@ -567,8 +572,21 @@ func codexAppLaunchOrRestart(prompt string) error {
 	if err := codexAppQuitApp(); err != nil {
 		return fmt.Errorf("quit Codex: %w", err)
 	}
-	if err := waitForCodexAppExit(30 * time.Second); err != nil {
-		return err
+	gracefulErr := waitForCodexAppGracefulExit(codexAppExitTimeout)
+	if gracefulErr != nil && !codexAppForceQuitSupported() {
+		return gracefulErr
+	}
+	if codexAppForceQuitSupported() && codexAppIsRunning() {
+		if forceErr := codexAppForceQuit(); forceErr != nil {
+			return fmt.Errorf("force stop Codex: %w", forceErr)
+		}
+		if err := waitForCodexAppExit(codexAppForceExitTimeout); err != nil {
+			return err
+		}
+	} else if gracefulErr != nil {
+		if codexAppIsRunning() {
+			return gracefulErr
+		}
 	}
 	if restartAppID != "" {
 		return codexAppOpenStart(restartAppID)
@@ -579,10 +597,29 @@ func codexAppLaunchOrRestart(prompt string) error {
 	return codexAppOpenApp()
 }
 
+func codexAppForceQuitSupported() bool {
+	return codexAppGOOS == "darwin" || codexAppGOOS == "windows"
+}
+
+func waitForCodexAppGracefulExit(timeout time.Duration) error {
+	return waitForCodexAppCondition(timeout, func() bool {
+		if codexAppGOOS == "windows" {
+			return !codexAppHasWindow()
+		}
+		return !codexAppIsRunning()
+	})
+}
+
 func waitForCodexAppExit(timeout time.Duration) error {
+	return waitForCodexAppCondition(timeout, func() bool {
+		return !codexAppIsRunning()
+	})
+}
+
+func waitForCodexAppCondition(timeout time.Duration, done func() bool) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !codexAppIsRunning() {
+		if done() {
 			return nil
 		}
 		codexAppSleep(200 * time.Millisecond)
@@ -648,6 +685,46 @@ func defaultCodexAppQuitApp() error {
 		scriptErr = exec.Command("osascript", "-e", `tell application id "`+codexAppBundleID+`" to quit`).Run()
 	}
 	return scriptErr
+}
+
+func defaultCodexAppForceQuitApp() error {
+	if !codexAppForceQuitSupported() {
+		return nil
+	}
+	pids := codexAppMatchingProcessIDs()
+	if len(pids) == 0 {
+		return nil
+	}
+	pidArgs := make([]string, 0, len(pids))
+	for _, pid := range pids {
+		pidArgs = append(pidArgs, strconv.Itoa(pid))
+	}
+	switch codexAppGOOS {
+	case "windows":
+		script := "Stop-Process -Id " + strings.Join(pidArgs, ",") + " -Force -ErrorAction SilentlyContinue"
+		return runCodexAppForceQuitCommand(exec.Command("powershell.exe", "-NoProfile", "-Command", script))
+	case "darwin":
+		return runCodexAppForceQuitCommand(exec.Command("kill", append([]string{"-TERM"}, pidArgs...)...))
+	default:
+		return nil
+	}
+}
+
+func runCodexAppForceQuitCommand(cmd *exec.Cmd) error {
+	err := cmd.Run()
+	if err != nil && !codexAppIsRunning() {
+		return nil
+	}
+	return err
+}
+
+func defaultCodexAppHasOpenWindow() bool {
+	if codexAppGOOS != "windows" {
+		return codexAppIsRunning()
+	}
+	script := `(Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`
+	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
 func defaultCodexAppIsRunning() bool {

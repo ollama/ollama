@@ -1741,6 +1741,11 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantURL: "https://developers.openai.com/codex/cli/",
 		},
 		{
+			name:    "codex app has hint",
+			input:   "codex-app",
+			wantURL: "https://developers.openai.com/codex/quickstart",
+		},
+		{
 			name:    "openclaw has hint",
 			input:   "openclaw",
 			wantURL: "https://docs.openclaw.ai",
