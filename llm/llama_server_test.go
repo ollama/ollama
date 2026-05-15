@@ -194,6 +194,60 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	}
 }
 
+func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
+	var completionBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/completion":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("reading completion request body: %v", err)
+				return
+			}
+			if err := json.Unmarshal(body, &completionBody); err != nil {
+				t.Errorf("invalid completion request body %q: %v", body, err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"","stop":true}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	opts := api.DefaultOptions()
+	opts.RepeatLastN = 0
+	if err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:  "test prompt",
+		Options: &opts,
+	}, func(CompletionResponse) {}); err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	value, ok := completionBody["repeat_last_n"]
+	if !ok {
+		t.Fatal("repeat_last_n missing from llama-server completion request")
+	}
+	if value != float64(0) {
+		t.Fatalf("repeat_last_n = %v, want 0", value)
+	}
+}
+
 func TestLlamaServerCompletionTruncatesPromptAsTokens(t *testing.T) {
 	var completionReq llamaServerCompletionRequest
 	var tokenizeReq struct {

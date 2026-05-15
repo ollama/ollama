@@ -930,7 +930,7 @@ type llamaServerCompletionRequest struct {
 	MinP            float32         `json:"min_p"`
 	Stop            []string        `json:"stop,omitempty"`
 	RepeatPenalty   float32         `json:"repeat_penalty"`
-	RepeatLastN     int             `json:"repeat_last_n,omitempty"`
+	RepeatLastN     int             `json:"repeat_last_n"`
 	FreqPenalty     float32         `json:"frequency_penalty"`
 	PresPenalty     float32         `json:"presence_penalty"`
 	TypicalP        float32         `json:"typical_p,omitempty"`
