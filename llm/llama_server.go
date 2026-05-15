@@ -938,7 +938,6 @@ type llamaServerCompletionRequest struct {
 	Grammar         string          `json:"grammar,omitempty"`
 	JsonSchema      json.RawMessage `json:"json_schema,omitempty"`
 	NProbs          int             `json:"n_probs,omitempty"`
-	Samplers        []string        `json:"samplers,omitempty"`
 	PreservedTokens []string        `json:"preserved_tokens,omitempty"`
 }
 
@@ -984,27 +983,6 @@ func leadingSpecialTokenCandidate(tag string) string {
 	}
 
 	return tag[:end+1]
-}
-
-// optimizedSamplerOrder mirrors llama-server's default sampler chain but moves
-// "penalties" after "top_k". The upstream default runs penalties first, which
-// iterates and does a hashmap lookup over the entire vocabulary (~128k tokens
-// for modern models) every generated token — a measured 28-30% throughput hit
-// on small models with the Ollama default repeat_penalty=1.1. Running penalties
-// after top_k truncates that work to ~40 tokens with no behavioral change since
-// every sampler here is commutative with top_k for the tokens that survive.
-//
-// See llama.cpp common/common.h COMMON_SAMPLER_TYPE_* for the canonical default.
-var optimizedSamplerOrder = []string{
-	"dry",
-	"top_n_sigma",
-	"top_k",
-	"penalties",
-	"typ_p",
-	"top_p",
-	"min_p",
-	"xtc",
-	"temperature",
 }
 
 // llamaServerMultimodalPrompt is used when images are present.
@@ -1122,7 +1100,6 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		PresPenalty:     req.Options.PresencePenalty,
 		TypicalP:        req.Options.TypicalP,
 		Seed:            req.Options.Seed,
-		Samplers:        optimizedSamplerOrder,
 		PreservedTokens: llamaServerPreservedTokens(req.PreservedTokens, req.ToolCallTag),
 	}
 
@@ -1688,7 +1665,6 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 		"presence_penalty":  req.Options.PresencePenalty,
 		"typical_p":         req.Options.TypicalP,
 		"seed":              req.Options.Seed,
-		"samplers":          optimizedSamplerOrder,
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools

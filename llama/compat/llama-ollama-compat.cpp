@@ -487,6 +487,21 @@ void rename_qwen_ssm_dt_bias_tensors(gguf_context * meta, ggml_context * ctx) {
     }
 }
 
+void collapse_u32_array_to_max(gguf_context * meta, const std::string & key, uint32_t fallback) {
+    const int64_t kid = gguf_find_key(meta, key.c_str());
+    if (kid < 0 || gguf_get_kv_type(meta, kid) != GGUF_TYPE_ARRAY) return;
+
+    const size_t n = gguf_get_arr_n(meta, kid);
+    const auto * arr = static_cast<const uint32_t *>(gguf_get_arr_data(meta, kid));
+    uint32_t max_value = 0;
+    for (size_t i = 0; i < n; ++i) if (arr[i] > max_value) max_value = arr[i];
+    if (max_value == 0) max_value = fallback;
+    if (max_value == 0) return;
+
+    gguf_remove_key (meta, key.c_str());
+    gguf_set_val_u32(meta, key.c_str(), max_value);
+}
+
 // Shared text-side fixes for qwen35 / qwen35moe published-model layouts.
 // Both arches use the same SSM-hybrid + M-RoPE + MTP+vision-monolithic
 // layout differences; only the arch name and KV prefix differ.
@@ -501,16 +516,7 @@ void apply_qwen35_text_fixes(const llama_model_loader * ml, gguf_context * meta,
     //    Collapse to the max non-zero value.
     {
         const std::string key = kv(".attention.head_count_kv");
-        const int64_t kid = gguf_find_key(meta, key.c_str());
-        if (kid >= 0 && gguf_get_kv_type(meta, kid) == GGUF_TYPE_ARRAY) {
-            const size_t n = gguf_get_arr_n(meta, kid);
-            const auto * arr = static_cast<const uint32_t *>(gguf_get_arr_data(meta, kid));
-            uint32_t max_kv = 0;
-            for (size_t i = 0; i < n; ++i) if (arr[i] > max_kv) max_kv = arr[i];
-            if (max_kv == 0) max_kv = 2; // safety fallback
-            gguf_remove_key  (meta, key.c_str());
-            gguf_set_val_u32 (meta, key.c_str(), max_kv);
-        }
+        collapse_u32_array_to_max(meta, key, 2);
     }
 
     // 2. rope.dimension_sections — llama.cpp expects a 4-element array
@@ -599,6 +605,7 @@ bool detect_ollama_qwen3next(const gguf_context * meta) {
 void handle_qwen3next(gguf_context * meta, ggml_context * ctx) {
     if (!detect_ollama_qwen3next(meta)) return;
     OLLAMA_COMPAT_LOG_INFO("%s: detected qwen3next GGUF with ssm_dt tensors; applying compatibility fixes\n", __func__);
+    collapse_u32_array_to_max(meta, "qwen3next.attention.head_count_kv", 0);
     rename_qwen_ssm_dt_bias_tensors(meta, ctx);
 }
 

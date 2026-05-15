@@ -51,6 +51,11 @@ var probeLlamaServerVulkanDevices = func() ([]vulkanPhysicalDevice, error) {
 }
 
 func refineLlamaServerDevices(devices []ml.DeviceInfo) []ml.DeviceInfo {
+	devices = refineLinuxROCmDevices(devices)
+	return refineWindowsVulkanDevices(devices)
+}
+
+func refineWindowsVulkanDevices(devices []ml.DeviceInfo) []ml.DeviceInfo {
 	if runtime.GOOS != "windows" {
 		return devices
 	}

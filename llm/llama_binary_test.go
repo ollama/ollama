@@ -24,7 +24,7 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 				goos:       "linux",
 				goarch:     "amd64",
 			},
-			want: []string{filepath.Join(root, "linux", "lib", "ollama", "llama-server")},
+			want:      []string{filepath.Join(root, "linux", "lib", "ollama", "llama-server")},
 			wantFirst: filepath.Join(root, "linux", "lib", "ollama", "llama-server"),
 		},
 		{
@@ -34,7 +34,7 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 				goos:       "windows",
 				goarch:     "amd64",
 			},
-			want: []string{filepath.Join(root, "windows", "lib", "ollama", "llama-server.exe")},
+			want:      []string{filepath.Join(root, "windows", "lib", "ollama", "llama-server.exe")},
 			wantFirst: filepath.Join(root, "windows", "lib", "ollama", "llama-server.exe"),
 		},
 		{
@@ -44,7 +44,7 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 				goos:       "darwin",
 				goarch:     "arm64",
 			},
-			want: []string{filepath.Join(root, "Ollama.app", "Contents", "Resources", "llama-server")},
+			want:      []string{filepath.Join(root, "Ollama.app", "Contents", "Resources", "llama-server")},
 			wantFirst: filepath.Join(root, "Ollama.app", "Contents", "Resources", "llama-server"),
 		},
 		{
