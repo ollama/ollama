@@ -28,7 +28,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { ThinkButton } from "./ThinkButton";
 import { ErrorMessage } from "./ErrorMessage";
-import { processFiles } from "@/utils/fileValidation";
+import { fetchValidFiles } from "@/utils/fileValidation";
 import type { ImageData } from "@/types/webview";
 import { PlusIcon } from "@heroicons/react/24/outline";
 
@@ -664,7 +664,7 @@ function ChatForm({
           .filter(Boolean) as File[];
 
         if (files.length > 0) {
-          const { validFiles, errors } = await processFiles(files, {
+          const { validFiles, errors } = await fetchValidFiles(files, {
             selectedModel,
             hasVisionCapability,
           });

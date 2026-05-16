@@ -104,7 +104,7 @@ export function readFileAsBytes(file: File): Promise<Uint8Array> {
 }
 
 // Process multiple files with validation
-export async function processFiles(
+export async function fetchValidFiles(
   files: File[],
   options: FileValidationOptions = {},
 ): Promise<{

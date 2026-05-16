@@ -7,7 +7,7 @@ import {
 } from "react";
 import { DocumentPlusIcon } from "@heroicons/react/24/outline";
 import type { Model } from "@/gotypes";
-import { processFiles as processFilesUtil } from "@/utils/fileValidation";
+import { fetchValidFiles } from "@/utils/fileValidation";
 
 interface FileUploadProps {
   children: ReactNode;
@@ -106,7 +106,7 @@ export function FileUpload({
       }
 
       // Use shared validation utility
-      const { validFiles, errors } = await processFilesUtil(allFiles, {
+      const { validFiles, errors } = await fetchValidFiles(allFiles, {
         maxFileSize,
         allowedExtensions,
         hasVisionCapability,
