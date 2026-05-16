@@ -200,7 +200,7 @@ function ChatForm({
   };
 
   // Create stable callback for file handling
-  const handleFilesReceived = useCallback(
+  const appendFilesReceivedToMessage = useCallback(
     (
       files: Array<{ filename: string; data: Uint8Array; type?: string }>,
       errors: Array<{ filename: string; error: string }> = [],
@@ -233,9 +233,9 @@ function ChatForm({
 
   useEffect(() => {
     if (onFilesReceived) {
-      onFilesReceived(handleFilesReceived);
+      onFilesReceived(appendFilesReceivedToMessage);
     }
-  }, [onFilesReceived, handleFilesReceived]);
+  }, [onFilesReceived, appendFilesReceivedToMessage]);
 
   // Determine if login banner should be shown
   const shouldShowLoginBanner =
@@ -671,7 +671,7 @@ function ChatForm({
 
           // Send processed files and errors to the same handler as FileUpload
           if (validFiles.length > 0 || errors.length > 0) {
-            handleFilesReceived(validFiles, errors);
+            appendFilesReceivedToMessage(validFiles, errors);
           }
         }
       }
