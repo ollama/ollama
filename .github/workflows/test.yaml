@@ -65,7 +65,7 @@ jobs:
           - preset: 'MLX CUDA 13'
             container: nvidia/cuda:13.0.0-devel-ubuntu22.04
             extra-packages: libcudnn9-dev-cuda-13 libopenblas-dev liblapack-dev liblapacke-dev git curl
-            flags: '-DCMAKE_CUDA_ARCHITECTURES=87 -DBLAS_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu -DLAPACK_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu'
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=87 -DMLX_CUDA_ARCHITECTURES=80-virtual -DBLAS_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu -DLAPACK_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu'
             install-go: true
     runs-on: linux
     container: ${{ matrix.container }}
@@ -105,7 +105,7 @@ jobs:
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.vendorsha }}
       - run: |
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
-          cmake --build --preset "${{ matrix.preset }}" --parallel
+          cmake --build --preset "${{ matrix.preset }}" -- -l $(nproc)
 
   windows:
     needs: [changes]
@@ -134,7 +134,7 @@ jobs:
           - preset: 'MLX CUDA 13'
             install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
             cudnn-install: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.18.1.3_cuda13-archive.zip
-            flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=80 -DMLX_CUDA_ARCHITECTURES=80-virtual'
             cuda-components:
               - '"cudart"'
               - '"nvcc"'
@@ -240,7 +240,7 @@ jobs:
           Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
-          cmake --build --parallel --preset "${{ matrix.preset }}"
+          cmake --build --preset "${{ matrix.preset }}" -- -l $([Environment]::ProcessorCount)
         env:
           CMAKE_GENERATOR: Ninja
 

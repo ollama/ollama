@@ -136,6 +136,8 @@ func Execute(args []string) error {
 			RepeatPenalty:    request.Options.RepeatPenalty,
 			PresencePenalty:  request.Options.PresencePenalty,
 			FrequencyPenalty: request.Options.FrequencyPenalty,
+			Seed:             request.Options.Seed,
+			UseSeed:          request.Options.Seed >= 0,
 			Logprobs:         request.Logprobs,
 			TopLogprobs:      request.TopLogprobs,
 		}

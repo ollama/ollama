@@ -58,6 +58,9 @@ func TestIntegrationLookup(t *testing.T) {
 		{"claude desktop", "claude-desktop", true, "Claude Desktop"},
 		{"claude desktop alias", "claude-app", true, "Claude Desktop"},
 		{"codex", "codex", true, "Codex"},
+		{"codex app", "codex-app", true, "Codex App"},
+		{"codex app desktop alias", "codex-desktop", true, "Codex App"},
+		{"codex app gui alias", "codex-gui", true, "Codex App"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
 		{"droid", "droid", true, "Droid"},
 		{"opencode", "opencode", true, "OpenCode"},
@@ -80,7 +83,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "codex", "kimi", "droid", "opencode", "hermes", "pool"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "codex", "codex-app", "kimi", "droid", "opencode", "hermes", "pool"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -1738,6 +1741,11 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantURL: "https://developers.openai.com/codex/cli/",
 		},
 		{
+			name:    "codex app has hint",
+			input:   "codex-app",
+			wantURL: "https://developers.openai.com/codex/quickstart",
+		},
+		{
 			name:    "openclaw has hint",
 			input:   "openclaw",
 			wantURL: "https://docs.openclaw.ai",
@@ -1813,8 +1821,35 @@ func TestListIntegrationInfos(t *testing.T) {
 			}
 			want = filtered
 		}
+		if codexAppSupported() != nil {
+			filtered := make([]string, 0, len(want))
+			for _, name := range want {
+				if name != "codex-app" {
+					filtered = append(filtered, name)
+				}
+			}
+			want = filtered
+		}
+
 		if diff := compareStrings(got, want); diff != "" {
 			t.Fatalf("launcher integration order mismatch: %s", diff)
+		}
+	})
+
+	t.Run("prioritizes primary launcher integrations", func(t *testing.T) {
+		got := make([]string, 0, len(infos))
+		for _, info := range infos {
+			got = append(got, info.Name)
+		}
+		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw"}
+		if codexAppSupported() != nil {
+			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode"}
+		}
+		if len(got) < len(wantPrefix) {
+			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
+		}
+		if diff := compareStrings(got[:len(wantPrefix)], wantPrefix); diff != "" {
+			t.Fatalf("unexpected primary launcher order: %s", diff)
 		}
 	})
 
@@ -1831,6 +1866,9 @@ func TestListIntegrationInfos(t *testing.T) {
 
 	t.Run("includes known integrations", func(t *testing.T) {
 		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
+		if codexAppSupported() == nil {
+			known["codex-app"] = false
+		}
 		if poolsideGOOS != "windows" {
 			known["pool"] = false
 		}

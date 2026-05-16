@@ -88,6 +88,10 @@ func BeginSpeculation(caches []Cache) ([]Cache, *Speculation, bool) {
 			sc := newSpeculativeKVCache(c)
 			specCaches[i] = sc
 			layers[i] = sc
+		case *RecurrentCache:
+			sc := newSpeculativeRecurrentCache(c)
+			specCaches[i] = sc
+			layers[i] = sc
 		default:
 			return nil, nil, false
 		}
@@ -108,6 +112,8 @@ func BeginIsolatedSpeculation(caches []Cache) ([]Cache, bool) {
 			specCaches[i] = newSpeculativeRotatingKVCache(c)
 		case *KVCache:
 			specCaches[i] = newIsolatedKVCache(c)
+		case *RecurrentCache:
+			specCaches[i] = newSpeculativeRecurrentCache(c)
 		default:
 			return nil, false
 		}

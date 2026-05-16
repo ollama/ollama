@@ -141,6 +141,14 @@ jobs:
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
+      # Increase pagefile to handle momentary spikes in RAM from NVCC compiles
+      - if: startsWith(matrix.preset, 'MLX ')
+        name: Increase pagefile to 200 GB
+        uses: al-cheb/configure-pagefile-action@v1.5
+        with:
+          minimum-size: 16GB
+          maximum-size: 200GB
+          disk-root: "D:"
       - name: Install system dependencies
         run: |
           choco install -y --no-progress ccache ninja
@@ -237,8 +245,9 @@ jobs:
           Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
-          cmake --build --parallel ([Environment]::ProcessorCount) --preset "${{ matrix.preset }}"
+          cmake --build --preset "${{ matrix.preset }}" -- -l $([Environment]::ProcessorCount)
           cmake --install build --component "${{ startsWith(matrix.preset, 'MLX ') && 'MLX' || startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || startsWith(matrix.preset, 'Vulkan') && 'Vulkan' || 'CPU' }}" --strip
+          if ('${{ matrix.preset }}'.StartsWith('MLX ')) { cmake --install build --component MLX_VENDOR }
           Remove-Item -Path dist\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
         env:
           CMAKE_GENERATOR: Ninja
@@ -380,20 +389,36 @@ jobs:
             dist/*.ps1
             dist/OllamaSetup.exe
 
-  linux-build:
+  # Pre-build each Dockerfile stage on its own runner in parallel and push the
+  # resulting layers to a per-stage registry cache.  The downstream
+  # docker-build-push job then assembles cache-hit-only.
+  linux-depends:
     strategy:
       matrix:
         include:
-          - os: linux
-            arch: amd64
-            target: archive
-          - os: linux
-            arch: amd64
-            target: rocm
-          - os: linux
-            arch: arm64
-            target: archive
-    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
+          - arch: amd64
+            target: cpu
+          - arch: amd64
+            target: cuda-12
+          - arch: amd64
+            target: cuda-13
+          - arch: amd64
+            target: mlx
+          - arch: amd64
+            target: rocm-7
+          - arch: amd64
+            target: vulkan
+          - arch: arm64
+            target: cpu
+          - arch: arm64
+            target: cuda-12
+          - arch: arm64
+            target: cuda-13
+          - arch: arm64
+            target: jetpack-5
+          - arch: arm64
+            target: jetpack-6
+    runs-on: ${{ matrix.arch == 'arm64' && 'linux-arm64' || 'linux' }}
     environment: release
     needs: setup-environment
     env:
@@ -401,53 +426,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      # Increase swap to handle momentary spikes in RAM from NVCC compiles
+      - if: matrix.target == 'mlx'
+        name: Increase Linux swap to 200 GB
+        shell: bash
+        run: |
+          set -e
+          SWAP_PATH=/swapfile-mlx
+          SWAP_SIZE_GB=200
+          if [ -f "$SWAP_PATH" ]; then
+              sudo swapoff "$SWAP_PATH" 2>/dev/null || true
+              sudo rm -f "$SWAP_PATH"
+          fi
+          if ! sudo fallocate -l ${SWAP_SIZE_GB}G "$SWAP_PATH" 2>/dev/null; then
+              echo "fallocate unsupported, falling back to dd"
+              sudo dd if=/dev/zero of="$SWAP_PATH" bs=1M count=$((SWAP_SIZE_GB * 1024))
+          fi
+          sudo chmod 600 "$SWAP_PATH"
+          sudo mkswap "$SWAP_PATH"
+          sudo swapon "$SWAP_PATH"
+          swapon --show
+          free -h
       - uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
           target: ${{ matrix.target }}
+          provenance: false
+          sbom: false
           build-args: |
-            GOFLAGS=${{ env.GOFLAGS }}
             CGO_CFLAGS=${{ env.CGO_CFLAGS }}
             CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
-          outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
-          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
-          cache-to: type=inline
-      - name: Deduplicate CUDA libraries
-        run: |
-          ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
-      - run: |
-          for COMPONENT in bin/* lib/ollama/*; do
-            case "$COMPONENT" in
-              bin/ollama*)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
-              lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
-              lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
-              lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
-              lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
-            esac
-          done
-        working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
-      - run: |
-          echo "Manifests"
-          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in ; do
-            echo $ARCHIVE
-            cat $ARCHIVE
-          done
-      - run: |
-          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
-            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd --ultra -22 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
-          done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bundles-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
-          path: |
-            *.tar.zst
+            GOFLAGS=${{ env.GOFLAGS }}
+            APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+            OLLAMA_MLX_BUILD_JOBS=16
+            OLLAMA_MLX_NVCC_THREADS=6
+          cache-from: |
+            type=registry,ref=ollama/release:cache-${{ matrix.arch }}-${{ matrix.target }}
+            type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+          cache-to: type=registry,ref=ollama/release:cache-${{ matrix.arch }}-${{ matrix.target }},mode=max
 
   # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
+  # Heavy stages were pre-built by linux-depends; this job is cache-hit-only for those layers
+  # and just assembles, runs the Go build, and pushes the final image.
   docker-build-push:
     strategy:
       matrix:
@@ -459,6 +484,15 @@ jobs:
               CGO_CXXFLAGS
               GOFLAGS
               APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+              OLLAMA_MLX_BUILD_JOBS=16
+              OLLAMA_MLX_NVCC_THREADS=6
+            cache-from: |
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+              type=registry,ref=ollama/release:cache-arm64-cpu
+              type=registry,ref=ollama/release:cache-arm64-cuda-12
+              type=registry,ref=ollama/release:cache-arm64-cuda-13
+              type=registry,ref=ollama/release:cache-arm64-jetpack-5
+              type=registry,ref=ollama/release:cache-arm64-jetpack-6
           - os: linux
             arch: amd64
             build-args: |
@@ -466,6 +500,15 @@ jobs:
               CGO_CXXFLAGS
               GOFLAGS
               APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+              OLLAMA_MLX_BUILD_JOBS=16
+              OLLAMA_MLX_NVCC_THREADS=6
+            cache-from: |
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+              type=registry,ref=ollama/release:cache-amd64-cpu
+              type=registry,ref=ollama/release:cache-amd64-cuda-12
+              type=registry,ref=ollama/release:cache-amd64-cuda-13
+              type=registry,ref=ollama/release:cache-amd64-mlx
+              type=registry,ref=ollama/release:cache-amd64-vulkan
           - os: linux
             arch: amd64
             suffix: '-rocm'
@@ -475,9 +518,15 @@ jobs:
               GOFLAGS
               FLAVOR=rocm
               APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+              OLLAMA_MLX_BUILD_JOBS=16
+              OLLAMA_MLX_NVCC_THREADS=6
+            cache-from: |
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+              type=registry,ref=ollama/release:cache-amd64-cpu
+              type=registry,ref=ollama/release:cache-amd64-rocm-7
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
-    needs: setup-environment
+    needs: [setup-environment, linux-depends]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
@@ -492,9 +541,11 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          provenance: false
+          sbom: false
           build-args: ${{ matrix.build-args }}
           outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+          cache-from: ${{ matrix.cache-from }}
           cache-to: type=inline
       - run: |
           mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
@@ -505,6 +556,58 @@ jobs:
           name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
           path: |
             ${{ runner.temp }}/${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+      # Re-run buildx with --target archive against buildkit's local cache to
+      # extract the release directory layout.  All upstream stages were just
+      # built above, so this is a cache-hit-only pass that just writes files.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          target: archive
+          provenance: false
+          sbom: false
+          build-args: ${{ matrix.build-args }}
+          outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
+          cache-from: ${{ matrix.cache-from }}
+      - name: Deduplicate CUDA libraries
+        run: |
+          ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
+      - run: |
+          for COMPONENT in bin/* lib/ollama/*; do
+            case "$COMPONENT" in
+              bin/ollama*)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
+              lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
+              lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
+              lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+            esac
+          done
+        working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
+      # rocm builds cpu + rocm libs for the container image, which
+      # creates a CPU-only amd64 tarball that would collide with the full
+      # bundle when the release job merges artifacts.
+      - if: matrix.suffix == '-rocm'
+        run: rm -f dist/${{ matrix.os }}-${{ matrix.arch }}/ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in
+      - run: |
+          echo "Manifests"
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in ; do
+            echo $ARCHIVE
+            cat $ARCHIVE
+          done
+      - run: |
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd -19 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst) &
+          done
+          wait
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
+          path: |
+            *.tar.zst
 
   # Merge Docker images for the same flavor into a single multi-arch manifest
   docker-merge-push:
@@ -544,7 +647,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     environment: release
-    needs: [darwin-build, windows-app, linux-build]
+    needs: [darwin-build, windows-app, docker-build-push]
     permissions:
       contents: write
     env:

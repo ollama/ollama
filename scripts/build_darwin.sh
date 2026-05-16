@@ -76,6 +76,7 @@ _build_darwin() {
             cmake --build $BUILD_DIR --target mlx mlxc -j
             cmake --install $BUILD_DIR --component CPU
             cmake --install $BUILD_DIR --component MLX
+            cmake --install $BUILD_DIR --component MLX_VENDOR
             # Override CGO flags to point to the amd64 build directory
             MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-ldl -lc++ -framework Accelerate -mmacosx-version-min=14.0"
@@ -103,6 +104,7 @@ _build_darwin() {
             cmake --build $BUILD_DIR --target mlx mlxc --parallel
             _relink_mlx_metallib $BUILD_DIR
             cmake --install $BUILD_DIR --component MLX
+            cmake --install $BUILD_DIR --component MLX_VENDOR
 
             # Metal 4.x build (NAX-enabled, macOS 26+)
             # Only possible with Xcode 26+ SDK; skip on older toolchains.
@@ -124,6 +126,7 @@ _build_darwin() {
                     -DFETCHCONTENT_SOURCE_DIR_METAL_CPP=$V3_DEPS/metal_cpp-src
                 cmake --build $BUILD_DIR_V4 --target mlx mlxc --parallel
                 cmake --install $BUILD_DIR_V4 --component MLX
+                cmake --install $BUILD_DIR_V4 --component MLX_VENDOR
             else
                 status "Skipping MLX Metal v4 (SDK $SDK_MAJOR < 26, need Xcode 26+)"
             fi
