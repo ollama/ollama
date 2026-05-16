@@ -54,7 +54,15 @@ func (p *mistral3CausalModel) KV(t *Tokenizer) KV {
 	kv["mistral3.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
 	kv["mistral3.attention.key_length"] = p.HeadDim
 	kv["mistral3.attention.value_length"] = p.HeadDim
-	kv["mistral3.rope.dimension_count"] = cmp.Or(p.HeadDim, p.HiddenSize/p.NumAttentionHeads)
+	// cmp.Or evaluates both operands, so the division runs even when
+	// HeadDim != 0. NumAttentionHeads comes from the attacker-controlled
+	// config.json; guard the division so num_attention_heads:0 does not
+	// panic the (unrecovered) conversion goroutine with a divide by zero.
+	var ropeDimensionCount uint32
+	if p.NumAttentionHeads > 0 {
+		ropeDimensionCount = p.HiddenSize / p.NumAttentionHeads
+	}
+	kv["mistral3.rope.dimension_count"] = cmp.Or(p.HeadDim, ropeDimensionCount)
 	kv["mistral3.rope.freq_base"] = cmp.Or(p.RopeTheta, p.RopeParameters.RopeTheta)
 	kv["mistral3.rope.scaling.factor"] = p.RopeParameters.Factor
 	kv["mistral3.rope.scaling.type"] = p.RopeParameters.RopeType

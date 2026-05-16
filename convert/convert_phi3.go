@@ -47,7 +47,14 @@ func (p *phi3Model) KV(t *Tokenizer) KV {
 	kv["phi3.attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
 	kv["phi3.attention.head_count_kv"] = cmp.Or(p.NumKeyValueHeads, p.NHeadKV)
 	kv["phi3.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
-	kv["phi3.rope.dimension_count"] = p.HiddenSize / cmp.Or(p.NumAttentionHeads, p.NHead)
+	// NumAttentionHeads / NHead come from the attacker-controlled
+	// config.json; guard the division so both being 0 does not panic the
+	// (unrecovered) conversion goroutine with an integer divide by zero.
+	var ropeDimensionCount uint32
+	if headCount := cmp.Or(p.NumAttentionHeads, p.NHead); headCount > 0 {
+		ropeDimensionCount = p.HiddenSize / headCount
+	}
+	kv["phi3.rope.dimension_count"] = ropeDimensionCount
 	kv["phi3.rope.freq_base"] = p.RopeTheta
 	kv["phi3.rope.scaling.original_context_length"] = p.OriginalMaxPositionEmbeddings
 	kv["phi3.attention.sliding_window"] = p.SlidingWindow

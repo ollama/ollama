@@ -141,8 +141,13 @@ func (p *lfm2Model) KV(t *Tokenizer) KV {
 
 	kv["attention.head_count"] = p.NumAttentionHeads
 	kv["attention.head_count_kv"] = kvHeadCounts
-	kv["attention.key_length"] = p.HiddenSize / p.NumAttentionHeads
-	kv["attention.value_length"] = p.HiddenSize / p.NumAttentionHeads
+	if p.NumAttentionHeads > 0 {
+		// NumAttentionHeads comes from the attacker-controlled config.json;
+		// guard the division so num_attention_heads:0 does not panic the
+		// (unrecovered) conversion goroutine with an integer divide by zero.
+		kv["attention.key_length"] = p.HiddenSize / p.NumAttentionHeads
+		kv["attention.value_length"] = p.HiddenSize / p.NumAttentionHeads
+	}
 	kv["attention.layer_norm_rms_epsilon"] = p.NormEps
 	kv["shortconv.l_cache"] = p.ConvLCache
 

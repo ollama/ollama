@@ -83,7 +83,10 @@ func (p *llamaModel) KV(t *Tokenizer) KV {
 	if p.RopeScaling.Type == "linear" {
 		kv["llama.rope.scaling.type"] = p.RopeScaling.Type
 		kv["llama.rope.scaling.factor"] = p.RopeScaling.Factor
-	} else if p.RopeScaling.RopeType == "llama3" {
+	} else if p.RopeScaling.RopeType == "llama3" && p.NumAttentionHeads > 0 {
+		// NumAttentionHeads comes from the attacker-controlled config.json;
+		// guard the division so num_attention_heads:0 does not panic the
+		// (unrecovered) conversion goroutine with an integer divide by zero.
 		dim := p.HiddenSize / p.NumAttentionHeads
 		for i := uint32(0); i < dim; i += 2 {
 			factor := cmp.Or(p.RopeScaling.Factor, 8.0)
