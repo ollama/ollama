@@ -1403,6 +1403,7 @@ func TestCreateHandler(t *testing.T) {
 		name           string
 		modelName      string
 		modelFile      string
+		setupFiles     func(t *testing.T, dir string)
 		serverResponse map[string]func(w http.ResponseWriter, r *http.Request)
 		expectedError  string
 		expectedOutput string
@@ -1448,6 +1449,21 @@ func TestCreateHandler(t *testing.T) {
 			},
 			expectedOutput: "",
 		},
+		{
+			name:      "unsupported safetensors architecture fails before upload",
+			modelName: "test-model",
+			modelFile: "FROM {{DIR}}",
+			setupFiles: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "model.safetensors"), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["MistralForCausalLM"]}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			serverResponse: map[string]func(w http.ResponseWriter, r *http.Request){},
+			expectedError:  `unsupported architecture "MistralForCausalLM"`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1474,6 +1490,21 @@ func TestCreateHandler(t *testing.T) {
 			}
 			if err := tempFile.Close(); err != nil {
 				t.Fatal(err)
+			}
+
+			if tt.setupFiles != nil {
+				tt.setupFiles(t, filepath.Dir(tempFile.Name()))
+			}
+			modelFile := tt.modelFile
+			if strings.Contains(modelFile, "{{DIR}}") {
+				realDir, err := filepath.EvalSymlinks(filepath.Dir(tempFile.Name()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				modelFile = strings.ReplaceAll(modelFile, "{{DIR}}", realDir)
+				if err := os.WriteFile(tempFile.Name(), []byte(modelFile), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			cmd := &cobra.Command{}
@@ -1520,6 +1551,8 @@ func TestCreateHandler(t *testing.T) {
 						t.Errorf("expected output %q, got %q", tt.expectedOutput, got)
 					}
 				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
+				t.Fatalf("expected error containing %q, got %v", tt.expectedError, err)
 			}
 		})
 	}

@@ -41,6 +41,7 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/cmd/tui"
+	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/internal/modelref"
@@ -330,6 +331,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		req.Quantize = quantize
 	}
 
+	if err := validateSafetensorsArchitecture(req.Files); err != nil {
+		return err
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -404,6 +409,23 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("the ollama server must be updated to use `ollama create` with this client")
 		}
 		return err
+	}
+
+	return nil
+}
+
+func validateSafetensorsArchitecture(files map[string]string) error {
+	for path := range files {
+		if filepath.Base(path) != "config.json" {
+			continue
+		}
+
+		bts, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		return convert.ValidateArchitecture(bts)
 	}
 
 	return nil

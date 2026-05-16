@@ -252,6 +252,91 @@ func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ofs.Config) error {
 	return writeFile(f, conv.KV(baseKV), conv.Tensors(ts))
 }
 
+func newConverter(arch string) ModelConverter {
+	switch arch {
+	case "LlamaForCausalLM":
+		return &llamaModel{}
+	case "MllamaForConditionalGeneration":
+		return &mllamaModel{}
+	case "Llama4ForConditionalGeneration":
+		return &llama4Model{}
+	case "Mistral3ForConditionalGeneration":
+		return &mistral3Model{}
+	case "Ministral3ForCausalLM":
+		return &mistral3CausalModel{}
+	case "MixtralForCausalLM":
+		return &mixtralModel{}
+	case "GemmaForCausalLM":
+		return &gemmaModel{}
+	case "Gemma2ForCausalLM":
+		return &gemma2Model{}
+	case "Gemma3ForCausalLM", "Gemma3ForConditionalGeneration":
+		return &gemma3Model{Architecture: arch}
+	case "Gemma3nForConditionalGeneration":
+		return &gemma3nModel{}
+	case "Gemma4ForCausalLM", "Gemma4ForConditionalGeneration":
+		return &gemma4Model{Architecture: arch}
+	case "Phi3ForCausalLM":
+		return &phi3Model{}
+	case "Qwen2ForCausalLM":
+		return &qwen2Model{}
+	case "Qwen2_5_VLForConditionalGeneration":
+		return &qwen25VLModel{}
+	case "Qwen3VLForConditionalGeneration", "Qwen3VLMoeForConditionalGeneration":
+		return &qwen3VLModel{}
+	case "Olmo3ForCausalLM":
+		return &olmoModel{}
+	case "BertModel":
+		return &bertModel{}
+	case "NomicBertModel", "NomicBertMoEModel":
+		return &nomicbertModel{}
+	case "CohereForCausalLM":
+		return &commandrModel{}
+	case "GptOssForCausalLM":
+		return &gptossModel{}
+	case "DeepseekOCRForCausalLM":
+		return &deepseekocr{}
+	case "DeepseekV3ForCausalLM":
+		return &deepseek2Model{}
+	case "Glm4MoeLiteForCausalLM":
+		return &glm4MoeLiteModel{}
+	case "LagunaForCausalLM":
+		return &lagunaModel{}
+	case "GlmOcrForConditionalGeneration":
+		return &glmOcrModel{}
+	case "Lfm2ForCausalLM", "Lfm2MoeForCausalLM":
+		return &lfm2Model{}
+	case "Lfm2VlForConditionalGeneration":
+		return &lfm2VLTextModel{}
+	case "Qwen3NextForCausalLM", "Qwen3_5ForConditionalGeneration", "Qwen3_5MoeForConditionalGeneration":
+		return &qwen3NextModel{}
+	case "NemotronH_Nano_VL_V2", "NemotronH_Nano_Omni_Reasoning_V3":
+		return &nemotronHNanoVLModel{}
+	case "NemotronHForCausalLM":
+		return &nemotronHModel{}
+	default:
+		return nil
+	}
+}
+
+func ValidateArchitecture(bts []byte) error {
+	bts = sanitizeNonFiniteJSON(bts)
+
+	var p ModelParameters
+	if err := json.Unmarshal(bts, &p); err != nil {
+		return fmt.Errorf("parse config.json: %w", err)
+	}
+
+	if len(p.Architectures) < 1 {
+		return errors.New("unknown architecture")
+	}
+
+	if newConverter(p.Architectures[0]) == nil {
+		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
+	}
+	return nil
+}
+
 func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
@@ -268,69 +353,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		return nil, nil, errors.New("unknown architecture")
 	}
 
-	var conv ModelConverter
-	switch p.Architectures[0] {
-	case "LlamaForCausalLM":
-		conv = &llamaModel{}
-	case "MllamaForConditionalGeneration":
-		conv = &mllamaModel{}
-	case "Llama4ForConditionalGeneration":
-		conv = &llama4Model{}
-	case "Mistral3ForConditionalGeneration":
-		conv = &mistral3Model{}
-	case "Ministral3ForCausalLM":
-		conv = &mistral3CausalModel{}
-	case "MixtralForCausalLM":
-		conv = &mixtralModel{}
-	case "GemmaForCausalLM":
-		conv = &gemmaModel{}
-	case "Gemma2ForCausalLM":
-		conv = &gemma2Model{}
-	case "Gemma3ForCausalLM", "Gemma3ForConditionalGeneration":
-		conv = &gemma3Model{Architecture: p.Architectures[0]}
-	case "Gemma3nForConditionalGeneration":
-		conv = &gemma3nModel{}
-	case "Gemma4ForCausalLM", "Gemma4ForConditionalGeneration":
-		conv = &gemma4Model{Architecture: p.Architectures[0]}
-	case "Phi3ForCausalLM":
-		conv = &phi3Model{}
-	case "Qwen2ForCausalLM":
-		conv = &qwen2Model{}
-	case "Qwen2_5_VLForConditionalGeneration":
-		conv = &qwen25VLModel{}
-	case "Qwen3VLForConditionalGeneration", "Qwen3VLMoeForConditionalGeneration":
-		conv = &qwen3VLModel{}
-	case "Olmo3ForCausalLM":
-		conv = &olmoModel{}
-	case "BertModel":
-		conv = &bertModel{}
-	case "NomicBertModel", "NomicBertMoEModel":
-		conv = &nomicbertModel{}
-	case "CohereForCausalLM":
-		conv = &commandrModel{}
-	case "GptOssForCausalLM":
-		conv = &gptossModel{}
-	case "DeepseekOCRForCausalLM":
-		conv = &deepseekocr{}
-	case "DeepseekV3ForCausalLM":
-		conv = &deepseek2Model{}
-	case "Glm4MoeLiteForCausalLM":
-		conv = &glm4MoeLiteModel{}
-	case "LagunaForCausalLM":
-		conv = &lagunaModel{}
-	case "GlmOcrForConditionalGeneration":
-		conv = &glmOcrModel{}
-	case "Lfm2ForCausalLM", "Lfm2MoeForCausalLM":
-		conv = &lfm2Model{}
-	case "Lfm2VlForConditionalGeneration":
-		conv = &lfm2VLTextModel{}
-	case "Qwen3NextForCausalLM", "Qwen3_5ForConditionalGeneration", "Qwen3_5MoeForConditionalGeneration":
-		conv = &qwen3NextModel{}
-	case "NemotronH_Nano_VL_V2", "NemotronH_Nano_Omni_Reasoning_V3":
-		conv = &nemotronHNanoVLModel{}
-	case "NemotronHForCausalLM":
-		conv = &nemotronHModel{}
-	default:
+	conv := newConverter(p.Architectures[0])
+	if conv == nil {
 		return nil, nil, fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
 

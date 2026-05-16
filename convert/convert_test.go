@@ -469,3 +469,62 @@ func generateLoraTestData(t *testing.T, tempDir string) {
 		t.Fatal(err)
 	}
 }
+
+func TestValidateArchitecture(t *testing.T) {
+	cases := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name:   "supported architecture",
+			config: `{"architectures": ["LlamaForCausalLM"]}`,
+		},
+		{
+			name:   "supported architecture (multimodal)",
+			config: `{"architectures": ["Qwen3VLForConditionalGeneration"]}`,
+		},
+		{
+			name:    "unsupported architecture",
+			config:  `{"architectures": ["BertForMaskedLM"]}`,
+			wantErr: `unsupported architecture "BertForMaskedLM"`,
+		},
+		{
+			name:    "empty architectures",
+			config:  `{"architectures": []}`,
+			wantErr: "unknown architecture",
+		},
+		{
+			name:    "missing architectures field",
+			config:  `{}`,
+			wantErr: "unknown architecture",
+		},
+		{
+			name:    "invalid json",
+			config:  `{not valid json`,
+			wantErr: "parse config.json",
+		},
+		{
+			name:   "config with non-finite values",
+			config: `{"architectures": ["LlamaForCausalLM"], "value": NaN}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateArchitecture([]byte(tc.config))
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("expected error but got none")
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+			}
+		})
+	}
+}
