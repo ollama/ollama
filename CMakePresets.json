@@ -112,7 +112,7 @@
       "name": "MLX CUDA 13",
       "inherits": [ "MLX", "CUDA 13" ],
       "cacheVariables": {
-        "MLX_CUDA_ARCHITECTURES": "86;89;90;90a;100;103;75-virtual;80-virtual;110-virtual;120-virtual;121-virtual",
+        "MLX_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual",
         "OLLAMA_RUNNER_DIR": "mlx_cuda_v13"
       }
     }

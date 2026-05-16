@@ -544,10 +544,15 @@ func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
 func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
+	draftDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(draftDir, "config.json"), []byte(`{"architectures":["DFlashDraftModel"],"model_type":"qwen3"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
 	opts := CreateOptions{
 		ModelName: "test-draft",
 		ModelDir:  t.TempDir(),
-		Modelfile: &ModelfileConfig{Draft: "/tmp/assistant"},
+		Modelfile: &ModelfileConfig{Draft: draftDir},
 	}
 
 	writer := newManifestWriter(opts, []string{"completion"}, "gemma4", "gemma4")
@@ -580,6 +585,9 @@ func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
 	}
 	if cfg.Draft.TensorPrefix != "draft." || cfg.Draft.Config != "draft/config.json" {
 		t.Fatalf("Draft = %#v, want draft prefix/config", cfg.Draft)
+	}
+	if cfg.Draft.Architecture != "DFlashDraftModel" {
+		t.Fatalf("Draft architecture = %q, want DFlashDraftModel", cfg.Draft.Architecture)
 	}
 }
 

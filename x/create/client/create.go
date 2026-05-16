@@ -243,6 +243,40 @@ func appendLayersManifestWriter(next create.ManifestWriter, extra []create.Layer
 	}
 }
 
+func draftMetadata(draftDir string) (*model.Draft, error) {
+	configPath := filepath.Join(draftDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read draft config %s: %w", configPath, err)
+	}
+
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse draft config %s: %w", configPath, err)
+	}
+
+	arch := ""
+	if len(cfg.Architectures) > 0 {
+		arch = cfg.Architectures[0]
+	}
+	if arch == "" {
+		arch = cfg.ModelType
+	}
+	if arch == "" {
+		return nil, fmt.Errorf("draft architecture not found in %s", configPath)
+	}
+
+	return &model.Draft{
+		ModelFormat:  "safetensors",
+		Architecture: arch,
+		TensorPrefix: "draft.",
+		Config:       "draft/config.json",
+	}, nil
+}
+
 func createModelFromBaseWithDraft(opts CreateOptions, draftLayers []create.LayerInfo, progressFn func(string)) error {
 	progressFn(fmt.Sprintf("loading base model %s", opts.ModelDir))
 	baseManifest, err := imagemanifest.LoadManifest(opts.ModelDir)
@@ -487,12 +521,11 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		configData.Parser = resolveParserName(opts.Modelfile, parserName)
 		configData.Renderer = resolveRendererName(opts.Modelfile, rendererName)
 		if opts.Modelfile != nil && opts.Modelfile.Draft != "" {
-			configData.Draft = &model.Draft{
-				ModelFormat:  "safetensors",
-				Architecture: "Gemma4AssistantForCausalLM",
-				TensorPrefix: "draft.",
-				Config:       "draft/config.json",
+			draft, err := draftMetadata(opts.Modelfile.Draft)
+			if err != nil {
+				return err
 			}
+			configData.Draft = draft
 		}
 		configJSON, err := json.Marshal(configData)
 		if err != nil {

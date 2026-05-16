@@ -144,6 +144,9 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM base AS mlx
 ARG CUDA13VERSION=13.0
+#   OLLAMA_MLX_BUILD_JOBS  empty -> ninja gates by load average (-l $(nproc))
+ARG OLLAMA_MLX_BUILD_JOBS=
+ARG OLLAMA_MLX_NVCC_THREADS=2
 RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
     && dnf install -y openblas-devel lapack-devel \
     && dnf install -y libcudnn9-cuda-13 libcudnn9-devel-cuda-13 \
@@ -170,9 +173,10 @@ RUN --mount=type=cache,target=/root/.ccache \
     && if [ -f /tmp/local-mlx-c/CMakeLists.txt ]; then \
         export OLLAMA_MLX_C_SOURCE=/tmp/local-mlx-c; \
     fi \
-    && cmake --preset 'MLX CUDA 13' -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas \
-        && cmake --build --preset 'MLX CUDA 13' -- -l $(nproc) \
-        && cmake --install build --component MLX --strip
+    && cmake --preset 'MLX CUDA 13' -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas -DCMAKE_CUDA_FLAGS="-t ${OLLAMA_MLX_NVCC_THREADS}" \
+        && cmake --build --preset 'MLX CUDA 13' -- -l $(nproc) ${OLLAMA_MLX_BUILD_JOBS:+-j ${OLLAMA_MLX_BUILD_JOBS}} \
+        && cmake --install build --component MLX --strip \
+        && cmake --install build --component MLX_VENDOR
 
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama

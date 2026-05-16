@@ -761,14 +761,15 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 	}
 
 	if err := transfer.Download(ctx, transfer.DownloadOptions{
-		Blobs:      blobs,
-		BaseURL:    baseURL,
-		DestDir:    destDir,
-		Repository: n.DisplayNamespaceModel(),
-		Progress:   progress,
-		Token:      regOpts.Token,
-		GetToken:   getToken,
-		Logger:     slog.Default(),
+		Blobs:           blobs,
+		BaseURL:         baseURL,
+		DestDir:         destDir,
+		Repository:      n.DisplayNamespaceModel(),
+		BodyConcurrency: max(1, int(envconfig.MaxTransferStreams())),
+		Progress:        progress,
+		Token:           regOpts.Token,
+		GetToken:        getToken,
+		Logger:          slog.Default(),
 	}); err != nil {
 		return err
 	}
@@ -837,16 +838,17 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 	}
 
 	return transfer.Upload(ctx, transfer.UploadOptions{
-		Blobs:       blobs,
-		BaseURL:     baseURL,
-		SrcDir:      srcDir,
-		Progress:    progress,
-		Token:       regOpts.Token,
-		GetToken:    getToken,
-		Logger:      slog.Default(),
-		Manifest:    manifestJSON,
-		ManifestRef: n.Tag,
-		Repository:  n.DisplayNamespaceModel(),
+		Blobs:           blobs,
+		BaseURL:         baseURL,
+		SrcDir:          srcDir,
+		BodyConcurrency: max(1, int(envconfig.MaxTransferStreams())),
+		Progress:        progress,
+		Token:           regOpts.Token,
+		GetToken:        getToken,
+		Logger:          slog.Default(),
+		Manifest:        manifestJSON,
+		ManifestRef:     n.Tag,
+		Repository:      n.DisplayNamespaceModel(),
 	})
 }
 

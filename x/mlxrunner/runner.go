@@ -40,6 +40,7 @@ type Runner struct {
 	Requests      chan Request
 	Sampler       *sample.Sampler
 	cache         kvCache
+	dflashCache   kvCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
 }

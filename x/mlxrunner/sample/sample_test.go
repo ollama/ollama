@@ -4,6 +4,7 @@ package sample
 
 import (
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
@@ -138,6 +139,132 @@ func TestSampleSingleSlotOptions(t *testing.T) {
 				t.Errorf("got %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDistributionAppliesTopKBeforeTopP(t *testing.T) {
+	skipIfNoMLX(t)
+
+	s := New(128)
+	t.Cleanup(func() {
+		s.Free()
+		mlx.Sweep()
+	})
+	s.Add(0, Options{Temperature: 1, TopK: 2, TopP: 0.7}, nil)
+
+	dist := s.Distribution(0, slotLogits([]float32{logOf(0.6), logOf(0.2), logOf(0.2)}), nil)
+	mlx.Eval(dist.Arrays()...)
+
+	ids := dist.IDs.Ints()
+	probs := dist.Probs.Floats()
+	if len(ids) != 2 || len(probs) != 2 {
+		t.Fatalf("support = ids %v probs %v, want 2 sparse entries", ids, probs)
+	}
+
+	foundTop := false
+	for i, id := range ids {
+		switch id {
+		case 0:
+			foundTop = true
+			if math.Abs(float64(probs[i]-1)) > 1e-5 {
+				t.Fatalf("top token prob = %v, want 1; ids=%v probs=%v", probs[i], ids, probs)
+			}
+		default:
+			if math.Abs(float64(probs[i])) > 1e-5 {
+				t.Fatalf("non-top token %d prob = %v, want 0; ids=%v probs=%v", id, probs[i], ids, probs)
+			}
+		}
+	}
+	if !foundTop {
+		t.Fatalf("top-k support %v did not include token 0", ids)
+	}
+}
+
+func TestDistributionResidualUsesTargetSupport(t *testing.T) {
+	skipIfNoMLX(t)
+
+	target := Distribution{
+		IDs:   mlx.NewArrayInt32([]int32{2, 5}, []int32{1, 2}),
+		Probs: mlx.FromValues([]float32{0.7, 0.3}, 1, 2),
+	}
+	draft := Distribution{
+		IDs:   mlx.NewArrayInt32([]int32{2, 4}, []int32{1, 2}),
+		Probs: mlx.FromValues([]float32{0.2, 0.8}, 1, 2),
+	}
+
+	residual := target.ResidualAgainst(draft)
+	mlx.Eval(residual.Arrays()...)
+
+	ids := residual.IDs.Ints()
+	probs := residual.Probs.Floats()
+	want := map[int]float64{2: 0.625, 5: 0.375}
+	if len(ids) != 2 || len(probs) != 2 {
+		t.Fatalf("residual = ids %v probs %v, want 2 sparse entries", ids, probs)
+	}
+	for i, id := range ids {
+		w, ok := want[id]
+		if !ok {
+			t.Fatalf("residual includes token %d outside target support: ids=%v probs=%v", id, ids, probs)
+		}
+		if math.Abs(float64(probs[i])-w) > 1e-5 {
+			t.Fatalf("residual token %d prob = %v, want %v; ids=%v probs=%v", id, probs[i], w, ids, probs)
+		}
+	}
+}
+
+func TestSeededSamplingIsReproducible(t *testing.T) {
+	skipIfNoMLX(t)
+
+	seededSequence := func(seed int) []int {
+		s := New(128)
+		t.Cleanup(func() {
+			s.Free()
+			mlx.Sweep()
+		})
+		s.Add(0, Options{Temperature: 1, TopK: 4, Seed: seed, UseSeed: true}, nil)
+
+		logits := slotLogits([]float32{0, 0, 0, 0})
+		out := make([]int, 32)
+		for i := range out {
+			token := s.Sample([]int{0}, logits).Token
+			mlx.Eval(token)
+			out[i] = token.Int()
+		}
+		return out
+	}
+
+	a := seededSequence(1234)
+	b := seededSequence(1234)
+	if !slices.Equal(a, b) {
+		t.Fatalf("same seed produced different sequences:\n%v\n%v", a, b)
+	}
+
+	c := seededSequence(5678)
+	if slices.Equal(a, c) {
+		t.Fatalf("different seeds produced the same sequence: %v", a)
+	}
+}
+
+func TestSeededBernoulliIsReproducible(t *testing.T) {
+	skipIfNoMLX(t)
+
+	seededMask := func() []int {
+		s := New(128)
+		t.Cleanup(func() {
+			s.Free()
+			mlx.Sweep()
+		})
+		s.Add(0, Options{Seed: 99, UseSeed: true}, nil)
+
+		mask := s.Bernoulli(0, mlx.FromValues([]float32{0.5, 0.5, 0.5, 0.5, 0.5, 0.5}, 6)).AsType(mlx.DTypeInt32)
+		mlx.Eval(mask)
+		return mask.Ints()
+	}
+
+	a := seededMask()
+	b := seededMask()
+	if !slices.Equal(a, b) {
+		t.Fatalf("same seed produced different bernoulli masks:\n%v\n%v", a, b)
 	}
 }
 
