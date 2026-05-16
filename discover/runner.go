@@ -186,6 +186,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 					devices[i].FilterID = devices[i].ID
 					devices[i].ID = strconv.Itoa(postFilteredID[devices[i].Library])
 				}
+				remapFilterIDForUserVisibleDevices(&devices[i])
 				postFilteredID[devices[i].Library]++
 			}
 		}
@@ -405,6 +406,8 @@ func filterOverlapByLibrary(supported map[string]map[string]map[string]int, need
 }
 
 func bootstrapDevicesWithMetalRetry(firstAttemptCtx, retryParentCtx context.Context, timeout time.Duration, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
+	extraEnvs = normalizeDiscoveryEnv(ollamaLibDirs, extraEnvs)
+
 	runDiscovery := func(ctx context.Context, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, error) {
 		start := time.Now()
 		defer func() {
@@ -440,6 +443,34 @@ func bootstrapDevicesWithMetalRetry(firstAttemptCtx, retryParentCtx context.Cont
 	return devices
 }
 
+func normalizeDiscoveryEnv(ollamaLibDirs []string, extraEnvs map[string]string) map[string]string {
+	return normalizeDiscoveryEnvForGOOS(runtime.GOOS, ollamaLibDirs, extraEnvs)
+}
+
+func normalizeDiscoveryEnvForGOOS(goos string, ollamaLibDirs []string, extraEnvs map[string]string) map[string]string {
+	if goos != "linux" || len(ollamaLibDirs) == 0 || filepath.Base(ollamaLibDirs[len(ollamaLibDirs)-1]) != "rocm" {
+		return extraEnvs
+	}
+
+	if extraEnvs["ROCR_VISIBLE_DEVICES"] != "" || envconfig.RocrVisibleDevices() != "" {
+		return extraEnvs
+	}
+
+	source, tokens := rocmNumericVisibleDeviceSource(extraEnvs)
+	if len(tokens) == 0 {
+		return extraEnvs
+	}
+
+	env := make(map[string]string, len(extraEnvs)+1)
+	for k, v := range extraEnvs {
+		env[k] = v
+	}
+	env["ROCR_VISIBLE_DEVICES"] = strings.Join(tokens, ",")
+	env[source] = visibleDeviceOrdinals(len(tokens))
+	slog.Debug("normalizing AMD visible devices for ROCm discovery", "from_env", source, "ROCR_VISIBLE_DEVICES", env["ROCR_VISIBLE_DEVICES"], "visible_ordinals", env[source])
+	return env
+}
+
 type bootstrapDevicesResult struct {
 	devices []ml.DeviceInfo
 	status  *llm.StatusWriter
@@ -469,6 +500,104 @@ func runBootstrapDevicesWithStatusWatchdog(
 		slog.Warn("llama-server GPU discovery watchdog timed out", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "error", ctx.Err())
 		return nil, nil, ctx.Err()
 	}
+}
+
+func remapFilterIDForUserVisibleDevices(device *ml.DeviceInfo) {
+	tokens := visibleDeviceFilterTokens(runtime.GOOS, device.Library)
+	if len(tokens) == 0 {
+		return
+	}
+
+	id := device.FilterID
+	if id == "" {
+		id = device.ID
+	}
+	index, err := strconv.Atoi(id)
+	if err != nil || index < 0 || index >= len(tokens) {
+		return
+	}
+
+	device.FilterID = tokens[index]
+}
+
+func visibleDeviceFilterTokens(goos, library string) []string {
+	switch library {
+	case "CUDA":
+		return splitVisibleDeviceList(envconfig.CudaVisibleDevices())
+	case "ROCm":
+		if goos == "linux" {
+			if tokens := splitVisibleDeviceList(envconfig.RocrVisibleDevices()); len(tokens) > 0 {
+				return tokens
+			}
+			if _, tokens := rocmNumericVisibleDeviceSource(nil); len(tokens) > 0 {
+				return tokens
+			}
+			return nil
+		}
+		for _, value := range []string{envconfig.HipVisibleDevices(), envconfig.GpuDeviceOrdinal(), envconfig.CudaVisibleDevices()} {
+			if tokens := splitNumericVisibleDeviceList(value); len(tokens) > 0 {
+				return tokens
+			}
+		}
+	case "Vulkan":
+		return splitVisibleDeviceList(envconfig.VkVisibleDevices())
+	}
+
+	return nil
+}
+
+func rocmNumericVisibleDeviceSource(extraEnvs map[string]string) (string, []string) {
+	for _, name := range []string{"HIP_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL", "CUDA_VISIBLE_DEVICES"} {
+		value := extraEnvs[name]
+		if value == "" {
+			switch name {
+			case "HIP_VISIBLE_DEVICES":
+				value = envconfig.HipVisibleDevices()
+			case "GPU_DEVICE_ORDINAL":
+				value = envconfig.GpuDeviceOrdinal()
+			case "CUDA_VISIBLE_DEVICES":
+				value = envconfig.CudaVisibleDevices()
+			}
+		}
+		if tokens := splitNumericVisibleDeviceList(value); len(tokens) > 0 {
+			return name, tokens
+		}
+	}
+	return "", nil
+}
+
+func splitVisibleDeviceList(value string) []string {
+	fields := strings.Split(value, ",")
+	tokens := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			tokens = append(tokens, field)
+		}
+	}
+	return tokens
+}
+
+func splitNumericVisibleDeviceList(value string) []string {
+	tokens := splitVisibleDeviceList(value)
+	if len(tokens) == 0 {
+		return nil
+	}
+	for _, token := range tokens {
+		index, err := strconv.Atoi(token)
+		if err != nil || index < 0 {
+			return nil
+		}
+	}
+	return tokens
+}
+
+func visibleDeviceOrdinals(count int) string {
+	ordinals := make([]string, count)
+	for i := range ordinals {
+		ordinals[i] = strconv.Itoa(i)
+	}
+	return strings.Join(ordinals, ",")
 }
 
 func lastDiscoveryStatusError(status *llm.StatusWriter) string {

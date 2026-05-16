@@ -65,6 +65,52 @@ func parseGFXTarget(gfx string) (int, int) {
 	return int(major), int(minor)
 }
 
+// HSA_OVERRIDE_GFX_VERSION changes the effective HIP/rocBLAS target even
+// though KFD/sysfs still reports the physical ASIC.
+func hsaOverrideGFXTarget() string {
+	return rocmGFXTargetOverride(os.Getenv("HSA_OVERRIDE_GFX_VERSION"))
+}
+
+func rocmGFXTargetOverride(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "gfx") {
+		if major, minor := parseGFXTarget(value); major != 0 || minor != 0 {
+			return value
+		}
+		return ""
+	}
+
+	parts := strings.Split(value, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+
+	var digits [3]uint64
+	for i, part := range parts {
+		digit, err := strconv.ParseUint(part, 10, 8)
+		if err != nil || digit > 0xf {
+			return ""
+		}
+		digits[i] = digit
+	}
+
+	return "gfx" +
+		strconv.FormatUint(digits[0], 10) +
+		strconv.FormatUint(digits[1], 16) +
+		strconv.FormatUint(digits[2], 16)
+}
+
+func setROCmGFXTarget(device *ml.DeviceInfo, gfx string) {
+	if gfx == "" || device.Library != "ROCm" {
+		return
+	}
+	device.GFXTarget = gfx
+	device.ComputeMajor, device.ComputeMinor = parseGFXTarget(gfx)
+}
+
 // rocblasGFXTargets scans the rocblas library directory for supported gfx targets
 // by looking for TensileLibrary_lazy_gfxNNNN.dat files.
 func rocblasGFXTargets(libDirs []string) map[string]bool {
@@ -338,12 +384,14 @@ func filterUnsupportedROCmDevices(devices []ml.DeviceInfo, libDirs []string) []m
 		return devices
 	}
 
+	override := hsaOverrideGFXTarget()
 	var filtered []ml.DeviceInfo
 	for _, dev := range devices {
 		if dev.Library != "ROCm" {
 			filtered = append(filtered, dev)
 			continue
 		}
+		setROCmGFXTarget(&dev, override)
 		gfx := dev.GFXTarget
 		if gfx == "" {
 			filtered = append(filtered, dev)

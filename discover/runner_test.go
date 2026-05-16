@@ -131,6 +131,150 @@ func TestRecordPersistentRunnerEnv(t *testing.T) {
 	}
 }
 
+func TestRemapFilterIDForUserVisibleDevices(t *testing.T) {
+	tests := []struct {
+		name       string
+		env        map[string]string
+		device     ml.DeviceInfo
+		wantID     string
+		wantFilter string
+	}{
+		{
+			name: "cuda numeric parent filter",
+			env:  map[string]string{"CUDA_VISIBLE_DEVICES": "1"},
+			device: ml.DeviceInfo{
+				DeviceID: ml.DeviceID{Library: "CUDA", ID: "0"},
+				FilterID: "0",
+			},
+			wantID:     "0",
+			wantFilter: "1",
+		},
+		{
+			name: "cuda uuid parent filter",
+			env:  map[string]string{"CUDA_VISIBLE_DEVICES": "GPU-f3a94ab8-b31d-61ff-9fbb-ce91ac1cdd95"},
+			device: ml.DeviceInfo{
+				DeviceID: ml.DeviceID{Library: "CUDA", ID: "0"},
+				FilterID: "0",
+			},
+			wantID:     "0",
+			wantFilter: "GPU-f3a94ab8-b31d-61ff-9fbb-ce91ac1cdd95",
+		},
+		{
+			name: "rocm hip parent filter",
+			env:  map[string]string{"HIP_VISIBLE_DEVICES": "2,0"},
+			device: ml.DeviceInfo{
+				DeviceID: ml.DeviceID{Library: "ROCm", ID: "1"},
+				FilterID: "1",
+			},
+			wantID:     "1",
+			wantFilter: "0",
+		},
+		{
+			name: "vulkan parent filter",
+			env:  map[string]string{"GGML_VK_VISIBLE_DEVICES": "1"},
+			device: ml.DeviceInfo{
+				DeviceID: ml.DeviceID{Library: "Vulkan", ID: "0"},
+				FilterID: "0",
+			},
+			wantID:     "0",
+			wantFilter: "1",
+		},
+		{
+			name: "no parent filter keeps internal filter id",
+			device: ml.DeviceInfo{
+				DeviceID: ml.DeviceID{Library: "CUDA", ID: "0"},
+				FilterID: "3",
+			},
+			wantID:     "0",
+			wantFilter: "3",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+
+			remapFilterIDForUserVisibleDevices(&tt.device)
+
+			if tt.device.ID != tt.wantID {
+				t.Fatalf("ID = %q, want %q", tt.device.ID, tt.wantID)
+			}
+			if tt.device.FilterID != tt.wantFilter {
+				t.Fatalf("FilterID = %q, want %q", tt.device.FilterID, tt.wantFilter)
+			}
+		})
+	}
+}
+
+func TestNormalizeROCmDiscoveryEnv(t *testing.T) {
+	tests := []struct {
+		name        string
+		env         map[string]string
+		extra       map[string]string
+		wantROCR    string
+		wantSource  string
+		wantOrdinal string
+		wantSame    bool
+	}{
+		{
+			name:        "hip becomes rocr",
+			env:         map[string]string{"HIP_VISIBLE_DEVICES": "2"},
+			wantROCR:    "2",
+			wantSource:  "HIP_VISIBLE_DEVICES",
+			wantOrdinal: "0",
+		},
+		{
+			name:        "gpu ordinal becomes rocr",
+			env:         map[string]string{"GPU_DEVICE_ORDINAL": "3"},
+			wantROCR:    "3",
+			wantSource:  "GPU_DEVICE_ORDINAL",
+			wantOrdinal: "0",
+		},
+		{
+			name:        "cuda numeric becomes rocr",
+			env:         map[string]string{"CUDA_VISIBLE_DEVICES": "2,0"},
+			wantROCR:    "2,0",
+			wantSource:  "CUDA_VISIBLE_DEVICES",
+			wantOrdinal: "0,1",
+		},
+		{
+			name:     "rocr wins",
+			env:      map[string]string{"ROCR_VISIBLE_DEVICES": "1", "HIP_VISIBLE_DEVICES": "2"},
+			wantSame: true,
+		},
+		{
+			name:     "cuda uuid does not become rocr",
+			env:      map[string]string{"CUDA_VISIBLE_DEVICES": "GPU-f3a94ab8-b31d-61ff-9fbb-ce91ac1cdd95"},
+			wantSame: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+
+			got := normalizeDiscoveryEnvForGOOS("linux", []string{"/lib/ollama", "/lib/ollama/rocm"}, tt.extra)
+
+			if tt.wantSame {
+				if got != nil && got["ROCR_VISIBLE_DEVICES"] != "" {
+					t.Fatalf("ROCR_VISIBLE_DEVICES = %q, want unset", got["ROCR_VISIBLE_DEVICES"])
+				}
+				return
+			}
+			if got["ROCR_VISIBLE_DEVICES"] != tt.wantROCR {
+				t.Fatalf("ROCR_VISIBLE_DEVICES = %q, want %q", got["ROCR_VISIBLE_DEVICES"], tt.wantROCR)
+			}
+			if got[tt.wantSource] != tt.wantOrdinal {
+				t.Fatalf("%s = %q, want %q", tt.wantSource, got[tt.wantSource], tt.wantOrdinal)
+			}
+		})
+	}
+}
+
 func TestBootstrapDevicesWithStatusWatchdogReturnsResult(t *testing.T) {
 	want := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA", ID: "0"}}}
 	devices, _, err := runBootstrapDevicesWithStatusWatchdog(

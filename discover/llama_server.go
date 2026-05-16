@@ -148,8 +148,14 @@ func llamaServerDiscoverDevices(ctx context.Context, libDirs []string, extraEnvs
 		return nil, status, fmt.Errorf("llama-server --list-devices failed: %w", err)
 	}
 
-	combined := string(listOutput) + "\n" + strings.Join(stderrLines, "\n")
-	return parseLlamaServerDevices(combined, libDirs), status, nil
+	nativeDevices, nativeStderr, nativeErr := discoverNativeDevices(ctx, llamaServer, libDirs, extraEnvs)
+	_, _ = status.Write([]byte(nativeStderr))
+	if nativeErr != nil {
+		logNativeProbeFailure(nativeErr, nativeStderr, libDirs)
+	}
+
+	combined := string(listOutput) + "\n" + strings.Join(stderrLines, "\n") + "\n" + nativeStderr
+	return parseLlamaServerDevicesWithNative(combined, libDirs, nativeDevices), status, nil
 }
 
 func llamaServerDiscoveryOutput(ctx context.Context) io.Writer {
@@ -191,11 +197,24 @@ var (
 // It extracts device info, ROCm gfx targets, CUDA compute capabilities, and
 // CUDA compiled architecture lists.
 func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
+	return parseLlamaServerDevicesWithNative(output, libDirs, nil)
+}
+
+func parseLlamaServerDevicesWithNative(output string, libDirs []string, nativeDevices []nativeProbeDevice) []ml.DeviceInfo {
 	// Extract per-device metadata from stderr
 	gfxByIndex := parseROCmGFXTargets(output)
+	rocmGFXOverride := hsaOverrideGFXTarget()
 	integratedByIndex := parseVulkanUMA(output)
 	ccByIndex := make(map[int]cudaComputeCapability)
 	var cudaArchs []string // compiled architectures for this variant
+	nativeByIndex := nativeProbeByLibraryIndex(nativeDevices)
+	for idx, dev := range nativeByIndex["ROCm"] {
+		if rocmGFXOverride != "" {
+			gfxByIndex[idx] = rocmGFXOverride
+		} else if dev.GFXTarget != "" {
+			gfxByIndex[idx] = dev.GFXTarget
+		}
+	}
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
@@ -212,6 +231,18 @@ func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 		}
 		if matches := cudaArchsRegex.FindStringSubmatch(line); matches != nil {
 			cudaArchs = strings.Split(matches[1], ",")
+		}
+	}
+	if cudaDevices := nativeByIndex["CUDA"]; len(cudaDevices) > 0 {
+		for idx, dev := range cudaDevices {
+			if dev.ComputeMajor <= 0 {
+				continue
+			}
+			ccByIndex[idx] = cudaComputeCapability{
+				major: dev.ComputeMajor,
+				minor: dev.ComputeMinor,
+				arch:  fmt.Sprintf("%d%d0", dev.ComputeMajor, dev.ComputeMinor),
+			}
 		}
 	}
 
@@ -272,6 +303,7 @@ func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 		}
 
 		computeMajor, computeMinor := computeVersion(library, deviceIndex, gfxByIndex, ccByIndex)
+		nativeDevice, hasNativeDevice := nativeByIndex[library][deviceIndex]
 		dev := ml.DeviceInfo{
 			DeviceID: ml.DeviceID{
 				ID:      strconv.Itoa(deviceIndex),
@@ -287,7 +319,30 @@ func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
 			GFXTarget:    gfxByIndex[deviceIndex],
 			Integrated:   isIntegratedLlamaServerDevice(library, deviceIndex, integratedByIndex),
 		}
-		if library == "CUDA" && hasCUDARuntime {
+		if hasNativeDevice {
+			if nativeDevice.DeviceID != "" {
+				dev.PCIID = nativeDevice.DeviceID
+			}
+			if nativeDevice.IntegratedKnown {
+				dev.Integrated = nativeDevice.Integrated
+			} else {
+				dev.Integrated = dev.Integrated || nativeDevice.Integrated
+			}
+			if dev.ComputeMajor == 0 && nativeDevice.ComputeMajor > 0 {
+				dev.ComputeMajor = nativeDevice.ComputeMajor
+				dev.ComputeMinor = nativeDevice.ComputeMinor
+			}
+			if nativeDevice.CUDADriverMajor > 0 {
+				dev.DriverMajor = nativeDevice.CUDADriverMajor
+				dev.DriverMinor = nativeDevice.CUDADriverMinor
+			}
+			if nativeDevice.NVIDIADriverMajor > 0 {
+				dev.NVIDIADriverMajor = nativeDevice.NVIDIADriverMajor
+			}
+			setROCmGFXTarget(&dev, nativeDevice.GFXTarget)
+		}
+		setROCmGFXTarget(&dev, rocmGFXOverride)
+		if library == "CUDA" && dev.DriverMajor == 0 && hasCUDARuntime {
 			dev.DriverMajor = cudaRuntimeMajor
 			dev.DriverMinor = cudaRuntimeMinor
 		}
@@ -384,7 +439,7 @@ func inferLibrary(name, description string) string {
 }
 
 func isIntegratedLlamaServerDevice(library string, deviceIndex int, integratedByIndex map[int]bool) bool {
-	if integratedByIndex[deviceIndex] {
+	if library == "Vulkan" && integratedByIndex[deviceIndex] {
 		return true
 	}
 

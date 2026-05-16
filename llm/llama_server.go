@@ -457,7 +457,7 @@ func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string
 			addPath(dir)
 		}
 	}
-	return libraryPaths
+	return adjustPlatformLibraryPaths(libraryPaths, gpuLibs)
 }
 
 func findLlamaServerGPUBackend(dir string) string {

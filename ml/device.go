@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"os"
 	"runtime"
 	"slices"
 	"sort"
@@ -312,6 +313,10 @@ type DeviceInfo struct {
 	DriverMajor int `json:"driver_major,omitempty"`
 	DriverMinor int `json:"driver_minor,omitempty"`
 
+	// NVIDIADriverMajor is the NVIDIA kernel driver branch. CUDA driver APIs
+	// expose a separate CUDA compatibility version, so keep this distinct.
+	NVIDIADriverMajor int `json:"-"`
+
 	// GFXTarget is the AMD GPU gfx target string (e.g. "gfx1100") for ROCm
 	// device validation. Empty on non-AMD devices.
 	GFXTarget string `json:"gfx_target,omitempty"`
@@ -595,12 +600,15 @@ func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
 
 func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bool) {
 	var envVar string
+	var rocmOrdinalEnv string
 	switch d.Library {
 	case "ROCm":
 		// ROCm must be filtered as it can crash the runner on unsupported devices
 		envVar = "ROCR_VISIBLE_DEVICES"
 		if runtime.GOOS != "linux" {
-			envVar = "HIP_VISIBLE_DEVICES"
+			envVar = rocmNonLinuxVisibleDevicesEnv()
+		} else {
+			rocmOrdinalEnv = rocmLinuxOrdinalVisibleDevicesEnv()
 		}
 	case "CUDA":
 		if !mustFilter {
@@ -618,6 +626,7 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 		return
 	}
 	v, existing := env[envVar]
+	childOrdinal := visibleDeviceCount(v)
 	if existing {
 		v = v + ","
 	}
@@ -627,6 +636,63 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 		v = v + d.ID
 	}
 	env[envVar] = v
+
+	if rocmOrdinalEnv != "" {
+		v, existing = env[rocmOrdinalEnv]
+		if existing {
+			v = v + ","
+		}
+		v = v + strconv.Itoa(childOrdinal)
+		env[rocmOrdinalEnv] = v
+	}
+}
+
+func visibleDeviceCount(value string) int {
+	count := 0
+	for _, field := range strings.Split(value, ",") {
+		if strings.TrimSpace(field) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func rocmLinuxOrdinalVisibleDevicesEnv() string {
+	if runtime.GOOS != "linux" || os.Getenv("ROCR_VISIBLE_DEVICES") != "" {
+		return ""
+	}
+	for _, name := range []string{"HIP_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL", "CUDA_VISIBLE_DEVICES"} {
+		if numericVisibleDeviceList(os.Getenv(name)) {
+			return name
+		}
+	}
+	return ""
+}
+
+func rocmNonLinuxVisibleDevicesEnv() string {
+	for _, name := range []string{"HIP_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL", "CUDA_VISIBLE_DEVICES"} {
+		if numericVisibleDeviceList(os.Getenv(name)) {
+			return name
+		}
+	}
+	return "HIP_VISIBLE_DEVICES"
+}
+
+func numericVisibleDeviceList(value string) bool {
+	fields := strings.Split(value, ",")
+	found := false
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		index, err := strconv.Atoi(field)
+		if err != nil || index < 0 {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 type BaseRunner interface {

@@ -112,6 +112,36 @@ func TestApplyLinuxROCmRefinement(t *testing.T) {
 	}
 }
 
+func TestFilterUnsupportedROCmDevicesRespectsHSAOverride(t *testing.T) {
+	t.Setenv("HSA_OVERRIDE_GFX_VERSION", "10.3.0")
+
+	libDir := t.TempDir()
+	rocblasDir := filepath.Join(libDir, "rocblas", "library")
+	if err := os.MkdirAll(rocblasDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rocblasDir, "TensileLibrary_lazy_gfx1030.dat"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	devices := filterUnsupportedROCmDevices([]ml.DeviceInfo{{
+		DeviceID:     ml.DeviceID{ID: "0", Library: "ROCm"},
+		Name:         "ROCm0",
+		GFXTarget:    "gfx1031",
+		ComputeMajor: 0x10,
+		ComputeMinor: 0x31,
+	}}, []string{libDir})
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1", len(devices))
+	}
+	if got := devices[0].GFXTarget; got != "gfx1030" {
+		t.Fatalf("GFXTarget = %q, want gfx1030", got)
+	}
+	if got := devices[0].Compute(); got != "gfx1030" {
+		t.Fatalf("Compute() = %q, want gfx1030", got)
+	}
+}
+
 type fakeROCmNode struct {
 	node        int
 	renderMinor int

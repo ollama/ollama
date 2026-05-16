@@ -3,21 +3,11 @@ package discover
 import (
 	"context"
 	"log/slog"
-	"os/exec"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/ollama/ollama/ml"
 )
 
-var (
-	cudaDriverVersionMu    sync.Mutex
-	cudaDriverMajorVersion *int
-)
-
-func filterOldCUDADriver(ctx context.Context, devices []ml.DeviceInfo) []ml.DeviceInfo {
+func filterOldCUDADriver(_ context.Context, devices []ml.DeviceInfo) []ml.DeviceInfo {
 	oldCUDA := func(dev ml.DeviceInfo) bool {
 		return dev.Library == "CUDA" && dev.ComputeMajor > 0 && dev.ComputeMajor < 7
 	}
@@ -33,9 +23,9 @@ func filterOldCUDADriver(ctx context.Context, devices []ml.DeviceInfo) []ml.Devi
 		return devices
 	}
 
-	driver, err := nvidiaDriverMajorVersion(ctx)
-	if err != nil {
-		slog.Warn("could not run nvidia-smi to verify CUDA driver compatibility for an older NVIDIA GPU", "error", err)
+	driver := nvidiaDriverMajorFromDevices(devices)
+	if driver == 0 {
+		slog.Warn("could not verify NVIDIA driver compatibility for an older NVIDIA GPU")
 		return devices
 	}
 	if driver >= 570 {
@@ -54,30 +44,11 @@ func filterOldCUDADriver(ctx context.Context, devices []ml.DeviceInfo) []ml.Devi
 	return filtered
 }
 
-func nvidiaDriverMajorVersion(ctx context.Context) (int, error) {
-	cudaDriverVersionMu.Lock()
-	defer cudaDriverVersionMu.Unlock()
-
-	if cudaDriverMajorVersion != nil {
-		return *cudaDriverMajorVersion, nil
+func nvidiaDriverMajorFromDevices(devices []ml.DeviceInfo) int {
+	for _, dev := range devices {
+		if dev.Library == "CUDA" && dev.NVIDIADriverMajor > 0 {
+			return dev.NVIDIADriverMajor
+		}
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	output, err := exec.CommandContext(ctx, "nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader,nounits").Output()
-	if err != nil {
-		return 0, err
-	}
-
-	line := strings.TrimSpace(strings.Split(string(output), "\n")[0])
-	major, _, _ := strings.Cut(line, ".")
-	driver, err := strconv.Atoi(major)
-	if err != nil {
-		slog.Warn("could not parse nvidia-smi driver version for an older NVIDIA GPU", "version", line, "error", err)
-		return 0, err
-	}
-
-	cudaDriverMajorVersion = &driver
-	return driver, nil
+	return 0
 }
