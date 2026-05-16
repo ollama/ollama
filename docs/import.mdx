@@ -108,6 +108,56 @@ Once you have created your `Modelfile`, use the `ollama create` command to build
 ollama create my-model
 ```
 
+## Pulling a GGUF model directly from Hugging Face Hub
+
+If a GGUF file is already hosted on Hugging Face Hub you can pull it directly without downloading it first:
+
+```shell
+ollama pull hf.co/owner/repo:tag
+```
+
+For example, to pull a Q4\_K\_M quantized model:
+
+```shell
+ollama pull hf.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF:Q4_K_M
+```
+
+Ollama resolves the `hf.co/` prefix against the Hugging Face Hub API and downloads the matching GGUF file automatically.
+
+### Creating a local alias
+
+After pulling you can create a shorter local name with `ollama cp`:
+
+```shell
+ollama pull hf.co/owner/repo:Q4_K_M
+ollama cp hf.co/owner/repo:Q4_K_M mymodel
+ollama run mymodel
+```
+
+This is useful when you fine-tune and publish multiple versions — pull the specific tag and alias it locally without editing a Modelfile each time.
+
+### Customising the system prompt
+
+Once pulled, generate a `Modelfile` to set a system prompt or parameters:
+
+```dockerfile
+FROM hf.co/owner/repo:Q4_K_M
+
+SYSTEM """
+You are a helpful assistant specialised in <domain>.
+"""
+
+PARAMETER temperature 0.7
+PARAMETER num_ctx 8192
+```
+
+Then build and run:
+
+```shell
+ollama create mymodel -f Modelfile
+ollama run mymodel
+```
+
 ## Quantizing a Model
 
 Quantizing a model allows you to run models faster and with less memory consumption but at reduced accuracy. This allows you to run a model on more modest hardware.
