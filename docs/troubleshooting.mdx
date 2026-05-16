@@ -41,6 +41,30 @@ $env:OLLAMA_DEBUG="1"
 
 Join the [Discord](https://discord.gg/ollama) for help interpreting the logs.
 
+## Model runs slower than expected
+
+If Ollama detects your GPU but a model generates responses much slower than expected, check whether the model loaded fully into GPU memory. A model can fall back to system memory, or split between CPU and GPU, when the model weights and current context length do not fit in available VRAM.
+
+Load the model, then run:
+
+```shell
+ollama ps
+```
+
+The `PROCESSOR` column shows where the loaded model is running:
+
+- `100% GPU` means the model loaded entirely into GPU memory
+- `100% CPU` means the model loaded entirely into system memory
+- `48%/52% CPU/GPU` means the model is split between system memory and GPU memory
+
+Common reasons for CPU fallback or partial offloading include:
+
+- the model is larger than the available VRAM
+- the configured [context length](./context-length) requires more memory
+- other loaded models or parallel requests are using memory
+
+Try a smaller model, use a quantized model, reduce the context length, or stop other loaded models, for example `ollama stop llama3.2`. Then load the model again and re-check `ollama ps`.
+
 ## LLM libraries
 
 Ollama includes multiple LLM libraries compiled for different GPUs and CPU vector features. Ollama tries to pick the best one based on the capabilities of your system. If this autodetection has problems, or you run into other problems (e.g. crashes in your GPU) you can workaround this by forcing a specific LLM library. `cpu_avx2` will perform the best, followed by `cpu_avx` an the slowest but most compatible is `cpu`. Rosetta emulation under MacOS will work with the `cpu` library.
