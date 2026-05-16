@@ -23,6 +23,15 @@ type quantizer struct {
 }
 
 func (q quantizer) WriteTo(w io.Writer) (int64, error) {
+	// Size() and Elements() multiply the (attacker-controlled) tensor shape
+	// without overflow checks, so a crafted GGUF with a shape like
+	// [2^32, 2^32] wraps the uint64 product to 0. That makes the
+	// len(data) < Size() guard below vacuous (0 < 0) and then panics on
+	// &data[0] over the empty slice. A legitimate weight tensor is never
+	// empty, so reject a zero element count or size up front.
+	if q.from.Elements() == 0 || q.from.Size() == 0 {
+		return 0, fmt.Errorf("tensor %s has invalid shape %v", q.from.Name, q.from.Shape)
+	}
 	quantize := q.from.Kind != q.to.Kind
 	sr := io.NewSectionReader(q, int64(q.offset), int64(q.from.Size()))
 	if !quantize {
