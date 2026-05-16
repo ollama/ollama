@@ -308,6 +308,8 @@ function mlxCuda13 {
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build\mlx_cuda_v$cudaMajorVer --component "MLX" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build\mlx_cuda_v$cudaMajorVer --component "MLX_VENDOR"
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         } else {
             Write-Output "CUDA v$cudaMajorVer not detected, skipping MLX build"
         }
@@ -430,7 +432,7 @@ function newZipJob($sourceDir, $destZip) {
     Start-Job -ScriptBlock {
         param($src, $dst, $use7z)
         if ($use7z) {
-            & 7z a -tzip -mx=9 -mmt=on $dst "${src}\*"
+            & 7z a -tzip -mx=7 -mmt=on $dst "${src}\*"
             if ($LASTEXITCODE -ne 0) { throw "7z failed with exit code $LASTEXITCODE" }
         } else {
             Compress-Archive -CompressionLevel Optimal -Path "${src}\*" -DestinationPath $dst -Force

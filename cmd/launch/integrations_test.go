@@ -10,7 +10,9 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
@@ -56,6 +58,9 @@ func TestIntegrationLookup(t *testing.T) {
 		{"claude desktop", "claude-desktop", true, "Claude Desktop"},
 		{"claude desktop alias", "claude-app", true, "Claude Desktop"},
 		{"codex", "codex", true, "Codex"},
+		{"codex app", "codex-app", true, "Codex App"},
+		{"codex app desktop alias", "codex-desktop", true, "Codex App"},
+		{"codex app gui alias", "codex-gui", true, "Codex App"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
 		{"droid", "droid", true, "Droid"},
 		{"opencode", "opencode", true, "OpenCode"},
@@ -78,7 +83,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "codex", "kimi", "droid", "opencode", "hermes", "pool"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "codex", "codex-app", "kimi", "droid", "opencode", "hermes", "pool"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -135,6 +140,23 @@ func TestLookupIntegration_UnknownIntegration(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown integration") {
 		t.Errorf("error should mention 'unknown integration', got: %v", err)
+	}
+}
+
+func TestLookupIntegration_ClaudeDesktopResolvesForRestore(t *testing.T) {
+	for _, name := range []string{"claude-desktop", "claude-app"} {
+		t.Run(name, func(t *testing.T) {
+			canonical, runner, err := LookupIntegration(name)
+			if err != nil {
+				t.Fatalf("expected Claude Desktop lookup to resolve, got: %v", err)
+			}
+			if canonical != "claude-desktop" {
+				t.Fatalf("canonical name = %q, want claude-desktop", canonical)
+			}
+			if runner.String() != "Claude Desktop" {
+				t.Fatalf("runner = %q, want Claude Desktop", runner.String())
+			}
+		})
 	}
 }
 
@@ -453,6 +475,28 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 				t.Errorf("cloud model %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
 		}
+	}
+}
+
+func TestBuildModelList_PreservesRecommendationRequiredPlanForExistingCloudModel(t *testing.T) {
+	recommendations := []ModelItem{
+		{
+			Name:          "glm-5:cloud",
+			Description:   "Reasoning and code generation",
+			Recommended:   true,
+			RequiredPlan:  "pro",
+			ContextLength: 202_752,
+		},
+	}
+	existing := []modelInfo{{Name: "glm-5:cloud", Remote: true}}
+
+	items, _, _, _ := buildModelListWithRecommendations(existing, recommendations, nil, "")
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %v", items)
+	}
+	item := items[0]
+	if item.RequiredPlan != "pro" {
+		t.Fatalf("RequiredPlan = %q, want pro", item.RequiredPlan)
 	}
 }
 
@@ -822,7 +866,7 @@ func TestPrepareEditorIntegration_SavesOnlyAfterSuccessfulEdit(t *testing.T) {
 	}
 
 	editor := &stubEditorRunner{editErr: errors.New("boom")}
-	err := prepareEditorIntegration("droid", editor, editor, []string{"new-model"})
+	err := prepareEditorIntegration("droid", editor, []string{"new-model"})
 	if err == nil || !strings.Contains(err.Error(), "setup failed") {
 		t.Fatalf("expected setup failure, got %v", err)
 	}
@@ -1390,6 +1434,187 @@ func TestEnsureAuth_EmptyWhoamiRequiresSignIn(t *testing.T) {
 	}
 }
 
+func TestApplyAccountStateToSelectionItems_BadgesOnlyWhenActionRequired(t *testing.T) {
+	items := []ModelItem{
+		{Name: "qwen3.5:cloud", Recommended: true},
+		{Name: "kimi-k2.6:cloud", Recommended: true, RequiredPlan: "pro"},
+		{Name: "llama3.2", RequiredPlan: "pro"},
+		{Name: "glm-5:cloud"},
+		{Name: "nemotron-3-super:cloud", Recommended: true, RequiredPlan: "free"},
+	}
+
+	signedOut := ApplyAccountStateToSelectionItems(items, AccountState{Status: accountStateSignedOut})
+	if signedOut[0].AvailabilityBadge != "Sign in required" {
+		t.Fatalf("account cloud badge = %q", signedOut[0].AvailabilityBadge)
+	}
+	if signedOut[1].AvailabilityBadge != "Sign in required" {
+		t.Fatalf("subscription cloud signed-out badge = %q", signedOut[1].AvailabilityBadge)
+	}
+	if signedOut[4].AvailabilityBadge != "Sign in required" {
+		t.Fatalf("free-plan cloud signed-out badge = %q", signedOut[4].AvailabilityBadge)
+	}
+	if signedOut[2].AvailabilityBadge != "" || signedOut[3].AvailabilityBadge != "" {
+		t.Fatalf("unexpected badge for local or unmetadata item: %#v", signedOut)
+	}
+
+	freeUser := ApplyAccountStateToSelectionItems(items, AccountState{Status: accountStateSignedIn, Plan: "free"})
+	if freeUser[0].AvailabilityBadge != "" {
+		t.Fatalf("signed-in account model should not be badged, got %q", freeUser[0].AvailabilityBadge)
+	}
+	if freeUser[1].AvailabilityBadge != "Upgrade required" {
+		t.Fatalf("subscription cloud free-plan badge = %q", freeUser[1].AvailabilityBadge)
+	}
+	if freeUser[4].AvailabilityBadge != "" {
+		t.Fatalf("free required plan should be usable by free user, got %q", freeUser[4].AvailabilityBadge)
+	}
+
+	proUser := ApplyAccountStateToSelectionItems(items, AccountState{Status: accountStateSignedIn, Plan: "pro"})
+	if proUser[1].AvailabilityBadge != "" {
+		t.Fatalf("pro user should not see included badge, got %q", proUser[1].AvailabilityBadge)
+	}
+
+	maxUser := ApplyAccountStateToSelectionItems(items, AccountState{Status: accountStateSignedIn, Plan: "max"})
+	if maxUser[1].AvailabilityBadge != "" {
+		t.Fatalf("max user should not see upgrade badge, got %q", maxUser[1].AvailabilityBadge)
+	}
+
+	unknown := ApplyAccountStateToSelectionItems(items, AccountState{Status: accountStateUnknown})
+	for _, item := range unknown {
+		if item.AvailabilityBadge != "" {
+			t.Fatalf("unknown account state should not render badges: %#v", unknown)
+		}
+	}
+}
+
+func TestSelectionItemsWithAccountState_SkipsBadgesWithoutBadgeableCloudItems(t *testing.T) {
+	items := []ModelItem{
+		{Name: "llama3.2"},
+		{Name: "custom:cloud"},
+	}
+	state := &AccountState{Status: accountStateSignedOut}
+	got := SelectionItemsWithAccountState(items, state)
+	if len(got) != len(items) {
+		t.Fatalf("got %d selection items, want %d", len(got), len(items))
+	}
+	for _, item := range got {
+		if item.AvailabilityBadge != "" {
+			t.Fatalf("unexpected badge without account state: %#v", got)
+		}
+	}
+}
+
+func TestSelectionItemsWithAccountState_UsesPrefetchedStateForRecommendedCloudItems(t *testing.T) {
+	state := &AccountState{Status: accountStateSignedOut}
+	got := SelectionItemsWithAccountState([]ModelItem{{Name: "qwen3.5:cloud", Recommended: true}}, state)
+	if got[0].AvailabilityBadge != "Sign in required" {
+		t.Fatalf("badge = %q, want Sign in required", got[0].AvailabilityBadge)
+	}
+}
+
+func TestRecommendedModelsDoNotIncludeRequiredPlanStubs(t *testing.T) {
+	byName := make(map[string]ModelItem, len(recommendedModels))
+	for _, item := range recommendedModels {
+		byName[item.Name] = item
+	}
+
+	if item := byName["kimi-k2.6:cloud"]; item.RequiredPlan != "" {
+		t.Fatalf("kimi fallback required plan should not be stubbed: %#v", item)
+	}
+	if item := byName["minimax-m2.7:cloud"]; item.RequiredPlan != "" {
+		t.Fatalf("minimax fallback required plan should not be stubbed: %#v", item)
+	}
+	if item := byName["qwen3.5:cloud"]; item.RequiredPlan != "" {
+		t.Fatalf("qwen fallback required plan = %#v", item)
+	}
+	if item := byName["glm-5.1:cloud"]; item.RequiredPlan != "" {
+		t.Fatalf("glm fallback required plan = %#v", item)
+	}
+}
+
+func TestLaunchAccountState(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantStatus accountStateStatus
+		wantPlan   string
+	}{
+		{
+			name:       "signed in",
+			statusCode: http.StatusOK,
+			body:       `{"name":"parth","plan":"pro"}`,
+			wantStatus: accountStateSignedIn,
+			wantPlan:   "pro",
+		},
+		{
+			name:       "signed out",
+			statusCode: http.StatusUnauthorized,
+			body:       `{"error":"unauthorized","signin_url":"https://example.com/signin"}`,
+			wantStatus: accountStateSignedOut,
+		},
+		{
+			name:       "unreachable",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"error":"temporary failure"}`,
+			wantStatus: accountStateUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/me" {
+					http.NotFound(w, r)
+					return
+				}
+				w.WriteHeader(tt.statusCode)
+				fmt.Fprint(w, tt.body)
+			}))
+			defer srv.Close()
+
+			u, _ := url.Parse(srv.URL)
+			got := launchAccountState(context.Background(), api.NewClient(u, srv.Client()))
+			if got.Status != tt.wantStatus {
+				t.Fatalf("Status = %v, want %v", got.Status, tt.wantStatus)
+			}
+			if got.Plan != tt.wantPlan {
+				t.Fatalf("Plan = %q, want %q", got.Plan, tt.wantPlan)
+			}
+		})
+	}
+}
+
+func TestStartAccountStatePrefetch_SkipsWhoamiWhenCloudDisabled(t *testing.T) {
+	var whoamiCalled atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprint(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		case "/api/me":
+			whoamiCalled.Store(true)
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	prefetch := StartAccountStatePrefetch(context.Background())
+	select {
+	case <-prefetch.done:
+	case <-time.After(time.Second):
+		t.Fatal("account prefetch did not finish")
+	}
+	if whoamiCalled.Load() {
+		t.Fatal("prefetch should not call whoami when cloud is disabled")
+	}
+	state := prefetch.StateIfReady()
+	if state == nil || state.Status != accountStateUnknown {
+		t.Fatalf("prefetch state = %#v, want unknown", state)
+	}
+}
+
 func TestEnsureAuth_PreservesCancelledSignInHook(t *testing.T) {
 	oldSignIn := DefaultSignIn
 	DefaultSignIn = func(modelName, signInURL string) (string, error) {
@@ -1511,14 +1736,14 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantURL: "https://code.claude.com/docs/en/quickstart",
 		},
 		{
-			name:    "claude desktop has hint",
-			input:   "claude-desktop",
-			wantURL: "https://claude.com/download",
-		},
-		{
 			name:    "codex has hint",
 			input:   "codex",
 			wantURL: "https://developers.openai.com/codex/cli/",
+		},
+		{
+			name:    "codex app has hint",
+			input:   "codex-app",
+			wantURL: "https://developers.openai.com/codex/quickstart",
 		},
 		{
 			name:    "openclaw has hint",
@@ -1596,10 +1821,10 @@ func TestListIntegrationInfos(t *testing.T) {
 			}
 			want = filtered
 		}
-		if claudeDesktopSupported() != nil {
+		if codexAppSupported() != nil {
 			filtered := make([]string, 0, len(want))
 			for _, name := range want {
-				if name != "claude-desktop" {
+				if name != "codex-app" {
 					filtered = append(filtered, name)
 				}
 			}
@@ -1608,6 +1833,23 @@ func TestListIntegrationInfos(t *testing.T) {
 
 		if diff := compareStrings(got, want); diff != "" {
 			t.Fatalf("launcher integration order mismatch: %s", diff)
+		}
+	})
+
+	t.Run("prioritizes primary launcher integrations", func(t *testing.T) {
+		got := make([]string, 0, len(infos))
+		for _, info := range infos {
+			got = append(got, info.Name)
+		}
+		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw"}
+		if codexAppSupported() != nil {
+			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode"}
+		}
+		if len(got) < len(wantPrefix) {
+			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
+		}
+		if diff := compareStrings(got[:len(wantPrefix)], wantPrefix); diff != "" {
+			t.Fatalf("unexpected primary launcher order: %s", diff)
 		}
 	})
 
@@ -1624,8 +1866,8 @@ func TestListIntegrationInfos(t *testing.T) {
 
 	t.Run("includes known integrations", func(t *testing.T) {
 		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
-		if claudeDesktopSupported() == nil {
-			known["claude-desktop"] = false
+		if codexAppSupported() == nil {
+			known["codex-app"] = false
 		}
 		if poolsideGOOS != "windows" {
 			known["pool"] = false
@@ -1677,14 +1919,10 @@ func TestListIntegrationInfos_HidesPoolsideOnWindows(t *testing.T) {
 	}
 }
 
-func TestListIntegrationInfos_HidesClaudeDesktopOnUnsupportedPlatform(t *testing.T) {
-	prev := claudeDesktopGOOS
-	claudeDesktopGOOS = "linux"
-	t.Cleanup(func() { claudeDesktopGOOS = prev })
-
+func TestListIntegrationInfos_HidesClaudeDesktop(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		if info.Name == "claude-desktop" {
-			t.Fatal("expected claude-desktop to be hidden on unsupported platforms")
+			t.Fatal("expected hidden claude-desktop to be absent")
 		}
 	}
 }

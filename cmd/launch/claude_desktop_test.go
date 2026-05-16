@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,62 +127,59 @@ func TestClaudeDesktopIntegration(t *testing.T) {
 	})
 }
 
-func TestLaunchIntegration_ClaudeDesktopDoesNotRequireLocalCloudSignIn(t *testing.T) {
+func TestLaunchIntegration_ClaudeDesktopLaunchReturnsUnsupported(t *testing.T) {
+	for _, name := range []string{"claude-desktop", "claude-app"} {
+		t.Run(name, func(t *testing.T) {
+			err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: name})
+			if err == nil {
+				t.Fatal("expected Claude Desktop launch to fail")
+			}
+			if !strings.Contains(err.Error(), "Claude Desktop is no longer supported") {
+				t.Fatalf("expected unsupported guidance, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "ollama launch claude-desktop --restore") {
+				t.Fatalf("expected restore guidance, got %v", err)
+			}
+		})
+	}
+}
+
+func TestLaunchIntegration_ClaudeDesktopRestoreStillWorks(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	withClaudeDesktopPlatform(t, "darwin")
-	withInteractiveSession(t, true)
-	withLauncherHooks(t)
-	t.Setenv("OLLAMA_API_KEY", "test-api-key")
+	withClaudeDesktopProcessHooks(t, func() bool { return false }, func() error { return nil }, func() error { return nil })
 
 	if err := os.MkdirAll(filepath.Join(tmpDir, "Applications", "Claude.app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/status":
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `{"error":"not found"}`)
-		case "/api/me":
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.meta, []byte(`{"appliedId":"`+claudeDesktopProfileID+`","entries":[{"id":"`+claudeDesktopProfileID+`","name":"Ollama"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.profile, []byte(`{"disableDeploymentModeChooser":true,"inferenceGatewayApiKey":"keep","inferenceProvider":"gateway","inferenceGatewayBaseUrl":"https://ollama.com","inferenceGatewayAuthScheme":"bearer"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	var validatedKey string
-	withClaudeDesktopValidation(t, func(_ context.Context, key string) error {
-		validatedKey = key
-		return nil
+	stderr := captureStderr(t, func() {
+		err = LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "claude-desktop", Restore: true})
 	})
-
-	DefaultSignIn = func(modelName, signInURL string) (string, error) {
-		t.Fatalf("Claude Desktop launch should not require local Ollama Cloud sign-in, got %s at %s", modelName, signInURL)
-		return "", nil
+	if err != nil {
+		t.Fatalf("LaunchIntegration restore returned error: %v", err)
 	}
-
-	var openCalls int
-	withClaudeDesktopProcessHooks(t,
-		func() bool { return false },
-		func() error { return nil },
-		func() error {
-			openCalls++
-			return nil
-		},
-	)
-
-	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "claude-desktop"}); err != nil {
-		t.Fatalf("LaunchIntegration returned error: %v", err)
+	if !strings.Contains(stderr, claudeDesktopRestoredMessage) {
+		t.Fatalf("expected restore success message, got stderr: %q", stderr)
 	}
-	if validatedKey != "test-api-key" {
-		t.Fatalf("validated key = %q, want test API key", validatedKey)
-	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	desktopConfig := claudeDesktopReadJSON(t, paths.desktopConfig)
+	if desktopConfig["deploymentMode"] != "1p" {
+		t.Fatalf("deploymentMode = %v, want 1p", desktopConfig["deploymentMode"])
 	}
 }
 
@@ -472,10 +467,27 @@ func TestWaitForClaudeDesktopExitUsesRunningHook(t *testing.T) {
 	}
 }
 
-func TestClaudeDesktopWindowsRestartUsesCapturedDesktopPath(t *testing.T) {
+func TestClaudeDesktopWindowsRestoreRestartUsesCapturedDesktopPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
 	withClaudeDesktopPlatform(t, "windows")
+	t.Setenv("LOCALAPPDATA", filepath.Join(tmpDir, "LocalAppData"))
 	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
 	defer restoreConfirm()
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.meta, []byte(`{"appliedId":"`+claudeDesktopProfileID+`","entries":[{"id":"`+claudeDesktopProfileID+`","name":"Ollama"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.profile, []byte(`{"disableDeploymentModeChooser":true,"inferenceGatewayApiKey":"keep"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	desktopPath := `C:\Users\parth\AppData\Local\AnthropicClaude\app-1.2.3\Claude.exe`
 	running := true
@@ -497,8 +509,8 @@ func TestClaudeDesktopWindowsRestartUsesCapturedDesktopPath(t *testing.T) {
 		return nil
 	}
 
-	if err := (&ClaudeDesktop{}).Run("qwen3.5", nil); err != nil {
-		t.Fatalf("Run returned error: %v", err)
+	if err := (&ClaudeDesktop{}).Restore(); err != nil {
+		t.Fatalf("Restore returned error: %v", err)
 	}
 	if openedPath != desktopPath {
 		t.Fatalf("opened path = %q, want %q", openedPath, desktopPath)
@@ -901,38 +913,34 @@ func TestClaudeDesktopRestoreTouchesAllWindowsProfileCandidates(t *testing.T) {
 	}
 }
 
-func TestClaudeDesktopRunRestartsRunningAppWhenConfirmed(t *testing.T) {
+func TestClaudeDesktopRunReturnsUnsupported(t *testing.T) {
 	withClaudeDesktopPlatform(t, "darwin")
-	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
-	defer restoreConfirm()
 
-	running := true
-	var quitCalls, openCalls int
 	withClaudeDesktopProcessHooks(t,
-		func() bool { return running },
+		func() bool {
+			t.Fatal("Run should not inspect Claude Desktop process state")
+			return false
+		},
 		func() error {
-			quitCalls++
-			running = false
+			t.Fatal("Run should not quit Claude Desktop")
 			return nil
 		},
 		func() error {
-			openCalls++
+			t.Fatal("Run should not open Claude Desktop")
 			return nil
 		},
 	)
 
-	if err := (&ClaudeDesktop{}).Run("qwen3.5", nil); err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-	if quitCalls != 1 || openCalls != 1 {
-		t.Fatalf("quit/open calls = %d/%d, want 1/1", quitCalls, openCalls)
-	}
-}
-
-func TestClaudeDesktopRunRejectsExtraArgs(t *testing.T) {
-	withClaudeDesktopPlatform(t, "darwin")
-	err := (&ClaudeDesktop{}).Run("qwen3.5", []string{"--foo"})
-	if err == nil || !strings.Contains(err.Error(), "does not accept extra arguments") {
-		t.Fatalf("Run error = %v, want extra args rejection", err)
+	for _, args := range [][]string{nil, {"--foo"}} {
+		err := (&ClaudeDesktop{}).Run("qwen3.5", args)
+		if err == nil {
+			t.Fatal("expected Run to fail")
+		}
+		if !strings.Contains(err.Error(), "Claude Desktop is no longer supported") {
+			t.Fatalf("expected unsupported guidance, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "ollama launch claude-desktop --restore") {
+			t.Fatalf("expected restore guidance, got %v", err)
+		}
 	}
 }

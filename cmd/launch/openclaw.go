@@ -753,7 +753,7 @@ func (c *Openclaw) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := fileutil.WriteWithBackup(configPath, data); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, data, "openclaw"); err != nil {
 		return err
 	}
 

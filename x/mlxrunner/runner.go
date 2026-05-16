@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -34,11 +35,14 @@ type Request struct {
 
 type Runner struct {
 	Model         base.Model
+	Draft         base.DraftModel
 	Tokenizer     *tokenizer.Tokenizer
 	Requests      chan Request
 	Sampler       *sample.Sampler
 	cache         kvCache
+	dflashCache   kvCache
 	contextLength int
+	mlxThread     *mlxthread.Thread
 }
 
 func (r *Runner) Load(modelName string) error {
@@ -59,11 +63,40 @@ func (r *Runner) Load(modelName string) error {
 		return err
 	}
 
-	// Assign weights to model (model-specific logic)
-	loadWeights := base.Weights(m)
-	if err := loadWeights(tensors); err != nil {
+	// Assign weights to model (model-specific logic). Target and draft weights
+	// must be loaded before sweeping so tensors from a combined manifest are
+	// not discarded before the draft model can retain them.
+	if err := m.LoadWeights(tensors); err != nil {
 		return err
 	}
+
+	r.Draft = nil
+	draft, err := base.NewDraft(root, m)
+	if err != nil {
+		return err
+	}
+	if draft != nil {
+		if err := draft.LoadWeights(tensors); err != nil {
+			return err
+		}
+		r.Draft = draft
+	}
+
+	collected := mlx.Collect(m)
+	if draft != nil {
+		draftArrays := mlx.Collect(draft)
+		collected = append(collected, draftArrays...)
+		if root.Draft != nil {
+			slog.Info("Loaded draft model", "tensor_prefix", root.Draft.TensorPrefix, "config", root.Draft.Config, "arrays", len(draftArrays))
+		} else {
+			slog.Info("Loaded draft model", "arrays", len(draftArrays))
+		}
+	}
+	for _, arr := range collected {
+		mlx.Pin(arr)
+	}
+	mlx.Sweep()
+	mlx.Eval(collected...)
 
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
@@ -137,7 +170,8 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 			case <-ctx.Done():
 				return nil
 			case request := <-r.Requests:
-				if err := request.Pipeline(request.Ctx, request); err != nil {
+				err := r.runRequest(request)
+				if err != nil {
 					slog.Info("Request terminated", "error", err)
 					var statusErr api.StatusError
 					if !errors.As(err, &statusErr) {
@@ -163,4 +197,14 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 	})
 
 	return g.Wait()
+}
+
+func (r *Runner) runRequest(request Request) error {
+	if r.mlxThread == nil {
+		return request.Pipeline(request.Ctx, request)
+	}
+
+	return r.mlxThread.Do(request.Ctx, func() error {
+		return request.Pipeline(request.Ctx, request)
+	})
 }

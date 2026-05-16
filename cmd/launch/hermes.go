@@ -132,7 +132,7 @@ func (h *Hermes) Configure(model string) error {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(configPath, data)
+	return fileutil.WriteWithBackup(configPath, data, "hermes")
 }
 
 func (h *Hermes) CurrentModel() string {

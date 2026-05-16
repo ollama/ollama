@@ -255,7 +255,7 @@ func TestModelRecommendationsLoadSnapshotInvalidDoesNotOverwrite(t *testing.T) {
 
 func TestValidateModelRecommendationsTrimsAndDropsInvalidCloudEntries(t *testing.T) {
 	input := []api.ModelRecommendation{
-		{Model: " good-cloud:cloud ", Description: " good cloud ", ContextLength: 1024, MaxOutputTokens: 256},
+		{Model: " good-cloud:cloud ", Description: " good cloud ", ContextLength: 1024, MaxOutputTokens: 256, RequiredPlan: " pro "},
 		{Model: "bad-cloud:cloud", Description: "missing limits"},
 		{Model: " good-local ", Description: " good local ", VRAMBytes: 2 * format.GigaByte},
 	}
@@ -266,11 +266,43 @@ func TestValidateModelRecommendationsTrimsAndDropsInvalidCloudEntries(t *testing
 	}
 
 	want := []api.ModelRecommendation{
-		{Model: "good-cloud:cloud", Description: "good cloud", ContextLength: 1024, MaxOutputTokens: 256},
+		{Model: "good-cloud:cloud", Description: "good cloud", ContextLength: 1024, MaxOutputTokens: 256, RequiredPlan: "pro"},
 		{Model: "good-local", Description: "good local", VRAMBytes: 2 * format.GigaByte},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("validated recommendations = %#v, want %#v", got, want)
+	}
+}
+
+func TestValidateModelRecommendationsDoesNotSynthesizeRequiredPlans(t *testing.T) {
+	input := []api.ModelRecommendation{
+		{Model: "kimi-k2.6:cloud", Description: "coding", ContextLength: 262_144, MaxOutputTokens: 262_144},
+		{Model: "qwen3.5:cloud", Description: "reasoning", ContextLength: 262_144, MaxOutputTokens: 32_768},
+		{Model: "custom:cloud", Description: "custom", ContextLength: 4096, MaxOutputTokens: 1024},
+		{Model: "minimax-m2.7:cloud", Description: "custom", ContextLength: 204_800, MaxOutputTokens: 128_000, RequiredPlan: "team"},
+	}
+
+	got, err := validateModelRecommendations(input)
+	if err != nil {
+		t.Fatalf("validateModelRecommendations failed: %v", err)
+	}
+
+	byName := make(map[string]api.ModelRecommendation, len(got))
+	for _, rec := range got {
+		byName[rec.Model] = rec
+	}
+
+	if rec := byName["kimi-k2.6:cloud"]; rec.RequiredPlan != "" {
+		t.Fatalf("kimi required plan should not be synthesized: %#v", rec)
+	}
+	if rec := byName["qwen3.5:cloud"]; rec.RequiredPlan != "" {
+		t.Fatalf("qwen required plan should not be synthesized: %#v", rec)
+	}
+	if rec := byName["custom:cloud"]; rec.RequiredPlan != "" {
+		t.Fatalf("custom required plan should not be synthesized: %#v", rec)
+	}
+	if rec := byName["minimax-m2.7:cloud"]; rec.RequiredPlan != "team" {
+		t.Fatalf("explicit required plan should not be overwritten: %#v", rec)
 	}
 }
 
@@ -306,7 +338,7 @@ func TestModelRecommendationsHandlerUsesCache(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/experimental/model-recommendations", nil)
 
-	s := &Server{modelRecommendations: cache}
+	s := &Server{modelCaches: &modelCaches{recommendations: cache}}
 	s.ModelRecommendationsExperimentalHandler(ctx)
 
 	if w.Code != http.StatusOK {
@@ -326,7 +358,7 @@ func TestModelRecommendationsRouteRegistration(t *testing.T) {
 
 	cache := newModelRecommendationsCache()
 	cache.set([]api.ModelRecommendation{{Model: "route-model", Description: "route description"}})
-	s := &Server{modelRecommendations: cache}
+	s := &Server{modelCaches: &modelCaches{recommendations: cache}}
 
 	router, err := s.GenerateRoutes(nil)
 	if err != nil {

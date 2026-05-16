@@ -434,6 +434,54 @@ func TestLayerTypeDetection(t *testing.T) {
 	}
 }
 
+func TestMTPDraftDefaults(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         *TextConfig
+		wantInitial int
+		wantMax     int
+	}{
+		{
+			name:        "nil config",
+			wantInitial: 4,
+			wantMax:     16,
+		},
+		{
+			name:        "31b bf16",
+			cfg:         &TextConfig{HiddenSize: 5376, NumHiddenLayers: 60},
+			wantInitial: 14,
+			wantMax:     16,
+		},
+		{
+			name:        "31b quantized",
+			cfg:         &TextConfig{HiddenSize: 5376, NumHiddenLayers: 60, QuantBits: 4},
+			wantInitial: 14,
+			wantMax:     16,
+		},
+		{
+			name:        "26b-a4b moe",
+			cfg:         &TextConfig{HiddenSize: 2816, NumHiddenLayers: 30, EnableMoeBlock: true},
+			wantInitial: 8,
+			wantMax:     16,
+		},
+		{
+			name:        "generic default",
+			cfg:         &TextConfig{HiddenSize: 2560, NumHiddenLayers: 42, HiddenSizePerLayer: 256},
+			wantInitial: 4,
+			wantMax:     16,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := (&Model{TextConfig: tt.cfg}).MTPDraftDefaults(false)
+			if got.InitialDraftTokens != tt.wantInitial || got.MaxDraftTokens != tt.wantMax || !got.Enabled {
+				t.Fatalf("MTPDraftDefaults() = %+v, want initial=%d max=%d enabled=true", got, tt.wantInitial, tt.wantMax)
+			}
+		})
+	}
+}
+
 func TestNewCachesOmitsSharedKVLayers(t *testing.T) {
 	m := &Model{
 		Layers: []*DecoderLayer{
@@ -464,6 +512,55 @@ func TestNewCachesIncludesAllNonSharedLayers(t *testing.T) {
 	caches := m.NewCaches()
 	if got, want := len(caches), len(m.Layers); got != want {
 		t.Fatalf("len(NewCaches()) = %d, want %d", got, want)
+	}
+}
+
+func TestNewCachesAssistantSharedHistoryOrdering(t *testing.T) {
+	cases := []struct {
+		name              string
+		totalLayers       int
+		slidingBeforeFull int
+		cacheLayers       int
+	}{
+		{name: "31B", totalLayers: 60, slidingBeforeFull: 5, cacheLayers: 60},
+		{name: "26B-A4B", totalLayers: 30, slidingBeforeFull: 5, cacheLayers: 30},
+		{name: "E4B", totalLayers: 42, slidingBeforeFull: 5, cacheLayers: 24},
+		{name: "E2B", totalLayers: 35, slidingBeforeFull: 4, cacheLayers: 15},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			groupSize := tc.slidingBeforeFull + 1
+			layers := make([]*DecoderLayer, tc.totalLayers)
+			for i := range layers {
+				donor := int32(-1)
+				if i >= tc.cacheLayers {
+					donor = 0
+				}
+				layers[i] = &DecoderLayer{
+					IsSliding:    i%groupSize < tc.slidingBeforeFull,
+					KVShareDonor: donor,
+				}
+			}
+
+			m := &Model{
+				Layers:     layers,
+				TextConfig: &TextConfig{SlidingWindow: 512},
+			}
+			caches := m.NewCaches()
+			if got := len(caches); got != tc.cacheLayers {
+				t.Fatalf("len(NewCaches()) = %d, want %d", got, tc.cacheLayers)
+			}
+
+			gotSliding := len(caches) - 2
+			gotFull := len(caches) - 1
+			if !m.Layers[gotSliding].IsSliding {
+				t.Fatalf("cache %d should be sliding attention", gotSliding)
+			}
+			if m.Layers[gotFull].IsSliding {
+				t.Fatalf("cache %d should be full attention", gotFull)
+			}
+		})
 	}
 }
 

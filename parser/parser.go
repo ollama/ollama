@@ -83,6 +83,8 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 					req.Files[k] = v
 				}
 			}
+		case "draft":
+			return nil, errors.New("DRAFT requires --experimental")
 		case "adapter":
 			path, err := expandPath(c.Args, relativeDir)
 			if err != nil {
@@ -336,7 +338,7 @@ func (c Command) String() string {
 	switch c.Name {
 	case "model":
 		fmt.Fprintf(&sb, "FROM %s", c.Args)
-	case "license", "template", "system", "adapter", "renderer", "parser", "requires":
+	case "license", "template", "system", "adapter", "renderer", "parser", "requires", "draft":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
@@ -362,7 +364,7 @@ const (
 var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
-	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"renderer\", \"parser\", \"parameter\", \"message\", or \"requires\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"draft\", \"renderer\", \"parser\", \"parameter\", \"message\", or \"requires\"")
 )
 
 type ParserError struct {
@@ -622,7 +624,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "renderer", "parser", "parameter", "message", "requires":
+	case "from", "license", "template", "system", "adapter", "draft", "renderer", "parser", "parameter", "message", "requires":
 		return true
 	default:
 		return false
