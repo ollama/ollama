@@ -46,7 +46,8 @@ if(APPLE)
 endif()
 
 set(OLLAMA_BUILD_DIR ${CMAKE_BINARY_DIR}/lib/ollama)
-set(OLLAMA_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/ollama/${OLLAMA_RUNNER_DIR})
+set(OLLAMA_LIB_DIR "lib/ollama" CACHE PATH "Install directory for Ollama runtime payloads")
+set(OLLAMA_INSTALL_DIR ${OLLAMA_LIB_DIR}/${OLLAMA_RUNNER_DIR})
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG   ${OLLAMA_BUILD_DIR})
@@ -57,7 +58,11 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${OLLAMA_BUILD_DIR})
 
 option(MLX_ENGINE "Enable MLX backend" OFF)
 
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/local.cmake)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/llama/server/CMakeLists.txt")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/local.cmake)
+elseif(NOT MLX_ENGINE)
+    message(FATAL_ERROR "llama/server is required for local Ollama builds")
+endif()
 
 if(MLX_ENGINE)
     add_subdirectory(cmake/mlx)

@@ -150,7 +150,7 @@ if(CUDAToolkit_FOUND)
             COMPONENT MLX)
         if(NOT WIN32 AND NOT APPLE)
             install(CODE "
-                set(_link \"${CMAKE_INSTALL_PREFIX}/lib/ollama/include\")
+                set(_link \"${CMAKE_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}/include\")
                 set(_target \"${OLLAMA_RUNNER_DIR}/include\")
                 if(NOT EXISTS \${_link})
                     execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink \${_target} \${_link})
