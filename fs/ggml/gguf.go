@@ -66,6 +66,52 @@ func (c *containerGGUF) validateLength(n uint64) error {
 	return nil
 }
 
+// ggufElementDiskSize returns the minimum number of bytes a single element of
+// the given GGUF scalar array type occupies in the file. For fixed-width types
+// this is the encoded width, which also equals the in-memory width, so
+// bounding the element count by it bounds the slice allocation as well. For
+// strings it is the 8-byte uint64 length prefix every string carries; the
+// string payload is bounded separately by validateLength when it is read.
+func ggufElementDiskSize(t uint32) int {
+	switch t {
+	case ggufTypeUint8, ggufTypeInt8, ggufTypeBool:
+		return 1
+	case ggufTypeUint16, ggufTypeInt16:
+		return 2
+	case ggufTypeUint32, ggufTypeInt32, ggufTypeFloat32:
+		return 4
+	case ggufTypeUint64, ggufTypeInt64, ggufTypeFloat64:
+		return 8
+	case ggufTypeString:
+		return 8
+	default:
+		return 1
+	}
+}
+
+// validateArrayLength returns an error if an array of n elements, each
+// occupying at least elemSize bytes on disk, cannot fit in this GGUF file. It
+// guards the uint64→int sign flip and, more importantly, rejects element
+// counts whose backing allocation (n * elemSize bytes) would exceed the file.
+// validateLength alone only bounds the raw count by the byte size of the file,
+// which still allows e.g. a uint64/float64/string count up to fileSize and an
+// allocation of up to 8-16x fileSize; bounding by the per-element disk size
+// closes that memory-amplification path. The comparison uses division so
+// n * elemSize can never overflow, and because a well-formed file must
+// physically contain elemSize bytes per element, no valid file is rejected.
+func (c *containerGGUF) validateArrayLength(n uint64, elemSize int) error {
+	if int64(n) < 0 {
+		return fmt.Errorf("invalid gguf array length: %d", n)
+	}
+	if elemSize < 1 {
+		elemSize = 1
+	}
+	if c.fileSize > 0 && n > uint64(c.fileSize)/uint64(elemSize) {
+		return fmt.Errorf("gguf array of %d elements (%d bytes each) exceeds file size %d", n, elemSize, c.fileSize)
+	}
+	return nil
+}
+
 func (c *containerGGUF) Name() string {
 	return "gguf"
 }
@@ -473,7 +519,7 @@ func readGGUFArray(llm *gguf, r io.Reader) (any, error) {
 		return nil, err
 	}
 
-	if err := llm.validateLength(n); err != nil {
+	if err := llm.validateArrayLength(n, ggufElementDiskSize(t)); err != nil {
 		return nil, fmt.Errorf("invalid array length: %w", err)
 	}
 

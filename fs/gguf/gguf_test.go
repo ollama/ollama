@@ -64,6 +64,30 @@ func TestOpenMalformedLengths(t *testing.T) {
 		for range f.KeyValues() {
 		}
 	})
+
+	// Regression for the reviewer feedback: a float64 count that is <= the
+	// file size (so the old raw-byte check passed it) but whose make([]T, n)
+	// allocation exceeds the file. readArrayData here has no maxArraySize cap,
+	// so this is the only thing standing between the count and an 8x-amplified
+	// allocation.
+	t.Run("typed array count within file size but amplified", func(t *testing.T) {
+		p := write(t, func(w *bytes.Buffer) {
+			binary.Write(w, binary.LittleEndian, uint64(1))
+			w.WriteByte('x')
+			binary.Write(w, binary.LittleEndian, uint32(9))  // type = array
+			binary.Write(w, binary.LittleEndian, uint32(12)) // element = float64
+			binary.Write(w, binary.LittleEndian, uint64(10)) // 10 <= ~49B file, 10*8 > it
+		})
+		f, err := gguf.Open(p)
+		if err != nil {
+			return
+		}
+		for range f.KeyValues() {
+		}
+		if f.KeyValue("x").Valid() {
+			t.Fatal("expected no usable KV from amplified float64 array")
+		}
+	})
 }
 
 func createBinFile(tb testing.TB) string {

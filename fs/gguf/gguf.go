@@ -71,6 +71,54 @@ func (f *File) validateLength(n uint64) error {
 	return nil
 }
 
+// elementDiskSize returns the minimum number of bytes a single element of the
+// given GGUF scalar array type occupies in the file. For fixed-width types
+// this is the encoded width, which also equals the in-memory width, so
+// bounding the element count by it bounds the slice allocation as well. For
+// strings it is the 8-byte uint64 length prefix every string carries; the
+// string payload is bounded separately by validateLength when it is read.
+func elementDiskSize(t uint32) int {
+	switch t {
+	case typeUint8, typeInt8, typeBool:
+		return 1
+	case typeUint16, typeInt16:
+		return 2
+	case typeUint32, typeInt32, typeFloat32:
+		return 4
+	case typeUint64, typeInt64, typeFloat64:
+		return 8
+	case typeString:
+		return 8
+	default:
+		return 1
+	}
+}
+
+// validateArrayLength returns an error if an array of n elements, each
+// occupying at least elemSize bytes on disk, cannot fit in this file. It
+// guards the uint64→int sign flip and, more importantly, rejects element
+// counts whose backing allocation (n * elemSize bytes) would exceed the file.
+// readArrayData/readArrayString here allocate make([]T, n) unconditionally
+// with no maxArraySize cap, so validateLength alone (which only bounds the
+// raw count by the byte size of the file) would still allow an allocation of
+// up to 8-16x fileSize for uint64/float64/string arrays. Bounding by the
+// per-element disk size closes that memory-amplification path. The comparison
+// uses division so n * elemSize can never overflow, and because a well-formed
+// file must physically contain elemSize bytes per element, no valid file is
+// rejected.
+func (f *File) validateArrayLength(n uint64, elemSize int) error {
+	if int64(n) < 0 {
+		return fmt.Errorf("invalid gguf array length: %d", n)
+	}
+	if elemSize < 1 {
+		elemSize = 1
+	}
+	if f.fileSize > 0 && n > uint64(f.fileSize)/uint64(elemSize) {
+		return fmt.Errorf("gguf array of %d elements (%d bytes each) exceeds file size %d", n, elemSize, f.fileSize)
+	}
+	return nil
+}
+
 func Open(path string) (f *File, err error) {
 	f = &File{bts: make([]byte, 4096)}
 	f.file, err = os.Open(path)
@@ -257,7 +305,7 @@ func readArray(f *File) (any, error) {
 		return nil, err
 	}
 
-	if err := f.validateLength(n); err != nil {
+	if err := f.validateArrayLength(n, elementDiskSize(t)); err != nil {
 		return nil, fmt.Errorf("invalid array length: %w", err)
 	}
 
