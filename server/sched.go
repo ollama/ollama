@@ -21,8 +21,10 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/version"
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/mlxrunner"
+	"golang.org/x/mod/semver"
 )
 
 type LlmRequest struct {
@@ -421,6 +423,19 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe", "qwen35", "qwen35moe", "qwen3next", "lfm2", "lfm2moe", "nemotron_h", "nemotron_h_moe", "nemotron_h_omni"}, req.model.Config.ModelFamily) && numParallel != 1 {
 		numParallel = 1
 		slog.Warn("model architecture does not currently support parallel requests", "architecture", req.model.Config.ModelFamily)
+	}
+
+	// Check if model requires a newer version of Ollama
+	if req.model.Config.Requires != "" {
+		currentVersion := version.Version
+		requiredVersion := req.model.Config.Requires
+		// Add 'v' prefix for semver comparison
+		currentV := "v" + currentVersion
+		requiredV := "v" + requiredVersion
+		if semver.IsValid(currentV) && semver.IsValid(requiredV) && semver.Compare(currentV, requiredV) < 0 {
+			req.errCh <- fmt.Errorf("a new version of Ollama is required to run this model (minimum version: %s, current version: %s)", requiredVersion, currentVersion)
+			return false
+		}
 	}
 
 	sessionDuration := envconfig.KeepAlive()
