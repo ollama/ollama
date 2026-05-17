@@ -64,11 +64,14 @@ RUN ln -s /usr/bin/python3 /usr/bin/python \
     && wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk.tar.xz \
     && tar xvf /tmp/vulkansdk.tar.xz -C /tmp \
     && /tmp/${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
+    && /tmp/${VULKANVERSION}/vulkansdk -j 8 spirv-headers \
     && /tmp/${VULKANVERSION}/vulkansdk -j 8 shaderc \
     && cp -r /tmp/${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
     && cp -r /tmp/${VULKANVERSION}/x86_64/lib/* /usr/local/lib \
+    && cp -r /tmp/${VULKANVERSION}/x86_64/share/* /usr/local/share/ \
     && cp -r /tmp/${VULKANVERSION}/x86_64/bin/* /usr/local/bin/ \
     && rm -rf /tmp/${VULKANVERSION} /tmp/vulkansdk.tar.xz
+ENV VULKAN_SDK=/usr/local
 
 #
 # llama-server stages — rebuild when LLAMA_CPP_VERSION, llama/server/, or llama/compat/ changes.

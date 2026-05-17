@@ -105,7 +105,7 @@ jobs:
             extra-packages: >
               mesa-vulkan-drivers vulkan-tools
               libvulkan1 libvulkan-dev
-              vulkan-sdk cmake ccache g++ make
+              vulkan-sdk spirv-headers cmake ccache g++ make
             superbuild_target: ollama-llama-server-vulkan
             superbuild_dir: build/local-superbuild-vulkan
             superbuild_args: '-DOLLAMA_LLAMA_SERVER_BACKENDS=vulkan'

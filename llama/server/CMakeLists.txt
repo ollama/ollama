@@ -25,6 +25,23 @@ elseif(NOT WIN32)
     set(CMAKE_BUILD_RPATH "$ORIGIN")
 endif()
 
+if(GGML_VULKAN AND DEFINED ENV{VULKAN_SDK})
+    file(TO_CMAKE_PATH "$ENV{VULKAN_SDK}" _ollama_vulkan_sdk)
+    list(APPEND CMAKE_PREFIX_PATH "${_ollama_vulkan_sdk}")
+    foreach(_ollama_spirv_headers_dir IN ITEMS
+            "${_ollama_vulkan_sdk}/Lib/cmake/SPIRV-Headers"
+            "${_ollama_vulkan_sdk}/lib/cmake/SPIRV-Headers"
+            "${_ollama_vulkan_sdk}/share/cmake/SPIRV-Headers"
+            "${_ollama_vulkan_sdk}/Lib/cmake"
+            "${_ollama_vulkan_sdk}/lib/cmake"
+            "${_ollama_vulkan_sdk}/share/cmake")
+        if(EXISTS "${_ollama_spirv_headers_dir}/SPIRV-HeadersConfig.cmake")
+            set(SPIRV-Headers_DIR "${_ollama_spirv_headers_dir}" CACHE PATH "SPIRV-Headers package directory")
+            break()
+        endif()
+    endforeach()
+endif()
+
 include(FetchContent)
 
 # Read pinned llama.cpp commit from version file (shared with Dockerfile)
