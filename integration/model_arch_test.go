@@ -41,19 +41,18 @@ func TestModelsChat(t *testing.T) {
 
 	var chatModels []string
 	if s := os.Getenv("OLLAMA_NEW_ENGINE"); s != "" {
-		chatModels = ollamaEngineChatModels
+		chatModels = append(ollamaEngineChatModels, mlxEngineChatModels...)
 	} else {
 		chatModels = append(ollamaEngineChatModels, llamaRunnerChatModels...)
+		chatModels = append(chatModels, mlxEngineChatModels...)
 	}
 
-	for _, model := range chatModels {
+	for _, model := range testModels(chatModels) {
 		t.Run(model, func(t *testing.T) {
 			if time.Now().Sub(started) > softTimeout {
 				t.Skip("skipping remaining tests to avoid excessive runtime")
 			}
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 			if maxVram > 0 {
 				resp, err := client.List(ctx)
 				if err != nil {
@@ -73,6 +72,7 @@ func TestModelsChat(t *testing.T) {
 				func(response api.GenerateResponse) error { return nil },
 			)
 			if err != nil {
+				skipIfMLXUnsupported(t, err)
 				t.Fatalf("failed to load model %s: %s", model, err)
 			}
 			gpuPercent := getGPUPercent(ctx, t, client, model)
@@ -133,14 +133,15 @@ func TestModelsEmbed(t *testing.T) {
 		t.Fatalf("failed to load test data: %s", err)
 	}
 	for model, expected := range testCase {
+		if testModel != "" && model != testModel {
+			continue
+		}
 
 		t.Run(model, func(t *testing.T) {
 			if time.Now().Sub(started) > softTimeout {
 				t.Skip("skipping remaining tests to avoid excessive runtime")
 			}
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 			if maxVram > 0 {
 				resp, err := client.List(ctx)
 				if err != nil {

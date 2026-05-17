@@ -50,20 +50,32 @@ export default function Thinking({
   // Position content to show bottom when collapsed
   useEffect(() => {
     if (isCollapsed && contentRef.current && wrapperRef.current) {
-      const contentHeight = contentRef.current.scrollHeight;
-      const wrapperHeight = wrapperRef.current.clientHeight;
-      if (contentHeight > wrapperHeight) {
-        const translateY = -(contentHeight - wrapperHeight);
-        contentRef.current.style.transform = `translateY(${translateY}px)`;
-        setHasOverflow(true);
-      } else {
-        setHasOverflow(false);
-      }
+      requestAnimationFrame(() => {
+        if (!contentRef.current || !wrapperRef.current) return;
+
+        const contentHeight = contentRef.current.scrollHeight;
+        const wrapperHeight = wrapperRef.current.clientHeight;
+        if (contentHeight > wrapperHeight) {
+          const translateY = -(contentHeight - wrapperHeight);
+          contentRef.current.style.transform = `translateY(${translateY}px)`;
+          setHasOverflow(true);
+        } else {
+          contentRef.current.style.transform = "translateY(0)";
+          setHasOverflow(false);
+        }
+      });
     } else if (contentRef.current) {
       contentRef.current.style.transform = "translateY(0)";
       setHasOverflow(false);
     }
   }, [thinking, isCollapsed]);
+
+  useEffect(() => {
+    if (activelyThinking && wrapperRef.current && !isCollapsed) {
+      // When expanded and actively thinking, scroll to bottom
+      wrapperRef.current.scrollTop = wrapperRef.current.scrollHeight;
+    }
+  }, [thinking, activelyThinking, isCollapsed]);
 
   const handleToggle = () => {
     setIsCollapsed(!isCollapsed);

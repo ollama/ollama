@@ -314,6 +314,11 @@ type DeviceInfo struct {
 
 	// Where backends were loaded from
 	LibraryPath []string
+
+	// RunnerEnvOverrides stores exceptional per-device runner environment
+	// overrides discovered during bootstrap. This is internal server state and
+	// is not serialized.
+	RunnerEnvOverrides map[string]string `json:"-"`
 }
 
 type SystemInfo struct {
@@ -492,16 +497,51 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 	return true
 }
 
+type FlashAttentionType int32
+
+const (
+	// Aligned with llama_flash_attn_type
+	FlashAttentionAuto     FlashAttentionType = -1
+	FlashAttentionDisabled FlashAttentionType = 0
+	FlashAttentionEnabled  FlashAttentionType = 1
+)
+
+func (f FlashAttentionType) LogValue() slog.Value {
+	return slog.AnyValue(f.String())
+}
+
+func (f FlashAttentionType) String() string {
+	switch f {
+	case FlashAttentionAuto:
+		return "Auto"
+	case FlashAttentionDisabled:
+		return "Disabled"
+	case FlashAttentionEnabled:
+		return "Enabled"
+	default:
+		return "unknown"
+	}
+}
+
 // Given the list of GPUs this instantiation is targeted for,
-// figure out the visible devices environment variables
-func GetVisibleDevicesEnv(l []DeviceInfo) map[string]string {
+// figure out the device environment variables and any recorded
+// per-device runner environment overrides. Set mustFilter true to enable
+// filtering of CUDA devices.
+func GetDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
 	if len(l) == 0 {
 		return nil
 	}
 	env := map[string]string{}
 	for _, d := range l {
-		d.updateVisibleDevicesEnv(env)
+		d.updateVisibleDevicesEnv(env, mustFilter)
+		for k, v := range d.RunnerEnvOverrides {
+			if existing, ok := env[k]; ok && existing != v {
+				slog.Warn("conflicting device environment override", "key", k, "existing", existing, "new", v, "library", d.Library, "id", d.ID)
+			}
+			env[k] = v
+		}
 	}
+
 	return env
 }
 
@@ -509,11 +549,9 @@ func GetVisibleDevicesEnv(l []DeviceInfo) map[string]string {
 // to crash at inference time and requires deeper validation before we include
 // it in the supported devices list.
 func (d DeviceInfo) NeedsInitValidation() bool {
-	// At this time the only library we know needs a 2nd pass is ROCm since
-	// rocblas will crash on unsupported devices.  We want to find those crashes
-	// during bootstrap discovery so we can eliminate those GPUs before the user
-	// tries to run inference on them
-	return d.Library == "ROCm"
+	// ROCm: rocblas will crash on unsupported devices.
+	// CUDA: verify CC is supported by the version of the library
+	return d.Library == "ROCm" || d.Library == "CUDA"
 }
 
 // Set the init validation environment variable
@@ -534,7 +572,7 @@ func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
 	return false
 }
 
-func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
+func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bool) {
 	var envVar string
 	switch d.Library {
 	case "ROCm":
@@ -543,8 +581,15 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string) {
 		if runtime.GOOS != "linux" {
 			envVar = "HIP_VISIBLE_DEVICES"
 		}
+	case "CUDA":
+		if !mustFilter {
+			// By default we try to avoid filtering CUDA devices because ROCm also
+			// looks at the CUDA env var, and gets confused in mixed vendor environments.
+			return
+		}
+		envVar = "CUDA_VISIBLE_DEVICES"
 	default:
-		// CUDA and Vulkan are not filtered via env var, but via scheduling decisions
+		// Vulkan is not filtered via env var, but via scheduling decisions
 		return
 	}
 	v, existing := env[envVar]

@@ -1,29 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
 import { fetchUser, fetchConnectUrl, disconnectUser } from "@/api";
 
 export function useUser() {
   const queryClient = useQueryClient();
-  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
-
-  // Wait for initial data to be loaded
-  useEffect(() => {
-    const initialPromise = window.__initialUserDataPromise;
-    if (initialPromise) {
-      initialPromise.finally(() => {
-        setInitialDataLoaded(true);
-      });
-    } else {
-      setInitialDataLoaded(true);
-    }
-  }, []);
 
   const userQuery = useQuery({
     queryKey: ["user"],
-    queryFn: () => fetchUser(),
+    queryFn: async () => {
+      const result = await fetchUser();
+      return result;
+    },
     staleTime: 5 * 60 * 1000, // Consider data stale after 5 minutes
     gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
-    initialData: null, // Start with null to prevent flashing
+    retry: 10,
+    retryDelay: (attemptIndex) => Math.min(500 * attemptIndex, 2000),
+    refetchOnMount: true, // Always fetch when component mounts
   });
 
   // Mutation to refresh user data
@@ -49,14 +40,15 @@ export function useUser() {
     },
   });
 
+  const isLoading = userQuery.isLoading || userQuery.isFetching;
+  const isAuthenticated = Boolean(userQuery.data?.name);
+
   return {
     user: userQuery.data,
-    isLoading:
-      !initialDataLoaded ||
-      (userQuery.isLoading && userQuery.data === undefined), // Show loading until initial data is loaded
+    isLoading,
     isError: userQuery.isError,
     error: userQuery.error,
-    isAuthenticated: Boolean(userQuery.data?.name),
+    isAuthenticated,
     refreshUser: refreshUser.mutate,
     isRefreshing: refreshUser.isPending,
     refetchUser: userQuery.refetch,

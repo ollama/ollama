@@ -34,7 +34,7 @@ type mllamaModel struct {
 	} `json:"vision_config"`
 }
 
-func (m *mllamaModel) KV(t *Tokenizer) ggml.KV {
+func (m *mllamaModel) KV(t *Tokenizer) KV {
 	kv := m.ModelParameters.KV(t)
 	kv["general.architecture"] = "mllama"
 

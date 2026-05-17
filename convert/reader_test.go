@@ -3,8 +3,10 @@ package convert
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/d4l3k/go-bfloat16"
@@ -231,6 +233,222 @@ func TestSafetensors(t *testing.T) {
 	}
 }
 
+func TestSafetensorWriteToFP8E4M3(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	path := filepath.Base(t.Name())
+	f, err := root.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// E4M3FN encodings for 1.0, 2.0, 0.5, and -1.0.
+	if _, err := f.Write([]byte{0x38, 0x40, 0x30, 0xb8}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(bfloat16.EncodeFloat32([]float32{2})); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st := safetensor{
+		fs:       root.FS(),
+		path:     path,
+		dtype:    "F8_E4M3",
+		offset:   0,
+		size:     4,
+		fp8Block: safetensorFP8BlockSize{rows: 128, cols: 128, ok: true},
+		scale: &safetensorScale{
+			name:   "linear.weight_scale",
+			dtype:  "BF16",
+			shape:  []uint64{1, 1},
+			offset: 4,
+			size:   2,
+		},
+		tensorBase: &tensorBase{
+			name:  "linear.weight",
+			shape: []uint64{2, 2},
+		},
+	}
+
+	var b bytes.Buffer
+	if _, err := st.WriteTo(&b); err != nil {
+		t.Fatal(err)
+	}
+
+	want := bfloat16.EncodeFloat32([]float32{2, 4, 1, -2})
+	if diff := cmp.Diff(want, b.Bytes()); diff != "" {
+		t.Errorf("safetensor.WriteTo() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSafetensorWriteToFP8E4M3UsesConfiguredBlockSize(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	path := filepath.Base(t.Name())
+	f, err := root.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := f.Write(bytes.Repeat([]byte{0x38}, 12)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(bfloat16.EncodeFloat32([]float32{1, 2, 3, 4})); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st := safetensor{
+		fs:       root.FS(),
+		path:     path,
+		dtype:    "F8_E4M3",
+		offset:   0,
+		size:     12,
+		fp8Block: safetensorFP8BlockSize{rows: 2, cols: 3, ok: true},
+		scale: &safetensorScale{
+			name:   "linear.weight_scale",
+			dtype:  "BF16",
+			shape:  []uint64{2, 2},
+			offset: 12,
+			size:   8,
+		},
+		tensorBase: &tensorBase{
+			name:  "linear.weight",
+			shape: []uint64{3, 4},
+		},
+	}
+
+	var b bytes.Buffer
+	if _, err := st.WriteTo(&b); err != nil {
+		t.Fatal(err)
+	}
+
+	want := bfloat16.EncodeFloat32([]float32{
+		1, 1, 1, 2,
+		1, 1, 1, 2,
+		3, 3, 3, 4,
+	})
+	if diff := cmp.Diff(want, b.Bytes()); diff != "" {
+		t.Errorf("safetensor.WriteTo() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseSafetensorsConsumesFP8ScaleCompanion(t *testing.T) {
+	tempDir := t.TempDir()
+	generateSafetensorTestData(t, tempDir, map[string]*tensorData{
+		"linear.weight": {
+			Offsets: []int{0, 4},
+			Type:    "F8_E4M3",
+			Shape:   []int{2, 2},
+		},
+		"linear.weight_scale": {
+			Offsets: []int{4, 6},
+			Type:    "BF16",
+			Shape:   []int{1, 1},
+		},
+	})
+	writeFP8BlockConfig(t, tempDir, 128, 128)
+
+	tensors, err := parseSafetensors(os.DirFS(tempDir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tensors) != 1 {
+		t.Fatalf("expected one tensor, got %d", len(tensors))
+	}
+	if got := tensors[0].Name(); got != "linear.weight" {
+		t.Fatalf("unexpected tensor name %q", got)
+	}
+	if got := tensors[0].Kind(); got != tensorKindBF16 {
+		t.Fatalf("unexpected fp8 converted kind %d, want %d", got, tensorKindBF16)
+	}
+}
+
+func TestParseSafetensorsRejectsFP8WithoutBlockMetadata(t *testing.T) {
+	tempDir := t.TempDir()
+	generateSafetensorTestData(t, tempDir, map[string]*tensorData{
+		"linear.weight": {
+			Offsets: []int{0, 4},
+			Type:    "F8_E4M3",
+			Shape:   []int{2, 2},
+		},
+		"linear.weight_scale": {
+			Offsets: []int{4, 6},
+			Type:    "BF16",
+			Shape:   []int{1, 1},
+		},
+	})
+
+	_, err := parseSafetensors(os.DirFS(tempDir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
+	if err == nil || !strings.Contains(err.Error(), "missing fp8 block size metadata") {
+		t.Fatalf("expected missing fp8 block size metadata error, got %v", err)
+	}
+}
+
+func TestParseSafetensorsRejectsAmbiguousFP8ScaleCompanion(t *testing.T) {
+	tempDir := t.TempDir()
+	generateSafetensorTestData(t, tempDir, map[string]*tensorData{
+		"linear.weight": {
+			Offsets: []int{0, 4},
+			Type:    "F8_E4M3",
+			Shape:   []int{2, 2},
+		},
+		"linear.weight_scale": {
+			Offsets: []int{4, 6},
+			Type:    "BF16",
+			Shape:   []int{1, 1},
+		},
+		"linear.weight.scale": {
+			Offsets: []int{6, 8},
+			Type:    "BF16",
+			Shape:   []int{1, 1},
+		},
+	})
+	writeFP8BlockConfig(t, tempDir, 128, 128)
+
+	_, err := parseSafetensors(os.DirFS(tempDir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
+	if err == nil || !strings.Contains(err.Error(), "multiple fp8 scale companions") {
+		t.Fatalf("expected ambiguous fp8 scale companion error, got %v", err)
+	}
+}
+
+func writeFP8BlockConfig(t *testing.T, dir string, rows, cols int) {
+	t.Helper()
+
+	config := fmt.Sprintf(`{
+  "architectures": ["GenericForCausalLM"],
+  "compression_config": {
+    "format": "float-quantized",
+    "config_groups": {
+      "group_0": {
+        "format": "float-quantized",
+        "weights": {
+          "type": "float",
+          "num_bits": 8,
+          "block_structure": [%d, %d]
+        }
+      }
+    }
+  }
+}`, rows, cols)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSafetensorKind(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -258,6 +476,17 @@ func TestSafetensorKind(t *testing.T) {
 				dtype: "BF16",
 			},
 			expected: tensorKindFP16,
+		},
+		{
+			name: "BF16 audio feature extractor constants should return FP32",
+			st: safetensor{
+				tensorBase: &tensorBase{
+					name:  "a.feature_extractor.fb",
+					shape: []uint64{1, 128, 257},
+				},
+				dtype: "BF16",
+			},
+			expected: tensorKindFP32,
 		},
 		{
 			name: "BF16 dtype with FP32 base kind should return FP32",

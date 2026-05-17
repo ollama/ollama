@@ -212,7 +212,7 @@ static __device__ void cpy_blck_f32_iq4_nl(const char * cxi, char * cdsti) {
 }
 
 template<typename src_t, typename dst_t>
-static __device__ void cpy_1_flt(const char * cxi, char * cdsti) {
+static __device__ void cpy_1_scalar(const char * cxi, char * cdsti) {
     *(dst_t *) cdsti = ggml_cuda_cast<dst_t>(*(const src_t *) cxi);
 }
 

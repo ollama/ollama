@@ -98,6 +98,82 @@ func TestSchemaMigrations(t *testing.T) {
 	})
 }
 
+func TestMigrationV13ToV14ContextLength(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.conn.Exec("UPDATE settings SET context_length = 4096, schema_version = 13")
+	if err != nil {
+		t.Fatalf("failed to seed v13 settings row: %v", err)
+	}
+
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v13 to v14 failed: %v", err)
+	}
+
+	var contextLength int
+	if err := db.conn.QueryRow("SELECT context_length FROM settings").Scan(&contextLength); err != nil {
+		t.Fatalf("failed to read context_length: %v", err)
+	}
+
+	if contextLength != 0 {
+		t.Fatalf("expected context_length to migrate to 0, got %d", contextLength)
+	}
+
+	version, err := db.getSchemaVersion()
+	if err != nil {
+		t.Fatalf("failed to get schema version: %v", err)
+	}
+	if version != currentSchemaVersion {
+		t.Fatalf("expected schema version %d, got %d", currentSchemaVersion, version)
+	}
+}
+
+func TestMigrationV15ToV16LastHomeViewDefaultsToLaunch(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.conn.Exec(`
+		ALTER TABLE settings DROP COLUMN last_home_view;
+		UPDATE settings SET schema_version = 15;
+	`); err != nil {
+		t.Fatalf("failed to seed v15 settings row: %v", err)
+	}
+
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v15 to v16 failed: %v", err)
+	}
+
+	var lastHomeView string
+	if err := db.conn.QueryRow("SELECT last_home_view FROM settings").Scan(&lastHomeView); err != nil {
+		t.Fatalf("failed to read last_home_view: %v", err)
+	}
+
+	if lastHomeView != "launch" {
+		t.Fatalf("expected last_home_view to default to launch after migration, got %q", lastHomeView)
+	}
+
+	version, err := db.getSchemaVersion()
+	if err != nil {
+		t.Fatalf("failed to get schema version: %v", err)
+	}
+	if version != currentSchemaVersion {
+		t.Fatalf("expected schema version %d, got %d", currentSchemaVersion, version)
+	}
+}
+
 func TestChatDeletionWithCascade(t *testing.T) {
 	t.Run("chat deletion cascades to related messages", func(t *testing.T) {
 		tmpDir := t.TempDir()

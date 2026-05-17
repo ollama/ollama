@@ -101,6 +101,10 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 			t.Pre = "deepseek-coder"
 		case "1ff7f41064896984db5d1bb6ff64fa4bc29007d08c1b439e505b7392777a319e":
 			t.Pre = "qwen2"
+		case "00431aed57e696b747435f734d1e3b9b1bfd931a121fb5cac7129e97c181e9ba":
+			t.Pre = "qwen35"
+		case "b92c0824a58e1d8dc3221cf3e12c433c3a86f57e46d57229993489f0798e7702":
+			t.Pre = "laguna"
 		case "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855":
 			// noop, empty pretokenizer
 		default:
@@ -212,8 +216,13 @@ type tokenizer struct {
 
 	PreTokenizer struct {
 		PreTokenizers []struct {
-			Type    string `json:"type"`
-			Pattern struct {
+			Type           string `json:"type"`
+			Behavior       string `json:"behavior"`
+			Invert         bool   `json:"invert"`
+			AddPrefixSpace bool   `json:"add_prefix_space"`
+			TrimOffsets    bool   `json:"trim_offsets"`
+			UseRegex       bool   `json:"use_regex"`
+			Pattern        struct {
 				Regex string `json:"Regex"`
 			} `json:"pattern"`
 		} `json:"pretokenizers"`

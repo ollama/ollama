@@ -1,6 +1,6 @@
 UPSTREAM=https://github.com/ggml-org/llama.cpp.git
 WORKDIR=llama/vendor
-FETCH_HEAD=3cfa9c3f125763305b4226bc032f1954f08990dc
+FETCH_HEAD=ec98e2002
 
 .PHONY: help
 help:
@@ -57,7 +57,7 @@ checkout: $(WORKDIR)
 $(WORKDIR):
 	git clone $(UPSTREAM) $(WORKDIR)
 
-.PHONE: format-patches
+.PHONY: format-patches
 format-patches: llama/patches
 	git -C $(WORKDIR) format-patch \
 		--no-signature \
@@ -66,7 +66,11 @@ format-patches: llama/patches
 		-o $(realpath $<) \
 		$(FETCH_HEAD)
 
-.PHONE: clean
+.PHONY: clean
 clean: checkout
 	@git -C $(WORKDIR) am --abort || true
 	$(RM) llama/patches/.*.patched
+
+.PHONY: print-base
+print-base:
+	@echo $(FETCH_HEAD)

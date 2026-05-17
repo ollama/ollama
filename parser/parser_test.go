@@ -21,6 +21,7 @@ import (
 	"golang.org/x/text/encoding/unicode"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/fs/ggml"
 )
 
@@ -55,6 +56,32 @@ TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
 	}
 
 	assert.Equal(t, expectedCommands, modelfile.Commands)
+}
+
+func TestParseFileDraft(t *testing.T) {
+	modelfile, err := ParseFile(strings.NewReader(`
+FROM base
+DRAFT ./assistant
+`))
+	require.NoError(t, err)
+
+	expectedCommands := []Command{
+		{Name: "model", Args: "base"},
+		{Name: "draft", Args: "./assistant"},
+	}
+	assert.Equal(t, expectedCommands, modelfile.Commands)
+	assert.Contains(t, modelfile.String(), "DRAFT ./assistant")
+}
+
+func TestCreateRequestDraftRequiresExperimental(t *testing.T) {
+	modelfile, err := ParseFile(strings.NewReader(`
+FROM base
+DRAFT ./assistant
+`))
+	require.NoError(t, err)
+
+	_, err = modelfile.CreateRequest("")
+	require.ErrorContains(t, err, "DRAFT requires --experimental")
 }
 
 func TestParseFileTrimSpace(t *testing.T) {
@@ -801,7 +828,7 @@ func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, 
 	}
 	defer f.Close()
 
-	base := map[string]any{"general.architecture": "test"}
+	var base convert.KV = map[string]any{"general.architecture": "test"}
 	maps.Copy(base, kv)
 
 	if err := ggml.WriteGGUF(f, base, ti); err != nil {
@@ -886,6 +913,37 @@ func TestFilesForModel(t *testing.T) {
 				"model-00002-of-00002.safetensors",
 				"config.json",
 				"tokenizer.json",
+			},
+		},
+		{
+			name: "safetensors with both tokenizer.json and tokenizer.model",
+			setup: func(dir string) error {
+				// Create binary content for tokenizer.model (application/octet-stream)
+				binaryContent := make([]byte, 512)
+				for i := range binaryContent {
+					binaryContent[i] = byte(i % 256)
+				}
+				files := []string{
+					"model-00001-of-00001.safetensors",
+					"config.json",
+					"tokenizer.json",
+				}
+				for _, file := range files {
+					if err := os.WriteFile(filepath.Join(dir, file), []byte("test content"), 0o644); err != nil {
+						return err
+					}
+				}
+				// Write tokenizer.model as binary
+				if err := os.WriteFile(filepath.Join(dir, "tokenizer.model"), binaryContent, 0o644); err != nil {
+					return err
+				}
+				return nil
+			},
+			wantFiles: []string{
+				"model-00001-of-00001.safetensors",
+				"config.json",
+				"tokenizer.json",
+				"tokenizer.model",
 			},
 		},
 		{

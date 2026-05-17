@@ -10,14 +10,20 @@
 
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
+#if defined(DATA_A_QUANT_LEGACY) || defined(DATA_A_MXFP4)
 #define K_PER_ITER 8
-
-#include "mul_mmq_funcs.glsl"
+#elif defined(DATA_A_QUANT_K)
+#define K_PER_ITER 16
+#else
+#error unimplemented
+#endif
 
 uint a_offset, b_offset, d_offset;
 
-int32_t cache_b_qs[2];
+int32_t cache_b_qs[K_PER_ITER / 4];
 vec2 cache_b_ds;
+
+#include "mul_mat_vecq_funcs.glsl"
 
 void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const uint num_rows, const uint tid, const uint i) {
     [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
@@ -25,45 +31,35 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
 
         // Preload data_b block
         const uint b_block_idx = (j*p.batch_stride_b + col) / QUANT_K_Q8_1 + b_offset;
-        const uint b_qs_idx = tid % 4;
+        const uint b_qs_idx = tid % (32 / K_PER_ITER);
         const uint b_block_idx_outer = b_block_idx / 4;
         const uint b_block_idx_inner = b_block_idx % 4;
         cache_b_ds = vec2(data_b[b_block_idx_outer].ds[b_block_idx_inner]);
 
 #if QUANT_R == 2
+        // Assumes K_PER_ITER == 8
         cache_b_qs[0] = data_b[b_block_idx_outer].qs[b_block_idx_inner * 8 + b_qs_idx];
         cache_b_qs[1] = data_b[b_block_idx_outer].qs[b_block_idx_inner * 8 + b_qs_idx + 4];
 #else
+#if K_PER_ITER == 8
         cache_b_qs[0] = data_b[b_block_idx_outer].qs[b_block_idx_inner * 8 + b_qs_idx * 2];
         cache_b_qs[1] = data_b[b_block_idx_outer].qs[b_block_idx_inner * 8 + b_qs_idx * 2 + 1];
+#elif K_PER_ITER == 16
+        cache_b_qs[0] = data_b[b_block_idx_outer].qs[b_block_idx_inner * 8 + b_qs_idx * 4    ];
+        cache_b_qs[1] = data_b[b_block_idx_outer].qs[b_block_idx_inner * 8 + b_qs_idx * 4 + 1];
+        cache_b_qs[2] = data_b[b_block_idx_outer].qs[b_block_idx_inner * 8 + b_qs_idx * 4 + 2];
+        cache_b_qs[3] = data_b[b_block_idx_outer].qs[b_block_idx_inner * 8 + b_qs_idx * 4 + 3];
+#else
+#error unimplemented
+#endif
 #endif
 
         uint ibi = first_row*p.ncols;
         [[unroll]] for (uint n = 0; n < num_rows; ++n) {
-            const uint a_block_idx = (ibi + col)/QUANT_K + a_offset;
+            const uint a_block_idx = (ibi + col)/QUANT_K_Q8_1 + a_offset;
             ibi += p.ncols;
 
-            int32_t q_sum = 0;
-#if QUANT_R == 2
-            const i32vec2 data_a_qs = repack(a_block_idx, b_qs_idx);
-            q_sum += dotPacked4x8EXT(data_a_qs.x,
-                                     cache_b_qs[0]);
-            q_sum += dotPacked4x8EXT(data_a_qs.y,
-                                     cache_b_qs[1]);
-#else
-            int32_t data_a_qs = repack(a_block_idx, b_qs_idx * 2);
-            q_sum += dotPacked4x8EXT(data_a_qs,
-                                     cache_b_qs[0]);
-            data_a_qs = repack(a_block_idx, b_qs_idx * 2 + 1);
-            q_sum += dotPacked4x8EXT(data_a_qs,
-                                     cache_b_qs[1]);
-#endif
-
-#if QUANT_AUXF == 1
-            temp[j][n] += mul_q8_1(q_sum,  get_d(a_block_idx), cache_b_ds, 4);
-#else
-            temp[j][n] += mul_q8_1(q_sum, get_dm(a_block_idx), cache_b_ds, 4);
-#endif
+            temp[j][n] += mmvq_dot_product(a_block_idx, b_qs_idx);
         }
     }
 }
@@ -72,7 +68,7 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
     const uint tid = gl_LocalInvocationID.x;
 
     get_offsets(a_offset, b_offset, d_offset);
-    a_offset /= QUANT_K;
+    a_offset /= QUANT_K_Q8_1;
     b_offset /= QUANT_K_Q8_1;
 
     FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
@@ -102,14 +98,6 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
     unroll_count = 2;
     unrolled_iters = num_iters & ~(unroll_count - 1);
 
-#if K_PER_ITER == 2
-    if ((p.ncols & 1) != 0 &&
-        unrolled_iters == num_iters &&
-        unrolled_iters > 0) {
-        unrolled_iters -= unroll_count;
-    }
-#endif
-
     while (i < unrolled_iters) {
         // Manually partially unroll the loop
         [[unroll]] for (uint k = 0; k < unroll_count; ++k) {
@@ -127,6 +115,10 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
 
 void main() {
     const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+
+#ifdef NEEDS_INIT_IQ_SHMEM
+    init_iq_shmem(gl_WorkGroupSize);
+#endif
 
     // do NUM_ROWS at a time, unless there aren't enough remaining rows
     if (first_row + NUM_ROWS <= p.stride_d) {

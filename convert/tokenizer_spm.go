@@ -49,7 +49,8 @@ func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
 			tt := int32(sentencepiece.ModelProto_SentencePiece_NORMAL)
 
 			// temporary fix to handle gemma3 broken configs
-			if slices.Contains([]string{"<end_of_turn>", "<start_of_turn>"}, piece.GetPiece()) {
+			// TODO(parthsareen): allow reading of tokenizer.json to allow managing special tokens when using spm
+			if slices.Contains([]string{"<end_of_turn>", "<start_of_turn>", "<start_function_declaration>", "<end_function_declaration>", "<start_function_call>", "<end_function_call>", "<start_function_response>", "<end_function_response>", "<escape>"}, piece.GetPiece()) {
 				tt = int32(sentencepiece.ModelProto_SentencePiece_CONTROL)
 			}
 

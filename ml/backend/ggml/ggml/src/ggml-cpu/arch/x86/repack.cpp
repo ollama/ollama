@@ -646,7 +646,7 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
     __m256i requiredOrder = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
     int64_t xstart = 0;
     int anr = nr - nr%16; // Used to align nr with boundary of 16
-#ifdef __AVX512F__
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
     int anc = nc - nc%16; // Used to align nc with boundary of 16
                           // Mask to mask out nibbles from packed bytes expanded to 512 bit length
     const __m512i m4bexpanded = _mm512_set1_epi8(0x0F);
@@ -1041,7 +1041,7 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
         xstart = anc/8;
         y = 0;
     }
-#endif // __AVX512F__
+#endif // __AVX512BW__ && __AVX512DQ__
 
     // Take group of four block_q8_0x4 structures at each pass of the loop and perform dot product operation
 
@@ -1989,7 +1989,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     __m256i requiredOrder = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
     int64_t xstart = 0;
     int anr = nr - nr % 16;; // Used to align nr with boundary of 16
-#ifdef __AVX512F__
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
     int anc = nc - nc % 16; // Used to align nc with boundary of 16
     // Mask to mask out nibbles from packed bytes expanded to 512 bit length
     const __m512i m4bexpanded = _mm512_set1_epi8(0x0F);
@@ -2727,7 +2727,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
         xstart = anc/8;
         y = 0;
     }
-#endif //AVX512F
+#endif // __AVX512BW__ && __AVX512DQ__
 
     // Take group of four block_q8_Kx4 structures at each pass of the loop and perform dot product operation
     for (; y < anr / 4; y += 4) {
@@ -3467,7 +3467,7 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     __m256i scalesmask2 = _mm256_castsi128_si256(scalesmask2_sse);
     scalesmask2 = _mm256_permute2f128_si256(scalesmask2, scalesmask2, 0);
 
-#ifdef __AVX512F__
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
 
     int anc = nc - nc % 16; // Used to align nc with boundary of 16
 
@@ -4947,7 +4947,7 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
         y = 0;
     }
 
-#endif //AVX512F
+#endif // __AVX512BW__ && __AVX512DQ__
 
     // Take group of four block_q8_Kx4 structures at each pass of the loop and perform dot product operation
     for (; y < anr / 4; y += 4) {

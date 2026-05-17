@@ -1,6 +1,8 @@
 #include "llama-hparams.h"
 
 #include "ggml.h"
+
+#include <algorithm>
 #include <cassert>
 
 void llama_hparams::set_swa_pattern(uint32_t n_pattern, bool dense_first) {
@@ -58,6 +60,16 @@ uint32_t llama_hparams::n_gqa(uint32_t il) const {
     }
 
     return n_head/n_head_kv;
+}
+
+uint32_t llama_hparams::n_embd_inp() const {
+    uint32_t n_embd_inp = n_embd;
+
+    if (n_deepstack_layers > 0) {
+        n_embd_inp += n_embd * n_deepstack_layers;
+    }
+
+    return n_embd_inp;
 }
 
 uint32_t llama_hparams::n_embd_k_gqa(uint32_t il) const {
@@ -148,7 +160,7 @@ bool llama_hparams::is_recurrent(uint32_t il) const {
 }
 
 uint32_t llama_hparams::n_pos_per_embd() const {
-    return rope_type == LLAMA_ROPE_TYPE_MROPE ? 4 : 1;
+    return rope_type == LLAMA_ROPE_TYPE_MROPE || rope_type == LLAMA_ROPE_TYPE_IMROPE ? 4 : 1;
 }
 
 bool llama_hparams::n_bskcn(uint32_t n, uint32_t il) const {
@@ -226,4 +238,8 @@ bool llama_hparams::is_masked_swa(uint32_t n_swa, llama_swa_type swa_type, llama
     }
 
     return false;
+}
+
+bool llama_hparams::use_mrope() const {
+    return rope_sections[0] > 0 && rope_sections[1] > 0;
 }

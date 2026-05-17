@@ -73,6 +73,7 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "kimi-k2",           LLM_CHAT_TEMPLATE_KIMI_K2           },
     { "seed_oss",          LLM_CHAT_TEMPLATE_SEED_OSS          },
     { "grok-2",            LLM_CHAT_TEMPLATE_GROK_2            },
+    { "pangu-embedded",    LLM_CHAT_TEMPLATE_PANGU_EMBED       },
 };
 
 llm_chat_template llm_chat_template_from_str(const std::string & name) {
@@ -213,6 +214,8 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         return LLM_CHAT_TEMPLATE_SEED_OSS;
     } else if (tmpl_contains("'Assistant: '  + message['content'] + '<|separator|>")) {
         return LLM_CHAT_TEMPLATE_GROK_2;
+    } else if (tmpl_contains(LU8("[unused9]系统：[unused10]"))) {
+        return LLM_CHAT_TEMPLATE_PANGU_EMBED;
     }
     return LLM_CHAT_TEMPLATE_UNKNOWN;
 }
@@ -812,6 +815,35 @@ int32_t llm_chat_apply_template(
         }
         if (add_ass) {
             ss << "Assistant:";
+        }
+    }else if (tmpl == LLM_CHAT_TEMPLATE_PANGU_EMBED) {
+        // [unused9]系统：xxx[unused10]
+        // [unused9]用户：xxx[unused10]
+        // [unused9]助手：xxx[unused10]
+        // ...
+        for (size_t i = 0; i < chat.size(); ++i) {
+            const auto & msg = chat[i];
+            const std::string & role = msg->role;
+            const std::string & content = msg->content;
+
+            if (i == 0 && role != "system") {
+                ss << "[unused9]系统：[unused10]";
+            }
+
+            if (role == "system") {
+                ss << "[unused9]系统：" << content << "[unused10]";
+            } else if (role == "user") {
+                ss << "[unused9]用户：" << content << "[unused10]";
+            } else if (role == "assistant") {
+                ss << "[unused9]助手：" << content << "[unused10]";
+            } else if (role == "tool") {
+                ss << "[unused9]工具：" << content << "[unused10]";
+            } else if (role == "function") {
+                ss << "[unused9]方法：" << content << "[unused10]";
+            }
+        }
+        if (add_ass) {
+            ss << "[unused9]助手：";
         }
     } else {
         // template not supported

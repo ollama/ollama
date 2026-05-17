@@ -87,9 +87,7 @@ func doModelPerfTest(t *testing.T, chatModels []string) {
 			if time.Now().Sub(started) > softTimeout {
 				t.Skip("skipping remaining tests to avoid excessive runtime")
 			}
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 			var maxContext int
 
 			resp, err := client.Show(ctx, &api.ShowRequest{Model: model})

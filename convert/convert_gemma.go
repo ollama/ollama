@@ -23,7 +23,7 @@ type gemmaModel struct {
 
 var _ ModelConverter = (*gemmaModel)(nil)
 
-func (p *gemmaModel) KV(t *Tokenizer) ggml.KV {
+func (p *gemmaModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma"
 	kv["gemma.context_length"] = p.MaxPositionEmbeddings

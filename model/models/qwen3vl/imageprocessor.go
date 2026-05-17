@@ -24,8 +24,8 @@ type ImageProcessor struct {
 	imageStd          []float32
 }
 
-// newImageProcessor creates a new image processor with default values
-func newImageProcessor(c fs.Config) ImageProcessor {
+// NewImageProcessor creates a new image processor with default values.
+func NewImageProcessor(c fs.Config) ImageProcessor {
 	patchSize := int(c.Uint("vision.patch_size", 14))
 	mergeSize := int(c.Uint("vision.spatial_merge_size", 2))
 

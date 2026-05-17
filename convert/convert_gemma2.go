@@ -1,7 +1,5 @@
 package convert
 
-import "github.com/ollama/ollama/fs/ggml"
-
 type gemma2Model struct {
 	gemmaModel
 	SlidingWindow         uint32  `json:"sliding_window"`
@@ -9,7 +7,7 @@ type gemma2Model struct {
 	FinalLogitSoftcap     float32 `json:"final_logit_softcapping"`
 }
 
-func (p *gemma2Model) KV(t *Tokenizer) ggml.KV {
+func (p *gemma2Model) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma2"
 	kv["gemma2.context_length"] = p.MaxPositionEmbeddings

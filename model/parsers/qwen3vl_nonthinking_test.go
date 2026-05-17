@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 )
 
@@ -214,6 +215,51 @@ func TestQwen3VLNonThinkingParserStreaming(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestQwen3VLNonThinkingAssignsSequentialToolCallIndices(t *testing.T) {
+	parser := Qwen3VLParser{hasThinkingSupport: false}
+	parser.Init([]api.Tool{}, nil, nil)
+
+	content, thinking, calls, err := parser.Add(
+		`<tool_call>{"name":"first","arguments":{"a":"1"}}</tool_call><tool_call>{"name":"second","arguments":{"b":"2"}}</tool_call>`,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+
+	expected := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Index: 0,
+				Name:  "first",
+				Arguments: testArgs(map[string]any{
+					"a": "1",
+				}),
+			},
+		},
+		{
+			Function: api.ToolCallFunction{
+				Index: 1,
+				Name:  "second",
+				Arguments: testArgs(map[string]any{
+					"b": "2",
+				}),
+			},
+		},
+	}
+
+	if diff := cmp.Diff(expected, calls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -550,10 +596,10 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get-current-weather",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"location": "San Francisco, CA",
 						"unit":     "fahrenheit",
-					},
+					}),
 				},
 			},
 		},
@@ -564,10 +610,10 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get current temperature",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"location with spaces": "San Francisco",
 						"unit with spaces":     "celsius",
-					},
+					}),
 				},
 			},
 		},
@@ -578,10 +624,10 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "\"get current temperature\"",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"\"location with spaces\"": "San Francisco",
 						"\"unit with spaces\"":     "\"celsius\"",
-					},
+					}),
 				},
 			},
 		},
@@ -592,12 +638,12 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "calculate",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"x":       3.14,
 						"y":       float64(42),
 						"enabled": true,
 						"items":   []any{"a", "b", "c"},
-					},
+					}),
 				},
 			},
 		},
@@ -608,9 +654,9 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "exec",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"command": "ls && echo \"done\"",
-					},
+					}),
 				},
 			},
 		},
@@ -621,9 +667,9 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "exec",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"command": "ls && echo \"a > b and a < b\"",
-					},
+					}),
 				},
 			},
 		},
@@ -634,10 +680,10 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "获取天气",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"城市":      "北京",
 						"message": "Hello! 你好! 🌟 مرحبا",
-					},
+					}),
 				},
 			},
 		},
@@ -648,7 +694,7 @@ func TestQwen3VLNonThinkingToolParser(t *testing.T) {
 		if err != nil {
 			t.Errorf("step %d (%s): %v", i, step.name, err)
 		}
-		if !reflect.DeepEqual(gotToolCall, step.wantToolCall) {
+		if !toolCallEqual(gotToolCall, step.wantToolCall) {
 			t.Errorf("step %d (%s): got tool call %#v, want %#v", i, step.name, gotToolCall, step.wantToolCall)
 		}
 	}

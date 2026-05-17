@@ -124,8 +124,17 @@ func (c *InputCache) LoadCacheSlot(prompt []*input.Input, cachePrompt bool) (*In
 	}
 
 	if c.cache != nil {
-		if numPast > 0 && !c.cache.CanResume(slot.Id, numPast) {
-			numPast = 0
+		if numPast > 0 {
+			// Recurrent caches use checkpoints to pick a safe resume position.
+			if cc, ok := c.cache.(kvcache.CheckpointCache); ok {
+				if restored, ok := cc.PrepareRestore(slot.Id, numPast); ok {
+					numPast = restored
+				} else {
+					numPast = 0
+				}
+			} else if !c.cache.CanResume(slot.Id, numPast) {
+				numPast = 0
+			}
 		}
 
 		err = c.cache.Remove(slot.Id, numPast, math.MaxInt32)

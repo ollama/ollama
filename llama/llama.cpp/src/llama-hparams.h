@@ -6,7 +6,7 @@
 
 // bump if necessary
 #define LLAMA_MAX_LAYERS  512
-#define LLAMA_MAX_EXPERTS 384  // Kimi-K2
+#define LLAMA_MAX_EXPERTS 512 // Qwen3 Next
 
 enum llama_expert_gating_func_type {
     LLAMA_EXPERT_GATING_FUNC_TYPE_NONE           = 0,
@@ -34,6 +34,7 @@ struct llama_hparams_convnext {
 
 struct llama_hparams {
     bool vocab_only;
+    bool no_alloc;
     bool rope_finetuned;
     bool use_par_res;
     bool swin_norm;
@@ -109,6 +110,7 @@ struct llama_hparams {
     float    rope_freq_base_train_swa;
     float    rope_freq_scale_train;
     float    rope_freq_scale_train_swa;
+
     uint32_t n_ctx_orig_yarn;
     float    rope_yarn_log_mul = 0.0f;
 
@@ -164,8 +166,9 @@ struct llama_hparams {
     // llama4 smallthinker
     uint32_t n_moe_layer_step        = 0;
     uint32_t n_no_rope_layer_step    = 4;
-    uint32_t n_attn_temp_floor_scale = 8192;
-    float    f_attn_temp_scale       = 0.1;
+    uint32_t n_attn_temp_floor_scale = 0;
+    float    f_attn_temp_scale       = 0.0f;
+    float    f_attn_temp_offset      = 0.0f; // offset position index
 
     // gemma3n altup
     uint32_t n_altup      = 4; // altup_num_inputs
@@ -184,6 +187,9 @@ struct llama_hparams {
     std::array<float, LLAMA_MAX_LAYERS> xielu_alpha_p;
     std::array<float, LLAMA_MAX_LAYERS> xielu_beta;
     std::array<float, LLAMA_MAX_LAYERS> xielu_eps;
+
+    // qwen3vl deepstack
+    uint32_t n_deepstack_layers = 0;
 
     // needed by encoder-decoder models (e.g. T5, FLAN-T5)
     // ref: https://github.com/ggerganov/llama.cpp/pull/8141
@@ -226,6 +232,9 @@ struct llama_hparams {
 
     uint32_t n_gqa(uint32_t il = 0) const;
 
+    // dimension of main + auxiliary input embeddings
+    uint32_t n_embd_inp() const;
+
     // dimension of key embeddings across all k-v heads
     uint32_t n_embd_k_gqa(uint32_t il = 0) const;
 
@@ -266,7 +275,8 @@ struct llama_hparams {
     // TODO: think of a better place for this function
     // TODO: pack the SWA params in a struct?
     static bool is_masked_swa(uint32_t n_swa, llama_swa_type swa_type, llama_pos p0, llama_pos p1);
+
+    bool use_mrope() const;
 };
 
 static_assert(std::is_trivially_copyable<llama_hparams>::value, "llama_hparams must be trivially copyable");
-

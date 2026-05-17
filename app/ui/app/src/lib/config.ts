@@ -8,3 +8,6 @@ export const API_BASE = import.meta.env.DEV ? DEV_API_URL : "";
 export const OLLAMA_HOST = import.meta.env.DEV
   ? DEV_API_URL
   : window.location.origin;
+
+export const OLLAMA_DOT_COM =
+  import.meta.env.VITE_OLLAMA_DOT_COM_URL || "https://ollama.com";

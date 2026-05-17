@@ -10,10 +10,10 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type Options struct {
@@ -42,13 +42,12 @@ type Options struct {
 	kqScale float64
 }
 
-func (o Options) RoPEOptions() []func(*rope.Options) {
-	attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(o.ropeScale))))
-	return []func(*rope.Options){
+func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, t, p ml.Tensor) ml.Tensor {
+	return nn.RoPE(ctx, t, p, o.qkRopeHeadDim, o.ropeBase, 1./o.ropeScale,
 		rope.WithOriginalContextLength(o.originalContextLength),
 		rope.WithExtrapolationFactor(1.),
-		rope.WithAttentionFactor(attnFactor),
-	}
+		rope.WithAttentionFactor(float32(1.0/(1.0+0.1*math.Log(float64(o.ropeScale))))),
+	)
 }
 
 type Attention struct {
@@ -91,8 +90,8 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 		compressedKV.Stride(1), compressedKV.Dim(1),
 	)
 
-	qRot := fast.RoPE(ctx, queryChunks[1], positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
-	kRot = fast.RoPE(ctx, kRot, positions, opts.qkRopeHeadDim, opts.ropeBase, 1./opts.ropeScale, opts.RoPEOptions()...)
+	qRot := opts.applyRotaryPositionEmbeddings(ctx, queryChunks[1], positions)
+	kRot = opts.applyRotaryPositionEmbeddings(ctx, kRot, positions)
 	kPass = attn.KVANorm.Forward(ctx, kPass, opts.eps)
 
 	var attention ml.Tensor
@@ -224,7 +223,7 @@ func (t *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tens
 
 type Model struct {
 	model.Base
-	model.BytePairEncoding
+	tokenizer.Tokenizer
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
@@ -279,8 +278,8 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	m := Model{
-		BytePairEncoding: model.NewBytePairEncoding(
-			&model.Vocabulary{
+		Tokenizer: tokenizer.NewBytePairEncoding(
+			&tokenizer.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
@@ -327,7 +326,7 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.qkRopeHeadDim, m.ropeBase, 1./m.ropeScale, m.RoPEOptions()...), nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {

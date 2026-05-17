@@ -38,7 +38,7 @@ type gemma3nModel struct {
 	VisionModel struct{} `json:"vision_config"`
 }
 
-func (m *gemma3nModel) KV(t *Tokenizer) ggml.KV {
+func (m *gemma3nModel) KV(t *Tokenizer) KV {
 	kv := m.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma3n"
 	kv["gemma3n.activation_sparsity_scale"] = slices.Collect(func(yield func(float32) bool) {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 )
 
 func TestConvertFromSafetensors(t *testing.T) {
@@ -17,7 +18,7 @@ func TestConvertFromSafetensors(t *testing.T) {
 
 	// Helper function to create a new layer and return its digest
 	makeTemp := func(content string) string {
-		l, err := NewLayer(strings.NewReader(content), "application/octet-stream")
+		l, err := manifest.NewLayer(strings.NewReader(content), "application/octet-stream")
 		if err != nil {
 			t.Fatalf("Failed to create layer: %v", err)
 		}

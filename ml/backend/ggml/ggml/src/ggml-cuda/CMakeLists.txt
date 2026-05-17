@@ -124,6 +124,7 @@ if (CUDAToolkit_FOUND)
 
     if (GGML_CUDA_DEBUG)
         list(APPEND CUDA_FLAGS -lineinfo)
+        add_compile_definitions(GGML_CUDA_DEBUG)
     endif()
 
     if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8")

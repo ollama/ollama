@@ -35,7 +35,7 @@ type llama4Model struct {
 }
 
 // KV implements ModelConverter.
-func (p *llama4Model) KV(t *Tokenizer) ggml.KV {
+func (p *llama4Model) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "llama4"
 

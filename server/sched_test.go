@@ -39,10 +39,25 @@ func TestSchedLoad(t *testing.T) {
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
-	var f *ggml.GGML // value not used in tests
+
+	modelPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.context_length":          uint32(32),
+		"llama.embedding_length":        uint32(4096),
+		"llama.block_count":             uint32(1),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(32),
+		"tokenizer.ggml.tokens":         []string{" "},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+	})
+
 	req := &LlmRequest{
 		ctx:             ctx,
-		model:           &Model{ModelPath: "foo"},
+		model:           &Model{ModelPath: modelPath},
 		opts:            api.DefaultOptions(),
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
@@ -54,7 +69,7 @@ func TestSchedLoad(t *testing.T) {
 	}
 	gpus := []ml.DeviceInfo{}
 	systemInfo := ml.SystemInfo{}
-	s.load(req, f, systemInfo, gpus, false)
+	s.load(req, systemInfo, gpus, false)
 	require.Empty(t, req.successCh)
 	require.Len(t, req.errCh, 1)
 	s.loadedMu.Lock()
@@ -68,7 +83,7 @@ func TestSchedLoad(t *testing.T) {
 		server.modelPath = model
 		return server, nil
 	}
-	s.load(req, f, systemInfo, gpus, false)
+	s.load(req, systemInfo, gpus, false)
 	select {
 	case err := <-req.errCh:
 		require.NoError(t, err)
@@ -80,9 +95,24 @@ func TestSchedLoad(t *testing.T) {
 		s.loadedMu.Unlock()
 	}
 
-	req.model.ModelPath = "dummy_model_path"
+	modelPath2, _ := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.context_length":          uint32(32),
+		"llama.embedding_length":        uint32(4096),
+		"llama.block_count":             uint32(1),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(32),
+		"tokenizer.ggml.tokens":         []string{" "},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+	})
+
+	req.model.ModelPath = modelPath2
 	server.waitResp = errors.New("wait failure")
-	s.load(req, f, systemInfo, gpus, false)
+	s.load(req, systemInfo, gpus, false)
 	select {
 	case err := <-req.errCh:
 		require.Contains(t, err.Error(), "wait failure")
@@ -90,7 +120,7 @@ func TestSchedLoad(t *testing.T) {
 		t.Fatalf("unexpected success %v", resp)
 	}
 	s.loadedMu.Lock()
-	runner := s.loaded["dummy_model_path"]
+	runner := s.loaded[modelPath2]
 	s.loadedMu.Unlock()
 	require.NotNil(t, runner)
 	require.Equal(t, uint(0), runner.refCount)
@@ -103,7 +133,6 @@ type reqBundle struct {
 	ctxDone func()
 	srv     *mockLlm
 	req     *LlmRequest
-	f       *ggml.GGML
 }
 
 func (scenario *reqBundle) newServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
@@ -132,11 +161,6 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, vra
 	})
 
 	model := &Model{Name: modelName, ModelPath: p}
-	f, err := llm.LoadModel(model.ModelPath, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b.f = f
 	if duration == nil {
 		duration = &api.Duration{Duration: 5 * time.Millisecond}
 	}
@@ -178,7 +202,6 @@ func TestSchedRequestsSameModelSameRequest(t *testing.T) {
 	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond}, nil)
 	b := newScenarioRequest(t, ctx, "ollama-model-1", 11, &api.Duration{Duration: 0}, nil)
 	b.req.model = a.req.model
-	b.f = a.f
 
 	s.newServerFn = a.newServer
 	slog.Info("a")
@@ -223,7 +246,6 @@ func TestSchedRequestsSimpleReloadSameModel(t *testing.T) {
 	b := newScenarioRequest(t, ctx, "ollama-model-1", 20, &api.Duration{Duration: 5 * time.Millisecond}, nil)
 	tmpModel := *a.req.model
 	b.req.model = &tmpModel
-	b.f = a.f
 
 	s.newServerFn = a.newServer
 	slog.Info("a")
@@ -448,21 +470,101 @@ func TestSchedGetRunner(t *testing.T) {
 	b.ctxDone()
 }
 
+func TestSchedGetRunnerUsesDigestKeyWhenModelPathEmpty(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	opts := api.DefaultOptions()
+	opts.NumCtx = 4
+
+	loadedModel := &Model{Name: "safetensors-a", Digest: "sha-a"}
+	loadedRunner := &runnerRef{
+		model:       loadedModel,
+		modelKey:    schedulerModelKey(loadedModel),
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+		Options:     &opts,
+		numParallel: 1,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[loadedRunner.modelKey] = loadedRunner
+	s.loadedMu.Unlock()
+
+	reqModel := &Model{Name: "safetensors-b", Digest: "sha-b"}
+	successCh, errCh := s.GetRunner(ctx, reqModel, opts, nil)
+
+	require.Empty(t, successCh)
+	require.Empty(t, errCh)
+	require.Len(t, s.pendingReqCh, 1)
+}
+
+func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	opts := api.DefaultOptions()
+	opts.NumCtx = 4
+
+	loadedModel := &Model{Name: "safetensors-a", Digest: "sha-a"}
+	loadedRunner := &runnerRef{
+		model:       loadedModel,
+		modelKey:    schedulerModelKey(loadedModel),
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+		Options:     &opts,
+		numParallel: 1,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[loadedRunner.modelKey] = loadedRunner
+	s.loadedMu.Unlock()
+
+	reqCtx, cancelReq := context.WithCancel(ctx)
+	successCh, errCh := s.GetRunner(reqCtx, &Model{Name: "safetensors-a-copy", Digest: "sha-a"}, opts, nil)
+	cancelReq()
+
+	select {
+	case runner := <-successCh:
+		require.Equal(t, loadedRunner, runner)
+	default:
+		t.Fatal("expected existing runner to be reused")
+	}
+
+	require.Empty(t, errCh)
+	require.Empty(t, s.pendingReqCh)
+}
+
 func TestSchedExpireRunner(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
+
+	modelPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.context_length":          uint32(32),
+		"llama.embedding_length":        uint32(4096),
+		"llama.block_count":             uint32(1),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(32),
+		"tokenizer.ggml.tokens":         []string{" "},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+	})
+
 	req := &LlmRequest{
 		ctx:             ctx,
-		model:           &Model{ModelPath: "foo"},
+		model:           &Model{ModelPath: modelPath},
 		opts:            api.DefaultOptions(),
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
 		sessionDuration: &api.Duration{Duration: 2 * time.Minute},
 	}
 
-	var f *ggml.GGML
 	gpus := []ml.DeviceInfo{}
 	systemInfo := ml.SystemInfo{}
 	server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
@@ -470,7 +572,7 @@ func TestSchedExpireRunner(t *testing.T) {
 		server.modelPath = model
 		return server, nil
 	}
-	s.load(req, f, systemInfo, gpus, false)
+	s.load(req, systemInfo, gpus, false)
 
 	select {
 	case err := <-req.errCh:
@@ -485,7 +587,7 @@ func TestSchedExpireRunner(t *testing.T) {
 		s.loadedMu.Unlock()
 	}
 
-	s.expireRunner(&Model{ModelPath: "foo"})
+	s.expireRunner(&Model{ModelPath: modelPath})
 
 	s.finishedReqCh <- req
 	s.processCompleted(ctx)
@@ -780,8 +882,8 @@ func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn 
 	return s.completionResp
 }
 
-func (s *mockLlm) Embedding(ctx context.Context, input string) ([]float32, error) {
-	return s.embeddingResp, s.embeddingRespErr
+func (s *mockLlm) Embedding(ctx context.Context, input string) ([]float32, int, error) {
+	return s.embeddingResp, 0, s.embeddingRespErr
 }
 
 func (s *mockLlm) Tokenize(ctx context.Context, content string) ([]int, error) {
@@ -796,11 +898,101 @@ func (s *mockLlm) Close() error {
 	s.closeCalled = true
 	return s.closeResp
 }
-func (s *mockLlm) VRAMSize() uint64                                   { return s.vramSize }
-func (s *mockLlm) TotalSize() uint64                                  { return s.totalSize }
+func (s *mockLlm) MemorySize() (uint64, uint64)                       { return s.totalSize, s.vramSize }
 func (s *mockLlm) VRAMByGPU(id ml.DeviceID) uint64                    { return s.vramByGPU[id] }
 func (s *mockLlm) Pid() int                                           { return -1 }
 func (s *mockLlm) GetPort() int                                       { return -1 }
 func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
 func (s *mockLlm) HasExited() bool                                    { return false }
 func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
+func (s *mockLlm) ContextLength() int                                 { return 0 }
+
+// TestImageGenRunnerCanBeEvicted verifies that an image generation model
+// loaded in the scheduler can be evicted when idle.
+func TestImageGenRunnerCanBeEvicted(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Simulate an image gen runner already loaded
+	imageGenRunner := &runnerRef{
+		model:           &Model{Name: "z-image", ModelPath: "/fake/image/model"},
+		modelPath:       "/fake/image/model",
+		llama:           &mockLlm{vramSize: 21 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{}},
+		sessionDuration: 5 * time.Millisecond,
+		refCount:        0, // idle
+	}
+
+	s.loadedMu.Lock()
+	s.loaded["/fake/image/model"] = imageGenRunner
+	s.loadedMu.Unlock()
+
+	// Verify the image gen runner is loaded
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 1)
+	s.loadedMu.Unlock()
+
+	// findRunnerToUnload should find the idle image gen runner
+	runner := s.findRunnerToUnload()
+	require.NotNil(t, runner)
+	require.Equal(t, "/fake/image/model", runner.modelPath)
+}
+
+// TestImageGenSchedulerCoexistence verifies that image generation models
+// can coexist with language models in the scheduler and VRAM is tracked correctly.
+func TestImageGenSchedulerCoexistence(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Load both an imagegen runner and a language model runner
+	imageGenRunner := &runnerRef{
+		model:           &Model{Name: "flux", ModelPath: "/fake/flux/model"},
+		modelPath:       "/fake/flux/model",
+		llama:           &mockLlm{vramSize: 8 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{{Library: "Metal"}: 8 * format.GigaByte}},
+		sessionDuration: 10 * time.Millisecond,
+		numParallel:     1,
+		refCount:        0,
+	}
+
+	langModelRunner := &runnerRef{
+		model:           &Model{Name: "llama3", ModelPath: "/fake/llama3/model"},
+		modelPath:       "/fake/llama3/model",
+		llama:           &mockLlm{vramSize: 4 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{{Library: "Metal"}: 4 * format.GigaByte}},
+		sessionDuration: 10 * time.Millisecond,
+		numParallel:     1,
+		refCount:        0,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded["/fake/flux/model"] = imageGenRunner
+	s.loaded["/fake/llama3/model"] = langModelRunner
+	s.loadedMu.Unlock()
+
+	// Verify both are loaded
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 2)
+	require.NotNil(t, s.loaded["/fake/flux/model"])
+	require.NotNil(t, s.loaded["/fake/llama3/model"])
+	s.loadedMu.Unlock()
+
+	// Verify updateFreeSpace accounts for both
+	gpus := []ml.DeviceInfo{
+		{
+			DeviceID:    ml.DeviceID{Library: "Metal"},
+			TotalMemory: 24 * format.GigaByte,
+			FreeMemory:  24 * format.GigaByte,
+		},
+	}
+	s.updateFreeSpace(gpus)
+
+	// Free memory should be reduced by both models
+	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
+	require.Equal(t, expectedFree, gpus[0].FreeMemory)
+}

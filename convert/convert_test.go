@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	fsc "github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/fs/ggml"
 )
 
@@ -28,7 +29,7 @@ type tensorData struct {
 	Shape   []int  `json:"shape"`
 }
 
-func convertFull(t *testing.T, fsys fs.FS) (*os.File, ggml.KV, ggml.Tensors) {
+func convertFull(t *testing.T, fsys fs.FS) (*os.File, fsc.Config, ggml.Tensors) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "f16")
@@ -59,9 +60,10 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, ggml.KV, ggml.Tensors) {
 	return r, m.KV(), m.Tensors()
 }
 
-func generateResultsJSON(t *testing.T, f *os.File, kv ggml.KV, tensors ggml.Tensors) map[string]string {
+func generateResultsJSON(t *testing.T, f *os.File, kv fsc.Config, tensors ggml.Tensors) map[string]string {
 	actual := make(map[string]string)
-	for k, v := range kv {
+	for k := range kv.Keys() {
+		v := kv.Value(k)
 		if s, ok := v.(json.Marshaler); !ok {
 			actual[k] = fmt.Sprintf("%v", v)
 		} else {
@@ -203,8 +205,8 @@ func TestConvertInvalidDatatype(t *testing.T) {
 	generateSafetensorTestData(t, tempDir, td)
 
 	err = ConvertModel(os.DirFS(tempDir), f)
-	if err == nil || err.Error() != "unsupported safetensors model" {
-		t.Errorf("expected error but didn't get one")
+	if err == nil || !strings.Contains(err.Error(), "unknown data type") {
+		t.Errorf("expected 'unknown data type' error but got: %v", err)
 	}
 }
 
@@ -277,7 +279,7 @@ func generateSafetensorTestData(t *testing.T, tempDir string, tensorData map[str
 func TestConvertAdapter(t *testing.T) {
 	type AdapterCase struct {
 		Name     string
-		BaseKV   map[string]any
+		BaseKV   KV
 		Expected map[string]string
 	}
 
