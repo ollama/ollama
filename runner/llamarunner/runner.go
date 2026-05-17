@@ -564,9 +564,8 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		seq.inputs = []input{{token: token}}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
-		sequence := strings.Join(seq.pendingResponses, "")
 
-		if ok, stop := common.FindStop(sequence, seq.stop); ok {
+		if ok, stop := common.FindStopAfterAppend(seq.pendingResponses, seq.stop); ok {
 			slog.Debug("hit stop token", "pending", seq.pendingResponses, "stop", stop)
 
 			var tokenTruncated bool
@@ -603,11 +602,11 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			continue
 		}
 
-		if common.ContainsStopSuffix(sequence, seq.stop) {
+		if common.ContainsStopSuffixInPieces(seq.pendingResponses, seq.stop) {
 			continue
 		}
 
-		if common.IncompleteUnicode(sequence) {
+		if common.IncompleteUnicodeInPieces(seq.pendingResponses) {
 			continue
 		}
 
