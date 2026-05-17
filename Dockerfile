@@ -16,21 +16,26 @@ WORKDIR /build
 COPY CMakeLists.txt CMakePresets.json ./
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 
+COPY scripts/cicc-cache /usr/local/cuda/nvvm/bin/cicc-cache
+RUN chmod +x /usr/local/cuda/nvvm/bin/cicc-cache \
+    && mv /usr/local/cuda/nvvm/bin/cicc /usr/local/cuda/nvvm/bin/cicc.real \
+    && mv /usr/local/cuda/nvvm/bin/cicc-cache /usr/local/cuda/nvvm/bin/cicc
+
+RUN cmake --preset 'CUDA 13' -DCMAKE_CUDA_ARCHITECTURES=86 \
+    && cmake --build --preset 'CUDA 13' -j$(nproc) \
+    && cmake --install build --component CUDA --strip
+
 RUN --mount=type=cache,target=/root/.cache/ccache \
     cmake --preset CPU \
     && cmake --build --preset CPU -j$(nproc) \
     && cmake --install build --component CPU --strip
 
-RUN --mount=type=cache,target=/root/.cache/ccache \
-    cmake --preset 'CUDA 13' \
-    && cmake --build --preset 'CUDA 13' -j$(nproc) \
-    && cmake --install build --component CUDA --strip
-
-WORKDIR /build/ollama
-COPY go.mod go.sum ./
 ARG GO_VERSION=1.26.0
 ADD --unpack "https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz" /usr/local/
 ENV PATH=/usr/local/go/bin:$PATH
+
+WORKDIR /build/ollama
+COPY go.mod go.sum ./
 
 RUN --mount=type=cache,target=/root/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \

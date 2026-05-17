@@ -398,16 +398,10 @@ static constexpr __device__ int ggml_cuda_get_max_cpy_bytes() {
 
 [[noreturn]]
 static __device__ void no_device_code(
-    const char * file_name, const int line, const char * function_name, const int arch, const char * arch_list) {
+    const char * file_name, const int line, const char * function_name) {
 
-#if defined(GGML_USE_HIP)
-    printf("%s:%d: ERROR: HIP kernel %s has no device code compatible with HIP arch %d.\n",
-           file_name, line, function_name, arch);
-    GGML_UNUSED(arch_list);
-#else
-    printf("%s:%d: ERROR: CUDA kernel %s has no device code compatible with CUDA arch %d. ggml-cuda.cu was compiled for: %s\n",
-           file_name, line, function_name, arch, arch_list);
-#endif // defined(GGML_USE_HIP)
+    printf("%s:%d: ERROR: kernel %s has no device code for this GPU architecture.\n",
+           file_name, line, function_name);
     __trap();
 
     GGML_UNUSED(no_device_code); // suppress unused function warning
@@ -417,11 +411,7 @@ static __device__ void no_device_code(
 #endif // defined(GGML_USE_MUSA)
 }
 
-#ifdef __CUDA_ARCH__
-#define NO_DEVICE_CODE no_device_code(__FILE__, __LINE__, __FUNCTION__, __CUDA_ARCH__, STRINGIZE(__CUDA_ARCH_LIST__))
-#else
-#define NO_DEVICE_CODE //GGML_ABORT("NO_DEVICE_CODE not valid in host code.")
-#endif // __CUDA_ARCH__
+#define NO_DEVICE_CODE no_device_code(__FILE__, __LINE__, __FUNCTION__)
 
 // The compiler is always able to unroll loops if they contain continue expressions.
 // In such cases loop unrolling can still be achieved via recursion:

@@ -15,13 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /usr/local/share/boost /usr/share/swift /opt/hostedtoolcache
-          sudo docker system prune -af
-          df -h /
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Build Dockerfile
-        run: docker build -t ollama:${{ github.sha }} .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ollama:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Verify ollama binary
         run: docker run --rm ollama:${{ github.sha }} --version

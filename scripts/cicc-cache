@@ -1,0 +1,57 @@
+#!/bin/bash
+
+set -euo pipefail
+
+REAL_CICC="${0}.real"
+CACHE_DIR="${CICC_CACHE_DIR:-/tmp/cicc-cache}"
+mkdir -p "$CACHE_DIR"
+
+log() { echo "[cicc-cache] $*" >&2; }
+
+input_file=""
+declare -A output_map
+prev=""
+
+for arg in "$@"; do
+    case "$prev" in
+        -o|--gen_c_file_name|--stub_file_name|--gen_device_file_name|--module_id_file_name)
+            output_map["$prev"]="$arg" ;;
+    esac
+    case "$arg" in *.cpp1.ii|*.cpp4.ii) input_file="$arg" ;; esac
+    prev="$arg"
+done
+
+if [ -z "$input_file" ] || [ ! -f "$input_file" ] || [ ${#output_map[@]} -eq 0 ]; then
+    exec "$REAL_CICC" "$@"
+fi
+
+input_hash=$(md5sum "$input_file" | cut -d' ' -f1)
+cache_entry="$CACHE_DIR/$input_hash"
+
+if [ -d "$cache_entry" ]; then
+    for flag in "${!output_map[@]}"; do
+        clean_flag="${flag#--}"
+        clean_flag="${clean_flag#-}"
+        cached="$cache_entry/$clean_flag"
+        target="${output_map[$flag]}"
+        if [ -f "$cached" ]; then
+            cp "$cached" "$target"
+        else
+            log "MISS $clean_flag $(basename "$input_file")"
+            exec "$REAL_CICC" "$@"
+        fi
+    done
+    log "HIT $(basename "$input_file")"
+    exit 0
+fi
+
+"$REAL_CICC" "$@"
+
+mkdir -p "$cache_entry"
+for flag in "${!output_map[@]}"; do
+    clean_flag="${flag#--}"
+    clean_flag="${clean_flag#-}"
+    src="${output_map[$flag]}"
+    [ -f "$src" ] && cp "$src" "$cache_entry/$clean_flag"
+done
+log "STORE $(basename "$input_file")"

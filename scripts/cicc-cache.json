@@ -1,0 +1,41 @@
+{
+  "name": "cicc-cache",
+  "description": "Content-addressed cache for CUDA device compiler.",
+  "commands": [{
+    "name": "exec",
+    "passthrough": true,
+    "flags": [
+      { "name": "o", "type": "string" },
+      { "name": "gen_c_file_name", "type": "string" },
+      { "name": "stub_file_name", "type": "string" },
+      { "name": "gen_device_file_name", "type": "string" },
+      { "name": "module_id_file_name", "type": "string" }
+    ],
+    "vars": {
+      "real_cicc": "/usr/local/cuda/nvvm/bin/cicc.real",
+      "cache_dir": "/tmp/cicc-cache"
+    },
+    "steps": [
+      {
+        "name": "input_hash",
+        "command": "md5sum {{.rest | filterSuffix \".cpp1.ii\" | first}} | cut -d' ' -f1"
+      },
+      {
+        "name": "restore",
+        "when": "{{fileExists (printf \"%s/%s/o\" .var.cache_dir .result.input_hash)}}",
+        "command": "cp {{.var.cache_dir}}/{{.result.input_hash}}/o {{shellquote .flag.o}} && cp {{.var.cache_dir}}/{{.result.input_hash}}/gen_c_file_name {{shellquote .flag.gen_c_file_name}} && cp {{.var.cache_dir}}/{{.result.input_hash}}/gen_device_file_name {{shellquote .flag.gen_device_file_name}} && cp {{.var.cache_dir}}/{{.result.input_hash}}/stub_file_name {{shellquote .flag.stub_file_name}} && cp {{.var.cache_dir}}/{{.result.input_hash}}/module_id_file_name {{shellquote .flag.module_id_file_name}} && echo hit"
+      },
+      {
+        "name": "compile",
+        "when": "{{not .result.restore}}",
+        "command": "{{.var.real_cicc}} {{spread .rest}} -o {{shellquote .flag.o}} --gen_c_file_name {{shellquote .flag.gen_c_file_name}} --stub_file_name {{shellquote .flag.stub_file_name}} --gen_device_file_name {{shellquote .flag.gen_device_file_name}} --module_id_file_name {{shellquote .flag.module_id_file_name}}"
+      },
+      {
+        "name": "store",
+        "when": "{{not .result.restore}}",
+        "command": "mkdir -p {{.var.cache_dir}}/{{.result.input_hash}} && cp {{shellquote .flag.o}} {{.var.cache_dir}}/{{.result.input_hash}}/o && cp {{shellquote .flag.gen_c_file_name}} {{.var.cache_dir}}/{{.result.input_hash}}/gen_c_file_name && cp {{shellquote .flag.gen_device_file_name}} {{.var.cache_dir}}/{{.result.input_hash}}/gen_device_file_name && cp {{shellquote .flag.stub_file_name}} {{.var.cache_dir}}/{{.result.input_hash}}/stub_file_name && cp {{shellquote .flag.module_id_file_name}} {{.var.cache_dir}}/{{.result.input_hash}}/module_id_file_name"
+      }
+    ],
+    "command": "true"
+  }]
+}
