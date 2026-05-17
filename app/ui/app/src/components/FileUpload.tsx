@@ -83,15 +83,21 @@ export function FileUpload({
 
   // Main file processing function
   const processFiles = useCallback(
-    async (dataTransfer: DataTransfer) => {
+    async (
+      dataTransfer: DataTransfer, 
+      isPaste: boolean = false
+    ) => {
       const allFiles: File[] = [];
 
       // Extract files from DataTransfer
       if (dataTransfer.items) {
         for (const item of dataTransfer.items) {
           if (item.kind === "file") {
-            const entry = item.webkitGetAsEntry?.();
-            if (entry?.isFile) {
+            const entry = item.webkitGetAsEntry();
+            if (isPaste == true) {
+              const file = item.getAsFile();
+              if (file) allFiles.push(file);
+            } else if (entry?.isFile) {
               const file = item.getAsFile();
               if (file) allFiles.push(file);
             } else if (entry?.isDirectory) {
@@ -161,23 +167,7 @@ export function FileUpload({
 
         e.preventDefault();
 
-        // Create a synthetic DataTransfer object for our processFiles function
-        const items = Array.from(e.clipboardData.items);
-        const syntheticDataTransfer = {
-          files: e.clipboardData.files,
-          items: {
-            ...items,
-            length: items.length,
-            add: () => null,
-            clear: () => {},
-            remove: () => null,
-            [Symbol.iterator]: () => items[Symbol.iterator](),
-          } as DataTransferItemList,
-          types: e.clipboardData.types,
-          getData: (format: string) => e.clipboardData!.getData(format),
-        } as DataTransfer;
-
-        await processFiles(syntheticDataTransfer);
+        await processFiles(e.clipboardData, true);
       }
     },
     [processFiles],
