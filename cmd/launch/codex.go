@@ -36,8 +36,11 @@ const (
 	codexRootModelCatalogJSONKey = "model_catalog_json"
 )
 
-func (c *Codex) args(model string, extra []string) []string {
+func (c *Codex) args(model, modelCatalogPath string, extra []string) []string {
 	args := []string{"--profile", codexProfileName}
+	if modelCatalogPath != "" {
+		args = append(args, "-c", fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, modelCatalogPath))
+	}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
@@ -54,7 +57,12 @@ func (c *Codex) Run(model string, args []string) error {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
-	cmd := exec.Command("codex", c.args(model, args)...)
+	catalogPath, err := codexModelCatalogPath()
+	if err != nil {
+		return fmt.Errorf("failed to configure codex: %w", err)
+	}
+
+	cmd := exec.Command("codex", c.args(model, catalogPath, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -77,7 +85,7 @@ func ensureCodexConfig(modelName string) error {
 		return err
 	}
 
-	catalogPath := filepath.Join(codexDir, "model.json")
+	catalogPath := codexModelCatalogPathForConfig(configPath)
 	if err := writeCodexModelCatalog(catalogPath, modelName); err != nil {
 		return err
 	}
@@ -91,6 +99,18 @@ func codexConfigPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".codex", "config.toml"), nil
+}
+
+func codexModelCatalogPath() (string, error) {
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return "", err
+	}
+	return codexModelCatalogPathForConfig(configPath), nil
+}
+
+func codexModelCatalogPathForConfig(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "model.json")
 }
 
 // writeCodexProfile ensures ~/.codex/config.toml has the ollama-launch profile

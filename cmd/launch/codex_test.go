@@ -16,6 +16,8 @@ import (
 
 func TestCodexArgs(t *testing.T) {
 	c := &Codex{}
+	catalogPath := filepath.Join("tmp", "model.json")
+	catalogArg := fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, catalogPath)
 
 	tests := []struct {
 		name  string
@@ -23,15 +25,15 @@ func TestCodexArgs(t *testing.T) {
 		args  []string
 		want  []string
 	}{
-		{"with model", "llama3.2", nil, []string{"--profile", "ollama-launch", "-m", "llama3.2"}},
-		{"empty model", "", nil, []string{"--profile", "ollama-launch"}},
-		{"with model and extra args", "qwen3.5", []string{"-p", "myprofile"}, []string{"--profile", "ollama-launch", "-m", "qwen3.5", "-p", "myprofile"}},
-		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, []string{"--profile", "ollama-launch", "-m", "llama3.2", "--sandbox", "workspace-write"}},
+		{"with model", "llama3.2", nil, []string{"--profile", "ollama-launch", "-c", catalogArg, "-m", "llama3.2"}},
+		{"empty model", "", nil, []string{"--profile", "ollama-launch", "-c", catalogArg}},
+		{"with model and extra args", "qwen3.5", []string{"-p", "myprofile"}, []string{"--profile", "ollama-launch", "-c", catalogArg, "-m", "qwen3.5", "-p", "myprofile"}},
+		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, []string{"--profile", "ollama-launch", "-c", catalogArg, "-m", "llama3.2", "--sandbox", "workspace-write"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := c.args(tt.model, tt.args)
+			got := c.args(tt.model, catalogPath, tt.args)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.args, got, tt.want)
 			}
