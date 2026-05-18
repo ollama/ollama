@@ -144,13 +144,46 @@ exit 0
 		t.Setenv("OLLAMA_HOST", srv.URL)
 	}
 
+	setNpmRegistryVersion := func(t *testing.T, version string) {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/latest") {
+				fmt.Fprintf(w, `{"version":%q}`, version)
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		oldRegistry := npmRegistryBaseURL
+		npmRegistryBaseURL = srv.URL
+		t.Cleanup(func() {
+			npmRegistryBaseURL = oldRegistry
+			srv.Close()
+		})
+	}
+
+	seedPiWebSearchPackage := func(t *testing.T, dir, version string) {
+		t.Helper()
+		packagePath := filepath.Join(dir, ".npm-global", "lib", "node_modules", "@ollama", "pi-web-search")
+		if err := os.MkdirAll(packagePath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		packageJSON := fmt.Sprintf(`{"name":%q,"version":%q}`, piWebSearchPkg, version)
+		if err := os.WriteFile(filepath.Join(packagePath, "package.json"), []byte(packageJSON), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		list := fmt.Sprintf("User packages:\n  %s\n    %s\n", piWebSearchSource, packagePath)
+		if err := os.WriteFile(filepath.Join(dir, "pi-list.txt"), []byte(list), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	t.Run("pi missing + user accepts install", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 		t.Setenv("PATH", tmpDir)
 		setCloudStatus(t, false)
 
-		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n  npm:@ollama/pi-web-search\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
@@ -202,8 +235,8 @@ exit 0
 		if !strings.Contains(got, "list\n") {
 			t.Fatalf("expected pi list call, got:\n%s", got)
 		}
-		if !strings.Contains(got, "update "+piWebSearchSource+"\n") {
-			t.Fatalf("expected pi update call, got:\n%s", got)
+		if !strings.Contains(got, "install "+piWebSearchSource+"\n") {
+			t.Fatalf("expected pi web search install call, got:\n%s", got)
 		}
 		if !strings.Contains(got, "--version\n") {
 			t.Fatalf("expected final pi launch call, got:\n%s", got)
@@ -236,9 +269,8 @@ exit 0
 		setTestHome(t, tmpDir)
 		t.Setenv("PATH", tmpDir)
 		setCloudStatus(t, false)
-		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n  "+piWebSearchSource+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.0")
 		seedPiScript(t, tmpDir)
 		seedLegacyPiNpm(t, tmpDir)
 
@@ -281,8 +313,8 @@ exit 0
 			t.Fatal(err)
 		}
 		gotPi := string(piCalls)
-		if !strings.Contains(gotPi, "update "+piWebSearchSource+"\n") {
-			t.Fatalf("expected pi update call, got:\n%s", gotPi)
+		if strings.Contains(gotPi, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("did not expect pi update call when web search is current, got:\n%s", gotPi)
 		}
 		if !strings.Contains(gotPi, "--version\n") {
 			t.Fatalf("expected final pi launch call, got:\n%s", gotPi)
@@ -323,9 +355,8 @@ exit 0
 		setTestHome(t, tmpDir)
 		t.Setenv("PATH", tmpDir)
 		setCloudStatus(t, false)
-		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n  "+piWebSearchSource+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.0")
 		seedPiScript(t, tmpDir)
 		seedBrokenPiProbeNpm(t, tmpDir)
 		withConfirm(t, func(prompt string) (bool, error) {
@@ -351,8 +382,8 @@ exit 0
 			t.Fatal(err)
 		}
 		gotPi := string(piCalls)
-		if !strings.Contains(gotPi, "update "+piWebSearchSource+"\n") {
-			t.Fatalf("expected pi update call, got:\n%s", gotPi)
+		if strings.Contains(gotPi, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("did not expect pi update call when web search is current, got:\n%s", gotPi)
 		}
 		if !strings.Contains(gotPi, "--version\n") {
 			t.Fatalf("expected final pi launch call, got:\n%s", gotPi)
@@ -398,14 +429,41 @@ exit 0
 		}
 	})
 
-	t.Run("pi installed + web search present updates every launch", func(t *testing.T) {
+	t.Run("pi installed + web search present skips update when current", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 		t.Setenv("PATH", tmpDir)
 		setCloudStatus(t, false)
-		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n  "+piWebSearchSource+"\n"), 0o644); err != nil {
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.0")
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+
+		p := &Pi{}
+		if err := p.Run("ignored", nil, []string{"doctor"}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
 			t.Fatal(err)
 		}
+		got := string(piCalls)
+		if strings.Contains(got, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("did not expect pi update call, got:\n%s", got)
+		}
+		if !strings.Contains(got, "doctor\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", got)
+		}
+	})
+
+	t.Run("pi installed + web search present updates when newer package exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.1")
 		seedPiScript(t, tmpDir)
 		seedNpmNoop(t, tmpDir)
 
@@ -422,6 +480,9 @@ exit 0
 		if !strings.Contains(got, "update "+piWebSearchSource+"\n") {
 			t.Fatalf("expected pi update call, got:\n%s", got)
 		}
+		if !strings.Contains(got, "doctor\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", got)
+		}
 	})
 
 	t.Run("web search update failure warns and continues", func(t *testing.T) {
@@ -430,9 +491,8 @@ exit 0
 		t.Setenv("PATH", tmpDir)
 		setCloudStatus(t, false)
 		t.Setenv("PI_FAIL_UPDATE", "1")
-		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n  "+piWebSearchSource+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.1")
 		seedPiScript(t, tmpDir)
 		seedNpmNoop(t, tmpDir)
 
