@@ -528,7 +528,7 @@ try {
         cpu
         cuda12
         cuda13
-        rocm6
+        rocm7
         vulkan
         mlxCuda13
         ollama
