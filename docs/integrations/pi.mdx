@@ -12,17 +12,6 @@ Install [Pi](https://github.com/earendil-works/pi):
 npm install -g @earendil-works/pi-coding-agent
 ```
 
-## Migration from the legacy package
-
-If you previously installed Pi from `@mariozechner/pi-coding-agent`, `ollama launch pi` can switch you to the official package automatically. Your Pi settings and installed extensions are kept.
-
-To migrate manually:
-
-```bash
-npm uninstall -g @mariozechner/pi-coding-agent
-npm install -g @earendil-works/pi-coding-agent
-```
-
 ## Usage with Ollama
 
 ### Quick setup
@@ -31,7 +20,7 @@ npm install -g @earendil-works/pi-coding-agent
 ollama launch pi
 ```
 
-This installs Pi if needed, migrates legacy installs to the official package, configures Ollama as a provider including web tools, and drops you into an interactive session.
+This installs Pi if needed, configures Ollama as a provider including web tools, and drops you into an interactive session.
 
 To configure without launching:
 
@@ -90,8 +79,6 @@ Tell Pi what to optimize. It runs experiments, benchmarks each one, keeps improv
 Each kept experiment is automatically committed. Each failed one is reverted. When you're done, Pi can group improvements into independent branches for clean review and merge.
 
 ## Advanced manual setup
-
-Most users should not need this. `ollama launch pi` writes these files for you automatically.
 
 Add a configuration block to `~/.pi/agent/models.json`:
 
