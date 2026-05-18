@@ -523,6 +523,30 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 	})
 }
 
+func LoadHandler(cmd *cobra.Command, args []string) error {
+	opts := &runOptions{
+		Model: args[0],
+	}
+	keepAlive, err := cmd.Flags().GetString("keepalive")
+	if err != nil {
+		return err
+	}
+	if keepAlive != "" {
+		d, err := time.ParseDuration(keepAlive)
+		if err != nil {
+			return err
+		}
+		opts.KeepAlive = &api.Duration{Duration: d}
+	}
+	if err := loadOrUnloadModel(cmd, opts); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("couldn't find model %q to load", args[0])
+		}
+		return err
+	}
+	return nil
+}
+
 func StopHandler(cmd *cobra.Command, args []string) error {
 	opts := &runOptions{
 		Model:     args[0],
@@ -2333,6 +2357,16 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
 	runCmd.Flags().MarkHidden("imagegen")
 
+	loadCmd := &cobra.Command{
+		Use:     "load MODEL",
+		Short:   "Load a model into memory",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    LoadHandler,
+	}
+
+	loadCmd.Flags().String("keepalive", "", "Duration to keep the model loaded (e.g. 5m)")
+
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
 		Short:   "Stop a running model",
@@ -2453,6 +2487,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		loadCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
@@ -2497,6 +2532,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		loadCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
