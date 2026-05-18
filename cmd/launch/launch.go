@@ -296,6 +296,7 @@ Supported integrations:
   copilot         Copilot CLI (aliases: copilot-cli)
   omp             OMP
   droid           Droid
+  goose           Goose
   kimi            Kimi Code CLI
   pi              Pi
   pool            Pool

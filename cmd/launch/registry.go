@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "goose", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -142,6 +142,17 @@ var integrationSpecs = []*IntegrationSpec{
 				return err == nil
 			},
 			URL: "https://docs.factory.ai/cli/getting-started/quickstart",
+		},
+	},
+	{
+		Name:        "goose",
+		Runner:      &Goose{},
+		Description: "Block's open-source coding agent with desktop and CLI",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&Goose{}).installed()
+			},
+			URL: "https://block.github.io/goose/docs/getting-started/installation/",
 		},
 	},
 	{
