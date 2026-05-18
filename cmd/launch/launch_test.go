@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1459,6 +1460,53 @@ func TestBuildLauncherState_ToleratesInventoryFailure(t *testing.T) {
 	}
 	if !state.Integrations["claude"].ModelUsable {
 		t.Fatal("expected saved integration model to remain usable via show fallback")
+	}
+}
+
+func TestBuildLauncherState_UsesTagsInventoryWithoutShow(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+
+	if err := config.SetLastModel("llama3.2"); err != nil {
+		t.Fatalf("failed to seed last model: %v", err)
+	}
+	if err := config.SaveIntegration("codex", []string{"qwen3:8b"}); err != nil {
+		t.Fatalf("failed to seed codex config: %v", err)
+	}
+
+	var showCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[`+
+				`{"name":"llama3.2","capabilities":["completion","tools"],"context_length":131072,"size":3200000000},`+
+				`{"name":"qwen3:8b","capabilities":["completion","tools"],"context_length":65536,"size":4500000000}`+
+				`]}`)
+		case "/api/show":
+			showCalls.Add(1)
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	state, err := BuildLauncherState(context.Background())
+	if err != nil {
+		t.Fatalf("BuildLauncherState returned error: %v", err)
+	}
+	if !state.RunModelUsable {
+		t.Fatal("expected saved run model to be usable from tags inventory")
+	}
+	if state.Integrations["codex"].CurrentModel != "qwen3:8b" {
+		t.Fatalf("expected codex current model from saved config, got %q", state.Integrations["codex"].CurrentModel)
+	}
+	if !state.Integrations["codex"].ModelUsable {
+		t.Fatal("expected saved codex model to be usable from tags inventory")
+	}
+	if got := showCalls.Load(); got != 0 {
+		t.Fatalf("show calls = %d, want 0 for broad launcher state", got)
 	}
 }
 

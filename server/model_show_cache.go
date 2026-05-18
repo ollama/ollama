@@ -27,12 +27,12 @@ The /api/show cache stores full api.ShowResponse values because callers use
 more than capabilities: launch flows also need context length, embeddings
 metadata, quantization details, remote metadata, and model-specific fields.
 
-Local model entries are stored by canonical model name and verbose flag, with
-the manifest digest recorded in the entry. The manifest digest is the freshness
-boundary: if the model content changes, the digest changes, so the previous
-response is replaced instead of accumulating under an old digest key. Requests
-with System or Options overlays bypass the cache because those overlays mutate
-the effective show response.
+Local model entries are stored lazily by canonical model name and verbose flag,
+with the manifest digest recorded in the entry. The manifest digest is the
+freshness boundary: if the model content changes, the digest changes, so the
+previous response is replaced instead of accumulating under an old digest key.
+Requests with System or Options overlays bypass the cache because those overlays
+mutate the effective show response.
 
 Cloud model entries are keyed by normalized cloud base model name and verbose.
 They use stale-while-revalidate behavior: a warm read returns the cached
@@ -42,10 +42,11 @@ in separate maps, so a local "qwen3.5" and an explicit "qwen3.5:cloud" cannot
 collide. The cloud suffix is request routing intent; api.ShowResponse does not
 carry a model-name field to reconstruct on the way out.
 
-The cache is process-local. Startup hydration runs asynchronously from the
-current local manifests and cloud tags; no show responses are written to or read
-from ~/.ollama/cache/show. That keeps cache lifetime tied to the server process
-and avoids snapshot freshness and invalidation cases for this iteration.
+The cache is process-local. Cloud startup hydration runs asynchronously from
+cloud tags, while local show responses are populated on demand. No show
+responses are written to or read from ~/.ollama/cache/show. That keeps cache
+lifetime tied to the server process and avoids snapshot freshness and
+invalidation cases for this iteration.
 */
 
 const (
@@ -117,9 +118,9 @@ func modelShowCacheable(req api.ShowRequest) bool {
 	return req.System == "" && len(req.Options) == 0
 }
 
-// Start kicks off non-blocking startup hydration. The cache remains
-// process-local; warm entries appear as the background local and cloud scans
-// populate the maps.
+// Start kicks off non-blocking startup hydration for cloud entries. Local show
+// responses stay lazy because even non-verbose show must load GGUF metadata that
+// is expensive for large model stores.
 func (c *modelShowCache) Start(ctx context.Context) {
 	c.once.Do(func() {
 		slog.Debug("starting model show cache")
@@ -127,34 +128,18 @@ func (c *modelShowCache) Start(ctx context.Context) {
 	})
 }
 
-// runStartup hydrates local and cloud caches concurrently. It is only called in
-// a goroutine from Start, so manifest scans and cloud requests cannot delay the
-// listener from accepting traffic.
+// runStartup hydrates the cloud cache. It is only called in a goroutine from
+// Start, so cloud requests cannot delay the listener from accepting traffic.
 func (c *modelShowCache) runStartup(ctx context.Context) {
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		if err := c.hydrateLocal(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Warn("model show local cache hydration failed", "error", err)
+	if err := c.hydrateCloud(ctx); err != nil {
+		switch {
+		case errors.Is(err, context.Canceled):
+		case errors.Is(err, errModelShowNoCloud):
+			slog.Debug("skipping model show cloud cache hydration because cloud is disabled")
+		default:
+			slog.Warn("model show cloud cache hydration failed", "error", err)
 		}
-	}()
-
-	go func() {
-		defer wg.Done()
-		if err := c.hydrateCloud(ctx); err != nil {
-			switch {
-			case errors.Is(err, context.Canceled):
-			case errors.Is(err, errModelShowNoCloud):
-				slog.Debug("skipping model show cloud cache hydration because cloud is disabled")
-			default:
-				slog.Warn("model show cloud cache hydration failed", "error", err)
-			}
-		}
-	}()
-
-	wg.Wait()
+	}
 }
 
 // GetLocal returns a cached local show response when the current manifest

@@ -20,6 +20,7 @@ import (
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
+	modelpkg "github.com/ollama/ollama/types/model"
 )
 
 var recommendedModels = []ModelItem{
@@ -365,11 +366,11 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 		}
 		displayName := strings.TrimSuffix(m.Name, ":latest")
 		existingModels[displayName] = true
-		item := ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}
 		if rec, ok := recByName[displayName]; ok {
-			item = copyModelRecommendationFields(displayName, rec)
+			items = append(items, modelItemFromInventory(displayName, m, copyModelRecommendationFields(displayName, rec)))
+		} else {
+			items = append(items, modelItemFromInventory(displayName, m, ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}))
 		}
-		items = append(items, item)
 	}
 
 	for _, rec := range recommendations {
@@ -481,6 +482,56 @@ func copyModelRecommendationFields(name string, rec ModelItem) ModelItem {
 	rec.Name = name
 	rec.Recommended = true
 	return rec
+}
+
+func modelItemFromInventory(name string, info modelInfo, item ModelItem) ModelItem {
+	item.Name = name
+	item.ToolCapable = info.ToolCapable
+	item.Capabilities = slices.Clone(info.Capabilities)
+	item.EmbeddingLength = info.EmbeddingLength
+	item.Size = info.Size
+	item.Details = info.Details
+	if info.ContextLength > 0 {
+		item.ContextLength = info.ContextLength
+	}
+	if strings.TrimSpace(item.Description) == "" {
+		item.Description = modelInfoDescription(info)
+	}
+	return item
+}
+
+func modelInfoDescription(info modelInfo) string {
+	parts := make([]string, 0, 6)
+
+	if info.ToolCapable {
+		parts = append(parts, "tools")
+	}
+	if slices.Contains(info.Capabilities, modelpkg.CapabilityVision) {
+		parts = append(parts, "vision")
+	}
+	if slices.Contains(info.Capabilities, modelpkg.CapabilityThinking) {
+		parts = append(parts, "thinking")
+	}
+	if len(parts) == 0 && slices.Contains(info.Capabilities, modelpkg.CapabilityEmbedding) {
+		parts = append(parts, "embedding")
+	}
+	if info.ContextLength > 0 {
+		parts = append(parts, format.HumanNumber(uint64(info.ContextLength))+" context")
+	}
+	if info.EmbeddingLength > 0 && slices.Contains(info.Capabilities, modelpkg.CapabilityEmbedding) {
+		parts = append(parts, fmt.Sprintf("%d-d embeddings", info.EmbeddingLength))
+	}
+	if info.Details.ParameterSize != "" {
+		parts = append(parts, info.Details.ParameterSize)
+	}
+	if info.Details.QuantizationLevel != "" {
+		parts = append(parts, info.Details.QuantizationLevel)
+	}
+	if info.Size > 0 {
+		parts = append(parts, format.HumanBytes(info.Size))
+	}
+
+	return strings.Join(parts, ", ")
 }
 
 // isCloudModelName reports whether the model name has an explicit cloud source.
