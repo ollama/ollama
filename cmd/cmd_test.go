@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2388,6 +2389,22 @@ func TestLoadHandler(t *testing.T) {
 			model:         "test-model",
 			keepaliveFlag: "garbage",
 			expectError:   "invalid duration",
+		},
+		{
+			name:          "zero keepalive is rejected to avoid silently unloading",
+			model:         "test-model",
+			keepaliveFlag: "0",
+			expectError:   "would immediately unload",
+		},
+		{
+			// api.Duration.MarshalJSON encodes any negative Duration as the
+			// literal -1, and the server's UnmarshalJSON maps that to
+			// math.MaxInt64 (the "keep loaded indefinitely" sentinel).
+			name:            "negative keepalive is forwarded as indefinite",
+			model:           "test-model",
+			keepaliveFlag:   "-1s",
+			expectGenerate:  true,
+			expectKeepAlive: &api.Duration{Duration: time.Duration(math.MaxInt64)},
 		},
 		{
 			name:        "missing model surfaces helpful error message",

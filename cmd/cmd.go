@@ -536,6 +536,11 @@ func LoadHandler(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		// A zero duration would unload the model immediately, contradicting
+		// the load intent. Send users to `ollama stop` instead.
+		if d == 0 {
+			return fmt.Errorf("--keepalive 0 would immediately unload the model; use \"ollama stop %s\" to unload, or pass a positive duration (e.g. 5m) or negative duration (e.g. -1s for indefinite)", args[0])
+		}
 		opts.KeepAlive = &api.Duration{Duration: d}
 	}
 	if err := loadOrUnloadModel(cmd, opts); err != nil {
@@ -2365,7 +2370,7 @@ func NewCLI() *cobra.Command {
 		RunE:    LoadHandler,
 	}
 
-	loadCmd.Flags().String("keepalive", "", "Duration to keep the model loaded (e.g. 5m)")
+	loadCmd.Flags().String("keepalive", "", "Duration to keep the model loaded (e.g. 5m, -1s to keep indefinitely)")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
