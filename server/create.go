@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -98,6 +99,15 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+		defer func() {
+			// Gin's recovery middleware only wraps the request goroutine, not
+			// the ones it spawns. Catch panics from convert / model loading
+			// so a crafted upload cannot take down the server.
+			if r := recover(); r != nil {
+				slog.Error("create panicked", "panic", r, "stack", string(debug.Stack()))
+				ch <- gin.H{"error": fmt.Sprintf("internal error: %v", r), "status": http.StatusInternalServerError}
+			}
+		}()
 		fn := func(resp api.ProgressResponse) {
 			ch <- resp
 		}
