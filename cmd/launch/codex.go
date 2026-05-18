@@ -26,8 +26,9 @@ type Codex struct{}
 func (c *Codex) String() string { return "Codex" }
 
 const (
-	codexProfileName  = "ollama-launch"
-	codexProviderName = "Ollama"
+	codexProfileName           = "ollama-launch"
+	codexProviderName          = "Ollama"
+	codexFallbackContextWindow = 128_000
 
 	codexRootProfileKey          = "profile"
 	codexRootModelKey            = "model"
@@ -572,9 +573,8 @@ func writeCodexModelCatalog(catalogPath, modelName string) error {
 }
 
 func buildCodexModelEntry(modelName string) map[string]any {
-	contextWindow := 0
+	contextWindow := codexFallbackContextWindow
 	hasVision := false
-	hasThinking := false
 	systemPrompt := ""
 
 	if l, ok := lookupCloudModelLimit(modelName); ok {
@@ -587,9 +587,6 @@ func buildCodexModelEntry(modelName string) map[string]any {
 		systemPrompt = resp.System
 		if slices.Contains(resp.Capabilities, model.CapabilityVision) {
 			hasVision = true
-		}
-		if slices.Contains(resp.Capabilities, model.CapabilityThinking) {
-			hasThinking = true
 		}
 
 		if !isCloudModelName(modelName) {
@@ -612,15 +609,6 @@ func buildCodexModelEntry(modelName string) map[string]any {
 		modalities = append(modalities, "image")
 	}
 
-	reasoningLevels := []any{}
-	if hasThinking {
-		reasoningLevels = []any{
-			map[string]any{"effort": "low", "description": "Fast responses with lighter reasoning"},
-			map[string]any{"effort": "medium", "description": "Balances speed and reasoning depth"},
-			map[string]any{"effort": "high", "description": "Greater reasoning depth for complex problems"},
-		}
-	}
-
 	truncationMode := "bytes"
 	if isCloudModelName(modelName) {
 		truncationMode = "tokens"
@@ -641,8 +629,8 @@ func buildCodexModelEntry(modelName string) map[string]any {
 		"support_verbosity":            true,
 		"default_verbosity":            "low",
 		"supports_parallel_tool_calls": false,
-		"supports_reasoning_summaries": hasThinking,
-		"supported_reasoning_levels":   reasoningLevels,
+		"supports_reasoning_summaries": false,
+		"supported_reasoning_levels":   []any{},
 		"experimental_supported_tools": []any{},
 	}
 }

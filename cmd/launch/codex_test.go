@@ -553,7 +553,17 @@ func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 			wantContext:   262144,
 		},
 		{
-			name:      "vision and thinking capabilities",
+			name:      "unknown cloud model uses fallback context",
+			modelName: "deepseek-v4-pro:cloud",
+			showResponse: `{
+				"model_info": {"deepseek.context_length": 131072},
+				"details": {"format": "gguf"}
+			}`,
+			envContextLen: "64000",
+			wantContext:   codexFallbackContextWindow,
+		},
+		{
+			name:      "vision capability without reasoning advertisement",
 			modelName: "llama3.2",
 			showResponse: `{
 				"model_info": {"llama.context_length": 131072},
@@ -600,14 +610,17 @@ func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 				t.Errorf("context_window = %d, want %d", gotContext, tt.wantContext)
 			}
 
-			if tt.name == "vision and thinking capabilities" {
+			if tt.name == "vision capability without reasoning advertisement" {
 				modalities, _ := entry["input_modalities"].([]string)
 				if !slices.Contains(modalities, "image") {
 					t.Error("expected image in input_modalities")
 				}
 				levels, _ := entry["supported_reasoning_levels"].([]any)
-				if len(levels) == 0 {
-					t.Error("expected non-empty supported_reasoning_levels")
+				if len(levels) != 0 {
+					t.Errorf("supported_reasoning_levels length = %d, want 0", len(levels))
+				}
+				if got, _ := entry["supports_reasoning_summaries"].(bool); got {
+					t.Error("supports_reasoning_summaries = true, want false")
 				}
 			}
 
