@@ -105,8 +105,10 @@ type qwen3NextModel struct {
 	VisionEndTokenID   uint32 `json:"vision_end_token_id"`
 }
 
-var _ ModelConverter = (*qwen3NextModel)(nil)
-var _ MultimodalConverter = (*qwen3NextModel)(nil)
+var (
+	_ ModelConverter      = (*qwen3NextModel)(nil)
+	_ MultimodalConverter = (*qwen3NextModel)(nil)
+)
 
 func (q *qwen3NextModel) parseMore(fsys fs.FS) error {
 	if q.TextConfig != nil {

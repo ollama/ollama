@@ -14,8 +14,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var windowsROCmRuntimeDLLNames = []string{"amdhip64_7.dll", "amdhip64_6.dll", "amdhip64.dll"}
-var windowsROCmCompanionDLLNames = []string{"amd_comgr.dll", "amd_comgr_2.dll"}
+var (
+	windowsROCmRuntimeDLLNames   = []string{"amdhip64_7.dll", "amdhip64_6.dll", "amdhip64.dll"}
+	windowsROCmCompanionDLLNames = []string{"amd_comgr.dll", "amd_comgr_2.dll"}
+)
 
 type windowsROCmRuntimeDLL struct {
 	path         string
@@ -45,6 +47,11 @@ func WindowsROCmRuntimeDLLPath(libDirs []string) (string, error) {
 }
 
 func adjustPlatformLibraryPaths(paths, gpuLibs []string) []string {
+	paths = adjustWindowsROCmLibraryPaths(paths, gpuLibs)
+	return adjustWindowsVulkanLibraryPaths(paths, gpuLibs)
+}
+
+func adjustWindowsROCmLibraryPaths(paths, gpuLibs []string) []string {
 	rocmDir := firstWindowsROCmLibDir(gpuLibs)
 	if rocmDir == "" {
 		return paths

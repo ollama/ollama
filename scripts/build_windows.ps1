@@ -704,7 +704,7 @@ function newDependencyAuditJob($payloadDir, $label, $reportPath, $dependencyDirs
             "winhttp.dll", "winmm.dll", "ws2_32.dll"
         )
         $driverDlls = @(
-            "nvcuda.dll", "nvml.dll", "vulkan-1.dll"
+            "nvcuda.dll", "nvml.dll"
         )
 
         $dependencyRoots = @()

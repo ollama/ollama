@@ -46,16 +46,16 @@ type vulkanPhysicalDevice struct {
 	Integrated bool
 }
 
-var probeLlamaServerVulkanDevices = func() ([]vulkanPhysicalDevice, error) {
+var probeLlamaServerVulkanDevices = func(_ []string) ([]vulkanPhysicalDevice, error) {
 	return nil, errWindowsVulkanProbeUnsupported
 }
 
-func refineLlamaServerDevices(devices []ml.DeviceInfo) []ml.DeviceInfo {
+func refineLlamaServerDevices(devices []ml.DeviceInfo, libDirs []string) []ml.DeviceInfo {
 	devices = refineLinuxROCmDevices(devices)
-	return refineWindowsVulkanDevices(devices)
+	return refineWindowsVulkanDevices(devices, libDirs)
 }
 
-func refineWindowsVulkanDevices(devices []ml.DeviceInfo) []ml.DeviceInfo {
+func refineWindowsVulkanDevices(devices []ml.DeviceInfo, libDirs []string) []ml.DeviceInfo {
 	if runtime.GOOS != "windows" {
 		return devices
 	}
@@ -74,7 +74,7 @@ func refineWindowsVulkanDevices(devices []ml.DeviceInfo) []ml.DeviceInfo {
 		return devices
 	}
 
-	probed, err := probeLlamaServerVulkanDevices()
+	probed, err := probeLlamaServerVulkanDevices(libDirs)
 	if err != nil {
 		if !errors.Is(err, errWindowsVulkanProbeUnsupported) {
 			slog.Debug("windows vulkan device refinement unavailable", "error", err)

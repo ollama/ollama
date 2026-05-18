@@ -351,7 +351,7 @@ func parseLlamaServerDevicesWithNative(output string, libDirs []string, nativeDe
 		deviceIndex++
 	}
 
-	return refineLlamaServerDevices(devices)
+	return refineLlamaServerDevices(devices, libDirs)
 }
 
 func cudaRuntimeVersion(libDirs []string) (int, int, bool) {

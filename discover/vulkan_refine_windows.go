@@ -2,8 +2,9 @@ package discover
 
 import (
 	"fmt"
-	"syscall"
 	"unsafe"
+
+	"github.com/ollama/ollama/llm"
 )
 
 const (
@@ -25,65 +26,69 @@ type vkInstanceCreateInfo struct {
 	PpEnabledExtensionNames uintptr
 }
 
-var (
-	vulkanDLL                     = syscall.NewLazyDLL("vulkan-1.dll")
-	vkCreateInstanceProc          = vulkanDLL.NewProc("vkCreateInstance")
-	vkDestroyInstanceProc         = vulkanDLL.NewProc("vkDestroyInstance")
-	vkEnumeratePhysicalDevices    = vulkanDLL.NewProc("vkEnumeratePhysicalDevices")
-	vkGetPhysicalDeviceProperties = vulkanDLL.NewProc("vkGetPhysicalDeviceProperties")
-)
-
 func init() {
 	probeLlamaServerVulkanDevices = windowsVulkanPhysicalDevices
 }
 
-func windowsVulkanPhysicalDevices() ([]vulkanPhysicalDevice, error) {
-	if err := vkCreateInstanceProc.Find(); err != nil {
+func windowsVulkanPhysicalDevices(libDirs []string) ([]vulkanPhysicalDevice, error) {
+	vulkanPath, err := llm.WindowsVulkanRuntimeDLLPath(libDirs)
+	if err != nil {
+		return nil, err
+	}
+	vulkanDLL, err := loadDLLFromPath(vulkanPath)
+	if err != nil {
+		return nil, err
+	}
+	vkCreateInstanceProc, err := findProc(vulkanDLL, "vkCreateInstance")
+	if err != nil {
 		return nil, fmt.Errorf("vkCreateInstance unavailable: %w", err)
 	}
-	if err := vkDestroyInstanceProc.Find(); err != nil {
+	vkDestroyInstanceProc, err := findProc(vulkanDLL, "vkDestroyInstance")
+	if err != nil {
 		return nil, fmt.Errorf("vkDestroyInstance unavailable: %w", err)
 	}
-	if err := vkEnumeratePhysicalDevices.Find(); err != nil {
+	vkEnumeratePhysicalDevices, err := findProc(vulkanDLL, "vkEnumeratePhysicalDevices")
+	if err != nil {
 		return nil, fmt.Errorf("vkEnumeratePhysicalDevices unavailable: %w", err)
 	}
-	if err := vkGetPhysicalDeviceProperties.Find(); err != nil {
+	vkGetPhysicalDeviceProperties, err := findProc(vulkanDLL, "vkGetPhysicalDeviceProperties")
+	if err != nil {
 		return nil, fmt.Errorf("vkGetPhysicalDeviceProperties unavailable: %w", err)
 	}
 
 	createInfo := vkInstanceCreateInfo{SType: vkStructureTypeInstanceCreateInfo}
 	var instance uintptr
-	result, _, err := vkCreateInstanceProc.Call(
+	result, _, callErr := vkCreateInstanceProc.Call(
 		uintptr(unsafe.Pointer(&createInfo)),
 		0,
 		uintptr(unsafe.Pointer(&instance)),
 	)
 	if result != vkSuccess {
-		return nil, fmt.Errorf("vkCreateInstance failed: result=%d error=%w", result, err)
+		return nil, fmt.Errorf("vkCreateInstance failed: result=%d error=%w", result, callErr)
 	}
 	defer vkDestroyInstanceProc.Call(instance, 0)
 
 	var count uint32
-	result, _, err = vkEnumeratePhysicalDevices.Call(
+	result, _, callErr = vkEnumeratePhysicalDevices.Call(
 		instance,
 		uintptr(unsafe.Pointer(&count)),
 		0,
 	)
 	if result != vkSuccess {
-		return nil, fmt.Errorf("vkEnumeratePhysicalDevices count failed: result=%d error=%w", result, err)
+		return nil, fmt.Errorf("vkEnumeratePhysicalDevices count failed: result=%d error=%w", result, callErr)
 	}
 	if count == 0 {
 		return nil, nil
 	}
 
 	physicalDevices := make([]uintptr, int(count))
-	result, _, err = vkEnumeratePhysicalDevices.Call(
+	result, _, callErr = vkEnumeratePhysicalDevices.Call(
 		instance,
 		uintptr(unsafe.Pointer(&count)),
 		uintptr(unsafe.Pointer(&physicalDevices[0])),
 	)
 	if result != vkSuccess {
-		return nil, fmt.Errorf("vkEnumeratePhysicalDevices failed: result=%d error=%w", result, err)
+		return nil, fmt.Errorf("vkEnumeratePhysicalDevices failed: result=%d error=%w", result, callErr)
 	}
 
 	devices := make([]vulkanPhysicalDevice, 0, count)

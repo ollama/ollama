@@ -13,7 +13,7 @@ import (
 
 func TestLlamaServerDiscovery(t *testing.T) {
 	originalProbe := probeLlamaServerVulkanDevices
-	probeLlamaServerVulkanDevices = func() ([]vulkanPhysicalDevice, error) {
+	probeLlamaServerVulkanDevices = func(_ []string) ([]vulkanPhysicalDevice, error) {
 		return nil, errWindowsVulkanProbeUnsupported
 	}
 	t.Cleanup(func() {

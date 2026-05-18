@@ -49,6 +49,10 @@ static void ollama_call_ggml_backend_dev_get_props(void * fn, void * dev, void *
 	((ollama_ggml_backend_dev_get_props_fn) fn)(dev, props);
 }
 
+static const char * ollama_cstr_from_uintptr(uintptr_t ptr) {
+	return (const char *) ptr;
+}
+
 typedef int (*ollama_cu_init_fn)(unsigned int);
 typedef int (*ollama_cu_driver_get_version_fn)(int *);
 typedef int (*ollama_cu_device_get_count_fn)(int *);
@@ -212,7 +216,7 @@ func probeGGMLDevicesLinux(libDirs []string) ([]nativeProbeDevice, error) {
 
 		library := ggmlProbeLibraryName(callGGMLRegName(regName, reg))
 		count := int(callGGMLRegDevCount(regDevCount, reg))
-		for i := 0; i < count; i++ {
+		for i := range count {
 			dev := callGGMLRegDevGet(regDevGet, reg, i)
 			if dev == nil {
 				continue
@@ -298,8 +302,9 @@ func probeCUDADriverLinux() ([]nativeProbeDevice, error) {
 		return nil, fmt.Errorf("cuDeviceGetCount failed: %d", int(ret))
 	}
 
-	devices := make([]nativeProbeDevice, 0, int(count))
-	for i := 0; i < int(count); i++ {
+	deviceCount := int(count)
+	devices := make([]nativeProbeDevice, 0, deviceCount)
+	for i := range deviceCount {
 		var device C.int
 		if ret := C.ollama_call_cu_device_get(cuDeviceGet, &device, C.int(i)); ret != cuSuccess {
 			continue
@@ -492,7 +497,7 @@ func cString(ptr uintptr) string {
 	if ptr == 0 {
 		return ""
 	}
-	return C.GoString((*C.char)(unsafe.Pointer(ptr)))
+	return C.GoString(C.ollama_cstr_from_uintptr(C.uintptr_t(ptr)))
 }
 
 func boolToCInt(v bool) C.int {

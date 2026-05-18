@@ -285,6 +285,10 @@ jobs:
           }
 
           $vulkanPath = (Resolve-Path "C:\VulkanSDK\*").path
+          $vulkanRuntime = Join-Path $vulkanPath "Helpers\VulkanRT.exe"
+          if (Test-Path $vulkanRuntime) {
+            Start-Process -FilePath $vulkanRuntime -ArgumentList "/s" -NoNewWindow -Wait
+          }
           echo "$vulkanPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
       - if: matrix.preset == 'MLX CUDA 13'
