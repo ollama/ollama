@@ -45,11 +45,11 @@ function checkEnv {
         Write-Output "No CUDA versions detected"
     }
 
-    # Locate ROCm v6
-    $rocmDir=(get-item "C:\Program Files\AMD\ROCm\6.*" -ea 'silentlycontinue' | sort-object -Descending | select-object -First 1)
+    # Locate ROCm v7
+    $rocmDir=(get-item "C:\Program Files\AMD\ROCm\7.*" -ea 'silentlycontinue' | sort-object -Descending | select-object -First 1)
     if ($null -ne $rocmDir) {
         $script:HIP_PATH=$rocmDir.FullName
-    } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]6\.') {
+    } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]7\.') {
         $script:HIP_PATH=$env:HIP_PATH
     }
     
@@ -205,7 +205,7 @@ function cuda13 {
     cudaCommon("13")
 }
 
-function rocm6 {
+function rocm7 {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     if ($script:ARCH -ne "arm64") {
         if ($script:HIP_PATH) {
@@ -221,7 +221,7 @@ function rocm6 {
             # spurious compiler-change reconfigures that reset CMAKE_INSTALL_PREFIX
             $env:CC="${script:HIP_PATH}\bin\clang.exe"
             $env:CXX="${script:HIP_PATH}\bin\clang++.exe"
-            & cmake -B build\rocm --preset "ROCm 6" -G Ninja `
+            & cmake -B build\rocm --preset "ROCm 7" -G Ninja `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
                 -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
                 --install-prefix $script:DIST_DIR
