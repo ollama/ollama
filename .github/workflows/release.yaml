@@ -502,6 +502,7 @@ jobs:
         include:
           - os: linux
             arch: arm64
+            archive-target: archive
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
@@ -518,6 +519,7 @@ jobs:
               type=registry,ref=${{ vars.DOCKER_REPO }}:latest
           - os: linux
             arch: amd64
+            archive-target: archive
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
@@ -535,6 +537,7 @@ jobs:
           - os: linux
             arch: amd64
             suffix: '-rocm'
+            archive-target: image-archive
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
@@ -583,7 +586,7 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.os }}/${{ matrix.arch }}
-          target: archive
+          target: ${{ matrix.archive-target }}
           provenance: false
           sbom: false
           build-args: ${{ matrix.build-args }}
