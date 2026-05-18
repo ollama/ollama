@@ -43,6 +43,14 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 			return nil, err
 		}
 
+		// Bound the header length to prevent unbounded allocation from a
+		// crafted file. Real safetensors headers are JSON metadata and the
+		// reference safetensors implementation caps them at 100MB.
+		const maxSafetensorsHeaderSize = 100 * 1024 * 1024
+		if n <= 0 || n > maxSafetensorsHeaderSize {
+			return nil, fmt.Errorf("invalid safetensors header length %d in %q (must be between 1 and %d bytes)", n, p, maxSafetensorsHeaderSize)
+		}
+
 		b := bytes.NewBuffer(make([]byte, 0, n))
 		if _, err = io.CopyN(b, f, n); err != nil {
 			return nil, err

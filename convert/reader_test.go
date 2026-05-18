@@ -521,3 +521,42 @@ func TestSafetensorKind(t *testing.T) {
 		})
 	}
 }
+
+func TestParseSafetensorsRejectsCorruptHeaderLength(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		headerLen  int64
+		wantSubstr string
+	}{
+		{"max int64 would overflow allocator", 0x7FFFFFFFFFFFFFFF, "invalid safetensors header length"},
+		{"negative length is rejected", -1, "invalid safetensors header length"},
+		{"zero length is rejected", 0, "invalid safetensors header length"},
+		{"above the 100MB cap is rejected", 100*1024*1024 + 1, "invalid safetensors header length"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tempDir := t.TempDir()
+
+			var buf bytes.Buffer
+			if err := binary.Write(&buf, binary.LittleEndian, tt.headerLen); err != nil {
+				t.Fatalf("write header length: %v", err)
+			}
+			path := filepath.Join(tempDir, "model-00001-of-00001.safetensors")
+			if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+				t.Fatalf("write file: %v", err)
+			}
+
+			_, err := parseSafetensors(os.DirFS(tempDir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.wantSubstr)
+			}
+			if !strings.Contains(err.Error(), tt.wantSubstr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantSubstr, err)
+			}
+		})
+	}
+}
