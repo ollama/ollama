@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -10,20 +9,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"time"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/types/model"
 )
 
 const defaultGatewayPort = 18789
-
-// Bound model capability probing so launch/config cannot hang on slow/unreachable API calls.
-var openclawModelShowTimeout = 5 * time.Second
 
 // openclawFreshInstall is set to true when ensureOpenclawInstalled performs an install
 var openclawFreshInstall bool
@@ -656,7 +649,7 @@ func (c *Openclaw) Paths() []string {
 	return nil
 }
 
-func (c *Openclaw) Edit(models []string) error {
+func (c *Openclaw) Edit(models []LaunchModel) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -710,13 +703,11 @@ func (c *Openclaw) Edit(models []string) error {
 		}
 	}
 
-	client, _ := api.ClientFromEnvironment()
-
 	var newModels []any
 	for _, m := range models {
-		entry, _ := openclawModelConfig(context.Background(), client, m)
+		entry, _ := openclawModelConfig(m)
 		// Merge existing fields (user customizations)
-		if existing, ok := existingByID[m]; ok {
+		if existing, ok := existingByID[m.Name]; ok {
 			for k, v := range existing {
 				if _, isNew := entry[k]; !isNew {
 					entry[k] = v
@@ -744,7 +735,7 @@ func (c *Openclaw) Edit(models []string) error {
 	if modelConfig == nil {
 		modelConfig = make(map[string]any)
 	}
-	modelConfig["primary"] = "ollama/" + models[0]
+	modelConfig["primary"] = "ollama/" + models[0].Name
 	defaults["model"] = modelConfig
 	agents["defaults"] = defaults
 	config["agents"] = agents
@@ -759,7 +750,7 @@ func (c *Openclaw) Edit(models []string) error {
 
 	// Clear any per-session model overrides so the new primary takes effect
 	// immediately rather than being shadowed by a cached modelOverride.
-	clearSessionModelOverride(models[0])
+	clearSessionModelOverride(models[0].Name)
 	return nil
 }
 
@@ -936,10 +927,10 @@ func configureOllamaWebSearch() {
 
 // openclawModelConfig builds an OpenClaw model config entry with capability detection.
 // The second return value indicates whether the model is a cloud (remote) model.
-func openclawModelConfig(ctx context.Context, client *api.Client, modelID string) (map[string]any, bool) {
+func openclawModelConfig(model LaunchModel) (map[string]any, bool) {
 	entry := map[string]any{
-		"id":    modelID,
-		"name":  modelID,
+		"id":    model.Name,
+		"name":  model.Name,
 		"input": []any{"text"},
 		"cost": map[string]any{
 			"input":      0,
@@ -949,53 +940,24 @@ func openclawModelConfig(ctx context.Context, client *api.Client, modelID string
 		},
 	}
 
-	if client == nil {
-		return entry, false
-	}
-
-	showCtx := ctx
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		showCtx, cancel = context.WithTimeout(ctx, openclawModelShowTimeout)
-		defer cancel()
-	}
-
-	resp, err := client.Show(showCtx, &api.ShowRequest{Model: modelID})
-	if err != nil {
-		return entry, false
-	}
-
 	// Set input types based on vision capability
-	if slices.Contains(resp.Capabilities, model.CapabilityVision) {
+	if model.HasCapability("vision") {
 		entry["input"] = []any{"text", "image"}
 	}
 
 	// Set reasoning based on thinking capability
-	if slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+	if model.HasCapability("thinking") {
 		entry["reasoning"] = true
 	}
 
-	// Cloud models: use hardcoded limits for context/output tokens.
-	// Capability detection above still applies (vision, thinking).
-	if resp.RemoteModel != "" {
-		if l, ok := lookupCloudModelLimit(modelID); ok {
-			entry["contextWindow"] = l.Context
-			entry["maxTokens"] = l.Output
-		}
-		return entry, true
+	if model.ContextLength > 0 {
+		entry["contextWindow"] = model.ContextLength
+	}
+	if model.MaxOutputTokens > 0 {
+		entry["maxTokens"] = model.MaxOutputTokens
 	}
 
-	// Extract context window from ModelInfo (local models only)
-	for key, val := range resp.ModelInfo {
-		if strings.HasSuffix(key, ".context_length") {
-			if ctxLen, ok := val.(float64); ok && ctxLen > 0 {
-				entry["contextWindow"] = int(ctxLen)
-			}
-			break
-		}
-	}
-
-	return entry, false
+	return entry, model.Remote || isCloudModelName(model.Name)
 }
 
 func (c *Openclaw) Models() []string {

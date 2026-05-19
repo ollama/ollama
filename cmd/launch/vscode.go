@@ -238,7 +238,7 @@ func (v *VSCode) Paths() []string {
 	return nil
 }
 
-func (v *VSCode) Edit(models []string) error {
+func (v *VSCode) Edit(models []LaunchModel) error {
 	if len(models) == 0 {
 		return nil
 	}

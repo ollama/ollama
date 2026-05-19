@@ -64,7 +64,7 @@ func (d *Droid) Paths() []string {
 	return nil
 }
 
-func (d *Droid) Edit(models []string) error {
+func (d *Droid) Edit(models []LaunchModel) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -99,7 +99,7 @@ func (d *Droid) Edit(models []string) error {
 	return fileutil.WriteWithBackup(settingsPath, data, "droid")
 }
 
-func updateDroidSettings(settingsMap map[string]any, settings droidSettings, models []string) map[string]any {
+func updateDroidSettings(settingsMap map[string]any, settings droidSettings, models []LaunchModel) map[string]any {
 	// Keep only non-Ollama models from the raw map (preserves extra fields)
 	// Rebuild Ollama models
 	var nonOllamaModels []any
@@ -119,20 +119,18 @@ func updateDroidSettings(settingsMap map[string]any, settings droidSettings, mod
 	var defaultModelID string
 	for i, model := range models {
 		maxOutput := 64000
-		if isCloudModelName(model) {
-			if l, ok := lookupCloudModelLimit(model); ok {
-				maxOutput = l.Output
-			}
+		if model.MaxOutputTokens > 0 {
+			maxOutput = model.MaxOutputTokens
 		}
-		modelID := fmt.Sprintf("custom:%s-%d", model, i)
+		modelID := fmt.Sprintf("custom:%s-%d", model.Name, i)
 		newModels = append(newModels, modelEntry{
-			Model:           model,
-			DisplayName:     model,
+			Model:           model.Name,
+			DisplayName:     model.Name,
 			BaseURL:         envconfig.Host().String() + "/v1",
 			APIKey:          "ollama",
 			Provider:        "generic-chat-completion-api",
 			MaxOutputTokens: maxOutput,
-			SupportsImages:  false,
+			SupportsImages:  model.HasCapability("vision"),
 			ID:              modelID,
 			Index:           i,
 		})

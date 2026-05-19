@@ -40,7 +40,7 @@ func (c *Cline) Paths() []string {
 	return nil
 }
 
-func (c *Cline) Edit(models []string) error {
+func (c *Cline) Edit(models []LaunchModel) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -66,10 +66,10 @@ func (c *Cline) Edit(models []string) error {
 	baseURL := envconfig.Host().String()
 	config["ollamaBaseUrl"] = baseURL
 	config["actModeApiProvider"] = "ollama"
-	config["actModeOllamaModelId"] = models[0]
+	config["actModeOllamaModelId"] = models[0].Name
 	config["actModeOllamaBaseUrl"] = baseURL
 	config["planModeApiProvider"] = "ollama"
-	config["planModeOllamaModelId"] = models[0]
+	config["planModeOllamaModelId"] = models[0].Name
 	config["planModeOllamaBaseUrl"] = baseURL
 
 	config["welcomeViewCompleted"] = true

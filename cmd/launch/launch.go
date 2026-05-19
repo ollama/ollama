@@ -147,7 +147,7 @@ type Runner interface {
 // Editor can edit config files for integrations that support model configuration.
 type Editor interface {
 	Paths() []string
-	Edit(models []string) error
+	Edit(models []LaunchModel) error
 	Models() []string
 }
 
@@ -166,7 +166,7 @@ type ManagedSingleModel interface {
 // ManagedModelListConfigurer lets managed single-model integrations receive
 // the launcher's model list while still preserving one primary selected model.
 type ManagedModelListConfigurer interface {
-	ConfigureWithModels(primary string, models []string) error
+	ConfigureWithModels(primary string, models []LaunchModel) error
 }
 
 // ManagedAutodiscoveryIntegration is for managed integrations that do not need
@@ -239,18 +239,6 @@ type RestorableIntegration interface {
 type SupportedIntegration interface {
 	Supported() error
 }
-
-type modelInfo struct {
-	Name         string
-	Remote       bool
-	ToolCapable  bool
-	Capabilities []modelpkg.Capability
-	Size         int64
-	Details      api.ModelDetails
-}
-
-// ModelInfo re-exports launcher model inventory details for callers.
-type ModelInfo = modelInfo
 
 // ModelItem represents model metadata before selector-only UI state is derived.
 type ModelItem struct {
@@ -416,8 +404,7 @@ func launchCommandIsClaudeDesktop(name string) bool {
 
 type launcherClient struct {
 	apiClient             *api.Client
-	modelInventory        []ModelInfo
-	inventoryLoaded       bool
+	inventory             *modelInventory
 	recommendationsLoaded bool
 	recommendationItems   []ModelItem
 	accountState          *AccountState
@@ -434,8 +421,16 @@ func newLauncherClient(policy LaunchPolicy) (*launcherClient, error) {
 
 	return &launcherClient{
 		apiClient: apiClient,
+		inventory: newModelInventory(apiClient),
 		policy:    policy,
 	}, nil
+}
+
+func (c *launcherClient) modelInventory() *modelInventory {
+	if c.inventory == nil {
+		c.inventory = newModelInventory(c.apiClient)
+	}
+	return c.inventory
 }
 
 // BuildLauncherState returns the launch-owned root launcher menu snapshot.
@@ -559,7 +554,7 @@ func prepareIntegrationLaunch(name string, policy LaunchPolicy) (*launcherClient
 }
 
 func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState, error) {
-	_ = c.loadModelInventoryOnce(ctx)
+	_, _ = c.modelInventory().Load(ctx)
 
 	state := &LauncherState{
 		LastSelection: config.LastSelection(),
@@ -756,7 +751,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	}
 
 	if (needsConfigure || req.ModelOverride != "") && !savedMatchesModels(saved, models) {
-		if err := prepareEditorIntegration(name, editor, models); err != nil {
+		if err := prepareEditorIntegration(name, editor, c.modelInventory().Resolve(ctx, models)); err != nil {
 			return err
 		}
 	}
@@ -790,7 +785,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		if err != nil {
 			return err
 		}
-		if err := prepareManagedSingleIntegration(name, managed, target, configureModels); err != nil {
+		if err := prepareManagedSingleIntegration(name, managed, target, c.modelInventory().Resolve(ctx, configureModels)); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
@@ -1115,13 +1110,14 @@ func runMultiSelector(title string, items []SelectionItem, preChecked []string, 
 }
 
 func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []string, current, emptyMessage string) ([]ModelItem, []string, error) {
-	if err := c.loadModelInventoryOnce(ctx); err != nil {
+	inventory, err := c.modelInventory().Load(ctx)
+	if err != nil {
 		return nil, nil, err
 	}
 	recommendations := c.recommendations(ctx)
 
 	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
-	items, orderedChecked, _, _ := buildModelListWithRecommendations(c.modelInventory, recommendations, preChecked, current)
+	items, orderedChecked, _, _ := buildModelListWithRecommendations(inventory, recommendations, preChecked, current)
 	if cloudDisabled {
 		items = filterCloudItems(items)
 		orderedChecked = c.filterDisabledCloudModels(ctx, orderedChecked)
@@ -1311,10 +1307,11 @@ func (c *launcherClient) filterDisabledCloudModels(ctx context.Context, models [
 }
 
 func (c *launcherClient) savedModelUsable(ctx context.Context, name string) (bool, error) {
-	if err := c.loadModelInventoryOnce(ctx); err != nil {
+	inventory, err := c.modelInventory().Load(ctx)
+	if err != nil {
 		return c.showBasedModelUsable(ctx, name)
 	}
-	return c.singleModelUsable(ctx, name), nil
+	return c.singleModelUsable(ctx, name, inventory), nil
 }
 
 func (c *launcherClient) showBasedModelUsable(ctx context.Context, name string) (bool, error) {
@@ -1340,7 +1337,7 @@ func (c *launcherClient) showBasedModelUsable(ctx context.Context, name string) 
 	return true, nil
 }
 
-func (c *launcherClient) singleModelUsable(ctx context.Context, name string) bool {
+func (c *launcherClient) singleModelUsable(ctx context.Context, name string, inventory []LaunchModel) bool {
 	if name == "" {
 		return false
 	}
@@ -1348,11 +1345,11 @@ func (c *launcherClient) singleModelUsable(ctx context.Context, name string) boo
 		cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
 		return !cloudDisabled
 	}
-	return c.hasLocalModel(name)
+	return hasLocalModel(inventory, name)
 }
 
-func (c *launcherClient) hasLocalModel(name string) bool {
-	for _, model := range c.modelInventory {
+func hasLocalModel(inventory []LaunchModel, name string) bool {
+	for _, model := range inventory {
 		if model.Remote {
 			continue
 		}
@@ -1361,36 +1358,6 @@ func (c *launcherClient) hasLocalModel(name string) bool {
 		}
 	}
 	return false
-}
-
-func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
-	if c.inventoryLoaded {
-		return nil
-	}
-
-	resp, err := c.apiClient.List(ctx)
-	if err != nil {
-		return err
-	}
-
-	c.modelInventory = c.modelInventory[:0]
-	for _, model := range resp.Models {
-		c.modelInventory = append(c.modelInventory, ModelInfo{
-			Name:         model.Name,
-			Remote:       model.RemoteModel != "",
-			ToolCapable:  slices.Contains(model.Capabilities, modelpkg.CapabilityTools),
-			Capabilities: slices.Clone(model.Capabilities),
-			Size:         model.Size,
-			Details:      model.Details,
-		})
-	}
-
-	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
-	if cloudDisabled {
-		c.modelInventory = filterCloudModels(c.modelInventory)
-	}
-	c.inventoryLoaded = true
-	return nil
 }
 
 func runIntegration(runner Runner, modelName string, args []string) error {

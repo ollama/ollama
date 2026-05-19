@@ -3,8 +3,6 @@ package launch
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/types/model"
 )
 
 func withCodexAppPlatform(t *testing.T, goos string) {
@@ -177,7 +176,7 @@ func TestCodexAppConfigureActivatesOllamaProfile(t *testing.T) {
 	}
 
 	c := &CodexApp{}
-	if err := c.ConfigureWithModels("llama3.2", []string{"llama3.2", "qwen3:8b"}); err != nil {
+	if err := c.ConfigureWithModels("llama3.2", testLaunchModels("llama3.2", "qwen3:8b")); err != nil {
 		t.Fatalf("ConfigureWithModels returned error: %v", err)
 	}
 
@@ -262,7 +261,7 @@ func TestCodexAppConfigureUsesAppSpecificProfileWithoutTouchingCLIProfile(t *tes
 		t.Fatal(err)
 	}
 
-	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"}); err != nil {
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", testLaunchModels("llama3.2")); err != nil {
 		t.Fatalf("ConfigureWithModels returned error: %v", err)
 	}
 
@@ -294,7 +293,7 @@ func TestCodexAppConfigureUsesConnectableHostForUnspecifiedBindAddress(t *testin
 	setTestHome(t, tmpDir)
 	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
 
-	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"}); err != nil {
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", testLaunchModels("llama3.2")); err != nil {
 		t.Fatalf("ConfigureWithModels returned error: %v", err)
 	}
 
@@ -331,7 +330,7 @@ func TestCodexAppConfigureRejectsMalformedTomlBeforeSideEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"})
+	err := (&CodexApp{}).ConfigureWithModels("llama3.2", testLaunchModels("llama3.2"))
 	if err == nil || !strings.Contains(err.Error(), "invalid Codex config TOML") {
 		t.Fatalf("ConfigureWithModels error = %v, want invalid TOML", err)
 	}
@@ -374,7 +373,7 @@ func TestCodexAppConfigureRejectsMalformedTomlEvenWithExistingRestoreState(t *te
 		t.Fatal(err)
 	}
 
-	err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"})
+	err := (&CodexApp{}).ConfigureWithModels("llama3.2", testLaunchModels("llama3.2"))
 	if err == nil || !strings.Contains(err.Error(), "invalid Codex config TOML") {
 		t.Fatalf("ConfigureWithModels error = %v, want invalid TOML", err)
 	}
@@ -532,32 +531,16 @@ func TestCodexAppCurrentModelRequiresHealthyCatalog(t *testing.T) {
 	}
 }
 
-func TestCodexAppConfigurePopulatesCatalogFromTagsAndShow(t *testing.T) {
+func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	showCalls := make(map[string]int)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"gemma4"},{"name":"qwen3:8b"},{"name":"llama3.2"}]}`)
-		case "/api/show":
-			var req struct {
-				Model string `json:"model"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode show request: %v", err)
-			}
-			showCalls[req.Model]++
-			fmt.Fprintf(w, `{"model_info":{"general.context_length":%d},"capabilities":["vision"]}`, 65536+len(req.Model))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	if err := (&CodexApp{}).ConfigureWithModels("gemma4", []string{"fallback"}); err != nil {
+	models := []LaunchModel{
+		{Name: "gemma4", ContextLength: 65536 + len("gemma4"), Capabilities: []model.Capability{model.CapabilityVision}},
+		{Name: "qwen3:8b"},
+		{Name: "llama3.2"},
+	}
+	if err := (&CodexApp{}).ConfigureWithModels("gemma4", models); err != nil {
 		t.Fatalf("ConfigureWithModels returned error: %v", err)
 	}
 
@@ -577,7 +560,7 @@ func TestCodexAppConfigurePopulatesCatalogFromTagsAndShow(t *testing.T) {
 	}
 
 	if got := catalogSlugs(catalog.Models); strings.Join(got, ",") != "gemma4,qwen3:8b,llama3.2" {
-		t.Fatalf("catalog slugs = %v, want /api/tags models", got)
+		t.Fatalf("catalog slugs = %v, want enriched models", got)
 	}
 	for _, model := range catalog.Models {
 		slug, _ := model["slug"].(string)
@@ -596,20 +579,15 @@ func TestCodexAppConfigurePopulatesCatalogFromTagsAndShow(t *testing.T) {
 		}
 		wantContext := float64(128000)
 		wantModalities := []string{"text"}
-		wantShowCalls := 0
 		if slug == "gemma4" {
 			wantContext = float64(65536 + len(slug))
 			wantModalities = []string{"text", "image"}
-			wantShowCalls = 1
 		}
 		if model["context_window"] != wantContext {
 			t.Fatalf("context_window for %q = %v, want %v", slug, model["context_window"], wantContext)
 		}
 		if got := catalogInputModalities(model); strings.Join(got, ",") != strings.Join(wantModalities, ",") {
 			t.Fatalf("input_modalities for %q = %v, want %v", slug, got, wantModalities)
-		}
-		if showCalls[slug] != wantShowCalls {
-			t.Fatalf("show calls for %q = %d, want %d", slug, showCalls[slug], wantShowCalls)
 		}
 	}
 }
@@ -638,7 +616,7 @@ func TestCodexAppConfigureUpgradesLegacyRestoreState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"}); err != nil {
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", testLaunchModels("llama3.2")); err != nil {
 		t.Fatalf("ConfigureWithModels returned error: %v", err)
 	}
 
@@ -688,7 +666,7 @@ func TestCodexAppRestoreRestoresPreviousProfile(t *testing.T) {
 	}
 
 	c := &CodexApp{}
-	if err := c.ConfigureWithModels("llama3.2", []string{"llama3.2"}); err != nil {
+	if err := c.ConfigureWithModels("llama3.2", testLaunchModels("llama3.2")); err != nil {
 		t.Fatalf("ConfigureWithModels returned error: %v", err)
 	}
 	if err := c.Restore(); err != nil {
@@ -772,7 +750,7 @@ func TestCodexAppConfigureMissingConfigReplacesStaleRestoreState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"}); err != nil {
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", testLaunchModels("llama3.2")); err != nil {
 		t.Fatalf("ConfigureWithModels returned error: %v", err)
 	}
 
@@ -815,7 +793,7 @@ func TestCodexAppConfigureRefreshesRestoreStateAfterManualProfileSwitch(t *testi
 		t.Fatal(err)
 	}
 
-	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", []string{"llama3.2"}); err != nil {
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", testLaunchModels("llama3.2")); err != nil {
 		t.Fatalf("first ConfigureWithModels returned error: %v", err)
 	}
 
@@ -829,7 +807,7 @@ func TestCodexAppConfigureRefreshesRestoreStateAfterManualProfileSwitch(t *testi
 		t.Fatal(err)
 	}
 
-	if err := (&CodexApp{}).ConfigureWithModels("qwen3:8b", []string{"qwen3:8b"}); err != nil {
+	if err := (&CodexApp{}).ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
 		t.Fatalf("second ConfigureWithModels returned error: %v", err)
 	}
 	if err := (&CodexApp{}).Restore(); err != nil {

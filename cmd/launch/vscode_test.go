@@ -113,7 +113,7 @@ func TestVSCodeEdit(t *testing.T) {
 				os.WriteFile(clmPath, []byte(tt.setup), 0o644)
 			}
 
-			if err := v.Edit(tt.models); err != nil {
+			if err := v.Edit(launchModelsFromNames(tt.models)); err != nil {
 				t.Fatal(err)
 			}
 
@@ -134,7 +134,7 @@ func TestVSCodeEditCleansUpOldSettings(t *testing.T) {
 	os.MkdirAll(filepath.Dir(settingsPath), 0o755)
 	os.WriteFile(settingsPath, []byte(`{"github.copilot.chat.byok.ollamaEndpoint": "http://old:11434", "ollama.launch.configured": true, "editor.fontSize": 14}`), 0o644)
 
-	if err := v.Edit([]string{"llama3.2"}); err != nil {
+	if err := v.Edit(testLaunchModels("llama3.2")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,7 +180,7 @@ func TestVSCodeEdit_CreatesDistinctBackupsForManagedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := v.Edit([]string{"llama3.2"}); err != nil {
+	if err := v.Edit(testLaunchModels("llama3.2")); err != nil {
 		t.Fatal(err)
 	}
 

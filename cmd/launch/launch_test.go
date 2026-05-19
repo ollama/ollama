@@ -34,8 +34,8 @@ func (r *launcherEditorRunner) String() string { return "LauncherEditor" }
 
 func (r *launcherEditorRunner) Paths() []string { return r.paths }
 
-func (r *launcherEditorRunner) Edit(models []string) error {
-	r.edited = append(r.edited, append([]string(nil), models...))
+func (r *launcherEditorRunner) Edit(models []LaunchModel) error {
+	r.edited = append(r.edited, launchModelNames(models))
 	return nil
 }
 
@@ -133,8 +133,8 @@ type launcherManagedListRunner struct {
 	configuredModelLists [][]string
 }
 
-func (r *launcherManagedListRunner) ConfigureWithModels(primary string, models []string) error {
-	r.configuredModelLists = append(r.configuredModelLists, append([]string(nil), models...))
+func (r *launcherManagedListRunner) ConfigureWithModels(primary string, models []LaunchModel) error {
+	r.configuredModelLists = append(r.configuredModelLists, launchModelNames(models))
 	return r.Configure(primary)
 }
 

@@ -1,24 +1,18 @@
 package launch
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
-	"github.com/ollama/ollama/envconfig"
-	modelpkg "github.com/ollama/ollama/types/model"
 )
 
 const (
@@ -68,10 +62,10 @@ func (c *CodexApp) Paths() []string {
 }
 
 func (c *CodexApp) Configure(model string) error {
-	return c.ConfigureWithModels(model, []string{model})
+	return c.ConfigureWithModels(model, launchModelsFromNames([]string{model}))
 }
 
-func (c *CodexApp) ConfigureWithModels(primary string, models []string) error {
+func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) error {
 	primary = strings.TrimSpace(primary)
 	if primary == "" {
 		return fmt.Errorf("codex-app requires a model")
@@ -88,7 +82,7 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeCodexAppModelCatalog(catalogPath, primary, codexAppCatalogModelNames(primary, models)); err != nil {
+	if err := writeCodexAppModelCatalog(catalogPath, primary, codexAppCatalogModels(primary, models)); err != nil {
 		return err
 	}
 	return writeCodexLaunchProfile(configPath, codexLaunchProfileOptions{
@@ -308,23 +302,15 @@ func codexAppModelCatalogPathForConfig(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), codexAppModelCatalogFilename)
 }
 
-func writeCodexAppModelCatalog(path, primary string, models []string) error {
+func writeCodexAppModelCatalog(path, primary string, models []LaunchModel) error {
 	if len(models) == 0 {
 		return fmt.Errorf("codex-app model catalog cannot be empty")
 	}
-	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
 	baseInstructions := codexAppBaseInstructions()
-	primaryMetadata := codexAppSelectedModelMetadata(ctx, client, primary)
 	entries := make([]map[string]any, 0, len(models))
 	for i, model := range models {
-		metadata := codexAppDefaultModelMetadata()
-		if model == primary {
-			metadata = primaryMetadata
-		}
-		entries = append(entries, codexAppCatalogEntry(model, metadata, i, baseInstructions))
+		entries = append(entries, codexAppCatalogEntry(model.Name, codexAppModelMetadataFromLaunchModel(model), i, baseInstructions))
 	}
 
 	data, err := json.MarshalIndent(map[string]any{"models": entries}, "", "  ")
@@ -337,32 +323,26 @@ func writeCodexAppModelCatalog(path, primary string, models []string) error {
 	return fileutil.WriteWithBackup(path, append(data, '\n'), codexAppIntegrationName)
 }
 
-func codexAppCatalogModelNames(primary string, fallback []string) []string {
-	models := codexAppTagModelNames()
-	if len(models) == 0 {
-		models = fallback
-	}
-	return dedupeModelList(append([]string{primary}, models...))
-}
-
-func codexAppTagModelNames() []string {
-	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	resp, err := client.List(ctx)
-	if err != nil {
-		return nil
-	}
-
-	models := make([]string, 0, len(resp.Models))
-	for _, model := range resp.Models {
-		name := strings.TrimSpace(model.Name)
-		if name != "" {
-			models = append(models, name)
+func codexAppCatalogModels(primary string, models []LaunchModel) []LaunchModel {
+	seen := make(map[string]bool, len(models)+1)
+	out := make([]LaunchModel, 0, len(models)+1)
+	add := func(model LaunchModel) {
+		if model.Name == "" || seen[model.Name] {
+			return
 		}
+		seen[model.Name] = true
+		out = append(out, model)
 	}
-	return models
+
+	if model, ok := findLaunchModel(models, primary); ok {
+		add(model)
+	} else {
+		add(fallbackLaunchModel(primary))
+	}
+	for _, model := range models {
+		add(model)
+	}
+	return out
 }
 
 type codexAppModelMetadata struct {
@@ -377,16 +357,12 @@ func codexAppDefaultModelMetadata() codexAppModelMetadata {
 	}
 }
 
-func codexAppSelectedModelMetadata(ctx context.Context, client *api.Client, model string) codexAppModelMetadata {
+func codexAppModelMetadataFromLaunchModel(model LaunchModel) codexAppModelMetadata {
 	metadata := codexAppDefaultModelMetadata()
-	resp, err := client.Show(ctx, &api.ShowRequest{Model: model})
-	if err != nil {
-		return metadata
+	if model.ContextLength > 0 {
+		metadata.contextWindow = model.ContextLength
 	}
-	if n, ok := modelInfoContextLength(resp.ModelInfo); ok {
-		metadata.contextWindow = n
-	}
-	if slices.Contains(resp.Capabilities, modelpkg.CapabilityVision) {
+	if model.HasCapability("vision") {
 		metadata.inputModalities = []string{"text", "image"}
 	}
 	return metadata

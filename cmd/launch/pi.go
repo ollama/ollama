@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +13,6 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/types/model"
 )
 
 // Pi implements Runner and Editor for Pi (Pi Coding Agent) integration
@@ -183,7 +181,7 @@ func (p *Pi) Paths() []string {
 	return paths
 }
 
-func (p *Pi) Edit(models []string) error {
+func (p *Pi) Edit(models []LaunchModel) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -225,7 +223,7 @@ func (p *Pi) Edit(models []string) error {
 	// Build set of selected models to track which need to be added
 	selectedSet := make(map[string]bool, len(models))
 	for _, m := range models {
-		selectedSet[m] = true
+		selectedSet[m.Name] = true
 	}
 
 	// Build new models list:
@@ -256,11 +254,9 @@ func (p *Pi) Edit(models []string) error {
 	}
 
 	// Add newly selected models that weren't already in the list
-	client := api.NewClient(envconfig.Host(), http.DefaultClient)
-	ctx := context.Background()
 	for _, model := range models {
-		if selectedSet[model] {
-			newModels = append(newModels, createConfig(ctx, client, model))
+		if selectedSet[model.Name] {
+			newModels = append(newModels, createConfig(model))
 		}
 	}
 
@@ -284,7 +280,7 @@ func (p *Pi) Edit(models []string) error {
 	}
 
 	settings["defaultProvider"] = "ollama"
-	settings["defaultModel"] = models[0]
+	settings["defaultModel"] = models[0].Name
 
 	settingsData, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -342,54 +338,27 @@ func hasContextWindow(cfg map[string]any) bool {
 	}
 }
 
-// createConfig builds Pi model config with capability detection
-func createConfig(ctx context.Context, client *api.Client, modelID string) map[string]any {
+// createConfig builds Pi model config with capability detection.
+func createConfig(model LaunchModel) map[string]any {
 	cfg := map[string]any{
-		"id":      modelID,
+		"id":      model.Name,
 		"_launch": true,
-	}
-	if l, ok := lookupCloudModelLimit(modelID); ok {
-		cfg["contextWindow"] = l.Context
-	}
-
-	applyCloudContextFallback := func() {
-		if l, ok := lookupCloudModelLimit(modelID); ok {
-			cfg["contextWindow"] = l.Context
-		}
-	}
-
-	resp, err := client.Show(ctx, &api.ShowRequest{Model: modelID})
-	if err != nil {
-		applyCloudContextFallback()
-		return cfg
 	}
 
 	// Set input types based on vision capability
-	if slices.Contains(resp.Capabilities, model.CapabilityVision) {
+	if model.HasCapability("vision") {
 		cfg["input"] = []string{"text", "image"}
 	} else {
 		cfg["input"] = []string{"text"}
 	}
 
 	// Set reasoning based on thinking capability
-	if slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+	if model.HasCapability("thinking") {
 		cfg["reasoning"] = true
 	}
 
-	// Extract context window from ModelInfo. For known cloud models, the
-	// pre-filled shared limit remains unless the server provides a positive value.
-	hasContextWindow := false
-	for key, val := range resp.ModelInfo {
-		if strings.HasSuffix(key, ".context_length") {
-			if ctxLen, ok := val.(float64); ok && ctxLen > 0 {
-				cfg["contextWindow"] = int(ctxLen)
-				hasContextWindow = true
-			}
-			break
-		}
-	}
-	if !hasContextWindow {
-		applyCloudContextFallback()
+	if model.ContextLength > 0 {
+		cfg["contextWindow"] = model.ContextLength
 	}
 
 	return cfg
