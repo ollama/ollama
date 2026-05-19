@@ -26,6 +26,8 @@ import (
 The /api/show cache stores full api.ShowResponse values because callers use
 more than capabilities: launch flows also need context length, embeddings
 metadata, quantization details, remote metadata, and model-specific fields.
+TODO(parthsareen): Consider removing show cache if /api/tags grows to cover
+the remaining callers.
 
 Local model entries are stored lazily by canonical model name and verbose flag,
 with the manifest digest recorded in the entry. The manifest digest is the

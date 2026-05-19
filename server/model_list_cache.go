@@ -792,6 +792,7 @@ func (s modelListSummary) ListModelResponse() api.ListModelResponse {
 
 func sortListModelResponses(models []api.ListModelResponse) {
 	slices.SortStableFunc(models, func(i, j api.ListModelResponse) int {
+		// Preserve the existing /api/tags order: most recently modified first.
 		return cmp.Compare(j.ModifiedAt.Unix(), i.ModifiedAt.Unix())
 	})
 }
