@@ -65,7 +65,8 @@ MinVersion=10.0.10240
 ; MinVersion=10.0.18362
 
 ; quiet...
-DisableDirPage=yes
+; Allow users to choose the installation directory via the wizard
+DisableDirPage=no
 DisableFinishedPage=yes
 DisableReadyMemo=yes
 DisableReadyPage=yes
@@ -256,6 +257,33 @@ end;
 var
   DeleteModelsChecked: Boolean;
   ModelsDir: string;
+  ModelsPage: TInputDirWizardPage;
+  DefaultModelsDir: string;
+  BuiltinDefaultModelsDir: string;
+  ExistingModelsEnv: string;
+
+procedure InitializeWizard;
+begin
+  BuiltinDefaultModelsDir := ExpandConstant('{%USERPROFILE}') + '\.ollama\models';
+  ExistingModelsEnv := GetEnv('OLLAMA_MODELS');
+
+  if ExistingModelsEnv <> '' then begin
+    DefaultModelsDir := ExistingModelsEnv;
+  end else begin
+    DefaultModelsDir := BuiltinDefaultModelsDir;
+  end;
+
+  ModelsPage := CreateInputDirPage(
+    wpSelectDir,
+    'Model storage location',
+    'Choose where to store downloaded models.',
+    'Select the folder where Ollama will store downloaded models. You can use the default location in your home directory or choose a different drive.',
+    False,
+    ''
+  );
+  ModelsPage.Add('');
+  ModelsPage.Values[0] := DefaultModelsDir;
+end;
 
 procedure InitializeUninstallProgressForm();
 var
@@ -343,6 +371,36 @@ begin
       DeleteModelsChecked:=True;
     end else begin
       DeleteModelsChecked:=False;
+    end;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  NewModelsPath: string;
+begin
+  if CurStep = ssPostInstall then begin
+    if ModelsPage = nil then
+      exit;
+
+    NewModelsPath := Trim(ModelsPage.Values[0]);
+    if NewModelsPath = '' then
+      exit;
+
+    { If there was an existing OLLAMA_MODELS and the user left it unchanged, preserve it }
+    if (ExistingModelsEnv <> '') and (CompareText(NewModelsPath, ExistingModelsEnv) = 0) then
+      exit;
+
+    { If there was no existing OLLAMA_MODELS and the user kept the built-in default, do nothing }
+    if (ExistingModelsEnv = '') and (CompareText(NewModelsPath, BuiltinDefaultModelsDir) = 0) then
+      exit;
+
+    { If the new value equals the built-in default, clear any previous override }
+    if CompareText(NewModelsPath, BuiltinDefaultModelsDir) = 0 then begin
+      if ExistingModelsEnv <> '' then
+        RegDeleteValue(HKCU, 'Environment', 'OLLAMA_MODELS');
+    end else begin
+      RegWriteStringValue(HKCU, 'Environment', 'OLLAMA_MODELS', NewModelsPath);
     end;
   end;
 end;
