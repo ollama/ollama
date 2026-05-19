@@ -234,6 +234,11 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
 	EnableVulkan = Bool("OLLAMA_VULKAN")
+	// PinnedHostBuffer routes CPU-resident tensors through CUDA pinned host
+	// memory (cudaMallocHost) for faster host-to-device transfers.
+	// Default: disabled (opt-in). Set OLLAMA_PINNED_HOST_BUFFER=1 to enable.
+	// EXPERIMENTAL.
+	PinnedHostBuffer = Bool("OLLAMA_PINNED_HOST_BUFFER")
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
 	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
 )
@@ -333,6 +338,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_CONTEXT_LENGTH":       {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},
 		"OLLAMA_EDITOR":               {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
 		"OLLAMA_NEW_ENGINE":           {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
+		"OLLAMA_PINNED_HOST_BUFFER":   {"OLLAMA_PINNED_HOST_BUFFER", PinnedHostBuffer(), "Route CPU-resident tensors through CUDA pinned host memory for faster H2D (experimental)"},
 		"OLLAMA_REMOTES":              {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 
 		// Informational
