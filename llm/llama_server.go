@@ -110,10 +110,6 @@ type llamaServerRunner struct {
 	// Keys are device names from llama-server output (e.g., "CUDA0", "ROCm0", "MTL0").
 	vramByDevice map[string]uint64
 
-	// GPU layer offload counts, parsed from "offloaded N/M layers to GPU" log line.
-	offloadedLayers int
-	offloadedTotal  int
-
 	// System-reported free VRAM per device at model load time, parsed from
 	// "using device CUDA0 ... - 15221 MiB free" log lines. This reflects
 	// real system state including external VRAM consumers (on platforms where
@@ -2091,11 +2087,6 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	return total, vram
 }
 
-// FullyOffloaded returns true if all model layers are on GPU.
-func (s *llamaServerRunner) FullyOffloaded() bool {
-	return s.offloadedTotal > 0 && s.offloadedLayers == s.offloadedTotal
-}
-
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
 // Uses model file size as a proxy for weights plus a rough KV cache estimate.
 // This is intentionally conservative — it overestimates to avoid VRAM contention.
@@ -2137,9 +2128,6 @@ type memoryParsingWriter struct {
 	runner *llamaServerRunner
 }
 
-// offloadRegex matches: "offloaded 29/29 layers to GPU"
-var offloadRegex = regexp.MustCompile(`offloaded (\d+)/(\d+) layers to GPU`)
-
 // deviceFreeRegex matches per-device free VRAM reported at model load time:
 //
 //	using device CUDA0 (NVIDIA GeForce RTX 4060 Ti) (0000:01:00.0) - 15221 MiB free
@@ -2179,10 +2167,6 @@ func deviceName(backendName string) string {
 
 func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 	if w.runner != nil {
-		if match := offloadRegex.FindSubmatch(b); match != nil {
-			w.runner.offloadedLayers, _ = strconv.Atoi(string(match[1]))
-			w.runner.offloadedTotal, _ = strconv.Atoi(string(match[2]))
-		}
 		if match := deviceFreeRegex.FindSubmatch(b); match != nil {
 			devName := string(match[1])
 			if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {

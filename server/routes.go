@@ -2269,14 +2269,6 @@ func (s *Server) PsHandler(c *gin.Context) {
 			total, vram := v.llama.MemorySize()
 			mr.Size = int64(total)
 			mr.SizeVRAM = int64(vram)
-
-			// When all layers are on GPU, report SizeVRAM == Size for the
-			// public API. The small CPU overhead (input/output buffers) is
-			// architectural and doesn't mean layers are on CPU.
-			type fullyOffloaded interface{ FullyOffloaded() bool }
-			if fo, ok := v.llama.(fullyOffloaded); ok && fo.FullyOffloaded() {
-				mr.SizeVRAM = mr.Size
-			}
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
