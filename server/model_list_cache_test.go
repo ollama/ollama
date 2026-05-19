@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -42,11 +44,11 @@ func TestModelListCacheHydratesSummary(t *testing.T) {
 	if summary.Details.Family != "test" || summary.Details.Format != "gguf" {
 		t.Fatalf("summary details = %+v, want gguf/test", summary.Details)
 	}
-	if summary.ContextLength != 4096 {
-		t.Fatalf("context length = %d, want 4096", summary.ContextLength)
+	if summary.Details.ContextLength != 4096 {
+		t.Fatalf("context length = %d, want 4096", summary.Details.ContextLength)
 	}
-	if summary.EmbeddingLength != 384 {
-		t.Fatalf("embedding length = %d, want 384", summary.EmbeddingLength)
+	if summary.Details.EmbeddingLength != 384 {
+		t.Fatalf("embedding length = %d, want 384", summary.Details.EmbeddingLength)
 	}
 
 	for _, capability := range []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityInsert} {
@@ -57,8 +59,8 @@ func TestModelListCacheHydratesSummary(t *testing.T) {
 
 	listModel := summary.ListModelResponse()
 	if !slices.Contains(listModel.Capabilities, model.CapabilityTools) ||
-		listModel.ContextLength != 4096 ||
-		listModel.EmbeddingLength != 384 {
+		listModel.Details.ContextLength != 4096 ||
+		listModel.Details.EmbeddingLength != 384 {
 		t.Fatalf("list response = %+v, want capabilities/context/embedding", listModel)
 	}
 }
@@ -180,6 +182,39 @@ func TestModelListCacheSyncsManifestChanges(t *testing.T) {
 	}
 	if slices.Contains(names, "list-sync-a:latest") || !slices.Contains(names, "list-sync-b:latest") {
 		t.Fatalf("names after delete = %v, want only list-sync-b", names)
+	}
+}
+
+func TestModelListCacheSyncDropsStaleEntryOnRefreshFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	createListCacheModel(t, "list-stale", map[string]any{"test.context_length": uint32(1024)}, "")
+
+	cache := newModelListCache()
+	cache.Start(context.Background())
+	if err := cache.Wait(context.Background()); err != nil {
+		t.Fatalf("wait failed: %v", err)
+	}
+
+	name := model.ParseName("list-stale")
+	if _, ok := cache.Get(name); !ok {
+		t.Fatal("list summary missing")
+	}
+
+	changeShowCacheManifest(t, "list-stale")
+	cache.build = func(model.Name, *manifest.Manifest) (modelListSummary, error) {
+		return modelListSummary{}, errors.New("refresh failed")
+	}
+
+	models, err := cache.List(context.Background())
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if len(models) != 0 {
+		t.Fatalf("models = %+v, want stale entry removed", models)
+	}
+	if _, ok := cache.Get(name); ok {
+		t.Fatal("stale entry remained in cache after refresh failure")
 	}
 }
 

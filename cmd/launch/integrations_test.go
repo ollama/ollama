@@ -481,11 +481,11 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 func TestBuildModelList_PreservesRecommendationRequiredPlanForExistingCloudModel(t *testing.T) {
 	recommendations := []ModelItem{
 		{
-			Name:          "glm-5:cloud",
-			Description:   "Reasoning and code generation",
-			Recommended:   true,
-			RequiredPlan:  "pro",
-			ContextLength: 202_752,
+			Name:         "glm-5:cloud",
+			Description:  "Reasoning and code generation",
+			Recommended:  true,
+			RequiredPlan: "pro",
+			Details:      api.ModelDetails{ContextLength: 202_752},
 		},
 	}
 	existing := []modelInfo{{Name: "glm-5:cloud", Remote: true}}

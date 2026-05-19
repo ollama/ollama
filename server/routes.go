@@ -1436,6 +1436,11 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
+	if s.modelCaches == nil || s.modelCaches.modelList == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "model list cache unavailable"})
+		return
+	}
+
 	models, err := s.modelCaches.modelList.List(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

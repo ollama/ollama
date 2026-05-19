@@ -241,14 +241,12 @@ type SupportedIntegration interface {
 }
 
 type modelInfo struct {
-	Name            string
-	Remote          bool
-	ToolCapable     bool
-	Capabilities    []modelpkg.Capability
-	ContextLength   int
-	EmbeddingLength int
-	Size            int64
-	Details         api.ModelDetails
+	Name         string
+	Remote       bool
+	ToolCapable  bool
+	Capabilities []modelpkg.Capability
+	Size         int64
+	Details      api.ModelDetails
 }
 
 // ModelInfo re-exports launcher model inventory details for callers.
@@ -260,12 +258,10 @@ type ModelItem struct {
 	Description     string
 	Recommended     bool
 	VRAMBytes       int64
-	ContextLength   int
 	MaxOutputTokens int
 	RequiredPlan    string
 	ToolCapable     bool
 	Capabilities    []modelpkg.Capability
-	EmbeddingLength int
 	Size            int64
 	Details         api.ModelDetails
 }
@@ -1190,9 +1186,11 @@ func (c *launcherClient) requestRecommendations(ctx context.Context) ([]ModelIte
 			Description:     description,
 			Recommended:     true,
 			VRAMBytes:       rec.VRAMBytes,
-			ContextLength:   rec.ContextLength,
 			MaxOutputTokens: rec.MaxOutputTokens,
 			RequiredPlan:    strings.TrimSpace(rec.RequiredPlan),
+			Details: api.ModelDetails{
+				ContextLength: rec.ContextLength,
+			},
 		})
 	}
 
@@ -1378,14 +1376,12 @@ func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 	c.modelInventory = c.modelInventory[:0]
 	for _, model := range resp.Models {
 		c.modelInventory = append(c.modelInventory, ModelInfo{
-			Name:            model.Name,
-			Remote:          model.RemoteModel != "",
-			ToolCapable:     slices.Contains(model.Capabilities, modelpkg.CapabilityTools),
-			Capabilities:    slices.Clone(model.Capabilities),
-			ContextLength:   model.ContextLength,
-			EmbeddingLength: model.EmbeddingLength,
-			Size:            model.Size,
-			Details:         model.Details,
+			Name:         model.Name,
+			Remote:       model.RemoteModel != "",
+			ToolCapable:  slices.Contains(model.Capabilities, modelpkg.CapabilityTools),
+			Capabilities: slices.Clone(model.Capabilities),
+			Size:         model.Size,
+			Details:      model.Details,
 		})
 	}
 

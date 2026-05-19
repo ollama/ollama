@@ -24,17 +24,15 @@ import (
 )
 
 type modelListSummary struct {
-	Model           string
-	Name            string
-	RemoteModel     string
-	RemoteHost      string
-	Size            int64
-	Digest          string
-	ModifiedAt      time.Time
-	Details         api.ModelDetails
-	Capabilities    []model.Capability
-	ContextLength   int
-	EmbeddingLength int
+	Model        string
+	Name         string
+	RemoteModel  string
+	RemoteHost   string
+	Size         int64
+	Digest       string
+	ModifiedAt   time.Time
+	Details      api.ModelDetails
+	Capabilities []model.Capability
 }
 
 type modelListCacheEntry struct {
@@ -181,6 +179,7 @@ func (c *modelListCache) syncManifests(ctx context.Context) error {
 	}
 
 	seen := make(map[string]struct{}, len(manifests))
+	stale := make(map[string]struct{})
 	var updates []update
 	for name, mf := range manifests {
 		if ctx != nil {
@@ -199,6 +198,9 @@ func (c *modelListCache) syncManifests(ctx context.Context) error {
 		summary, err := c.build(name, mf)
 		if err != nil {
 			slog.Warn("failed to refresh model list cache", "model", key, "error", err)
+			if _, ok := current[key]; ok {
+				stale[key] = struct{}{}
+			}
 			continue
 		}
 		updates = append(updates, update{name: name, digest: digest, summary: summary})
@@ -207,6 +209,10 @@ func (c *modelListCache) syncManifests(ctx context.Context) error {
 	c.mu.Lock()
 	for name := range c.entries {
 		if _, ok := seen[name]; !ok {
+			delete(c.entries, name)
+			continue
+		}
+		if _, ok := stale[name]; ok {
 			delete(c.entries, name)
 		}
 	}
@@ -236,11 +242,13 @@ func (c *modelListCache) RefreshModel(name model.Name) error {
 
 	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
+		c.DeleteModel(name)
 		return err
 	}
 
 	summary, err := c.build(name, mf)
 	if err != nil {
+		c.DeleteModel(name)
 		return err
 	}
 
@@ -323,9 +331,9 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 			Families:          append([]string(nil), cfg.ModelFamilies...),
 			ParameterSize:     cfg.ModelType,
 			QuantizationLevel: cfg.FileType,
+			ContextLength:     cfg.ContextLen,
+			EmbeddingLength:   cfg.EmbedLen,
 		},
-		ContextLength:   cfg.ContextLen,
-		EmbeddingLength: cfg.EmbedLen,
 	}
 
 	modelPath, projectorCount, tmpl, err := readModelListLayers(mf, &summary)
@@ -339,11 +347,11 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 			slog.Debug("failed to read gguf model metadata", "model", name.String(), "error", err)
 		} else {
 			summary.Capabilities = appendModelListCapabilities(summary.Capabilities, info.Capabilities...)
-			if summary.ContextLength == 0 {
-				summary.ContextLength = info.ContextLength
+			if summary.Details.ContextLength == 0 {
+				summary.Details.ContextLength = info.ContextLength
 			}
-			if summary.EmbeddingLength == 0 {
-				summary.EmbeddingLength = info.EmbeddingLength
+			if summary.Details.EmbeddingLength == 0 {
+				summary.Details.EmbeddingLength = info.EmbeddingLength
 			}
 		}
 	}
@@ -780,12 +788,12 @@ func (s modelListSummary) ListModelResponse() api.ListModelResponse {
 			Families:          append([]string(nil), s.Details.Families...),
 			ParameterSize:     s.Details.ParameterSize,
 			QuantizationLevel: s.Details.QuantizationLevel,
+			ContextLength:     s.Details.ContextLength,
+			EmbeddingLength:   s.Details.EmbeddingLength,
 		},
 	}
 
 	resp.Capabilities = append([]model.Capability(nil), s.Capabilities...)
-	resp.ContextLength = s.ContextLength
-	resp.EmbeddingLength = s.EmbeddingLength
 
 	return resp
 }
