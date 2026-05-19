@@ -46,6 +46,14 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			},
 		},
 		{
+			name:   "omp",
+			binary: "omp",
+			runner: &OMP{},
+			checkPath: func(home string) string {
+				return filepath.Join(home, ".omp", "config.json")
+			},
+		},
+		{
 			name:   "pool",
 			binary: "pool",
 			runner: &Poolside{},

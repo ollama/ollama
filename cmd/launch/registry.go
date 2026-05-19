@@ -154,6 +154,19 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
+		Name:        "omp",
+		Runner:      &OMP{},
+		Description: "OMP's AI coding agent",
+		Hidden:      true,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := exec.LookPath("omp")
+				return err == nil
+			},
+			URL: "https://omp.sh/",
+		},
+	},
+	{
 		Name:        "openclaw",
 		Runner:      &Openclaw{},
 		Aliases:     []string{"clawdbot", "moltbot"},
