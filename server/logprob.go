@@ -12,7 +12,7 @@ func toAPILogprobs(logprobs []llm.Logprob) []api.Logprob {
 		result[i] = api.Logprob{
 			TokenLogprob: api.TokenLogprob{
 				Token:   lp.Token,
-				Bytes:   stringToByteInts(lp.Token),
+				Bytes:   logprobBytes(lp.TokenLogprob),
 				Logprob: lp.Logprob,
 			},
 		}
@@ -21,13 +21,25 @@ func toAPILogprobs(logprobs []llm.Logprob) []api.Logprob {
 			for j, tlp := range lp.TopLogprobs {
 				result[i].TopLogprobs[j] = api.TokenLogprob{
 					Token:   tlp.Token,
-					Bytes:   stringToByteInts(tlp.Token),
+					Bytes:   logprobBytes(tlp),
 					Logprob: tlp.Logprob,
 				}
 			}
 		}
 	}
 	return result
+}
+
+// logprobBytes returns tlp.Bytes as []int, falling back to Token if Bytes is empty.
+func logprobBytes(tlp llm.TokenLogprob) []int {
+	if len(tlp.Bytes) > 0 {
+		ints := make([]int, len(tlp.Bytes))
+		for i, b := range tlp.Bytes {
+			ints[i] = int(b)
+		}
+		return ints
+	}
+	return stringToByteInts(tlp.Token)
 }
 
 func stringToByteInts(s string) []int {
