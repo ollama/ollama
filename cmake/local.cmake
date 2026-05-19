@@ -22,9 +22,33 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
     list(APPEND OLLAMA_LLAMA_SERVER_EXTERNAL_OPTIONS BUILD_JOB_SERVER_AWARE TRUE)
 endif()
 
+set(OLLAMA_LLAMA_SERVER_BUILD_TOOL_COMMAND
+    ${CMAKE_COMMAND} --build <BINARY_DIR>)
+set(OLLAMA_LLAMA_SERVER_BUILD_TARGET_ARG --target)
+if(CMAKE_GENERATOR MATCHES "Makefiles")
+    set(OLLAMA_LLAMA_SERVER_BUILD_TOOL_COMMAND
+        "$(MAKE)" -C <BINARY_DIR>)
+    set(OLLAMA_LLAMA_SERVER_BUILD_TARGET_ARG)
+endif()
+
 function(ollama_escape_cmake_list input output)
     string(REPLACE ";" "|" _escaped "${input}")
     set(${output} "${_escaped}" PARENT_SCOPE)
+endfunction()
+
+function(ollama_collect_cache_args_with_prefix prefix output)
+    get_cmake_property(_cache_variables CACHE_VARIABLES)
+    list(SORT _cache_variables)
+
+    set(_args)
+    foreach(_var IN LISTS _cache_variables)
+        if(_var MATCHES "^${prefix}")
+            ollama_escape_cmake_list("${${_var}}" _value)
+            list(APPEND _args "-D${_var}=${_value}")
+        endif()
+    endforeach()
+
+    set(${output} "${_args}" PARENT_SCOPE)
 endfunction()
 
 function(ollama_add_llama_server_build name)
@@ -39,6 +63,8 @@ function(ollama_add_llama_server_build name)
     else()
         set(_build_dir ${CMAKE_BINARY_DIR}/llama-server-${name})
     endif()
+    ollama_collect_cache_args_with_prefix("GGML_" _ggml_cache_args)
+    ollama_collect_cache_args_with_prefix("LLAMA_" _llama_cache_args)
     set(_cmake_args
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}
@@ -46,6 +72,8 @@ function(ollama_add_llama_server_build name)
         -DGGML_NATIVE=OFF
         -DGGML_OPENMP=OFF
         ${ARG_CMAKE_ARGS}
+        ${_ggml_cache_args}
+        ${_llama_cache_args}
     )
 
     if(APPLE)
@@ -67,9 +95,9 @@ function(ollama_add_llama_server_build name)
         SOURCE_DIR ${CMAKE_SOURCE_DIR}/llama/server
         BINARY_DIR ${_build_dir}
         CMAKE_ARGS ${_cmake_args}
-        BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR>
+        BUILD_COMMAND ${OLLAMA_LLAMA_SERVER_BUILD_TOOL_COMMAND}
             ${OLLAMA_LLAMA_SERVER_CONFIG_ARG}
-            --target ${ARG_TARGETS}
+            ${OLLAMA_LLAMA_SERVER_BUILD_TARGET_ARG} ${ARG_TARGETS}
         INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
             ${OLLAMA_LLAMA_SERVER_CONFIG_ARG}
             --component llama-server

@@ -29,8 +29,8 @@ cmake --build build --parallel 4
 To build `llama-server` GPU backends through the same root build, select the backend and target explicitly:
 
 ```shell
-cmake -B build-gpu . -DOLLAMA_LLAMA_SERVER_BACKENDS=vulkan
-cmake --build build-gpu --target ollama-llama-server-vulkan --parallel 4
+cmake -B build . -DOLLAMA_LLAMA_SERVER_BACKENDS=vulkan
+cmake --build build --target ollama-llama-server-vulkan --parallel 4
 ```
 
 Supported backend values are `cuda-v12`, `cuda-v13`, `cuda-v13-windows`, `rocm`, `rocm-windows`, `vulkan`, `jetpack5`, and `jetpack6`.
@@ -39,13 +39,19 @@ Use standard CMake architecture overrides to narrow GPU builds for local hardwar
 
 ```shell
 # CUDA
-cmake -B build-gpu . -DOLLAMA_LLAMA_SERVER_BACKENDS=cuda-v13 -DCMAKE_CUDA_ARCHITECTURES=native
+cmake -B build . -DOLLAMA_LLAMA_SERVER_BACKENDS=cuda-v13 -DCMAKE_CUDA_ARCHITECTURES=native
 
 # ROCm / HIP
-cmake -B build-gpu . -DOLLAMA_LLAMA_SERVER_BACKENDS=rocm -DCMAKE_HIP_ARCHITECTURES=gfx1100
+cmake -B build . -DOLLAMA_LLAMA_SERVER_BACKENDS=rocm -DCMAKE_HIP_ARCHITECTURES=gfx1100
 ```
 
 `AMDGPU_TARGETS` is also accepted for ROCm when matching llama.cpp-specific target strings is necessary.
+
+You can tune GGML build options by setting `GGML_*` values during configure. For example, to build CUDA v12 for Pascal without flash attention kernels:
+
+```shell
+cmake -B build . -DOLLAMA_LLAMA_SERVER_BACKENDS=cuda-v12 -DCMAKE_CUDA_ARCHITECTURES=61 -DGGML_CUDA_FA=OFF
+```
 
 ## macOS (Apple Silicon)
 
