@@ -1829,6 +1829,13 @@ func GetMLXInitError() error {
 }
 
 func init() {
+	// MLX is only available on macOS
+	if runtime.GOOS != "darwin" {
+		mlxInitError = fmt.Errorf("MLX is only supported on macOS")
+		mlxInitialized = false
+		return
+	}
+
 	// Initialize MLX dynamic library first
 	if err := InitMLX(); err != nil {
 		// Don't panic in init - let the caller handle the error
