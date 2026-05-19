@@ -5196,9 +5196,6 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     const int64_t n_group    = hparams.ssm_n_group;
                     const int64_t d_in_proj  = 2*d_inner + 2*n_group*d_state + n_ssm_head;
 
-                    const int64_t n_ff_exp = hparams.n_ff_exp ? hparams.n_ff_exp : n_ff / n_expert_used;
-                    const int64_t n_ff_shexp = hparams.n_ff_shexp;
-
                     // embeddings
                     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
 
@@ -5250,6 +5247,9 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                             layer.bo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias",   i), {n_embd},         TENSOR_NOT_REQUIRED);
                         }  else {
                             if (n_expert != 0) {
+                                const int64_t n_ff_exp = hparams.n_ff_exp ? hparams.n_ff_exp : n_ff / n_expert_used;
+                                const int64_t n_ff_shexp = hparams.n_ff_shexp;
+                                
                                 layer.ffn_gate_inp    = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP,  "weight", i), { n_embd, n_expert}, 0);
                                 layer.ffn_exp_probs_b = create_tensor(tn(LLM_TENSOR_FFN_EXP_PROBS_B, "bias", i), {n_expert         }, 0);
 
