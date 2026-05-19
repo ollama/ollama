@@ -709,11 +709,10 @@ func NewLlamaServerRunner(
 	// Reap subprocess when it exits
 	go func() {
 		err := s.cmd.Wait()
-		if err != nil && s.lastErrMsg() != "" {
-			slog.Error("llama-server terminated", "error", err)
-			s.doneErr = errors.New(s.lastErrMsg())
-		} else {
-			s.doneErr = err
+		s.doneErr = err
+		if msg := s.lastErrMsg(); err != nil && msg != "" {
+			slog.Error("llama-server terminated", "error", err, "exit", ExitStatusFromError(err))
+			s.doneErr = errors.New(msg)
 		}
 		close(s.done)
 	}()
@@ -773,7 +772,7 @@ func (s *llamaServerRunner) getServerStatus(ctx context.Context) (ServerStatus, 
 		if s.cmd.ProcessState.ExitCode() == -1 {
 			slog.Warn("llama-server process no longer running", "sys", s.cmd.ProcessState.Sys(), "string", s.cmd.ProcessState)
 		}
-		return ServerStatusError, fmt.Errorf("llama-server process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
+		return ServerStatusError, fmt.Errorf("llama-server process no longer running: %s %s", ExitStatus(s.cmd.ProcessState.ExitCode()), msg)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", s.port), nil)
@@ -861,13 +860,22 @@ func (s *llamaServerRunner) WaitUntilRunning(ctx context.Context) error {
 				if s.doneErr == nil {
 					return fmt.Errorf("llama-server process has terminated: %s", msg)
 				}
+				if s.cmd != nil && s.cmd.ProcessState != nil && s.cmd.ProcessState.ExitCode() >= 0 {
+					return fmt.Errorf("llama-server process has terminated: %s: %s", ExitStatus(s.cmd.ProcessState.ExitCode()), msg)
+				}
+				if exit := ExitStatusFromError(s.doneErr); exit.Known() {
+					return fmt.Errorf("llama-server process has terminated: %s: %s", exit, msg)
+				}
 				return fmt.Errorf("llama-server process has terminated: %w: %s", s.doneErr, msg)
 			}
 			if s.doneErr == nil {
 				if s.cmd != nil && s.cmd.ProcessState != nil {
-					return fmt.Errorf("llama-server process has terminated with exit code %d", s.cmd.ProcessState.ExitCode())
+					return fmt.Errorf("llama-server process has terminated: %s", ExitStatus(s.cmd.ProcessState.ExitCode()))
 				}
 				return errors.New("llama-server process has terminated")
+			}
+			if exit := ExitStatusFromError(s.doneErr); exit.Known() {
+				return fmt.Errorf("llama-server process has terminated: %s", exit)
 			}
 			return fmt.Errorf("llama-server process has terminated: %w", s.doneErr)
 		default:
@@ -880,7 +888,7 @@ func (s *llamaServerRunner) WaitUntilRunning(ctx context.Context) error {
 
 		if s.cmd.ProcessState != nil {
 			msg := s.lastErrMsg()
-			return fmt.Errorf("llama-server process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
+			return fmt.Errorf("llama-server process no longer running: %s %s", ExitStatus(s.cmd.ProcessState.ExitCode()), msg)
 		}
 
 		pollCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)

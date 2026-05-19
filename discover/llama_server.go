@@ -116,10 +116,12 @@ func llamaServerDiscoverDevices(ctx context.Context, libDirs []string, extraEnvs
 	}
 	waitErr := cmd.Wait()
 	if waitErr != nil {
+		exit := llm.ExitStatusFromError(waitErr)
 		if stoppedForDiscovery {
-			slog.Debug("llama-server discovery: stopped subprocess after collecting GPU info", "libDirs", libDirs)
-		} else {
-			slog.Debug("llama-server discovery: server startup exited", "error", waitErr, "libDirs", libDirs)
+			slog.Debug("llama-server discovery: stopped subprocess after collecting GPU info", "exit", exit, "libDirs", libDirs)
+		}
+		if !stoppedForDiscovery {
+			slog.Debug("llama-server discovery: server startup exited", "error", waitErr, "exit", exit, "libDirs", libDirs)
 		}
 	}
 	<-done
@@ -144,7 +146,11 @@ func llamaServerDiscoverDevices(ctx context.Context, libDirs []string, extraEnvs
 	listOutput, err := cmd2.CombinedOutput()
 	_, _ = status.Write(listOutput)
 	if err != nil {
-		slog.Debug("llama-server --list-devices failed", "error", err)
+		exit := llm.ExitStatusFromError(err)
+		slog.Debug("llama-server --list-devices failed", "error", err, "exit", exit)
+		if exit.Known() {
+			return nil, status, fmt.Errorf("llama-server --list-devices failed: %s", exit)
+		}
 		return nil, status, fmt.Errorf("llama-server --list-devices failed: %w", err)
 	}
 
