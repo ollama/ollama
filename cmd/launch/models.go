@@ -20,7 +20,6 @@ import (
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
-	modelpkg "github.com/ollama/ollama/types/model"
 )
 
 var recommendedModels = []ModelItem{
@@ -494,44 +493,7 @@ func modelItemFromInventory(name string, info modelInfo, item ModelItem) ModelIt
 	if info.ContextLength > 0 {
 		item.ContextLength = info.ContextLength
 	}
-	if strings.TrimSpace(item.Description) == "" {
-		item.Description = modelInfoDescription(info)
-	}
 	return item
-}
-
-func modelInfoDescription(info modelInfo) string {
-	parts := make([]string, 0, 6)
-
-	if info.ToolCapable {
-		parts = append(parts, "tools")
-	}
-	if slices.Contains(info.Capabilities, modelpkg.CapabilityVision) {
-		parts = append(parts, "vision")
-	}
-	if slices.Contains(info.Capabilities, modelpkg.CapabilityThinking) {
-		parts = append(parts, "thinking")
-	}
-	if len(parts) == 0 && slices.Contains(info.Capabilities, modelpkg.CapabilityEmbedding) {
-		parts = append(parts, "embedding")
-	}
-	if info.ContextLength > 0 {
-		parts = append(parts, format.HumanNumber(uint64(info.ContextLength))+" context")
-	}
-	if info.EmbeddingLength > 0 && slices.Contains(info.Capabilities, modelpkg.CapabilityEmbedding) {
-		parts = append(parts, fmt.Sprintf("%d-d embeddings", info.EmbeddingLength))
-	}
-	if info.Details.ParameterSize != "" {
-		parts = append(parts, info.Details.ParameterSize)
-	}
-	if info.Details.QuantizationLevel != "" {
-		parts = append(parts, info.Details.QuantizationLevel)
-	}
-	if info.Size > 0 {
-		parts = append(parts, format.HumanBytes(info.Size))
-	}
-
-	return strings.Join(parts, ", ")
 }
 
 // isCloudModelName reports whether the model name has an explicit cloud source.

@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -45,10 +44,8 @@ func TestBuildModelList_UsesInventoryMetadataForInstalledModels(t *testing.T) {
 	if got.Size != 7500*format.MegaByte {
 		t.Fatalf("Size = %d, want %d", got.Size, 7500*format.MegaByte)
 	}
-	for _, want := range []string{"tools", "thinking", "131K context", "8B", "Q4_K_M", "7.5 GB"} {
-		if !strings.Contains(got.Description, want) {
-			t.Fatalf("Description = %q, want to contain %q", got.Description, want)
-		}
+	if got.Description != "" {
+		t.Fatalf("Description = %q, want empty for installed model without recommendation copy", got.Description)
 	}
 }
 
