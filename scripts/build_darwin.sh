@@ -28,6 +28,24 @@ usage() {
 
 mkdir -p dist
 
+# Work around MLX's v3 metallib link leaking the macOS 26 deployment target.
+_relink_mlx_metallib() {
+    BUILD_DIR="$1"
+    KERNEL_DIR="$BUILD_DIR/_deps/mlx-build/mlx/backend/metal/kernels"
+    AIR_LIST="$BUILD_DIR/mlx-air-files.txt"
+    METALLIB="$KERNEL_DIR/mlx.metallib"
+
+    find "$KERNEL_DIR" -type f -name '*.air' | sort > "$AIR_LIST"
+    if [ ! -s "$AIR_LIST" ]; then
+        echo "error: could not find MLX AIR files in $KERNEL_DIR" >&2
+        exit 1
+    fi
+
+    status "Relinking MLX metallib"
+    rm -f "$METALLIB"
+    xargs xcrun -sdk macosx metallib -o "$METALLIB" < "$AIR_LIST"
+}
+
 
 ARCHS="arm64 amd64"
 while getopts "a:h" OPTION; do
@@ -58,6 +76,7 @@ _build_darwin() {
             cmake --build $BUILD_DIR --target mlx mlxc -j
             cmake --install $BUILD_DIR --component CPU
             cmake --install $BUILD_DIR --component MLX
+            cmake --install $BUILD_DIR --component MLX_VENDOR
             # Override CGO flags to point to the amd64 build directory
             MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-ldl -lc++ -framework Accelerate -mmacosx-version-min=14.0"
@@ -83,7 +102,9 @@ _build_darwin() {
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
                 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
             cmake --build $BUILD_DIR --target mlx mlxc --parallel
+            _relink_mlx_metallib $BUILD_DIR
             cmake --install $BUILD_DIR --component MLX
+            cmake --install $BUILD_DIR --component MLX_VENDOR
 
             # Metal 4.x build (NAX-enabled, macOS 26+)
             # Only possible with Xcode 26+ SDK; skip on older toolchains.
@@ -105,6 +126,7 @@ _build_darwin() {
                     -DFETCHCONTENT_SOURCE_DIR_METAL_CPP=$V3_DEPS/metal_cpp-src
                 cmake --build $BUILD_DIR_V4 --target mlx mlxc --parallel
                 cmake --install $BUILD_DIR_V4 --component MLX
+                cmake --install $BUILD_DIR_V4 --component MLX_VENDOR
             else
                 status "Skipping MLX Metal v4 (SDK $SDK_MAJOR < 26, need Xcode 26+)"
             fi
@@ -200,10 +222,15 @@ _build_macapp() {
         # Copy .so files from both architectures (names don't collide: arm64=libggml-cpu.so, amd64=libggml-cpu-*.so)
         cp dist/darwin-arm64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
         cp dist/darwin-amd64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
-        # Lipo common dylibs into universal binaries, copy amd64-only ones as-is
+        # Lipo common dylibs into universal binaries, copy amd64-only ones as-is.
+        # Skip MLX dylibs (libmlx*.dylib) — on arm64 these live in variant
+        # subdirs (mlx_metal_v3/) and are lipo'd there below. Copying the
+        # amd64 flat copy here would produce an x86_64-only dylib in
+        # Resources/ that shadows the variant subdirs.
         for F in dist/darwin-amd64/lib/ollama/*.dylib; do
             [ -f "$F" ] && [ ! -L "$F" ] || continue
             BASE=$(basename "$F")
+            case "$BASE" in libmlx*) continue ;; esac
             if [ -f "dist/darwin-arm64/lib/ollama/$BASE" ]; then
                 lipo -create -output "dist/Ollama.app/Contents/Resources/$BASE" "$F" "dist/darwin-arm64/lib/ollama/$BASE"
             else
@@ -228,9 +255,11 @@ _build_macapp() {
                         cp "$VARIANT$LIB" "$DEST/"
                     fi
                 done
-                # Copy remaining files (metallib) from arm64 v3
+                # Copy remaining files (metallib and auxiliary runtime dylibs)
+                # from arm64 v3. libmlx/libmlxc are handled above so v3 can
+                # be universal when an x86_64 build is available.
                 for F in "$VARIANT"*; do
-                    case "$(basename "$F")" in *.dylib) continue ;; esac
+                    case "$(basename "$F")" in libmlx.dylib|libmlxc.dylib) continue ;; esac
                     [ -f "$F" ] && [ ! -L "$F" ] || continue
                     cp "$F" "$DEST/"
                 done

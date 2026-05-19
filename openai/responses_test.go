@@ -253,6 +253,29 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 		if err == nil {
 			t.Error("expected error, got nil")
 		}
+		if err != nil && err.Error() != `unknown input item type: "unknown_type"` {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("missing type field", func(t *testing.T) {
+		_, err := unmarshalResponsesInputItem([]byte(`{"content": "hello"}`))
+		if err == nil {
+			t.Error("expected error for missing type, got nil")
+		}
+		if err != nil && err.Error() != "input item missing required 'type' field" {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("empty type field", func(t *testing.T) {
+		_, err := unmarshalResponsesInputItem([]byte(`{"type": ""}`))
+		if err == nil {
+			t.Error("expected error for empty type, got nil")
+		}
+		if err != nil && err.Error() != "input item missing required 'type' field" {
+			t.Errorf("unexpected error message: %v", err)
+		}
 	})
 }
 
@@ -389,6 +412,86 @@ func TestFromResponsesRequest_Tools(t *testing.T) {
 	}
 	if len(tool.Function.Parameters.Required) != 1 || tool.Function.Parameters.Required[0] != "command" {
 		t.Errorf("expected required ['command'], got %v", tool.Function.Parameters.Required)
+	}
+}
+
+func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name      string
+		effort    string
+		wantThink any
+		wantErr   bool
+	}{
+		{
+			name: "unset",
+		},
+		{
+			name:      "low",
+			effort:    "low",
+			wantThink: "low",
+		},
+		{
+			name:      "medium",
+			effort:    "medium",
+			wantThink: "medium",
+		},
+		{
+			name:      "high",
+			effort:    "high",
+			wantThink: "high",
+		},
+		{
+			name:      "max",
+			effort:    "max",
+			wantThink: "max",
+		},
+		{
+			name:      "none",
+			effort:    "none",
+			wantThink: false,
+		},
+		{
+			name:    "invalid",
+			effort:  "extreme",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ResponsesRequest{
+				Model: "deepseek-v4-flash",
+				Input: ResponsesInput{Text: "hi"},
+			}
+			if tt.effort != "" {
+				req.Reasoning.Effort = tt.effort
+			}
+
+			chatReq, err := FromResponsesRequest(req)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantThink == nil {
+				if chatReq.Think != nil {
+					t.Fatalf("Think = %#v, want nil", chatReq.Think)
+				}
+				return
+			}
+
+			if chatReq.Think == nil {
+				t.Fatalf("Think = nil, want %v", tt.wantThink)
+			}
+			if chatReq.Think.Value != tt.wantThink {
+				t.Errorf("Think.Value = %v, want %v", chatReq.Think.Value, tt.wantThink)
+			}
+		})
 	}
 }
 

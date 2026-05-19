@@ -53,7 +53,7 @@ func (p *Pi) Run(model string, args []string) error {
 
 func ensureNpmInstalled() error {
 	if _, err := exec.LookPath("npm"); err != nil {
-		return fmt.Errorf("npm (Node.js) is required to launch pi\n\nInstall it first:\n  https://nodejs.org/")
+		return fmt.Errorf("npm (Node.js) is required to launch pi\n\nInstall it first:\n  https://nodejs.org/\n\nThen re-run:\n  ollama launch pi")
 	}
 	return nil
 }
@@ -64,7 +64,7 @@ func ensurePiInstalled() (string, error) {
 	}
 
 	if _, err := exec.LookPath("npm"); err != nil {
-		return "", fmt.Errorf("pi is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/")
+		return "", fmt.Errorf("pi is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch pi")
 	}
 
 	ok, err := ConfirmPrompt("Pi is not installed. Install with npm?")
@@ -272,7 +272,7 @@ func (p *Pi) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := fileutil.WriteWithBackup(configPath, configData); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, configData, "pi"); err != nil {
 		return err
 	}
 
@@ -290,7 +290,7 @@ func (p *Pi) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(settingsPath, settingsData)
+	return fileutil.WriteWithBackup(settingsPath, settingsData, "pi")
 }
 
 func (p *Pi) Models() []string {

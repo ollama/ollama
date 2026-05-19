@@ -580,6 +580,41 @@ func TestGetModelInfo_SafetensorsUsesStoredFileType(t *testing.T) {
 	}
 }
 
+func TestGetModelInfo_SafetensorsModelfileUsesShortName(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	cfgData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  "safetensors",
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(cfgData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName("show-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if !strings.Contains(resp.Modelfile, "FROM show-safetensors:latest\n") {
+		t.Fatalf("Modelfile = %q, want FROM show-safetensors:latest", resp.Modelfile)
+	}
+
+	if strings.Contains(resp.Modelfile, "# To build a new Modelfile based on this, replace FROM with:") {
+		t.Fatalf("Modelfile should not include replacement hint: %q", resp.Modelfile)
+	}
+}
+
 func casingShuffle(s string) string {
 	rr := []rune(s)
 	for i := range rr {

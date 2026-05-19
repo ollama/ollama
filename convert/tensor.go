@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"iter"
+	"maps"
 	"path"
 	"slices"
 	"strconv"
@@ -152,4 +153,55 @@ func (g mergeGroup) WriteTo(w io.Writer) (int64, error) {
 	}
 
 	return 0, nil
+}
+
+func sourceTensorKV(ts []*ggml.Tensor) KV {
+	sourceFP8 := make(map[string]struct{})
+	for _, t := range ts {
+		if writerSourceDType(t.WriterTo) == "F8_E4M3" {
+			sourceFP8[t.Name] = struct{}{}
+		}
+	}
+	if len(sourceFP8) == 0 {
+		return nil
+	}
+
+	return KV{
+		"source_quantization": "hf_fp8",
+		"source_fp8_tensors":  slices.Sorted(maps.Keys(sourceFP8)),
+	}
+}
+
+type sourceDTypeTensor interface {
+	SourceDType() string
+}
+
+func writerSourceDType(w io.WriterTo) string {
+	switch w := w.(type) {
+	case sourceDTypeTensor:
+		return w.SourceDType()
+	case mergeGroup:
+		if len(w) == 0 {
+			return ""
+		}
+		dtype := sourceDType(w[0])
+		if dtype == "" {
+			return ""
+		}
+		for _, t := range w[1:] {
+			if sourceDType(t) != dtype {
+				return ""
+			}
+		}
+		return dtype
+	default:
+		return ""
+	}
+}
+
+func sourceDType(t Tensor) string {
+	if t, ok := t.(sourceDTypeTensor); ok {
+		return t.SourceDType()
+	}
+	return ""
 }

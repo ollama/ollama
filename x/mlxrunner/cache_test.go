@@ -159,6 +159,50 @@ func (c *fakeRewindableCache) Split(snapshot cache.Snapshot, at int) (cache.Snap
 	return p, ch
 }
 
+func TestKVCacheBeginWithFactoryLimitCapsPrefix(t *testing.T) {
+	inputs := []int32{1, 2, 3, 4, 5}
+	tracker := &snapshotTracker{}
+	var kc kvCache
+
+	factory := func() []cache.Cache {
+		return []cache.Cache{&fakeRewindableCache{tracker: tracker}}
+	}
+
+	session := kc.beginWithFactoryLimit(inputs, factory, "test", -1, false)
+	session.caches[0].(*fakeRewindableCache).feed(inputs)
+	session.close()
+
+	session = kc.beginWithFactoryLimit(inputs, factory, "test", 3, false)
+	if got, want := session.caches[0].Offset(), 3; got != want {
+		t.Fatalf("cache offset = %d, want %d", got, want)
+	}
+	if got, want := session.remaining, inputs[3:]; !slices.Equal(got, want) {
+		t.Fatalf("remaining = %v, want %v", got, want)
+	}
+}
+
+func TestKVCacheBeginWithFactoryLimitDoesNotKeepSeedToken(t *testing.T) {
+	inputs := []int32{1, 2, 3, 4, 5}
+	tracker := &snapshotTracker{}
+	var kc kvCache
+
+	factory := func() []cache.Cache {
+		return []cache.Cache{&fakeRewindableCache{tracker: tracker}}
+	}
+
+	session := kc.beginWithFactoryLimit(inputs, factory, "test", -1, false)
+	session.caches[0].(*fakeRewindableCache).feed(inputs)
+	session.close()
+
+	session = kc.beginWithFactoryLimit(inputs, factory, "test", len(inputs), false)
+	if got, want := session.caches[0].Offset(), len(inputs); got != want {
+		t.Fatalf("cache offset = %d, want %d", got, want)
+	}
+	if len(session.remaining) != 0 {
+		t.Fatalf("remaining = %v, want empty", session.remaining)
+	}
+}
+
 // fakeSlidingWindowCache models RotatingKVCache semantics: stores the full
 // token sequence but only the trailing maxSize tokens are "live" in the window.
 // Once the window fills, live rewind is impossible without a snapshot.

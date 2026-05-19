@@ -28,6 +28,7 @@ type Qwen3VLParser struct {
 	state              qwenParserState
 	buffer             strings.Builder
 	tools              []api.Tool
+	callIndex          int
 	hasThinkingSupport bool
 }
 
@@ -56,6 +57,7 @@ func (p *Qwen3VLParser) setInitialState(lastMessage *api.Message) {
 
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
+	p.callIndex = 0
 	p.setInitialState(lastMessage)
 	return tools
 }
@@ -88,6 +90,11 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 			// events, we naively append them together here.
 			contentSb.WriteString(event.content)
 		}
+	}
+
+	for i := range calls {
+		calls[i].Function.Index = p.callIndex
+		p.callIndex++
 	}
 
 	return contentSb.String(), thinkingSb.String(), calls, nil
