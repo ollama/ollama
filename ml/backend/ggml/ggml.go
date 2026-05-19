@@ -82,8 +82,8 @@ type layerDevice struct {
 }
 
 type Backend struct {
-	// modelPath is the location of the model data
-	modelPath string
+	// modelPaths are the shard file paths; single-element for non-split models
+	modelPaths []string
 
 	meta *fsggml.GGML
 
@@ -128,14 +128,24 @@ type Backend struct {
 
 var once sync.Once
 
-func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
-	r, err := os.Open(modelPath)
-	if err != nil {
-		return nil, err
+func New(modelPaths []string, params ml.BackendParams) (ml.Backend, error) {
+	if len(modelPaths) == 0 {
+		return nil, fmt.Errorf("no model paths provided")
 	}
-	defer r.Close()
 
-	meta, err := fsggml.Decode(r, -1)
+	var meta *fsggml.GGML
+	var err error
+	if len(modelPaths) == 1 {
+		var r *os.File
+		r, err = os.Open(modelPaths[0])
+		if err != nil {
+			return nil, err
+		}
+		defer r.Close()
+		meta, err = fsggml.Decode(r, -1)
+	} else {
+		meta, err = fsggml.DecodeShards(modelPaths, -1)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +438,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	return &Backend{
-		modelPath:         modelPath,
+		modelPaths:        modelPaths,
 		allocMemory:       params.AllocMemory,
 		flashAttention:    params.FlashAttention,
 		meta:              meta,
@@ -473,6 +483,16 @@ func (b *Backend) Close() {
 	C.ggml_backend_sched_free(b.sched)
 }
 
+// tensorLocation returns the file path and the base byte offset for the tensor
+// data region in that file. For split GGUF models the shard index on the tensor
+// selects the correct file; for single-file models it always returns modelPaths[0].
+func (b *Backend) tensorLocation(t *fsggml.Tensor) (path string, baseOffset int64) {
+	if so := b.meta.Tensors().ShardOffsets; len(so) > 0 {
+		return b.modelPaths[t.ShardIdx], int64(so[t.ShardIdx])
+	}
+	return b.modelPaths[0], int64(b.meta.Tensors().Offset)
+}
+
 func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 	if !b.allocMemory {
 		return errors.New("cannot load model without memory allocation")
@@ -502,7 +522,10 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(b.layers)+1))
 
 	var doneBytes atomic.Uint64
-	totalBytes := uint64(b.meta.Length) - b.meta.Tensors().Offset
+	var totalBytes uint64
+	for _, t := range b.meta.Tensors().Items() {
+		totalBytes += t.Size()
+	}
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
@@ -525,13 +548,14 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 
 			// Create a new FD for each goroutine so that each FD is read sequentially, rather than
 			// seeking around within an FD shared between all goroutines.
-			file, err := os.Open(b.modelPath)
+			filePath, baseOffset := b.tensorLocation(t)
+			file, err := os.Open(filePath)
 			if err != nil {
-				slog.Warn("file open error", "file", b.modelPath, "error", err)
+				slog.Warn("file open error", "file", filePath, "error", err)
 				return err
 			}
 			defer file.Close()
-			sr := io.NewSectionReader(file, int64(b.meta.Tensors().Offset+t.Offset), int64(t.Size()))
+			sr := io.NewSectionReader(file, baseOffset+int64(t.Offset), int64(t.Size()))
 
 			if t.Kind == 4 && tts[0]._type == 39 {
 				// source is mxfp4, target is ggml mxfp4
@@ -547,7 +571,7 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 					}
 					n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
 					if err != nil {
-						slog.Warn("file read error", "file", b.modelPath, "error", err)
+						slog.Warn("file read error", "file", filePath, "error", err)
 						return err
 					}
 					for j := range n / BS {
@@ -585,7 +609,7 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 					}
 					n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Elements()-e)*2)])
 					if err != nil {
-						slog.Warn("file read error", "file", b.modelPath, "error", err)
+						slog.Warn("file read error", "file", filePath, "error", err)
 						return err
 					}
 					fp32 := ConvertToF32(bts, uint32(fsggml.TensorTypeBF16), uint64(n/2))
@@ -613,7 +637,7 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 
 				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
 				if err != nil {
-					slog.Warn("file read error", "file", b.modelPath, "error", err)
+					slog.Warn("file read error", "file", filePath, "error", err)
 					return err
 				}
 
@@ -725,10 +749,10 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		info.Description = C.GoString(props.description)
 		info.ID = C.GoString(props.id)
 		info.Library = C.GoString(props.library)
-		info.ComputeMajor = (int)(props.compute_major)
-		info.ComputeMinor = (int)(props.compute_minor)
-		info.DriverMajor = (int)(props.driver_major)
-		info.DriverMinor = (int)(props.driver_minor)
+		info.ComputeMajor = int(props.compute_major)
+		info.ComputeMinor = int(props.compute_minor)
+		info.DriverMajor = int(props.driver_major)
+		info.DriverMinor = int(props.driver_minor)
 		info.Integrated = props.integrated != 0
 		if props.library != nil {
 			info.Library = C.GoString(props.library)
@@ -738,8 +762,8 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		}
 		info.LibraryPath = ggml.LibPaths()
 		C.ggml_backend_dev_memory(dev, &props.memory_free, &props.memory_total)
-		info.TotalMemory = (uint64)(props.memory_total)
-		info.FreeMemory = (uint64)(props.memory_free)
+		info.TotalMemory = uint64(props.memory_total)
+		info.FreeMemory = uint64(props.memory_free)
 
 		deviceInfos = append(deviceInfos, info)
 	}
@@ -1467,7 +1491,7 @@ func (t *Tensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
 func (t *Tensor) Scale(ctx ml.Context, s float64) ml.Tensor {
 	return &Tensor{
 		b: t.b,
-		t: C.ggml_scale(ctx.(*Context).ctx, t.t, (C.float)(s)),
+		t: C.ggml_scale(ctx.(*Context).ctx, t.t, C.float(s)),
 	}
 }
 
@@ -1944,7 +1968,8 @@ func (t *Tensor) Slice(ctx ml.Context, dim int, low, high, step int) ml.Tensor {
 
 	if dim == 0 && step > 1 {
 		// dim=0,step>1 is a special case so handle it here first
-		return t.View(ctx,
+		return t.View(
+			ctx,
 			low*t.Stride(0), 1,
 			step*t.Stride(0), (high-low+1)/step,
 			t.Stride(1), t.Dim(1),

@@ -254,8 +254,8 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) 
 }
 
 type Server struct {
-	// modelPath is the location of the model to be loaded
-	modelPath string
+	// modelPaths are the shard file paths; single-element for non-split models
+	modelPaths []string
 
 	// loadMu prevents more than one load attempt from occurring at a time
 	loadMu sync.Mutex
@@ -828,7 +828,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 // memory allocated is worst case for text models but not for vision.
 func (s *Server) loadModel(
 	params llama.ModelParams,
-	mpath string,
+	mpaths []string,
 	lpath []string,
 	ppath string,
 	kvSize int,
@@ -838,7 +838,11 @@ func (s *Server) loadModel(
 	multiUserCache bool,
 ) {
 	var err error
-	s.model, err = llama.LoadModelFromFile(mpath, params)
+	if len(mpaths) == 1 {
+		s.model, err = llama.LoadModelFromFile(mpaths[0], params)
+	} else {
+		s.model, err = llama.LoadModelFromSplits(mpaths, params)
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -931,7 +935,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.status = llm.ServerStatusLoadingModel
-		go s.loadModel(params, s.modelPath, req.LoraPath, req.ProjectorPath, req.KvSize, req.KvCacheType, req.FlashAttention, req.NumThreads, req.MultiUserCache)
+		go s.loadModel(params, s.modelPaths, req.LoraPath, req.ProjectorPath, req.KvSize, req.KvCacheType, req.FlashAttention, req.NumThreads, req.MultiUserCache)
 
 	case llm.LoadOperationClose:
 		// No-op for us
@@ -950,7 +954,11 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 func Execute(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
-	mpath := fs.String("model", "", "Path to model binary file")
+	var mpaths []string
+	fs.Func("model", "path to model shard file (may be repeated for split GGUF)", func(v string) error {
+		mpaths = append(mpaths, v)
+		return nil
+	})
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
@@ -967,8 +975,8 @@ func Execute(args []string) error {
 	llama.BackendInit()
 
 	server := &Server{
-		modelPath: *mpath,
-		status:    llm.ServerStatusLaunched,
+		modelPaths: mpaths,
+		status:     llm.ServerStatusLaunched,
 	}
 
 	server.ready.Add(1)

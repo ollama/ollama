@@ -343,16 +343,40 @@ func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isA
 			return nil, errOnlyOneAdapterSupported
 		}
 
-		var digest string
 		var allLayers []*layerGGML
-		for _, v := range files {
-			digest = v
+		for _, digest := range files {
 			layers, err := ggufLayers(digest, fn)
 			if err != nil {
 				return nil, err
 			}
 			allLayers = append(allLayers, layers...)
 		}
+
+		// Sort model shards by split.no so manifest layers are in the right order.
+		// Non-split files all have split.no == 0 and sort stably among themselves.
+		slices.SortStableFunc(allLayers, func(a, b *layerGGML) int {
+			if a.MediaType != "application/vnd.ollama.image.model" || b.MediaType != "application/vnd.ollama.image.model" {
+				return 0
+			}
+			return cmp.Compare(a.KV().SplitNo(), b.KV().SplitNo())
+		})
+
+		// Verify shard count matches declared split.count (0 means not a split model).
+		if len(allLayers) > 1 {
+			var modelLayers []*layerGGML
+			for _, l := range allLayers {
+				if l.MediaType == "application/vnd.ollama.image.model" {
+					modelLayers = append(modelLayers, l)
+				}
+			}
+			if n := len(modelLayers); n > 1 {
+				declared := int(modelLayers[0].KV().SplitCount())
+				if declared != 0 && declared != n {
+					return nil, fmt.Errorf("split GGUF declares %d shards but %d were provided", declared, n)
+				}
+			}
+		}
+
 		return allLayers, nil
 	default:
 		return nil, errUnknownType

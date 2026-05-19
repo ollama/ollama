@@ -30,7 +30,7 @@ func setup(tb testing.TB, n int) ml.Backend {
 		tb.Fatal(err)
 	}
 
-	b, err := ggml.New(f.Name(), ml.BackendParams{AllocMemory: true})
+	b, err := ggml.New([]string{f.Name()}, ml.BackendParams{AllocMemory: true})
 	if err != nil {
 		tb.Fatal(err)
 	}

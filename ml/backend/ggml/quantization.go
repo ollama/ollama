@@ -71,11 +71,12 @@ func Quantize(newType fsggml.TensorType, f32s []float32, shape []uint64) []byte 
 		newSize += C.ggml_quantize_chunk(
 			uint32(newType),
 			(*C.float)(&f32s[f32s_03]),
-			unsafe.Pointer((uintptr)(unsafe.Pointer(&buf[0]))+uintptr(buf_03)),
+			unsafe.Pointer(uintptr(unsafe.Pointer(&buf[0]))+uintptr(buf_03)),
 			0,
 			nrows,
 			nPerRow,
-			nil)
+			nil,
+		)
 	}
 	return buf[:newSize]
 }

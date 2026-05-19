@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"os"
 	"slices"
 	"strings"
 
@@ -141,6 +142,18 @@ func (kv KV) ContextLength() uint64 {
 
 func (kv KV) ChatTemplate() string {
 	return kv.String("tokenizer.chat_template")
+}
+
+// split GGUF metadata
+
+func (kv KV) SplitNo() uint16 {
+	v, _ := kv["split.no"].(uint16)
+	return v
+}
+
+func (kv KV) SplitCount() uint16 {
+	v, _ := kv["split.count"].(uint16)
+	return v
 }
 
 // ssm architecture parameters
@@ -316,7 +329,7 @@ type arrayValueTypes interface {
 }
 
 func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ...T) (T, bool) {
-	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
+	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") && !strings.HasPrefix(key, "split.") {
 		key = kv.Architecture() + "." + key
 	}
 
@@ -329,8 +342,9 @@ func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ..
 }
 
 type Tensors struct {
-	items  []*Tensor
-	Offset uint64
+	items        []*Tensor
+	Offset       uint64
+	ShardOffsets []uint64 // nil for single-file; len == shard count for split GGUF
 }
 
 func (s Tensors) Items(prefix ...string) []*Tensor {
@@ -357,7 +371,8 @@ func (ts Tensors) GroupLayers() map[string]Layer {
 				// blk and mm should have a number after them, join it
 				parts = append(
 					[]string{strings.Join(parts[:index+2], ".")},
-					parts[index+2:]...)
+					parts[index+2:]...,
+				)
 			}
 		}
 
@@ -382,9 +397,10 @@ func (l Layer) Size() (size uint64) {
 }
 
 type Tensor struct {
-	Name   string `json:"name"`
-	Kind   uint32 `json:"kind"`
-	Offset uint64 `json:"-"`
+	Name     string `json:"name"`
+	Kind     uint32 `json:"kind"`
+	Offset   uint64 `json:"-"`
+	ShardIdx int    `json:"-"`
 
 	// Shape is the number of elements in each dimension
 	Shape []uint64 `json:"shape"`
@@ -596,6 +612,59 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 		model:     model,
 		Length:    offset,
 	}, nil
+}
+
+// DecodeShards opens each path, decodes the GGUF header, and merges the
+// results into a single GGML. KV metadata is taken from shard 0; tensors are
+// collected from all shards with ShardIdx set to their source file index.
+// Paths must be ordered by split.no (0-indexed).
+func DecodeShards(paths []string, maxArraySize int) (*GGML, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("no paths provided")
+	}
+	if len(paths) == 1 {
+		f, err := os.Open(paths[0])
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		return Decode(f, maxArraySize)
+	}
+
+	shards := make([]*GGML, len(paths))
+	for i, p := range paths {
+		f, err := os.Open(p)
+		if err != nil {
+			return nil, fmt.Errorf("shard %d: %w", i, err)
+		}
+		defer f.Close()
+		shards[i], err = Decode(f, maxArraySize)
+		if err != nil {
+			return nil, fmt.Errorf("shard %d: %w", i, err)
+		}
+	}
+
+	base := shards[0]
+	kv := base.KV()
+	delete(kv, "split.no")
+	delete(kv, "split.count")
+	delete(kv, "split.tensors.count")
+
+	g := base.model.(*gguf)
+	g.shardOffsets = make([]uint64, len(shards))
+	g.shardOffsets[0] = g.tensorOffset
+
+	for i, shard := range shards[1:] {
+		idx := i + 1
+		sg := shard.model.(*gguf)
+		g.shardOffsets[idx] = sg.tensorOffset
+		for _, t := range sg.tensors {
+			t.ShardIdx = idx
+			g.tensors = append(g.tensors, t)
+		}
+	}
+
+	return base, nil
 }
 
 func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention ml.FlashAttentionType) (kv []uint64, partialOffload, fullOffload uint64) {

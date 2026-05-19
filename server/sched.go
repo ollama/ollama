@@ -52,7 +52,7 @@ type Scheduler struct {
 	loaded        map[string]*runnerRef
 
 	loadFn          func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
-	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
+	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPaths []string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
@@ -441,7 +441,11 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 				s.loadedMu.Unlock()
 				return false
 			}
-			llama, err = s.newServerFn(systemInfo, gpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
+			modelPaths := req.model.ModelPaths
+			if len(modelPaths) == 0 && req.model.ModelPath != "" {
+				modelPaths = []string{req.model.ModelPath}
+			}
+			llama, err = s.newServerFn(systemInfo, gpus, modelPaths, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
 			if err != nil {
 				// some older models are not compatible with newer versions of llama.cpp
 				// show a generalized compatibility error until there is a better way to
@@ -789,11 +793,13 @@ func (runner *runnerRef) LogValue() slog.Value {
 		attrs = append(attrs, slog.String("name", runner.model.Name))
 	}
 	if len(runner.gpus) > 0 {
-		attrs = append(attrs,
+		attrs = append(
+			attrs,
 			slog.Any("inference", runner.gpus),
 		)
 	}
-	attrs = append(attrs,
+	attrs = append(
+		attrs,
 		slog.String("size", format.HumanBytes2(runner.totalSize)),
 		slog.String("vram", format.HumanBytes2(runner.vramSize)),
 		slog.Int("parallel", runner.numParallel),

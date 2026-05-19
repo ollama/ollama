@@ -89,6 +89,16 @@ To import a GGUF model, create a `Modelfile` containing:
 FROM /path/to/file.gguf
 ```
 
+### Importing a split GGUF model
+
+Large models are often distributed as multiple GGUF shard files (e.g. `model-00001-of-00003.gguf`). Add one `FROM` line per shard in any order — Ollama will sort them automatically by their `split.no` metadata before loading:
+
+```dockerfile
+FROM /path/to/model-00001-of-00003.gguf
+FROM /path/to/model-00002-of-00003.gguf
+FROM /path/to/model-00003-of-00003.gguf
+```
+
 For a GGUF adapter, create the `Modelfile` with:
 
 ```dockerfile
