@@ -1,6 +1,7 @@
 # Ollama para IBM Power9 (ppc64le) com GPU NVIDIA Tesla V100
 
 Fork do Ollama oficial (v0.23.2) com suporte à arquitetura ppc64le para IBM AC922 com CUDA.
+
 **Branch:** Todo o trabalho está na branch `ollama-ppc64le`. As demais branches são do repositório oficial do Ollama e podem ser ignoradas.
 
 ## Binário pré-compilado
