@@ -64,27 +64,19 @@ func ensureNpmInstalled() error {
 
 func ensurePiInstalled() (string, error) {
 	if _, err := exec.LookPath("pi"); err == nil {
-		pkg, pkgErr := installedPiPackage()
+		install, pkgErr := installedPiPackageInfo()
 		if pkgErr != nil {
 			fmt.Fprintf(os.Stderr, "%sCould not verify which Pi package is installed: %v%s\n", ansiYellow, pkgErr, ansiReset)
 			fmt.Fprintf(os.Stderr, "Pi will still launch. To switch to the official package manually:\n  npm uninstall -g %s\n  npm install -g %s\n\n", piLegacyNpmPackage, piNpmPackage)
 			return "pi", nil
 		}
 
-		if pkg == piLegacyNpmPackage {
-			ok, err := ConfirmPrompt("Switch Pi to the official package? Your settings and extensions will be kept.")
-			if err != nil {
-				return "", err
-			}
-			if !ok {
-				return "", fmt.Errorf("pi migration cancelled\n\nTo migrate later, re-run:\n  ollama launch pi\n\nOr migrate manually:\n  npm uninstall -g %s\n  npm install -g %s", piLegacyNpmPackage, piNpmPackage)
-			}
-
+		if install.packageName == piLegacyNpmPackage {
 			fmt.Fprintf(os.Stderr, "%sUpdating Pi...%s\n", ansiGray, ansiReset)
-			if err := uninstallLegacyPiPackage(); err != nil {
+			if err := migrateLegacyPiPackage(install.npmPrefix); err != nil {
 				return "", err
 			}
-			if err := installPiPackage(); err != nil {
+			if err := requirePiOnPath(); err != nil {
 				return "", err
 			}
 		}
@@ -93,6 +85,28 @@ func ensurePiInstalled() (string, error) {
 
 	if _, err := exec.LookPath("npm"); err != nil {
 		return "", fmt.Errorf("pi is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch pi")
+	}
+
+	install, pkgErr := installedPiPackageInfo()
+	if pkgErr == nil && install.packageName == piLegacyNpmPackage {
+		fmt.Fprintf(os.Stderr, "%sUpdating Pi...%s\n", ansiGray, ansiReset)
+		if err := migrateLegacyPiPackage(install.npmPrefix); err != nil {
+			return "", err
+		}
+		if err := requirePiOnPath(); err != nil {
+			return "", err
+		}
+		return "pi", nil
+	}
+	if pkgErr == nil && install.packageName == piNpmPackage {
+		fmt.Fprintf(os.Stderr, "%sInstalling Pi...%s\n", ansiGray, ansiReset)
+		if err := installPiPackageWithPrefix(install.npmPrefix); err != nil {
+			return "", err
+		}
+		if err := requirePiOnPath(); err != nil {
+			return "", err
+		}
+		return "pi", nil
 	}
 
 	ok, err := ConfirmPrompt("Install Pi with npm?")
@@ -108,23 +122,60 @@ func ensurePiInstalled() (string, error) {
 		return "", err
 	}
 
-	if _, err := exec.LookPath("pi"); err != nil {
-		return "", fmt.Errorf("pi was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+	if err := requirePiOnPath(); err != nil {
+		return "", err
 	}
 
 	fmt.Fprintf(os.Stderr, "%sPi installed successfully%s\n\n", ansiGreen, ansiReset)
 	return "pi", nil
 }
 
+func requirePiOnPath() error {
+	if _, err := exec.LookPath("pi"); err != nil {
+		return fmt.Errorf("pi was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+	}
+	return nil
+}
+
 func installPiPackage() error {
-	if err := runQuietCommand("npm", "install", "-g", piNpmPackage+"@latest"); err != nil {
+	return installPiPackageWithPrefix("")
+}
+
+func installPiPackageWithPrefix(prefix string) error {
+	if err := runQuietCommand("npm", npmArgs(prefix, "install", "-g", piNpmPackage+"@latest")...); err != nil {
 		return fmt.Errorf("failed to install pi: %w", err)
 	}
 	return nil
 }
 
-func uninstallLegacyPiPackage() error {
-	if err := runQuietCommand("npm", "uninstall", "-g", piLegacyNpmPackage); err != nil {
+func migrateLegacyPiPackage(prefix string) error {
+	if err := installPiPackageForced(prefix); err != nil {
+		return err
+	}
+
+	installed, err := npmPackageInstalledWithPrefix(piNpmPackage, prefix)
+	if err != nil {
+		return fmt.Errorf("failed to verify official pi package: %w", err)
+	}
+	if !installed {
+		return fmt.Errorf("failed to verify official pi package")
+	}
+
+	if err := uninstallLegacyPiPackageWithPrefix(prefix); err != nil {
+		return err
+	}
+	return installPiPackageWithPrefix(prefix)
+}
+
+func installPiPackageForced(prefix string) error {
+	if err := runQuietCommand("npm", npmArgs(prefix, "install", "-g", piNpmPackage+"@latest", "--force")...); err != nil {
+		return fmt.Errorf("failed to install pi: %w", err)
+	}
+	return nil
+}
+
+func uninstallLegacyPiPackageWithPrefix(prefix string) error {
+	if err := runQuietCommand("npm", npmArgs(prefix, "uninstall", "-g", piLegacyNpmPackage)...); err != nil {
 		return fmt.Errorf("failed to remove legacy pi package: %w", err)
 	}
 	return nil
@@ -143,32 +194,92 @@ func runQuietCommand(name string, args ...string) error {
 	return fmt.Errorf("%w: %s", err, msg)
 }
 
-func installedPiPackage() (string, error) {
+type piPackageInstall struct {
+	packageName string
+	npmPrefix   string
+}
+
+func installedPiPackageInfo() (piPackageInstall, error) {
 	if _, err := exec.LookPath("npm"); err != nil {
-		return "", err
+		return piPackageInstall{}, err
 	}
 
-	installed, err := npmPackageInstalled(piNpmPackage)
+	if bin, err := exec.LookPath("pi"); err == nil {
+		install, err := piPackageInstallFromBinary(bin)
+		if err == nil && install.packageName != "" {
+			return install, nil
+		}
+	}
+
+	installed, err := npmPackageInstalled(piLegacyNpmPackage)
 	if err != nil {
-		return "", err
+		return piPackageInstall{}, err
 	}
 	if installed {
-		return piNpmPackage, nil
+		return piPackageInstall{packageName: piLegacyNpmPackage}, nil
 	}
 
-	installed, err = npmPackageInstalled(piLegacyNpmPackage)
+	installed, err = npmPackageInstalled(piNpmPackage)
 	if err != nil {
-		return "", err
+		return piPackageInstall{}, err
 	}
 	if installed {
-		return piLegacyNpmPackage, nil
+		return piPackageInstall{packageName: piNpmPackage}, nil
 	}
 
-	return "", nil
+	return piPackageInstall{}, nil
+}
+
+func piPackageInstallFromBinary(bin string) (piPackageInstall, error) {
+	realPath, err := filepath.EvalSymlinks(bin)
+	if err != nil {
+		realPath = bin
+	}
+
+	dir := filepath.Dir(realPath)
+	for {
+		packageJSON := filepath.Join(dir, "package.json")
+		data, err := os.ReadFile(packageJSON)
+		if err == nil {
+			var payload struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal(data, &payload) == nil && (payload.Name == piLegacyNpmPackage || payload.Name == piNpmPackage) {
+				return piPackageInstall{packageName: payload.Name, npmPrefix: npmPrefixForPackageRoot(dir)}, nil
+			}
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	return piPackageInstall{}, nil
+}
+
+func npmPrefixForPackageRoot(packageRoot string) string {
+	packageRoot = filepath.Clean(packageRoot)
+	nodeModules := string(filepath.Separator) + "node_modules" + string(filepath.Separator)
+	idx := strings.LastIndex(packageRoot, nodeModules)
+	if idx == -1 {
+		return ""
+	}
+
+	libDir := packageRoot[:idx]
+	if filepath.Base(libDir) != "lib" {
+		return ""
+	}
+	return filepath.Dir(libDir)
 }
 
 func npmPackageInstalled(pkg string) (bool, error) {
-	cmd := exec.Command("npm", "ls", "-g", pkg, "--depth=0", "--json")
+	return npmPackageInstalledWithPrefix(pkg, "")
+}
+
+func npmPackageInstalledWithPrefix(pkg, prefix string) (bool, error) {
+	cmd := exec.Command("npm", npmArgs(prefix, "ls", "-g", pkg, "--depth=0", "--json")...)
 	out, err := cmd.Output()
 
 	var payload struct {
@@ -199,6 +310,13 @@ func npmPackageInstalled(pkg string) (bool, error) {
 	}
 
 	return false, err
+}
+
+func npmArgs(prefix string, args ...string) []string {
+	if prefix == "" {
+		return args
+	}
+	return append([]string{"--prefix", prefix}, args...)
 }
 
 func ensurePiWebSearchPackage(bin string) {
