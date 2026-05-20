@@ -35,7 +35,9 @@ chmod +x ollama-ppc64le
 Para compilar o Ollama na POWER9, são necessárias as seguintes dependências com as versões adequadas:
 
 Go: 1.26.0
+
 GCC: 11.2.1 (via gcc-toolset-11)
+
 CMake: >= 3.24
 
 Instale as dependências:
