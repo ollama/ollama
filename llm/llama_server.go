@@ -91,16 +91,18 @@ func WithDefaultEmbeddingNumBatch(opts api.Options) api.Options {
 // llamaServerRunner wraps an upstream llama-server process and implements the LlamaServer interface.
 // It communicates with llama-server over HTTP.
 type llamaServerRunner struct {
-	port      int
-	cmd       *exec.Cmd
-	done      chan struct{}
-	doneErr   error
-	client    *http.Client
-	memTotal  uint64 // actual total buffer size parsed from llama-server logs (bytes)
-	memGPU    uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
-	status    *StatusWriter
-	options   api.Options
-	modelPath string
+	port             int
+	cmd              *exec.Cmd
+	done             chan struct{}
+	doneErr          error
+	client           *http.Client
+	memTotal         uint64 // actual total buffer size parsed from llama-server logs (bytes)
+	memGPU           uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
+	gpuLayers        uint64 // model layers loaded on GPU, parsed from llama-server logs
+	gpuLayerOverflow int    // number of GPU-selected layers partially overflowed to CPU
+	status           *StatusWriter
+	options          api.Options
+	modelPath        string
 	// mediaMarker must match the LLAMA_MEDIA_MARKER value passed to llama-server.
 	// llama.cpp randomizes this by default; Ollama renders stable [img-N] markers
 	// and rewrites them before forwarding the request.
@@ -121,7 +123,7 @@ type llamaServerRunner struct {
 	gpus []ml.DeviceInfo
 
 	ggml        *ggml.GGML
-	totalLayers uint64
+	totalLayers uint64 // maximum offloadable model layers
 	loadStart   time.Time
 
 	sem *semaphore.Weighted
@@ -2080,11 +2082,14 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 }
 
 // MemorySize returns total and GPU memory usage parsed from llama-server's
-// post-load log output (e.g., "Metal model buffer size = 1234.56 MiB").
-// Falls back to model file size if the log hasn't been parsed yet.
+// post-load log output. Full model-layer offload is reported as 100% GPU.
 func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	if s.memTotal > 0 {
-		return s.memTotal, s.memGPU
+		total, vram = s.memTotal, s.memGPU
+		if s.totalLayers > 0 && s.gpuLayers >= s.totalLayers && s.gpuLayerOverflow == 0 {
+			total = vram
+		}
+		return total, vram
 	}
 	// Fallback: use model file size as a rough proxy
 	slog.Debug("llama-server buffer sizes not available, falling back to file size estimate", "model", s.modelPath)
@@ -2158,6 +2163,9 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 // component so repeated fit/probe values can be replaced by the final load.
 var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
 
+var offloadedLayersRegex = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
+var fitOverflowingLayersRegex = regexp.MustCompile(`common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
+
 // isGPUBuffer returns true if the backend buffer name represents GPU memory.
 // CPU, BLAS, and host-pinned buffers (*_Host) are not GPU memory.
 // Device-mapped buffers (e.g., MTL0_Mapped) ARE GPU memory — they're model
@@ -2190,6 +2198,20 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			devName := string(match[1])
 			if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
 				w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
+			}
+		}
+		for _, match := range offloadedLayersRegex.FindAllSubmatch(b, -1) {
+			loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
+			total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
+			if loadedErr == nil && totalErr == nil {
+				w.runner.gpuLayers = loaded
+				w.runner.totalLayers = total
+			}
+		}
+		for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(b, -1) {
+			overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
+			if err == nil && overflowing > 0 {
+				w.runner.gpuLayerOverflow += int(overflowing)
 			}
 		}
 		for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {

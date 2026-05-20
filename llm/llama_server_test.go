@@ -1958,6 +1958,85 @@ func TestMemoryParsingPerDevice(t *testing.T) {
 	}
 }
 
+func TestMemoryParsingWriterMemorySizeFullOffload(t *testing.T) {
+	tests := []struct {
+		name             string
+		lines            []string
+		wantProcessTotal uint64
+		wantProcessVRAM  uint64
+	}{
+		{
+			name: "fully offloaded",
+			lines: []string{
+				"llm_load_tensors: offloading 32 repeating layers to GPU\n",
+				"llm_load_tensors: offloaded 33/33 layers to GPU\n",
+			},
+			wantProcessTotal: 80,
+			wantProcessVRAM:  80,
+		},
+		{
+			name: "partially offloaded",
+			lines: []string{
+				"llm_load_tensors: offloaded 22/33 layers to GPU\n",
+			},
+			wantProcessTotal: 100,
+			wantProcessVRAM:  80,
+		},
+		{
+			name: "missing offload line",
+			lines: []string{
+				"llm_load_tensors: offloading 32 repeating layers to GPU\n",
+			},
+			wantProcessTotal: 100,
+			wantProcessVRAM:  80,
+		},
+		{
+			name: "latest offload line wins",
+			lines: []string{
+				"llm_load_tensors: offloaded 0/33 layers to GPU\n",
+				"llm_load_tensors: offloaded 33/33 layers to GPU\n",
+			},
+			wantProcessTotal: 80,
+			wantProcessVRAM:  80,
+		},
+		{
+			name: "fit overflow suppresses full offload mask",
+			lines: []string{
+				"common_params_fit_impl:   - ROCm0 (AMD Radeon RX 6700 XT): 25 layers ( 5 overflowing),  11065 MiB used,   1036 MiB free\n",
+				"llm_load_tensors: offloaded 25/25 layers to GPU\n",
+			},
+			wantProcessTotal: 100,
+			wantProcessVRAM:  80,
+		},
+		{
+			name: "fit without overflow still masks full offload",
+			lines: []string{
+				"common_params_fit_impl:   - ROCm0 (AMD Radeon Pro W7900): 34 layers ( 0 overflowing),  32765 MiB used,   1144 MiB free\n",
+				"llm_load_tensors: offloaded 34/34 layers to GPU\n",
+			},
+			wantProcessTotal: 80,
+			wantProcessVRAM:  80,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &llamaServerRunner{memTotal: 100, memGPU: 80}
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+			for _, line := range tt.lines {
+				if _, err := w.Write([]byte(line)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			total, vram := runner.MemorySize()
+			if total != tt.wantProcessTotal || vram != tt.wantProcessVRAM {
+				t.Fatalf("MemorySize() = %d/%d, want %d/%d", total, vram, tt.wantProcessTotal, tt.wantProcessVRAM)
+			}
+		})
+	}
+}
+
 func TestVRAMByGPU(t *testing.T) {
 	runner := &llamaServerRunner{
 		vramByDevice: map[string]uint64{
