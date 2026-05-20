@@ -174,52 +174,36 @@
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda_jetpack6"
     },
     {
-      "name": "rocm_v7_1_base",
+      "name": "rocm_v7_14_base",
       "hidden": true,
       "inherits": ["default"],
       "cacheVariables": {
         "GGML_HIP": "ON",
         "CMAKE_HIP_PLATFORM": "amd",
-        "OLLAMA_RUNNER_DIR": "rocm_v7_1",
+        "OLLAMA_RUNNER_DIR": "rocm_v7_14",
         "OLLAMA_GPU_BACKEND": "hip"
       }
     },
     {
-      "name": "rocm_v7_1_windows",
-      "inherits": ["rocm_v7_1_base"],
-      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_1",
+      "name": "rocm_v7_14_linux",
+      "inherits": ["rocm_v7_14_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_14",
       "cacheVariables": {
-        "AMDGPU_TARGETS": "gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151;gfx1200;gfx1201"
+        "AMDGPU_TARGETS": "gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-"
       }
     },
     {
-      "name": "rocm_v7_1_user_arch",
-      "inherits": ["rocm_v7_1_base"],
-      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_1"
-    },
-    {
-      "name": "rocm_v7_2_base",
-      "hidden": true,
-      "inherits": ["default"],
+      "name": "rocm_v7_14_windows",
+      "inherits": ["rocm_v7_14_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_14",
       "cacheVariables": {
-        "GGML_HIP": "ON",
-        "CMAKE_HIP_PLATFORM": "amd",
-        "OLLAMA_RUNNER_DIR": "rocm_v7_2",
-        "OLLAMA_GPU_BACKEND": "hip"
+        "AMDGPU_TARGETS": "gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201"
       }
     },
     {
-      "name": "rocm_v7_2_linux",
-      "inherits": ["rocm_v7_2_base"],
-      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_2",
-      "cacheVariables": {
-        "AMDGPU_TARGETS": "gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx942;gfx950;gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151;gfx1200;gfx1201"
-      }
-    },
-    {
-      "name": "rocm_v7_2_user_arch",
-      "inherits": ["rocm_v7_2_base"],
-      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_2"
+      "name": "rocm_v7_14_user_arch",
+      "inherits": ["rocm_v7_14_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_14"
     },
     {
       "name": "vulkan",
@@ -309,23 +293,18 @@
       "targets": ["ggml-cuda"]
     },
     {
-      "name": "rocm_v7_1_windows",
-      "configurePreset": "rocm_v7_1_windows",
+      "name": "rocm_v7_14_linux",
+      "configurePreset": "rocm_v7_14_linux",
       "targets": ["ggml-hip"]
     },
     {
-      "name": "rocm_v7_1_user_arch",
-      "configurePreset": "rocm_v7_1_user_arch",
+      "name": "rocm_v7_14_windows",
+      "configurePreset": "rocm_v7_14_windows",
       "targets": ["ggml-hip"]
     },
     {
-      "name": "rocm_v7_2_linux",
-      "configurePreset": "rocm_v7_2_linux",
-      "targets": ["ggml-hip"]
-    },
-    {
-      "name": "rocm_v7_2_user_arch",
-      "configurePreset": "rocm_v7_2_user_arch",
+      "name": "rocm_v7_14_user_arch",
+      "configurePreset": "rocm_v7_14_user_arch",
       "targets": ["ggml-hip"]
     },
     {
