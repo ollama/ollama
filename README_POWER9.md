@@ -1,6 +1,7 @@
 # Ollama para IBM Power9 (ppc64le) com GPU NVIDIA Tesla V100
 
 Fork do Ollama oficial (v0.23.2) com suporte à arquitetura ppc64le para IBM AC922 com CUDA.
+**Branch:** Todo o trabalho está na branch `ollama-ppc64le`. As demais branches são do repositório oficial do Ollama e podem ser ignoradas.
 
 ## Binário pré-compilado
 
@@ -30,6 +31,13 @@ chmod +x ollama-ppc64le
 
 ### Passo 1 — Dependências
 
+Para compilar o Ollama na POWER9, são necessárias as seguintes dependências com as versões adequadas:
+
+Go: 1.26.0
+GCC: 11.2.1 (via gcc-toolset-11)
+CMake: >= 3.24
+
+Instale as dependências:
 ```bash
 sudo dnf update -y
 sudo dnf install -y wget git tar make gcc gcc-c++ cmake gcc-toolset-11
