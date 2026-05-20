@@ -1,12 +1,19 @@
 package cache
 
 import (
+	"fmt"
+
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/models/nn"
 )
 
 // RecurrentCache stores state for linear-recurrent layers.
+//
+// Conv state takes its dtype from the first Get call (the activation dtype).
+// Delta state is always float32: the gated-delta recurrent accumulator runs
+// for the full sequence length and needs the extra precision regardless of
+// activation dtype.
 //
 // Conv state shape: [B, convTail, convDim]
 // Delta state shape: [B, numVHeads, headVDim, headKDim]
@@ -48,33 +55,30 @@ func NewRecurrentCache(convTail, convDim, numVHeads, headVDim, headKDim int32) *
 	}
 }
 
-func (c *RecurrentCache) ensure(batch int, dtype mlx.DType) {
+// Get returns the current conv/delta state for the SSM layer's read
+// phase. On first call it lazy-initializes zero-filled state tensors
+// sized from b.InputIDs and dtyped from the caller's activation dtype.
+// On subsequent calls it returns the existing state; batch size and
+// dtype must match the first call, since recurrent state is cumulative
+// and cannot be reshaped without losing history.
+func (c *RecurrentCache) Get(b *batch.Batch, dtype mlx.DType) *nn.RecurrentHistory {
+	batch := b.InputIDs.Dim(0)
 	if batch <= 0 {
 		batch = 1
 	}
 
-	needConv := c.convState == nil || !c.convState.Valid() || c.convState.DType() != dtype ||
-		c.convState.Dim(0) != batch || c.convState.Dim(1) != c.convTail || c.convState.Dim(2) != c.convDim
-	needDelta := c.deltaState == nil || !c.deltaState.Valid() || c.deltaState.DType() != dtype ||
-		c.deltaState.Dim(0) != batch || c.deltaState.Dim(1) != c.numVHeads || c.deltaState.Dim(2) != c.headVDim || c.deltaState.Dim(3) != c.headKDim
-	if !needConv && !needDelta {
-		return
+	if c.convState != nil {
+		if got := c.convState.Dim(0); got != batch {
+			panic(fmt.Sprintf("recurrent cache: batch size changed mid-sequence (have %d, got %d)", got, batch))
+		}
+		if got := c.convState.DType(); got != dtype {
+			panic(fmt.Sprintf("recurrent cache: conv dtype changed mid-sequence (have %v, got %v)", got, dtype))
+		}
+		return nn.NewRecurrentHistory(c.convState, c.deltaState)
 	}
 
-	if needConv {
-		c.convState = c.setState(c.convState, mlx.Zeros(dtype, batch, c.convTail, c.convDim), false)
-	}
-	if needDelta {
-		c.deltaState = c.setState(c.deltaState, mlx.Zeros(dtype, batch, c.numVHeads, c.headVDim, c.headKDim), false)
-	}
-}
-
-// Get returns the current conv/delta state for the SSM layer's read
-// phase. Lazy-initializes zero-filled state tensors using b.InputIDs
-// for the batch size; reallocates if the existing state's batch size
-// or dtype no longer matches.
-func (c *RecurrentCache) Get(b *batch.Batch, dtype mlx.DType) *nn.RecurrentHistory {
-	c.ensure(b.InputIDs.Dim(0), dtype)
+	c.convState = c.setState(nil, mlx.Zeros(dtype, batch, c.convTail, c.convDim), false)
+	c.deltaState = c.setState(nil, mlx.Zeros(mlx.DTypeFloat32, batch, c.numVHeads, c.headVDim, c.headKDim), false)
 	return nn.NewRecurrentHistory(c.convState, c.deltaState)
 }
 
