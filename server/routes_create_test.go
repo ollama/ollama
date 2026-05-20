@@ -329,6 +329,74 @@ func TestCreateModelValidatesSplitGGUFWithOriginalShardNames(t *testing.T) {
 	}
 }
 
+func TestBaseLayerTensorsReadsAllSplitGGUFShards(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	firstData := []byte{1, 2, 3, 4}
+	secondData := []byte{5, 6, 7, 8}
+
+	_, firstDigest := createBinFile(t, ggml.KV{
+		"general.architecture":       "qwen35",
+		"general.file_type":          uint32(ggml.FileTypeF32),
+		"qwen35.split.no":            uint32(0),
+		"qwen35.split.count":         uint32(2),
+		"qwen35.split.tensors.count": int32(2),
+	}, []*ggml.Tensor{
+		{
+			Name:     "blk.0.attn_q.weight",
+			Kind:     uint32(ggml.TensorTypeF32),
+			Shape:    []uint64{1},
+			WriterTo: bytes.NewReader(firstData),
+		},
+	})
+	_, secondDigest := createBinFile(t, ggml.KV{
+		"general.architecture":       "qwen35",
+		"general.file_type":          uint32(ggml.FileTypeF32),
+		"qwen35.split.no":            uint32(1),
+		"qwen35.split.count":         uint32(2),
+		"qwen35.split.tensors.count": int32(2),
+	}, []*ggml.Tensor{
+		{
+			Name:     "blk.1.attn_q.weight",
+			Kind:     uint32(ggml.TensorTypeF32),
+			Shape:    []uint64{1},
+			WriterTo: bytes.NewReader(secondData),
+		},
+	})
+
+	baseLayers, err := convertModelFromFiles(map[string]string{
+		"model-00001-of-00002.gguf": firstDigest,
+		"model-00002-of-00002.gguf": secondDigest,
+	}, nil, false, func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(baseLayers), 1; got != want {
+		t.Fatalf("base layers = %d, want %d", got, want)
+	}
+
+	tensors, cleanup, err := baseLayerTensors(baseLayers[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	byName := map[string][]byte{}
+	for _, tensor := range tensors {
+		var b bytes.Buffer
+		if _, err := tensor.WriteTo(&b); err != nil {
+			t.Fatal(err)
+		}
+		byName[tensor.Name] = b.Bytes()
+	}
+
+	if got := byName["blk.0.attn_q.weight"]; !bytes.Equal(got, firstData) {
+		t.Fatalf("first shard tensor data = %v, want %v", got, firstData)
+	}
+	if got := byName["blk.1.attn_q.weight"]; !bytes.Equal(got, secondData) {
+		t.Fatalf("second shard tensor data = %v, want %v", got, secondData)
+	}
+}
+
 func TestCreateModelAddsDefaultLlavaProjectorType(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 

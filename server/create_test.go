@@ -95,7 +95,7 @@ func TestConvertFromSafetensors(t *testing.T) {
 				"tokenizer.json": tokenizer,
 			}
 
-			_, err := convertFromSafetensors(files, nil, false, func(resp api.ProgressResponse) {})
+			_, err := convertFromSafetensors(files, nil, false, "", true, func(resp api.ProgressResponse) {})
 
 			if (tt.wantErr == nil && err != nil) ||
 				(tt.wantErr != nil && err == nil) ||

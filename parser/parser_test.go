@@ -73,15 +73,21 @@ DRAFT ./assistant
 	assert.Contains(t, modelfile.String(), "DRAFT ./assistant")
 }
 
-func TestCreateRequestDraftRequiresExperimental(t *testing.T) {
+func TestCreateRequestDraftFiles(t *testing.T) {
+	dir := t.TempDir()
+	draft := filepath.Join(dir, "draft.gguf")
+	require.NoError(t, os.WriteFile(draft, []byte("draft"), 0o644))
+
 	modelfile, err := ParseFile(strings.NewReader(`
 FROM base
-DRAFT ./assistant
+DRAFT ./draft.gguf
 `))
 	require.NoError(t, err)
 
-	_, err = modelfile.CreateRequest("")
-	require.ErrorContains(t, err, "DRAFT requires --experimental")
+	req, err := modelfile.CreateRequest(dir)
+	require.NoError(t, err)
+	require.Len(t, req.DraftFiles, 1)
+	assert.Contains(t, req.DraftFiles, draft)
 }
 
 func TestParseFileTrimSpace(t *testing.T) {

@@ -2321,7 +2321,8 @@ func chatModeForModel(m *Model) chatExecutionMode {
 
 func llamaServerConfigForModel(m *Model) llm.LlamaServerConfig {
 	return llm.LlamaServerConfig{
-		DisableJinja: usesOllamaRenderedChat(m),
+		DisableJinja:   usesOllamaRenderedChat(m),
+		DraftModelPath: m.DraftPath,
 	}
 }
 

@@ -303,6 +303,7 @@ func startLlamaServer(
 	params = appendJinjaArgs(params, config)
 
 	params = appendMMProjArgs(params, modelPath, projectors, opts, gpus, modelLayers)
+	params = appendMTPDraftArgs(params, config, opts)
 
 	params = append(params, qwenVLServerArgs(modelArch)...)
 
@@ -607,6 +608,26 @@ func appendJinjaArgs(params []string, config LlamaServerConfig) []string {
 	return params
 }
 
+func appendMTPDraftArgs(params []string, config LlamaServerConfig, opts api.Options) []string {
+	if !config.EnableMTP && config.DraftModelPath == "" {
+		return params
+	}
+	if opts.DraftNumPredict <= 0 {
+		return params
+	}
+
+	params = append(params, "--spec-type", "draft-mtp")
+	params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
+	if config.DraftModelPath != "" {
+		params = append(params, "--spec-draft-model", config.DraftModelPath)
+	}
+	return params
+}
+
+func hasMTPDraft(f *ggml.GGML) bool {
+	return f.KV().Uint("nextn_predict_layers") > 0
+}
+
 // NewLlamaServerRunner creates a new llama-server runner that wraps the upstream llama-server binary.
 func NewLlamaServerRunner(
 	gpus []ml.DeviceInfo,
@@ -650,6 +671,9 @@ func NewLlamaServerRunner(
 		len(f.Tensors().Items("v.")) > 0 &&
 		compatClipArches[arch] {
 		projectors = []string{modelPath}
+	}
+	if config.DraftModelPath == "" && hasMTPDraft(f) {
+		config.EnableMTP = true
 	}
 
 	gpuLibs := ml.LibraryPaths(gpus)
@@ -2163,8 +2187,10 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 // component so repeated fit/probe values can be replaced by the final load.
 var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
 
-var offloadedLayersRegex = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
-var fitOverflowingLayersRegex = regexp.MustCompile(`common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
+var (
+	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
+	fitOverflowingLayersRegex = regexp.MustCompile(`common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
+)
 
 // isGPUBuffer returns true if the backend buffer name represents GPU memory.
 // CPU, BLAS, and host-pinned buffers (*_Host) are not GPU memory.

@@ -68,7 +68,9 @@ type LlamaServer interface {
 }
 
 type LlamaServerConfig struct {
-	DisableJinja bool
+	DisableJinja   bool
+	EnableMTP      bool
+	DraftModelPath string
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.

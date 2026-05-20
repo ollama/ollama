@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"math"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/d4l3k/go-bfloat16"
@@ -38,6 +41,8 @@ type qwen3NextTextConfig struct {
 	MaxPositionEmbeddings uint32  `json:"max_position_embeddings"`
 	HiddenSize            uint32  `json:"hidden_size"`
 	NumHiddenLayers       uint32  `json:"num_hidden_layers"`
+	NumNextNPredictLayers uint32  `json:"num_nextn_predict_layers"`
+	MTPNumHiddenLayers    uint32  `json:"mtp_num_hidden_layers"`
 	IntermediateSize      uint32  `json:"intermediate_size"`
 	NumAttentionHeads     uint32  `json:"num_attention_heads"`
 	NumKeyValueHeads      uint32  `json:"num_key_value_heads"`
@@ -113,6 +118,16 @@ var (
 func (q *qwen3NextModel) parseMore(fsys fs.FS) error {
 	if q.TextConfig != nil {
 		q.qwen3NextTextConfig = *q.TextConfig
+	}
+	if q.NumNextNPredictLayers == 0 {
+		q.NumNextNPredictLayers = q.MTPNumHiddenLayers
+	}
+	if q.NumNextNPredictLayers == 0 {
+		nextn, err := qwen3NextInferNextNPredictLayers(fsys)
+		if err != nil {
+			return err
+		}
+		q.NumNextNPredictLayers = nextn
 	}
 
 	if q.RopeTheta == 0 {
@@ -194,6 +209,150 @@ func (q *qwen3NextModel) parseMore(fsys fs.FS) error {
 	return nil
 }
 
+func qwen3NextInferNextNPredictLayers(fsys fs.FS) (uint32, error) {
+	paths, err := fs.Glob(fsys, "*.safetensors")
+	if err != nil {
+		return 0, err
+	}
+
+	maxLayer := -1
+	hasMTP := false
+	for _, p := range paths {
+		f, err := fsys.Open(p)
+		if err != nil {
+			return 0, err
+		}
+
+		var n int64
+		if err := binary.Read(f, binary.LittleEndian, &n); err != nil {
+			f.Close()
+			return 0, err
+		}
+
+		b := bytes.NewBuffer(make([]byte, 0, n))
+		if _, err = io.CopyN(b, f, n); err != nil {
+			f.Close()
+			return 0, err
+		}
+		f.Close()
+
+		var headers map[string]safetensorMetadata
+		if err := json.NewDecoder(b).Decode(&headers); err != nil {
+			return 0, err
+		}
+
+		for name, value := range headers {
+			if value.Type == "" || !strings.HasPrefix(name, "mtp.") {
+				continue
+			}
+			hasMTP = true
+			rest := strings.TrimPrefix(name, "mtp.layers.")
+			layer, suffix, ok := strings.Cut(rest, ".")
+			if !ok {
+				continue
+			}
+			n, err := strconv.Atoi(layer)
+			if err == nil && n > maxLayer && suffix != "" {
+				maxLayer = n
+			}
+		}
+	}
+
+	if maxLayer >= 0 {
+		return uint32(maxLayer + 1), nil
+	}
+	if hasMTP {
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func ConvertQwen35MTPDraft(fsys fs.FS, f *os.File, baseKV ggml.KV, baseTensors []*ggml.Tensor) error {
+	arch := baseKV.Architecture()
+	if arch != "qwen35" && arch != "qwen35moe" {
+		return fmt.Errorf("MTP draft safetensors require a qwen3.5 base model, got %q", arch)
+	}
+
+	baseBlocks := baseKV.Uint("block_count")
+	if baseBlocks == 0 {
+		return fmt.Errorf("MTP draft safetensors require a base model with block_count")
+	}
+	if baseKV.Uint("nextn_predict_layers") > 0 {
+		return fmt.Errorf("MTP draft safetensors require a base model without embedded MTP layers")
+	}
+
+	nextn, err := qwen3NextInferNextNPredictLayers(fsys)
+	if err != nil {
+		return err
+	}
+	if nextn == 0 {
+		return fmt.Errorf("MTP draft safetensors did not contain mtp tensors")
+	}
+
+	q := &qwen3NextModel{
+		qwen3NextTextConfig: qwen3NextTextConfig{
+			NumHiddenLayers:       baseBlocks,
+			NumNextNPredictLayers: nextn,
+		},
+	}
+	ts, err := parseTensors(fsys, strings.NewReplacer(q.Replacements()...))
+	if err != nil {
+		return err
+	}
+	if err := ensureUniqueTensorNames(ts); err != nil {
+		return err
+	}
+
+	mtpTensors := q.Tensors(ts)
+	if len(mtpTensors) == 0 {
+		return fmt.Errorf("MTP draft safetensors did not produce GGUF tensors")
+	}
+	for _, tensor := range mtpTensors {
+		if !qwen35MTPDraftTensorName(tensor.Name, baseBlocks, nextn) {
+			return fmt.Errorf("MTP draft safetensors produced unexpected tensor %q", tensor.Name)
+		}
+		tensor.Shape = slices.Clone(tensor.Shape)
+		slices.Reverse(tensor.Shape)
+	}
+
+	kv := maps.Clone(baseKV)
+	qwen35RemoveSplitMetadata(kv, arch)
+	kv[arch+".block_count"] = baseBlocks + nextn
+	kv[arch+".nextn_predict_layers"] = nextn
+
+	tensors := make([]*ggml.Tensor, 0, len(baseTensors)+len(mtpTensors))
+	tensors = append(tensors, baseTensors...)
+	tensors = append(tensors, mtpTensors...)
+
+	var parameters uint64
+	for _, tensor := range tensors {
+		parameters += tensor.Elements()
+	}
+	kv["general.parameter_count"] = parameters
+
+	return ggml.WriteGGUF(f, kv, tensors)
+}
+
+func qwen35RemoveSplitMetadata(kv ggml.KV, arch string) {
+	for _, key := range []string{
+		"split.no",
+		"split.count",
+		"split.tensors.count",
+	} {
+		delete(kv, key)
+		delete(kv, arch+"."+key)
+	}
+}
+
+func qwen35MTPDraftTensorName(name string, base, nextn uint32) bool {
+	for i := range nextn {
+		if strings.HasPrefix(name, fmt.Sprintf("blk.%d.", base+i)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (q *qwen3NextModel) kvHeadCounts() ([]uint32, error) {
 	if len(q.LayerTypes) > 0 {
 		kv := make([]uint32, q.NumHiddenLayers)
@@ -271,7 +430,10 @@ func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 	}
 	kv["general.architecture"] = arch
 	kv["tokenizer.ggml.pre"] = "qwen35"
-	kv["block_count"] = q.NumHiddenLayers
+	kv["block_count"] = q.NumHiddenLayers + q.NumNextNPredictLayers
+	if q.NumNextNPredictLayers > 0 {
+		kv["nextn_predict_layers"] = q.NumNextNPredictLayers
+	}
 	kv["context_length"] = q.MaxPositionEmbeddings
 	kv["embedding_length"] = q.HiddenSize
 	kv["feed_forward_length"] = q.IntermediateSize
@@ -488,7 +650,7 @@ func (q *qwen3NextModel) ProjectorKV(*Tokenizer) KV {
 func (q *qwen3NextModel) TextTensors(ts []Tensor, _ *Tokenizer) []*ggml.Tensor {
 	var text []Tensor
 	for _, t := range ts {
-		if qwen3NextVisionTensor(t.Name()) || strings.HasPrefix(t.Name(), "mtp.") {
+		if qwen3NextVisionTensor(t.Name()) {
 			continue
 		}
 		text = append(text, t)
@@ -795,6 +957,13 @@ func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
 		name := t.Name()
 		shape := t.Shape()
 
+		if names := q.mtpTensorNames(name); len(names) > 0 {
+			for _, name := range names {
+				out = q.appendDirectTensor(out, t, name)
+			}
+			continue
+		}
+
 		if strings.HasSuffix(name, ".ssm_in.weight") {
 			if qkv, gate, ok := q.splitQKVZTensor(t); ok {
 				out = append(out, qkv, gate)
@@ -894,6 +1063,73 @@ func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	}
 
 	return out
+}
+
+func (q *qwen3NextModel) appendDirectTensor(out []*ggml.Tensor, t Tensor, name string) []*ggml.Tensor {
+	if qwen3NextShouldShiftNorm(name) {
+		t = t.Clone()
+		t.SetRepacker(q.addOne)
+	}
+	return append(out, &ggml.Tensor{Name: name, Kind: t.Kind(), Shape: slices.Clone(t.Shape()), WriterTo: t})
+}
+
+func qwen3NextShouldShiftNorm(name string) bool {
+	if strings.HasSuffix(name, ".ssm_norm.weight") {
+		return false
+	}
+	return strings.HasSuffix(name, "_norm.weight") ||
+		strings.HasSuffix(name, ".nextn.enorm.weight") ||
+		strings.HasSuffix(name, ".nextn.hnorm.weight")
+}
+
+func (q *qwen3NextModel) mtpTensorNames(name string) []string {
+	if !strings.HasPrefix(name, "mtp.") {
+		return nil
+	}
+
+	base := q.NumHiddenLayers
+	nextn := q.NumNextNPredictLayers
+	if nextn == 0 {
+		nextn = 1
+	}
+
+	if rest := strings.TrimPrefix(name, "mtp.layers."); rest != name {
+		layer, suffix, ok := strings.Cut(rest, ".")
+		if !ok {
+			return nil
+		}
+		idx, err := strconv.ParseUint(layer, 10, 32)
+		if err != nil {
+			return nil
+		}
+		return []string{fmt.Sprintf("blk.%d.%s", base+uint32(idx), suffix)}
+	}
+
+	var suffix string
+	switch name {
+	case "mtp.fc.weight":
+		suffix = "nextn.eh_proj.weight"
+	case "mtp.pre_fc_norm_embedding.weight":
+		suffix = "nextn.enorm.weight"
+	case "mtp.pre_fc_norm_hidden.weight":
+		suffix = "nextn.hnorm.weight"
+	case "mtp.norm.weight":
+		suffix = "nextn.shared_head_norm.weight"
+	case "mtp.embed_tokens.weight":
+		suffix = "nextn.embed_tokens.weight"
+	case "mtp.shared_head.head.weight":
+		suffix = "nextn.shared_head_head.weight"
+	case "mtp.shared_head.norm.weight":
+		suffix = "nextn.shared_head_norm.weight"
+	default:
+		return nil
+	}
+
+	names := make([]string, 0, nextn)
+	for i := range nextn {
+		names = append(names, fmt.Sprintf("blk.%d.%s", base+i, suffix))
+	}
+	return names
 }
 
 func (q *qwen3NextModel) repackReorderDim(dim, headDim int) Repacker {

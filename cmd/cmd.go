@@ -234,9 +234,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	// This gates both safetensors LLM and imagegen model creation
 	experimental, _ := cmd.Flags().GetBool("experimental")
 	draftQuantize, _ := cmd.Flags().GetString("draft-quantize")
-	if draftQuantize != "" && !experimental {
-		return errors.New("--draft-quantize requires --experimental")
-	}
 	if experimental {
 		if !isLocalhost() {
 			return errors.New("remote safetensor model creation not yet supported")
@@ -331,6 +328,12 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	if quantize != "" {
 		req.Quantize = quantize
 	}
+	if draftQuantize != "" {
+		if len(req.DraftFiles) == 0 {
+			return errors.New("--draft-quantize requires a DRAFT model")
+		}
+		req.DraftQuantize = draftQuantize
+	}
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -366,12 +369,26 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		})
 	}
 
+	draftFiles := syncmap.NewSyncMap[string, string]()
+	draftFileNames := createRequestFileNames(req.DraftFiles)
+	for f, digest := range req.DraftFiles {
+		g.Go(func() error {
+			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
+				return err
+			}
+
+			draftFiles.Store(draftFileNames[f], digest)
+			return nil
+		})
+	}
+
 	if err := g.Wait(); err != nil {
 		return err
 	}
 
 	req.Files = files.Items()
 	req.Adapters = adapters.Items()
+	req.DraftFiles = draftFiles.Items()
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
@@ -2335,9 +2352,6 @@ func NewCLI() *cobra.Command {
 			// Skip server check for experimental mode (writes directly to disk)
 			if experimental, _ := cmd.Flags().GetBool("experimental"); experimental {
 				return nil
-			}
-			if draftQuantize, _ := cmd.Flags().GetString("draft-quantize"); draftQuantize != "" {
-				return errors.New("--draft-quantize requires --experimental")
 			}
 			return checkServerHeartbeat(cmd, args)
 		},

@@ -1447,6 +1447,48 @@ func TestAppendJinjaArgs(t *testing.T) {
 	}
 }
 
+func TestAppendMTPDraftArgs(t *testing.T) {
+	tests := []struct {
+		name   string
+		config LlamaServerConfig
+		opts   api.Options
+		want   []string
+	}{
+		{
+			name: "no draft model leaves speculative decoding disabled",
+			opts: api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want: []string{"base"},
+		},
+		{
+			name:   "embedded draft uses configured draft depth",
+			config: LlamaServerConfig{EnableMTP: true},
+			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4"},
+		},
+		{
+			name:   "separate draft model uses configured draft depth",
+			config: LlamaServerConfig{DraftModelPath: "draft.gguf"},
+			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 8}},
+			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-model", "draft.gguf"},
+		},
+		{
+			name:   "zero draft depth disables speculative decoding",
+			config: LlamaServerConfig{EnableMTP: true, DraftModelPath: "draft.gguf"},
+			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 0}},
+			want:   []string{"base"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendMTPDraftArgs([]string{"base"}, tt.config, tt.opts)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendMTPDraftArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func testIntPtr(v int) *int {
 	return &v
 }

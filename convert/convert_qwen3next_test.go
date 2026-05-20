@@ -259,6 +259,63 @@ func TestQwen35KVFromTextConfig(t *testing.T) {
 	}
 }
 
+func TestQwen35MTPTensors(t *testing.T) {
+	m := &qwen3NextModel{
+		ModelParameters: ModelParameters{
+			ModelType: "qwen3_5",
+		},
+		qwen3NextTextConfig: qwen3NextTextConfig{
+			NumHiddenLayers:       32,
+			NumNextNPredictLayers: 1,
+		},
+	}
+
+	kv := m.KV(&Tokenizer{Vocabulary: &Vocabulary{}})
+	if got, want := kv["block_count"], uint32(33); got != want {
+		t.Fatalf("unexpected block_count: got %v want %v", got, want)
+	}
+	if got, want := kv["nextn_predict_layers"], uint32(1); got != want {
+		t.Fatalf("unexpected nextn_predict_layers: got %v want %v", got, want)
+	}
+
+	tensors := m.Tensors([]Tensor{
+		&fakeTensor{name: "mtp.fc.weight", shape: []uint64{2, 2}, data: make([]float32, 4)},
+		&fakeTensor{name: "mtp.pre_fc_norm_embedding.weight", shape: []uint64{2}, data: []float32{0, 1}},
+		&fakeTensor{name: "mtp.pre_fc_norm_hidden.weight", shape: []uint64{2}, data: []float32{0, 1}},
+		&fakeTensor{name: "mtp.norm.weight", shape: []uint64{2}, data: []float32{0, 1}},
+		&fakeTensor{name: "mtp.layers.0.attn_q.weight", shape: []uint64{2, 2}, data: make([]float32, 4)},
+		&fakeTensor{name: "mtp.layers.0.ffn_down.weight", shape: []uint64{2, 2}, data: make([]float32, 4)},
+	})
+
+	byName := map[string]*ggml.Tensor{}
+	for _, tensor := range tensors {
+		byName[tensor.Name] = tensor
+	}
+
+	for _, name := range []string{
+		"blk.32.nextn.eh_proj.weight",
+		"blk.32.nextn.enorm.weight",
+		"blk.32.nextn.hnorm.weight",
+		"blk.32.nextn.shared_head_norm.weight",
+		"blk.32.attn_q.weight",
+		"blk.32.ffn_down.weight",
+	} {
+		if _, ok := byName[name]; !ok {
+			t.Fatalf("missing MTP tensor %q", name)
+		}
+	}
+
+	for _, name := range []string{
+		"blk.32.nextn.enorm.weight",
+		"blk.32.nextn.hnorm.weight",
+		"blk.32.nextn.shared_head_norm.weight",
+	} {
+		if got, want := readTensorData(t, byName[name]), []float32{1, 2}; !slices.Equal(got, want) {
+			t.Fatalf("unexpected shifted norm values for %s: got %v want %v", name, got, want)
+		}
+	}
+}
+
 func TestQwen35NativeSplitKV(t *testing.T) {
 	m := &qwen3NextModel{
 		ModelParameters: ModelParameters{

@@ -65,6 +65,7 @@ type Model struct {
 	Config            model.ConfigV2
 	ShortName         string
 	ModelPath         string
+	DraftPath         string
 	ParentModel       string
 	HasChatTemplate   bool
 	HasLegacyTemplate bool
@@ -353,6 +354,13 @@ func (m *Model) String() string {
 		})
 	}
 
+	if m.DraftPath != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "draft",
+			Args: m.DraftPath,
+		})
+	}
+
 	for _, projector := range m.ProjectorPaths {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "model",
@@ -474,6 +482,8 @@ func GetModel(name string) (*Model, error) {
 				modelHasPooling = f.KeyValue("pooling_type").Valid()
 				f.Close()
 			}
+		case manifest.MediaTypeImageDraft:
+			m.DraftPath = filename
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version

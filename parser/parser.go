@@ -84,7 +84,23 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 				}
 			}
 		case "draft":
-			return nil, errors.New("DRAFT requires --experimental")
+			path, err := expandPath(c.Args, relativeDir)
+			if err != nil {
+				return nil, err
+			}
+
+			digestMap, err := fileDigestMap(path)
+			if err != nil {
+				return nil, err
+			}
+
+			if req.DraftFiles == nil {
+				req.DraftFiles = digestMap
+			} else {
+				for k, v := range digestMap {
+					req.DraftFiles[k] = v
+				}
+			}
 		case "adapter":
 			path, err := expandPath(c.Args, relativeDir)
 			if err != nil {
