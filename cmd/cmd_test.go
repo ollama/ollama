@@ -1398,6 +1398,41 @@ func TestListHandler(t *testing.T) {
 	}
 }
 
+func TestListCommandHelpShowsOptionalPrefix(t *testing.T) {
+	cmd := NewCLI()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"list", "--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := out.String()
+	for _, want := range []string{
+		"ollama list [MODEL_PREFIX]",
+		"Aliases:",
+		"list, ls",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected help output to contain %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestListCommandRejectsExtraArgs(t *testing.T) {
+	cmd := NewCLI()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"list", "llama", "mistral"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "accepts at most 1 arg") {
+		t.Fatalf("expected max args error, got %v", err)
+	}
+}
+
 func TestCreateHandler(t *testing.T) {
 	tests := []struct {
 		name           string
