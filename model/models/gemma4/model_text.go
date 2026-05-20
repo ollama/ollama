@@ -226,6 +226,64 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 	return m.OutputNorm.Forward(ctx, hiddenState, m.eps)
 }
 
+func (m *TextModel) TokenEmbeddings(ctx ml.Context, tokens ml.Tensor) ml.Tensor {
+	h := m.TokenEmbedding.Forward(ctx, tokens)
+	return h.Scale(ctx, math.Sqrt(float64(m.hiddenSize)))
+}
+
+func (m *TextModel) ForwardWithHidden(ctx ml.Context, batch input.Batch, cache kvcache.Cache) (normed, preNormHidden ml.Tensor) {
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+
+	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
+	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.hiddenSize)))
+
+	for _, image := range batch.Multimodal {
+		visionOutputs := image.Multimodal[0].Tensor
+		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+	}
+
+	var perLayerInputs ml.Tensor
+	if m.PerLayerProjector != nil {
+		perLayerInputs = m.PerLayerProjector.Forward(ctx, batch, hiddenState, &m.TextOptions)
+	}
+
+	for i := range len(m.Layers) {
+		layer := m.Layers[i]
+		if cache != nil {
+			cache.SetLayer(i)
+			cacheType := cacheTypeSWA
+			if !m.isLocal(i) {
+				cacheType = cacheTypeCausal
+			}
+			wc := cache.(*kvcache.WrapperCache)
+			wc.SetLayerType(cacheType)
+
+			if causal, ok := wc.UnderlyingCache().(*kvcache.Causal); ok {
+				causal.SetCausal(ctx, kvcache.CausalOptions{})
+			}
+		}
+
+		var lastLayerOutputs ml.Tensor
+		if i == len(m.Layers)-1 {
+			lastLayerOutputs = batch.Outputs
+		}
+
+		var perLayerInput ml.Tensor
+		if perLayerInputs != nil {
+			perLayerInput = perLayerInputs.View(ctx, i*perLayerInputs.Stride(1), perLayerInputs.Dim(0), perLayerInputs.Stride(2), perLayerInputs.Dim(2))
+		}
+
+		isShared := false
+		if donorLayer, ok := m.kvDonorMap[i]; ok {
+			cache.SetLayer(donorLayer)
+			isShared = true
+		}
+		hiddenState = layer.Forward(ctx, i, hiddenState, positions, perLayerInput, lastLayerOutputs, cache, isShared, &m.TextOptions)
+	}
+
+	return m.OutputNorm.Forward(ctx, hiddenState, m.eps), hiddenState
+}
+
 // PerLayerProjector implements PLE.
 type PerLayerProjector struct {
 	TokenEmbedding *nn.Embedding `gguf:"per_layer_token_embd"`

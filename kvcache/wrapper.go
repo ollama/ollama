@@ -108,3 +108,27 @@ func (c *WrapperCache) Remove(seq int, beginIndex, endIndex int32) error {
 
 	return nil
 }
+
+func (c *WrapperCache) BeginSpeculation(seq int) {
+	for _, cache := range c.caches {
+		if causal, ok := cache.(*Causal); ok {
+			causal.BeginSpeculation(seq)
+		}
+	}
+}
+
+func (c *WrapperCache) Commit(n int) {
+	for _, cache := range c.caches {
+		if causal, ok := cache.(*Causal); ok {
+			causal.Commit(n)
+		}
+	}
+}
+
+func (c *WrapperCache) Rollback() {
+	for _, cache := range c.caches {
+		if causal, ok := cache.(*Causal); ok {
+			causal.Rollback()
+		}
+	}
+}

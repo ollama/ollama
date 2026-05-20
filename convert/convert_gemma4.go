@@ -570,5 +570,14 @@ func (p *gemma4Model) Replacements() []string {
 
 		// Layer scalar
 		"layer_scalar", "layer_output_scale.weight",
+
+		// Draft (MTP assistant) model tensors
+		"draft.pre_projection", "draft.pre_projection",
+		"draft.post_projection", "draft.post_projection",
+		"draft.model.embed_tokens", "draft.token_embd",
+		"draft.model.norm", "draft.output_norm",
+		"draft.model.layers", "draft.blk",
+		"draft.masked_embedding.centroids", "draft.centroids",
+		"draft.masked_embedding.token_ordering", "draft.token_ordering",
 	}
 }

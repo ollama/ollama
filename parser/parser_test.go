@@ -73,7 +73,7 @@ DRAFT ./assistant
 	assert.Contains(t, modelfile.String(), "DRAFT ./assistant")
 }
 
-func TestCreateRequestDraftRequiresExperimental(t *testing.T) {
+func TestCreateRequestDraftAccepted(t *testing.T) {
 	modelfile, err := ParseFile(strings.NewReader(`
 FROM base
 DRAFT ./assistant
@@ -81,7 +81,7 @@ DRAFT ./assistant
 	require.NoError(t, err)
 
 	_, err = modelfile.CreateRequest("")
-	require.ErrorContains(t, err, "DRAFT requires --experimental")
+	require.NoError(t, err)
 }
 
 func TestParseFileTrimSpace(t *testing.T) {

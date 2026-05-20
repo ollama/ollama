@@ -307,6 +307,9 @@ type batchState struct {
 	// modelOutput holds the outputs from this batch
 	modelOutput ml.Tensor
 
+	// hiddenOutput holds the pre-norm hidden state for MTP drafting (nil if MTP not active)
+	hiddenOutput ml.Tensor
+
 	// batchInputs holds the input token pointers which may start as
 	// placeholders later filled in before calling ctx.Compute
 	batchInputs []*input.Input
@@ -628,7 +631,11 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
 	batch.Outputs = nextBatch.ctx.Input().FromInts(batchOutputs, len(batchOutputs))
 	nextBatch.ctx.SetBatchSize(len(batchInputs))
-	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
+	if mtpModel, ok := s.model.(model.MTPModel); ok && mtpModel.HasDraft() {
+		nextBatch.modelOutput, nextBatch.hiddenOutput, err = mtpModel.ForwardMTP(nextBatch.ctx, batch)
+	} else {
+		nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
+	}
 	if err != nil {
 		err = fmt.Errorf("failed to build graph: %w", err)
 		return
@@ -720,12 +727,16 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	s.mu.Unlock()
 
 	activeBatch.batch.Inputs.FromInts(batchInputs)
+	computeTensors := []ml.Tensor{activeBatch.modelOutput}
+	if activeBatch.hiddenOutput != nil {
+		computeTensors = append(computeTensors, activeBatch.hiddenOutput)
+	}
 	activeBatch.ctx.ComputeWithNotify(
 		func() {
 			logutil.Trace("computeBatch: signaling computeStartedCh", "batchID", activeBatch.id)
 			activeBatch.computeStartedCh <- struct{}{}
 		},
-		activeBatch.modelOutput)
+		computeTensors...)
 
 	outputs := activeBatch.modelOutput.Floats()
 	t := time.Now()
@@ -793,6 +804,35 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
+
+		// MTP: if the model supports multi-token prediction and conditions are met,
+		// draft and verify additional tokens in one cycle.
+		if activeBatch.hiddenOutput != nil && isMTPEligible(s.model, seq) {
+			position := int32(len(seq.cache.Inputs) + len(seq.pendingInputs) - 1)
+			acceptedDrafts, nextAfterMTP, mtpOk := runMTPCycle(s, seq, token, logits, activeBatch.hiddenOutput, position, s.model.(tokenizer.Tokenizer))
+			if mtpOk && len(acceptedDrafts) > 0 {
+				tok := s.model.(tokenizer.Tokenizer)
+				hitEOS := false
+				for _, dt := range acceptedDrafts {
+					if tok.Is(dt, tokenizer.SpecialEOS) {
+						s.removeSequence(i, llm.DoneReasonStop)
+						hitEOS = true
+						break
+					}
+					draftPiece, derr := tok.Decode([]int32{dt})
+					if derr != nil {
+						break
+					}
+					seq.pendingResponses = append(seq.pendingResponses, draftPiece)
+					seq.numPredicted++
+					seq.pendingInputs = append(seq.pendingInputs, &input.Input{Token: dt})
+				}
+				if hitEOS {
+					continue
+				}
+				nextBatchTokens[i].Token = nextAfterMTP
+			}
+		}
 
 		// if past the num predict limit
 		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {

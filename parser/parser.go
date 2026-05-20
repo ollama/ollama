@@ -84,7 +84,7 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 				}
 			}
 		case "draft":
-			return nil, errors.New("DRAFT requires --experimental")
+			// TODO: wire draft directory through the standard GGUF convert path
 		case "adapter":
 			path, err := expandPath(c.Args, relativeDir)
 			if err != nil {

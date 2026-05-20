@@ -75,6 +75,13 @@ type Causal struct {
 	backend      ml.Backend
 	ctxs         map[int]ml.Context
 	keys, values map[int]ml.Tensor
+
+	// Speculation state: tracks cells allocated during speculative decoding
+	// (MTP verification) so they can be rolled back if drafts are rejected.
+	speculating    bool
+	specCells      []int             // cell indices allocated during speculation
+	specSeq        int               // the sequence being speculated on
+	specCellRanges map[int]cellRange // snapshot of cellRanges before speculation
 }
 
 type cacheCell struct {
@@ -203,12 +210,20 @@ func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) e
 
 	var locs []int32
 	if !reserve {
-		c.updateSlidingWindow()
+		if !c.speculating {
+			c.updateSlidingWindow()
+		}
 
 		var err error
 		locs, err = c.findLocs()
 		if err != nil {
 			return err
+		}
+
+		if c.speculating {
+			for _, loc := range locs {
+				c.specCells = append(c.specCells, int(loc))
+			}
 		}
 
 		for i, pos := range batch.Positions {
@@ -663,4 +678,68 @@ func (c *Causal) Remove(seq int, beginIndex, endIndex int32) error {
 	}
 
 	return nil
+}
+
+// BeginSpeculation enters speculative mode for a sequence. While speculating,
+// SWA eviction is deferred and all newly allocated cells are tracked so they
+// can be rolled back if the speculation is rejected.
+func (c *Causal) BeginSpeculation(seq int) {
+	c.speculating = true
+	c.specSeq = seq
+	c.specCells = c.specCells[:0]
+	c.specCellRanges = make(map[int]cellRange, len(c.cellRanges))
+	for k, v := range c.cellRanges {
+		c.specCellRanges[k] = v
+	}
+}
+
+// Commit accepts the first n speculated cells and frees the rest, then runs
+// the deferred SWA eviction. If n equals the total number of speculated cells,
+// all are kept.
+func (c *Causal) Commit(n int) {
+	if !c.speculating {
+		return
+	}
+
+	for i := n; i < len(c.specCells); i++ {
+		idx := c.specCells[i]
+		c.cells[idx] = cacheCell{}
+	}
+
+	if n < len(c.specCells) {
+		seqRange := newRange()
+		for i := range c.cells {
+			if len(c.cells[i].sequences) > 0 && slices.Contains(c.cells[i].sequences, c.specSeq) {
+				seqRange.min = min(seqRange.min, i)
+				seqRange.max = max(seqRange.max, i)
+			}
+		}
+		if seqRange == newRange() {
+			delete(c.cellRanges, c.specSeq)
+		} else {
+			c.cellRanges[c.specSeq] = seqRange
+		}
+	}
+
+	c.speculating = false
+	c.specCells = c.specCells[:0]
+	c.specCellRanges = nil
+}
+
+// Rollback discards all speculated cells and restores the cache to its
+// pre-speculation state. No SWA eviction occurs.
+func (c *Causal) Rollback() {
+	if !c.speculating {
+		return
+	}
+
+	for _, idx := range c.specCells {
+		c.cells[idx] = cacheCell{}
+	}
+
+	c.cellRanges = c.specCellRanges
+
+	c.speculating = false
+	c.specCells = c.specCells[:0]
+	c.specCellRanges = nil
 }

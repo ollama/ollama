@@ -40,6 +40,15 @@ type Model interface {
 	Config() config
 }
 
+// MTPModel is an optional interface for models that support multi-token
+// prediction. The runner checks for this interface to enable MTP decoding.
+type MTPModel interface {
+	HasDraft() bool
+	ForwardMTP(ctx ml.Context, batch input.Batch) (logits ml.Tensor, hidden ml.Tensor, err error)
+	MTPDraft(ctx ml.Context, token int32, hidden ml.Tensor, position int32, cache kvcache.Cache, maxDraft int) (draftTokens []int32, err error)
+	MTPVerify(ctx ml.Context, baseLogits []float32, draftTokens []int32, seqID int, position int32, cache kvcache.Cache) (accepted int, nextToken int32, err error)
+}
+
 // Validator is an optional interface that models can implement to perform
 // validation after tensors have been loaded. If validation fails, model
 // loading will fail with the returned error.

@@ -25,6 +25,10 @@ type Sampler struct {
 	grammar     *GrammarSampler
 }
 
+func (s *Sampler) IsGreedy() bool {
+	return s.temperature == 0
+}
+
 func (s *Sampler) Sample(logits []float32) (int32, error) {
 	if len(logits) == 0 {
 		return -1, errors.New("sample: no logits provided to sample")

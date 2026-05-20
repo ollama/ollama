@@ -25,6 +25,7 @@ type Model struct {
 	*VisionModel `gguf:"v"`
 	*TextModel
 	*AudioModel `gguf:"a"`
+	*DraftModel `gguf:"draft"`
 
 	*MultiModalProjector      `gguf:"mm"`
 	*AudioMultimodalProjector `gguf:"mm.a"`
@@ -101,6 +102,7 @@ func New(c fs.Config) (model.Model, error) {
 		TextModel:                newTextModel(c),
 		VisionModel:              newVisionModel(c),
 		AudioModel:               newAudioModel(c),
+		DraftModel:               newDraftModel(c),
 		MultiModalProjector:      &MultiModalProjector{},
 		AudioMultimodalProjector: &AudioMultimodalProjector{},
 		ImageProcessor:           newImageProcessor(c),
@@ -253,6 +255,130 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	}
 
 	return hiddenState, nil
+}
+
+func (m *Model) HasDraft() bool {
+	return m.DraftModel != nil
+}
+
+func (m *Model) ForwardMTP(ctx ml.Context, batch input.Batch) (ml.Tensor, ml.Tensor, error) {
+	if cache := m.Config().Cache; cache != nil {
+		if err := cache.StartForward(ctx, batch, false); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	normed, hidden := m.TextModel.ForwardWithHidden(ctx, batch, m.Cache)
+
+	logits := m.TextModel.Output.Forward(ctx, normed)
+	if m.TextModel.TextOptions.finalLogitSoftcap > 0 {
+		logits = logits.Scale(ctx, 1.0/float64(m.TextModel.TextOptions.finalLogitSoftcap))
+		logits = logits.Tanh(ctx)
+		logits = logits.Scale(ctx, float64(m.TextModel.TextOptions.finalLogitSoftcap))
+	}
+
+	ctx.Forward(logits)
+	return logits, hidden, nil
+}
+
+func (m *Model) MTPDraft(ctx ml.Context, token int32, hidden ml.Tensor, position int32, cache kvcache.Cache, maxDraft int) ([]int32, error) {
+	var draftTokens []int32
+	lastToken := token
+	lastHidden := hidden
+
+	for range maxDraft {
+		tokenTensor := ctx.Input().FromInts([]int32{lastToken}, 1)
+		embedding := m.TextModel.TokenEmbeddings(ctx, tokenTensor)
+		inputEmbeds := embedding.Concat(ctx, lastHidden, 0)
+
+		logits, projected := m.DraftModel.Draft(ctx, inputEmbeds, position, cache, &m.TextModel.TextOptions)
+
+		ctx.Forward(logits)
+		ctx.Compute(logits)
+		logitValues := logits.Floats()
+
+		nextToken := argmaxSlice(logitValues)
+		draftTokens = append(draftTokens, nextToken)
+		lastToken = nextToken
+		lastHidden = projected
+	}
+
+	return draftTokens, nil
+}
+
+func (m *Model) MTPVerify(ctx ml.Context, baseLogits []float32, draftTokens []int32, seqID int, position int32, cache kvcache.Cache) (int, int32, error) {
+	N := len(draftTokens)
+	vocabSize := len(baseLogits)
+
+	baseChoice := argmaxSlice(baseLogits)
+	if N == 0 || baseChoice != draftTokens[0] {
+		return 0, baseChoice, nil
+	}
+
+	positions := make([]int32, N)
+	sequences := make([]int, N)
+	outputs := make([]int32, N)
+	for i := range N {
+		positions[i] = position + 1 + int32(i)
+		sequences[i] = seqID
+		outputs[i] = int32(i)
+	}
+
+	verifyBatch := input.Batch{
+		Inputs:    ctx.Input().FromInts(draftTokens, N),
+		Positions: positions,
+		Sequences: sequences,
+		Outputs:   ctx.Input().FromInts(outputs, N),
+	}
+
+	if err := cache.StartForward(ctx, verifyBatch, false); err != nil {
+		return 0, baseChoice, err
+	}
+
+	normed := m.TextModel.Forward(ctx, verifyBatch, cache)
+	logitsTensor := m.TextModel.Output.Forward(ctx, normed)
+
+	if m.TextModel.TextOptions.finalLogitSoftcap > 0 {
+		logitsTensor = logitsTensor.Scale(ctx, 1.0/float64(m.TextModel.TextOptions.finalLogitSoftcap))
+		logitsTensor = logitsTensor.Tanh(ctx)
+		logitsTensor = logitsTensor.Scale(ctx, float64(m.TextModel.TextOptions.finalLogitSoftcap))
+	}
+
+	ctx.Forward(logitsTensor)
+	ctx.Compute(logitsTensor)
+	allLogits := logitsTensor.Floats()
+
+	accepted := 1
+	for i := 1; i < N; i++ {
+		posLogits := allLogits[i*vocabSize : (i+1)*vocabSize]
+		if argmaxSlice(posLogits) != draftTokens[i] {
+			break
+		}
+		accepted++
+	}
+
+	var nextToken int32
+	if accepted == N {
+		lastLogits := allLogits[(N-1)*vocabSize : N*vocabSize]
+		nextToken = argmaxSlice(lastLogits)
+	} else {
+		mismatchLogits := allLogits[accepted*vocabSize : (accepted+1)*vocabSize]
+		nextToken = argmaxSlice(mismatchLogits)
+	}
+
+	return accepted, nextToken, nil
+}
+
+func argmaxSlice(s []float32) int32 {
+	best := int32(0)
+	bestVal := s[0]
+	for i := int32(1); i < int32(len(s)); i++ {
+		if s[i] > bestVal {
+			bestVal = s[i]
+			best = i
+		}
+	}
+	return best
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {

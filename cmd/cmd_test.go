@@ -1537,7 +1537,7 @@ func TestCreateHandlerDraftQuantizeRequiresExperimental(t *testing.T) {
 	}
 }
 
-func TestCreateHandlerDraftRequiresExperimental(t *testing.T) {
+func TestCreateHandlerDraftAcceptedWithoutExperimental(t *testing.T) {
 	dir := t.TempDir()
 	modelfile := filepath.Join(dir, "Modelfile")
 	if err := os.WriteFile(modelfile, []byte("FROM base\nDRAFT ./assistant\n"), 0o644); err != nil {
@@ -1551,8 +1551,10 @@ func TestCreateHandlerDraftRequiresExperimental(t *testing.T) {
 	cmd.SetContext(t.Context())
 
 	err := CreateHandler(cmd, []string{"test-model"})
-	if err == nil || !strings.Contains(err.Error(), "DRAFT requires --experimental") {
-		t.Fatalf("error = %v, want DRAFT requires --experimental", err)
+	// DRAFT no longer requires --experimental; the error (if any) should be
+	// about the model not being found, not about needing --experimental.
+	if err != nil && strings.Contains(err.Error(), "DRAFT requires --experimental") {
+		t.Fatalf("DRAFT should not require --experimental, got: %v", err)
 	}
 }
 
