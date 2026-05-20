@@ -227,6 +227,26 @@ func TestFilterUnsupportedROCmDevicesRespectsHSAOverride(t *testing.T) {
 	}
 }
 
+func TestFilterUnsupportedROCmDevicesFindsNestedRocblasTargets(t *testing.T) {
+	libDir := t.TempDir()
+	rocblasDir := filepath.Join(libDir, "rocblas", "library", "gfx1150")
+	if err := os.MkdirAll(rocblasDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rocblasDir, "TensileLibrary_lazy_gfx1150.dat"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	devices := filterUnsupportedROCmDevices([]ml.DeviceInfo{{
+		DeviceID:  ml.DeviceID{ID: "0", Library: "ROCm"},
+		Name:      "ROCm0",
+		GFXTarget: "gfx1150",
+	}}, []string{libDir})
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1", len(devices))
+	}
+}
+
 type fakeROCmNode struct {
 	node        int
 	renderMinor int

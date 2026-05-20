@@ -112,16 +112,24 @@ func setROCmGFXTarget(device *ml.DeviceInfo, gfx string) {
 }
 
 // rocblasGFXTargets scans the rocblas library directory for supported gfx targets
-// by looking for TensileLibrary_lazy_gfxNNNN.dat files.
+// by looking for TensileLibrary_lazy_gfxNNNN.dat files. Some ROCm layouts keep
+// these files flat under rocblas/library, while TheRock nests them under
+// rocblas/library/gfxNNNN.
 func rocblasGFXTargets(libDirs []string) map[string]bool {
 	targets := make(map[string]bool)
 	for _, dir := range libDirs {
-		files, _ := filepath.Glob(filepath.Join(dir, "rocblas", "library", "TensileLibrary_lazy_gfx*.dat"))
-		for _, f := range files {
-			base := filepath.Base(f)
-			if t, ok := strings.CutPrefix(base, "TensileLibrary_lazy_"); ok {
-				if t, ok = strings.CutSuffix(t, ".dat"); ok {
-					targets[t] = true
+		patterns := []string{
+			filepath.Join(dir, "rocblas", "library", "TensileLibrary_lazy_gfx*.dat"),
+			filepath.Join(dir, "rocblas", "library", "gfx*", "TensileLibrary_lazy_gfx*.dat"),
+		}
+		for _, pattern := range patterns {
+			files, _ := filepath.Glob(pattern)
+			for _, f := range files {
+				base := filepath.Base(f)
+				if t, ok := strings.CutPrefix(base, "TensileLibrary_lazy_"); ok {
+					if t, ok = strings.CutSuffix(t, ".dat"); ok {
+						targets[t] = true
+					}
 				}
 			}
 		}

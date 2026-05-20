@@ -426,6 +426,37 @@ func integratedGPUAllowedByDefault(device ml.DeviceInfo) bool {
 	}
 }
 
+// libDirNewerThan returns true if directory a should be preferred over b,
+// comparing numeric components extracted from their basenames in order so
+// that e.g. cuda_v13 > cuda_v12 and rocm_v7_14_nightly > rocm_v7_2.
+func libDirNewerThan(a, b string) bool {
+	versionNums := func(dir string) []int {
+		var nums []int
+		for _, part := range strings.FieldsFunc(filepath.Base(dir), func(r rune) bool {
+			return r == '_' || r == '.' || r == '-'
+		}) {
+			s := strings.TrimLeftFunc(part, func(r rune) bool { return r < '0' || r > '9' })
+			if n, err := strconv.Atoi(s); err == nil {
+				nums = append(nums, n)
+			}
+		}
+		return nums
+	}
+	numsA, numsB := versionNums(a), versionNums(b)
+	for i := range numsA {
+		if i >= len(numsB) {
+			return true
+		}
+		if numsA[i] != numsB[i] {
+			return numsA[i] > numsB[i]
+		}
+	}
+	if len(numsB) > len(numsA) {
+		return false
+	}
+	return a > b
+}
+
 func filterOverlapByLibrary(supported map[string]map[string]map[string]int, needsDelete []bool) {
 	// For multi-GPU systems, use the newest version that supports all the GPUs
 	for _, byLibDirs := range supported {
@@ -433,7 +464,9 @@ func filterOverlapByLibrary(supported map[string]map[string]map[string]int, need
 		for libDir := range byLibDirs {
 			libDirs = append(libDirs, libDir)
 		}
-		sort.Sort(sort.Reverse(sort.StringSlice(libDirs)))
+		sort.Slice(libDirs, func(i, j int) bool {
+			return libDirNewerThan(libDirs[i], libDirs[j])
+		})
 		anyMissing := false
 		var newest string
 		for _, newest = range libDirs {

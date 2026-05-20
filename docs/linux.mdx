@@ -10,6 +10,12 @@ To install Ollama, run the following command:
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
+On AMD GPUs, the install script downloads the stable ROCm package by default. To opt into the experimental TheRock nightly ROCm package, run:
+
+```shell
+curl -fsSL https://ollama.com/install.sh | OLLAMA_THEROCK=1 sh
+```
+
 ## Manual install
 
 <Note>
@@ -38,10 +44,21 @@ ollama -v
 
 ### AMD GPU install
 
-If you have an AMD GPU, also download and extract the additional ROCm package:
+If you have an AMD GPU, also download and extract the ROCm packages. The stable ROCm release is split into two archives (download both):
 
 ```shell
-curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm.tar.zst \
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm-stable-1-of-2.tar.zst \
+    | sudo tar x -C /usr
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm-stable-2-of-2.tar.zst \
+    | sudo tar x -C /usr
+```
+
+Alternatively, an experimental nightly ROCm build with bleeding-edge GPU support is available:
+
+```shell
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm-nightly-1-of-2.tar.zst \
+    | sudo tar x -C /usr
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm-nightly-2-of-2.tar.zst \
     | sudo tar x -C /usr
 ```
 

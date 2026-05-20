@@ -182,6 +182,7 @@ FetchContent_Declare(
     GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
     GIT_TAG ${LLAMA_CPP_GIT_TAG}
     GIT_SHALLOW TRUE
+    UPDATE_DISCONNECTED TRUE
     ${_ollama_compat_patch_cmd}
 )
 FetchContent_MakeAvailable(llama_cpp)
@@ -445,7 +446,7 @@ if(OLLAMA_RUNNER_DIR)
             )
             install(RUNTIME_DEPENDENCY_SET rocm_deps
                 DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
-                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register roctx64 rocroller drm drm_amdgpu numa elf
+                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocm_kpack rocm_sysdeps rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register roctx64 rocroller drm drm_amdgpu numa elf clang-cpp LLVM
                 PRE_EXCLUDE_REGEXES ".*"
                 POST_EXCLUDE_REGEXES "system32"
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
@@ -472,14 +473,41 @@ if(OLLAMA_RUNNER_DIR)
                     message(FATAL_ERROR "Could not find ROCm COMGR runtime DLLs to bundle")
                 endif()
             endif()
+            # TheRock places a stub bin/rocblas/CTestTestfile.cmake that would be found
+            # first if we checked HIP_BIN_INSTALL_DIR first. Guard with /library to skip
+            # stubs and find the real Tensile kernel database.
             foreach(_hip_dir IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
-                if(EXISTS ${_hip_dir}/rocblas)
+                if(EXISTS ${_hip_dir}/rocblas/library)
                     install(DIRECTORY ${_hip_dir}/rocblas
                         DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
                         COMPONENT llama-server)
                     break()
                 endif()
             endforeach()
+            foreach(_hip_dir IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
+                if(EXISTS ${_hip_dir}/hipblaslt/library)
+                    install(DIRECTORY ${_hip_dir}/hipblaslt
+                        DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
+                        COMPONENT llama-server)
+                    break()
+                endif()
+            endforeach()
+            install(CODE "
+                set(_hip_dynamic_runtime_dlls)
+                foreach(_hip_dir IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
+                    if(EXISTS \"\${_hip_dir}\")
+                        file(GLOB _dir_hip_dynamic_runtime_dlls
+                            LIST_DIRECTORIES false
+                            \"\${_hip_dir}/amd_comgr*.dll\")
+                        list(APPEND _hip_dynamic_runtime_dlls \${_dir_hip_dynamic_runtime_dlls})
+                    endif()
+                endforeach()
+                if(_hip_dynamic_runtime_dlls)
+                    list(REMOVE_DUPLICATES _hip_dynamic_runtime_dlls)
+                    file(INSTALL \${_hip_dynamic_runtime_dlls}
+                        DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${_base_dest}/${OLLAMA_RUNNER_DIR}\")
+                endif()
+            " COMPONENT llama-server)
         endif()
     endif()
     if(GGML_VULKAN)

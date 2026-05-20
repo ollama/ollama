@@ -8,6 +8,18 @@ DOCKER_ORG=${DOCKER_ORG:-"ollama"}
 FINAL_IMAGE_REPO=${FINAL_IMAGE_REPO:-"${DOCKER_ORG}/ollama"}
 OLLAMA_COMMON_BUILD_ARGS="--build-arg=GOFLAGS"
 
+# Resolve the TheRock nightly version at build time so the Docker cache key is
+# pinned to a specific build rather than the opaque string "latest".
+if [ -z "${THEROCK_VERSION:-}" ]; then
+    _therock_resolved=$(bash "$(dirname "$0")/fetch_therock_rocm_linux.sh" \
+        --target "${THEROCK_TARGET:-multiarch}" \
+        --resolve-only 2>/dev/null | awk '/Version:/{print $2}')
+    if [ -n "$_therock_resolved" ]; then
+        THEROCK_VERSION="$_therock_resolved"
+        export THEROCK_VERSION
+    fi
+fi
+
 add_build_arg() {
     eval "_value=\"\${$1:-}\""
     if [ -n "$_value" ]; then
@@ -29,7 +41,9 @@ for arg in \
     MLX_CUDA_RAM_MB \
     APT_MIRROR \
     OLLAMA_MLX_BUILD_JOBS \
-    OLLAMA_MLX_NVCC_THREADS
+    OLLAMA_MLX_NVCC_THREADS \
+    THEROCK_VERSION \
+    THEROCK_TARGET
 do
     add_build_arg "$arg"
 done
