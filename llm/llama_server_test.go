@@ -1793,6 +1793,60 @@ func TestMemoryParsingWriter(t *testing.T) {
 			wantGPU:   0,
 			wantTotal: 0,
 		},
+		{
+			name: "fit probe buffers are replaced by final load",
+			lines: []string{
+				"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =  2000.00 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =   300.00 MiB\n",
+				"sched_reserve:  CUDA_Host compute buffer size =   400.00 MiB\n",
+				"load_tensors:        CUDA0 model buffer size =  1100.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =  2200.00 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =   330.00 MiB\n",
+				"sched_reserve:  CUDA_Host compute buffer size =   440.00 MiB\n",
+				"alloc_compute_meta:  CUDA0 compute buffer size =    10.00 MiB\n",
+				"llama_memory_recurrent:      CUDA0 RS buffer size =    20.00 MiB\n",
+			},
+			wantGPU:   1100 + 2200 + 330 + 10 + 20,
+			wantTotal: 1100 + 2200 + 330 + 440 + 10 + 20,
+		},
+		{
+			name: "rc21 fit probe accounting",
+			lines: []string{
+				"load_tensors:          CPU model buffer size =     0.00 MiB\n",
+				"load_tensors:        CUDA0 model buffer size =     0.00 MiB\n",
+				"load_tensors:        CUDA1 model buffer size =     0.00 MiB\n",
+				"llama_context:  CUDA_Host  output buffer size =     0.95 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =     0.00 MiB\n",
+				"llama_kv_cache:      CUDA1 KV buffer size =     0.00 MiB\n",
+				"llama_memory_recurrent:      CUDA0 RS buffer size =    90.40 MiB\n",
+				"llama_memory_recurrent:      CUDA1 RS buffer size =    59.23 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =  9952.25 MiB\n",
+				"sched_reserve:      CUDA1 compute buffer size =  6436.28 MiB\n",
+				"sched_reserve:  CUDA_Host compute buffer size =  8272.31 MiB\n",
+				"load_tensors:          CPU model buffer size =   682.03 MiB\n",
+				"load_tensors:        CUDA0 model buffer size =  8171.01 MiB\n",
+				"load_tensors:        CUDA1 model buffer size =  6618.25 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =  9216.00 MiB\n",
+				"llama_kv_cache:      CUDA1 KV buffer size =  7168.00 MiB\n",
+				"llama_memory_recurrent:      CUDA0 RS buffer size =    90.40 MiB\n",
+				"llama_memory_recurrent:      CUDA1 RS buffer size =    59.23 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =  9952.25 MiB\n",
+				"sched_reserve:      CUDA1 compute buffer size =  6276.28 MiB\n",
+				"sched_reserve:  CUDA_Host compute buffer size =  8272.31 MiB\n",
+				"alloc_compute_meta:      CUDA0 compute buffer size =   248.10 MiB\n",
+				"alloc_compute_meta:        CPU compute buffer size =    24.93 MiB\n",
+			},
+			wantGPU:   47799.52,
+			wantTotal: 56779.74,
+		},
+	}
+
+	withinKiB := func(got, want uint64) bool {
+		if got > want {
+			return got-want <= 1024
+		}
+		return want-got <= 1024
 	}
 
 	for _, tt := range tests {
@@ -1810,18 +1864,18 @@ func TestMemoryParsingWriter(t *testing.T) {
 			expectedGPU := uint64(tt.wantGPU * 1024 * 1024)
 			expectedTotal := uint64(tt.wantTotal * 1024 * 1024)
 
-			if runner.memGPU != expectedGPU {
+			if !withinKiB(runner.memGPU, expectedGPU) {
 				t.Errorf("memGPU = %d, want %d", runner.memGPU, expectedGPU)
 			}
-			if runner.memTotal != expectedTotal {
+			if !withinKiB(runner.memTotal, expectedTotal) {
 				t.Errorf("memTotal = %d, want %d", runner.memTotal, expectedTotal)
 			}
 
 			total, vram := runner.MemorySize()
-			if total != expectedTotal {
+			if !withinKiB(total, expectedTotal) {
 				t.Errorf("MemorySize total = %d, want %d", total, expectedTotal)
 			}
-			if vram != expectedGPU {
+			if !withinKiB(vram, expectedGPU) {
 				t.Errorf("MemorySize vram = %d, want %d", vram, expectedGPU)
 			}
 		})

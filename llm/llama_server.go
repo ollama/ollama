@@ -2132,8 +2132,19 @@ func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
 //	MTL0_Mapped model buffer size =  1918.35 MiB
 //	ROCm0 model buffer size =  1918.35 MiB
 type memoryParsingWriter struct {
-	inner  io.Writer
-	runner *llamaServerRunner
+	inner   io.Writer
+	runner  *llamaServerRunner
+	buffers map[memoryBufferKey]memoryBuffer
+}
+
+type memoryBufferKey struct {
+	component string
+	backend   string
+	kind      string
+}
+
+type memoryBuffer struct {
+	bytes uint64
 }
 
 // deviceFreeRegex matches per-device free VRAM reported at model load time:
@@ -2143,9 +2154,9 @@ type memoryParsingWriter struct {
 //	using device ROCm0 (AMD Radeon RX 6800) (0000:06:00.0) - 16196 MiB free
 var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+)\s+MiB free`)
 
-// bufferSizeRegex matches all buffer size lines from llama-server:
-// model buffers, KV cache buffers, compute buffers, and output buffers.
-var bufferSizeRegex = regexp.MustCompile(`(\S+)\s+(?:model |KV |compute |output )?buffer size\s*=\s*([\d.]+)\s*MiB`)
+// bufferSizeRegex matches llama-server buffer size lines and captures the
+// component so repeated fit/probe values can be replaced by the final load.
+var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
 
 // isGPUBuffer returns true if the backend buffer name represents GPU memory.
 // CPU, BLAS, and host-pinned buffers (*_Host) are not GPU memory.
@@ -2182,18 +2193,38 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			}
 		}
 		for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
-			backendName := string(match[1])
-			if mib, err := strconv.ParseFloat(string(match[2]), 64); err == nil {
-				bytes := uint64(mib * 1024 * 1024)
-				w.runner.memTotal += bytes
-				if isGPUBuffer(backendName) {
-					w.runner.memGPU += bytes
-					w.runner.vramByDevice[deviceName(backendName)] += bytes
+			backendName := string(match[2])
+			if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
+				if w.buffers == nil {
+					w.buffers = make(map[memoryBufferKey]memoryBuffer)
 				}
+				w.buffers[memoryBufferKey{
+					component: string(match[1]),
+					backend:   backendName,
+					kind:      string(match[3]),
+				}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
+				w.updateRunnerMemory()
 			}
 		}
 	}
 	return w.inner.Write(b)
+}
+
+func (w *memoryParsingWriter) updateRunnerMemory() {
+	var total, gpu uint64
+	byDevice := make(map[string]uint64)
+
+	for key, buffer := range w.buffers {
+		total += buffer.bytes
+		if isGPUBuffer(key.backend) {
+			gpu += buffer.bytes
+			byDevice[deviceName(key.backend)] += buffer.bytes
+		}
+	}
+
+	w.runner.memTotal = total
+	w.runner.memGPU = gpu
+	w.runner.vramByDevice = byDevice
 }
 
 // VRAMByGPU returns the VRAM used by this runner on the specified device.
