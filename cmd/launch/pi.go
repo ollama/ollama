@@ -26,7 +26,7 @@ const (
 
 func (p *Pi) String() string { return "Pi" }
 
-func (p *Pi) Run(model string, args []string) error {
+func (p *Pi) Run(_ string, _ []LaunchModel, args []string) error {
 	fmt.Fprintf(os.Stderr, "\n%sPreparing Pi...%s\n", ansiGray, ansiReset)
 	if err := ensureNpmInstalled(); err != nil {
 		return err

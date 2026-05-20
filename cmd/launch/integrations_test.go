@@ -25,7 +25,7 @@ type stubEditorRunner struct {
 	editErr  error
 }
 
-func (s *stubEditorRunner) Run(model string, args []string) error {
+func (s *stubEditorRunner) Run(model string, _ []LaunchModel, args []string) error {
 	s.ranModel = model
 	return nil
 }
@@ -206,7 +206,7 @@ func TestAllIntegrations_HaveRequiredMethods(t *testing.T) {
 			if displayName == "" {
 				t.Error("String() should not return empty")
 			}
-			var _ func(string, []string) error = r.Run
+			var _ func(string, []LaunchModel, []string) error = r.Run
 		})
 	}
 }

@@ -1103,7 +1103,7 @@ func TestCodexAppRunRestartsRunningAppWhenConfirmed(t *testing.T) {
 		},
 	)
 
-	if err := (&CodexApp{}).Run("qwen3.5", nil); err != nil {
+	if err := (&CodexApp{}).Run("qwen3.5", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	if quitCalls != 1 || openCalls != 1 {
@@ -1141,7 +1141,7 @@ func TestCodexAppRunWaitsForGracefulExitBeforeReopening(t *testing.T) {
 		},
 	)
 
-	if err := (&CodexApp{}).Run("qwen3.5", nil); err != nil {
+	if err := (&CodexApp{}).Run("qwen3.5", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	if quitCalls != 1 || openCalls != 1 {
@@ -1177,7 +1177,7 @@ func TestCodexAppRunForceStopsMacAfterGracefulTimeout(t *testing.T) {
 		return nil
 	}
 
-	if err := (&CodexApp{}).Run("qwen3.5", nil); err != nil {
+	if err := (&CodexApp{}).Run("qwen3.5", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	want := []string{"quit", "force", "open"}
@@ -1204,7 +1204,7 @@ func TestCodexAppRunReturnsMacForceStopError(t *testing.T) {
 		return fmt.Errorf("operation not permitted")
 	}
 
-	err := (&CodexApp{}).Run("qwen3.5", nil)
+	err := (&CodexApp{}).Run("qwen3.5", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "force stop Codex") || !strings.Contains(err.Error(), "operation not permitted") {
 		t.Fatalf("Run error = %v, want force stop failure", err)
 	}
@@ -1223,7 +1223,7 @@ func TestCodexAppRunOpensOnWindowsWhenNotRunning(t *testing.T) {
 		},
 	)
 
-	if err := (&CodexApp{}).Run("qwen3.5", nil); err != nil {
+	if err := (&CodexApp{}).Run("qwen3.5", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	if openCalls != 1 {
@@ -1265,7 +1265,7 @@ func TestCodexAppRunRestartsWindowsStartAppID(t *testing.T) {
 		return nil
 	}
 
-	if err := (&CodexApp{}).Run("qwen3.5", nil); err != nil {
+	if err := (&CodexApp{}).Run("qwen3.5", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	if quitCalls != 1 {
@@ -1311,7 +1311,7 @@ func TestCodexAppRunForceStopsWindowsBackgroundProcessesBeforeReopening(t *testi
 		return nil
 	}
 
-	if err := (&CodexApp{}).Run("qwen3.5", nil); err != nil {
+	if err := (&CodexApp{}).Run("qwen3.5", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	want := []string{"quit", "force", "open:OpenAI.Codex_2p2nqsd0c76g0!App"}
@@ -1346,7 +1346,7 @@ func TestCodexAppRunReturnsWindowsForceStopError(t *testing.T) {
 		return nil
 	}
 
-	err := (&CodexApp{}).Run("qwen3.5", nil)
+	err := (&CodexApp{}).Run("qwen3.5", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "force stop Codex") || !strings.Contains(err.Error(), "access denied") {
 		t.Fatalf("Run error = %v, want force stop failure", err)
 	}
@@ -1354,7 +1354,7 @@ func TestCodexAppRunReturnsWindowsForceStopError(t *testing.T) {
 
 func TestCodexAppRunRejectsExtraArgs(t *testing.T) {
 	withCodexAppPlatform(t, "darwin")
-	err := (&CodexApp{}).Run("qwen3.5", []string{"--foo"})
+	err := (&CodexApp{}).Run("qwen3.5", nil, []string{"--foo"})
 	if err == nil || !strings.Contains(err.Error(), "does not accept extra arguments") {
 		t.Fatalf("Run error = %v, want extra args rejection", err)
 	}

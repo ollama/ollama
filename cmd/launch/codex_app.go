@@ -196,7 +196,7 @@ func (c *CodexApp) RestoreSuccessMessage() string {
 	return codexAppRestoreSuccess
 }
 
-func (c *CodexApp) Run(_ string, args []string) error {
+func (c *CodexApp) Run(_ string, _ []LaunchModel, args []string) error {
 	if err := codexAppSupported(); err != nil {
 		return err
 	}

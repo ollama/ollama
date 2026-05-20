@@ -138,9 +138,10 @@ var isInteractiveSession = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-// Runner executes a model with an integration.
+// Runner executes an integration with the selected model and its resolved
+// launch metadata. models is ordered with the primary model first.
 type Runner interface {
-	Run(model string, args []string) error
+	Run(model string, models []LaunchModel, args []string) error
 	String() string
 }
 
@@ -728,7 +729,7 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 		}
 	}
 
-	return launchAfterConfiguration(name, runner, target, req)
+	return launchAfterConfiguration(name, runner, target, c.resolveRunModels(ctx, []string{target}), req)
 }
 
 func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -750,13 +751,17 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		return nil
 	}
 
+	var launchModels []LaunchModel
 	if (needsConfigure || req.ModelOverride != "") && !savedMatchesModels(saved, models) {
-		if err := prepareEditorIntegration(name, editor, c.modelInventory().Resolve(ctx, models)); err != nil {
+		launchModels = c.modelInventory().Resolve(ctx, models)
+		if err := prepareEditorIntegration(name, editor, launchModels); err != nil {
 			return err
 		}
+	} else {
+		launchModels = c.resolveRunModels(ctx, models)
 	}
 
-	return launchAfterConfiguration(name, runner, models[0], req)
+	return launchAfterConfiguration(name, runner, models[0], launchModels, req)
 }
 
 func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, name string, runner Runner, managed ManagedSingleModel, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -815,7 +820,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		return nil
 	}
 
-	return runIntegration(runner, target, req.ExtraArgs)
+	return runIntegration(runner, target, c.resolveRunModels(ctx, []string{target}), req.ExtraArgs)
 }
 
 func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Context, name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -858,7 +863,7 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 		return nil
 	}
 
-	return runIntegration(runner, target, req.ExtraArgs)
+	return runIntegration(runner, target, c.resolveRunModels(ctx, []string{target}), req.ExtraArgs)
 }
 
 func (c *launcherClient) managedAutodiscoveryUsable(ctx context.Context, autodiscovery ManagedAutodiscoveryIntegration) bool {
@@ -1360,11 +1365,18 @@ func hasLocalModel(inventory []LaunchModel, name string) bool {
 	return false
 }
 
-func runIntegration(runner Runner, modelName string, args []string) error {
-	return runner.Run(modelName, args)
+func (c *launcherClient) resolveRunModels(ctx context.Context, models []string) []LaunchModel {
+	return c.modelInventory().Resolve(ctx, models)
 }
 
-func launchAfterConfiguration(name string, runner Runner, model string, req IntegrationLaunchRequest) error {
+func runIntegration(runner Runner, modelName string, models []LaunchModel, args []string) error {
+	if len(models) == 0 && modelName != "" {
+		models = launchModelsFromNames([]string{modelName})
+	}
+	return runner.Run(modelName, models, args)
+}
+
+func launchAfterConfiguration(name string, runner Runner, model string, models []LaunchModel, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
 		launch, err := ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
 		if err != nil {
@@ -1377,7 +1389,7 @@ func launchAfterConfiguration(name string, runner Runner, model string, req Inte
 	if err := EnsureIntegrationInstalled(name, runner); err != nil {
 		return err
 	}
-	return runIntegration(runner, model, req.ExtraArgs)
+	return runIntegration(runner, model, models, req.ExtraArgs)
 }
 
 func loadStoredIntegrationConfig(name string) (*config.IntegrationConfig, error) {

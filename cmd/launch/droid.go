@@ -40,7 +40,7 @@ type modelEntry struct {
 
 func (d *Droid) String() string { return "Droid" }
 
-func (d *Droid) Run(model string, args []string) error {
+func (d *Droid) Run(model string, _ []LaunchModel, args []string) error {
 	if _, err := exec.LookPath("droid"); err != nil {
 		return fmt.Errorf("droid is not installed, install from https://docs.factory.ai/cli/getting-started/quickstart")
 	}

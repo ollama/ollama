@@ -126,7 +126,7 @@ const (
 	minVSCodeVersion      = "1.113"
 )
 
-func (v *VSCode) Run(model string, args []string) error {
+func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 	v.checkVSCodeVersion()
 	v.checkCopilotChatVersion()
 

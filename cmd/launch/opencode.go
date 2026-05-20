@@ -43,7 +43,7 @@ func findOpenCode() (string, bool) {
 	return "", false
 }
 
-func (o *OpenCode) Run(model string, args []string) error {
+func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error {
 	opencodePath, ok := findOpenCode()
 	if !ok {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
@@ -54,7 +54,7 @@ func (o *OpenCode) Run(model string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	if content := o.resolveContent(model); content != "" {
+	if content := o.resolveContent(model, models); content != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 	return cmd.Run()
@@ -63,19 +63,55 @@ func (o *OpenCode) Run(model string, args []string) error {
 // resolveContent returns the inline config to send via OPENCODE_CONFIG_CONTENT.
 // Returns content built by Edit if available, otherwise builds from model.json
 // with the requested model as primary (e.g. re-launch with saved config).
-func (o *OpenCode) resolveContent(model string) string {
+func (o *OpenCode) resolveContent(model string, models []LaunchModel) string {
 	if o.configContent != "" {
 		return o.configContent
 	}
-	models := readModelJSONModels()
-	if !slices.Contains(models, model) {
-		models = append([]string{model}, models...)
+	resolvedModels := resolveOpenCodeRunModels(model, models, readModelJSONModels())
+	if len(resolvedModels) == 0 {
+		return ""
 	}
-	content, err := buildInlineConfig(fallbackLaunchModel(model), launchModelsFromNames(models))
+	content, err := buildInlineConfig(resolvedModels[0], resolvedModels)
 	if err != nil {
 		return ""
 	}
 	return content
+}
+
+func resolveOpenCodeRunModels(primary string, models []LaunchModel, stateModels []string) []LaunchModel {
+	if primary == "" {
+		return nil
+	}
+
+	resolved := make([]LaunchModel, 0, 1+len(models)+len(stateModels))
+	appendModel := func(name string) {
+		if name == "" || hasLaunchModel(resolved, name) {
+			return
+		}
+		if model, ok := findLaunchModel(models, name); ok {
+			resolved = append(resolved, model)
+			return
+		}
+		resolved = append(resolved, fallbackLaunchModel(name))
+	}
+
+	appendModel(primary)
+	for _, model := range models {
+		appendModel(model.Name)
+	}
+	for _, model := range stateModels {
+		appendModel(model)
+	}
+	return resolved
+}
+
+func hasLaunchModel(models []LaunchModel, name string) bool {
+	for _, model := range models {
+		if launchModelMatches(model.Name, name) || launchModelMatches(name, model.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *OpenCode) Paths() []string {

@@ -48,7 +48,8 @@ func (m LaunchModel) WithCloudLimits() LaunchModel {
 type modelInventory struct {
 	client *api.Client
 
-	once   sync.Once
+	mu     sync.Mutex
+	loaded bool
 	models []LaunchModel
 	err    error
 }
@@ -58,22 +59,39 @@ func newModelInventory(client *api.Client) *modelInventory {
 }
 
 func (i *modelInventory) Load(ctx context.Context) ([]LaunchModel, error) {
+	return i.load(ctx, false)
+}
+
+func (i *modelInventory) Refresh(ctx context.Context) ([]LaunchModel, error) {
+	return i.load(ctx, true)
+}
+
+func (i *modelInventory) load(ctx context.Context, force bool) ([]LaunchModel, error) {
 	if i == nil || i.client == nil {
 		return nil, nil
 	}
 
-	i.once.Do(func() {
-		resp, err := i.client.List(ctx)
-		if err != nil {
-			i.err = err
-			return
-		}
+	i.mu.Lock()
+	defer i.mu.Unlock()
 
-		i.models = make([]LaunchModel, 0, len(resp.Models))
-		for _, model := range resp.Models {
-			i.models = append(i.models, launchModelFromListResponse(model))
-		}
-	})
+	if i.loaded && !force {
+		return cloneLaunchModels(i.models), i.err
+	}
+
+	resp, err := i.client.List(ctx)
+	if err != nil {
+		i.models = nil
+		i.err = err
+		i.loaded = true
+		return nil, err
+	}
+
+	i.models = make([]LaunchModel, 0, len(resp.Models))
+	for _, model := range resp.Models {
+		i.models = append(i.models, launchModelFromListResponse(model))
+	}
+	i.err = nil
+	i.loaded = true
 
 	return cloneLaunchModels(i.models), i.err
 }
@@ -89,15 +107,29 @@ func (i *modelInventory) Resolve(ctx context.Context, names []string) []LaunchMo
 		models = nil
 	}
 
+	resolved, localMiss := resolveLaunchModels(names, models)
+	if localMiss {
+		if refreshed, err := i.Refresh(ctx); err == nil {
+			resolved, _ = resolveLaunchModels(names, refreshed)
+		}
+	}
+	return resolved
+}
+
+func resolveLaunchModels(names []string, models []LaunchModel) ([]LaunchModel, bool) {
 	resolved := make([]LaunchModel, 0, len(names))
+	localMiss := false
 	for _, name := range names {
 		if model, ok := findLaunchModel(models, name); ok {
 			resolved = append(resolved, model.WithCloudLimits())
 			continue
 		}
+		if !isCloudModelName(name) {
+			localMiss = true
+		}
 		resolved = append(resolved, fallbackLaunchModel(name))
 	}
-	return resolved
+	return resolved, localMiss
 }
 
 func launchModelFromListResponse(model api.ListModelResponse) LaunchModel {

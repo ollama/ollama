@@ -135,7 +135,7 @@ exit 0
 		})
 
 		p := &Pi{}
-		if err := p.Run("ignored", []string{"--version"}); err != nil {
+		if err := p.Run("ignored", nil, []string{"--version"}); err != nil {
 			t.Fatalf("Run() error = %v", err)
 		}
 
@@ -178,7 +178,7 @@ exit 0
 		})
 
 		p := &Pi{}
-		err := p.Run("ignored", nil)
+		err := p.Run("ignored", nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "pi installation cancelled") {
 			t.Fatalf("expected install cancellation error, got %v", err)
 		}
@@ -200,7 +200,7 @@ exit 0
 		})
 
 		p := &Pi{}
-		if err := p.Run("ignored", []string{"session"}); err != nil {
+		if err := p.Run("ignored", nil, []string{"session"}); err != nil {
 			t.Fatalf("Run() error = %v", err)
 		}
 
@@ -235,7 +235,7 @@ exit 0
 		seedNpmNoop(t, tmpDir)
 
 		p := &Pi{}
-		if err := p.Run("ignored", []string{"doctor"}); err != nil {
+		if err := p.Run("ignored", nil, []string{"doctor"}); err != nil {
 			t.Fatalf("Run() error = %v", err)
 		}
 
@@ -263,7 +263,7 @@ exit 0
 
 		p := &Pi{}
 		stderr := captureStderr(t, func() {
-			if err := p.Run("ignored", []string{"session"}); err != nil {
+			if err := p.Run("ignored", nil, []string{"session"}); err != nil {
 				t.Fatalf("Run() should continue after web search update failure, got %v", err)
 			}
 		})
@@ -298,7 +298,7 @@ exit 0
 
 		p := &Pi{}
 		stderr := captureStderr(t, func() {
-			if err := p.Run("ignored", []string{"session"}); err != nil {
+			if err := p.Run("ignored", nil, []string{"session"}); err != nil {
 				t.Fatalf("Run() should continue after web search install failure, got %v", err)
 			}
 		})
@@ -328,7 +328,7 @@ exit 0
 
 		p := &Pi{}
 		stderr := captureStderr(t, func() {
-			if err := p.Run("ignored", []string{"session"}); err != nil {
+			if err := p.Run("ignored", nil, []string{"session"}); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
 		})
@@ -357,7 +357,7 @@ exit 0
 		seedPiScript(t, tmpDir)
 
 		p := &Pi{}
-		err := p.Run("ignored", []string{"session"})
+		err := p.Run("ignored", nil, []string{"session"})
 		if err == nil || !strings.Contains(err.Error(), "npm (Node.js) is required to launch pi") {
 			t.Fatalf("expected missing npm error, got %v", err)
 		}

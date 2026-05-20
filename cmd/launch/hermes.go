@@ -65,7 +65,7 @@ type Hermes struct{}
 
 func (h *Hermes) String() string { return "Hermes Agent" }
 
-func (h *Hermes) Run(_ string, args []string) error {
+func (h *Hermes) Run(_ string, _ []LaunchModel, args []string) error {
 	// Hermes reads its primary model from config.yaml. launch configures that
 	// default model ahead of time so we can keep runtime invocation simple and
 	// still let Hermes discover additional models later via its own UX.

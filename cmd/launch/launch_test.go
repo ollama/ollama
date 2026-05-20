@@ -25,7 +25,7 @@ type launcherEditorRunner struct {
 	ranModel string
 }
 
-func (r *launcherEditorRunner) Run(model string, args []string) error {
+func (r *launcherEditorRunner) Run(model string, _ []LaunchModel, args []string) error {
 	r.ranModel = model
 	return nil
 }
@@ -45,7 +45,7 @@ type launcherSingleRunner struct {
 	ranModel string
 }
 
-func (r *launcherSingleRunner) Run(model string, args []string) error {
+func (r *launcherSingleRunner) Run(model string, _ []LaunchModel, args []string) error {
 	r.ranModel = model
 	return nil
 }
@@ -83,7 +83,7 @@ type launcherManagedRunner struct {
 	skipModelReadiness   bool
 }
 
-func (r *launcherManagedRunner) Run(model string, args []string) error {
+func (r *launcherManagedRunner) Run(model string, _ []LaunchModel, args []string) error {
 	r.ranModel = model
 	return nil
 }

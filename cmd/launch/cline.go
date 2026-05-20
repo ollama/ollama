@@ -16,7 +16,7 @@ type Cline struct{}
 
 func (c *Cline) String() string { return "Cline" }
 
-func (c *Cline) Run(model string, args []string) error {
+func (c *Cline) Run(model string, _ []LaunchModel, args []string) error {
 	if _, err := exec.LookPath("cline"); err != nil {
 		return fmt.Errorf("cline is not installed, install with: npm install -g cline")
 	}

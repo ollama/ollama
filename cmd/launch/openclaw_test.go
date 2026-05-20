@@ -75,7 +75,7 @@ func TestOpenclawRunPassthroughArgs(t *testing.T) {
 	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
 
 	c := &Openclaw{}
-	if err := c.Run("llama3.2", []string{"gateway", "--someflag"}); err != nil {
+	if err := c.Run("llama3.2", nil, []string{"gateway", "--someflag"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -149,7 +149,7 @@ fi
 	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
 
 	c := &Openclaw{}
-	if err := c.Run("llama3.2", nil); err != nil {
+	if err := c.Run("llama3.2", nil, nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -221,7 +221,7 @@ func TestOpenclawRun_SetupLaterContinuesToGatewayAndTUI(t *testing.T) {
 	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
 
 	c := &Openclaw{}
-	if err := c.Run("llama3.2", nil); err != nil {
+	if err := c.Run("llama3.2", nil, nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -284,7 +284,7 @@ exit 0
 	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
 
 	c := &Openclaw{}
-	if err := c.Run("llama3.2", []string{"status"}); err != nil {
+	if err := c.Run("llama3.2", nil, []string{"status"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -364,7 +364,7 @@ exit 0
 	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
 
 	c := &Openclaw{}
-	if err := c.Run("llama3.2", []string{"tui"}); err != nil {
+	if err := c.Run("llama3.2", nil, []string{"tui"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 

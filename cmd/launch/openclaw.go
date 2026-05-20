@@ -27,7 +27,7 @@ type Openclaw struct{}
 
 func (c *Openclaw) String() string { return "OpenClaw" }
 
-func (c *Openclaw) Run(model string, args []string) error {
+func (c *Openclaw) Run(model string, _ []LaunchModel, args []string) error {
 	bin, err := ensureOpenclawInstalled()
 	if err != nil {
 		return err

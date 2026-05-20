@@ -461,7 +461,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		data, _ := json.MarshalIndent(state, "", "  ")
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
-		got := o.resolveContent("gemma4")
+		got := o.resolveContent("gemma4", nil)
 		if got != editContent {
 			t.Errorf("resolveContent returned different content than Edit set\ngot:  %s\nwant: %s", got, editContent)
 		}
@@ -483,7 +483,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		content := o.resolveContent("llama3.2")
+		content := o.resolveContent("llama3.2", nil)
 		if content == "" {
 			t.Fatal("resolveContent returned empty")
 		}
@@ -517,7 +517,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		content := o.resolveContent("qwen3:32b")
+		content := o.resolveContent("qwen3:32b", nil)
 
 		var cfg map[string]any
 		json.Unmarshal([]byte(content), &cfg)
@@ -541,7 +541,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		content := o.resolveContent("gemma4")
+		content := o.resolveContent("gemma4", nil)
 
 		var cfg map[string]any
 		json.Unmarshal([]byte(content), &cfg)
@@ -561,8 +561,53 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		o := &OpenCode{}
-		if got := o.resolveContent(""); got != "" {
+		if got := o.resolveContent("", nil); got != "" {
 			t.Errorf("resolveContent(\"\") = %q, want empty", got)
+		}
+	})
+
+	t.Run("uses run model metadata when Edit was not called", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+		state := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
+			},
+		}
+		data, _ := json.MarshalIndent(state, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		o := &OpenCode{}
+		content := o.resolveContent("gemma4", []LaunchModel{
+			{
+				Name:            "gemma4",
+				Capabilities:    []model.Capability{model.CapabilityVision},
+				ContextLength:   65_536,
+				MaxOutputTokens: 8_192,
+			},
+		})
+		if content == "" {
+			t.Fatal("resolveContent returned empty")
+		}
+
+		var cfg map[string]any
+		json.Unmarshal([]byte(content), &cfg)
+		provider, _ := cfg["provider"].(map[string]any)
+		ollama, _ := provider["ollama"].(map[string]any)
+		cfgModels, _ := ollama["models"].(map[string]any)
+		entry, _ := cfgModels["gemma4"].(map[string]any)
+		limit, _ := entry["limit"].(map[string]any)
+		if limit["context"] != float64(65_536) || limit["output"] != float64(8_192) {
+			t.Fatalf("limit = %v, want context/output from launch metadata", limit)
+		}
+		if _, ok := entry["modalities"].(map[string]any); !ok {
+			t.Fatalf("modalities should be set from launch metadata, got %v", entry["modalities"])
+		}
+		if cfgModels["llama3.2"] == nil {
+			t.Fatalf("state model missing from fallback config: %v", cfgModels)
 		}
 	})
 
@@ -581,7 +626,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		_ = o.resolveContent("llama3.2")
+		_ = o.resolveContent("llama3.2", nil)
 		if o.configContent != "" {
 			t.Errorf("resolveContent should not mutate configContent, got %q", o.configContent)
 		}
