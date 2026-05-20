@@ -44,6 +44,8 @@ var (
 	backends           map[C.ggml_backend_dev_t]C.ggml_backend_t
 )
 
+const modelLoadChunkSize = 4 * format.MebiByte
+
 var initDevices = sync.OnceFunc(func() {
 	ggml.OnceLoad()
 
@@ -602,7 +604,7 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 				return nil
 			}
 
-			bts := make([]byte, 128*format.KibiByte)
+			bts := make([]byte, modelLoadChunkSize)
 
 			var s uint64
 			for s < t.Size() {
