@@ -83,7 +83,7 @@ for (int t = 0; t < T; ++t) {
 
 for (int i = 0; i < n_per_t; ++i) {
   auto s_idx = n_per_t * dk_idx + i;
-  o_state[s_idx] = static_cast<StT>(state[i]);
+  o_state[s_idx] = static_cast<InT>(state[i]);
 }
 `
 
@@ -163,7 +163,7 @@ for (int t = 0; t < T_val; ++t) {
 
 for (int i = 0; i < n_per_t; ++i) {
   auto s_idx = n_per_t * dk_idx + i;
-  o_state[s_idx] = static_cast<StT>(state[i]);
+  o_state[s_idx] = static_cast<InT>(state[i]);
 }
 `
 
@@ -262,9 +262,8 @@ func gatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 		return nil, nil, false
 	}
 
-	inputDType := q.DType()
-	stateDType := state.DType()
-	if k.DType() != inputDType || v.DType() != inputDType || g.DType() != inputDType || beta.DType() != inputDType {
+	dtype := q.DType()
+	if k.DType() != dtype || v.DType() != dtype || g.DType() != dtype || beta.DType() != dtype || state.DType() != dtype {
 		return nil, nil, false
 	}
 
@@ -278,13 +277,7 @@ func gatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 
 	cInT := C.CString("InT")
 	defer C.free(unsafe.Pointer(cInT))
-	if C.mlx_fast_metal_kernel_config_add_template_arg_dtype(cfg, cInT, C.mlx_dtype(inputDType)) != 0 {
-		gatedDeltaMetalDisabled = true
-		return nil, nil, false
-	}
-	cStT := C.CString("StT")
-	defer C.free(unsafe.Pointer(cStT))
-	if C.mlx_fast_metal_kernel_config_add_template_arg_dtype(cfg, cStT, C.mlx_dtype(stateDType)) != 0 {
+	if C.mlx_fast_metal_kernel_config_add_template_arg_dtype(cfg, cInT, C.mlx_dtype(dtype)) != 0 {
 		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
@@ -308,11 +301,11 @@ func gatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 
 	yShape := []C.int{C.int(B), C.int(T), C.int(Hv), C.int(Dv)}
 	stateShape := []C.int{C.int(B), C.int(Hv), C.int(Dv), C.int(Dk)}
-	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(yShape), C.size_t(len(yShape)), C.mlx_dtype(inputDType)) != 0 {
+	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(yShape), C.size_t(len(yShape)), C.mlx_dtype(dtype)) != 0 {
 		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
-	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(stateDType)) != 0 {
+	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(dtype)) != 0 {
 		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
@@ -523,9 +516,8 @@ func gatedDeltaCUDAKernelApply(q, k, v, g, beta, state *Array) (y, nextState *Ar
 		return nil, nil, false
 	}
 
-	inputDType := q.DType()
-	stateDType := state.DType()
-	if k.DType() != inputDType || v.DType() != inputDType || g.DType() != inputDType || beta.DType() != inputDType {
+	dtype := q.DType()
+	if k.DType() != dtype || v.DType() != dtype || g.DType() != dtype || beta.DType() != dtype || state.DType() != dtype {
 		return nil, nil, false
 	}
 
@@ -539,13 +531,7 @@ func gatedDeltaCUDAKernelApply(q, k, v, g, beta, state *Array) (y, nextState *Ar
 
 	cInT := C.CString("InT")
 	defer C.free(unsafe.Pointer(cInT))
-	if C.mlx_fast_cuda_kernel_config_add_template_arg_dtype(cfg, cInT, C.mlx_dtype(inputDType)) != 0 {
-		gatedDeltaCUDADisabled = true
-		return nil, nil, false
-	}
-	cStT := C.CString("StT")
-	defer C.free(unsafe.Pointer(cStT))
-	if C.mlx_fast_cuda_kernel_config_add_template_arg_dtype(cfg, cStT, C.mlx_dtype(stateDType)) != 0 {
+	if C.mlx_fast_cuda_kernel_config_add_template_arg_dtype(cfg, cInT, C.mlx_dtype(dtype)) != 0 {
 		gatedDeltaCUDADisabled = true
 		return nil, nil, false
 	}
@@ -569,11 +555,11 @@ func gatedDeltaCUDAKernelApply(q, k, v, g, beta, state *Array) (y, nextState *Ar
 
 	yShape := []C.int{C.int(B), C.int(T), C.int(Hv), C.int(Dv)}
 	stateShape := []C.int{C.int(B), C.int(Hv), C.int(Dv), C.int(Dk)}
-	if C.mlx_fast_cuda_kernel_config_add_output_arg(cfg, unsafe.SliceData(yShape), C.size_t(len(yShape)), C.mlx_dtype(inputDType)) != 0 {
+	if C.mlx_fast_cuda_kernel_config_add_output_arg(cfg, unsafe.SliceData(yShape), C.size_t(len(yShape)), C.mlx_dtype(dtype)) != 0 {
 		gatedDeltaCUDADisabled = true
 		return nil, nil, false
 	}
-	if C.mlx_fast_cuda_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(stateDType)) != 0 {
+	if C.mlx_fast_cuda_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(dtype)) != 0 {
 		gatedDeltaCUDADisabled = true
 		return nil, nil, false
 	}
