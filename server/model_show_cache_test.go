@@ -148,6 +148,25 @@ func TestModelShowCacheLocalHydrationSkipsUnchangedInMemory(t *testing.T) {
 	}
 }
 
+func TestModelShowCacheStartupSkipsLocalHydration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	t.Setenv("OLLAMA_NO_CLOUD", "1")
+	createShowCacheModel(t, "show-cache-startup", map[string]any{"test.context_length": uint32(1024)})
+
+	cache := newModelShowCache()
+	cache.getModelInfo = func(req api.ShowRequest) (*api.ShowResponse, error) {
+		t.Fatalf("startup should not hydrate local show cache, got request: %+v", req)
+		return nil, nil
+	}
+
+	cache.runStartup(context.Background())
+
+	if len(cache.local) != 0 {
+		t.Fatalf("local cache entries = %d, want 0", len(cache.local))
+	}
+}
+
 func TestModelShowCacheBypassesSystemAndOptionsOverlays(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())

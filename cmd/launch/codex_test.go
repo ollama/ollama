@@ -639,11 +639,14 @@ func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 				}
 			}
 
-			requiredKeys := []string{"slug", "display_name", "apply_patch_tool_type", "shell_type"}
+			requiredKeys := []string{"slug", "display_name", "shell_type"}
 			for _, key := range requiredKeys {
 				if _, ok := entry[key]; !ok {
 					t.Errorf("missing required key %q", key)
 				}
+			}
+			if _, ok := entry["apply_patch_tool_type"]; ok {
+				t.Error("apply_patch_tool_type should be omitted so Codex CLI defaults can handle schema changes")
 			}
 
 			if _, err := json.Marshal(entry); err != nil {

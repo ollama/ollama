@@ -638,7 +638,6 @@ func buildCodexModelEntry(modelName string) map[string]any {
 		"slug":                         modelName,
 		"display_name":                 modelName,
 		"context_window":               contextWindow,
-		"apply_patch_tool_type":        "function",
 		"shell_type":                   "default",
 		"visibility":                   "list",
 		"supported_in_api":             true,

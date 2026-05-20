@@ -630,7 +630,7 @@ func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
 }
 
 func TestSchedExpireRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx, done := context.WithCancel(t.Context())
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
@@ -650,8 +650,11 @@ func TestSchedExpireRunner(t *testing.T) {
 		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 	})
 
+	reqCtx, cancelReq := context.WithCancel(ctx)
+	defer cancelReq()
+
 	req := &LlmRequest{
-		ctx:             ctx,
+		ctx:             reqCtx,
 		model:           &Model{ModelPath: modelPath},
 		opts:            api.DefaultOptions(),
 		successCh:       make(chan *runnerRef, 1),
@@ -681,16 +684,33 @@ func TestSchedExpireRunner(t *testing.T) {
 		s.loadedMu.Unlock()
 	}
 
-	s.expireRunner(&Model{ModelPath: modelPath})
+	completedDone := make(chan struct{})
+	go func() {
+		defer close(completedDone)
+		s.processCompleted(ctx)
+	}()
 
-	s.finishedReqCh <- req
-	s.processCompleted(ctx)
+	s.expireRunner(&Model{ModelPath: modelPath})
+	cancelReq()
+
+	select {
+	case <-s.unloadedCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected model to be unloaded")
+	}
 
 	s.loadedMu.Lock()
 	if len(s.loaded) != 0 {
 		t.Fatalf("expected model to be unloaded")
 	}
 	s.loadedMu.Unlock()
+
+	done()
+	select {
+	case <-completedDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected completed loop to stop")
+	}
 }
 
 // TODO - add one scenario that triggers the bogus finished event with positive ref count

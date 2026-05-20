@@ -93,12 +93,21 @@ func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
 
 func TestRoutes(t *testing.T) {
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+
 	type testCase struct {
 		Name     string
 		Method   string
 		Path     string
 		Setup    func(t *testing.T, req *http.Request)
 		Expected func(t *testing.T, resp *http.Response)
+	}
+
+	s := &Server{modelCaches: &modelCaches{modelList: newModelListCache()}}
+	s.modelCaches.modelList.Start(context.Background())
+	if err := s.modelCaches.modelList.Wait(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 
 	createTestModel := func(t *testing.T, name string) {
@@ -138,6 +147,7 @@ func TestRoutes(t *testing.T) {
 		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
 			t.Fatal(err)
 		}
+		s.refreshModelListCache(modelName)
 	}
 
 	testCases := []testCase{
@@ -496,9 +506,6 @@ func TestRoutes(t *testing.T) {
 		},
 	}
 
-	modelsDir := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", modelsDir)
-
 	rc := &ollama.Registry{
 		// This is a temporary measure to allow us to move forward,
 		// surfacing any code contacting ollama.com we do not intended
@@ -514,7 +521,6 @@ func TestRoutes(t *testing.T) {
 		HTTPClient: panicOnRoundTrip,
 	}
 
-	s := &Server{}
 	router, err := s.GenerateRoutes(rc)
 	if err != nil {
 		t.Fatalf("failed to generate routes: %v", err)

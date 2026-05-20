@@ -12,6 +12,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
+	modelpkg "github.com/ollama/ollama/types/model"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -240,9 +241,12 @@ type SupportedIntegration interface {
 }
 
 type modelInfo struct {
-	Name        string
-	Remote      bool
-	ToolCapable bool
+	Name         string
+	Remote       bool
+	ToolCapable  bool
+	Capabilities []modelpkg.Capability
+	Size         int64
+	Details      api.ModelDetails
 }
 
 // ModelInfo re-exports launcher model inventory details for callers.
@@ -254,9 +258,12 @@ type ModelItem struct {
 	Description     string
 	Recommended     bool
 	VRAMBytes       int64
-	ContextLength   int
 	MaxOutputTokens int
 	RequiredPlan    string
+	ToolCapable     bool
+	Capabilities    []modelpkg.Capability
+	Size            int64
+	Details         api.ModelDetails
 }
 
 // SelectionItem represents a model row after launch has derived selector-only UI state.
@@ -1179,9 +1186,11 @@ func (c *launcherClient) requestRecommendations(ctx context.Context) ([]ModelIte
 			Description:     description,
 			Recommended:     true,
 			VRAMBytes:       rec.VRAMBytes,
-			ContextLength:   rec.ContextLength,
 			MaxOutputTokens: rec.MaxOutputTokens,
 			RequiredPlan:    strings.TrimSpace(rec.RequiredPlan),
+			Details: api.ModelDetails{
+				ContextLength: rec.ContextLength,
+			},
 		})
 	}
 
@@ -1367,8 +1376,12 @@ func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 	c.modelInventory = c.modelInventory[:0]
 	for _, model := range resp.Models {
 		c.modelInventory = append(c.modelInventory, ModelInfo{
-			Name:   model.Name,
-			Remote: model.RemoteModel != "",
+			Name:         model.Name,
+			Remote:       model.RemoteModel != "",
+			ToolCapable:  slices.Contains(model.Capabilities, modelpkg.CapabilityTools),
+			Capabilities: slices.Clone(model.Capabilities),
+			Size:         model.Size,
+			Details:      model.Details,
 		})
 	}
 

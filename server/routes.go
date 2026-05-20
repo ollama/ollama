@@ -1084,7 +1084,10 @@ func (s *Server) PullHandler(c *gin.Context) {
 
 		if err := PullModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
+			return
 		}
+
+		s.refreshModelListCache(name)
 	}()
 
 	if req.Stream != nil && !*req.Stream {
@@ -1223,6 +1226,8 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	s.deleteModelListCache(n)
 
 	if err := m.RemoveLayers(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1553,53 +1558,16 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
-	ms, err := manifest.Manifests(true)
+	if s.modelCaches == nil || s.modelCaches.modelList == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "model list cache unavailable"})
+		return
+	}
+
+	models, err := s.modelCaches.modelList.List(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	models := []api.ListModelResponse{}
-	for n, m := range ms {
-		var cf model.ConfigV2
-
-		if m.Config.Digest != "" {
-			f, err := m.Config.Open()
-			if err != nil {
-				slog.Warn("bad manifest filepath", "name", n, "error", err)
-				continue
-			}
-			defer f.Close()
-
-			if err := json.NewDecoder(f).Decode(&cf); err != nil {
-				slog.Warn("bad manifest config", "name", n, "error", err)
-				continue
-			}
-		}
-
-		// tag should never be masked
-		models = append(models, api.ListModelResponse{
-			Model:       n.DisplayShortest(),
-			Name:        n.DisplayShortest(),
-			RemoteModel: cf.RemoteModel,
-			RemoteHost:  cf.RemoteHost,
-			Size:        m.Size(),
-			Digest:      m.Digest(),
-			ModifiedAt:  m.FileInfo().ModTime(),
-			Details: api.ModelDetails{
-				Format:            cf.ModelFormat,
-				Family:            cf.ModelFamily,
-				Families:          cf.ModelFamilies,
-				ParameterSize:     cf.ModelType,
-				QuantizationLevel: cf.FileType,
-			},
-		})
-	}
-
-	slices.SortStableFunc(models, func(i, j api.ListModelResponse) int {
-		// most recently modified first
-		return cmp.Compare(j.ModifiedAt.Unix(), i.ModifiedAt.Unix())
-	})
 
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
@@ -1640,6 +1608,8 @@ func (s *Server) CopyHandler(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model %q not found", r.Source)})
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	} else {
+		s.refreshModelListCache(dst)
 	}
 }
 
