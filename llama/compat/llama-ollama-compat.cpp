@@ -615,8 +615,8 @@ void handle_qwen3next(gguf_context * meta, ggml_context * ctx) {
 //
 // Same arch name on both sides. Existing published models can use a monolithic
 // GGUF that embeds the vision encoder + audio encoder + projector inline.
-// Some MoE variants also store expert gate/up tensors split while llama.cpp's
-// Gemma4 loader reads the fused gate_up tensor.
+// Split expert gate/up tensors are valid in llama.cpp GGUFs, so they are not
+// sufficient to identify an existing published Ollama model.
 
 bool detect_ollama_gemma4(const gguf_context * meta, const ggml_context * ctx) {
     const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
@@ -625,7 +625,21 @@ bool detect_ollama_gemma4(const gguf_context * meta, const ggml_context * ctx) {
     return any_tensor_with_prefix(ctx, "a.")
         || any_tensor_with_prefix(ctx, "v.")
         || any_tensor_with_prefix(ctx, "mm.")
-        || any_tensor_with_prefix(ctx, "blk.0.ffn_gate_exps.weight");
+        || any_tensor_with_prefix(ctx, "model.vision_tower.")
+        || string_kv_equals(meta, "tokenizer.ggml.model", "llama");
+}
+
+bool has_gemma4_split_expert_sidecars(ggml_context * ctx, uint32_t b) {
+    char gate_scale[64], gate_input_scale[64], up_scale[64], up_input_scale[64];
+    std::snprintf(gate_scale,       sizeof(gate_scale),       "blk.%u.ffn_gate_exps.scale",       b);
+    std::snprintf(gate_input_scale, sizeof(gate_input_scale), "blk.%u.ffn_gate_exps.input_scale", b);
+    std::snprintf(up_scale,         sizeof(up_scale),         "blk.%u.ffn_up_exps.scale",         b);
+    std::snprintf(up_input_scale,   sizeof(up_input_scale),   "blk.%u.ffn_up_exps.input_scale",   b);
+
+    return ggml_get_tensor(ctx, gate_scale)
+        || ggml_get_tensor(ctx, gate_input_scale)
+        || ggml_get_tensor(ctx, up_scale)
+        || ggml_get_tensor(ctx, up_input_scale);
 }
 
 bool register_gemma4_moe_gate_up_load(gguf_context * meta,
@@ -723,7 +737,8 @@ void handle_gemma4(const llama_model_loader * ml, gguf_context * meta, ggml_cont
         std::snprintf(scale,      sizeof(scale),      "blk.%u.ffn_gate_inp.per_expert_scale", b);
         std::snprintf(down_scale, sizeof(down_scale), "blk.%u.ffn_down_exps.scale",           b);
 
-        if (register_gemma4_moe_gate_up_load(meta, ctx, gate, up, gate_up)) {
+        const bool can_fuse_gate_up = !has_gemma4_split_expert_sidecars(ctx, b);
+        if (can_fuse_gate_up && register_gemma4_moe_gate_up_load(meta, ctx, gate, up, gate_up)) {
             add_skip_prefix(ml, up);
             transformed_moe = true;
         }

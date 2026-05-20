@@ -781,8 +781,8 @@ func rewriteLayerWithLlamaQuantize(layer *layerGGML, typeName string, fn func(re
 	if err != nil {
 		return nil, err
 	}
-	defer temp.Close()
 	defer os.Remove(temp.Name())
+	defer temp.Close()
 
 	if err := rewrite(in, temp, fnWrap); err != nil {
 		return nil, err

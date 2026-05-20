@@ -82,8 +82,8 @@ func addDefaultLlavaProjectorType(layer *layerGGML) (*layerGGML, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer temp.Close()
 	defer os.Remove(temp.Name())
+	defer temp.Close()
 
 	kv := maps.Clone(layer.GGML.KV())
 	kv["clip.projector_type"] = "mlp"
@@ -245,8 +245,8 @@ func restoreEmbeddedCompatibilityTensors(in, out *os.File, orig *fsggml.GGML, ne
 	if err != nil {
 		return err
 	}
-	defer temp.Close()
 	defer os.Remove(temp.Name())
+	defer temp.Close()
 
 	if err := fsggml.WriteGGUF(temp, kv, tensors); err != nil {
 		return err
