@@ -57,6 +57,58 @@ func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
 	}
 }
 
+func TestPruneLayersKeepsTrackedPendingBlobAlive(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	origInterval := manifest.LayerKeepAliveInterval
+	manifest.LayerKeepAliveInterval = 10 * time.Millisecond
+	defer func() {
+		manifest.LayerKeepAliveInterval = origInterval
+	}()
+
+	layer, err := manifest.NewLayer(strings.NewReader("pending-create-data"), manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blobPath, err := manifest.BlobsPath(layer.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldTime := time.Now().Add(-layerPruneGracePeriod - time.Hour)
+	if err := os.Chtimes(blobPath, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+
+	keepAlive := manifest.StartLayerKeepAlive()
+	keepAlive.Track(layer.Digest)
+	defer keepAlive.Close()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		info, err := os.Stat(blobPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.ModTime().After(oldTime) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("blob mtime was not refreshed before deadline")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := PruneLayers(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(blobPath); err != nil {
+		t.Fatalf("tracked pending blob was pruned: %v", err)
+	}
+}
+
 func TestModelCapabilities(t *testing.T) {
 	// Create completion model (llama architecture without vision)
 	completionModelPath, _ := createBinFile(t, ggml.KV{
