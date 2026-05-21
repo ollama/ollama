@@ -331,9 +331,6 @@ type DeviceInfo struct {
 }
 
 type SystemInfo struct {
-	// ThreadCount is the optimal number of threads to use for inference
-	ThreadCount int `json:"threads,omitempty"`
-
 	// TotalMemory is the total amount of system memory
 	TotalMemory uint64 `json:"total_memory,omitempty"`
 
