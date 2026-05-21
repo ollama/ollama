@@ -492,6 +492,7 @@ jobs:
             OLLAMA_MLX_BUILD_JOBS=16
             OLLAMA_MLX_NVCC_THREADS=6
             APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+            APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
           cache-from: |
             type=registry,ref=ollama/release:cache-${{ matrix.arch }}-${{ matrix.target }}
             type=registry,ref=${{ vars.DOCKER_REPO }}:latest
@@ -512,6 +513,7 @@ jobs:
               CGO_CXXFLAGS
               GOFLAGS
               APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+              APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
               OLLAMA_MLX_BUILD_JOBS=16
               OLLAMA_MLX_NVCC_THREADS=6
             cache-from: |
@@ -529,6 +531,7 @@ jobs:
               CGO_CXXFLAGS
               GOFLAGS
               APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+              APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
               OLLAMA_MLX_BUILD_JOBS=16
               OLLAMA_MLX_NVCC_THREADS=6
             cache-from: |
@@ -548,6 +551,7 @@ jobs:
               GOFLAGS
               FLAVOR=rocm
               APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+              APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
               OLLAMA_MLX_BUILD_JOBS=16
               OLLAMA_MLX_NVCC_THREADS=6
             cache-from: |
