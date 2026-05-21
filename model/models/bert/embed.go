@@ -111,7 +111,8 @@ type MLP struct {
 }
 
 func (m *MLP) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
-	return m.Down.Forward(ctx, m.Up.Forward(ctx, hiddenStates).GELU(ctx))
+	// BERT uses exact GELU (erf-based), not the tanh approximation
+	return m.Down.Forward(ctx, m.Up.Forward(ctx, hiddenStates).GELU_ERF(ctx))
 }
 
 type Options struct {
