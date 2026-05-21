@@ -256,7 +256,17 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
             }
             break;
         case 512:
-            if (!gqa_opt_applies) {
+            // The MMA F16 dispatcher in ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2
+            // selects ncols2 in {1, 2, 4, 8} based on (gqa_ratio, use_gqa_opt).
+            // Only ncols2 \u2208 {4, 8} are explicitly instantiated for DKQ=DV=512
+            // (see fattn-mma-f16.cuh: extern DECL_FATTN_MMA_F16_CASE(512, 512, ...)).
+            // If we reach this kernel with ncols2 \u2208 {1, 2}, an implicit instantiation
+            // of an unvalidated template specialization is used, which can launch a
+            // kernel with shared-memory / launch-bound parameters that hang the GPU
+            // for large prefill batches (issue #15350: Gemma 4 31B Dense FA hang).
+            // Require gqa_ratio % 4 == 0 so the dispatcher always lands on an
+            // instantiated path (matches the existing case 576 guard below).
+            if (!gqa_opt_applies || gqa_ratio % 4 != 0) {
                 return BEST_FATTN_KERNEL_NONE;
             }
             break;
