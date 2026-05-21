@@ -119,6 +119,7 @@ func (p *bertModel) KV(t *Tokenizer) KV {
 
 	kv["tokenizer.ggml.model"] = "bert"
 	kv["tokenizer.ggml.token_type_count"] = uint32(2)
+	kv["tokenizer.ggml.strip_accents"] = t.StripAccents
 
 	// convert to phantom space tokens
 	for i, e := range t.Tokens {

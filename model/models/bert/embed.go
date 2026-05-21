@@ -157,7 +157,7 @@ func New(c fs.Config) (model.Model, error) {
 	var t tokenizer.Tokenizer
 	switch c.String("tokenizer.ggml.model", "bert") {
 	case "bert":
-		t = tokenizer.NewWordPiece(vocab, true)
+		t = tokenizer.NewWordPiece(vocab, true, c.Bool("tokenizer.ggml.strip_accents", false))
 	default:
 		return nil, model.ErrUnsupportedTokenizer
 	}

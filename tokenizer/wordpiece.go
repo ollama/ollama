@@ -10,8 +10,23 @@ import (
 )
 
 type WordPiece struct {
-	vocab     *Vocabulary
-	lowercase bool
+	vocab        *Vocabulary
+	lowercase    bool
+	stripAccents bool
+}
+
+// stripAccents removes combining diacritical marks (U+0300–U+036F) from the string.
+// This applies NFD normalization and filters out the combining marks.
+func stripAccents(s string) string {
+	var sb strings.Builder
+	for _, r := range s {
+		// Skip combining diacritical marks (U+0300–U+036F)
+		if r >= 0x0300 && r <= 0x036F {
+			continue
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
 }
 
 // ggmlPrefix is the prefix used by GGML vocabularies to indicate word boundaries.
@@ -100,6 +115,11 @@ func (wpm WordPiece) words(s string) iter.Seq[string] {
 func (wpm WordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
 	var ids []int32
 
+	// Apply accent stripping if enabled (BERT-style preprocessing)
+	if wpm.stripAccents {
+		s = stripAccents(s)
+	}
+
 	// TODO: use [UNK] from config
 	unk := wpm.vocab.Encode("[UNK]")
 	for word := range wpm.words(s) {
@@ -163,9 +183,10 @@ func (wpm WordPiece) Vocabulary() *Vocabulary {
 
 var _ Tokenizer = (*WordPiece)(nil)
 
-func NewWordPiece(vocab *Vocabulary, lowercase bool) WordPiece {
+func NewWordPiece(vocab *Vocabulary, lowercase, stripAccents bool) WordPiece {
 	return WordPiece{
-		vocab:     vocab,
-		lowercase: lowercase,
+		vocab:        vocab,
+		lowercase:    lowercase,
+		stripAccents: stripAccents,
 	}
 }
