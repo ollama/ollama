@@ -1,0 +1,21 @@
+# Suggested BuildKit GC config for ollama local development.
+#
+[worker.oci]
+  gc = true
+  gckeepstorage = "150GB"
+
+[[worker.oci.gcpolicy]]
+  filters = ["type==source.local", "type==source.git.checkout"]
+  keepDuration = "48h"
+  maxUsedSpace = "5GB"
+
+[[worker.oci.gcpolicy]]
+  filters = ["type==exec.cachemount"]
+  keepDuration = "168h"     # 7 days
+  maxUsedSpace = "20GB"
+
+[[worker.oci.gcpolicy]]
+  keepDuration = "720h"     # 30 days
+  reservedSpace = "20GB"
+  maxUsedSpace = "150GB"
+  minFreeSpace = "50GB"

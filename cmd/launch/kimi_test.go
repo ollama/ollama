@@ -307,7 +307,7 @@ func TestKimiRun_RejectsConflictingArgsBeforeInstall(t *testing.T) {
 	}
 	t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
 
-	err := k.Run("llama3.2", []string{"--model", "other"})
+	err := k.Run("llama3.2", nil, []string{"--model", "other"})
 	if err == nil || !strings.Contains(err.Error(), "--model") {
 		t.Fatalf("expected conflict error mentioning --model, got %v", err)
 	}
@@ -337,7 +337,7 @@ exit 0
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
 	k := &Kimi{}
-	if err := k.Run("llama3.2", []string{"--quiet", "--print"}); err != nil {
+	if err := k.Run("llama3.2", nil, []string{"--quiet", "--print"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 

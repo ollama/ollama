@@ -57,6 +57,23 @@ type MTPEmbeddingModel interface {
 	TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array
 }
 
+// DFlashTargetModel exposes target-layer hidden states for DFlash drafts.
+type DFlashTargetModel interface {
+	ForwardDFlash(b *batch.Batch, caches []cache.Cache, layerIDs []int) (hidden, targetHidden *mlx.Array)
+}
+
+// DFlashDraftModel is a block-diffusion speculative draft model.
+type DFlashDraftModel interface {
+	DraftModel
+
+	TargetLayerIDs() []int
+	BlockSize() int
+	MaskTokenID() int32
+	NewCaches() []cache.Cache
+	AppendContext(targetHidden *mlx.Array, caches []cache.Cache)
+	Draft(inputIDs *mlx.Array, caches []cache.Cache) *mlx.Array
+}
+
 var (
 	mu            sync.Mutex
 	registry      = make(map[string]func(root *model.Root) (Model, error))

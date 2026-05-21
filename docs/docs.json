@@ -123,6 +123,7 @@
                 "expanded": true,
                 "pages": [
                   "/integrations/claude-code",
+                  "/integrations/codex-app",
                   "/integrations/codex",
                   "/integrations/copilot-cli",
                   "/integrations/opencode",

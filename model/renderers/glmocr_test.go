@@ -25,7 +25,7 @@ func TestGlmOcrRenderer_Images(t *testing.T) {
 					Images:  []api.ImageData{api.ImageData("img1")},
 				},
 			},
-			expected: "[gMASK]<sop><|user|>\n[img-0]Describe this image.<|assistant|>\n",
+			expected: "[gMASK]<sop><|user|>\n[img-0] Describe this image.<|assistant|>\n",
 		},
 		{
 			name:     "use_img_tags_multiple_images",
@@ -37,7 +37,7 @@ func TestGlmOcrRenderer_Images(t *testing.T) {
 					Images:  []api.ImageData{api.ImageData("img1"), api.ImageData("img2")},
 				},
 			},
-			expected: "[gMASK]<sop><|user|>\n[img-0][img-1]Describe these images.<|assistant|>\n",
+			expected: "[gMASK]<sop><|user|>\n[img-0][img-1] Describe these images.<|assistant|>\n",
 		},
 		{
 			name:     "multi_turn_increments_image_offset",
@@ -58,7 +58,7 @@ func TestGlmOcrRenderer_Images(t *testing.T) {
 					Images:  []api.ImageData{api.ImageData("img2")},
 				},
 			},
-			expected: "[gMASK]<sop><|user|>\n[img-0]First image<|assistant|>\n<think></think>\nProcessed.\n<|user|>\n[img-1]Second image<|assistant|>\n",
+			expected: "[gMASK]<sop><|user|>\n[img-0] First image<|assistant|>\n<think></think>\nProcessed.\n<|user|>\n[img-1] Second image<|assistant|>\n",
 		},
 		{
 			name:     "default_no_img_tags",
