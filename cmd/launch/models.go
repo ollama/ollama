@@ -299,18 +299,17 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 }
 
 // prepareEditorIntegration persists models and applies editor-managed config files.
-func prepareEditorIntegration(name string, editor Editor, models []string) error {
+func prepareEditorIntegration(name string, editor Editor, models []LaunchModel) error {
 	if err := editor.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
-	if err := config.SaveIntegration(name, models); err != nil {
+	if err := config.SaveIntegration(name, launchModelNames(models)); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
 	return nil
 }
 
-func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, model string, models []string) error {
-	models = dedupeModelList(append([]string{model}, models...))
+func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, model string, models []LaunchModel) error {
 	var err error
 	if withModels, ok := managed.(ManagedModelListConfigurer); ok {
 		err = withModels.ConfigureWithModels(model, models)

@@ -932,7 +932,7 @@ func TestClaudeDesktopRunReturnsUnsupported(t *testing.T) {
 	)
 
 	for _, args := range [][]string{nil, {"--foo"}} {
-		err := (&ClaudeDesktop{}).Run("qwen3.5", args)
+		err := (&ClaudeDesktop{}).Run("qwen3.5", nil, args)
 		if err == nil {
 			t.Fatal("expected Run to fail")
 		}
