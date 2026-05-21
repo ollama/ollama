@@ -746,6 +746,9 @@ const (
 	llamaServerGenerationBatchDefault = 512
 	llamaServerGenerationBatchMedium  = 1024
 	llamaServerGenerationBatchLarge   = 2048
+
+	llamaServerGenerationBatchMediumHeadroomPercent = 75
+	llamaServerGenerationBatchLargeHeadroomPercent  = 60
 )
 
 func (req *LlmRequest) applyAutomaticGenerationBatch(completion bool, effectiveCtx int, predictedVRAM, availableMemory uint64) {
@@ -791,8 +794,22 @@ func generationBatchFits(batch int, predictedVRAM, availableMemory uint64) bool 
 	if predictedVRAM > threshold {
 		return false
 	}
+	if !generationBatchHasHeadroom(batch, predictedVRAM, availableMemory) {
+		return false
+	}
 
 	return generationBatchSurcharge(batch) <= threshold-predictedVRAM
+}
+
+func generationBatchHasHeadroom(batch int, predictedVRAM, availableMemory uint64) bool {
+	switch {
+	case batch >= llamaServerGenerationBatchLarge:
+		return predictedVRAM <= availableMemory*llamaServerGenerationBatchLargeHeadroomPercent/100
+	case batch >= llamaServerGenerationBatchMedium:
+		return predictedVRAM <= availableMemory*llamaServerGenerationBatchMediumHeadroomPercent/100
+	default:
+		return true
+	}
 }
 
 func nextLowerGenerationBatch(batch int) int {

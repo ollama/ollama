@@ -1014,6 +1014,13 @@ func TestAutomaticGenerationBatch(t *testing.T) {
 			want:         2048,
 		},
 		{
+			name:         "large context steps down to 1024 without 2048 headroom",
+			effectiveCtx: 131072,
+			predicted:    9 * format.GibiByte,
+			available:    14 * format.GibiByte,
+			want:         1024,
+		},
+		{
 			name:         "large context steps down to 1024 for headroom",
 			effectiveCtx: 131072,
 			predicted:    8 * format.GibiByte,
