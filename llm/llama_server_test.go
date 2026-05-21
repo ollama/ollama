@@ -194,6 +194,119 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	}
 }
 
+func TestLlamaServerStreamsHandleLargeSSELines(t *testing.T) {
+	tests := []struct {
+		name       string
+		chat       bool
+		payloadLen int
+		wantErr    bool
+	}{
+		{name: "completion over old scanner limit", payloadLen: 512*1024 + 1024},
+		{name: "completion over bounded limit", payloadLen: llamaServerStreamMaxBufferSize + 1, wantErr: true},
+		{name: "chat over old scanner limit", chat: true, payloadLen: 512*1024 + 1024},
+		{name: "chat over bounded limit", chat: true, payloadLen: llamaServerStreamMaxBufferSize + 1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := strings.Repeat("x", tt.payloadLen)
+			path := "/completion"
+			if tt.chat {
+				path = "/v1/chat/completions"
+			}
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, `{"status":"ok"}`)
+				case path:
+					w.Header().Set("Content-Type", "text/event-stream")
+					writeLargeLlamaServerEvent(t, w, tt.chat, payload)
+					if !tt.wantErr {
+						if tt.chat {
+							fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+						} else {
+							fmt.Fprintln(w, `data: {"content":"","stop":true}`)
+						}
+					}
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			parts := strings.Split(srv.URL, ":")
+			var portInt int
+			fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+			runner := &llamaServerRunner{
+				port:    portInt,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+			}
+
+			var got string
+			opts := api.DefaultOptions()
+			var err error
+			if tt.chat {
+				err = runner.Chat(t.Context(), ChatRequest{
+					Messages: []api.Message{{Role: "user", Content: "test prompt"}},
+					Options:  &opts,
+				}, func(cr ChatResponse) {
+					got += cr.Message.Content
+				})
+			} else {
+				err = runner.Completion(t.Context(), CompletionRequest{
+					Prompt:  "test prompt",
+					Options: &opts,
+				}, func(cr CompletionResponse) {
+					got += cr.Content
+				})
+			}
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected oversized stream error")
+				}
+				if !strings.Contains(err.Error(), "stream event exceeded 8 MB limit") {
+					t.Fatalf("expected stream limit error, got %v", err)
+				}
+				if strings.Contains(err.Error(), "bufio.Scanner") {
+					t.Fatalf("expected wrapped stream limit error, got %v", err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != payload {
+				t.Fatalf("large payload length = %d, want %d", len(got), len(payload))
+			}
+		})
+	}
+}
+
+func writeLargeLlamaServerEvent(t *testing.T, w io.Writer, chat bool, payload string) {
+	t.Helper()
+
+	fmt.Fprint(w, "data: ")
+	var err error
+	if chat {
+		err = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{
+				"delta": map[string]any{"content": payload},
+			}},
+		})
+	} else {
+		err = json.NewEncoder(w).Encode(map[string]any{"content": payload, "stop": false})
+	}
+	if err != nil {
+		t.Errorf("encoding large event: %v", err)
+	}
+}
+
 func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
 	var completionBody map[string]any
 

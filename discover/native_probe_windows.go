@@ -193,7 +193,7 @@ func probeCUDADriverWindows() ([]nativeProbeDevice, error) {
 	}
 
 	devices := make([]nativeProbeDevice, 0, int(count))
-	for i := 0; i < int(count); i++ {
+	for i := range int(count) {
 		var device int32
 		if ret, _, _ := cuDeviceGet.Call(uintptr(unsafe.Pointer(&device)), uintptr(i)); ret != cuSuccessWindows {
 			continue
@@ -267,7 +267,7 @@ func probeHIPRuntimeWindows(libDirs []string) ([]nativeProbeDevice, error) {
 	}
 
 	devices := make([]nativeProbeDevice, 0, int(count))
-	for i := 0; i < int(count); i++ {
+	for i := range int(count) {
 		name := make([]byte, 128)
 		hipDeviceGetName.Call(uintptr(unsafe.Pointer(&name[0])), uintptr(len(name)), uintptr(i))
 
@@ -446,18 +446,12 @@ func procAny(dll *windows.DLL, names ...string) (*windows.Proc, error) {
 	return nil, errors.New(strings.Join(errs, "; "))
 }
 
+//nolint:govet // Windows Proc.Call returns C string pointers as uintptr.
 func windowsCString(ptr uintptr) string {
 	if ptr == 0 {
 		return ""
 	}
-	var bytes []byte
-	for p := ptr; ; p++ {
-		b := *(*byte)(unsafe.Pointer(p))
-		if b == 0 {
-			return string(bytes)
-		}
-		bytes = append(bytes, b)
-	}
+	return windows.BytePtrToString((*byte)(unsafe.Pointer(ptr)))
 }
 
 func byteCString(data []byte) string {

@@ -145,7 +145,11 @@ type ServerStatusResponse struct {
 
 // Request/Response types
 
-const maxBufferSize = 512 * format.KiloByte
+const (
+	llamaServerStreamInitialBufferSize = 64 * 1024
+	// llamaServerStreamMaxBufferSize bounds a single runner response stream line.
+	llamaServerStreamMaxBufferSize = 8 * format.MegaByte
+)
 
 type ImageData struct {
 	Data []byte `json:"data"`

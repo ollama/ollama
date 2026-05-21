@@ -1222,8 +1222,8 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	// after the response body is closed because routes may tokenize from that
 	// callback to build the final Generate context.
 	scanner := bufio.NewScanner(res.Body)
-	buf := make([]byte, 0, maxBufferSize)
-	scanner.Buffer(buf, maxBufferSize)
+	buf := make([]byte, 0, llamaServerStreamInitialBufferSize)
+	scanner.Buffer(buf, llamaServerStreamMaxBufferSize)
 
 	var lastToken string
 	var tokenRepeat int
@@ -1300,6 +1300,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		}
 
 		if err := scanner.Err(); err != nil {
+			if err := llamaServerStreamLimitError("response", err); err != nil {
+				return err
+			}
 			return fmt.Errorf("error reading llama-server response: %v", err)
 		}
 
@@ -1312,6 +1315,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	}
 
 	if err := scanner.Err(); err != nil {
+		if err := llamaServerStreamLimitError("response", err); err != nil {
+			return err
+		}
 		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
 			s.Close()
 			msg := s.lastErrMsg()
@@ -1324,6 +1330,14 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	}
 
 	return nil
+}
+
+func llamaServerStreamLimitError(label string, err error) error {
+	if !strings.Contains(err.Error(), "token too long") {
+		return nil
+	}
+
+	return fmt.Errorf("llama-server %s stream event exceeded %d MB limit", label, llamaServerStreamMaxBufferSize/(1000*1000))
 }
 
 func (s *llamaServerRunner) statusErrorMessage(body []byte) string {
@@ -1498,8 +1512,8 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 	}
 
 	scanner := bufio.NewScanner(res.Body)
-	buf := make([]byte, 0, maxBufferSize)
-	scanner.Buffer(buf, maxBufferSize)
+	buf := make([]byte, 0, llamaServerStreamInitialBufferSize)
+	scanner.Buffer(buf, llamaServerStreamMaxBufferSize)
 
 	toolCalls := map[int]*llamaServerToolCallAccumulator{}
 	var finalResp ChatResponse
@@ -1594,6 +1608,9 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 		}
 
 		if err := scanner.Err(); err != nil {
+			if err := llamaServerStreamLimitError("chat response", err); err != nil {
+				return err
+			}
 			return fmt.Errorf("error reading llama-server chat response: %v", err)
 		}
 
@@ -1606,6 +1623,9 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 	}
 
 	if err := scanner.Err(); err != nil {
+		if err := llamaServerStreamLimitError("chat response", err); err != nil {
+			return err
+		}
 		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
 			s.Close()
 			msg := s.lastErrMsg()
