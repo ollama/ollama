@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -260,19 +261,48 @@ func piPackageInstallFromBinary(bin string) (piPackageInstall, error) {
 }
 
 func npmPrefixForPackageRoot(packageRoot string) string {
-	packageRoot = filepath.Clean(packageRoot)
-	nodeModules := string(filepath.Separator) + "node_modules" + string(filepath.Separator)
+	return npmPrefixForPackageRootForGOOS(filepath.Clean(packageRoot), runtime.GOOS, string(filepath.Separator))
+}
+
+func npmPrefixForPackageRootForGOOS(packageRoot, goos, separator string) string {
+	packageRoot = strings.TrimRight(packageRoot, separator)
+	nodeModules := separator + "node_modules" + separator
 	idx := strings.LastIndex(packageRoot, nodeModules)
 	if idx == -1 {
 		return ""
 	}
 
-	libDir := packageRoot[:idx]
-	if filepath.Base(libDir) != "lib" {
+	rootDir := packageRoot[:idx]
+	if pathBaseForSeparator(rootDir, separator) == "lib" {
+		// Unix npm global root is <prefix>/lib/node_modules.
+		return pathDirForSeparator(rootDir, separator)
+	}
+	if goos == "windows" {
+		// Windows npm global root is usually <prefix>\node_modules.
+		return rootDir
+	}
+	return ""
+}
+
+func pathBaseForSeparator(path, separator string) string {
+	path = strings.TrimRight(path, separator)
+	idx := strings.LastIndex(path, separator)
+	if idx == -1 {
+		return path
+	}
+	return path[idx+len(separator):]
+}
+
+func pathDirForSeparator(path, separator string) string {
+	path = strings.TrimRight(path, separator)
+	idx := strings.LastIndex(path, separator)
+	if idx == -1 {
 		return ""
 	}
-	// npm --prefix expects the global prefix whose root is <prefix>/lib/node_modules.
-	return filepath.Dir(libDir)
+	if idx == 0 {
+		return separator
+	}
+	return path[:idx]
 }
 
 func npmPackageInstalled(pkg string) (bool, error) {

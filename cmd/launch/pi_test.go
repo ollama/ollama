@@ -48,10 +48,73 @@ func TestPiInstallSpec_UsesOfficialPackage(t *testing.T) {
 
 func TestPiNpmPrefixForPackageRoot(t *testing.T) {
 	prefix := filepath.Join(t.TempDir(), "npm-global")
-	packageRoot := filepath.Join(prefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent")
-	if got := npmPrefixForPackageRoot(packageRoot); got != prefix {
-		t.Fatalf("npmPrefixForPackageRoot() = %q, want %q", got, prefix)
+	t.Run("unix npm global layout", func(t *testing.T) {
+		packageRoot := filepath.Join(prefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent")
+		if got := npmPrefixForPackageRoot(packageRoot); got != prefix {
+			t.Fatalf("npmPrefixForPackageRoot() = %q, want %q", got, prefix)
+		}
+	})
+	tests := []struct {
+		name        string
+		goos        string
+		separator   string
+		packageRoot string
+		want        string
+	}{
+		{
+			name:        "macos npm global layout",
+			goos:        "darwin",
+			separator:   "/",
+			packageRoot: "/Users/parth/.npm-global/lib/node_modules/@mariozechner/pi-coding-agent",
+			want:        "/Users/parth/.npm-global",
+		},
+		{
+			name:        "linux npm global layout",
+			goos:        "linux",
+			separator:   "/",
+			packageRoot: "/home/parth/.npm-global/lib/node_modules/@mariozechner/pi-coding-agent",
+			want:        "/home/parth/.npm-global",
+		},
+		{
+			name:        "windows npm global layout",
+			goos:        "windows",
+			separator:   `\`,
+			packageRoot: `C:\Users\parth\AppData\Roaming\npm\node_modules\@mariozechner\pi-coding-agent`,
+			want:        `C:\Users\parth\AppData\Roaming\npm`,
+		},
+		{
+			name:        "windows lib npm global layout",
+			goos:        "windows",
+			separator:   `\`,
+			packageRoot: `C:\Users\parth\.npm-global\lib\node_modules\@mariozechner\pi-coding-agent`,
+			want:        `C:\Users\parth\.npm-global`,
+		},
+		{
+			name:        "non-windows direct node_modules layout",
+			goos:        "linux",
+			separator:   "/",
+			packageRoot: "/home/parth/.npm-global/node_modules/@mariozechner/pi-coding-agent",
+			want:        "",
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := npmPrefixForPackageRootForGOOS(tt.packageRoot, tt.goos, tt.separator)
+			if got != tt.want {
+				t.Fatalf("npmPrefixForPackageRootForGOOS() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	t.Run("host windows npm global layout", func(t *testing.T) {
+		packageRoot := filepath.Join(prefix, "node_modules", "@mariozechner", "pi-coding-agent")
+		want := ""
+		if runtime.GOOS == "windows" {
+			want = prefix
+		}
+		if got := npmPrefixForPackageRoot(packageRoot); got != want {
+			t.Fatalf("npmPrefixForPackageRoot() = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestPiRun_InstallAndWebSearchLifecycle(t *testing.T) {
