@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Horacehxw <horacehxw@gmail.com>
+Date: Wed, 22 Apr 2026 16:40:00 +0800
+Subject: [PATCH] ggml-metal: match cooperative tensor operand order
+
+---
+ ggml/src/ggml-metal/ggml-metal.metal | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
+index 398c80717b68d7bacc93dd66b7fd3e6444ecabc7..ab902475a955b834796eee64a8a3f54fad0496aa 100644
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -9149,7 +9149,7 @@ kernel void kernel_mul_mm(
+         mpp::tensor_ops::matmul2d_descriptor(NR1, NR0, NK, false, true, false, mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate),
+         execution_simdgroups<4>> mm;
+ 
+-    auto cT = mm.get_destination_cooperative_tensor<decltype(tA), decltype(tB), float>();
++    auto cT = mm.get_destination_cooperative_tensor<decltype(tB), decltype(tA), float>();
+ #endif
+ 
+     for (int loop_k = 0; loop_k < args.ne00; loop_k += NK) {
+@@ -9534,7 +9534,7 @@ kernel void kernel_mul_mm_id(
+         mpp::tensor_ops::matmul2d_descriptor(NR1, NR0, NK, false, true, false, mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate),
+         execution_simdgroups<4>> mm;
+ 
+-    auto cT = mm.get_destination_cooperative_tensor<decltype(tA), decltype(tB), float>();
++    auto cT = mm.get_destination_cooperative_tensor<decltype(tB), decltype(tA), float>();
+ #endif
+ 
+     for (int loop_k = 0; loop_k < args.ne00; loop_k += NK) {
+-- 
+2.39.5
