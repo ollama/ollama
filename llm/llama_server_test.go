@@ -1463,13 +1463,13 @@ func TestAppendMTPDraftArgs(t *testing.T) {
 			name:   "embedded draft uses configured draft depth",
 			config: LlamaServerConfig{EnableMTP: true},
 			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 4}},
-			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4"},
+			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4", "--spec-draft-backend-sampling"},
 		},
 		{
 			name:   "separate draft model uses configured draft depth",
 			config: LlamaServerConfig{DraftModelPath: "draft.gguf"},
 			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 8}},
-			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-model", "draft.gguf"},
+			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
 		},
 		{
 			name:   "zero draft depth disables speculative decoding",

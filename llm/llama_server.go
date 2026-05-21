@@ -618,6 +618,7 @@ func appendMTPDraftArgs(params []string, config LlamaServerConfig, opts api.Opti
 
 	params = append(params, "--spec-type", "draft-mtp")
 	params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
+	params = append(params, "--spec-draft-backend-sampling")
 	if config.DraftModelPath != "" {
 		params = append(params, "--spec-draft-model", config.DraftModelPath)
 	}
