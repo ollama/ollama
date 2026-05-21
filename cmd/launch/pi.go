@@ -271,6 +271,7 @@ func npmPrefixForPackageRoot(packageRoot string) string {
 	if filepath.Base(libDir) != "lib" {
 		return ""
 	}
+	// npm --prefix expects the global prefix whose root is <prefix>/lib/node_modules.
 	return filepath.Dir(libDir)
 }
 

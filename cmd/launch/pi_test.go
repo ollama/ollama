@@ -46,6 +46,14 @@ func TestPiInstallSpec_UsesOfficialPackage(t *testing.T) {
 	}
 }
 
+func TestPiNpmPrefixForPackageRoot(t *testing.T) {
+	prefix := filepath.Join(t.TempDir(), "npm-global")
+	packageRoot := filepath.Join(prefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent")
+	if got := npmPrefixForPackageRoot(packageRoot); got != prefix {
+		t.Fatalf("npmPrefixForPackageRoot() = %q, want %q", got, prefix)
+	}
+}
+
 func TestPiRun_InstallAndWebSearchLifecycle(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell test binaries")
