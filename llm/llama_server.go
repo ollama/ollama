@@ -1,9 +1,9 @@
 // llama_server.go wraps the llama-server binary as a subprocess
 //
 // Ollama uses two chat paths with llama-server. Models with explicit Ollama
-// renderers/parsers, Harmony handling, MLX, or an enabled legacy TEMPLATE layer
+// renderers/parsers, Harmony handling, MLX, or an enabled Go TEMPLATE layer
 // still render prompts in Go and call /completion. Other GGUF chat models use
-// llama-server's native chat template handling through /v1/chat/completions.
+// llama-server's chat_template handling through /v1/chat/completions.
 //
 // For structured output, JSON schemas are passed directly to llama-server via
 // its json_schema field (avoiding the CGO SchemaToGrammar dependency). Raw BNF

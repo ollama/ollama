@@ -1427,7 +1427,7 @@ func TestAppendJinjaArgs(t *testing.T) {
 		want   []string
 	}{
 		{
-			name: "native llama-server template path leaves jinja enabled",
+			name: "llama-server chat_template path leaves jinja enabled",
 			want: []string{"base"},
 		},
 		{

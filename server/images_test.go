@@ -60,7 +60,7 @@ func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
 func TestGetModelTemplateMetadata(t *testing.T) {
 	customTemplate := "CUSTOM {{ .Prompt }}"
 
-	t.Run("records chat template and legacy template layer", func(t *testing.T) {
+	t.Run("records chat template and Go TEMPLATE layer", func(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
@@ -77,11 +77,77 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		if !m.HasChatTemplate {
 			t.Fatal("expected GGUF chat template to be detected")
 		}
-		if !m.HasLegacyTemplate {
-			t.Fatal("expected legacy template layer to be detected")
+		if !m.HasGoTemplate {
+			t.Fatal("expected Go TEMPLATE layer to be detected")
 		}
 		if got := m.Template.String(); got != customTemplate {
 			t.Fatalf("template = %q, want %q", got, customTemplate)
+		}
+	})
+
+	t.Run("prefers chat template when Go TEMPLATE has fewer capabilities", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture":    "llama",
+			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
+		}, nil)
+		writeTestModelManifest(t, "chat-template-tools", digest, customTemplate)
+
+		m, err := GetModel("chat-template-tools")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !m.PreferChatTemplate {
+			t.Fatal("expected chat template to be preferred")
+		}
+		if got := m.CheckCapabilities(model.CapabilityTools); got != nil {
+			t.Fatalf("expected tools capability, got %v", got)
+		}
+	})
+
+	t.Run("respects explicit Go TEMPLATE enablement", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture":    "llama",
+			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
+		}, nil)
+		writeTestModelManifest(t, "go-template-forced", digest, customTemplate)
+
+		m, err := GetModel("go-template-forced")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.PreferChatTemplate {
+			t.Fatal("expected explicit Go TEMPLATE setting to suppress chat_template preference")
+		}
+		if got := m.CheckCapabilities(model.CapabilityTools); got == nil {
+			t.Fatal("expected tools capability to be unavailable when Go TEMPLATE is explicitly enabled")
+		}
+	})
+
+	t.Run("respects explicit Go TEMPLATE disablement", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "0")
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture":    "llama",
+			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
+		}, nil)
+		writeTestModelManifest(t, "go-template-disabled", digest, customTemplate)
+
+		m, err := GetModel("go-template-disabled")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.PreferChatTemplate {
+			t.Fatal("expected explicit Go TEMPLATE setting to suppress chat_template preference")
+		}
+		if got := m.CheckCapabilities(model.CapabilityTools); got != nil {
+			t.Fatalf("expected tools capability from GGUF chat_template, got %v", got)
 		}
 	})
 
@@ -101,8 +167,8 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		if m.HasChatTemplate {
 			t.Fatal("expected missing GGUF chat template")
 		}
-		if !m.HasLegacyTemplate {
-			t.Fatal("expected legacy template layer to be detected")
+		if !m.HasGoTemplate {
+			t.Fatal("expected Go TEMPLATE layer to be detected")
 		}
 	})
 }
@@ -139,7 +205,7 @@ func TestModelCapabilities(t *testing.T) {
 		"general.architecture": "llama",
 	}, []*ggml.Tensor{})
 
-	nativeToolTemplateModelPath, _ := createBinFile(t, ggml.KV{
+	ggufToolTemplateModelPath, _ := createBinFile(t, ggml.KV{
 		"general.architecture":    "llama",
 		"tokenizer.chat_template": `{% if tools %}<tool_call>{{ tools }}</tool_call>{% endif %}<think>{{ messages[0]['content'] }}</think>`,
 	}, []*ggml.Tensor{})
@@ -242,19 +308,19 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools},
 		},
 		{
-			name: "model with native chat template tools and thinking",
+			name: "model with GGUF chat_template tools and thinking",
 			model: Model{
-				ModelPath: nativeToolTemplateModelPath,
+				ModelPath: ggufToolTemplateModelPath,
 			},
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking},
 		},
 		{
-			name: "model with Go template ignores native chat template capabilities",
+			name: "model with Go TEMPLATE ignores GGUF chat_template capabilities",
 			model: Model{
-				ModelPath:         nativeToolTemplateModelPath,
-				Template:          chatTemplate,
-				HasLegacyTemplate: true,
-				HasChatTemplate:   true,
+				ModelPath:       ggufToolTemplateModelPath,
+				Template:        chatTemplate,
+				HasGoTemplate:   true,
+				HasChatTemplate: true,
 			},
 			expectedCaps: []model.Capability{model.CapabilityCompletion},
 		},
@@ -367,7 +433,7 @@ func TestModelCapabilities(t *testing.T) {
 			},
 		},
 		{
-			name: "legacy gemma4 safetensors suppresses vision and audio",
+			name: "default gemma4 safetensors suppresses vision and audio",
 			model: Model{
 				Config: model.ConfigV2{
 					ModelFormat:  "safetensors",

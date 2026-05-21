@@ -214,7 +214,7 @@ func LogLevel() slog.Level {
 var (
 	// FlashAttention enables the experimental flash attention feature.
 	FlashAttention = BoolWithDefault("OLLAMA_FLASH_ATTENTION")
-	// GoTemplate enables legacy Modelfile TEMPLATE rendering when a model has one.
+	// GoTemplate enables Modelfile TEMPLATE rendering when a model has one.
 	GoTemplate = BoolWithDefault("OLLAMA_GO_TEMPLATE")
 	// DebugLogRequests logs inference requests to disk for replay/debugging.
 	DebugLogRequests = Bool("OLLAMA_DEBUG_LOG_REQUESTS")

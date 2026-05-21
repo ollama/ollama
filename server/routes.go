@@ -570,7 +570,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 			leadingBOS = leadingBOSForModel(m)
 		} else {
-			// legacy flow
+			// Direct template execution flow.
 			if err := tmpl.Execute(&b, values); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -2327,11 +2327,18 @@ func llamaServerConfigForModel(m *Model) llm.LlamaServerConfig {
 }
 
 func usesOllamaRenderedChat(m *Model) bool {
-	return m != nil && (m.Config.Renderer != "" || m.Config.Parser != "" || shouldUseHarmony(m) || shouldUseLegacyTemplate(m))
+	return m != nil && (m.Config.Renderer != "" || m.Config.Parser != "" || shouldUseHarmony(m) || shouldUseGoTemplate(m))
 }
 
-func shouldUseLegacyTemplate(m *Model) bool {
-	return m.HasLegacyTemplate && envconfig.GoTemplate(true)
+func shouldUseGoTemplate(m *Model) bool {
+	if !m.HasGoTemplate {
+		return false
+	}
+	if goTemplateEnvSet() {
+		return envconfig.GoTemplate(true)
+	}
+
+	return !m.PreferChatTemplate && envconfig.GoTemplate(true)
 }
 
 func writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {

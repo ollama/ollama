@@ -194,18 +194,28 @@ func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv ggml.KV, tm
 
 func TestChatModeForModel(t *testing.T) {
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
-	if got := chatModeForModel(&Model{HasChatTemplate: true, HasLegacyTemplate: true}); got != chatExecutionModeRendered {
+	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true}); got != chatExecutionModeRendered {
 		t.Fatalf("chatModeForModel with default go template env = %v, want rendered", got)
 	}
 
 	t.Setenv("OLLAMA_GO_TEMPLATE", "0")
-	if got := chatModeForModel(&Model{HasChatTemplate: true, HasLegacyTemplate: true}); got != chatExecutionModeNative {
-		t.Fatalf("chatModeForModel with go template env disabled = %v, want native", got)
+	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true}); got != chatExecutionModeNative {
+		t.Fatalf("chatModeForModel with go template env disabled = %v, want chat_template route", got)
 	}
 
 	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
-	if got := chatModeForModel(&Model{HasChatTemplate: true, HasLegacyTemplate: true}); got != chatExecutionModeRendered {
+	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true}); got != chatExecutionModeRendered {
 		t.Fatalf("chatModeForModel with go template env enabled = %v, want rendered", got)
+	}
+
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true, PreferChatTemplate: true}); got != chatExecutionModeRendered {
+		t.Fatalf("chatModeForModel with explicit go template env and chat_template preference = %v, want rendered", got)
+	}
+
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true, PreferChatTemplate: true}); got != chatExecutionModeNative {
+		t.Fatalf("chatModeForModel with default go template env and chat_template preference = %v, want chat_template route", got)
 	}
 
 	t.Setenv("OLLAMA_GO_TEMPLATE", "0")
@@ -239,22 +249,22 @@ func TestChatModeForModel(t *testing.T) {
 
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
 	if got := chatModeForModel(&Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasChatTemplate: true}); got != chatExecutionModeNative {
-		t.Fatalf("chatModeForModel without legacy template = %v, want native", got)
+		t.Fatalf("chatModeForModel without Go TEMPLATE = %v, want chat_template route", got)
 	}
 	if got := llamaServerConfigForModel(&Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasChatTemplate: true}); got.DisableJinja {
-		t.Fatalf("llamaServerConfigForModel with native chat template should not disable jinja")
+		t.Fatalf("llamaServerConfigForModel with GGUF chat_template should not disable jinja")
 	}
 
-	legacyModel := &Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasLegacyTemplate: true}
-	if got := chatModeForModel(legacyModel); got != chatExecutionModeRendered {
-		t.Fatalf("chatModeForModel with generic legacy template = %v, want rendered", got)
+	goTemplateModel := &Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasGoTemplate: true}
+	if got := chatModeForModel(goTemplateModel); got != chatExecutionModeRendered {
+		t.Fatalf("chatModeForModel with generic Go TEMPLATE = %v, want rendered", got)
 	}
-	if got := llamaServerConfigForModel(legacyModel); !got.DisableJinja {
+	if got := llamaServerConfigForModel(goTemplateModel); !got.DisableJinja {
 		t.Fatalf("llamaServerConfigForModel with Go TEMPLATE should disable jinja")
 	}
 }
 
-func TestChatHandlerNativeTemplateRoute(t *testing.T) {
+func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
 	gin.SetMode(gin.TestMode)
@@ -262,7 +272,7 @@ func TestChatHandlerNativeTemplateRoute(t *testing.T) {
 	mock := mockRunner{
 		ChatFn: func(_ context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
 			fn(llm.ChatResponse{
-				Message:            api.Message{Role: "assistant", Content: "native response"},
+				Message:            api.Message{Role: "assistant", Content: "chat template response"},
 				Done:               true,
 				DoneReason:         llm.DoneReasonStop,
 				PromptEvalCount:    1,
@@ -274,13 +284,13 @@ func TestChatHandlerNativeTemplateRoute(t *testing.T) {
 		},
 	}
 	s := newServerWithMockRunner(t, &mock)
-	createMinimalGGUFModel(t, s, "native-chat", ggml.KV{
+	createMinimalGGUFModel(t, s, "chat-template", ggml.KV{
 		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 	}, "", nil)
 
 	stream := false
 	w := createRequest(t, s.ChatHandler, api.ChatRequest{
-		Model: "native-chat",
+		Model: "chat-template",
 		Messages: []api.Message{
 			{Role: "user", Content: "hello"},
 		},
@@ -294,14 +304,14 @@ func TestChatHandlerNativeTemplateRoute(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &actual); err != nil {
 		t.Fatal(err)
 	}
-	if actual.Message.Content != "native response" {
-		t.Fatalf("expected native response, got %q", actual.Message.Content)
+	if actual.Message.Content != "chat template response" {
+		t.Fatalf("expected chat template response, got %q", actual.Message.Content)
 	}
 	if len(mock.ChatRequest.Messages) != 1 || mock.ChatRequest.Messages[0].Content != "hello" {
-		t.Fatalf("native chat request messages = %#v", mock.ChatRequest.Messages)
+		t.Fatalf("chat_template request messages = %#v", mock.ChatRequest.Messages)
 	}
 	if !mock.ChatRequest.Shift {
-		t.Fatal("expected native chat to preserve default cache_prompt shift")
+		t.Fatal("expected chat_template route to preserve default cache_prompt shift")
 	}
 }
 
@@ -312,19 +322,19 @@ func TestChatHandlerTemplateEnvUsesRenderedRoute(t *testing.T) {
 
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
-			Content:    "legacy response",
+			Content:    "go template response",
 			Done:       true,
 			DoneReason: llm.DoneReasonStop,
 		},
 	}
 	s := newServerWithMockRunner(t, &mock)
-	createMinimalGGUFModel(t, s, "legacy-template", ggml.KV{
+	createMinimalGGUFModel(t, s, "go-template", ggml.KV{
 		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 	}, "{{ range .Messages }}{{ .Role }}: {{ .Content }}\n{{ end }}", nil)
 
 	stream := false
 	w := createRequest(t, s.ChatHandler, api.ChatRequest{
-		Model: "legacy-template",
+		Model: "go-template",
 		Messages: []api.Message{
 			{Role: "user", Content: "hello"},
 		},
@@ -334,7 +344,7 @@ func TestChatHandlerTemplateEnvUsesRenderedRoute(t *testing.T) {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 	if mock.ChatRequest.Messages != nil {
-		t.Fatalf("expected rendered route, native chat request was recorded: %#v", mock.ChatRequest)
+		t.Fatalf("expected rendered route, chat_template request was recorded: %#v", mock.ChatRequest)
 	}
 	if !strings.Contains(mock.CompletionRequest.Prompt, "user: hello") {
 		t.Fatalf("expected rendered prompt, got %q", mock.CompletionRequest.Prompt)
