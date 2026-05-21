@@ -57,6 +57,28 @@ func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
 	}
 }
 
+func TestPruneLayersRemovesRecentInvalidBlobs(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	blobsDir, err := manifest.BlobsPath("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	invalidPath := filepath.Join(blobsDir, "sha256-deadbeef-partial")
+	if err := os.WriteFile(invalidPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := PruneLayers(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(invalidPath); !os.IsNotExist(err) {
+		t.Fatalf("recent invalid blob still exists: %v", err)
+	}
+}
+
 func TestModelCapabilities(t *testing.T) {
 	// Create completion model (llama architecture without vision)
 	completionModelPath, _ := createBinFile(t, ggml.KV{

@@ -487,27 +487,26 @@ func PruneLayers() error {
 			continue
 		}
 
+		name := strings.ReplaceAll(blob.Name(), "-", ":")
+
+		_, err = manifest.BlobsPath(name)
+		if err != nil {
+			if errors.Is(err, manifest.ErrInvalidDigestFormat) {
+				// remove invalid blobs (e.g. partial downloads or interrupted uploads)
+				if err := os.Remove(filepath.Join(p, blob.Name())); err != nil {
+					slog.Error("couldn't remove blob", "blob", blob.Name(), "error", err)
+				}
+			}
+
+			continue
+		}
+
 		info, err := blob.Info()
 		if err != nil {
 			slog.Error("couldn't stat blob", "blob", blob.Name(), "error", err)
 			continue
 		}
 		if time.Since(info.ModTime()) < layerPruneGracePeriod {
-			continue
-		}
-
-		name := blob.Name()
-		name = strings.ReplaceAll(name, "-", ":")
-
-		_, err = manifest.BlobsPath(name)
-		if err != nil {
-			if errors.Is(err, manifest.ErrInvalidDigestFormat) {
-				// remove invalid blobs (e.g. partial downloads)
-				if err := os.Remove(filepath.Join(p, blob.Name())); err != nil {
-					slog.Error("couldn't remove blob", "blob", blob.Name(), "error", err)
-				}
-			}
-
 			continue
 		}
 
