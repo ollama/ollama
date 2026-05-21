@@ -107,7 +107,7 @@ func GetModelArch(modelPath string) (string, error) {
 	defer C.free(unsafe.Pointer(key))
 	arch_index := C.gguf_find_key(gguf_ctx, key)
 	if int(arch_index) < 0 {
-		return "", errors.New("unknown model architecture")
+		return "", errors.New("unsupported model architecture")
 	}
 
 	arch := C.gguf_get_val_str(gguf_ctx, arch_index)

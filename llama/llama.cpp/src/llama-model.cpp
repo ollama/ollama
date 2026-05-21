@@ -473,7 +473,7 @@ void llama_model::load_stats(llama_model_loader & ml) {
 void llama_model::load_arch(llama_model_loader & ml) {
     arch = ml.get_arch();
     if (arch == LLM_ARCH_UNKNOWN) {
-        throw std::runtime_error("unknown model architecture: '" + ml.get_arch_name() + "'");
+        throw std::runtime_error("unsupported model architecture: '" + ml.get_arch_name() + "' (this Ollama version may not support it yet)");
     }
 }
 
