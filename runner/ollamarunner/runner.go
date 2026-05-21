@@ -633,8 +633,8 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 
 	if resumeSeq != -1 {
 		s.nextSeq = resumeSeq
-	} else if len(processOrder) > 0 {
-		s.nextSeq = processOrder[len(processOrder)-1] + 1
+	} else if len(processOrder) > 0 && len(s.seqs) > 0 {
+		s.nextSeq = (processOrder[len(processOrder)-1] + 1) % len(s.seqs)
 	}
 
 	if len(batchInputs) == 0 {

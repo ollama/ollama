@@ -10,8 +10,8 @@ import (
 	"github.com/ollama/ollama/model/input"
 )
 
-// Accelerated implements a free block pool for O(1) allocation
-// instead of O(n) linear search
+// Accelerated implements a free block pool using a bitmap for efficient
+// free cell tracking, reducing overhead compared to linear search
 type Accelerated struct {
 	DType ml.DType
 
@@ -37,7 +37,7 @@ type Accelerated struct {
 	cellRanges map[int]cellRange
 
 	// ** ACCELERATION: Free Block Pool **
-	// Bitmap of free cells for O(1) lookup
+	// Bitmap of free cells for efficient lookup
 	// Each bit represents whether a cell is free (1) or occupied (0)
 	freeBitmap []uint64
 	// Index of the first known free cell (hint for faster search)
@@ -180,7 +180,8 @@ func (a *Accelerated) findNextFreeHint() {
 	a.firstFreeHint = len(a.cells)
 }
 
-// findLocsAccelerated finds free locations using the bitmap for O(1) amortized lookup
+// findLocsAccelerated finds free locations using the bitmap for efficient lookup.
+// Uses a hint (firstFreeHint) to reduce scan distance, with wraparound if needed.
 func (a *Accelerated) findLocsAccelerated() ([]int32, error) {
 	if a.freeCount < a.curBatchSize {
 		return nil, fmt.Errorf("%w (cache: %v batch: %v free: %v)", ErrKvCacheFull, len(a.cells), a.curBatchSize, a.freeCount)

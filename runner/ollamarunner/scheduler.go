@@ -80,42 +80,53 @@ func (cbs *continuousBatchingScheduler) plan(seqs []*Sequence) *batchPlan {
 	}
 
 	// Step 3: Fair-share remaining capacity among prefill sequences
-	var prefillCapacity int
 	if numPrefill > 0 {
-		prefillCapacity = remainingCapacity
+		prefillCapacity := remainingCapacity
 		capPerSeq := prefillCapacity / numPrefill
+
+		// When capacity is tight (capPerSeq < 1), only allocate to first few sequences
 		if capPerSeq < 1 {
-			capPerSeq = 1
-		}
-
-		// First pass: allocate up to capPerSeq or available inputs
-		allocated := 0
-		remainingPrefill := make([]int, 0, numPrefill)
-		for _, idx := range bp.prefillSeqs {
-			seq := seqs[idx]
-			take := min(capPerSeq, len(seq.inputs))
-			bp.tokensPerSeq[idx] = take
-			allocated += take
-			if take < len(seq.inputs) {
-				remainingPrefill = append(remainingPrefill, idx)
+			// Allocate 1 token to first prefillCapacity sequences only
+			allocated := 0
+			for i, idx := range bp.prefillSeqs {
+				if i >= prefillCapacity {
+					break // No more capacity
+				}
+				if len(seqs[idx].inputs) > 0 {
+					bp.tokensPerSeq[idx] = 1
+					allocated++
+				}
 			}
-		}
-
-		// Second pass: distribute any leftover capacity to sequences that still have inputs
-		leftover := prefillCapacity - allocated
-		for _, idx := range remainingPrefill {
-			if leftover <= 0 {
-				break
+			bp.totalTokens = allocated
+		} else {
+			// Normal case: fair-share with possible second pass for leftovers
+			allocated := 0
+			remainingPrefill := make([]int, 0, numPrefill)
+			for _, idx := range bp.prefillSeqs {
+				seq := seqs[idx]
+				take := min(capPerSeq, len(seq.inputs))
+				bp.tokensPerSeq[idx] = take
+				allocated += take
+				if take < len(seq.inputs) {
+					remainingPrefill = append(remainingPrefill, idx)
+				}
 			}
-			seq := seqs[idx]
-			canTake := len(seq.inputs) - bp.tokensPerSeq[idx]
-			take := min(leftover, canTake)
-			bp.tokensPerSeq[idx] += take
-			leftover -= take
-		}
 
-		// If we still have capacity and no prefill seqs need more, it's OK
-		bp.totalTokens = prefillCapacity - leftover
+			// Second pass: distribute any leftover capacity to sequences that still have inputs
+			leftover := prefillCapacity - allocated
+			for _, idx := range remainingPrefill {
+				if leftover <= 0 {
+					break
+				}
+				seq := seqs[idx]
+				canTake := len(seq.inputs) - bp.tokensPerSeq[idx]
+				take := min(leftover, canTake)
+				bp.tokensPerSeq[idx] += take
+				leftover -= take
+			}
+
+			bp.totalTokens = prefillCapacity - leftover
+		}
 	}
 
 	// Step 4: Fill decode slots

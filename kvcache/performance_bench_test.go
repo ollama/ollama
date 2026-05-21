@@ -1,3 +1,6 @@
+//go:build benchmark
+// +build benchmark
+
 package kvcache
 
 import (
@@ -7,8 +10,9 @@ import (
 	"github.com/ollama/ollama/ml"
 )
 
-// TestPerformanceCompare compares original vs accelerated implementation
-func TestPerformanceCompare(t *testing.T) {
+// BenchmarkPerformanceCompare compares original vs accelerated implementation.
+// Run with: go test -tags=benchmark -bench=. -run=^$
+func BenchmarkPerformanceCompare(b *testing.B) {
 	capacities := []int{1000, 10000, 100000}
 	batchSizes := []int{1, 10, 100}
 
@@ -18,17 +22,7 @@ func TestPerformanceCompare(t *testing.T) {
 
 	for _, capacity := range capacities {
 		for _, batchSize := range batchSizes {
-			// Test original implementation
-			originalCache := NewCausalCache(nil)
-			originalCache.Init(&testBackend{}, ml.DTypeF16, 1, capacity, batchSize)
-
-			// Warm up
-			for i := 0; i < 100; i++ {
-				originalCache.curBatchSize = batchSize
-				_, _ = originalCache.findLocs()
-			}
-
-			// Measure original
+			// Benchmark original implementation
 			tOriginal := testing.Benchmark(func(b *testing.B) {
 				cache := NewCausalCache(nil)
 				cache.Init(&testBackend{}, ml.DTypeF16, 1, capacity, batchSize)
@@ -39,17 +33,7 @@ func TestPerformanceCompare(t *testing.T) {
 				}
 			})
 
-			// Test accelerated implementation
-			accelCache := NewAcceleratedCache(nil)
-			accelCache.Init(&testBackend{}, ml.DTypeF16, 1, capacity, batchSize)
-
-			// Warm up
-			for i := 0; i < 100; i++ {
-				accelCache.curBatchSize = batchSize
-				_, _ = accelCache.findLocsAccelerated()
-			}
-
-			// Measure accelerated
+			// Benchmark accelerated implementation
 			tAccel := testing.Benchmark(func(b *testing.B) {
 				cache := NewAcceleratedCache(nil)
 				cache.Init(&testBackend{}, ml.DTypeF16, 1, capacity, batchSize)
