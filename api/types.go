@@ -606,6 +606,13 @@ type Runner struct {
 	MainGPU   int   `json:"main_gpu,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
 	NumThread int   `json:"num_thread,omitempty"`
+
+	// Fast optimizations - add these for performance tuning
+	NumUBatch        int    `json:"num_ubatch,omitempty"`        // Micro batch size for processing (default: num_batch)
+	FlashAttention   string `json:"flash_attention,omitempty"`   // "enabled", "disabled", or "auto" (default: "auto")
+	KVCacheType      string `json:"kv_cache_type,omitempty"`     // "f16", "q8_0", "q4_0" (default: "f16")
+	UseNUMA          *bool  `json:"use_numa,omitempty"`         // Enable NUMA awareness for multi-socket systems
+	ContinuousBatch  *bool  `json:"continuous_batch,omitempty"` // Enable continuous batching for higher throughput (default: true when parallel > 1)
 }
 
 // EmbedRequest is the request passed to [Client.Embed].

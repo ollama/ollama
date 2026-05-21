@@ -389,6 +389,9 @@ type Server struct {
 	// next sequence for prompt processing to avoid starvation
 	nextSeq int
 
+	// scheduler for continuous batching
+	scheduler *continuousBatchingScheduler
+
 	// multimodalHash generates hashes for comparing equality
 	// of non-text data
 	multimodalHash maphash.Hash
@@ -513,10 +516,16 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 	var batchOutputs []int32
 	var batch input.Batch
 
+	// Continuous batching: plan token allocation across sequences
+	plan := s.scheduler.plan(s.seqs)
+
 	resumeSeq := -1
-	seqIdx := s.nextSeq - 1
-	for range s.seqs {
-		seqIdx = (seqIdx + 1) % len(s.seqs)
+	// Process decode sequences first (for low latency), then prefill sequences
+	var processOrder []int
+	processOrder = append(processOrder, plan.decodeSeqs...)
+	processOrder = append(processOrder, plan.prefillSeqs...)
+
+	for _, seqIdx := range processOrder {
 		seq := s.seqs[seqIdx]
 		if seq == nil {
 			continue
@@ -528,6 +537,10 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 		}
 
 		batchSize := s.batchSize
+		maxTokens := plan.tokensPerSeq[seqIdx]
+		if maxTokens <= 0 {
+			continue
+		}
 
 		for i, inp := range seq.inputs {
 			// If we are required to put following inputs into a single batch then extend the
@@ -543,6 +556,14 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			// here again for the next batch to avoid starvation, though we can opportunistically
 			// check if other sequences can still squeeze something in.
 			if len(batchInputs)+minBatch > batchSize {
+				if len(seq.pendingInputs) == 0 && resumeSeq == -1 {
+					resumeSeq = seqIdx
+				}
+				break
+			}
+
+			// Stop if we've reached the continuous batching allocation limit for this sequence
+			if i >= maxTokens {
 				if len(seq.pendingInputs) == 0 && resumeSeq == -1 {
 					resumeSeq = seqIdx
 				}
@@ -612,8 +633,8 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 
 	if resumeSeq != -1 {
 		s.nextSeq = resumeSeq
-	} else {
-		s.nextSeq = seqIdx + 1
+	} else if len(processOrder) > 0 {
+		s.nextSeq = processOrder[len(processOrder)-1] + 1
 	}
 
 	if len(batchInputs) == 0 {
@@ -1235,6 +1256,7 @@ func (s *Server) allocModel(
 	s.parallel = parallel
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
+	s.scheduler = &continuousBatchingScheduler{maxBatchSize: s.batchSize}
 
 	err = s.reserveWorstCaseGraph(true)
 	if err != nil {

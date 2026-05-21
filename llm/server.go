@@ -174,6 +174,24 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
 
+	// Continuous batching: enabled by default when parallel > 1
+	if opts.ContinuousBatch != nil {
+		loadRequest.ContinuousBatch = *opts.ContinuousBatch
+	} else {
+		loadRequest.ContinuousBatch = numParallel > 1
+	}
+
+	// Fast optimization: NumUBatch (micro batch size)
+	if opts.NumUBatch > 0 {
+		if opts.NumUBatch > opts.NumBatch {
+			slog.Warn("num_ubatch cannot exceed num_batch, using num_batch", "num_ubatch", opts.NumUBatch, "num_batch", opts.NumBatch)
+			loadRequest.BatchSize = opts.NumBatch
+		} else {
+			loadRequest.BatchSize = opts.NumUBatch
+			slog.Info("using micro batch size", "num_ubatch", opts.NumUBatch)
+		}
+	}
+
 	defaultThreads := systemInfo.ThreadCount
 	if opts.NumThread > 0 {
 		loadRequest.NumThreads = opts.NumThread
@@ -514,6 +532,9 @@ type LoadRequest struct {
 	NumThreads     int
 	GPULayers      ml.GPULayersList
 	MultiUserCache bool
+
+	// Continuous batching for higher throughput with concurrent requests
+	ContinuousBatch bool
 
 	// Legacy fields - not used with the Ollama engine
 	ProjectorPath string
