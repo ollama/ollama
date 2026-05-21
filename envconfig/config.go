@@ -236,6 +236,9 @@ var (
 	EnableVulkan = Bool("OLLAMA_VULKAN")
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
 	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
+	// NoFileFragmentation prevents severe NTFS file fragmentation on Windows
+	// by forcing single-threaded sequential downloads and disabling sparse files.
+	NoFileFragmentation = Bool("OLLAMA_NO_FILE_FRAGMENTATION")
 )
 
 func String(s string) func() string {
@@ -334,6 +337,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_EDITOR":               {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
 		"OLLAMA_NEW_ENGINE":           {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
 		"OLLAMA_REMOTES":              {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
+		"OLLAMA_NO_FILE_FRAGMENTATION": {"OLLAMA_NO_FILE_FRAGMENTATION", NoFileFragmentation(), "Prevent on-disk file fragmentation by forcing each download to be 1 single stream"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
