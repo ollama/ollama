@@ -493,9 +493,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	images := make([]llm.ImageData, len(req.Images))
+	media := make([]llm.MediaData, len(req.Images))
 	for i := range req.Images {
-		images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
+		media[i] = llm.NewMediaData(i, req.Images[i])
 	}
 
 	prompt := req.Prompt
@@ -527,8 +527,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			userMsg := api.Message{Role: "user", Content: req.Prompt}
-			for _, i := range images {
-				userMsg.Images = append(userMsg.Images, i.Data)
+			for _, m := range media {
+				userMsg.Images = append(userMsg.Images, m.Data)
 			}
 			values.Messages = append(msgs, userMsg)
 		}
@@ -558,7 +558,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// support for generate
 		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
 			genTruncate := (req.Truncate == nil || *req.Truncate) && !m.IsMLX()
-			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, optionsForPrompt(opts, r), values.Messages, []api.Tool{}, req.Think, genTruncate)
+			prompt, media, err = chatPrompt(c.Request.Context(), m, r.Tokenize, optionsForPrompt(opts, r), values.Messages, []api.Tool{}, req.Think, genTruncate)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -587,7 +587,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			CreatedAt: time.Now().UTC(),
 			DebugInfo: &api.DebugInfo{
 				RenderedTemplate: prompt,
-				ImageCount:       len(images),
+				ImageCount:       len(media),
 			},
 		})
 		return
@@ -614,7 +614,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:          prompt,
-			Images:          images,
+			Media:           media,
 			Format:          req.Format,
 			Options:         opts,
 			Shift:           req.Shift == nil || *req.Shift,
@@ -1513,6 +1513,8 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return nil, err
 	}
 
+	resp.Template = selectedModelTemplate(m, kvData)
+
 	delete(kvData, "general.name")
 	delete(kvData, "tokenizer.chat_template")
 	resp.ModelInfo = kvData
@@ -1555,6 +1557,15 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 	}
 
 	return kv, data.Tensors(), nil
+}
+
+func selectedModelTemplate(m *Model, kv ggml.KV) string {
+	if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
+		if chatTemplate := kv.String("tokenizer.chat_template"); chatTemplate != "" {
+			return chatTemplate
+		}
+	}
+	return m.Template.String()
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
@@ -2654,7 +2665,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		truncate = false
 	}
 	promptOpts := optionsForPrompt(opts, r)
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, promptOpts, msgs, processedTools, req.Think, truncate)
+	prompt, media, err := chatPrompt(c.Request.Context(), m, r.Tokenize, promptOpts, msgs, processedTools, req.Think, truncate)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -2668,7 +2679,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			CreatedAt: time.Now().UTC(),
 			DebugInfo: &api.DebugInfo{
 				RenderedTemplate: prompt,
-				ImageCount:       len(images),
+				ImageCount:       len(media),
 			},
 		})
 		return
@@ -2730,7 +2741,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			err := r.Completion(ctx, llm.CompletionRequest{
 				Prompt:          prompt,
-				Images:          images,
+				Media:           media,
 				Format:          currentFormat,
 				Options:         opts,
 				Shift:           req.Shift == nil || *req.Shift,
@@ -3075,9 +3086,9 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		}
 	}
 
-	var images []llm.ImageData
+	var media []llm.MediaData
 	for i, imgData := range req.Images {
-		images = append(images, llm.ImageData{ID: i, Data: imgData})
+		media = append(media, llm.NewMediaData(i, imgData))
 	}
 
 	var streamStarted bool
@@ -3089,7 +3100,7 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		Height: req.Height,
 		Steps:  req.Steps,
 		Seed:   seed,
-		Images: images,
+		Media:  media,
 	}, func(cr llm.CompletionResponse) {
 		streamStarted = true
 		res := api.GenerateResponse{

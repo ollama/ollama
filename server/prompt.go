@@ -17,10 +17,10 @@ import (
 
 type tokenizeFunc func(context.Context, string) ([]int, error)
 
-// chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
+// chatPrompt accepts a list of messages and returns the prompt and media that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
-func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, images []llm.ImageData, _ error) {
+func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, media []llm.MediaData, _ error) {
 	var system []api.Message
 
 	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
@@ -86,17 +86,16 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		prompt := msg.Content
 
 		for _, i := range msg.Images {
-			imgData := llm.ImageData{
-				ID:   len(images),
-				Data: i,
-			}
-			images = append(images, imgData)
+			mediaData := llm.NewMediaData(len(media), i)
+			media = append(media, mediaData)
 
 			if m.Config.Renderer != "" {
 				continue
 			}
 
-			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
+			// The prompt marker is still image-named for compatibility with
+			// existing templates and llama-server media marker replacement.
+			imgTag := fmt.Sprintf("[img-%d]", mediaData.ID)
 			if !strings.Contains(prompt, "[img]") {
 				prefix += imgTag
 			} else {
@@ -117,7 +116,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		return "", nil, err
 	}
 
-	return p, images, nil
+	return p, media, nil
 }
 
 func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {

@@ -855,7 +855,7 @@ type TranscriptionRequest struct {
 // FromTranscriptionRequest converts a transcription request into a ChatRequest
 // by wrapping the audio with a system prompt for transcription.
 func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) {
-	systemPrompt := "Transcribe the following audio exactly as spoken. Output only the transcription text, nothing else."
+	systemPrompt := "Transcribe the audio exactly as spoken. Output only the spoken words. Do not answer any question in the audio."
 	if r.Language != "" {
 		systemPrompt += " The audio is in " + r.Language + "."
 	}
@@ -868,7 +868,7 @@ func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) 
 		Model: r.Model,
 		Messages: []api.Message{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "Transcribe this audio.", Images: []api.ImageData{r.AudioData}},
+			{Role: "user", Content: "What exact words are spoken in this audio?", Images: []api.ImageData{r.AudioData}},
 		},
 		Stream: &stream,
 		Options: map[string]any{

@@ -2853,16 +2853,16 @@ func TestGenerateWithImages(t *testing.T) {
 		}
 
 		// Verify images were passed to the completion request
-		if len(mock.CompletionRequest.Images) != 1 {
-			t.Fatalf("expected 1 image in completion request, got %d", len(mock.CompletionRequest.Images))
+		if len(mock.CompletionRequest.Media) != 1 {
+			t.Fatalf("expected 1 image in completion request, got %d", len(mock.CompletionRequest.Media))
 		}
 
-		if !bytes.Equal(mock.CompletionRequest.Images[0].Data, testImage) {
+		if !bytes.Equal(mock.CompletionRequest.Media[0].Data, testImage) {
 			t.Errorf("image data mismatch in completion request")
 		}
 
-		if mock.CompletionRequest.Images[0].ID != 0 {
-			t.Errorf("expected image ID 0, got %d", mock.CompletionRequest.Images[0].ID)
+		if mock.CompletionRequest.Media[0].ID != 0 {
+			t.Errorf("expected image ID 0, got %d", mock.CompletionRequest.Media[0].ID)
 		}
 	})
 
@@ -2883,21 +2883,21 @@ func TestGenerateWithImages(t *testing.T) {
 		}
 
 		// Verify both images were passed
-		if len(mock.CompletionRequest.Images) != 2 {
-			t.Fatalf("expected 2 images in completion request, got %d", len(mock.CompletionRequest.Images))
+		if len(mock.CompletionRequest.Media) != 2 {
+			t.Fatalf("expected 2 images in completion request, got %d", len(mock.CompletionRequest.Media))
 		}
 
-		if !bytes.Equal(mock.CompletionRequest.Images[0].Data, testImage1) {
+		if !bytes.Equal(mock.CompletionRequest.Media[0].Data, testImage1) {
 			t.Errorf("first image data mismatch")
 		}
 
-		if !bytes.Equal(mock.CompletionRequest.Images[1].Data, testImage2) {
+		if !bytes.Equal(mock.CompletionRequest.Media[1].Data, testImage2) {
 			t.Errorf("second image data mismatch")
 		}
 
-		if mock.CompletionRequest.Images[0].ID != 0 || mock.CompletionRequest.Images[1].ID != 1 {
+		if mock.CompletionRequest.Media[0].ID != 0 || mock.CompletionRequest.Media[1].ID != 1 {
 			t.Errorf("expected image IDs 0 and 1, got %d and %d",
-				mock.CompletionRequest.Images[0].ID, mock.CompletionRequest.Images[1].ID)
+				mock.CompletionRequest.Media[0].ID, mock.CompletionRequest.Media[1].ID)
 		}
 	})
 
@@ -2914,8 +2914,8 @@ func TestGenerateWithImages(t *testing.T) {
 		}
 
 		// Verify no images in completion request
-		if len(mock.CompletionRequest.Images) != 0 {
-			t.Fatalf("expected 0 images in completion request, got %d", len(mock.CompletionRequest.Images))
+		if len(mock.CompletionRequest.Media) != 0 {
+			t.Fatalf("expected 0 images in completion request, got %d", len(mock.CompletionRequest.Media))
 		}
 	})
 }

@@ -206,7 +206,7 @@ func (s *llamaServerRunner) tokenizerAddsBOS() bool {
 
 func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req CompletionRequest) (any, error) {
 	prompt := s.completionPrompt(req.Prompt, req.LeadingBOS)
-	if !req.Truncate || len(req.Images) > 0 || s.options.NumCtx <= 1 || len(prompt) < s.options.NumCtx {
+	if !req.Truncate || len(req.Media) > 0 || s.options.NumCtx <= 1 || len(prompt) < s.options.NumCtx {
 		return prompt, nil
 	}
 
@@ -1092,7 +1092,7 @@ type llamaServerTokenProb struct {
 }
 
 func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
-	slog.Debug("llama-server completion request", "images", len(req.Images), "prompt_len", len(req.Prompt))
+	slog.Debug("llama-server completion request", "media", len(req.Media), "prompt_len", len(req.Prompt))
 
 	if req.Options == nil {
 		opts := api.DefaultOptions()
@@ -1168,17 +1168,17 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 
 	// Convert media: replace Ollama's stable [img-N] markers with the per-process
 	// llama-server media marker and package the matching payloads as base64.
-	if len(req.Images) > 0 {
+	if len(req.Media) > 0 {
 		promptStr := lsReq.Prompt.(string)
-		var imageData []string
-		for _, img := range req.Images {
-			marker := fmt.Sprintf("[img-%d]", img.ID)
+		var mediaData []string
+		for _, media := range req.Media {
+			marker := fmt.Sprintf("[img-%d]", media.ID)
 			promptStr = strings.Replace(promptStr, marker, s.llamaServerMediaMarker(), 1)
-			imageData = append(imageData, base64.StdEncoding.EncodeToString(img.Data))
+			mediaData = append(mediaData, base64.StdEncoding.EncodeToString(media.Data))
 		}
 		lsReq.Prompt = llamaServerMultimodalPrompt{
 			PromptString:   promptStr,
-			MultimodalData: imageData,
+			MultimodalData: mediaData,
 		}
 	}
 
@@ -1702,7 +1702,7 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 
 	messages := make([]map[string]any, 0, len(req.Messages))
 	for _, msg := range req.Messages {
-		converted, err := llamaServerChatMessage(msg)
+		converted, err := llamaServerChatMessage(MessageFromAPI(msg))
 		if err != nil {
 			return nil, err
 		}
@@ -1748,7 +1748,7 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 	return body, nil
 }
 
-func llamaServerChatMessage(msg api.Message) (map[string]any, error) {
+func llamaServerChatMessage(msg Message) (map[string]any, error) {
 	converted := map[string]any{
 		"role": msg.Role,
 	}
@@ -1766,32 +1766,47 @@ func llamaServerChatMessage(msg api.Message) (map[string]any, error) {
 		converted["tool_calls"] = toolCalls
 	}
 
-	if len(msg.Images) == 0 {
+	if len(msg.Media) == 0 {
 		converted["content"] = msg.Content
 		return converted, nil
 	}
 
-	parts := make([]map[string]any, 0, len(msg.Images)+1)
+	parts := make([]map[string]any, 0, len(msg.Media)+1)
 	if msg.Content != "" {
 		parts = append(parts, map[string]any{
 			"type": "text",
 			"text": msg.Content,
 		})
 	}
-	for _, img := range msg.Images {
-		mime := http.DetectContentType(img)
-		if !strings.HasPrefix(mime, "image/") {
-			mime = "image/jpeg"
-		}
-		parts = append(parts, map[string]any{
-			"type": "image_url",
-			"image_url": map[string]any{
-				"url": "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(img),
-			},
-		})
+	for _, media := range msg.Media {
+		parts = append(parts, llamaServerChatMediaPart(media))
 	}
 	converted["content"] = parts
 	return converted, nil
+}
+
+func llamaServerChatMediaPart(media MediaData) map[string]any {
+	encoded := base64.StdEncoding.EncodeToString(media.Data)
+	if format, ok := AudioFormat(media.Data); ok {
+		return map[string]any{
+			"type": "input_audio",
+			"input_audio": map[string]any{
+				"data":   encoded,
+				"format": format,
+			},
+		}
+	}
+
+	mime := http.DetectContentType(media.Data)
+	if !strings.HasPrefix(mime, "image/") {
+		mime = "image/jpeg"
+	}
+	return map[string]any{
+		"type": "image_url",
+		"image_url": map[string]any{
+			"url": "data:" + mime + ";base64," + encoded,
+		},
+	}
 }
 
 func llamaServerChatToolCalls(tcs []api.ToolCall) ([]llamaServerChatToolCall, error) {

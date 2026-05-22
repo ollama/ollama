@@ -795,6 +795,33 @@ func TestShow(t *testing.T) {
 	}
 }
 
+func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+	chatTemplate := "{% if tools %}{{ tools }}{% endif %}{% set content = (content.split('</think>')|last) %}"
+	goTemplate := "{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}{{ end }}"
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":    "llama",
+		"tokenizer.chat_template": chatTemplate,
+	}, nil)
+	writeTestModelManifest(t, "show-selected-template", digest, goTemplate)
+
+	var s Server
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: "show-selected-template"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Template != chatTemplate {
+		t.Fatalf("template = %q, want selected chat_template %q", resp.Template, chatTemplate)
+	}
+}
+
 func TestShowCopilotUserAgentOverwritesExistingBasename(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 

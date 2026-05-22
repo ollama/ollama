@@ -107,6 +107,31 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		}
 	})
 
+	t.Run("prefers Qwen chat template with tools and inferred thinking", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture":    "llama",
+			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{% set content = (content.split('</think>')|last) %}",
+		}, nil)
+		writeTestModelManifest(t, "chat-template-tools-thinking", digest, "{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}{{ end }}")
+
+		m, err := GetModel("chat-template-tools-thinking")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !m.PreferChatTemplate {
+			t.Fatal("expected chat template to be preferred")
+		}
+		if got := m.CheckCapabilities(model.CapabilityTools); got != nil {
+			t.Fatalf("expected tools capability, got %v", got)
+		}
+		if got := m.CheckCapabilities(model.CapabilityThinking); got != nil {
+			t.Fatalf("expected thinking capability, got %v", got)
+		}
+	})
+
 	t.Run("respects explicit Go TEMPLATE enablement", func(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "1")
@@ -369,16 +394,16 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio, model.CapabilityTools},
 		},
 		{
-			name: "gemma4 projector suppresses audio capability",
+			name: "gemma4 projector exposes audio capability",
 			model: Model{
 				ModelPath:      completionModelPath,
 				ProjectorPaths: []string{suppressedAudioProjectorPath},
 				Template:       chatTemplate,
 			},
-			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio},
 		},
 		{
-			name: "gemma4 gguf suppresses audio capability",
+			name: "gemma4 gguf exposes audio capability",
 			model: Model{
 				ModelPath:      completionModelPath,
 				ProjectorPaths: []string{audioProjectorPath},
@@ -388,7 +413,7 @@ func TestModelCapabilities(t *testing.T) {
 				},
 				Template: chatTemplate,
 			},
-			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
+			expectedCaps: []model.Capability{model.CapabilityAudio, model.CapabilityCompletion, model.CapabilityVision},
 		},
 		{
 			name: "nemotron3 gguf suppresses audio capability",

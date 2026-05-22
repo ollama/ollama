@@ -475,7 +475,7 @@ func TestLlamaServerCompletionWithMediaUsesRunnerMarker(t *testing.T) {
 	err := runner.Completion(t.Context(), CompletionRequest{
 		Prompt:  "look [img-7] now",
 		Options: &opts,
-		Images:  []ImageData{{ID: 7, Data: []byte("media-bytes")}},
+		Media:   []MediaData{NewMediaData(7, []byte("media-bytes"))},
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -2345,7 +2345,7 @@ func TestLlamaServerChatMessageConvertsToolCalls(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("command", "ls")
 
-	msg, err := llamaServerChatMessage(api.Message{
+	msg, err := llamaServerChatMessage(Message{
 		Role: "assistant",
 		ToolCalls: []api.ToolCall{{
 			ID: "call_1",
@@ -2369,6 +2369,45 @@ func TestLlamaServerChatMessageConvertsToolCalls(t *testing.T) {
 	}
 	if toolCalls[0].Function.Arguments != `{"command":"ls"}` {
 		t.Fatalf("expected string-encoded arguments, got %#v", toolCalls[0])
+	}
+}
+
+func TestLlamaServerChatMessageConvertsMediaParts(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\n")
+	wav := []byte("RIFF\x00\x00\x00\x00WAVE")
+	mp3 := []byte("ID3\x04\x00\x00")
+
+	msg, err := llamaServerChatMessage(Message{
+		Role:    "user",
+		Content: "describe these",
+		Media:   []MediaData{NewMediaData(0, png), NewMediaData(1, wav), NewMediaData(2, mp3)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parts, ok := msg["content"].([]map[string]any)
+	if !ok || len(parts) != 4 {
+		t.Fatalf("expected four content parts, got %#v", msg["content"])
+	}
+	if parts[1]["type"] != "image_url" {
+		t.Fatalf("expected image_url for PNG, got %#v", parts[1])
+	}
+	for i, want := range []string{"wav", "mp3"} {
+		part := parts[i+2]
+		if part["type"] != "input_audio" {
+			t.Fatalf("expected input_audio for %s, got %#v", want, part)
+		}
+		audio, ok := part["input_audio"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected input_audio payload for %s, got %#v", want, part["input_audio"])
+		}
+		if audio["format"] != want {
+			t.Fatalf("expected %s format, got %#v", want, audio["format"])
+		}
+		if audio["data"] == "" {
+			t.Fatalf("expected base64 audio data for %s", want)
+		}
 	}
 }
 

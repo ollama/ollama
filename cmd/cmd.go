@@ -1353,11 +1353,28 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 
 	if resp.ProjectorInfo != nil {
 		tableRender("Projector", func() (rows [][]string) {
-			arch := resp.ProjectorInfo["general.architecture"].(string)
-			rows = append(rows, []string{"", "architecture", arch})
-			rows = append(rows, []string{"", "parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))})
-			rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(resp.ProjectorInfo[fmt.Sprintf("%s.vision.embedding_length", arch)].(float64), 'f', -1, 64)})
-			rows = append(rows, []string{"", "dimensions", strconv.FormatFloat(resp.ProjectorInfo[fmt.Sprintf("%s.vision.projection_dim", arch)].(float64), 'f', -1, 64)})
+			arch, _ := resp.ProjectorInfo["general.architecture"].(string)
+			if arch != "" {
+				rows = append(rows, []string{"", "architecture", arch})
+			}
+			if v, ok := resp.ProjectorInfo["general.parameter_count"].(float64); ok {
+				rows = append(rows, []string{"", "parameters", format.HumanNumber(uint64(v))})
+			}
+
+			projectorValue := func(suffix string) (float64, bool) {
+				for _, modality := range []string{"vision", "audio"} {
+					if v, ok := resp.ProjectorInfo[fmt.Sprintf("%s.%s.%s", arch, modality, suffix)].(float64); ok {
+						return v, true
+					}
+				}
+				return 0, false
+			}
+			if v, ok := projectorValue("embedding_length"); ok {
+				rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(v, 'f', -1, 64)})
+			}
+			if v, ok := projectorValue("projection_dim"); ok {
+				rows = append(rows, []string{"", "dimensions", strconv.FormatFloat(v, 'f', -1, 64)})
+			}
 			return
 		})
 	}

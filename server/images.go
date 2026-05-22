@@ -163,7 +163,7 @@ func chatTemplateCapabilities(capabilities []model.Capability, chatTemplate stri
 	if chatTemplateHasToolSupport(chatTemplate) {
 		capabilities = appendCapability(capabilities, model.CapabilityTools)
 	}
-	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
+	if chatTemplateHasThinkingSupport(chatTemplate) {
 		capabilities = appendCapability(capabilities, model.CapabilityThinking)
 	}
 
@@ -172,6 +172,19 @@ func chatTemplateCapabilities(capabilities []model.Capability, chatTemplate stri
 
 func chatTemplateHasToolSupport(chatTemplate string) bool {
 	return strings.Contains(chatTemplate, "tools") || strings.Contains(chatTemplate, "tool_call")
+}
+
+func chatTemplateHasThinkingSupport(chatTemplate string) bool {
+	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
+		return true
+	}
+
+	// Some Qwen/DeepSeek templates strip prior reasoning by splitting assistant
+	// content at </think>; llama.cpp can still extract reasoning from them.
+	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
+		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
+		!strings.Contains(chatTemplate, "reasoning_content") &&
+		!strings.Contains(chatTemplate, "<SPECIAL_12>")
 }
 
 func goTemplateCapabilities(t *template.Template) []model.Capability {
@@ -283,8 +296,7 @@ func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, m
 }
 
 func suppressAudioCapability(m *Model, arch string) bool {
-	if isGemma4Renderer(m.Config.Renderer) {
-		// TODO: expose Gemma 4 audio once llama-server audio support is reliable.
+	if isGemma4Renderer(m.Config.Renderer) && m.Config.ModelFormat == "safetensors" {
 		return true
 	}
 
@@ -314,8 +326,7 @@ func projectorHasAudio(f *gguf.File) bool {
 
 func projectorSuppressesAudioCapability(f *gguf.File) bool {
 	switch f.KeyValue("vision.projector_type").String() {
-	case "gemma3nv", "gemma4v":
-		// TODO: expose Gemma projector audio once llama-server audio support is reliable.
+	case "gemma3nv":
 		return true
 	}
 

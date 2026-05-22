@@ -151,15 +151,51 @@ const (
 	llamaServerStreamMaxBufferSize = 8 * format.MegaByte
 )
 
-type ImageData struct {
+type MediaKind string
+
+const (
+	MediaKindUnknown MediaKind = ""
+	MediaKindImage   MediaKind = "image"
+	MediaKindAudio   MediaKind = "audio"
+)
+
+type MediaData struct {
 	Data []byte `json:"data"`
 	ID   int    `json:"id"`
+	Kind MediaKind
+}
+
+type Message struct {
+	Role       string
+	Content    string
+	Thinking   string
+	Media      []MediaData
+	ToolCalls  []api.ToolCall
+	ToolName   string
+	ToolCallID string
+}
+
+func MessageFromAPI(msg api.Message) Message {
+	media := make([]MediaData, len(msg.Images))
+	for i, data := range msg.Images {
+		media[i] = NewMediaData(i, data)
+	}
+
+	return Message{
+		Role:       msg.Role,
+		Content:    msg.Content,
+		Thinking:   msg.Thinking,
+		Media:      media,
+		ToolCalls:  msg.ToolCalls,
+		ToolName:   msg.ToolName,
+		ToolCallID: msg.ToolCallID,
+	}
 }
 
 type CompletionRequest struct {
 	Prompt  string
 	Format  json.RawMessage
-	Images  []ImageData
+	Media   []MediaData
 	Options *api.Options
 
 	Grammar         string // set before sending the request to the subprocess

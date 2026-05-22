@@ -261,10 +261,10 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		seed = time.Now().UnixNano()
 	}
 
-	// Extract raw image bytes from llm.ImageData slice
+	// Extract raw image bytes from the request media.
 	var images [][]byte
-	for _, img := range req.Images {
-		images = append(images, img.Data)
+	for _, media := range req.Media {
+		images = append(images, media.Data)
 	}
 
 	// Build request for subprocess

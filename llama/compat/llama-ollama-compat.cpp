@@ -2203,16 +2203,8 @@ void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
 
     gguf_set_val_str(meta, "general.architecture", "clip");
 
-    const bool has_vision       = any_tensor_with_prefix(ctx, "v.");
-    const bool has_audio_tensors = any_tensor_with_prefix(ctx, "a.");
-    // TODO: expose Gemma 4 audio once llama-server audio support is reliable.
-    // Keep Gemma 4 audio hidden until llama-server can route and load mixed
-    // vision/audio projectors reliably. This prevents the audio clip context
-    // and a.* tensors from being loaded into backend memory.
-    if (has_audio_tensors) {
-        gguf_set_val_bool(meta, "clip.has_audio_encoder", false);
-    }
-    const bool has_audio = false;
+    const bool has_vision = any_tensor_with_prefix(ctx, "v.");
+    const bool has_audio  = any_tensor_with_prefix(ctx, "a.");
 
     if (has_vision) {
         copy_u32_kv(meta, "gemma4.vision.block_count",                   "clip.vision.block_count");
@@ -2245,9 +2237,9 @@ void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
         copy_u32_kv(meta, "gemma4.audio.feed_forward_length",           "clip.audio.feed_forward_length");
         copy_u32_kv(meta, "gemma4.audio.attention.head_count",          "clip.audio.attention.head_count");
         copy_f32_kv(meta, "gemma4.audio.attention.layer_norm_epsilon",  "clip.audio.attention.layer_norm_epsilon");
-        // Defaults from a llama.cpp-compatible reference E2B mmproj.
+        // Defaults from Gemma 4 audio preprocessing.
         inject_u32_if_missing(meta, "clip.audio.num_mel_bins",   128);
-        inject_u32_if_missing(meta, "clip.audio.projection_dim", 1536);
+        copy_u32_kv(meta, "gemma4.embedding_length", "clip.audio.projection_dim");
 
         inject_bool_if_missing(meta, "clip.has_audio_encoder", true);
         gguf_set_val_str(meta, "clip.audio.projector_type", "gemma4a");
