@@ -1514,6 +1514,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	resp.Template = selectedModelTemplate(m, kvData)
+	if isUnknownQuantization(resp.Details.QuantizationLevel) {
+		if fileType := kvData.FileType().String(); !isUnknownQuantization(fileType) {
+			resp.Details.QuantizationLevel = fileType
+		}
+	}
 
 	delete(kvData, "general.name")
 	delete(kvData, "tokenizer.chat_template")

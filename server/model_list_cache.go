@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/model/parsers"
 	ollamatemplate "github.com/ollama/ollama/template"
@@ -353,6 +354,9 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 			if summary.Details.EmbeddingLength == 0 {
 				summary.Details.EmbeddingLength = info.EmbeddingLength
 			}
+			if isUnknownQuantization(summary.Details.QuantizationLevel) && !isUnknownQuantization(info.FileType) {
+				summary.Details.QuantizationLevel = info.FileType
+			}
 		}
 	}
 
@@ -455,6 +459,7 @@ type modelListGGUF struct {
 	Capabilities    []model.Capability
 	ContextLength   int
 	EmbeddingLength int
+	FileType        string
 }
 
 const (
@@ -551,6 +556,15 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 				return modelListGGUF{}, err
 			}
 			architecture = value
+			continue
+		}
+
+		if key == "general.file_type" {
+			value, err := readModelListGGUFIntValue(r, byteOrder, version, valueType)
+			if err != nil {
+				return modelListGGUF{}, err
+			}
+			info.FileType = ggml.FileType(value).String()
 			continue
 		}
 
@@ -764,6 +778,10 @@ func appendModelListCapability(capabilities []model.Capability, capability model
 		return capabilities
 	}
 	return append(capabilities, capability)
+}
+
+func isUnknownQuantization(quantization string) bool {
+	return quantization == "" || quantization == "unknown"
 }
 
 func cloneModelListSummary(summary modelListSummary) modelListSummary {

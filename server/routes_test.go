@@ -586,6 +586,42 @@ func TestGetModelInfo_SafetensorsUsesStoredFileType(t *testing.T) {
 	}
 }
 
+func TestGetModelInfoRepairsUnknownGGUFFileType(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture": "llama",
+		"general.file_type":    uint32(ggml.FileTypeQ4_K_M),
+	}, nil)
+	modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := createConfigLayer([]manifest.Layer{modelLayer}, model.ConfigV2{
+		ModelFormat:   "gguf",
+		ModelFamily:   "llama",
+		ModelFamilies: []string{"llama"},
+		FileType:      "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := model.ParseName("show-unknown-gguf")
+	if err := manifest.WriteManifest(name, *configLayer, []manifest.Layer{modelLayer}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if resp.Details.QuantizationLevel != "Q4_K_M" {
+		t.Fatalf("QuantizationLevel = %q, want %q", resp.Details.QuantizationLevel, "Q4_K_M")
+	}
+}
+
 func TestGetModelInfo_SafetensorsModelfileUsesShortName(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 

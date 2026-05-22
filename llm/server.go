@@ -25,25 +25,35 @@ func (e filteredEnv) LogValue() slog.Value {
 	var attrs []slog.Attr
 	for _, env := range e {
 		if key, value, ok := strings.Cut(env, "="); ok {
-			switch {
-			case strings.HasPrefix(key, "OLLAMA_"),
-				strings.HasPrefix(key, "CUDA_"),
-				strings.HasPrefix(key, "ROCR_"),
-				strings.HasPrefix(key, "ROCM_"),
-				strings.HasPrefix(key, "HIP_"),
-				strings.HasPrefix(key, "GPU_"),
-				strings.HasPrefix(key, "HSA_"),
-				strings.HasPrefix(key, "GGML_"),
-				slices.Contains([]string{
-					"PATH",
-					"LD_LIBRARY_PATH",
-					"DYLD_LIBRARY_PATH",
-				}, key):
-				attrs = append(attrs, slog.String(key, value))
+			if filteredEnvLogKey(key) {
+				attrs = append(attrs, slog.String(key, filteredEnvLogValue(key, value)))
 			}
 		}
 	}
 	return slog.GroupValue(attrs...)
+}
+
+func filteredEnvLogKey(key string) bool {
+	return strings.HasPrefix(key, "CUDA_") ||
+		strings.HasPrefix(key, "ROCR_") ||
+		strings.HasPrefix(key, "ROCM_") ||
+		strings.HasPrefix(key, "HIP_") ||
+		strings.HasPrefix(key, "HSA_") ||
+		strings.HasPrefix(key, "GGML_") ||
+		slices.Contains([]string{
+			"PATH",
+			"LD_LIBRARY_PATH",
+			"DYLD_LIBRARY_PATH",
+		}, key)
+}
+
+func filteredEnvLogValue(key, value string) string {
+	for _, token := range []string{"API", "KEY", "TOKEN", "SECRET", "PASSWORD", "PASS", "CREDENTIAL", "AUTH"} {
+		if strings.Contains(strings.ToUpper(key), token) {
+			return "[redacted]"
+		}
+	}
+	return value
 }
 
 type LlamaServer interface {

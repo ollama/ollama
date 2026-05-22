@@ -879,6 +879,43 @@ func TestSetupLlamaServerCommandEnv(t *testing.T) {
 	}
 }
 
+func TestFilteredEnvLogValue(t *testing.T) {
+	attrs := filteredEnv([]string{
+		"OLLAMA_DEBUG=1",
+		"OLLAMA_API_KEY=ollama-secret",
+		"OPENAI_API_KEY=openai-secret",
+		"HF_TOKEN=hf-secret",
+		"GGML_BACKEND_PATH=/tmp/ggml",
+		"CUDA_VISIBLE_DEVICES=0",
+		"CUDA_API_KEY=cuda-secret",
+		"HIP_VISIBLE_DEVICES=1",
+		"PATH=/bin",
+	}).LogValue().Group()
+
+	got := make(map[string]string, len(attrs))
+	for _, attr := range attrs {
+		got[attr.Key] = attr.Value.String()
+	}
+
+	for _, key := range []string{"OLLAMA_DEBUG", "OLLAMA_API_KEY", "OPENAI_API_KEY", "HF_TOKEN"} {
+		if _, ok := got[key]; ok {
+			t.Fatalf("%s should not be logged: %#v", key, got)
+		}
+	}
+
+	for key, want := range map[string]string{
+		"GGML_BACKEND_PATH":    "/tmp/ggml",
+		"CUDA_VISIBLE_DEVICES": "0",
+		"HIP_VISIBLE_DEVICES":  "1",
+		"PATH":                 "/bin",
+		"CUDA_API_KEY":         "[redacted]",
+	} {
+		if got[key] != want {
+			t.Fatalf("%s = %q, want %q; attrs=%#v", key, got[key], want, got)
+		}
+	}
+}
+
 func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 	tests := []struct {
 		name             string
