@@ -138,16 +138,17 @@ var isInteractiveSession = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-// Runner executes a model with an integration.
+// Runner executes an integration with the selected model and its resolved
+// launch metadata. models is ordered with the primary model first.
 type Runner interface {
-	Run(model string, args []string) error
+	Run(model string, models []LaunchModel, args []string) error
 	String() string
 }
 
 // Editor can edit config files for integrations that support model configuration.
 type Editor interface {
 	Paths() []string
-	Edit(models []string) error
+	Edit(models []LaunchModel) error
 	Models() []string
 }
 
@@ -166,7 +167,7 @@ type ManagedSingleModel interface {
 // ManagedModelListConfigurer lets managed single-model integrations receive
 // the launcher's model list while still preserving one primary selected model.
 type ManagedModelListConfigurer interface {
-	ConfigureWithModels(primary string, models []string) error
+	ConfigureWithModels(primary string, models []LaunchModel) error
 }
 
 // ManagedAutodiscoveryIntegration is for managed integrations that do not need
@@ -239,18 +240,6 @@ type RestorableIntegration interface {
 type SupportedIntegration interface {
 	Supported() error
 }
-
-type modelInfo struct {
-	Name         string
-	Remote       bool
-	ToolCapable  bool
-	Capabilities []modelpkg.Capability
-	Size         int64
-	Details      api.ModelDetails
-}
-
-// ModelInfo re-exports launcher model inventory details for callers.
-type ModelInfo = modelInfo
 
 // ModelItem represents model metadata before selector-only UI state is derived.
 type ModelItem struct {
@@ -416,8 +405,7 @@ func launchCommandIsClaudeDesktop(name string) bool {
 
 type launcherClient struct {
 	apiClient             *api.Client
-	modelInventory        []ModelInfo
-	inventoryLoaded       bool
+	inventory             *modelInventory
 	recommendationsLoaded bool
 	recommendationItems   []ModelItem
 	accountState          *AccountState
@@ -434,8 +422,16 @@ func newLauncherClient(policy LaunchPolicy) (*launcherClient, error) {
 
 	return &launcherClient{
 		apiClient: apiClient,
+		inventory: newModelInventory(apiClient),
 		policy:    policy,
 	}, nil
+}
+
+func (c *launcherClient) modelInventory() *modelInventory {
+	if c.inventory == nil {
+		c.inventory = newModelInventory(c.apiClient)
+	}
+	return c.inventory
 }
 
 // BuildLauncherState returns the launch-owned root launcher menu snapshot.
@@ -559,7 +555,7 @@ func prepareIntegrationLaunch(name string, policy LaunchPolicy) (*launcherClient
 }
 
 func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState, error) {
-	_ = c.loadModelInventoryOnce(ctx)
+	_, _ = c.modelInventory().Load(ctx)
 
 	state := &LauncherState{
 		LastSelection: config.LastSelection(),
@@ -733,7 +729,7 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 		}
 	}
 
-	return launchAfterConfiguration(name, runner, target, req)
+	return launchAfterConfiguration(name, runner, target, c.resolveRunModels(ctx, []string{target}), req)
 }
 
 func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -755,13 +751,17 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		return nil
 	}
 
+	var launchModels []LaunchModel
 	if (needsConfigure || req.ModelOverride != "") && !savedMatchesModels(saved, models) {
-		if err := prepareEditorIntegration(name, editor, models); err != nil {
+		launchModels = c.modelInventory().Resolve(ctx, models)
+		if err := prepareEditorIntegration(name, editor, launchModels); err != nil {
 			return err
 		}
+	} else {
+		launchModels = c.resolveRunModels(ctx, models)
 	}
 
-	return launchAfterConfiguration(name, runner, models[0], req)
+	return launchAfterConfiguration(name, runner, models[0], launchModels, req)
 }
 
 func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, name string, runner Runner, managed ManagedSingleModel, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -790,7 +790,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		if err != nil {
 			return err
 		}
-		if err := prepareManagedSingleIntegration(name, managed, target, configureModels); err != nil {
+		if err := prepareManagedSingleIntegration(name, managed, target, c.modelInventory().Resolve(ctx, configureModels)); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
@@ -820,7 +820,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		return nil
 	}
 
-	return runIntegration(runner, target, req.ExtraArgs)
+	return runIntegration(runner, target, c.resolveRunModels(ctx, []string{target}), req.ExtraArgs)
 }
 
 func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Context, name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -863,7 +863,7 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 		return nil
 	}
 
-	return runIntegration(runner, target, req.ExtraArgs)
+	return runIntegration(runner, target, c.resolveRunModels(ctx, []string{target}), req.ExtraArgs)
 }
 
 func (c *launcherClient) managedAutodiscoveryUsable(ctx context.Context, autodiscovery ManagedAutodiscoveryIntegration) bool {
@@ -1115,13 +1115,14 @@ func runMultiSelector(title string, items []SelectionItem, preChecked []string, 
 }
 
 func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []string, current, emptyMessage string) ([]ModelItem, []string, error) {
-	if err := c.loadModelInventoryOnce(ctx); err != nil {
+	inventory, err := c.modelInventory().Load(ctx)
+	if err != nil {
 		return nil, nil, err
 	}
 	recommendations := c.recommendations(ctx)
 
 	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
-	items, orderedChecked, _, _ := buildModelListWithRecommendations(c.modelInventory, recommendations, preChecked, current)
+	items, orderedChecked, _, _ := buildModelListWithRecommendations(inventory, recommendations, preChecked, current)
 	if cloudDisabled {
 		items = filterCloudItems(items)
 		orderedChecked = c.filterDisabledCloudModels(ctx, orderedChecked)
@@ -1311,10 +1312,11 @@ func (c *launcherClient) filterDisabledCloudModels(ctx context.Context, models [
 }
 
 func (c *launcherClient) savedModelUsable(ctx context.Context, name string) (bool, error) {
-	if err := c.loadModelInventoryOnce(ctx); err != nil {
+	inventory, err := c.modelInventory().Load(ctx)
+	if err != nil {
 		return c.showBasedModelUsable(ctx, name)
 	}
-	return c.singleModelUsable(ctx, name), nil
+	return c.singleModelUsable(ctx, name, inventory), nil
 }
 
 func (c *launcherClient) showBasedModelUsable(ctx context.Context, name string) (bool, error) {
@@ -1340,7 +1342,7 @@ func (c *launcherClient) showBasedModelUsable(ctx context.Context, name string) 
 	return true, nil
 }
 
-func (c *launcherClient) singleModelUsable(ctx context.Context, name string) bool {
+func (c *launcherClient) singleModelUsable(ctx context.Context, name string, inventory []LaunchModel) bool {
 	if name == "" {
 		return false
 	}
@@ -1348,11 +1350,11 @@ func (c *launcherClient) singleModelUsable(ctx context.Context, name string) boo
 		cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
 		return !cloudDisabled
 	}
-	return c.hasLocalModel(name)
+	return hasLocalModel(inventory, name)
 }
 
-func (c *launcherClient) hasLocalModel(name string) bool {
-	for _, model := range c.modelInventory {
+func hasLocalModel(inventory []LaunchModel, name string) bool {
+	for _, model := range inventory {
 		if model.Remote {
 			continue
 		}
@@ -1363,41 +1365,18 @@ func (c *launcherClient) hasLocalModel(name string) bool {
 	return false
 }
 
-func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
-	if c.inventoryLoaded {
-		return nil
-	}
-
-	resp, err := c.apiClient.List(ctx)
-	if err != nil {
-		return err
-	}
-
-	c.modelInventory = c.modelInventory[:0]
-	for _, model := range resp.Models {
-		c.modelInventory = append(c.modelInventory, ModelInfo{
-			Name:         model.Name,
-			Remote:       model.RemoteModel != "",
-			ToolCapable:  slices.Contains(model.Capabilities, modelpkg.CapabilityTools),
-			Capabilities: slices.Clone(model.Capabilities),
-			Size:         model.Size,
-			Details:      model.Details,
-		})
-	}
-
-	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
-	if cloudDisabled {
-		c.modelInventory = filterCloudModels(c.modelInventory)
-	}
-	c.inventoryLoaded = true
-	return nil
+func (c *launcherClient) resolveRunModels(ctx context.Context, models []string) []LaunchModel {
+	return c.modelInventory().Resolve(ctx, models)
 }
 
-func runIntegration(runner Runner, modelName string, args []string) error {
-	return runner.Run(modelName, args)
+func runIntegration(runner Runner, modelName string, models []LaunchModel, args []string) error {
+	if len(models) == 0 && modelName != "" {
+		models = launchModelsFromNames([]string{modelName})
+	}
+	return runner.Run(modelName, models, args)
 }
 
-func launchAfterConfiguration(name string, runner Runner, model string, req IntegrationLaunchRequest) error {
+func launchAfterConfiguration(name string, runner Runner, model string, models []LaunchModel, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
 		launch, err := ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
 		if err != nil {
@@ -1410,7 +1389,7 @@ func launchAfterConfiguration(name string, runner Runner, model string, req Inte
 	if err := EnsureIntegrationInstalled(name, runner); err != nil {
 		return err
 	}
-	return runIntegration(runner, model, req.ExtraArgs)
+	return runIntegration(runner, model, models, req.ExtraArgs)
 }
 
 func loadStoredIntegrationConfig(name string) (*config.IntegrationConfig, error) {

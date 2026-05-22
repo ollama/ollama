@@ -1,18 +1,13 @@
 package launch
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
-	"strconv"
 	"strings"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
@@ -48,12 +43,12 @@ func (c *Codex) args(model, modelCatalogPath string, extra []string) []string {
 	return args
 }
 
-func (c *Codex) Run(model string, args []string) error {
+func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 	if err := checkCodexVersion(); err != nil {
 		return err
 	}
 
-	if err := ensureCodexConfig(model); err != nil {
+	if err := ensureCodexConfig(model, models); err != nil {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
@@ -74,7 +69,7 @@ func (c *Codex) Run(model string, args []string) error {
 
 // ensureCodexConfig writes a Codex profile and model catalog so Codex uses the
 // local Ollama server and has model metadata available.
-func ensureCodexConfig(modelName string) error {
+func ensureCodexConfig(modelName string, models []LaunchModel) error {
 	configPath, err := codexConfigPath()
 	if err != nil {
 		return err
@@ -86,7 +81,7 @@ func ensureCodexConfig(modelName string) error {
 	}
 
 	catalogPath := codexModelCatalogPathForConfig(configPath)
-	if err := writeCodexModelCatalog(catalogPath, modelName); err != nil {
+	if err := writeCodexModelCatalog(catalogPath, codexCatalogModel(modelName, models)); err != nil {
 		return err
 	}
 
@@ -577,8 +572,15 @@ func codexRootLineHasKey(line, key string) bool {
 	return ok
 }
 
-func writeCodexModelCatalog(catalogPath, modelName string) error {
-	entry := buildCodexModelEntry(modelName)
+func codexCatalogModel(modelName string, models []LaunchModel) LaunchModel {
+	if model, ok := findLaunchModel(models, modelName); ok {
+		return model.WithCloudLimits()
+	}
+	return fallbackLaunchModel(modelName)
+}
+
+func writeCodexModelCatalog(catalogPath string, model LaunchModel) error {
+	entry := buildCodexModelEntry(model)
 
 	catalog := map[string]any{
 		"models": []any{entry},
@@ -592,40 +594,28 @@ func writeCodexModelCatalog(catalogPath, modelName string) error {
 	return os.WriteFile(catalogPath, data, 0o644)
 }
 
-func buildCodexModelEntry(modelName string) map[string]any {
+func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
+	modelName := launchModel.Name
 	contextWindow := codexFallbackContextWindow
-	hasVision := false
 	systemPrompt := ""
 
+	if launchModel.ContextLength > 0 {
+		contextWindow = launchModel.ContextLength
+	} else if launchModel.Details.ContextLength > 0 {
+		contextWindow = launchModel.Details.ContextLength
+	}
 	if l, ok := lookupCloudModelLimit(modelName); ok {
 		contextWindow = l.Context
 	}
 
-	client := api.NewClient(envconfig.Host(), http.DefaultClient)
-	resp, err := client.Show(context.Background(), &api.ShowRequest{Model: modelName})
-	if err == nil {
-		systemPrompt = resp.System
-		if slices.Contains(resp.Capabilities, model.CapabilityVision) {
-			hasVision = true
-		}
-
-		if !isCloudModelName(modelName) {
-			if n, ok := modelInfoContextLength(resp.ModelInfo); ok {
-				contextWindow = n
-			}
-			if resp.Details.Format != "safetensors" {
-				if ctxLen := envconfig.ContextLength(); ctxLen > 0 {
-					contextWindow = int(ctxLen)
-				}
-				if numCtx := parseNumCtx(resp.Parameters); numCtx > 0 {
-					contextWindow = numCtx
-				}
-			}
+	if !isCloudModelName(modelName) && launchModel.Details.Format != "safetensors" {
+		if ctxLen := envconfig.ContextLength(); ctxLen > 0 {
+			contextWindow = int(ctxLen)
 		}
 	}
 
 	modalities := []string{"text"}
-	if hasVision {
+	if launchModel.HasCapability(model.CapabilityVision) {
 		modalities = append(modalities, "image")
 	}
 
@@ -652,19 +642,6 @@ func buildCodexModelEntry(modelName string) map[string]any {
 		"supported_reasoning_levels":   []any{},
 		"experimental_supported_tools": []any{},
 	}
-}
-
-func parseNumCtx(parameters string) int {
-	for _, line := range strings.Split(parameters, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[0] == "num_ctx" {
-			if v, err := strconv.ParseFloat(fields[1], 64); err == nil {
-				return int(v)
-			}
-		}
-	}
-
-	return 0
 }
 
 func checkCodexVersion() error {

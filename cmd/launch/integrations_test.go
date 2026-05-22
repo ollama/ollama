@@ -25,7 +25,7 @@ type stubEditorRunner struct {
 	editErr  error
 }
 
-func (s *stubEditorRunner) Run(model string, args []string) error {
+func (s *stubEditorRunner) Run(model string, _ []LaunchModel, args []string) error {
 	s.ranModel = model
 	return nil
 }
@@ -34,11 +34,11 @@ func (s *stubEditorRunner) String() string { return "StubEditor" }
 
 func (s *stubEditorRunner) Paths() []string { return nil }
 
-func (s *stubEditorRunner) Edit(models []string) error {
+func (s *stubEditorRunner) Edit(models []LaunchModel) error {
 	if s.editErr != nil {
 		return s.editErr
 	}
-	cloned := append([]string(nil), models...)
+	cloned := launchModelNames(models)
 	s.edited = append(s.edited, cloned)
 	return nil
 }
@@ -206,7 +206,7 @@ func TestAllIntegrations_HaveRequiredMethods(t *testing.T) {
 			if displayName == "" {
 				t.Error("String() should not return empty")
 			}
-			var _ func(string, []string) error = r.Run
+			var _ func(string, []LaunchModel, []string) error = r.Run
 		})
 	}
 }
@@ -866,7 +866,7 @@ func TestPrepareEditorIntegration_SavesOnlyAfterSuccessfulEdit(t *testing.T) {
 	}
 
 	editor := &stubEditorRunner{editErr: errors.New("boom")}
-	err := prepareEditorIntegration("droid", editor, []string{"new-model"})
+	err := prepareEditorIntegration("droid", editor, testLaunchModels("new-model"))
 	if err == nil || !strings.Contains(err.Error(), "setup failed") {
 		t.Fatalf("expected setup failure, got %v", err)
 	}

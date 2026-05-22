@@ -3,15 +3,15 @@ package launch
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	modelpkg "github.com/ollama/ollama/types/model"
 )
 
 func TestCodexArgs(t *testing.T) {
@@ -369,7 +369,7 @@ func TestEnsureCodexConfig(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
-		if err := ensureCodexConfig("llama3.2"); err != nil {
+		if err := ensureCodexConfig("llama3.2", launchModelsFromNames([]string{"llama3.2"})); err != nil {
 			t.Fatal(err)
 		}
 
@@ -401,10 +401,10 @@ func TestEnsureCodexConfig(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
-		if err := ensureCodexConfig("llama3.2"); err != nil {
+		if err := ensureCodexConfig("llama3.2", launchModelsFromNames([]string{"llama3.2"})); err != nil {
 			t.Fatal(err)
 		}
-		if err := ensureCodexConfig("llama3.2"); err != nil {
+		if err := ensureCodexConfig("llama3.2", launchModelsFromNames([]string{"llama3.2"})); err != nil {
 			t.Fatal(err)
 		}
 
@@ -439,29 +439,6 @@ func assertBackupContains(t *testing.T, pattern, marker string) {
 	t.Fatalf("backup matching %q with marker %q not found", pattern, marker)
 }
 
-func TestParseNumCtx(t *testing.T) {
-	tests := []struct {
-		name       string
-		parameters string
-		want       int
-	}{
-		{"num_ctx set", "num_ctx 8192", 8192},
-		{"num_ctx with other params", "temperature 0.7\nnum_ctx 4096\ntop_p 0.9", 4096},
-		{"no num_ctx", "temperature 0.7\ntop_p 0.9", 0},
-		{"empty string", "", 0},
-		{"malformed value", "num_ctx abc", 0},
-		{"float value", "num_ctx 8192.0", 8192},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := parseNumCtx(tt.parameters); got != tt.want {
-				t.Errorf("parseNumCtx(%q) = %d, want %d", tt.parameters, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestModelInfoContextLength(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -488,124 +465,91 @@ func TestModelInfoContextLength(t *testing.T) {
 func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 	tests := []struct {
 		name          string
-		modelName     string
-		showResponse  string
+		model         LaunchModel
 		envContextLen string
 		wantContext   int
 	}{
 		{
-			name:      "architectural context length as fallback",
-			modelName: "llama3.2",
-			showResponse: `{
-				"model_info": {"llama.context_length": 131072},
-				"details": {"format": "gguf"}
-			}`,
+			name: "inventory context length as fallback",
+			model: LaunchModel{
+				Name:          "llama3.2",
+				ContextLength: 131072,
+				Details:       api.ModelDetails{Format: "gguf"},
+			},
 			wantContext: 131072,
 		},
 		{
-			name:      "OLLAMA_CONTEXT_LENGTH overrides architectural",
-			modelName: "llama3.2",
-			showResponse: `{
-				"model_info": {"llama.context_length": 131072},
-				"details": {"format": "gguf"}
-			}`,
+			name: "details context length is used when model context is empty",
+			model: LaunchModel{
+				Name:    "llama3.2",
+				Details: api.ModelDetails{Format: "gguf", ContextLength: 131072},
+			},
+			wantContext: 131072,
+		},
+		{
+			name: "OLLAMA_CONTEXT_LENGTH overrides local gguf inventory context",
+			model: LaunchModel{
+				Name:          "llama3.2",
+				ContextLength: 131072,
+				Details:       api.ModelDetails{Format: "gguf"},
+			},
 			envContextLen: "64000",
 			wantContext:   64000,
 		},
 		{
-			name:      "num_ctx overrides OLLAMA_CONTEXT_LENGTH",
-			modelName: "llama3.2",
-			showResponse: `{
-				"model_info": {"llama.context_length": 131072},
-				"parameters": "num_ctx 8192",
-				"details": {"format": "gguf"}
-			}`,
-			envContextLen: "64000",
-			wantContext:   8192,
-		},
-		{
-			name:      "num_ctx overrides architectural",
-			modelName: "llama3.2",
-			showResponse: `{
-				"model_info": {"llama.context_length": 131072},
-				"parameters": "num_ctx 32768",
-				"details": {"format": "gguf"}
-			}`,
-			wantContext: 32768,
-		},
-		{
-			name:      "safetensors uses architectural context only",
-			modelName: "llama3.2",
-			showResponse: `{
-				"model_info": {"llama.context_length": 131072},
-				"parameters": "num_ctx 8192",
-				"details": {"format": "safetensors"}
-			}`,
+			name: "safetensors uses inventory context only",
+			model: LaunchModel{
+				Name:          "llama3.2",
+				ContextLength: 131072,
+				Details:       api.ModelDetails{Format: "safetensors"},
+			},
 			envContextLen: "64000",
 			wantContext:   131072,
 		},
 		{
-			name:      "cloud model uses hardcoded limits",
-			modelName: "qwen3.5:cloud",
-			showResponse: `{
-				"model_info": {"qwen3_5_moe.context_length": 131072},
-				"details": {"format": "gguf"}
-			}`,
+			name: "cloud model uses hardcoded limits",
+			model: LaunchModel{
+				Name:          "qwen3.5:cloud",
+				ContextLength: 131072,
+				Details:       api.ModelDetails{Format: "gguf"},
+			},
 			envContextLen: "64000",
 			wantContext:   262144,
 		},
 		{
-			name:      "unknown cloud model uses fallback context",
-			modelName: "deepseek-v4-pro:cloud",
-			showResponse: `{
-				"model_info": {"deepseek.context_length": 131072},
-				"details": {"format": "gguf"}
-			}`,
+			name: "unknown cloud model without metadata uses fallback context",
+			model: LaunchModel{
+				Name: "deepseek-v4-pro:cloud",
+			},
 			envContextLen: "64000",
 			wantContext:   codexFallbackContextWindow,
 		},
 		{
-			name:      "vision capability without reasoning advertisement",
-			modelName: "llama3.2",
-			showResponse: `{
-				"model_info": {"llama.context_length": 131072},
-				"details": {"format": "gguf"},
-				"capabilities": ["vision", "thinking"]
-			}`,
+			name: "vision capability without reasoning advertisement",
+			model: LaunchModel{
+				Name:          "llama3.2",
+				ContextLength: 131072,
+				Details:       api.ModelDetails{Format: "gguf"},
+				Capabilities:  []modelpkg.Capability{modelpkg.CapabilityVision, modelpkg.CapabilityThinking},
+			},
 			wantContext: 131072,
 		},
 		{
-			name:      "system prompt passed through",
-			modelName: "llama3.2",
-			showResponse: `{
-				"model_info": {"llama.context_length": 131072},
-				"details": {"format": "gguf"},
-				"system": "You are a helpful assistant."
-			}`,
-			wantContext: 131072,
+			name:        "missing metadata uses fallback context",
+			model:       LaunchModel{Name: "llama3.2"},
+			wantContext: codexFallbackContextWindow,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/show":
-					fmt.Fprint(w, tt.showResponse)
-				default:
-					http.NotFound(w, r)
-				}
-			}))
-			defer srv.Close()
-			t.Setenv("OLLAMA_HOST", srv.URL)
-
 			if tt.envContextLen != "" {
 				t.Setenv("OLLAMA_CONTEXT_LENGTH", tt.envContextLen)
 			} else {
 				t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
 			}
 
-			entry := buildCodexModelEntry(tt.modelName)
+			entry := buildCodexModelEntry(tt.model)
 
 			gotContext, _ := entry["context_window"].(int)
 			if gotContext != tt.wantContext {
@@ -623,12 +567,6 @@ func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 				}
 				if got, _ := entry["supports_reasoning_summaries"].(bool); got {
 					t.Error("supports_reasoning_summaries = true, want false")
-				}
-			}
-
-			if tt.name == "system prompt passed through" {
-				if got, _ := entry["base_instructions"].(string); got != "You are a helpful assistant." {
-					t.Errorf("base_instructions = %q, want %q", got, "You are a helpful assistant.")
 				}
 			}
 
