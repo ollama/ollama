@@ -277,6 +277,27 @@ if(OLLAMA_RUNNER_DIR)
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
+            if(WIN32)
+                # HIP delay-loads COMGR on Windows, so CMake's runtime
+                # dependency scan can miss the versioned companion DLL.
+                set(_rocm_companion_dlls)
+                foreach(_hip_dir IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
+                    if(EXISTS "${_hip_dir}")
+                        file(GLOB _hip_comgr_dlls
+                            LIST_DIRECTORIES false
+                            "${_hip_dir}/amd_comgr*.dll")
+                        list(APPEND _rocm_companion_dlls ${_hip_comgr_dlls})
+                    endif()
+                endforeach()
+                if(_rocm_companion_dlls)
+                    list(REMOVE_DUPLICATES _rocm_companion_dlls)
+                    install(FILES ${_rocm_companion_dlls}
+                        DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
+                        COMPONENT llama-server)
+                else()
+                    message(FATAL_ERROR "Could not find ROCm COMGR runtime DLLs to bundle")
+                endif()
+            endif()
             foreach(_hip_dir IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
                 if(EXISTS ${_hip_dir}/rocblas)
                     install(DIRECTORY ${_hip_dir}/rocblas

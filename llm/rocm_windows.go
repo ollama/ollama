@@ -15,8 +15,12 @@ import (
 )
 
 var (
-	windowsROCmRuntimeDLLNames   = []string{"amdhip64_7.dll", "amdhip64_6.dll", "amdhip64.dll"}
-	windowsROCmCompanionDLLNames = []string{"amd_comgr.dll", "amd_comgr_2.dll"}
+	windowsROCmRuntimeDLLNames          = []string{"amdhip64_7.dll", "amdhip64_6.dll", "amdhip64.dll"}
+	windowsROCmRuntimeCompanionDLLNames = map[string][]string{
+		"amdhip64_7.dll": {"amd_comgr_3.dll"},
+		"amdhip64_6.dll": {"amd_comgr_2.dll"},
+		"amdhip64.dll":   {"amd_comgr.dll"},
+	}
 )
 
 type windowsROCmRuntimeDLL struct {
@@ -118,7 +122,7 @@ func windowsROCmRuntimeDLLChoice(libDirs []string) (windowsROCmRuntimeDLL, error
 				choice.source = "system"
 			}
 		}
-		if choice.source == "system" && !systemROCmCompanionDLLsCompatible(libDirs, choice.systemDir) {
+		if choice.source == "system" && !systemROCmCompanionDLLsCompatible(libDirs, choice.name, choice.systemDir) {
 			choice.path = choice.bundledPath
 			choice.source = "bundled"
 		}
@@ -144,8 +148,8 @@ func windowsROCmRuntimeDLLChoice(libDirs []string) (windowsROCmRuntimeDLL, error
 	return windowsROCmRuntimeDLL{}, errors.New("no amdhip64 runtime DLL found")
 }
 
-func systemROCmCompanionDLLsCompatible(libDirs []string, systemDir string) bool {
-	for _, name := range windowsROCmCompanionDLLNames {
+func systemROCmCompanionDLLsCompatible(libDirs []string, runtimeName, systemDir string) bool {
+	for _, name := range windowsROCmRuntimeCompanionDLLNames[strings.ToLower(runtimeName)] {
 		bundledPath := firstExistingFile(libDirs, name)
 		if bundledPath == "" {
 			continue
@@ -153,7 +157,9 @@ func systemROCmCompanionDLLsCompatible(libDirs []string, systemDir string) bool 
 
 		systemPath := filepath.Join(systemDir, name)
 		if !fileExists(systemPath) {
-			continue
+			slog.Debug("keeping bundled ROCm runtime because system companion DLL is missing",
+				"name", name, "bundled", bundledPath, "system", systemPath)
+			return false
 		}
 
 		bundledVer, bundledOK := readWindowsFileVersion(bundledPath)
