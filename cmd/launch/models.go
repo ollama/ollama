@@ -496,17 +496,6 @@ func isCloudModelName(name string) bool {
 	return modelref.HasExplicitCloudSource(name)
 }
 
-// filterCloudModels drops remote-only models from the given inventory.
-func filterCloudModels(existing []modelInfo) []modelInfo {
-	filtered := existing[:0]
-	for _, m := range existing {
-		if !m.Remote {
-			filtered = append(filtered, m)
-		}
-	}
-	return filtered
-}
-
 // filterCloudItems removes cloud models from selection items.
 func filterCloudItems(items []ModelItem) []ModelItem {
 	filtered := items[:0]
