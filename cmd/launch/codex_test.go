@@ -362,6 +362,51 @@ func TestWriteCodexProfile(t *testing.T) {
 			t.Fatalf("expected connectable loopback URL, got:\n%s", content)
 		}
 	})
+
+	t.Run("maps inherited xhigh reasoning effort to Ollama value", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.toml")
+		existing := "" +
+			`model_reasoning_effort = "xhigh"` + "\n\n" +
+			"[profiles.default]\n" +
+			`model = "gpt-5.5"` + "\n"
+		os.WriteFile(configPath, []byte(existing), 0o644)
+
+		if err := writeCodexProfile(configPath); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		content := string(data)
+
+		if got := codexRootStringValue(content, "model_reasoning_effort"); got != "xhigh" {
+			t.Fatalf("root model_reasoning_effort = %q, want original xhigh in:\n%s", got, content)
+		}
+		if got := codexSectionStringValue(content, codexProfileHeader(), "model_reasoning_effort"); got != "high" {
+			t.Fatalf("profile model_reasoning_effort = %q, want high in:\n%s", got, content)
+		}
+	})
+
+	t.Run("preserves valid profile reasoning effort", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.toml")
+		existing := "" +
+			`model_reasoning_effort = "xhigh"` + "\n\n" +
+			codexProfileHeader() + "\n" +
+			`model_reasoning_effort = "medium"` + "\n"
+		os.WriteFile(configPath, []byte(existing), 0o644)
+
+		if err := writeCodexProfile(configPath); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		content := string(data)
+
+		if got := codexSectionStringValue(content, codexProfileHeader(), "model_reasoning_effort"); got != "medium" {
+			t.Fatalf("profile model_reasoning_effort = %q, want medium in:\n%s", got, content)
+		}
+	})
 }
 
 func TestEnsureCodexConfig(t *testing.T) {
