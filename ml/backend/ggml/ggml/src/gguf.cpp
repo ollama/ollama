@@ -587,9 +587,15 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
 
             // calculate byte offsets given the tensor shape and type
             info.t.nb[0] = type_size;
-            info.t.nb[1] = info.t.nb[0]*(info.t.ne[0]/blck_size);
-            for (int j = 2; j < GGML_MAX_DIMS; ++j) {
-                info.t.nb[j] = info.t.nb[j - 1]*info.t.ne[j - 1];
+            for (int j = 1; j < GGML_MAX_DIMS; ++j) {
+                const size_t mul = (size_t) (j == 1 ? info.t.ne[0]/blck_size : info.t.ne[j - 1]);
+                if (mul != 0 && info.t.nb[j - 1] > SIZE_MAX/mul) {
+                    GGML_LOG_ERROR("%s: tensor '%s' byte stride overflow at dimension %d\n",
+                        __func__, info.t.name, j);
+                    ok = false;
+                    break;
+                }
+                info.t.nb[j] = info.t.nb[j - 1]*mul;
             }
         }
         if (!ok) {
