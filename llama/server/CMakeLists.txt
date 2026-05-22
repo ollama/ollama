@@ -342,6 +342,13 @@ else()
     if(TARGET llama-common)
         list(APPEND _llama_server_base_libs llama-common)
     endif()
+    if(BUILD_SHARED_LIBS)
+        foreach(_impl_lib IN ITEMS llama-server-impl llama-quantize-impl)
+            if(TARGET ${_impl_lib})
+                list(APPEND _llama_server_base_libs ${_impl_lib})
+            endif()
+        endforeach()
+    endif()
 
     install(TARGETS ${_llama_server_base_libs}
         RUNTIME DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL
