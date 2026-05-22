@@ -73,7 +73,7 @@ This table tracks the dispatch surface. Keep it brief; the handler comments in
 | `lfm2` | Renames norm tensors and fixes feed-forward metadata. | n/a |
 | `olmo3` | Maps to the OLMo2-compatible loader path. | n/a |
 | `mistral3` | Fixes RoPE/YaRN metadata and hides embedded vision/projector tensors. | Pixtral-style projector translation. |
-| `qwen35`, `qwen35moe` | Fixes Qwen3.5/Qwen3-VL-style text metadata and hides embedded vision/projector/MTP tensors. | Qwen3-VL merger-style projector translation. |
+| `qwen35`, `qwen35moe` | Fixes Qwen3.5/Qwen3-VL-style text metadata, translates embedded MTP tensors, and hides embedded vision/projector tensors. | Qwen3-VL merger-style projector translation. |
 | `qwen3next` | Normalizes hybrid attention KV-head metadata and renames SSM dt tensors to the names expected by llama.cpp. | n/a |
 | `qwen25vl` | Maps to `qwen2vl` metadata conventions. | Qwen2.5-VL projector translation. |
 | `qwen3vl`, `qwen3vlmoe` | Adds missing Qwen3-VL metadata and hides embedded vision/projector tensors. | Qwen3-VL projector translation, including QKV merge and patch-embedding split/repack. |

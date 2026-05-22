@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <cstdarg>
@@ -502,6 +503,145 @@ void collapse_u32_array_to_max(gguf_context * meta, const std::string & key, uin
     gguf_set_val_u32(meta, key.c_str(), max_value);
 }
 
+void set_u32_kv(gguf_context * meta, const std::string & key, uint32_t value) {
+    gguf_remove_key(meta, key.c_str());
+    gguf_set_val_u32(meta, key.c_str(), value);
+}
+
+bool parse_tensor_index(const std::string & name, const char * prefix, uint32_t & index, std::string * suffix) {
+    const size_t prefix_len = std::strlen(prefix);
+    if (name.compare(0, prefix_len, prefix) != 0) return false;
+
+    const char * start = name.c_str() + prefix_len;
+    char * end = nullptr;
+    errno = 0;
+    const unsigned long value = std::strtoul(start, &end, 10);
+    if (errno != 0 || end == start || *end != '.' || value > UINT32_MAX) return false;
+
+    index = static_cast<uint32_t>(value);
+    if (suffix) *suffix = end + 1;
+    return true;
+}
+
+uint32_t qwen35_text_block_count(const gguf_context * meta, const char * arch_prefix) {
+    uint32_t max_block = 0;
+    bool found = false;
+    const int64_t n = gguf_get_n_tensors(meta);
+    for (int64_t i = 0; i < n; ++i) {
+        const std::string name(gguf_get_tensor_name(meta, i));
+        uint32_t index = 0;
+        if (!parse_tensor_index(name, "blk.", index, nullptr)) continue;
+        if (!found || index > max_block) max_block = index;
+        found = true;
+    }
+    if (found) return max_block + 1;
+
+    const std::string key = std::string(arch_prefix) + ".block_count";
+    const int64_t kid = gguf_find_key(meta, key.c_str());
+    if (kid >= 0 && gguf_get_kv_type(meta, kid) == GGUF_TYPE_UINT32) {
+        return gguf_get_val_u32(meta, kid);
+    }
+    return 0;
+}
+
+uint32_t qwen35_mtp_layer_count(const gguf_context * meta) {
+    uint32_t max_mtp_layer = 0;
+    bool found_layer = false;
+    bool found_mtp = false;
+
+    const int64_t n = gguf_get_n_tensors(meta);
+    for (int64_t i = 0; i < n; ++i) {
+        const std::string name(gguf_get_tensor_name(meta, i));
+        if (name.compare(0, 4, "mtp.") != 0) continue;
+        found_mtp = true;
+
+        uint32_t index = 0;
+        std::string suffix;
+        if (!parse_tensor_index(name, "mtp.layers.", index, &suffix) || suffix.empty()) continue;
+        if (!found_layer || index > max_mtp_layer) max_mtp_layer = index;
+        found_layer = true;
+    }
+
+    if (found_layer) return max_mtp_layer + 1;
+    return found_mtp ? 1 : 0;
+}
+
+bool qwen35_has_native_mtp_tensors(const gguf_context * meta) {
+    const int64_t n = gguf_get_n_tensors(meta);
+    for (int64_t i = 0; i < n; ++i) {
+        const std::string name(gguf_get_tensor_name(meta, i));
+        if (name.compare(0, 4, "blk.") == 0 && name.find(".nextn.") != std::string::npos) return true;
+    }
+    return false;
+}
+
+void rename_qwen35_mtp_tensor(gguf_context * meta, ggml_context * ctx, const char * from, const std::string & to) {
+    if (gguf_find_tensor(meta, from) < 0 || gguf_find_tensor(meta, to.c_str()) >= 0) return;
+    rename_tensor(meta, ctx, from, to.c_str());
+}
+
+void rename_qwen35_mtp_tensors(gguf_context * meta, ggml_context * ctx, uint32_t base_block, uint32_t nextn) {
+    std::vector<std::pair<std::string, std::string>> layer_renames;
+    const int64_t n = gguf_get_n_tensors(meta);
+    for (int64_t i = 0; i < n; ++i) {
+        const std::string name(gguf_get_tensor_name(meta, i));
+        uint32_t mtp_index = 0;
+        std::string suffix;
+        if (!parse_tensor_index(name, "mtp.layers.", mtp_index, &suffix) || suffix.empty()) continue;
+        if (mtp_index >= nextn) continue;
+
+        char dest[GGML_MAX_NAME];
+        std::snprintf(dest, sizeof(dest), "blk.%u.%s", base_block + mtp_index, suffix.c_str());
+        layer_renames.emplace_back(name, dest);
+    }
+    for (const auto & [from, to] : layer_renames) {
+        rename_qwen35_mtp_tensor(meta, ctx, from.c_str(), to);
+    }
+
+    if (nextn != 1) {
+        if (gguf_find_tensor(meta, "mtp.fc.weight") >= 0 ||
+            gguf_find_tensor(meta, "mtp.pre_fc_norm_embedding.weight") >= 0 ||
+            gguf_find_tensor(meta, "mtp.pre_fc_norm_hidden.weight") >= 0 ||
+            gguf_find_tensor(meta, "mtp.embed_tokens.weight") >= 0 ||
+            gguf_find_tensor(meta, "mtp.shared_head.head.weight") >= 0 ||
+            gguf_find_tensor(meta, "mtp.shared_head.norm.weight") >= 0 ||
+            gguf_find_tensor(meta, "mtp.norm.weight") >= 0) {
+            OLLAMA_COMPAT_LOG_ERROR("%s: cannot duplicate shared MTP tensors across %u layers\n", __func__, nextn);
+        }
+        return;
+    }
+
+    auto nextn_name = [base_block](const char * suffix) {
+        char dest[GGML_MAX_NAME];
+        std::snprintf(dest, sizeof(dest), "blk.%u.%s", base_block, suffix);
+        return std::string(dest);
+    };
+
+    rename_qwen35_mtp_tensor(meta, ctx, "mtp.fc.weight", nextn_name("nextn.eh_proj.weight"));
+    rename_qwen35_mtp_tensor(meta, ctx, "mtp.pre_fc_norm_embedding.weight", nextn_name("nextn.enorm.weight"));
+    rename_qwen35_mtp_tensor(meta, ctx, "mtp.pre_fc_norm_hidden.weight", nextn_name("nextn.hnorm.weight"));
+    rename_qwen35_mtp_tensor(meta, ctx, "mtp.embed_tokens.weight", nextn_name("nextn.embed_tokens.weight"));
+    rename_qwen35_mtp_tensor(meta, ctx, "mtp.shared_head.head.weight", nextn_name("nextn.shared_head_head.weight"));
+    rename_qwen35_mtp_tensor(meta, ctx, "mtp.shared_head.norm.weight", nextn_name("nextn.shared_head_norm.weight"));
+    rename_qwen35_mtp_tensor(meta, ctx, "mtp.norm.weight", nextn_name("nextn.shared_head_norm.weight"));
+}
+
+void apply_qwen35_mtp_fixes(gguf_context * meta, ggml_context * ctx, const char * arch_prefix) {
+    const uint32_t nextn = qwen35_mtp_layer_count(meta);
+    if (nextn == 0) return;
+    if (qwen35_has_native_mtp_tensors(meta)) return;
+
+    const uint32_t base_block = qwen35_text_block_count(meta, arch_prefix);
+    if (base_block == 0) {
+        OLLAMA_COMPAT_LOG_ERROR("%s: cannot infer qwen3.5 text block count for MTP translation\n", __func__);
+        return;
+    }
+
+    set_u32_kv(meta, std::string(arch_prefix) + ".nextn_predict_layers", nextn);
+    set_u32_kv(meta, std::string(arch_prefix) + ".block_count", base_block + nextn);
+    rename_qwen35_mtp_tensors(meta, ctx, base_block, nextn);
+}
+
 // Shared text-side fixes for qwen35 / qwen35moe published-model layouts.
 // Both arches use the same SSM-hybrid + M-RoPE + MTP+vision-monolithic
 // layout differences; only the arch name and KV prefix differ.
@@ -535,7 +675,11 @@ void apply_qwen35_text_fixes(const llama_model_loader * ml, gguf_context * meta,
     //    `blk.N.ssm_dt.bias` (same shape).
     rename_qwen_ssm_dt_bias_tensors(meta, ctx);
 
-    // 4. Drop embedded vision + MTP + projector tensors from the text loader.
+    // 4. Translate legacy embedded MTP tensors to llama.cpp's qwen3.5 layout.
+    apply_qwen35_mtp_fixes(meta, ctx, arch_prefix);
+
+    // 5. Drop embedded vision/projector tensors, plus any untranslated legacy
+    //    MTP tensors, from the text loader.
     add_skip_prefix(ml, "v.");
     add_skip_prefix(ml, "mm.");
     add_skip_prefix(ml, "mtp.");

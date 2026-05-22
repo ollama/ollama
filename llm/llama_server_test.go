@@ -1602,6 +1602,48 @@ func TestAppendMTPDraftArgs(t *testing.T) {
 	}
 }
 
+func TestHasLegacyQwenMTPDraft(t *testing.T) {
+	tests := []struct {
+		name    string
+		arch    string
+		tensors []*ggml.Tensor
+		want    bool
+	}{
+		{
+			name:    "qwen35 legacy mtp marker",
+			arch:    "qwen35",
+			tensors: []*ggml.Tensor{{Name: "mtp.fc.weight"}},
+			want:    true,
+		},
+		{
+			name:    "qwen35moe legacy mtp marker",
+			arch:    "qwen35moe",
+			tensors: []*ggml.Tensor{{Name: "mtp.layers.0.attn_q.weight"}},
+			want:    true,
+		},
+		{
+			name:    "qwen35 without legacy mtp marker",
+			arch:    "qwen35",
+			tensors: nil,
+			want:    false,
+		},
+		{
+			name:    "other arch with mtp prefix",
+			arch:    "qwen3next",
+			tensors: []*ggml.Tensor{{Name: "mtp.fc.weight"}},
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasLegacyQwenMTPDraft(tt.arch, tt.tensors); got != tt.want {
+				t.Fatalf("hasLegacyQwenMTPDraft() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func testIntPtr(v int) *int {
 	return &v
 }

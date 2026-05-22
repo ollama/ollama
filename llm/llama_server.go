@@ -626,7 +626,19 @@ func appendMTPDraftArgs(params []string, config LlamaServerConfig, opts api.Opti
 }
 
 func hasMTPDraft(f *ggml.GGML) bool {
-	return f.KV().Uint("nextn_predict_layers") > 0
+	if f.KV().Uint("nextn_predict_layers") > 0 {
+		return true
+	}
+	return hasLegacyQwenMTPDraft(f.KV().Architecture(), f.Tensors().Items("mtp."))
+}
+
+func hasLegacyQwenMTPDraft(arch string, tensors []*ggml.Tensor) bool {
+	switch arch {
+	case "qwen35", "qwen35moe":
+		return len(tensors) > 0
+	default:
+		return false
+	}
 }
 
 // NewLlamaServerRunner creates a new llama-server runner that wraps the upstream llama-server binary.
