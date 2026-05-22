@@ -159,7 +159,8 @@ type ResponsesFunctionCall struct {
 	Type      string `json:"type"`         // always "function_call"
 	CallID    string `json:"call_id"`      // the tool call ID
 	Name      string `json:"name"`         // function name
-	Arguments string `json:"arguments"`    // JSON arguments string
+	Namespace string `json:"namespace,omitempty"`
+	Arguments string `json:"arguments"` // JSON arguments string
 }
 
 func (ResponsesFunctionCall) responsesInputItem() {}
@@ -347,11 +348,12 @@ type ResponsesText struct {
 // ResponsesTool represents a tool in the Responses API format.
 // Note: This differs from api.Tool which nests fields under "function".
 type ResponsesTool struct {
-	Type        string         `json:"type"` // "function"
-	Name        string         `json:"name"`
-	Description *string        `json:"description"` // nullable but required
-	Strict      *bool          `json:"strict"`      // nullable but required
-	Parameters  map[string]any `json:"parameters"`  // nullable but required
+	Type        string          `json:"type"` // "function" or "namespace"
+	Name        string          `json:"name"`
+	Description *string         `json:"description"` // nullable but required
+	Strict      *bool           `json:"strict"`      // nullable but required
+	Parameters  map[string]any  `json:"parameters"`  // nullable but required
+	Tools       []ResponsesTool `json:"tools,omitempty"`
 }
 
 type ResponsesRequest struct {
@@ -452,11 +454,10 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 			toolCall := api.ToolCall{
 				ID: v.CallID,
 				Function: api.ToolCallFunction{
-					Name:      v.Name,
+					Name:      flattenNamespaceToolCallName(v.Namespace, v.Name),
 					Arguments: args,
 				},
 			}
-
 			// Merge tool call into existing assistant message if it has content or tool calls
 			if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
 				lastMsg := &messages[len(messages)-1]
@@ -540,11 +541,11 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 	// Convert tools from Responses API format to api.Tool format
 	var tools []api.Tool
 	for _, t := range r.Tools {
-		tool, err := convertTool(t)
+		converted, err := convertTools(t)
 		if err != nil {
 			return nil, err
 		}
-		tools = append(tools, tool)
+		tools = append(tools, converted...)
 	}
 
 	// Handle text format (e.g. json_schema)
@@ -566,6 +567,30 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		Format:   format,
 		Think:    think,
 	}, nil
+}
+
+func convertTools(t ResponsesTool) ([]api.Tool, error) {
+	if t.Type == "namespace" {
+		var tools []api.Tool
+		for _, child := range t.Tools {
+			if child.Type != "function" {
+				return nil, fmt.Errorf("namespace tool %q contains unsupported child tool type %q", t.Name, child.Type)
+			}
+			child.Name = joinNamespaceToolName(t.Name, child.Name)
+			tool, err := convertTool(child)
+			if err != nil {
+				return nil, err
+			}
+			tools = append(tools, tool)
+		}
+		return tools, nil
+	}
+
+	tool, err := convertTool(t)
+	if err != nil {
+		return nil, err
+	}
+	return []api.Tool{tool}, nil
 }
 
 func convertTool(t ResponsesTool) (api.Tool, error) {
@@ -595,6 +620,78 @@ func convertTool(t ResponsesTool) (api.Tool, error) {
 			Parameters:  params,
 		},
 	}, nil
+}
+
+// Ollama's chat tool representation has one flat function name. Responses
+// namespace tools keep namespace and child name separate on the wire, so the
+// OpenAI boundary joins them before model execution and splits known joined
+// names back out when returning Responses function_call items.
+func joinNamespaceToolName(namespace, name string) string {
+	if strings.HasSuffix(namespace, "__") {
+		return namespace + name
+	}
+	return strings.Join([]string{namespace, name}, "__")
+}
+
+type namespaceToolCallName struct {
+	name      string
+	namespace string
+}
+
+func namespaceToolCallNamesByFlatName(tools []ResponsesTool) map[string]namespaceToolCallName {
+	flatFunctionNames := make(map[string]struct{})
+	for _, tool := range tools {
+		if tool.Type == "function" && tool.Name != "" {
+			flatFunctionNames[tool.Name] = struct{}{}
+		}
+	}
+
+	names := make(map[string]namespaceToolCallName)
+	for _, tool := range tools {
+		if tool.Type != "namespace" {
+			continue
+		}
+		addNamespaceToolCallNames(names, flatFunctionNames, tool)
+	}
+	return names
+}
+
+func addNamespaceToolCallNames(names map[string]namespaceToolCallName, flatFunctionNames map[string]struct{}, namespace ResponsesTool) {
+	if namespace.Name == "" {
+		return
+	}
+	for _, child := range namespace.Tools {
+		if child.Type != "function" || child.Name == "" {
+			continue
+		}
+		flatName := joinNamespaceToolName(namespace.Name, child.Name)
+		// Prefer preserving an explicit flat function tool over guessing that
+		// the model intended the namespace child when the request is ambiguous.
+		if _, ok := flatFunctionNames[flatName]; ok {
+			continue
+		}
+		names[flatName] = namespaceToolCallName{
+			name:      child.Name,
+			namespace: namespace.Name,
+		}
+	}
+}
+
+func unflattenNamespaceToolCallName(names map[string]namespaceToolCallName, name string) (string, string) {
+	if resolved, ok := names[name]; ok {
+		return resolved.name, resolved.namespace
+	}
+	return name, ""
+}
+
+func flattenNamespaceToolCallName(namespace, name string) string {
+	if namespace == "" {
+		return name
+	}
+	if strings.HasPrefix(name, joinNamespaceToolName(namespace, "")) {
+		return name
+	}
+	return joinNamespaceToolName(namespace, name)
 }
 
 func convertInputMessage(m ResponsesInputMessage) (api.Message, error) {
@@ -705,6 +802,7 @@ type ResponsesOutputItem struct {
 	Content   []ResponsesOutputContent `json:"content,omitempty"`   // for message
 	CallID    string                   `json:"call_id,omitempty"`   // for function_call
 	Name      string                   `json:"name,omitempty"`      // for function_call
+	Namespace string                   `json:"namespace,omitempty"` // for function_call
 	Arguments string                   `json:"arguments,omitempty"` // for function_call
 
 	// Reasoning fields
@@ -770,13 +868,16 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 
 	if len(chatResponse.Message.ToolCalls) > 0 {
 		toolCalls := ToToolCalls(chatResponse.Message.ToolCalls)
+		toolCallNames := namespaceToolCallNamesByFlatName(request.Tools)
 		for i, tc := range toolCalls {
+			name, namespace := unflattenNamespaceToolCallName(toolCallNames, tc.Function.Name)
 			output = append(output, ResponsesOutputItem{
 				ID:        fmt.Sprintf("fc_%s_%d", responseID, i),
 				Type:      "function_call",
 				Status:    "completed",
 				CallID:    tc.ID,
-				Name:      tc.Function.Name,
+				Name:      name,
+				Namespace: namespace,
 				Arguments: tc.Function.Arguments,
 			})
 		}
@@ -986,22 +1087,6 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		truncation = *c.request.Truncation
 	}
 
-	var tools []any
-	if c.request.Tools != nil {
-		for _, t := range c.request.Tools {
-			tools = append(tools, map[string]any{
-				"type":        t.Type,
-				"name":        t.Name,
-				"description": t.Description,
-				"strict":      t.Strict,
-				"parameters":  t.Parameters,
-			})
-		}
-	}
-	if tools == nil {
-		tools = []any{}
-	}
-
 	textFormat := map[string]any{"type": "text"}
 	if c.request.Text != nil && c.request.Text.Format != nil {
 		textFormat = map[string]any{
@@ -1056,7 +1141,7 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		"instructions":         instructions,
 		"output":               output,
 		"error":                nil,
-		"tools":                tools,
+		"tools":                responsesToolsForStream(c.request.Tools),
 		"tool_choice":          "auto",
 		"truncation":           truncation,
 		"parallel_tool_calls":  true,
@@ -1077,6 +1162,28 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		"safety_identifier":    nil,
 		"prompt_cache_key":     nil,
 	}
+}
+
+func responsesToolsForStream(tools []ResponsesTool) []any {
+	if tools == nil {
+		return []any{}
+	}
+
+	converted := make([]any, 0, len(tools))
+	for _, tool := range tools {
+		value := map[string]any{
+			"type":        tool.Type,
+			"name":        tool.Name,
+			"description": tool.Description,
+			"strict":      tool.Strict,
+			"parameters":  tool.Parameters,
+		}
+		if len(tool.Tools) > 0 {
+			value["tools"] = responsesToolsForStream(tool.Tools)
+		}
+		converted = append(converted, value)
+	}
+	return converted
 }
 
 func (c *ResponsesStreamConverter) createResponseCreatedEvent() ResponsesStreamEvent {
@@ -1163,9 +1270,11 @@ func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []
 	events = append(events, c.finishReasoning()...)
 
 	converted := ToToolCalls(toolCalls)
+	toolCallNames := namespaceToolCallNamesByFlatName(c.request.Tools)
 
 	for i, tc := range converted {
 		fcItemID := fmt.Sprintf("fc_%d_%d", rand.Intn(999999), i)
+		name, namespace := unflattenNamespaceToolCallName(toolCallNames, tc.Function.Name)
 
 		// Store for final output (with status: completed)
 		toolCallItem := map[string]any{
@@ -1173,22 +1282,29 @@ func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []
 			"type":      "function_call",
 			"status":    "completed",
 			"call_id":   tc.ID,
-			"name":      tc.Function.Name,
+			"name":      name,
 			"arguments": tc.Function.Arguments,
+		}
+		if namespace != "" {
+			toolCallItem["namespace"] = namespace
 		}
 		c.toolCallItems = append(c.toolCallItems, toolCallItem)
 
 		// response.output_item.added for function call
+		addedItem := map[string]any{
+			"id":        fcItemID,
+			"type":      "function_call",
+			"status":    "in_progress",
+			"call_id":   tc.ID,
+			"name":      name,
+			"arguments": "",
+		}
+		if namespace != "" {
+			addedItem["namespace"] = namespace
+		}
 		events = append(events, c.newEvent("response.output_item.added", map[string]any{
 			"output_index": c.outputIndex + i,
-			"item": map[string]any{
-				"id":        fcItemID,
-				"type":      "function_call",
-				"status":    "in_progress",
-				"call_id":   tc.ID,
-				"name":      tc.Function.Name,
-				"arguments": "",
-			},
+			"item":         addedItem,
 		}))
 
 		// response.function_call_arguments.delta
@@ -1210,14 +1326,7 @@ func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []
 		// response.output_item.done for function call
 		events = append(events, c.newEvent("response.output_item.done", map[string]any{
 			"output_index": c.outputIndex + i,
-			"item": map[string]any{
-				"id":        fcItemID,
-				"type":      "function_call",
-				"status":    "completed",
-				"call_id":   tc.ID,
-				"name":      tc.Function.Name,
-				"arguments": tc.Function.Arguments,
-			},
+			"item":         toolCallItem,
 		}))
 	}
 
