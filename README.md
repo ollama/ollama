@@ -14,6 +14,19 @@
 > - **Prefill Rate:** ~3463 tokens/sec
 > - **Generate Rate:** ~78 tokens/sec
 > - **Time to First Token (TTFT):** ~130ms
+>
+> **How to Test / Benchmark**
+> ```powershell
+> # 1. Set optimized environment variables for RDNA4
+> $env:HSA_OVERRIDE_GFX_VERSION = "12.0.1"
+> $env:ROCR_VISIBLE_DEVICES = "0"
+> $env:HIP_VISIBLE_DEVICES = "0"
+> $env:OLLAMA_FLASH_ATTENTION = "1"
+> $env:OLLAMA_NUM_GPU = "26" # Adjust layers here
+> 
+> # 2. Run your benchmark or start the server
+> .\ollama.exe run devstral:latest "What is the capital of France?" --verbose
+> ```
 
 ## Binaries 
 https://github.com/Maxritz/ollama-ROCM/tree/rdna4-gfx1201/releases
