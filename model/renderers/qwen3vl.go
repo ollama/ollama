@@ -77,7 +77,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think
 		imageOffset = nextImageOffset
 
 		lastMessage := i == len(messages)-1
-		prefill := lastMessage && message.Role == "assistant"
+		prefill := lastMessage && message.Role == "assistant" && len(message.ToolCalls) == 0
 
 		if message.Role == "user" || message.Role == "system" && i != 0 {
 			sb.WriteString("<|im_start|>" + message.Role + "\n" + content + "<|im_end|>\n")
