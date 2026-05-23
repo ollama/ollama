@@ -90,8 +90,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 				} else if jetpack == "" && strings.Contains(filepath.Base(dir), "cuda_jetpack") {
 					slog.Debug("jetpack not detected (set JETSON_JETPACK or OLLAMA_LLM_LIBRARY to override), skipping", "libDir", dir)
 					continue
-				} else if !envconfig.EnableVulkan() && strings.Contains(filepath.Base(dir), "vulkan") {
-					slog.Info("experimental Vulkan support disabled.  To enable, set OLLAMA_VULKAN=1")
+				} else if !envconfig.EnableVulkan(true) && strings.Contains(filepath.Base(dir), "vulkan") {
 					continue
 				}
 				dirs = []string{ml.LibOllamaPath, dir}

@@ -641,6 +641,44 @@ func TestLlamaServerWaitUntilRunningFailsOnHealthOOM(t *testing.T) {
 	}
 }
 
+func TestLlamaServerWaitUntilRunningWaitsOnRecoverableStartupOOM(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"status":"error","message":"compute buffer allocation failed"}`)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	status := &StatusWriter{}
+	status.SetLastError("ggml_backend_sched_reserve: compute buffer allocation failed, retrying without pipeline parallelism")
+	runner := &llamaServerRunner{
+		port:   portInt,
+		cmd:    fakeRunningCmd(),
+		status: status,
+	}
+
+	err := runner.WaitUntilRunning(t.Context())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls < 2 {
+		t.Fatalf("expected WaitUntilRunning to keep polling after recoverable OOM, calls=%d", calls)
+	}
+}
+
 func TestLlamaServerWaitUntilRunningTimesOutWhenLoadExceedsTimeout(t *testing.T) {
 	t.Setenv("OLLAMA_LOAD_TIMEOUT", "10ms")
 
@@ -1503,6 +1541,7 @@ func TestAppendMMProjArgs(t *testing.T) {
 		opts        api.Options
 		gpus        []ml.DeviceInfo
 		modelLayers uint64
+		retry       bool
 		want        []string
 	}{
 		{
@@ -1558,11 +1597,27 @@ func TestAppendMMProjArgs(t *testing.T) {
 			modelLayers: 81,
 			want:        []string{"base", "--mmproj", "model.gguf"},
 		},
+		{
+			name:        "startup oom retry disables projector offload",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			modelLayers: 81,
+			retry:       true,
+			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := appendMMProjArgs([]string{"base"}, "model.gguf", tt.projectors, tt.opts, tt.gpus, tt.modelLayers)
+			got := appendMMProjArgs([]string{"base"}, llamaServerLaunchConfig{
+				modelPath:            "model.gguf",
+				projectors:           tt.projectors,
+				opts:                 tt.opts,
+				gpus:                 tt.gpus,
+				modelLayers:          tt.modelLayers,
+				forceNoMMProjOffload: tt.retry,
+			})
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("appendMMProjArgs = %v, want %v", got, tt.want)
 			}

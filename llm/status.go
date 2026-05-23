@@ -95,11 +95,22 @@ var outOfMemorySubstrings = []string{
 	"erroroutofmemory",
 }
 
+var recoverableOutOfMemorySubstrings = []string{
+	"retrying without pipeline parallelism",
+}
+
 func IsOutOfMemory(err error) bool {
 	if err == nil {
 		return false
 	}
 	return IsOutOfMemoryMessage(err.Error())
+}
+
+func isRecoverableOutOfMemory(err error) bool {
+	if err == nil {
+		return false
+	}
+	return isRecoverableOutOfMemoryMessage(err.Error())
 }
 
 func IsOutOfMemoryMessage(msg string) bool {
@@ -110,6 +121,31 @@ func IsOutOfMemoryMessage(msg string) bool {
 		}
 	}
 	return false
+}
+
+func isRecoverableOutOfMemoryMessage(msg string) bool {
+	lastLine := lastNonEmptyLine(msg)
+	if !IsOutOfMemoryMessage(lastLine) {
+		return false
+	}
+
+	lastLine = strings.ToLower(lastLine)
+	for _, needle := range recoverableOutOfMemorySubstrings {
+		if strings.Contains(lastLine, strings.ToLower(needle)) {
+			return true
+		}
+	}
+	return false
+}
+
+func lastNonEmptyLine(msg string) string {
+	lines := strings.Split(strings.TrimSpace(msg), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func (w *StatusWriter) Write(b []byte) (int, error) {
