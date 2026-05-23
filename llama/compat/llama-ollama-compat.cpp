@@ -580,7 +580,115 @@ void rename_qwen35_mtp_tensor(gguf_context * meta, ggml_context * ctx, const cha
     rename_tensor(meta, ctx, from, to.c_str());
 }
 
-void rename_qwen35_mtp_tensors(gguf_context * meta, ggml_context * ctx, uint32_t base_block, uint32_t nextn) {
+bool qwen35moe_mtp_expert_source(const std::string & name, uint32_t mtp_index,
+                                 const char * suffix, uint32_t & expert) {
+    char prefix[128];
+    std::snprintf(prefix, sizeof(prefix), "mtp.layers.%u.mlp.experts.", mtp_index);
+    const size_t prefix_len = std::strlen(prefix);
+    if (name.compare(0, prefix_len, prefix) != 0) return false;
+
+    const char * start = name.c_str() + prefix_len;
+    char * end = nullptr;
+    errno = 0;
+    const unsigned long value = std::strtoul(start, &end, 10);
+    if (errno != 0 || end == start || *end != '.' || value > UINT32_MAX) return false;
+    if (std::strcmp(end + 1, suffix) != 0) return false;
+
+    expert = static_cast<uint32_t>(value);
+    return true;
+}
+
+std::vector<std::pair<uint32_t, std::string>> qwen35moe_mtp_expert_sources(
+        const gguf_context * meta, uint32_t mtp_index, const char * suffix) {
+    std::vector<std::pair<uint32_t, std::string>> sources;
+    const int64_t n = gguf_get_n_tensors(meta);
+    for (int64_t i = 0; i < n; ++i) {
+        const std::string name(gguf_get_tensor_name(meta, i));
+        uint32_t expert = 0;
+        if (!qwen35moe_mtp_expert_source(name, mtp_index, suffix, expert)) continue;
+        sources.emplace_back(expert, name);
+    }
+
+    std::sort(sources.begin(), sources.end(),
+              [](const auto & a, const auto & b) { return a.first < b.first; });
+    return sources;
+}
+
+bool register_qwen35moe_mtp_expert_merge(gguf_context * meta, ggml_context * ctx,
+                                         uint32_t mtp_index, uint32_t block,
+                                         const char * src_suffix,
+                                         const char * dst_suffix) {
+    const auto sources = qwen35moe_mtp_expert_sources(meta, mtp_index, src_suffix);
+    if (sources.empty()) return false;
+
+    std::vector<std::string> names;
+    names.reserve(sources.size());
+    for (size_t i = 0; i < sources.size(); ++i) {
+        if (sources[i].first != static_cast<uint32_t>(i)) {
+            OLLAMA_COMPAT_LOG_ERROR("%s: non-contiguous qwen35moe MTP experts for layer %u suffix %s\n",
+                                    __func__, mtp_index, src_suffix);
+            return false;
+        }
+        names.push_back(sources[i].second);
+    }
+
+    ggml_tensor * first = ggml_get_tensor(ctx, names[0].c_str());
+    if (!first || first->ne[2] != 1 || first->ne[3] != 1) return false;
+    const int64_t ne0 = first->ne[0];
+    const int64_t ne1 = first->ne[1];
+    const ggml_type type = first->type;
+
+    for (const auto & name : names) {
+        ggml_tensor * t = ggml_get_tensor(ctx, name.c_str());
+        if (!t || t->type != type || t->ne[0] != ne0 || t->ne[1] != ne1 ||
+                t->ne[2] != 1 || t->ne[3] != 1) {
+            OLLAMA_COMPAT_LOG_ERROR("%s: inconsistent qwen35moe MTP expert tensor shape/type for %s\n",
+                                    __func__, name.c_str());
+            return false;
+        }
+    }
+
+    char dest[GGML_MAX_NAME];
+    std::snprintf(dest, sizeof(dest), "blk.%u.%s", block, dst_suffix);
+
+    register_concat_load(meta, dest, names);
+    rename_tensor(meta, ctx, names[0].c_str(), dest);
+    if (ggml_tensor * t = ggml_get_tensor(ctx, dest)) {
+        set_tensor_shape(t, {ne0, ne1, (int64_t) names.size()});
+    }
+    return true;
+}
+
+bool merge_qwen35moe_mtp_expert_tensors(gguf_context * meta, ggml_context * ctx,
+                                        uint32_t base_block, uint32_t nextn) {
+    bool merged_any = false;
+    for (uint32_t i = 0; i < nextn; ++i) {
+        const uint32_t block = base_block + i;
+        const bool gate = register_qwen35moe_mtp_expert_merge(meta, ctx, i, block,
+                                                              "gate_proj.weight", "ffn_gate_exps.weight");
+        const bool up = register_qwen35moe_mtp_expert_merge(meta, ctx, i, block,
+                                                            "up_proj.weight", "ffn_up_exps.weight");
+        const bool down = register_qwen35moe_mtp_expert_merge(meta, ctx, i, block,
+                                                              "down_proj.weight", "ffn_down_exps.weight");
+        if (gate || up || down) {
+            merged_any = true;
+            if (!gate || !up || !down) {
+                OLLAMA_COMPAT_LOG_ERROR("%s: incomplete qwen35moe MTP expert merge for layer %u\n", __func__, i);
+            }
+        }
+    }
+    return merged_any;
+}
+
+bool rename_qwen35_mtp_tensors(gguf_context * meta, ggml_context * ctx,
+                               const char * arch_prefix,
+                               uint32_t base_block, uint32_t nextn) {
+    const bool is_moe = std::strcmp(arch_prefix, "qwen35moe") == 0;
+    bool registered_load_transform = false;
+    if (is_moe) {
+        registered_load_transform = merge_qwen35moe_mtp_expert_tensors(meta, ctx, base_block, nextn);
+    }
+
     std::vector<std::pair<std::string, std::string>> layer_renames;
     const int64_t n = gguf_get_n_tensors(meta);
     for (int64_t i = 0; i < n; ++i) {
@@ -589,6 +697,7 @@ void rename_qwen35_mtp_tensors(gguf_context * meta, ggml_context * ctx, uint32_t
         std::string suffix;
         if (!parse_tensor_index(name, "mtp.layers.", mtp_index, &suffix) || suffix.empty()) continue;
         if (mtp_index >= nextn) continue;
+        if (is_moe && suffix.compare(0, std::strlen("mlp.experts."), "mlp.experts.") == 0) continue;
 
         char dest[GGML_MAX_NAME];
         std::snprintf(dest, sizeof(dest), "blk.%u.%s", base_block + mtp_index, suffix.c_str());
@@ -608,7 +717,7 @@ void rename_qwen35_mtp_tensors(gguf_context * meta, ggml_context * ctx, uint32_t
             gguf_find_tensor(meta, "mtp.norm.weight") >= 0) {
             OLLAMA_COMPAT_LOG_ERROR("%s: cannot duplicate shared MTP tensors across %u layers\n", __func__, nextn);
         }
-        return;
+        return registered_load_transform;
     }
 
     auto nextn_name = [base_block](const char * suffix) {
@@ -624,22 +733,23 @@ void rename_qwen35_mtp_tensors(gguf_context * meta, ggml_context * ctx, uint32_t
     rename_qwen35_mtp_tensor(meta, ctx, "mtp.shared_head.head.weight", nextn_name("nextn.shared_head_head.weight"));
     rename_qwen35_mtp_tensor(meta, ctx, "mtp.shared_head.norm.weight", nextn_name("nextn.shared_head_norm.weight"));
     rename_qwen35_mtp_tensor(meta, ctx, "mtp.norm.weight", nextn_name("nextn.shared_head_norm.weight"));
+    return registered_load_transform;
 }
 
-void apply_qwen35_mtp_fixes(gguf_context * meta, ggml_context * ctx, const char * arch_prefix) {
+bool apply_qwen35_mtp_fixes(gguf_context * meta, ggml_context * ctx, const char * arch_prefix) {
     const uint32_t nextn = qwen35_mtp_layer_count(meta);
-    if (nextn == 0) return;
-    if (qwen35_has_native_mtp_tensors(meta)) return;
+    if (nextn == 0) return false;
+    if (qwen35_has_native_mtp_tensors(meta)) return false;
 
     const uint32_t base_block = qwen35_text_block_count(meta, arch_prefix);
     if (base_block == 0) {
         OLLAMA_COMPAT_LOG_ERROR("%s: cannot infer qwen3.5 text block count for MTP translation\n", __func__);
-        return;
+        return false;
     }
 
     set_u32_kv(meta, std::string(arch_prefix) + ".nextn_predict_layers", nextn);
     set_u32_kv(meta, std::string(arch_prefix) + ".block_count", base_block + nextn);
-    rename_qwen35_mtp_tensors(meta, ctx, base_block, nextn);
+    return rename_qwen35_mtp_tensors(meta, ctx, arch_prefix, base_block, nextn);
 }
 
 // Shared text-side fixes for qwen35 / qwen35moe published-model layouts.
@@ -676,7 +786,9 @@ void apply_qwen35_text_fixes(const llama_model_loader * ml, gguf_context * meta,
     rename_qwen_ssm_dt_bias_tensors(meta, ctx);
 
     // 4. Translate legacy embedded MTP tensors to llama.cpp's qwen3.5 layout.
-    apply_qwen35_mtp_fixes(meta, ctx, arch_prefix);
+    if (apply_qwen35_mtp_fixes(meta, ctx, arch_prefix)) {
+        disable_mmap_for(ml);
+    }
 
     // 5. Drop embedded vision/projector tensors, plus any untranslated legacy
     //    MTP tensors, from the text loader.
