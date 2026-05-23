@@ -342,6 +342,49 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		}
 	})
 
+	t.Run("cohere embed", func(t *testing.T) {
+		upstream, capture := newUpstream(t, `{"id":"embed","embeddings":{"float":[[0.1,0.2]]}}`)
+		defer upstream.Close()
+
+		original := cloudProxyBaseURL
+		cloudProxyBaseURL = upstream.URL
+		t.Cleanup(func() { cloudProxyBaseURL = original })
+
+		s := &Server{}
+		router, err := s.GenerateRoutes(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		local := httptest.NewServer(router)
+		defer local.Close()
+
+		reqBody := `{"model":"kimi-k2.5:cloud","texts":["hello"]}`
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/v2/embed", bytes.NewBufferString(reqBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := local.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+		}
+
+		if capture.path != "/v2/embed" {
+			t.Fatalf("expected upstream path /v2/embed, got %q", capture.path)
+		}
+
+		if !strings.Contains(capture.body, `"model":"kimi-k2.5"`) {
+			t.Fatalf("expected normalized model in upstream body, got %q", capture.body)
+		}
+	})
+
 	t.Run("api show", func(t *testing.T) {
 		upstream, capture := newUpstream(t, `{"details":{"format":"gguf"}}`)
 		defer upstream.Close()

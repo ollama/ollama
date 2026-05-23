@@ -136,6 +136,35 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
+		if params.embedding && len(images) > 0 {
+			multimodalProcessor, visionModel := s.model.(model.MultimodalProcessor)
+			if !visionModel {
+				return nil, errors.New("embedding only supported for multimodal models")
+			}
+			if len(images) > 1 {
+				return nil, errors.New("embedding only supported for single image")
+			}
+
+			ctx := s.model.Backend().NewContext()
+			runtime.SetFinalizer(ctx, func(c ml.Context) { c.Close() })
+			ctxs = append(ctxs, ctx)
+
+			imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, images[0].Data)
+			if err != nil {
+				return nil, err
+			}
+
+			s.multimodalHash.Reset()
+			_, _ = s.multimodalHash.Write(images[0].Data)
+			imageHash := s.multimodalHash.Sum64()
+
+			mmStore = newMultimodalStore()
+			mmStore.addMultimodal(imageEmbeddings)
+			inputs = []*input.Input{{Multimodal: imageEmbeddings, MultimodalHash: imageHash}}
+		}
+	}
+
+	if len(inputs) == 0 {
 		return nil, errors.New("no input provided")
 	}
 
@@ -1007,7 +1036,17 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
+
+	prompt := req.Content
+	var images []llm.ImageData
+	if req.Image != nil {
+		images = []llm.ImageData{*req.Image}
+		if prompt != "" {
+			prompt += " [img-0]"
+		}
+	}
+
+	seq, err := s.NewSequence(prompt, images, NewSequenceParams{
 		embedding: true,
 		truncate:  false,
 	})

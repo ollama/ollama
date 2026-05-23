@@ -616,6 +616,9 @@ type EmbedRequest struct {
 	// Input is the input to embed.
 	Input any `json:"input"`
 
+	// Inputs is an optional multimodal batch for embeddings.
+	Inputs []EmbedInput `json:"inputs,omitempty"`
+
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
@@ -628,6 +631,12 @@ type EmbedRequest struct {
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
+}
+
+// EmbedInput is a single embedding item, optionally combining text and image.
+type EmbedInput struct {
+	Text  string    `json:"text,omitempty"`
+	Image ImageData `json:"image,omitempty"`
 }
 
 // EmbedResponse is the response from [Client.Embed].
