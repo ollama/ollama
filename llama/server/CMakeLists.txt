@@ -42,6 +42,10 @@ if(GGML_VULKAN AND DEFINED ENV{VULKAN_SDK})
     endforeach()
 endif()
 
+if(WIN32 AND MINGW)
+    add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
+endif()
+
 include(FetchContent)
 
 # Read pinned llama.cpp commit from version file (shared with Dockerfile)
@@ -155,6 +159,60 @@ endif()
 
 set(_base_dest "lib/ollama")
 
+function(ollama_append_newest_windows_runtime_family output)
+    set(_runtime_dirs)
+    foreach(_pattern IN LISTS ARGN)
+        file(GLOB _dirs LIST_DIRECTORIES true "${_pattern}")
+        list(APPEND _runtime_dirs ${_dirs})
+    endforeach()
+
+    if(_runtime_dirs)
+        list(REMOVE_DUPLICATES _runtime_dirs)
+        # Use one redist version per runtime family so older DLLs do not
+        # overwrite newer DLLs with the same names.
+        list(SORT _runtime_dirs COMPARE NATURAL ORDER DESCENDING)
+        list(GET _runtime_dirs 0 _newest_dir)
+        cmake_path(GET _newest_dir PARENT_PATH _newest_parent)
+
+        set(_selected_runtime_dirs)
+        foreach(_runtime_dir IN LISTS _runtime_dirs)
+            cmake_path(GET _runtime_dir PARENT_PATH _runtime_parent)
+            if(_runtime_parent STREQUAL _newest_parent)
+                list(APPEND _selected_runtime_dirs "${_runtime_dir}")
+            endif()
+        endforeach()
+
+        set(${output} ${${output}} ${_selected_runtime_dirs} PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(ollama_append_mingw_runtime_dlls output)
+    cmake_path(GET CMAKE_CXX_COMPILER PARENT_PATH _compiler_bin_dir)
+    set(_runtime_dll_patterns
+        "${_compiler_bin_dir}/libc++*.dll"
+        "${_compiler_bin_dir}/libgcc_s_*.dll"
+        "${_compiler_bin_dir}/libstdc++-*.dll"
+        "${_compiler_bin_dir}/libunwind*.dll"
+        "${_compiler_bin_dir}/libwinpthread-*.dll")
+    if(GGML_OPENMP)
+        list(APPEND _runtime_dll_patterns
+            "${_compiler_bin_dir}/libgomp-[0-9]*.dll"
+            "${_compiler_bin_dir}/libomp*.dll")
+    endif()
+
+    set(_runtime_dlls)
+    foreach(_dll_pattern IN LISTS _runtime_dll_patterns)
+        file(GLOB _matched_runtime_dlls
+            LIST_DIRECTORIES false
+            "${_dll_pattern}")
+        list(APPEND _runtime_dlls ${_matched_runtime_dlls})
+    endforeach()
+
+    if(_runtime_dlls)
+        set(${output} ${${output}} ${_runtime_dlls} PARENT_SCOPE)
+    endif()
+endfunction()
+
 function(ollama_install_windows_runtime_dlls dest)
     if(NOT WIN32 OR NOT GGML_BACKEND_DL)
         return()
@@ -167,18 +225,30 @@ function(ollama_install_windows_runtime_dlls dest)
         set(_ollama_windows_runtime_arch "arm64")
     endif()
 
-    set(_runtime_dir_patterns)
-    set(_runtime_dlls)
+    set(_crt_dir_patterns)
+    set(_openmp_dir_patterns)
 
     if(DEFINED ENV{VCToolsRedistDir})
         file(TO_CMAKE_PATH "$ENV{VCToolsRedistDir}" _vc_tools_redist_dir)
-        list(APPEND _runtime_dir_patterns
+        list(APPEND _crt_dir_patterns
             "${_vc_tools_redist_dir}/${_ollama_windows_runtime_arch}/Microsoft.VC*.CRT")
+        list(APPEND _openmp_dir_patterns
+            "${_vc_tools_redist_dir}/${_ollama_windows_runtime_arch}/Microsoft.VC*.OpenMP*")
     endif()
 
     if(CMAKE_GENERATOR_INSTANCE)
-        list(APPEND _runtime_dir_patterns
+        list(APPEND _crt_dir_patterns
             "${CMAKE_GENERATOR_INSTANCE}/VC/Redist/MSVC/*/${_ollama_windows_runtime_arch}/Microsoft.VC*.CRT")
+        list(APPEND _openmp_dir_patterns
+            "${CMAKE_GENERATOR_INSTANCE}/VC/Redist/MSVC/*/${_ollama_windows_runtime_arch}/Microsoft.VC*.OpenMP*")
+    endif()
+
+    if(DEFINED ENV{VSINSTALLDIR})
+        file(TO_CMAKE_PATH "$ENV{VSINSTALLDIR}" _vs_install_dir)
+        list(APPEND _crt_dir_patterns
+            "${_vs_install_dir}/VC/Redist/MSVC/*/${_ollama_windows_runtime_arch}/Microsoft.VC*.CRT")
+        list(APPEND _openmp_dir_patterns
+            "${_vs_install_dir}/VC/Redist/MSVC/*/${_ollama_windows_runtime_arch}/Microsoft.VC*.OpenMP*")
     endif()
 
     if(MSVC)
@@ -189,44 +259,31 @@ function(ollama_install_windows_runtime_dlls dest)
         cmake_path(GET _tmp PARENT_PATH _tmp)
         cmake_path(GET _tmp PARENT_PATH _msvc_ver_dir)
         # The redist version may differ from the toolset version.
-        list(APPEND _runtime_dir_patterns
+        list(APPEND _crt_dir_patterns
             "${_msvc_ver_dir}/../../../Redist/MSVC/*/${_ollama_windows_runtime_arch}/Microsoft.VC*.CRT")
-    endif()
-
-    if(MINGW)
-        get_filename_component(_mingw_compiler_name "${CMAKE_CXX_COMPILER}" NAME)
-        if(_mingw_compiler_name MATCHES "^(.+)-g\\+\\+(\\.exe)?$")
-            set(_mingw_triplet "${CMAKE_MATCH_1}")
-            get_filename_component(_mingw_bin_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
-            get_filename_component(_mingw_root "${_mingw_bin_dir}" DIRECTORY)
-            set(_mingw_runtime_dir "${_mingw_root}/${_mingw_triplet}/bin")
-            foreach(_dll_name IN ITEMS libc++.dll libunwind.dll libwinpthread-1.dll)
-                if(EXISTS "${_mingw_runtime_dir}/${_dll_name}")
-                    list(APPEND _runtime_dlls "${_mingw_runtime_dir}/${_dll_name}")
-                endif()
-            endforeach()
-        endif()
+        list(APPEND _openmp_dir_patterns
+            "${_msvc_ver_dir}/../../../Redist/MSVC/*/${_ollama_windows_runtime_arch}/Microsoft.VC*.OpenMP*")
     endif()
 
     set(_runtime_dll_dirs)
-    foreach(_pattern IN LISTS _runtime_dir_patterns)
-        file(GLOB _dirs LIST_DIRECTORIES true "${_pattern}")
-        list(APPEND _runtime_dll_dirs ${_dirs})
-    endforeach()
+    ollama_append_newest_windows_runtime_family(_runtime_dll_dirs ${_crt_dir_patterns})
+    if(GGML_OPENMP)
+        ollama_append_newest_windows_runtime_family(_runtime_dll_dirs ${_openmp_dir_patterns})
+    endif()
     if(_runtime_dll_dirs)
         list(REMOVE_DUPLICATES _runtime_dll_dirs)
-        # Multiple VS redists can be installed; use one CRT set so older DLLs
-        # do not overwrite newer DLLs with the same names.
-        list(SORT _runtime_dll_dirs COMPARE NATURAL ORDER DESCENDING)
-        list(GET _runtime_dll_dirs 0 _runtime_dll_dirs)
     endif()
 
+    set(_runtime_dlls)
     foreach(_dir IN LISTS _runtime_dll_dirs)
         if(EXISTS "${_dir}")
             file(GLOB _dlls "${_dir}/*.dll")
             list(APPEND _runtime_dlls ${_dlls})
         endif()
     endforeach()
+    if(MINGW)
+        ollama_append_mingw_runtime_dlls(_runtime_dlls)
+    endif()
 
     if(_runtime_dlls)
         list(REMOVE_DUPLICATES _runtime_dlls)

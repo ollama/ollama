@@ -157,6 +157,9 @@ else()
         -DBUILD_SHARED_LIBS=ON
         -DGGML_BACKEND_DL=ON
         -DGGML_CPU_ALL_VARIANTS=ON)
+    if(WIN32)
+        list(APPEND _cpu_args -DGGML_OPENMP=ON)
+    endif()
     if(APPLE)
         list(APPEND _cpu_args -DGGML_METAL=OFF)
     endif()

@@ -234,7 +234,7 @@ function cpu {
         New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
         # Build llama-server from upstream source (CPU + base)
-        & cmake -S llama\server --preset cpu --install-prefix $script:DIST_DIR
+        & cmake -S llama\server --preset cpu-windows --install-prefix $script:DIST_DIR
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         & cmake --build build\llama-server-cpu --config Release --parallel $script:JOBS
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}

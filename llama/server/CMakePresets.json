@@ -23,6 +23,13 @@
       }
     },
     {
+      "name": "cpu-windows",
+      "inherits": ["cpu"],
+      "cacheVariables": {
+        "GGML_OPENMP": "ON"
+      }
+    },
+    {
       "name": "cpu-arm64",
       "inherits": ["default"],
       "binaryDir": "${sourceDir}/../../build/llama-server-cpu-arm64",
@@ -148,6 +155,11 @@
     {
       "name": "cpu",
       "configurePreset": "cpu",
+      "targets": ["llama-server", "llama-quantize"]
+    },
+    {
+      "name": "cpu-windows",
+      "configurePreset": "cpu-windows",
       "targets": ["llama-server", "llama-quantize"]
     },
     {
