@@ -1,20 +1,28 @@
-.DS_Store
-.vscode
-.vs/
-.env
-.venv
-.swp
-0
-dist
-build
-.cache
-.gocache
+﻿# Build artifacts
+build/
+dist/windows-amd64/
+
+# Build logs
+*.log
+build_*.log
+
+# Backup files created by apply scripts
+*.bak.*
+
+# Zip/installer artifacts
+*.zip
 *.exe
-.idea
-test_data
-*.crt
-__debug_bin*
-llama/build
-llama/vendor
-/ollama
-integration/testdata/models/
+!apply_COMPLETE.ps1
+
+# Patch files from previous sessions
+OLLAMA_COMPLETE_ROCM7_GFX1201.patch
+OLLAMA_COMPLETE_ROCM7_GFX1201.patch.txt
+
+# Benchmark result text files
+new_build_bench*.txt
+ollama_*_bench.txt
+
+# Modelfiles
+Modelfile
+Modelfile-gemma
+Modelfile-llama3
