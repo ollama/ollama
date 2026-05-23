@@ -44,7 +44,7 @@ func (c *Claude) findPath() (string, error) {
 	return fallback, nil
 }
 
-func (c *Claude) Run(model string, args []string) error {
+func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
 	claudePath, err := c.findPath()
 	if err != nil {
 		return fmt.Errorf("claude is not installed, install from https://code.claude.com/docs/en/quickstart")

@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/semver"
 )
@@ -19,8 +21,9 @@ type Codex struct{}
 func (c *Codex) String() string { return "Codex" }
 
 const (
-	codexProfileName  = "ollama-launch"
-	codexProviderName = "Ollama"
+	codexProfileName           = "ollama-launch"
+	codexProviderName          = "Ollama"
+	codexFallbackContextWindow = 128_000
 
 	codexRootProfileKey          = "profile"
 	codexRootModelKey            = "model"
@@ -28,8 +31,11 @@ const (
 	codexRootModelCatalogJSONKey = "model_catalog_json"
 )
 
-func (c *Codex) args(model string, extra []string) []string {
+func (c *Codex) args(model, modelCatalogPath string, extra []string) []string {
 	args := []string{"--profile", codexProfileName}
+	if modelCatalogPath != "" {
+		args = append(args, "-c", fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, modelCatalogPath))
+	}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
@@ -37,16 +43,21 @@ func (c *Codex) args(model string, extra []string) []string {
 	return args
 }
 
-func (c *Codex) Run(model string, args []string) error {
+func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 	if err := checkCodexVersion(); err != nil {
 		return err
 	}
 
-	if err := ensureCodexConfig(); err != nil {
+	if err := ensureCodexConfig(model, models); err != nil {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
-	cmd := exec.Command("codex", c.args(model, args)...)
+	catalogPath, err := codexModelCatalogPath()
+	if err != nil {
+		return fmt.Errorf("failed to configure codex: %w", err)
+	}
+
+	cmd := exec.Command("codex", c.args(model, catalogPath, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -56,18 +67,25 @@ func (c *Codex) Run(model string, args []string) error {
 	return cmd.Run()
 }
 
-// ensureCodexConfig writes a [profiles.ollama-launch] section to ~/.codex/config.toml
-// with openai_base_url pointing to the local Ollama server.
-func ensureCodexConfig() error {
+// ensureCodexConfig writes a Codex profile and model catalog so Codex uses the
+// local Ollama server and has model metadata available.
+func ensureCodexConfig(modelName string, models []LaunchModel) error {
 	configPath, err := codexConfigPath()
 	if err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+	codexDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
 		return err
 	}
-	return writeCodexProfile(configPath)
+
+	catalogPath := codexModelCatalogPathForConfig(configPath)
+	if err := writeCodexModelCatalog(catalogPath, codexCatalogModel(modelName, models)); err != nil {
+		return err
+	}
+
+	return writeCodexProfile(configPath, catalogPath)
 }
 
 func codexConfigPath() (string, error) {
@@ -78,12 +96,28 @@ func codexConfigPath() (string, error) {
 	return filepath.Join(home, ".codex", "config.toml"), nil
 }
 
+func codexModelCatalogPath() (string, error) {
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return "", err
+	}
+	return codexModelCatalogPathForConfig(configPath), nil
+}
+
+func codexModelCatalogPathForConfig(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "model.json")
+}
+
 // writeCodexProfile ensures ~/.codex/config.toml has the ollama-launch profile
 // and model provider sections with the correct base URL.
-func writeCodexProfile(configPath string) error {
-	return writeCodexLaunchProfile(configPath, codexLaunchProfileOptions{
+func writeCodexProfile(configPath string, modelCatalogPath ...string) error {
+	opts := codexLaunchProfileOptions{
 		forceAPIAuth: true,
-	})
+	}
+	if len(modelCatalogPath) > 0 {
+		opts.modelCatalogPath = modelCatalogPath[0]
+	}
+	return writeCodexLaunchProfile(configPath, opts)
 }
 
 type codexLaunchProfileOptions struct {
@@ -536,6 +570,78 @@ func codexRootLineHasKey(line, key string) bool {
 	}
 	_, ok := cfg[key]
 	return ok
+}
+
+func codexCatalogModel(modelName string, models []LaunchModel) LaunchModel {
+	if model, ok := findLaunchModel(models, modelName); ok {
+		return model.WithCloudLimits()
+	}
+	return fallbackLaunchModel(modelName)
+}
+
+func writeCodexModelCatalog(catalogPath string, model LaunchModel) error {
+	entry := buildCodexModelEntry(model)
+
+	catalog := map[string]any{
+		"models": []any{entry},
+	}
+
+	data, err := json.MarshalIndent(catalog, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(catalogPath, data, 0o644)
+}
+
+func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
+	modelName := launchModel.Name
+	contextWindow := codexFallbackContextWindow
+	systemPrompt := ""
+
+	if launchModel.ContextLength > 0 {
+		contextWindow = launchModel.ContextLength
+	} else if launchModel.Details.ContextLength > 0 {
+		contextWindow = launchModel.Details.ContextLength
+	}
+	if l, ok := lookupCloudModelLimit(modelName); ok {
+		contextWindow = l.Context
+	}
+
+	if !isCloudModelName(modelName) && launchModel.Details.Format != "safetensors" {
+		if ctxLen := envconfig.ContextLength(); ctxLen > 0 {
+			contextWindow = int(ctxLen)
+		}
+	}
+
+	modalities := []string{"text"}
+	if launchModel.HasCapability(model.CapabilityVision) {
+		modalities = append(modalities, "image")
+	}
+
+	truncationMode := "bytes"
+	if isCloudModelName(modelName) {
+		truncationMode = "tokens"
+	}
+
+	return map[string]any{
+		"slug":                         modelName,
+		"display_name":                 modelName,
+		"context_window":               contextWindow,
+		"shell_type":                   "default",
+		"visibility":                   "list",
+		"supported_in_api":             true,
+		"priority":                     0,
+		"truncation_policy":            map[string]any{"mode": truncationMode, "limit": 10000},
+		"input_modalities":             modalities,
+		"base_instructions":            systemPrompt,
+		"support_verbosity":            true,
+		"default_verbosity":            "low",
+		"supports_parallel_tool_calls": false,
+		"supports_reasoning_summaries": false,
+		"supported_reasoning_levels":   []any{},
+		"experimental_supported_tools": []any{},
+	}
 }
 
 func checkCodexVersion() error {

@@ -130,7 +130,7 @@ func (c *ClaudeDesktop) SkipModelReadiness() bool {
 	return true
 }
 
-func (c *ClaudeDesktop) Run(_ string, _ []string) error {
+func (c *ClaudeDesktop) Run(_ string, _ []LaunchModel, _ []string) error {
 	return errClaudeDesktopUnsupported()
 }
 
