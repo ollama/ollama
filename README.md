@@ -6,6 +6,15 @@
 
 # Ollama
 
+> **⚠️ AMD RDNA4 Optimized Build (RX 9070 XT gfx1201)**
+> This is a highly optimized build of Ollama tailored for AMD RDNA4 architecture (specifically RX 9070 XT). 
+> It includes 20 specific optimizations such as Paged KV Cache, Split-K Matmul, MoE Top-K routing, RoPE Cache, and TurboQuant.
+> 
+> **Benchmarks (8B Q8_0 model on RX 9070 XT)**
+> - **Prefill Rate:** ~3463 tokens/sec
+> - **Generate Rate:** ~78 tokens/sec
+> - **Time to First Token (TTFT):** ~130ms
+
 Start building with open models.
 
 ## Download
