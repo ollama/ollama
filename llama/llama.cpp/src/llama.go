@@ -3,6 +3,7 @@ package llama
 // #cgo CXXFLAGS: -std=c++17
 // #cgo CPPFLAGS: -I${SRCDIR}/../include
 // #cgo CPPFLAGS: -I${SRCDIR}/../../../ml/backend/ggml/ggml/include
+// #cgo CPPFLAGS: -DGGML_TURBOQUANT
 // #cgo windows CPPFLAGS: -D_WIN32_WINNT=0x0602
 import "C"
 

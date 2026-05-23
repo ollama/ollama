@@ -1,9 +1,11 @@
 #include "common.cuh"
 #include "fattn-common.cuh"
 
+// PR #19625: Wave32 Flash Attention refactor.
+// Returns the number of threads used for the host-side launch configuration.
 static int ggml_cuda_fattn_vec_get_nthreads_host(const int cc) {
-    return 128;
     GGML_UNUSED(cc);
+    return 128;
 }
 
 static constexpr __device__ int ggml_cuda_fattn_vec_get_nthreads_device() {
@@ -63,11 +65,17 @@ static __global__ void flash_attn_ext_vec(
     constexpr int cpy_ne = cpy_nb / 4;
 
 #ifdef GGML_USE_HIP
-#ifdef RDNA
+// PR #19625: Wave32 Flash Attention refactor.
+// RDNA3/4 (Wave32): nthreads_KQ=4 fills the wave better → higher occupancy & less divergence.
+// RDNA1/2 (Wave32 but older): nthreads_KQ=2 keeps register pressure manageable.
+// GCN/CDNA (Wave64): nthreads_KQ=4 matches upstream CUDA path.
+#if defined(RDNA4) || defined(RDNA3)
+    constexpr int nthreads_KQ_q = 4;
+#elif defined(RDNA1) || defined(RDNA2)
     constexpr int nthreads_KQ_q = 2;
 #else
     constexpr int nthreads_KQ_q = 4;
-#endif // RDNA
+#endif
     constexpr int nthreads_V_q  = (D/4 < 32 ? D/4 : 32);
 #else
     constexpr int nthreads_KQ_q = (D/4 < 32 ? D/4 : 32);
@@ -282,7 +290,7 @@ static __global__ void flash_attn_ext_vec(
         for (int j = 0; j < ncols; ++j) {
 #pragma unroll
             for (int offset = nthreads_KQ; offset < WARP_SIZE; offset <<= 1) {
-                KQ_max_new[j] = fmaxf(KQ_max_new[j], __shfl_xor_sync(0xFFFFFFFF, KQ_max_new[j], offset, WARP_SIZE));
+                KQ_max_new[j] = fmaxf(KQ_max_new[j], __shfl_xor_sync(GGML_HIP_WARP_MASK, KQ_max_new[j], offset, WARP_SIZE));
             }
             const float KQ_max_scale = expf(KQ_max[j] - KQ_max_new[j]);
             KQ_max[j] = KQ_max_new[j];

@@ -58,6 +58,12 @@ const (
 )
 
 func main() {
+	os.Setenv("OLLAMA_LLM_LIBRARY", "rocm")
+	os.Setenv("HIP_STREAM_PER_THREAD", "1")
+	os.Setenv("OLLAMA_NUM_PARALLEL", "1")
+	os.Setenv("GGML_HIP_TURBOQUANT", "1")
+	os.Setenv("OLLAMA_MAX_LOADED_MODELS", "1")
+
 	startHidden := false
 	var urlSchemeRequest string
 	if len(os.Args) > 1 {

@@ -248,6 +248,7 @@ enum vk_device_architecture {
     AMD_RDNA1,
     AMD_RDNA2,
     AMD_RDNA3,
+    AMD_RDNA4,  // gfx1200/gfx1201 (RX 9000 series) - added for proper shader parameter selection
     INTEL_XE2,
     NVIDIA_PRE_TURING,
 };
@@ -291,11 +292,23 @@ static vk_device_architecture get_device_architecture(const vk::PhysicalDevice& 
             return vk_device_architecture::AMD_GCN;
         }
         if (subgroup_size_control_props.maxSubgroupSize == 64 && subgroup_size_control_props.minSubgroupSize == 32) {
-            // RDNA
+            // RDNA family: distinguish by wavefronts-per-SIMD and integer dot product support
             if (shader_core_props_amd.wavefrontsPerSimd == 20) {
                 return vk_device_architecture::AMD_RDNA1;
             }
             if (integer_dot_props.integerDotProduct4x8BitPackedMixedSignednessAccelerated) {
+                // RDNA4 (gfx1200/gfx1201) additionally exposes BF16 shader operations.
+                // Check for VK_KHR_shader_bfloat16 support as the RDNA4 discriminator.
+                bool has_bfloat16 = false;
+                for (const auto& ep : ext_props) {
+                    if (strcmp("VK_KHR_shader_bfloat16", ep.extensionName) == 0) {
+                        has_bfloat16 = true;
+                        break;
+                    }
+                }
+                if (has_bfloat16) {
+                    return vk_device_architecture::AMD_RDNA4;
+                }
                 return vk_device_architecture::AMD_RDNA3;
             }
             return vk_device_architecture::AMD_RDNA2;
@@ -2702,6 +2715,15 @@ static std::vector<GpuPipelineConfig> gpu_pipeline_configs = {
         },
         RDNA_DEFAULT_SUBGROUP_SIZE
     },
+    // RDNA4 (gfx1200/gfx1201): Wave32, same soft_max/im2col preferences as RDNA3.
+    // Added to prevent fallthrough to subgroup_size=0 which causes unoptimized shader selection.
+    {
+        vk_device_architecture::AMD_RDNA4,
+        {
+            rdna2_pipelines,  // RDNA4 uses the same Wave32 pipeline preferences as RDNA2/3
+        },
+        RDNA_DEFAULT_SUBGROUP_SIZE
+    },
 };
 
 static uint32_t get_subgroup_size(const std::string &pipeline_name, const vk_device_architecture &arch) {
@@ -4476,8 +4498,33 @@ static vk_device ggml_vk_get_device(size_t idx) {
 
         std::vector<vk::QueueFamilyProperties> queue_family_props = device->physical_device.getQueueFamilyProperties();
 
-        // Try to find a non-graphics compute queue and transfer-focused queues
-        const uint32_t compute_queue_family_index = ggml_vk_find_queue_family_index(queue_family_props, vk::QueueFlagBits::eCompute, vk::QueueFlagBits::eGraphics, -1, 1);
+        // PR #20551: On AMD hardware, the graphics queue family provides superior scheduling
+        // behavior and reduces queue starvation compared to the pure compute queue.
+        // Prefer graphics-capable queue for AMD, pure compute for others.
+        uint32_t compute_queue_family_index;
+        if (device->vendor_id == VK_VENDOR_ID_AMD) {
+            // AMD: prefer queue family that supports BOTH graphics + compute (avoids pure-compute queue starvation)
+            compute_queue_family_index = ggml_vk_find_queue_family_index(
+                queue_family_props,
+                vk::QueueFlagBits::eCompute | vk::QueueFlagBits::eGraphics,
+                vk::QueueFlagBits::eProtected,
+                -1, 1);
+            // If no combined queue found, fall back to any compute queue
+            if (compute_queue_family_index == UINT32_MAX) {
+                compute_queue_family_index = ggml_vk_find_queue_family_index(
+                    queue_family_props,
+                    vk::QueueFlagBits::eCompute,
+                    vk::QueueFlagBits::eProtected,
+                    -1, 1);
+            }
+        } else {
+            // Non-AMD: prefer pure compute queue (avoids graphics pipeline overhead)
+            compute_queue_family_index = ggml_vk_find_queue_family_index(
+                queue_family_props,
+                vk::QueueFlagBits::eCompute,
+                vk::QueueFlagBits::eGraphics,
+                -1, 1);
+        }
         const uint32_t transfer_queue_family_index = ggml_vk_find_queue_family_index(queue_family_props, vk::QueueFlagBits::eTransfer, vk::QueueFlagBits::eCompute | vk::QueueFlagBits::eGraphics, compute_queue_family_index, 1);
 
         const float priorities[] = { 1.0f, 1.0f };
@@ -4861,7 +4908,13 @@ static vk_device ggml_vk_get_device(size_t idx) {
         device->device = device->physical_device.createDevice(device_create_info);
 
         // Queues
-        ggml_vk_create_queue(device, device->compute_queue, compute_queue_family_index, 0, { vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eTransfer }, false);
+        // PR #20551: For AMD graphics-queue path, include eAllGraphics stage for better scheduling
+        const bool uses_graphics_queue = (device->vendor_id == VK_VENDOR_ID_AMD) &&
+            (queue_family_props[compute_queue_family_index].queueFlags & vk::QueueFlagBits::eGraphics);
+        vk::PipelineStageFlags compute_stage_flags = uses_graphics_queue
+            ? (vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eTransfer | vk::PipelineStageFlagBits::eAllGraphics)
+            : (vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eTransfer);
+        ggml_vk_create_queue(device, device->compute_queue, compute_queue_family_index, 0, std::move(compute_stage_flags), false);
 
         // Shaders
         // Disable matmul tile sizes early if performance low or not supported
@@ -14611,8 +14664,9 @@ static bool ggml_vk_khr_cooperative_matrix_support(const vk::PhysicalDevicePrope
         return arch == vk_device_architecture::INTEL_XE2;
     case VK_VENDOR_ID_AMD:
         if (driver_props.driverID == vk::DriverId::eAmdProprietary || driver_props.driverID == vk::DriverId::eAmdOpenSource) {
-            // Workaround for AMD proprietary driver reporting support on all GPUs
-            return arch == vk_device_architecture::AMD_RDNA3;
+            // Workaround for AMD proprietary driver reporting support on all GPUs.
+            // RDNA3 and RDNA4 both support cooperative matrix with the AMD proprietary driver.
+            return arch == vk_device_architecture::AMD_RDNA3 || arch == vk_device_architecture::AMD_RDNA4;
         }
         return true;
     default:

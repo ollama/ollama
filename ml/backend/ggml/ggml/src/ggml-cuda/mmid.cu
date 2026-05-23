@@ -78,7 +78,7 @@ static __global__ void mm_ids_helper(
             int it_compact_add_lower = 0;
 #pragma unroll
             for (int offset = neu_padded; offset < warp_size; offset += neu_padded) {
-                const int tmp = __shfl_up_sync(0xFFFFFFFF, it_compact_add_self, offset, warp_size);
+                const int tmp = __shfl_up_sync(GGML_HIP_WARP_MASK, it_compact_add_self, offset, warp_size);
                 if (threadIdx.x >= static_cast<unsigned int>(offset)) {
                     it_compact_add_lower += tmp;
                 }
@@ -89,7 +89,7 @@ static __global__ void mm_ids_helper(
             }
 
             // The thread with the highest index in the warp always has the sum over the whole warp, use it to increment all threads:
-            it_compact += __shfl_sync(0xFFFFFFFF, it_compact_add_lower + it_compact_add_self, warp_size - 1, warp_size);
+            it_compact += __shfl_sync(GGML_HIP_WARP_MASK, it_compact_add_lower + it_compact_add_self, warp_size - 1, warp_size);
         }
     }
     nex_prev = warp_reduce_sum<warp_size>(nex_prev);

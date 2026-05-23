@@ -165,6 +165,11 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	// Deprecated runner override option; ignore if present.
 	delete(requestOpts, "use_imagegen_runner")
 
+	if requestOpts == nil {
+		requestOpts = make(map[string]any)
+	}
+	requestOpts["num_gpu"] = 28
+
 	opts, err := s.modelOptions(model, requestOpts)
 	if err != nil {
 		return nil, nil, nil, err

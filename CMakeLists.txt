@@ -133,6 +133,10 @@ set(WINDOWS_AMDGPU_TARGETS_EXCLUDE_REGEX ""
     "Regular expression describing AMDGPU_TARGETS not supported on Windows. Override to force building these targets. Default \"^gfx(908|90a):xnack[+-]$\"."
 )
 
+option(GGML_HIP_ROCWMMA_FATTN "Enable rocWMMA Flash Attention" ON)
+option(GGML_HIP_MTP "Enable Multi-Token Prediction" OFF)
+option(GGML_HIP_TURBOQUANT "Enable TurboQuant KV" OFF)
+
 check_language(HIP)
 if(CMAKE_HIP_COMPILER)
     set(HIP_PLATFORM "amd")
@@ -156,6 +160,14 @@ if(CMAKE_HIP_COMPILER)
         endif()
 
         target_compile_definitions(ggml-hip PRIVATE GGML_HIP_NO_VMM)
+
+        # Apply gfx1201 RDNA4 performance flags ONLY to ggml-hip, not to Vulkan/CXX
+        if(AMDGPU_TARGETS MATCHES "gfx1201")
+            message(STATUS "Applying gfx1201 RDNA4 performance flags to ggml-hip target")
+            target_compile_options(ggml-hip PRIVATE
+                $<$<COMPILE_LANGUAGE:HIP>:-mllvm;-amdgpu-unroll-threshold-local=900;-mllvm;-amdgpu-early-inline-all=true>
+            )
+        endif()
 
         install(TARGETS ggml-hip
             RUNTIME_DEPENDENCY_SET rocm

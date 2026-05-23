@@ -1,3 +1,20 @@
+// COMPLETE: rocWMMA 64-bit warp mask fix + hipblasGemmEx type fix
+#ifdef GGML_HIP_ROCWMMA_FATTN
+#define GGML_HIP_WARP_MASK 0xFFFFFFFFFFFFFFFFULL
+#else
+#define GGML_HIP_WARP_MASK 0xFFFFFFFF
+#endif
+
+#ifdef GGML_HIP_ROCWMMA_FATTN
+#define __shfl_sync(mask, var, laneMask, width) __shfl(var, laneMask, width)
+#define __shfl_xor_sync(mask, var, laneMask, width) __shfl_xor(var, laneMask, width)
+#endif
+
+
+#ifdef __AMDGCN_WAVEFRONT_SIZE
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-pragma"
+#endif
 #pragma once
 
 #define HIP_DISABLE_WARP_SYNC_BUILTINS 1

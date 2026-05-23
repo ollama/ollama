@@ -52,8 +52,8 @@ static __device__ __forceinline__ int ggml_cuda_movmatrix(const int x) {
     const int shift_low  = ((src_j + 0) % 2) * 16;
     const int shift_high = ((src_j + 1) % 2) * 16;
 
-    const int ret_low  = (__shfl_sync(0xFFFFFFFF, x, src_laneid_low,  WARP_SIZE) >> shift_low)  & 0x0000FFFF;
-    const int ret_high = (__shfl_sync(0xFFFFFFFF, x, src_laneid_high, WARP_SIZE) << shift_high) & 0xFFFF0000;
+    const int ret_low  = (__shfl_sync(GGML_HIP_WARP_MASK, x, src_laneid_low,  WARP_SIZE) >> shift_low)  & 0x0000FFFF;
+    const int ret_high = (__shfl_sync(GGML_HIP_WARP_MASK, x, src_laneid_high, WARP_SIZE) << shift_high) & 0xFFFF0000;
 
     return ret_low | ret_high;
 }
@@ -554,7 +554,7 @@ namespace ggml_cuda_mma {
             // On Volta FP16 and FP32 tiles have a different memory layout,
             //     for the conversion threads with an offset of 2 need to exchange half their values:
             ret.x[l0/2 + (((threadIdx.x % 4) / 2) ^ 1)] = __shfl_xor_sync(
-                0xFFFFFFFF, ret.x[l0/2 + (((threadIdx.x % 4) / 2) ^ 1)], 2, WARP_SIZE);
+                GGML_HIP_WARP_MASK, ret.x[l0/2 + (((threadIdx.x % 4) / 2) ^ 1)], 2, WARP_SIZE);
         }
         return ret;
     }

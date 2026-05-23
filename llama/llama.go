@@ -10,6 +10,7 @@ package llama
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/tools/mtmd
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/src
 #cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
+#cgo CPPFLAGS: -DGGML_TURBOQUANT
 
 #include <stdlib.h>
 #include "ggml.h"

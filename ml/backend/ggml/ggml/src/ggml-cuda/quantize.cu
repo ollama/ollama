@@ -89,7 +89,7 @@ static __global__ void quantize_mmq_q8_1(
     // Exchange max. abs. value between vals_per_scale/4 threads.
 #pragma unroll
     for (int offset = vals_per_scale/8; offset > 0; offset >>= 1) {
-        amax = fmaxf(amax, __shfl_xor_sync(0xFFFFFFFF, amax, offset, WARP_SIZE));
+        amax = fmaxf(amax, __shfl_xor_sync(GGML_HIP_WARP_MASK, amax, offset, WARP_SIZE));
     }
 
     float sum;
@@ -99,7 +99,7 @@ static __global__ void quantize_mmq_q8_1(
         // Calculate sums across vals_per_sum/4 threads.
 #pragma unroll
         for (int offset = vals_per_sum/8; offset > 0; offset >>= 1) {
-            sum += __shfl_xor_sync(0xFFFFFFFF, sum, offset, WARP_SIZE);
+            sum += __shfl_xor_sync(GGML_HIP_WARP_MASK, sum, offset, WARP_SIZE);
         }
     }
 

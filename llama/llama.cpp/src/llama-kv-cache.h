@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef GGML_TURBOQUANT
+#include "ggml_turboquant.h"
+#endif
+
 #include "llama-batch.h"
 #include "llama-graph.h"
 #include "llama-kv-cells.h"
@@ -283,6 +287,16 @@ private:
 
     bool state_read_meta(llama_io_read_i & io, uint32_t strm, uint32_t cell_count,       slot_info & sinfo, llama_seq_id dest_seq_id = -1);
     bool state_read_data(llama_io_read_i & io, uint32_t strm, uint32_t cell_count, const slot_info & sinfo);
+
+#ifdef GGML_TURBOQUANT
+public:
+    enum llama_kv_type_t kv_type_k = LLAMA_KV_TYPE_F16;
+    enum llama_kv_type_t kv_type_v = LLAMA_KV_TYPE_F16;
+    bool do_sharpen = false;
+    float sharpen_alpha = 1.0f;
+    void* tq_k_cache = nullptr;
+    void* tq_v_cache = nullptr;
+#endif
 };
 
 class llama_kv_cache_context : public llama_memory_context_i {

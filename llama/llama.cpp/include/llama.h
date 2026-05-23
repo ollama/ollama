@@ -239,6 +239,19 @@ extern "C" {
         int8_t       *  logits;   // TODO: rename this to "output"
     } llama_batch;
 
+    // TurboQuant KV cache types
+    typedef enum {
+        LLAMA_KV_TYPE_F16 = 0,
+        LLAMA_KV_TYPE_Q8_0 = 1,
+        LLAMA_KV_TYPE_Q4_0 = 2,
+        LLAMA_KV_TYPE_TBQ2 = 10,   // 2-bit WHT
+        LLAMA_KV_TYPE_TBQ3 = 11,   // 3-bit WHT
+        LLAMA_KV_TYPE_TBQ4 = 12,   // 4-bit WHT
+        LLAMA_KV_TYPE_TBQP3 = 13,  // 3-bit WHT + QJL (K only)
+        LLAMA_KV_TYPE_TBQP4 = 14,  // 4-bit WHT + QJL (K only)
+        LLAMA_KV_TYPE_AMX3 = 15,   // AMX hybrid (head_dim=128 only)
+    } llama_kv_type_t;
+
     enum llama_model_kv_override_type {
         LLAMA_KV_OVERRIDE_TYPE_INT,
         LLAMA_KV_OVERRIDE_TYPE_FLOAT,
@@ -346,6 +359,10 @@ extern "C" {
 
         enum ggml_type type_k; // data type for K cache [EXPERIMENTAL]
         enum ggml_type type_v; // data type for V cache [EXPERIMENTAL]
+
+        // TurboQuant settings
+        enum llama_kv_type_t cache_type_k;
+        enum llama_kv_type_t cache_type_v;
 
         // Abort callback
         // if it returns true, execution of llama_decode() will be aborted
@@ -499,6 +516,11 @@ extern "C" {
     LLAMA_API uint32_t llama_n_batch    (const struct llama_context * ctx);
     LLAMA_API uint32_t llama_n_ubatch   (const struct llama_context * ctx);
     LLAMA_API uint32_t llama_n_seq_max  (const struct llama_context * ctx);
+
+    // TurboQuant: get/set cache types
+    LLAMA_API enum llama_kv_type_t llama_get_cache_type_k(const struct llama_context * ctx);
+    LLAMA_API enum llama_kv_type_t llama_get_cache_type_v(const struct llama_context * ctx);
+    LLAMA_API void llama_set_cache_types(struct llama_context * ctx, enum llama_kv_type_t k_type, enum llama_kv_type_t v_type);
 
     DEPRECATED(LLAMA_API int32_t llama_n_ctx_train(const struct llama_model * model), "use llama_model_n_ctx_train instead");
     DEPRECATED(LLAMA_API int32_t llama_n_embd     (const struct llama_model * model), "use llama_model_n_embd instead");
@@ -938,6 +960,12 @@ extern "C" {
     // Set whether the model is in warmup mode or not
     // If true, all model tensors are activated during llama_decode() to load and cache their weights.
     LLAMA_API void llama_set_warmup(struct llama_context * ctx, bool warmup);
+
+    // TurboQuant: attention sharpening control
+    // Enables dynamic attention sharpening to compensate for quantization noise
+    // alpha(N) = 1 + c * sqrt(ln(N)/ln(N0))
+    LLAMA_API void llama_set_attention_sharpen(struct llama_context * ctx, bool enable);
+    LLAMA_API bool llama_get_attention_sharpen(const struct llama_context * ctx);
 
     // Set abort callback
     LLAMA_API void llama_set_abort_callback(struct llama_context * ctx, ggml_abort_callback abort_callback, void * abort_callback_data);
