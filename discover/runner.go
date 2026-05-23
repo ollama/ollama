@@ -54,7 +54,6 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 
 		slog.Info("discovering available GPUs...")
 		detectIncompatibleLibraries()
-		detectOldAMDDriverWindows()
 
 		// Warn if any user-overrides are set which could lead to incorrect GPU discovery
 		overrideWarnings()
@@ -142,12 +141,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 				extraEnvs := ml.GetDevicesEnv(devices[i : i+1])
 				devices[i].AddInitValidation(extraEnvs)
 				if len(bootstrapDevicesWithMetalRetry(ctx2ndPass, ctx, 30*time.Second, devices[i].LibraryPath, extraEnvs)) == 0 {
-					slog.Debug("filtering device which didn't fully initialize",
-						"id", devices[i].ID,
-						"libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
-						"pci_id", devices[i].PCIID,
-						"library", devices[i].Library,
-					)
+					logInitValidationFailure(devices[i])
 					needsDelete[i] = true
 				} else {
 					supportedMu.Lock()
@@ -353,6 +347,33 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 	}
 
 	return append([]ml.DeviceInfo{}, devices...)
+}
+
+func logInitValidationFailure(device ml.DeviceInfo) {
+	libDir := device.LibraryPath[len(device.LibraryPath)-1]
+	if device.Library != "ROCm" {
+		slog.Debug("filtering device which didn't fully initialize",
+			"id", device.ID,
+			"libdir", libDir,
+			"pci_id", device.PCIID,
+			"library", device.Library,
+		)
+		return
+	}
+
+	typeStr := "discrete"
+	if device.Integrated {
+		typeStr = "iGPU"
+	}
+	slog.Warn("dropping ROCm device because runtime initialization failed",
+		"id", device.ID,
+		"libdir", libDir,
+		"pci_id", device.PCIID,
+		"compute", device.Compute(),
+		"name", device.Name,
+		"description", device.Description,
+		"type", typeStr,
+		"hint", "update to a ROCm-capable AMD driver/runtime or select another backend")
 }
 
 func filterOverlapByLibrary(supported map[string]map[string]map[string]int, needsDelete []bool) {
