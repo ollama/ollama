@@ -542,6 +542,12 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 				case "nemotron_h", "nemotron_h_moe", "nemotron_h_omni":
 					config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
 					config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
+				case "qwen35", "qwen35moe":
+					config.Renderer = cmp.Or(config.Renderer, "qwen3.5")
+					config.Parser = cmp.Or(config.Parser, "qwen3.5")
+				case "qwen3vl", "qwen3vlmoe":
+					config.Renderer = cmp.Or(config.Renderer, "qwen3-vl-thinking")
+					config.Parser = cmp.Or(config.Parser, "qwen3-vl-thinking")
 				}
 			}
 		}
