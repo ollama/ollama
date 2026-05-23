@@ -15,6 +15,9 @@
 > - **Generate Rate:** ~78 tokens/sec
 > - **Time to First Token (TTFT):** ~130ms
 
+## Binaries 
+https://github.com/Maxritz/ollama-ROCM/tree/rdna4-gfx1201/releases
+
 Start building with open models.
 
 ## Download
