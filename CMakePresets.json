@@ -102,7 +102,7 @@
                                               ],
                                  "cacheVariables":  {
                                                         "CMAKE_HIP_FLAGS":  "-parallel-jobs=4",
-                                                        "AMDGPU_TARGETS":  "gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-",
+                                                        "AMDGPU_TARGETS":  "gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201;gfx908:xnack-;gfx1010:xnack-;gfx1011:xnack-;gfx1012:xnack-",
                                                         "OLLAMA_RUNNER_DIR":  "rocm"
                                                     }
                              },
@@ -142,7 +142,7 @@
                                                   "CUDA 13"
                                               ],
                                  "cacheVariables":  {
-                                                        "MLX_CUDA_ARCHITECTURES":  "75-virtual;80-virtual;86-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual",
+                                                        "MLX_CUDA_ARCHITECTURES":  "75-virtual;80-virtual;86-virtual;87-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual",
                                                         "OLLAMA_RUNNER_DIR":  "mlx_cuda_v13"
                                                     }
                              },
