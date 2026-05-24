@@ -114,6 +114,7 @@ enum llm_type {
     LLM_TYPE_16B_A1B,
     LLM_TYPE_21B_A3B, // Ernie MoE small
     LLM_TYPE_30B_A3B,
+    LLM_TYPE_35B_A3B,
     LLM_TYPE_31B_A3_5B,
     LLM_TYPE_80B_A3B, // Qwen3 Next
     LLM_TYPE_100B_A6B,
@@ -314,6 +315,10 @@ struct llama_layer {
 
     // qwen3next
     struct ggml_tensor * ssm_beta_alpha = nullptr;
+
+    // qwen3.5
+    struct ggml_tensor * ssm_alpha = nullptr;
+    struct ggml_tensor * ssm_beta  = nullptr;
 
     // rwkv
     struct ggml_tensor * time_mix_w1         = nullptr;
