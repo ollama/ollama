@@ -139,6 +139,17 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools},
 		},
 		{
+			name: "model with tools capability from config and parser",
+			model: Model{
+				Config: model.ConfigV2{
+					Capabilities: []string{"completion", "tools"},
+					Parser:       "qwen3-coder",
+				},
+				Template: chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools},
+		},
+		{
 			name: "model with vision capability",
 			model: Model{
 				ModelPath: visionModelPath,

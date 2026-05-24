@@ -834,6 +834,34 @@ func TestParseSafetensorsAllHeaders(t *testing.T) {
 			wantQuants: []string{"int4", "int4"},
 		},
 		{
+			name: "nvfp4 global scale is hidden",
+			header: map[string]any{
+				"__metadata__": map[string]any{
+					"quant_type": "nvfp4",
+					"group_size": "16",
+				},
+				"model.layers.0.mlp.up_proj.weight": map[string]any{
+					"dtype":        "U32",
+					"shape":        []int64{2560, 320},
+					"data_offsets": []int64{0, 3276800},
+				},
+				"model.layers.0.mlp.up_proj.weight.scale": map[string]any{
+					"dtype":        "U8",
+					"shape":        []int64{2560, 160},
+					"data_offsets": []int64{3276800, 3686400},
+				},
+				"model.layers.0.mlp.up_proj.weight.global_scale": map[string]any{
+					"dtype":        "F32",
+					"shape":        []int64{1},
+					"data_offsets": []int64{3686400, 3686404},
+				},
+			},
+			wantCount:  1,
+			wantNames:  []string{"model.layers.0.mlp.up_proj.weight"},
+			wantDtypes: []string{"U32"},
+			wantQuants: []string{"nvfp4"},
+		},
+		{
 			name: "packed mixed-precision blob (no global metadata)",
 			header: map[string]any{
 				"model.layers.0.mlp.experts.0.gate_proj.weight": map[string]any{
@@ -1049,7 +1077,7 @@ func TestGetTensorInfoFromManifest_Packed(t *testing.T) {
 	}
 }
 
-func TestGetSafetensorsDtypeScansPastUnquantizedFirstBlob(t *testing.T) {
+func TestGetSafetensorsDtypeChoosesLowestPrecisionQuantizedBlob(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	writeSafetensorsLayer := func(t *testing.T, header map[string]any, name string) manifest.Layer {
@@ -1110,8 +1138,25 @@ func TestGetSafetensorsDtypeScansPastUnquantizedFirstBlob(t *testing.T) {
 		},
 	}, "model.layers.0.mlp.down_proj.weight")
 
-	name := model.ParseName("mixed-fp8-safetensors")
-	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{unquantized, quantized}); err != nil {
+	lowerPrecision := writeSafetensorsLayer(t, map[string]any{
+		"__metadata__": map[string]string{
+			"quant_type": "nvfp4",
+			"group_size": "16",
+		},
+		"model.layers.0.mlp.up_proj.weight": map[string]any{
+			"dtype":        "U32",
+			"shape":        []int64{16, 2},
+			"data_offsets": []int64{0, 128},
+		},
+		"model.layers.0.mlp.up_proj.weight.scale": map[string]any{
+			"dtype":        "U8",
+			"shape":        []int64{16, 1},
+			"data_offsets": []int64{128, 144},
+		},
+	}, "model.layers.0.mlp.up_proj.weight")
+
+	name := model.ParseName("mixed-precision-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{unquantized, quantized, lowerPrecision}); err != nil {
 		t.Fatalf("failed to write manifest: %v", err)
 	}
 
@@ -1119,7 +1164,7 @@ func TestGetSafetensorsDtypeScansPastUnquantizedFirstBlob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSafetensorsDtype() error = %v", err)
 	}
-	if got != "mxfp8" {
-		t.Fatalf("GetSafetensorsDtype() = %q, want mxfp8", got)
+	if got != "nvfp4" {
+		t.Fatalf("GetSafetensorsDtype() = %q, want nvfp4", got)
 	}
 }

@@ -132,7 +132,7 @@ func (m *Model) Capabilities() []model.Capability {
 	if err != nil {
 		slog.Warn("model template contains errors", "error", err)
 	}
-	if slices.Contains(v, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
+	if !slices.Contains(capabilities, model.CapabilityTools) && (slices.Contains(v, "tools") || (builtinParser != nil && builtinParser.HasToolSupport())) {
 		capabilities = append(capabilities, model.CapabilityTools)
 	}
 
