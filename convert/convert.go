@@ -216,10 +216,6 @@ type moreParser interface {
 	parseMore(fs.FS) error
 }
 
-type extraTensorParser interface {
-	extraTensors(fs.FS) ([]Tensor, error)
-}
-
 type tokenizerAdjuster interface {
 	adjustTokenizer(*Tokenizer)
 }
@@ -346,7 +342,7 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &lagunaModel{}
 	case "GlmOcrForConditionalGeneration":
 		conv = &glmOcrModel{}
-	case "Lfm2ForCausalLM", "Lfm2MoeForCausalLM":
+	case "Lfm2Model", "Lfm2ForCausalLM", "Lfm2MoeForCausalLM":
 		conv = &lfm2Model{}
 	case "Lfm2VlForConditionalGeneration":
 		conv = &lfm2VLTextModel{}
@@ -414,14 +410,6 @@ func ConvertModel(fsys fs.FS, f *os.File, projectorFiles ...*os.File) error {
 	ts, err := parseTensors(fsys, strings.NewReplacer(conv.Replacements()...))
 	if err != nil {
 		return err
-	}
-
-	if tp, ok := conv.(extraTensorParser); ok {
-		extra, err := tp.extraTensors(fsys)
-		if err != nil {
-			return err
-		}
-		ts = append(ts, extra...)
 	}
 
 	if err := ensureUniqueTensorNames(ts); err != nil {
