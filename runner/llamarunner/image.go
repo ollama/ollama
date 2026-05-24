@@ -97,7 +97,7 @@ func (c *ImageContext) BatchSize(configuredBatchSize int) int {
 }
 
 func (c *ImageContext) EmbedSize(llamaContext *llama.Context) int {
-	return llamaContext.Model().NEmbd()
+	return llamaContext.Model().NEmbdInput()
 }
 
 type imageCache struct {

@@ -524,6 +524,10 @@ func (m *Model) NEmbd() int {
 	return int(C.llama_model_n_embd(m.c))
 }
 
+func (m *Model) NEmbdInput() int {
+	return int(C.llama_model_n_embd_inp(m.c))
+}
+
 // vision processing
 type MtmdContext struct {
 	c *C.struct_mtmd_context
@@ -571,7 +575,7 @@ func (c *MtmdContext) MultimodalTokenize(llamaContext *Context, data []byte) ([]
 		return nil, errors.New("unable to tokenize mtmd embedding from image")
 	}
 	nChunks := C.mtmd_input_chunks_size(ic)
-	numEmbed := llamaContext.Model().NEmbd()
+	numEmbed := llamaContext.Model().NEmbdInput()
 	outChunks := make([]MtmdChunk, 0)
 	for i := range int(nChunks) {
 		chunk := C.mtmd_input_chunks_get(ic, C.size_t(i))
