@@ -2,77 +2,12 @@
 title: Claude Desktop
 ---
 
-Claude Desktop can use Ollama Cloud, including Claude Cowork and Claude Code inside the app.
+Claude Desktop is no longer supported by `ollama launch`.
 
-<img
-  src="/images/claude-cowork-kimi-k2-6.png"
-  alt="Claude Cowork using kimi-k2.6 through Ollama Cloud"
-  className="rounded-xl"
-/>
-
-## Requirements
-
-- Claude Desktop for macOS or Windows
-- An [Ollama API key](https://ollama.com/settings/keys)
-
-Set the key in your shell before launching:
-
-```shell
-export OLLAMA_API_KEY=your_api_key
-```
-
-## Quick setup
-
-```shell
-ollama launch claude-desktop
-```
-
-To bring back the usual Anthropic Claude profile later, run:
+Existing installations can be restored to the usual Claude profile:
 
 ```shell
 ollama launch claude-desktop --restore
 ```
 
-## Using Ollama Cloud models
-
-After setup, Claude Desktop discovers your available Ollama Cloud models automatically. For example, `kimi-k2.6` appears inside Claude Cowork.
-
-The same models are also available to Claude Code inside Claude Desktop:
-
-![Claude Code using kimi-k2.6 inside Claude Desktop](/images/claude-code-kimi-k2-6.png)
-
-## Configure without launching
-
-```shell
-ollama launch claude-desktop --config
-```
-
-## Restore normal Claude
-
-Switch Claude Desktop back to its usual profile:
-
-```shell
-ollama launch claude-desktop --restore
-```
-
-
-If Claude Desktop is running, use `--yes` to approve the restart automatically:
-
-```shell
-ollama launch claude-desktop --restore --yes
-```
-
-## Supported with Ollama
-
-Claude Desktop with Ollama currently supports:
-
-- Ollama Cloud as the third-party inference gateway
-- Automatic model discovery from Ollama Cloud
-- Claude Cowork with Ollama Cloud models
-- Claude Code inside Claude Desktop with the same cloud models
-- subagents (tell Claude to have subagents inherit the current model) 
-
-Claude Desktop with Ollama does not support yet:
-
-- Web search
-- Extensions
+Use [Claude Code](/integrations/claude-code) for Anthropic-compatible coding workflows with Ollama.

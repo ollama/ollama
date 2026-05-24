@@ -78,6 +78,11 @@ type MessagesRequest struct {
 	ToolChoice    *ToolChoice     `json:"tool_choice,omitempty"`
 	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
 	Metadata      *Metadata       `json:"metadata,omitempty"`
+	OutputConfig  *OutputConfig   `json:"output_config,omitempty"`
+}
+
+type OutputConfig struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 // MessageParam represents a message in the request
@@ -161,7 +166,7 @@ type WebSearchToolResultError struct {
 
 // ImageSource represents the source of an image
 type ImageSource struct {
-	Type      string `json:"type"` // "base64" or "url"
+	Type      string `json:"type"` // "base64"
 	MediaType string `json:"media_type,omitempty"`
 	Data      string `json:"data,omitempty"`
 	URL       string `json:"url,omitempty"`
@@ -373,8 +378,25 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 
 	var think *api.ThinkValue
+	normalizedEffort := ""
+	if r.OutputConfig != nil {
+		normalizedEffort = strings.ToLower(strings.TrimSpace(r.OutputConfig.Effort))
+		if normalizedEffort == "xhigh" {
+			normalizedEffort = "high"
+		}
+	}
+
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
 		think = &api.ThinkValue{Value: true}
+	}
+	if r.Thinking != nil && r.Thinking.Type == "disabled" {
+		think = &api.ThinkValue{Value: false}
+	}
+	if think == nil && r.OutputConfig != nil {
+		switch normalizedEffort {
+		case "high", "medium", "low", "max":
+			think = &api.ThinkValue{Value: normalizedEffort}
+		}
 	}
 
 	stream := r.Stream
@@ -425,17 +447,12 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				return nil, errors.New("invalid image source")
 			}
 
-			if block.Source.Type == "base64" {
-				decoded, err := base64.StdEncoding.DecodeString(block.Source.Data)
-				if err != nil {
-					logutil.Trace("anthropic: invalid base64 image data", "role", role, "error", err)
-					return nil, fmt.Errorf("invalid base64 image data: %w", err)
-				}
-				images = append(images, decoded)
-			} else {
-				logutil.Trace("anthropic: unsupported image source type", "role", role, "source_type", block.Source.Type)
-				return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", block.Source.Type)
+			decoded, err := resolveImageSource(block.Source)
+			if err != nil {
+				logutil.Trace("anthropic: unsupported image source", "role", role, "source_type", block.Source.Type, "error", err)
+				return nil, err
 			}
+			images = append(images, decoded)
 
 		case "tool_use":
 			toolUseBlocks++
@@ -457,26 +474,16 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 
 		case "tool_result":
 			toolResultBlocks++
-			var resultContent string
-
-			switch c := block.Content.(type) {
-			case string:
-				resultContent = c
-			case []any:
-				for _, cb := range c {
-					if cbMap, ok := cb.(map[string]any); ok {
-						if cbMap["type"] == "text" {
-							if text, ok := cbMap["text"].(string); ok {
-								resultContent += text
-							}
-						}
-					}
-				}
+			resultContent, resultImages, err := convertToolResultContent(block.Content)
+			if err != nil {
+				logutil.Trace("anthropic: invalid tool_result content", "role", role, "error", err)
+				return nil, err
 			}
 
 			toolResults = append(toolResults, api.Message{
 				Role:       "tool",
 				Content:    resultContent,
+				Images:     resultImages,
 				ToolCallID: block.ToolUseID,
 			})
 
@@ -508,6 +515,10 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 		}
 	}
 
+	if role == "user" && len(toolResults) > 0 {
+		messages = append(messages, toolResults...)
+	}
+
 	if textContent.Len() > 0 || len(images) > 0 || len(toolCalls) > 0 || thinking != "" {
 		m := api.Message{
 			Role:      role,
@@ -519,8 +530,10 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 		messages = append(messages, m)
 	}
 
-	// Add tool results as separate messages
-	messages = append(messages, toolResults...)
+	// Add tool results as separate messages.
+	if role != "user" || len(toolResults) == 0 {
+		messages = append(messages, toolResults...)
+	}
 	logutil.Trace("anthropic: converted block message",
 		"role", role,
 		"blocks", len(msg.Content),
@@ -967,6 +980,71 @@ func generateID(prefix string) string {
 // GenerateMessageID generates a unique message ID
 func GenerateMessageID() string {
 	return generateID("msg")
+}
+
+func resolveImageSource(source *ImageSource) (api.ImageData, error) {
+	if source.Type != "base64" {
+		return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", source.Type)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(source.Data)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base64 image data: %w", err)
+	}
+
+	return decoded, nil
+}
+
+func convertToolResultContent(content any) (string, []api.ImageData, error) {
+	switch c := content.(type) {
+	case nil:
+		return "", nil, nil
+	case string:
+		return c, nil, nil
+	case []any:
+		var text strings.Builder
+		var images []api.ImageData
+
+		for _, cb := range c {
+			cbMap, ok := cb.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			switch cbMap["type"] {
+			case "text":
+				if t, ok := cbMap["text"].(string); ok {
+					text.WriteString(t)
+				}
+			case "image":
+				rawSource, ok := cbMap["source"].(map[string]any)
+				if !ok {
+					return "", nil, errors.New("invalid tool_result image source")
+				}
+
+				var source ImageSource
+				if rawType, ok := rawSource["type"].(string); ok {
+					source.Type = rawType
+				}
+				if rawMediaType, ok := rawSource["media_type"].(string); ok {
+					source.MediaType = rawMediaType
+				}
+				if rawData, ok := rawSource["data"].(string); ok {
+					source.Data = rawData
+				}
+
+				img, err := resolveImageSource(&source)
+				if err != nil {
+					return "", nil, err
+				}
+				images = append(images, img)
+			}
+		}
+
+		return text.String(), images, nil
+	default:
+		return "", nil, nil
+	}
 }
 
 // ptr returns a pointer to the given string value

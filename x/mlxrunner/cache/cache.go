@@ -54,6 +54,81 @@ type Attention interface {
 	Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVHistory
 }
 
+// Viewer exposes a read-only attention history for a cache.
+type Viewer interface {
+	View(b *batch.Batch) *nn.KVHistory
+}
+
+type speculativeCommitter interface {
+	Cache
+	commit(n int)
+}
+
+// Speculation is an isolated cache transaction for speculative target
+// validation. Updates record generated K/V without mutating the live caches;
+// Commit appends only the accepted prefix to the live caches.
+type Speculation struct {
+	layers []speculativeCommitter
+}
+
+// BeginSpeculation returns cache wrappers suitable for a speculative target
+// forward. The returned caches must only be used for that forward.
+func BeginSpeculation(caches []Cache) ([]Cache, *Speculation, bool) {
+	specCaches := make([]Cache, len(caches))
+	layers := make([]speculativeCommitter, len(caches))
+
+	for i, c := range caches {
+		switch c := c.(type) {
+		case nil:
+		case *RotatingKVCache:
+			sc := newSpeculativeRotatingKVCache(c)
+			specCaches[i] = sc
+			layers[i] = sc
+		case *KVCache:
+			sc := newSpeculativeKVCache(c)
+			specCaches[i] = sc
+			layers[i] = sc
+		default:
+			return nil, nil, false
+		}
+	}
+
+	return specCaches, &Speculation{layers: layers}, true
+}
+
+// BeginIsolatedSpeculation returns cache wrappers that never mutate live cache
+// state. It is intended for correctness instrumentation, not the hot path.
+func BeginIsolatedSpeculation(caches []Cache) ([]Cache, bool) {
+	specCaches := make([]Cache, len(caches))
+
+	for i, c := range caches {
+		switch c := c.(type) {
+		case nil:
+		case *RotatingKVCache:
+			specCaches[i] = newSpeculativeRotatingKVCache(c)
+		case *KVCache:
+			specCaches[i] = newIsolatedKVCache(c)
+		default:
+			return nil, false
+		}
+	}
+
+	return specCaches, true
+}
+
+// Commit appends the accepted prefix from the speculative forward to the live
+// caches. The target bonus token is intentionally not committed.
+func (s *Speculation) Commit(n int) {
+	if s == nil {
+		return
+	}
+	for _, layer := range s.layers {
+		if layer != nil {
+			layer.commit(n)
+		}
+	}
+}
+
 type KVCache struct {
 	keys, values *mlx.Array
 	offset       int
@@ -68,6 +143,15 @@ func NewKVCache() *KVCache {
 func (c *KVCache) Update(_ *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
 	newK, newV := c.appendKV(keys, values)
 	return nn.NewKVHistory(newK, newV, nil)
+}
+
+// View returns the current cache contents as attention history without writing.
+func (c *KVCache) View(_ *batch.Batch) *nn.KVHistory {
+	state := c.State()
+	if len(state) < 2 {
+		return nil
+	}
+	return nn.NewKVHistory(state[0], state[1], nil)
 }
 
 // appendKV is the raw write path shared by Update and Restore.
@@ -250,6 +334,94 @@ func (c *KVCache) Free() {
 
 func (c *KVCache) Offset() int { return c.offset }
 
+type speculativeBase struct {
+	offset int
+}
+
+func (s *speculativeBase) Free()                                 {}
+func (s *speculativeBase) Offset() int                           { return s.offset }
+func (s *speculativeBase) Snapshot(int) Snapshot                 { return nil }
+func (s *speculativeBase) Restore(Snapshot, int) bool            { return false }
+func (s *speculativeBase) Merge(parent, child Snapshot) Snapshot { return nil }
+func (s *speculativeBase) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
+	return nil, snapshot
+}
+
+type speculativeKVCache struct {
+	speculativeBase
+	target *KVCache
+	start  int
+	end    int
+}
+
+func newSpeculativeKVCache(target *KVCache) *speculativeKVCache {
+	return &speculativeKVCache{
+		speculativeBase: speculativeBase{offset: target.Offset()},
+		target:          target,
+		start:           target.Offset(),
+		end:             target.Offset(),
+	}
+}
+
+func (c *speculativeKVCache) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
+	history := c.target.Update(b, keys, values)
+	c.offset = c.target.Offset()
+	c.end = c.target.Offset()
+	return history
+}
+
+func (c *speculativeKVCache) State() []*mlx.Array {
+	return c.target.State()
+}
+
+func (c *speculativeKVCache) commit(n int) {
+	target := max(c.start, c.start+n)
+	if target > c.end {
+		target = c.end
+	}
+	c.target.offset = target
+	c.offset = target
+}
+
+type isolatedKVCache struct {
+	speculativeBase
+	target       *KVCache
+	keys, values *mlx.Array
+}
+
+func newIsolatedKVCache(target *KVCache) *isolatedKVCache {
+	return &isolatedKVCache{
+		speculativeBase: speculativeBase{offset: target.Offset()},
+		target:          target,
+	}
+}
+
+func (c *isolatedKVCache) Update(_ *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
+	c.keys = concatKV(c.keys, keys)
+	c.values = concatKV(c.values, values)
+	c.offset += keys.Dim(2)
+
+	state := c.target.State()
+	if len(state) < 2 {
+		return nn.NewKVHistory(c.keys, c.values, nil)
+	}
+	return nn.NewKVHistory(state[0].Concatenate(2, c.keys), state[1].Concatenate(2, c.values), nil)
+}
+
+func (c *isolatedKVCache) State() []*mlx.Array {
+	if c.keys == nil || c.values == nil {
+		return c.target.State()
+	}
+	state := c.target.State()
+	if len(state) < 2 {
+		return []*mlx.Array{c.keys, c.values}
+	}
+	return []*mlx.Array{
+		state[0].Concatenate(2, c.keys),
+		state[1].Concatenate(2, c.values),
+	}
+}
+
 // RotatingKVCache implements sliding window attention with bounded memory
 type RotatingKVCache struct {
 	maxSize int
@@ -273,6 +445,127 @@ func (c *RotatingKVCache) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KV
 		ringIdx: c.idx,
 		dtype:   keys.DType(),
 	})
+}
+
+// View returns the current rotating cache contents in logical order for
+// assistant KV sharing.
+func (c *RotatingKVCache) View(_ *batch.Batch) *nn.KVHistory {
+	k, v := c.logicalTail(c.maxSize - 1)
+	if k == nil || v == nil {
+		return nil
+	}
+	return nn.NewKVHistory(k, v, nil)
+}
+
+func (c *RotatingKVCache) logicalTail(keep int) (*mlx.Array, *mlx.Array) {
+	state := c.State()
+	if len(state) < 2 || keep <= 0 {
+		return nil, nil
+	}
+
+	keys, values := state[0], state[1]
+	K := keys.Dim(2)
+	if K == 0 {
+		return nil, nil
+	}
+
+	keep = min(keep, K)
+	if K > c.maxSize || c.offset < c.maxSize {
+		start := K - keep
+		return keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, K), mlx.Slice()),
+			values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, K), mlx.Slice())
+	}
+
+	oldest := c.idx % K
+	var logicalK, logicalV *mlx.Array
+	if oldest == 0 {
+		logicalK, logicalV = keys, values
+	} else {
+		tailK := keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(oldest, K), mlx.Slice())
+		tailV := values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(oldest, K), mlx.Slice())
+		headK := keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, oldest), mlx.Slice())
+		headV := values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, oldest), mlx.Slice())
+		logicalK = tailK.Concatenate(2, headK)
+		logicalV = tailV.Concatenate(2, headV)
+	}
+
+	start := K - keep
+	return logicalK.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, K), mlx.Slice()),
+		logicalV.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, K), mlx.Slice())
+}
+
+type speculativeRotatingKVCache struct {
+	speculativeBase
+	target       *RotatingKVCache
+	keys, values *mlx.Array
+}
+
+func newSpeculativeRotatingKVCache(target *RotatingKVCache) *speculativeRotatingKVCache {
+	return &speculativeRotatingKVCache{
+		speculativeBase: speculativeBase{offset: target.Offset()},
+		target:          target,
+	}
+}
+
+func (c *speculativeRotatingKVCache) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
+	c.keys = concatKV(c.keys, keys)
+	c.values = concatKV(c.values, values)
+	c.offset += keys.Dim(2)
+
+	oldK, oldV := c.target.logicalTail(c.target.maxSize - 1)
+	histK, histV := c.keys, c.values
+	if oldK != nil && oldV != nil {
+		histK = oldK.Concatenate(2, c.keys)
+		histV = oldV.Concatenate(2, c.values)
+	}
+
+	return nn.NewKVHistory(histK, histV, logicalSlidingApplier{
+		b:      b,
+		K:      histK.Dim(2),
+		window: c.target.maxSize,
+		dtype:  keys.DType(),
+	})
+}
+
+func (c *speculativeRotatingKVCache) State() []*mlx.Array {
+	if c.keys == nil || c.values == nil {
+		return c.target.State()
+	}
+	oldK, oldV := c.target.logicalTail(c.target.maxSize - 1)
+	if oldK == nil || oldV == nil {
+		return []*mlx.Array{c.keys, c.values}
+	}
+	return []*mlx.Array{oldK.Concatenate(2, c.keys), oldV.Concatenate(2, c.values)}
+}
+
+func (c *speculativeRotatingKVCache) commit(n int) {
+	if c.keys == nil || c.values == nil || n <= 0 {
+		return
+	}
+	n = min(n, c.keys.Dim(2))
+	c.target.appendKV(prefixKV(c.keys, n), prefixKV(c.values, n))
+}
+
+type logicalSlidingApplier struct {
+	b      *batch.Batch
+	K      int
+	window int
+	dtype  mlx.DType
+}
+
+func (a logicalSlidingApplier) ApplyMask(logical nn.AttentionMask) nn.AttentionMask {
+	return logical.Intersect(nn.SlidingWindowMask(a.b, a.K, a.window, a.dtype))
+}
+
+func concatKV(prev, next *mlx.Array) *mlx.Array {
+	if prev == nil {
+		return next
+	}
+	return prev.Concatenate(2, next)
+}
+
+func prefixKV(a *mlx.Array, n int) *mlx.Array {
+	return a.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, n), mlx.Slice())
 }
 
 // appendKV is the raw write path shared by Update and Restore —

@@ -228,15 +228,28 @@ if(MLX_ENGINE)
         list(APPEND MLX_INCLUDE_REGEXES "^dl\\.dll$")
     endif()
 
+    # Split mlx/mlxc libraries from runtime deps to avoid stripping deps
     install(TARGETS mlx mlxc
-        RUNTIME_DEPENDENCIES
-            DIRECTORIES ${MLX_RUNTIME_DIRS}
-            PRE_INCLUDE_REGEXES ${MLX_INCLUDE_REGEXES}
-            PRE_EXCLUDE_REGEXES ".*"
+        RUNTIME_DEPENDENCY_SET mlx_runtime_deps
         RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
         LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
         FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     )
+    install(RUNTIME_DEPENDENCY_SET mlx_runtime_deps
+        DIRECTORIES ${MLX_RUNTIME_DIRS}
+        PRE_INCLUDE_REGEXES ${MLX_INCLUDE_REGEXES}
+        PRE_EXCLUDE_REGEXES ".*"
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX_VENDOR
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX_VENDOR
+    )
+
+    if(TARGET jaccl)
+        install(TARGETS jaccl
+            RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
+            LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
+            FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
+        )
+    endif()
 
     # Install the Metal library for macOS arm64 (must be colocated with the binary)
     # Metal backend is only built for arm64, not x86_64
@@ -358,7 +371,7 @@ if(MLX_ENGINE)
         if(MLX_CUDA_LIBS)
             install(FILES ${MLX_CUDA_LIBS}
                 DESTINATION ${OLLAMA_INSTALL_DIR}
-                COMPONENT MLX)
+                COMPONENT MLX_VENDOR)
         endif()
     endif()
 endif()

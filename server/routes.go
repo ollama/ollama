@@ -98,11 +98,11 @@ var useClient2 = experimentEnabled("client2")
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr                 net.Addr
-	sched                *Scheduler
-	defaultNumCtx        int
-	requestLogger        *inferenceRequestLogger
-	modelRecommendations *modelRecommendationsCache
+	addr          net.Addr
+	sched         *Scheduler
+	defaultNumCtx int
+	requestLogger *inferenceRequestLogger
+	modelCaches   *modelCaches
 }
 
 func init() {
@@ -969,7 +969,10 @@ func (s *Server) PullHandler(c *gin.Context) {
 
 		if err := PullModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
+			return
 		}
+
+		s.refreshModelListCache(name)
 	}()
 
 	if req.Stream != nil && !*req.Stream {
@@ -1108,6 +1111,8 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		return
 	}
 
+	s.deleteModelListCache(n)
+
 	if err := m.RemoveLayers(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1143,13 +1148,33 @@ func (s *Server) ShowHandler(c *gin.Context) {
 
 	if modelRef.Source == modelSourceCloud {
 		req.Model = modelRef.Base
+		if modelShowCacheable(req) && s.modelCaches != nil && s.modelCaches.show != nil {
+			if disabled, _ := internalcloud.Status(); disabled {
+				c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(cloudErrRemoteModelDetailsUnavailable)})
+				return
+			}
+
+			ctx := context.Background()
+			if c.Request != nil {
+				ctx = c.Request.Context()
+			}
+			if resp, ok := s.modelCaches.show.GetCloudSWR(ctx, req); ok {
+				c.JSON(http.StatusOK, resp)
+				return
+			}
+		}
 		proxyCloudJSONRequest(c, req, cloudErrRemoteModelDetailsUnavailable)
 		return
 	}
 
 	req.Model = modelRef.Base
 
-	resp, err := GetModelInfo(req)
+	var resp *api.ShowResponse
+	if modelShowCacheable(req) && s.modelCaches != nil && s.modelCaches.show != nil {
+		resp, err = s.modelCaches.show.GetLocal(req)
+	} else {
+		resp, err = GetModelInfo(req)
+	}
 	if err != nil {
 		var statusErr api.StatusError
 		switch {
@@ -1411,53 +1436,16 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
-	ms, err := manifest.Manifests(true)
+	if s.modelCaches == nil || s.modelCaches.modelList == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "model list cache unavailable"})
+		return
+	}
+
+	models, err := s.modelCaches.modelList.List(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	models := []api.ListModelResponse{}
-	for n, m := range ms {
-		var cf model.ConfigV2
-
-		if m.Config.Digest != "" {
-			f, err := m.Config.Open()
-			if err != nil {
-				slog.Warn("bad manifest filepath", "name", n, "error", err)
-				continue
-			}
-			defer f.Close()
-
-			if err := json.NewDecoder(f).Decode(&cf); err != nil {
-				slog.Warn("bad manifest config", "name", n, "error", err)
-				continue
-			}
-		}
-
-		// tag should never be masked
-		models = append(models, api.ListModelResponse{
-			Model:       n.DisplayShortest(),
-			Name:        n.DisplayShortest(),
-			RemoteModel: cf.RemoteModel,
-			RemoteHost:  cf.RemoteHost,
-			Size:        m.Size(),
-			Digest:      m.Digest(),
-			ModifiedAt:  m.FileInfo().ModTime(),
-			Details: api.ModelDetails{
-				Format:            cf.ModelFormat,
-				Family:            cf.ModelFamily,
-				Families:          cf.ModelFamilies,
-				ParameterSize:     cf.ModelType,
-				QuantizationLevel: cf.FileType,
-			},
-		})
-	}
-
-	slices.SortStableFunc(models, func(i, j api.ListModelResponse) int {
-		// most recently modified first
-		return cmp.Compare(j.ModifiedAt.Unix(), i.ModifiedAt.Unix())
-	})
 
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
@@ -1498,6 +1486,8 @@ func (s *Server) CopyHandler(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model %q not found", r.Source)})
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	} else {
+		s.refreshModelListCache(dst)
 	}
 }
 
@@ -1762,12 +1752,12 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 func (s *Server) ModelRecommendationsExperimentalHandler(c *gin.Context) {
 	recs := defaultModelRecommendations
 	source := "default"
-	if s.modelRecommendations != nil {
+	if s.modelCaches != nil && s.modelCaches.recommendations != nil {
 		ctx := context.Background()
 		if c.Request != nil {
 			ctx = c.Request.Context()
 		}
-		recs = s.modelRecommendations.GetSWR(ctx)
+		recs = s.modelCaches.recommendations.GetSWR(ctx)
 		source = "cache"
 	}
 
@@ -1811,12 +1801,9 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
-	// TODO(parthsareen): If we add more runtime caches, prefer introducing a
-	// small cache manager owned by Server (for shared start/stop/health wiring)
-	// instead of adding one top-level field per cache here in Serve.
 	s := &Server{
-		addr:                 ln.Addr(),
-		modelRecommendations: newModelRecommendationsCache(),
+		addr:        ln.Addr(),
+		modelCaches: newModelCaches(),
 	}
 	if err := s.initRequestLogging(); err != nil {
 		return err
@@ -1842,7 +1829,7 @@ func Serve(ln net.Listener) error {
 	schedCtx, schedDone := context.WithCancel(ctx)
 	sched := InitScheduler(schedCtx)
 	s.sched = sched
-	s.modelRecommendations.Start(ctx)
+	s.modelCaches.Start(ctx)
 
 	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
 	srvr := &http.Server{
@@ -2027,11 +2014,30 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 	client := api.NewClient(u, http.DefaultClient)
 	user, err := client.Whoami(c)
 	if err != nil {
+		var authErr api.AuthorizationError
+		if errors.As(err, &authErr) && authErr.StatusCode == http.StatusUnauthorized {
+			// Preserve an actionable sign-in response for launch; other failures
+			// below mean account or plan verification is temporarily unavailable.
+			sURL := authErr.SigninURL
+			if sURL == "" {
+				var sErr error
+				sURL, sErr = signinURL()
+				if sErr != nil {
+					slog.Error(sErr.Error())
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
+					return
+				}
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": sURL})
+			return
+		}
+
 		slog.Error(err.Error())
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account unavailable"})
+		return
 	}
 
-	// user isn't signed in
-	if user != nil && user.Name == "" {
+	if user == nil || user.Name == "" {
 		sURL, sErr := signinURL()
 		if sErr != nil {
 			slog.Error(sErr.Error())
@@ -2043,6 +2049,10 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 		return
 	}
 
+	if strings.TrimSpace(user.Plan) == "" {
+		slog.Warn("account plan was not set; defaulting to free")
+		user.Plan = "free"
+	}
 	c.JSON(http.StatusOK, user)
 }
 
@@ -2816,8 +2826,12 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 	}); err != nil {
 		// Only send JSON error if streaming hasn't started yet
 		// (once streaming starts, headers are committed and we can't change status code)
-		if !streamStarted {
+		if !isStreaming || !streamStarted {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		} else {
+			data, _ := json.Marshal(gin.H{"error": err.Error()})
+			c.Writer.Write(append(data, '\n'))
+			c.Writer.Flush()
 		}
 		return
 	}

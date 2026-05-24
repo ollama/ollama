@@ -271,6 +271,241 @@ func TestFromMessagesRequest_WithToolResult(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_WithToolResultImage(t *testing.T) {
+	imgData, _ := base64.StdEncoding.DecodeString(testImage)
+
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages: []MessageParam{
+			{
+				Role: "user",
+				Content: []ContentBlock{
+					{
+						Type:      "tool_result",
+						ToolUseID: "call_img",
+						Content: []any{
+							map[string]any{"type": "text", "text": "Attached image"},
+							map[string]any{
+								"type": "image",
+								"source": map[string]any{
+									"type":       "base64",
+									"media_type": "image/png",
+									"data":       testImage,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	msg := result.Messages[0]
+	if msg.Role != "tool" {
+		t.Errorf("expected role 'tool', got %q", msg.Role)
+	}
+	if msg.ToolCallID != "call_img" {
+		t.Errorf("expected tool_call_id 'call_img', got %q", msg.ToolCallID)
+	}
+	if msg.Content != "Attached image" {
+		t.Errorf("unexpected content: %q", msg.Content)
+	}
+	if len(msg.Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(msg.Images))
+	}
+	if string(msg.Images[0]) != string(imgData) {
+		t.Error("image data mismatch")
+	}
+}
+
+func TestFromMessagesRequest_WithToolResultFollowedByUserText(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages: []MessageParam{
+			{
+				Role: "assistant",
+				Content: []ContentBlock{
+					{
+						Type:  "tool_use",
+						ID:    "call_read",
+						Name:  "Read",
+						Input: makeArgs("file_path", "/Users/hoyyeva/Desktop/aaa.png"),
+					},
+				},
+			},
+			{
+				Role: "user",
+				Content: []ContentBlock{
+					{
+						Type:      "tool_result",
+						ToolUseID: "call_read",
+						Content:   "Read image (311.5KB)",
+					},
+					{
+						Type: "text",
+						Text: ptr("Please describe it."),
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result.Messages))
+	}
+
+	if result.Messages[1].Role != "tool" {
+		t.Fatalf("expected second message to be tool, got %q", result.Messages[1].Role)
+	}
+	if result.Messages[1].ToolCallID != "call_read" {
+		t.Fatalf("expected tool_call_id 'call_read', got %q", result.Messages[1].ToolCallID)
+	}
+	if result.Messages[2].Role != "user" {
+		t.Fatalf("expected third message to be user, got %q", result.Messages[2].Role)
+	}
+	if result.Messages[2].Content != "Please describe it." {
+		t.Fatalf("unexpected user content: %q", result.Messages[2].Content)
+	}
+}
+
+func TestFromMessagesRequest_WithOutputConfigEffort(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "gemma4",
+		MaxTokens: 32000,
+		Messages: []MessageParam{
+			{
+				Role:    "user",
+				Content: textContent("Describe the image."),
+			},
+		},
+		OutputConfig: &OutputConfig{
+			Effort: "high",
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatal("expected think to be set from output_config.effort")
+	}
+
+	if got := result.Think.String(); got != "high" {
+		t.Fatalf("expected think level 'high', got %q", got)
+	}
+}
+
+func TestFromMessagesRequest_WithOutputConfigEffortXHighMapsToHigh(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "gemma4",
+		MaxTokens: 32000,
+		Messages: []MessageParam{
+			{
+				Role:    "user",
+				Content: textContent("Describe the image."),
+			},
+		},
+		OutputConfig: &OutputConfig{
+			Effort: "xhigh",
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatal("expected think to be set from output_config.effort")
+	}
+
+	if got := result.Think.String(); got != "high" {
+		t.Fatalf("expected think level 'high' for xhigh effort, got %q", got)
+	}
+}
+
+func TestFromMessagesRequest_ThinkingDisabledOverridesOutputConfigEffort(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "gemma4",
+		MaxTokens: 32000,
+		Messages: []MessageParam{
+			{
+				Role:    "user",
+				Content: textContent("Describe the image."),
+			},
+		},
+		Thinking: &ThinkingConfig{
+			Type: "disabled",
+		},
+		OutputConfig: &OutputConfig{
+			Effort: "high",
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatal("expected think to be set")
+	}
+
+	if got := result.Think.Value; got != false {
+		t.Fatalf("expected think=false when thinking is disabled, got %v", got)
+	}
+}
+
+func TestFromMessagesRequest_ThinkingAdaptiveUsesOutputConfigEffort(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "gemma4",
+		MaxTokens: 32000,
+		Messages: []MessageParam{
+			{
+				Role:    "user",
+				Content: textContent("Describe the image."),
+			},
+		},
+		Thinking: &ThinkingConfig{
+			Type: "adaptive",
+		},
+		OutputConfig: &OutputConfig{
+			Effort: "high",
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatal("expected think to be set from output_config.effort")
+	}
+
+	if got := result.Think.String(); got != "high" {
+		t.Fatalf("expected think level 'high' for adaptive thinking, got %q", got)
+	}
+}
+
 func TestFromMessagesRequest_WithTools(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",

@@ -36,7 +36,7 @@ func (k *Kimi) args(config string, extra []string) []string {
 	return args
 }
 
-func (k *Kimi) Run(model string, args []string) error {
+func (k *Kimi) Run(model string, _ []LaunchModel, args []string) error {
 	if strings.TrimSpace(model) == "" {
 		return fmt.Errorf("model is required")
 	}

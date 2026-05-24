@@ -94,6 +94,47 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(mlx-c)
 
+# To avoid a "long tail" when building MLX with a large set of GPU
+# architectures, utilize a higher --threads (-t) setting. At high -t
+# every .cu spawns concurrent cicc instances; each cicc can consume several GB
+# compiling MLX's CUTLASS-using kernels.  This in turn can cause OOMs.
+#
+# We use a pool to cover all MLX CUDA sources. Pool size is derived from total 
+# host RAM via a per-file memory budget.
+#
+# This was calibrated with `-t 6`.  Higher -t may require overriding
+# MLX_CUDA_RAM_MB
+if(CMAKE_GENERATOR STREQUAL "Ninja")
+    file(GLOB_RECURSE _mlx_cu
+        "${mlx_SOURCE_DIR}/mlx/backend/cuda/*.cu"
+        "${mlx_BINARY_DIR}/mlx/backend/cuda/*.cu"
+    )
+    if(_mlx_cu)
+        set(MLX_CUDA_RAM_MB 22000 CACHE STRING
+            "Per-file memory budget (MB) for the cuda_compile JOB_POOL.  Override for higher -t.")
+        cmake_host_system_information(RESULT _ram_mb QUERY TOTAL_PHYSICAL_MEMORY)
+        math(EXPR _cuda_pool "${_ram_mb} / ${MLX_CUDA_RAM_MB}")
+        if(_cuda_pool LESS 2)
+            set(_cuda_pool 2)
+        endif()
+        set_property(GLOBAL APPEND PROPERTY JOB_POOLS cuda_compile=${_cuda_pool})
+        list(LENGTH _mlx_cu _cu_count)
+        # SOURCE properties default to directory-scoped, which means a plain
+        # set_property(SOURCE ...) here would NOT affect the build rules
+        # generated for the mlx target (defined in mlx_SOURCE_DIR after
+        # FetchContent).  TARGET_DIRECTORY mlx puts the property in the
+        # directory where mlx was defined, so it actually applies.
+        foreach(f ${_mlx_cu})
+            set_property(SOURCE "${f}"
+                TARGET_DIRECTORY mlx
+                PROPERTY JOB_POOL_COMPILE cuda_compile)
+        endforeach()
+        message(STATUS "MLX cuda_compile JOB_POOL: ${_cu_count} files, pool size ${_cuda_pool} (host RAM ${_ram_mb} MB / ${MLX_CUDA_RAM_MB} MB per file)")
+    else()
+        message(WARNING "MLX cuda_compile JOB_POOL: no .cu files found under mlx/backend/cuda/ - check MLX layout")
+    endif()
+endif()
+
 # Sync vendored headers with fetched version
 file(GLOB _mlx_c_hdrs "${mlx-c_SOURCE_DIR}/mlx/c/*.h")
 file(COPY ${_mlx_c_hdrs} DESTINATION "${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c/")

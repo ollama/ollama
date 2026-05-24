@@ -16,7 +16,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
-	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/format"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
@@ -24,10 +23,10 @@ import (
 )
 
 var recommendedModels = []ModelItem{
-	{Name: "kimi-k2.6:cloud", Description: "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability", Recommended: true, ContextLength: 262_144, MaxOutputTokens: 262_144},
-	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true, ContextLength: 262_144, MaxOutputTokens: 32_768},
-	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true, ContextLength: 202_752, MaxOutputTokens: 131_072},
-	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true, ContextLength: 204_800, MaxOutputTokens: 128_000},
+	{Name: "kimi-k2.6:cloud", Description: "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 262_144},
+	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 32_768},
+	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true, Details: api.ModelDetails{ContextLength: 202_752}, MaxOutputTokens: 131_072},
+	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true, Details: api.ModelDetails{ContextLength: 204_800}, MaxOutputTokens: 128_000},
 	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true, VRAMBytes: 12 * format.GigaByte},
 	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true, VRAMBytes: 14 * format.GigaByte},
 }
@@ -116,7 +115,7 @@ func setDynamicCloudModelLimits(limits map[string]cloudModelLimit) {
 func cloudModelLimitsFromRecommendations(recommendations []ModelItem) map[string]cloudModelLimit {
 	limits := make(map[string]cloudModelLimit, len(recommendations))
 	for _, rec := range recommendations {
-		if !isCloudModelName(rec.Name) || rec.ContextLength <= 0 || rec.MaxOutputTokens <= 0 {
+		if !isCloudModelName(rec.Name) || rec.Details.ContextLength <= 0 || rec.MaxOutputTokens <= 0 {
 			continue
 		}
 		base, stripped := modelref.StripCloudSourceTag(rec.Name)
@@ -124,7 +123,7 @@ func cloudModelLimitsFromRecommendations(recommendations []ModelItem) map[string
 			continue
 		}
 		limits[base] = cloudModelLimit{
-			Context: rec.ContextLength,
+			Context: rec.Details.ContextLength,
 			Output:  rec.MaxOutputTokens,
 		}
 	}
@@ -189,7 +188,7 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 		return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
 	}
 
-	user, err := client.Whoami(ctx)
+	user, err := whoamiWithTimeout(ctx, client)
 	if err == nil && user != nil && user.Name != "" {
 		return nil
 	}
@@ -244,7 +243,7 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 			fmt.Fprintf(os.Stderr, "\r\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[frame%len(spinnerFrames)])
 
 			if frame%10 == 0 {
-				u, err := client.Whoami(ctx)
+				u, err := whoamiWithTimeout(ctx, client)
 				if err == nil && u != nil && u.Name != "" {
 					fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1msigned in:\033[0m %s\n", u.Name)
 					return nil
@@ -300,28 +299,17 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 }
 
 // prepareEditorIntegration persists models and applies editor-managed config files.
-func prepareEditorIntegration(name string, runner Runner, editor Editor, models []string) error {
-	if ok, err := confirmConfigEdit(runner, editor.Paths()); err != nil {
-		return err
-	} else if !ok {
-		return errCancelled
-	}
+func prepareEditorIntegration(name string, editor Editor, models []LaunchModel) error {
 	if err := editor.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
-	if err := config.SaveIntegration(name, models); err != nil {
+	if err := config.SaveIntegration(name, launchModelNames(models)); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
 	return nil
 }
 
-func prepareManagedSingleIntegration(name string, runner Runner, managed ManagedSingleModel, model string, models []string) error {
-	if ok, err := confirmConfigEdit(runner, managed.Paths()); err != nil {
-		return err
-	} else if !ok {
-		return errCancelled
-	}
-	models = dedupeModelList(append([]string{model}, models...))
+func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, model string, models []LaunchModel) error {
 	var err error
 	if withModels, ok := managed.(ManagedModelListConfigurer); ok {
 		err = withModels.ConfigureWithModels(model, models)
@@ -337,12 +325,7 @@ func prepareManagedSingleIntegration(name string, runner Runner, managed Managed
 	return nil
 }
 
-func prepareManagedAutodiscoveryIntegration(name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, model string) error {
-	if ok, err := confirmConfigEdit(runner, autodiscovery.Paths()); err != nil {
-		return err
-	} else if !ok {
-		return errCancelled
-	}
+func prepareManagedAutodiscoveryIntegration(name string, autodiscovery ManagedAutodiscoveryIntegration, model string) error {
 	if err := autodiscovery.ConfigureAutodiscovery(); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
@@ -350,20 +333,6 @@ func prepareManagedAutodiscoveryIntegration(name string, runner Runner, autodisc
 		return fmt.Errorf("failed to save: %w", err)
 	}
 	return nil
-}
-
-func confirmConfigEdit(runner Runner, paths []string) (bool, error) {
-	if len(paths) == 0 {
-		return true, nil
-	}
-
-	fmt.Fprintf(os.Stderr, "This will modify your %s configuration:\n", runner)
-	for _, path := range paths {
-		fmt.Fprintf(os.Stderr, "  %s\n", path)
-	}
-	fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", fileutil.BackupDir())
-
-	return ConfirmPrompt("Proceed?")
 }
 
 // buildModelList merges existing models with recommendations for selection UIs.
@@ -378,9 +347,11 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 	var hasLocalModel, hasCloudModel bool
 
 	recDesc := make(map[string]string)
+	recByName := make(map[string]ModelItem)
 	for _, rec := range recommendations {
 		recommended[rec.Name] = true
 		recDesc[rec.Name] = rec.Description
+		recByName[rec.Name] = rec
 	}
 
 	for _, m := range existing {
@@ -393,8 +364,11 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 		}
 		displayName := strings.TrimSuffix(m.Name, ":latest")
 		existingModels[displayName] = true
-		item := ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}
-		items = append(items, item)
+		if rec, ok := recByName[displayName]; ok {
+			items = append(items, modelItemFromInventory(displayName, m, copyModelRecommendationFields(displayName, rec)))
+		} else {
+			items = append(items, modelItemFromInventory(displayName, m, ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}))
+		}
 	}
 
 	for _, rec := range recommendations {
@@ -500,6 +474,21 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 	}
 
 	return items, preChecked, existingModels, cloudModels
+}
+
+func copyModelRecommendationFields(name string, rec ModelItem) ModelItem {
+	rec.Name = name
+	rec.Recommended = true
+	return rec
+}
+
+func modelItemFromInventory(name string, info modelInfo, item ModelItem) ModelItem {
+	item.Name = name
+	item.ToolCapable = info.ToolCapable
+	item.Capabilities = slices.Clone(info.Capabilities)
+	item.Size = info.Size
+	item.Details = info.Details
+	return item
 }
 
 // isCloudModelName reports whether the model name has an explicit cloud source.

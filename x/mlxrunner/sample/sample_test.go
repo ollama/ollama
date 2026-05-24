@@ -4,6 +4,7 @@ package sample
 
 import (
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
@@ -141,6 +142,132 @@ func TestSampleSingleSlotOptions(t *testing.T) {
 	}
 }
 
+func TestDistributionAppliesTopKBeforeTopP(t *testing.T) {
+	skipIfNoMLX(t)
+
+	s := New(128)
+	t.Cleanup(func() {
+		s.Free()
+		mlx.Sweep()
+	})
+	s.Add(0, Options{Temperature: 1, TopK: 2, TopP: 0.7}, nil)
+
+	dist := s.Distribution(0, slotLogits([]float32{logOf(0.6), logOf(0.2), logOf(0.2)}), nil)
+	mlx.Eval(dist.Arrays()...)
+
+	ids := dist.IDs.Ints()
+	probs := dist.Probs.Floats()
+	if len(ids) != 2 || len(probs) != 2 {
+		t.Fatalf("support = ids %v probs %v, want 2 sparse entries", ids, probs)
+	}
+
+	foundTop := false
+	for i, id := range ids {
+		switch id {
+		case 0:
+			foundTop = true
+			if math.Abs(float64(probs[i]-1)) > 1e-5 {
+				t.Fatalf("top token prob = %v, want 1; ids=%v probs=%v", probs[i], ids, probs)
+			}
+		default:
+			if math.Abs(float64(probs[i])) > 1e-5 {
+				t.Fatalf("non-top token %d prob = %v, want 0; ids=%v probs=%v", id, probs[i], ids, probs)
+			}
+		}
+	}
+	if !foundTop {
+		t.Fatalf("top-k support %v did not include token 0", ids)
+	}
+}
+
+func TestDistributionResidualUsesTargetSupport(t *testing.T) {
+	skipIfNoMLX(t)
+
+	target := Distribution{
+		IDs:   mlx.NewArrayInt32([]int32{2, 5}, []int32{1, 2}),
+		Probs: mlx.FromValues([]float32{0.7, 0.3}, 1, 2),
+	}
+	draft := Distribution{
+		IDs:   mlx.NewArrayInt32([]int32{2, 4}, []int32{1, 2}),
+		Probs: mlx.FromValues([]float32{0.2, 0.8}, 1, 2),
+	}
+
+	residual := target.ResidualAgainst(draft)
+	mlx.Eval(residual.Arrays()...)
+
+	ids := residual.IDs.Ints()
+	probs := residual.Probs.Floats()
+	want := map[int]float64{2: 0.625, 5: 0.375}
+	if len(ids) != 2 || len(probs) != 2 {
+		t.Fatalf("residual = ids %v probs %v, want 2 sparse entries", ids, probs)
+	}
+	for i, id := range ids {
+		w, ok := want[id]
+		if !ok {
+			t.Fatalf("residual includes token %d outside target support: ids=%v probs=%v", id, ids, probs)
+		}
+		if math.Abs(float64(probs[i])-w) > 1e-5 {
+			t.Fatalf("residual token %d prob = %v, want %v; ids=%v probs=%v", id, probs[i], w, ids, probs)
+		}
+	}
+}
+
+func TestSeededSamplingIsReproducible(t *testing.T) {
+	skipIfNoMLX(t)
+
+	seededSequence := func(seed int) []int {
+		s := New(128)
+		t.Cleanup(func() {
+			s.Free()
+			mlx.Sweep()
+		})
+		s.Add(0, Options{Temperature: 1, TopK: 4, Seed: seed, UseSeed: true}, nil)
+
+		logits := slotLogits([]float32{0, 0, 0, 0})
+		out := make([]int, 32)
+		for i := range out {
+			token := s.Sample([]int{0}, logits).Token
+			mlx.Eval(token)
+			out[i] = token.Int()
+		}
+		return out
+	}
+
+	a := seededSequence(1234)
+	b := seededSequence(1234)
+	if !slices.Equal(a, b) {
+		t.Fatalf("same seed produced different sequences:\n%v\n%v", a, b)
+	}
+
+	c := seededSequence(5678)
+	if slices.Equal(a, c) {
+		t.Fatalf("different seeds produced the same sequence: %v", a)
+	}
+}
+
+func TestSeededBernoulliIsReproducible(t *testing.T) {
+	skipIfNoMLX(t)
+
+	seededMask := func() []int {
+		s := New(128)
+		t.Cleanup(func() {
+			s.Free()
+			mlx.Sweep()
+		})
+		s.Add(0, Options{Seed: 99, UseSeed: true}, nil)
+
+		mask := s.Bernoulli(0, mlx.FromValues([]float32{0.5, 0.5, 0.5, 0.5, 0.5, 0.5}, 6)).AsType(mlx.DTypeInt32)
+		mlx.Eval(mask)
+		return mask.Ints()
+	}
+
+	a := seededMask()
+	b := seededMask()
+	if !slices.Equal(a, b) {
+		t.Fatalf("same seed produced different bernoulli masks:\n%v\n%v", a, b)
+	}
+}
+
 // TestSampleHistoryWindow verifies that penalty history respects the
 // RepeatLastN window: priors longer than RepeatLastN are trimmed on Add,
 // and once the ring wraps, tokens that rotate out no longer contribute
@@ -173,6 +300,65 @@ func TestSampleHistoryWindow(t *testing.T) {
 	mlx.Eval(step2)
 	if got := step2.Int(); got != 2 {
 		t.Fatalf("step 2 = %d, want 2 (token 2 rotated out of ring)", got)
+	}
+}
+
+func TestSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
+	skipIfNoMLX(t)
+
+	s := New(128)
+	t.Cleanup(func() {
+		s.Free()
+		mlx.Sweep()
+	})
+
+	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{1, 2})
+	draftTokens := mlx.NewArrayInt32([]int32{3, 4}, []int32{1, 2})
+	scores := s.SpeculativeScores(0, batchLogits(
+		[]float32{0, 9, 9, 8, 0}, // history {1,2}; token 3 wins
+		[]float32{0, 0, 9, 9, 8}, // history {2,3}; token 4 wins
+		[]float32{0, 0, 9, 9, 8}, // history {3,4}; token 2 wins
+	), draftTokens)
+	tokens := scores.Argmax(-1, false).AsType(mlx.DTypeInt32)
+	mlx.Eval(tokens)
+
+	if got, want := tokens.Ints(), []int{3, 4, 2}; len(got) != len(want) {
+		t.Fatalf("tokens = %v, want %v", got, want)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("tokens = %v, want %v", got, want)
+			}
+		}
+	}
+	if s.byID[0].historyLen != 2 {
+		t.Fatalf("historyLen = %d, want 2", s.byID[0].historyLen)
+	}
+}
+
+func TestCommitBatchesRingWrites(t *testing.T) {
+	skipIfNoMLX(t)
+
+	s := New(128)
+	t.Cleanup(func() {
+		s.Free()
+		mlx.Sweep()
+	})
+
+	s.Add(0, Options{RepeatLastN: 4, RepeatPenalty: 1.1}, []int32{10, 11, 12})
+	s.Commit(0, []int32{20, 21, 22})
+	s.Commit(0, []int32{30, 31, 32, 33, 34})
+	mlx.Eval(s.history)
+
+	got := s.history.Ints()
+	want := []int{32, 33, 34, 31}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("history = %v, want %v", got, want)
+		}
+	}
+	if s.byID[0].historyLen != 11 {
+		t.Fatalf("historyLen = %d, want 11", s.byID[0].historyLen)
 	}
 }
 

@@ -1,11 +1,7 @@
-//go:build goexperiment.synctest
-
 package backoff
 
 import (
 	"testing"
-	"testing/synctest"
-	"time"
 )
 
 func TestLoopAllocs(t *testing.T) {
@@ -25,15 +21,4 @@ func TestLoopAllocs(t *testing.T) {
 			t.Errorf("[%d ticks]: allocs = %v, want 0", i, want)
 		}
 	}
-}
-
-func BenchmarkLoop(b *testing.B) {
-	ctx := b.Context()
-	synctest.Run(func() {
-		for n := range Loop(ctx, 100*time.Millisecond) {
-			if n == b.N {
-				break
-			}
-		}
-	})
 }
