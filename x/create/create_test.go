@@ -452,6 +452,137 @@ func TestCreateSafetensorsModel(t *testing.T) {
 	}
 }
 
+func TestCreateDraftSafetensorsLayersPrefixesTensorsAndConfigs(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"model_type":"gemma4_assistant"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.layers.0.self_attn.q_proj.weight", "BF16", []int32{2, 2}, make([]byte, 8)),
+	})
+
+	var tensorNames []string
+	createLayer := func(r io.Reader, mediaType, name string) (LayerInfo, error) {
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return LayerInfo{}, err
+		}
+		return LayerInfo{Digest: "sha256:json_" + name, Size: int64(len(data)), MediaType: mediaType, Name: name}, nil
+	}
+	createTensorLayer := func(r io.Reader, name, dtype string, shape []int32, quantize string) ([]LayerInfo, error) {
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return nil, err
+		}
+		tensorNames = append(tensorNames, name)
+		tensorName, tensorShape := readSingleTensorNameAndShape(t, data)
+		if tensorName != name {
+			t.Fatalf("safetensors key = %q, want %q", tensorName, name)
+		}
+		if !slices.Equal(tensorShape, shape) {
+			t.Fatalf("shape = %v, want %v", tensorShape, shape)
+		}
+		if quantize != "" {
+			t.Fatalf("draft quantize = %q, want empty", quantize)
+		}
+		return []LayerInfo{{Digest: "sha256:tensor_" + name, Size: int64(len(data)), MediaType: "application/vnd.ollama.image.tensor", Name: name}}, nil
+	}
+
+	layers, err := CreateDraftSafetensorsLayers(dir, "draft.", "draft", "", createLayer, createTensorLayer, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Contains(tensorNames, "draft.model.layers.0.self_attn.q_proj.weight") {
+		t.Fatalf("draft tensor was not prefixed: %v", tensorNames)
+	}
+	var hasDraftConfig bool
+	for _, layer := range layers {
+		if layer.Name == "draft/config.json" && layer.MediaType == "application/vnd.ollama.image.json" {
+			hasDraftConfig = true
+		}
+	}
+	if !hasDraftConfig {
+		t.Fatalf("draft/config.json layer missing: %#v", layers)
+	}
+}
+
+func TestCreateDraftSafetensorsLayersQuantizesEligibleTensors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{
+		"architectures":["Gemma4AssistantForCausalLM"],
+		"num_hidden_layers":8
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
+		st.NewTensorDataFromBytes("model.layers.0.self_attn.q_proj.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
+		st.NewTensorDataFromBytes("model.layers.0.input_layernorm.weight", "BF16", []int32{64}, make([]byte, 64*2)),
+	})
+
+	createLayer := func(r io.Reader, mediaType, name string) (LayerInfo, error) {
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return LayerInfo{}, err
+		}
+		return LayerInfo{Digest: "sha256:json_" + name, Size: int64(len(data)), MediaType: mediaType, Name: name}, nil
+	}
+	quantizeByName := make(map[string]string)
+	createTensorLayer := func(r io.Reader, name, dtype string, shape []int32, quantize string) ([]LayerInfo, error) {
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return nil, err
+		}
+		quantizeByName[name] = quantize
+		return []LayerInfo{{Digest: "sha256:tensor_" + name, Size: int64(len(data)), MediaType: "application/vnd.ollama.image.tensor", Name: name}}, nil
+	}
+
+	if _, err := CreateDraftSafetensorsLayers(dir, "draft.", "draft", "MXFP8", createLayer, createTensorLayer, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := quantizeByName["draft.model.layers.0.self_attn.q_proj.weight"]; got != "mxfp8" {
+		t.Fatalf("q_proj draft quantize = %q, want mxfp8", got)
+	}
+	if got := quantizeByName["draft.model.layers.0.input_layernorm.weight"]; got != "" {
+		t.Fatalf("norm draft quantize = %q, want empty", got)
+	}
+	if got := quantizeByName["draft.model.embed_tokens.weight"]; got != "" {
+		t.Fatalf("embed_tokens draft quantize = %q, want empty", got)
+	}
+}
+
+func TestCreateDraftSafetensorsLayersRejectsUnsupportedDraftQuantize(t *testing.T) {
+	_, err := CreateDraftSafetensorsLayers(t.TempDir(), "draft.", "draft", "bogus", nil, nil, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "unsupported --draft-quantize") {
+		t.Fatalf("error = %v, want unsupported --draft-quantize", err)
+	}
+}
+
+func readSingleTensorNameAndShape(t *testing.T, data []byte) (string, []int32) {
+	t.Helper()
+
+	var headerSize uint64
+	if err := binary.Read(bytes.NewReader(data[:8]), binary.LittleEndian, &headerSize); err != nil {
+		t.Fatalf("failed to read header size: %v", err)
+	}
+
+	var header map[string]struct {
+		Shape []int32 `json:"shape"`
+	}
+	if err := json.Unmarshal(data[8:8+headerSize], &header); err != nil {
+		t.Fatalf("failed to parse header: %v", err)
+	}
+	for name, info := range header {
+		if name != "__metadata__" {
+			return name, info.Shape
+		}
+	}
+	t.Fatal("no tensor entry found in header")
+	return "", nil
+}
+
 func TestCreateSafetensorsModel_NoConfigJson(t *testing.T) {
 	dir := t.TempDir()
 

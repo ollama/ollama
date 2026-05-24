@@ -367,9 +367,16 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	// Check if subprocess is still alive
 	if s.HasExited() {
 		slog.Error("mlx subprocess has exited unexpectedly")
+		if errMsg := s.getLastErr(); errMsg != "" {
+			return fmt.Errorf("mlx runner closed response before completion: %s", errMsg)
+		}
 	}
 
-	return scanErr
+	if scanErr != nil {
+		return scanErr
+	}
+
+	return errors.New("mlx runner closed response before completion")
 }
 
 // Close terminates the subprocess.

@@ -35,21 +35,37 @@ type ConfirmOptions struct {
 
 // SingleSelector is a function type for single item selection.
 // current is the name of the previously selected item to highlight; empty means no pre-selection.
-type SingleSelector func(title string, items []ModelItem, current string) (string, error)
+type SingleSelector func(title string, items []SelectionItem, current string) (string, error)
+
+// SingleSelectorWithUpdates is a single item selector that can receive refreshed item state while open.
+type SingleSelectorWithUpdates func(title string, items []SelectionItem, current string, updates <-chan []SelectionItem) (string, error)
 
 // MultiSelector is a function type for multi item selection.
-type MultiSelector func(title string, items []ModelItem, preChecked []string) ([]string, error)
+type MultiSelector func(title string, items []SelectionItem, preChecked []string) ([]string, error)
+
+// MultiSelectorWithUpdates is a multi item selector that can receive refreshed item state while open.
+type MultiSelectorWithUpdates func(title string, items []SelectionItem, preChecked []string, updates <-chan []SelectionItem) ([]string, error)
 
 // DefaultSingleSelector is the default single-select implementation.
 var DefaultSingleSelector SingleSelector
 
+// DefaultSingleSelectorWithUpdates is the default single-select implementation with live updates.
+var DefaultSingleSelectorWithUpdates SingleSelectorWithUpdates
+
 // DefaultMultiSelector is the default multi-select implementation.
 var DefaultMultiSelector MultiSelector
+
+// DefaultMultiSelectorWithUpdates is the default multi-select implementation with live updates.
+var DefaultMultiSelectorWithUpdates MultiSelectorWithUpdates
 
 // DefaultSignIn provides a TUI-based sign-in flow.
 // When set, ensureAuth uses it instead of plain text prompts.
 // Returns the signed-in username or an error.
 var DefaultSignIn func(modelName, signInURL string) (string, error)
+
+// DefaultUpgrade provides a TUI-based upgrade flow.
+// Returns the updated plan or an error.
+var DefaultUpgrade func(modelName, requiredPlan string) (string, error)
 
 type launchConfirmPolicy struct {
 	yes               bool

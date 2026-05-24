@@ -133,6 +133,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		processed += n
 		position += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
+		logutil.TraceContext(ctx, "mlx prompt forward", "processed", processed, "total", total, "tokens", n, "memory", mlx.Memory{})
 
 		// Create snapshot if we've reached a pending offset.
 		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
@@ -146,6 +147,12 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
+	if r.useGreedyMTP(request.SamplerOpts) {
+		return r.runGreedyMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
+	}
+	if r.useSampleMTP(request.SamplerOpts) {
+		return r.runSampleMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
+	}
 
 	step := func(token *mlx.Array) sampler.Result {
 		fwd := r.Model.Forward(&batch.Batch{
@@ -165,6 +172,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	}
 
 	sample = step(mlx.FromValues(tokens[processed:], 1, total-processed))
+	logutil.TraceContext(ctx, "mlx decode seed", "tokens", total-processed, "memory", mlx.Memory{})
 
 	dec := decoder{
 		tokenizer:       r.Tokenizer,
@@ -188,6 +196,9 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 		output := int32(sample.Token.Int())
 		session.outputs = append(session.outputs, output)
+		if i == 0 {
+			logutil.TraceContext(ctx, "mlx decode first token", "memory", mlx.Memory{})
+		}
 
 		if r.Tokenizer.IsEOS(output) {
 			final.DoneReason = 0

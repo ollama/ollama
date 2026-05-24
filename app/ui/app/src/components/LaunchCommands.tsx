@@ -14,14 +14,6 @@ interface LaunchCommand {
 
 const LAUNCH_COMMANDS: LaunchCommand[] = [
   {
-    id: "claude-desktop",
-    name: "Claude Desktop",
-    command: "ollama launch claude-desktop",
-    description: "Claude Desktop with Ollama Cloud",
-    icon: "/launch-icons/claude.svg",
-    iconClassName: "h-7 w-7",
-  },
-  {
     id: "claude",
     name: "Claude Code",
     command: "ollama launch claude",
@@ -30,11 +22,12 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     iconClassName: "h-7 w-7",
   },
   {
-    id: "openclaw",
-    name: "OpenClaw",
-    command: "ollama launch openclaw",
-    description: "Personal AI with 100+ skills",
-    icon: "/launch-icons/openclaw.svg",
+    id: "codex-app",
+    name: "Codex App",
+    command: "ollama launch codex-app",
+    description: "An AI agent you can delegate real work to, by OpenAI",
+    icon: "/launch-icons/codex-app.png",
+    iconClassName: "h-full w-full",
   },
   {
     id: "hermes",
@@ -43,6 +36,13 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     description: "Self-improving AI agent built by Nous Research",
     icon: "/launch-icons/hermes-agent.svg",
     iconClassName: "h-7 w-7",
+  },
+  {
+    id: "openclaw",
+    name: "OpenClaw",
+    command: "ollama launch openclaw",
+    description: "Personal AI with 100+ skills",
+    icon: "/launch-icons/openclaw.svg",
   },
   {
     id: "opencode",

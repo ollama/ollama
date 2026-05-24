@@ -236,7 +236,7 @@ func TestLFM2Renderer_Images(t *testing.T) {
 				Content: "Describe this image.",
 				Images:  []api.ImageData{api.ImageData("img1")},
 			},
-			expected: "<|startoftext|><|im_start|>user\n[img-0]Describe this image.<|im_end|>\n<|im_start|>assistant\n",
+			expected: "<|startoftext|><|im_start|>user\n[img-0] Describe this image.<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
 			name:     "existing_template_image_placeholder_not_duplicated",

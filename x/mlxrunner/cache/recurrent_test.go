@@ -63,8 +63,8 @@ func TestRecurrentCacheGetLazyInit(t *testing.T) {
 	if got := h.ConvState().DType(); got != mlx.DTypeBFloat16 {
 		t.Fatalf("conv state dtype = %v, want %v", got, mlx.DTypeBFloat16)
 	}
-	if got := h.DeltaState().DType(); got != mlx.DTypeBFloat16 {
-		t.Fatalf("delta state dtype = %v, want %v", got, mlx.DTypeBFloat16)
+	if got := h.DeltaState().DType(); got != mlx.DTypeFloat32 {
+		t.Fatalf("delta state dtype = %v, want %v", got, mlx.DTypeFloat32)
 	}
 }
 

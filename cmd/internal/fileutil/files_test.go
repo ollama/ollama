@@ -18,6 +18,12 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("TMPDIR", tmpRoot); err != nil {
 		panic(err)
 	}
+	if err := os.Setenv("HOME", tmpRoot); err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("USERPROFILE", tmpRoot); err != nil {
+		panic(err)
+	}
 
 	code := m.Run()
 	_ = os.RemoveAll(tmpRoot)
@@ -41,6 +47,17 @@ func isolatedTempDir(t *testing.T) string {
 func TestWriteWithBackup(t *testing.T) {
 	tmpDir := isolatedTempDir(t)
 
+	t.Run("uses ollama directory under home", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+
+		want := filepath.Join(home, ".ollama", "backup")
+		if got := BackupDir(); got != want {
+			t.Fatalf("BackupDir() = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("creates file", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "new.json")
 		data := mustMarshal(t, map[string]string{"key": "value"})
@@ -63,7 +80,7 @@ func TestWriteWithBackup(t *testing.T) {
 		}
 	})
 
-	t.Run("creates backup in the temp backup directory", func(t *testing.T) {
+	t.Run("creates backup in the shared backup directory", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "backup.json")
 
 		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
@@ -107,6 +124,35 @@ func TestWriteWithBackup(t *testing.T) {
 		json.Unmarshal(current, &currentData)
 		if !currentData["updated"] {
 			t.Error("file doesn't contain updated data")
+		}
+	})
+
+	t.Run("stores hinted backups under a subdirectory", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "hinted.json")
+		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
+
+		data := mustMarshal(t, map[string]bool{"updated": true})
+		if err := WriteWithBackup(path, data, "openclaw"); err != nil {
+			t.Fatal(err)
+		}
+
+		entries, err := os.ReadDir(filepath.Join(BackupDir(), "openclaw"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var found bool
+		for _, entry := range entries {
+			name := entry.Name()
+			if len(name) > len("hinted.json.") && name[:len("hinted.json.")] == "hinted.json." {
+				found = true
+				_ = os.Remove(filepath.Join(BackupDir(), "openclaw", name))
+				break
+			}
+		}
+
+		if !found {
+			t.Error("backup file was not created under hint directory")
 		}
 	})
 
@@ -189,6 +235,35 @@ func TestWriteWithBackup(t *testing.T) {
 			t.Error("backup file with timestamp not found")
 		}
 	})
+
+	t.Run("retains only the five newest backups per file", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "pruned.json")
+		if err := os.WriteFile(path, []byte(`{"v": 0}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		for i := 1; i <= maxBackupsPerFile; i++ {
+			backupPath := filepath.Join(BackupDir(), fmt.Sprintf("pruned.json.%d", i))
+			if err := os.WriteFile(backupPath, []byte(fmt.Sprintf(`{"v": %d}`, i)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		if err := WriteWithBackup(path, []byte(`{"v": 1}`)); err != nil {
+			t.Fatal(err)
+		}
+
+		backups, err := filepath.Glob(filepath.Join(BackupDir(), "pruned.json.*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(backups) != maxBackupsPerFile {
+			t.Fatalf("expected %d backups after pruning, got %d", maxBackupsPerFile, len(backups))
+		}
+		if _, err := os.Stat(filepath.Join(BackupDir(), "pruned.json.1")); !os.IsNotExist(err) {
+			t.Fatalf("expected oldest backup to be pruned, stat err = %v", err)
+		}
+	})
 }
 
 // Edge case tests for files.go
@@ -251,6 +326,36 @@ func TestWriteWithBackup_PermissionDenied(t *testing.T) {
 	}
 }
 
+func TestWriteWithBackup_UnchangedContentIsNoOp(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission tests unreliable on Windows")
+	}
+
+	tmpDir := isolatedTempDir(t)
+	path := filepath.Join(tmpDir, "unchanged-noop.json")
+	data := []byte(`{"same":true}`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(tmpDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(tmpDir, 0o755)
+
+	if err := WriteWithBackup(path, data); err != nil {
+		t.Fatalf("expected unchanged write to be a no-op, got %v", err)
+	}
+
+	backups, err := filepath.Glob(filepath.Join(BackupDir(), "unchanged-noop.json.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("expected no backups for unchanged content, got %d", len(backups))
+	}
+}
+
 // TestWriteWithBackup_DirectoryDoesNotExist verifies behavior when target directory doesn't exist.
 // writeWithBackup doesn't create directories - caller is responsible.
 func TestWriteWithBackup_DirectoryDoesNotExist(t *testing.T) {
@@ -302,9 +407,9 @@ func TestBackupToTmp_SpecialCharsInFilename(t *testing.T) {
 	path := filepath.Join(tmpDir, "my config (backup).json")
 	os.WriteFile(path, []byte(`{"test": true}`), 0o644)
 
-	backupPath, err := backupToTmp(path)
+	backupPath, err := writeBackupCopy(path, "")
 	if err != nil {
-		t.Fatalf("backupToTmp with special chars failed: %v", err)
+		t.Fatalf("writeBackupCopy with special chars failed: %v", err)
 	}
 
 	// Verify backup exists and has correct content

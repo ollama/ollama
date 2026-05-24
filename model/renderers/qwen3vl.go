@@ -1,7 +1,6 @@
 package renderers
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -15,18 +14,17 @@ type Qwen3VLRenderer struct {
 }
 
 func (r *Qwen3VLRenderer) renderContent(content api.Message, imageOffset int) (string, int) {
+	if r.useImgTags {
+		return renderContentWithImageTags(content.Content, len(content.Images), imageOffset)
+	}
+
 	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
 	var subSb strings.Builder
 	for range content.Images {
 		// TODO: (jmorganca): how to render this is different for different
 		// model backends, and so we should eventually parameterize this or
 		// only output a placeholder such as [img]
-		if r.useImgTags {
-			subSb.WriteString(fmt.Sprintf("[img-%d]", imageOffset))
-			imageOffset++
-		} else {
-			subSb.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
-		}
+		subSb.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
 	}
 	// TODO: support videos
 
@@ -126,7 +124,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think
 			if i == 0 || messages[i-1].Role != "tool" {
 				sb.WriteString("<|im_start|>user")
 			}
-			sb.WriteString("\n<tool_response>\n" + message.Content + "\n</tool_response>")
+			sb.WriteString("\n<tool_response>\n" + content + "\n</tool_response>")
 			if i == len(messages)-1 || messages[i+1].Role != "tool" {
 				sb.WriteString("<|im_end|>\n")
 			}

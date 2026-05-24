@@ -63,7 +63,7 @@ func TestDroidEdit(t *testing.T) {
 
 	t.Run("fresh install creates models with sequential indices", func(t *testing.T) {
 		cleanup()
-		if err := d.Edit([]string{"model-a", "model-b"}); err != nil {
+		if err := d.Edit(testLaunchModels("model-a", "model-b")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -99,7 +99,7 @@ func TestDroidEdit(t *testing.T) {
 
 	t.Run("sets sessionDefaultSettings.model to first model ID", func(t *testing.T) {
 		cleanup()
-		if err := d.Edit([]string{"model-a", "model-b"}); err != nil {
+		if err := d.Edit(testLaunchModels("model-a", "model-b")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -116,10 +116,10 @@ func TestDroidEdit(t *testing.T) {
 	t.Run("re-indexes when models removed", func(t *testing.T) {
 		cleanup()
 		// Add three models
-		d.Edit([]string{"model-a", "model-b", "model-c"})
+		d.Edit(testLaunchModels("model-a", "model-b", "model-c"))
 
 		// Remove middle model
-		d.Edit([]string{"model-a", "model-c"})
+		d.Edit(testLaunchModels("model-a", "model-c"))
 
 		settings := readSettings()
 		models := getCustomModels(settings)
@@ -155,7 +155,7 @@ func TestDroidEdit(t *testing.T) {
 			]
 		}`), 0o644)
 
-		d.Edit([]string{"model-a"})
+		d.Edit(testLaunchModels("model-a"))
 
 		settings := readSettings()
 		models := getCustomModels(settings)
@@ -184,7 +184,7 @@ func TestDroidEdit(t *testing.T) {
 			"sessionDefaultSettings": {"autonomyMode": "auto-high"}
 		}`), 0o644)
 
-		d.Edit([]string{"model-a"})
+		d.Edit(testLaunchModels("model-a"))
 
 		settings := readSettings()
 
@@ -203,7 +203,7 @@ func TestDroidEdit(t *testing.T) {
 
 	t.Run("required fields present", func(t *testing.T) {
 		cleanup()
-		d.Edit([]string{"test-model"})
+		d.Edit(testLaunchModels("test-model"))
 
 		settings := readSettings()
 		models := getCustomModels(settings)
@@ -239,7 +239,7 @@ func TestDroidEdit(t *testing.T) {
 			"sessionDefaultSettings": {"reasoningEffort": "off"}
 		}`), 0o644)
 
-		d.Edit([]string{"model-a"})
+		d.Edit(testLaunchModels("model-a"))
 
 		settings := readSettings()
 		session := settings["sessionDefaultSettings"].(map[string]any)
@@ -256,7 +256,7 @@ func TestDroidEdit(t *testing.T) {
 			"sessionDefaultSettings": {"reasoningEffort": "high"}
 		}`), 0o644)
 
-		d.Edit([]string{"model-a"})
+		d.Edit(testLaunchModels("model-a"))
 
 		settings := readSettings()
 		session := settings["sessionDefaultSettings"].(map[string]any)
@@ -281,7 +281,7 @@ func TestDroidEdit_CorruptedJSON(t *testing.T) {
 	os.WriteFile(settingsPath, []byte(`{corrupted json content`), 0o644)
 
 	// Corrupted JSON should return an error so user knows something is wrong
-	err := d.Edit([]string{"model-a"})
+	err := d.Edit(testLaunchModels("model-a"))
 	if err == nil {
 		t.Fatal("expected error for corrupted JSON, got nil")
 	}
@@ -306,7 +306,7 @@ func TestDroidEdit_WrongTypeCustomModels(t *testing.T) {
 	os.WriteFile(settingsPath, []byte(`{"customModels": "not an array"}`), 0o644)
 
 	// Should not panic - wrong type should be handled gracefully
-	err := d.Edit([]string{"model-a"})
+	err := d.Edit(testLaunchModels("model-a"))
 	if err != nil {
 		t.Fatalf("Edit failed with wrong type customModels: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestDroidEdit_EmptyModels(t *testing.T) {
 	os.WriteFile(settingsPath, []byte(originalContent), 0o644)
 
 	// Empty models should be no-op
-	err := d.Edit([]string{})
+	err := d.Edit(testLaunchModels())
 	if err != nil {
 		t.Fatalf("Edit with empty models failed: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestDroidEdit_DuplicateModels(t *testing.T) {
 	settingsPath := filepath.Join(settingsDir, "settings.json")
 
 	// Add same model twice
-	err := d.Edit([]string{"model-a", "model-a"})
+	err := d.Edit(testLaunchModels("model-a", "model-a"))
 	if err != nil {
 		t.Fatalf("Edit with duplicates failed: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestDroidEdit_MalformedModelEntry(t *testing.T) {
 	// Model entry is a string instead of a map
 	os.WriteFile(settingsPath, []byte(`{"customModels": ["not a map", 123]}`), 0o644)
 
-	err := d.Edit([]string{"model-a"})
+	err := d.Edit(testLaunchModels("model-a"))
 	if err != nil {
 		t.Fatalf("Edit with malformed entries failed: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestDroidEdit_WrongTypeSessionSettings(t *testing.T) {
 	// sessionDefaultSettings is a string instead of map
 	os.WriteFile(settingsPath, []byte(`{"sessionDefaultSettings": "not a map"}`), 0o644)
 
-	err := d.Edit([]string{"model-a"})
+	err := d.Edit(testLaunchModels("model-a"))
 	if err != nil {
 		t.Fatalf("Edit with wrong type sessionDefaultSettings failed: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestDroidEdit_RoundTrip(t *testing.T) {
 	os.WriteFile(settingsPath, []byte(testDroidSettingsFixture), 0o644)
 
 	// Edit with new models
-	if err := d.Edit([]string{"llama3", "mistral"}); err != nil {
+	if err := d.Edit(testLaunchModels("llama3", "mistral")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -615,7 +615,7 @@ func TestDroidEdit_PreservesUnknownFields(t *testing.T) {
 		}`
 		os.WriteFile(settingsPath, []byte(original), 0o644)
 
-		if err := d.Edit([]string{"model-a"}); err != nil {
+		if err := d.Edit(testLaunchModels("model-a")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -660,7 +660,7 @@ func TestDroidEdit_PreservesUnknownFields(t *testing.T) {
 		}`
 		os.WriteFile(settingsPath, []byte(original), 0o644)
 
-		if err := d.Edit([]string{"llama3"}); err != nil {
+		if err := d.Edit(testLaunchModels("llama3")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -715,10 +715,10 @@ func TestDroidEdit_Idempotent(t *testing.T) {
 	os.WriteFile(settingsPath, []byte(testDroidSettingsFixture), 0o644)
 
 	// Edit twice with same models
-	d.Edit([]string{"llama3", "mistral"})
+	d.Edit(testLaunchModels("llama3", "mistral"))
 	firstData, _ := os.ReadFile(settingsPath)
 
-	d.Edit([]string{"llama3", "mistral"})
+	d.Edit(testLaunchModels("llama3", "mistral"))
 	secondData, _ := os.ReadFile(settingsPath)
 
 	// Results should be identical
@@ -744,7 +744,7 @@ func TestDroidEdit_MultipleConsecutiveEdits(t *testing.T) {
 		if i%2 == 0 {
 			models = []string{"model-x", "model-y", "model-z"}
 		}
-		if err := d.Edit(models); err != nil {
+		if err := d.Edit(launchModelsFromNames(models)); err != nil {
 			t.Fatalf("edit %d failed: %v", i, err)
 		}
 	}
@@ -803,7 +803,7 @@ func TestDroidEdit_UnicodeAndSpecialCharacters(t *testing.T) {
 	}`
 	os.WriteFile(settingsPath, []byte(original), 0o644)
 
-	if err := d.Edit([]string{"model-a"}); err != nil {
+	if err := d.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -845,7 +845,7 @@ func TestDroidEdit_LargeNumbers(t *testing.T) {
 	}`
 	os.WriteFile(settingsPath, []byte(original), 0o644)
 
-	if err := d.Edit([]string{"model-a"}); err != nil {
+	if err := d.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -889,7 +889,7 @@ func TestDroidEdit_EmptyAndNullValues(t *testing.T) {
 	}`
 	os.WriteFile(settingsPath, []byte(original), 0o644)
 
-	if err := d.Edit([]string{"model-a"}); err != nil {
+	if err := d.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -943,7 +943,7 @@ func TestDroidEdit_DeeplyNestedStructures(t *testing.T) {
 	}`
 	os.WriteFile(settingsPath, []byte(original), 0o644)
 
-	if err := d.Edit([]string{"model-a"}); err != nil {
+	if err := d.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -988,7 +988,7 @@ func TestDroidEdit_ModelNamesWithSpecialCharacters(t *testing.T) {
 		"model_with_underscores",
 	}
 
-	if err := d.Edit(specialModels); err != nil {
+	if err := d.Edit(launchModelsFromNames(specialModels)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1025,7 +1025,7 @@ func TestDroidEdit_MissingCustomModelsKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	settings = updateDroidSettings(settings, settingsStruct, []string{"model-a"})
+	settings = updateDroidSettings(settings, settingsStruct, testLaunchModels("model-a"))
 
 	// Original fields preserved
 	if settings["diffMode"] != "github" {
@@ -1062,7 +1062,7 @@ func TestDroidEdit_NullCustomModels(t *testing.T) {
 	}`
 	os.WriteFile(settingsPath, []byte(original), 0o644)
 
-	if err := d.Edit([]string{"model-a"}); err != nil {
+	if err := d.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1090,7 +1090,7 @@ func TestDroidEdit_MinifiedJSON(t *testing.T) {
 	original := `{"diffMode":"github","enableHooks":true,"hooks":{"imported":["cmd1","cmd2"]},"customModels":[],"sessionDefaultSettings":{}}`
 	os.WriteFile(settingsPath, []byte(original), 0o644)
 
-	if err := d.Edit([]string{"model-a"}); err != nil {
+	if err := d.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1120,7 +1120,7 @@ func TestDroidEdit_CreatesDirectoryIfMissing(t *testing.T) {
 		t.Fatal("directory should not exist before test")
 	}
 
-	if err := d.Edit([]string{"model-a"}); err != nil {
+	if err := d.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1157,7 +1157,7 @@ func TestDroidEdit_PreservesFileAfterError(t *testing.T) {
 	os.WriteFile(settingsPath, []byte(original), 0o644)
 
 	// Empty models list is a no-op, should not modify file
-	d.Edit([]string{})
+	d.Edit(testLaunchModels())
 
 	data, _ := os.ReadFile(settingsPath)
 	if string(data) != original {
@@ -1172,7 +1172,7 @@ func TestDroidEdit_BackupCreated(t *testing.T) {
 
 	settingsDir := filepath.Join(tmpDir, ".factory")
 	settingsPath := filepath.Join(settingsDir, "settings.json")
-	backupDir := filepath.Join(os.TempDir(), "ollama-backups")
+	backupDir := fileutil.BackupDir()
 
 	os.MkdirAll(settingsDir, 0o755)
 
@@ -1181,12 +1181,12 @@ func TestDroidEdit_BackupCreated(t *testing.T) {
 	original := fmt.Sprintf(`{"diffMode": "%s", "customModels": [], "sessionDefaultSettings": {}}`, uniqueMarker)
 	os.WriteFile(settingsPath, []byte(original), 0o644)
 
-	if err := d.Edit([]string{"model-a"}); err != nil {
+	if err := d.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 
 	// Find backup containing our unique marker
-	backups, _ := filepath.Glob(filepath.Join(backupDir, "settings.json.*"))
+	backups, _ := filepath.Glob(filepath.Join(backupDir, "droid", "settings.json.*"))
 	foundBackup := false
 	for _, backup := range backups {
 		data, err := os.ReadFile(backup)
@@ -1231,7 +1231,7 @@ func TestDroidEdit_LargeNumberOfModels(t *testing.T) {
 		models = append(models, fmt.Sprintf("model-%d", i))
 	}
 
-	if err := d.Edit(models); err != nil {
+	if err := d.Edit(launchModelsFromNames(models)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1261,7 +1261,7 @@ func TestDroidEdit_LocalModelDefaultMaxOutput(t *testing.T) {
 	settingsDir := filepath.Join(tmpDir, ".factory")
 	settingsPath := filepath.Join(settingsDir, "settings.json")
 
-	if err := d.Edit([]string{"llama3.2"}); err != nil {
+	if err := d.Edit(testLaunchModels("llama3.2")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1312,7 +1312,7 @@ func TestDroidEdit_ArraysWithMixedTypes(t *testing.T) {
 	}`
 	os.WriteFile(settingsPath, []byte(original), 0o644)
 
-	if err := d.Edit([]string{"model-a"}); err != nil {
+	if err := d.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 

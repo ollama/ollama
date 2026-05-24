@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -28,7 +29,12 @@ func TestList(t *testing.T) {
 		"myhost/mynamespace/lips:code",
 	}
 
-	var s Server
+	s := Server{modelCaches: &modelCaches{modelList: newModelListCache()}}
+	s.modelCaches.modelList.Start(context.Background())
+	if err := s.modelCaches.modelList.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
 	for _, n := range expectNames {
 		_, digest := createBinFile(t, nil, nil)
 
@@ -62,5 +68,11 @@ func TestList(t *testing.T) {
 
 	if !slices.Equal(actualNames, expectNames) {
 		t.Fatalf("expected slices to be equal %v", actualNames)
+	}
+
+	for _, m := range resp.Models {
+		if !slices.Contains(m.Capabilities, "completion") {
+			t.Fatalf("capabilities for %q = %v, want completion", m.Name, m.Capabilities)
+		}
 	}
 }

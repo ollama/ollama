@@ -20,9 +20,7 @@ import (
 	"github.com/ollama/ollama/format"
 )
 
-const (
-	modelRecommendationsURL = "https://ollama.com/api/experimental/model-recommendations"
-)
+const modelRecommendationsURL = "https://ollama.com/api/experimental/model-recommendations"
 
 var (
 	modelRecommendationsRefreshInterval     = 4 * time.Hour
@@ -323,6 +321,7 @@ func validateModelRecommendations(recs []api.ModelRecommendation) ([]api.ModelRe
 	for _, rec := range recs {
 		rec.Model = strings.TrimSpace(rec.Model)
 		rec.Description = strings.TrimSpace(rec.Description)
+		rec.RequiredPlan = strings.TrimSpace(rec.RequiredPlan)
 
 		if rec.Model == "" {
 			return nil, errors.New("recommendation missing model")

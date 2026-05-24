@@ -51,7 +51,7 @@ func TestPoolsideRunSetsOllamaEnv(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 	p := &Poolside{}
-	if err := p.Run("qwen3.5", []string{"session"}); err != nil {
+	if err := p.Run("qwen3.5", nil, []string{"session"}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
@@ -78,7 +78,7 @@ func TestPoolsideRunWindowsUnsupported(t *testing.T) {
 	t.Cleanup(func() { poolsideGOOS = prev })
 
 	p := &Poolside{}
-	err := p.Run("kimi-k2.6:cloud", nil)
+	err := p.Run("kimi-k2.6:cloud", nil, nil)
 	if err == nil {
 		t.Fatal("expected Windows unsupported error")
 	}

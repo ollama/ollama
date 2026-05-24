@@ -289,7 +289,7 @@ func TestAPIChat(t *testing.T) {
 				}
 			case <-done:
 				if genErr != nil {
-					t.Fatalf("failed with %s request prompt %v", req.Model, req.Messages)
+					t.Fatalf("failed with %s request prompt %s", req.Model, summarizeMessages(req.Messages))
 				}
 				// Verify the response contains the expected data
 				response := buf.String()
