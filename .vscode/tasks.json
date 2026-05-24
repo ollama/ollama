@@ -1,0 +1,75 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "1. Setup Environment",
+            "type": "shell",
+            "command": "powershell",
+            "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/setup_env.ps1"],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "2. Apply All Fixes",
+            "type": "shell",
+            "command": "powershell",
+            "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/apply_rocwmma_fix.ps1"],
+            "group": "build",
+            "dependsOn": "1. Setup Environment",
+            "problemMatcher": []
+        },
+        {
+            "label": "3. Configure CMake",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-B", "build", "-G", "Ninja",
+                "-DCMAKE_C_COMPILER=clang",
+                "-DCMAKE_CXX_COMPILER=clang++",
+                "-DCMAKE_HIP_COMPILER=clang++",
+                "-DAMDGPU_TARGETS=gfx1201",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DCMAKE_PREFIX_PATH=C:/Program Files/AMD/ROCm/7.1",
+                "-DGGML_HIP_ROCWMMA_FATTN=ON",
+                "-DCMAKE_HIP_FLAGS=-parallel-jobs=4 -mllvm -amdgpu-unroll-threshold-local=900 -mllvm -amdgpu-early-inline-all=true",
+                "-S", "."
+            ],
+            "group": "build",
+            "dependsOn": "2. Apply All Fixes",
+            "problemMatcher": []
+        },
+        {
+            "label": "4. Build Ollama (Release)",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "build", "--config", "Release", "--parallel"],
+            "group": {"kind": "build", "isDefault": true},
+            "dependsOn": "3. Configure CMake",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "5. Build Installer",
+            "type": "shell",
+            "command": "powershell",
+            "args": ["-ExecutionPolicy", "Bypass", "-File", ".\\scripts\\build_windows.ps1"],
+            "group": "build",
+            "dependsOn": "4. Build Ollama (Release)"
+        },
+        {
+            "label": "Quick Rebuild",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "build", "--config", "Release", "--parallel"],
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Clean",
+            "type": "shell",
+            "command": "powershell",
+            "args": ["-Command", "Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue"],
+            "group": "build",
+            "problemMatcher": []
+        }
+    ]
+}

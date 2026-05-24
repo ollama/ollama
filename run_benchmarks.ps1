@@ -1,5 +1,5 @@
-$layers = @(22, 25, 28, 30, 33)
-$models = @("gemma-4-e4b:latest", "qwen2.5-coder:latest")
+$layers = @(25, 28, 33)
+$models = @("devstral:latest")
 $prompt = "Write a comprehensive Python script that sorts a list using quicksort and explains every step."
 
 $resultsFile = "C:\Users\rr\Desktop\Ollama\ollama-for-amd\multi_model_benchmarks.txt"

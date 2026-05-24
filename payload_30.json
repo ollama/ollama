@@ -1,0 +1,5 @@
+{
+    "prompt":  "Write a comprehensive Python script that sorts a list using quicksort and explains every step.",
+    "model":  "gemma-4-e4b:latest",
+    "stream":  false
+}

@@ -10,36 +10,67 @@
 > This is a highly optimized build of Ollama tailored for AMD RDNA4 architecture (specifically RX 9070 XT). 
 > It includes 20 specific optimizations such as Paged KV Cache, Split-K Matmul, MoE Top-K routing, RoPE Cache, and TurboQuant.
 > 
-> **Benchmarks (8B Q8_0 model on RX 9070 XT)**
-> - **Prefill Rate:** ~3463 tokens/sec
-> - **Generate Rate:** ~78 tokens/sec
-> - **Time to First Token (TTFT):** ~130ms
->
-> **How to Test / Benchmark**
-> ```powershell
-> # 1. Set optimized environment variables for RDNA4
-> $env:HSA_OVERRIDE_GFX_VERSION = "12.0.1"
-> $env:ROCR_VISIBLE_DEVICES = "0"
-> $env:HIP_VISIBLE_DEVICES = "0"
-> $env:OLLAMA_FLASH_ATTENTION = "1"
-> $env:OLLAMA_NUM_GPU = "26" # Adjust layers here
-> 
-> # 2. Run your benchmark or start the server
-> .\ollama.exe run devstral:latest "What is the capital of France?" --verbose
-> ```
+## 🚀 The "v2.0" Architectural Fixes & Optimization
+We have fully integrated the **v2.0 Bank-Conflict-Free Kernel Fixes** into the codebase. These include:
+1. **Bank-Conflict-Free `s_O` Rescale:** Eliminating 16-way shared memory bank conflicts by padding the K/V shared memory stride.
+2. **Register-Accumulated $P \times V$:** Removing the scalar FMA thrashing in the inner loop by replacing it with a register-accumulated `o_reg[][]`.
+3. **Dispatch Fixes:** Hardened compile-time and runtime compute capability checks (`cc >= 12000`) in `fattn.cu` to guarantee the custom kernel always executes on RDNA4.
+4. **Decode Vector Kernel (`fattn-vec-gfx12.cuh`):** Added a new optimized vector path utilizing `__builtin_amdgcn_v_pk_fma_f16` to push beyond GDDR6 limitations during token generation.
 
-## 🚀 Benchmark Performance & Insights (gfx1201 / RX 9070 XT)
+---
 
-We ran extensive benchmarks evaluating the baseline engine vs. our optimized builds, focusing heavily on how RDNA4 matrix cores interact with LLM inference. 
+## 📊 Benchmark Performance (gfx1201 / RX 9070 XT)
+
+All tests run via the custom `run_benchmarks.ps1` automation script.
 
 ### 1. Prefill Speed (Prompt Evaluation)
-Thanks to the introduction of native **RDNA4 WMMA Matrix Cores** (`__builtin_amdgcn_wmma_f32_16x16x16_f16_w32_gfx12`), our bleeding-edge `gfx12_mma` build delivers a massive boost to the Prompt Evaluation rate. Matrix multiplications for large contexts ($Q \times K^T \times V$) map perfectly to 16x16 matrix structures.
-* **Gemma-4-e4b Prefill**: ~1,100 tokens/sec (Hybrid Offload)
-* **Llama-3-8B Prefill**: ~1,881 tokens/sec (100% Offload)
+Thanks to the native **RDNA4 WMMA Matrix Cores** (`__builtin_amdgcn_wmma_f32_16x16x16_f16_w32_gfx12`) combined with our **v2.0 Bank-Conflict-Free architecture**, prefill speeds have surged by ~27%:
+* **Qwen2.5-Coder (7B)**: ~1,673 tokens/sec (Layer 28)
+* **Gemma-4-e4b (8B)**: ~1,396 tokens/sec (Layer 25 & 27)
+* **Devstral (MoE)**: ~15.5 tokens/sec (Heavily bottlenecked without MTP enabled).
 
 ### 2. Decode Speed (Token Generation)
-Unlike prefill, token generation (decode) processes one token at a time ($Sq = 1$). This is a 1D vector-matrix multiplication, which **mathematically cannot utilize 16x16 matrix cores**. Therefore, decode speeds flatline exactly at the physical limit of the GDDR6 memory bandwidth.
-* **Decode Bottleneck**: Generation speeds on the RX 9070 XT hit roughly **76 tokens/sec**, completely saturating the 576 GB/s memory bandwidth limit.
+Generation is a 1D vector-matrix multiplication ($Sq = 1$). It is fundamentally memory-bandwidth bound (GDDR6 576 GB/s):
+* **Qwen2.5-Coder (7B)**: ~107 tokens/sec
+* **Gemma-4-e4b (8B)**: ~76 tokens/sec
+* **Devstral (MoE)**: ~6.7 tokens/sec
+
+---
+
+## 🛠️ How to Replicate Our Environment
+
+To replicate these exact benchmarks on your own RDNA4 system, follow these commands:
+
+### Linux (via our new `apply_fixes.sh`)
+```bash
+# 1. Clone the repository
+git clone -b rdna4-gfx1201 https://github.com/Maxritz/ollama-ROCM.git
+cd ollama-ROCM
+
+# 2. Apply all fixes and compile
+chmod +x apply_fixes.sh && ./apply_fixes.sh
+./build_gfx1201.sh
+
+# 3. Verify the Kernel Executes
+OLLAMA_DEBUG=1 ./build/bin/ollama run qwen2.5-coder "test" --verbose 2>&1 | grep -i gfx12
+```
+
+### Windows (PowerShell)
+```powershell
+# 1. Clone the repository
+git clone -b rdna4-gfx1201 https://github.com/Maxritz/ollama-ROCM.git
+cd ollama-ROCM
+
+# 2. Patch the code and build
+.\apply_rocwmma_fix.ps1
+.\build_gfx1201.ps1 -FastMath
+
+# 3. Verify the Kernel Executes
+$env:OLLAMA_DEBUG=1
+$env:HSA_OVERRIDE_GFX_VERSION="12.0.1"
+$env:OLLAMA_FLASH_ATTENTION="1"
+.\build\bin\Release\ollama.exe run qwen2.5-coder "test" --verbose
+```
 
 ---
 

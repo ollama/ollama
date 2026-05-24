@@ -1,0 +1,33 @@
+{
+    "cmake.configureOnOpen": false,
+    "cmake.generator": "Ninja",
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.configureSettings": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_HIP_COMPILER": "clang++",
+        "AMDGPU_TARGETS": "gfx1201",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "C:/Program Files/AMD/ROCm/7.1",
+        "GGML_HIP_ROCWMMA_FATTN": "ON",
+        "GGML_HIP_MTP": "OFF",
+        "GGML_HIP_TURBOQUANT": "OFF",
+        "CMAKE_HIP_FLAGS": "-parallel-jobs=4 -mllvm -amdgpu-unroll-threshold-local=900 -mllvm -amdgpu-early-inline-all=true"
+    },
+    "terminal.integrated.env.windows": {
+        "HIP_PATH": "C:\\Program Files\\AMD\\ROCm\\7.1",
+        "ROCM_PATH": "C:\\Program Files\\AMD\\ROCm\\7.1",
+        "PATH": "C:\\Program Files\\AMD\\ROCm\\7.1\\bin;${env:PATH}",
+        "AMDGPU_TARGETS": "gfx1201",
+        "GGML_HIP_ROCWMMA_FATTN": "1",
+        "GGML_HIP_MTP": "0",
+        "GGML_HIP_TURBOQUANT": "0",
+        "HIP_STREAM_PER_THREAD": "1"
+    },
+    "files.associations": {
+        "*.go": "go",
+        "*.hip": "cpp",
+        "*.cu": "cpp",
+        "*.cuh": "cpp"
+    }
+}
