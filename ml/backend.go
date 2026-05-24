@@ -271,6 +271,23 @@ type ScaledDotProductAttention interface {
 	ScaledDotProductAttention(ctx Context, key, value, mask, sinks Tensor, vmla Tensor, scale float64, cacheConfigApplied bool) Tensor
 }
 
+// PagedAttention implements PagedAttention with block tables for efficient
+// memory management with variable-length sequences.
+type PagedAttention interface {
+	// PagedAttention computes attention using paged KV cache with block tables.
+	//
+	// Parameters:
+	//   - ctx: computation context
+	//   - key: key tensor from paged cache
+	//   - value: value tensor from paged cache
+	//   - mask: optional attention mask
+	//   - blockTables: maps logical positions to physical block IDs [batch, max_blocks]
+	//   - seqLengths: actual sequence lengths [batch]
+	//   - scale: scaling factor for attention scores
+	//   - blockSize: number of tokens per KV cache block
+	PagedAttention(ctx Context, key, value, mask, blockTables, seqLengths Tensor, scale float64, blockSize int) Tensor
+}
+
 type number interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64 |
 		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |

@@ -57,6 +57,11 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 		key, value, mask = cache.Get(ctx)
 	}
 
+	// Check if we should use PagedAttention
+	if pagedCache, ok := cache.(*kvcache.Paged); ok {
+		return pagedAttention(ctx, query, key, value, mask, sinks, vmla, scale, pagedCache)
+	}
+
 	if sdpa, ok := query.(ml.ScaledDotProductAttention); ok {
 		cacheConfigApplied := cache != nil
 		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale, cacheConfigApplied)
@@ -81,4 +86,48 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 
 		return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	}
+}
+
+// pagedAttention implements PagedAttention using block tables for efficient
+// memory management with variable-length sequences.
+func pagedAttention(ctx ml.Context, query, key, value, mask, sinks ml.Tensor, vmla ml.Tensor, scale float64, cache *kvcache.Paged) ml.Tensor {
+	blockTables := cache.GetBlockTablesTensor(ctx)
+	seqLengths := cache.GetSeqLengthsTensor(ctx)
+	blockSize := cache.GetBlockSize()
+
+	// Permute query from model layout [headDim, numHeads, numTokens] to
+	// the layout expected by the PagedAttention kernel [headDim, numTokens, numHeads, batch]
+	query = query.Permute(ctx, 0, 2, 1, 3)
+
+	if pa, ok := query.(ml.PagedAttention); ok {
+		result := pa.PagedAttention(ctx, key, value, mask, blockTables, seqLengths, scale, blockSize)
+
+		if vmla != nil {
+			result = result.Permute(ctx, 0, 2, 1, 3)
+			result = vmla.Mulmat(ctx, result)
+			result = result.Permute(ctx, 0, 2, 1, 3)
+			result = result.Contiguous(ctx)
+		}
+
+		return result
+	}
+
+	// Fall back to standard attention if PagedAttention interface not available
+	query = query.Permute(ctx, 0, 2, 1, 3)
+	key = key.Permute(ctx, 0, 2, 1, 3)
+	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+
+	kq := key.MulmatFullPrec(ctx, query)
+	kq = kq.Scale(ctx, scale)
+	if mask != nil {
+		kq = kq.Add(ctx, mask)
+	}
+	kq = kq.Softmax(ctx)
+	kqv := value.Mulmat(ctx, kq)
+
+	if vmla != nil {
+		kqv = vmla.Mulmat(ctx, kqv)
+	}
+
+	return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 }

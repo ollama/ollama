@@ -541,6 +541,7 @@ extern "C" {
 
         GGML_OP_FLASH_ATTN_EXT,
         GGML_OP_FLASH_ATTN_BACK,
+        GGML_OP_PAGED_ATTENTION,  // PagedAttention with block table support
         GGML_OP_SSM_CONV,
         GGML_OP_SSM_SCAN,
         GGML_OP_WIN_PART,
@@ -2345,6 +2346,39 @@ extern "C" {
            struct ggml_tensor  * v,
            struct ggml_tensor  * d,
            bool                  masked);
+
+    // PagedAttention with block table support
+    // Computes attention using non-contiguous KV blocks via block_tables.
+    //
+    // Parameters:
+    //   ctx        - context
+    //   q          - query tensor [ne0, ne1, ne2, ne3] where:
+    //                ne0 = head_dim
+    //                ne1 = n_tokens (1 for decode)
+    //                ne2 = n_q_heads (supports GQA: n_q_heads >= n_kv_heads)
+    //                ne3 = batch_size
+    //   k          - paged key tensor [head_dim, n_kv_heads, block_size, n_blocks]
+    //                ne0=head_dim, ne1=n_kv_heads, ne2=block_size, ne3=n_blocks
+    //                Each physical block stores block_size contiguous key vectors
+    //   v          - paged value tensor, same layout as k
+    //   mask       - optional attention mask
+    //   block_tables - int32 tensor [max_blocks_per_seq, batch_size]
+    //                ne0=max_blocks_per_seq, ne1=batch_size
+    //                Maps (logical_block_idx, seq_idx) -> physical_block_id
+    //                Unused entries filled with -1
+    //   seq_lengths - int32 tensor, actual sequence lengths per batch [batch_size]
+    //   scale      - attention score scale factor (typically 1/sqrt(head_dim))
+    //   block_size - number of tokens per block (typically 16)
+    GGML_API struct ggml_tensor * ggml_paged_attention_ext(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q,
+            struct ggml_tensor  * k,
+            struct ggml_tensor  * v,
+            struct ggml_tensor  * mask,
+            struct ggml_tensor  * block_tables,
+            struct ggml_tensor  * seq_lengths,
+            float                 scale,
+            int                   block_size);
 
     GGML_API struct ggml_tensor * ggml_ssm_conv(
             struct ggml_context * ctx,

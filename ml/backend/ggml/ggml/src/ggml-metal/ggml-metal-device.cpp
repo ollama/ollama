@@ -65,6 +65,7 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_base(ggml
     switch (op) {
         case GGML_OP_ADD_ID: op_str = "add_id"; break;
         case GGML_OP_CONCAT: op_str = "concat"; break;
+        case GGML_OP_PAGED_ATTENTION: op_str = "paged_attention"; break;
         default: GGML_ABORT("fatal error");
     };
 

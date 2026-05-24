@@ -942,4 +942,29 @@ typedef struct {
     int64_t  np;
 } ggml_metal_kargs_opt_step_sgd;
 
+typedef struct {
+    int32_t  ne02;    // num q heads
+    int32_t  ne03;    // batch
+    uint64_t nb02;    // Q stride for heads
+    uint64_t nb03;    // Q stride for batch
+    int32_t  ne11;    // num kv heads
+    int32_t  ne12;    // block_size
+    int32_t  ne13;    // num blocks
+    uint64_t nb11;    // K stride for heads
+    uint64_t nb12;    // K stride for positions
+    uint64_t nb13;    // K stride for blocks
+    int32_t  ne20;    // V head dim
+    int32_t  ne21;    // V num kv heads
+    int32_t  ne22;    // V block_size
+    int32_t  ne23;    // V num blocks
+    uint64_t nb21;    // V stride for heads
+    uint64_t nb22;    // V stride for positions
+    uint64_t nb23;    // V stride for blocks
+    int32_t  max_blocks_seq;  // ne0 of block_tables
+    int32_t  gqa_ratio;
+    float    scale;
+    int32_t  block_size;
+    int32_t  head_dim;
+} ggml_metal_kargs_paged_attention;
+
 #endif // GGML_METAL_IMPL

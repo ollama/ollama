@@ -1972,6 +1972,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 bool masked = t != 0;
                 ggml_compute_forward_flash_attn_back(params, masked, tensor);
             } break;
+        case GGML_OP_PAGED_ATTENTION:
+            {
+                ggml_compute_forward_paged_attention(params, tensor);
+            } break;
         case GGML_OP_SSM_CONV:
             {
                 ggml_compute_forward_ssm_conv(params, tensor);
@@ -2888,6 +2892,15 @@ struct ggml_cplan ggml_graph_plan(
                             cur  = sizeof(float)*mxDn*n_tasks; // TODO: this can become (n_tasks-1)
                             cur += sizeof(float)*mxDn*n_tasks; // this is overestimated by x2
                         }
+                    } break;
+                case GGML_OP_PAGED_ATTENTION:
+                    {
+                        // PagedAttention memory: incremental softmax state + attention output buffer
+                        const int64_t D = node->src[0]->ne[0]; // head dim
+                        // Need storage for running max, sum_exp (for incremental softmax)
+                        // and temporary attention scores per block
+                        cur = sizeof(float) * 2 * D * n_tasks; // max + sum_exp per head
+                        cur += sizeof(float) * D * n_tasks; // output buffer per task
                     } break;
 
                 case GGML_OP_CROSS_ENTROPY_LOSS:

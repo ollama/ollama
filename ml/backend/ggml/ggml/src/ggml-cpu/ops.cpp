@@ -8726,6 +8726,291 @@ void ggml_compute_forward_flash_attn_back(
     }
 }
 
+// ggml_compute_forward_paged_attention
+
+// Helper: incremental softmax computation
+// This allows computing softmax incrementally across multiple blocks
+// which is essential for PagedAttention
+static void ggml_incremental_softmax_f32(
+        const float * scores,
+        float * output,
+        float * old_max,
+        float * old_sum_exp,
+        int n) {
+    // Find max in current block
+    float block_max = scores[0];
+    for (int i = 1; i < n; i++) {
+        if (scores[i] > block_max) {
+            block_max = scores[i];
+        }
+    }
+
+    // Update global max
+    float new_max = fmaxf(*old_max, block_max);
+
+    // Renormalize old sum_exp if max changed
+    float sum_exp = *old_sum_exp;
+    if (new_max > *old_max) {
+        sum_exp *= expf(*old_max - new_max);
+    }
+
+    // Add new block's contribution
+    for (int i = 0; i < n; i++) {
+        float exp_score = expf(scores[i] - new_max);
+        output[i] = exp_score;
+        sum_exp += exp_score;
+    }
+
+    // Normalize
+    float inv_sum = 1.0f / sum_exp;
+    for (int i = 0; i < n; i++) {
+        output[i] *= inv_sum;
+    }
+
+    *old_max = new_max;
+    *old_sum_exp = sum_exp;
+}
+
+static void ggml_compute_forward_paged_attention_one_chunk(
+        const ggml_compute_params * params,
+        ggml_tensor * dst,
+        int ir0, int ir1) {
+
+    const ggml_tensor * q           = dst->src[0];
+    const ggml_tensor * k           = dst->src[1];
+    const ggml_tensor * v           = dst->src[2];
+    const ggml_tensor * mask        = dst->src[3];
+    const ggml_tensor * block_tables = dst->src[4];
+    const ggml_tensor * seq_lengths  = dst->src[5];
+
+    GGML_TENSOR_LOCALS(int64_t, neq, q,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbq, q,   nb)
+    GGML_TENSOR_LOCALS(int64_t, nek, k,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbk, k,   nb)
+    GGML_TENSOR_LOCALS(int64_t, nev, v,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbv, v,   nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst, nb)
+
+    const int64_t DK = nek0;
+    const int64_t DV = nev0;
+
+    // K,V layout: [head_dim, num_kv_heads, block_size, num_blocks]
+    //  ne[0]=head_dim, ne[1]=num_kv_heads, ne[2]=block_size, ne[3]=num_blocks
+    const int64_t num_kv_heads = nek1;
+
+    // Get parameters
+    const float scale = dst->op_params[0];
+    const int block_size = (int)dst->op_params[1];
+
+    GGML_ASSERT(ne0 == DV);
+    GGML_ASSERT(ne2 == neq1);
+
+    // block_tables shape: [max_blocks_per_seq, batch_size] (int32)
+    const int32_t * block_tables_data = (const int32_t *)block_tables->data;
+    const int32_t max_blocks_per_seq = block_tables->ne[0];
+    const int32_t * seq_lengths_data  = (const int32_t *)seq_lengths->data;
+
+    // Process each query in the chunk
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int iq1 = ir % neq1; // token index in sequence (0 for decode)
+        const int iq2 = ir / neq1; // head index (Q head)
+        const int iq3 = ir / (neq1*neq2); // batch index
+
+        const int seq_len = seq_lengths_data[iq3];
+
+        // GQA: map Q head to KV head
+        const int kv_head = (int)((int64_t)iq2 * num_kv_heads / neq2);
+
+        // Get query vector
+        const float * q_data = (const float *) ((const char *) q->data + iq1*nbq1 + iq2*nbq2 + iq3*nbq3);
+
+        // Output buffer for this query
+        float * dst_data = (float *) ((char *) dst->data + ir*nb1);
+
+        // Initialize output
+        for (int dv = 0; dv < DV; ++dv) {
+            dst_data[dv] = 0.0f;
+        }
+
+        // Incremental softmax state
+        float softmax_max = -INFINITY;
+        float softmax_sum_exp = 0.0f;
+
+        // Process blocks for this sequence
+        const int num_blocks = (seq_len + block_size - 1) / block_size;
+
+        for (int block_idx = 0; block_idx < num_blocks; ++block_idx) {
+            // Get physical block ID from block table:
+            // block_tables is [max_blocks_per_seq, batch_size], ne[0]=max_blocks_per_seq
+            const int physical_block = block_tables_data[iq3 * max_blocks_per_seq + block_idx];
+
+            // Calculate range within this block
+            const int block_start = block_idx * block_size;
+            const int block_end   = MIN(block_start + block_size, seq_len);
+
+            // Skip if this block is entirely before the current position
+            if (block_end <= iq1) {
+                continue;
+            }
+
+            // Positions in this block we attend to (with causal masking)
+            const int kv_start = MAX(block_start, 0);
+            const int kv_end   = MIN(block_end, iq1 + 1);
+            const int kv_len   = kv_end - kv_start;
+
+            if (kv_len <= 0) {
+                continue;
+            }
+
+            float * block_scores = (float *) alloca(sizeof(float) * kv_len);
+
+            for (int ik = 0; ik < kv_len; ++ik) {
+                // ik is the offset within kv_start..kv_end
+                // We need the position within the physical block:
+                //   block_offset = (block_start + ik) % block_size = ik
+                //   since block_start = block_idx * block_size and ik < block_size
+                const int block_offset = ik;
+
+                // Access K: k[block_offset, kv_head, physical_block]
+                const float * k_data = (const float *) ((const char *) k->data +
+                    block_offset * nbk2 +      // position within block (dim 2 stride)
+                    kv_head * nbk1 +           // head index (dim 1 stride)
+                    physical_block * nbk3);    // block index (dim 3 stride)
+
+                // Dot product
+                float sum = 0.0f;
+                for (int dk = 0; dk < DK; ++dk) {
+                    sum += q_data[dk] * k_data[dk];
+                }
+                block_scores[ik] = sum * scale;
+            }
+
+            // Apply mask if provided
+            if (mask) {
+                for (int ik = 0; ik < kv_len; ++ik) {
+                    const int seq_pos = kv_start + ik;
+                    const float * mask_data = (const float *) ((const char *) mask->data +
+                        iq1 * mask->nb[1] +
+                        iq2 * mask->nb[2] +
+                        iq3 * mask->nb[3]);
+                    block_scores[ik] += mask_data[seq_pos];
+                }
+            }
+
+            // Incremental softmax
+            float * attn_weights = (float *) alloca(sizeof(float) * kv_len);
+            ggml_incremental_softmax_f32(block_scores, attn_weights,
+                &softmax_max, &softmax_sum_exp, kv_len);
+
+            // Accumulate weighted values
+            for (int ik = 0; ik < kv_len; ++ik) {
+                const int block_offset = ik; // position within physical block
+                const float weight = attn_weights[ik];
+
+                const float * v_data = (const float *) ((const char *) v->data +
+                    block_offset * nbv2 +
+                    kv_head * nbv1 +
+                    physical_block * nbv3);
+
+                for (int dv = 0; dv < DV; ++dv) {
+                    dst_data[dv] += weight * v_data[dv];
+                }
+            }
+        }
+    }
+}
+
+static void ggml_compute_forward_paged_attention_f32(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * q = dst->src[0];
+    const ggml_tensor * k = dst->src[1];
+    const ggml_tensor * v = dst->src[2];
+
+    GGML_TENSOR_LOCALS(int64_t, neq, q,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbq, q,   nb)
+    GGML_TENSOR_LOCALS(int64_t, nek, k,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbk, k,   nb)
+    GGML_TENSOR_LOCALS(int64_t, nev, v,   ne)
+    GGML_TENSOR_LOCALS(size_t,  nbv, v,   nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst, nb)
+
+    const int64_t DK = nek0;
+    const int64_t DV = nev0;
+    const int64_t N  = neq1;
+
+    GGML_ASSERT(ne0 == DV);
+    GGML_ASSERT(ne2 == N);
+
+    // input tensor rows must be contiguous
+    GGML_ASSERT(nbq0 == ggml_type_size(q->type));
+    GGML_ASSERT(nbk0 == ggml_type_size(k->type));
+    GGML_ASSERT(nbv0 == ggml_type_size(v->type));
+
+    GGML_ASSERT(neq0 == DK);
+    GGML_ASSERT(nek0 == DK);
+    GGML_ASSERT(nev0 == DV);
+
+    // dst cannot be transposed or permuted
+    GGML_ASSERT(nb0 == sizeof(float));
+    GGML_ASSERT(nb0 <= nb1);
+    GGML_ASSERT(nb1 <= nb2);
+    GGML_ASSERT(nb2 <= nb3);
+
+    // parallelize by q rows
+    const int64_t nr = neq1*neq2*neq3;
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const bool disable_chunking = ggml_is_numa();
+
+    int nth_scaled = nth * 4;
+    int64_t chunk_size = (nr + nth_scaled - 1) / nth_scaled;
+    int64_t nchunk     = (nr + chunk_size - 1) / chunk_size;
+
+    if (nth == 1 || nchunk < nth || disable_chunking) {
+        nchunk = nth;
+    }
+
+    if (ith == 0) {
+        ggml_threadpool_chunk_set(params->threadpool, nth);
+    }
+
+    ggml_barrier(params->threadpool);
+
+    const int64_t dr = (nr + nchunk - 1) / nchunk;
+
+    int current_chunk = ith;
+
+    while (current_chunk < nchunk) {
+        const int64_t ir0 = dr * current_chunk;
+        const int64_t ir1 = MIN(ir0 + dr, nr);
+
+        ggml_compute_forward_paged_attention_one_chunk(params, dst, ir0, ir1);
+
+        current_chunk = ggml_threadpool_chunk_add(params->threadpool, 1);
+    }
+}
+
+void ggml_compute_forward_paged_attention(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    switch (dst->src[0]->type) {
+        case GGML_TYPE_F32:
+            {
+                ggml_compute_forward_paged_attention_f32(params, dst);
+            } break;
+        default:
+            {
+                GGML_ABORT("fatal error");
+            }
+    }
+}
+
 // ggml_compute_forward_ssm_conv
 
 static void ggml_compute_forward_ssm_conv_f32(

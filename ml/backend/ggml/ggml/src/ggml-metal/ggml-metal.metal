@@ -10216,3 +10216,162 @@ kernel void kernel_opt_step_sgd_f32(
 
     x[gid] = x[gid] * (1.0f - pars[0] * pars[1]) - pars[0] * g[gid];
 }
+
+// PagedAttention kernel
+// Grid: (num_q_heads, batch_size, 1), each threadgroup processes one (head, seq) pair
+// Threadgroup: 128 threads
+kernel void kernel_paged_attention(
+        device       float  * dst     [[buffer(0)]],
+        device const float  * Q       [[buffer(1)]],
+        device const float  * K_cache [[buffer(2)]],
+        device const float  * V_cache [[buffer(3)]],
+        device const float  * mask    [[buffer(4)]],
+        device const int32_t * block_tables [[buffer(5)]],
+        device const int32_t * seq_lengths  [[buffer(6)]],
+        device const ggml_metal_kargs_paged_attention & args [[buffer(7)]],
+        uint3  tgpig  [[threadgroup_position_in_grid]],
+        uint   tiisg  [[thread_index_in_simdgroup]],
+        uint   sgitg  [[simdgroup_index_in_threadgroup]],
+        uint3  tpitg  [[thread_position_in_threadgroup]],
+        uint3  ntg    [[threads_per_threadgroup]]) {
+
+    const int head_idx = (int)tgpig.x;
+    const int seq_idx  = (int)tgpig.y;
+    const int kv_head_idx = head_idx / args.gqa_ratio;
+
+    const int seq_len = seq_lengths[seq_idx];
+    if (seq_len <= 0) {
+        return;
+    }
+
+    const int head_dim    = args.head_dim;
+    const int block_size  = args.block_size;
+    const int tid = (int)tpitg.x;
+
+    const float * q_src = (const float *)((const device char *)Q +
+        head_idx * args.nb02 + seq_idx * args.nb03);
+
+    const int nthreads = 128;
+    const int nelems_per_thread = (head_dim + nthreads - 1) / nthreads;
+
+    float out_acc[8] = {0.0f};
+
+    float max_logit = -INFINITY;
+    float sum_exp = 0.0f;
+
+    const int num_blocks = (seq_len + block_size - 1) / block_size;
+
+    threadgroup float block_scores[256];
+    threadgroup float block_max;
+    threadgroup float block_sum;
+
+    for (int block_idx = 0; block_idx < num_blocks; block_idx++) {
+        const int32_t physical_block = block_tables[seq_idx * args.max_blocks_seq + block_idx];
+
+        const int block_start = block_idx * block_size;
+        const int block_end   = min(block_start + block_size, seq_len);
+        const int block_len   = block_end - block_start;
+
+        const int nsimd = nthreads / 32;
+
+        // Compute QK^T scores for this block
+        for (int pos = sgitg; pos < block_len; pos += nsimd) {
+            float score = 0.0f;
+            const float * k_ptr = (const float *)((const device char *)K_cache +
+                pos * args.nb12 + kv_head_idx * args.nb11 + physical_block * args.nb13);
+
+            // Each thread computes partial dot product
+            for (int j = 0; j < nelems_per_thread; j++) {
+                int d = tid + j * nthreads;
+                if (d < head_dim) {
+                    score += q_src[d] * k_ptr[d];
+                }
+            }
+
+            // Reduce within simdgroup
+            score = simd_sum(score);
+
+            if (tiisg == 0) {
+                block_scores[pos] = score * args.scale;
+            }
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        // Find block max (single thread)
+        if (tid == 0) {
+            block_max = -INFINITY;
+            for (int pos = 0; pos < block_len; pos++) {
+                if (block_scores[pos] > block_max) {
+                    block_max = block_scores[pos];
+                }
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        float m_new = (block_idx == 0) ? block_max : max(max_logit, block_max);
+        float correction = exp(max_logit - m_new);
+
+        // Compute softmax and sum for this block
+        if (tid == 0) {
+            block_sum = 0.0f;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (int pos = tiisg; pos < block_len; pos += 32) {
+            float e = exp(block_scores[pos] - m_new);
+            block_scores[pos] = e; // reuse as softmax weight
+            // Atomic add to block_sum
+            // Since we only have one simd writing, use simd reduction
+        }
+
+        if (tid == 0) {
+            block_sum = 0.0f;
+            for (int pos = 0; pos < block_len; pos++) {
+                block_sum += block_scores[pos];
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        float new_sum = sum_exp * correction + block_sum;
+
+        // Rescale output accumulators
+        for (int j = 0; j < min(nelems_per_thread, 8); j++) {
+            int d = tid + j * nthreads;
+            if (d < head_dim) {
+                out_acc[j] *= correction;
+            }
+        }
+
+        // Accumulate V * softmax for this block
+        for (int pos = sgitg; pos < block_len; pos += nsimd) {
+            float w = block_scores[pos];
+            const float * v_ptr = (const float *)((const device char *)V_cache +
+                pos * args.nb22 + kv_head_idx * args.nb21 + physical_block * args.nb23);
+
+            for (int j = 0; j < min(nelems_per_thread, 8); j++) {
+                int d = tid + j * nthreads;
+                if (d < head_dim) {
+                    out_acc[j] += w * v_ptr[d];
+                }
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        max_logit = m_new;
+        sum_exp = new_sum;
+    }
+
+    // Normalize and write output
+    float inv_sum = 1.0f / sum_exp;
+
+    float * dst_row = (device float *)((device char *)dst +
+        head_idx * args.nb02 + seq_idx * args.nb03);
+
+    for (int j = 0; j < min(nelems_per_thread, 8); j++) {
+        int d = tid + j * nthreads;
+        if (d < head_dim) {
+            dst_row[d] = out_acc[j] * inv_sum;
+        }
+    }
+}

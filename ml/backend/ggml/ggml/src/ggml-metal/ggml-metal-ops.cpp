@@ -178,8 +178,75 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
     //GGML_LOG_INFO("%s: encoding node %3d, op = %8s\n", __func__, idx, ggml_op_name(node->op));
 
     if (ggml_is_empty(node)) {
-        return 1;
-    }
+    return 1;
+}
+
+int ggml_metal_op_paged_attention(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    assert(op->op == GGML_OP_PAGED_ATTENTION);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    ggml_tensor * q            = op->src[0];
+    ggml_tensor * k            = op->src[1];
+    ggml_tensor * v            = op->src[2];
+    ggml_tensor * mask         = op->src[3];
+    ggml_tensor * block_tables = op->src[4];
+    ggml_tensor * seq_lengths  = op->src[5];
+
+    const float scale     = *(const float *)op->op_params;
+    const int   block_sz  = *(const int *)(op->op_params + sizeof(float));
+    const int   head_dim  = q->ne[0];
+    const int   num_q_heads = q->ne[2];
+    const int   num_kv_heads = k->ne[1];
+    const int   gqa_ratio = num_q_heads / num_kv_heads;
+
+    ggml_metal_kargs_paged_attention args = {
+        /*.ne02           =*/ (int32_t)q->ne[2],
+        /*.ne03           =*/ (int32_t)q->ne[3],
+        /*.nb02           =*/ (uint64_t)q->nb[2],
+        /*.nb03           =*/ (uint64_t)q->nb[3],
+        /*.ne11           =*/ (int32_t)k->ne[1],
+        /*.ne12           =*/ (int32_t)k->ne[2],
+        /*.ne13           =*/ (int32_t)k->ne[3],
+        /*.nb11           =*/ (uint64_t)k->nb[1],
+        /*.nb12           =*/ (uint64_t)k->nb[2],
+        /*.nb13           =*/ (uint64_t)k->nb[3],
+        /*.ne20           =*/ (int32_t)v->ne[0],
+        /*.ne21           =*/ (int32_t)v->ne[1],
+        /*.ne22           =*/ (int32_t)v->ne[2],
+        /*.ne23           =*/ (int32_t)v->ne[3],
+        /*.nb21           =*/ (uint64_t)v->nb[1],
+        /*.nb22           =*/ (uint64_t)v->nb[2],
+        /*.nb23           =*/ (uint64_t)v->nb[3],
+        /*.max_blocks_seq =*/ (int32_t)block_tables->ne[0],
+        /*.gqa_ratio      =*/ (int32_t)gqa_ratio,
+        /*.scale          =*/ scale,
+        /*.block_size     =*/ block_sz,
+        /*.head_dim       =*/ head_dim,
+    };
+
+    auto pipeline = ggml_metal_library_get_pipeline_base(lib, GGML_OP_PAGED_ATTENTION);
+
+    int ida = 0;
+    ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op),       ida++);
+    ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(q),        ida++);
+    ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(k),        ida++);
+    ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(v),        ida++);
+    ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(mask),     ida++);
+    ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(block_tables), ida++);
+    ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(seq_lengths),  ida++);
+    ggml_metal_encoder_set_bytes(enc, &args, sizeof(args), ida);
+
+    const int nth = 128;
+    dim3 grid(num_q_heads, (uint32_t)q->ne[3], 1);
+
+    ggml_metal_encoder_dispatch_threadgroups(enc, grid.x, grid.y, grid.z, nth, 1, 1);
+
+    return 1;
+}
 
     switch (node->op) {
         case GGML_OP_NONE:
@@ -429,6 +496,10 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
         case GGML_OP_FLASH_ATTN_EXT:
             {
                 n_fuse = ggml_metal_op_flash_attn_ext(ctx, idx);
+            } break;
+        case GGML_OP_PAGED_ATTENTION:
+            {
+                n_fuse = ggml_metal_op_paged_attention(ctx, idx);
             } break;
         case GGML_OP_DUP:
         case GGML_OP_CPY:

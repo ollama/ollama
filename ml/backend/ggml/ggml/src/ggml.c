@@ -1048,9 +1048,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_SGD",
 
     "GLU",
+    "PAGED_ATTENTION",
 };
 
-static_assert(GGML_OP_COUNT == 95, "GGML_OP_COUNT != 95");
+static_assert(GGML_OP_COUNT == 96, "GGML_OP_COUNT != 96");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1157,9 +1158,10 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "sgd(x)",
 
     "glu(x)",
+    "paged_attention(x)",
 };
 
-static_assert(GGML_OP_COUNT == 95, "GGML_OP_COUNT != 95");
+static_assert(GGML_OP_COUNT == 96, "GGML_OP_COUNT != 96");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -5393,6 +5395,62 @@ struct ggml_tensor * ggml_flash_attn_back(
     result->src[1] = k;
     result->src[2] = v;
     result->src[3] = d;
+
+    return result;
+}
+
+// ggml_paged_attention_ext
+
+struct ggml_tensor * ggml_paged_attention_ext(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * q,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * v,
+        struct ggml_tensor  * mask,
+        struct ggml_tensor  * block_tables,
+        struct ggml_tensor  * seq_lengths,
+        float                 scale,
+        int                   block_size) {
+    // Validate dimensions
+    // Q: [head_dim, n_tokens, n_q_heads, batch]
+    // K: [head_dim, n_kv_heads, block_size, n_blocks]
+    // V: same layout as K
+    GGML_ASSERT(q->ne[0] == k->ne[0]);  // head_dim matches
+    GGML_ASSERT(k->ne[0] == v->ne[0]);  // K,V head_dim match
+    GGML_ASSERT(k->ne[1] == v->ne[1]);  // K,V num_kv_heads match
+    GGML_ASSERT(k->ne[2] == v->ne[2]);  // K,V block_size match
+    GGML_ASSERT(k->ne[3] == v->ne[3]);  // K,V num_blocks match
+
+    // block_tables: [max_blocks_per_seq, batch_size] (int32)
+    // seq_lengths: [batch_size] (int32)
+    if (block_tables) {
+        GGML_ASSERT(block_tables->type == GGML_TYPE_I32);
+        GGML_ASSERT(block_tables->ne[1] == q->ne[3]);  // batch_size matches Q
+    }
+    if (seq_lengths) {
+        GGML_ASSERT(seq_lengths->type == GGML_TYPE_I32);
+        GGML_ASSERT(seq_lengths->ne[0] == q->ne[3]);  // batch_size matches Q
+    }
+
+    if (mask) {
+        GGML_ASSERT(ggml_is_contiguous(mask));
+    }
+
+    // Output shape: [head_dim, n_tokens, n_heads, batch_size]
+    int64_t ne[4] = { v->ne[0], q->ne[1], q->ne[2], q->ne[3] };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    // Store parameters: scale, block_size
+    float params[2] = { scale, (float)block_size };
+    ggml_set_op_params(result, params, sizeof(params));
+
+    result->op     = GGML_OP_PAGED_ATTENTION;
+    result->src[0] = q;
+    result->src[1] = k;
+    result->src[2] = v;
+    result->src[3] = mask;
+    result->src[4] = block_tables;
+    result->src[5] = seq_lengths;
 
     return result;
 }

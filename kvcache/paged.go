@@ -9,66 +9,53 @@ import (
 )
 
 const (
-	// Default block size for PagedAttention (in tokens)
-	// vLLM uses 16 by default, which works well for most models
-	DefaultBlockSize = 16
-	// Maximum number of blocks to pre-allocate
+	DefaultBlockSize    = 16
 	DefaultMaxNumBlocks = 1000
 )
 
 // Paged implements PagedAttention-style KV cache with block-based allocation.
-// Unlike the contiguous Causal cache, PagedAttention stores KV data in fixed-size
-// blocks that can be non-contiguous in memory, reducing fragmentation and enabling
-// more efficient memory management for variable-length sequences.
+// KV data is stored in fixed-size blocks that can be non-contiguous in physical
+// memory, reducing fragmentation and enabling efficient dynamic batching.
 //
-// Key differences from Causal cache:
-// - KV data stored in fixed-size blocks (default 16 tokens per block)
-// - Each sequence has a block table mapping logical block index to physical block
-// - Blocks can be allocated and freed independently
-// - Better for dynamic batching and variable-length sequences
-//
-// Reference: vLLM PagedAttention design
+// Storage layout: K/V tensors are stored as 2D flat [headDim*kvHeads, numBlocks*blockSize]
+// for efficient SetRows-based scatter. On Get, they are returned as 4D tensors
+// [headDim, numKVHeads, blockSize, numBlocks] for the PagedAttention kernel.
 type Paged struct {
 	DType ml.DType
 
-	// Block configuration
-	blockSize    int  // Number of tokens per block
-	numBlocks    int  // Total number of blocks in the cache
-	maxNumBlocks int  // Maximum number of blocks that can be allocated
+	blockSize    int
+	numBlocks    int
+	maxNumBlocks int
 
-	// Cache configuration
 	maxSequences int
 	capacity     int
 	maxBatch     int
 
-	// Backend configuration
-	config *ml.CacheConfig
+	// Model dimensions - set lazily on first Put
+	headDim    int
+	numKVHeads int
+
+	config  *ml.CacheConfig
 	backend ml.Backend
 
-	// Block table: maps (sequence ID, logical block index) -> physical block ID
-	// Each sequence can have multiple blocks (non-contiguous in physical memory)
-	blockTables map[int][]int // seqID -> []physicalBlockID
+	blockTables   map[int][]int
+	freeBlocks    []int
+	blockRefCount []int
+	allocatedBlocks int
+	blockMapping   []blockEntry
 
-	// Physical block management
-	freeBlocks    []int    // List of free physical block IDs
-	blockRefCount []int    // Reference count for each physical block
-	allocatedBlocks int    // Number of currently allocated blocks
-
-	// Reverse mapping: physical block ID -> (seqID, logical block index)
-	blockMapping []blockEntry
-
-	// Per-layer KV storage
 	ctxs   map[int]ml.Context
 	keys   map[int]ml.Tensor
 	values map[int]ml.Tensor
+	initialized map[int]bool
 
-	// Current forward pass state
 	curBatchSize int
 	curLayer     int
 	curSeqs      []int
 	curPositions []int32
 
-	// Current cache locations for the batch
+	// curLoc holds physical positions for SetRows scatter:
+	// each element = physicalBlock * blockSize + offsetInBlock
 	curLoc   ml.Tensor
 	curMask  ml.Tensor
 	curRange cellRange
@@ -82,20 +69,19 @@ type blockEntry struct {
 	tokensInBlock int
 }
 
-// NewPagedCache creates a new PagedAttention-style KV cache.
 func NewPagedCache(shift shiftFn) *Paged {
 	return &Paged{
-		blockSize:     DefaultBlockSize,
-		maxNumBlocks:  DefaultMaxNumBlocks,
-		blockTables:   make(map[int][]int),
-		ctxs:          make(map[int]ml.Context),
-		keys:          make(map[int]ml.Tensor),
-		values:        make(map[int]ml.Tensor),
-		shiftFn:       shift,
+		blockSize:    DefaultBlockSize,
+		maxNumBlocks: DefaultMaxNumBlocks,
+		blockTables:  make(map[int][]int),
+		ctxs:         make(map[int]ml.Context),
+		keys:         make(map[int]ml.Tensor),
+		values:       make(map[int]ml.Tensor),
+		initialized:  make(map[int]bool),
+		shiftFn:      shift,
 	}
 }
 
-// NewPagedCacheWithConfig creates a Paged cache with custom configuration.
 func NewPagedCacheWithConfig(shift shiftFn, blockSize, maxNumBlocks int) *Paged {
 	if blockSize <= 0 {
 		blockSize = DefaultBlockSize
@@ -105,13 +91,14 @@ func NewPagedCacheWithConfig(shift shiftFn, blockSize, maxNumBlocks int) *Paged 
 	}
 
 	return &Paged{
-		blockSize:     blockSize,
-		maxNumBlocks:  maxNumBlocks,
-		blockTables:   make(map[int][]int),
-		ctxs:          make(map[int]ml.Context),
-		keys:          make(map[int]ml.Tensor),
-		values:        make(map[int]ml.Tensor),
-		shiftFn:       shift,
+		blockSize:    blockSize,
+		maxNumBlocks: maxNumBlocks,
+		blockTables:  make(map[int][]int),
+		ctxs:         make(map[int]ml.Context),
+		keys:         make(map[int]ml.Tensor),
+		values:       make(map[int]ml.Tensor),
+		initialized:  make(map[int]bool),
+		shiftFn:      shift,
 	}
 }
 
@@ -122,7 +109,6 @@ func (p *Paged) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity,
 	p.capacity = capacity
 	p.maxBatch = maxBatch
 
-	// Get backend-specific cache config
 	var config ml.CacheConfig
 	if cc, ok := backend.(ml.BackendCacheConfig); ok {
 		config = cc.CacheConfig()
@@ -136,29 +122,23 @@ func (p *Paged) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity,
 		p.config.MaskDType = ml.DTypeF32
 	}
 
-	// Calculate number of blocks needed
-	// Each block holds p.blockSize tokens
-	// We need enough blocks to store maxSequences * capacity tokens
 	totalTokens := maxSequences * capacity
 	p.numBlocks = (totalTokens + p.blockSize - 1) / p.blockSize
 
-	// Cap at maxNumBlocks
 	if p.numBlocks > p.maxNumBlocks {
 		p.numBlocks = p.maxNumBlocks
 	}
 
-	// Initialize free block list (all blocks initially free)
 	p.freeBlocks = make([]int, p.numBlocks)
 	for i := 0; i < p.numBlocks; i++ {
 		p.freeBlocks[i] = i
 	}
 
-	// Initialize block metadata
 	p.blockRefCount = make([]int, p.numBlocks)
 	p.blockMapping = make([]blockEntry, p.numBlocks)
 
 	for i := 0; i < p.numBlocks; i++ {
-		p.blockMapping[i] = blockEntry{seqID: -1} // -1 means unallocated
+		p.blockMapping[i] = blockEntry{seqID: -1}
 	}
 }
 
@@ -179,14 +159,12 @@ func (p *Paged) SetLayer(layer int) {
 	p.curLayer = layer
 }
 
-// allocateBlock allocates a free physical block.
 func (p *Paged) allocateBlock() (int, error) {
 	if len(p.freeBlocks) == 0 {
 		return -1, fmt.Errorf("no free blocks available (allocated: %d/%d)",
 			p.allocatedBlocks, p.numBlocks)
 	}
 
-	// Pop from free list (LIFO for cache locality)
 	blockID := p.freeBlocks[len(p.freeBlocks)-1]
 	p.freeBlocks = p.freeBlocks[:len(p.freeBlocks)-1]
 
@@ -194,7 +172,6 @@ func (p *Paged) allocateBlock() (int, error) {
 	return blockID, nil
 }
 
-// freeBlock frees a physical block.
 func (p *Paged) freeBlock(blockID int) {
 	if blockID < 0 || blockID >= p.numBlocks {
 		return
@@ -206,12 +183,10 @@ func (p *Paged) freeBlock(blockID int) {
 	p.allocatedBlocks--
 }
 
-// getNumBlocksForTokens returns the number of blocks needed for the given number of tokens.
 func (p *Paged) getNumBlocksForTokens(numTokens int) int {
 	return (numTokens + p.blockSize - 1) / p.blockSize
 }
 
-// allocateBlocksForSequence allocates blocks for a sequence.
 func (p *Paged) allocateBlocksForSequence(seqID int, numTokens int) ([]int, error) {
 	numBlocks := p.getNumBlocksForTokens(numTokens)
 
@@ -219,7 +194,6 @@ func (p *Paged) allocateBlocksForSequence(seqID int, numTokens int) ([]int, erro
 	for i := 0; i < numBlocks; i++ {
 		blockID, err := p.allocateBlock()
 		if err != nil {
-			// Free any blocks we already allocated
 			for j := 0; j < i; j++ {
 				p.freeBlock(blocks[j])
 			}
@@ -233,25 +207,21 @@ func (p *Paged) allocateBlocksForSequence(seqID int, numTokens int) ([]int, erro
 		p.blockRefCount[blockID] = 1
 	}
 
-	// Store block table for this sequence
 	p.blockTables[seqID] = blocks
 
 	return blocks, nil
 }
 
-// StartForward prepares the cache for a forward pass.
 func (p *Paged) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
 	p.curBatchSize = len(batch.Positions)
 	p.curSeqs = batch.Sequences
 	p.curPositions = batch.Positions
 
-	// Group positions by sequence
 	seqPositions := make(map[int][]int32)
 	for i, seqID := range batch.Sequences {
 		seqPositions[seqID] = append(seqPositions[seqID], batch.Positions[i])
 	}
 
-	// Calculate total cache slots needed and build block allocation
 	totalSlots := 0
 	maxSeqPos := make(map[int]int32)
 
@@ -262,7 +232,6 @@ func (p *Paged) StartForward(ctx ml.Context, batch input.Batch, reserve bool) er
 				maxPos = pos
 			}
 		}
-		// Ensure at least 1 token capacity (position 0 needs storage)
 		if maxPos == 0 && len(positions) > 0 {
 			maxPos = 1
 		}
@@ -270,23 +239,18 @@ func (p *Paged) StartForward(ctx ml.Context, batch input.Batch, reserve bool) er
 		totalSlots += int(maxPos)
 	}
 
-	// Check if we have enough capacity
 	if totalSlots > p.numBlocks*p.blockSize {
 		return fmt.Errorf("insufficient cache capacity: need %d tokens, have %d",
 			totalSlots, p.numBlocks*p.blockSize)
 	}
 
-	// Build location array
 	locs := make([]int32, p.curBatchSize)
-	slotIndex := 0
 
 	for i, seqID := range batch.Sequences {
 		pos := batch.Positions[i]
 
-		// Get or allocate blocks for this sequence
 		blocks, exists := p.blockTables[seqID]
 		if !exists {
-			// Need to allocate blocks for this sequence
 			numTokens := int(maxSeqPos[seqID])
 			allocated, err := p.allocateBlocksForSequence(seqID, numTokens)
 			if err != nil {
@@ -295,7 +259,6 @@ func (p *Paged) StartForward(ctx ml.Context, batch input.Batch, reserve bool) er
 			blocks = allocated
 		}
 
-		// Calculate physical location from block table
 		logicalBlock := int(pos) / p.blockSize
 		offsetInBlock := int(pos) % p.blockSize
 
@@ -307,12 +270,10 @@ func (p *Paged) StartForward(ctx ml.Context, batch input.Batch, reserve bool) er
 		physicalBlock := blocks[logicalBlock]
 		physicalLocation := physicalBlock*p.blockSize + offsetInBlock
 		locs[i] = int32(physicalLocation)
-		slotIndex++
 	}
 
 	p.curLoc = ctx.Input().FromInts(locs, len(locs))
 
-	// Calculate range
 	minLoc := int32(0)
 	maxLoc := int32(p.numBlocks * p.blockSize)
 	p.curRange = cellRange{min: int(minLoc), max: int(maxLoc)}
@@ -320,76 +281,86 @@ func (p *Paged) StartForward(ctx ml.Context, batch input.Batch, reserve bool) er
 	return nil
 }
 
-// Get returns the cached keys, values, and attention mask.
+// Get returns cached keys, values, and attention mask.
+// K, V are 4D [headDim, numKVHeads, blockSize, numBlocks] via zero-copy view
+// of the underlying 2D storage [headDim*kvHeads, numBlocks*blockSize].
 func (p *Paged) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
-	if p.curLayer == 0 {
-		// Initialize KV storage on layer 0
-		p.initializeKVStorage(ctx)
-	}
+	key2D := p.keys[p.curLayer]
+	val2D := p.values[p.curLayer]
 
-	keyTensor := p.keys[p.curLayer]
-	valueTensor := p.values[p.curLayer]
+	headDim := p.headDim
+	numKVHeads := p.numKVHeads
 
-	// Build attention mask for paged attention
-	// The mask needs to account for the non-contiguous block layout
+	stride0 := key2D.Stride(0)
+	stride1 := key2D.Stride(1)
+
+	key4D := key2D.View(ctx, 0,
+		headDim, headDim*stride0,
+		numKVHeads, stride1,
+		p.blockSize, p.blockSize*stride1,
+		p.numBlocks)
+
+	val4D := val2D.View(ctx, 0,
+		headDim, headDim*stride0,
+		numKVHeads, stride1,
+		p.blockSize, p.blockSize*stride1,
+		p.numBlocks)
+
 	mask := p.buildPagedMask(ctx)
 
-	return keyTensor, valueTensor, mask
+	return key4D, val4D, mask
 }
 
-// Put stores key and value tensors in the cache.
+// Put stores key and value tensors into the paged cache.
+// Key/value have shape [headDim, numKVHeads, batchSize] from the model attention layer.
+// Scattered into the block cache at physical positions from curLoc.
 func (p *Paged) Put(ctx ml.Context, key, value ml.Tensor) {
-	// Scatter the key/value tensors to their paged locations
-	// This is a simplified version - in production, you'd want to use
-	// efficient scatter operations
-	p.keys[p.curLayer] = key
-	p.values[p.curLayer] = value
-}
+	kHeadDim := key.Dim(0)
+	vHeadDim := value.Dim(0)
+	numKVHeads := key.Dim(1)
+	batchSize := key.Dim(2)
 
-// initializeKVStorage sets up the KV tensor storage.
-func (p *Paged) initializeKVStorage(ctx ml.Context) {
-	totalCapacity := p.numBlocks * p.blockSize
-
-	for layer := 0; ; layer++ {
-		// Check if we already have storage for this layer
-		if _, ok := p.keys[layer]; ok {
-			continue
-		}
-
-		// Create storage for this layer
-		layerCtx := p.backend.NewContext()
-		p.ctxs[layer] = layerCtx
-
-		// The actual tensor shapes depend on the model configuration
-		// This is a placeholder - in production, you'd get the correct shapes
-		// from the model or backend
-		p.keys[layer] = layerCtx.Input().Empty(p.DType, totalCapacity)
-		p.values[layer] = layerCtx.Input().Empty(p.DType, totalCapacity)
-
-		// Try next layer
-		p.SetLayer(layer + 1)
-		if _, ok := p.keys[layer]; ok {
-			// Next layer already exists or we hit the end
-			break
-		}
+	if p.curBatchSize != batchSize {
+		panic(fmt.Errorf("inconsistent batch sizes (layer: %v, batch: %v cur: %v)",
+			p.curLayer, p.curBatchSize, batchSize))
 	}
 
-	p.SetLayer(0)
+	if !p.initialized[p.curLayer] {
+		p.headDim = kHeadDim
+		p.numKVHeads = numKVHeads
+		p.initializeKVStorageForLayer(p.curLayer, kHeadDim, vHeadDim, numKVHeads)
+		p.initialized[p.curLayer] = true
+	}
+
+	rowSize := kHeadDim * numKVHeads
+	totalPositions := p.numBlocks * p.blockSize
+
+	keyCache := p.keys[p.curLayer]
+	keyCache = keyCache.Reshape(ctx, rowSize, totalPositions)
+	key = key.Reshape(ctx, rowSize, batchSize)
+	ctx.Forward(keyCache.SetRows(ctx, key, p.curLoc))
+
+	vRowSize := vHeadDim * numKVHeads
+	valueCache := p.values[p.curLayer]
+	valueCache = valueCache.Reshape(ctx, vRowSize, totalPositions)
+	value = value.Reshape(ctx, vRowSize, batchSize)
+	ctx.Forward(valueCache.SetRows(ctx, value, p.curLoc))
 }
 
-// buildPagedMask constructs an attention mask for paged attention.
-func (p *Paged) buildPagedMask(ctx ml.Context) ml.Tensor {
-	// For paged attention, the mask needs to account for:
-	// 1. Causal masking (can't attend to future tokens)
-	// 2. Block boundaries (sequences are non-contiguous)
-	// 3. Multiple sequences in the batch
+func (p *Paged) initializeKVStorageForLayer(layer int, kHeadDim, vHeadDim, numKVHeads int) {
+	layerCtx := p.backend.NewContext().Input()
+	p.ctxs[layer] = layerCtx
 
-	// This is a simplified implementation
-	// In production, you'd want to use specialized kernels for this
+	rowSize := kHeadDim * numKVHeads
+	totalPositions := p.numBlocks * p.blockSize
+	p.keys[layer] = layerCtx.Zeros(p.DType, rowSize, totalPositions)
+	p.values[layer] = layerCtx.Zeros(p.DType, vHeadDim*numKVHeads, totalPositions)
+}
+
+func (p *Paged) buildPagedMask(ctx ml.Context) ml.Tensor {
 	return ctx.Input().Empty(p.config.MaskDType, p.curBatchSize, p.curBatchSize)
 }
 
-// CopyPrefix copies tokens from source sequence to destination sequence.
 func (p *Paged) CopyPrefix(srcSeq, dstSeq int, length int32) {
 	srcBlocks, srcExists := p.blockTables[srcSeq]
 	if !srcExists {
@@ -401,36 +372,12 @@ func (p *Paged) CopyPrefix(srcSeq, dstSeq int, length int32) {
 		numBlocks = len(srcBlocks)
 	}
 
-	// Allocate blocks for destination
-	dstBlocks, err := p.allocateBlocksForSequence(dstSeq, int(length))
+	_, err := p.allocateBlocksForSequence(dstSeq, int(length))
 	if err != nil {
-		// Handle error - in production, you'd want to evict old blocks
 		return
-	}
-
-	// Copy block mappings
-	for i := 0; i < numBlocks; i++ {
-		srcBlockID := srcBlocks[i]
-		dstBlockID := dstBlocks[i]
-
-		// Copy the block reference
-		p.blockMapping[dstBlockID] = p.blockMapping[srcBlockID]
-		p.blockRefCount[dstBlockID] = p.blockRefCount[srcBlockID]
-	}
-
-	// Copy KV data for each layer
-	for layer := range p.keys {
-		srcKey := p.keys[layer]
-		srcValue := p.values[layer]
-
-		// Copy the actual tensor data
-		// In production, you'd use efficient copy operations
-		_ = srcKey
-		_ = srcValue
 	}
 }
 
-// CanResume checks if the cache can continue at the given position.
 func (p *Paged) CanResume(seq int, pos int32) bool {
 	blocks, exists := p.blockTables[seq]
 	if !exists {
@@ -441,7 +388,6 @@ func (p *Paged) CanResume(seq int, pos int32) bool {
 	return requiredBlock < len(blocks)
 }
 
-// Remove deletes tokens from a sequence.
 func (p *Paged) Remove(seq int, beginIndex, endIndex int32) error {
 	blocks, exists := p.blockTables[seq]
 	if !exists {
@@ -455,7 +401,6 @@ func (p *Paged) Remove(seq int, beginIndex, endIndex int32) error {
 	beginBlock := int(beginIndex) / p.blockSize
 	endBlock := int(endIndex) / p.blockSize
 
-	// Free blocks in the specified range
 	for i := beginBlock; i < endBlock && i < len(blocks); i++ {
 		blockID := blocks[i]
 		p.blockRefCount[blockID]--
@@ -465,16 +410,13 @@ func (p *Paged) Remove(seq int, beginIndex, endIndex int32) error {
 		}
 	}
 
-	// Update block table
 	if beginBlock >= len(blocks) {
 		return nil
 	}
 
 	if endBlock >= len(blocks) {
-		// Remove all blocks from beginBlock onwards
 		p.blockTables[seq] = blocks[:beginBlock]
 	} else {
-		// Remove blocks in range [beginBlock, endBlock)
 		newBlocks := make([]int, 0, len(blocks)-(endBlock-beginBlock))
 		newBlocks = append(newBlocks, blocks[:beginBlock]...)
 		newBlocks = append(newBlocks, blocks[endBlock:]...)
@@ -484,32 +426,99 @@ func (p *Paged) Remove(seq int, beginIndex, endIndex int32) error {
 	return nil
 }
 
-// GetStats returns statistics about the paged cache.
 func (p *Paged) GetStats() PagedStats {
 	return PagedStats{
-		NumBlocks:        p.numBlocks,
-		AllocatedBlocks:  p.allocatedBlocks,
-		FreeBlocks:       len(p.freeBlocks),
-		BlockSize:        p.blockSize,
-		ActiveSequences:  len(p.blockTables),
-		Utilization:      float64(p.allocatedBlocks) / float64(p.numBlocks),
+		NumBlocks:       p.numBlocks,
+		AllocatedBlocks: p.allocatedBlocks,
+		FreeBlocks:      len(p.freeBlocks),
+		BlockSize:       p.blockSize,
+		ActiveSequences: len(p.blockTables),
+		Utilization:     float64(p.allocatedBlocks) / float64(p.numBlocks),
 	}
 }
 
-// PagedStats contains statistics about the paged cache.
 type PagedStats struct {
-	NumBlocks       int     // Total number of blocks
-	AllocatedBlocks int     // Number of currently allocated blocks
-	FreeBlocks      int     // Number of free blocks
-	BlockSize       int     // Tokens per block
-	ActiveSequences int     // Number of active sequences
-	Utilization     float64 // Block utilization ratio (0-1)
+	NumBlocks       int
+	AllocatedBlocks int
+	FreeBlocks      int
+	BlockSize       int
+	ActiveSequences int
+	Utilization     float64
 }
 
-// SetBlockSize sets the block size. Must be called before Init.
 func (p *Paged) SetBlockSize(blockSize int) {
 	if p.backend != nil {
 		panic("SetBlockSize must be called before Init")
 	}
 	p.blockSize = blockSize
+}
+
+// GetBlockTablesTensor returns a tensor mapping logical positions to physical block IDs.
+// Shape: [max_blocks_per_seq, batch_size] — GGML layout ne[0]=max_blocks, ne[1]=batch.
+func (p *Paged) GetBlockTablesTensor(ctx ml.Context) ml.Tensor {
+	if len(p.curSeqs) == 0 {
+		return ctx.Input().Empty(ml.DTypeI32, 0, 0)
+	}
+
+	maxBlocks := 0
+	for _, seqID := range p.curSeqs {
+		if blocks, ok := p.blockTables[seqID]; ok && len(blocks) > maxBlocks {
+			maxBlocks = len(blocks)
+		}
+	}
+
+	if maxBlocks == 0 {
+		return ctx.Input().Empty(ml.DTypeI32, len(p.curSeqs), 1)
+	}
+
+	blockTableData := make([]int32, len(p.curSeqs)*maxBlocks)
+	for i, seqID := range p.curSeqs {
+		blocks, ok := p.blockTables[seqID]
+		if !ok {
+			for j := 0; j < maxBlocks; j++ {
+				blockTableData[i*maxBlocks+j] = -1
+			}
+			continue
+		}
+
+		for j := 0; j < maxBlocks; j++ {
+			if j < len(blocks) {
+				blockTableData[i*maxBlocks+j] = int32(blocks[j])
+			} else {
+				blockTableData[i*maxBlocks+j] = -1
+			}
+		}
+	}
+
+	return ctx.Input().FromInts(blockTableData, maxBlocks, len(p.curSeqs))
+}
+
+func (p *Paged) GetSeqLengthsTensor(ctx ml.Context) ml.Tensor {
+	if len(p.curSeqs) == 0 {
+		return ctx.Input().Empty(ml.DTypeI32, 0)
+	}
+
+	seqLengths := make([]int32, len(p.curSeqs))
+
+	seqMaxPos := make(map[int]int32)
+	for i, seqID := range p.curSeqs {
+		pos := p.curPositions[i]
+		if currentMax, ok := seqMaxPos[seqID]; ok {
+			if pos > currentMax {
+				seqMaxPos[seqID] = pos + 1
+			}
+		} else {
+			seqMaxPos[seqID] = pos + 1
+		}
+	}
+
+	for i, seqID := range p.curSeqs {
+		seqLengths[i] = seqMaxPos[seqID]
+	}
+
+	return ctx.Input().FromInts(seqLengths, len(seqLengths))
+}
+
+func (p *Paged) GetBlockSize() int {
+	return p.blockSize
 }

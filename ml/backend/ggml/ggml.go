@@ -1799,6 +1799,58 @@ func (t *Tensor) Duplicate(ctx ml.Context) ml.Tensor {
 	}
 }
 
+// PagedAttention computes attention using paged KV cache with block tables.
+// This enables efficient memory management for variable-length sequences.
+//
+// Parameters:
+//   - ctx: computation context
+//   - query: [head_dim, n_tokens, n_q_heads, batch] — query tensor (supports GQA)
+//   - key: [head_dim, n_kv_heads, block_size, n_blocks] — paged key cache
+//   - value: [head_dim, n_kv_heads, block_size, n_blocks] — paged value cache
+//   - mask: optional attention mask
+//   - blockTables: int32 [max_blocks_per_seq, batch] — maps (logical_block, seq) → physical_block
+//   - seqLengths: int32 [batch] — actual sequence lengths
+//   - scale: scaling factor for attention scores (typically 1/sqrt(head_dim))
+//   - blockSize: number of tokens per KV cache block
+func PagedAttention(
+	ctx ml.Context,
+	query ml.Tensor,
+	key ml.Tensor,
+	value ml.Tensor,
+	mask ml.Tensor,
+	blockTables ml.Tensor,
+	seqLengths ml.Tensor,
+	scale float64,
+	blockSize int,
+) ml.Tensor {
+	q := query.(*Tensor).t
+	k := key.(*Tensor).t
+	v := value.(*Tensor).t
+
+	var maskT *C.struct_ggml_tensor
+	if mask != nil {
+		maskT = mask.(*Tensor).t
+	}
+
+	bt := blockTables.(*Tensor).t
+	sl := seqLengths.(*Tensor).t
+
+	result := C.ggml_paged_attention_ext(
+		ctx.(*Context).ctx,
+		q, k, v,
+		maskT,
+		bt, sl,
+		C.float(scale),
+		C.int(blockSize),
+	)
+
+	return &Tensor{b: query.(*Tensor).b, t: result}
+}
+
+func (t *Tensor) PagedAttention(ctx ml.Context, key, value, mask, blockTables, seqLengths ml.Tensor, scale float64, blockSize int) ml.Tensor {
+	return PagedAttention(ctx, t, key, value, mask, blockTables, seqLengths, scale, blockSize)
+}
+
 func (t *Tensor) TopK(ctx ml.Context, k int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
