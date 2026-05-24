@@ -1,0 +1,53 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,5 +1,50 @@
+ # Aggressive ROCm 7.x Optimization Injection
+ # Apply to llama.cpp's CMakeLists.txt or OLLaMA's build CMake
++
++set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -ffast-math -funroll-loops -finline-functions -fomit-frame-pointer -DNDEBUG")
++set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math -funroll-loops -finline-functions -fomit-frame-pointer -DNDEBUG -falign-functions=32 -falign-loops=32")
++
++if (GGML_HIP)
++    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -O3 -ffast-math --amdgpu-unroll-threshold=500 -fgpu-rdc")
++    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -mllvm -amdgpu-inline-threshold=10000")
++    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -mllvm -amdgpu-early-inline-all=true")
++    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -mllvm -amdgpu-function-calls=false")
++    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} --hip-link")
++    
++    # Wave32 mode for RDNA3+/GFX11/GFX12
++    if (AMDGPU_TARGETS MATCHES "gfx11|gfx12")
++        set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -mwavefrontsize64")
++        add_compile_definitions(GGML_HIP_WAVE32=1)
++    endif()
++    
++    # Enable device LDS optimization
++    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -mllvm -amdgpu-max-lds-size=65536")
++    
++    # Link-time optimization
++    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
++endif()
++
++if (GGML_VULKAN)
++    # Vulkan aggressive compilation
++    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DGGML_VULKAN_CHECK_RESULTS=0")
++    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DGGML_VULKAN_CHECK_RESULTS=0")
++    
++    # Subgroup ops enablement
++    add_compile_definitions(GGML_VULKAN_SUBGROUP_OPS=1)
++    add_compile_definitions(GGML_VULKAN_ASYNC_UPLOAD=1)
++endif()
++
++# Enable all backend graphs
++option(GGML_HIP_GRAPHS "Enable HIP graphs" ON)
++option(GGML_CUDA_GRAPHS "Enable CUDA graphs" ON)
++option(GGML_VULKAN_GRAPHS "Enable Vulkan graphs" ON)
++
++# Disable debug overhead
++set(CMAKE_BUILD_TYPE Release)
++set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_RELEASE}")
++set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE}")
++set(CMAKE_HIP_FLAGS_DEBUG "${CMAKE_HIP_FLAGS_RELEASE}")
++
++# Force static linking where possible for LTO
++set(BUILD_SHARED_LIBS OFF)

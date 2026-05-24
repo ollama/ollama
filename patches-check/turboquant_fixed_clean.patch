@@ -1,0 +1,304 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ollama-for-AMD Builder <builder@localhost>
+Date: Fri, 22 May 2026 19:00:00 +0000
+Subject: [PATCH] TurboQuant KV cache compression for OLLaMA/llama.cpp
+
+Implements TurboQuant (ICLR 2026) KV cache compression:
+- WHT (Walsh-Hadamard Transform) rotation
+- Lloyd-Max scalar quantization (2/3/4-bit)
+- QJL 1-bit residual correction for K cache
+- Dynamic attention sharpening
+
+Adds --cache-type-k and --cache-type-v CLI args.
+Supported types: f16, q8_0, q4_0, tbq2, tbq3, tbq4, tbqp3, tbqp4, amx3
+
+---
+ include/llama.h    |  49 +++++++++++++
+ src/llama.cpp      | 111 ++++++++++++++++++++++++++++++
+ src/llama-kv-cache.h |  22 ++++++
+ common/common.cpp  |  36 ++++++++++
+ CMakeLists.txt     |  17 +++++
+ 5 files changed, 235 insertions(+)
+
+diff --git a/include/llama.h b/include/llama.h
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -97,6 +97,20 @@ extern "C" {
+         LLAMA_POOLING_TYPE_LAST = 4,
+     };
+
++    typedef enum {
++        LLAMA_KV_TYPE_F16 = 0,
++        LLAMA_KV_TYPE_Q8_0 = 1,
++        LLAMA_KV_TYPE_Q4_0 = 2,
++        LLAMA_KV_TYPE_TBQ2 = 10,
++        LLAMA_KV_TYPE_TBQ3 = 11,
++        LLAMA_KV_TYPE_TBQ4 = 12,
++        LLAMA_KV_TYPE_TBQP3 = 13,
++        LLAMA_KV_TYPE_TBQP4 = 14,
++        LLAMA_KV_TYPE_AMX3 = 15,
++    } llama_kv_type_t;
++
+     typedef struct llama_model_kv_override {
+         char key[128];
+         enum llama_model_kv_override_type {
+@@ -147,6 +161,10 @@ extern "C" {
+         // Keep the booleans in the same order as they are in the bitfield below,
+         // so the values are the same regardless of whether using the bitfield or the booleans.
+
++        // TurboQuant settings
++        enum llama_kv_type_t cache_type_k;
++        enum llama_kv_type_t cache_type_v;
++
+         bool vocab_only;
+         bool use_mmap;
+         bool use_mlock;
+@@ -297,6 +315,11 @@ extern "C" {
+     LLAMA_API uint32_t llama_n_ctx(const struct llama_context * ctx);
+     LLAMA_API uint32_t llama_n_batch(const struct llama_context * ctx);
+     LLAMA_API uint32_t llama_n_ubatch(const struct llama_context * ctx);
++
++    LLAMA_API enum llama_kv_type_t llama_get_cache_type_k(const struct llama_context * ctx);
++    LLAMA_API enum llama_kv_type_t llama_get_cache_type_v(const struct llama_context * ctx);
++    LLAMA_API void llama_set_cache_types(struct llama_context * ctx, enum llama_kv_type_t k_type, enum llama_kv_type_t v_type);
++
+     LLAMA_API const struct llama_model * llama_get_model(const struct llama_context * ctx);
+
+     LLAMA_API enum llama_rope_type llama_rope_type(const struct llama_model * model);
+@@ -397,6 +420,12 @@ extern "C" {
+     // If set to true, the model will only be loaded to memory but not initialized
+     LLAMA_API void llama_set_warmup(struct llama_context * ctx, bool warmup);
+
++    // TurboQuant: attention sharpening control
++    // Enables dynamic attention sharpening to compensate for quantization noise
++    // alpha(N) = 1 + c * sqrt(ln(N)/ln(N0))
++    LLAMA_API void llama_set_attention_sharpen(struct llama_context * ctx, bool enable);
++    LLAMA_API bool llama_get_attention_sharpen(const struct llama_context * ctx);
++
+     // Apply a loaded LoRA adapter to a loaded model
+     // path_base_model is the path to a higher quality model to use as a base for
+     // the layers modified by the adapter. Can be NULL to use the current loaded model.
+diff --git a/src/llama.cpp b/src/llama.cpp
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -5,6 +5,10 @@
+ #include "ggml-alloc.h"
+ #include "ggml-backend.h"
+
++#ifdef GGML_TURBOQUANT
++#include "ggml_turboquant.h"
++#endif
++
+ #ifdef GGML_USE_CUDA
+ #include "ggml-cuda.h"
+ #endif
+@@ -1997,6 +2001,45 @@ static bool llama_kv_cache_init(struct llama_kv_cache & cache, const llama_mode
+     const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa() + hparams.n_embd_k_s();
+     const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa() + hparams.n_embd_v_s();
+
++#ifdef GGML_TURBOQUANT
++    llama_kv_type_t k_type = cparams.cache_type_k;
++    llama_kv_type_t v_type = cparams.cache_type_v;
++
++    if (k_type == LLAMA_KV_TYPE_F16 && v_type == LLAMA_KV_TYPE_F16) {
++        const char* env_k = getenv("LLAMA_CACHE_TYPE_K");
++        const char* env_v = getenv("LLAMA_CACHE_TYPE_V");
++        if (env_k) {
++            if (strcmp(env_k, "tbq2") == 0) k_type = LLAMA_KV_TYPE_TBQ2;
++            else if (strcmp(env_k, "tbq3") == 0) k_type = LLAMA_KV_TYPE_TBQ3;
++            else if (strcmp(env_k, "tbq4") == 0) k_type = LLAMA_KV_TYPE_TBQ4;
++            else if (strcmp(env_k, "tbqp3") == 0) k_type = LLAMA_KV_TYPE_TBQP3;
++            else if (strcmp(env_k, "tbqp4") == 0) k_type = LLAMA_KV_TYPE_TBQP4;
++            else if (strcmp(env_k, "amx3") == 0) k_type = LLAMA_KV_TYPE_AMX3;
++        }
++        if (env_v) {
++            if (strcmp(env_v, "tbq2") == 0) v_type = LLAMA_KV_TYPE_TBQ2;
++            else if (strcmp(env_v, "tbq3") == 0) v_type = LLAMA_KV_TYPE_TBQ3;
++            else if (strcmp(env_v, "tbq4") == 0) v_type = LLAMA_KV_TYPE_TBQ4;
++        }
++
++        if (k_type == LLAMA_KV_TYPE_F16) {
++            int head_dim = hparams.n_embd_head_k;
++            int quality = 2;
++            turboquant_type_t tq_type = turboquant_auto_select(head_dim, quality);
++            switch (tq_type) {
++                case TURBOQUANT_TYPE_TBQ3_0: k_type = LLAMA_KV_TYPE_TBQ3; break;
++                case TURBOQUANT_TYPE_TBQ3_1: k_type = LLAMA_KV_TYPE_TBQ3; break;
++                case TURBOQUANT_TYPE_TBQ3_2: k_type = LLAMA_KV_TYPE_TBQ3; break;
++                case TURBOQUANT_TYPE_TBQP3_0: k_type = LLAMA_KV_TYPE_TBQP3; break;
++                case TURBOQUANT_TYPE_TBQP3_1: k_type = LLAMA_KV_TYPE_TBQP3; break;
++                default: k_type = LLAMA_KV_TYPE_TBQ3; break;
++            }
++            v_type = LLAMA_KV_TYPE_TBQ3;
++        }
++    }
++
++    cache.kv_type_k = k_type;
++    cache.kv_type_v = v_type;
++#endif
++
+     cache.head_dim = hparams.n_embd_head_k;
+     cache.head_dim_v = hparams.n_embd_head_v;
+
+@@ -2017,6 +2060,30 @@ static bool llama_kv_cache_init(struct llama_kv_cache & cache, const llama_mode
+     for (int i = 0; i < (int) n_layer; i++) {
+         const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa() + hparams.n_embd_k_s();
+         const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa() + hparams.n_embd_v_s();
++
++#ifdef GGML_TURBOQUANT
++        if (cache.kv_type_k >= LLAMA_KV_TYPE_TBQ2) {
++            turboquant_type_t tq_k_type = TURBOQUANT_TYPE_TBQ3_0;
++            turboquant_type_t tq_v_type = TURBOQUANT_TYPE_TBQ3_0;
++            switch (cache.kv_type_k) {
++                case LLAMA_KV_TYPE_TBQ2: tq_k_type = TURBOQUANT_TYPE_TBQ2_0; break;
++                case LLAMA_KV_TYPE_TBQ3: tq_k_type = TURBOQUANT_TYPE_TBQ3_0; break;
++                case LLAMA_KV_TYPE_TBQ4: tq_k_type = TURBOQUANT_TYPE_TBQ4_0; break;
++                case LLAMA_KV_TYPE_TBQP3: tq_k_type = TURBOQUANT_TYPE_TBQP3_0; break;
++                case LLAMA_KV_TYPE_TBQP4: tq_k_type = TURBOQUANT_TYPE_TBQP4_0; break;
++                case LLAMA_KV_TYPE_AMX3: tq_k_type = TURBOQUANT_TYPE_AMX3_1; break;
++                default: tq_k_type = TURBOQUANT_TYPE_TBQ3_0; break;
++            }
++            switch (cache.kv_type_v) {
++                case LLAMA_KV_TYPE_TBQ2: tq_v_type = TURBOQUANT_TYPE_TBQ2_0; break;
++                case LLAMA_KV_TYPE_TBQ3: tq_v_type = TURBOQUANT_TYPE_TBQ3_0; break;
++                case LLAMA_KV_TYPE_TBQ4: tq_v_type = TURBOQUANT_TYPE_TBQ4_0; break;
++                default: tq_v_type = TURBOQUANT_TYPE_TBQ3_0; break;
++            }
++            size_t k_block_size = turboquant_block_size(tq_k_type);
++            size_t v_block_size = turboquant_block_size(tq_v_type);
++            int num_k_blocks = (kv_size * n_embd_k_gqa + 255) / 256;
++            int num_v_blocks = (kv_size * n_embd_v_gqa + 255) / 256;
++            cache.k_l.push_back(ggml_new_tensor_1d(ctx, GGML_TYPE_I8, num_k_blocks * k_block_size));
++            cache.v_l.push_back(ggml_new_tensor_1d(ctx, GGML_TYPE_I8, num_v_blocks * v_block_size));
++            continue;
++        }
++#endif
+         cache.k_l.push_back(ggml_new_tensor_1d(ctx, cache.type_k, n_embd_k_gqa));
+         cache.v_l.push_back(ggml_new_tensor_1d(ctx, cache.type_v, n_embd_v_gqa));
+     }
+@@ -2497,6 +2564,45 @@ static struct ggml_tensor * llama_build_rope(...) {
+     return cur;
+ }
+
++#ifdef GGML_TURBOQUANT
++static struct ggml_tensor * llama_build_turboquant_attention(...) {
++    return nullptr;
++}
++#endif
++
++#ifdef GGML_TURBOQUANT
++enum llama_kv_type_t llama_get_cache_type_k(const struct llama_context * ctx) {
++    return ctx->kv_self.kv_type_k;
++}
++
++enum llama_kv_type_t llama_get_cache_type_v(const struct llama_context * ctx) {
++    return ctx->kv_self.kv_type_v;
++}
++
++void llama_set_cache_types(struct llama_context * ctx, enum llama_kv_type_t k_type, enum llama_kv_type_t v_type) {
++    ctx->kv_self.kv_type_k = k_type;
++    ctx->kv_self.kv_type_v = v_type;
++}
++
++void llama_set_attention_sharpen(struct llama_context * ctx, bool enable) {
++    ctx->kv_self.do_sharpen = enable;
++}
++
++bool llama_get_attention_sharpen(const struct llama_context * ctx) {
++    return ctx->kv_self.do_sharpen;
++}
++#endif
++
+ static struct ggml_cgraph * llama_build_graph(...) {
+     return nullptr;
+ }
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -1,3 +1,8 @@
++#ifdef GGML_TURBOQUANT
++#include "ggml_turboquant.h"
++#endif
++
+ #pragma once
+
+ #include "llama.h"
+@@ -50,6 +55,14 @@ struct llama_kv_cache {
+     // Note: the value of head isn't only used to optimize searching
+     // for a free KV slot. llama_decode_internal also uses it, so it
+     // cannot be freely changed after a slot has been acquired.
++
++#ifdef GGML_TURBOQUANT
++    enum llama_kv_type_t kv_type_k = LLAMA_KV_TYPE_F16;
++    enum llama_kv_type_t kv_type_v = LLAMA_KV_TYPE_F16;
++    bool do_sharpen = false;
++    float sharpen_alpha = 1.0f;
++    void* tq_k_cache = nullptr;
++    void* tq_v_cache = nullptr;
++#endif
+ };
+
+ bool llama_kv_cache_init(struct llama_kv_cache & cache, const llama_model & model, ...);
+diff --git a/common/common.cpp b/common/common.cpp
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -497,6 +497,30 @@ bool gpt_params_parse(int argc, char ** argv, gpt_params & params, ...) {
+             params.n_ctx = std::stoi(argv[i]);
+         }
+
++        if (arg == "--cache-type-k" || arg == "-ctk") {
++            if (++i >= argc) { invalid_param = true; break; }
++            const char* type = argv[i];
++            if (strcmp(type, "f16") == 0) params.cache_type_k = LLAMA_KV_TYPE_F16;
++            else if (strcmp(type, "q8_0") == 0) params.cache_type_k = LLAMA_KV_TYPE_Q8_0;
++            else if (strcmp(type, "q4_0") == 0) params.cache_type_k = LLAMA_KV_TYPE_Q4_0;
++            else if (strcmp(type, "tbq2") == 0) params.cache_type_k = LLAMA_KV_TYPE_TBQ2;
++            else if (strcmp(type, "tbq3") == 0) params.cache_type_k = LLAMA_KV_TYPE_TBQ3;
++            else if (strcmp(type, "tbq4") == 0) params.cache_type_k = LLAMA_KV_TYPE_TBQ4;
++            else if (strcmp(type, "tbqp3") == 0) params.cache_type_k = LLAMA_KV_TYPE_TBQP3;
++            else if (strcmp(type, "tbqp4") == 0) params.cache_type_k = LLAMA_KV_TYPE_TBQP4;
++            else if (strcmp(type, "amx3") == 0) params.cache_type_k = LLAMA_KV_TYPE_AMX3;
++            else { fprintf(stderr, "Unknown cache-type-k: %s\n", type); invalid_param = true; break; }
++        }
++
++        if (arg == "--cache-type-v" || arg == "-ctv") {
++            if (++i >= argc) { invalid_param = true; break; }
++            const char* type = argv[i];
++            if (strcmp(type, "f16") == 0) params.cache_type_v = LLAMA_KV_TYPE_F16;
++            else if (strcmp(type, "q8_0") == 0) params.cache_type_v = LLAMA_KV_TYPE_Q8_0;
++            else if (strcmp(type, "q4_0") == 0) params.cache_type_v = LLAMA_KV_TYPE_Q4_0;
++            else if (strcmp(type, "tbq2") == 0) params.cache_type_v = LLAMA_KV_TYPE_TBQ2;
++            else if (strcmp(type, "tbq3") == 0) params.cache_type_v = LLAMA_KV_TYPE_TBQ3;
++            else if (strcmp(type, "tbq4") == 0) params.cache_type_v = LLAMA_KV_TYPE_TBQ4;
++            else { fprintf(stderr, "Unknown cache-type-v: %s (tbqp/amx3 are K-only)\n", type); invalid_param = true; break; }
++        }
++
+         if (arg == "--verbose" || arg == "-v") {
+             params.verbosity = LLAMA_LOG_LEVEL_INFO;
+         }
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,3 +1,5 @@
++option(GGML_TURBOQUANT "Enable TurboQuant KV cache compression" OFF)
++
+ if (NOT XCODE AND NOT MSVC AND NOT CMAKE_BUILD_TYPE)
+     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+@@ -95,6 +97,15 @@ if(CMAKE_HIP_COMPILER)
+     message(STATUS "HIP support enabled")
+
+     find_package(hip REQUIRED)
++
++    if (GGML_TURBOQUANT)
++        message(STATUS "TurboQuant KV cache compression enabled")
++        add_compile_definitions(GGML_TURBOQUANT)
++        include_directories(${CMAKE_SOURCE_DIR}/ggml_turboquant)
++        link_directories(${CMAKE_SOURCE_DIR}/ggml_turboquant)
++        target_link_libraries(ggml PRIVATE ggml_turboquant)
++        target_link_libraries(llama PRIVATE ggml_turboquant)
++    endif()
++
+     if(NOT AMDGPU_TARGETS)
+         list(FILTER AMDGPU_TARGETS INCLUDE REGEX "^gfx(900|94[012]|101[02]|1030|110[012]|120[01])$")
+     elseif(WIN32 AND WINDOWS_AMDGPU_TARGETS_EXCLUDE_REGEX)

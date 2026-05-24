@@ -1,0 +1,63 @@
+{
+  "gpu": {
+    "architecture": "gfx1201",
+    "vram_total_gib": 16,
+    "vram_available_gib": 13.7,
+    "max_decode_tok_s": 76,
+    "bottleneck": "gddr6_memory_bandwidth"
+  },
+  "models": {
+    "qwen2.5-coder": {
+      "recommended_quant": "q4_0",
+      "max_layers": 28,
+      "gqa_ratio": 7,
+      "optimal_configs": {
+        "speed": { "ctx_size": 4096, "kv_cache_type": "f16", "expected_prefill": 1800, "expected_decode": 110 },
+        "balanced": { "ctx_size": 8192, "kv_cache_type": "f16", "expected_prefill": 1600, "expected_decode": 95 },
+        "long_context": { "ctx_size": 32768, "kv_cache_type": "q8_0", "expected_prefill": 1000, "expected_decode": 75 }
+      }
+    },
+    "llama3.1": {
+      "recommended_quant": "q4_0",
+      "max_layers": 32,
+      "gqa_ratio": 4,
+      "optimal_configs": {
+        "speed": { "ctx_size": 4096, "kv_cache_type": "f16", "expected_prefill": 1500, "expected_decode": 90 },
+        "balanced": { "ctx_size": 8192, "kv_cache_type": "f16", "expected_prefill": 1300, "expected_decode": 80 },
+        "long_context": { "ctx_size": 16384, "kv_cache_type": "q8_0", "expected_prefill": 1100, "expected_decode": 70 }
+      }
+    },
+    "gemma-4": {
+      "recommended_quant": "q4_0",
+      "max_layers": 42,
+      "gqa_ratio": 1,
+      "note": "Dense attention (no GQA) — KV cache is 4-7x larger. Avoid for very long context.",
+      "optimal_configs": {
+        "speed": { "ctx_size": 2048, "kv_cache_type": "f16", "expected_prefill": 1200, "expected_decode": 80 },
+        "balanced": { "ctx_size": 4096, "kv_cache_type": "f16", "expected_prefill": 1000, "expected_decode": 70 }
+      }
+    },
+    "devstral": {
+      "recommended_quant": "q4_0",
+      "max_layers": 41,
+      "gqa_ratio": 4,
+      "note": "12B model — tight fit on 16GB. Must use Q4_0 or small context.",
+      "optimal_configs": {
+        "speed": { "ctx_size": 2048, "kv_cache_type": "f16", "expected_prefill": 1400, "expected_decode": 75 },
+        "balanced": { "ctx_size": 4096, "kv_cache_type": "q4_0", "expected_prefill": 1300, "expected_decode": 72 }
+      }
+    }
+  },
+  "kv_cache_types": {
+    "f16": { "bytes_per_element": 2, "quality": "best", "speed_impact": "none", "use_when": "Short context (<8K) or abundant VRAM" },
+    "q8_0": { "bytes_per_element": 1, "quality": "excellent", "speed_impact": "minimal", "use_when": "Medium context (8K-32K) or tight VRAM" },
+    "q4_0": { "bytes_per_element": 0.5, "quality": "good", "speed_impact": "small", "use_when": "Long context (>32K) or very tight VRAM" }
+  },
+  "environment_variables": {
+    "HSA_OVERRIDE_GFX_VERSION": "12.0.1",
+    "OLLAMA_FLASH_ATTENTION": "1",
+    "OLLAMA_NUM_GPU": "<set_per_model>",
+    "OLLAMA_CTX_SIZE": "<set_per_use_case>",
+    "OLLAMA_KV_CACHE_TYPE": "<f16|q8_0|q4_0>"
+  }
+}

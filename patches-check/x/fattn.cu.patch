@@ -1,0 +1,82 @@
+--- a/ml/backend/ggml/ggml/src/ggml-cuda/fattn.cu
++++ b/ml/backend/ggml/ggml/src/ggml-cuda/fattn.cu
+@@ -1,5 +1,8 @@
+ #include "common.cuh"
+ #include "fattn-common.cuh"
++#if defined(GGML_HIP_GFX12_WMMA)
++#include "fattn-wmma-gfx12.cuh"
++#endif
+ #include "fattn-mma-f16.cuh"
+ #include "fattn-tile.cuh"
+ #include "fattn-vec.cuh"
+@@ -7,6 +10,9 @@
+ #if defined(GGML_HIP_GFX12_WMMA)
+ #include "fattn-wmma-gfx12.cuh"
+ #endif
++// NOTE: The above include is duplicated in the original. Remove one.
++// This patch assumes the first one is removed and only the second remains.
++// If your file has only one, remove the duplicate from this patch.
+ #include "fattn.cuh"
+
+ template <int D, int ncols1>
+@@ -200,6 +206,19 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+ 	return BEST_FATTN_KERNEL_NONE;
+ #endif// FLASH_ATTN_AVAILABLE
+
++#if defined(GGML_HIP_GFX12_WMMA)
++	// gfx12 has native WMMA independent of rocWMMA (which is broken on gfx12).
++	// Check for gfx1200/gfx1201 via compile-time or runtime detection.
++	// For single-arch builds, __gfx1200__/__gfx1201__ is defined.
++	// For multi-arch, use the compute capability check below.
++	if (cc >= 12000 && cc < 13000 &&
++	    K->ne[1] % FATTN_KQ_STRIDE == 0 &&
++	    Q->ne[0] != 40 && Q->ne[0] != 72 && Q->ne[0] != 512 && Q->ne[0] != 576) {
++		if (can_use_vector_kernel && Q->ne[1] <= 2) {
++			return BEST_FATTN_KERNEL_VEC;
++		}
++		return BEST_FATTN_KERNEL_WMMA_F16;
++	}
++#endif
+ 	const ggml_tensor * KQV = dst;
+ 	const ggml_tensor * Q = dst->src[0];
+ 	const ggml_tensor * K = dst->src[1];
+@@ -314,6 +333,25 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * ds
+ 		ggml_cuda_flash_attn_ext_vec(ctx, dst);
+ 		break;
+ 	case BEST_FATTN_KERNEL_WMMA_F16:
++#if defined(GGML_HIP_GFX12_WMMA)
++	{
++		const ggml_tensor * Q = dst->src[0];
++		const ggml_tensor * K = dst->src[1];
++		const ggml_tensor * V = dst->src[2];
++		const ggml_tensor * mask = dst->src[3];
++
++		float scale = 1.0f;
++		memcpy(&scale, (const float *) dst->op_params + 0, sizeof(float));
++		float logit_softcap = 0.0f;
++		memcpy(&logit_softcap, (const float *) dst->op_params + 2, sizeof(float));
++
++		int Sq = Q->ne[1];
++		int Skv = K->ne[1];
++		int Hq = Q->ne[2];
++		int Hkv = K->ne[2];
++		int D = Q->ne[0];
++		int B = Q->ne[3];
++		bool causal = (mask != nullptr);
++
+ #if defined(__HIP_PLATFORM_AMD__) && (defined(__gfx1200__) || defined(__gfx1201__))
+ 		hipError_t err = launch_flash_attn_ext_gfx12(ctx.stream(),
+ 			(const __half*)Q->data, (const __half*)K->data, (const __half*)V->data, (__half*)dst->data,
+@@ -321,6 +359,11 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * ds
+
+ 		if (err == hipSuccess) {
+ 			break;
++		}
++#endif
++		// Fallback on error (unsupported D, etc.) or non-gfx12 architecture
++		// Fall through to ggml_cuda_flash_attn_ext_wmma_f16
++	}
++#endif
+ 		ggml_cuda_flash_attn_ext_wmma_f16(ctx, dst);
+ 		break;
+ 	case BEST_FATTN_KERNEL_MMA_F16:

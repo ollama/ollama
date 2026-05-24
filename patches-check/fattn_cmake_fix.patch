@@ -1,0 +1,33 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -95,6 +95,12 @@ if(CMAKE_HIP_COMPILER)
+     message(STATUS "HIP support enabled")
+
+     find_package(hip REQUIRED)
++
++    # ULTIMATE: rocWMMA FATTN serial compilation for RAM-heavy templates
++    # These files need ~8GB each and crash when compiled in parallel
++    if(GGML_HIP_ROCWMMA_FATTN AND CMAKE_GENERATOR MATCHES "Ninja")
++        include(cmake/ggml_fattn_pool.cmake)
++    endif()
++
+     if(NOT AMDGPU_TARGETS)
+         list(FILTER AMDGPU_TARGETS INCLUDE REGEX "^gfx(900|94[012]|101[02]|1030|110[012]|120[01])$")
+     elseif(WIN32 AND WINDOWS_AMDGPU_TARGETS_EXCLUDE_REGEX)
+@@ -102,6 +108,15 @@ if(CMAKE_HIP_COMPILER)
+     endif()
+ endif()
+
++# ULTIMATE: TurboQuant KV cache compression
++if(GGML_TURBOQUANT)
++    message(STATUS "TurboQuant KV cache compression enabled")
++    add_compile_definitions(GGML_TURBOQUANT)
++    include_directories(${CMAKE_SOURCE_DIR}/ggml_turboquant)
++    link_directories(${CMAKE_SOURCE_DIR}/ggml_turboquant)
++    target_link_libraries(ggml PRIVATE ggml_turboquant)
++    target_link_libraries(llama PRIVATE ggml_turboquant)
++endif()
++
+ # ... rest of CMakeLists.txt ...
+

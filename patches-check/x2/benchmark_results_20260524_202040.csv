@@ -1,0 +1,4 @@
+"Model","Layers","Offloaded","Context","KV_Type","Prefill_tok_s","Decode_tok_s","Total_ms","CPU_Fallback","Status"
+"devstral:latest","25","40","4096","f16","413.42","44.78","0","False","OK"
+"devstral:latest","28","40","4096","f16","413.56","44.83","0","False","OK"
+"devstral:latest","33","40","4096","f16","376.88","44.91","0","False","OK"

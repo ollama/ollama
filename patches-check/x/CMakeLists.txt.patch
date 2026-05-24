@@ -1,0 +1,18 @@
+--- a/ml/backend/ggml/ggml/src/ggml-hip/CMakeLists.txt
++++ b/ml/backend/ggml/ggml/src/ggml-hip/CMakeLists.txt
+@@ -1,5 +1,15 @@
+ # ... existing content ...
+
++# gfx12 WMMA flash attention support
++# This adds the custom gfx12 kernel to the HIP build when GGML_HIP_GFX12_WMMA is ON.
++# It does NOT require rocWMMA (which is broken on gfx12).
++option(GGML_HIP_GFX12_WMMA "Enable native gfx12 WMMA flash attention kernel" OFF)
++
++if (GGML_HIP_GFX12_WMMA)
++    add_compile_definitions(GGML_HIP_GFX12_WMMA=1)
++    message(STATUS "gfx12 WMMA flash attention: ENABLED")
++endif()
++
+ # Existing rocWMMA check (keep for gfx11 compatibility):
+ option(GGML_HIP_ROCWMMA_FATTN "Enable rocWMMA flash attention" OFF)
+
