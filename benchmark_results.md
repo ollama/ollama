@@ -99,8 +99,15 @@ During automated sequential benchmarking, we discovered a crucial system behavio
 
 ---
 
-## 🛠️ Verification Complete
-All benchmarks were successfully automated and verified. The standalone `bench.exe` utility remains in the folder and is ready for any future testing!
+## 🛠️ Verification Complete & Binaries Published
+All benchmarks were successfully automated and verified. 
+
+To allow independent verification and direct comparison, we have packaged and pushed all three major builds to the `benchmark-binaries/` directory on the `rdna4-gfx1201` branch:
+1. **`OLLAMA-1-Baseline.zip`**: The original baseline ROCm compilation.
+2. **`OLLAMA-2-Optimized.zip`**: The generalized upstream RDNA-optimized build.
+3. **`OLLAMA-3-WMMA-gfx12.zip`**: Our bleeding-edge build featuring native `gfx12_mma` Wave Matrix Multiply-Accumulate Flash Attention for RDNA4.
+
+The standalone `bench.exe` utility remains in the folder and is ready for any future testing!
 
 ---
 
