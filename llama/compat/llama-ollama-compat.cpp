@@ -575,9 +575,70 @@ bool qwen35_has_native_mtp_tensors(const gguf_context * meta) {
     return false;
 }
 
-void rename_qwen35_mtp_tensor(gguf_context * meta, ggml_context * ctx, const char * from, const std::string & to) {
-    if (gguf_find_tensor(meta, from) < 0 || gguf_find_tensor(meta, to.c_str()) >= 0) return;
+bool string_ends_with(const std::string & s, const char * suffix) {
+    const size_t n = std::strlen(suffix);
+    return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
+
+bool qwen35_should_shift_norm_after_rename(const std::string & name) {
+    if (string_ends_with(name, ".ssm_norm.weight")) return false;
+    return string_ends_with(name, "_norm.weight") ||
+        string_ends_with(name, ".nextn.enorm.weight") ||
+        string_ends_with(name, ".nextn.hnorm.weight");
+}
+
+bool register_qwen35_norm_shift_load(gguf_context * meta, ggml_context * ctx,
+                                     const char * from, const std::string & to) {
+    const int64_t tid = gguf_find_tensor(meta, from);
+    if (tid < 0) return false;
+
+    ggml_tensor * src = ggml_get_tensor(ctx, from);
+    if (!src) return false;
+
+    const size_t src_offset = tensor_file_offset(meta, from);
+    const size_t src_size   = gguf_get_tensor_size(meta, tid);
+    const ggml_type src_type = src->type;
+    const size_t n_elem = (size_t) ggml_nelements(src);
+
     rename_tensor(meta, ctx, from, to.c_str());
+    ggml_tensor * dst = ggml_get_tensor(ctx, to.c_str());
+    if (!dst) return false;
+
+    set_tensor_type(dst, GGML_TYPE_F32);
+    register_load_op(to, LoadOp{
+        [src_offset, src_size, src_type, n_elem](const char * path, void * out, size_t out_size) {
+            if (out_size != n_elem * sizeof(float)) return false;
+
+            float * dst = static_cast<float *>(out);
+            if (src_type == GGML_TYPE_F32) {
+                if (src_size != n_elem * sizeof(float)) return false;
+                std::vector<uint8_t> src(src_size);
+                if (!read_at(path, src_offset, src.data(), src.size())) return false;
+                const float * fp = reinterpret_cast<const float *>(src.data());
+                for (size_t i = 0; i < n_elem; ++i) dst[i] = fp[i] + 1.0f;
+                return true;
+            }
+
+            std::vector<uint8_t> src(src_size);
+            if (!read_at(path, src_offset, src.data(), src.size())) return false;
+            const auto * traits = ggml_get_type_traits(src_type);
+            if (!traits || !traits->to_float) return false;
+            traits->to_float(src.data(), dst, (int64_t) n_elem);
+            for (size_t i = 0; i < n_elem; ++i) dst[i] += 1.0f;
+            return true;
+        },
+        "F32 add-one norm shift",
+    });
+    return true;
+}
+
+bool rename_qwen35_mtp_tensor(gguf_context * meta, ggml_context * ctx, const char * from, const std::string & to) {
+    if (gguf_find_tensor(meta, from) < 0 || gguf_find_tensor(meta, to.c_str()) >= 0) return false;
+    if (qwen35_should_shift_norm_after_rename(to)) {
+        return register_qwen35_norm_shift_load(meta, ctx, from, to);
+    }
+    rename_tensor(meta, ctx, from, to.c_str());
+    return false;
 }
 
 bool qwen35moe_mtp_expert_source(const std::string & name, uint32_t mtp_index,
@@ -704,7 +765,7 @@ bool rename_qwen35_mtp_tensors(gguf_context * meta, ggml_context * ctx,
         layer_renames.emplace_back(name, dest);
     }
     for (const auto & [from, to] : layer_renames) {
-        rename_qwen35_mtp_tensor(meta, ctx, from.c_str(), to);
+        registered_load_transform |= rename_qwen35_mtp_tensor(meta, ctx, from.c_str(), to);
     }
 
     if (nextn != 1) {
@@ -726,13 +787,13 @@ bool rename_qwen35_mtp_tensors(gguf_context * meta, ggml_context * ctx,
         return std::string(dest);
     };
 
-    rename_qwen35_mtp_tensor(meta, ctx, "mtp.fc.weight", nextn_name("nextn.eh_proj.weight"));
-    rename_qwen35_mtp_tensor(meta, ctx, "mtp.pre_fc_norm_embedding.weight", nextn_name("nextn.enorm.weight"));
-    rename_qwen35_mtp_tensor(meta, ctx, "mtp.pre_fc_norm_hidden.weight", nextn_name("nextn.hnorm.weight"));
-    rename_qwen35_mtp_tensor(meta, ctx, "mtp.embed_tokens.weight", nextn_name("nextn.embed_tokens.weight"));
-    rename_qwen35_mtp_tensor(meta, ctx, "mtp.shared_head.head.weight", nextn_name("nextn.shared_head_head.weight"));
-    rename_qwen35_mtp_tensor(meta, ctx, "mtp.shared_head.norm.weight", nextn_name("nextn.shared_head_norm.weight"));
-    rename_qwen35_mtp_tensor(meta, ctx, "mtp.norm.weight", nextn_name("nextn.shared_head_norm.weight"));
+    registered_load_transform |= rename_qwen35_mtp_tensor(meta, ctx, "mtp.fc.weight", nextn_name("nextn.eh_proj.weight"));
+    registered_load_transform |= rename_qwen35_mtp_tensor(meta, ctx, "mtp.pre_fc_norm_embedding.weight", nextn_name("nextn.enorm.weight"));
+    registered_load_transform |= rename_qwen35_mtp_tensor(meta, ctx, "mtp.pre_fc_norm_hidden.weight", nextn_name("nextn.hnorm.weight"));
+    registered_load_transform |= rename_qwen35_mtp_tensor(meta, ctx, "mtp.embed_tokens.weight", nextn_name("nextn.embed_tokens.weight"));
+    registered_load_transform |= rename_qwen35_mtp_tensor(meta, ctx, "mtp.shared_head.head.weight", nextn_name("nextn.shared_head_head.weight"));
+    registered_load_transform |= rename_qwen35_mtp_tensor(meta, ctx, "mtp.shared_head.norm.weight", nextn_name("nextn.shared_head_norm.weight"));
+    registered_load_transform |= rename_qwen35_mtp_tensor(meta, ctx, "mtp.norm.weight", nextn_name("nextn.shared_head_norm.weight"));
     return registered_load_transform;
 }
 
