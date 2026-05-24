@@ -2786,12 +2786,13 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 	var finalResponse api.GenerateResponse
 
 	if err := runner.Completion(c.Request.Context(), llm.CompletionRequest{
-		Prompt: req.Prompt,
-		Width:  req.Width,
-		Height: req.Height,
-		Steps:  req.Steps,
-		Seed:   seed,
-		Images: images,
+		Prompt:   req.Prompt,
+		Width:    req.Width,
+		Height:   req.Height,
+		Steps:    req.Steps,
+		Seed:     seed,
+		Images:   images,
+		Negative: req.Negative,
 	}, func(cr llm.CompletionResponse) {
 		streamStarted = true
 		res := api.GenerateResponse{

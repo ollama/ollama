@@ -141,6 +141,10 @@ type GenerateRequest struct {
 	// Steps is the number of diffusion steps for image generation.
 	// Only used for image generation models.
 	Steps int32 `json:"steps,omitempty"`
+
+	// Negative is the negative prompt used by classifier-free guidance for image
+	// generation. Models that do not implement CFG will ignore this field.
+	Negative string `json:"negative,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].

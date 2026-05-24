@@ -13,11 +13,12 @@ type Request struct {
 	Options *RequestOptions `json:"options,omitempty"`
 
 	// Image generation fields
-	Width  int32    `json:"width,omitempty"`
-	Height int32    `json:"height,omitempty"`
-	Steps  int      `json:"steps,omitempty"`
-	Seed   int64    `json:"seed,omitempty"`
-	Images [][]byte `json:"images,omitempty"` // Input images for image editing/conditioning
+	Width    int32    `json:"width,omitempty"`
+	Height   int32    `json:"height,omitempty"`
+	Steps    int      `json:"steps,omitempty"`
+	Seed     int64    `json:"seed,omitempty"`
+	Images   [][]byte `json:"images,omitempty"` // Input images for image editing/conditioning
+	Negative string   `json:"negative,omitempty"` // Negative prompt for classifier-free guidance (CFG-capable models only)
 }
 
 // RequestOptions contains LLM-specific generation options.
