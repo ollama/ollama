@@ -43,6 +43,8 @@ find_package(hip     REQUIRED)
 find_package(hipblas REQUIRED)
 find_package(rocblas REQUIRED)
 
+option(GGML_HIP_GFX12_WMMA "Native WMMA FA path for RDNA4 gfx1200/gfx1201" OFF)
+
 if (${hip_VERSION} VERSION_LESS 6.1)
     message(FATAL_ERROR "At least ROCM/HIP V6.1 is required")
 endif()
@@ -110,6 +112,13 @@ endif()
 
 if (GGML_HIP_ROCWMMA_FATTN)
     add_compile_definitions(GGML_HIP_ROCWMMA_FATTN)
+endif()
+
+if (GGML_HIP_GFX12_WMMA)
+    if (GGML_HIP_ROCWMMA_FATTN)
+        message(FATAL_ERROR "GGML_HIP_GFX12_WMMA and GGML_HIP_ROCWMMA_FATTN are mutually exclusive")
+    endif()
+    add_compile_definitions(GGML_HIP_GFX12_WMMA)
 endif()
 
 if (GGML_HIP_TURBOQUANT)

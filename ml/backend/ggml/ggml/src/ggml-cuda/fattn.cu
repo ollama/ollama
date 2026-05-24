@@ -4,6 +4,9 @@
 #include "fattn-tile.cuh"
 #include "fattn-vec.cuh"
 #include "fattn-wmma-f16.cuh"
+#if defined(GGML_HIP_GFX12_WMMA)
+#include "fattn-wmma-gfx12.cuh"
+#endif
 #include "fattn.cuh"
 
 template <int DKQ, int DV, int ncols2>
@@ -379,6 +382,38 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
             ggml_cuda_flash_attn_ext_vec(ctx, dst);
             break;
         case BEST_FATTN_KERNEL_WMMA_F16:
+#if defined(GGML_HIP_GFX12_WMMA)
+            {
+                const ggml_tensor * Q = dst->src[0];
+                const ggml_tensor * K = dst->src[1];
+                const ggml_tensor * V = dst->src[2];
+                const ggml_tensor * mask = dst->src[3];
+
+                float scale = 1.0f;
+                memcpy(&scale, (const float *) dst->op_params + 0, sizeof(float));
+                float logit_softcap = 0.0f;
+                memcpy(&logit_softcap, (const float *) dst->op_params + 2, sizeof(float));
+
+                int Sq = Q->ne[1];
+                int Skv = K->ne[1];
+                int Hq = Q->ne[2];
+                int Hkv = K->ne[2];
+                int D = Q->ne[0];
+                int B = Q->ne[3];
+                bool causal = (mask != nullptr);
+
+#if defined(__HIP_PLATFORM_AMD__) && (defined(__gfx1200__) || defined(__gfx1201__))
+                hipError_t err = launch_flash_attn_ext_gfx12(ctx.stream(), 
+                    (const __half*)Q->data, (const __half*)K->data, (const __half*)V->data, (__half*)dst->data, 
+                    Sq, Skv, Hq, Hkv, D, B, scale, logit_softcap, causal);
+                
+                if (err == hipSuccess) {
+                    break;
+                }
+#endif
+                // Fallback on error (e.g., unsupported head dim like 256) or wrong architecture
+            }
+#endif
             ggml_cuda_flash_attn_ext_wmma_f16(ctx, dst);
             break;
         case BEST_FATTN_KERNEL_MMA_F16:

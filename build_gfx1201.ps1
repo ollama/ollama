@@ -24,14 +24,15 @@ cmake -B build -G Ninja -Wno-dev `
     -DCMAKE_C_COMPILER_LAUNCHER="" `
     -DCMAKE_CXX_COMPILER_LAUNCHER="" `
     -DCMAKE_HIP_COMPILER_LAUNCHER="" `
-    -DGGML_HIP_ROCWMMA_FATTN=ON `
+    -DGGML_HIP_ROCWMMA_FATTN=OFF `
+    -DGGML_HIP_GFX12_WMMA=ON `
     -DGGML_HIP_MTP=OFF `
     -DGGML_HIP_TURBOQUANT=ON `
     -DCMAKE_HIP_FLAGS="$hipFlags" `
     -DCMAKE_CXX_FLAGS="$cxxFlags" `
     -S .
 if ($LASTEXITCODE -ne 0) { Write-Error "Configure failed"; exit 1 }
-cmake --build build --config Release -j 4
+cmake --build build --config Release
 if ($LASTEXITCODE -ne 0) { Write-Error "Build failed"; exit 1 }
 Write-Host "Build complete!" -ForegroundColor Green
 if ($Installer) { powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1 }
