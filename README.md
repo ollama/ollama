@@ -28,8 +28,28 @@
 > .\ollama.exe run devstral:latest "What is the capital of France?" --verbose
 > ```
 
-## Binaries 
-https://github.com/Maxritz/ollama-ROCM/tree/rdna4-gfx1201/releases
+## 🚀 Benchmark Performance & Insights (gfx1201 / RX 9070 XT)
+
+We ran extensive benchmarks evaluating the baseline engine vs. our optimized builds, focusing heavily on how RDNA4 matrix cores interact with LLM inference. 
+
+### 1. Prefill Speed (Prompt Evaluation)
+Thanks to the introduction of native **RDNA4 WMMA Matrix Cores** (`__builtin_amdgcn_wmma_f32_16x16x16_f16_w32_gfx12`), our bleeding-edge `gfx12_mma` build delivers a massive boost to the Prompt Evaluation rate. Matrix multiplications for large contexts ($Q \times K^T \times V$) map perfectly to 16x16 matrix structures.
+* **Gemma-4-e4b Prefill**: ~1,100 tokens/sec (Hybrid Offload)
+* **Llama-3-8B Prefill**: ~1,881 tokens/sec (100% Offload)
+
+### 2. Decode Speed (Token Generation)
+Unlike prefill, token generation (decode) processes one token at a time ($Sq = 1$). This is a 1D vector-matrix multiplication, which **mathematically cannot utilize 16x16 matrix cores**. Therefore, decode speeds flatline exactly at the physical limit of the GDDR6 memory bandwidth.
+* **Decode Bottleneck**: Generation speeds on the RX 9070 XT hit roughly **76 tokens/sec**, completely saturating the 576 GB/s memory bandwidth limit.
+
+---
+
+## 📦 Binaries & Downloads
+
+To allow independent verification and direct comparison, we have packaged all three major builds in the [`benchmark-binaries/`](https://github.com/Maxritz/ollama-ROCM/tree/rdna4-gfx1201/benchmark-binaries) directory on this branch:
+
+1. [**`OLLAMA-1-Baseline.zip`**](https://github.com/Maxritz/ollama-ROCM/raw/rdna4-gfx1201/benchmark-binaries/OLLAMA-1-Baseline.zip): The original baseline ROCm compilation.
+2. [**`OLLAMA-2-Optimized.zip`**](https://github.com/Maxritz/ollama-ROCM/raw/rdna4-gfx1201/benchmark-binaries/OLLAMA-2-Optimized.zip): The generalized upstream RDNA-optimized build.
+3. [**`OLLAMA-3-WMMA-gfx12.zip`**](https://github.com/Maxritz/ollama-ROCM/raw/rdna4-gfx1201/benchmark-binaries/OLLAMA-3-WMMA-gfx12.zip): Our bleeding-edge build featuring native `gfx12_mma` Wave Matrix Multiply-Accumulate Flash Attention for RDNA4.
 
 Start building with open models.
 
