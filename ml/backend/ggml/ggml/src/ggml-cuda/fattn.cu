@@ -1,11 +1,15 @@
 #include "common.cuh"
 #include "fattn-common.cuh"
+#if defined(GGML_HIP_GFX12_WMMA)
+#include "fattn-vec-gfx12.cuh"
+#endif
 #include "fattn-mma-f16.cuh"
 #include "fattn-tile.cuh"
 #include "fattn-vec.cuh"
 #include "fattn-wmma-f16.cuh"
 #if defined(GGML_HIP_GFX12_WMMA)
 #include "fattn-wmma-gfx12.cuh"
+#include "fattn-wmma-gfx12-gqa.cuh"
 #endif
 #include "fattn.cuh"
 
@@ -351,6 +355,9 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         if (can_use_vector_kernel && Q->ne[1] <= 2) {
             return BEST_FATTN_KERNEL_VEC;
         }
+        if (gqa_ratio >= 2 && Q->ne[0] <= 128) {
+            return BEST_FATTN_KERNEL_WMMA_F16;
+        }
         return BEST_FATTN_KERNEL_WMMA_F16;
     }
 #endif
@@ -389,6 +396,33 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
             ggml_cuda_flash_attn_ext_tile(ctx, dst);
             break;
         case BEST_FATTN_KERNEL_VEC:
+#if defined(GGML_HIP_GFX12_WMMA)
+            {
+                const ggml_tensor * Q = dst->src[0];
+                const ggml_tensor * K = dst->src[1];
+                const ggml_tensor * V = dst->src[2];
+
+                float scale = 1.0f;
+                memcpy(&scale, (const float *) dst->op_params + 0, sizeof(float));
+                float logit_softcap = 0.0f;
+                memcpy(&logit_softcap, (const float *) dst->op_params + 2, sizeof(float));
+
+                int Skv = K->ne[1];
+                int Hq = Q->ne[2];
+                int Hkv = K->ne[2];
+                int D = Q->ne[0];
+                int B = Q->ne[3];
+
+#if defined(__HIP_PLATFORM_AMD__) && (defined(__gfx1200__) || defined(__gfx1201__))
+                hipError_t err = launch_flash_attn_decode_gfx12(ctx.stream(),
+                    (const __half*)Q->data, (const __half*)K->data, (const __half*)V->data, (__half*)dst->data,
+                    Skv, Hq, Hkv, D, B, scale, logit_softcap);
+                if (err == hipSuccess) {
+                    break;
+                }
+#endif
+            }
+#endif
             ggml_cuda_flash_attn_ext_vec(ctx, dst);
             break;
         case BEST_FATTN_KERNEL_WMMA_F16:
@@ -412,12 +446,24 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
                 int B = Q->ne[3];
                 bool causal = (mask != nullptr);
 
+                const int gqa_ratio = Q->ne[2] / K->ne[2];
+                if (gqa_ratio >= 2 && D <= 128) {
 #if defined(__HIP_PLATFORM_AMD__) && (defined(__gfx1200__) || defined(__gfx1201__))
-                hipError_t err = launch_flash_attn_ext_gfx12(ctx.stream(), 
+                    hipError_t err_gqa = launch_flash_attn_ext_gfx12_gqa(ctx.stream(),
+                        (const __half*)Q->data, (const __half*)K->data, (const __half*)V->data, (__half*)dst->data,
+                        Sq, Skv, Hq, Hkv, D, B, scale, logit_softcap, causal);
+                    if (err_gqa == hipSuccess) {
+                        break;
+                    }
+#endif
+                }
+
+#if defined(__HIP_PLATFORM_AMD__) && (defined(__gfx1200__) || defined(__gfx1201__))
+                hipError_t err_single = launch_flash_attn_ext_gfx12(ctx.stream(), 
                     (const __half*)Q->data, (const __half*)K->data, (const __half*)V->data, (__half*)dst->data, 
                     Sq, Skv, Hq, Hkv, D, B, scale, logit_softcap, causal);
                 
-                if (err == hipSuccess) {
+                if (err_single == hipSuccess) {
                     break;
                 }
 #endif

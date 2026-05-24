@@ -33,15 +33,30 @@ func startApp(ctx context.Context, client *api.Client) error {
 	appExe := filepath.Join(filepath.Dir(exe), AppName)
 	_, err = os.Stat(appExe)
 	if errors.Is(err, os.ErrNotExist) {
+		// Try Ollama-GUI.exe
+		AppName = "Ollama-GUI.exe"
+		appExe = filepath.Join(filepath.Dir(exe), AppName)
+		_, err = os.Stat(appExe)
+	}
+	if errors.Is(err, os.ErrNotExist) {
 		// Try the standard install location
 		localAppData := os.Getenv("LOCALAPPDATA")
+		AppName = "ollama app.exe"
 		appExe = filepath.Join(localAppData, "Ollama", AppName)
 		_, err := os.Stat(appExe)
 		if errors.Is(err, os.ErrNotExist) {
-			// Finally look in the path
-			appExe, err = exec.LookPath(AppName)
-			if err != nil {
-				return errors.New("could not locate ollama app")
+			AppName = "Ollama-GUI.exe"
+			appExe = filepath.Join(localAppData, "Ollama", AppName)
+			_, err := os.Stat(appExe)
+			if errors.Is(err, os.ErrNotExist) {
+				// Finally look in the path
+				appExe, err = exec.LookPath("ollama app.exe")
+				if err != nil {
+					appExe, err = exec.LookPath("Ollama-GUI.exe")
+					if err != nil {
+						return errors.New("could not locate ollama app")
+					}
+				}
 			}
 		}
 	}
