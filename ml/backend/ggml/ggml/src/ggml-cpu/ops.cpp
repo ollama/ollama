@@ -8845,6 +8845,11 @@ static void ggml_compute_forward_paged_attention_one_chunk(
             // block_tables is [max_blocks_per_seq, batch_size], ne[0]=max_blocks_per_seq
             const int physical_block = block_tables_data[iq3 * max_blocks_per_seq + block_idx];
 
+            // Skip invalid blocks (physical_block < 0 means no block allocated)
+            if (physical_block < 0) {
+                continue;
+            }
+
             // Calculate range within this block
             const int block_start = block_idx * block_size;
             const int block_end   = MIN(block_start + block_size, seq_len);
