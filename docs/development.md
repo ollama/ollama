@@ -125,6 +125,41 @@ Lastly, run Ollama:
 go run . serve
 ```
 
+
+### Building with ROCm for RDNA4 (gfx1200 / gfx1201)
+
+The official `ollama-linux-amd64` binary in 0.20.6 ships CPU and CUDA backends only — no `rocm/` runner directory. RDNA4 users (RX 9000-series, Radeon AI PRO R9700, gfx1200/gfx1201) must build from source until the official build pipeline updates to ROCm 6.4+ (tracked in [#10676](https://github.com/ollama/ollama/pull/10676)).
+
+The source already lists gfx1200 and gfx1201 in `AMDGPU_TARGETS` (see the `ROCm 7` preset in `CMakePresets.json`), so no patching is required — ROCm ≥ 6.3 is sufficient for gfx1201; ROCm ≥ 7.0 is recommended for hipBLASLt-tuned kernels.
+
+Prerequisites (Ubuntu 24.04 example):
+
+```shell
+sudo apt install build-essential cmake ninja-build git
+# Install ROCm 7.x — see https://rocm.docs.amd.com/projects/install-on-linux/
+```
+
+Build (targeting gfx1201 only — drop or expand `AMDGPU_TARGETS` for a multi-arch build):
+
+```shell
+git clone https://github.com/ollama/ollama.git && cd ollama
+PATH=/opt/rocm/lib/llvm/bin:$PATH cmake --preset 'ROCm 7' \
+    -DAMDGPU_TARGETS=gfx1201 \
+    -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+    -DCMAKE_PREFIX_PATH=/opt/rocm
+cmake --build build --config Release -j$(nproc)
+go build .
+cmake --install build --prefix dist
+```
+
+Verify ROCm detection:
+
+```shell
+HIP_VISIBLE_DEVICES=0 ./dist/bin/ollama serve 2>&1 | grep "inference compute"
+```
+
+Look for `library=ROCm compute=gfx1201` in the output. See [#14927](https://github.com/ollama/ollama/issues/14927) for benchmarks and a full troubleshooting transcript.
+
 ## MLX Engine (Optional)
 
 The MLX engine enables running safetensor based models. It requires building the [MLX](https://github.com/ml-explore/mlx) and [MLX-C](https://github.com/ml-explore/mlx-c) shared libraries separately via CMake.  On MacOS, MLX leverages the Metal library to run on the GPU, and on Windows and Linux, runs on NVIDIA GPUs via CUDA v13.
