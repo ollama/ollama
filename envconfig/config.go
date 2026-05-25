@@ -271,6 +271,11 @@ func Uint(key string, defaultValue uint) func() uint {
 }
 
 var (
+	// NumThread sets the default CPU thread count for model inference when the
+	// client does not pass num_thread. Zero means use hardware discovery.
+	// When set, the value is capped at 85% of the sum of physical CoreCount from CPU discovery.
+	// NumThread can be configured via the OLLAMA_NUM_THREAD environment variable.
+	NumThread = Uint("OLLAMA_NUM_THREAD", 0)
 	// NumParallel sets the number of parallel model requests. NumParallel can be configured via the OLLAMA_NUM_PARALLEL environment variable.
 	NumParallel = Uint("OLLAMA_NUM_PARALLEL", 1)
 	// MaxRunners sets the maximum number of loaded models. MaxRunners can be configured via the OLLAMA_MAX_LOADED_MODELS environment variable.
@@ -327,6 +332,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NOHISTORY":            {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":              {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":         {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
+		"OLLAMA_NUM_THREAD":           {"OLLAMA_NUM_THREAD", NumThread(), "Default CPU threads for inference when not set per request (0 = use hardware discovery; capped at 85% of discovered physical core count)"},
 		"OLLAMA_ORIGINS":              {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
 		"OLLAMA_SCHED_SPREAD":         {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_MULTIUSER_CACHE":      {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},

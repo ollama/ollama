@@ -325,6 +325,10 @@ type SystemInfo struct {
 	// ThreadCount is the optimal number of threads to use for inference
 	ThreadCount int `json:"threads,omitempty"`
 
+	// TotalCoreCount is the sum of physical CoreCount across all CPU packages
+	// (performance plus efficiency cores). Used for limits such as OLLAMA_NUM_THREAD.
+	TotalCoreCount int `json:"total_cores,omitempty"`
+
 	// TotalMemory is the total amount of system memory
 	TotalMemory uint64 `json:"total_memory,omitempty"`
 
