@@ -671,6 +671,21 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
     if (copy_event != nullptr) {
         CUDA_CHECK(cudaEventDestroy(copy_event));
     }
+    // MoE staging safety-net cleanup (sched normally destroys first)
+    if (moe_staging.stream != nullptr) {
+        CUDA_CHECK(cudaStreamDestroy(moe_staging.stream));
+        moe_staging.stream = nullptr;
+    }
+    for (int i = 0; i < 2; i++) {
+        if (moe_staging.buffers[i] != nullptr) {
+            CUDA_CHECK(cudaFree(moe_staging.buffers[i]));
+            moe_staging.buffers[i] = nullptr;
+        }
+        if (moe_staging.h2d_done[i] != nullptr) {
+            CUDA_CHECK(cudaEventDestroy(moe_staging.h2d_done[i]));
+            moe_staging.h2d_done[i] = nullptr;
+        }
+    }
     for (int i = 0; i < GGML_CUDA_MAX_DEVICES; ++i) {
         for (int j = 0; j < GGML_CUDA_MAX_STREAMS; ++j) {
             if (streams[i][j] != nullptr) {
@@ -5073,6 +5088,242 @@ static ggml_backend_feature * ggml_backend_cuda_get_features(ggml_backend_reg_t 
     GGML_UNUSED(reg);
 }
 
+// ---------------------------------------------------------------------------
+// MoE prefetch CUDA helpers exposed via proc address as void* handles.
+// ---------------------------------------------------------------------------
+
+static void * ggml_backend_cuda_moe_stream(void * backend_handle) {
+    if (!backend_handle) return nullptr;
+    ggml_backend_t backend = (ggml_backend_t)backend_handle;
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+    if (cuda_ctx->moe_staging.stream != nullptr) {
+        return (void *)cuda_ctx->moe_staging.stream;
+    }
+    ggml_cuda_set_device(cuda_ctx->device);
+    if (cudaStreamCreateWithFlags(&cuda_ctx->moe_staging.stream, cudaStreamNonBlocking) != cudaSuccess) {
+        cuda_ctx->moe_staging.stream = nullptr;
+        return nullptr;
+    }
+    return (void *)cuda_ctx->moe_staging.stream;
+}
+
+static void ggml_backend_cuda_moe_stream_synchronize(void * stream_handle) {
+    if (stream_handle) {
+        cudaStreamSynchronize((cudaStream_t)stream_handle);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MoE prefetch staging buffer path (overlap-safe).
+//
+// Two dedicated VRAM buffers (double-buffered) receive H2D copies on the
+// independent prefetch stream; the main compute stream later D2D-copies from
+// the matching staging slot into input_cpy. The staging VRAM is disjoint from
+// any input_cpy region, so the prefetch H2D cannot race with in-flight compute
+// reading an aliased input_cpy.
+// ---------------------------------------------------------------------------
+
+// Initialize double staging buffers of `max_size` bytes each on the given
+// backend's device. Returns true on success; leaves staging empty on failure.
+// Safe to call repeatedly, growing but never shrinking capacity.
+static bool ggml_backend_cuda_moe_staging_init(void * backend_handle, size_t max_size) {
+    if (!backend_handle || max_size == 0) return false;
+    ggml_backend_t backend = (ggml_backend_t)backend_handle;
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+    if (cuda_ctx->moe_staging.capacity >= max_size &&
+        cuda_ctx->moe_staging.buffers[0] != nullptr &&
+        cuda_ctx->moe_staging.buffers[1] != nullptr) {
+        return true;
+    }
+    ggml_cuda_set_device(cuda_ctx->device);
+    auto cleanup_staging = [&]() {
+        for (int i = 0; i < 2; i++) {
+            if (cuda_ctx->moe_staging.buffers[i] != nullptr) {
+                cudaFree(cuda_ctx->moe_staging.buffers[i]);
+                cuda_ctx->moe_staging.buffers[i] = nullptr;
+            }
+            if (cuda_ctx->moe_staging.h2d_done[i] != nullptr) {
+                cudaEventDestroy(cuda_ctx->moe_staging.h2d_done[i]);
+                cuda_ctx->moe_staging.h2d_done[i] = nullptr;
+            }
+        }
+        cuda_ctx->moe_staging.capacity = 0;
+    };
+    cleanup_staging();
+    for (int i = 0; i < 2; i++) {
+        if (cudaMalloc(&cuda_ctx->moe_staging.buffers[i], max_size) != cudaSuccess) {
+            cuda_ctx->moe_staging.buffers[i] = nullptr;
+            cleanup_staging();
+            return false;
+        }
+        if (cuda_ctx->moe_staging.h2d_done[i] == nullptr) {
+            if (cudaEventCreateWithFlags(&cuda_ctx->moe_staging.h2d_done[i],
+                                         cudaEventDisableTiming) != cudaSuccess) {
+                cuda_ctx->moe_staging.h2d_done[i] = nullptr;
+                cleanup_staging();
+                return false;
+            }
+        }
+    }
+    cuda_ctx->moe_staging.capacity = max_size;
+    return true;
+}
+
+static void ggml_backend_cuda_moe_staging_destroy(void * backend_handle) {
+    if (!backend_handle) return;
+    ggml_backend_t backend = (ggml_backend_t)backend_handle;
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+    ggml_cuda_set_device(cuda_ctx->device);
+    if (cuda_ctx->moe_staging.stream != nullptr) {
+        cudaStreamDestroy(cuda_ctx->moe_staging.stream);
+        cuda_ctx->moe_staging.stream = nullptr;
+    }
+    for (int i = 0; i < 2; i++) {
+        if (cuda_ctx->moe_staging.buffers[i] != nullptr) {
+            cudaFree(cuda_ctx->moe_staging.buffers[i]);
+            cuda_ctx->moe_staging.buffers[i] = nullptr;
+        }
+        if (cuda_ctx->moe_staging.h2d_done[i] != nullptr) {
+            cudaEventDestroy(cuda_ctx->moe_staging.h2d_done[i]);
+            cuda_ctx->moe_staging.h2d_done[i] = nullptr;
+        }
+    }
+    cuda_ctx->moe_staging.capacity = 0;
+}
+
+// H2D on the independent prefetch stream: CPU pinned `input` -> staging[slot],
+// then record h2d_done[slot]. The main-stream D2D must wait on that event.
+static bool ggml_backend_cuda_moe_staging_h2d(
+        void * backend_handle, void * prefetch_stream_handle, int slot,
+        struct ggml_tensor * input) {
+    if (!backend_handle || !prefetch_stream_handle || !input) return false;
+    if (slot < 0 || slot > 1) return false;
+    ggml_backend_t backend = (ggml_backend_t)backend_handle;
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+    if (cuda_ctx->moe_staging.buffers[slot] == nullptr ||
+        cuda_ctx->moe_staging.h2d_done[slot] == nullptr) return false;
+    size_t nbytes = ggml_nbytes(input);
+    if (nbytes > cuda_ctx->moe_staging.capacity) return false;
+    cudaStream_t pstream = (cudaStream_t)prefetch_stream_handle;
+    if (cudaMemcpyAsync(cuda_ctx->moe_staging.buffers[slot], input->data, nbytes,
+                        cudaMemcpyHostToDevice, pstream) != cudaSuccess) return false;
+    return cudaEventRecord(cuda_ctx->moe_staging.h2d_done[slot], pstream) == cudaSuccess;
+}
+
+// D2D on the main compute stream: wait on h2d_done[slot], then copy
+// staging[slot] -> input_cpy. Size taken from input_cpy (must equal H2D size).
+static bool ggml_backend_cuda_moe_staging_d2d(
+        void * backend_handle, int slot, struct ggml_tensor * input_cpy) {
+    if (!backend_handle || !input_cpy) return false;
+    if (slot < 0 || slot > 1) return false;
+    ggml_backend_t backend = (ggml_backend_t)backend_handle;
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+    if (cuda_ctx->moe_staging.buffers[slot] == nullptr ||
+        cuda_ctx->moe_staging.h2d_done[slot] == nullptr) return false;
+    size_t nbytes = ggml_nbytes(input_cpy);
+    if (nbytes > cuda_ctx->moe_staging.capacity) return false;
+    cudaStream_t main_stream = cuda_ctx->stream();
+    if (cudaStreamWaitEvent(main_stream, cuda_ctx->moe_staging.h2d_done[slot], 0) != cudaSuccess) return false;
+    return cudaMemcpyAsync(input_cpy->data, cuda_ctx->moe_staging.buffers[slot], nbytes,
+                           cudaMemcpyDeviceToDevice, main_stream) == cudaSuccess;
+}
+
+// Range descriptor for selective staging: [first_id, last_id] inclusive, along
+// the expert dimension (input->ne[2]) of a MUL_MAT_ID weight tensor.
+struct moe_expert_range {
+    int32_t first_id;
+    int32_t last_id;
+};
+
+// Selective H2D on the prefetch stream: for each range, copy the corresponding
+// contiguous expert rows from pinned CPU memory to staging[slot] at the SAME
+// byte offset (so the subsequent D2D can mirror the layout). After all ranges
+// are submitted, record h2d_done[slot] once. Mirrors the MMQ padding_end
+// behavior of the full-weight path.
+static bool ggml_backend_cuda_moe_staging_h2d_ranges(
+        void * backend_handle, void * prefetch_stream_handle, int slot,
+        struct ggml_tensor * input,
+        const struct moe_expert_range * ranges, int n_ranges) {
+    if (!backend_handle || !prefetch_stream_handle || !input) return false;
+    if (!ranges || n_ranges <= 0) return false;
+    if (slot < 0 || slot > 1) return false;
+    ggml_backend_t backend = (ggml_backend_t)backend_handle;
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+    if (cuda_ctx->moe_staging.buffers[slot] == nullptr ||
+        cuda_ctx->moe_staging.h2d_done[slot] == nullptr) return false;
+    size_t tensor_nbytes = ggml_nbytes(input);
+    if (tensor_nbytes > cuda_ctx->moe_staging.capacity) return false;
+
+    const int32_t n_expert    = (int32_t)input->ne[2];
+    const size_t  expert_size = input->nb[2];
+    const size_t  padding     = expert_size < 512 ? expert_size : 512;
+
+    cudaStream_t pstream = (cudaStream_t)prefetch_stream_handle;
+    uint8_t *    staging = (uint8_t *)cuda_ctx->moe_staging.buffers[slot];
+
+    for (int r = 0; r < n_ranges; r++) {
+        const int32_t first_id = ranges[r].first_id;
+        const int32_t last_id  = ranges[r].last_id;
+        if (first_id < 0 || last_id < first_id || last_id >= n_expert) return false;
+
+        const size_t expert_offset    = (size_t)first_id * expert_size;
+        const size_t expert_size_copy = (size_t)(last_id - first_id + 1) * expert_size;
+        const size_t padding_end      = (n_expert > 1 && last_id < n_expert - 1) ? padding : 0;
+
+        const uint8_t * src = (const uint8_t *)input->data + expert_offset;
+        uint8_t       * dst = staging + expert_offset;
+        if (cudaMemcpyAsync(dst, src, expert_size_copy + padding_end,
+                            cudaMemcpyHostToDevice, pstream) != cudaSuccess) {
+            return false;
+        }
+    }
+    return cudaEventRecord(cuda_ctx->moe_staging.h2d_done[slot], pstream) == cudaSuccess;
+}
+
+// Selective D2D on the main compute stream: wait on h2d_done[slot] once, then
+// issue one cudaMemcpyAsync per range, reading from staging[slot] at the same
+// expert offset that the H2D wrote to.
+static bool ggml_backend_cuda_moe_staging_d2d_ranges(
+        void * backend_handle, int slot, struct ggml_tensor * input_cpy,
+        const struct moe_expert_range * ranges, int n_ranges) {
+    if (!backend_handle || !input_cpy) return false;
+    if (!ranges || n_ranges <= 0) return false;
+    if (slot < 0 || slot > 1) return false;
+    ggml_backend_t backend = (ggml_backend_t)backend_handle;
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+    if (cuda_ctx->moe_staging.buffers[slot] == nullptr ||
+        cuda_ctx->moe_staging.h2d_done[slot] == nullptr) return false;
+    size_t tensor_nbytes = ggml_nbytes(input_cpy);
+    if (tensor_nbytes > cuda_ctx->moe_staging.capacity) return false;
+
+    const int32_t n_expert    = (int32_t)input_cpy->ne[2];
+    const size_t  expert_size = input_cpy->nb[2];
+    const size_t  padding     = expert_size < 512 ? expert_size : 512;
+
+    cudaStream_t main_stream = cuda_ctx->stream();
+    if (cudaStreamWaitEvent(main_stream, cuda_ctx->moe_staging.h2d_done[slot], 0) != cudaSuccess) return false;
+
+    const uint8_t * staging = (const uint8_t *)cuda_ctx->moe_staging.buffers[slot];
+    uint8_t *       dst_base = (uint8_t *)input_cpy->data;
+
+    for (int r = 0; r < n_ranges; r++) {
+        const int32_t first_id = ranges[r].first_id;
+        const int32_t last_id  = ranges[r].last_id;
+        if (first_id < 0 || last_id < first_id || last_id >= n_expert) return false;
+
+        const size_t expert_offset    = (size_t)first_id * expert_size;
+        const size_t expert_size_copy = (size_t)(last_id - first_id + 1) * expert_size;
+        const size_t padding_end      = (n_expert > 1 && last_id < n_expert - 1) ? padding : 0;
+
+        if (cudaMemcpyAsync(dst_base + expert_offset, staging + expert_offset,
+                            expert_size_copy + padding_end,
+                            cudaMemcpyDeviceToDevice, main_stream) != cudaSuccess) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, const char * name) {
     GGML_UNUSED(reg);
     if (strcmp(name, "ggml_backend_split_buffer_type") == 0) {
@@ -5086,6 +5337,30 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     }
     if (strcmp(name, "ggml_backend_get_features") == 0) {
         return (void *)ggml_backend_cuda_get_features;
+    }
+    if (strcmp(name, "ggml_backend_cuda_moe_stream") == 0) {
+        return (void *)ggml_backend_cuda_moe_stream;
+    }
+    if (strcmp(name, "ggml_backend_cuda_moe_stream_synchronize") == 0) {
+        return (void *)ggml_backend_cuda_moe_stream_synchronize;
+    }
+    if (strcmp(name, "ggml_backend_cuda_moe_staging_init") == 0) {
+        return (void *)ggml_backend_cuda_moe_staging_init;
+    }
+    if (strcmp(name, "ggml_backend_cuda_moe_staging_destroy") == 0) {
+        return (void *)ggml_backend_cuda_moe_staging_destroy;
+    }
+    if (strcmp(name, "ggml_backend_cuda_moe_staging_h2d") == 0) {
+        return (void *)ggml_backend_cuda_moe_staging_h2d;
+    }
+    if (strcmp(name, "ggml_backend_cuda_moe_staging_d2d") == 0) {
+        return (void *)ggml_backend_cuda_moe_staging_d2d;
+    }
+    if (strcmp(name, "ggml_backend_cuda_moe_staging_h2d_ranges") == 0) {
+        return (void *)ggml_backend_cuda_moe_staging_h2d_ranges;
+    }
+    if (strcmp(name, "ggml_backend_cuda_moe_staging_d2d_ranges") == 0) {
+        return (void *)ggml_backend_cuda_moe_staging_d2d_ranges;
     }
     return nullptr;
 }

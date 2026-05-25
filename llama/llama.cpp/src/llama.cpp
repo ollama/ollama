@@ -322,7 +322,7 @@ static void llama_params_fit_impl(
             case LAYER_FRACTION_MOE: {
                 static std::array<std::string, n_strings> patterns;
                 if (patterns[il].empty()) {
-                    patterns[il] = "blk\\." + std::to_string(il) + "\\.ffn_(up|down|gate)_(ch|)exps";
+                    patterns[il] = "blk\\." + std::to_string(il) + "\\.ffn_(up|down|gate|gate_up)_(exps|chexps|ch_exps)";
                 }
                 return patterns[il].c_str();
             }
@@ -417,7 +417,7 @@ static void llama_params_fit_impl(
 
     int64_t global_surplus_cpu_moe = 0;
     if (hp_nex > 0) {
-        const static std::string pattern_moe_all = "blk\\.\\d+\\.ffn_(up|down|gate)_(ch|)exps"; // matches all MoE tensors
+        const static std::string pattern_moe_all = "blk\\.\\d+\\.ffn_(up|down|gate|gate_up)_(exps|chexps|ch_exps)"; // matches all MoE tensors
         ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
         tensor_buft_overrides[0] = {pattern_moe_all.c_str(), cpu_buft};
         tensor_buft_overrides[1] = {nullptr, nullptr};
@@ -1067,4 +1067,3 @@ const char * llama_print_system_info(void) {
 
     return s.c_str();
 }
-

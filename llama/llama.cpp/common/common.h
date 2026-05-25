@@ -821,7 +821,7 @@ const char * const LLM_KV_SPLIT_TENSORS_COUNT = "split.tensors.count";
 // MoE utils
 //
 
-const char * const LLM_FFN_EXPS_REGEX = "\\.ffn_(up|down|gate)_(ch|)exps";
+const char * const LLM_FFN_EXPS_REGEX = "\\.ffn_(up|down|gate|gate_up)_(exps|chexps|ch_exps)";
 
 static std::string llm_ffn_exps_block_regex(int idx) {
     return string_format("blk\\.%d%s", idx, LLM_FFN_EXPS_REGEX);
