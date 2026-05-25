@@ -16,12 +16,16 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/server/internal/wakelock"
 )
 
 func TestMain(m *testing.M) {
 	os.Setenv("OLLAMA_DEBUG", "1")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	slog.SetDefault(logger)
+	// Don't take a real OS sleep-prevention assertion (e.g. spawn
+	// `caffeinate` on macOS) during unit tests.
+	wakelock.Disable()
 	os.Exit(m.Run())
 }
 
@@ -675,7 +679,7 @@ func TestSchedUseLoadedRunner(t *testing.T) {
 	finished := make(chan *LlmRequest)
 	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	r1 := &runnerRef{llama: llm1, sessionDuration: 1, numParallel: 1}
-	req.useLoadedRunner(r1, finished)
+	req.useLoadedRunner(r1, finished, nil)
 	require.Equal(t, uint(1), r1.refCount)
 	require.Equal(t, time.Duration(2), r1.sessionDuration)
 	select {
