@@ -17,6 +17,20 @@ import (
 	"time"
 )
 
+// RunnerHost returns the IP address that model runner subprocesses will bind to for
+// their internal HTTP IPC server. RunnerHost can be configured via the
+// OLLAMA_RUNNER_HOST environment variable. Default is "127.0.0.1".
+func RunnerHost() string {
+	if h := strings.TrimSpace(Var("OLLAMA_RUNNER_HOST")); h != "" {
+		// Strip brackets for bare IPv6 literals like "[::1]".
+		if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
+			return ip.String()
+		}
+		return h
+	}
+	return "127.0.0.1"
+}
+
 // Host returns the scheme and host. Host can be configured via the OLLAMA_HOST environment variable.
 // Default is scheme "http" and host "127.0.0.1:11434"
 func Host() *url.URL {
@@ -316,6 +330,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_HOST":                 {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_RUNNER_HOST":          {"OLLAMA_RUNNER_HOST", RunnerHost(), "IP address runner subprocesses bind to for internal IPC (default 127.0.0.1)"},
 		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":         {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},

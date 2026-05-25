@@ -412,7 +412,12 @@ func filterOverlapByLibrary(supported map[string]map[string]map[string]int, need
 
 type bootstrapRunner struct {
 	port int
+	host string
 	cmd  *exec.Cmd
+}
+
+func (r *bootstrapRunner) GetHost() string {
+	return r.host
 }
 
 func (r *bootstrapRunner) GetPort() int {
@@ -494,7 +499,7 @@ func bootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []string, ext
 	}
 
 	status := llm.NewStatusWriter(baseOut)
-	cmd, port, err := llm.StartRunner(
+	cmd, port, host, err := llm.StartRunner(
 		true, // ollama engine
 		"",   // no model
 		ollamaLibDirs,
@@ -512,7 +517,7 @@ func bootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []string, ext
 
 	defer cmd.Process.Kill()
 
-	devices, err := ml.GetDevicesFromRunner(ctx, &bootstrapRunner{port: port, cmd: cmd})
+	devices, err := ml.GetDevicesFromRunner(ctx, &bootstrapRunner{port: port, host: host, cmd: cmd})
 	exitCode := -1
 	if cmd.ProcessState != nil {
 		exitCode = cmd.ProcessState.ExitCode()
