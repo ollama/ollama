@@ -313,6 +313,66 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	return &m, nil
 }
 
+// LoadModelFromSplits loads a split GGUF model from multiple shard paths.
+// paths must be ordered by split.no (0-indexed). For single-file models prefer LoadModelFromFile.
+func LoadModelFromSplits(paths []string, params ModelParams) (*Model, error) {
+	cparams := C.llama_model_default_params()
+	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
+	cparams.main_gpu = C.int32_t(params.MainGpu)
+	cparams.use_mmap = C.bool(params.UseMmap)
+	cparams.vocab_only = C.bool(params.VocabOnly)
+
+	var devices []C.ggml_backend_dev_t
+	for _, llamaID := range params.Devices {
+		devices = append(devices, C.ggml_backend_dev_get(C.size_t(llamaID)))
+	}
+	if len(devices) > 0 {
+		devices = append(devices, C.ggml_backend_dev_t(C.NULL))
+		devicesData := &devices[0]
+
+		var devicesPin runtime.Pinner
+		devicesPin.Pin(devicesData)
+		defer devicesPin.Unpin()
+
+		cparams.devices = devicesData
+	}
+
+	if len(params.TensorSplit) > 0 {
+		tensorSplitData := &params.TensorSplit[0]
+
+		var tensorSplitPin runtime.Pinner
+		tensorSplitPin.Pin(tensorSplitData)
+		defer tensorSplitPin.Unpin()
+
+		cparams.tensor_split = (*C.float)(unsafe.Pointer(tensorSplitData))
+	}
+
+	if params.Progress != nil {
+		handle := cgo.NewHandle(params.Progress)
+		defer handle.Delete()
+
+		var handlePin runtime.Pinner
+		handlePin.Pin(&handle)
+		defer handlePin.Unpin()
+
+		cparams.progress_callback = C.llama_progress_callback(C.llamaProgressCallback)
+		cparams.progress_callback_user_data = unsafe.Pointer(&handle)
+	}
+
+	cpaths := make([]*C.char, len(paths))
+	for i, p := range paths {
+		cpaths[i] = C.CString(p)
+		defer C.free(unsafe.Pointer(cpaths[i]))
+	}
+
+	m := Model{c: C.llama_model_load_from_splits(&cpaths[0], C.size_t(len(paths)), cparams)}
+	if m.c == nil {
+		return nil, fmt.Errorf("unable to load split model: %v", paths)
+	}
+
+	return &m, nil
+}
+
 func FreeModel(model *Model) {
 	C.llama_model_free(model.c)
 }
@@ -426,7 +486,7 @@ func (b *Batch) Add(token int, embed []float32, pos int, logits bool, seqIds ...
 	unsafe.Slice(b.c.n_seq_id, b.allocSize())[b.c.n_tokens] = C.int(len(seqIds))
 
 	for i, s := range seqIds {
-		unsafe.Slice((unsafe.Slice(b.c.seq_id, b.allocSize())[b.c.n_tokens]), C.int(len(seqIds)))[i] = C.int32_t(s)
+		unsafe.Slice(unsafe.Slice(b.c.seq_id, b.allocSize())[b.c.n_tokens], C.int(len(seqIds)))[i] = C.int32_t(s)
 	}
 
 	if logits {

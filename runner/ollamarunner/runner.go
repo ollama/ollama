@@ -329,8 +329,8 @@ type batchState struct {
 }
 
 type Server struct {
-	// modelPath is the location of the model to be loaded
-	modelPath string
+	// modelPaths are the shard file paths; single-element for non-split models
+	modelPaths []string
 
 	// loadMu prevents more than one load attempt from occurring at a time
 	loadMu sync.Mutex
@@ -725,7 +725,8 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			logutil.Trace("computeBatch: signaling computeStartedCh", "batchID", activeBatch.id)
 			activeBatch.computeStartedCh <- struct{}{}
 		},
-		activeBatch.modelOutput)
+		activeBatch.modelOutput,
+	)
 
 	outputs := activeBatch.modelOutput.Floats()
 	t := time.Now()
@@ -1181,7 +1182,7 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 // allocModel pre-allocates the maximum needed memory for a model
 // based on the given parameters
 func (s *Server) allocModel(
-	mpath string,
+	mpaths []string,
 	params ml.BackendParams,
 	loraPath []string,
 	parallel int,
@@ -1206,7 +1207,7 @@ func (s *Server) allocModel(
 	}()
 
 	var err error
-	s.model, err = model.New(mpath, params)
+	s.model, err = model.New(mpaths, params)
 	if err != nil {
 		return err
 	}
@@ -1321,7 +1322,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 		s.batchSize = req.BatchSize
 
-		err := s.allocModel(s.modelPath, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
+		err := s.allocModel(s.modelPaths, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
 		if err != nil {
 			s.closeModel()
 
@@ -1416,7 +1417,7 @@ func (s *Server) infoModelLocked() (model.Model, error) {
 				return
 			}
 
-			s.infoModel, s.infoErr = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
+			s.infoModel, s.infoErr = model.New([]string{f.Name()}, ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
 			if s.infoErr == nil {
 				slog.Debug("dummy model load took", "duration", time.Since(startLoad))
 			}
@@ -1435,7 +1436,11 @@ func (s *Server) infoModelLocked() (model.Model, error) {
 
 func Execute(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
-	mpath := fs.String("model", "", "Path to model binary file")
+	var mpaths []string
+	fs.Func("model", "path to model shard file (may be repeated for split GGUF)", func(v string) error {
+		mpaths = append(mpaths, v)
+		return nil
+	})
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
@@ -1453,8 +1458,8 @@ func Execute(args []string) error {
 	defer cancel()
 
 	server := &Server{
-		modelPath: *mpath,
-		status:    llm.ServerStatusLaunched,
+		modelPaths: mpaths,
+		status:     llm.ServerStatusLaunched,
 	}
 
 	server.cond = sync.NewCond(&server.mu)

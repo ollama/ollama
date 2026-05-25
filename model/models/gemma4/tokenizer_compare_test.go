@@ -16,7 +16,7 @@ func TestTokenizerMatchesHF(t *testing.T) {
 		t.Skip("set GEMMA4_MODEL_PATH to a gemma4 GGUF file")
 	}
 
-	m, err := model.New(modelPath, ml.BackendParams{AllocMemory: true})
+	m, err := model.New([]string{modelPath}, ml.BackendParams{AllocMemory: true})
 	if err != nil {
 		t.Fatalf("Failed to load model: %v", err)
 	}

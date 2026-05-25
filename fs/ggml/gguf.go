@@ -94,6 +94,7 @@ type gguf struct {
 
 	parameters   uint64
 	tensorOffset uint64
+	shardOffsets []uint64 // nil for single-file models
 
 	scratch [16 << 10]byte
 }
@@ -111,8 +112,9 @@ func (llm *gguf) KV() KV {
 
 func (llm *gguf) Tensors() Tensors {
 	return Tensors{
-		items:  llm.tensors,
-		Offset: llm.tensorOffset,
+		items:        llm.tensors,
+		Offset:       llm.tensorOffset,
+		ShardOffsets: llm.shardOffsets,
 	}
 }
 
@@ -597,7 +599,8 @@ func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {
 	if !strings.HasPrefix(k, arch+".") &&
 		!strings.HasPrefix(k, "general.") &&
 		!strings.HasPrefix(k, "adapter.") &&
-		!strings.HasPrefix(k, "tokenizer.") {
+		!strings.HasPrefix(k, "tokenizer.") &&
+		!strings.HasPrefix(k, "split.") {
 		k = arch + "." + k
 	}
 
@@ -612,6 +615,8 @@ func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {
 
 	var err error
 	switch v := v.(type) {
+	case uint16:
+		err = writeGGUF(ws, ggufTypeUint16, v)
 	case int32:
 		err = writeGGUF(ws, ggufTypeInt32, v)
 	case int64:

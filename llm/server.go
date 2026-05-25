@@ -85,13 +85,13 @@ type LlamaServer interface {
 
 // llmServer is an instance of a runner hosting a single model
 type llmServer struct {
-	port      int
-	cmd       *exec.Cmd
-	done      chan struct{} // closed when the process exits
-	doneErr   error         // valid after done is closed
-	status    *StatusWriter
-	options   api.Options
-	modelPath string
+	port       int
+	cmd        *exec.Cmd
+	done       chan struct{} // closed when the process exits
+	doneErr    error         // valid after done is closed
+	status     *StatusWriter
+	options    api.Options
+	modelPaths []string
 
 	loadRequest LoadRequest       // Parameters used to initialize the runner
 	mem         *ml.BackendMemory // Memory allocations for this model
@@ -141,23 +141,28 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 }
 
 // NewLlamaServer will run a server for the given GPUs
-func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPaths []string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var llamaModel *llama.Model
 	var tok tokenizer.Tokenizer
 	var err error
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
 		if len(projectors) == 0 {
-			tok, err = model.NewTextProcessor(modelPath)
+			tok, err = model.NewTextProcessor(modelPaths[0])
 		} else {
 			err = errors.New("split vision models aren't supported")
 		}
 		if err != nil {
 			// To prepare for opt-out mode, instead of treating this as an error, we fallback to the old runner
-			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
+			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPaths[0], "error", err)
 		}
 	}
 	if tok == nil {
-		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
+		vocabParams := llama.ModelParams{VocabOnly: true}
+		if len(modelPaths) > 1 {
+			llamaModel, err = llama.LoadModelFromSplits(modelPaths, vocabParams)
+		} else {
+			llamaModel, err = llama.LoadModelFromFile(modelPaths[0], vocabParams)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -275,7 +280,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	status := NewStatusWriter(os.Stderr)
 	cmd, port, err := StartRunner(
 		tok != nil,
-		modelPath,
+		modelPaths,
 		gpuLibs,
 		status,
 		ml.GetDevicesEnv(gpus, false),
@@ -286,7 +291,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		cmd:            cmd,
 		status:         status,
 		options:        opts,
-		modelPath:      modelPath,
+		modelPaths:     modelPaths,
 		loadRequest:    loadRequest,
 		llamaModel:     llamaModel,
 		llamaModelLock: &sync.Mutex{},
@@ -331,7 +336,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 }
 
-func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, err error) {
+func StartRunner(ollamaEngine bool, modelPaths []string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, err error) {
 	var exe string
 	exe, err = os.Executable()
 	if err != nil {
@@ -358,8 +363,8 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	if ollamaEngine {
 		params = append(params, "--ollama-engine")
 	}
-	if modelPath != "" {
-		params = append(params, "--model", modelPath)
+	for _, p := range modelPaths {
+		params = append(params, "--model", p)
 	}
 	params = append(params, "--port", strconv.Itoa(port))
 
@@ -473,7 +478,10 @@ func ShouldRetryWithMetalTensorDisabled(err error, status *StatusWriter) bool {
 }
 
 func (s *llmServer) ModelPath() string {
-	return s.modelPath
+	if len(s.modelPaths) > 0 {
+		return s.modelPaths[0]
+	}
+	return ""
 }
 
 type LoadOperation int

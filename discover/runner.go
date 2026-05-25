@@ -149,7 +149,8 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 				extraEnvs := ml.GetDevicesEnv(devices[i:i+1], true)
 				devices[i].AddInitValidation(extraEnvs)
 				if len(bootstrapDevicesWithMetalRetry(ctx2ndPass, ctx, 30*time.Second, devices[i].LibraryPath, extraEnvs)) == 0 {
-					slog.Debug("filtering device which didn't fully initialize",
+					slog.Debug(
+						"filtering device which didn't fully initialize",
 						"id", devices[i].ID,
 						"libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
 						"pci_id", devices[i].PCIID,
@@ -223,7 +224,8 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 					if droppedDevice.Integrated {
 						typeStr = "iGPU"
 					}
-					slog.Debug("dropping duplicate device",
+					slog.Debug(
+						"dropping duplicate device",
 						"id", droppedDevice.ID,
 						"library", droppedDevice.Library,
 						"compute", droppedDevice.Compute(),
@@ -397,7 +399,8 @@ func filterOverlapByLibrary(supported map[string]map[string]map[string]int, need
 			}
 			for dev, i := range byLibDirs[libDir] {
 				if _, found := byLibDirs[newest][dev]; found {
-					slog.Debug("filtering device with overlapping libraries",
+					slog.Debug(
+						"filtering device with overlapping libraries",
 						"id", dev,
 						"library", libDir,
 						"delete_index", i,
@@ -496,7 +499,7 @@ func bootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []string, ext
 	status := llm.NewStatusWriter(baseOut)
 	cmd, port, err := llm.StartRunner(
 		true, // ollama engine
-		"",   // no model
+		nil,  // no model
 		ollamaLibDirs,
 		status,
 		extraEnvs,

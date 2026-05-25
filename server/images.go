@@ -64,7 +64,8 @@ type Model struct {
 	Name           string `json:"name"`
 	Config         model.ConfigV2
 	ShortName      string
-	ModelPath      string
+	ModelPath      string   // first shard path; used for logging and keying
+	ModelPaths     []string // all shard paths ordered by split.no
 	ParentModel    string
 	AdapterPaths   []string
 	ProjectorPaths []string
@@ -338,7 +339,10 @@ func GetModel(name string) (*Model, error) {
 
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
-			m.ModelPath = filename
+			m.ModelPaths = append(m.ModelPaths, filename)
+			if m.ModelPath == "" {
+				m.ModelPath = filename
+			}
 			m.ParentModel = layer.From
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2

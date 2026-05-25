@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -301,6 +302,140 @@ func TestCreateGGUF(t *testing.T) {
 	deleteReq := &api.DeleteRequest{Model: modelName}
 	if err := client.Delete(ctx, deleteReq); err != nil {
 		t.Logf("Warning: failed to delete test model: %v", err)
+	}
+}
+
+// TestCreateSplitGGUF verifies that a Modelfile with multiple FROM lines
+// (one per shard) imports correctly regardless of the order the shards are
+// listed. It also checks that an incomplete shard set is rejected.
+//
+// Requirements: huggingface-cli (to download the base model) and
+// llama-gguf-split (from llama.cpp) must be on PATH. The test is skipped
+// automatically if either tool is missing.
+func TestCreateSplitGGUF(t *testing.T) {
+	if testModel != "" {
+		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
+	}
+	skipIfRemote(t)
+
+	// Require llama-gguf-split; skip if absent.
+	splitBin, err := exec.LookPath("llama-gguf-split")
+	if err != nil {
+		t.Skip("llama-gguf-split not found in PATH; install from llama.cpp to enable this test")
+	}
+
+	// Download SmolLM2-135M Q8_0 (~90 MB, fast even on slow connections).
+	modelDir := filepath.Join(testdataModelsDir, "SmolLM2-135M-GGUF")
+	downloadHFModel(t, "hugging-quants/SmolLM2-135M-Instruct-Q8_0-GGUF", modelDir,
+		"--include", "smollm2-135m-instruct-q8_0.gguf")
+
+	var basePath string
+	entries, _ := os.ReadDir(modelDir)
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".gguf" {
+			basePath = filepath.Join(modelDir, e.Name())
+			break
+		}
+	}
+	if basePath == "" {
+		t.Skip("No GGUF file found in model directory")
+	}
+
+	// Split into 3 shards so the incomplete-shard error case is testable
+	// (needs at least 2 paths for the mismatch check to fire).
+	splitDir := t.TempDir()
+	splitBase := filepath.Join(splitDir, "smollm")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	splitCmd := exec.CommandContext(ctx, splitBin, "--split-max-tensors", "100", basePath, splitBase)
+	splitCmd.Stdout = os.Stdout
+	splitCmd.Stderr = os.Stderr
+	if err := splitCmd.Run(); err != nil {
+		t.Fatalf("llama-gguf-split failed: %v", err)
+	}
+
+	shardFiles, err := filepath.Glob(filepath.Join(splitDir, "smollm-*.gguf"))
+	if err != nil || len(shardFiles) < 2 {
+		t.Fatalf("expected ≥2 shard files after split, got %v", shardFiles)
+	}
+
+	// ── case 1: reversed FROM order must still produce a working model ────────
+
+	// Sort shards in reverse filename order so FROM lines are intentionally wrong.
+	sort.Sort(sort.Reverse(sort.StringSlice(shardFiles)))
+
+	var lines []string
+	for _, s := range shardFiles {
+		abs, _ := filepath.Abs(s)
+		lines = append(lines, "FROM "+abs)
+	}
+	mfContent := strings.Join(lines, "\n") + "\n"
+
+	mfPath := filepath.Join(t.TempDir(), "Modelfile")
+	if err := os.WriteFile(mfPath, []byte(mfContent), 0o644); err != nil {
+		t.Fatalf("Failed to write Modelfile: %v", err)
+	}
+
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	const modelName = "test-split-gguf"
+
+	createCmd := exec.CommandContext(ctx, ollamaBin(), "create", modelName, "-f", mfPath)
+	createCmd.Stdout = os.Stdout
+	createCmd.Stderr = os.Stderr
+	if err := createCmd.Run(); err != nil {
+		t.Fatalf("ollama create failed with reversed shard order: %v", err)
+	}
+
+	if _, err := client.Show(ctx, &api.ShowRequest{Name: modelName}); err != nil {
+		t.Fatalf("Model show failed after create: %v", err)
+	}
+
+	var output strings.Builder
+	if err := client.Generate(ctx, &api.GenerateRequest{
+		Model:  modelName,
+		Prompt: "Write a short sentence about the weather.",
+		Options: map[string]interface{}{
+			"num_predict": 20,
+			"temperature": 0.0,
+		},
+	}, func(r api.GenerateResponse) error {
+		output.WriteString(r.Response)
+		return nil
+	}); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	t.Logf("Generated output: %q", output.String())
+	assertCoherentOutput(t, output.String())
+
+	if err := client.Delete(ctx, &api.DeleteRequest{Model: modelName}); err != nil {
+		t.Logf("Warning: failed to delete test model: %v", err)
+	}
+
+	// ── case 2: supplying fewer shards than split.count must be rejected ──────
+
+	// Use the first two shards of a 3-shard model (sorted order, not reversed).
+	sort.Strings(shardFiles)
+	var incompleteLines []string
+	for _, s := range shardFiles[:2] {
+		abs, _ := filepath.Abs(s)
+		incompleteLines = append(incompleteLines, "FROM "+abs)
+	}
+	incompleteMF := filepath.Join(t.TempDir(), "Modelfile.incomplete")
+	if err := os.WriteFile(incompleteMF, []byte(strings.Join(incompleteLines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("Failed to write incomplete Modelfile: %v", err)
+	}
+
+	incompleteCreate := exec.CommandContext(ctx, ollamaBin(), "create", "test-split-gguf-incomplete", "-f", incompleteMF)
+	var incompleteStderr strings.Builder
+	incompleteCreate.Stderr = io.MultiWriter(os.Stderr, &incompleteStderr)
+	if err := incompleteCreate.Run(); err == nil {
+		t.Error("expected ollama create to fail with incomplete shard set, but it succeeded")
+	} else if !strings.Contains(incompleteStderr.String(), "declares") {
+		t.Errorf("expected 'declares N shards but M were provided' in stderr, got: %s", incompleteStderr.String())
 	}
 }
 
