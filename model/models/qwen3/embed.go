@@ -4,6 +4,7 @@ import (
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
@@ -13,6 +14,7 @@ import (
 type embedModel struct {
 	model.Base
 	tokenizer.Tokenizer
+	ClsOut *nn.Linear `gguf:"cls.output"`
 
 	*Model
 	poolingType pooling.Type
@@ -24,8 +26,12 @@ func (m *embedModel) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, erro
 		return nil, err
 	}
 
-	hiddenStates = m.poolingType.Forward(ctx, hiddenStates)
-	hiddenStates = hiddenStates.L2Norm(ctx, 1e-12)
+	hiddenStates = m.poolingType.Forward(ctx, hiddenStates, nil, m.ClsOut)
+	if m.poolingType == pooling.TypeRank {
+		hiddenStates = hiddenStates.Softmax(ctx)
+	} else {
+		hiddenStates = hiddenStates.L2Norm(ctx, 1e-12)
+	}
 	return hiddenStates, nil
 }
 

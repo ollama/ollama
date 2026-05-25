@@ -47,6 +47,131 @@ static __global__ void quantize_q8_1(
     y[ib].ds = make_half2(d, sum);
 }
 
+__device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
+    if (!(amax > 0.0f)) {
+        return 0;
+    }
+
+    // FP4 E2M1: max exponent (unbiased) is 2.
+    constexpr int FP4_E2M1_EMAX = 2;
+
+    const float e = log2f(amax);
+
+    // "even" -> round-to-nearest integer, ties-to-even
+    const int e_int = __float2int_rn(e);
+
+    const int shared_exp = e_int - FP4_E2M1_EMAX;
+
+    int biased = shared_exp + 127;
+
+    biased = max(biased, 0);
+    biased = min(biased, 254);
+
+    return static_cast<uint8_t>(biased);
+}
+
+// quantize values in the format mxfp4 is stored which is interleaved nibbles
+// i.e. a block a0-a31 is represented as a0a16,a1a17 ...a15a31
+static __global__ void quantize_mmq_mxfp4(const float * __restrict__ x,
+                                          const int32_t * __restrict__ ids,
+                                          void * __restrict__ vy,
+                                          const int64_t ne00,
+                                          const int64_t s01,
+                                          const int64_t s02,
+                                          const int64_t s03,
+                                          const int64_t ne0,
+                                          const int     ne1,
+                                          const int     ne2) {
+    constexpr int vals_per_scale = 32;
+    constexpr int vals_per_warp  = 2 * vals_per_scale;  // Each warp processes 2 blocks of 32 = 64 values
+
+    const int warp_id = threadIdx.y;
+    const int lane_id_32 = threadIdx.x;
+
+    const int nwarps = blockDim.y;
+
+    const int64_t warp_start_offset = (blockIdx.y * nwarps + warp_id) * vals_per_warp;
+
+    if (warp_start_offset >= ne0) {
+        return;
+    }
+
+    const int64_t i1 = blockIdx.x;
+    const int64_t i2 = blockIdx.z % ne2;
+    const int64_t i3 = blockIdx.z / ne2;
+
+    const int64_t i01 = ids ? ids[i1] : i1;
+    const int64_t i02 = i2;
+    const int64_t i03 = i3;
+
+    block_fp4_mmq * y = (block_fp4_mmq *) vy;
+
+    const int64_t block_fp4_mmq_size = 8 * QK_MXFP4;  // 256 values
+    const int64_t ib0                = blockIdx.z * ((int64_t) ne1 * (ne0 / block_fp4_mmq_size));
+    const int64_t ib = ib0 + (warp_start_offset / block_fp4_mmq_size) * ne1 + blockIdx.x;
+    const int64_t quad_idx_in_block  = (warp_start_offset % block_fp4_mmq_size) / vals_per_warp;
+
+    const int group_id = lane_id_32 / 4;
+    const int lane_in_group = lane_id_32 % 4;
+    const int base = group_id * 2;
+    char2 * yqs2 = (char2 *) y[ib].qs;
+
+    const int64_t base_pos = i03 * s03 + i02 * s02 + i01 * s01;
+
+    uint8_t scales[2];
+
+#pragma unroll
+    for (int b = 0; b < 2; ++b) {
+        const int64_t i0 = warp_start_offset + b * vals_per_scale + lane_id_32;
+        const float xi = (i0 < ne00) ? x[base_pos + i0] : 0.0f;
+
+        float amax = fabsf(xi);
+#pragma unroll
+        for (int mask = 16; mask > 0; mask >>= 1) {
+            amax = fmaxf(amax, __shfl_xor_sync(0xFFFFFFFF, amax, mask, WARP_SIZE));
+        }
+
+        const uint8_t e = compute_e8m0_scale(amax);
+        scales[b] = e;
+        const float inv_s = (amax == 0.0f) ? 0.0f : __frcp_rn(ggml_cuda_e8m0_to_fp32(e));
+
+#if CUDART_VERSION >= 12080
+        const float scaled_val = xi * inv_s;
+
+        const float val0 = __shfl_sync(0xFFFFFFFF, scaled_val, base, WARP_SIZE);
+        const float val1 = __shfl_sync(0xFFFFFFFF, scaled_val, base + 16, WARP_SIZE);
+        const float val2 = __shfl_sync(0xFFFFFFFF, scaled_val, base + 1, WARP_SIZE);
+        const float val3 = __shfl_sync(0xFFFFFFFF, scaled_val, base + 17, WARP_SIZE);
+
+        if (lane_in_group == 0) {
+            __nv_fp4x4_e2m1 fp4_packed(make_float4(val0, val1, val2, val3));
+
+            yqs2[quad_idx_in_block * 16 + b * 8 + group_id] = *(char2 *) &fp4_packed;
+        }
+#else
+        // Fallback: manual FP4 conversion using LUT
+        const uint8_t q_val = ggml_cuda_float_to_fp4_e2m1(xi, inv_s);
+
+        const uint8_t q_lo_0 = __shfl_sync(0xFFFFFFFF, q_val, base,      WARP_SIZE);
+        const uint8_t q_lo_1 = __shfl_sync(0xFFFFFFFF, q_val, base + 1,  WARP_SIZE);
+        const uint8_t q_hi_0 = __shfl_sync(0xFFFFFFFF, q_val, base + 16, WARP_SIZE);
+        const uint8_t q_hi_1 = __shfl_sync(0xFFFFFFFF, q_val, base + 17, WARP_SIZE);
+
+        if (lane_in_group == 0) {
+            char2 q;
+            q.x = (q_hi_0 << 4) | q_lo_0;
+            q.y = (q_hi_1 << 4) | q_lo_1;
+            yqs2[quad_idx_in_block * 16 + b * 8 + group_id] = q;
+        }
+#endif // CUDART_VERSION >= 12080
+    }
+
+    if (lane_id_32 == 0) {
+        // Store 2 scales packed into 1 uint32
+        y[ib].d4[quad_idx_in_block] = (scales[1] << 8) | scales[0];
+    }
+}
+
 template <mmq_q8_1_ds_layout ds_layout>
 static __global__ void quantize_mmq_q8_1(
         const float * __restrict__ x, const int32_t * __restrict__ ids, void * __restrict__ vy,
@@ -189,4 +314,30 @@ void quantize_mmq_q8_1_cuda(
             GGML_ABORT("fatal error");
             break;
     }
+}
+
+void quantize_mmq_mxfp4_cuda(const float *                    x,
+                             const int32_t *                  ids,
+                             void *                           vy,
+                             [[maybe_unused]] const ggml_type type_src0,
+                             const int64_t                    ne00,
+                             const int64_t                    s01,
+                             const int64_t                    s02,
+                             const int64_t                    s03,
+                             const int64_t                    ne0,
+                             const int64_t                    ne1,
+                             const int64_t                    ne2,
+                             const int64_t                    ne3,
+                             cudaStream_t                     stream) {
+    GGML_ASSERT(ne0 % (2 * QK_MXFP4) == 0);
+
+    constexpr int nwarps = 8;
+    constexpr int vals_per_warp  = 2 * QK_MXFP4;
+    constexpr int vals_per_block = nwarps * vals_per_warp;
+
+    const int64_t block_num_y = (ne0 + vals_per_block - 1) / vals_per_block;
+    const dim3    num_blocks(ne1, block_num_y, ne2 * ne3);
+    const dim3    block_size(WARP_SIZE, nwarps, 1);
+
+    quantize_mmq_mxfp4<<<num_blocks, block_size, 0, stream>>>(x, ids, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
 }

@@ -19,6 +19,7 @@ layout (push_constant) uniform parameter
     int s0; int s1;
     int p0; int p1;
     int d0; int d1;
+    uint batch_IC;
 } p;
 
 layout(constant_id = 0) const uint BLOCK_SIZE = 32;
@@ -34,12 +35,12 @@ layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
 layout (buffer_reference) buffer D_ptr {D_TYPE d;};
 #endif
 
-void main() {
+void im2col(const uint y, const uint z) {
     const uint gidx = gl_GlobalInvocationID.x;
 
-    const uint oh = gl_GlobalInvocationID.y;
-    const uint batch = gl_GlobalInvocationID.z / p.IC;
-    const uint ic = gl_GlobalInvocationID.z % p.IC;
+    const uint oh = y;
+    const uint batch = z / p.IC;
+    const uint ic = z % p.IC;
 
     const uint src_base = ic * p.offset_delta + batch * p.batch_offset;
     const BDA_OFFSET_T dst_base = ((BDA_OFFSET_T(batch) * p.OH + oh) * p.OW) * p.CHW + BDA_OFFSET_T(ic) * (p.KW * p.KH);
@@ -99,5 +100,17 @@ void main() {
 #else
         data_d[offset_dst[idx]] = D_TYPE(values[idx]);
 #endif
+    }
+}
+
+void main() {
+    uint y = gl_GlobalInvocationID.y;
+    while (y < p.OH) {
+        uint z = gl_GlobalInvocationID.z;
+        while (z < p.batch_IC) {
+            im2col(y, z);
+            z += gl_NumWorkGroups.z;
+        }
+        y += gl_NumWorkGroups.y;
     }
 }

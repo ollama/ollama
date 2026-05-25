@@ -119,7 +119,7 @@ type ContextParams struct {
 	c C.struct_llama_context_params
 }
 
-func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention ml.FlashAttentionType, kvCacheType string) ContextParams {
+func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention ml.FlashAttentionType, kvCacheType string, reranking bool) ContextParams {
 	params := C.llama_context_default_params()
 	params.n_ctx = C.uint(numCtx)
 	params.n_batch = C.uint(batchSize * numSeqMax)
@@ -128,6 +128,9 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 	params.n_threads = C.int(threads)
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
+	if reranking {
+		params.pooling_type = C.LLAMA_POOLING_TYPE_RANK
+	}
 	switch flashAttention {
 	case ml.FlashAttentionEnabled:
 		params.flash_attn_type = int32(C.LLAMA_FLASH_ATTN_TYPE_ENABLED)
@@ -207,16 +210,25 @@ func (c *Context) KvCacheCanShift() bool {
 	return bool(C.llama_memory_can_shift(C.llama_get_memory(c.c)))
 }
 
+func (c *Context) isRank() bool {
+	return C.llama_pooling_type(c.c) == C.LLAMA_POOLING_TYPE_RANK
+}
+
 // Get the embeddings for a sequence id
 func (c *Context) GetEmbeddingsSeq(seqId int) []float32 {
 	e := unsafe.Pointer(C.llama_get_embeddings_seq(c.c, C.int(seqId)))
 	if e == nil {
 		return nil
 	}
-
-	embeddings := make([]float32, c.Model().NEmbd())
-	_ = copy(embeddings, unsafe.Slice((*float32)(e), c.Model().NEmbd()))
-	return embeddings
+	var embeddingsSize int
+	if c.isRank() {
+		embeddingsSize = c.Model().nClsOut()
+	} else {
+		embeddingsSize = c.Model().NEmbd()
+	}
+	ret := make([]float32, embeddingsSize)
+	copy(ret, unsafe.Slice((*float32)(e), embeddingsSize))
+	return ret
 }
 
 func (c *Context) GetEmbeddingsIth(i int) []float32 {
@@ -224,10 +236,15 @@ func (c *Context) GetEmbeddingsIth(i int) []float32 {
 	if e == nil {
 		return nil
 	}
-
-	embeddings := make([]float32, c.Model().NEmbd())
-	_ = copy(embeddings, unsafe.Slice((*float32)(e), c.Model().NEmbd()))
-	return embeddings
+	var embeddingsSize int
+	if c.isRank() {
+		embeddingsSize = c.Model().nClsOut()
+	} else {
+		embeddingsSize = c.Model().NEmbd()
+	}
+	ret := make([]float32, embeddingsSize)
+	copy(ret, unsafe.Slice((*float32)(e), embeddingsSize))
+	return ret
 }
 
 // GetLogitsIth gets the logits for the ith token
@@ -341,6 +358,10 @@ func (m *Model) AddBOSToken() bool {
 	return bool(C.llama_vocab_get_add_bos(m.Vocab()))
 }
 
+func (m *Model) BOS() int32 {
+	return int32(C.llama_vocab_bos(m.Vocab()))
+}
+
 func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {
 	cLoraPath := C.CString(loraPath)
 	defer C.free(unsafe.Pointer(cLoraPath))
@@ -363,6 +384,22 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 
 func (m *Model) Vocab() *C.struct_llama_vocab {
 	return C.llama_model_get_vocab(m.c)
+}
+
+func (m *Model) AddSEPToken() bool {
+	return bool(C.llama_vocab_get_add_sep(m.Vocab()))
+}
+
+func (m *Model) SEP() int32 {
+	return int32(C.llama_vocab_sep(m.Vocab()))
+}
+
+func (m *Model) AddEOSToken() bool {
+	return bool(C.llama_vocab_get_add_sep(m.Vocab()))
+}
+
+func (m *Model) EOS() int32 {
+	return int32(C.llama_vocab_eos(m.Vocab()))
 }
 
 type Batch struct {
@@ -522,6 +559,10 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 
 func (m *Model) NEmbd() int {
 	return int(C.llama_model_n_embd(m.c))
+}
+
+func (m *Model) nClsOut() int {
+	return int(C.llama_model_n_cls_out(m.c))
 }
 
 // vision processing

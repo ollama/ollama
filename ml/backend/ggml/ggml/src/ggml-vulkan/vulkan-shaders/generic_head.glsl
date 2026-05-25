@@ -6,4 +6,6 @@ layout (push_constant) uniform parameter
     uint KY;
     float param1;
     float param2;
+    float param3;
+    float param4;
 } p;

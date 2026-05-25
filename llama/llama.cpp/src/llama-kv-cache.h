@@ -305,7 +305,7 @@ public:
             bool do_shift,
             stream_copy_info sc_info);
 
-    // used to create a batch procesing context from a batch
+    // used to create a batch processing context from a batch
     llama_kv_cache_context(
             llama_kv_cache * kv,
             slot_info_vec_t sinfos,
