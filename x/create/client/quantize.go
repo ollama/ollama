@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -184,18 +183,13 @@ func quantizeTensor(r io.Reader, tensorName, dtype string, shape []int32, quanti
 	return os.ReadFile(outPath)
 }
 
-// quantizePackedGroup quantizes multiple tensors and saves them all into a single
-// combined safetensors blob. Used for packing expert groups.
-// When the inputs are per-expert 2D tensors (e.g., experts.0.gate_proj.weight),
-// they are stacked into 3D switch_mlp tensors before quantization.
-// Each tensor may have a different quantization type (mixed-precision).
-// Returns the blob bytes.
-func quantizePackedGroup(groupName string, inputs []create.PackedTensorInput) ([]byte, error) {
-	// Check if inputs are per-expert tensors that should be stacked into 3D
-	if projGroups, projQuantize := parsePerExpertInputs(groupName, inputs); projGroups != nil {
-		return stackAndQuantizeExpertGroup(groupName, projGroups, projQuantize)
-	}
-
+// quantizePackedGroup quantizes multiple tensors and packs them into a single
+// combined safetensors blob. Each tensor may use its own quantization type
+// (mixed-precision). Returns the blob bytes.
+//
+// Per-expert source tensors are stacked into 3-D switch_mlp form upstream by
+// create.StackPerExpertGroup, so this function only sees stacked tensors.
+func quantizePackedGroup(inputs []create.PackedTensorInput) ([]byte, error) {
 	allArrays := make(map[string]*mlx.Array)
 	var pinned []*mlx.Array
 
@@ -296,210 +290,6 @@ func arraysForPackedInput(allArrays map[string]*mlx.Array, input create.PackedTe
 		}
 	}
 	return out
-}
-
-// perExpertSuffix matches ".{index}.{proj_and_suffix}" after the group prefix.
-var perExpertSuffix = regexp.MustCompile(`^\.(\d+)\.(.+)$`)
-
-type expertTensorInfo struct {
-	index int
-	proj  string // e.g., "gate_proj.weight"
-	input create.PackedTensorInput
-}
-
-// parsePerExpertInputs groups per-expert 2D tensor inputs by projection type
-// and returns per-projection quantization types. Different projections may use
-// different quant types (e.g., gate_up=int4, down=int8) but all experts within
-// a projection must share the same type.
-// Returns nil if the inputs are not per-expert tensors (e.g., already stacked 3D).
-// Only handles ".experts" groups; ".shared_experts" groups are left unpacked.
-func parsePerExpertInputs(groupName string, inputs []create.PackedTensorInput) (map[string][]expertTensorInfo, map[string]string) {
-	if !strings.HasSuffix(groupName, ".experts") {
-		return nil, nil
-	}
-
-	groups := make(map[string][]expertTensorInfo)
-	projQuantize := make(map[string]string) // projection -> quant type
-	for _, input := range inputs {
-		suffix := strings.TrimPrefix(input.Name, groupName)
-		m := perExpertSuffix.FindStringSubmatch(suffix)
-		if m == nil {
-			return nil, nil // not a per-expert pattern
-		}
-		index, err := strconv.Atoi(m[1])
-		if err != nil {
-			return nil, nil
-		}
-		proj := m[2]
-		if existing, ok := projQuantize[proj]; ok {
-			if input.Quantize != existing {
-				return nil, nil // mixed quant within same projection
-			}
-		} else {
-			projQuantize[proj] = input.Quantize
-		}
-		groups[proj] = append(groups[proj], expertTensorInfo{
-			index: index,
-			proj:  proj,
-			input: input,
-		})
-	}
-	if len(groups) == 0 {
-		return nil, nil
-	}
-	return groups, projQuantize
-}
-
-// stackAndQuantizeExpertGroup decodes per-expert tensors, stacks them into 3D
-// switch_mlp tensors, quantizes, and returns the combined safetensors blob.
-// projQuantize maps projection name to its quantization type (may differ per projection).
-func stackAndQuantizeExpertGroup(groupName string, projGroups map[string][]expertTensorInfo, projQuantize map[string]string) ([]byte, error) {
-	groupBase := strings.TrimSuffix(groupName, ".experts")
-
-	allArrays := make(map[string]*mlx.Array)
-	var pinned []*mlx.Array
-
-	// Build metadata: if all projections use the same quant type, set global metadata.
-	// Otherwise record per-tensor quant info.
-	metadata := make(map[string]string)
-
-	// Sort projection names for deterministic output
-	projNames := make([]string, 0, len(projGroups))
-	for proj := range projGroups {
-		projNames = append(projNames, proj)
-	}
-	sort.Strings(projNames)
-
-	cleanup := func() {
-		for _, p := range pinned {
-			if p != nil {
-				mlx.Unpin(p)
-			}
-		}
-		mlx.Sweep()
-	}
-
-	for _, proj := range projNames {
-		experts := projGroups[proj]
-
-		// Sort by expert index
-		sort.Slice(experts, func(i, j int) bool {
-			return experts[i].index < experts[j].index
-		})
-
-		// Load and decode each expert tensor
-		var decoded []*mlx.Array
-		for _, expert := range experts {
-			dummyArrays := make(map[string]*mlx.Array)
-			tmpPath, toEval, st, err := loadAndQuantizeArray(expert.input.Reader, expert.input.Name, "", dummyArrays)
-			if err != nil {
-				cleanup()
-				return nil, fmt.Errorf("failed to decode expert tensor %s: %w", expert.input.Name, err)
-			}
-			mlx.Eval(toEval...)
-
-			arr := dummyArrays[expert.input.Name]
-			mlx.Pin(arr)
-			pinned = append(pinned, arr)
-			decoded = append(decoded, arr)
-
-			if st != nil {
-				st.Free()
-			}
-			if tmpPath != "" {
-				os.Remove(tmpPath)
-			}
-			mlx.Sweep()
-		}
-
-		// Stack into 3D along axis 0: [numExperts, rows, cols]
-		stacked := mlx.Stack(decoded, 0)
-		mlx.Eval(stacked)
-		mlx.Pin(stacked)
-		pinned = append(pinned, stacked)
-
-		// Free individual decoded arrays (remove from pinned to avoid double-unpin in cleanup)
-		for i, p := range pinned {
-			for _, d := range decoded {
-				if p == d {
-					pinned[i] = nil
-				}
-			}
-		}
-		mlx.Unpin(decoded...)
-		mlx.Sweep()
-
-		stackedName := groupBase + ".switch_mlp." + proj
-		quantize := projQuantize[proj]
-
-		// Record per-tensor quant metadata so the model can resolve params at load time.
-		if quantize != "" {
-			if groupSize, _, _ := model.QuantizationParams(quantize); groupSize > 0 {
-				metadata[stackedName+".quant_type"] = quantize
-				metadata[stackedName+".group_size"] = strconv.Itoa(groupSize)
-			}
-		}
-
-		// Quantize the stacked tensor
-		if quantize != "" {
-			groupSize, bits, mode := model.QuantizationParams(quantize)
-
-			qweight, scales, qbiases := mlx.Quantize(stacked, groupSize, bits, mode)
-
-			// Validate quantization produced non-empty output.
-			mlx.Eval(qweight, scales)
-			if len(qweight.Dims()) == 0 || qweight.Dims()[0] == 0 {
-				cleanup()
-				return nil, fmt.Errorf("mlx.Quantize produced empty weight for %s (quantize=%s, groupSize=%d, bits=%d, mode=%s)",
-					stackedName, quantize, groupSize, bits, mode)
-			}
-
-			qweight = mlx.Contiguous(qweight, false)
-			scales = mlx.Contiguous(scales, false)
-			allArrays[stackedName] = qweight
-			allArrays[stackedName+".scale"] = scales
-
-			toEval := []*mlx.Array{qweight, scales}
-			if qbiases != nil {
-				qbiases = mlx.Contiguous(qbiases, false)
-				allArrays[stackedName+".bias"] = qbiases
-				toEval = append(toEval, qbiases)
-			}
-			mlx.Eval(toEval...)
-			mlx.Pin(toEval...)
-			pinned = append(pinned, toEval...)
-
-			// Free stacked source array (remove from pinned to avoid double-unpin in cleanup)
-			for i, p := range pinned {
-				if p == stacked {
-					pinned[i] = nil
-				}
-			}
-			mlx.Unpin(stacked)
-			mlx.Sweep()
-		} else {
-			stacked = mlx.Contiguous(stacked, false)
-			mlx.Eval(stacked)
-			mlx.Pin(stacked)
-			pinned = append(pinned, stacked)
-			allArrays[stackedName] = stacked
-		}
-	}
-
-	defer cleanup()
-
-	tmpDir := ensureTempDir()
-	outPath := filepath.Join(tmpDir, "stacked-combined.safetensors")
-	defer os.Remove(outPath)
-	if err := mlx.SaveSafetensorsWithMetadata(outPath, allArrays, metadata); err != nil {
-		return nil, fmt.Errorf("failed to save stacked blob: %w", err)
-	}
-
-	blobData, err := os.ReadFile(outPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read stacked blob: %w", err)
-	}
-	return blobData, nil
 }
 
 // QuantizeSupported returns true if quantization is supported (MLX library available)

@@ -418,7 +418,63 @@ type StackedExpertWeights struct {
 	GroupSize int
 }
 
-// collectAndStackExpertWeights loads and stacks expert weights for one projection type.
+// loadSwitchMLPProjection loads a 3-D stacked MoE projection in the layout
+// produced by the create pipeline:
+//
+//	<prefix>.mlp.switch_mlp.<proj>.weight   (+ .scale / .bias for quantized)
+//
+// Returns nil if the tensor isn't present.
+func loadSwitchMLPProjection(tensors map[string]*mlx.Array, prefix, projName string, useQuantized bool, cfg *Config) *StackedExpertWeights {
+	base := prefix + ".mlp.switch_mlp." + projName
+	w := tensors[base+".weight"]
+	if w == nil {
+		w = tensors[base]
+		if w == nil {
+			return nil
+		}
+	}
+
+	scales := tensors[base+".scale"]
+	if scales == nil {
+		scales = tensors[base+".weight_scale"]
+	}
+	if scales == nil {
+		return &StackedExpertWeights{Weight: w}
+	}
+
+	biases := tensors[base+".bias"]
+	if biases == nil {
+		biases = tensors[base+".weight_qbias"]
+	}
+
+	groupSize, bits, mode := model.ResolveLinearQuantParams(
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode,
+		cfg.TensorQuant, base+".weight", w, scales,
+	)
+
+	if useQuantized && supportsGatherQMM(mode, bits) {
+		return &StackedExpertWeights{
+			Weight:    w,
+			Scales:    scales,
+			Biases:    biases,
+			Bits:      bits,
+			GroupSize: groupSize,
+		}
+	}
+
+	return &StackedExpertWeights{
+		Weight:    mlx.Dequantize(w, scales, biases, groupSize, bits, mode),
+		Bits:      bits,
+		GroupSize: groupSize,
+	}
+}
+
+// collectAndStackExpertWeights loads "<prefix>.mlp.experts.{E}.<proj>"
+// per-expert tensors and stacks them at load time.
+//
+// Backwards compatibility only: kept so previously-published per-expert blobs
+// keep loading. New imports land in the 3-D switch_mlp form via
+// create.StackPerExpertGroup and are read by loadSwitchMLPProjection above.
 func collectAndStackExpertWeights(
 	tensors map[string]*mlx.Array,
 	prefix string,
@@ -462,8 +518,16 @@ func collectAndStackExpertWeights(
 	return result
 }
 
-// sanitizeExpertWeights stacks individual expert weights into tensors.
+// sanitizeExpertWeights resolves the three MoE projections (gate, up, down)
+// for a layer. Reads the 3-D switch_mlp layout produced by the create
+// pipeline; falls back to the per-expert layout for previously-published blobs.
 func sanitizeExpertWeights(tensors map[string]*mlx.Array, prefix string, numExperts int32, useQuantized bool, cfg *Config) (gate, up, down *StackedExpertWeights) {
+	gate = loadSwitchMLPProjection(tensors, prefix, "gate_proj", useQuantized, cfg)
+	up = loadSwitchMLPProjection(tensors, prefix, "up_proj", useQuantized, cfg)
+	down = loadSwitchMLPProjection(tensors, prefix, "down_proj", useQuantized, cfg)
+	if gate != nil && up != nil && down != nil {
+		return gate, up, down
+	}
 	gate = collectAndStackExpertWeights(tensors, prefix, "gate_proj", numExperts, useQuantized, cfg)
 	up = collectAndStackExpertWeights(tensors, prefix, "up_proj", numExperts, useQuantized, cfg)
 	down = collectAndStackExpertWeights(tensors, prefix, "down_proj", numExperts, useQuantized, cfg)

@@ -163,33 +163,70 @@ func TestUseMoreBits(t *testing.T) {
 	}
 }
 
-func TestIsGemma4StackedMoETensor(t *testing.T) {
+func TestCanonicalGemma4MoEName(t *testing.T) {
 	tests := []struct {
 		label      string
 		tensorName string
 		shape      []int32
-		want       bool
+		wantName   string
+		wantOk     bool
 	}{
-		// New-style: .experts.gate_up_proj
-		{"experts gate_up_proj 3D", "model.layers.0.experts.gate_up_proj", []int32{128, 1408, 2816}, true},
-		{"experts down_proj 3D", "model.layers.0.experts.down_proj", []int32{128, 2816, 704}, true},
-		// Old-style: .moe.gate_proj
-		{"moe gate_proj 3D", "model.layers.0.moe.gate_proj", []int32{128, 2112, 2816}, true},
-		{"moe down_proj 3D", "model.layers.0.moe.down_proj.weight", []int32{128, 2816, 2112}, true},
-		// Not stacked: 2D
-		{"2D weight", "model.layers.0.experts.gate_up_proj", []int32{1408, 2816}, false},
-		// Not expert
-		{"non-expert 3D", "model.layers.0.mlp.gate_proj", []int32{3, 2816, 2816}, false},
-		// Not a projection
-		{"expert non-proj", "model.layers.0.experts.scale", []int32{128, 1, 1}, false},
+		// New-style: .experts.<proj> → .moe.switch_mlp.<proj>.weight
+		{
+			"experts gate_up_proj 3D",
+			"model.language_model.layers.0.experts.gate_up_proj",
+			[]int32{128, 1408, 2816},
+			"model.language_model.layers.0.moe.switch_mlp.gate_up_proj.weight",
+			true,
+		},
+		{
+			"experts down_proj 3D with .weight",
+			"model.language_model.layers.0.experts.down_proj.weight",
+			[]int32{128, 2816, 704},
+			"model.language_model.layers.0.moe.switch_mlp.down_proj.weight",
+			true,
+		},
+		// Old-style: .moe.<proj> → .moe.switch_mlp.<proj>.weight
+		{
+			"moe gate_proj 3D",
+			"model.language_model.layers.0.moe.gate_proj",
+			[]int32{128, 2112, 2816},
+			"model.language_model.layers.0.moe.switch_mlp.gate_proj.weight",
+			true,
+		},
+		{
+			"moe down_proj 3D with .weight",
+			"model.language_model.layers.0.moe.down_proj.weight",
+			[]int32{128, 2816, 2112},
+			"model.language_model.layers.0.moe.switch_mlp.down_proj.weight",
+			true,
+		},
+		// Not stacked: 2D shapes pass through.
+		{"2D weight", "model.language_model.layers.0.experts.gate_up_proj", []int32{1408, 2816}, "", false},
+		// Not an expert projection.
+		{"non-expert 3D", "model.language_model.layers.0.mlp.gate_proj", []int32{3, 2816, 2816}, "", false},
+		// Not a projection.
+		{"expert non-proj", "model.language_model.layers.0.experts.scale", []int32{128, 1, 1}, "", false},
+		// Already-canonical switch_mlp names should be left alone.
+		{
+			"already canonical switch_mlp",
+			"model.language_model.layers.0.moe.switch_mlp.gate_up_proj.weight",
+			[]int32{128, 1408, 2816},
+			"",
+			false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.label, func(t *testing.T) {
-			got := isGemma4StackedMoETensor(tt.tensorName, tt.shape)
-			if got != tt.want {
-				t.Errorf("isGemma4StackedMoETensor(%q, %v) = %v, want %v",
-					tt.tensorName, tt.shape, got, tt.want)
+			gotName, gotOk := canonicalGemma4MoEName(tt.tensorName, tt.shape)
+			if gotOk != tt.wantOk {
+				t.Errorf("canonicalGemma4MoEName(%q, %v) ok = %v, want %v",
+					tt.tensorName, tt.shape, gotOk, tt.wantOk)
+			}
+			if gotName != tt.wantName {
+				t.Errorf("canonicalGemma4MoEName(%q, %v) name = %q, want %q",
+					tt.tensorName, tt.shape, gotName, tt.wantName)
 			}
 		})
 	}

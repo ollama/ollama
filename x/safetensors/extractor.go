@@ -10,11 +10,14 @@ import (
 	"sort"
 )
 
-// tensorInfo holds tensor metadata from safetensors headers.
+// tensorInfo holds tensor metadata from safetensors headers. Fields are
+// declared in alphabetical key order so json.Marshal emits them in the same
+// sequence used by other safetensors writers (MLX, the huggingface reference
+// implementation), keeping the on-disk header byte-stable across writers.
 type tensorInfo struct {
+	DataOffsets [2]int  `json:"data_offsets"`
 	Dtype       string  `json:"dtype"`
 	Shape       []int32 `json:"shape"`
-	DataOffsets [2]int  `json:"data_offsets"`
 }
 
 // TensorExtractor extracts individual tensors from a safetensors file.
@@ -242,6 +245,85 @@ func (te *TensorExtractor) GetTensor(name string) (*TensorData, error) {
 		Size:   size,
 		reader: io.NewSectionReader(te.file, start, size),
 	}, nil
+}
+
+// CanonicalizeFile rewrites a safetensors file in place so that tensors appear
+// in sorted-name order in both the header JSON and the data section. Header
+// keys come out sorted automatically because Go's encoding/json sorts map
+// keys when marshaling; the data section is then reassembled in the same
+// order. This makes the on-disk byte content reproducible regardless of the
+// underlying writer's iteration order (e.g., MLX's C++ unordered_map).
+//
+// __metadata__ is preserved.
+func CanonicalizeFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var headerSize uint64
+	if err := binary.Read(f, binary.LittleEndian, &headerSize); err != nil {
+		return fmt.Errorf("read header size: %w", err)
+	}
+	headerBytes := make([]byte, headerSize)
+	if _, err := io.ReadFull(f, headerBytes); err != nil {
+		return fmt.Errorf("read header: %w", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(headerBytes, &raw); err != nil {
+		return fmt.Errorf("parse header: %w", err)
+	}
+	var metadata map[string]string
+	if md, ok := raw["__metadata__"]; ok {
+		if err := json.Unmarshal(md, &metadata); err != nil {
+			return fmt.Errorf("parse __metadata__: %w", err)
+		}
+		delete(raw, "__metadata__")
+	}
+
+	dataOffset := int64(8) + int64(headerSize)
+	names := make([]string, 0, len(raw))
+	for name := range raw {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	tensors := make([]*TensorData, 0, len(names))
+	for _, name := range names {
+		var info tensorInfo
+		if err := json.Unmarshal(raw[name], &info); err != nil {
+			return fmt.Errorf("parse tensor %q: %w", name, err)
+		}
+		size := int64(info.DataOffsets[1] - info.DataOffsets[0])
+		start := dataOffset + int64(info.DataOffsets[0])
+		tensors = append(tensors, &TensorData{
+			Name:   name,
+			Dtype:  info.Dtype,
+			Shape:  info.Shape,
+			Size:   size,
+			reader: io.NewSectionReader(f, start, size),
+		})
+	}
+
+	tmpPath := path + ".canon.tmp"
+	out, err := os.Create(tmpPath)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, BuildPackedSafetensorsReaderWithMetadata(tensors, metadata)); err != nil {
+		out.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	// Close the source handle before rename so Windows tolerates the swap.
+	f.Close()
+	return os.Rename(tmpPath, path)
 }
 
 // ListTensors returns all tensor names in sorted order.

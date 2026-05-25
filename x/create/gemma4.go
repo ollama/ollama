@@ -2,8 +2,6 @@ package create
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -188,90 +186,46 @@ func (t gemma4ImportTransform) transformTensor(td *safetensors.TensorData) ([]*s
 		return nil, nil
 	}
 
-	// Split pre-stacked MoE expert tensors [N, out, in] into per-expert
-	// [out, in] tensors so they go through the standard expert packing and
-	// quantization flow (ExpertGroupPrefix matching, per-expert quantize).
-	if isGemma4StackedMoETensor(td.Name, td.Shape) {
-		return splitStackedMoETensor(td)
+	if newName, ok := canonicalGemma4MoEName(td.Name, td.Shape); ok {
+		return []*safetensors.TensorData{td.WithName(newName)}, nil
 	}
 
 	return []*safetensors.TensorData{td}, nil
 }
 
-// isGemma4StackedMoETensor checks if this is a pre-stacked MoE expert weight.
-// Gemma 4 HF weights come in two layouts depending on the model version:
-//   - Older: model.language_model.layers.N.moe.{gate,up,down}_proj [experts, dim1, dim2]
-//   - Newer: model.language_model.layers.N.experts.{gate_up,down}_proj [experts, dim1, dim2]
+// canonicalGemma4MoEName rewrites pre-stacked Gemma 4 MoE expert tensors to the
+// on-disk name expected by the runtime, preserving the [experts, ..., ...]
+// shape:
 //
-// The newer layout has gate+up already fused. We keep it fused (no splitting)
-// so the tensors flow through the standard expert packing and quantization path.
-func isGemma4StackedMoETensor(name string, shape []int32) bool {
+//	<layerPrefix>.moe.switch_mlp.<proj>.weight
+//
+// Source layouts handled:
+//   - "<layerPrefix>.moe.{gate,up,down}_proj[.weight]"     (older split form)
+//   - "<layerPrefix>.experts.{gate_up,down}_proj[.weight]" (newer fused form)
+//
+// gate_up_proj stays fused; the runtime splits axis 1 at load time.
+//
+// The ".moe." segment is kept for backwards compatibility with published gemma4
+// models using incorrect names. Do not copy this pattern for new models; use
+// ".mlp.switch_mlp.<proj>.weight"
+func canonicalGemma4MoEName(name string, shape []int32) (string, bool) {
 	if len(shape) != 3 {
-		return false
+		return "", false
 	}
-	if strings.Contains(name, ".moe.") || strings.Contains(name, ".experts.") {
-		return strings.HasSuffix(name, "_proj") || strings.HasSuffix(name, "_proj.weight")
-	}
-	return false
-}
-
-// splitStackedMoETensor splits a [N, out, in] stacked expert tensor into
-// N individual [out, in] tensors named with the per-expert convention that
-// ExpertGroupPrefix expects: prefix.moe.experts.{E}.{proj}.weight
-func splitStackedMoETensor(td *safetensors.TensorData) ([]*safetensors.TensorData, error) {
-	raw, err := io.ReadAll(td.Reader())
-	if err != nil {
-		return nil, fmt.Errorf("failed to read tensor %s: %w", td.Name, err)
+	parts := strings.Split(strings.TrimSuffix(name, ".weight"), ".")
+	if len(parts) < 3 {
+		return "", false
 	}
 
-	numExperts := int(td.Shape[0])
-	rows := int(td.Shape[1]) // out_features in HF layout
-	cols := int(td.Shape[2]) // in_features in HF layout
-
-	elemSize, err := DTypeSize(td.Dtype)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get dtype size for %s: %w", td.Dtype, err)
+	proj := parts[len(parts)-1]
+	if !strings.HasSuffix(proj, "_proj") {
+		return "", false
 	}
-
-	perExpertBytes := rows * cols * elemSize
-	if len(raw) != numExperts*perExpertBytes {
-		return nil, fmt.Errorf("tensor %s: raw byte length %d does not match shape %v and dtype %s",
-			td.Name, len(raw), td.Shape, td.Dtype)
+	switch parts[len(parts)-2] {
+	case "moe", "experts":
+	default:
+		return "", false
 	}
-
-	// Determine the per-expert name pattern.
-	// Two source layouts:
-	//   Old: model.language_model.layers.N.moe.gate_proj
-	//     -> model.language_model.layers.N.moe.experts.E.gate_proj.weight
-	//   New: model.language_model.layers.N.experts.gate_up_proj
-	//     -> model.language_model.layers.N.moe.experts.E.gate_up_proj.weight
-	baseName := td.Name
-	baseName = strings.TrimSuffix(baseName, ".weight")
-	lastDot := strings.LastIndex(baseName, ".")
-	if lastDot < 0 {
-		return nil, fmt.Errorf("tensor %s: unexpected name format", td.Name)
-	}
-	parentPrefix := baseName[:lastDot] // "...layers.N.moe" or "...layers.N.experts"
-	projName := baseName[lastDot+1:]   // "gate_proj" or "gate_up_proj"
-
-	// Normalize: if parent already ends with ".experts", use the grandparent + ".moe"
-	// so we get a consistent "layers.N.moe.experts.E" pattern.
-	var moePrefix string
-	if cut, ok := strings.CutSuffix(parentPrefix, ".experts"); ok {
-		moePrefix = cut + ".moe"
-	} else {
-		moePrefix = parentPrefix
-	}
-
-	transposedShape := []int32{td.Shape[1], td.Shape[2]}
-
-	results := make([]*safetensors.TensorData, numExperts)
-	for e := range numExperts {
-		expertName := fmt.Sprintf("%s.experts.%d.%s.weight", moePrefix, e, projName)
-		start := e * perExpertBytes
-		end := start + perExpertBytes
-		results[e] = safetensors.NewTensorDataFromBytes(expertName, td.Dtype, transposedShape, raw[start:end])
-	}
-
-	return results, nil
+	prefix := strings.Join(parts[:len(parts)-2], ".")
+	return prefix + ".moe.switch_mlp." + proj + ".weight", true
 }
