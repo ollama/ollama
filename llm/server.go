@@ -1489,7 +1489,7 @@ number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
 ws ::= ([ \t\n] ws)?
 `
 
-const maxBufferSize = 512 * format.KiloByte
+const maxBufferSize = 8 * format.MegaByte
 
 type ImageData struct {
 	Data []byte `json:"data"`
