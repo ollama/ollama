@@ -38,6 +38,25 @@ func TestWordPiece(t *testing.T) {
 	}
 }
 
+func TestWordPieceEncodeReturnsErrorWhenUnkMissing(t *testing.T) {
+	// Regression test for issue #15174: WordPiece used to silently emit
+	// -1 when a word could not be tokenized and [UNK] was absent from the
+	// vocab. That -1 then crashed the embedding forward pass with a
+	// GGML_ASSERT in ggml_get_rows.
+	wpm := NewWordPiece(
+		&Vocabulary{
+			Values: []string{"[CLS]", "[SEP]", "▁hello"},
+			BOS:    []int32{0},
+			EOS:    []int32{1},
+		},
+		true,
+	)
+
+	if _, err := wpm.Encode("hello world!", false); err == nil {
+		t.Error("expected error when word is OOV and [UNK] is missing, got nil")
+	}
+}
+
 func TestWordPieceWords(t *testing.T) {
 	var wpm WordPiece
 

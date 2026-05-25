@@ -152,12 +152,15 @@ func New(c fs.Config) (model.Model, error) {
 				c.Uint("tokenizer.ggml.eos_token_id"),
 			)),
 		},
+		AddSpacePrefix: c.Bool("tokenizer.ggml.add_space_prefix", false),
 	}
 
 	var t tokenizer.Tokenizer
 	switch c.String("tokenizer.ggml.model", "bert") {
 	case "bert":
 		t = tokenizer.NewWordPiece(vocab, true)
+	case "t5":
+		t = tokenizer.NewSentencePiece(vocab)
 	default:
 		return nil, model.ErrUnsupportedTokenizer
 	}

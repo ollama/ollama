@@ -21,6 +21,7 @@ type Vocabulary struct {
 
 	BOS, EOS       []int32
 	AddBOS, AddEOS bool
+	AddSpacePrefix bool
 
 	specialOnce sync.Once
 	special     []string
