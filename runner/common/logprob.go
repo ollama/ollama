@@ -44,6 +44,8 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 		TokenLogprob: llm.TokenLogprob{
 			Token:   selectedText,
 			Logprob: float64(selectedLogprob),
+			// Store raw bytes before JSON encoding to preserve partial UTF-8 sequences
+			Bytes: []byte(selectedText),
 		},
 	}
 
@@ -70,6 +72,8 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 			topLogprobs[i] = llm.TokenLogprob{
 				Token:   tokenText,
 				Logprob: float64(pairs[i].logprob),
+				// Store raw bytes before JSON encoding to preserve partial UTF-8 sequences
+				Bytes: []byte(tokenText),
 			}
 		}
 		result.TopLogprobs = topLogprobs
