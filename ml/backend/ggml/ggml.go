@@ -29,6 +29,7 @@ import (
 	"unicode"
 	"unsafe"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs"
 	fsggml "github.com/ollama/ollama/fs/ggml"
@@ -164,17 +165,45 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 
 	blocks := int(meta.KV().BlockCount())
 
-	// create list of buffer types for the cpu
+	// create list of buffer types for the cpu in order: ACCEL → GPU host → CPU
 	cpuDeviceBufferType := deviceBufferType{d: C.ggml_backend_dev_by_type(C.GGML_BACKEND_DEVICE_TYPE_CPU)}
-	for _, d := range append(accels, append(gpus, cpus...)...) {
-		switch C.ggml_backend_dev_type(d) {
-		case C.GGML_BACKEND_DEVICE_TYPE_CPU,
-			C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
-			bt := C.ggml_backend_dev_buffer_type(d)
-			cpuDeviceBufferType.bts = append(cpuDeviceBufferType.bts, bt)
+	for _, d := range accels {
+		bt := C.ggml_backend_dev_buffer_type(d)
+		cpuDeviceBufferType.bts = append(cpuDeviceBufferType.bts, bt)
+		btDeviceMemory[bt] = &requiredMemory.CPU
+	}
 
-			btDeviceMemory[C.ggml_backend_dev_buffer_type(d)] = &requiredMemory.CPU
+	// EXPERIMENTAL: when OLLAMA_PINNED_HOST_BUFFER=1, insert the GPU's host
+	// buffer type (cudaMallocHost-backed pinned memory) after ACCEL bufts and
+	// before the plain CPU buffer, matching llama.cpp's make_cpu_buft_list order.
+	//
+	// Allocation safety: createTensor walks bts in order; if cudaMallocHost
+	// fails, the next fallback is the plain CPU buffer, so behavior is at worst
+	// equivalent to the disabled path.
+	//
+	// Only the first GPU's host buft is added. On systems with no CUDA GPU
+	// this loop is a no-op. The pinned buffer's memory still counts against
+	// system RAM, so we map it to CPU memory accounting.
+	if envconfig.PinnedHostBuffer() {
+		for _, d := range gpus {
+			hostBuft := C.ggml_backend_dev_host_buffer_type(d)
+			if hostBuft == nil {
+				continue
+			}
+			cpuDeviceBufferType.bts = append(cpuDeviceBufferType.bts, hostBuft)
+			btDeviceMemory[hostBuft] = &requiredMemory.CPU
+			slog.Info("OLLAMA_PINNED_HOST_BUFFER enabled: prefer cuda_host pinned for CPU-resident tensors",
+				"buft", C.GoString(C.ggml_backend_buft_name(hostBuft)),
+				"device", C.GoString(C.ggml_backend_dev_name(d)),
+			)
+			break
 		}
+	}
+
+	for _, d := range cpus {
+		bt := C.ggml_backend_dev_buffer_type(d)
+		cpuDeviceBufferType.bts = append(cpuDeviceBufferType.bts, bt)
+		btDeviceMemory[bt] = &requiredMemory.CPU
 	}
 
 	requiredMemory.CPU.Name = C.GoString(C.ggml_backend_dev_name(cpuDeviceBufferType.d))
