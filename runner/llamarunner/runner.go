@@ -951,6 +951,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 func Execute(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 	mpath := fs.String("model", "", "Path to model binary file")
+	host := fs.String("host", "127.0.0.1", "IP address to bind the runner HTTP server to")
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
@@ -980,7 +981,7 @@ func Execute(args []string) error {
 
 	go server.run(ctx)
 
-	addr := "127.0.0.1:" + strconv.Itoa(*port)
+	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Println("Listen error:", err)

@@ -78,6 +78,7 @@ type LlamaServer interface {
 	VRAMByGPU(id ml.DeviceID) uint64
 	Pid() int
 	GetPort() int
+	GetHost() string
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
 	HasExited() bool
 	ContextLength() int
@@ -86,6 +87,7 @@ type LlamaServer interface {
 // llmServer is an instance of a runner hosting a single model
 type llmServer struct {
 	port      int
+	host      string // IP address the runner subprocess is bound to
 	cmd       *exec.Cmd
 	done      chan struct{} // closed when the process exits
 	doneErr   error         // valid after done is closed
@@ -273,7 +275,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
-	cmd, port, err := StartRunner(
+	cmd, port, host, err := StartRunner(
 		tok != nil,
 		modelPath,
 		gpuLibs,
@@ -283,6 +285,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	s := llmServer{
 		port:           port,
+		host:           host,
 		cmd:            cmd,
 		status:         status,
 		options:        opts,
@@ -331,19 +334,21 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 }
 
-func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, err error) {
+func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, host string, err error) {
 	var exe string
 	exe, err = os.Executable()
 	if err != nil {
-		return nil, 0, fmt.Errorf("unable to lookup executable path: %w", err)
+		return nil, 0, "", fmt.Errorf("unable to lookup executable path: %w", err)
 	}
 
 	if eval, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = eval
 	}
 
+	host = envconfig.RunnerHost()
+
 	port = 0
-	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
+	if a, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(host, "0")); err == nil {
 		var l *net.TCPListener
 		if l, err = net.ListenTCP("tcp", a); err == nil {
 			port = l.Addr().(*net.TCPAddr).Port
@@ -361,6 +366,7 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	if modelPath != "" {
 		params = append(params, "--model", modelPath)
 	}
+	params = append(params, "--host", host)
 	params = append(params, "--port", strconv.Itoa(port))
 
 	var pathEnv string
@@ -434,7 +440,7 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	slog.Debug("subprocess", "", filteredEnv(cmd.Env))
 
 	if err = cmd.Start(); err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	err = nil
 	return
@@ -1229,7 +1235,7 @@ func (s *llmServer) initModel(ctx context.Context, req LoadRequest, operation Lo
 		return nil, fmt.Errorf("error marshaling load data: %w", err)
 	}
 
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/load", s.port), bytes.NewBuffer(data))
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://%s/load", net.JoinHostPort(s.host, strconv.Itoa(s.port))), bytes.NewBuffer(data))
 	if err != nil {
 		return nil, fmt.Errorf("error creating load request: %w", err)
 	}
@@ -1307,7 +1313,7 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 		return ServerStatusError, fmt.Errorf("llama runner process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", s.port), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/health", net.JoinHostPort(s.host, strconv.Itoa(s.port))), nil)
 	if err != nil {
 		return ServerStatusError, fmt.Errorf("error creating GET request: %v", err)
 	}
@@ -1453,6 +1459,10 @@ func (s *llmServer) Pid() int {
 		return s.cmd.Process.Pid
 	}
 	return -1
+}
+
+func (s *llmServer) GetHost() string {
+	return s.host
 }
 
 func (s *llmServer) GetPort() int {
@@ -1639,7 +1649,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return fmt.Errorf("failed to marshal data: %v", err)
 	}
 
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
+	endpoint := fmt.Sprintf("http://%s/completion", net.JoinHostPort(s.host, strconv.Itoa(s.port)))
 	serverReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
 	if err != nil {
 		return fmt.Errorf("error creating POST request: %v", err)
@@ -1774,7 +1784,7 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int
 		return nil, 0, fmt.Errorf("error marshaling embed data: %w", err)
 	}
 
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), bytes.NewBuffer(data))
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://%s/embedding", net.JoinHostPort(s.host, strconv.Itoa(s.port))), bytes.NewBuffer(data))
 	if err != nil {
 		return nil, 0, fmt.Errorf("error creating embed request: %w", err)
 	}

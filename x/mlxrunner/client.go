@@ -33,6 +33,7 @@ import (
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
 type Client struct {
 	port          int
+	host          string
 	modelName     string
 	contextLength atomic.Int64
 	memory        atomic.Uint64
@@ -233,6 +234,11 @@ func (c *Client) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 // GetPort implements llm.LlamaServer.
 func (c *Client) GetPort() int {
 	return c.port
+}
+
+// GetPort implements llm.LlamaServer.
+func (c *Client) GetHost() string {
+	return c.host
 }
 
 // HasExited implements llm.LlamaServer.

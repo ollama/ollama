@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"runtime"
 	"slices"
@@ -605,6 +606,9 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 }
 
 type BaseRunner interface {
+	// GetHost returns the hos the runner is running on, usually localhost
+	GetHost() string
+
 	// GetPort returns the localhost port number the runner is running on
 	GetPort() int
 
@@ -635,13 +639,14 @@ type FilteredRunnerDiscovery interface {
 func GetDevicesFromRunner(ctx context.Context, runner BaseRunner) ([]DeviceInfo, error) {
 	var moreDevices []DeviceInfo
 	port := runner.GetPort()
+	host := runner.GetHost()
 	tick := time.Tick(10 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("failed to finish discovery before timeout")
 		case <-tick:
-			r, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/info", port), nil)
+			r, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/info", net.JoinHostPort(host, strconv.Itoa(port))), nil)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create request: %w", err)
 			}

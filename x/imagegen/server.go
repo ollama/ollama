@@ -36,6 +36,7 @@ type Server struct {
 	mu          sync.Mutex
 	cmd         *exec.Cmd
 	port        int
+	host        string
 	modelName   string
 	vramSize    uint64
 	done        chan error
@@ -442,6 +443,11 @@ func (s *Server) Pid() int {
 // GetPort returns the port the subprocess is listening on.
 func (s *Server) GetPort() int {
 	return s.port
+}
+
+// GetHost returns the host the subprocess is listening on.
+func (s *Server) GetHost() string {
+	return s.host
 }
 
 // GetDeviceInfos returns device information.

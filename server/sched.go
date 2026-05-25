@@ -814,6 +814,13 @@ func (runner *runnerRef) GetPort() int {
 	return -1
 }
 
+func (runner *runnerRef) GetHost() string {
+	if runner.llama != nil {
+		return runner.llama.GetHost()
+	}
+	return ""
+}
+
 func (runner *runnerRef) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 	if runner.llama != nil {
 		return runner.llama.GetDeviceInfos(ctx)
