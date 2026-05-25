@@ -209,7 +209,7 @@ func TestLLMServerFitGPU(t *testing.T) {
 				s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
 			}
 
-			gpuLayers, err := s.createLayout(systemInfo, tt.gpus, s.mem, tt.requireFull, 0)
+			gpuLayers, _, err := s.createLayout(systemInfo, tt.gpus, s.mem, tt.requireFull, 0)
 			if err != tt.expectedErr {
 				t.Fatalf("fitGPU returned error: %v", err)
 			}
@@ -217,6 +217,128 @@ func TestLLMServerFitGPU(t *testing.T) {
 				t.Errorf("fitGPU assigned %v, want %v", gpuLayers, tt.expected)
 			}
 		})
+	}
+}
+
+func TestLLMServerMoESplitDenseFallbackUsesLargestGPU(t *testing.T) {
+	t.Setenv("OLLAMA_MOE_GPU_LAYERS", "-1")
+
+	minMemory := uint64(457 * format.MebiByte)
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{ID: "gpu-small"}, FreeMemory: minMemory + 320*format.MebiByte},
+		{DeviceID: ml.DeviceID{ID: "gpu-large"}, FreeMemory: minMemory + 360*format.MebiByte},
+	}
+
+	s := &ollamaServer{
+		llmServer: llmServer{
+			totalLayers: 2,
+			options: api.Options{
+				Runner: api.Runner{NumGPU: -1},
+			},
+		},
+	}
+
+	s.mem = &ml.BackendMemory{CPU: ml.DeviceMemory{
+		Weights:    []uint64{250 * format.MebiByte, 200 * format.MebiByte},
+		MoEWeights: []uint64{50 * format.MebiByte, 50 * format.MebiByte},
+		Cache:      make([]uint64, s.totalLayers),
+	}, GPUs: make([]ml.DeviceMemory, len(gpus))}
+
+	for i := range s.mem.GPUs {
+		s.mem.GPUs[i].DeviceID = gpus[i].DeviceID
+		s.mem.GPUs[i].Weights = make([]uint64, s.totalLayers)
+		s.mem.GPUs[i].MoEWeights = make([]uint64, s.totalLayers)
+		s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
+	}
+
+	systemInfo := ml.SystemInfo{
+		TotalMemory: 4 * format.GibiByte,
+		FreeMemory:  2 * format.GibiByte,
+		FreeSwap:    2 * format.GibiByte,
+	}
+
+	gpuLayers, denseGPULayers, err := s.createLayout(systemInfo, gpus, s.mem, false, 0)
+	if err != nil {
+		t.Fatalf("createLayout returned error: %v", err)
+	}
+	if gpuLayers.Sum() != 0 {
+		t.Fatalf("MoE GPU layers = %v, want none", gpuLayers)
+	}
+	if len(denseGPULayers) != 1 || denseGPULayers[0].DeviceID.ID != "gpu-large" {
+		t.Fatalf("dense GPU layers = %v, want gpu-large", denseGPULayers)
+	}
+}
+
+func TestLLMServerVerifyLayoutMoESplitCPUMemory(t *testing.T) {
+	gpuID := ml.DeviceID{ID: "gpu0"}
+	gpus := []ml.DeviceInfo{{DeviceID: gpuID}}
+	layers := []uint64{1056 * format.MebiByte, 1056 * format.MebiByte}
+	memory := &ml.BackendMemory{
+		CPU: ml.DeviceMemory{
+			Weights:    []uint64{1024 * format.MebiByte, 1024 * format.MebiByte},
+			MoEWeights: []uint64{64 * format.MebiByte, 64 * format.MebiByte},
+			Cache:      []uint64{32 * format.MebiByte, 32 * format.MebiByte},
+		},
+		GPUs: []ml.DeviceMemory{{
+			DeviceID:   gpuID,
+			Weights:    make([]uint64, len(layers)),
+			MoEWeights: make([]uint64, len(layers)),
+			Cache:      make([]uint64, len(layers)),
+		}},
+	}
+	systemInfo := ml.SystemInfo{
+		TotalMemory: 4 * format.GibiByte,
+		FreeMemory:  200 * format.MebiByte,
+	}
+	s := &llmServer{}
+	denseGPULayers := ml.GPULayersList{{DeviceID: gpuID, Layers: []int{0, 1}}}
+
+	if err := s.verifyLayout(systemInfo, gpus, memory, false, nil, denseGPULayers, layers); err != nil {
+		t.Fatalf("verifyLayout with MoE split returned error: %v", err)
+	}
+
+	if err := s.verifyLayout(systemInfo, gpus, memory, false, nil, nil, layers); err == nil {
+		t.Fatal("verifyLayout without MoE split succeeded, want system memory error")
+	}
+}
+
+func TestLLMServerMoESplitBudgetExcludesCacheFromMoELayers(t *testing.T) {
+	t.Setenv("OLLAMA_MOE_GPU_LAYERS", "-1")
+	t.Setenv("OLLAMA_GPU_OVERHEAD", "0")
+
+	gpuID := ml.DeviceID{ID: "gpu0"}
+	minMemory := uint64(457 * format.MebiByte)
+	denseSize := uint64(100 * format.MebiByte)
+	moeSize := uint64(50 * format.MebiByte)
+	cacheSize := uint64(40 * format.MebiByte)
+	denseCacheTotal := 2 * (denseSize + cacheSize)
+	gpus := []ml.DeviceInfo{{DeviceID: gpuID, FreeMemory: minMemory + denseCacheTotal + moeSize}}
+
+	s := &ollamaServer{
+		llmServer: llmServer{
+			totalLayers: 2,
+			options: api.Options{
+				Runner: api.Runner{NumGPU: -1},
+			},
+		},
+	}
+	s.mem = &ml.BackendMemory{CPU: ml.DeviceMemory{
+		Weights:    []uint64{denseSize + moeSize, denseSize + moeSize},
+		MoEWeights: []uint64{moeSize, moeSize},
+		Cache:      []uint64{cacheSize, cacheSize},
+	}, GPUs: []ml.DeviceMemory{{
+		DeviceID:   gpuID,
+		Weights:    make([]uint64, s.totalLayers),
+		MoEWeights: make([]uint64, s.totalLayers),
+		Cache:      make([]uint64, s.totalLayers),
+	}}}
+
+	gpuLayers, denseGPULayers, _ := s.buildLayout(gpus, s.mem, false, 0)
+	if gpuLayers.Sum() != 1 {
+		t.Fatalf("MoE GPU layers = %v, want one layer", gpuLayers)
+	}
+	if len(denseGPULayers) != 1 || denseGPULayers[0].DeviceID != gpuID || denseGPULayers.Sum() != 2 {
+		t.Fatalf("dense GPU layers = %v, want all layers on %v", denseGPULayers, gpuID)
 	}
 }
 
