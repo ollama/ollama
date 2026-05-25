@@ -32,31 +32,40 @@ type InputCache struct {
 }
 
 func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots int, batchSize int, multiUserCache bool) (*InputCache, error) {
-	numCtx := kvSize / int32(numSlots)
+    numCtx := kvSize / int32(numSlots)
 
-	if int(numCtx) < batchSize {
-		return nil, fmt.Errorf("kv size must be at least as large as batch size * parallel (kv: %v batch: %v parallel: %v)", kvSize, batchSize, numSlots)
-	}
+    if int(numCtx) < batchSize {
+        return nil, fmt.Errorf("kv size must be at least as large as batch size * parallel (kv: %v batch: %v parallel: %v)", kvSize, batchSize, numSlots)
+    }
 
-	slots := make([]InputCacheSlot, numSlots)
+    slots := make([]InputCacheSlot, numSlots)
+    for i := range slots {
+        slots[i] = InputCacheSlot{Id: i}
+    }
 
-	for i := range slots {
-		slots[i] = InputCacheSlot{Id: i}
-	}
+    cache := model.Config().Cache
+    if cache != nil {
+        cache.Init(model.Backend(), kvCacheTypeFromStr(kvCacheType), numSlots, int(numCtx), batchSize)
+    }
 
-	cache := model.Config().Cache
-	if cache != nil {
-		cache.Init(model.Backend(), kvCacheTypeFromStr(kvCacheType), numSlots, int(numCtx), batchSize)
-	}
+    // FIX: If cache is nil (CPU mode), create a basic in-memory cache
+    // This ensures KV cache works even without GPU
+    if cache == nil {
+        // Create a simple fallback cache for CPU-only mode
+        // This allows the prefix caching to work
+        cache = kvcache.NewCache(numSlots, int(numCtx), batchSize)
+        slog.Info("created fallback KV cache for CPU mode")
+    }
 
-	return &InputCache{
-		numCtx:         numCtx,
-		enabled:        cache != nil,
-		slots:          slots,
-		multiUserCache: multiUserCache,
-		cache:          cache,
-	}, nil
+    return &InputCache{
+        numCtx:         numCtx,
+        enabled:        true, // FIX: Always enable cache (previously: cache != nil)
+        slots:          slots,
+        multiUserCache: multiUserCache,
+        cache:          cache,
+    }, nil
 }
+
 
 func kvCacheTypeFromStr(s string) ml.DType {
 	switch s {
