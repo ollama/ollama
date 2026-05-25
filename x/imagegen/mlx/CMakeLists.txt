@@ -94,30 +94,81 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(mlx-c)
 
+# To avoid a "long tail" when building MLX with a large set of GPU
+# architectures, utilize a higher --threads (-t) setting. At high -t
+# every .cu spawns concurrent cicc instances; each cicc can consume several GB
+# compiling MLX's CUTLASS-using kernels.  This in turn can cause OOMs.
+#
+# We use a pool to cover all MLX CUDA sources. Pool size is derived from total 
+# host RAM via a per-file memory budget.
+#
+# This was calibrated with `-t 6`.  Higher -t may require overriding
+# MLX_CUDA_RAM_MB
+if(CMAKE_GENERATOR STREQUAL "Ninja")
+    file(GLOB_RECURSE _mlx_cu
+        "${mlx_SOURCE_DIR}/mlx/backend/cuda/*.cu"
+        "${mlx_BINARY_DIR}/mlx/backend/cuda/*.cu"
+    )
+    if(_mlx_cu)
+        set(MLX_CUDA_RAM_MB 22000 CACHE STRING
+            "Per-file memory budget (MB) for the cuda_compile JOB_POOL.  Override for higher -t.")
+        cmake_host_system_information(RESULT _ram_mb QUERY TOTAL_PHYSICAL_MEMORY)
+        math(EXPR _cuda_pool "${_ram_mb} / ${MLX_CUDA_RAM_MB}")
+        if(_cuda_pool LESS 2)
+            set(_cuda_pool 2)
+        endif()
+        set_property(GLOBAL APPEND PROPERTY JOB_POOLS cuda_compile=${_cuda_pool})
+        list(LENGTH _mlx_cu _cu_count)
+        # SOURCE properties default to directory-scoped, which means a plain
+        # set_property(SOURCE ...) here would NOT affect the build rules
+        # generated for the mlx target (defined in mlx_SOURCE_DIR after
+        # FetchContent).  TARGET_DIRECTORY mlx puts the property in the
+        # directory where mlx was defined, so it actually applies.
+        foreach(f ${_mlx_cu})
+            set_property(SOURCE "${f}"
+                TARGET_DIRECTORY mlx
+                PROPERTY JOB_POOL_COMPILE cuda_compile)
+        endforeach()
+        message(STATUS "MLX cuda_compile JOB_POOL: ${_cu_count} files, pool size ${_cuda_pool} (host RAM ${_ram_mb} MB / ${MLX_CUDA_RAM_MB} MB per file)")
+    else()
+        message(WARNING "MLX cuda_compile JOB_POOL: no .cu files found under mlx/backend/cuda/ - check MLX layout")
+    endif()
+endif()
+
 # Sync vendored headers with fetched version
 file(GLOB _mlx_c_hdrs "${mlx-c_SOURCE_DIR}/mlx/c/*.h")
 file(COPY ${_mlx_c_hdrs} DESTINATION "${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c/")
 
 # Regenerate Go/C shim wrappers from the (possibly updated) headers.
-find_program(GO_EXECUTABLE go REQUIRED)
-message(STATUS "Regenerating MLX Go wrappers")
+# Skip during cross-compilation — the generated files are arch-independent.
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR OR NOT APPLE)
+    find_program(GO_EXECUTABLE go REQUIRED)
+    message(STATUS "Regenerating MLX Go wrappers")
 
-# Go's cgo splits CC on whitespace, so a CC like "C:/Program Files/…/cl.exe"
-# (set by cmake on Windows) breaks with "C:/Program" not found.  Clear CC
-# when it contains spaces so cgo falls back to its default (gcc).
-if(WIN32 AND "$ENV{CC}" MATCHES " ")
+    # CGo's probe compilation is sensitive to CGO_CFLAGS/CGO_CXXFLAGS and CC.
+    # Clear them so go generate uses default compiler settings:
+    # - On Windows, CC may contain spaces (e.g., "C:/Program Files/.../cl.exe")
+    #   which breaks CGo's CC parsing.
+    # - On macOS, CGO_CFLAGS with -mmacosx-version-min breaks header search
+    #   when cmake also sets CMAKE_OSX_DEPLOYMENT_TARGET.
     set(_SAVE_CC "$ENV{CC}")
+    set(_SAVE_CGO_CFLAGS "$ENV{CGO_CFLAGS}")
+    set(_SAVE_CGO_CXXFLAGS "$ENV{CGO_CXXFLAGS}")
     set(ENV{CC} "")
-endif()
+    set(ENV{CGO_CFLAGS} "")
+    set(ENV{CGO_CXXFLAGS} "")
 
-execute_process(
-    COMMAND ${GO_EXECUTABLE} generate ./x/...
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND_ERROR_IS_FATAL ANY
-)
+    execute_process(
+        COMMAND ${GO_EXECUTABLE} generate ./x/...
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMAND_ERROR_IS_FATAL ANY
+    )
 
-if(DEFINED _SAVE_CC)
     set(ENV{CC} "${_SAVE_CC}")
+    set(ENV{CGO_CFLAGS} "${_SAVE_CGO_CFLAGS}")
+    set(ENV{CGO_CXXFLAGS} "${_SAVE_CGO_CXXFLAGS}")
+else()
+    message(STATUS "Skipping MLX Go wrapper generation (cross-compiling)")
 endif()
 
 # For local dev builds, override MLX_VERSION with git describe output

@@ -32,6 +32,7 @@ import (
 	"github.com/ollama/ollama/app/version"
 	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 	_ "github.com/tkrajina/typescriptify-golang-structs/typescriptify"
 )
@@ -193,7 +194,7 @@ func (s *Server) Handler() http.Handler {
 			if CORS() {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, User-Agent, Accept, X-Requested-With")
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 				// Handle preflight requests
@@ -301,6 +302,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("HEAD /api/version", ollamaProxy)
 	mux.Handle("POST /api/me", ollamaProxy)
 	mux.Handle("POST /api/signout", ollamaProxy)
+	mux.Handle("GET /api/experimental/model-recommendations", ollamaProxy)
 
 	// React app - catch all non-API routes and serve the React app
 	mux.Handle("GET /", s.appHandler())
@@ -318,7 +320,7 @@ func (s *Server) handleError(w http.ResponseWriter, e error) {
 	if CORS() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, User-Agent, Accept, X-Requested-With")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 
@@ -341,8 +343,18 @@ func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 // httpClient returns an HTTP client that automatically adds the User-Agent header
 func (s *Server) httpClient() *http.Client {
+	return userAgentHTTPClient(10 * time.Second)
+}
+
+// inferenceClient uses almost the same HTTP client, but without a timeout so
+// long requests aren't truncated
+func (s *Server) inferenceClient() *api.Client {
+	return api.NewClient(envconfig.Host(), userAgentHTTPClient(0))
+}
+
+func userAgentHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: timeout,
 		Transport: &userAgentTransport{
 			base: http.DefaultTransport,
 		},
@@ -720,11 +732,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	_, cancelLoading := context.WithCancel(ctx)
 	loading := false
 
-	c, err := api.ClientFromEnvironment()
-	if err != nil {
-		cancelLoading()
-		return err
-	}
+	c := s.inferenceClient()
 
 	// Check if the model exists locally by trying to show it
 	// TODO (jmorganca): skip this round trip and instead just act
@@ -1572,9 +1580,18 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 		return json.NewEncoder(w).Encode(response)
 	}
 
+	n := model.ParseName(req.Model)
+	stale := true
+	if m, err := manifest.ParseNamedManifest(n); err == nil {
+		if m.Digest() == digest {
+			stale = false
+		} else if pushTime > 0 && m.FileInfo().ModTime().Unix() >= pushTime {
+			stale = false
+		}
+	}
+
 	response := responses.ModelUpstreamResponse{
-		Digest:   digest,
-		PushTime: pushTime,
+		Stale: stale,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1671,7 +1688,6 @@ func ptr[T any](v T) *T { return &v }
 func supportsBrowserTools(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "gpt-oss")
 }
-
 
 // buildChatRequest converts store.Chat to api.ChatRequest
 func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, availableTools []map[string]any) (*api.ChatRequest, error) {

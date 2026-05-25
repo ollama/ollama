@@ -47,6 +47,12 @@ type Validator interface {
 	Validate() error
 }
 
+// PostLoader is an optional interface that models can implement to run
+// initialization steps after backend weights have been loaded.
+type PostLoader interface {
+	PostLoad() error
+}
+
 // MultimodalProcessor must be implemented by multimodal models.
 type MultimodalProcessor interface {
 	// EncodeMultimodal processes a single input (such as an image) and

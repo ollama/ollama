@@ -141,7 +141,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 					ch <- gin.H{"error": err.Error()}
 				}
 
-				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "") {
+				if err == nil && !remote {
 					mf, mErr := manifest.ParseNamedManifest(fromName)
 					if mErr == nil && mf.Config.Digest != "" {
 						configPath, pErr := manifest.BlobsPath(mf.Config.Digest)
@@ -157,6 +157,12 @@ func (s *Server) CreateHandler(c *gin.Context) {
 									}
 									if config.Requires == "" {
 										config.Requires = baseConfig.Requires
+									}
+									if config.ModelFormat == "" {
+										config.ModelFormat = baseConfig.ModelFormat
+									}
+									if len(config.Capabilities) == 0 {
+										config.Capabilities = baseConfig.Capabilities
 									}
 								}
 								cfgFile.Close()
@@ -264,6 +270,8 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				ch <- gin.H{"error": err.Error()}
 			}
 		}
+
+		s.refreshModelListCache(name)
 
 		ch <- api.ProgressResponse{Status: "success"}
 	}()
@@ -488,15 +496,18 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	for _, layer := range baseLayers {
 		if layer.GGML != nil {
 			quantType := strings.ToUpper(cmp.Or(r.Quantize, r.Quantization))
+			ft := layer.GGML.KV().FileType()
+			if quantType == "" && hasSourceFP8Tensors(layer.GGML.KV()) && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" && slices.Contains([]string{"F16", "BF16", "F32"}, ft.String()) {
+				quantType = "Q8_0"
+			}
 			if quantType != "" && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" {
 				want, err := ggml.ParseFileType(quantType)
 				if err != nil {
 					return err
 				}
 
-				ft := layer.GGML.KV().FileType()
-				if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
-					return errors.New("quantization is only supported for F16 and F32 models")
+				if !slices.Contains([]string{"F16", "BF16", "F32"}, ft.String()) {
+					return errors.New("quantization is only supported for F16, BF16 and F32 models")
 				} else if ft != want {
 					layer, err = quantizeLayer(layer, quantType, fn)
 					if err != nil {
@@ -509,6 +520,30 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 			config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(layer.GGML.KV().ParameterCount()))
 			config.FileType = cmp.Or(config.FileType, layer.GGML.KV().FileType().String())
 			config.ModelFamilies = append(config.ModelFamilies, layer.GGML.KV().Architecture())
+
+			// Auto-detect renderer, parser, and stop tokens from GGUF architecture.
+			// TODO: abstract this into a registry/lookup table when multiple models
+			// need architecture-based renderer/parser/stop defaults.
+			if config.Renderer == "" || config.Parser == "" {
+				arch := layer.GGML.KV().Architecture()
+				switch arch {
+				case "gemma4":
+					config.Renderer = cmp.Or(config.Renderer, gemma4RendererLegacy)
+					config.Parser = cmp.Or(config.Parser, "gemma4")
+					if _, ok := r.Parameters["stop"]; !ok {
+						if r.Parameters == nil {
+							r.Parameters = make(map[string]any)
+						}
+						r.Parameters["stop"] = []string{"<turn|>"}
+					}
+				case "laguna":
+					config.Renderer = cmp.Or(config.Renderer, "laguna")
+					config.Parser = cmp.Or(config.Parser, "laguna")
+				case "nemotron_h", "nemotron_h_moe", "nemotron_h_omni":
+					config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
+					config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
+				}
+			}
 		}
 		layers = append(layers, layer.Layer)
 	}
@@ -580,6 +615,10 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	}
 
 	return nil
+}
+
+func hasSourceFP8Tensors(kv ggml.KV) bool {
+	return kv.String("source_quantization") == "hf_fp8" && len(kv.Strings("source_fp8_tensors")) > 0
 }
 
 func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.ProgressResponse)) (*layerGGML, error) {
@@ -701,9 +740,6 @@ func removeLayer(layers []manifest.Layer, mediatype string) []manifest.Layer {
 
 func setTemplate(layers []manifest.Layer, t string) ([]manifest.Layer, error) {
 	layers = removeLayer(layers, "application/vnd.ollama.image.template")
-	if _, err := template.Parse(t); err != nil {
-		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
-	}
 	if _, err := template.Parse(t); err != nil {
 		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
 	}

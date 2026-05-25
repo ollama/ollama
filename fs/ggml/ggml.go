@@ -15,6 +15,7 @@ import (
 
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/util/bufioutil"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -281,11 +282,13 @@ func (kv KV) OllamaEngineRequired() bool {
 		"deepseekocr",
 		"gemma3",
 		"gemma3n",
+		"gemma4",
 		"gptoss", "gpt-oss",
+		"laguna",
 		"llama4",
 		"mistral3",
 		"mllama",
-		"nemotron_h", "nemotron_h_moe",
+		"nemotron_h", "nemotron_h_moe", "nemotron_h_omni",
 		"nomic-bert",
 		"olmo3",
 		"qwen25vl",
@@ -321,7 +324,7 @@ func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ..
 		return val, true
 	}
 
-	slog.Debug("key with type not found", "key", key, "default", defaultValue[0])
+	logutil.Trace("key with type not found", "key", key, "default", defaultValue[0])
 	return defaultValue[0], false
 }
 
@@ -889,13 +892,14 @@ func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
 		"bert",
 		"gemma3",
+		"gemma4",
 		"glm4moelite",
 		"glmocr",
 		"gptoss", "gpt-oss",
 		"lfm2",
 		"lfm2moe",
 		"mistral3",
-		"nemotron_h", "nemotron_h_moe",
+		"nemotron_h", "nemotron_h_moe", "nemotron_h_omni",
 		"olmo3",
 		"qwen3", "qwen3moe",
 		"qwen35", "qwen35moe",

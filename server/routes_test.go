@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
@@ -92,12 +93,21 @@ func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
 
 func TestRoutes(t *testing.T) {
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+
 	type testCase struct {
 		Name     string
 		Method   string
 		Path     string
 		Setup    func(t *testing.T, req *http.Request)
 		Expected func(t *testing.T, resp *http.Response)
+	}
+
+	s := &Server{modelCaches: &modelCaches{modelList: newModelListCache()}}
+	s.modelCaches.modelList.Start(context.Background())
+	if err := s.modelCaches.modelList.Wait(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 
 	createTestModel := func(t *testing.T, name string) {
@@ -137,6 +147,7 @@ func TestRoutes(t *testing.T) {
 		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
 			t.Fatal(err)
 		}
+		s.refreshModelListCache(modelName)
 	}
 
 	testCases := []testCase{
@@ -495,9 +506,6 @@ func TestRoutes(t *testing.T) {
 		},
 	}
 
-	modelsDir := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", modelsDir)
-
 	rc := &ollama.Registry{
 		// This is a temporary measure to allow us to move forward,
 		// surfacing any code contacting ollama.com we do not intended
@@ -513,7 +521,6 @@ func TestRoutes(t *testing.T) {
 		HTTPClient: panicOnRoundTrip,
 	}
 
-	s := &Server{}
 	router, err := s.GenerateRoutes(rc)
 	if err != nil {
 		t.Fatalf("failed to generate routes: %v", err)
@@ -544,6 +551,73 @@ func TestRoutes(t *testing.T) {
 				tc.Expected(t, resp)
 			}
 		})
+	}
+}
+
+func TestGetModelInfo_SafetensorsUsesStoredFileType(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	cfgData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  "safetensors",
+		FileType:     "mxfp8",
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(cfgData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName("show-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if resp.Details.QuantizationLevel != "mxfp8" {
+		t.Fatalf("QuantizationLevel = %q, want %q", resp.Details.QuantizationLevel, "mxfp8")
+	}
+}
+
+func TestGetModelInfo_SafetensorsModelfileUsesShortName(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	cfgData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  "safetensors",
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(cfgData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName("show-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if !strings.Contains(resp.Modelfile, "FROM show-safetensors:latest\n") {
+		t.Fatalf("Modelfile = %q, want FROM show-safetensors:latest", resp.Modelfile)
+	}
+
+	if strings.Contains(resp.Modelfile, "# To build a new Modelfile based on this, replace FROM with:") {
+		t.Fatalf("Modelfile should not include replacement hint: %q", resp.Modelfile)
 	}
 }
 

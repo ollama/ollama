@@ -63,7 +63,6 @@ export function validateFile(
   const {
     maxFileSize = 10,
     allowedExtensions = [...TEXT_FILE_EXTENSIONS, ...IMAGE_EXTENSIONS],
-    hasVisionCapability = false,
     customValidator,
   } = options;
 
@@ -81,10 +80,6 @@ export function validateFile(
   // File extension validation
   if (!fileExtension || !allowedExtensions.includes(fileExtension)) {
     return { valid: false, error: "File type not supported" };
-  }
-
-  if (IMAGE_EXTENSIONS.includes(fileExtension) && !hasVisionCapability) {
-    return { valid: false, error: "This model does not support images" };
   }
 
   // File size validation

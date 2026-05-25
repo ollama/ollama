@@ -50,8 +50,18 @@ var initDevices = sync.OnceFunc(func() {
 	backends = make(map[C.ggml_backend_dev_t]C.ggml_backend_t)
 	for i := range C.ggml_backend_dev_count() {
 		d := C.ggml_backend_dev_get(i)
+		t := C.ggml_backend_dev_type(d)
+		name := C.GoString(C.ggml_backend_dev_name(d))
 
-		switch C.ggml_backend_dev_type(d) {
+		b := C.ggml_backend_dev_init(d, nil)
+		if b == nil {
+			slog.Error("failed to initialize ggml backend device", "device", name, "type", t)
+			panic(fmt.Sprintf("failed to initialize ggml backend device: %s", name))
+		}
+
+		backends[d] = b
+
+		switch t {
 		case C.GGML_BACKEND_DEVICE_TYPE_CPU:
 			if len(cpus) == 0 {
 				// only the first cpu device should be used
@@ -63,8 +73,6 @@ var initDevices = sync.OnceFunc(func() {
 			C.GGML_BACKEND_DEVICE_TYPE_IGPU:
 			gpus = append(gpus, d)
 		}
-
-		backends[d] = C.ggml_backend_dev_init(d, nil)
 	}
 })
 
@@ -1069,6 +1077,21 @@ func (t *Tensor) Floats() (data []float32) {
 	return
 }
 
+func (t *Tensor) BackendGet() []float32 {
+	n := int(C.ggml_nelements(t.t))
+	if n == 0 {
+		return nil
+	}
+
+	if t.sync != nil {
+		t.sync()
+	}
+
+	data := make([]float32, n)
+	C.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))
+	return data
+}
+
 func tensorSet[S ~[]E, E byte | float32 | int32](t *Tensor, s S) {
 	if len(s) == 0 {
 		return
@@ -1310,6 +1333,13 @@ func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_pad(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
+	}
+}
+
+func (t *Tensor) PadExt(ctx ml.Context, lp0, rp0, lp1, rp1, lp2, rp2, lp3, rp3 int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_pad_ext(ctx.(*Context).ctx, t.t, C.int(lp0), C.int(rp0), C.int(lp1), C.int(rp1), C.int(lp2), C.int(rp2), C.int(lp3), C.int(rp3)),
 	}
 }
 
@@ -1657,6 +1687,13 @@ func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_conv_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1)),
+	}
+}
+
+func (t *Tensor) Conv1DDW(ctx ml.Context, weight ml.Tensor, s, p, d int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_conv_1d_dw(ctx.(*Context).ctx, weight.(*Tensor).t, t.t, C.int(s), C.int(p), C.int(d)),
 	}
 }
 

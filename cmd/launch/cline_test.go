@@ -43,7 +43,7 @@ func TestClineEdit(t *testing.T) {
 	t.Run("creates config from scratch", func(t *testing.T) {
 		os.RemoveAll(filepath.Join(tmpDir, ".cline"))
 
-		if err := c.Edit([]string{"kimi-k2.5:cloud"}); err != nil {
+		if err := c.Edit(testLaunchModels("kimi-k2.5:cloud")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -77,7 +77,7 @@ func TestClineEdit(t *testing.T) {
 		data, _ := json.Marshal(existing)
 		os.WriteFile(configPath, data, 0o644)
 
-		if err := c.Edit([]string{"glm-5:cloud"}); err != nil {
+		if err := c.Edit(testLaunchModels("glm-5:cloud")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -93,10 +93,10 @@ func TestClineEdit(t *testing.T) {
 	t.Run("updates model on re-edit", func(t *testing.T) {
 		os.RemoveAll(filepath.Join(tmpDir, ".cline"))
 
-		if err := c.Edit([]string{"kimi-k2.5:cloud"}); err != nil {
+		if err := c.Edit(testLaunchModels("kimi-k2.5:cloud")); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.Edit([]string{"glm-5:cloud"}); err != nil {
+		if err := c.Edit(testLaunchModels("glm-5:cloud")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -124,7 +124,7 @@ func TestClineEdit(t *testing.T) {
 	t.Run("uses first model as primary", func(t *testing.T) {
 		os.RemoveAll(filepath.Join(tmpDir, ".cline"))
 
-		if err := c.Edit([]string{"kimi-k2.5:cloud", "glm-5:cloud"}); err != nil {
+		if err := c.Edit(testLaunchModels("kimi-k2.5:cloud", "glm-5:cloud")); err != nil {
 			t.Fatal(err)
 		}
 

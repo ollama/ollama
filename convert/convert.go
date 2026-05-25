@@ -290,6 +290,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &gemma3Model{Architecture: p.Architectures[0]}
 	case "Gemma3nForConditionalGeneration":
 		conv = &gemma3nModel{}
+	case "Gemma4ForCausalLM", "Gemma4ForConditionalGeneration":
+		conv = &gemma4Model{Architecture: p.Architectures[0]}
 	case "Phi3ForCausalLM":
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":
@@ -314,6 +316,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &deepseek2Model{}
 	case "Glm4MoeLiteForCausalLM":
 		conv = &glm4MoeLiteModel{}
+	case "LagunaForCausalLM":
+		conv = &lagunaModel{}
 	case "GlmOcrForConditionalGeneration":
 		conv = &glmOcrModel{}
 	case "Lfm2ForCausalLM", "Lfm2MoeForCausalLM":
@@ -322,6 +326,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &lfm2VLTextModel{}
 	case "Qwen3NextForCausalLM", "Qwen3_5ForConditionalGeneration", "Qwen3_5MoeForConditionalGeneration":
 		conv = &qwen3NextModel{}
+	case "NemotronH_Nano_VL_V2", "NemotronH_Nano_Omni_Reasoning_V3":
+		conv = &nemotronHNanoVLModel{}
 	case "NemotronHForCausalLM":
 		conv = &nemotronHModel{}
 	default:
@@ -385,6 +391,10 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 }
 
 func writeFile(f *os.File, kv KV, ts []*ggml.Tensor) error {
+	for k, v := range sourceTensorKV(ts) {
+		kv[k] = v
+	}
+
 	for i := range ts {
 		ts[i].Shape = slices.Clone(ts[i].Shape)
 		slices.Reverse(ts[i].Shape)

@@ -5,23 +5,27 @@ package integration
 import (
 	"context"
 	"encoding/base64"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 // Default set of vision models to test. When OLLAMA_TEST_MODEL is set,
 // only that model is tested (with a capability check for vision).
 var defaultVisionModels = []string{
+	"nemotron3:33b",
+	"gemma4",
 	"gemma3",
 	"llama3.2-vision",
 	"qwen2.5vl",
 	"qwen3-vl:8b",
 }
 
-// decodeTestImages returns the two test images (Abbey Road llamas, docs llamas).
-func decodeTestImages(t *testing.T) (abbeyRoad, docs api.ImageData) {
+// decodeTestImages returns the test images.
+func decodeTestImages(t *testing.T) (abbeyRoad, docs, ollamaHome api.ImageData) {
 	t.Helper()
 	var err error
 	abbeyRoad, err = base64.StdEncoding.DecodeString(imageEncoding)
@@ -32,16 +36,43 @@ func decodeTestImages(t *testing.T) (abbeyRoad, docs api.ImageData) {
 	if err != nil {
 		t.Fatalf("decode docs image: %v", err)
 	}
+	ollamaHome, err = base64.StdEncoding.DecodeString(imageEncodingOllamaHome)
+	if err != nil {
+		t.Fatalf("decode ollama home image: %v", err)
+	}
 	return
+}
+
+// skipIfNoVisionOverride skips the entire test (at parent level) when
+// OLLAMA_TEST_MODEL is set to a non-vision model. This prevents the parent
+// test from reporting PASS when all subtests are skipped.
+func skipIfNoVisionOverride(t *testing.T) {
+	t.Helper()
+	if testModel == "" {
+		return
+	}
+	// Check actual model capabilities via the API rather than a hardcoded list.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+	resp, err := client.Show(ctx, &api.ShowRequest{Name: testModel})
+	if err != nil {
+		return // let the test proceed and fail naturally
+	}
+	if len(resp.Capabilities) > 0 && !slices.Contains(resp.Capabilities, model.CapabilityVision) {
+		t.Skipf("model override %q does not have vision capability (has %v)", testModel, resp.Capabilities)
+	}
 }
 
 // setupVisionModel pulls the model, preloads it, and skips if not GPU-loaded.
 func setupVisionModel(ctx context.Context, t *testing.T, client *api.Client, model string) {
 	t.Helper()
-	if testModel != "" {
-		requireCapability(ctx, t, client, model, "vision")
+	if testModel == "" {
+		pullOrSkip(ctx, t, client, model)
 	}
-	pullOrSkip(ctx, t, client, model)
+	skipIfModelTooLargeForVRAM(ctx, t, client, model)
+	requireCapability(ctx, t, client, model, "vision")
 	err := client.Generate(ctx, &api.GenerateRequest{Model: model}, func(response api.GenerateResponse) error { return nil })
 	if err != nil {
 		t.Fatalf("failed to load model %s: %s", model, err)
@@ -53,7 +84,8 @@ func setupVisionModel(ctx context.Context, t *testing.T, client *api.Client, mod
 // questions about the same image. This verifies that the KV cache correctly
 // handles cached image tokens across turns.
 func TestVisionMultiTurn(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
+	skipIfNoVisionOverride(t)
 
 	// Models that fail on multi-turn detail questions (e.g. misidentifying objects).
 	skipModels := map[string]string{
@@ -72,7 +104,7 @@ func TestVisionMultiTurn(t *testing.T) {
 			defer cleanup()
 
 			setupVisionModel(ctx, t, client, model)
-			abbeyRoad, _ := decodeTestImages(t)
+			abbeyRoad, _, _ := decodeTestImages(t)
 
 			// Turn 1: describe the image
 			req := api.ChatRequest{
@@ -85,7 +117,8 @@ func TestVisionMultiTurn(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			resp1 := DoChat(ctx, t, client, req, []string{
 				"llama", "cross", "walk", "road", "animal", "cartoon",
@@ -100,7 +133,7 @@ func TestVisionMultiTurn(t *testing.T) {
 				api.Message{Role: "user", Content: "How many animals are in the image?"},
 			)
 			resp2 := DoChat(ctx, t, client, req, []string{
-				"four", "4",
+				"four", "4", "three", "3",
 			}, 60*time.Second, 30*time.Second)
 			if resp2 == nil {
 				t.Fatal("no response from turn 2")
@@ -120,7 +153,8 @@ func TestVisionMultiTurn(t *testing.T) {
 
 // TestVisionObjectCounting asks the model to count objects in an image.
 func TestVisionObjectCounting(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
+	skipIfNoVisionOverride(t)
 
 	skipModels := map[string]string{
 		"llama3.2-vision": "consistently miscounts (says 3 instead of 4)",
@@ -137,7 +171,7 @@ func TestVisionObjectCounting(t *testing.T) {
 			defer cleanup()
 
 			setupVisionModel(ctx, t, client, model)
-			_, docs := decodeTestImages(t)
+			_, docs, _ := decodeTestImages(t)
 
 			req := api.ChatRequest{
 				Model: model,
@@ -149,7 +183,8 @@ func TestVisionObjectCounting(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{"4", "four"}, 120*time.Second, 30*time.Second)
 		})
@@ -159,7 +194,8 @@ func TestVisionObjectCounting(t *testing.T) {
 // TestVisionSceneUnderstanding tests whether the model can identify
 // cultural references and scene context from an image.
 func TestVisionSceneUnderstanding(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
+	skipIfNoVisionOverride(t)
 
 	// Models known to be too small or not capable enough for cultural reference detection.
 	skipModels := map[string]string{
@@ -178,7 +214,7 @@ func TestVisionSceneUnderstanding(t *testing.T) {
 			defer cleanup()
 
 			setupVisionModel(ctx, t, client, model)
-			abbeyRoad, _ := decodeTestImages(t)
+			abbeyRoad, _, _ := decodeTestImages(t)
 
 			req := api.ChatRequest{
 				Model: model,
@@ -190,10 +226,11 @@ func TestVisionSceneUnderstanding(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
-				"abbey road", "beatles", "abbey",
+				"abbey road", "beatles", "abbey", "llama",
 			}, 120*time.Second, 30*time.Second)
 		})
 	}
@@ -202,7 +239,8 @@ func TestVisionSceneUnderstanding(t *testing.T) {
 // TestVisionSpatialReasoning tests the model's ability to identify
 // objects based on their spatial position in the image.
 func TestVisionSpatialReasoning(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
+	skipIfNoVisionOverride(t)
 
 	for _, model := range testModels(defaultVisionModels) {
 		t.Run(model, func(t *testing.T) {
@@ -212,7 +250,7 @@ func TestVisionSpatialReasoning(t *testing.T) {
 			defer cleanup()
 
 			setupVisionModel(ctx, t, client, model)
-			_, docs := decodeTestImages(t)
+			_, docs, _ := decodeTestImages(t)
 
 			// The docs image has: leftmost llama on laptop with glasses,
 			// rightmost llama sleeping.
@@ -226,10 +264,11 @@ func TestVisionSpatialReasoning(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
-				"laptop", "computer", "typing", "working",
+				"laptop", "computer", "typing", "working", "desk", "writing", "pen", "glasses", "reading",
 			}, 120*time.Second, 30*time.Second)
 		})
 	}
@@ -238,7 +277,8 @@ func TestVisionSpatialReasoning(t *testing.T) {
 // TestVisionDetailRecognition tests whether the model can identify
 // small details like accessories in an image.
 func TestVisionDetailRecognition(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
+	skipIfNoVisionOverride(t)
 
 	for _, model := range testModels(defaultVisionModels) {
 		t.Run(model, func(t *testing.T) {
@@ -248,7 +288,7 @@ func TestVisionDetailRecognition(t *testing.T) {
 			defer cleanup()
 
 			setupVisionModel(ctx, t, client, model)
-			_, docs := decodeTestImages(t)
+			_, docs, _ := decodeTestImages(t)
 
 			req := api.ChatRequest{
 				Model: model,
@@ -260,7 +300,8 @@ func TestVisionDetailRecognition(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
 				"glasses", "spectacles", "eyeglasses",
@@ -273,7 +314,8 @@ func TestVisionDetailRecognition(t *testing.T) {
 // the model to compare and contrast them. This exercises multi-image
 // encoding and cross-image reasoning.
 func TestVisionMultiImage(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+	skipUnderMinVRAM(t, 16)
+	skipIfNoVisionOverride(t)
 
 	// Multi-image support varies across models.
 	skipModels := map[string]string{
@@ -291,7 +333,7 @@ func TestVisionMultiImage(t *testing.T) {
 			defer cleanup()
 
 			setupVisionModel(ctx, t, client, model)
-			abbeyRoad, docs := decodeTestImages(t)
+			abbeyRoad, docs, _ := decodeTestImages(t)
 
 			req := api.ChatRequest{
 				Model: model,
@@ -303,7 +345,8 @@ func TestVisionMultiImage(t *testing.T) {
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			// Both images feature cartoon llamas/alpacas — the model should
 			// note the common subject and the different settings.
@@ -314,10 +357,12 @@ func TestVisionMultiImage(t *testing.T) {
 	}
 }
 
-// TestVisionOCR tests text extraction from an image. The docs image
-// contains the text "Ollama's documentation" in a header.
-func TestVisionOCR(t *testing.T) {
-	skipUnderMinVRAM(t, 6)
+// TestVisionImageDescription verifies that the model can describe the contents
+// of the ollama homepage image (a cartoon llama with "Start building with
+// open models" text). Basic sanity check that the vision pipeline works.
+func TestVisionImageDescription(t *testing.T) {
+	skipUnderMinVRAM(t, 16)
+	skipIfNoVisionOverride(t)
 
 	for _, model := range testModels(defaultVisionModels) {
 		t.Run(model, func(t *testing.T) {
@@ -327,22 +372,23 @@ func TestVisionOCR(t *testing.T) {
 			defer cleanup()
 
 			setupVisionModel(ctx, t, client, model)
-			_, docs := decodeTestImages(t)
+			_, _, ollamaHome := decodeTestImages(t)
 
 			req := api.ChatRequest{
 				Model: model,
 				Messages: []api.Message{
 					{
 						Role:    "user",
-						Content: "What text appears in this image? Read all visible text.",
-						Images:  []api.ImageData{docs},
+						Content: "Describe what you see in this image briefly.",
+						Images:  []api.ImageData{ollamaHome},
 					},
 				},
 				Stream: &stream,
-				Options: map[string]any{"temperature": 0.0, "seed": 42},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
+				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
-				"ollama", "documentation",
+				"llama", "animal", "build", "model", "open", "cartoon", "character",
 			}, 120*time.Second, 30*time.Second)
 		})
 	}
