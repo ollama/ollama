@@ -25,12 +25,9 @@
     {
       "name": "cpu-arm64",
       "inherits": ["default"],
-      "generator": "Visual Studio 17 2022",
-      "architecture": "ARM64",
-      "toolset": "ClangCL",
       "binaryDir": "${sourceDir}/../../build/llama-server-cpu-arm64",
+      "toolchainFile": "${sourceDir}/../../cmake/windows-arm64-llvm-mingw.cmake",
       "cacheVariables": {
-        "CMAKE_SYSTEM_PROCESSOR": "ARM64",
         "GGML_CPU_ALL_VARIANTS": "OFF",
         "OLLAMA_RUNNER_DIR": "",
         "OLLAMA_WINDOWS_RUNTIME_ARCH": "arm64"

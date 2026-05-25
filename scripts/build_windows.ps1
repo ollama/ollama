@@ -254,8 +254,8 @@ function cpuArm64 {
     Remove-Item -ea 0 -recurse -force -path "${arm64DistDir}\lib\ollama"
     New-Item "${arm64DistDir}\lib\ollama\" -ItemType Directory -ea 0 | Out-Null
 
-    # Cross-compile the Windows ARM64 CPU llama-server payload from an x64
-    # Windows host with clang-cl. GPU backends are not built for Windows ARM64.
+    # Cross-compile the Windows ARM64 CPU llama-server payload from an x64 host
+    # with llvm-mingw. GPU backends are not built for Windows ARM64.
     $oldCC = $env:CC
     $oldCXX = $env:CXX
     $oldGenerator = $env:CMAKE_GENERATOR
@@ -263,7 +263,6 @@ function cpuArm64 {
     $oldGeneratorToolset = $env:CMAKE_GENERATOR_TOOLSET
     $env:CC = $null
     $env:CXX = $null
-    $env:CMAKE_GENERATOR = $null
     $env:CMAKE_GENERATOR_PLATFORM = $null
     $env:CMAKE_GENERATOR_TOOLSET = $null
     & cmake -S llama\server --preset cpu-arm64 --install-prefix $arm64DistDir
