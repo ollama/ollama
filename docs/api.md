@@ -109,6 +109,7 @@ The final response in the stream also includes additional data about the generat
 
 - `total_duration`: time spent generating the response
 - `load_duration`: time spent in nanoseconds loading the model
+- `prompt_cached_count`: number of tokens served from KV cache
 - `prompt_eval_count`: number of tokens in the prompt
 - `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
 - `eval_count`: number of tokens in the response
@@ -127,6 +128,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
   "context": [1, 2, 3],
   "total_duration": 10706818083,
   "load_duration": 6338219291,
+  "prompt_cached_count": 10,
   "prompt_eval_count": 26,
   "prompt_eval_duration": 130079000,
   "eval_count": 259,
@@ -161,6 +163,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
   "context": [1, 2, 3],
   "total_duration": 5043500667,
   "load_duration": 5025959,
+  "prompt_cached_count": 10,
   "prompt_eval_count": 26,
   "prompt_eval_duration": 325953000,
   "eval_count": 290,
@@ -583,6 +586,7 @@ Final response:
   "done": true,
   "total_duration": 4883583458,
   "load_duration": 1334875,
+  "prompt_cached_count": 10,
   "prompt_eval_count": 26,
   "prompt_eval_duration": 342546000,
   "eval_count": 282,
@@ -997,6 +1001,7 @@ curl http://localhost:11434/api/chat -d '{
   "done": true,
   "total_duration": 1668506709,
   "load_duration": 1986209,
+  "prompt_cached_count": 10,
   "prompt_eval_count": 26,
   "prompt_eval_duration": 359682000,
   "eval_count": 83,

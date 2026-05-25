@@ -97,12 +97,10 @@ func TestAPIGenerate(t *testing.T) {
 					if len(response.Context) == 0 {
 						t.Errorf("final response missing context: %#v", response)
 					}
-
-					// Note: caching can result in no prompt eval count, so this can't be verified reliably
-					// if response.Metrics.PromptEvalCount == 0 {
-					// 	t.Errorf("final response missing prompt_eval_count: %#v", response)
-					// }
-
+					// Caching can result in no prompt eval count, so testing sum
+					if response.Metrics.PromptCachedCount + response.Metrics.PromptEvalCount == 0 {
+						t.Errorf("final response has prompt_eval_count + prompt_cached_count == 0: %#v", response)
+					}
 				} // else incremental response, nothing to check right now...
 				buf.Write([]byte(response.Response))
 				if !stallTimer.Reset(streamTimeout) {
@@ -260,8 +258,8 @@ func TestAPIChat(t *testing.T) {
 						t.Errorf("final response missing eval_duration: %#v", response)
 					}
 
-					if response.Metrics.PromptEvalCount == 0 {
-						t.Errorf("final response missing prompt_eval_count: %#v", response)
+					if response.Metrics.PromptCachedCount + response.Metrics.PromptEvalCount == 0 {
+						t.Errorf("final response has prompt_cached_count + prompt_eval_count == 0: %#v", response)
 					}
 				} // else incremental response, nothing to check right now...
 				buf.Write([]byte(response.Message.Content))

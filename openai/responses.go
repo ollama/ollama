@@ -859,8 +859,9 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 			InputTokens:  chatResponse.PromptEvalCount,
 			OutputTokens: chatResponse.EvalCount,
 			TotalTokens:  chatResponse.PromptEvalCount + chatResponse.EvalCount,
-			// TODO(drifkin): wire through the actual values
-			InputTokensDetails: ResponsesInputTokensDetails{CachedTokens: 0},
+			InputTokensDetails: ResponsesInputTokensDetails{CachedTokens:
+				chatResponse.PromptCachedCount,
+			},
 			// TODO(drifkin): wire through the actual values
 			OutputTokensDetails: ResponsesOutputTokensDetails{ReasoningTokens: 0},
 		},
