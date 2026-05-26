@@ -297,6 +297,7 @@ console.log(response.message.content);
 - [tlm](https://github.com/yusufcanb/tlm) - Local shell copilot
 - [tenere](https://github.com/pythops/tenere) - TUI for LLMs
 - [ParLlama](https://github.com/paulrobello/parllama) - TUI for Ollama
+- [Prompter](https://github.com/whonixnetworks/prompter) - Multi-model comparison, benchmarking, and evaluation TUI for Ollama
 - [llm-ollama](https://github.com/taketwo/llm-ollama) - Plugin for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/)
 - [ShellOracle](https://github.com/djcopley/ShellOracle) - Shell command suggestions
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
