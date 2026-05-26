@@ -7,5 +7,7 @@ package cpu
 // #cgo linux CPPFLAGS: -D_GNU_SOURCE
 // #cgo darwin,arm64 CPPFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 // #cgo darwin,arm64 LDFLAGS: -framework Accelerate
+// #cgo linux,loong64 CFLAGS: -mlasx
+// #cgo linux,loong64 CPPFLAGS: -mlasx
 import "C"
 import _ "github.com/ollama/ollama/ml/backend/ggml/ggml/src/ggml-cpu/llamafile"
