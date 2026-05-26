@@ -256,3 +256,33 @@ func TestRemoteURL_Idempotent(t *testing.T) {
 		})
 	}
 }
+
+func TestSetTemplate(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	t.Run("valid template", func(t *testing.T) {
+		layers, err := setTemplate(nil, "{{ .Prompt }}")
+		if err != nil {
+			t.Fatalf("setTemplate returned error for valid template: %v", err)
+		}
+
+		if len(layers) != 1 {
+			t.Fatalf("expected 1 layer, got %d", len(layers))
+		}
+
+		if got, want := layers[0].MediaType, "application/vnd.ollama.image.template"; got != want {
+			t.Fatalf("unexpected media type: got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("invalid template", func(t *testing.T) {
+		_, err := setTemplate(nil, "{{ if .Prompt }}")
+		if err == nil {
+			t.Fatal("expected error for invalid template, got nil")
+		}
+
+		if !errors.Is(err, errBadTemplate) {
+			t.Fatalf("expected errBadTemplate, got %v", err)
+		}
+	})
+}

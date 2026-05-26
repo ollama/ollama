@@ -1263,9 +1263,6 @@ func setTemplate(layers []manifest.Layer, t string) ([]manifest.Layer, error) {
 	if _, err := template.Parse(t); err != nil {
 		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
 	}
-	if _, err := template.Parse(t); err != nil {
-		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
-	}
 
 	blob := strings.NewReader(t)
 	layer, err := manifest.NewLayer(blob, "application/vnd.ollama.image.template")
