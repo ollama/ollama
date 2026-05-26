@@ -328,6 +328,67 @@ func TestFromMessagesRequest_WithToolResultImage(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_WithToolResultImageFromJSON(t *testing.T) {
+	// This test simulates the exact scenario from issue #16298:
+	// Claude Code's Read tool returning a PNG image wrapped in a tool_result
+	// when unmarshaled from JSON (as happens in real API requests)
+	requestJSON := `{
+		"model": "test-model",
+		"max_tokens": 1024,
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "toolu_01PNG123",
+						"content": [
+							{
+								"type": "image",
+								"source": {
+									"type": "base64",
+									"media_type": "image/png",
+									"data": "` + testImage + `"
+								}
+							}
+						]
+					}
+				]
+			}
+		]
+	}`
+
+	var req MessagesRequest
+	if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	msg := result.Messages[0]
+	if msg.Role != "tool" {
+		t.Errorf("expected role 'tool', got %q", msg.Role)
+	}
+	if msg.ToolCallID != "toolu_01PNG123" {
+		t.Errorf("expected tool_call_id 'toolu_01PNG123', got %q", msg.ToolCallID)
+	}
+	if len(msg.Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(msg.Images))
+	}
+
+	expectedImgData, _ := base64.StdEncoding.DecodeString(testImage)
+	if string(msg.Images[0]) != string(expectedImgData) {
+		t.Error("image data mismatch")
+	}
+}
+
 func TestFromMessagesRequest_WithToolResultFollowedByUserText(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",

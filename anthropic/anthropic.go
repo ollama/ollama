@@ -140,6 +140,60 @@ type ContentBlock struct {
 	Signature string  `json:"signature,omitempty"`
 }
 
+func (cb *ContentBlock) UnmarshalJSON(data []byte) error {
+	// Create an alias type to avoid infinite recursion
+	type Alias ContentBlock
+	aux := &struct {
+		Content json.RawMessage `json:"content,omitempty"`
+		*Alias
+	}{
+		Alias: (*Alias)(cb),
+	}
+
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+
+	// Handle Content field based on block type
+	if len(aux.Content) > 0 {
+		// For tool_result blocks, Content can be a string or an array of nested ContentBlocks
+		if cb.Type == "tool_result" {
+			// Try unmarshaling as string first
+			var s string
+			if err := json.Unmarshal(aux.Content, &s); err == nil {
+				cb.Content = s
+				return nil
+			}
+
+			// Try unmarshaling as array of content blocks (for nested images/text)
+			var blocks []ContentBlock
+			if err := json.Unmarshal(aux.Content, &blocks); err == nil {
+				// Store as []any for compatibility with convertToolResultContent
+				cb.Content = rawToAny(aux.Content)
+				return nil
+			}
+
+			// If neither works, store raw to preserve original behavior
+			cb.Content = rawToAny(aux.Content)
+			return nil
+		}
+
+		// For other block types, use standard unmarshaling
+		cb.Content = rawToAny(aux.Content)
+	}
+
+	return nil
+}
+
+// rawToAny unmarshals json.RawMessage into any for generic handling
+func rawToAny(raw json.RawMessage) any {
+	var result any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return string(raw)
+	}
+	return result
+}
+
 // Citation represents a citation in a text block
 type Citation struct {
 	Type           string `json:"type"` // "web_search_result_location"
