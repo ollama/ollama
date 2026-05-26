@@ -257,7 +257,7 @@ func TestNormalizeROCmDiscoveryEnv(t *testing.T) {
 				t.Setenv(key, value)
 			}
 
-			got := normalizeDiscoveryEnvForGOOS("linux", []string{"/lib/ollama", "/lib/ollama/rocm"}, tt.extra)
+			got := normalizeDiscoveryEnvForGOOS("linux", []string{"/lib/ollama", "/lib/ollama/rocm_v7_2"}, tt.extra)
 
 			if tt.wantSame {
 				if got != nil && got["ROCR_VISIBLE_DEVICES"] != "" {
@@ -303,7 +303,7 @@ func TestBootstrapDevicesWithStatusWatchdogReturnsOnDeadline(t *testing.T) {
 
 	_, _, err := runBootstrapDevicesWithStatusWatchdog(
 		ctx,
-		[]string{"/lib/ollama", "/lib/ollama/rocm"},
+		[]string{"/lib/ollama", "/lib/ollama/rocm_v7_2"},
 		nil,
 		func(context.Context, []string, map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, error) {
 			close(started)

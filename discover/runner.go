@@ -468,7 +468,7 @@ func normalizeDiscoveryEnv(ollamaLibDirs []string, extraEnvs map[string]string) 
 }
 
 func normalizeDiscoveryEnvForGOOS(goos string, ollamaLibDirs []string, extraEnvs map[string]string) map[string]string {
-	if goos != "linux" || len(ollamaLibDirs) == 0 || filepath.Base(ollamaLibDirs[len(ollamaLibDirs)-1]) != "rocm" {
+	if goos != "linux" || len(ollamaLibDirs) == 0 || !isROCmLibraryDir(filepath.Base(ollamaLibDirs[len(ollamaLibDirs)-1])) {
 		return extraEnvs
 	}
 
@@ -489,6 +489,10 @@ func normalizeDiscoveryEnvForGOOS(goos string, ollamaLibDirs []string, extraEnvs
 	env[source] = visibleDeviceOrdinals(len(tokens))
 	slog.Debug("normalizing AMD visible devices for ROCm discovery", "from_env", source, "ROCR_VISIBLE_DEVICES", env["ROCR_VISIBLE_DEVICES"], "visible_ordinals", env[source])
 	return env
+}
+
+func isROCmLibraryDir(name string) bool {
+	return strings.HasPrefix(name, "rocm")
 }
 
 type bootstrapDevicesResult struct {

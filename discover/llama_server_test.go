@@ -86,7 +86,7 @@ Available devices:
 Available devices:
   ROCm0: AMD Radeon RX 6700 XT (12272 MiB, 12248 MiB free)
 `,
-				libDirs: []string{"/lib/ollama", "/lib/ollama/rocm"},
+				libDirs: []string{"/lib/ollama", "/lib/ollama/rocm_v7_2"},
 				want: []wantDevice{{
 					name:      "ROCm0",
 					library:   "ROCm",

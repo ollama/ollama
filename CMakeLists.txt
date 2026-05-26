@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.24)
 
 project(Ollama C CXX)
 
@@ -23,7 +23,9 @@ include(GNUInstallDirs)
 
 find_package(Threads REQUIRED)
 
-set(CMAKE_BUILD_TYPE Release)
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
 # These defaults can be overridden by presets (e.g., for static macOS llama-server builds)
 if(NOT DEFINED BUILD_SHARED_LIBS)
@@ -46,7 +48,7 @@ if(APPLE)
 endif()
 
 set(OLLAMA_BUILD_DIR ${CMAKE_BINARY_DIR}/lib/ollama)
-set(OLLAMA_LIB_DIR "lib/ollama" CACHE PATH "Install directory for Ollama runtime payloads")
+set(OLLAMA_LIB_DIR "lib/ollama" CACHE STRING "Install destination for Ollama runtime payloads")
 set(OLLAMA_INSTALL_DIR ${OLLAMA_LIB_DIR}/${OLLAMA_RUNNER_DIR})
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
@@ -56,14 +58,9 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG   ${OLLAMA_BUILD_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${OLLAMA_BUILD_DIR})
 
-option(MLX_ENGINE "Enable MLX backend" OFF)
-
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/llama/server/CMakeLists.txt")
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/local.cmake)
-elseif(NOT MLX_ENGINE)
-    message(FATAL_ERROR "llama/server is required for local Ollama builds")
+    set(OLLAMA_HAVE_LLAMA_SERVER TRUE)
+else()
+    set(OLLAMA_HAVE_LLAMA_SERVER FALSE)
 endif()
-
-if(MLX_ENGINE)
-    add_subdirectory(cmake/mlx)
-endif()
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/local.cmake)

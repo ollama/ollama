@@ -26,6 +26,10 @@ elseif(NOT WIN32)
 endif()
 
 if(GGML_VULKAN AND DEFINED ENV{VULKAN_SDK})
+    # LunarG SDK installs SPIRV-Headers package files under SDK-specific
+    # directories that CMake does not always find through the default prefix
+    # search. Keep this narrow to the SDK layout so future llama.cpp bumps can
+    # remove it if upstream's Vulkan dependency discovery becomes sufficient.
     file(TO_CMAKE_PATH "$ENV{VULKAN_SDK}" _ollama_vulkan_sdk)
     list(APPEND CMAKE_PREFIX_PATH "${_ollama_vulkan_sdk}")
     foreach(_ollama_spirv_headers_dir IN ITEMS
@@ -43,7 +47,63 @@ if(GGML_VULKAN AND DEFINED ENV{VULKAN_SDK})
 endif()
 
 if(WIN32 AND MINGW)
+    # cpp-httplib uses Windows 10 APIs such as CreateFile2. Some MinGW
+    # toolchains default to an older _WIN32_WINNT unless we set it explicitly.
     add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
+endif()
+
+function(ollama_set_cache_default name type value doc)
+    if(NOT DEFINED ${name} OR "${${name}}" STREQUAL "")
+        set(${name} "${value}" CACHE ${type} "${doc}" FORCE)
+    endif()
+endfunction()
+
+function(ollama_append_cache_flags name)
+    set(_flags "${${name}}")
+    foreach(_flag IN LISTS ARGN)
+        string(FIND " ${_flags} " " ${_flag} " _found)
+        if(_found EQUAL -1)
+            string(APPEND _flags " ${_flag}")
+        endif()
+    endforeach()
+    string(STRIP "${_flags}" _flags)
+    set(${name} "${_flags}" CACHE STRING "" FORCE)
+endfunction()
+
+if(GGML_CUDA)
+    if(OLLAMA_RUNNER_DIR STREQUAL "cuda_v12")
+        ollama_set_cache_default(CMAKE_CUDA_ARCHITECTURES STRING
+            "native"
+            "CUDA architectures")
+        ollama_set_cache_default(CMAKE_CUDA_FLAGS STRING
+            "-Wno-deprecated-gpu-targets -t 2"
+            "CUDA compiler flags")
+    elseif(OLLAMA_RUNNER_DIR STREQUAL "cuda_v13")
+        ollama_set_cache_default(CMAKE_CUDA_ARCHITECTURES STRING
+            "native" "CUDA architectures")
+        ollama_set_cache_default(CMAKE_CUDA_FLAGS STRING
+            "-t 4" "CUDA compiler flags")
+    elseif(OLLAMA_RUNNER_DIR STREQUAL "cuda_jetpack5")
+        ollama_set_cache_default(CMAKE_CUDA_ARCHITECTURES STRING
+            "native" "CUDA architectures")
+    elseif(OLLAMA_RUNNER_DIR STREQUAL "cuda_jetpack6")
+        ollama_set_cache_default(CMAKE_CUDA_ARCHITECTURES STRING
+            "native" "CUDA architectures")
+    endif()
+endif()
+
+if(GGML_HIP AND OLLAMA_RUNNER_DIR MATCHES "^rocm_v")
+    ollama_set_cache_default(CMAKE_HIP_FLAGS STRING
+        "-parallel-jobs=4" "HIP compiler flags")
+    if(WIN32)
+        # HIP on Windows currently emits attributes and deprecated pragma
+        # warnings from ROCm headers. Keep the workaround local to Windows ROCm
+        # so it can be removed when the ROCm toolchain no longer needs it.
+        ollama_append_cache_flags(CMAKE_C_FLAGS
+            -parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma)
+        ollama_append_cache_flags(CMAKE_CXX_FLAGS
+            -parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma)
+    endif()
 endif()
 
 include(FetchContent)
@@ -63,13 +123,20 @@ endif()
 # in-memory translation layer for existing published model blobs.
 # See llama/compat/README.md for details.
 #
-# The patch only runs when fetching from GitHub — if a local source override
-# is active, leave the developer's tree alone (they can apply by hand if
-# they want to iterate on the compat layer).
+# The patch runs for fetched sources and explicit FetchContent source
+# overrides, unless the caller prepared the source already. If
+# OLLAMA_LLAMA_CPP_SOURCE is set, leave the developer's tree alone so they can
+# apply the patch by hand while iterating on the compat layer.
 set(_ollama_compat_patch_cmd "")
-if(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
-    include(${CMAKE_CURRENT_SOURCE_DIR}/../compat/compat.cmake)
-
+include(${CMAKE_CURRENT_SOURCE_DIR}/../compat/compat.cmake)
+option(OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH
+    "Skip llama.cpp compat patch application because the source is already prepared"
+    OFF)
+set(_ollama_link_compat_sources OFF)
+if(OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH)
+    set(_ollama_link_compat_sources ON)
+elseif(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
+    set(_ollama_link_compat_sources ON)
     if(DEFINED FETCHCONTENT_SOURCE_DIR_LLAMA_CPP AND NOT FETCHCONTENT_SOURCE_DIR_LLAMA_CPP STREQUAL "")
         get_filename_component(_llama_cpp_source_override
             "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" ABSOLUTE)
@@ -119,7 +186,7 @@ FetchContent_MakeAvailable(llama_cpp)
 # Link the Ollama-compat source files into the fetched llama target.
 # Kept separate from the hook patch so our .cpp/.h stay
 # on-disk in llama/compat/ rather than being copied into _deps/.
-if(DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
+if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     file(GLOB _compat_sources CONFIGURE_DEPENDS
         ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/*.cpp)
     foreach(_compat_target IN ITEMS llama mtmd)
@@ -157,7 +224,8 @@ endif()
 # GPU build (OLLAMA_RUNNER_DIR="cuda_v12" etc.):
 #   lib/ollama/cuda_v12/libggml-cuda.so  (GPU backend only)
 
-set(_base_dest "lib/ollama")
+set(OLLAMA_LIB_DIR "lib/ollama" CACHE STRING "Install destination for Ollama runtime payloads")
+set(_base_dest "${OLLAMA_LIB_DIR}")
 
 function(ollama_append_newest_windows_runtime_family output)
     set(_runtime_dirs)
@@ -298,7 +366,9 @@ endfunction()
 if(OLLAMA_RUNNER_DIR)
     # GPU backend build: install the GPU backend .so/.dll module.
     # install(CODE) runs at install time so CMAKE_INSTALL_CONFIG_NAME is
-    # available for multi-config generators.
+    # available for multi-config generators. llama.cpp backend module target
+    # names vary by platform and configuration, so glob the final module
+    # filenames instead of depending on a single upstream target name.
     install(CODE "
         set(_backend_dirs \"${CMAKE_BINARY_DIR}/bin\")
         if(DEFINED CMAKE_INSTALL_CONFIG_NAME AND NOT CMAKE_INSTALL_CONFIG_NAME STREQUAL \"\")
@@ -387,6 +457,9 @@ if(OLLAMA_RUNNER_DIR)
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
             if(WIN32)
+                # Bundle the system Vulkan loader, not an arbitrary SDK copy.
+                # The loader is supplied by the installed Vulkan runtime or
+                # GPU driver; using that copy avoids PATH-dependent SDK drift.
                 if(DEFINED ENV{SystemRoot})
                     file(TO_CMAKE_PATH "$ENV{SystemRoot}" _ollama_windows_root)
                 else()
@@ -432,7 +505,9 @@ else()
 
     # CPU backend modules (multiple variants from GGML_CPU_ALL_VARIANTS).
     # install(CODE) runs at install time so CMAKE_INSTALL_CONFIG_NAME is
-    # available for multi-config generators.
+    # available for multi-config generators. llama.cpp creates variant module
+    # filenames from detected CPU features, so glob the final install payload
+    # rather than hard-coding an upstream target list.
     install(CODE "
         set(_backend_dirs \"${CMAKE_BINARY_DIR}/bin\")
         if(DEFINED CMAKE_INSTALL_CONFIG_NAME AND NOT CMAKE_INSTALL_CONFIG_NAME STREQUAL \"\")

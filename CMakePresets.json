@@ -11,27 +11,10 @@
       }
     },
     {
-      "name": "MLX",
+      "name": "MLX Metal",
       "inherits": [ "Default" ],
       "cacheVariables": {
-        "MLX_ENGINE": "ON",
-        "OLLAMA_RUNNER_DIR": "mlx"
-      }
-    },
-    {
-      "name": "MLX CUDA 12",
-      "inherits": [ "MLX" ],
-      "cacheVariables": {
-        "OLLAMA_RUNNER_DIR": "mlx_cuda_v12"
-      }
-    },
-    {
-      "name": "MLX CUDA 13",
-      "inherits": [ "MLX" ],
-      "cacheVariables": {
-        "CMAKE_CUDA_FLAGS": "-t 2",
-        "MLX_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual",
-        "OLLAMA_RUNNER_DIR": "mlx_cuda_v13"
+        "OLLAMA_MLX_BACKENDS": "metal_v3;metal_v4"
       }
     }
   ],
@@ -42,19 +25,9 @@
       "configuration": "Release"
     },
     {
-      "name": "MLX",
-      "targets": [ "mlx", "mlxc" ],
-      "configurePreset": "MLX"
-    },
-    {
-      "name": "MLX CUDA 12",
-      "targets": [ "mlx", "mlxc" ],
-      "configurePreset": "MLX CUDA 12"
-    },
-    {
-      "name": "MLX CUDA 13",
-      "targets": [ "mlx", "mlxc" ],
-      "configurePreset": "MLX CUDA 13"
+      "name": "MLX Metal",
+      "targets": [ "ollama-mlx-backends" ],
+      "configurePreset": "MLX Metal"
     }
   ]
 }

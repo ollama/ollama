@@ -96,34 +96,34 @@ RUN --mount=type=cache,target=/root/.ccache \
                 [ -e "$lib" ] && cp -a "$lib" dist/lib/ollama/ || true; \
             done
 
-FROM cuda-12-deps AS llama-server-cuda-v12
+FROM cuda-12-deps AS llama-server-cuda_v12
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake -S llama/server --preset cuda-v12 \
-        && cmake --build build/llama-server-cuda-v12 -- -l $(nproc) \
-        && cmake --install build/llama-server-cuda-v12 --component llama-server --strip
+    cmake -S llama/server --preset llama_cuda_v12_linux \
+        && cmake --build build/llama-server-cuda_v12 -- -l $(nproc) \
+        && cmake --install build/llama-server-cuda_v12 --component llama-server --strip
 
-FROM cuda-13-deps AS llama-server-cuda-v13
+FROM cuda-13-deps AS llama-server-cuda_v13
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake -S llama/server --preset cuda-v13 \
-        && cmake --build build/llama-server-cuda-v13 -- -l $(nproc) \
-        && cmake --install build/llama-server-cuda-v13 --component llama-server --strip
+    cmake -S llama/server --preset llama_cuda_v13_linux \
+        && cmake --build build/llama-server-cuda_v13 -- -l $(nproc) \
+        && cmake --install build/llama-server-cuda_v13 --component llama-server --strip
 
-FROM rocm-7-deps AS llama-server-rocm
+FROM rocm-7-deps AS llama-server-rocm_v7_2
 ENV CC=clang CXX=clang++
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake -S llama/server --preset rocm \
-        && cmake --build build/llama-server-rocm -- -l $(nproc) \
-        && cmake --install build/llama-server-rocm --component llama-server --strip
-RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*
+    cmake -S llama/server --preset rocm_v7_2_linux \
+        && cmake --build build/llama-server-rocm_v7_2 -- -l $(nproc) \
+        && cmake --install build/llama-server-rocm_v7_2 --component llama-server --strip
+RUN rm -f dist/lib/ollama/rocm_v7_2/rocblas/library/*gfx90[06]*
 
 FROM vulkan-deps AS llama-server-vulkan
 COPY LLAMA_CPP_VERSION .
@@ -151,9 +151,9 @@ COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake -S llama/server --preset jetpack5 \
-        && cmake --build build/llama-server-jetpack5 -- -l $(nproc) \
-        && cmake --install build/llama-server-jetpack5 --component llama-server --strip
+    cmake -S llama/server --preset llama_cuda_jetpack5 \
+        && cmake --build build/llama-server-cuda_jetpack5 -- -l $(nproc) \
+        && cmake --install build/llama-server-cuda_jetpack5 --component llama-server --strip
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
 ARG CMAKEVERSION
@@ -168,9 +168,9 @@ COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake -S llama/server --preset jetpack6 \
-        && cmake --build build/llama-server-jetpack6 -- -l $(nproc) \
-        && cmake --install build/llama-server-jetpack6 --component llama-server --strip
+    cmake -S llama/server --preset llama_cuda_jetpack6 \
+        && cmake --build build/llama-server-cuda_jetpack6 -- -l $(nproc) \
+        && cmake --install build/llama-server-cuda_jetpack6 --component llama-server --strip
 
 #
 # MLX stage
@@ -180,6 +180,7 @@ FROM base AS mlx
 ARG CUDA13VERSION=13.0
 ARG OLLAMA_MLX_BUILD_JOBS=
 ARG OLLAMA_MLX_NVCC_THREADS=2
+ARG MLX_CUDA_RAM_MB=
 RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
     && dnf install -y openblas-devel lapack-devel \
     && dnf install -y libcudnn9-cuda-13 libcudnn9-devel-cuda-13 \
@@ -206,10 +207,8 @@ RUN --mount=type=cache,target=/root/.ccache \
     && if [ -f /tmp/local-mlx-c/CMakeLists.txt ]; then \
         export OLLAMA_MLX_C_SOURCE=/tmp/local-mlx-c; \
     fi \
-    && cmake --preset 'MLX CUDA 13' -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas -DCMAKE_CUDA_FLAGS="-t ${OLLAMA_MLX_NVCC_THREADS}" \
-        && cmake --build --preset 'MLX CUDA 13' -- -l $(nproc) ${OLLAMA_MLX_BUILD_JOBS:+-j ${OLLAMA_MLX_BUILD_JOBS}} \
-        && cmake --install build --component MLX --strip \
-        && cmake --install build --component MLX_VENDOR
+    && cmake -S . -B build/mlx_cuda_v13 -DOLLAMA_MLX_BACKENDS=cuda_v13 -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas -DCMAKE_CUDA_FLAGS="-t ${OLLAMA_MLX_NVCC_THREADS}" ${MLX_CUDA_RAM_MB:+-DMLX_CUDA_RAM_MB=${MLX_CUDA_RAM_MB}} -DOLLAMA_PAYLOAD_INSTALL_PREFIX=/go/src/github.com/ollama/ollama/dist \
+        && cmake --build build/mlx_cuda_v13 --target ollama-mlx-cuda_v13 -- -l $(nproc) ${OLLAMA_MLX_BUILD_JOBS:+-j ${OLLAMA_MLX_BUILD_JOBS}}
 
 #
 # Go build
@@ -237,25 +236,25 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM --platform=linux/amd64 scratch AS amd64
 COPY --from=llama-server-cpu      dist/lib/ollama /lib/ollama/
-COPY --from=llama-server-cuda-v12 dist/lib/ollama /lib/ollama/
-COPY --from=llama-server-cuda-v13 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
 COPY --from=llama-server-vulkan   dist/lib/ollama /lib/ollama/
 COPY --from=mlx     /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64
 COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
-COPY --from=llama-server-cuda-v12 dist/lib/ollama /lib/ollama/
-COPY --from=llama-server-cuda-v13 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
 COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
 COPY --from=llama-server-cpu  dist/lib/ollama /lib/ollama
-COPY --from=llama-server-rocm dist/lib/ollama /lib/ollama
+COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama
 
 FROM --platform=linux/amd64 scratch AS amd64-archive
 COPY --from=amd64 /lib/ollama /lib/ollama/
-COPY --from=llama-server-rocm dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64-archive
 COPY --from=arm64 /lib/ollama /lib/ollama/

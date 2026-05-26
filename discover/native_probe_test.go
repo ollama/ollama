@@ -97,7 +97,7 @@ func TestParseLlamaServerDevicesUsesNativeROCmMetadata(t *testing.T) {
 Available devices:
   ROCm0: AMD Radeon RX 7600 (8176 MiB, 7900 MiB free)
 `
-	devices := parseLlamaServerDevicesWithNative(output, []string{"/lib/ollama", "/lib/ollama/rocm"}, []nativeProbeDevice{{
+	devices := parseLlamaServerDevicesWithNative(output, []string{"/lib/ollama", "/lib/ollama/rocm_v7_2"}, []nativeProbeDevice{{
 		Library:             "ROCm",
 		Index:               0,
 		IndexMatchesBackend: true,

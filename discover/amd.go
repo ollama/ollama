@@ -391,8 +391,7 @@ func filterUnsupportedROCmDevices(devices []ml.DeviceInfo, libDirs []string) []m
 			slog.Warn("dropping ROCm device because it is not supported by the current ROCm runtime",
 				"device", dev.Name, "description", dev.Description, "gfx_target", dev.GFXTarget,
 				"pci_id", dev.PCIID,
-				"reason", reason,
-				"hint", "set OLLAMA_LLM_LIBRARY=rocm or HIP_VISIBLE_DEVICES/ROCR_VISIBLE_DEVICES/GPU_DEVICE_ORDINAL to test explicitly")
+				"reason", reason)
 			continue
 		}
 
@@ -429,7 +428,7 @@ func knownUnsupportedROCmDeviceReason(goos string, device ml.DeviceInfo, explici
 }
 
 func explicitROCmDeviceSelection() bool {
-	if strings.EqualFold(envconfig.LLMLibrary(), "rocm") {
+	if isROCmLibraryDir(strings.ToLower(envconfig.LLMLibrary())) {
 		return true
 	}
 	return envconfig.HipVisibleDevices() != "" ||

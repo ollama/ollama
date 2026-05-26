@@ -54,6 +54,51 @@ function findDumpbin {
     return $null
 }
 
+function normalizePathForCompare {
+    param([string]$Path)
+
+    if (-not $Path) {
+        return ""
+    }
+
+    return ([IO.Path]::GetFullPath($Path).TrimEnd('\')).Replace('/', '\').ToLowerInvariant()
+}
+
+function newCompilerPair($name, $cc, $cxx) {
+    if ((Test-Path $cc) -and (Test-Path $cxx)) {
+        return [pscustomobject]@{
+            Name = $name
+            CC = (Resolve-Path $cc).Path
+            CXX = (Resolve-Path $cxx).Path
+        }
+    }
+    return $null
+}
+
+function findWindowsCPUCompiler {
+    $llvmMingwBins = @()
+    if ($env:ProgramFiles) {
+        $llvmMingwBins += Resolve-Path "$env:ProgramFiles\llvm-mingw-*-x86_64*\bin" -ErrorAction SilentlyContinue
+    }
+    if ($env:LOCALAPPDATA) {
+        $llvmMingwBins += Resolve-Path "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\MartinStorsjo.LLVM-MinGW*\llvm-mingw-*-x86_64*\bin" -ErrorAction SilentlyContinue
+    }
+    foreach ($bin in ($llvmMingwBins | Sort-Object -Property Path -Descending)) {
+        $compiler = newCompilerPair "llvm-mingw" (Join-Path $bin.Path "x86_64-w64-mingw32-gcc.exe") (Join-Path $bin.Path "x86_64-w64-mingw32-g++.exe")
+        if ($compiler) { return $compiler }
+        $compiler = newCompilerPair "llvm-mingw" (Join-Path $bin.Path "gcc.exe") (Join-Path $bin.Path "g++.exe")
+        if ($compiler) { return $compiler }
+    }
+
+    $compiler = newCompilerPair "MSYS2 clang64" "C:\msys64\clang64\bin\clang.exe" "C:\msys64\clang64\bin\clang++.exe"
+    if ($compiler) { return $compiler }
+
+    $compiler = newCompilerPair "MSYS2 UCRT64 GCC" "C:\msys64\ucrt64\bin\gcc.exe" "C:\msys64\ucrt64\bin\g++.exe"
+    if ($compiler) { return $compiler }
+
+    return $null
+}
+
 function ensureMsvcForNinja {
     if ($env:CMAKE_GENERATOR -notlike "Ninja*") {
         return
@@ -130,13 +175,13 @@ function checkEnv {
     }
 
     # Locate ROCm installations
-    $rocm7Dir=(get-item "C:\Program Files\AMD\ROCm\7.*" -ea 'silentlycontinue' | sort-object -Descending | select-object -First 1)
+    $rocm7Dir=(get-item "C:\Program Files\AMD\ROCm\7.*" -ea 'silentlycontinue' | sort-object { [version]$_.Name } -Descending | select-object -First 1)
     if ($null -ne $rocm7Dir) {
         $script:HIP_PATH_V7=$rocm7Dir.FullName
     } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]7\.') {
         $script:HIP_PATH_V7=$env:HIP_PATH
     }
-    $rocm6Dir=(get-item "C:\Program Files\AMD\ROCm\6.*" -ea 'silentlycontinue' | sort-object -Descending | select-object -First 1)
+    $rocm6Dir=(get-item "C:\Program Files\AMD\ROCm\6.*" -ea 'silentlycontinue' | sort-object { [version]$_.Name } -Descending | select-object -First 1)
     if ($null -ne $rocm6Dir) {
         $script:HIP_PATH_V6=$rocm6Dir.FullName
     } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]6\.') {
@@ -233,13 +278,55 @@ function cpu {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
         New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
-        # Build llama-server from upstream source (CPU + base)
-        & cmake -S llama\server --preset cpu-windows --install-prefix $script:DIST_DIR
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --build build\llama-server-cpu --config Release --parallel $script:JOBS
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --install build\llama-server-cpu --component llama-server --strip
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        $oldCC = $env:CC
+        $oldCXX = $env:CXX
+        $setCPUCompiler = $false
+        try {
+            if (-not $env:CC -and -not $env:CXX) {
+                $cpuCompiler = findWindowsCPUCompiler
+                if ($cpuCompiler) {
+                    $env:CC = $cpuCompiler.CC
+                    $env:CXX = $cpuCompiler.CXX
+                    $setCPUCompiler = $true
+                    Write-Output "Using $($cpuCompiler.Name) for Windows CPU backend variants"
+                } else {
+                    Write-Output "WARNING: llvm-mingw/MSYS2 compiler not found; CPU variants unsupported by MSVC will be skipped"
+                }
+            } elseif (-not $env:CC -or -not $env:CXX) {
+                Write-Output "WARNING: set both CC and CXX for a custom Windows CPU compiler"
+            }
+
+            $cpuBuildDir = "${script:SRC_DIR}\build\llama-server-cpu"
+            $cache = Join-Path $cpuBuildDir "CMakeCache.txt"
+            if ($env:CXX -and (Test-Path $cache)) {
+                $cachedCXX = Select-String -Path $cache -Pattern '^CMAKE_CXX_COMPILER:FILEPATH=(.*)$' | Select-Object -First 1
+                if ($cachedCXX -and (normalizePathForCompare $cachedCXX.Matches[0].Groups[1].Value) -ne (normalizePathForCompare $env:CXX)) {
+                    Write-Output "Reconfiguring Windows CPU build after compiler change"
+                    Remove-Item -ea 0 -recurse -force -path $cpuBuildDir
+                }
+            }
+
+            # Build llama-server from upstream source (CPU + base)
+            & cmake -S llama\server --preset cpu_windows --install-prefix $script:DIST_DIR
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build build\llama-server-cpu --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build\llama-server-cpu --component llama-server --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        } finally {
+            if ($setCPUCompiler) {
+                if ($null -eq $oldCC) {
+                    Remove-Item Env:CC -ErrorAction SilentlyContinue
+                } else {
+                    $env:CC = $oldCC
+                }
+                if ($null -eq $oldCXX) {
+                    Remove-Item Env:CXX -ErrorAction SilentlyContinue
+                } else {
+                    $env:CXX = $oldCXX
+                }
+            }
+        }
     }
 }
 
@@ -265,11 +352,11 @@ function cpuArm64 {
     $env:CXX = $null
     $env:CMAKE_GENERATOR_PLATFORM = $null
     $env:CMAKE_GENERATOR_TOOLSET = $null
-    & cmake -S llama\server --preset cpu-arm64 --install-prefix $arm64DistDir
+    & cmake -S llama\server --preset cpu_arm64 --install-prefix $arm64DistDir
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    & cmake --build build\llama-server-cpu-arm64 --config Release --parallel $script:JOBS
+    & cmake --build build\llama-server-cpu_arm64 --config Release --parallel $script:JOBS
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    & cmake --install build\llama-server-cpu-arm64 --component llama-server --strip
+    & cmake --install build\llama-server-cpu_arm64 --component llama-server --strip
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     $env:CC = $oldCC
     $env:CXX = $oldCXX
@@ -312,17 +399,14 @@ function cudaCommon {
             # Build llama-server CUDA backend from upstream source
             Write-Output "Building llama-server CUDA v$cudaMajorVer backend"
             $env:CUDAToolkit_ROOT=$cuda
-            # CUDA 13 on Windows needs a reduced architecture set to avoid
-            # MSVC cl.exe template explosion (hangs during compilation)
-            $preset = "cuda-v$cudaMajorVer"
-            if ($cudaMajorVer -eq "13") { $preset = "cuda-v13-windows" }
+            $preset = "llama_cuda_v$($cudaMajorVer)_windows"
             $cudaToolsetArgs = cudaCMakeArgs $cuda
             $configureArgs = @("-S", "llama\server", "--preset", $preset) + $cudaToolsetArgs + @("--install-prefix", "$script:DIST_DIR")
             & cmake @configureArgs
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build "build\llama-server-cuda-v$cudaMajorVer" --config Release --parallel $script:JOBS
+            & cmake --build "build\llama-server-cuda_v$cudaMajorVer" --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install "build\llama-server-cuda-v$cudaMajorVer" --component llama-server --strip
+            & cmake --install "build\llama-server-cuda_v$cudaMajorVer" --component llama-server --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         } else {
             Write-Output "CUDA v$cudaMajorVer not detected, skipping"
@@ -360,6 +444,13 @@ function rocm7 {
     if ($script:ARCH -ne "arm64") {
         if ($script:HIP_PATH_V7) {
             Write-Output "Building llama-server ROCm v7 backend $script:HIP_PATH_V7"
+            $rocmVersion = Split-Path -Leaf $script:HIP_PATH_V7
+            if ($rocmVersion -notmatch '^(\d+)\.(\d+)') {
+                Write-Output "Unable to determine ROCm version from $script:HIP_PATH_V7"
+                exit(1)
+            }
+            $rocmBackend = "rocm_v$($Matches[1])_$($Matches[2])"
+            $rocmPreset = "${rocmBackend}_windows"
             if (-Not (get-command -ErrorAction silent ninja)) {
                 $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
                 $env:PATH="$NINJA_DIR;$env:PATH"
@@ -374,7 +465,7 @@ function rocm7 {
             $env:CMAKE_PREFIX_PATH="${script:HIP_PATH_V7}"
             $env:CC="${script:HIP_PATH_V7}\bin\clang.exe"
             $env:CXX="${script:HIP_PATH_V7}\bin\clang++.exe"
-            & cmake -S llama\server --preset rocm-windows -G Ninja `
+            & cmake -S llama\server --preset $rocmPreset -G Ninja `
                 --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             $env:HIPCXX=$oldHIPCXX
@@ -382,9 +473,9 @@ function rocm7 {
             $env:CMAKE_PREFIX_PATH=$oldCMAKE_PREFIX_PATH
             $env:CC=$oldCC
             $env:CXX=$oldCXX
-            & cmake --build build\llama-server-rocm --config Release --parallel $script:JOBS
+            & cmake --build "build\llama-server-$rocmBackend" --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build\llama-server-rocm --component llama-server --strip
+            & cmake --install "build\llama-server-$rocmBackend" --component llama-server --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         } else {
             Write-Output "ROCm v7 not detected, skipping"
@@ -459,18 +550,14 @@ function mlxCuda13 {
                 $cudaFlags += "-DCMAKE_CUDA_FLAGS=$env:OLLAMA_CMAKE_CUDA_FLAGS"
             }
             $cudaToolsetArgs = cudaCMakeArgs $cuda
-            $configureArgs = @("-B", "build\mlx_cuda_v$cudaMajorVer", "--preset", "MLX CUDA $cudaMajorVer") + $cudaToolsetArgs + $cudaFlags + @("--install-prefix", "$script:DIST_DIR")
+            $configureArgs = @("-S", ".", "-B", "build\mlx_cuda_v$cudaMajorVer", "-DOLLAMA_MLX_BACKENDS=cuda_v$cudaMajorVer") + $cudaToolsetArgs + $cudaFlags + @("-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "--install-prefix", "$script:DIST_DIR")
             & cmake @configureArgs
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            $buildArgs = @("--build", "build\mlx_cuda_v$cudaMajorVer", "--target", "mlx", "--target", "mlxc", "--config", "Release", "--parallel", "$script:JOBS")
+            $buildArgs = @("--build", "build\mlx_cuda_v$cudaMajorVer", "--target", "ollama-mlx-cuda_v$cudaMajorVer", "--config", "Release", "--parallel", "$script:JOBS")
             if ($env:CMAKE_GENERATOR -notlike "Ninja*") {
                 $buildArgs += @("--", "/nodeReuse:false")
             }
             & cmake @buildArgs
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build\mlx_cuda_v$cudaMajorVer --component "MLX" --strip
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build\mlx_cuda_v$cudaMajorVer --component "MLX_VENDOR"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         } else {
             Write-Output "CUDA v$cudaMajorVer not detected, skipping MLX build"
@@ -804,8 +891,8 @@ function zip {
 
     try {
         if (Test-Path -Path $amd64Dir) {
-            # Stage ROCm into its own directory for independent compression
-            if (stageComponents $amd64Dir "${distDir}\windows-amd64-rocm" "rocm*" "ROCm") {
+            # Stage ROCm into its own directory for independent compression.
+            if (stageComponents $amd64Dir "${distDir}\windows-amd64-rocm" "rocm_v*" "ROCm") {
                 Write-Output "Generating ${distDir}\ollama-windows-amd64-rocm.zip"
                 $jobs += newZipJob "${distDir}\windows-amd64-rocm" "${distDir}\ollama-windows-amd64-rocm.zip"
                 $jobs += newDependencyAuditJob "${distDir}\windows-amd64-rocm" "windows-amd64-rocm" "${distDir}\dependency-audit-windows-amd64-rocm.txt" $amd64Dir

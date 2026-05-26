@@ -13,7 +13,6 @@
 #
 VOL_NAME=${VOL_NAME:-"Ollama"}
 export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
-export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${VERSION#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
 export CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
 export CGO_CXXFLAGS="-O3 -mmacosx-version-min=14.0"
 export CGO_LDFLAGS="-mmacosx-version-min=14.0"
@@ -28,25 +27,6 @@ usage() {
 
 mkdir -p dist
 
-# Work around MLX's v3 metallib link leaking the macOS 26 deployment target.
-_relink_mlx_metallib() {
-    BUILD_DIR="$1"
-    KERNEL_DIR="$BUILD_DIR/_deps/mlx-build/mlx/backend/metal/kernels"
-    AIR_LIST="$BUILD_DIR/mlx-air-files.txt"
-    METALLIB="$KERNEL_DIR/mlx.metallib"
-
-    find "$KERNEL_DIR" -type f -name '*.air' | sort > "$AIR_LIST"
-    if [ ! -s "$AIR_LIST" ]; then
-        echo "error: could not find MLX AIR files in $KERNEL_DIR" >&2
-        exit 1
-    fi
-
-    status "Relinking MLX metallib"
-    rm -f "$METALLIB"
-    xargs xcrun -sdk macosx metallib -o "$METALLIB" < "$AIR_LIST"
-}
-
-
 ARCHS="arm64 amd64"
 while getopts "a:h" OPTION; do
     case $OPTION in
@@ -58,109 +38,95 @@ done
 shift $(( $OPTIND - 1 ))
 
 _build_darwin() {
-    # Shared upstream-source cache so each build dir doesn't fetch its own
-    # copy of llama.cpp. First build to need it populates the cache; the rest
-    # reference it via FETCHCONTENT_SOURCE_DIR_LLAMA_CPP. Mirrors what we do
-    # for MLX (FETCHCONTENT_SOURCE_DIR_MLX/MLX-C/JSON/FMT/METAL_CPP further
-    # down). Stays under build/ so `git clean -dfx` clears it.
-    LLAMA_CPP_SHARED_SRC="$(pwd)/build/_shared_deps/llama_cpp-src"
-    if [ ! -f "$LLAMA_CPP_SHARED_SRC/CMakeLists.txt" ]; then
-        LLAMA_CPP_TAG=$(cat LLAMA_CPP_VERSION)
-        status "Cloning shared llama.cpp source ($LLAMA_CPP_TAG) → $LLAMA_CPP_SHARED_SRC"
-        rm -rf "$LLAMA_CPP_SHARED_SRC"
-        mkdir -p "$(dirname "$LLAMA_CPP_SHARED_SRC")"
-        git clone --depth 1 --branch "$LLAMA_CPP_TAG" \
-            https://github.com/ggml-org/llama.cpp.git "$LLAMA_CPP_SHARED_SRC"
-    fi
+    SOURCE_BUILD=build/darwin-sources
+    status "Preparing shared native sources"
+    cmake -S . -B "$SOURCE_BUILD" -DOLLAMA_MLX_BACKENDS=metal_v3 -DOLLAMA_LLAMA_BACKENDS=
+    cmake --build "$SOURCE_BUILD" --target ollama-llama-cpp-source --target ollama-mlx-sources
+    LLAMA_CPP_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/llama_cpp-src"
+    MLX_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/mlx-src"
+    MLX_C_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/mlx-c-src"
 
     for ARCH in $ARCHS; do
         status "Building darwin $ARCH"
         INSTALL_PREFIX=dist/darwin-$ARCH/
+        BUILD_DIR=build/darwin-$ARCH
 
         if [ "$ARCH" = "amd64" ]; then
-            status "Building darwin $ARCH dynamic backends"
-            BUILD_DIR=build/darwin-$ARCH
-            cmake -B $BUILD_DIR \
-                -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
-                -DMLX_ENGINE=ON \
-                -DMLX_ENABLE_X64_MAC=ON \
-                -DOLLAMA_RUNNER_DIR=./
-            cmake --build $BUILD_DIR --target mlx mlxc -j
-            cmake --install $BUILD_DIR --component MLX
-            cmake --install $BUILD_DIR --component MLX_VENDOR
-            # Build llama-server statically (no Metal on x86, CPU-only)
-            status "Building darwin $ARCH llama-server (static)"
-            cmake -S llama/server --preset cpu \
-                -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
-                -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=$LLAMA_CPP_SHARED_SRC \
-                -DGGML_METAL=OFF \
-                -DGGML_CPU_ALL_VARIANTS=ON
-            cmake --build build/llama-server-cpu --target llama-server --target llama-quantize --target ggml -j
-            cmake --install build/llama-server-cpu --component llama-server
+            CMAKE_ARCH=x86_64
+            MLX_BACKENDS=metal_v3
+            MLX_EXTRA_ARGS="-DMLX_ENABLE_X64_MAC=ON"
             MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-ldl -lc++ -framework Accelerate -mmacosx-version-min=14.0"
         else
-            # Build MLX twice for arm64
-            # Metal 3.x build (backward compatible, macOS 14+)
-            BUILD_DIR=build/metal-v3
-            status "Building MLX Metal v3 (macOS 14+)"
-            cmake -S . -B $BUILD_DIR \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DMLX_ENGINE=ON \
-                -DOLLAMA_RUNNER_DIR=mlx_metal_v3 \
-                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
-            cmake --build $BUILD_DIR --target mlx mlxc --parallel
-            _relink_mlx_metallib $BUILD_DIR
-            cmake --install $BUILD_DIR --component MLX
-            cmake --install $BUILD_DIR --component MLX_VENDOR
-
-            # Metal 4.x build (NAX-enabled, macOS 26+)
-            # Only possible with Xcode 26+ SDK; skip on older toolchains.
-            SDK_MAJOR=$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)
-            if [ "${SDK_MAJOR:-0}" -ge 26 ]; then
-                V3_DEPS=$BUILD_DIR/_deps
-                BUILD_DIR_V4=build/metal-v4
-                status "Building MLX Metal v4 (macOS 26+, NAX)"
-                cmake -S . -B $BUILD_DIR_V4 \
-                    -DCMAKE_BUILD_TYPE=Release \
-                    -DMLX_ENGINE=ON \
-                    -DOLLAMA_RUNNER_DIR=mlx_metal_v4 \
-                    -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0 \
-                    -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
-                    -DFETCHCONTENT_SOURCE_DIR_MLX=$V3_DEPS/mlx-src \
-                    -DFETCHCONTENT_SOURCE_DIR_MLX-C=$V3_DEPS/mlx-c-src \
-                    -DFETCHCONTENT_SOURCE_DIR_JSON=$V3_DEPS/json-src \
-                    -DFETCHCONTENT_SOURCE_DIR_FMT=$V3_DEPS/fmt-src \
-                    -DFETCHCONTENT_SOURCE_DIR_METAL_CPP=$V3_DEPS/metal_cpp-src
-                cmake --build $BUILD_DIR_V4 --target mlx mlxc --parallel
-                cmake --install $BUILD_DIR_V4 --component MLX
-                cmake --install $BUILD_DIR_V4 --component MLX_VENDOR
-            else
-                status "Skipping MLX Metal v4 (SDK $SDK_MAJOR < 26, need Xcode 26+)"
-            fi
-
-            # Build llama-server from upstream source (Metal + CPU linked in)
-            status "Building darwin $ARCH llama-server (static)"
-            cmake -S llama/server --preset darwin \
-                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
-                -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=$LLAMA_CPP_SHARED_SRC
-            cmake --build build/llama-server-darwin --target llama-server --target llama-quantize --parallel
-            cmake --install build/llama-server-darwin --component llama-server
-
-            # Use the v3 build for CGO linking (compatible with both)
+            CMAKE_ARCH=arm64
+            MLX_BACKENDS="metal_v3;metal_v4"
+            MLX_EXTRA_ARGS=
             MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-lc++ -framework Metal -framework Foundation -framework Accelerate -mmacosx-version-min=14.0"
         fi
-        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" go build -o $INSTALL_PREFIX .
-        # MLX libraries stay in lib/ollama/ (flat or variant subdirs).
-        # The runtime discovery in dynamic.go searches lib/ollama/ relative
-        # to the executable, including mlx_* subdirectories.
+
+        cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=$CMAKE_ARCH \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+            -DOLLAMA_PAYLOAD_INSTALL_PREFIX=$INSTALL_PREFIX \
+            -DOLLAMA_GO_OUTPUT=$INSTALL_PREFIX/ollama \
+            -DOLLAMA_VERSION="$VERSION" \
+            -DOLLAMA_MLX_BACKENDS="$MLX_BACKENDS" \
+            -DOLLAMA_LLAMA_BACKENDS= \
+            -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=$LLAMA_CPP_SHARED_SRC \
+            -DFETCHCONTENT_SOURCE_DIR_MLX=$MLX_SHARED_SRC \
+            -DFETCHCONTENT_SOURCE_DIR_MLX-C=$MLX_C_SHARED_SRC \
+            $MLX_EXTRA_ARGS
+
+        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" \
+            cmake --build "$BUILD_DIR" --target ollama-local --target ollama-mlx-backends --parallel
+    done
+}
+
+_merge_darwin_payload() {
+    status "Preparing universal Darwin runtime payload"
+    rm -rf dist/darwin/lib
+    mkdir -p dist/darwin/lib/ollama
+
+    for ROOT in dist/darwin-amd64/lib/ollama dist/darwin-arm64/lib/ollama; do
+        [ -d "$ROOT" ] || continue
+        for F in "$ROOT"/*; do
+            [ -e "$F" ] || continue
+            BASE=$(basename "$F")
+            case "$BASE" in
+                llama-server|llama-quantize|mlx_*) continue ;;
+            esac
+            [ -e "dist/darwin/lib/ollama/$BASE" ] || cp -P "$F" dist/darwin/lib/ollama/
+        done
+    done
+
+    for VARIANT in dist/darwin-arm64/lib/ollama/mlx_metal_v*/; do
+        [ -d "$VARIANT" ] || continue
+        VNAME=$(basename "$VARIANT")
+        DEST=dist/darwin/lib/ollama/$VNAME
+        AMD_VARIANT=dist/darwin-amd64/lib/ollama/$VNAME
+        [ -d "$AMD_VARIANT" ] || AMD_VARIANT=dist/darwin-amd64/lib/ollama
+        mkdir -p "$DEST"
+
+        for LIB in libmlx.dylib libmlxc.dylib; do
+            if [ -f "$AMD_VARIANT/$LIB" ] && [ -f "$VARIANT$LIB" ]; then
+                lipo -create -output "$DEST/$LIB" "$AMD_VARIANT/$LIB" "$VARIANT$LIB"
+            elif [ -f "$VARIANT$LIB" ]; then
+                cp "$VARIANT$LIB" "$DEST/"
+            elif [ -f "$AMD_VARIANT/$LIB" ]; then
+                cp "$AMD_VARIANT/$LIB" "$DEST/"
+            fi
+        done
+
+        for F in "$VARIANT"*; do
+            [ -f "$F" ] && [ ! -L "$F" ] || continue
+            case "$(basename "$F")" in
+                libmlx.dylib|libmlxc.dylib) continue ;;
+            esac
+            cp "$F" "$DEST/"
+        done
     done
 }
 
@@ -179,8 +145,10 @@ _sign_darwin() {
     chmod +x dist/darwin/llama-quantize
     lipo dist/darwin/llama-quantize -verify_arch x86_64 arm64
 
+    _merge_darwin_payload
+
     if [ -n "$APPLE_IDENTITY" ]; then
-        for F in dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize dist/darwin-*/lib/ollama/* dist/darwin-*/lib/ollama/mlx_metal_v*/*; do
+        for F in dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize dist/darwin/lib/ollama/* dist/darwin/lib/ollama/mlx_metal_v*/*; do
             [ -f "$F" ] && [ ! -L "$F" ] || continue
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$F"
         done
@@ -194,8 +162,7 @@ _sign_darwin() {
 
     status "Creating universal tarball..."
     tar -cf dist/ollama-darwin.tar --strip-components 2 dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize
-    tar -rf dist/ollama-darwin.tar --strip-components 4 --exclude '*/llama-server' --exclude '*/llama-quantize' dist/darwin-amd64/lib/
-    tar -rf dist/ollama-darwin.tar --strip-components 4 --exclude '*/llama-server' --exclude '*/llama-quantize' dist/darwin-arm64/lib/
+    tar -rf dist/ollama-darwin.tar --strip-components 4 dist/darwin/lib/ollama
     gzip -9vc <dist/ollama-darwin.tar >dist/ollama-darwin.tgz
 }
 
@@ -247,92 +214,12 @@ _build_macapp() {
 
     # Setup the ollama binaries
     mkdir -p dist/Ollama.app/Contents/Resources
-    if [ -d dist/darwin-amd64 ]; then
-        lipo -create -output dist/Ollama.app/Contents/Resources/ollama dist/darwin-amd64/ollama dist/darwin-arm64/ollama
-
-        # llama-server + llama-quantize universal binaries
-        cp dist/darwin/llama-server dist/Ollama.app/Contents/Resources/
-        cp dist/darwin/llama-quantize dist/Ollama.app/Contents/Resources/
-
-        # Copy .so files from both architectures (names don't collide: arm64=libggml-cpu.so, amd64=libggml-cpu-*.so)
-        cp dist/darwin-arm64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
-        cp dist/darwin-amd64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
-        # Lipo common dylibs into universal binaries, copy amd64-only ones as-is.
-        # Skip MLX dylibs (libmlx*.dylib) — on arm64 these live in variant
-        # subdirs (mlx_metal_v3/) and are lipo'd there below. Copying the
-        # amd64 flat copy here would produce an x86_64-only dylib in
-        # Resources/ that shadows the variant subdirs.
-        for F in dist/darwin-amd64/lib/ollama/*.dylib; do
-            [ -f "$F" ] && [ ! -L "$F" ] || continue
-            BASE=$(basename "$F")
-            case "$BASE" in libmlx*) continue ;; esac
-            if [ -f "dist/darwin-arm64/lib/ollama/$BASE" ]; then
-                lipo -create -output "dist/Ollama.app/Contents/Resources/$BASE" "$F" "dist/darwin-arm64/lib/ollama/$BASE"
-            else
-                cp "$F" dist/Ollama.app/Contents/Resources/
-            fi
-        done
-        # Preserve dylib soname symlinks required by the x86_64 llama-server slice
-        # (for example @rpath/libmtmd.0.dylib).
-        for F in dist/darwin-amd64/lib/ollama/*.dylib; do
-            [ -L "$F" ] || continue
-            BASE=$(basename "$F")
-            case "$BASE" in libmlx*) continue ;; esac
-            cp -P "$F" dist/Ollama.app/Contents/Resources/
-        done
-
-        # MLX Metal variant subdirs from arm64
-        for VARIANT in dist/darwin-arm64/lib/ollama/mlx_metal_v*/; do
-            [ -d "$VARIANT" ] || continue
-            VNAME=$(basename "$VARIANT")
-            DEST=dist/Ollama.app/Contents/Resources/$VNAME
-            mkdir -p "$DEST"
-            if [ "$VNAME" = "mlx_metal_v3" ]; then
-                # v3: lipo amd64 flat + arm64 v3 into universal dylibs
-                for LIB in libmlx.dylib libmlxc.dylib; do
-                    if [ -f "dist/darwin-amd64/lib/ollama/$LIB" ] && [ -f "$VARIANT$LIB" ]; then
-                        lipo -create -output "$DEST/$LIB" "dist/darwin-amd64/lib/ollama/$LIB" "$VARIANT$LIB"
-                    elif [ -f "$VARIANT$LIB" ]; then
-                        cp "$VARIANT$LIB" "$DEST/"
-                    fi
-                done
-                # Copy remaining files (metallib and auxiliary runtime dylibs)
-                # from arm64 v3. libmlx/libmlxc are handled above so v3 can
-                # be universal when an x86_64 build is available.
-                for F in "$VARIANT"*; do
-                    case "$(basename "$F")" in libmlx.dylib|libmlxc.dylib) continue ;; esac
-                    [ -f "$F" ] && [ ! -L "$F" ] || continue
-                    cp "$F" "$DEST/"
-                done
-            else
-                # v4+: arm64-only, copy all non-symlink files
-                for F in "$VARIANT"*; do
-                    [ -f "$F" ] && [ ! -L "$F" ] || continue
-                    cp "$F" "$DEST/"
-                done
-            fi
-        done
-    else
-        cp -a dist/darwin/ollama dist/Ollama.app/Contents/Resources/ollama
-        cp dist/darwin/llama-server dist/Ollama.app/Contents/Resources/
-        cp dist/darwin/llama-quantize dist/Ollama.app/Contents/Resources/
-        # arm64-only build: copy variant subdirs directly
-        for VARIANT in dist/darwin-arm64/lib/ollama/mlx_metal_v*/; do
-            [ -d "$VARIANT" ] || continue
-            VNAME=$(basename "$VARIANT")
-            mkdir -p dist/Ollama.app/Contents/Resources/$VNAME
-            cp "$VARIANT"* dist/Ollama.app/Contents/Resources/$VNAME/ 2>/dev/null || true
-        done
-        # CPU backend libs (ggml-base, ggml-cpu) are flat in lib/ollama/
-        cp dist/darwin-arm64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
-        for F in dist/darwin-arm64/lib/ollama/*.dylib; do
-            [ -f "$F" ] && [ ! -L "$F" ] || continue
-            cp "$F" dist/Ollama.app/Contents/Resources/
-        done
-        for F in dist/darwin-arm64/lib/ollama/*.dylib; do
-            [ -L "$F" ] || continue
-            cp -P "$F" dist/Ollama.app/Contents/Resources/
-        done
+    [ -d dist/darwin/lib/ollama ] || _merge_darwin_payload
+    cp -a dist/darwin/ollama dist/Ollama.app/Contents/Resources/ollama
+    cp dist/darwin/llama-server dist/Ollama.app/Contents/Resources/
+    cp dist/darwin/llama-quantize dist/Ollama.app/Contents/Resources/
+    if [ -d dist/darwin/lib/ollama ]; then
+        cp -a dist/darwin/lib/ollama/. dist/Ollama.app/Contents/Resources/
     fi
     chmod a+x dist/Ollama.app/Contents/Resources/ollama
 

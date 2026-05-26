@@ -1,15 +1,56 @@
-# Ollama MLX runtime build and install rules.
-#
-# The repository root CMake project is evolving into an orchestration layer.
-# Keep MLX-specific target setup here so the root can later coordinate MLX,
-# llama-server, and Go builds without carrying backend-specific install logic.
+cmake_minimum_required(VERSION 3.24)
+
+project(OllamaMLX C CXX)
+
+include(CheckLanguage)
+include(GNUInstallDirs)
+
+find_package(Threads REQUIRED)
+
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+if(NOT DEFINED BUILD_SHARED_LIBS)
+    set(BUILD_SHARED_LIBS ON)
+endif()
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS ON)
+
+if(APPLE)
+    set(CMAKE_BUILD_RPATH "@loader_path")
+    set(CMAKE_INSTALL_RPATH "@loader_path")
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
+endif()
+
+if(NOT DEFINED OLLAMA_SOURCE_DIR OR "${OLLAMA_SOURCE_DIR}" STREQUAL "")
+    get_filename_component(OLLAMA_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+endif()
+get_filename_component(OLLAMA_SOURCE_DIR "${OLLAMA_SOURCE_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(OLLAMA_SOURCE_DIR "${OLLAMA_SOURCE_DIR}" CACHE PATH "Ollama repository root")
+
+set(OLLAMA_LIB_DIR "lib/ollama" CACHE STRING "Install destination for Ollama runtime payloads")
+set(OLLAMA_RUNNER_DIR "" CACHE STRING "Ollama runtime payload subdirectory")
+set(OLLAMA_BUILD_DIR ${CMAKE_BINARY_DIR}/lib/ollama)
+set(OLLAMA_INSTALL_DIR ${OLLAMA_LIB_DIR}/${OLLAMA_RUNNER_DIR})
+
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG   ${OLLAMA_BUILD_DIR})
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${OLLAMA_BUILD_DIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG   ${OLLAMA_BUILD_DIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${OLLAMA_BUILD_DIR})
 
 if(MLX_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES)
     check_language(CUDA)
 endif()
 
+option(OLLAMA_MLX_GENERATE_WRAPPERS "Regenerate MLX Go wrappers" OFF)
+
 message(STATUS "Setting up MLX (this takes a while...)")
-add_subdirectory(${CMAKE_SOURCE_DIR}/x/imagegen/mlx ${CMAKE_BINARY_DIR}/x/imagegen/mlx)
+add_subdirectory(${OLLAMA_SOURCE_DIR}/x/imagegen/mlx ${CMAKE_BINARY_DIR}/x/imagegen/mlx)
 
 # Find CUDA toolkit if MLX is built with CUDA support.
 find_package(CUDAToolkit)
@@ -18,9 +59,14 @@ find_package(CUDAToolkit)
 set(MLX_RUNTIME_DIRS ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR})
 # Add cuDNN bin paths for DLLs (Windows MLX CUDA builds).
 # CUDNN_ROOT_DIR is the standard CMake variable for cuDNN location.
-if(DEFINED ENV{CUDNN_ROOT_DIR})
+if(CUDNN_ROOT_DIR)
+    set(_cudnn_root "${CUDNN_ROOT_DIR}")
+elseif(DEFINED ENV{CUDNN_ROOT_DIR})
+    set(_cudnn_root "$ENV{CUDNN_ROOT_DIR}")
+endif()
+if(_cudnn_root)
     # cuDNN 9.x has versioned subdirectories under bin/ (e.g., bin/13.0/).
-    file(GLOB CUDNN_BIN_SUBDIRS "$ENV{CUDNN_ROOT_DIR}/bin/*")
+    file(GLOB CUDNN_BIN_SUBDIRS "${_cudnn_root}/bin/*")
     list(APPEND MLX_RUNTIME_DIRS ${CUDNN_BIN_SUBDIRS})
 endif()
 # Add build output directory and MLX dependency build directories.

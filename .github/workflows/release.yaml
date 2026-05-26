@@ -222,10 +222,6 @@ jobs:
           }
           echo "$vulkanPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
-      - if: matrix.preset == 'CPU'
-        run: |
-          echo "CC=clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "CXX=clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - if: startsWith(matrix.preset, 'MLX ')
         name: Install cuDNN for MLX
         run: |
@@ -427,21 +423,21 @@ jobs:
           - arch: amd64
             target: llama-server-cpu
           - arch: amd64
-            target: llama-server-cuda-v12
+            target: llama-server-cuda_v12
           - arch: amd64
-            target: llama-server-cuda-v13
+            target: llama-server-cuda_v13
           - arch: amd64
             target: mlx
           - arch: amd64
-            target: llama-server-rocm
+            target: llama-server-rocm_v7_2
           - arch: amd64
             target: llama-server-vulkan
           - arch: arm64
             target: llama-server-cpu
           - arch: arm64
-            target: llama-server-cuda-v12
+            target: llama-server-cuda_v12
           - arch: arm64
-            target: llama-server-cuda-v13
+            target: llama-server-cuda_v13
           - arch: arm64
             target: jetpack-5
           - arch: arm64
@@ -518,8 +514,8 @@ jobs:
               OLLAMA_MLX_NVCC_THREADS=6
             cache-from: |
               type=registry,ref=ollama/release:cache-arm64-llama-server-cpu
-              type=registry,ref=ollama/release:cache-arm64-llama-server-cuda-v12
-              type=registry,ref=ollama/release:cache-arm64-llama-server-cuda-v13
+              type=registry,ref=ollama/release:cache-arm64-llama-server-cuda_v12
+              type=registry,ref=ollama/release:cache-arm64-llama-server-cuda_v13
               type=registry,ref=ollama/release:cache-arm64-jetpack-5
               type=registry,ref=ollama/release:cache-arm64-jetpack-6
               type=registry,ref=${{ vars.DOCKER_REPO }}:latest
@@ -536,9 +532,10 @@ jobs:
               OLLAMA_MLX_NVCC_THREADS=6
             cache-from: |
               type=registry,ref=ollama/release:cache-amd64-llama-server-cpu
-              type=registry,ref=ollama/release:cache-amd64-llama-server-cuda-v12
-              type=registry,ref=ollama/release:cache-amd64-llama-server-cuda-v13
+              type=registry,ref=ollama/release:cache-amd64-llama-server-cuda_v12
+              type=registry,ref=ollama/release:cache-amd64-llama-server-cuda_v13
               type=registry,ref=ollama/release:cache-amd64-mlx
+              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v7_2
               type=registry,ref=ollama/release:cache-amd64-llama-server-vulkan
               type=registry,ref=${{ vars.DOCKER_REPO }}:latest
           - os: linux
@@ -556,7 +553,7 @@ jobs:
               OLLAMA_MLX_NVCC_THREADS=6
             cache-from: |
               type=registry,ref=ollama/release:cache-amd64-llama-server-cpu
-              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm
+              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v7_2
               type=registry,ref=${{ vars.DOCKER_REPO }}:latest
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
@@ -626,7 +623,7 @@ jobs:
               lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
               lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
               lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
-              lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+              lib/ollama/rocm_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
             esac
           done
         working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}

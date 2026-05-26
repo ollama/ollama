@@ -1,17 +1,23 @@
 include(FetchContent)
 
+if(NOT DEFINED OLLAMA_SOURCE_DIR OR "${OLLAMA_SOURCE_DIR}" STREQUAL "")
+    set(OLLAMA_SOURCE_DIR "${CMAKE_SOURCE_DIR}" CACHE PATH "Ollama repository root")
+endif()
+get_filename_component(OLLAMA_SOURCE_DIR "${OLLAMA_SOURCE_DIR}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+
 # Read MLX-C version from top-level file (shared with Dockerfile)
-file(READ "${CMAKE_SOURCE_DIR}/MLX_C_VERSION" MLX_C_GIT_TAG)
+file(READ "${OLLAMA_SOURCE_DIR}/MLX_C_VERSION" MLX_C_GIT_TAG)
 string(STRIP "${MLX_C_GIT_TAG}" MLX_C_GIT_TAG)
 
 # Read MLX version from top-level file
-file(READ "${CMAKE_SOURCE_DIR}/MLX_VERSION" MLX_GIT_TAG)
+file(READ "${OLLAMA_SOURCE_DIR}/MLX_VERSION" MLX_GIT_TAG)
 string(STRIP "${MLX_GIT_TAG}" MLX_GIT_TAG)
 
 set(MLX_C_BUILD_EXAMPLES OFF)
 
 set(MLX_BUILD_GGUF OFF)
 set(MLX_BUILD_SAFETENSORS ON)
+option(OLLAMA_MLX_GENERATE_WRAPPERS "Regenerate MLX Go wrappers" ON)
 
 function(set_target_output_directory _target)
     if(TARGET ${_target})
@@ -25,15 +31,28 @@ endfunction()
 
 # Check for Metal support (macOS only)
 if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    find_program(XCRUN_EXECUTABLE xcrun)
+    if(NOT XCRUN_EXECUTABLE)
+        message(FATAL_ERROR
+            "MLX Metal requires Xcode command line tools. Install Xcode, run "
+            "`sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`, "
+            "then install the Metal toolchain with "
+            "`xcodebuild -downloadComponent MetalToolchain`.")
+    endif()
+
     execute_process(
       COMMAND
         zsh "-c"
-        "echo \"__METAL_VERSION__\" | xcrun -sdk macosx metal ${XCRUN_FLAGS} -E -x metal -P - | tail -1 | tr -d '\n'"
-      OUTPUT_VARIABLE MLX_METAL_VERSION COMMAND_ERROR_IS_FATAL ANY)
+        "echo \"__METAL_VERSION__\" | \"${XCRUN_EXECUTABLE}\" -sdk macosx metal ${XCRUN_FLAGS} -E -x metal -P - 2>/dev/null | tail -1 | tr -d '\n'"
+      OUTPUT_VARIABLE MLX_METAL_VERSION
+      RESULT_VARIABLE MLX_METAL_RESULT)
 
-    if(NOT MLX_METAL_VERSION)
-        message(STATUS "`xcrun metal` error. Setting MLX_BUILD_METAL=OFF")
-        set(MLX_BUILD_METAL OFF)
+    if(NOT MLX_METAL_RESULT EQUAL 0 OR NOT MLX_METAL_VERSION MATCHES "^[0-9]+$")
+        message(FATAL_ERROR
+            "MLX Metal requires Xcode's Metal toolchain. Install Xcode, run "
+            "`sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`, "
+            "then install the Metal toolchain with "
+            "`xcodebuild -downloadComponent MetalToolchain`.")
     endif()
 else()
     # On Linux, disable Metal backend
@@ -69,12 +88,12 @@ endif()
 # Allow local source overrides via environment variables
 # Resolve to absolute paths so FetchContent doesn't break on relative dirs.
 if(DEFINED ENV{OLLAMA_MLX_SOURCE})
-    get_filename_component(_mlx_src "$ENV{OLLAMA_MLX_SOURCE}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
+    get_filename_component(_mlx_src "$ENV{OLLAMA_MLX_SOURCE}" ABSOLUTE BASE_DIR "${OLLAMA_SOURCE_DIR}")
     set(FETCHCONTENT_SOURCE_DIR_MLX "${_mlx_src}" CACHE PATH "" FORCE)
     message(STATUS "Using local MLX source: ${_mlx_src}")
 endif()
 if(DEFINED ENV{OLLAMA_MLX_C_SOURCE})
-    get_filename_component(_mlx_c_src "$ENV{OLLAMA_MLX_C_SOURCE}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
+    get_filename_component(_mlx_c_src "$ENV{OLLAMA_MLX_C_SOURCE}" ABSOLUTE BASE_DIR "${OLLAMA_SOURCE_DIR}")
     set(FETCHCONTENT_SOURCE_DIR_MLX-C "${_mlx_c_src}" CACHE PATH "" FORCE)
     message(STATUS "Using local MLX-C source: ${_mlx_c_src}")
 endif()
@@ -135,13 +154,15 @@ if(CMAKE_GENERATOR STREQUAL "Ninja")
     endif()
 endif()
 
-# Sync vendored headers with fetched version
-file(GLOB _mlx_c_hdrs "${mlx-c_SOURCE_DIR}/mlx/c/*.h")
-file(COPY ${_mlx_c_hdrs} DESTINATION "${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c/")
+# Sync vendored headers with fetched version.
+if(OLLAMA_MLX_GENERATE_WRAPPERS)
+    file(GLOB _mlx_c_hdrs "${mlx-c_SOURCE_DIR}/mlx/c/*.h")
+    file(COPY ${_mlx_c_hdrs} DESTINATION "${OLLAMA_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c/")
+endif()
 
 # Regenerate Go/C shim wrappers from the (possibly updated) headers.
 # Skip during cross-compilation — the generated files are arch-independent.
-if(CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR OR NOT APPLE)
+if(OLLAMA_MLX_GENERATE_WRAPPERS AND (CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR OR NOT APPLE))
     find_program(GO_EXECUTABLE go REQUIRED)
     message(STATUS "Regenerating MLX Go wrappers")
 
@@ -160,13 +181,15 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR OR NOT APPLE)
 
     execute_process(
         COMMAND ${GO_EXECUTABLE} generate ./x/...
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        WORKING_DIRECTORY ${OLLAMA_SOURCE_DIR}
         COMMAND_ERROR_IS_FATAL ANY
     )
 
     set(ENV{CC} "${_SAVE_CC}")
     set(ENV{CGO_CFLAGS} "${_SAVE_CGO_CFLAGS}")
     set(ENV{CGO_CXXFLAGS} "${_SAVE_CGO_CXXFLAGS}")
+elseif(NOT OLLAMA_MLX_GENERATE_WRAPPERS)
+    message(STATUS "Skipping MLX Go wrapper generation")
 else()
     message(STATUS "Skipping MLX Go wrapper generation (cross-compiling)")
 endif()

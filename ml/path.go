@@ -15,7 +15,7 @@ type libOllamaPathSearch struct {
 
 // LibOllamaPath is the root used to find bundled llama.cpp and MLX runtime
 // libraries. GPU-specific libraries live in backend subdirectories such as
-// cuda_v12, rocm, vulkan, and mlx_cuda_v13.
+// cuda_v12, rocm_v7_2, vulkan, and mlx_cuda_v13.
 var LibOllamaPath = func() string {
 	exe, err := os.Executable()
 	if err != nil {

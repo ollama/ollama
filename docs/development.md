@@ -18,70 +18,58 @@ go run . serve
 
 ## Native build model
 
-For a fresh checkout, or after changing native code, build from the repository root. Use an explicit job count instead of bare `--parallel`; increase `4` only if the machine has enough CPU and memory headroom.
+For a fresh checkout, or after changing native code, build from the repository root. On macOS arm64, this builds Metal inference. On all other platforms this builds CPU-only inference. It builds the Go binary at the repository root and installs the native runtime payload under `build/lib/ollama`.
 
 ```shell
 cmake -B build .
-cmake --build build --parallel 4
+cmake --build build --parallel 8
 ./ollama serve
 ```
 
-To build `llama-server` GPU backends through the same root build, select the backend and target explicitly:
+To install into a standard prefix layout:
 
 ```shell
-cmake -B build . -DOLLAMA_LLAMA_SERVER_BACKENDS=vulkan
-cmake --build build --target ollama-llama-server-vulkan --parallel 4
+cmake --install build --prefix /path/to/install
 ```
 
-Supported backend values are `cuda-v12`, `cuda-v13`, `cuda-v13-windows`, `rocm`, `rocm-windows`, `vulkan`, `jetpack5`, and `jetpack6`.
+On all platforms except macOS arm64, to build GPU backends select the backends explicitly:
+
+```shell
+cmake -B build . -DOLLAMA_LLAMA_BACKENDS="cuda_v13;vulkan"
+cmake --build build --parallel 8
+```
+
+Supported backend values are `cuda_v12`, `cuda_v13`, `rocm_v7_1`, `rocm_v7_2`, `vulkan`, `cuda_jetpack5`, and `cuda_jetpack6`.
 
 Use standard CMake architecture overrides to narrow GPU builds for local hardware:
 
 ```shell
 # CUDA
-cmake -B build . -DOLLAMA_LLAMA_SERVER_BACKENDS=cuda-v13 -DCMAKE_CUDA_ARCHITECTURES=native
+cmake -B build . -DOLLAMA_LLAMA_BACKENDS=cuda_v13 -DCMAKE_CUDA_ARCHITECTURES=native
 
 # ROCm / HIP
-cmake -B build . -DOLLAMA_LLAMA_SERVER_BACKENDS=rocm -DCMAKE_HIP_ARCHITECTURES=gfx1100
+cmake -B build . -DOLLAMA_LLAMA_BACKENDS=rocm_v7_2 -DCMAKE_HIP_ARCHITECTURES=gfx1100
 ```
-
-`AMDGPU_TARGETS` is also accepted for ROCm when matching llama.cpp-specific target strings is necessary.
 
 You can tune GGML build options by setting `GGML_*` values during configure. For example, to build CUDA v12 for Pascal without flash attention kernels:
 
 ```shell
-cmake -B build . -DOLLAMA_LLAMA_SERVER_BACKENDS=cuda-v12 -DCMAKE_CUDA_ARCHITECTURES=61 -DGGML_CUDA_FA=OFF
+cmake -B build . -DOLLAMA_LLAMA_BACKENDS=cuda_v12 -DCMAKE_CUDA_ARCHITECTURES=61 -DGGML_CUDA_FA=OFF
 ```
 
 ## macOS (Apple Silicon)
 
-macOS Apple Silicon supports Metal for local native builds. For a release-style payload:
+Additional prerequisites:
+
+MLX Metal requires the Metal toolchain. Install [Xcode](https://developer.apple.com/xcode/) first, then:
 
 ```shell
-./scripts/build_darwin.sh -a arm64
-```
-
-## macOS (Intel)
-
-Install prerequisites:
-
-- [CMake](https://cmake.org/download/) or `brew install cmake`
-
-Then build the Darwin payload:
-
-```shell
-./scripts/build_darwin.sh -a amd64
-```
-
-Lastly, run Ollama:
-
-```shell
-dist/darwin-amd64/ollama serve
+xcodebuild -downloadComponent MetalToolchain
 ```
 
 ## Windows
 
-Install prerequisites:
+Additional prerequisites:
 
 - [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) including the Native Desktop Workload
 - (Optional) AMD GPU support
@@ -94,11 +82,7 @@ Install prerequisites:
     - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
     - [cuDNN 9+](https://developer.nvidia.com/cudnn)
 
-Then build a minimal CPU payload and Go binary:
-
-```powershell
-.\scripts\build_windows.ps1 cpu ollama
-```
+For Ninja builds, run CMake from a Developer PowerShell/Command Prompt or another shell where the Visual Studio compiler is available.
 
 > Building for Vulkan requires VULKAN_SDK environment variable:
 > 
@@ -111,24 +95,13 @@ Then build a minimal CPU payload and Go binary:
 > set VULKAN_SDK=C:\VulkanSDK\<version>
 > ```
 
-> [!IMPORTANT]
-> Prefer the build script for release-style GPU payloads. It wires the platform-specific compiler, SDK, and install layout details.
-
-Lastly, run Ollama:
-
-```powershell
-.\dist\windows-amd64\ollama.exe serve
-```
-
-For native CMake iteration, use the repository-root CMake build shown in [Native build model](#native-build-model). Ninja is recommended when available.
-
 ## Windows (ARM)
 
-Windows ARM does not support additional acceleration libraries at this time. The Windows build script can cross-compile the CPU llama-server payload when the ARM64 cross-compile toolchain is installed; otherwise it skips that payload for local developer builds.
+Windows ARM does not support additional acceleration libraries at this time.
 
 ## Linux
 
-Install prerequisites:
+Additional prerequisites:
 
 - (Optional) AMD GPU support
     - [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html)
@@ -144,54 +117,17 @@ Install prerequisites:
 > [!IMPORTANT]
 > Ensure prerequisites are in `PATH` before running CMake.
 
-
-For a release-style Linux payload, use the Docker-backed build script:
-
-```shell
-./scripts/build_linux.sh
-```
-
-For native CMake iteration, use the repository-root CMake build shown in [Native build model](#native-build-model).
-
 ## MLX Engine (Optional)
 
-The MLX engine enables running safetensor based models. It requires building the [MLX](https://github.com/ml-explore/mlx) and [MLX-C](https://github.com/ml-explore/mlx-c) shared libraries via the repository-root CMake presets. The root project delegates MLX-specific rules to `cmake/mlx`. On macOS, MLX leverages the Metal library to run on the GPU, and on Windows and Linux, runs on NVIDIA GPUs via CUDA v13.
+The MLX engine enables running safetensor based models. On macOS arm64, MLX is enabled by default. On other platforms, MLX backends are selected with `OLLAMA_MLX_BACKENDS`.
 
-### macOS (Apple Silicon)
-
-Requires the Metal toolchain. Install [Xcode](https://developer.apple.com/xcode/) first, then:
-
-```shell
-xcodebuild -downloadComponent MetalToolchain
-```
-
-Verify it's installed correctly (should print "no input files"):
-
-```shell
-xcrun metal
-```
-
-Then build:
-
-```shell
-cmake --preset MLX
-cmake --build --preset MLX --parallel 4
-cmake --install build --component MLX
-cmake --install build --component MLX_VENDOR
-```
-
-> [!NOTE]
-> Without the Metal toolchain, cmake will silently complete with Metal disabled. Check the cmake output for `Setting MLX_BUILD_METAL=OFF` which indicates the toolchain is missing.
-
-### Windows / Linux (CUDA)
+### CUDA
 
 Requires CUDA 13+ and [cuDNN](https://developer.nvidia.com/cudnn) 9+.
 
 ```shell
-cmake --preset "MLX CUDA 13"
-cmake --build --preset "MLX CUDA 13" --parallel 4
-cmake --install build --component MLX --strip
-cmake --install build --component MLX_VENDOR
+cmake -B build . -DOLLAMA_MLX_BACKENDS=cuda_v13
+cmake --build build --parallel 8
 ```
 
 ### Local MLX source overrides
@@ -203,17 +139,20 @@ export OLLAMA_MLX_SOURCE=/path/to/mlx
 export OLLAMA_MLX_C_SOURCE=/path/to/mlx-c
 ```
 
-For example, using the helper scripts with local mlx and mlx-c repos:
-```shell
-OLLAMA_MLX_SOURCE=../mlx OLLAMA_MLX_C_SOURCE=../mlx-c ./scripts/build_linux.sh
+On macOS arm64:
 
-OLLAMA_MLX_SOURCE=../mlx OLLAMA_MLX_C_SOURCE=../mlx-c ./scripts/build_darwin.sh
+```shell
+OLLAMA_MLX_SOURCE=../mlx OLLAMA_MLX_C_SOURCE=../mlx-c cmake -B build .
+cmake --build build --parallel 8
 ```
+
+For CUDA:
 
 ```powershell
 $env:OLLAMA_MLX_SOURCE="../mlx"
 $env:OLLAMA_MLX_C_SOURCE="../mlx-c"
-./scripts/build_windows.ps1
+cmake -B build . -DOLLAMA_MLX_BACKENDS=cuda_v13
+cmake --build build --parallel 8
 ```
 
 ## Docker
