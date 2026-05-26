@@ -73,9 +73,31 @@ func getCPUMemByCgroups(mem memInfo) memInfo {
 	}
 	used, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.current")
 	if err == nil {
-		mem.FreeMemory = mem.TotalMemory - used
+		inactiveFile, _ := getCgroupMemStat("inactive_file")
+		reclaimable := min(inactiveFile, used)
+		mem.FreeMemory = mem.TotalMemory - used + reclaimable
 	}
 	return mem
+}
+
+func getCgroupMemStat(key string) (uint64, error) {
+	return cgroupMemStatFromFile("/sys/fs/cgroup/memory.stat", key)
+}
+
+func cgroupMemStatFromFile(path, key string) (uint64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		fields := strings.Fields(s.Text())
+		if len(fields) == 2 && fields[0] == key {
+			return strconv.ParseUint(fields[1], 10, 64)
+		}
+	}
+	return 0, fmt.Errorf("key %q not found in memory.stat", key)
 }
 
 func getUint64ValueFromFile(path string) (uint64, error) {
