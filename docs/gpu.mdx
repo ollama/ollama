@@ -98,6 +98,11 @@ If you have multiple GPUs with different GFX versions, append the numeric device
 number to the environment variable to set them individually. For example,
 `HSA_OVERRIDE_GFX_VERSION_0=10.3.0` and `HSA_OVERRIDE_GFX_VERSION_1=11.0.0`
 
+For experimental forks or local builds, you can also set `OLLAMA_AMD_UNSAFE=1`
+to skip the ROCm deep-init filtering step and let Ollama attempt to use an
+unsupported AMD device. This is not recommended for normal builds because the
+runner can still crash during inference.
+
 At this time, the known supported GPU types on linux are the following LLVM Targets.
 This table shows some example GPUs that map to these LLVM targets:
 | **LLVM Target** | **An Example GPU** |

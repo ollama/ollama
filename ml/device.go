@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/logutil"
 )
@@ -550,8 +551,13 @@ func GetDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
 // it in the supported devices list.
 func (d DeviceInfo) NeedsInitValidation() bool {
 	// ROCm: rocblas will crash on unsupported devices.
-	// CUDA: verify CC is supported by the version of the library
-	return d.Library == "ROCm" || d.Library == "CUDA"
+	// CUDA: verify CC is supported by the version of the library.
+	// When explicitly requested, allow experimental ROCm attempts to skip the
+	// deep-init filter so unsupported AMD devices can still be tried.
+	if d.Library == "ROCm" {
+		return !envconfig.UnsafeAMD()
+	}
+	return d.Library == "CUDA"
 }
 
 // Set the init validation environment variable
