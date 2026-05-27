@@ -388,14 +388,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	if !req.Raw && m.Config.Parser != "" {
-		builtinParser = parsers.ParserForName(m.Config.Parser)
-		if builtinParser != nil {
-			// no tools or last message for generate endpoint
-			builtinParser.Init(nil, nil, req.Think)
-		}
-	}
-
 	caps := []model.Capability{model.CapabilityCompletion}
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
@@ -411,6 +403,19 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if req.Think != nil && req.Think.Bool() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
 			return
+		}
+	}
+
+	// Parser init must run after the CapabilityThinking auto-default above
+	// so that thinking-aware parsers (e.g. gemma4, deepseek3, glm46, cogito)
+	// receive a non-nil req.Think. Otherwise channel-formatted thinking output
+	// is silently discarded and short-num_predict requests can return empty
+	// responses.
+	if !req.Raw && m.Config.Parser != "" {
+		builtinParser = parsers.ParserForName(m.Config.Parser)
+		if builtinParser != nil {
+			// no tools or last message for generate endpoint
+			builtinParser.Init(nil, nil, req.Think)
 		}
 	}
 
