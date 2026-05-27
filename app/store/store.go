@@ -471,7 +471,7 @@ func (s *Store) DeleteAllChats() error {
 
 	// Also delete all chat images
 	if err := os.RemoveAll(s.ImgDir()); err != nil {
-		slog.Warn("failed to delete chat images directory", "error", err)
+		return fmt.Errorf("delete chat images: %w", err)
 	}
 
 	return nil

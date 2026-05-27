@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -340,6 +341,41 @@ func TestDeleteAllChats(t *testing.T) {
 		// Don't create the image directory — DeleteAllChats should still succeed
 		if err := s.DeleteAllChats(); err != nil {
 			t.Fatalf("DeleteAllChats() with missing image dir returned error: %v", err)
+		}
+	})
+
+	t.Run("image directory deletion failure is returned as an error", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Unix permission semantics not available on Windows")
+		}
+		if os.Getuid() == 0 {
+			t.Skip("permission restrictions have no effect when running as root")
+		}
+
+		s, cleanup := setupTestStore(t)
+		defer cleanup()
+
+		// Build a directory tree that os.RemoveAll cannot fully remove:
+		// imgDir/locked/  (mode 0o000 after setup) contains a file so that
+		// RemoveAll must recurse into it — which requires execute permission.
+		// Without that permission RemoveAll returns EACCES.
+		imgDir := s.ImgDir()
+		lockedDir := filepath.Join(imgDir, "locked")
+		if err := os.MkdirAll(lockedDir, 0o700); err != nil {
+			t.Fatalf("failed to create locked dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(lockedDir, "data"), []byte("x"), 0o600); err != nil {
+			t.Fatalf("failed to write file in locked dir: %v", err)
+		}
+		if err := os.Chmod(lockedDir, 0o000); err != nil {
+			t.Fatalf("failed to chmod locked dir: %v", err)
+		}
+		// Restore permissions so t.TempDir cleanup can remove the tree.
+		t.Cleanup(func() { os.Chmod(lockedDir, 0o755) })
+
+		err := s.DeleteAllChats()
+		if err == nil {
+			t.Error("DeleteAllChats() returned nil; expected an error when the image directory cannot be removed")
 		}
 	})
 
