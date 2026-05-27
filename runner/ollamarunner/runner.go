@@ -211,12 +211,12 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 }
 
 // calculateLogprobs converts raw logits to log probabilities and finds top K tokens
-func calculateLogprobs(logits []float32, selectedToken int32, topK int, tok tokenizer.Tokenizer) []llm.Logprob {
+func calculateLogprobs(logits []float32, selectedToken int32, topK int, temperature float32, tok tokenizer.Tokenizer) []llm.Logprob {
 	decoder := func(tokenID int) string {
 		text, _ := tok.Decode([]int32{int32(tokenID)})
 		return text
 	}
-	return common.CalculateLogprobs(logits, int(selectedToken), topK, decoder)
+	return common.CalculateLogprobs(logits, int(selectedToken), topK, temperature, decoder)
 }
 
 // inputs processes the prompt and images into a list of inputs
@@ -788,7 +788,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 
 		// Calculate logprobs if requested (after EOS check to avoid logprobs for EOS tokens)
 		if seq.logprobs {
-			logprobs := calculateLogprobs(logits, token, seq.topLogprobs, s.model.(tokenizer.Tokenizer))
+			logprobs := calculateLogprobs(logits, token, seq.topLogprobs, seq.sampler.Temperature(), s.model.(tokenizer.Tokenizer))
 			seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
 		}
 
