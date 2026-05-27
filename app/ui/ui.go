@@ -1227,6 +1227,14 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	if len(chat.Messages) > 0 {
 		chat.Messages[len(chat.Messages)-1].Stream = false
 	}
+
+	// If the client disconnected (e.g. the stream was aborted because the
+	// user triggered "delete all conversations"), skip the final upsert.
+	// Without this guard, a goroutine that reaches this point after
+	// deleteAllChats has cleared the chats table would re-insert the row.
+	if ctx.Err() != nil {
+		return nil
+	}
 	return s.Store.SetChat(*chat)
 }
 
