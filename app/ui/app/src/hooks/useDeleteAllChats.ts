@@ -9,8 +9,11 @@ export function useDeleteAllChats() {
   return useMutation({
     mutationFn: () => deleteAllChats(),
     onSuccess: () => {
-      // Invalidate first so the sidebar is already cleared when we navigate
-      queryClient.invalidateQueries({ queryKey: ["chats"] });
+      // Remove the chat list and all per-chat entries from the cache
+      // immediately so the sidebar is empty on navigation and no stale
+      // deleted-chat data can be served from cache on a direct URL visit.
+      queryClient.removeQueries({ queryKey: ["chats"] });
+      queryClient.removeQueries({ queryKey: ["chat"] });
       navigate({ to: "/c/$chatId", params: { chatId: "new" } });
     },
     onError: (error) => {
