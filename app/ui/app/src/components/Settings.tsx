@@ -51,6 +51,7 @@ export default function Settings() {
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
   const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState<string | null>(null);
   const {
     user,
     isAuthenticated,
@@ -637,7 +638,10 @@ export default function Settings() {
                           type="button"
                           color="white"
                           className="px-3 py-2 text-sm"
-                          onClick={() => setConfirmingDeleteAll(false)}
+                          onClick={() => {
+                            setConfirmingDeleteAll(false);
+                            setDeleteAllError(null);
+                          }}
                         >
                           Cancel
                         </Button>
@@ -649,7 +653,14 @@ export default function Settings() {
                           onClick={() => {
                             deleteAllChatsMutation.mutate(undefined, {
                               onSuccess: () => setConfirmingDeleteAll(false),
-                              onError: () => setConfirmingDeleteAll(false),
+                              onError: (error) => {
+                                setConfirmingDeleteAll(false);
+                                setDeleteAllError(
+                                  error instanceof Error
+                                    ? error.message
+                                    : "Failed to delete conversations. Please try again.",
+                                );
+                              },
                             });
                           }}
                         >
@@ -663,7 +674,10 @@ export default function Settings() {
                         type="button"
                         color="white"
                         className="px-3 py-2 text-sm"
-                        onClick={() => setConfirmingDeleteAll(true)}
+                        onClick={() => {
+                          setDeleteAllError(null);
+                          setConfirmingDeleteAll(true);
+                        }}
                       >
                         Delete all
                       </Button>
@@ -671,6 +685,13 @@ export default function Settings() {
                   </div>
                 </div>
               </Field>
+              {deleteAllError && (
+                <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <Text className="text-sm text-red-600 dark:text-red-400">
+                    {deleteAllError}
+                  </Text>
+                </div>
+              )}
             </div>
           </div>
 
