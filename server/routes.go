@@ -135,7 +135,12 @@ func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts
 		opts.NumCtx = s.defaultNumCtx
 	}
 
+	// api.Options stores defaulted values, so lower layers cannot distinguish
+	// an unset draft_num_predict from the default. Track that while we still
+	// have the raw model/request option maps.
+	draftNumPredictSet := hasOption(requestOpts, "draft_num_predict")
 	if model != nil {
+		draftNumPredictSet = draftNumPredictSet || hasOption(model.Options, "draft_num_predict")
 		if err := opts.FromMap(model.Options); err != nil {
 			return api.Options{}, err
 		}
@@ -147,6 +152,10 @@ func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts
 
 	if applyEmbeddingBatchDefault {
 		opts = llm.WithDefaultEmbeddingNumBatch(opts)
+	}
+
+	if model != nil && model.DraftPath == "" && !draftNumPredictSet {
+		opts.DraftNumPredict = 0
 	}
 
 	return opts, nil

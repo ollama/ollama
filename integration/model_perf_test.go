@@ -28,7 +28,6 @@ var (
 		"falcon2:latest", // 2k model
 		"minicpm-v:latest",
 		"qwen:latest",
-		"solar-pro:latest",
 	}
 )
 

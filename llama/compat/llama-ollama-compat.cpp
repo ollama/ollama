@@ -3350,14 +3350,11 @@ bool maybe_load_tensor(ggml_tensor * cur,
     }
 
 #if defined(_WIN32)
-    // Avoid Windows iostream large-file seek failures in clip tensor loading.
-    constexpr size_t large_seek_threshold = (size_t{1} << 31) - 1;
-    if (file_offset <= large_seek_threshold) return false;
-
+    // Avoid Windows iostream seek failures in clip tensor loading.
     const size_t dst_size = ggml_nbytes(cur);
     std::vector<uint8_t> dst(dst_size);
     if (!read_at(source_file, file_offset, dst.data(), dst_size)) {
-        OLLAMA_COMPAT_LOG_ERROR("%s: large-offset read failed for %s\n", __func__, ggml_get_name(cur));
+        OLLAMA_COMPAT_LOG_ERROR("%s: read failed for %s\n", __func__, ggml_get_name(cur));
         return false;
     }
     return write_tensor_data(cur, buft, dst.data(), dst_size);

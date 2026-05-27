@@ -192,6 +192,55 @@ func TestModelOptionsEmbeddingNumBatchDefault(t *testing.T) {
 	}
 }
 
+func TestModelOptionsDraftNumPredictDefault(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       *Model
+		requestOpts map[string]any
+		want        int
+	}{
+		{
+			name:  "separate draft model keeps default enabled",
+			model: &Model{DraftPath: "draft.gguf"},
+			want:  4,
+		},
+		{
+			name:  "embedded draft requires explicit parameter",
+			model: &Model{},
+			want:  0,
+		},
+		{
+			name:  "model parameter enables embedded draft",
+			model: &Model{Options: map[string]any{"draft_num_predict": float64(4)}},
+			want:  4,
+		},
+		{
+			name:        "request parameter enables embedded draft",
+			model:       &Model{},
+			requestOpts: map[string]any{"draft_num_predict": float64(8)},
+			want:        8,
+		},
+		{
+			name:        "request can disable separate draft model",
+			model:       &Model{DraftPath: "draft.gguf"},
+			requestOpts: map[string]any{"draft_num_predict": float64(0)},
+			want:        0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts, err := (&Server{}).modelOptions(tt.model, tt.requestOpts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if opts.DraftNumPredict != tt.want {
+				t.Fatalf("DraftNumPredict = %d, want %d", opts.DraftNumPredict, tt.want)
+			}
+		})
+	}
+}
+
 func TestUsesAutomaticNumBatch(t *testing.T) {
 	tests := []struct {
 		name        string
