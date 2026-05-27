@@ -99,6 +99,9 @@ type Sequence struct {
 	logprobs    bool
 	topLogprobs int
 
+	// temperature used for sampling, needed for correct logprob scaling
+	temperature float32
+
 	// Metrics
 	processingDuration time.Duration
 	generationDuration time.Duration
@@ -167,6 +170,11 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		}
 	}
 
+	var temp float32
+	if params.samplingParams != nil {
+		temp = params.samplingParams.Temp
+	}
+
 	return &Sequence{
 		inputs:           inputs,
 		numPromptInputs:  len(inputs),
@@ -182,12 +190,13 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		shift:            params.shift,
 		logprobs:         params.logprobs,
 		topLogprobs:      params.topLogprobs,
+		temperature:      temp,
 	}, nil
 }
 
 // calculateLogprobsLlama converts raw logits to log probabilities and finds top K tokens
-func calculateLogprobsLlama(logits []float32, selectedToken int, topK int, model *llama.Model) []llm.Logprob {
-	return common.CalculateLogprobs(logits, selectedToken, topK, model.TokenToPiece)
+func calculateLogprobsLlama(logits []float32, selectedToken int, topK int, temperature float32, model *llama.Model) []llm.Logprob {
+	return common.CalculateLogprobs(logits, selectedToken, topK, temperature, model.TokenToPiece)
 }
 
 // inputs processes the prompt and images into a list of inputs
@@ -556,7 +565,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		if seq.logprobs {
 			logits := s.lc.GetLogitsIth(seq.iBatch)
 			if logits != nil {
-				logprobs := calculateLogprobsLlama(logits, token, seq.topLogprobs, s.model)
+				logprobs := calculateLogprobsLlama(logits, token, seq.topLogprobs, seq.temperature, s.model)
 				seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
 			}
 		}

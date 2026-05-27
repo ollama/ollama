@@ -56,7 +56,7 @@ func TestCalculateLogprobs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := CalculateLogprobs(tt.logits, tt.selectedToken, tt.topK, decoder)
+			result := CalculateLogprobs(tt.logits, tt.selectedToken, tt.topK, 1.0, decoder)
 			if len(result) != tt.wantLen {
 				t.Errorf("CalculateLogprobs() returned %d results, want %d", len(result), tt.wantLen)
 			}
@@ -87,7 +87,7 @@ func TestCalculateLogprobsNumericalStability(t *testing.T) {
 
 	// Test with very large logits to ensure numerical stability
 	logits := []float32{1000.0, 999.0, 998.0}
-	result := CalculateLogprobs(logits, 0, 3, decoder)
+	result := CalculateLogprobs(logits, 0, 3, 1.0, decoder)
 
 	if len(result) != 1 {
 		t.Fatalf("Expected 1 result, got %d", len(result))
@@ -161,7 +161,7 @@ func TestCalculateLogprobsProbabilityCorrectness(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := CalculateLogprobs(tt.logits, tt.selectedToken, tt.topK, decoder)
+			result := CalculateLogprobs(tt.logits, tt.selectedToken, tt.topK, 1.0, decoder)
 
 			if len(result) != 1 {
 				t.Fatalf("Expected 1 result, got %d", len(result))
@@ -262,7 +262,7 @@ func TestCalculateLogprobsSoftmaxCorrectness(t *testing.T) {
 			// Calculate logprobs for all tokens
 			var totalProb float64
 			for i := range tt.logits {
-				result := CalculateLogprobs(tt.logits, i, 0, decoder)
+				result := CalculateLogprobs(tt.logits, i, 0, 1.0, decoder)
 				if len(result) != 1 {
 					t.Fatalf("Expected 1 result, got %d", len(result))
 				}
@@ -305,7 +305,7 @@ func TestCalculateLogprobsSelectedTokenCorrectness(t *testing.T) {
 	var maxProbIndex int
 
 	for i := range logits {
-		result := CalculateLogprobs(logits, i, 0, decoder)
+		result := CalculateLogprobs(logits, i, 0, 1.0, decoder)
 		prob := math.Exp(result[0].Logprob)
 
 		if prob > maxProb {
@@ -344,7 +344,7 @@ func TestCalculateLogprobsTopKOrdering(t *testing.T) {
 	// Expected order by probability: 1 (5.0), 3 (4.0), 4 (3.0), 0 (2.0), 2 (1.0)
 	expectedOrder := []string{"second", "fourth", "fifth", "first", "third"}
 
-	result := CalculateLogprobs(logits, 0, 5, decoder)
+	result := CalculateLogprobs(logits, 0, 5, 1.0, decoder)
 
 	if len(result) != 1 {
 		t.Fatalf("Expected 1 result, got %d", len(result))
