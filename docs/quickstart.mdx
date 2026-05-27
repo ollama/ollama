@@ -7,20 +7,19 @@ Ollama is available on macOS, Windows, and Linux.
 <a
   href="https://ollama.com/download"
   target="_blank"
-  className="inline-block px-6 py-2 bg-black rounded-full dark:bg-neutral-700 text-white font-normal border-none"
->
+  className="inline-block px-6 py-2 bg-black rounded-full dark:bg-neutral-700 text-white font-normal border-none">
   Download Ollama
 </a>
 
 ## Get Started
 
-Run `ollama` in your terminal to open the interactive menu:
+Run `Ollama` in your terminal to open the interactive menu:
 
 ```sh
 ollama
 ```
 
-Navigate with `↑/↓`, press `enter` to launch, `→` to change model, and `esc` to quit.
+Navigate with `↑/↓`, press `Enter` to launch, `→` to change model, and `Esc` to quit.
 
 The menu provides quick access to:
 - **Run a model** - Start an interactive chat
@@ -60,7 +59,12 @@ Use the [API](/api) to integrate Ollama into your applications:
 ```sh
 curl http://localhost:11434/api/chat -d '{
   "model": "gemma3",
-  "messages": [{ "role": "user", "content": "Hello!" }]
+  "messages": [
+    { 
+      "role": "user", 
+      "content": "Hello!" 
+    }
+  ]
 }'
 ```
 
