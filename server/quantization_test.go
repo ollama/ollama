@@ -196,6 +196,27 @@ func TestQwen3LinearAttentionQuantOverride(t *testing.T) {
 			expected: fsggml.TensorTypeQ4_K,
 		},
 		{
+			name:     "qwen3next_mtp_fc_q4_k_m",
+			arch:     "qwen3next",
+			tensor:   "mtp.fc.weight",
+			fileType: fsggml.FileTypeQ4_K_M,
+			expected: fsggml.TensorTypeQ8_0,
+		},
+		{
+			name:     "qwen35_mtp_fc_q4_k_m",
+			arch:     "qwen35",
+			tensor:   "mtp.fc.weight",
+			fileType: fsggml.FileTypeQ4_K_M,
+			expected: fsggml.TensorTypeQ8_0,
+		},
+		{
+			name:     "qwen35_mtp_fc_q4_k_s",
+			arch:     "qwen35",
+			tensor:   "mtp.fc.weight",
+			fileType: fsggml.FileTypeQ4_K_S,
+			expected: fsggml.TensorTypeQ8_0,
+		},
+		{
 			name:     "non_qwen35_falls_back",
 			arch:     "foo",
 			tensor:   "blk.0.attn_qkv.weight",

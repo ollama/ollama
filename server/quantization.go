@@ -68,6 +68,9 @@ func useMoreBits(iLayer, nLayers int) bool {
 
 func qwen3LinearAttnQuantType(name string) (fsggml.TensorType, bool) {
 	switch {
+	case name == "mtp.fc.weight" || strings.HasSuffix(name, ".mtp.fc.weight"):
+		return fsggml.TensorTypeQ8_0, true
+
 	// Full attention
 	case strings.HasSuffix(name, ".attn_q.weight"):
 		return fsggml.TensorTypeQ4_K, true
