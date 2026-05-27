@@ -765,6 +765,13 @@ func (s *Server) DetokenizeHandler(c *gin.Context) {
 		return
 	}
 
+	for _, t := range req.Tokens {
+		if t < 0 || t > math.MaxInt32 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "token IDs must be non-negative and fit in int32"})
+			return
+		}
+	}
+
 	modelRef, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusNotFound, fmt.Sprintf("model '%s' not found", req.Model))

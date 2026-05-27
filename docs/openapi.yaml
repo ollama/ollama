@@ -422,6 +422,78 @@ components:
         status:
           type: string
           description: Current status message
+    TokenizeRequest:
+      type: object
+      required: [model, content]
+      properties:
+        model:
+          type: string
+          description: Model name
+        content:
+          type: string
+          description: Text to tokenize
+        keep_alive:
+          type: string
+          description: Model keep-alive duration
+        options:
+          $ref: "#/components/schemas/ModelOptions"
+    TokenizeResponse:
+      type: object
+      properties:
+        model:
+          type: string
+          description: Model that performed the tokenization
+        tokens:
+          type: array
+          items:
+            type: integer
+          description: Array of token IDs
+        count:
+          type: integer
+          description: Number of tokens
+        pieces:
+          type: array
+          items:
+            type: string
+          description: Text representation of each token, parallel to tokens
+        total_duration:
+          type: integer
+          description: Total time spent in nanoseconds
+        load_duration:
+          type: integer
+          description: Load time in nanoseconds
+    DetokenizeRequest:
+      type: object
+      required: [model, tokens]
+      properties:
+        model:
+          type: string
+          description: Model name
+        tokens:
+          type: array
+          items:
+            type: integer
+          description: Token IDs to convert to text
+        keep_alive:
+          type: string
+          description: Model keep-alive duration
+        options:
+          $ref: "#/components/schemas/ModelOptions"
+    DetokenizeResponse:
+      type: object
+      properties:
+        model:
+          type: string
+          description: Model that performed the detokenization
+        content:
+          type: string
+          description: Text produced from the token IDs
+        total_duration:
+          type: integer
+          description: Total time spent in nanoseconds
+        load_duration:
+          type: integer
+          description: Load time in nanoseconds
     EmbedRequest:
       type: object
       required: [model, input]
@@ -1052,6 +1124,80 @@ paths:
             application/x-ndjson:
               schema:
                 $ref: "#/components/schemas/ChatStreamEvent"
+  /api/tokenize:
+    post:
+      summary: Tokenize text
+      description: Tokenize text using a model's tokenizer without performing inference
+      operationId: tokenize
+      x-mint:
+        href: /api/tokenize
+      x-codeSamples:
+        - lang: bash
+          label: Default
+          source: |
+            curl http://localhost:11434/api/tokenize -d '{
+              "model": "llama3.2",
+              "content": "Why is the sky blue?"
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenizeRequest"
+            example:
+              model: llama3.2
+              content: "Why is the sky blue?"
+      responses:
+        "200":
+          description: Token IDs, count, and per-token text pieces
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenizeResponse"
+              example:
+                model: "llama3.2"
+                tokens: [10445, 374, 279, 13180, 6437, 30]
+                count: 6
+                pieces: ["Why", " is", " the", " sky", " blue", "?"]
+                total_duration: 95039
+                load_duration: 8500
+  /api/detokenize:
+    post:
+      summary: Detokenize tokens
+      description: Convert token IDs back into text using a model's tokenizer
+      operationId: detokenize
+      x-mint:
+        href: /api/detokenize
+      x-codeSamples:
+        - lang: bash
+          label: Default
+          source: |
+            curl http://localhost:11434/api/detokenize -d '{
+              "model": "llama3.2",
+              "tokens": [10445, 374, 279, 13180, 6437, 30]
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DetokenizeRequest"
+            example:
+              model: llama3.2
+              tokens: [10445, 374, 279, 13180, 6437, 30]
+      responses:
+        "200":
+          description: Text produced from the token IDs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DetokenizeResponse"
+              example:
+                model: "llama3.2"
+                content: "Why is the sky blue?"
+                total_duration: 42167
+                load_duration: 7500
   /api/embed:
     post:
       summary: Generate embeddings

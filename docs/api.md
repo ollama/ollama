@@ -14,6 +14,8 @@
 - [Pull a Model](#pull-a-model)
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
+- [Tokenize](#tokenize)
+- [Detokenize](#detokenize)
 - [List Running Models](#list-running-models)
 - [Version](#version)
 - [Experimental: Image Generation](#image-generation-experimental)
@@ -1764,6 +1766,87 @@ curl http://localhost:11434/api/embed -d '{
       0.017194884, 0.09032035, -0.051705178, 0.09951512, 0.09072481
     ]
   ]
+}
+```
+
+## Tokenize
+
+```
+POST /api/tokenize
+```
+
+Tokenize text using a model's tokenizer. Returns token IDs, a count, and per-token text pieces.
+
+### Parameters
+
+- `model`: name of model to tokenize with
+
+Advanced parameters:
+
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.mdx#valid-parameters-and-values)
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+
+### Examples
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/tokenize -d '{
+  "model": "llama3.2",
+  "content": "Why is the sky blue?"
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "llama3.2",
+  "tokens": [10445, 374, 279, 13180, 6437, 30],
+  "count": 6,
+  "pieces": ["Why", " is", " the", " sky", " blue", "?"],
+  "total_duration": 95039,
+  "load_duration": 8500
+}
+```
+
+## Detokenize
+
+```
+POST /api/detokenize
+```
+
+Convert token IDs back into text using a model's tokenizer.
+
+### Parameters
+
+- `model`: name of model to detokenize with
+- `tokens`: list of token IDs to convert to text
+
+Advanced parameters:
+
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.mdx#valid-parameters-and-values)
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+
+### Examples
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/detokenize -d '{
+  "model": "llama3.2",
+  "tokens": [10445, 374, 279, 13180, 6437, 30]
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "llama3.2",
+  "content": "Why is the sky blue?",
+  "total_duration": 42167,
+  "load_duration": 7500
 }
 ```
 
