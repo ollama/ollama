@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 	"time"
 
@@ -128,6 +129,71 @@ func TestRecordPersistentRunnerEnv(t *testing.T) {
 
 	if devices[1].RunnerEnvOverrides != nil {
 		t.Fatalf("unexpected RunnerEnvOverrides recorded for non-Metal device: %#v", devices[1].RunnerEnvOverrides)
+	}
+}
+
+func TestFilterIntegratedGPUs(t *testing.T) {
+	devices := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{Library: "CUDA", ID: "0"}, Description: "NVIDIA integrated", Integrated: true},
+		{DeviceID: ml.DeviceID{Library: "Metal", ID: "0"}, Description: "Apple GPU", Integrated: true},
+		{DeviceID: ml.DeviceID{Library: "Vulkan", ID: "0"}, Description: "AMD Radeon(TM) Graphics", Integrated: true},
+		{DeviceID: ml.DeviceID{Library: "ROCm", ID: "0"}, Description: "AMD Radeon(TM) Graphics", Integrated: true},
+		{DeviceID: ml.DeviceID{Library: "Vulkan", ID: "1"}, Description: "AMD Radeon RX 6800"},
+	}
+
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		t.Setenv("OLLAMA_IGPU_ENABLE", "false")
+		got := filterIntegratedGPUs(append([]ml.DeviceInfo{}, devices...))
+		want := []ml.DeviceID{
+			{Library: "CUDA", ID: "0"},
+			{Library: "Metal", ID: "0"},
+			{Library: "Vulkan", ID: "0"},
+			{Library: "ROCm", ID: "0"},
+			{Library: "Vulkan", ID: "1"},
+		}
+		assertDeviceIDs(t, got, want)
+		return
+	}
+
+	t.Run("auto admits only allowlisted integrated GPUs", func(t *testing.T) {
+		got := filterIntegratedGPUs(append([]ml.DeviceInfo{}, devices...))
+		want := []ml.DeviceID{
+			{Library: "CUDA", ID: "0"},
+			{Library: "Vulkan", ID: "1"},
+		}
+		assertDeviceIDs(t, got, want)
+	})
+
+	t.Run("explicit true admits all integrated GPUs", func(t *testing.T) {
+		t.Setenv("OLLAMA_IGPU_ENABLE", "true")
+		got := filterIntegratedGPUs(append([]ml.DeviceInfo{}, devices...))
+		want := []ml.DeviceID{
+			{Library: "CUDA", ID: "0"},
+			{Library: "Metal", ID: "0"},
+			{Library: "Vulkan", ID: "0"},
+			{Library: "ROCm", ID: "0"},
+			{Library: "Vulkan", ID: "1"},
+		}
+		assertDeviceIDs(t, got, want)
+	})
+
+	t.Run("explicit false drops integrated GPUs", func(t *testing.T) {
+		t.Setenv("OLLAMA_IGPU_ENABLE", "false")
+		got := filterIntegratedGPUs(append([]ml.DeviceInfo{}, devices...))
+		want := []ml.DeviceID{{Library: "Vulkan", ID: "1"}}
+		assertDeviceIDs(t, got, want)
+	})
+}
+
+func assertDeviceIDs(t *testing.T, got []ml.DeviceInfo, want []ml.DeviceID) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d devices, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].DeviceID != want[i] {
+			t.Fatalf("device %d = %#v, want %#v", i, got[i].DeviceID, want[i])
+		}
 	}
 }
 

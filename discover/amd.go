@@ -2,14 +2,17 @@
 // generic llama-server device list. ROCm devices expose their real capability
 // as gfx targets, and the shipped rocBLAS kernels define which of those
 // targets are actually usable. On Linux, KFD topology and DRM sysfs attributes
-// provide the integrated-vs-discrete signal needed for scheduler decisions.
-// These helpers keep that extra validation and warning logic in one place.
+// provide the integrated-vs-discrete signal needed for scheduler decisions. On
+// Windows, older HIP driver installs can also leave ROCm libraries present but
+// too old to support GPU inference. These helpers keep that extra validation
+// and warning logic in one place.
 package discover
 
 import (
 	"bufio"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -17,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -375,11 +377,14 @@ func gfxTargetFromKFDVersion(version uint64) string {
 }
 
 // filterUnsupportedROCmDevices removes ROCm devices whose gfx target doesn't have
-// matching rocblas kernels bundled, plus known-bad ROCm/device combinations.
+// matching rocblas kernels bundled.
 func filterUnsupportedROCmDevices(devices []ml.DeviceInfo, libDirs []string) []ml.DeviceInfo {
 	supported := rocblasGFXTargets(libDirs)
+	if len(supported) == 0 {
+		return devices
+	}
+
 	override := hsaOverrideGFXTarget()
-	explicitROCmSelection := explicitROCmDeviceSelection()
 	var filtered []ml.DeviceInfo
 	for _, dev := range devices {
 		if dev.Library != "ROCm" {
@@ -387,17 +392,9 @@ func filterUnsupportedROCmDevices(devices []ml.DeviceInfo, libDirs []string) []m
 			continue
 		}
 
-		if reason := knownUnsupportedROCmDeviceReason(runtime.GOOS, dev, explicitROCmSelection); reason != "" {
-			slog.Warn("dropping ROCm device because it is not supported by the current ROCm runtime",
-				"device", dev.Name, "description", dev.Description, "gfx_target", dev.GFXTarget,
-				"pci_id", dev.PCIID,
-				"reason", reason)
-			continue
-		}
-
 		setROCmGFXTarget(&dev, override)
 		gfx := dev.GFXTarget
-		if gfx == "" || len(supported) == 0 {
+		if gfx == "" {
 			filtered = append(filtered, dev)
 			continue
 		}
@@ -412,26 +409,13 @@ func filterUnsupportedROCmDevices(devices []ml.DeviceInfo, libDirs []string) []m
 	return filtered
 }
 
-func knownUnsupportedROCmDeviceReason(goos string, device ml.DeviceInfo, explicitSelection bool) string {
-	if explicitSelection || device.Library != "ROCm" {
-		return ""
+func detectOldAMDDriverWindows() {
+	if runtime.GOOS != "windows" {
+		return
 	}
-
-	if goos == "windows" {
-		switch device.GFXTarget {
-		case "gfx1150":
-			return "Windows ROCm runtime hangs during memory-fit probing"
-		}
+	_, errV6 := exec.LookPath("amdhip64_6.dll")
+	_, errV7 := exec.LookPath("amdhip64_7.dll")
+	if errV6 == nil && errV7 != nil {
+		slog.Warn("AMD driver is too old. Update your AMD driver to enable GPU inference.")
 	}
-
-	return ""
-}
-
-func explicitROCmDeviceSelection() bool {
-	if isROCmLibraryDir(strings.ToLower(envconfig.LLMLibrary())) {
-		return true
-	}
-	return envconfig.HipVisibleDevices() != "" ||
-		envconfig.RocrVisibleDevices() != "" ||
-		envconfig.GpuDeviceOrdinal() != ""
 }
