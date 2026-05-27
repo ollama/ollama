@@ -309,11 +309,21 @@ function cpu {
             # Build llama-server from upstream source (CPU + base)
             & cmake -S llama\server --preset cpu_windows --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            $oldPath = $env:PATH
+            if ($env:CXX -and [System.IO.Path]::IsPathRooted($env:CXX)) {
+                # llama-ui-embed runs even with UI disabled; this ensures DLL dependencies are found.
+                $cpuCompilerDir = Split-Path -Parent $env:CXX
+                $env:PATH = "$cpuCompilerDir;$env:PATH"
+            }
             & cmake --build build\llama-server-cpu --config Release --parallel $script:JOBS
+            $env:PATH = $oldPath
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build\llama-server-cpu --component llama-server --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         } finally {
+            if ($oldPath) {
+                $env:PATH = $oldPath
+            }
             if ($setCPUCompiler) {
                 if ($null -eq $oldCC) {
                     Remove-Item Env:CC -ErrorAction SilentlyContinue
