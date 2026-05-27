@@ -256,16 +256,45 @@ endfunction()
 
 function(ollama_append_mingw_runtime_dlls output)
     cmake_path(GET CMAKE_CXX_COMPILER PARENT_PATH _compiler_bin_dir)
+    set(_runtime_dll_dir "${_compiler_bin_dir}")
+
+    cmake_path(GET CMAKE_CXX_COMPILER FILENAME _compiler_name)
+    set(_runtime_target_triple)
+    if(_compiler_name MATCHES "^([A-Za-z0-9_]+-w64-mingw32)-")
+        set(_runtime_target_triple "${CMAKE_MATCH_1}")
+    elseif(DEFINED OLLAMA_WINDOWS_RUNTIME_ARCH)
+        string(TOLOWER "${OLLAMA_WINDOWS_RUNTIME_ARCH}" _runtime_arch)
+        if(_runtime_arch MATCHES "^(arm64|aarch64)$")
+            set(_runtime_target_triple "aarch64-w64-mingw32")
+        elseif(_runtime_arch MATCHES "^(x64|amd64|x86_64)$")
+            set(_runtime_target_triple "x86_64-w64-mingw32")
+        elseif(_runtime_arch MATCHES "^(x86|i686)$")
+            set(_runtime_target_triple "i686-w64-mingw32")
+        endif()
+    endif()
+
+    if(_runtime_target_triple)
+        cmake_path(GET _compiler_bin_dir PARENT_PATH _toolchain_root)
+        set(_target_runtime_dir "${_toolchain_root}/${_runtime_target_triple}/bin")
+        # llvm-mingw cross tools keep target runtime DLLs under <triple>/bin;
+        # the top-level bin directory contains host-architecture DLLs.
+        if(EXISTS "${_target_runtime_dir}")
+            set(_runtime_dll_dir "${_target_runtime_dir}")
+        elseif(CMAKE_CROSSCOMPILING)
+            message(FATAL_ERROR "Could not find MinGW runtime DLL directory ${_target_runtime_dir} for ${_runtime_target_triple}")
+        endif()
+    endif()
+
     set(_runtime_dll_patterns
-        "${_compiler_bin_dir}/libc++*.dll"
-        "${_compiler_bin_dir}/libgcc_s_*.dll"
-        "${_compiler_bin_dir}/libstdc++-*.dll"
-        "${_compiler_bin_dir}/libunwind*.dll"
-        "${_compiler_bin_dir}/libwinpthread-*.dll")
+        "${_runtime_dll_dir}/libc++*.dll"
+        "${_runtime_dll_dir}/libgcc_s_*.dll"
+        "${_runtime_dll_dir}/libstdc++-*.dll"
+        "${_runtime_dll_dir}/libunwind*.dll"
+        "${_runtime_dll_dir}/libwinpthread-*.dll")
     if(GGML_OPENMP)
         list(APPEND _runtime_dll_patterns
-            "${_compiler_bin_dir}/libgomp-[0-9]*.dll"
-            "${_compiler_bin_dir}/libomp*.dll")
+            "${_runtime_dll_dir}/libgomp-[0-9]*.dll"
+            "${_runtime_dll_dir}/libomp*.dll")
     endif()
 
     set(_runtime_dlls)
