@@ -16,6 +16,7 @@ import {
   CogIcon,
   ArrowLeftIcon,
   ArrowDownTrayIcon,
+  TrashIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { useNavigate } from "@tanstack/react-router";
@@ -29,6 +30,7 @@ import {
   updateSettings,
   getInferenceCompute,
 } from "@/api";
+import { useDeleteAllChats } from "@/hooks/useDeleteAllChats";
 
 function AnimatedDots() {
   return (
@@ -48,6 +50,7 @@ export default function Settings() {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
+  const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
   const {
     user,
     isAuthenticated,
@@ -219,6 +222,8 @@ export default function Settings() {
       updateSettingsMutation.mutate(defaultSettings);
     }
   };
+
+  const deleteAllChatsMutation = useDeleteAllChats();
 
   const cloudOverriddenByEnv =
     cloudStatus?.source === "env" || cloudStatus?.source === "both";
@@ -609,6 +614,65 @@ export default function Settings() {
               </div>
             </div>
           )}
+
+          {/* Data */}
+          <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
+            <div className="p-4">
+              <Field>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start space-x-3 flex-1">
+                    <TrashIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                    <div>
+                      <Label>Delete all conversations</Label>
+                      <Description>
+                        Permanently remove all chat history. This cannot be
+                        undone.
+                      </Description>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    {confirmingDeleteAll ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          color="white"
+                          className="px-3 py-2 text-sm"
+                          onClick={() => setConfirmingDeleteAll(false)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          color="red"
+                          className="px-3 py-2 text-sm"
+                          disabled={deleteAllChatsMutation.isPending}
+                          onClick={() => {
+                            deleteAllChatsMutation.mutate(undefined, {
+                              onSuccess: () => setConfirmingDeleteAll(false),
+                              onError: () => setConfirmingDeleteAll(false),
+                            });
+                          }}
+                        >
+                          {deleteAllChatsMutation.isPending
+                            ? "Deleting…"
+                            : "Delete all"}
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        type="button"
+                        color="white"
+                        className="px-3 py-2 text-sm"
+                        onClick={() => setConfirmingDeleteAll(true)}
+                      >
+                        Delete all
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </Field>
+            </div>
+          </div>
 
           {/* Reset button */}
           <div className="mt-6 flex justify-end px-4">

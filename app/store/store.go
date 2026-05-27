@@ -460,6 +460,23 @@ func (s *Store) DeleteChat(id string) error {
 	return nil
 }
 
+func (s *Store) DeleteAllChats() error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+
+	if err := s.db.deleteAllChats(); err != nil {
+		return err
+	}
+
+	// Also delete all chat images
+	if err := os.RemoveAll(s.ImgDir()); err != nil {
+		slog.Warn("failed to delete chat images directory", "error", err)
+	}
+
+	return nil
+}
+
 func (s *Store) WindowSize() (int, int, error) {
 	if err := s.ensureDB(); err != nil {
 		return 0, 0, err

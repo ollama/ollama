@@ -280,6 +280,7 @@ func (s *Server) Handler() http.Handler {
 
 	// API routes - handle first to take precedence
 	mux.Handle("GET /api/v1/chats", handle(s.listChats))
+	mux.Handle("DELETE /api/v1/chats", handle(s.deleteAllChats))
 	mux.Handle("GET /api/v1/chat/{id}", handle(s.getChat))
 	mux.Handle("POST /api/v1/chat/{id}", handle(s.chat))
 	mux.Handle("DELETE /api/v1/chat/{id}", handle(s.deleteChat))
@@ -1338,6 +1339,15 @@ func (s *Server) deleteChat(w http.ResponseWriter, r *http.Request) error {
 	// Delete the chat
 	if err := s.Store.DeleteChat(cid); err != nil {
 		return fmt.Errorf("failed to delete chat: %w", err)
+	}
+
+	w.WriteHeader(http.StatusOK)
+	return nil
+}
+
+func (s *Server) deleteAllChats(w http.ResponseWriter, r *http.Request) error {
+	if err := s.Store.DeleteAllChats(); err != nil {
+		return fmt.Errorf("failed to delete all chats: %w", err)
 	}
 
 	w.WriteHeader(http.StatusOK)
