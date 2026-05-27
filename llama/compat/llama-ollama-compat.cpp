@@ -3294,15 +3294,30 @@ bool should_skip_tensor(const llama_model_loader * ml, const char * tensor_name)
     return should_skip_tensor_prefix(ml, tensor_name);
 }
 
-bool maybe_load_tensor(ggml_tensor * cur,
-                       const char * source_file,
-                       size_t file_offset,
-                       ggml_backend_buffer_type_t buft) {
-    (void) file_offset; // registered ops capture their own offsets
-    if (compat_disabled()) return false;
+static bool write_tensor_data(ggml_tensor * cur,
+                              ggml_backend_buffer_type_t buft,
+                              const void * data,
+                              size_t size) {
+    // buft can be null for tensors not yet bound to a backend buffer (e.g.
+    // tied output reusing token_embd's storage). In that case the tensor
+    // already has a host-side data pointer — write to it directly.
+    const bool is_host = !buft || ggml_backend_buft_is_host(buft);
+    if (is_host) {
+        if (!cur->data) {
+            OLLAMA_COMPAT_LOG_ERROR("%s: no destination for %s (no buffer, no data)\n", __func__, ggml_get_name(cur));
+            return false;
+        }
+        std::memcpy(cur->data, data, size);
+    } else {
+        ggml_backend_tensor_set(cur, data, 0, size);
+    }
+    return true;
+}
 
-    LoadOp op;
-    if (!take_load_op(ggml_get_name(cur), op)) return false;
+static bool load_tensor_with_op(ggml_tensor * cur,
+                                const char * source_file,
+                                ggml_backend_buffer_type_t buft,
+                                const LoadOp & op) {
 
     const auto start = std::chrono::steady_clock::now();
     const size_t dst_size = ggml_nbytes(cur);
@@ -3313,19 +3328,7 @@ bool maybe_load_tensor(ggml_tensor * cur,
         return false;
     }
 
-    // buft can be null for tensors not yet bound to a backend buffer (e.g.
-    // tied output reusing token_embd's storage). In that case the tensor
-    // already has a host-side data pointer — write to it directly.
-    const bool is_host = !buft || ggml_backend_buft_is_host(buft);
-    if (is_host) {
-        if (!cur->data) {
-            OLLAMA_COMPAT_LOG_ERROR("%s: no destination for %s (no buffer, no data)\n", __func__, ggml_get_name(cur));
-            return false;
-        }
-        std::memcpy(cur->data, dst.data(), dst_size);
-    } else {
-        ggml_backend_tensor_set(cur, dst.data(), 0, dst_size);
-    }
+    if (!write_tensor_data(cur, buft, dst.data(), dst_size)) return false;
 
     const double ms = elapsed_ms(start);
     const TransformTiming total = record_transform_timing(dst_size, ms);
@@ -3333,6 +3336,37 @@ bool maybe_load_tensor(ggml_tensor * cur,
                            op.description, ggml_get_name(cur), dst_size, ms,
                            (unsigned long long) total.count, total.bytes, total.ms);
     return true;
+}
+
+bool maybe_load_tensor(ggml_tensor * cur,
+                       const char * source_file,
+                       size_t file_offset,
+                       ggml_backend_buffer_type_t buft) {
+    if (compat_disabled()) return false;
+
+    LoadOp op;
+    if (take_load_op(ggml_get_name(cur), op)) {
+        return load_tensor_with_op(cur, source_file, buft, op);
+    }
+
+#if defined(_WIN32)
+    // Avoid Windows iostream large-file seek failures in clip tensor loading.
+    constexpr size_t large_seek_threshold = (size_t{1} << 31) - 1;
+    if (file_offset <= large_seek_threshold) return false;
+
+    const size_t dst_size = ggml_nbytes(cur);
+    std::vector<uint8_t> dst(dst_size);
+    if (!read_at(source_file, file_offset, dst.data(), dst_size)) {
+        OLLAMA_COMPAT_LOG_ERROR("%s: large-offset read failed for %s\n", __func__, ggml_get_name(cur));
+        return false;
+    }
+    return write_tensor_data(cur, buft, dst.data(), dst_size);
+#else
+    (void) source_file;
+    (void) file_offset;
+    (void) buft;
+    return false;
+#endif
 }
 
 bool maybe_load_text_tensor(const llama_model_loader * ml,
@@ -3349,7 +3383,11 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
     ggml_backend_buffer_type_t buft = cur->buffer
         ? ggml_backend_buffer_get_type(cur->buffer)
         : nullptr;
-    return maybe_load_tensor(cur, path.c_str(), file_offset, buft);
+    (void) file_offset; // registered text ops capture their own offsets
+
+    LoadOp op;
+    if (!take_load_op(ggml_get_name(cur), op)) return false;
+    return load_tensor_with_op(cur, path.c_str(), buft, op);
 }
 
 } // namespace llama_ollama_compat
