@@ -129,6 +129,7 @@
                   "/integrations/opencode",
                   "/integrations/droid",
                   "/integrations/goose",
+                  "/integrations/omp",
                   "/integrations/pi",
                   "/integrations/pool"
                 ]
