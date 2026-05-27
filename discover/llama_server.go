@@ -308,8 +308,12 @@ func parseLlamaServerDevicesWithNative(output string, libDirs []string, nativeDe
 			}
 		}
 
-		computeMajor, computeMinor := computeVersion(library, deviceIndex, gfxByIndex, ccByIndex)
 		nativeDevice, hasNativeDevice := nativeByIndex[library][deviceIndex]
+		totalBytes := totalMiB * 1024 * 1024
+		if hasNativeDevice && !nativeProbeMatchesLlamaServerDevice(library, description, totalBytes, nativeDevice) {
+			hasNativeDevice = false
+		}
+		computeMajor, computeMinor := computeVersion(library, deviceIndex, gfxByIndex, ccByIndex)
 		dev := ml.DeviceInfo{
 			DeviceID: ml.DeviceID{
 				ID:      strconv.Itoa(deviceIndex),
@@ -317,7 +321,7 @@ func parseLlamaServerDevicesWithNative(output string, libDirs []string, nativeDe
 			},
 			Name:         name,
 			Description:  description,
-			TotalMemory:  totalMiB * 1024 * 1024,
+			TotalMemory:  totalBytes,
 			FreeMemory:   freeMiB * 1024 * 1024,
 			ComputeMajor: computeMajor,
 			ComputeMinor: computeMinor,
@@ -358,6 +362,32 @@ func parseLlamaServerDevicesWithNative(output string, libDirs []string, nativeDe
 	}
 
 	return refineLlamaServerDevices(devices, libDirs)
+}
+
+func nativeProbeMatchesLlamaServerDevice(library, description string, totalBytes uint64, nativeDevice nativeProbeDevice) bool {
+	if library != "Vulkan" {
+		return true
+	}
+
+	nativeDescription := nativeDevice.Description
+	if nativeDescription == "" {
+		nativeDescription = nativeDevice.Name
+	}
+	if nativeDescription == "" || !ml.SimilarDeviceDescription(description, nativeDescription) {
+		slog.Debug("skipping Vulkan native metadata with mismatched device name",
+			"llama_server_name", description,
+			"native_name", nativeDescription)
+		return false
+	}
+	if nativeDevice.TotalMemory != 0 && !ml.SimilarDeviceMemory(totalBytes, nativeDevice.TotalMemory) {
+		slog.Debug("skipping Vulkan native metadata with mismatched memory",
+			"llama_server_name", description,
+			"llama_server_total", totalBytes,
+			"native_total", nativeDevice.TotalMemory)
+		return false
+	}
+
+	return true
 }
 
 func cudaRuntimeVersion(libDirs []string) (int, int, bool) {

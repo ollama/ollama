@@ -385,6 +385,32 @@ Available devices:
 		}
 	})
 
+	t.Run("skips mismatched Vulkan native metadata", func(t *testing.T) {
+		output := `Available devices:
+  Vulkan0: Intel(R) UHD Graphics 770 (32768 MiB, 31000 MiB free)
+`
+		nativeDevices := []nativeProbeDevice{{
+			Library:             "Vulkan",
+			Index:               0,
+			IndexMatchesBackend: true,
+			Description:         "NVIDIA GeForce RTX 4060 Ti",
+			DeviceID:            "0000:05:00.0",
+			IntegratedKnown:     true,
+			TotalMemory:         16107 * 1024 * 1024,
+		}}
+
+		devices := parseLlamaServerDevicesWithNative(output, []string{"/lib/ollama", "/lib/ollama/vulkan"}, nativeDevices)
+		if len(devices) != 1 {
+			t.Fatalf("got %d devices, want 1", len(devices))
+		}
+		if devices[0].PCIID != "" {
+			t.Fatalf("PCIID = %q, want empty", devices[0].PCIID)
+		}
+		if devices[0].Integrated {
+			t.Fatal("Integrated = true, want false")
+		}
+	})
+
 	t.Run("cuda runtime version", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "libcudart.so.12.8.90"), nil, 0o644); err != nil {
@@ -428,6 +454,15 @@ Available devices:
 				applied: true,
 			},
 			{
+				name: "matches names when order differs",
+				probed: []vulkanPhysicalDevice{
+					{Name: "AMD Radeon RX 7900 XTX", Integrated: false},
+					{Name: "AMD Radeon(TM) Graphics", Integrated: true},
+				},
+				want:    []bool{true, false, false},
+				applied: true,
+			},
+			{
 				name: "skips when names do not line up",
 				probed: []vulkanPhysicalDevice{
 					{Name: "Wrong GPU", Integrated: true},
@@ -441,7 +476,7 @@ Available devices:
 				want:   []bool{false, false, false},
 			},
 			{
-				name: "skips when already classified",
+				name: "overwrites stale classification",
 				devices: []ml.DeviceInfo{
 					{DeviceID: ml.DeviceID{ID: "0", Library: "Vulkan"}, Description: "AMD Radeon(TM) Graphics", Integrated: true},
 					{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Description: "AMD Radeon RX 7900 XTX"},
@@ -450,7 +485,8 @@ Available devices:
 					{Name: "AMD Radeon(TM) Graphics", Integrated: false},
 					{Name: "AMD Radeon RX 7900 XTX", Integrated: false},
 				},
-				want: []bool{true, false},
+				want:    []bool{false, false},
+				applied: true,
 			},
 		}
 

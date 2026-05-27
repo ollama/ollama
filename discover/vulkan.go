@@ -61,16 +61,14 @@ func refineWindowsVulkanDevices(devices []ml.DeviceInfo, libDirs []string) []ml.
 	}
 
 	var vulkanIndexes []int
-	hasIntegratedVulkan := false
 	for i, device := range devices {
 		if device.Library != "Vulkan" {
 			continue
 		}
 		vulkanIndexes = append(vulkanIndexes, i)
-		hasIntegratedVulkan = hasIntegratedVulkan || device.Integrated
 	}
 
-	if len(vulkanIndexes) == 0 || hasIntegratedVulkan {
+	if len(vulkanIndexes) == 0 {
 		return devices
 	}
 
@@ -93,9 +91,6 @@ func applyWindowsVulkanRefinement(devices []ml.DeviceInfo, probed []vulkanPhysic
 	var vulkanIndexes []int
 	for i, device := range devices {
 		if device.Library == "Vulkan" {
-			if device.Integrated {
-				return false
-			}
 			vulkanIndexes = append(vulkanIndexes, i)
 		}
 	}
@@ -106,17 +101,30 @@ func applyWindowsVulkanRefinement(devices []ml.DeviceInfo, probed []vulkanPhysic
 		return false
 	}
 
-	for i, probedDevice := range probed {
-		description := devices[vulkanIndexes[i]].Description
-		if !sameVulkanDeviceName(description, probedDevice.Name) {
+	matches := make([]int, len(vulkanIndexes))
+	for i := range matches {
+		matches[i] = -1
+	}
+	used := make([]bool, len(probed))
+	for i, deviceIndex := range vulkanIndexes {
+		description := devices[deviceIndex].Description
+		for j, probedDevice := range probed {
+			if used[j] || !sameVulkanDeviceName(description, probedDevice.Name) {
+				continue
+			}
+			matches[i] = j
+			used[j] = true
+			break
+		}
+		if matches[i] < 0 {
 			slog.Debug("windows vulkan device refinement skipped: device name mismatch",
-				"index", i, "llama_server_name", description, "vulkan_name", probedDevice.Name)
+				"index", i, "llama_server_name", description)
 			return false
 		}
 	}
 
-	for i, probedDevice := range probed {
-		devices[vulkanIndexes[i]].Integrated = probedDevice.Integrated
+	for i, probedIndex := range matches {
+		devices[vulkanIndexes[i]].Integrated = probed[probedIndex].Integrated
 	}
 
 	slog.Debug("windows vulkan device refinement applied", "devices", len(vulkanIndexes))
@@ -124,5 +132,5 @@ func applyWindowsVulkanRefinement(devices []ml.DeviceInfo, probed []vulkanPhysic
 }
 
 func sameVulkanDeviceName(a, b string) bool {
-	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+	return ml.SimilarDeviceDescription(a, b)
 }

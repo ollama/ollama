@@ -449,6 +449,18 @@ const (
 )
 
 func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
+	if a.PCIID != "" && b.PCIID != "" {
+		if !strings.EqualFold(a.PCIID, b.PCIID) {
+			return UniqueDevice
+		}
+		if a.Library == b.Library {
+			return SameBackendDevice
+		}
+		return DuplicateDevice
+	}
+	if likelyVulkanDuplicate(a, b) {
+		return DuplicateDevice
+	}
 	if a.PCIID != b.PCIID {
 		return UniqueDevice
 	}
@@ -460,6 +472,73 @@ func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
 		return SameBackendDevice
 	}
 	return DuplicateDevice
+}
+
+func likelyVulkanDuplicate(a, b DeviceInfo) bool {
+	if a.Library == b.Library {
+		return false
+	}
+	vulkan, other := a, b
+	if b.Library == "Vulkan" {
+		vulkan, other = b, a
+	}
+	if vulkan.Library != "Vulkan" {
+		return false
+	}
+	if other.Library != "CUDA" && other.Library != "ROCm" {
+		return false
+	}
+	if normalizeDeviceDescription(vulkan.Description) == "" {
+		return false
+	}
+	if !SimilarDeviceDescription(vulkan.Description, other.Description) {
+		return false
+	}
+	return SimilarDeviceMemory(vulkan.TotalMemory, other.TotalMemory)
+}
+
+// SimilarDeviceDescription reports whether two backend device descriptions are
+// close enough to identify the same physical GPU across different libraries.
+func SimilarDeviceDescription(a, b string) bool {
+	normalizedA := normalizeDeviceDescription(a)
+	return normalizedA != "" && normalizedA == normalizeDeviceDescription(b)
+}
+
+func normalizeDeviceDescription(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	depth := 0
+	for _, r := range s {
+		switch {
+		case r == '(':
+			depth++
+			continue
+		case r == ')':
+			if depth > 0 {
+				depth--
+				continue
+			}
+		case depth > 0:
+			continue
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func SimilarDeviceMemory(a, b uint64) bool {
+	if a == 0 || b == 0 {
+		return false
+	}
+	maxMemory := max(a, b)
+	tolerance := maxMemory / 20
+	if tolerance < 512*1024*1024 {
+		tolerance = 512 * 1024 * 1024
+	}
+	return maxMemory-min(a, b) <= tolerance
 }
 
 // For a SameBackendDevice, return true if b is better than a

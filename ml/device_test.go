@@ -99,6 +99,72 @@ func TestGetDevicesEnvFiltersSingleDevice(t *testing.T) {
 	}
 }
 
+func TestDeviceCompareVulkanDuplicates(t *testing.T) {
+	tests := []struct {
+		name string
+		a    DeviceInfo
+		b    DeviceInfo
+		want DeviceComparison
+	}{
+		{
+			name: "vulkan duplicate with missing pci",
+			a: DeviceInfo{
+				DeviceID:    DeviceID{Library: "CUDA", ID: "0"},
+				Description: "NVIDIA GeForce RTX 4060 Ti",
+				PCIID:       "0000:01:00.0",
+				TotalMemory: 16 * 1024 * 1024 * 1024,
+			},
+			b: DeviceInfo{
+				DeviceID:    DeviceID{Library: "Vulkan", ID: "2"},
+				Description: "NVIDIA GeForce RTX 4060 Ti",
+				TotalMemory: 16107 * 1024 * 1024,
+			},
+			want: DuplicateDevice,
+		},
+		{
+			name: "vulkan radv suffix duplicate",
+			a: DeviceInfo{
+				DeviceID:    DeviceID{Library: "ROCm", ID: "0"},
+				Description: "AMD Radeon RX 6400",
+				PCIID:       "0000:03:00.0",
+				TotalMemory: 4 * 1024 * 1024 * 1024,
+			},
+			b: DeviceInfo{
+				DeviceID:    DeviceID{Library: "Vulkan", ID: "0"},
+				Description: "AMD Radeon RX 6400 (RADV NAVI24)",
+				TotalMemory: 4096 * 1024 * 1024,
+			},
+			want: DuplicateDevice,
+		},
+		{
+			name: "different vulkan igpu",
+			a: DeviceInfo{
+				DeviceID:    DeviceID{Library: "CUDA", ID: "0"},
+				Description: "NVIDIA GeForce RTX 4060 Ti",
+				PCIID:       "0000:01:00.0",
+				TotalMemory: 16 * 1024 * 1024 * 1024,
+			},
+			b: DeviceInfo{
+				DeviceID:    DeviceID{Library: "Vulkan", ID: "0"},
+				Description: "Intel(R) UHD Graphics 770",
+				TotalMemory: 32 * 1024 * 1024 * 1024,
+			},
+			want: UniqueDevice,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.a.Compare(tt.b); got != tt.want {
+				t.Fatalf("Compare = %v, want %v", got, tt.want)
+			}
+			if got := tt.b.Compare(tt.a); got != tt.want {
+				t.Fatalf("reverse Compare = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFlashAttentionSupported(t *testing.T) {
 	tests := []struct {
 		name string
