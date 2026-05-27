@@ -11,6 +11,10 @@ func (p *GlmOcrParser) HasThinkingSupport() bool {
 	return false
 }
 
+func (p *GlmOcrParser) CanToggleThinking() bool {
+	return false
+}
+
 func (p *GlmOcrParser) Init(tools []api.Tool, _ *api.Message, _ *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	return tools

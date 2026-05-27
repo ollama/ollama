@@ -461,6 +461,11 @@ func (h *HarmonyMessageHandler) HasThinkingSupport() bool {
 	return true
 }
 
+// CanToggleThinking implements the Parser interface.
+func (h *HarmonyMessageHandler) CanToggleThinking() bool {
+	return false
+}
+
 func (m *FunctionNameMap) ConvertAndAdd(userFunctionName string) string {
 	harmonyFunctionName := m.deriveName(userFunctionName)
 	// built-in functions should not be renamed

@@ -27,6 +27,90 @@ func (m *mockParser) HasThinkingSupport() bool {
 	return false
 }
 
+func (m *mockParser) CanToggleThinking() bool {
+	return false
+}
+
+func TestCanToggleThinking(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{name: "qwen3", want: false},
+		{name: "qwen3-thinking", want: true},
+		{name: "qwen3.5", want: true},
+		{name: "qwen3-coder", want: false},
+		{name: "qwen3-vl-instruct", want: false},
+		{name: "qwen3-vl-thinking", want: false},
+		{name: "ministral", want: false},
+		{name: "passthrough", want: false},
+		{name: "harmony", want: false},
+		{name: "cogito", want: true},
+		{name: "deepseek3", want: true},
+		{name: "olmo3", want: false},
+		{name: "olmo3-think", want: false},
+		{name: "nemotron-3-nano", want: true},
+		{name: "functiongemma", want: false},
+		{name: "glm-4.7", want: true},
+		{name: "gemma4", want: true},
+		{name: "gemma4-no-thinking", want: false},
+		{name: "glm-ocr", want: false},
+		{name: "lfm2", want: false},
+		{name: "lfm2-thinking", want: true},
+		{name: "laguna", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := ParserForName(tt.name)
+			if parser == nil {
+				t.Fatalf("expected parser %q to exist", tt.name)
+			}
+			if got := parser.CanToggleThinking(); got != tt.want {
+				t.Errorf("CanToggleThinking() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParserForArchitecture(t *testing.T) {
+	tests := []struct {
+		arch       string
+		wantParser string
+		wantToggle bool
+	}{
+		{arch: "gemma4", wantParser: "gemma4", wantToggle: true},
+		{arch: "laguna", wantParser: "laguna", wantToggle: true},
+		{arch: "nemotron_h", wantParser: "nemotron-3-nano", wantToggle: true},
+		{arch: "nemotron_h_moe", wantParser: "nemotron-3-nano", wantToggle: true},
+		{arch: "nemotron_h_omni", wantParser: "nemotron-3-nano", wantToggle: true},
+		{arch: "glm5.1"},
+		{arch: "kimi-k2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.arch, func(t *testing.T) {
+			if got := ParserNameForArchitecture(tt.arch); got != tt.wantParser {
+				t.Fatalf("ParserNameForArchitecture() = %q, want %q", got, tt.wantParser)
+			}
+
+			parser := ParserForArchitecture(tt.arch)
+			if tt.wantParser == "" {
+				if parser != nil {
+					t.Fatalf("ParserForArchitecture() = %#v, want nil", parser)
+				}
+				return
+			}
+			if parser == nil {
+				t.Fatalf("ParserForArchitecture() = nil, want parser")
+			}
+			if got := parser.CanToggleThinking(); got != tt.wantToggle {
+				t.Fatalf("CanToggleThinking() = %v, want %v", got, tt.wantToggle)
+			}
+		})
+	}
+}
+
 func TestRegisterCustomParser(t *testing.T) {
 	// Register a custom parser
 	Register("custom-parser", func() Parser {

@@ -25,3 +25,18 @@ export function useHasToolsCapability(modelName: string | undefined) {
   const { data: capabilitiesResponse } = useModelCapabilities(modelName);
   return capabilitiesResponse?.capabilities?.includes("tools") ?? false;
 }
+
+export function useHasThinkingCapability(modelName: string | undefined) {
+  const { data: capabilitiesResponse } = useModelCapabilities(modelName);
+  return capabilitiesResponse?.capabilities?.includes("thinking") ?? false;
+}
+
+export function useCanToggleThinking(modelName: string | undefined) {
+  const { data: capabilitiesResponse } = useModelCapabilities(modelName);
+  return capabilitiesResponse?.capabilities?.includes("thinking_toggle") ?? false;
+}
+
+export function useHasThinkingLevels(modelName: string | undefined) {
+  const { data: capabilitiesResponse } = useModelCapabilities(modelName);
+  return capabilitiesResponse?.capabilities?.includes("thinking_levels") ?? false;
+}

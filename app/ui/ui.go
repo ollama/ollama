@@ -33,6 +33,7 @@ import (
 	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/types/model"
 	_ "github.com/tkrajina/typescriptify-golang-structs/typescriptify"
 )
@@ -296,7 +297,7 @@ func (s *Server) Handler() http.Handler {
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
 	mux.Handle("GET /api/tags", ollamaProxy)
-	mux.Handle("POST /api/show", ollamaProxy)
+	mux.Handle("POST /api/show", handle(s.showModel))
 	mux.Handle("GET /api/version", ollamaProxy)
 	mux.Handle("GET /api/status", ollamaProxy)
 	mux.Handle("HEAD /api/version", ollamaProxy)
@@ -350,6 +351,32 @@ func (s *Server) httpClient() *http.Client {
 // long requests aren't truncated
 func (s *Server) inferenceClient() *api.Client {
 	return api.NewClient(envconfig.Host(), userAgentHTTPClient(0))
+}
+
+func (s *Server) showModel(w http.ResponseWriter, r *http.Request) error {
+	if err := WaitForServer(r.Context(), 10*time.Second); err != nil {
+		return err
+	}
+
+	var req api.ShowRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+	if req.Model == "" {
+		req.Model = req.Name
+	}
+	if req.Model == "" {
+		return fmt.Errorf("model is required")
+	}
+
+	resp, err := s.inferenceClient().Show(r.Context(), &req)
+	if err != nil {
+		return err
+	}
+
+	normalizeAppShowCapabilities(resp)
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(resp)
 }
 
 func userAgentHTTPClient(timeout time.Duration) *http.Client {
@@ -816,14 +843,15 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	think := slices.Contains(details.Capabilities, model.CapabilityThinking)
-
-	var thinkValue any
-
-	if req.Think != nil {
-		thinkValue = req.Think
-	} else {
-		thinkValue = think
+	settings, err := s.Store.Settings()
+	if err != nil {
+		errorEvent := s.getError(err)
+		json.NewEncoder(w).Encode(errorEvent)
+		flusher.Flush()
+		return fmt.Errorf("failed to get settings: %w", err)
 	}
+
+	thinkValue := resolveChatThinkValue(settings, req.Think, think)
 
 	// Check if the last user message has attachments
 	// TODO (parthsareen): this logic will change with directory drag and drop
@@ -1689,6 +1717,97 @@ func supportsBrowserTools(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "gpt-oss")
 }
 
+func resolveChatThinkValue(settings store.Settings, requestThink any, modelSupportsThinking bool) any {
+	if requestThink != nil {
+		return requestThink
+	}
+	if !settings.ThinkEnabled {
+		return false
+	}
+	return modelSupportsThinking
+}
+
+func normalizeAppShowCapabilities(resp *api.ShowResponse) {
+	if resp == nil || !slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+		return
+	}
+
+	if isGptOSSShowResponse(resp) {
+		appendShowCapability(resp, model.CapabilityThinkingToggle)
+		appendShowCapability(resp, model.CapabilityThinkingLevels)
+		return
+	}
+
+	if slices.Contains(resp.Capabilities, model.CapabilityThinkingToggle) {
+		return
+	}
+
+	for _, parserName := range showCapabilityParserCandidates(resp) {
+		parser := parsers.ParserForName(parserName)
+		if parser == nil {
+			parser = parsers.ParserForArchitecture(parserName)
+		}
+		if parser == nil {
+			continue
+		}
+		if parser.HasThinkingSupport() && parser.CanToggleThinking() {
+			appendShowCapability(resp, model.CapabilityThinkingToggle)
+			return
+		}
+	}
+}
+
+func appendShowCapability(resp *api.ShowResponse, cap model.Capability) {
+	if !slices.Contains(resp.Capabilities, cap) {
+		resp.Capabilities = append(resp.Capabilities, cap)
+	}
+}
+
+func isGptOSSShowResponse(resp *api.ShowResponse) bool {
+	for _, candidate := range showCapabilityParserCandidates(resp) {
+		if candidate == "gptoss" || candidate == "gpt-oss" {
+			return true
+		}
+	}
+	return false
+}
+
+func showCapabilityParserCandidates(resp *api.ShowResponse) []string {
+	rawCandidates := []string{
+		resp.Parser,
+		resp.Details.Family,
+		resp.Details.ParentModel,
+		resp.RemoteModel,
+	}
+	for _, key := range []string{"general.architecture", "general.basename"} {
+		if value, ok := resp.ModelInfo[key].(string); ok {
+			rawCandidates = append(rawCandidates, value)
+		}
+	}
+
+	candidates := make([]string, 0, len(rawCandidates)*2)
+	seen := map[string]struct{}{}
+	add := func(s string) {
+		s = strings.TrimSpace(strings.ToLower(s))
+		if s == "" {
+			return
+		}
+		if base, _, ok := strings.Cut(s, ":"); ok {
+			s = base
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		candidates = append(candidates, s)
+	}
+
+	for _, candidate := range rawCandidates {
+		add(candidate)
+	}
+	return candidates
+}
+
 // buildChatRequest converts store.Chat to api.ChatRequest
 func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, availableTools []map[string]any) (*api.ChatRequest, error) {
 	var msgs []api.Message
@@ -1755,11 +1874,8 @@ func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, ava
 
 	var thinkValue *api.ThinkValue
 	if think != nil {
-		// Only set Think if it's actually requesting thinking
 		if boolValue, ok := think.(bool); ok {
-			if boolValue {
-				thinkValue = &api.ThinkValue{Value: boolValue}
-			}
+			thinkValue = &api.ThinkValue{Value: boolValue}
 		} else if stringValue, ok := think.(string); ok {
 			if stringValue != "" && stringValue != "none" {
 				thinkValue = &api.ThinkValue{Value: stringValue}

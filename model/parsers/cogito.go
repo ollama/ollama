@@ -46,6 +46,10 @@ func (p *CogitoParser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *CogitoParser) CanToggleThinking() bool {
+	return true
+}
+
 func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Tool, thinkValue *api.ThinkValue) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 

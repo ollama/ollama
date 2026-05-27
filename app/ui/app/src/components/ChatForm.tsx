@@ -20,6 +20,9 @@ import { useSelectedModel } from "@/hooks/useSelectedModel";
 import {
   useHasVisionCapability,
   useHasToolsCapability,
+  useHasThinkingCapability,
+  useCanToggleThinking,
+  useHasThinkingLevels,
 } from "@/hooks/useModelCapabilities";
 import { useUser } from "@/hooks/useUser";
 import { DisplayLogin } from "@/components/DisplayLogin";
@@ -145,7 +148,7 @@ function ChatForm({
   const {
     settings: {
       webSearchEnabled,
-      thinkEnabled,
+      thinkEnabled: defaultThinkEnabled,
       thinkLevel: settingsThinkLevel,
     },
     setSettings,
@@ -153,28 +156,37 @@ function ChatForm({
   const { cloudDisabled } = useCloudStatus();
 
   const supportsWebSearch = useHasToolsCapability(selectedModel?.model);
-  // Use per-chat thinking level instead of global
-  const thinkLevel: ThinkingLevel =
+  const supportsThinking = useHasThinkingCapability(selectedModel?.model);
+  const supportsThinkToggling = useCanToggleThinking(selectedModel?.model);
+  const modelSupportsThinkingLevels = useHasThinkingLevels(
+    selectedModel?.model,
+  );
+  const defaultThinkLevel: ThinkingLevel =
     settingsThinkLevel === "none" || !settingsThinkLevel
       ? "medium"
       : (settingsThinkLevel as ThinkingLevel);
-  const setThinkingLevel = (newLevel: ThinkingLevel) => {
-    setSettings({ ThinkLevel: newLevel });
-  };
-
-  const modelSupportsThinkingLevels =
-    selectedModel?.model.toLowerCase().startsWith("gpt-oss") || false;
-  const supportsThinkToggling =
-    selectedModel?.model.toLowerCase().startsWith("deepseek-v3.1") || false;
+  const [chatThinkEnabled, setChatThinkEnabled] =
+    useState(defaultThinkEnabled);
+  const [chatThinkLevel, setChatThinkLevel] =
+    useState<ThinkingLevel>(defaultThinkLevel);
 
   useEffect(() => {
-    if (supportsThinkToggling && thinkEnabled && webSearchEnabled) {
+    setChatThinkEnabled(defaultThinkEnabled);
+    setChatThinkLevel(defaultThinkLevel);
+  }, [chatId, defaultThinkEnabled, defaultThinkLevel]);
+
+  const setThinkingLevel = (newLevel: ThinkingLevel) => {
+    setChatThinkEnabled(true);
+    setChatThinkLevel(newLevel);
+  };
+  useEffect(() => {
+    if (supportsThinkToggling && chatThinkEnabled && webSearchEnabled) {
       setSettings({ WebSearchEnabled: false });
     }
   }, [
     selectedModel?.model,
     supportsThinkToggling,
-    thinkEnabled,
+    chatThinkEnabled,
     webSearchEnabled,
     setSettings,
   ]);
@@ -228,7 +240,7 @@ function ChatForm({
         }));
       }
     },
-    [],
+    [modelSupportsThinkingLevels],
   );
 
   useEffect(() => {
@@ -466,7 +478,13 @@ function ChatForm({
       window.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("paste", handlePaste);
     };
-  }, [isStreaming, editingMessage, onCancelEdit, navigateToNextElement]);
+  }, [
+    isStreaming,
+    editingMessage,
+    onCancelEdit,
+    navigateToNextElement,
+    modelSupportsThinkingLevels,
+  ]);
 
   const handleSubmit = async () => {
     if (!message.content.trim() || isStreaming || isDownloading) return;
@@ -492,10 +510,14 @@ function ChatForm({
 
     const useWebSearch =
       supportsWebSearch && webSearchEnabled && !cloudDisabled;
-    const useThink = modelSupportsThinkingLevels
-      ? thinkLevel
-      : supportsThinkToggling
-        ? thinkEnabled
+    const useThink = chatThinkEnabled
+      ? supportsThinkToggling
+        ? modelSupportsThinkingLevels
+          ? chatThinkLevel
+          : true
+        : undefined
+      : supportsThinking
+        ? false
         : undefined;
 
     if (onSubmit) {
@@ -894,7 +916,9 @@ function ChatForm({
                       mode="thinkingLevel"
                       ref={thinkingLevelButtonRef}
                       isVisible={modelSupportsThinkingLevels}
-                      currentLevel={thinkLevel}
+                      isActive={chatThinkEnabled}
+                      currentLevel={chatThinkLevel}
+                      onToggle={() => setChatThinkEnabled(false)}
                       onLevelChange={setThinkingLevel}
                       onDropdownToggle={handleThinkingLevelDropdownToggle}
                     />
@@ -909,18 +933,16 @@ function ChatForm({
                       isVisible={
                         supportsThinkToggling && !modelSupportsThinkingLevels
                       }
-                      isActive={thinkEnabled}
+                      isActive={chatThinkEnabled}
                       onToggle={() => {
                         // DeepSeek-v3 specific - thinking and web search are mutually exclusive
                         if (supportsThinkToggling) {
-                          const enable = !thinkEnabled;
-                          setSettings({
-                            ThinkEnabled: enable,
-                            ...(enable ? { WebSearchEnabled: false } : {}),
-                          });
+                          const enable = !chatThinkEnabled;
+                          setChatThinkEnabled(enable);
+                          if (enable) setSettings({ WebSearchEnabled: false });
                           return;
                         }
-                        setSettings({ ThinkEnabled: !thinkEnabled });
+                        setChatThinkEnabled(!chatThinkEnabled);
                       }}
                     />
                   </>
@@ -935,9 +957,9 @@ function ChatForm({
                     }
                     const enable = !webSearchEnabled;
                     if (supportsThinkToggling && enable) {
+                      setChatThinkEnabled(false);
                       setSettings({
                         WebSearchEnabled: true,
-                        ThinkEnabled: false,
                       });
                       return;
                     }
