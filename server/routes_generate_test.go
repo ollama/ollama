@@ -2957,7 +2957,10 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	opts := api.DefaultOptions()
+	opts, err := (&Server{}).modelOptions(loadedModel, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := Server{
 		sched: &Scheduler{
 			pendingReqCh:  make(chan *LlmRequest, 1),
@@ -3044,7 +3047,10 @@ func newImageGenerateTestServer(t *testing.T, mock *mockRunner) Server {
 		t.Fatal(err)
 	}
 
-	opts := api.DefaultOptions()
+	opts, err := (&Server{}).modelOptions(loadedModel, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := Server{
 		sched: &Scheduler{
 			pendingReqCh:  make(chan *LlmRequest, 1),
