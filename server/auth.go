@@ -80,7 +80,7 @@ func getAuthorizationToken(ctx context.Context, challenge registryChallenge, ori
 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		return "", fmt.Errorf("%d: %v", response.StatusCode, err)
+		return "", fmt.Errorf("%d: %w", response.StatusCode, err)
 	}
 
 	if response.StatusCode >= http.StatusBadRequest {
