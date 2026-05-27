@@ -1,11 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { deleteAllChats } from "@/api";
-import { useNavigate } from "@tanstack/react-router";
 import { useStreamingContext } from "@/contexts/StreamingContext";
 
 export function useDeleteAllChats() {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const {
     abortControllers,
     setStreamingChatIds,
@@ -30,11 +28,10 @@ export function useDeleteAllChats() {
       setAbortControllers(new Map());
       setDownloadProgress(new Map());
       // Remove the chat list and all per-chat entries from the cache
-      // immediately so the sidebar is empty on navigation and no stale
-      // deleted-chat data can be served from cache on a direct URL visit.
+      // immediately so the sidebar is empty when the user navigates back
+      // and no stale deleted-chat data can be served from cache.
       queryClient.removeQueries({ queryKey: ["chats"] });
       queryClient.removeQueries({ queryKey: ["chat"] });
-      navigate({ to: "/c/$chatId", params: { chatId: "new" } });
     },
     onError: (error) => {
       console.error("Failed to delete all chats:", error);
