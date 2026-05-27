@@ -3,7 +3,9 @@ package mlxthread
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
+	"runtime/debug"
 	"sync/atomic"
 )
 
@@ -24,8 +26,21 @@ type job struct {
 }
 
 type result struct {
-	err        error
-	panicValue any
+	err   error
+	panic *panicError
+}
+
+// panicError carries a value recovered from the worker goroutine together with
+// the stack captured at recovery, before the original stack unwinds. Because it
+// implements error, re-panicking with it makes the runtime print the original
+// worker location in the fatal trace instead of this package's re-panic site.
+type panicError struct {
+	value any
+	stack []byte
+}
+
+func (p *panicError) Error() string {
+	return fmt.Sprintf("%v\n\nmlx worker stack:\n%s", p.value, p.stack)
 }
 
 // Start creates a long-lived worker goroutine locked to one OS thread.
@@ -40,8 +55,8 @@ func Start(name string, init func() error) (*Thread, error) {
 	go t.loop(init, initResult)
 
 	res := <-initResult
-	if res.panicValue != nil {
-		panic(res.panicValue)
+	if res.panic != nil {
+		panic(res.panic)
 	}
 	if res.err != nil {
 		return nil, res.err
@@ -60,8 +75,8 @@ func (t *Thread) Do(ctx context.Context, fn func() error) error {
 	if err != nil {
 		return err
 	}
-	if res.panicValue != nil {
-		panic(res.panicValue)
+	if res.panic != nil {
+		panic(res.panic)
 	}
 	return res.err
 }
@@ -101,8 +116,8 @@ func (t *Thread) Stop(ctx context.Context, cleanup func()) error {
 		}
 		return err
 	}
-	if res.panicValue != nil {
-		panic(res.panicValue)
+	if res.panic != nil {
+		panic(res.panic)
 	}
 	if res.err != nil {
 		return res.err
@@ -123,7 +138,7 @@ func (t *Thread) loop(init func() error, initResult chan<- result) {
 
 	res := run(init)
 	initResult <- res
-	if res.err != nil || res.panicValue != nil {
+	if res.err != nil || res.panic != nil {
 		close(t.done)
 		return
 	}
@@ -166,7 +181,7 @@ func (t *Thread) enqueue(ctx context.Context, fn func() error, stop, allowStoppi
 func run(fn func() error) (res result) {
 	defer func() {
 		if v := recover(); v != nil {
-			res.panicValue = v
+			res.panic = &panicError{value: v, stack: debug.Stack()}
 		}
 	}()
 	if fn != nil {
