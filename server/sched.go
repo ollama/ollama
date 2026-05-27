@@ -297,6 +297,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			}
 			runner.refMu.Lock()
 			runner.refCount--
+			runner.lastActive = time.Now()
 			if runner.refCount <= 0 {
 				if runner.sessionDuration <= 0 {
 					slog.Debug("runner with zero duration has gone idle, expiring to unload", "runner", runner)
@@ -576,6 +577,7 @@ iGPUScan:
 		}
 		runner.refCount++
 		runner.loading = false
+			runner.lastActive = time.Now()
 		go func() {
 			<-req.ctx.Done()
 			slog.Debug("context for request finished")
@@ -646,6 +648,7 @@ type runnerRef struct {
 	sessionDuration time.Duration
 	expireTimer     *time.Timer
 	expiresAt       time.Time
+	lastActive      time.Time
 
 	model       *Model
 	modelPath   string
@@ -701,7 +704,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
 		(!runner.model.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew)) || // have the runner options changed?
-		runner.llama.Ping(ctx) != nil {
+		(time.Since(runner.lastActive) > 5*time.Second && runner.llama.Ping(ctx) != nil) {
 		return true
 	}
 

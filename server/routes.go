@@ -16,12 +16,14 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -125,6 +127,20 @@ var (
 	errBadTemplate = errors.New("template error")
 )
 
+var modelCache sync.Map // cache GetModel results
+
+func getCachedModel(name string) (*Model, error) {
+	if cached, ok := modelCache.Load(name); ok {
+		return cached.(*Model), nil
+	}
+	m, err := GetModel(name)
+	if err != nil {
+		return nil, err
+	}
+	modelCache.Store(name, m)
+	return m, nil
+}
+
 func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	opts := api.DefaultOptions()
 	if opts.NumCtx == 0 {
@@ -149,7 +165,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, fmt.Errorf("model %w", errRequired)
 	}
 
-	model, err := GetModel(name)
+	model, err := getCachedModel(name)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -232,7 +248,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	m, err := GetModel(name.String())
+	m, err := getCachedModel(name.String())
 	if err != nil {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
@@ -1219,7 +1235,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return nil, err
 	}
 
-	m, err := GetModel(name.String())
+	m, err := getCachedModel(name.String())
 	if err != nil {
 		return nil, err
 	}
@@ -2186,7 +2202,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	m, err := GetModel(name.String())
+	m, err := getCachedModel(name.String())
 	if err != nil {
 		switch {
 		case os.IsNotExist(err):
