@@ -1825,6 +1825,12 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
 
         auto pipeline = ggml_metal_library_get_pipeline_mul_mm(lib, op);
 
+        if (!pipeline.pipeline) {
+            GGML_LOG_ERROR("%s: error: failed to get pipeline for mul_mm op with src0=%s, src1=%s\n",
+                    __func__, ggml_type_name(op->src[0]->type), ggml_type_name(op->src[1]->type));
+            return 0;
+        }
+
         ggml_metal_kargs_mul_mm args = {
             /*.ne00 =*/ ne00,
             /*.ne02 =*/ ne02,
@@ -2015,6 +2021,12 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
 
         {
             auto pipeline = ggml_metal_library_get_pipeline_mul_mm_id(lib, op);
+
+            if (!pipeline.pipeline) {
+                GGML_LOG_ERROR("%s: error: failed to get pipeline for mul_mm_id op with src0=%s, src1=%s\n",
+                        __func__, ggml_type_name(op->src[0]->type), ggml_type_name(op->src[1]->type));
+                return 0;
+            }
 
             ggml_metal_kargs_mul_mm_id args = {
                 /*.ne00  =*/ ne00,
