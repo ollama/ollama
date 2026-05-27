@@ -208,7 +208,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	modelRef, err := parseAndValidateModelRef(req.Model)
+	modelRef, err := resolveModelRefWithLocalFallback(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusNotFound, fmt.Sprintf("model '%s' not found", req.Model))
 		return
@@ -698,7 +698,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	modelRef, err := parseAndValidateModelRef(req.Model)
+	modelRef, err := resolveModelRefWithLocalFallback(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusNotFound, fmt.Sprintf("model '%s' not found", req.Model))
 		return
@@ -879,7 +879,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	modelRef, err := parseAndValidateModelRef(req.Model)
+	modelRef, err := resolveModelRefWithLocalFallback(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusBadRequest, "model is required")
 		return
@@ -1066,6 +1066,32 @@ func getExistingName(n model.Name) (model.Name, error) {
 	return n, nil
 }
 
+// resolveModelRefWithLocalFallback checks if a model with the original name
+// exists locally before treating a `-cloud` suffix as a cloud source indicator.
+// This fixes ambiguity where tags legitimately end in `-cloud` (e.g. `397b-cloud`).
+func resolveModelRefWithLocalFallback(raw string) (parsedModelRef, error) {
+	modelRef, err := parseAndValidateModelRef(raw)
+	if err != nil {
+		return parsedModelRef{}, err
+	}
+
+	if modelRef.Source == modelSourceCloud {
+		originalName := model.ParseName(modelRef.Original)
+		if originalName.IsValid() {
+			if _, err := GetModel(originalName.String()); err == nil {
+				return parsedModelRef{
+					Original: modelRef.Original,
+					Base:     modelRef.Original,
+					Name:     originalName,
+					Source:   modelSourceUnspecified,
+				}, nil
+			}
+		}
+	}
+
+	return modelRef, nil
+}
+
 func (s *Server) DeleteHandler(c *gin.Context) {
 	var r api.DeleteRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
@@ -1140,7 +1166,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		return
 	}
 
-	modelRef, err := parseAndValidateModelRef(req.Model)
+	modelRef, err := resolveModelRefWithLocalFallback(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusBadRequest, err.Error())
 		return
@@ -2162,7 +2188,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	modelRef, err := parseAndValidateModelRef(req.Model)
+	modelRef, err := resolveModelRefWithLocalFallback(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusBadRequest, "model is required")
 		return

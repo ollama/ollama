@@ -12,27 +12,39 @@ type TokenDecoderFunc func(tokenID int) string
 
 // CalculateLogprobs converts raw logits to log probabilities and finds top K tokens.
 // It uses numerically stable softmax to compute log probabilities.
-func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder TokenDecoderFunc) []llm.Logprob {
+// If temperature > 0, logits are scaled by temperature before computing probabilities,
+// matching the distribution used during sampling.
+func CalculateLogprobs(logits []float32, selectedToken int, topK int, temperature float32, decoder TokenDecoderFunc) []llm.Logprob {
 	if len(logits) == 0 {
 		return nil
 	}
 
+	// Apply temperature scaling to match the sampling distribution
+	scaledLogits := make([]float32, len(logits))
+	copy(scaledLogits, logits)
+	if temperature > 0 {
+		temp := max(temperature, 1e-7)
+		for i := range scaledLogits {
+			scaledLogits[i] = scaledLogits[i] / temp
+		}
+	}
+
 	// Step 1: Convert logits to log probabilities using numerically stable softmax
-	maxLogit := logits[0]
-	for _, logit := range logits[1:] {
+	maxLogit := scaledLogits[0]
+	for _, logit := range scaledLogits[1:] {
 		if logit > maxLogit {
 			maxLogit = logit
 		}
 	}
 
 	var sumExp float64
-	for _, logit := range logits {
+	for _, logit := range scaledLogits {
 		sumExp += math.Exp(float64(logit - maxLogit))
 	}
 	logSumExp := float32(math.Log(sumExp))
 
-	logProbs := make([]float32, len(logits))
-	for i, logit := range logits {
+	logProbs := make([]float32, len(scaledLogits))
+	for i, logit := range scaledLogits {
 		logProbs[i] = (logit - maxLogit) - logSumExp
 	}
 
