@@ -204,3 +204,8 @@ func (g *GrammarSampler) Accept(token int32) {
 func (g *GrammarSampler) Free() {
 	g.grammar.Free()
 }
+
+// Temperature returns the temperature used by this sampler
+func (s *Sampler) Temperature() float32 {
+	return s.temperature
+}
