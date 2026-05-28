@@ -166,6 +166,7 @@ type Tensor interface {
 	Conv1DDW(ctx Context, weight Tensor, s, p, d int) Tensor
 	SSMConv(ctx Context, kernel Tensor) Tensor
 	SSMScan(ctx Context, x, dt, A, B, C, ids Tensor) Tensor
+	GatedDeltaNet(ctx Context, k, v, gate, beta, state Tensor) Tensor
 
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
