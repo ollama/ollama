@@ -1868,10 +1868,8 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 		body["logprobs"] = true
 		body["top_logprobs"] = max(req.TopLogprobs, 1)
 	}
-	if req.Think != nil {
-		body["chat_template_kwargs"] = map[string]any{
-			"enable_thinking": req.Think.Bool(),
-		}
+	if kwargs := llamaServerChatTemplateKwargs(req.Think); kwargs != nil {
+		body["chat_template_kwargs"] = kwargs
 	}
 	if format, err := llamaServerChatResponseFormat(req.Format); err != nil {
 		return nil, err
@@ -1880,6 +1878,22 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 	}
 
 	return body, nil
+}
+
+func llamaServerChatTemplateKwargs(think *api.ThinkValue) map[string]any {
+	if think == nil {
+		return nil
+	}
+
+	kwargs := map[string]any{
+		"enable_thinking": think.Bool(),
+	}
+	if think.IsString() {
+		if effort := think.String(); effort != "" {
+			kwargs["reasoning_effort"] = effort
+		}
+	}
+	return kwargs
 }
 
 func llamaServerChatMessage(msg Message) (map[string]any, error) {

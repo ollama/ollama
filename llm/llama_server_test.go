@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -2576,6 +2577,45 @@ func TestAccumulatedToolCallsRejectsInvalidArguments(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "weather") {
 		t.Fatalf("expected function name in error, got %v", err)
+	}
+}
+
+func TestLlamaServerChatTemplateKwargs(t *testing.T) {
+	tests := []struct {
+		name  string
+		think *api.ThinkValue
+		want  map[string]any
+	}{
+		{
+			name: "unset",
+		},
+		{
+			name:  "disabled",
+			think: &api.ThinkValue{Value: false},
+			want:  map[string]any{"enable_thinking": false},
+		},
+		{
+			name:  "enabled uses template default effort",
+			think: &api.ThinkValue{Value: true},
+			want:  map[string]any{"enable_thinking": true},
+		},
+		{
+			name:  "explicit effort",
+			think: &api.ThinkValue{Value: "high"},
+			want: map[string]any{
+				"enable_thinking":  true,
+				"reasoning_effort": "high",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := llamaServerChatTemplateKwargs(tt.think)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("kwargs = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }
 
