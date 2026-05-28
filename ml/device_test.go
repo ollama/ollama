@@ -52,7 +52,7 @@ func TestGetDevicesEnvWarnsOnConflictingOverrides(t *testing.T) {
 	}
 }
 
-func TestGetDevicesEnvFiltersSingleDevice(t *testing.T) {
+func TestGetDevicesEnvFiltersVisibleDevices(t *testing.T) {
 	tests := []struct {
 		name string
 		gpus []DeviceInfo
@@ -71,7 +71,17 @@ func TestGetDevicesEnvFiltersSingleDevice(t *testing.T) {
 				{DeviceID: DeviceID{Library: "CUDA", ID: "3"}},
 				{DeviceID: DeviceID{Library: "CUDA", ID: "4"}},
 			},
-			key: "CUDA_VISIBLE_DEVICES",
+			key:  "CUDA_VISIBLE_DEVICES",
+			want: "3,4",
+		},
+		{
+			name: "multiple remapped CUDA",
+			gpus: []DeviceInfo{
+				{DeviceID: DeviceID{Library: "CUDA", ID: "0"}, FilterID: "0"},
+				{DeviceID: DeviceID{Library: "CUDA", ID: "1"}, FilterID: "2"},
+			},
+			key:  "CUDA_VISIBLE_DEVICES",
+			want: "0,2",
 		},
 		{
 			name: "single Vulkan",

@@ -632,7 +632,9 @@ func GetDevicesEnv(l []DeviceInfo) map[string]string {
 	if len(l) == 0 {
 		return nil
 	}
-	mustFilter := len(l) == 1
+	// CUDA-only groups need filtering so devices removed during discovery do
+	// not reappear in the child process.
+	mustFilter := len(l) == 1 || allDevicesUseLibrary(l, "CUDA")
 	env := map[string]string{}
 	for _, d := range l {
 		d.updateVisibleDevicesEnv(env, mustFilter)
@@ -645,6 +647,15 @@ func GetDevicesEnv(l []DeviceInfo) map[string]string {
 	}
 
 	return env
+}
+
+func allDevicesUseLibrary(l []DeviceInfo, library string) bool {
+	for _, d := range l {
+		if d.Library != library {
+			return false
+		}
+	}
+	return true
 }
 
 // NeedsInitValidation returns true if the device in question has the potential
@@ -689,7 +700,7 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 	case "CUDA":
 		if !mustFilter {
 			// By default we try to avoid filtering CUDA devices because ROCm also
-			// looks at the CUDA env var, and gets confused in mixed vendor environments.
+			// looks at the CUDA env var, and gets confused in mixed-vendor environments.
 			return
 		}
 		envVar = "CUDA_VISIBLE_DEVICES"

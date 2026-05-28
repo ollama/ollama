@@ -326,9 +326,8 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			rctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
 
-			// Apply any device filters to avoid re-discovering unsupported devices,
-			// and get IDs correct. GetDevicesEnv only filters visibility when this
-			// pass is narrowed to a single device.
+			// Apply any device filters to avoid re-discovering unsupported devices
+			// and keep remapped IDs aligned.
 			devFilter := ml.GetDevicesEnv(devices)
 
 			for dir := range libDirs {
