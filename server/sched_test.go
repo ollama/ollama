@@ -308,7 +308,8 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	b.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
 	c := newScenarioRequest(t, ctx, "model-c-10g-cpu", 10*format.GigaByte, nil, nil /* No GPU load */)
 	c.req.opts.NumGPU = 0                                                                                                                         // CPU load, will be allowed
-	b.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
+	c.req.sessionDuration = &api.Duration{Duration: 20 * time.Millisecond}                                                                        // longer than b so scheduler picks b to unload (b frees GPU memory for d)
+	b.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // shorter than c so scheduler picks b first
 	d := newScenarioRequest(t, ctx, "model-d-10g-gpu", 13*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 13 * format.GigaByte}) // Needs prior unloaded
 
 	s.newServerFn = a.newServer
@@ -394,16 +395,15 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	s.loadedMu.Lock()
 	require.Len(t, s.loaded, 2)
 	s.loadedMu.Unlock()
-	// Mark b done so it can unload
-	b.ctxDone()
-	// Report recovered VRAM usage so scheduler will finish waiting and unload
-	time.Sleep(1 * time.Millisecond)
+	// Update GPU view before releasing b so scheduler sees enough VRAM as soon as b unloads
 	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
 		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
 		g.TotalMemory = 24 * format.GigaByte
 		g.FreeMemory = 24 * format.GigaByte
 		return []ml.DeviceInfo{g}
 	}
+	// Mark b done so it can unload and d can load
+	b.ctxDone()
 	select {
 	case resp := <-d.req.successCh:
 		require.Equal(t, resp.llama, d.srv)
