@@ -763,6 +763,56 @@ ggml_metal_device_t ggml_metal_device_init(void) {
                 }
             }
 
+            // verify the tensor API supports mixed bfloat/half inputs used by some kernels
+            if (dev->props.has_tensor && dev->props.has_bfloat) {
+                const char * src_tensor_bf16_f16 = "\n"
+                    "#include <metal_stdlib> \n"
+                    "#include <metal_tensor> \n"
+                    "#include <MetalPerformancePrimitives/MetalPerformancePrimitives.h> \n"
+                    " \n"
+                    "using namespace metal; \n"
+                    "using namespace mpp::tensor_ops; \n"
+                    " \n"
+                    "kernel void dummy_kernel( \n"
+                    "    tensor<device bfloat, dextents<int32_t, 2>> A [[buffer(0)]], \n"
+                    "    tensor<device  half, dextents<int32_t, 2>> B [[buffer(1)]], \n"
+                    "    device float * C [[buffer(2)]], \n"
+                    "    uint2 tgid [[threadgroup_position_in_grid]]) \n"
+                    "{ \n"
+                    "    auto tA = A.slice(0, (int)tgid.y); \n"
+                    "    auto tB = B.slice((int)tgid.x, 0); \n"
+                    " \n"
+                    "    matmul2d< \n"
+                    "        matmul2d_descriptor(8, 8, dynamic_extent), \n"
+                    "        execution_simdgroups<4>> mm; \n"
+                    " \n"
+                    "    auto cT = mm.get_destination_cooperative_tensor<decltype(tA), decltype(tB), float>(); \n"
+                    " \n"
+                    "    auto sA = tA.slice(0, 0); \n"
+                    "    auto sB = tB.slice(0, 0); \n"
+                    "    mm.run(sB, sA, cT); \n"
+                    " \n"
+                    "    auto tC = tensor<device float, dextents<int32_t, 2>, tensor_inline>(C, dextents<int32_t, 2>(4, 4)); \n"
+                    " \n"
+                    "    cT.store(tC); \n"
+                    "}";
+
+                GGML_LOG_INFO("%s: testing tensor API for mixed bf16/f16 support\n", __func__);
+                ggml_metal_library_t lib = ggml_metal_library_init_from_source(dev, src_tensor_bf16_f16, false);
+                if (lib == NULL) {
+                    GGML_LOG_WARN("%s: - the tensor API does not support mixed bf16/f16 inputs - disabling tensor API\n", __func__);
+                    dev->props.has_tensor = false;
+                } else {
+                    struct ggml_metal_pipeline_with_params ppl = ggml_metal_library_compile_pipeline(lib, "dummy_kernel", "dummy_kernel", nil);
+                    if (!ppl.pipeline) {
+                        GGML_LOG_WARN("%s: - the tensor API does not support mixed bf16/f16 inputs - disabling tensor API\n", __func__);
+                        dev->props.has_tensor = false;
+                    }
+
+                    ggml_metal_library_free(lib);
+                }
+            }
+
             dev->props.use_residency_sets = true;
 #if defined(GGML_METAL_HAS_RESIDENCY_SETS)
             dev->props.use_residency_sets = getenv("GGML_METAL_NO_RESIDENCY") == nil;
