@@ -64,6 +64,7 @@ func TestIntegrationLookup(t *testing.T) {
 		{"kimi", "kimi", true, "Kimi Code CLI"},
 		{"droid", "droid", true, "Droid"},
 		{"opencode", "opencode", true, "OpenCode"},
+		{"omp", "omp", true, "OMP"},
 		{"pool", "pool", true, "Pool"},
 		{"unknown integration", "unknown", false, ""},
 		{"empty string", "", false, ""},
@@ -83,7 +84,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "codex", "codex-app", "kimi", "droid", "opencode", "hermes", "pool"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "codex", "codex-app", "kimi", "droid", "opencode", "omp", "hermes", "pool"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -100,7 +101,7 @@ func TestIntegrationRegistry(t *testing.T) {
 func TestHiddenIntegrationsExcludedFromVisibleLists(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		switch info.Name {
-		case "cline", "vscode", "kimi":
+		case "cline", "vscode", "kimi", "omp":
 			t.Fatalf("hidden integration %q should not appear in ListIntegrationInfos", info.Name)
 		}
 	}

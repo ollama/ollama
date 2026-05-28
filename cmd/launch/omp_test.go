@@ -7,6 +7,31 @@ import (
 	"testing"
 )
 
+func TestOMPArgs(t *testing.T) {
+	o := &OMP{}
+
+	tests := []struct {
+		name  string
+		model string
+		extra []string
+		want  []string
+	}{
+		{"with model", "qwen3.5", nil, []string{"--model", "ollama/qwen3.5"}},
+		{"empty model", "", nil, nil},
+		{"preserves Ollama prefix", "ollama/qwen3.5", []string{"--debug"}, []string{"--model", "ollama/qwen3.5", "--debug"}},
+		{"with extra args", "llama3.2", []string{"--headless", "--try"}, []string{"--model", "ollama/llama3.2", "--headless", "--try"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := o.args(tt.model, tt.extra)
+			if strings.Join(got, "\x00") != strings.Join(tt.want, "\x00") {
+				t.Fatalf("args() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestOMPRunSetsOllamaEnv(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "omp.log")
@@ -18,10 +43,10 @@ func TestOMPRunSetsOllamaEnv(t *testing.T) {
 	}
 
 	t.Setenv("PATH", tmpDir)
-	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
 
 	o := &OMP{}
-	if err := o.Run("", []string{"--headless", "--try"}); err != nil {
+	if err := o.Run("qwen3.5", []string{"--headless", "--try"}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
@@ -37,7 +62,7 @@ func TestOMPRunSetsOllamaEnv(t *testing.T) {
 	if !strings.Contains(got, "key=ollama") {
 		t.Fatalf("expected OPENAI_API_KEY override in log, got:\n%s", got)
 	}
-	if !strings.Contains(got, "args=--headless --try") {
+	if !strings.Contains(got, "args=--model ollama/qwen3.5 --headless --try") {
 		t.Fatalf("expected passthrough args in log, got:\n%s", got)
 	}
 }
