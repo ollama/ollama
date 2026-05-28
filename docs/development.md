@@ -173,7 +173,7 @@ export OLLAMA_MLX_SOURCE=/path/to/mlx
 export OLLAMA_MLX_C_SOURCE=/path/to/mlx-c
 ```
 
-For example, using the helper scripts with local mlx and mlx-c repos:
+For example, using the helper scripts with local MLX and MLX-C repos:
 ```shell
 OLLAMA_MLX_SOURCE=../mlx OLLAMA_MLX_C_SOURCE=../mlx-c ./scripts/build_linux.sh
 
@@ -183,7 +183,7 @@ OLLAMA_MLX_SOURCE=../mlx OLLAMA_MLX_C_SOURCE=../mlx-c ./scripts/build_darwin.sh
 ```powershell
 $env:OLLAMA_MLX_SOURCE="../mlx"
 $env:OLLAMA_MLX_C_SOURCE="../mlx-c"
-./scripts/build_darwin.ps1
+./scripts/build_windows.ps1
 ```
 
 ## Docker
