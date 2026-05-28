@@ -218,6 +218,9 @@ type Tensor interface {
 	Exp(ctx Context) Tensor
 	Neg(ctx Context) Tensor
 
+	// Sign returns the signum of each element: -1 for negative, 0 for zero, +1 for positive
+	Sign(ctx Context) Tensor
+
 	// Clamp clamps values to [min, max] range
 	Clamp(ctx Context, min, max float32) Tensor
 
@@ -409,6 +412,8 @@ const (
 	DTypeQ40
 	DTypeI32
 	DTypeMXFP4
+	DTypeTQ3
+	DTypeTQ4
 )
 
 type SamplingMode int

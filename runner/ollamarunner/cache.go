@@ -31,6 +31,10 @@ type InputCache struct {
 	cache kvcache.Cache
 }
 
+type cacheSetter interface {
+	SetCache(kvcache.Cache)
+}
+
 func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots int, batchSize int, multiUserCache bool) (*InputCache, error) {
 	numCtx := kvSize / int32(numSlots)
 
@@ -46,7 +50,25 @@ func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots
 
 	cache := model.Config().Cache
 	if cache != nil {
-		cache.Init(model.Backend(), kvCacheTypeFromStr(kvCacheType), numSlots, int(numCtx), batchSize)
+		dtype := kvCacheTypeFromStr(kvCacheType)
+		wrapped := false
+
+		if dtype == ml.DTypeTQ3 || dtype == ml.DTypeTQ4 {
+			cache = kvcache.NewTurboQuantWrapper(cache, dtype)
+			wrapped = true
+		}
+
+		// Model.Forward reads from the model's cache field, so replace it when we
+		// wrap the cache for TurboQuant.
+		if wrapped {
+			setter, ok := model.(cacheSetter)
+			if !ok {
+				return nil, errors.New("model does not support cache replacement for turboquant")
+			}
+			setter.SetCache(cache)
+		}
+
+		cache.Init(model.Backend(), dtype, numSlots, int(numCtx), batchSize)
 	}
 
 	return &InputCache{
@@ -64,6 +86,10 @@ func kvCacheTypeFromStr(s string) ml.DType {
 		return ml.DTypeQ80
 	case "q4_0":
 		return ml.DTypeQ40
+	case "tq3":
+		return ml.DTypeTQ3
+	case "tq4":
+		return ml.DTypeTQ4
 	default:
 		return ml.DTypeF16
 	}

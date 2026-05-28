@@ -104,6 +104,11 @@ func (m *Base) Config() config {
 	return m.config
 }
 
+// SetCache replaces the model cache implementation at runtime.
+func (m *Base) SetCache(cache kvcache.Cache) {
+	m.config.Cache = cache
+}
+
 var models = make(map[string]func(fs.Config) (Model, error))
 
 // Register registers a model constructor for the given architecture
