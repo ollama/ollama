@@ -46,7 +46,7 @@ ignore the GPUs and force CPU usage, use an invalid GPU ID (e.g., "-1")
 
 ### Linux Suspend Resume
 
-On linux, after a suspend/resume cycle, sometimes Ollama will fail to discover
+On Linux, after a suspend/resume cycle, sometimes Ollama will fail to discover
 your NVIDIA GPU, and fallback to running on the CPU. You can workaround this
 driver bug by reloading the NVIDIA UVM driver with `sudo rmmod nvidia_uvm &&
 sudo modprobe nvidia_uvm`
@@ -98,7 +98,7 @@ If you have multiple GPUs with different GFX versions, append the numeric device
 number to the environment variable to set them individually. For example,
 `HSA_OVERRIDE_GFX_VERSION_0=10.3.0` and `HSA_OVERRIDE_GFX_VERSION_1=11.0.0`
 
-At this time, the known supported GPU types on linux are the following LLVM Targets.
+At this time, the known supported GPU types on Linux are the following LLVM Targets.
 This table shows some example GPUs that map to these LLVM targets:
 | **LLVM Target** | **An Example GPU** |
 |-----------------|---------------------|

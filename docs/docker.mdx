@@ -4,7 +4,7 @@
 docker run -d -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
 ```
 
-## Nvidia GPU
+## NVIDIA GPU
 
 Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#installation).
 
@@ -42,7 +42,7 @@ Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-
     sudo yum install -y nvidia-container-toolkit
     ```
 
-### Configure Docker to use Nvidia driver
+### Configure Docker to use NVIDIA driver
 
 ```shell
 sudo nvidia-ctk runtime configure --runtime=docker
