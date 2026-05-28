@@ -23,8 +23,10 @@ type tokenizeFunc func(context.Context, string) ([]int, error)
 func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, media []llm.MediaData, _ error) {
 	var system []api.Message
 
-	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
-	// Clip images are represented as 768 tokens, each an embedding
+	// TODO: This is only a truncation heuristic; llama-server handles the
+	// actual image/media inputs. Replace this with projector/model-aware media
+	// token accounting so image history is neither over-packed nor over-trimmed.
+	// Clip images are represented as 768 tokens, each an embedding.
 	imageNumTokens := 768
 
 	lastMsgIdx := len(msgs) - 1

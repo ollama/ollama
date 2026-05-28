@@ -44,6 +44,7 @@ var (
 	errUnknownType             = errors.New("unknown type")
 	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
 	errFilePath                = errors.New("file path must be relative")
+	errRemoteDraftUnsupported  = errors.New("DRAFT cannot be used with remote models")
 )
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -203,6 +204,11 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			}
 		} else {
 			ch <- gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest}
+			return
+		}
+
+		if remote && len(r.DraftFiles) > 0 {
+			ch <- gin.H{"error": errRemoteDraftUnsupported.Error(), "status": http.StatusBadRequest}
 			return
 		}
 

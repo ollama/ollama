@@ -187,7 +187,7 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
 
-		s.getRunner(ctx, visionModel, opts, nil, true, false)
+		s.getRunner(ctx, visionModel, opts, nil, true, false, nil)
 
 		req := <-s.pendingReqCh
 		require.Equal(t, 2048, req.opts.NumCtx)
@@ -199,7 +199,7 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
 
-		s.getRunner(ctx, visionModel, opts, nil, false, false)
+		s.getRunner(ctx, visionModel, opts, nil, false, false, nil)
 
 		req := <-s.pendingReqCh
 		require.Equal(t, 2048, req.opts.NumCtx)
@@ -895,6 +895,33 @@ func TestSchedNeedsReload(t *testing.T) {
 	req.opts.NumGPU = -1
 	resp = runner.needsReload(ctx, req)
 	require.False(t, resp)
+	req.contextShift = true
+	resp = runner.needsReload(ctx, req)
+	require.True(t, resp)
+}
+
+func TestResolveContextShift(t *testing.T) {
+	trueValue := true
+	falseValue := false
+
+	tests := []struct {
+		name  string
+		shift *bool
+		ctx   int
+		want  bool
+	}{
+		{name: "unset small context keeps legacy shift", ctx: 128, want: true},
+		{name: "unset large context disables shift", ctx: contextShiftSmallContextLimit, want: false},
+		{name: "unset invalid context disables shift", ctx: 0, want: false},
+		{name: "explicit false wins for small context", shift: &falseValue, ctx: 128, want: false},
+		{name: "explicit true wins for large context", shift: &trueValue, ctx: 32768, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, resolveContextShift(tt.shift, tt.ctx))
+		})
+	}
 }
 
 func TestSchedNeedsReloadIgnoresAutomaticNumCtxClamp(t *testing.T) {
@@ -911,6 +938,35 @@ func TestSchedNeedsReloadIgnoresAutomaticNumCtxClamp(t *testing.T) {
 		llama:       llm,
 		numParallel: 1,
 		numCtxAuto:  true,
+	}
+	req := &LlmRequest{
+		model:      model,
+		opts:       api.DefaultOptions(),
+		numCtxAuto: true,
+	}
+	req.opts.NumCtx = 262144
+
+	require.False(t, runner.needsReload(ctx, req))
+
+	req.numCtxAuto = false
+	require.True(t, runner.needsReload(ctx, req))
+}
+
+func TestSchedNeedsReloadUsesEffectiveAutomaticContextShift(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	llm := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
+	opts := api.DefaultOptions()
+	opts.NumCtx = 128
+	model := &Model{ModelPath: "model.gguf"}
+	runner := &runnerRef{
+		model:        model,
+		Options:      &opts,
+		llama:        llm,
+		numParallel:  1,
+		numCtxAuto:   true,
+		contextShift: true,
 	}
 	req := &LlmRequest{
 		model:      model,
@@ -1142,6 +1198,45 @@ func TestSchedLlamaServerEvictsWhenVRAMInsufficient(t *testing.T) {
 
 	needEvict := s.load(scenario.req, systemInfo, gpus, true)
 	require.True(t, needEvict, "expected eviction when predicted VRAM exceeds free memory")
+}
+
+func TestSchedLlamaServerExplicitPartialNumGPUSkipsFullFitEviction(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 0
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	scenario := newScenarioRequest(t, ctx, "partial-llama-server-model", 1*format.GigaByte, nil, nil)
+	scenario.req.opts.NumGPU = 1
+	scenario.srv.vramSize = 0
+
+	called := false
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+		called = true
+		require.Equal(t, 1, opts.NumGPU)
+		return scenario.srv, nil
+	}
+
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.False(t, needEvict, "explicit partial offload should not trigger full-fit eviction")
+	require.True(t, called, "scheduler should try the explicitly partial load")
 }
 
 func TestSchedLlamaServerFitsAlongside(t *testing.T) {

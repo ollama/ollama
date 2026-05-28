@@ -553,7 +553,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 			<-serverDone
 			slog.Info("terminate complete")
 
-			if t.Failed() {
+			if t.Failed() || os.Getenv("OLLAMA_TEST_LOG_SERVER") != "" {
 				slog.Warn("SERVER LOG FOLLOWS")
 				io.Copy(os.Stderr, &serverLog)
 				slog.Warn("END OF SERVER")

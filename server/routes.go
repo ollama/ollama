@@ -202,7 +202,7 @@ func usesAutomaticNumBatch(model *Model, requestOpts map[string]any) bool {
 
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
 // It returns the allocated runner, model instance, and consolidated options if successful and error otherwise.
-func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, *Model, *api.Options, error) {
+func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
 	if name == "" {
 		return nil, nil, nil, fmt.Errorf("model %w", errRequired)
 	}
@@ -231,7 +231,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchAuto)
+	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchAuto, shift)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
@@ -475,7 +475,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
 		return
@@ -804,7 +804,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -1016,7 +1016,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	name := modelRef.Name
 
-	r, m, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, m, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -2613,7 +2613,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
 		return
@@ -2928,6 +2928,19 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 		Logprobs:    req.Logprobs,
 		TopLogprobs: req.TopLogprobs,
 	}
+	truncate := req.Truncate == nil || *req.Truncate
+	var err error
+	nativeReq.Messages, err = truncateNativeChatMessages(c.Request.Context(), m, r, optionsForPrompt(opts, r), nativeReq, truncate)
+	if err != nil {
+		slog.Error("chat template prompt error", "error", err)
+		var serr api.StatusError
+		if errors.As(err, &serr) {
+			c.JSON(serr.StatusCode, gin.H{"error": serr.ErrorMessage})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
 
 	if req.DebugRenderOnly {
 		prompt, err := r.ApplyChatTemplate(c.Request.Context(), nativeReq)
@@ -2997,6 +3010,65 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 	writeChatResponse(c, req, ch)
 }
 
+func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer, opts *api.Options, req llm.ChatRequest, truncate bool) ([]api.Message, error) {
+	if !truncate || opts == nil || opts.NumCtx <= 0 || len(req.Messages) <= 1 {
+		return req.Messages, nil
+	}
+
+	lastMsgIdx := len(req.Messages) - 1
+	currMsgIdx := 0
+	var system []api.Message
+
+	for i := 0; i <= lastMsgIdx; i++ {
+		system = system[:0]
+		for j := range i {
+			if req.Messages[j].Role == "system" {
+				system = append(system, req.Messages[j])
+			}
+		}
+
+		renderReq := req
+		renderReq.Messages = append(slices.Clone(system), req.Messages[i:]...)
+		prompt, err := r.ApplyChatTemplate(ctx, renderReq)
+		if err != nil {
+			return nil, err
+		}
+
+		tokens, err := r.Tokenize(ctx, prompt)
+		if err != nil {
+			return nil, err
+		}
+
+		ctxLen := len(tokens)
+		if m != nil && m.ProjectorPaths != nil {
+			for _, msg := range renderReq.Messages {
+				ctxLen += 768 * len(msg.Images)
+			}
+		}
+
+		if ctxLen <= opts.NumCtx {
+			currMsgIdx = i
+			break
+		}
+		if i == lastMsgIdx {
+			currMsgIdx = lastMsgIdx
+			break
+		}
+	}
+
+	if currMsgIdx > 0 {
+		slog.Debug("truncating native chat messages which exceed context length", "truncated", currMsgIdx)
+	}
+
+	system = system[:0]
+	for j := range currMsgIdx {
+		if req.Messages[j].Role == "system" {
+			system = append(system, req.Messages[j])
+		}
+	}
+	return append(slices.Clone(system), req.Messages[currMsgIdx:]...), nil
+}
+
 func countChatImages(msgs []api.Message) int {
 	var count int
 	for _, msg := range msgs {
@@ -3059,7 +3131,7 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 	}
 
 	// Schedule the runner for image generation
-	runner, m, _, err := s.scheduleRunner(c.Request.Context(), modelName, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive)
+	runner, m, _, err := s.scheduleRunner(c.Request.Context(), modelName, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return

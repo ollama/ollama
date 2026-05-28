@@ -51,6 +51,11 @@ type LlmRequest struct {
 	// useMMapAuto is true when UseMMap was derived by the scheduler rather than
 	// explicitly requested.
 	useMMapAuto bool
+
+	// contextShift is a llama-server launch attribute resolved from the
+	// request-level shift option before scheduling.
+	contextShift bool
+	shift        *bool
 }
 
 type Scheduler struct {
@@ -124,10 +129,30 @@ func schedulerModelKey(m *Model) string {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
-	return s.getRunner(c, m, opts, sessionDuration, false, false)
+	return s.getRunner(c, m, opts, sessionDuration, false, false, nil)
 }
 
-func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool, numBatchAuto bool) (chan *runnerRef, chan error) {
+const contextShiftSmallContextLimit = 8192
+
+func resolveContextShift(shift *bool, numCtx int) bool {
+	if shift != nil {
+		return *shift
+	}
+
+	return numCtx > 0 && numCtx < contextShiftSmallContextLimit
+}
+
+func effectiveModelContext(numCtx int, f *ggml.GGML) int {
+	if f != nil {
+		if trainCtx := int(f.KV().ContextLength()); trainCtx > 0 && numCtx > trainCtx {
+			return trainCtx
+		}
+	}
+
+	return numCtx
+}
+
+func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool, numBatchAuto bool, shift *bool) (chan *runnerRef, chan error) {
 	if opts.NumCtx < 4 {
 		opts.NumCtx = 4
 	}
@@ -135,6 +160,11 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 	if m.CheckCapabilities(model.CapabilityVision) == nil {
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
+	}
+
+	contextShift := false
+	if m.ModelPath != "" {
+		contextShift = resolveContextShift(shift, opts.NumCtx)
 	}
 
 	req := &LlmRequest{
@@ -146,6 +176,8 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 		errCh:           make(chan error, 1),
 		numCtxAuto:      numCtxAuto,
 		numBatchAuto:    numBatchAuto,
+		contextShift:    contextShift,
+		shift:           shift,
 	}
 
 	key := schedulerModelKey(req.model)
@@ -497,7 +529,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			// Pre-flight check: estimate whether the model fits in remaining memory.
 			// llama-server auto-detects layers based on available VRAM, so if
 			// we predict it won't fit, evict before spawning.
-			if requireFull && len(s.loaded) > 0 && len(loadGpus) > 0 {
+			if requireFull && !explicitPartialGPUOffload(launchOpts, f) && len(s.loaded) > 0 && len(loadGpus) > 0 {
 				freeMemory, gpuFreeMemory, systemLimited := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
 				// Use 80% of free memory as threshold to leave headroom.
 				if predictedForLoad > freeMemory*80/100 {
@@ -523,8 +555,11 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			}
 
 			launchOpts = s.applyLlamaServerMmapDefaults(req, launchOpts, systemInfo, loadGpus, f, numParallel)
+			req.contextShift = resolveContextShift(req.shift, effectiveModelContext(launchOpts.NumCtx, f))
 
-			llama, err = s.newServerFn(systemInfo, loadGpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, launchOpts, numParallel, llamaServerConfigForModel(req.model))
+			config := llamaServerConfigForModel(req.model)
+			config.ContextShift = req.contextShift
+			llama, err = s.newServerFn(systemInfo, loadGpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, launchOpts, numParallel, config)
 			if err != nil {
 				// some older models are not compatible with newer versions of llama.cpp
 				// show a generalized compatibility error until there is a better way to
@@ -661,6 +696,7 @@ iGPUScan:
 		numCtxAuto:      req.numCtxAuto,
 		numBatchAuto:    req.numBatchAuto,
 		useMMapAuto:     req.useMMapAuto,
+		contextShift:    req.contextShift,
 	}
 	runner.numParallel = numParallel
 	runner.refMu.Lock() // hold lock until running or aborted
@@ -732,14 +768,16 @@ func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *ggml.GGML, numParallel int,
 	return oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch, true
 }
 
-func effectiveLlamaServerContext(numCtx int, f *ggml.GGML, numParallel int) int {
-	if f != nil {
-		if trainCtx := int(f.KV().ContextLength()); trainCtx > 0 && numCtx > trainCtx {
-			numCtx = trainCtx
-		}
+func explicitPartialGPUOffload(opts api.Options, f *ggml.GGML) bool {
+	if opts.NumGPU <= 0 || f == nil {
+		return false
 	}
 
-	return numCtx * max(numParallel, 1)
+	return uint64(opts.NumGPU) < f.KV().BlockCount()+1
+}
+
+func effectiveLlamaServerContext(numCtx int, f *ggml.GGML, numParallel int) int {
+	return effectiveModelContext(numCtx, f) * max(numParallel, 1)
 }
 
 const (
@@ -1277,6 +1315,7 @@ type runnerRef struct {
 	numCtxAuto   bool
 	numBatchAuto bool
 	useMMapAuto  bool
+	contextShift bool
 	*api.Options
 }
 
@@ -1292,6 +1331,7 @@ func (runner *runnerRef) unload() {
 	runner.model = nil
 	runner.Options = nil
 	runner.gpus = nil
+	runner.contextShift = false
 }
 
 func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool {
@@ -1329,6 +1369,14 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	if optsNew.NumGPU < 0 {
 		optsExisting.NumGPU = -1
 		optsNew.NumGPU = -1
+	}
+
+	contextShift := req.contextShift
+	if req.model.ModelPath != "" {
+		contextShift = resolveContextShift(req.shift, optsNew.NumCtx)
+	}
+	if runner.contextShift != contextShift {
+		return true
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)

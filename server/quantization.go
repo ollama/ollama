@@ -311,7 +311,9 @@ func llamaQuantizeArgs(arch string, newFileType fsggml.FileType, input, output, 
 	}
 	// GLM-OCR is a small multimodal OCR model; keeping the input/output
 	// embeddings high precision avoids degenerate text output on K-quants.
-	if arch == "glmocr" {
+	// Legacy Ollama GGUFs use "glmocr"; split text GGUFs use llama.cpp's
+	// native "glm4" architecture.
+	if arch == "glmocr" || arch == "glm4" {
 		switch newFileType {
 		case fsggml.FileTypeQ4_K_S, fsggml.FileTypeQ4_K_M:
 			args = append(args,

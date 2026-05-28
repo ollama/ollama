@@ -79,6 +79,7 @@ type LlamaServer interface {
 
 type LlamaServerConfig struct {
 	DisableJinja   bool
+	ContextShift   bool
 	EnableMTP      bool
 	DraftModelPath string
 }

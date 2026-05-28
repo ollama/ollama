@@ -35,6 +35,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -70,7 +71,10 @@ ws ::= ([ \t\n] ws)?
 
 // DefaultEmbeddingNumBatch is the default NumBatch used for embedding models
 // when neither the model nor the request specifies num_batch.
-const DefaultEmbeddingNumBatch = 2048
+const (
+	DefaultEmbeddingNumBatch             = 2048
+	openEndedGenerationContextMultiplier = 10
+)
 
 // DefaultEmbeddingNumBatchForContext caps the embedding batch default to the
 // active context length before it is passed to llama-server.
@@ -88,6 +92,20 @@ func WithDefaultEmbeddingNumBatch(opts api.Options) api.Options {
 	return opts
 }
 
+func boundedNumPredict(numPredict, numCtx int) int {
+	if numCtx <= 0 {
+		return numPredict
+	}
+	// Ollama's default num_predict=-1 means "generate until a stop condition".
+	// llama-server still needs a finite request budget, so keep open-ended
+	// generations bounded while allowing several full context windows.
+	limit := openEndedGenerationContextMultiplier * numCtx
+	if numPredict < 0 || numPredict > limit {
+		return limit
+	}
+	return numPredict
+}
+
 // llamaServerRunner wraps an upstream llama-server process and implements the LlamaServer interface.
 // It communicates with llama-server over HTTP.
 type llamaServerRunner struct {
@@ -96,6 +114,7 @@ type llamaServerRunner struct {
 	done             chan struct{}
 	doneErr          error
 	client           *http.Client
+	memoryMu         sync.RWMutex
 	memTotal         uint64 // actual total buffer size parsed from llama-server logs (bytes)
 	memGPU           uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
 	gpuLayers        uint64 // model layers loaded on GPU, parsed from llama-server logs
@@ -350,18 +369,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	params = appendMainGPUArgs(params, launch.opts)
 
-	// Context shift: enable for small contexts (<8k) where users are more
-	// likely to hit overflow on long prompts, matching the old CGO engine's
-	// behavior. For 8k+ contexts, disable shifting and let llama-server
-	// return a clean 400 error — context shifting at large sizes silently
-	// degrades quality because the prompt template and system prompt get
-	// evicted (n_keep only preserves a few initial tokens).
-	if launch.opts.NumCtx > 0 && launch.opts.NumCtx < 8192 {
-		params = append(params, "--context-shift")
-		if launch.opts.NumKeep > 0 {
-			params = append(params, "--keep", strconv.Itoa(launch.opts.NumKeep))
-		}
-	}
+	params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
 
 	// Set up library paths for GPU backend discovery
 	cmd = exec.Command(exe, params...)
@@ -621,6 +629,19 @@ func appendJinjaArgs(params []string, config LlamaServerConfig) []string {
 	return params
 }
 
+func appendContextShiftArgs(params []string, opts api.Options, enabled bool) []string {
+	if !enabled {
+		return params
+	}
+
+	params = append(params, "--context-shift")
+	if opts.NumKeep > 0 {
+		params = append(params, "--keep", strconv.Itoa(opts.NumKeep))
+	}
+
+	return params
+}
+
 func appendMTPDraftArgs(params []string, config LlamaServerConfig, opts api.Options) []string {
 	if !config.EnableMTP && config.DraftModelPath == "" {
 		return params
@@ -803,10 +824,11 @@ func qwenVLServerArgs(modelArch string) []string {
 	}
 }
 
-// Load waits for llama-server to finish loading the model. lama-server loads
+// Load waits for llama-server to finish loading the model. llama-server loads
 // the model at startup and auto-detects GPU layers, so this just waits for
-// health to report ready.
-func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
+// health to report ready. The scheduler handles full-fit preflight for
+// llama-server before this point.
+func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, _ bool) ([]ml.DeviceID, error) {
 	slog.Info("loading model via llama-server", "model", s.modelPath)
 
 	if err := s.WaitUntilRunning(ctx); err != nil {
@@ -825,7 +847,7 @@ func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, 
 	// Verify that buffer size parsing captured GPU allocations.
 	// If parsing failed (e.g., llama-server log format changed), warn so the
 	// issue is visible in logs when users report problems.
-	if len(s.gpus) > 0 && len(s.vramByDevice) == 0 {
+	if len(s.gpus) > 0 && !s.hasParsedVRAM() {
 		slog.Warn("llama-server VRAM tracking: no per-device buffer sizes were parsed from "+
 			"llama-server logs. VRAM accounting will be inaccurate. This may indicate a "+
 			"change in llama-server's log format — check for 'buffer size' lines in the output.",
@@ -877,6 +899,9 @@ func (s *llamaServerRunner) shouldRetryMMProjCPUOffload(err error) bool {
 }
 
 func (s *llamaServerRunner) resetLoadAccounting() {
+	s.memoryMu.Lock()
+	defer s.memoryMu.Unlock()
+
 	s.memTotal = 0
 	s.memGPU = 0
 	s.gpuLayers = 0
@@ -890,6 +915,13 @@ func (s *llamaServerRunner) resetLoadAccounting() {
 	if s.status != nil {
 		s.status.SetLastError("")
 	}
+}
+
+func (s *llamaServerRunner) hasParsedVRAM() bool {
+	s.memoryMu.RLock()
+	defer s.memoryMu.RUnlock()
+
+	return len(s.vramByDevice) > 0
 }
 
 // getServerStatus checks llama-server's /health endpoint.
@@ -1213,9 +1245,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	}
 	defer s.sem.Release(1)
 
-	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
-		req.Options.NumPredict = 10 * s.options.NumCtx
-	}
+	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
@@ -1565,9 +1595,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 	}
 	defer s.sem.Release(1)
 
-	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
-		req.Options.NumPredict = 10 * s.options.NumCtx
-	}
+	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
@@ -2225,6 +2253,9 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 	if len(s.gpus) == 0 {
 		return nil
 	}
+	s.memoryMu.RLock()
+	defer s.memoryMu.RUnlock()
+
 	infos := make([]ml.DeviceInfo, len(s.gpus))
 	for i, gpu := range s.gpus {
 		infos[i] = gpu
@@ -2257,9 +2288,17 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 // MemorySize returns total and GPU memory usage parsed from llama-server's
 // post-load log output. Full model-layer offload is reported as 100% GPU.
 func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
-	if s.memTotal > 0 {
-		total, vram = s.memTotal, s.memGPU
-		if s.totalLayers > 0 && s.gpuLayers >= s.totalLayers && s.gpuLayerOverflow == 0 {
+	s.memoryMu.RLock()
+	memTotal := s.memTotal
+	memGPU := s.memGPU
+	totalLayers := s.totalLayers
+	gpuLayers := s.gpuLayers
+	gpuLayerOverflow := s.gpuLayerOverflow
+	s.memoryMu.RUnlock()
+
+	if memTotal > 0 {
+		total, vram = memTotal, memGPU
+		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 {
 			total = vram
 		}
 		return total, vram
@@ -2369,45 +2408,50 @@ func deviceName(backendName string) string {
 
 func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 	if w.runner != nil {
-		if match := deviceFreeRegex.FindSubmatch(b); match != nil {
-			devName := string(match[1])
-			if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
-				w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
-			}
-		}
-		for _, match := range offloadedLayersRegex.FindAllSubmatch(b, -1) {
-			loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
-			total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
-			if loadedErr == nil && totalErr == nil {
-				w.runner.gpuLayers = loaded
-				w.runner.totalLayers = total
-			}
-		}
-		for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(b, -1) {
-			overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
-			if err == nil && overflowing > 0 {
-				w.runner.gpuLayerOverflow += int(overflowing)
-			}
-		}
-		for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
-			backendName := string(match[2])
-			if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
-				if w.buffers == nil {
-					w.buffers = make(map[memoryBufferKey]memoryBuffer)
+		func() {
+			w.runner.memoryMu.Lock()
+			defer w.runner.memoryMu.Unlock()
+
+			if match := deviceFreeRegex.FindSubmatch(b); match != nil {
+				devName := string(match[1])
+				if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
+					w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
 				}
-				w.buffers[memoryBufferKey{
-					component: string(match[1]),
-					backend:   backendName,
-					kind:      string(match[3]),
-				}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
-				w.updateRunnerMemory()
 			}
-		}
+			for _, match := range offloadedLayersRegex.FindAllSubmatch(b, -1) {
+				loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
+				total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
+				if loadedErr == nil && totalErr == nil {
+					w.runner.gpuLayers = loaded
+					w.runner.totalLayers = total
+				}
+			}
+			for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(b, -1) {
+				overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
+				if err == nil && overflowing > 0 {
+					w.runner.gpuLayerOverflow += int(overflowing)
+				}
+			}
+			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
+				backendName := string(match[2])
+				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
+					if w.buffers == nil {
+						w.buffers = make(map[memoryBufferKey]memoryBuffer)
+					}
+					w.buffers[memoryBufferKey{
+						component: string(match[1]),
+						backend:   backendName,
+						kind:      string(match[3]),
+					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
+					w.updateRunnerMemoryLocked()
+				}
+			}
+		}()
 	}
 	return w.inner.Write(b)
 }
 
-func (w *memoryParsingWriter) updateRunnerMemory() {
+func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 	var total, gpu uint64
 	byDevice := make(map[string]uint64)
 
@@ -2428,6 +2472,9 @@ func (w *memoryParsingWriter) updateRunnerMemory() {
 // The values are parsed from llama-server's buffer size log output during model load
 // (model tensors + KV cache + compute buffers).
 func (s *llamaServerRunner) VRAMByGPU(id ml.DeviceID) uint64 {
+	s.memoryMu.RLock()
+	defer s.memoryMu.RUnlock()
+
 	// Map DeviceID to the log device name used by llama-server.
 	// Discovery stores the device name (e.g., "CUDA0", "ROCm0", "MTL0") from
 	// --list-devices stdout, which matches the buffer log prefix.

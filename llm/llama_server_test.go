@@ -98,6 +98,27 @@ func TestLlamaServerHealthParsing(t *testing.T) {
 	}
 }
 
+func TestBoundedNumPredict(t *testing.T) {
+	tests := []struct {
+		name       string
+		numPredict int
+		numCtx     int
+		want       int
+	}{
+		{name: "open ended gets finite budget", numPredict: -1, numCtx: 2048, want: 20480},
+		{name: "explicit under limit preserved", numPredict: 100, numCtx: 2048, want: 100},
+		{name: "explicit over limit capped", numPredict: 30000, numCtx: 2048, want: 20480},
+		{name: "unknown context unchanged", numPredict: -1, numCtx: 0, want: -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := boundedNumPredict(tt.numPredict, tt.numCtx); got != tt.want {
+				t.Fatalf("boundedNumPredict(%d, %d) = %d, want %d", tt.numPredict, tt.numCtx, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	// Simulate llama-server SSE streaming response
 	sseLines := []string{
@@ -1652,6 +1673,45 @@ func TestAppendJinjaArgs(t *testing.T) {
 	}
 }
 
+func TestAppendContextShiftArgs(t *testing.T) {
+	opts := api.DefaultOptions()
+	opts.NumKeep = 4
+
+	tests := []struct {
+		name    string
+		opts    api.Options
+		enabled bool
+		want    []string
+	}{
+		{
+			name: "disabled leaves context shift off",
+			opts: opts,
+			want: []string{"base"},
+		},
+		{
+			name:    "enabled adds context shift and keep",
+			opts:    opts,
+			enabled: true,
+			want:    []string{"base", "--context-shift", "--keep", "4"},
+		},
+		{
+			name:    "enabled without keep omits keep flag",
+			opts:    api.Options{},
+			enabled: true,
+			want:    []string{"base", "--context-shift"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendContextShiftArgs([]string{"base"}, tt.opts, tt.enabled)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendContextShiftArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppendMTPDraftArgs(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -2244,6 +2304,50 @@ func TestMemoryParsingPerDevice(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMemoryParsingWriterConcurrentReads(t *testing.T) {
+	runner := &llamaServerRunner{
+		vramByDevice:     make(map[string]uint64),
+		systemFreeAtLoad: make(map[string]uint64),
+		gpus: []ml.DeviceInfo{
+			{
+				DeviceID:    ml.DeviceID{ID: "0", Library: "CUDA"},
+				Name:        "CUDA0",
+				TotalMemory: 16000 * 1024 * 1024,
+			},
+		},
+	}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+	lines := [][]byte{
+		[]byte("common_params_fit_impl: getting device memory data for initial parameters:\n"),
+		[]byte("using device CUDA0 (NVIDIA GPU) (0000:01:00.0) - 12000 MiB free\n"),
+		[]byte("load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n"),
+		[]byte("llama_kv_cache:      CUDA0 KV buffer size =  2000.00 MiB\n"),
+		[]byte("sched_reserve:      CUDA0 compute buffer size =   300.00 MiB\n"),
+		[]byte("llm_load_tensors: offloaded 33/33 layers to GPU\n"),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 1000 {
+			for _, line := range lines {
+				_, _ = w.Write(line)
+			}
+		}
+	}()
+
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			runner.MemorySize()
+			runner.VRAMByGPU(ml.DeviceID{ID: "0", Library: "CUDA"})
+			runner.GetDeviceInfos(context.Background())
+		}
 	}
 }
 

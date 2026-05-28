@@ -67,6 +67,17 @@ func TestLlamaQuantizeArgs(t *testing.T) {
 			},
 		},
 		{
+			name:     "glm4 k quant keeps glm-ocr split text embeddings f16",
+			arch:     "glm4",
+			fileType: fsggml.FileTypeQ4_K_M,
+			want: []string{
+				"--allow-requantize",
+				"--tensor-type", `^token_embd\.weight$=f16`,
+				"--tensor-type", `^output\.weight$=f16`,
+				"in.gguf", "out.gguf", "Q4_K_M",
+			},
+		},
+		{
 			name:     "copy does not add quantization overrides",
 			arch:     "gemma3n",
 			fileType: fsggml.FileTypeQ4_K_M,

@@ -1308,6 +1308,33 @@ func TestCreateAndShowRemoteModel(t *testing.T) {
 	fmt.Printf("resp = %#v\n", resp)
 }
 
+func TestCreateRemoteModelRejectsDraftFiles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var s Server
+	_, digest := createBinFile(t, nil, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "test-remote-draft",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		DraftFiles: map[string]string{"draft.gguf": digest},
+		Stream:     &stream,
+	})
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status code 400, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["error"] != errRemoteDraftUnsupported.Error() {
+		t.Fatalf("expected error %q, got %q", errRemoteDraftUnsupported, resp["error"])
+	}
+}
+
 func TestCreateFromCloudSourceSuffix(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

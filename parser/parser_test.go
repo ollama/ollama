@@ -90,6 +90,36 @@ DRAFT ./draft.gguf
 	assert.Contains(t, req.DraftFiles, draft)
 }
 
+func TestCreateRequestDraftRejectsSameFile(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "model.gguf")
+	require.NoError(t, os.WriteFile(model, []byte("model"), 0o644))
+
+	modelfile, err := ParseFile(strings.NewReader(`
+FROM ./model.gguf
+DRAFT ./model.gguf
+`))
+	require.NoError(t, err)
+
+	_, err = modelfile.CreateRequest(dir)
+	require.ErrorContains(t, err, "DRAFT must not reference the same local path as FROM")
+}
+
+func TestCreateRequestDraftRejectsSameDirectory(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "model.gguf"), make([]byte, 512), 0o644))
+
+	modelfile, err := ParseFile(strings.NewReader(`
+FROM .
+DRAFT .
+`))
+	require.NoError(t, err)
+
+	_, err = modelfile.CreateRequest(dir)
+	require.ErrorContains(t, err, "DRAFT must not reference the same local path as FROM")
+}
+
 func TestParseFileTrimSpace(t *testing.T) {
 	input := `
 FROM "     model 1"

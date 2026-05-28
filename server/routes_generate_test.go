@@ -315,6 +315,66 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	}
 }
 
+func TestChatHandlerChatTemplateRouteTruncatesMessages(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		contextLength: 6,
+		TemplateFn: func(_ context.Context, req llm.ChatRequest) (string, error) {
+			var b strings.Builder
+			for _, msg := range req.Messages {
+				b.WriteString(msg.Role)
+				b.WriteByte(' ')
+				b.WriteString(msg.Content)
+				b.WriteByte(' ')
+			}
+			return b.String(), nil
+		},
+		ChatFn: func(_ context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
+			fn(llm.ChatResponse{
+				Message:    api.Message{Role: "assistant", Content: "ok"},
+				Done:       true,
+				DoneReason: llm.DoneReasonStop,
+			})
+			return nil
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "chat-template-truncate", ggml.KV{
+		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
+	}, "", nil)
+
+	stream := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model: "chat-template-truncate",
+		Messages: []api.Message{
+			{Role: "system", Content: "sys"},
+			{Role: "user", Content: "old one two three four"},
+			{Role: "assistant", Content: "old answer one two"},
+			{Role: "user", Content: "new ask"},
+		},
+		Stream: &stream,
+		Options: map[string]any{
+			"num_ctx": 6,
+		},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(mock.ChatRequest.Messages) != 2 {
+		t.Fatalf("chat_template request messages = %#v", mock.ChatRequest.Messages)
+	}
+	if !cmp.Equal(mock.ChatRequest.Messages[0], api.Message{Role: "system", Content: "sys"}) {
+		t.Fatalf("first message = %#v", mock.ChatRequest.Messages[0])
+	}
+	if !cmp.Equal(mock.ChatRequest.Messages[1], api.Message{Role: "user", Content: "new ask"}) {
+		t.Fatalf("second message = %#v", mock.ChatRequest.Messages[1])
+	}
+}
+
 func TestChatHandlerTemplateEnvUsesRenderedRoute(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
