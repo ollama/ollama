@@ -3,6 +3,8 @@ package ggml
 // #cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
 // #cgo windows LDFLAGS: -lpthread
 // #cgo CPPFLAGS: -I${SRCDIR}/ggml/include
+// #cgo linux amd64 CFLAGS: -mavx2
+// #cgo linux amd64 CXXFLAGS: -mavx2
 // #include <stdlib.h>
 // #include <stdint.h>
 // #include "ggml.h"

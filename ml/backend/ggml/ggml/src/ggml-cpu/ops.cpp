@@ -8726,9 +8726,163 @@ void ggml_compute_forward_flash_attn_back(
     }
 }
 
-// ggml_compute_forward_paged_attention
+// ============================================================================
+// PagedAttention SIMD-optimized helper functions
+// ============================================================================
 
-// Helper: incremental softmax computation
+#if defined(__AVX2__)
+#include <immintrin.h>
+
+// AVX2 dot product: compute dot(x, y) for n elements
+static inline float ggml_dot_product_avx2(const float * GGML_RESTRICT x, const float * GGML_RESTRICT y, int n) {
+    __m256 sum = _mm256_setzero_ps();
+    int i = 0;
+    // Process 8 elements at a time
+    for (; i + 8 <= n; i += 8) {
+        __m256 vx = _mm256_loadu_ps(x + i);
+        __m256 vy = _mm256_loadu_ps(y + i);
+        sum = _mm256_fmadd_ps(vx, vy, sum);  // sum += x * y
+    }
+    // Horizontal sum
+    float tmp[8];
+    _mm256_storeu_ps(tmp, sum);
+    float result = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
+    // Handle remaining elements
+    for (; i < n; ++i) {
+        result += x[i] * y[i];
+    }
+    return result;
+}
+
+// AVX2 fused multiply-add: dst += alpha * src
+static inline void ggml_vec_mad_avx2(float * GGML_RESTRICT dst, const float * GGML_RESTRICT src, float alpha, int n) {
+    int i = 0;
+    __m256 valpha = _mm256_set1_ps(alpha);
+    for (; i + 8 <= n; i += 8) {
+        __m256 vsrc = _mm256_loadu_ps(src + i);
+        __m256 vdst = _mm256_loadu_ps(dst + i);
+        vdst = _mm256_fmadd_ps(vsrc, valpha, vdst);  // dst += alpha * src
+        _mm256_storeu_ps(dst + i, vdst);
+    }
+    // Handle remaining elements
+    for (; i < n; ++i) {
+        dst[i] += alpha * src[i];
+    }
+}
+
+// AVX2 incremental softmax: find max in a block
+static inline float ggml_reduce_max_avx2(const float * x, int n) {
+    if (n == 0) return -INFINITY;
+    __m256 vmax = _mm256_set1_ps(x[0]);
+    int i = 0;
+    for (; i + 8 <= n; i += 8) {
+        __m256 vx = _mm256_loadu_ps(x + i);
+        vmax = _mm256_max_ps(vmax, vx);
+    }
+    // Horizontal max
+    float tmp[8];
+    _mm256_storeu_ps(tmp, vmax);
+    float result = tmp[0];
+    for (int j = 1; j < 8; ++j) {
+        result = result > tmp[j] ? result : tmp[j];
+    }
+    // Handle remaining elements
+    for (; i < n; ++i) {
+        result = result > x[i] ? result : x[i];
+    }
+    return result;
+}
+
+#define GGML_USE_SIMD_DOT_PRODUCT 1
+#define GGML_USE_SIMD_MAD 1
+#define GGML_USE_SIMD_REDUCE_MAX 1
+
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+
+// NEON dot product
+static inline float ggml_dot_product_neon(const float * GGML_RESTRICT x, const float * GGML_RESTRICT y, int n) {
+    float32x4_t sum0 = vdupq_n_f32(0.0f);
+    float32x4_t sum1 = vdupq_n_f32(0.0f);
+    int i = 0;
+    // Process 8 elements at a time (2 NEON registers)
+    for (; i + 8 <= n; i += 8) {
+        float32x4_t vx0 = vld1q_f32(x + i);
+        float32x4_t vy0 = vld1q_f32(y + i);
+        float32x4_t vx1 = vld1q_f32(x + i + 4);
+        float32x4_t vy1 = vld1q_f32(y + i + 4);
+        sum0 = vmlaq_f32(sum0, vx0, vy0);  // sum0 += vx0 * vy0
+        sum1 = vmlaq_f32(sum1, vx1, vy1);  // sum1 += vx1 * vy1
+    }
+    // Horizontal sum
+    float tmp0[4], tmp1[4];
+    vst1q_f32(tmp0, sum0);
+    vst1q_f32(tmp1, sum1);
+    float result = tmp0[0] + tmp0[1] + tmp0[2] + tmp0[3] +
+                   tmp1[0] + tmp1[1] + tmp1[2] + tmp1[3];
+    // Handle remaining elements
+    for (; i < n; ++i) {
+        result += x[i] * y[i];
+    }
+    return result;
+}
+
+// NEON fused multiply-add
+static inline void ggml_vec_mad_neon(float * GGML_RESTRICT dst, const float * GGML_RESTRICT src, float alpha, int n) {
+    float32x4_t valpha = vdupq_n_f32(alpha);
+    int i = 0;
+    for (; i + 4 <= n; i += 4) {
+        float32x4_t vsrc = vld1q_f32(src + i);
+        float32x4_t vdst = vld1q_f32(dst + i);
+        float32x4_t valpha_vsrc = vmulq_f32(valpha, vsrc);
+        vdst = vaddq_f32(vdst, valpha_vsrc);
+        vst1q_f32(dst + i, vdst);
+    }
+    // Handle remaining elements
+    for (; i < n; ++i) {
+        dst[i] += alpha * src[i];
+    }
+}
+
+// NEON incremental softmax: find max
+static inline float ggml_reduce_max_neon(const float * x, int n) {
+    if (n == 0) return -INFINITY;
+    float32x4_t vmax = vdupq_n_f32(x[0]);
+    int i = 0;
+    for (; i + 4 <= n; i += 4) {
+        float32x4_t vx = vld1q_f32(x + i);
+        vmax = vmaxq_f32(vmax, vx);
+    }
+    // Horizontal max
+    float tmp[4];
+    vst1q_f32(tmp, vmax);
+    float result = tmp[0];
+    for (int j = 1; j < 4; ++j) {
+        result = result > tmp[j] ? result : tmp[j];
+    }
+    // Handle remaining elements
+    for (; i < n; ++i) {
+        result = result > x[i] ? result : x[i];
+    }
+    return result;
+}
+
+#define GGML_USE_SIMD_DOT_PRODUCT 1
+#define GGML_USE_SIMD_MAD 1
+#define GGML_USE_SIMD_REDUCE_MAX 1
+
+#else
+// Scalar fallbacks
+#define GGML_USE_SIMD_DOT_PRODUCT 0
+#define GGML_USE_SIMD_MAD 0
+#define GGML_USE_SIMD_REDUCE_MAX 0
+#endif
+
+// ============================================================================
+// ggml_compute_forward_paged_attention
+// ============================================================================
+
+// Helper: incremental softmax computation (SIMD-optimized)
 // This allows computing softmax incrementally across multiple blocks
 // which is essential for PagedAttention
 static void ggml_incremental_softmax_f32(
@@ -8737,13 +8891,19 @@ static void ggml_incremental_softmax_f32(
         float * old_max,
         float * old_sum_exp,
         int n) {
-    // Find max in current block
+    // Find max in current block (use SIMD if available)
+#if defined(__AVX2__)
+    float block_max = ggml_reduce_max_avx2(scores, n);
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+    float block_max = ggml_reduce_max_neon(scores, n);
+#else
     float block_max = scores[0];
     for (int i = 1; i < n; i++) {
         if (scores[i] > block_max) {
             block_max = scores[i];
         }
     }
+#endif
 
     // Update global max
     float new_max = fmaxf(*old_max, block_max);
@@ -8755,15 +8915,74 @@ static void ggml_incremental_softmax_f32(
     }
 
     // Add new block's contribution
-    for (int i = 0; i < n; i++) {
+    int i = 0;
+#if defined(__AVX2__)
+    {
+        __m256 vnew_max = _mm256_set1_ps(new_max);
+        for (; i + 8 <= n; i += 8) {
+            __m256 vscores = _mm256_loadu_ps(scores + i);
+            __m256 vdiff = _mm256_sub_ps(vscores, vnew_max);
+            // Compute exp for each element
+            float tmp[8];
+            _mm256_storeu_ps(tmp, vdiff);
+            for (int j = 0; j < 8; ++j) {
+                tmp[j] = expf(tmp[j]);
+            }
+            _mm256_storeu_ps(output + i, _mm256_loadu_ps(tmp));
+        }
+    }
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+    for (; i + 4 <= n; i += 4) {
+        float32x4_t vscores = vld1q_f32(scores + i);
+        float32x4_t vdiff = vsubq_f32(vscores, vdupq_n_f32(new_max));
+        float tmp[4];
+        vst1q_f32(tmp, vdiff);
+        for (int j = 0; j < 4; ++j) {
+            tmp[j] = expf(tmp[j]);
+        }
+        vst1q_f32(output + i, vld1q_f32(tmp));
+    }
+#endif
+
+    // Handle remaining elements and accumulate sum_exp
+    for (; i < n; ++i) {
         float exp_score = expf(scores[i] - new_max);
         output[i] = exp_score;
         sum_exp += exp_score;
     }
 
+    // Sum exp values from SIMD-processed elements
+#if defined(__AVX2__)
+    for (int j = 0; j < i; j += 8) {
+        for (int k = 0; k < 8 && j + k < i; ++k) {
+            sum_exp += output[j + k];
+        }
+    }
+#endif
+
     // Normalize
     float inv_sum = 1.0f / sum_exp;
-    for (int i = 0; i < n; i++) {
+    i = 0;
+#if defined(__AVX2__)
+    {
+        __m256 vinv_sum = _mm256_set1_ps(inv_sum);
+        for (; i + 8 <= n; i += 8) {
+            __m256 vout = _mm256_loadu_ps(output + i);
+            vout = _mm256_mul_ps(vout, vinv_sum);
+            _mm256_storeu_ps(output + i, vout);
+        }
+    }
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+    {
+        float32x4_t vinv_sum = vdupq_n_f32(inv_sum);
+        for (; i + 4 <= n; i += 4) {
+            float32x4_t vout = vld1q_f32(output + i);
+            vout = vmulq_f32(vout, vinv_sum);
+            vst1q_f32(output + i, vout);
+        }
+    }
+#endif
+    for (; i < n; ++i) {
         output[i] *= inv_sum;
     }
 
@@ -8883,12 +9102,19 @@ static void ggml_compute_forward_paged_attention_one_chunk(
                     kv_head * nbk1 +           // head index (dim 1 stride)
                     physical_block * nbk3);    // block index (dim 3 stride)
 
-                // Dot product
+                // Dot product (SIMD-optimized)
+#if defined(__AVX2__)
+                float sum = ggml_dot_product_avx2(q_data, k_data, DK) * scale;
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+                float sum = ggml_dot_product_neon(q_data, k_data, DK) * scale;
+#else
                 float sum = 0.0f;
                 for (int dk = 0; dk < DK; ++dk) {
                     sum += q_data[dk] * k_data[dk];
                 }
-                block_scores[ik] = sum * scale;
+                sum *= scale;
+#endif
+                block_scores[ik] = sum;
             }
 
             // Apply mask if provided
@@ -8908,7 +9134,7 @@ static void ggml_compute_forward_paged_attention_one_chunk(
             ggml_incremental_softmax_f32(block_scores, attn_weights,
                 &softmax_max, &softmax_sum_exp, kv_len);
 
-            // Accumulate weighted values
+            // Accumulate weighted values (SIMD-optimized)
             for (int ik = 0; ik < kv_len; ++ik) {
                 const int block_offset = ik; // position within physical block
                 const float weight = attn_weights[ik];
@@ -8918,9 +9144,15 @@ static void ggml_compute_forward_paged_attention_one_chunk(
                     kv_head * nbv1 +
                     physical_block * nbv3);
 
+#if defined(__AVX2__)
+                ggml_vec_mad_avx2(dst_data, v_data, weight, DV);
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+                ggml_vec_mad_neon(dst_data, v_data, weight, DV);
+#else
                 for (int dv = 0; dv < DV; ++dv) {
                     dst_data[dv] += weight * v_data[dv];
                 }
+#endif
             }
         }
     }

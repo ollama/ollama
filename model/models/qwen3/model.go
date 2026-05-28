@@ -258,6 +258,7 @@ func New(c fs.Config) (model.Model, error) {
 
 func init() {
 	model.Register("qwen3", New)
+	model.Register("qwen35", New)
 	model.Register("qwen3moe", New)
 	model.Register("qwen3_embed", newEmbed)
 }

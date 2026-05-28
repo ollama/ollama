@@ -392,6 +392,9 @@ type Server struct {
 	// multimodalHash generates hashes for comparing equality
 	// of non-text data
 	multimodalHash maphash.Hash
+
+	// continuous batching scheduler
+	scheduler *ContinuousBatchScheduler
 }
 
 func (s *Server) allNil() bool {
@@ -441,6 +444,9 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	seq.cache.InUse = false
 	s.seqs[seqIndex] = nil
 	s.seqsSem.Release(1)
+
+	// Notify scheduler that sequence is complete
+	s.scheduler.MarkSequenceComplete(seq)
 }
 
 // track batch state between forwardBatch, computeBatch and predictForwardBatch
@@ -946,6 +952,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			}
 
 			s.seqs[i] = seq
+			// Add to scheduler for continuous batching
+			estimatedTokens := len(seq.inputs) + req.Options.NumPredict
+			s.scheduler.AddRequest(seq, PriorityNormal, estimatedTokens)
 			s.cond.Signal()
 			found = true
 			break
@@ -1235,6 +1244,14 @@ func (s *Server) allocModel(
 	s.parallel = parallel
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
+
+	// Initialize continuous batching scheduler
+	s.scheduler = NewContinuousBatchScheduler(SchedulerConfig{
+		MaxBatchSize:      s.parallel,
+		MaxTokensPerBatch: s.batchSize * 2, // Approximate
+		ScheduleInterval:  10 * time.Millisecond,
+		PreemptThreshold:  0.8,
+	})
 
 	err = s.reserveWorstCaseGraph(true)
 	if err != nil {

@@ -100,6 +100,14 @@ func (m *Base) Backend() ml.Backend {
 	return m.b
 }
 
+func (m *Base) SetCache(cache kvcache.Cache) {
+	m.Cache = cache
+}
+
+func (m *Base) GetCache() kvcache.Cache {
+	return m.Cache
+}
+
 func (m *Base) Config() config {
 	return m.config
 }

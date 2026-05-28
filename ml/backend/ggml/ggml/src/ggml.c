@@ -1023,6 +1023,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
 
     "FLASH_ATTN_EXT",
     "FLASH_ATTN_BACK",
+    "PAGED_ATTENTION",
     "SSM_CONV",
     "SSM_SCAN",
     "WIN_PART",
@@ -1048,7 +1049,6 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_SGD",
 
     "GLU",
-    "PAGED_ATTENTION",
 };
 
 static_assert(GGML_OP_COUNT == 96, "GGML_OP_COUNT != 96");
@@ -1133,6 +1133,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
 
     "flash_attn_ext(x)",
     "flash_attn_back(x)",
+    "paged_attention(x)",
     "ssm_conv(x)",
     "ssm_scan(x)",
     "win_part(x)",
@@ -1158,7 +1159,6 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "sgd(x)",
 
     "glu(x)",
-    "paged_attention(x)",
 };
 
 static_assert(GGML_OP_COUNT == 96, "GGML_OP_COUNT != 96");
@@ -5436,8 +5436,8 @@ struct ggml_tensor * ggml_paged_attention_ext(
         GGML_ASSERT(ggml_is_contiguous(mask));
     }
 
-    // Output shape: [head_dim, n_tokens, n_heads, batch_size]
-    int64_t ne[4] = { v->ne[0], q->ne[1], q->ne[2], q->ne[3] };
+    // Output shape: [head_dim, n_q_heads, n_tokens, batch_size]
+    int64_t ne[4] = { v->ne[0], q->ne[2], q->ne[1], q->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
 
     // Store parameters: scale, block_size
