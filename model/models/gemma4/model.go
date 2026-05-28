@@ -224,12 +224,21 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 			endToken = m.imageEndTokenID
 		}
 
+		endN := 0
+		if endToken >= 0 {
+			endN = 1
+		}
+
 		if beginToken >= 0 {
-			result = append(result, &input.Input{Token: beginToken, SameBatch: numTokens + 2})
+			result = append(result, &input.Input{Token: beginToken, SameBatch: numTokens + endN})
 		}
 
 		result = append(result,
-			&input.Input{Multimodal: []input.Multimodal{{Tensor: inputMultimodal}}, MultimodalHash: inp.MultimodalHash},
+			&input.Input{
+				Multimodal:     []input.Multimodal{{Tensor: inputMultimodal}},
+				MultimodalHash: inp.MultimodalHash,
+				SameBatch:      numTokens - 1 + endN,
+			},
 		)
 		result = append(result, slices.Repeat([]*input.Input{{Token: 0}}, numTokens-1)...)
 

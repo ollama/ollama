@@ -134,9 +134,13 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 			inputMultimodal := inp.Multimodal[0].Tensor
 
 			result = append(result,
-				&input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3}, // "\n\n"
-				&input.Input{Token: 255999},                                     // "<start_of_image>""
-				&input.Input{Multimodal: []input.Multimodal{{Tensor: inputMultimodal}}, MultimodalHash: inp.MultimodalHash}, // image data is on the first placeholder
+				&input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3},
+				&input.Input{Token: 255999},
+				&input.Input{
+					Multimodal:     []input.Multimodal{{Tensor: inputMultimodal}},
+					MultimodalHash: inp.MultimodalHash,
+					SameBatch:      inputMultimodal.Dim(1) + 1,
+				},
 			)
 
 			// add image token placeholders
