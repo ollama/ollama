@@ -1072,8 +1072,8 @@ nextLayer:
 	}
 
 	// On linux and windows, over-allocating CPU memory will almost always result in an error
-	// Darwin has fully dynamic swap so has no direct concept of free swap space
-	if runtime.GOOS != "darwin" {
+	// Darwin and FreeBSD have fully dynamic swap so has no direct concept of free swap space
+	if runtime.GOOS != "darwin" && runtime.GOOS != "freebsd" {
 		available := systemInfo.FreeMemory + systemInfo.FreeSwap
 		if cpuSize > available {
 			slog.Warn("model request too large for system", "requested", format.HumanBytes2(cpuSize), "available", format.HumanBytes2(available), "total", format.HumanBytes2(systemInfo.TotalMemory), "free", format.HumanBytes2(systemInfo.FreeMemory), "swap", format.HumanBytes2(systemInfo.FreeSwap))
