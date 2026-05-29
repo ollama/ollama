@@ -3,6 +3,7 @@ package discover
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 
@@ -10,6 +11,10 @@ import (
 )
 
 func TestApplyLinuxROCmRefinement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Linux PCI sysfs paths use ':' which is not valid in Windows filenames")
+	}
+
 	tests := []struct {
 		name           string
 		nodes          []fakeROCmNode
