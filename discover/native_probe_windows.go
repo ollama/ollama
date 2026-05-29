@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +130,7 @@ func probeGGMLDevicesWindows(libDirs []string) ([]nativeProbeDevice, error) {
 				TotalMemory: uint64(props.MemoryTotal),
 				FreeMemory:  uint64(props.MemoryFree),
 			})
+			slog.Debug("GGML GPU device type", "library", library, "index", i, "ggml_type", props.Type, "integrated", ggmlDeviceTypeIntegrated(props.Type))
 		}
 	}
 
