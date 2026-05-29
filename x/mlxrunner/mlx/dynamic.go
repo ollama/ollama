@@ -101,6 +101,8 @@ func libOllamaRoots() []string {
 	// and incompatible variants are skipped. Without this, alphabetical
 	// order would always pick v3 over v4 in dev builds.
 	for _, base := range repoBuildDirs() {
+		platform := runtime.GOOS + "-" + runtime.GOARCH
+		platformAlt := runtime.GOOS + "_" + runtime.GOARCH
 		roots = append(roots, filepath.Join(base, "lib", "ollama"))
 		if matches, err := filepath.Glob(filepath.Join(base, "*", "lib", "ollama")); err == nil {
 			sort.Sort(sort.Reverse(sort.StringSlice(matches)))
@@ -113,8 +115,22 @@ func libOllamaRoots() []string {
 				}
 			}
 		}
+		if matches, err := filepath.Glob(filepath.Join(base, platform, "*", "lib", "ollama")); err == nil {
+			sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+			for _, m := range matches {
+				variant := filepath.Base(filepath.Dir(filepath.Dir(m)))
+				if isCompatibleMLXVariant(variant) {
+					roots = append(roots, m)
+				}
+			}
+		}
+		repoRoot := filepath.Dir(base)
+		roots = append(roots, filepath.Join(repoRoot, "dist", platform, "lib", "ollama"))
+		roots = append(roots, filepath.Join(repoRoot, "dist", platformAlt, "lib", "ollama"))
+		if runtime.GOOS == "darwin" {
+			roots = append(roots, filepath.Join(repoRoot, "dist", "darwin", "lib", "ollama"))
+		}
 	}
-
 	return roots
 }
 

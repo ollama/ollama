@@ -368,7 +368,7 @@ function(ollama_add_mlx_build name)
         message(FATAL_ERROR "ollama_add_mlx_build(${name}) requires RUNNER_DIR")
     endif()
 
-    set(_build_dir ${CMAKE_BINARY_DIR}/mlx-${name})
+    set(_build_dir ${CMAKE_BINARY_DIR}/${ARG_RUNNER_DIR})
     ollama_collect_cache_args_with_prefix("MLX_" _mlx_cache_args)
     set(_cmake_args
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
