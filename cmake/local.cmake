@@ -157,7 +157,8 @@ if(OLLAMA_MLX_BACKENDS)
         ExternalProject_Add(ollama-mlx-source
             GIT_REPOSITORY "https://github.com/ml-explore/mlx.git"
             GIT_TAG ${OLLAMA_MLX_GIT_TAG}
-            GIT_SHALLOW TRUE
+            # MLX uses commit hashes while we track closely; switch to shallow when MLX pins move to tags.
+            GIT_SHALLOW FALSE
             SOURCE_DIR ${OLLAMA_MLX_SOURCE_DIR}
             CONFIGURE_COMMAND ""
             BUILD_COMMAND ""
@@ -179,7 +180,8 @@ if(OLLAMA_MLX_BACKENDS)
         ExternalProject_Add(ollama-mlx-c-source
             GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
             GIT_TAG ${OLLAMA_MLX_C_GIT_TAG}
-            GIT_SHALLOW TRUE
+            # MLX-C uses commit hashes while we track closely; switch to shallow when MLX-C pins move to tags.
+            GIT_SHALLOW FALSE
             SOURCE_DIR ${OLLAMA_MLX_C_SOURCE_DIR}
             CONFIGURE_COMMAND ""
             BUILD_COMMAND ""
