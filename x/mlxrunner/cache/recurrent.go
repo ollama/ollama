@@ -82,14 +82,20 @@ func (c *RecurrentCache) Get(b *batch.Batch, dtype mlx.DType) *nn.RecurrentHisto
 	return nn.NewRecurrentHistory(c.convState, c.deltaState)
 }
 
-// Put stores the post-computation conv/delta states for the SSM
-// layer's write phase and advances the cache offset by the current
-// forward's real token count.
+// Put stores the conv/delta states produced by the SSM layer's write phase.
+// convStates/deltaStates are the per-boundary recurrent states, one per
+// boundary ending with the forward-end state. The final entry becomes the
+// committed live state, advancing the cache offset by the forward's real
+// token count.
+//
+// In the common (unsegmented) case both slices have length 1 — just the
+// forward-end state.
 //
 // Assumes B = 1; heterogeneous batches are not supported.
-func (c *RecurrentCache) Put(b *batch.Batch, newConv, newDelta *mlx.Array) {
-	c.convState = c.setState(c.convState, newConv, true)
-	c.deltaState = c.setState(c.deltaState, newDelta, false)
+func (c *RecurrentCache) Put(b *batch.Batch, convStates, deltaStates []*mlx.Array) {
+	last := len(convStates) - 1
+	c.convState = c.setState(c.convState, convStates[last], true)
+	c.deltaState = c.setState(c.deltaState, deltaStates[last], false)
 	c.offset += int(b.SeqQueryLens[0])
 }
 

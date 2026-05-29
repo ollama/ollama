@@ -1176,7 +1176,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 		)
 	}
 
-	convOut, nextConv := nn.CausalConv1D(b, qkv, g.Conv1D, g.ConvWeight, int(convTail), rec)
+	convOut, convStates := nn.CausalConv1D(b, qkv, g.Conv1D, g.ConvWeight, int(convTail), rec)
 	convOut = mlx.SiLU(convOut)
 
 	keyDim := cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim
@@ -1198,14 +1198,14 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 
 	betaGate := mlx.Sigmoid(beta)
 
-	out, state := nn.GatedDelta(b, q, k, v, gDecay, betaGate, rec)
+	out, deltaStates := nn.GatedDelta(b, q, k, v, gDecay, betaGate, rec)
 	outDType := out.DType()
 	out = mlx.RMSNormFn(out, g.NormWeight, cfg.RMSNormEps)
 	out = mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.SiLU(z.AsType(mlx.DTypeFloat32))).AsType(outDType)
 	out = mlx.Reshape(out, B, L, valueDim)
 	out = g.OutProj.Forward(out)
 	if rc != nil {
-		rc.Put(b, nextConv, state)
+		rc.Put(b, convStates, deltaStates)
 	}
 	return out
 }
