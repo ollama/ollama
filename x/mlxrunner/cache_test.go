@@ -26,6 +26,63 @@ func (tr *snapshotTracker) track(s *fakeSnapshot) {
 // Fake caches that store actual token sequences so tests can verify the right
 // data was restored, not just the right offset.
 
+// fakePending mirrors the production pendingSnapshots capture machinery for the
+// fakes: it schedules offsets, captures as feed crosses each one (edge-local,
+// via a running base cursor), and returns the captures in scheduled order.
+// capture is the owning fake's snapshot-at-an-offset function.
+type fakePending struct {
+	offsets  []int
+	captured []cache.Snapshot
+	base     int
+}
+
+func (p *fakePending) prepare(currentOffset int, offsets []int) {
+	p.offsets = slices.Clone(offsets)
+	p.captured = make([]cache.Snapshot, len(offsets))
+	p.base = currentOffset
+}
+
+func (p *fakePending) take() []cache.Snapshot {
+	out := p.captured
+	p.offsets, p.captured = nil, nil
+	return out
+}
+
+// feedCapturing advances the cache from start over the fed tokens, capturing at
+// every scheduled offset crossed (including start and end). capture(from,
+// reached) produces the snapshot for the edge ending at reached;
+// advance(tokens) appends a token segment to the live state. Segment boundaries
+// fall at scheduled offsets.
+func (p *fakePending) feedCapturing(start int, tokens []int32, capture func(from, reached int) cache.Snapshot, advance func([]int32)) {
+	end := start + len(tokens)
+	captureAt := func(reached int) {
+		for i, o := range p.offsets {
+			if p.captured[i] == nil && o == reached {
+				p.captured[i] = capture(p.base, reached)
+			}
+		}
+		p.base = reached
+	}
+
+	if len(p.offsets) == 0 {
+		advance(tokens)
+		return
+	}
+
+	captureAt(start)
+	prev := 0
+	for cut := start + 1; cut < end; cut++ {
+		if !slices.Contains(p.offsets, cut) {
+			continue
+		}
+		advance(tokens[prev : cut-start])
+		captureAt(cut)
+		prev = cut - start
+	}
+	advance(tokens[prev:])
+	captureAt(end)
+}
+
 // fakeSnapshot stores a copy of the token sub-sequence it covers.
 type fakeSnapshot struct {
 	tokens   []int32
@@ -34,11 +91,23 @@ type fakeSnapshot struct {
 
 	tracker    *snapshotTracker
 	closeCount int
+
+	onMaterialize func(delta int)
 }
 
-func (s *fakeSnapshot) Size() int { return s.byteSize }
-func (s *fakeSnapshot) Close() {
-	s.closeCount++
+func (s *fakeSnapshot) Size() int                             { return s.byteSize }
+func (s *fakeSnapshot) SetMaterializeHook(fn func(delta int)) { s.onMaterialize = fn }
+func (s *fakeSnapshot) Close()                                { s.closeCount++ }
+
+// materialize simulates a lazy snapshot copying out: grow byteSize by delta
+// and fire the trie's hook if one is attached. Tests use this to verify the
+// trie's counter responds to materialization events.
+func (s *fakeSnapshot) materialize(delta int) {
+	s.byteSize += delta
+	if s.onMaterialize != nil {
+		s.onMaterialize(delta)
+		s.onMaterialize = nil
+	}
 }
 
 // fakeRewindableCache tracks the full token sequence and supports
@@ -46,10 +115,13 @@ func (s *fakeSnapshot) Close() {
 type fakeRewindableCache struct {
 	tokens  []int32
 	tracker *snapshotTracker
+	pending fakePending
 }
 
 func (c *fakeRewindableCache) feed(tokens []int32) {
-	c.tokens = append(c.tokens, tokens...)
+	c.pending.feedCapturing(len(c.tokens), tokens,
+		func(from, reached int) cache.Snapshot { return c.Snapshot(from) },
+		func(seg []int32) { c.tokens = append(c.tokens, seg...) })
 }
 
 func (c *fakeRewindableCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
@@ -159,6 +231,11 @@ func (c *fakeRewindableCache) Split(snapshot cache.Snapshot, at int) (cache.Snap
 	return p, ch
 }
 
+func (c *fakeRewindableCache) PrepareSnapshots(offsets []int) {
+	c.pending.prepare(len(c.tokens), offsets)
+}
+func (c *fakeRewindableCache) TakeSnapshots() []cache.Snapshot { return c.pending.take() }
+
 // fakeSlidingWindowCache models RotatingKVCache semantics: stores the full
 // token sequence but only the trailing maxSize tokens are "live" in the window.
 // Once the window fills, live rewind is impossible without a snapshot.
@@ -166,10 +243,13 @@ type fakeSlidingWindowCache struct {
 	tokens  []int32
 	maxSize int
 	tracker *snapshotTracker
+	pending fakePending
 }
 
 func (c *fakeSlidingWindowCache) feed(tokens []int32) {
-	c.tokens = append(c.tokens, tokens...)
+	c.pending.feedCapturing(len(c.tokens), tokens,
+		func(from, reached int) cache.Snapshot { return c.Snapshot(0) },
+		func(seg []int32) { c.tokens = append(c.tokens, seg...) })
 }
 
 func (c *fakeSlidingWindowCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
@@ -241,15 +321,23 @@ func (c *fakeSlidingWindowCache) Split(snapshot cache.Snapshot, at int) (cache.S
 	return nil, snapshot
 }
 
+func (c *fakeSlidingWindowCache) PrepareSnapshots(offsets []int) {
+	c.pending.prepare(len(c.tokens), offsets)
+}
+func (c *fakeSlidingWindowCache) TakeSnapshots() []cache.Snapshot { return c.pending.take() }
+
 // fakeRecurrentCache models RecurrentCache semantics: stores tokens
 // but cannot rewind without a snapshot.
 type fakeRecurrentCache struct {
 	tokens  []int32
 	tracker *snapshotTracker
+	pending fakePending
 }
 
 func (c *fakeRecurrentCache) feed(tokens []int32) {
-	c.tokens = append(c.tokens, tokens...)
+	c.pending.feedCapturing(len(c.tokens), tokens,
+		func(from, reached int) cache.Snapshot { return c.Snapshot(0) },
+		func(seg []int32) { c.tokens = append(c.tokens, seg...) })
 }
 
 func (c *fakeRecurrentCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
@@ -299,6 +387,11 @@ func (c *fakeRecurrentCache) Merge(parent, child cache.Snapshot) cache.Snapshot 
 func (c *fakeRecurrentCache) Split(snapshot cache.Snapshot, at int) (cache.Snapshot, cache.Snapshot) {
 	return nil, snapshot // can't split cumulative state
 }
+
+func (c *fakeRecurrentCache) PrepareSnapshots(offsets []int) {
+	c.pending.prepare(len(c.tokens), offsets)
+}
+func (c *fakeRecurrentCache) TakeSnapshots() []cache.Snapshot { return c.pending.take() }
 
 type feedableCache interface {
 	cache.Cache
@@ -935,4 +1028,61 @@ func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 
 		checkTrieInvariants(t, kvc.root)
 	})
+}
+
+// TestPagedOutBytesUpdatesOnMaterialize verifies that when a snapshot owned
+// by a trie node materializes (allocates owned bytes from a previously lazy
+// state), the trie's pagedOutBytes counter picks up the delta via the
+// installed materialize hook.
+func TestPagedOutBytesUpdatesOnMaterialize(t *testing.T) {
+	kvc := &kvCache{}
+	kvc.ensureRoot()
+
+	node := &trieNode{parent: kvc.root, tokens: []int32{1, 2, 3}, endOffset: 3}
+	kvc.root.children = append(kvc.root.children, node)
+
+	snap := &fakeSnapshot{from: 0, to: 3, byteSize: 0}
+	node.setSnapshots([]cache.Snapshot{snap}, &kvc.pagedOutBytes)
+
+	if kvc.pagedOutBytes != 0 {
+		t.Fatalf("pagedOutBytes after install = %d, want 0 (lazy snapshot)", kvc.pagedOutBytes)
+	}
+
+	const materialized = 1 << 20
+	snap.materialize(materialized)
+
+	if kvc.pagedOutBytes != materialized {
+		t.Fatalf("pagedOutBytes after materialize = %d, want %d", kvc.pagedOutBytes, materialized)
+	}
+}
+
+// TestSwapSnapshotsDetachesHook verifies that snapshots removed from a trie
+// node via swapSnapshots no longer feed the trie's counter when they later
+// materialize. Without detach, a Split/Merge that folds an old snapshot
+// elsewhere would double-count its bytes if it copied out afterward.
+func TestSwapSnapshotsDetachesHook(t *testing.T) {
+	kvc := &kvCache{}
+	kvc.ensureRoot()
+
+	node := &trieNode{parent: kvc.root, tokens: []int32{1, 2, 3}, endOffset: 3}
+	kvc.root.children = append(kvc.root.children, node)
+
+	snap := &fakeSnapshot{from: 0, to: 3, byteSize: 0}
+	node.setSnapshots([]cache.Snapshot{snap}, &kvc.pagedOutBytes)
+
+	replacement := &fakeSnapshot{from: 0, to: 3, byteSize: 0}
+	old := node.swapSnapshots([]cache.Snapshot{replacement}, &kvc.pagedOutBytes)
+	if len(old) != 1 || old[0] != snap {
+		t.Fatalf("swapSnapshots returned %v, want the original snap", old)
+	}
+
+	snap.materialize(1 << 20)
+	if kvc.pagedOutBytes != 0 {
+		t.Fatalf("pagedOutBytes after detached materialize = %d, want 0", kvc.pagedOutBytes)
+	}
+
+	replacement.materialize(2 << 20)
+	if kvc.pagedOutBytes != 2<<20 {
+		t.Fatalf("pagedOutBytes after replacement materialize = %d, want %d", kvc.pagedOutBytes, 2<<20)
+	}
 }
