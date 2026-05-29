@@ -68,6 +68,17 @@ func (w *WebFetch) Execute(ctx context.Context, args map[string]any) (any, strin
 		return nil, "", fmt.Errorf("url must be a non-empty string")
 	}
 
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return nil, "", fmt.Errorf("url must use http or https scheme")
+	}
+	host := parsedURL.Hostname()
+	if host == "localhost" || host == "::1" ||
+		strings.HasPrefix(host, "127.") || strings.HasPrefix(host, "169.254.") ||
+		strings.HasPrefix(host, "10.") || strings.HasPrefix(host, "192.168.") {
+		return nil, "", fmt.Errorf("url must not point to internal or private network addresses")
+	}
+
 	result, err := performWebFetch(ctx, urlStr)
 	if err != nil {
 		return nil, "", err
