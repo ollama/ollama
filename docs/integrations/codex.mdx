@@ -52,20 +52,31 @@ codex --oss -m gpt-oss:120b-cloud
 
 ### Profile-based setup
 
-For a persistent configuration, add an Ollama provider and profiles to `~/.codex/config.toml`:
+For a persistent configuration, add an Ollama provider to `~/.codex/config.toml`:
 
 ```toml
 [model_providers.ollama-launch]
 name = "Ollama"
-base_url = "http://localhost:11434/v1"
+base_url = "http://localhost:11434/v1/"
+wire_api = "responses"
+```
 
-[profiles.ollama-launch]
+Then create `~/.codex/ollama-launch.config.toml`:
+
+```toml
 model = "gpt-oss:120b"
 model_provider = "ollama-launch"
+openai_base_url = "http://localhost:11434/v1/"
+forced_login_method = "api"
+```
 
-[profiles.ollama-cloud]
+For a cloud model, create `~/.codex/ollama-cloud.config.toml`:
+
+```toml
 model = "gpt-oss:120b-cloud"
 model_provider = "ollama-launch"
+openai_base_url = "http://localhost:11434/v1/"
+forced_login_method = "api"
 ```
 
 Then run:

@@ -45,6 +45,7 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("creates new file when none exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
+		profilePath := codexProfileConfigPathForConfig(configPath, codexProfileName)
 		catalogPath := filepath.Join(tmpDir, "model.json")
 
 		if err := writeCodexProfile(configPath, catalogPath); err != nil {
@@ -57,22 +58,27 @@ func TestWriteCodexProfile(t *testing.T) {
 		}
 
 		content := string(data)
-		if !strings.Contains(content, "[profiles.ollama-launch]") {
-			t.Error("missing [profiles.ollama-launch] header")
+		profileData, err := os.ReadFile(profilePath)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(content, "openai_base_url") {
+		profileContent := string(profileData)
+		if strings.Contains(content, "[profiles.ollama-launch]") {
+			t.Error("main config should not contain legacy [profiles.ollama-launch] header")
+		}
+		if !strings.Contains(profileContent, "openai_base_url") {
 			t.Error("missing openai_base_url key")
 		}
-		if !strings.Contains(content, "/v1/") {
+		if !strings.Contains(profileContent, "/v1/") {
 			t.Error("missing /v1/ suffix in base URL")
 		}
-		if !strings.Contains(content, `forced_login_method = "api"`) {
+		if !strings.Contains(profileContent, `forced_login_method = "api"`) {
 			t.Error("missing forced_login_method key")
 		}
-		if !strings.Contains(content, `model_provider = "ollama-launch"`) {
+		if !strings.Contains(profileContent, `model_provider = "ollama-launch"`) {
 			t.Error("missing model_provider key")
 		}
-		if !strings.Contains(content, fmt.Sprintf("model_catalog_json = %q", catalogPath)) {
+		if !strings.Contains(profileContent, fmt.Sprintf("model_catalog_json = %q", catalogPath)) {
 			t.Error("missing model_catalog_json key")
 		}
 		if !strings.Contains(content, "[model_providers.ollama-launch]") {
@@ -83,6 +89,9 @@ func TestWriteCodexProfile(t *testing.T) {
 		}
 		if err := codexValidateConfigText(content); err != nil {
 			t.Fatalf("generated config should be valid TOML: %v\n%s", err, content)
+		}
+		if err := codexValidateConfigText(profileContent); err != nil {
+			t.Fatalf("generated profile config should be valid TOML: %v\n%s", err, profileContent)
 		}
 	})
 
@@ -103,8 +112,50 @@ func TestWriteCodexProfile(t *testing.T) {
 		if !strings.Contains(content, "[some_other_section]") {
 			t.Error("existing section was removed")
 		}
-		if !strings.Contains(content, "[profiles.ollama-launch]") {
-			t.Error("missing [profiles.ollama-launch] header")
+		if strings.Contains(content, "[profiles.ollama-launch]") {
+			t.Error("main config should not contain legacy [profiles.ollama-launch] header")
+		}
+		profileData, err := os.ReadFile(codexProfileConfigPathForConfig(configPath, codexProfileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(profileData), `model_provider = "ollama-launch"`) {
+			t.Error("missing model_provider in profile config")
+		}
+	})
+
+	t.Run("preserves existing profile config settings", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.toml")
+		profilePath := codexProfileConfigPathForConfig(configPath, codexProfileName)
+		profileText := "" +
+			`approval_policy = "on-request"` + "\n\n" +
+			`[profiles.ollama-launch]` + "\n" +
+			`model = "profile-file-legacy"` + "\n\n" +
+			`[model_providers.ollama-launch]` + "\n" +
+			`name = "Old"` + "\n" +
+			`base_url = "http://old:1234/v1/"` + "\n"
+		if err := os.WriteFile(profilePath, []byte(profileText), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := writeCodexProfile(configPath); err != nil {
+			t.Fatal(err)
+		}
+
+		data, err := os.ReadFile(profilePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(data)
+		if !strings.Contains(content, `approval_policy = "on-request"`) {
+			t.Fatalf("existing profile setting was not preserved, got:\n%s", content)
+		}
+		if !strings.Contains(content, `model = "profile-file-legacy"`) {
+			t.Fatalf("legacy profile file model was not migrated, got:\n%s", content)
+		}
+		if strings.Contains(content, "[profiles.ollama-launch]") || strings.Contains(content, "[model_providers.ollama-launch]") {
+			t.Fatalf("legacy managed sections should be removed from profile config, got:\n%s", content)
 		}
 	})
 
@@ -112,7 +163,7 @@ func TestWriteCodexProfile(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
 		catalogPath := filepath.Join(tmpDir, "model.json")
-		existing := "[profiles.ollama-launch]\nopenai_base_url = \"http://old:1234/v1/\"\n\n[model_providers.ollama-launch]\nname = \"Ollama\"\nbase_url = \"http://old:1234/v1/\"\n"
+		existing := "profile = \"ollama-launch\"\n\n[profiles.ollama-launch]\nopenai_base_url = \"http://old:1234/v1/\"\nmodel = \"saved-model\"\n\n[model_providers.ollama-launch]\nname = \"Ollama\"\nbase_url = \"http://old:1234/v1/\"\n"
 		os.WriteFile(configPath, []byte(existing), 0o644)
 
 		if err := writeCodexProfile(configPath, catalogPath); err != nil {
@@ -125,14 +176,28 @@ func TestWriteCodexProfile(t *testing.T) {
 		if strings.Contains(content, "old:1234") {
 			t.Error("old URL was not replaced")
 		}
-		if strings.Count(content, "[profiles.ollama-launch]") != 1 {
-			t.Errorf("expected exactly one [profiles.ollama-launch] section, got %d", strings.Count(content, "[profiles.ollama-launch]"))
+		if strings.Contains(content, `profile = "ollama-launch"`) {
+			t.Error("legacy root profile selector was not removed")
+		}
+		if strings.Contains(content, "[profiles.ollama-launch]") {
+			t.Error("legacy [profiles.ollama-launch] section was not removed")
 		}
 		if strings.Count(content, "[model_providers.ollama-launch]") != 1 {
 			t.Errorf("expected exactly one [model_providers.ollama-launch] section, got %d", strings.Count(content, "[model_providers.ollama-launch]"))
 		}
+		profileData, err := os.ReadFile(codexProfileConfigPathForConfig(configPath, codexProfileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		profileContent := string(profileData)
+		if !strings.Contains(profileContent, `model = "saved-model"`) {
+			t.Fatalf("legacy model should migrate to profile config, got:\n%s", profileContent)
+		}
 		if err := codexValidateConfigText(content); err != nil {
 			t.Fatalf("generated config should be valid TOML: %v\n%s", err, content)
+		}
+		if err := codexValidateConfigText(profileContent); err != nil {
+			t.Fatalf("generated profile config should be valid TOML: %v\n%s", err, profileContent)
 		}
 	})
 
@@ -158,16 +223,23 @@ func TestWriteCodexProfile(t *testing.T) {
 		content := string(data)
 
 		if strings.Contains(content, `profiles."ollama-launch"`) {
-			t.Fatalf("quoted profile table should be replaced, got:\n%s", content)
+			t.Fatalf("quoted profile table should be removed, got:\n%s", content)
 		}
 		if strings.Contains(content, "old:1234") {
 			t.Fatalf("old URL was not replaced, got:\n%s", content)
 		}
-		if got := codexSectionStringValue(content, codexProfileHeader(), "model_provider"); got != codexProfileName {
-			t.Fatalf("profile model_provider = %q, want %q", got, codexProfileName)
+		if got, ok := codexRootStringValueOK(content, "profile"); ok {
+			t.Fatalf("legacy root profile should be removed, got %q", got)
 		}
 		if got := codexSectionStringValue(content, codexProviderHeader(), "base_url"); !strings.Contains(got, "/v1/") {
 			t.Fatalf("provider base_url = %q, want /v1/ URL", got)
+		}
+		profileData, err := os.ReadFile(codexProfileConfigPathForConfig(configPath, codexProfileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := codexRootStringValue(string(profileData), "model_provider"); got != codexProfileName {
+			t.Fatalf("profile config model_provider = %q, want %q", got, codexProfileName)
 		}
 		if err := codexValidateConfigText(content); err != nil {
 			t.Fatalf("generated config should be valid TOML: %v\n%s", err, content)
@@ -188,6 +260,34 @@ func TestWriteCodexProfile(t *testing.T) {
 		data, _ := os.ReadFile(configPath)
 		if string(data) != existing {
 			t.Fatalf("invalid config should be left untouched, got:\n%s", data)
+		}
+	})
+
+	t.Run("rejects invalid existing profile config without writing", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.toml")
+		profilePath := codexProfileConfigPathForConfig(configPath, codexProfileName)
+		existingConfig := "[some_other_section]\nkey = \"value\"\n"
+		existingProfile := "model = \n"
+		if err := os.WriteFile(configPath, []byte(existingConfig), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(profilePath, []byte(existingProfile), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		err := writeCodexProfile(configPath)
+		if err == nil || !strings.Contains(err.Error(), "invalid Codex config TOML") {
+			t.Fatalf("writeCodexProfile error = %v, want invalid TOML", err)
+		}
+
+		configData, _ := os.ReadFile(configPath)
+		if string(configData) != existingConfig {
+			t.Fatalf("invalid profile config should leave config untouched, got:\n%s", configData)
+		}
+		profileData, _ := os.ReadFile(profilePath)
+		if string(profileData) != existingProfile {
+			t.Fatalf("invalid profile config should be left untouched, got:\n%s", profileData)
 		}
 	})
 
@@ -294,6 +394,9 @@ func TestWriteCodexProfile(t *testing.T) {
 		if strings.Contains(content, "old:1234") {
 			t.Error("old URL was not replaced")
 		}
+		if strings.Contains(content, "[profiles.ollama-launch]") {
+			t.Error("legacy [profiles.ollama-launch] section was not removed")
+		}
 		if !strings.Contains(content, "[another_section]") {
 			t.Error("following section was removed")
 		}
@@ -316,8 +419,11 @@ func TestWriteCodexProfile(t *testing.T) {
 		data, _ := os.ReadFile(configPath)
 		content := string(data)
 
-		if !strings.Contains(content, "[profiles.ollama-launch]") {
-			t.Error("missing [profiles.ollama-launch] header")
+		if strings.Contains(content, "[profiles.ollama-launch]") {
+			t.Error("main config should not contain legacy [profiles.ollama-launch] header")
+		}
+		if !strings.Contains(content, "[model_providers.ollama-launch]") {
+			t.Error("missing [model_providers.ollama-launch] header")
 		}
 		// Should not have double blank lines from missing trailing newline
 		if strings.Contains(content, "\n\n\n") {
@@ -337,9 +443,16 @@ func TestWriteCodexProfile(t *testing.T) {
 
 		data, _ := os.ReadFile(configPath)
 		content := string(data)
+		profileData, err := os.ReadFile(codexProfileConfigPathForConfig(configPath, codexProfileName))
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		if !strings.Contains(content, "myhost:9999/v1/") {
 			t.Errorf("expected custom host in URL, got:\n%s", content)
+		}
+		if !strings.Contains(string(profileData), "myhost:9999/v1/") {
+			t.Errorf("expected custom host in profile config, got:\n%s", profileData)
 		}
 	})
 
@@ -354,12 +467,16 @@ func TestWriteCodexProfile(t *testing.T) {
 
 		data, _ := os.ReadFile(configPath)
 		content := string(data)
-
-		if strings.Contains(content, "0.0.0.0") {
-			t.Fatalf("config should not write bind-only host, got:\n%s", content)
+		profileData, err := os.ReadFile(codexProfileConfigPathForConfig(configPath, codexProfileName))
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(content, "127.0.0.1:11434/v1/") {
-			t.Fatalf("expected connectable loopback URL, got:\n%s", content)
+
+		if strings.Contains(content, "0.0.0.0") || strings.Contains(string(profileData), "0.0.0.0") {
+			t.Fatalf("config should not write bind-only host, got:\n%s\n%s", content, profileData)
+		}
+		if !strings.Contains(content, "127.0.0.1:11434/v1/") || !strings.Contains(string(profileData), "127.0.0.1:11434/v1/") {
+			t.Fatalf("expected connectable loopback URL, got:\n%s\n%s", content, profileData)
 		}
 	})
 }
@@ -380,11 +497,19 @@ func TestEnsureCodexConfig(t *testing.T) {
 		}
 
 		content := string(data)
-		if !strings.Contains(content, "[profiles.ollama-launch]") {
-			t.Error("missing [profiles.ollama-launch] header")
+		if strings.Contains(content, "[profiles.ollama-launch]") {
+			t.Error("main config should not contain legacy [profiles.ollama-launch] header")
 		}
-		if !strings.Contains(content, "openai_base_url") {
-			t.Error("missing openai_base_url key")
+		if !strings.Contains(content, "[model_providers.ollama-launch]") {
+			t.Error("missing [model_providers.ollama-launch] header")
+		}
+		profilePath := filepath.Join(tmpDir, ".codex", "ollama-launch.config.toml")
+		profileData, err := os.ReadFile(profilePath)
+		if err != nil {
+			t.Fatalf("profile config not created: %v", err)
+		}
+		if !strings.Contains(string(profileData), "openai_base_url") {
+			t.Error("missing openai_base_url key in profile config")
 		}
 
 		catalogPath := filepath.Join(tmpDir, ".codex", "model.json")
@@ -412,11 +537,19 @@ func TestEnsureCodexConfig(t *testing.T) {
 		data, _ := os.ReadFile(configPath)
 		content := string(data)
 
-		if strings.Count(content, "[profiles.ollama-launch]") != 1 {
-			t.Errorf("expected exactly one [profiles.ollama-launch] section after two calls, got %d", strings.Count(content, "[profiles.ollama-launch]"))
+		if strings.Count(content, "[profiles.ollama-launch]") != 0 {
+			t.Errorf("expected no [profiles.ollama-launch] section after two calls, got %d", strings.Count(content, "[profiles.ollama-launch]"))
 		}
 		if strings.Count(content, "[model_providers.ollama-launch]") != 1 {
 			t.Errorf("expected exactly one [model_providers.ollama-launch] section after two calls, got %d", strings.Count(content, "[model_providers.ollama-launch]"))
+		}
+		profilePath := filepath.Join(tmpDir, ".codex", "ollama-launch.config.toml")
+		profileData, err := os.ReadFile(profilePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(string(profileData), `model_provider = "ollama-launch"`) != 1 {
+			t.Fatalf("expected profile config model_provider exactly once, got:\n%s", profileData)
 		}
 	})
 }

@@ -108,16 +108,100 @@ func codexModelCatalogPathForConfig(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), "model.json")
 }
 
-// writeCodexProfile ensures ~/.codex/config.toml has the ollama-launch profile
-// and model provider sections with the correct base URL.
+func codexProfileConfigPathForConfig(configPath, profileName string) string {
+	return filepath.Join(filepath.Dir(configPath), profileName+".config.toml")
+}
+
+// writeCodexProfile ensures Codex has an ollama-launch profile using Codex's
+// profile-v2 layout: provider config in ~/.codex/config.toml and profile
+// settings in ~/.codex/ollama-launch.config.toml.
 func writeCodexProfile(configPath string, modelCatalogPath ...string) error {
-	opts := codexLaunchProfileOptions{
-		forceAPIAuth: true,
+	baseURL := codexBaseURL()
+	profileName := codexProfileName
+	profileConfigPath := codexProfileConfigPathForConfig(configPath, profileName)
+
+	content, readErr := os.ReadFile(configPath)
+	text := ""
+	if readErr == nil {
+		text = string(content)
+	} else if !os.IsNotExist(readErr) {
+		return readErr
 	}
-	if len(modelCatalogPath) > 0 {
-		opts.modelCatalogPath = modelCatalogPath[0]
+	parsed, err := codexParseConfig(text)
+	if err != nil {
+		return err
 	}
-	return writeCodexLaunchProfile(configPath, opts)
+
+	profileContent, profileReadErr := os.ReadFile(profileConfigPath)
+	profileText := ""
+	if profileReadErr == nil {
+		profileText = string(profileContent)
+	} else if !os.IsNotExist(profileReadErr) {
+		return profileReadErr
+	}
+	profileParsed, err := codexParseConfig(profileText)
+	if err != nil {
+		return err
+	}
+
+	model := profileParsed.RootString(codexRootModelKey)
+	if model == "" {
+		model = profileParsed.ProfileString(profileName, codexRootModelKey)
+	}
+	if model == "" {
+		model = parsed.ProfileString(profileName, codexRootModelKey)
+	}
+	catalogPath := profileParsed.RootString(codexRootModelCatalogJSONKey)
+	if catalogPath == "" {
+		catalogPath = profileParsed.ProfileString(profileName, codexRootModelCatalogJSONKey)
+	}
+	if catalogPath == "" {
+		catalogPath = parsed.ProfileString(profileName, codexRootModelCatalogJSONKey)
+	}
+	if len(modelCatalogPath) > 0 && strings.TrimSpace(modelCatalogPath[0]) != "" {
+		catalogPath = strings.TrimSpace(modelCatalogPath[0])
+	}
+
+	text = codexRemoveRootValue(text, codexRootProfileKey)
+	text = codexRemoveSection(text, codexProfileHeaderFor(profileName))
+	text = codexUpsertSection(text, codexProviderHeaderFor(profileName), []string{
+		fmt.Sprintf("name = %q", codexProviderName),
+		fmt.Sprintf("base_url = %q", baseURL),
+		`wire_api = "responses"`,
+	})
+
+	profileText = codexRemoveRootValue(profileText, codexRootProfileKey)
+	profileText = codexRemoveSection(profileText, codexProfileHeaderFor(profileName))
+	profileText = codexRemoveSection(profileText, codexProviderHeaderFor(profileName))
+	if model != "" {
+		profileText = codexSetRootStringValue(profileText, codexRootModelKey, model)
+	}
+	profileText = codexSetRootStringValue(profileText, "openai_base_url", baseURL)
+	profileText = codexSetRootStringValue(profileText, codexRootModelProviderKey, profileName)
+	profileText = codexSetRootStringValue(profileText, "forced_login_method", "api")
+	if catalogPath != "" {
+		profileText = codexSetRootStringValue(profileText, codexRootModelCatalogJSONKey, catalogPath)
+	}
+
+	parsed, err = codexParseConfig(text)
+	if err != nil {
+		return err
+	}
+	profileParsed, err = codexParseConfig(profileText)
+	if err != nil {
+		return err
+	}
+	if err := codexValidateProfileV2Text(parsed, profileParsed, profileName, model, catalogPath, baseURL); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return err
+	}
+	if err := fileutil.WriteWithBackup(configPath, []byte(text)); err != nil {
+		return err
+	}
+	return fileutil.WriteWithBackup(profileConfigPath, []byte(profileText))
 }
 
 type codexLaunchProfileOptions struct {
@@ -300,6 +384,48 @@ func codexValidateLaunchProfileText(config codexParsedConfig, profileName string
 	return nil
 }
 
+func codexValidateProfileV2Text(config, profileConfig codexParsedConfig, profileName, model, modelCatalogPath, baseURL string) error {
+	if config.Exists("profiles", profileName) {
+		return fmt.Errorf("generated Codex config still contains legacy profiles.%s table", profileName)
+	}
+	if got, ok := config.RootStringOK(codexRootProfileKey); ok {
+		return fmt.Errorf("generated Codex config still contains legacy profile = %q", got)
+	}
+	if profileConfig.Exists("profiles", profileName) {
+		return fmt.Errorf("generated Codex profile config still contains legacy profiles.%s table", profileName)
+	}
+	if got, ok := profileConfig.RootStringOK(codexRootProfileKey); ok {
+		return fmt.Errorf("generated Codex profile config still contains legacy profile = %q", got)
+	}
+	for _, check := range []struct {
+		config codexParsedConfig
+		path   []string
+		want   string
+	}{
+		{profileConfig, []string{"openai_base_url"}, baseURL},
+		{profileConfig, []string{codexRootModelProviderKey}, profileName},
+		{profileConfig, []string{"forced_login_method"}, "api"},
+		{config, []string{"model_providers", profileName, "name"}, codexProviderName},
+		{config, []string{"model_providers", profileName, "base_url"}, baseURL},
+		{config, []string{"model_providers", profileName, "wire_api"}, "responses"},
+	} {
+		if got, ok := check.config.String(check.path...); !ok || got != check.want {
+			return fmt.Errorf("generated Codex config missing %s = %q", strings.Join(check.path, "."), check.want)
+		}
+	}
+	if model != "" {
+		if got, ok := profileConfig.String(codexRootModelKey); !ok || got != model {
+			return fmt.Errorf("generated Codex profile config missing model = %q", model)
+		}
+	}
+	if modelCatalogPath != "" {
+		if got, ok := profileConfig.String(codexRootModelCatalogJSONKey); !ok || got != modelCatalogPath {
+			return fmt.Errorf("generated Codex profile config missing model_catalog_json = %q", modelCatalogPath)
+		}
+	}
+	return nil
+}
+
 func codexUpsertSection(text, header string, lines []string) string {
 	block := strings.Join(append([]string{header}, lines...), "\n") + "\n"
 
@@ -354,6 +480,24 @@ func (c codexParsedConfig) String(path ...string) (string, bool) {
 		return "", false
 	}
 	return value, true
+}
+
+func (c codexParsedConfig) Exists(path ...string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	var current any = c.values
+	for _, part := range path {
+		table, ok := current.(map[string]any)
+		if !ok {
+			return false
+		}
+		current, ok = table[part]
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (c codexParsedConfig) RootString(key string) string {
