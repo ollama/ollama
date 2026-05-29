@@ -467,7 +467,7 @@ func (e *testEnv) assertAllTokens(t *testing.T, label string, expected []int32) 
 }
 
 // simulateRequest mirrors the production pipeline lifecycle:
-//   begin -> prefill with snapshot(false) at branch points -> generate -> close
+//   begin -> schedule snapshots -> prefill in one pass -> attach snapshots -> generate -> close
 
 type requestResult struct {
 	remaining        []int32
@@ -480,9 +480,10 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 	t.Helper()
 
 	session := kvc.begin(nil, inputs)
+	var snapshotOffsets []int
 	for _, at := range userSnapshotAt {
 		if at > 0 {
-			session.requestSnapshot(at)
+			snapshotOffsets = append(snapshotOffsets, at)
 		}
 	}
 
@@ -496,26 +497,14 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 	baseOffset := kvc.minCacheOffset()
 	remaining := inputs[baseOffset:]
 
-	// Prefill: feed tokens, pausing at each pending snapshot.
-	for len(session.pendingSnapshots) > 0 {
-		sp := session.pendingSnapshots[0]
-		count := sp.offset - baseOffset
-		if count > len(remaining) {
-			break
-		}
-		if count > 0 {
-			feedAll(kvc.caches, remaining[:count])
-			remaining = remaining[count:]
-			baseOffset = sp.offset
-		}
-		assertCacheOffsetAlignment(t, kvc, "at snapshot point")
-		session.snapshot()
-	}
-
-	// Feed rest of input tokens.
+	// Prefill: schedule the pending snapshots, feed the whole prompt in one pass
+	// (the caches self-segment at the scheduled offsets), then attach the
+	// captures to the trie.
+	session.schedulePrefillSnapshots(snapshotOffsets)
 	if len(remaining) > 0 {
 		feedAll(kvc.caches, remaining)
 	}
+	session.attachPrefillSnapshots()
 
 	assertCacheOffsetAlignment(t, kvc, "after prefill")
 
@@ -923,6 +912,80 @@ func TestUserSnapshotResistsAutoMerge(t *testing.T) {
 
 		checkTrieInvariants(t, kvc.root)
 	})
+}
+
+// TestSnapshotBeyondPrefillSkipped verifies that a snapshot scheduled at an
+// offset the prefill never reaches (prefill leaves one token for decode
+// seeding, so the last token is never written during prefill) is dropped rather
+// than materialized as a trie node claiming tokens the cache never wrote.
+func TestSnapshotBeyondPrefillSkipped(t *testing.T) {
+	forEachEnv(t, func(t *testing.T, env *testEnv) {
+		kvc := env.kvc
+		inputs := []int32{1, 2, 3, 4, 5}
+
+		session := kvc.begin(nil, inputs)
+		// Request a reachable snapshot at 3 and one at len(inputs), which a
+		// prefill that stops one token short never crosses.
+		session.schedulePrefillSnapshots([]int{3, len(inputs)})
+		// Prefill writes all but the final token (mirrors total-processed > 1).
+		feedAll(kvc.caches, inputs[kvc.minCacheOffset():len(inputs)-1])
+		session.attachPrefillSnapshots()
+
+		// The reachable offset became a node; the unreached one did not.
+		if !nodeExistsAtOffset(kvc.root, 3) {
+			t.Errorf("no trie node at reached offset 3")
+		}
+		if nodeExistsAtOffset(kvc.root, len(inputs)) {
+			t.Errorf("trie node materialized at unreached offset %d", len(inputs))
+		}
+
+		checkTrieInvariants(t, kvc.root)
+	})
+}
+
+// TestPrefillSnapshotsDiscardedOnCancel mirrors a prefill canceled after the
+// caches captured interior snapshots but before attachPrefillSnapshots ran. The
+// abandoned captures must be released when the session closes; otherwise the
+// next request's PrepareSnapshots overwrites the schedule without closing them,
+// leaking the snapshots (caught by checkSnapshotLeaks in the env cleanup).
+func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
+	forEachEnv(t, func(t *testing.T, env *testEnv) {
+		kvc := env.kvc
+		inputs := []int32{1, 2, 3, 4, 5}
+
+		session := kvc.begin(nil, inputs)
+		session.schedulePrefillSnapshots([]int{3})
+		// Cross offset 3 so the caches capture it, then close the session as a
+		// canceled prefill would, before the captures are attached to the trie.
+		feedAll(kvc.caches, inputs[kvc.minCacheOffset():3])
+		session.close()
+
+		// close advances the trie over the committed tokens, but the abandoned
+		// captures must not be attached as snapshots to any node.
+		walkNodes(kvc.root, func(n *trieNode) bool {
+			if n != kvc.root && n.hasSnapshots() {
+				t.Errorf("abandoned capture attached as snapshot at offset %d", n.endOffset)
+			}
+			return true
+		})
+
+		// A second request re-prepares snapshots on the same caches: if the
+		// discarded ones were not closed, prepare() orphans them here.
+		simulateRequest(t, kvc, inputs, nil, 4)
+
+		checkTrieInvariants(t, kvc.root)
+	})
+}
+
+func nodeExistsAtOffset(root *trieNode, offset int) bool {
+	var found bool
+	walkNodes(root, func(n *trieNode) bool {
+		if n.endOffset == offset && n != root {
+			found = true
+		}
+		return true
+	})
+	return found
 }
 
 func findUserNode(t *testing.T, kvc *kvCache) *trieNode {
