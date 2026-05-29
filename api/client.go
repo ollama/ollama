@@ -359,6 +359,36 @@ func (c *Client) Create(ctx context.Context, req *CreateRequest, fn CreateProgre
 	})
 }
 
+// RemoteModelsURL is the ollama.com endpoint for the curated model list.
+// Exposed as a variable so tests can override it with an httptest server URL.
+var RemoteModelsURL = "https://ollama.com/v1/models"
+
+// ListRemote fetches a curated list of models from the ollama.com public registry
+// via the OpenAI-compatible /v1/models API. Note: this does not return all available
+// models or all available tags — it is a featured shortlist maintained by Ollama.
+func ListRemote(ctx context.Context, timeout time.Duration) (*RemoteListResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, RemoteModelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var lr RemoteListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
+		return nil, err
+	}
+	return &lr, nil
+}
+
 // List lists models that are available locally.
 func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 	var lr ListResponse

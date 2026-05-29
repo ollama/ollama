@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClientFromEnvironment(t *testing.T) {
@@ -318,5 +319,75 @@ func TestClientDo(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestListRemote_Success(t *testing.T) {
+	want := RemoteListResponse{
+		Object: "list",
+		Data: []RemoteModel{
+			{ID: "gemma3:4b", Object: "model", OwnedBy: "library"},
+			{ID: "gemma3:12b", Object: "model", OwnedBy: "library"},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(want)
+	}))
+	defer ts.Close()
+
+	orig := RemoteModelsURL
+	RemoteModelsURL = ts.URL + "/v1/models"
+	defer func() { RemoteModelsURL = orig }()
+
+	got, err := ListRemote(t.Context(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.Data) != len(want.Data) {
+		t.Fatalf("expected %d models, got %d", len(want.Data), len(got.Data))
+	}
+	for i, m := range got.Data {
+		if m.ID != want.Data[i].ID {
+			t.Errorf("model[%d].ID: got %q, want %q", i, m.ID, want.Data[i].ID)
+		}
+	}
+}
+
+func TestListRemote_Timeout(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// block until the request context is cancelled
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	orig := RemoteModelsURL
+	RemoteModelsURL = ts.URL + "/v1/models"
+	defer func() { RemoteModelsURL = orig }()
+
+	_, err := ListRemote(t.Context(), 1*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+}
+
+func TestListRemote_BadJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("not json"))
+	}))
+	defer ts.Close()
+
+	orig := RemoteModelsURL
+	RemoteModelsURL = ts.URL + "/v1/models"
+	defer func() { RemoteModelsURL = orig }()
+
+	_, err := ListRemote(t.Context(), 5*time.Second)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
 	}
 }

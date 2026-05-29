@@ -1425,6 +1425,23 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	modelName := ""
+	if len(args) == 0 {
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			return fmt.Errorf("model name required in non-interactive mode; use: ollama pull <model>")
+		}
+		selected, err := tui.RunPullMenu()
+		if errors.Is(err, tui.ErrCancelled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		modelName = selected
+	} else {
+		modelName = args[0]
+	}
+
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -1485,7 +1502,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
+	request := api.PullRequest{Name: modelName, Insecure: insecure}
 	return client.Pull(cmd.Context(), &request, fn)
 }
 
@@ -2350,9 +2367,9 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd := &cobra.Command{
-		Use:     "pull MODEL",
+		Use:     "pull [MODEL]",
 		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.MaximumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    PullHandler,
 	}
