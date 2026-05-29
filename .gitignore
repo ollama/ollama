@@ -17,3 +17,4 @@ llama/vendor
 /ollama
 integration/testdata/models/
 .claude/
+dev/

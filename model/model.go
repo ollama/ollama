@@ -45,8 +45,8 @@ type Model interface {
 type MTPModel interface {
 	HasDraft() bool
 	ForwardMTP(ctx ml.Context, batch input.Batch) (logits ml.Tensor, hidden ml.Tensor, err error)
-	MTPDraft(ctx ml.Context, token int32, hidden ml.Tensor, position int32, cache kvcache.Cache, maxDraft int) (draftTokens []int32, err error)
-	MTPVerify(ctx ml.Context, baseLogits []float32, draftTokens []int32, seqID int, position int32, cache kvcache.Cache) (accepted int, nextToken int32, err error)
+	MTPDraft(ctx ml.Context, token int32, hiddenFloats []float32, hiddenDim int, position int32, seqID int, cache kvcache.Cache, maxDraft int) (draftTokens []int32, err error)
+	MTPVerify(ctx ml.Context, baseLogits []float32, token int32, draftTokens []int32, seqID int, position int32, cache kvcache.Cache) (accepted int, nextToken int32, err error)
 }
 
 // Validator is an optional interface that models can implement to perform

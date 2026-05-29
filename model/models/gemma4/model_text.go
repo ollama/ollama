@@ -1,6 +1,7 @@
 package gemma4
 
 import (
+	"log/slog"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -139,6 +140,8 @@ func newTextModel(c fs.Config) *TextModel {
 			}
 		}
 	}
+
+	slog.Info("gemma4 text model", "numLayers", numLayers, "sharedLayers", sharedLayers, "firstShared", numLayers-sharedLayers, "kvDonorMap", kvDonorMap, "slidingPattern", slidingPattern)
 
 	return &TextModel{
 		Layers: make([]TextLayer, numLayers),

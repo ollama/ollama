@@ -1,8 +1,6 @@
 package gemma4
 
 import (
-	"math"
-
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
@@ -144,9 +142,6 @@ func (m *DraftModel) Draft(ctx ml.Context, inputEmbeds ml.Tensor, position int32
 	h := m.PreProjection.Forward(ctx, inputEmbeds)
 
 	for i, layer := range m.Layers {
-		// Point the cache at the corresponding target layer for KV access.
-		// The draft model's attention is Q-only: it reads K/V from the target's
-		// cache via nn.Attention with nil key/value.
 		targetLayer := m.mapToTargetLayer(i, targetOpts)
 		cache.SetLayer(targetLayer)
 		if wc, ok := cache.(*kvcache.WrapperCache); ok {
@@ -221,8 +216,7 @@ func (a *DraftAttention) Forward(ctx ml.Context, layer int, hiddenState, positio
 	}
 	q = nn.RoPE(ctx, q, positions, ropeDims, ropeBase, 1.0, ropeOpts...)
 
-	scale := 1.0 / math.Sqrt(float64(hd))
-	attention := nn.Attention(ctx, q, nil, nil, scale, cache)
+	attention := nn.Attention(ctx, q, nil, nil, 1.0, cache)
 
 	attention = attention.Reshape(ctx, hd*opts.numHeads, batchSize)
 	return a.OProj.Forward(ctx, attention)

@@ -246,14 +246,23 @@ func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) e
 			c.cellRanges[seq] = seqRange
 		}
 	} else {
-		// If we are reserving memory, don't update any of the cache metadata but set the size
-		// to the worst case.
+		// Read-only mode: compute the correct cell range from the
+		// sequence's existing cells without allocating new ones.
 		locs = make([]int32, c.curBatchSize)
 		for i := range locs {
 			locs[i] = int32(i)
 		}
-		c.curCellRange.min = 0
-		c.curCellRange.max = len(c.cells) - 1
+		c.curCellRange = newRange()
+		for _, seq := range batch.Sequences {
+			if seqRange, ok := c.cellRanges[seq]; ok {
+				c.curCellRange.min = min(c.curCellRange.min, seqRange.min)
+				c.curCellRange.max = max(c.curCellRange.max, seqRange.max)
+			}
+		}
+		if c.curCellRange == newRange() {
+			c.curCellRange.min = 0
+			c.curCellRange.max = 0
+		}
 	}
 
 	c.curLoc = ctx.Input().FromInts(locs, len(locs))

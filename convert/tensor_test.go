@@ -29,6 +29,10 @@ func (f fakeTensor) Name() string {
 	return f.name
 }
 
+func (f *fakeTensor) SetName(name string) {
+	f.name = name
+}
+
 func (f fakeTensor) Shape() []uint64 {
 	return f.shape
 }

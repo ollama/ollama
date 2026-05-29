@@ -323,9 +323,10 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 	name := t.Name
 	quantize := strings.HasSuffix(name, "weight")
 
-	// don't quantize vision or audio encoder tensors
+	// don't quantize vision, audio, or draft model tensors
 	quantize = quantize && !strings.HasPrefix(name, "v.")
 	quantize = quantize && !strings.HasPrefix(name, "a.")
+	quantize = quantize && !strings.HasPrefix(name, "draft.")
 	quantize = quantize && !strings.Contains(name, "mm.")
 
 	// quantize only 2D and 3D tensors (experts)

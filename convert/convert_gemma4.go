@@ -3,7 +3,9 @@ package convert
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"io/fs"
 	"math"
 	"slices"
 	"strings"
@@ -580,4 +582,93 @@ func (p *gemma4Model) Replacements() []string {
 		"draft.masked_embedding.centroids", "draft.centroids",
 		"draft.masked_embedding.token_ordering", "draft.token_ordering",
 	}
+}
+
+type gemma4AssistantConfig struct {
+	UseOrderedEmbeddings     bool   `json:"use_ordered_embeddings"`
+	NumCentroids             uint32 `json:"num_centroids"`
+	CentroidIntermediateTopK uint32 `json:"centroid_intermediate_top_k"`
+	TextConfig               struct {
+		NumHiddenLayers   uint32   `json:"num_hidden_layers"`
+		HiddenSize        uint32   `json:"hidden_size"`
+		NumAttentionHeads uint32   `json:"num_attention_heads"`
+		NumKeyValueHeads  uint32   `json:"num_key_value_heads"`
+		HeadDim           uint32   `json:"head_dim"`
+		GlobalHeadDim     uint32   `json:"global_head_dim"`
+		IntermediateSize  uint32   `json:"intermediate_size"`
+		RMSNormEps        float32  `json:"rms_norm_eps"`
+		LayerTypes        []string `json:"layer_types"`
+		RopeParameters    map[string]*struct {
+			RopeTheta           float32  `json:"rope_theta"`
+			PartialRotaryFactor *float32 `json:"partial_rotary_factor"`
+		} `json:"rope_parameters"`
+	} `json:"text_config"`
+}
+
+func (p *gemma4Model) DraftKV(draftFsys fs.FS) (KV, error) {
+	bts, err := fs.ReadFile(draftFsys, "config.json")
+	if err != nil {
+		return nil, fmt.Errorf("read draft config.json: %w", err)
+	}
+	bts = sanitizeNonFiniteJSON(bts)
+
+	var cfg gemma4AssistantConfig
+	if err := json.Unmarshal(bts, &cfg); err != nil {
+		return nil, fmt.Errorf("parse draft config.json: %w", err)
+	}
+
+	tc := cfg.TextConfig
+	kv := make(KV)
+
+	kv["draft.block_count"] = tc.NumHiddenLayers
+	kv["draft.embedding_length"] = tc.HiddenSize
+
+	if tc.NumAttentionHeads > 0 {
+		kv["draft.attention.head_count"] = tc.NumAttentionHeads
+	}
+	if tc.HeadDim > 0 {
+		kv["draft.attention.key_length_swa"] = tc.HeadDim
+		kv["draft.attention.value_length_swa"] = tc.HeadDim
+	}
+	if tc.GlobalHeadDim > 0 {
+		kv["draft.attention.key_length"] = tc.GlobalHeadDim
+		kv["draft.attention.value_length"] = tc.GlobalHeadDim
+	}
+	if tc.RMSNormEps > 0 {
+		kv["draft.attention.layer_norm_rms_epsilon"] = tc.RMSNormEps
+	}
+	if tc.IntermediateSize > 0 {
+		kv["draft.feed_forward_length"] = tc.IntermediateSize
+	}
+
+	if len(tc.LayerTypes) > 0 {
+		kv["draft.attention.sliding_window_pattern"] = slices.Collect(func(yield func(bool) bool) {
+			for _, lt := range tc.LayerTypes {
+				if !yield(lt == "sliding_attention") {
+					break
+				}
+			}
+		})
+	}
+
+	if rp, ok := tc.RopeParameters["full_attention"]; ok && rp != nil {
+		kv["draft.rope.freq_base"] = rp.RopeTheta
+		if rp.PartialRotaryFactor != nil {
+			rotDims := uint32(float32(tc.GlobalHeadDim) * *rp.PartialRotaryFactor)
+			kv["draft.rope.dimension_count"] = rotDims
+		}
+	}
+	if rp, ok := tc.RopeParameters["sliding_attention"]; ok && rp != nil {
+		kv["draft.rope.freq_base_swa"] = rp.RopeTheta
+	}
+
+	kv["draft.use_ordered_embeddings"] = cfg.UseOrderedEmbeddings
+	if cfg.NumCentroids > 0 {
+		kv["draft.num_centroids"] = cfg.NumCentroids
+	}
+	if cfg.CentroidIntermediateTopK > 0 {
+		kv["draft.centroid_intermediate_top_k"] = cfg.CentroidIntermediateTopK
+	}
+
+	return kv, nil
 }

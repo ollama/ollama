@@ -4,7 +4,6 @@ import (
 	"log/slog"
 
 	"github.com/ollama/ollama/kvcache"
-	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/tokenizer"
 )
@@ -22,28 +21,31 @@ func isMTPEligible(m model.Model, seq *Sequence) bool {
 	if seq.logprobs {
 		return false
 	}
+	slog.Debug("MTP eligible, attempting draft cycle")
 	return true
 }
 
 func runMTPCycle(
 	s *Server,
 	seq *Sequence,
-	token int32,
+	inputToken int32,
+	sampledToken int32,
 	logits []float32,
-	hidden ml.Tensor,
+	hiddenFloats []float32,
+	hiddenDim int,
 	position int32,
 	tok tokenizer.Tokenizer,
 ) (acceptedTokens []int32, nextToken int32, ok bool) {
 	mtpModel, valid := s.model.(model.MTPModel)
 	if !valid {
-		return nil, token, false
+		return nil, sampledToken, false
 	}
 
 	maxDraft := mtpDefaultDraftTokens
 	if seq.numPredict > 0 {
 		remaining := seq.numPredict - seq.numPredicted
 		if remaining <= 1 {
-			return nil, token, false
+			return nil, sampledToken, false
 		}
 		if maxDraft > remaining-1 {
 			maxDraft = remaining - 1
@@ -52,49 +54,56 @@ func runMTPCycle(
 
 	cache := s.model.Config().Cache
 	wc, isWrapper := cache.(*kvcache.WrapperCache)
+	seqID := seq.cache.Id
 
-	if isWrapper {
-		wc.BeginSpeculation(seq.cache.Id)
-	}
-
+	// Draft phase: use the INPUT token (position P) so predictions start
+	// at P+1, matching baseChoice. reserve=true avoids cache cell allocation.
 	draftCtx := s.model.Backend().NewContext()
-	defer draftCtx.Close()
-
-	draftTokens, err := mtpModel.MTPDraft(draftCtx, token, hidden, position, cache, maxDraft)
+	draftTokens, err := mtpModel.MTPDraft(draftCtx, inputToken, hiddenFloats, hiddenDim, position, seqID, cache, maxDraft)
+	draftCtx.Close()
 	if err != nil {
 		slog.Warn("MTP draft failed", "error", err)
-		if isWrapper {
-			wc.Rollback()
-		}
-		return nil, token, false
+		return nil, sampledToken, false
 	}
 
 	if len(draftTokens) == 0 {
-		if isWrapper {
-			wc.Rollback()
-		}
-		return nil, token, false
+		return nil, sampledToken, false
 	}
 
-	verifyCtx := s.model.Backend().NewContext()
-	defer verifyCtx.Close()
+	// Begin speculation for verify — cells allocated here are committed or
+	// rolled back based on how many tokens are accepted.
+	if isWrapper {
+		wc.BeginSpeculation(seqID)
+	}
 
-	accepted, nextAfter, err := mtpModel.MTPVerify(verifyCtx, logits, draftTokens, seq.cache.Id, position, cache)
+	// Verify: draftTokens[0] predicts P+1 (same as baseChoice). If it matches,
+	// the verify batch runs the target on draftTokens to check further tokens.
+	// draftTokens[0] = sampledToken, so we pass sampledToken for the verify batch.
+	verifyCtx := s.model.Backend().NewContext()
+	accepted, nextAfter, err := mtpModel.MTPVerify(verifyCtx, logits, sampledToken, draftTokens, seqID, position, cache)
+	verifyCtx.Close()
 	if err != nil {
 		slog.Warn("MTP verification failed", "error", err)
 		if isWrapper {
 			wc.Rollback()
 		}
-		return nil, token, false
+		return nil, sampledToken, false
 	}
 
+	// Rollback the verify's KV entries — the accepted tokens will be
+	// re-processed by the normal pipeline through seq.inputs.
 	if isWrapper {
-		wc.Commit(accepted)
+		wc.Rollback()
 	}
 
 	if accepted > 0 {
 		slog.Debug("MTP accepted", "count", accepted, "total_drafted", len(draftTokens))
 	}
 
-	return draftTokens[:accepted], nextAfter, true
+	// draftTokens[0] = sampledToken (already accounted for by the runner).
+	// Return only the ADDITIONAL accepted tokens: draftTokens[1:accepted].
+	if accepted <= 1 {
+		return nil, nextAfter, true
+	}
+	return draftTokens[1:accepted], nextAfter, true
 }

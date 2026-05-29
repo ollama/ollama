@@ -74,14 +74,19 @@ DRAFT ./assistant
 }
 
 func TestCreateRequestDraftAccepted(t *testing.T) {
-	modelfile, err := ParseFile(strings.NewReader(`
+	// Create a temp directory with a GGUF file for DRAFT to reference
+	draftPath, _ := createBinFile(t, nil, nil)
+
+	modelfile, err := ParseFile(strings.NewReader(fmt.Sprintf(`
 FROM base
-DRAFT ./assistant
-`))
+DRAFT %s
+`, draftPath)))
 	require.NoError(t, err)
 
-	_, err = modelfile.CreateRequest("")
+	req, err := modelfile.CreateRequest("")
 	require.NoError(t, err)
+	require.NotNil(t, req.DraftFiles)
+	require.Len(t, req.DraftFiles, 1)
 }
 
 func TestParseFileTrimSpace(t *testing.T) {

@@ -739,6 +739,14 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		computeTensors...)
 
 	outputs := activeBatch.modelOutput.Floats()
+
+	var hiddenFloats []float32
+	var hiddenDim int
+	if activeBatch.hiddenOutput != nil {
+		hiddenFloats = activeBatch.hiddenOutput.Floats()
+		hiddenDim = activeBatch.hiddenOutput.Dim(0)
+	}
+
 	t := time.Now()
 
 	logutil.Trace("computeBatch: logits ready", "batchID", activeBatch.id)
@@ -807,12 +815,14 @@ func (s *Server) computeBatch(activeBatch batchState) {
 
 		// MTP: if the model supports multi-token prediction and conditions are met,
 		// draft and verify additional tokens in one cycle.
-		if activeBatch.hiddenOutput != nil && isMTPEligible(s.model, seq) {
+		if hiddenFloats != nil && isMTPEligible(s.model, seq) {
 			position := int32(len(seq.cache.Inputs) + len(seq.pendingInputs) - 1)
-			acceptedDrafts, nextAfterMTP, mtpOk := runMTPCycle(s, seq, token, logits, activeBatch.hiddenOutput, position, s.model.(tokenizer.Tokenizer))
+			inputToken := seq.cache.Inputs[len(seq.cache.Inputs)-1].Token
+			acceptedDrafts, nextAfterMTP, mtpOk := runMTPCycle(s, seq, inputToken, token, logits, hiddenFloats, hiddenDim, position, s.model.(tokenizer.Tokenizer))
 			if mtpOk && len(acceptedDrafts) > 0 {
 				tok := s.model.(tokenizer.Tokenizer)
 				hitEOS := false
+				var draftInputs []*input.Input
 				for _, dt := range acceptedDrafts {
 					if tok.Is(dt, tokenizer.SpecialEOS) {
 						s.removeSequence(i, llm.DoneReasonStop)
@@ -825,12 +835,21 @@ func (s *Server) computeBatch(activeBatch batchState) {
 					}
 					seq.pendingResponses = append(seq.pendingResponses, draftPiece)
 					seq.numPredicted++
-					seq.pendingInputs = append(seq.pendingInputs, &input.Input{Token: dt})
+					draftInputs = append(draftInputs, &input.Input{Token: dt})
 				}
 				if hitEOS {
 					continue
 				}
-				nextBatchTokens[i].Token = nextAfterMTP
+				// Decode and add nextAfterMTP's text to response
+				nextPiece, nerr := tok.Decode([]int32{nextAfterMTP})
+				if nerr == nil {
+					seq.pendingResponses = append(seq.pendingResponses, nextPiece)
+					seq.numPredicted++
+				}
+				// Append accepted drafts + nextAfterMTP to seq.inputs for
+				// normal pipeline processing (KV cache update).
+				draftInputs = append(draftInputs, &input.Input{Token: nextAfterMTP})
+				seq.inputs = append(seq.inputs, draftInputs...)
 			}
 		}
 

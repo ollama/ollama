@@ -200,6 +200,12 @@ type ModelConverter interface {
 	specialTokenTypes() []string
 }
 
+// DraftKVEmitter is an optional interface for model converters that support
+// emitting KV metadata for a bundled draft/assistant model.
+type DraftKVEmitter interface {
+	DraftKV(draftFsys fs.FS) (KV, error)
+}
+
 type moreParser interface {
 	parseMore(fs.FS) error
 }
@@ -388,6 +394,64 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 	}
 
 	return writeFile(f, conv.KV(t), conv.Tensors(ts))
+}
+
+// ConvertModelWithDraft converts a model like ConvertModel, but also reads
+// draft/assistant tensors from draftFsys. Draft tensor names are prefixed
+// with "draft." before replacement rules are applied, and draft KV metadata
+// is emitted if the converter implements DraftKVEmitter.
+func ConvertModelWithDraft(fsys fs.FS, draftFsys fs.FS, f *os.File) error {
+	kv, t, err := LoadModelMetadata(fsys)
+	if err != nil {
+		return err
+	}
+	conv := kv.(ModelConverter)
+
+	replacer := strings.NewReplacer(conv.Replacements()...)
+	ts, err := parseTensors(fsys, replacer)
+	if err != nil {
+		return err
+	}
+
+	draftMatches, err := fs.Glob(draftFsys, "*.safetensors")
+	if err != nil {
+		return fmt.Errorf("draft: %w", err)
+	}
+	if len(draftMatches) == 0 {
+		return errors.New("draft directory contains no .safetensors files")
+	}
+
+	// Parse draft tensors with an identity replacer, then prefix names with
+	// "draft." and run the model's replacer. This converts e.g.
+	// "model.language_model.layers.0.self_attn.q_proj.weight"
+	// → (prefix) "draft.model.language_model.layers.0.self_attn.q_proj.weight"
+	// → (replace) "draft.blk.0.attn_q.weight"
+	identityReplacer := strings.NewReplacer()
+	draftTs, err := parseSafetensors(draftFsys, identityReplacer, draftMatches...)
+	if err != nil {
+		return fmt.Errorf("draft: %w", err)
+	}
+
+	for i := range draftTs {
+		prefixed := "draft." + draftTs[i].Name()
+		renamed := replacer.Replace(prefixed)
+		draftTs[i].SetName(renamed)
+	}
+
+	ts = append(ts, draftTs...)
+
+	allKV := conv.KV(t)
+	if emitter, ok := conv.(DraftKVEmitter); ok {
+		draftKV, err := emitter.DraftKV(draftFsys)
+		if err != nil {
+			return fmt.Errorf("draft KV: %w", err)
+		}
+		for k, v := range draftKV {
+			allKV[k] = v
+		}
+	}
+
+	return writeFile(f, allKV, conv.Tensors(ts))
 }
 
 func writeFile(f *os.File, kv KV, ts []*ggml.Tensor) error {

@@ -1390,6 +1390,10 @@ func (t *Tensor) SetInplace(ctx ml.Context, src ml.Tensor, nb1, nb2, nb3, offset
 	}
 }
 
+func (t *Tensor) SetOutput() {
+	C.ggml_set_output(t.t)
+}
+
 func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,

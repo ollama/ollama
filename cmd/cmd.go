@@ -366,12 +366,25 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		})
 	}
 
+	draftFiles := syncmap.NewSyncMap[string, string]()
+	for f, digest := range req.DraftFiles {
+		g.Go(func() error {
+			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
+				return err
+			}
+
+			draftFiles.Store(filepath.Base(f), digest)
+			return nil
+		})
+	}
+
 	if err := g.Wait(); err != nil {
 		return err
 	}
 
 	req.Files = files.Items()
 	req.Adapters = adapters.Items()
+	req.DraftFiles = draftFiles.Items()
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {

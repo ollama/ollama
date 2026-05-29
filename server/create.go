@@ -172,7 +172,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				}
 			}
 		} else if r.Files != nil {
-			baseLayers, err = convertModelFromFiles(r.Files, baseLayers, false, fn)
+			baseLayers, err = convertModelFromFiles(r.Files, baseLayers, false, fn, r.DraftFiles)
 			if err != nil {
 				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType} {
 					if errors.Is(err, badReq) {
@@ -327,10 +327,10 @@ func remoteURL(raw string) (string, error) {
 	return u.String(), nil
 }
 
-func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse), draftFiles ...map[string]string) ([]*layerGGML, error) {
 	switch detectModelTypeFromFiles(files) {
 	case "safetensors":
-		layers, err := convertFromSafetensors(files, baseLayers, isAdapter, fn)
+		layers, err := convertFromSafetensors(files, baseLayers, isAdapter, fn, draftFiles...)
 		if err != nil {
 			slog.Error("error converting from safetensors", "error", err)
 			return nil, err
@@ -397,13 +397,12 @@ func detectModelTypeFromFiles(files map[string]string) string {
 	return ""
 }
 
-func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse), draftFiles ...map[string]string) ([]*layerGGML, error) {
 	tmpDir, err := os.MkdirTemp(envconfig.Models(), "ollama-safetensors")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmpDir)
-	// Set up a root to validate paths
 	root, err := os.OpenRoot(tmpDir)
 	if err != nil {
 		return nil, err
@@ -415,7 +414,6 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 			return nil, fmt.Errorf("%w: %s", errFilePath, fp)
 		}
 		if _, err := root.Stat(fp); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			// Path is likely outside the root
 			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
 		}
 
@@ -434,12 +432,38 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	}
 	defer t.Close()
 
+	hasDraft := len(draftFiles) > 0 && len(draftFiles[0]) > 0
+
 	var mediaType string
 	if !isAdapter {
 		fn(api.ProgressResponse{Status: "converting model"})
 		mediaType = "application/vnd.ollama.image.model"
-		if err := convert.ConvertModel(os.DirFS(tmpDir), t); err != nil {
-			return nil, err
+
+		if hasDraft {
+			draftDir, err := os.MkdirTemp(envconfig.Models(), "ollama-draft-safetensors")
+			if err != nil {
+				return nil, err
+			}
+			defer os.RemoveAll(draftDir)
+
+			for fp, digest := range draftFiles[0] {
+				blobPath, err := manifest.BlobsPath(digest)
+				if err != nil {
+					return nil, err
+				}
+				if err := createLink(blobPath, filepath.Join(draftDir, fp)); err != nil {
+					return nil, err
+				}
+			}
+
+			fn(api.ProgressResponse{Status: "converting model with draft"})
+			if err := convert.ConvertModelWithDraft(os.DirFS(tmpDir), os.DirFS(draftDir), t); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := convert.ConvertModel(os.DirFS(tmpDir), t); err != nil {
+				return nil, err
+			}
 		}
 	} else {
 		kv, err := kvFromLayers(baseLayers)
