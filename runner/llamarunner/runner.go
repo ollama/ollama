@@ -919,6 +919,29 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// If the scheduler reserved an RPC device but assigned zero layers to
+		// it (which it does today — discover knows the Pi's memory but the
+		// layer-assignment heuristic doesn't yet account for it), llama.cpp
+		// ends up with TensorSplit=[0] and silently keeps everything on CPU.
+		// Detect that case and rebuild the device list with RPC devices given
+		// an equal share, so the model actually gets offloaded.
+		if numGPU == 0 {
+			var rpcIDs []uint64
+			var rpcSplit []float32
+			for i := range gpuIDs {
+				if gpuIDs[i].Library == "RPC" {
+					slog.Info("force-including RPC device", "id", gpuIDs[i].ID)
+					rpcIDs = append(rpcIDs, gpuIDs[i].LlamaID)
+					rpcSplit = append(rpcSplit, 1)
+				}
+			}
+			if len(rpcIDs) > 0 {
+				llamaIDs = rpcIDs
+				tensorSplit = rpcSplit
+				numGPU = 999 // offload everything to RPC devices
+			}
+		}
+
 		params := llama.ModelParams{
 			Devices:      llamaIDs,
 			NumGpuLayers: numGPU,
@@ -965,6 +988,11 @@ func Execute(args []string) error {
 	slog.Info("starting go runner")
 
 	llama.BackendInit()
+
+	for _, ep := range envconfig.RPCServers() {
+		slog.Info("registering RPC server", "endpoint", ep)
+		llama.AddRPCServer(ep)
+	}
 
 	server := &Server{
 		modelPath: *mpath,

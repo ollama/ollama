@@ -3,6 +3,7 @@ package runner
 import (
 	"github.com/ollama/ollama/runner/llamarunner"
 	"github.com/ollama/ollama/runner/ollamarunner"
+	"github.com/ollama/ollama/runner/rpcserver"
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/mlxrunner"
 )
@@ -20,6 +21,8 @@ func Execute(args []string) error {
 			return imagegen.Execute(args[1:])
 		case "--mlx-engine":
 			return mlxrunner.Execute(args[1:])
+		case "--rpc-server":
+			return rpcserver.Execute(args[1:])
 		}
 	}
 	return llamarunner.Execute(args)
