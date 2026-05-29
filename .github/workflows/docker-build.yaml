@@ -8,7 +8,9 @@ on:
   push:
 
 permissions:
+  id-token: write
   contents: read
+  actions: read
 
 jobs:
   build:
@@ -27,3 +29,19 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Verify ollama binary
         run: docker run --rm ollama:${{ github.sha }} --version
+      - name: Extract binary
+        run: |
+          docker create --name extract ollama:${{ github.sha }}
+          mkdir -p dist
+          docker cp extract:/usr/bin/ollama dist/ollama_linux_amd64
+          docker rm extract
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-build
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-publish@master
