@@ -144,15 +144,15 @@ func DecodeTiled(latents *mlx.Array, cfg *TilingConfig, decoder func(*mlx.Array)
 	for i, row := range rows {
 		keepH := rowHeights[i]
 
-		for y := int32(0); y < keepH; y++ {
+		for y := range keepH {
 			dstX := int32(0)
 			for j, tile := range row {
 				keepW := colWidths[j]
 
-				for x := int32(0); x < keepW; x++ {
-					for c := int32(0); c < 3; c++ {
-						srcIdx := (y*tile.width + x) * 3 + c
-						dstIdx := ((dstY + y) * totalW + (dstX + x)) * 3 + c
+				for x := range keepW {
+					for c := range int32(3) {
+						srcIdx := (y*tile.width+x)*3 + c
+						dstIdx := ((dstY+y)*totalW+(dstX+x))*3 + c
 						finalData[dstIdx] = tile.data[srcIdx]
 					}
 				}
@@ -179,12 +179,12 @@ func blendV(above, current *decodedTile, blendExtent int32) {
 	}
 
 	w := min(above.width, current.width)
-	for y := int32(0); y < blend; y++ {
+	for y := range blend {
 		alpha := float32(y) / float32(blend)
-		for x := int32(0); x < w; x++ {
-			for c := int32(0); c < 3; c++ {
-				aboveIdx := ((above.height - blend + y) * above.width + x) * 3 + c
-				currIdx := (y * current.width + x) * 3 + c
+		for x := range w {
+			for c := range int32(3) {
+				aboveIdx := ((above.height-blend+y)*above.width+x)*3 + c
+				currIdx := (y*current.width+x)*3 + c
 				current.data[currIdx] = above.data[aboveIdx]*(1-alpha) + current.data[currIdx]*alpha
 			}
 		}
@@ -200,12 +200,12 @@ func blendH(left, current *decodedTile, blendExtent int32) {
 	}
 
 	h := min(left.height, current.height)
-	for y := int32(0); y < h; y++ {
-		for x := int32(0); x < blend; x++ {
+	for y := range h {
+		for x := range blend {
 			alpha := float32(x) / float32(blend)
-			for c := int32(0); c < 3; c++ {
-				leftIdx := (y * left.width + (left.width - blend + x)) * 3 + c
-				currIdx := (y * current.width + x) * 3 + c
+			for c := range int32(3) {
+				leftIdx := (y*left.width+(left.width-blend+x))*3 + c
+				currIdx := (y*current.width+x)*3 + c
 				current.data[currIdx] = left.data[leftIdx]*(1-alpha) + current.data[currIdx]*alpha
 			}
 		}

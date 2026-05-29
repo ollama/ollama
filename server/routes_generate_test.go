@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +23,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
+	ollamatemplate "github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -54,7 +56,13 @@ type mockRunner struct {
 	// CompletionRequest is only valid until the next call to Completion
 	llm.CompletionRequest
 	llm.CompletionResponse
-	CompletionFn func(context.Context, llm.CompletionRequest, func(llm.CompletionResponse)) error
+	CompletionFn  func(context.Context, llm.CompletionRequest, func(llm.CompletionResponse)) error
+	ChatRequest   llm.ChatRequest
+	ChatResponse  llm.ChatResponse
+	ChatFn        func(context.Context, llm.ChatRequest, func(llm.ChatResponse)) error
+	Template      string
+	TemplateFn    func(context.Context, llm.ChatRequest) (string, error)
+	contextLength int
 }
 
 func (m *mockRunner) Completion(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
@@ -64,6 +72,23 @@ func (m *mockRunner) Completion(ctx context.Context, r llm.CompletionRequest, fn
 	}
 	fn(m.CompletionResponse)
 	return nil
+}
+
+func (m *mockRunner) Chat(ctx context.Context, r llm.ChatRequest, fn func(llm.ChatResponse)) error {
+	m.ChatRequest = r
+	if m.ChatFn != nil {
+		return m.ChatFn(ctx, r, fn)
+	}
+	fn(m.ChatResponse)
+	return nil
+}
+
+func (m *mockRunner) ApplyChatTemplate(ctx context.Context, r llm.ChatRequest) (string, error) {
+	m.ChatRequest = r
+	if m.TemplateFn != nil {
+		return m.TemplateFn(ctx, r)
+	}
+	return m.Template, nil
 }
 
 func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error) {
@@ -76,9 +101,367 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 
 func (mockRunner) Ping(_ context.Context) error { return nil }
 
-func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
+func (m mockRunner) ContextLength() int { return m.contextLength }
+
+func TestOptionsForPromptUsesEffectiveContextLength(t *testing.T) {
+	opts := &api.Options{Runner: api.Runner{NumCtx: 4096}}
+
+	got := optionsForPrompt(opts, &mockRunner{contextLength: 2048})
+	if got == opts {
+		t.Fatal("expected copied options")
+	}
+	if got.NumCtx != 2048 {
+		t.Fatalf("NumCtx = %d, want 2048", got.NumCtx)
+	}
+	if opts.NumCtx != 4096 {
+		t.Fatalf("original NumCtx mutated to %d", opts.NumCtx)
+	}
+}
+
+func TestOptionsForPromptLeavesLargerRunnerContext(t *testing.T) {
+	opts := &api.Options{Runner: api.Runner{NumCtx: 2048}}
+
+	got := optionsForPrompt(opts, &mockRunner{contextLength: 4096})
+	if got != opts {
+		t.Fatal("expected original options when runner context is larger")
+	}
+}
+
+func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int, llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return mock, nil
+	}
+}
+
+func newServerWithMockRunner(t *testing.T, mock *mockRunner) *Server {
+	t.Helper()
+
+	s := &Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				req.successCh <- &runnerRef{llama: mock}
+				return false
+			},
+		},
+	}
+	go s.sched.Run(t.Context())
+
+	return s
+}
+
+func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv ggml.KV, tmpl string, info map[string]any) {
+	t.Helper()
+
+	base := ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}
+	for k, v := range kv {
+		base[k] = v
+	}
+
+	_, digest := createBinFile(t, base, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:    name,
+		Files:    map[string]string{"file.gguf": digest},
+		Template: tmpl,
+		Info:     info,
+		Stream:   &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 creating model, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestChatModeForModel(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true}); got != chatExecutionModeRendered {
+		t.Fatalf("chatModeForModel with default go template env = %v, want rendered", got)
+	}
+
+	t.Setenv("OLLAMA_GO_TEMPLATE", "0")
+	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true}); got != chatExecutionModeNative {
+		t.Fatalf("chatModeForModel with go template env disabled = %v, want chat_template route", got)
+	}
+
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true}); got != chatExecutionModeRendered {
+		t.Fatalf("chatModeForModel with go template env enabled = %v, want rendered", got)
+	}
+
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true, PreferChatTemplate: true}); got != chatExecutionModeRendered {
+		t.Fatalf("chatModeForModel with explicit go template env and chat_template preference = %v, want rendered", got)
+	}
+
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true, PreferChatTemplate: true}); got != chatExecutionModeNative {
+		t.Fatalf("chatModeForModel with default go template env and chat_template preference = %v, want chat_template route", got)
+	}
+
+	t.Setenv("OLLAMA_GO_TEMPLATE", "0")
+	parserModel := &Model{Config: model.ConfigV2{Parser: "gemma4"}, HasChatTemplate: true}
+	if got := chatModeForModel(parserModel); got != chatExecutionModeRendered {
+		t.Fatalf("chatModeForModel with parser = %v, want rendered", got)
+	}
+	if got := llamaServerConfigForModel(parserModel); !got.DisableJinja {
+		t.Fatalf("llamaServerConfigForModel with parser should disable jinja")
+	}
+
+	rendererModel := &Model{Config: model.ConfigV2{Renderer: "gemma3"}, HasChatTemplate: true}
+	if got := chatModeForModel(rendererModel); got != chatExecutionModeRendered {
+		t.Fatalf("chatModeForModel with renderer = %v, want rendered", got)
+	}
+	if got := llamaServerConfigForModel(rendererModel); !got.DisableJinja {
+		t.Fatalf("llamaServerConfigForModel with renderer should disable jinja")
+	}
+
+	if got := chatModeForModel(&Model{Config: model.ConfigV2{ModelFormat: "safetensors"}, HasChatTemplate: true}); got != chatExecutionModeRendered {
+		t.Fatalf("chatModeForModel with MLX = %v, want rendered", got)
+	}
+
+	harmonyTemplate, err := ollamatemplate.Parse("<|start|><|end|>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := chatModeForModel(&Model{Config: model.ConfigV2{ModelFamily: "gptoss"}, Template: harmonyTemplate, HasChatTemplate: true}); got != chatExecutionModeRendered {
+		t.Fatalf("chatModeForModel with harmony = %v, want rendered", got)
+	}
+
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	if got := chatModeForModel(&Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasChatTemplate: true}); got != chatExecutionModeNative {
+		t.Fatalf("chatModeForModel without Go TEMPLATE = %v, want chat_template route", got)
+	}
+	if got := llamaServerConfigForModel(&Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasChatTemplate: true}); got.DisableJinja {
+		t.Fatalf("llamaServerConfigForModel with GGUF chat_template should not disable jinja")
+	}
+
+	goTemplateModel := &Model{Config: model.ConfigV2{ModelFamily: "unknown"}, HasGoTemplate: true}
+	if got := chatModeForModel(goTemplateModel); got != chatExecutionModeRendered {
+		t.Fatalf("chatModeForModel with generic Go TEMPLATE = %v, want rendered", got)
+	}
+	if got := llamaServerConfigForModel(goTemplateModel); !got.DisableJinja {
+		t.Fatalf("llamaServerConfigForModel with Go TEMPLATE should disable jinja")
+	}
+}
+
+func TestChatHandlerChatTemplateRoute(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		ChatFn: func(_ context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
+			fn(llm.ChatResponse{
+				Message:            api.Message{Role: "assistant", Content: "chat template response"},
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: time.Millisecond,
+				EvalCount:          2,
+				EvalDuration:       2 * time.Millisecond,
+			})
+			return nil
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "chat-template", ggml.KV{
+		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
+	}, "", nil)
+
+	stream := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model: "chat-template",
+		Messages: []api.Message{
+			{Role: "user", Content: "hello"},
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var actual api.ChatResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Message.Content != "chat template response" {
+		t.Fatalf("expected chat template response, got %q", actual.Message.Content)
+	}
+	if len(mock.ChatRequest.Messages) != 1 || mock.ChatRequest.Messages[0].Content != "hello" {
+		t.Fatalf("chat_template request messages = %#v", mock.ChatRequest.Messages)
+	}
+	if !mock.ChatRequest.Shift {
+		t.Fatal("expected chat_template route to preserve default cache_prompt shift")
+	}
+}
+
+func TestChatHandlerChatTemplateRouteTruncatesMessages(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		contextLength: 6,
+		TemplateFn: func(_ context.Context, req llm.ChatRequest) (string, error) {
+			var b strings.Builder
+			for _, msg := range req.Messages {
+				b.WriteString(msg.Role)
+				b.WriteByte(' ')
+				b.WriteString(msg.Content)
+				b.WriteByte(' ')
+			}
+			return b.String(), nil
+		},
+		ChatFn: func(_ context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
+			fn(llm.ChatResponse{
+				Message:    api.Message{Role: "assistant", Content: "ok"},
+				Done:       true,
+				DoneReason: llm.DoneReasonStop,
+			})
+			return nil
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "chat-template-truncate", ggml.KV{
+		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
+	}, "", nil)
+
+	stream := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model: "chat-template-truncate",
+		Messages: []api.Message{
+			{Role: "system", Content: "sys"},
+			{Role: "user", Content: "old one two three four"},
+			{Role: "assistant", Content: "old answer one two"},
+			{Role: "user", Content: "new ask"},
+		},
+		Stream: &stream,
+		Options: map[string]any{
+			"num_ctx": 6,
+		},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(mock.ChatRequest.Messages) != 2 {
+		t.Fatalf("chat_template request messages = %#v", mock.ChatRequest.Messages)
+	}
+	if !cmp.Equal(mock.ChatRequest.Messages[0], api.Message{Role: "system", Content: "sys"}) {
+		t.Fatalf("first message = %#v", mock.ChatRequest.Messages[0])
+	}
+	if !cmp.Equal(mock.ChatRequest.Messages[1], api.Message{Role: "user", Content: "new ask"}) {
+		t.Fatalf("second message = %#v", mock.ChatRequest.Messages[1])
+	}
+}
+
+func TestChatHandlerTemplateEnvUsesRenderedRoute(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Content:    "go template response",
+			Done:       true,
+			DoneReason: llm.DoneReasonStop,
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "go-template", ggml.KV{
+		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
+	}, "{{ range .Messages }}{{ .Role }}: {{ .Content }}\n{{ end }}", nil)
+
+	stream := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model: "go-template",
+		Messages: []api.Message{
+			{Role: "user", Content: "hello"},
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if mock.ChatRequest.Messages != nil {
+		t.Fatalf("expected rendered route, chat_template request was recorded: %#v", mock.ChatRequest)
+	}
+	if !strings.Contains(mock.CompletionRequest.Prompt, "user: hello") {
+		t.Fatalf("expected rendered prompt, got %q", mock.CompletionRequest.Prompt)
+	}
+}
+
+func TestChatHandlerHarmonyPreservesStructuralTokens(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Done:       true,
+			DoneReason: llm.DoneReasonStop,
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "gpt-oss-harmony", nil, "<|start|><|end|>{{ range .Messages }}{{ .Content }}{{ end }}", map[string]any{
+		"model_family": "gptoss",
+		"capabilities": []any{"completion", "tools", "thinking"},
+	})
+
+	stream := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model: "gpt-oss-harmony",
+		Messages: []api.Message{
+			{Role: "user", Content: "hello"},
+		},
+		Tools: []api.Tool{{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: testPropsMap(map[string]api.ToolProperty{
+						"location": {Type: api.PropertyType{"string"}},
+					}),
+				},
+			},
+		}},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	for _, token := range []string{"<|start|>", "<|message|>", "<|channel|>", "<|constrain|>"} {
+		if !slices.Contains(mock.CompletionRequest.PreservedTokens, token) {
+			t.Fatalf("expected preserved tokens to contain %q, got %#v", token, mock.CompletionRequest.PreservedTokens)
+		}
+	}
+	if slices.Contains(mock.CompletionRequest.PreservedTokens, "<|call|>") {
+		t.Fatalf("expected preserved tokens not to contain Harmony call terminator, got %#v", mock.CompletionRequest.PreservedTokens)
+	}
+	if mock.CompletionRequest.Options != nil && slices.Contains(mock.CompletionRequest.Options.Stop, "<|call|>") {
+		t.Fatalf("expected stop sequences not to be patched with Harmony call terminator, got %#v", mock.CompletionRequest.Options)
 	}
 }
 
@@ -164,6 +547,7 @@ func TestGenerateChatRemote(t *testing.T) {
 
 func TestGenerateChat(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
 	gin.SetMode(gin.TestMode)
 
 	mock := mockRunner{
@@ -1629,6 +2013,7 @@ func TestChatLogprobs(t *testing.T) {
 	})
 
 	t.Run("returns logprob bytes when requested", func(t *testing.T) {
+		t.Setenv("OLLAMA_GO_TEMPLATE", "1")
 		gin.SetMode(gin.TestMode)
 
 		mock := &mockRunner{}
@@ -1766,6 +2151,7 @@ func TestChatLogprobs(t *testing.T) {
 }
 
 func TestChatWithPromptEndingInThinkTag(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
 	gin.SetMode(gin.TestMode)
 
 	// Helper to create a standard thinking test setup
@@ -2527,16 +2913,16 @@ func TestGenerateWithImages(t *testing.T) {
 		}
 
 		// Verify images were passed to the completion request
-		if len(mock.CompletionRequest.Images) != 1 {
-			t.Fatalf("expected 1 image in completion request, got %d", len(mock.CompletionRequest.Images))
+		if len(mock.CompletionRequest.Media) != 1 {
+			t.Fatalf("expected 1 image in completion request, got %d", len(mock.CompletionRequest.Media))
 		}
 
-		if !bytes.Equal(mock.CompletionRequest.Images[0].Data, testImage) {
+		if !bytes.Equal(mock.CompletionRequest.Media[0].Data, testImage) {
 			t.Errorf("image data mismatch in completion request")
 		}
 
-		if mock.CompletionRequest.Images[0].ID != 0 {
-			t.Errorf("expected image ID 0, got %d", mock.CompletionRequest.Images[0].ID)
+		if mock.CompletionRequest.Media[0].ID != 0 {
+			t.Errorf("expected image ID 0, got %d", mock.CompletionRequest.Media[0].ID)
 		}
 	})
 
@@ -2557,21 +2943,21 @@ func TestGenerateWithImages(t *testing.T) {
 		}
 
 		// Verify both images were passed
-		if len(mock.CompletionRequest.Images) != 2 {
-			t.Fatalf("expected 2 images in completion request, got %d", len(mock.CompletionRequest.Images))
+		if len(mock.CompletionRequest.Media) != 2 {
+			t.Fatalf("expected 2 images in completion request, got %d", len(mock.CompletionRequest.Media))
 		}
 
-		if !bytes.Equal(mock.CompletionRequest.Images[0].Data, testImage1) {
+		if !bytes.Equal(mock.CompletionRequest.Media[0].Data, testImage1) {
 			t.Errorf("first image data mismatch")
 		}
 
-		if !bytes.Equal(mock.CompletionRequest.Images[1].Data, testImage2) {
+		if !bytes.Equal(mock.CompletionRequest.Media[1].Data, testImage2) {
 			t.Errorf("second image data mismatch")
 		}
 
-		if mock.CompletionRequest.Images[0].ID != 0 || mock.CompletionRequest.Images[1].ID != 1 {
+		if mock.CompletionRequest.Media[0].ID != 0 || mock.CompletionRequest.Media[1].ID != 1 {
 			t.Errorf("expected image IDs 0 and 1, got %d and %d",
-				mock.CompletionRequest.Images[0].ID, mock.CompletionRequest.Images[1].ID)
+				mock.CompletionRequest.Media[0].ID, mock.CompletionRequest.Media[1].ID)
 		}
 	})
 
@@ -2588,8 +2974,8 @@ func TestGenerateWithImages(t *testing.T) {
 		}
 
 		// Verify no images in completion request
-		if len(mock.CompletionRequest.Images) != 0 {
-			t.Fatalf("expected 0 images in completion request, got %d", len(mock.CompletionRequest.Images))
+		if len(mock.CompletionRequest.Media) != 0 {
+			t.Fatalf("expected 0 images in completion request, got %d", len(mock.CompletionRequest.Media))
 		}
 	})
 }
@@ -2631,7 +3017,10 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	opts := api.DefaultOptions()
+	opts, err := (&Server{}).modelOptions(loadedModel, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := Server{
 		sched: &Scheduler{
 			pendingReqCh:  make(chan *LlmRequest, 1),
@@ -2718,7 +3107,10 @@ func newImageGenerateTestServer(t *testing.T, mock *mockRunner) Server {
 		t.Fatal(err)
 	}
 
-	opts := api.DefaultOptions()
+	opts, err := (&Server{}).modelOptions(loadedModel, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := Server{
 		sched: &Scheduler{
 			pendingReqCh:  make(chan *LlmRequest, 1),

@@ -63,7 +63,7 @@ func TestCompletionReturnsImageData(t *testing.T) {
 		Height: 256,
 		Steps:  7,
 		Seed:   42,
-		Images: []llm.ImageData{{Data: []byte("input-image")}},
+		Media:  []llm.MediaData{llm.NewMediaData(0, []byte("input-image"))},
 	}, func(resp llm.CompletionResponse) {
 		responses = append(responses, resp)
 	})

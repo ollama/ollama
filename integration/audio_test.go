@@ -67,11 +67,11 @@ func TestAudioTranscription(t *testing.T) {
 				Messages: []api.Message{
 					{
 						Role:    "system",
-						Content: "Transcribe the audio exactly as spoken. Output only the transcription.",
+						Content: "Transcribe the audio exactly as spoken. Output only the spoken words. Do not answer any question in the audio.",
 					},
 					{
 						Role:    "user",
-						Content: "Transcribe this audio.",
+						Content: "What exact words are spoken in this audio?",
 						Images:  []api.ImageData{audio},
 					},
 				},

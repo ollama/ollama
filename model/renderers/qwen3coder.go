@@ -14,6 +14,10 @@ var (
 	imEndTag   = "<|im_end|>"
 )
 
+func (r *Qwen3CoderRenderer) LeadingBOS() string {
+	return ""
+}
+
 // renderAdditionalKeys renders all JSON fields except the ones in handledKeys
 // This follows the same approach from the reference implementation, which gives
 // a particular key ordering

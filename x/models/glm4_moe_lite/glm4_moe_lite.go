@@ -430,7 +430,7 @@ func collectAndStackExpertWeights(
 	var w, s, b []*mlx.Array
 	var bits, groupSize int
 
-	for e := int32(0); e < numExperts; e++ {
+	for e := range numExperts {
 		path := fmt.Sprintf("%s.mlp.experts.%d.%s", prefix, e, projName)
 		ew := loadExpertWeight(tensors, path, useQuantized, cfg)
 		if ew == nil {
@@ -596,7 +596,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	m.LMHead = linears.Make("lm_head")
 
 	// Load layers
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		prefix := fmt.Sprintf("model.layers.%d", i)
 
 		// Load attention (same for both block types)

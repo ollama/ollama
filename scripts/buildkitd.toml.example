@@ -1,5 +1,5 @@
-# Suggested BuildKit GC config for ollama local development.
-#
+# Suggested BuildKit GC config for Ollama local development.
+
 [worker.oci]
   gc = true
   gckeepstorage = "150GB"
@@ -11,11 +11,11 @@
 
 [[worker.oci.gcpolicy]]
   filters = ["type==exec.cachemount"]
-  keepDuration = "168h"     # 7 days
+  keepDuration = "168h"
   maxUsedSpace = "20GB"
 
 [[worker.oci.gcpolicy]]
-  keepDuration = "720h"     # 30 days
+  keepDuration = "720h"
   reservedSpace = "20GB"
   maxUsedSpace = "150GB"
   minFreeSpace = "50GB"

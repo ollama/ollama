@@ -25,6 +25,10 @@ const (
 	lfm2ToolResponseEndTag   = "<|tool_response_end|>"
 )
 
+func (r *LFM2Renderer) LeadingBOS() string {
+	return lfm2BOSToken
+}
+
 func lfm2RenderSystemContent(content any) string {
 	switch v := content.(type) {
 	case string:

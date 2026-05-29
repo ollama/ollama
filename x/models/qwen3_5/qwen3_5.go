@@ -4,6 +4,7 @@ package qwen3_5
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 
@@ -400,7 +401,7 @@ func NewModel(root *model.Root) (base.Model, error) {
 		tok:    tok,
 	}
 
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		m.Layers[i] = &Layer{IsLinear: layerIsLinear(&cfg, i)}
 	}
 
@@ -570,7 +571,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	groupSize := 0
 	mode := cfg.QuantMode
 
-	for e := int32(0); e < numExperts; e++ {
+	for e := range numExperts {
 		base := fmt.Sprintf("%s.mlp.experts.%d.%s", layerPrefix, e, proj)
 		w, key := tensorByBase(tensors, base)
 		if w == nil {
@@ -872,7 +873,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 	moeLoadSummaries := make([]string, 0)
 
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", modelPrefix, i)
 		layer := &Layer{IsLinear: layerIsLinear(cfg, i)}
 
@@ -1068,6 +1069,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		}
 
 		m.Layers[i] = layer
+	}
+	for _, summary := range moeLoadSummaries {
+		slog.Debug("qwen3.5 moe load", "summary", summary)
 	}
 
 	return nil

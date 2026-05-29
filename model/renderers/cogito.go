@@ -11,6 +11,10 @@ type CogitoRenderer struct {
 	isThinking bool
 }
 
+func (r *CogitoRenderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *CogitoRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
