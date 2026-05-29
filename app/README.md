@@ -20,6 +20,10 @@ go run ./cmd/app
 
 Install required tools:
 
+1. Make sure the C++ compiler is installed for your machine. Read the [root README](../README.md) to install it
+
+2. Install the typescriptify structs for golang:
+
 ```bash
 go install github.com/tkrajina/typescriptify-golang-structs/tscriptify@latest
 ```
@@ -34,11 +38,21 @@ npm install
 npm run dev
 ```
 
+`npm install` needs to be run only once when launching the UI for the first time
+
 2. In a separate terminal, run the Ollama app with the `-dev` flag:
 
 ```bash
 go generate ./... &&
 OLLAMA_DEBUG=1 go run ./cmd/app -dev
+```
+
+`go generate ./...` needs to be run only whenever the golang source has had changes or when launching the server for the first time, otherwise the build step can be skipped. For 64-bit windows users, the commands would be:
+
+```bash
+go generate ./...
+set OLLAMA_DEBUG=1 
+go run ./cmd/app -dev
 ```
 
 The `-dev` flag enables:

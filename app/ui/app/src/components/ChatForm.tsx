@@ -28,7 +28,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { ThinkButton } from "./ThinkButton";
 import { ErrorMessage } from "./ErrorMessage";
-import { processFiles } from "@/utils/fileValidation";
+import { fetchValidFiles } from "@/utils/fileValidation";
 import type { ImageData } from "@/types/webview";
 import { PlusIcon } from "@heroicons/react/24/outline";
 
@@ -200,7 +200,7 @@ function ChatForm({
   };
 
   // Create stable callback for file handling
-  const handleFilesReceived = useCallback(
+  const appendFilesReceivedToMessage = useCallback(
     (
       files: Array<{ filename: string; data: Uint8Array; type?: string }>,
       errors: Array<{ filename: string; error: string }> = [],
@@ -233,9 +233,9 @@ function ChatForm({
 
   useEffect(() => {
     if (onFilesReceived) {
-      onFilesReceived(handleFilesReceived);
+      onFilesReceived(appendFilesReceivedToMessage);
     }
-  }, [onFilesReceived, handleFilesReceived]);
+  }, [onFilesReceived, appendFilesReceivedToMessage]);
 
   // Determine if login banner should be shown
   const shouldShowLoginBanner =
@@ -664,14 +664,14 @@ function ChatForm({
           .filter(Boolean) as File[];
 
         if (files.length > 0) {
-          const { validFiles, errors } = await processFiles(files, {
+          const { validFiles, errors } = await fetchValidFiles(files, {
             selectedModel,
             hasVisionCapability,
           });
 
           // Send processed files and errors to the same handler as FileUpload
           if (validFiles.length > 0 || errors.length > 0) {
-            handleFilesReceived(validFiles, errors);
+            appendFilesReceivedToMessage(validFiles, errors);
           }
         }
       }
