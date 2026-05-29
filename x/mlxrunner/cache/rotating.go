@@ -2,6 +2,7 @@ package cache
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
@@ -9,21 +10,42 @@ import (
 	"github.com/ollama/ollama/x/models/nn"
 )
 
-// RotatingKVCache implements sliding window attention with bounded memory
+// RotatingKVCache implements sliding window attention with bounded memory.
 type RotatingKVCache struct {
-	maxSize int
-	idx     int
+	keys, values *mlx.Array
+	offset       int
+	step         int
+	maxSize      int
+	idx          int
 
-	*KVCache
+	snapshots pendingSnapshots
+
+	// lazySnapshots are outstanding snapshots still in their lazy state: they
+	// index into the live keys/values buffer by slot rather than owning a copy
+	// (see rotatingSnapshot). A write that trims, linearizes, or overwrites the
+	// buffer copies them out (copyOutLazySnapshots) before destroying the slots
+	// they name.
+	lazySnapshots []*rotatingSnapshot
 }
 
 func NewRotatingKVCache(maxSize int) *RotatingKVCache {
-	return &RotatingKVCache{maxSize: maxSize, KVCache: NewKVCache()}
+	return &RotatingKVCache{maxSize: maxSize, step: 256}
 }
 
 // Assumes B = 1; heterogeneous batches are not supported.
 func (c *RotatingKVCache) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
-	newK, newV := c.appendKV(keys, values)
+	start := c.offset
+	c.captureStartBoundary(start)
+
+	batched := keys.Dim(2) > 1
+	var newK, newV *mlx.Array
+	if batched {
+		newK, newV = c.concat(keys, values)
+	} else {
+		newK, newV = c.update(keys, values)
+	}
+
+	c.captureLazySnapshots(start, c.offset, batched)
 	return nn.NewKVHistory(newK, newV, rotatingApplier{
 		b:       b,
 		K:       newK.Dim(2),
@@ -34,127 +56,13 @@ func (c *RotatingKVCache) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KV
 	})
 }
 
-// View returns the current rotating cache contents in logical order for
-// assistant KV sharing.
-func (c *RotatingKVCache) View(_ *batch.Batch) *nn.KVHistory {
-	k, v := c.logicalTail(c.maxSize - 1)
-	if k == nil || v == nil {
-		return nil
-	}
-	return nn.NewKVHistory(k, v, nil)
-}
-
-func (c *RotatingKVCache) logicalTail(keep int) (*mlx.Array, *mlx.Array) {
-	state := c.State()
-	if len(state) < 2 || keep <= 0 {
-		return nil, nil
-	}
-
-	keys, values := state[0], state[1]
-	K := keys.Dim(2)
-	if K == 0 {
-		return nil, nil
-	}
-
-	keep = min(keep, K)
-	if K > c.maxSize || c.offset < c.maxSize {
-		start := K - keep
-		return keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, K), mlx.Slice()),
-			values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, K), mlx.Slice())
-	}
-
-	oldest := c.idx % K
-	var logicalK, logicalV *mlx.Array
-	if oldest == 0 {
-		logicalK, logicalV = keys, values
-	} else {
-		tailK := keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(oldest, K), mlx.Slice())
-		tailV := values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(oldest, K), mlx.Slice())
-		headK := keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, oldest), mlx.Slice())
-		headV := values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, oldest), mlx.Slice())
-		logicalK = tailK.Concatenate(2, headK)
-		logicalV = tailV.Concatenate(2, headV)
-	}
-
-	start := K - keep
-	return logicalK.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, K), mlx.Slice()),
-		logicalV.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, K), mlx.Slice())
-}
-
-type speculativeRotatingKVCache struct {
-	speculativeBase
-	target       *RotatingKVCache
-	keys, values *mlx.Array
-}
-
-func newSpeculativeRotatingKVCache(target *RotatingKVCache) *speculativeRotatingKVCache {
-	return &speculativeRotatingKVCache{
-		speculativeBase: speculativeBase{offset: target.Offset()},
-		target:          target,
-	}
-}
-
-func (c *speculativeRotatingKVCache) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
-	c.keys = concatKV(c.keys, keys)
-	c.values = concatKV(c.values, values)
-	c.offset += keys.Dim(2)
-
-	oldK, oldV := c.target.logicalTail(c.target.maxSize - 1)
-	histK, histV := c.keys, c.values
-	if oldK != nil && oldV != nil {
-		histK = oldK.Concatenate(2, c.keys)
-		histV = oldV.Concatenate(2, c.values)
-	}
-
-	return nn.NewKVHistory(histK, histV, logicalSlidingApplier{
-		b:      b,
-		K:      histK.Dim(2),
-		window: c.target.maxSize,
-		dtype:  keys.DType(),
-	})
-}
-
-func (c *speculativeRotatingKVCache) State() []*mlx.Array {
-	if c.keys == nil || c.values == nil {
-		return c.target.State()
-	}
-	oldK, oldV := c.target.logicalTail(c.target.maxSize - 1)
-	if oldK == nil || oldV == nil {
-		return []*mlx.Array{c.keys, c.values}
-	}
-	return []*mlx.Array{oldK.Concatenate(2, c.keys), oldV.Concatenate(2, c.values)}
-}
-
-func (c *speculativeRotatingKVCache) commit(n int) {
-	if c.keys == nil || c.values == nil || n <= 0 {
-		return
-	}
-	n = min(n, c.keys.Dim(2))
-	c.target.appendKV(prefixKV(c.keys, n), prefixKV(c.values, n))
-}
-
-type logicalSlidingApplier struct {
-	b      *batch.Batch
-	K      int
-	window int
-	dtype  mlx.DType
-}
-
-func (a logicalSlidingApplier) ApplyMask(logical nn.AttentionMask) nn.AttentionMask {
-	return logical.Intersect(nn.SlidingWindowMask(a.b, a.K, a.window, a.dtype))
-}
-
-// appendKV is the raw write path shared by Update and Restore —
-// routes to concat for prefill (L > 1) and update for decode.
-func (c *RotatingKVCache) appendKV(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
-	if keys.Dim(2) > 1 {
-		return c.concat(keys, values)
-	}
-	return c.update(keys, values)
-}
-
 func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV *mlx.Array) {
 	logutil.Trace("(*RotatingKVCache).concat", "keys_dim", keys.Dims(), "values_dim", values.Dims(), "offset", c.offset, "idx", c.idx, "max_size", c.maxSize)
+
+	// Freeze outstanding lazy snapshots: the linearize/trim/concat below
+	// reorders and drops the slots they name.
+	c.copyOutLazySnapshots()
+
 	if c.keys == nil {
 		c.keys, c.values = keys.Clone(), values.Clone()
 		mlx.Pin(c.keys, c.values)
@@ -187,7 +95,6 @@ func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV
 
 		c.keys.Set(c.keys.Concatenate(2, keys))
 		c.values.Set(c.values.Concatenate(2, values))
-		c.idx = c.keys.Dim(2)
 	}
 
 	c.offset += keys.Dim(2)
@@ -197,6 +104,11 @@ func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV
 
 func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 	logutil.Trace("(*RotatingKVCache).update", "keys_dim", keys.Dims(), "values_dim", values.Dims(), "offset", c.offset, "idx", c.idx, "max_size", c.maxSize)
+
+	// Freeze outstanding lazy snapshots: the trim/rotate/SliceUpdate below
+	// overwrites the slots they name.
+	c.copyOutLazySnapshots()
+
 	B, H, L, Dk, Dv := keys.Dim(0), keys.Dim(1), keys.Dim(2), keys.Dim(3), values.Dim(3)
 
 	prev := c.offset
@@ -239,6 +151,38 @@ func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Arra
 		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, validLen), mlx.Slice())
 }
 
+// View returns the current cache contents as a read-only KV history, used by an
+// assistant model that shares this cache. It sets L=1 so rotatingApplier treats
+// the buffer as ring-ordered (its stored layout); L=1 is a layout selector, not
+// a query length. A post-concat oversize buffer (K > maxSize) is already in
+// logical order, so View trims to the trailing maxSize tokens and resets ringIdx
+// to 0, collapsing the applier's gather to identity.
+func (c *RotatingKVCache) View(b *batch.Batch) *nn.KVHistory {
+	state := c.State()
+	k, v := state[0], state[1]
+	K := k.Dim(2)
+	ringIdx := c.idx
+	if K > c.maxSize {
+		// Post-concat oversize buffer: storage is in logical (oldest-first)
+		// order, so slice the trailing maxSize tokens. The slice is already
+		// in logical layout, so reset ringIdx to make the applier's gather
+		// collapse to identity.
+		start := K - c.maxSize
+		k = k.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, K), mlx.Slice())
+		v = v.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, K), mlx.Slice())
+		K = c.maxSize
+		ringIdx = 0
+	}
+	return nn.NewKVHistory(k, v, rotatingApplier{
+		b:       b,
+		K:       K,
+		L:       1,
+		window:  c.maxSize,
+		ringIdx: ringIdx,
+		dtype:   k.DType(),
+	})
+}
+
 func (c *RotatingKVCache) State() []*mlx.Array {
 	if c.keys == nil || c.values == nil {
 		return nil
@@ -250,14 +194,166 @@ func (c *RotatingKVCache) State() []*mlx.Array {
 	}
 }
 
-// rotatingSnapshot holds paged-out data for a RotatingKVCache.
-type rotatingSnapshot struct {
-	kvSnapshot     // embedded KV data
-	idx        int // buffer write position at snapshot time
+// replaceBuffer swaps in newK/newV as the cache's keys/values, unpinning the old
+// buffer and pinning the new one.
+func (c *RotatingKVCache) replaceBuffer(newK, newV *mlx.Array) {
+	mlx.Unpin(c.keys, c.values)
+	c.keys, c.values = newK, newV
+	mlx.Pin(c.keys, c.values)
 }
 
-func (s *rotatingSnapshot) Size() int { return s.kvSnapshot.Size() }
-func (s *rotatingSnapshot) Close()    { s.kvSnapshot.Close() }
+func (c *RotatingKVCache) Free() {
+	// Freeing drops the buffer lazy snapshots index into; copy them out first.
+	c.copyOutLazySnapshots()
+	mlx.Unpin(c.keys, c.values)
+	c.keys, c.values = nil, nil
+	c.offset = 0
+	c.idx = 0
+	c.snapshots = pendingSnapshots{}
+}
+
+func (c *RotatingKVCache) Offset() int { return c.offset }
+
+func (c *RotatingKVCache) PrepareSnapshots(offsets []int) { c.snapshots.prepare(c.offset, offsets) }
+func (c *RotatingKVCache) TakeSnapshots() []Snapshot      { return c.snapshots.take() }
+
+// captureStartBoundary captures a scheduled offset at the pre-write position via
+// the clone path (Snapshot), so the rollback point holds the full pre-write
+// window before concat/update reorders or drops it.
+func (c *RotatingKVCache) captureStartBoundary(start int) {
+	if len(c.snapshots.offsets) == 0 {
+		return
+	}
+	c.snapshots.captureReached(start, func(int) Snapshot { return c.Snapshot(0) })
+}
+
+// captureLazySnapshots records a snapshot for each scheduled offset the write
+// reached after the start boundary. A batched write (concat) linearizes the
+// buffer into logical order, so each window is a contiguous slot slice captured
+// lazily (lazyRotatingSnapshot). A single-token write (update) leaves the buffer
+// ring-ordered or grown, breaking that slot math, so capture a clone (Snapshot)
+// instead; update only ever reaches the end boundary (o == c.offset).
+func (c *RotatingKVCache) captureLazySnapshots(start, end int, batched bool) {
+	if len(c.snapshots.offsets) == 0 {
+		return
+	}
+	for _, o := range c.snapshots.scheduledIn(start, end) {
+		if o == start {
+			continue // captured pre-write by captureStartBoundary
+		}
+		c.snapshots.captureReached(o, func(int) Snapshot {
+			if batched {
+				return c.lazyRotatingSnapshot(o)
+			}
+			return c.Snapshot(o - min(o, c.maxSize))
+		})
+	}
+}
+
+// lazyRotatingSnapshot records the window ending at offset o as a lazy snapshot
+// into the current (logically ordered) buffer: window [o-liveLen, o) maps to
+// slots [sliceStart, sliceEnd), and restoring sets idx == liveLen so the buffer
+// reads back in logical order. Returns nil for a zero-width range.
+func (c *RotatingKVCache) lazyRotatingSnapshot(o int) Snapshot {
+	if c.keys == nil {
+		return nil
+	}
+	bufBase := c.offset - c.keys.Dim(2)
+	liveLen := min(o, c.maxSize)
+	sliceStart := o - liveLen - bufBase
+	sliceEnd := o - bufBase
+	if sliceEnd <= sliceStart {
+		return nil
+	}
+	s := &rotatingSnapshot{
+		fromOffset: o - liveLen,
+		toOffset:   o,
+		idx:        liveLen,
+		cache:      c,
+		sliceStart: sliceStart,
+		sliceEnd:   sliceEnd,
+	}
+	c.lazySnapshots = append(c.lazySnapshots, s)
+	return s
+}
+
+// rotatingSnapshot holds paged-out data for a RotatingKVCache. Initially lazy:
+// the window lives in the issuing cache's buffer at slots [sliceStart, sliceEnd)
+// in logical order, and copyOut clones it into owned keys/values before a write
+// reorders or drops those slots.
+type rotatingSnapshot struct {
+	keys, values         *mlx.Array // owned window once copied out; nil while lazy
+	fromOffset, toOffset int        // absolute offset range the window covers
+	idx                  int        // buffer write position a restore installs
+
+	cache                *RotatingKVCache // issuer while lazy; nil once copied out
+	sliceStart, sliceEnd int              // buffer slot range of the window while lazy
+
+	// onMaterialize, if set, is fired once from copyOut with the newly-owned
+	// byte count so an owner (e.g. the trie's pagedOutBytes counter) can pick
+	// up bytes that were free while the snapshot was lazy.
+	onMaterialize func(delta int)
+}
+
+func (s *rotatingSnapshot) Size() int {
+	if s.keys != nil {
+		return s.keys.NumBytes() + s.values.NumBytes()
+	}
+	// Lazy snapshots own no extra memory: the window still lives in the
+	// issuing cache's buffer.
+	return 0
+}
+
+func (s *rotatingSnapshot) SetMaterializeHook(fn func(delta int)) { s.onMaterialize = fn }
+
+func (s *rotatingSnapshot) Close() {
+	mlx.Unpin(s.keys, s.values)
+	if s.cache != nil {
+		s.cache.dropLazySnapshot(s)
+		s.cache = nil
+	}
+}
+
+// copyOut converts a lazy snapshot into an owned clone of its window slots. It
+// is a no-op once the snapshot already owns its data. The slots hold the window
+// in logical order, so the clone needs no reordering.
+func (s *rotatingSnapshot) copyOut() {
+	if s.keys != nil {
+		return
+	}
+	c := s.cache
+	kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(s.sliceStart, s.sliceEnd), mlx.Slice())
+	vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(s.sliceStart, s.sliceEnd), mlx.Slice())
+	k := mlx.Contiguous(kSlice, false)
+	v := mlx.Contiguous(vSlice, false)
+	mlx.Pin(k, v)
+	mlx.AsyncEval(k, v)
+
+	s.keys, s.values = k, v
+	c.dropLazySnapshot(s)
+	s.cache = nil
+
+	if s.onMaterialize != nil {
+		s.onMaterialize(s.keys.NumBytes() + s.values.NumBytes())
+		s.onMaterialize = nil
+	}
+}
+
+func (c *RotatingKVCache) dropLazySnapshot(s *rotatingSnapshot) {
+	if i := slices.Index(c.lazySnapshots, s); i >= 0 {
+		c.lazySnapshots = slices.Delete(c.lazySnapshots, i, i+1)
+	}
+}
+
+// copyOutLazySnapshots clones every outstanding lazy snapshot into owned data.
+// The destructive write paths (concat, update) call this before they trim,
+// linearize, or overwrite the slots a snapshot names. copyOut removes the
+// snapshot from the set, so iterate over a clone.
+func (c *RotatingKVCache) copyOutLazySnapshots() {
+	for _, s := range slices.Clone(c.lazySnapshots) {
+		s.copyOut()
+	}
+}
 
 func (c *RotatingKVCache) Snapshot(fromOffset int) Snapshot {
 	if c.keys == nil || c.offset <= fromOffset {
@@ -270,13 +366,11 @@ func (c *RotatingKVCache) Snapshot(fromOffset int) Snapshot {
 	mlx.Pin(k, v)
 
 	return &rotatingSnapshot{
-		kvSnapshot: kvSnapshot{
-			keys:       k,
-			values:     v,
-			fromOffset: fromOffset,
-			toOffset:   c.offset,
-		},
-		idx: c.idx,
+		keys:       k,
+		values:     v,
+		fromOffset: fromOffset,
+		toOffset:   c.offset,
+		idx:        c.idx,
 	}
 }
 
@@ -289,10 +383,9 @@ func (c *RotatingKVCache) Restore(snapshot Snapshot, target int) bool {
 		if target >= c.offset {
 			return target == c.offset
 		}
-		// Live rewind is only safe when the buffer hasn't filled yet
-		// (offset <= maxSize). Once the window has shifted, rewinding
-		// leaves fewer than maxSize trailing tokens to attend to —
-		// a snapshot is required to restore the full window.
+		// Live rewind is only safe before the buffer fills (offset <= maxSize);
+		// once wrapped, rewinding leaves an incomplete window, so a snapshot is
+		// required.
 		if c.offset > c.maxSize {
 			return false
 		}
@@ -312,14 +405,37 @@ func (c *RotatingKVCache) Restore(snapshot Snapshot, target int) bool {
 		return false
 	}
 
-	// Restore from snapshot: rebuild buffer state.
-	// Free existing state first.
-	if c.keys != nil {
-		mlx.Unpin(c.keys, c.values)
+	// Fast path: this cache's own still-lazy snapshot names the restored window
+	// in the live buffer, so slice it in as the new buffer (no copy) and re-point
+	// the snapshot to slots [0, liveLen), kept lazy.
+	if snap.cache == c && snap.keys == nil {
+		// Drop snap (re-pointed, not copied), then copy out the siblings: their
+		// slots fall outside the restored window.
+		c.dropLazySnapshot(snap)
+		c.copyOutLazySnapshots()
+		liveLen := snap.sliceEnd - snap.sliceStart
+		c.replaceBuffer(
+			c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(snap.sliceStart, snap.sliceEnd), mlx.Slice()),
+			c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(snap.sliceStart, snap.sliceEnd), mlx.Slice()),
+		)
+		snap.sliceStart, snap.sliceEnd = 0, liveLen
+		c.lazySnapshots = append(c.lazySnapshots, snap)
+		c.offset = snap.toOffset
+		c.idx = snap.idx
+		if target < c.offset {
+			c.offset = target
+			c.idx = target
+		}
+		return true
 	}
-	c.keys = snap.keys.Clone()
-	c.values = snap.values.Clone()
-	mlx.Pin(c.keys, c.values)
+
+	// snap is owned (cross-cache or already materialized; the lazy-own case is
+	// above), so copyOut is a no-op here. Freeze this cache's lazy snapshots off
+	// the buffer the assignment below replaces.
+	snap.copyOut()
+	c.copyOutLazySnapshots()
+
+	c.replaceBuffer(snap.keys.Clone(), snap.values.Clone())
 	c.offset = snap.toOffset
 	c.idx = snap.idx
 
@@ -346,20 +462,11 @@ func (c *RotatingKVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) 
 	return nil, snapshot
 }
 
-func (c *RotatingKVCache) Free() {
-	c.KVCache.Free()
-	c.idx = 0
-}
-
-// rotatingApplier composes the sliding-window storage restriction
-// onto the caller's logical mask.
-//
-// ringIdx is the cache's write cursor at Update time. At L=1 decode
-// the ring buffer is not position-ordered — logical col j lives at
-// storage slot (ringIdx+j) mod K — so tensor masks built in
-// logical space must be gathered into this layout before the kernel
-// sees them. At L>1 prefill the concat path has already linearised
-// storage, so the gather is identity and ringIdx is unused.
+// rotatingApplier composes the sliding-window storage restriction onto the
+// caller's logical mask. ringIdx is the write cursor at Update time: at L=1
+// decode the ring is not position-ordered (logical col j lives at slot
+// (ringIdx+j) mod K), so tensor masks must be gathered into ring layout. At L>1
+// prefill concat has linearized storage, so the gather is identity.
 type rotatingApplier struct {
 	b       *batch.Batch
 	K       int
@@ -371,20 +478,15 @@ type rotatingApplier struct {
 
 func (r rotatingApplier) ApplyMask(logical nn.AttentionMask) nn.AttentionMask {
 	if r.L == 1 {
-		// Single-query decode: storage already enforces the window
-		// (Update keeps the last maxSize tokens, all within
-		// [absQ-window+1, absQ]), and every stored key's absolute
-		// position <= absQ. For a zero or plain-causal logical mask
-		// both constraints reduce to "no mask", so return the zero
-		// mask and let SDPA dispatch to mode="".
+		// Single-query decode: storage already enforces the window and every
+		// stored key's position <= absQ, so a zero or causal logical mask
+		// reduces to no mask — let SDPA dispatch to mode="".
 		if logical.IsZero() || logical.IsCausal() {
 			return nn.AttentionMask{}
 		}
 
-		// Tensor-backed mask (user ArrayMask, causal+Relax, causal
-		// with accumulated array): materialize in logical-position
-		// order then gather K cols into ring-slot order so they
-		// align with the cache output the kernel will index.
+		// Tensor-backed mask: materialize in logical order, then gather K cols
+		// into ring-slot order to align with the cache output.
 		arr := logical.AsArray(r.b, r.K, r.dtype)
 		arr = gatherRingCols(arr, r.ringIdx, r.K)
 		return nn.ArrayMask(arr)
@@ -393,14 +495,10 @@ func (r rotatingApplier) ApplyMask(logical nn.AttentionMask) nn.AttentionMask {
 	return logical.Intersect(nn.SlidingWindowMask(r.b, r.K, r.window, r.dtype))
 }
 
-// gatherRingCols reorders a [B, 1, L, K] mask's K axis from
-// logical-position order (col 0 = oldest stored position) into the
-// cache's ring-slot order (col 0 = buffer slot 0). Logical col j
-// lives at slot (ringIdx+j) mod K, so storage slot s reads from
-// logical col (s-ringIdx+K) mod K. Returns arr unchanged when the
-// permutation is a no-op: ringIdx % K == 0 (layouts coincide), or
-// the K axis broadcasts (dim 3 == 1, i.e. Q-padding-shaped masks
-// where every key shares the same value).
+// gatherRingCols reorders a [B, 1, L, K] mask's K axis from logical order
+// (col 0 = oldest) into ring-slot order (col 0 = slot 0): logical col j lives at
+// slot (ringIdx+j) mod K. A no-op when ringIdx % K == 0 or the K axis broadcasts
+// (dim 3 == 1, Q-padding-shaped masks where every key shares one value).
 func gatherRingCols(arr *mlx.Array, ringIdx, K int) *mlx.Array {
 	if w := arr.Dim(3); w != 1 && w != K {
 		panic(fmt.Sprintf("gatherRingCols: K-axis width %d must be 1 or %d", w, K))

@@ -27,6 +27,52 @@ type RecurrentCache struct {
 	numVHeads int
 	headVDim  int
 	headKDim  int
+
+	snapshots pendingSnapshots
+}
+
+// PrepareSnapshots schedules snapshot capture. Recurrent state is cumulative;
+// an interior offset within a forward has no state unless the recurrent kernel
+// is run in segments cut at that offset (see SnapshotSplits + Put). The
+// current offset is a boundary now (the pre-forward state) and is captured
+// immediately. Interior offsets are captured when Put receives the matching
+// per-boundary state; the end offset is captured by Put's final state.
+func (c *RecurrentCache) PrepareSnapshots(offsets []int) {
+	c.snapshots.prepare(c.offset, offsets)
+	// The current offset is a valid boundary right now, so capture it.
+	c.captureBoundary(c.offset)
+}
+
+func (c *RecurrentCache) TakeSnapshots() []Snapshot { return c.snapshots.take() }
+
+// SnapshotSplits returns the scheduled offsets strictly interior to the upcoming
+// forward [offset, offset+forwardLen), expressed relative to the forward
+// start — the points at which the caller must segment the recurrent kernel so
+// each interior state can be captured. Empty when nothing is scheduled or no
+// interior offsets fall in range.
+func (c *RecurrentCache) SnapshotSplits(forwardLen int) []int {
+	start := c.offset
+	end := start + forwardLen
+	var splits []int
+	for _, o := range c.snapshots.offsets {
+		if o > start && o < end {
+			splits = append(splits, o-start)
+		}
+	}
+	return splits
+}
+
+func (c *RecurrentCache) captureBoundary(reached int) {
+	c.snapshots.captureReached(reached, func(int) Snapshot { return c.Snapshot(reached) })
+}
+
+// captureBoundaryState captures a scheduled interior offset from the
+// per-boundary conv/delta states the kernel wrappers produced while segmenting,
+// rather than from the cache's current (end-of-forward) state.
+func (c *RecurrentCache) captureBoundaryState(reached int, conv, delta *mlx.Array) {
+	c.snapshots.captureReached(reached, func(int) Snapshot {
+		return newRecurrentSnapshot(conv, delta, reached)
+	})
 }
 
 func (c *RecurrentCache) setState(old, v *mlx.Array, contiguous bool) *mlx.Array {
@@ -84,19 +130,39 @@ func (c *RecurrentCache) Get(b *batch.Batch, dtype mlx.DType) *nn.RecurrentHisto
 
 // Put stores the conv/delta states produced by the SSM layer's write phase.
 // convStates/deltaStates are the per-boundary recurrent states, one per
-// boundary ending with the forward-end state. The final entry becomes the
-// committed live state, advancing the cache offset by the forward's real
-// token count.
+// boundary ending with the forward-end state. The boundaries align with this
+// forward's snapshot splits plus the end: the leading entries are captured as
+// snapshots at the scheduled interior offsets, and the final entry becomes the
+// committed live state, advancing the cache offset by the forward's real token
+// count.
 //
 // In the common (unsegmented) case both slices have length 1 — just the
 // forward-end state.
 //
 // Assumes B = 1; heterogeneous batches are not supported.
 func (c *RecurrentCache) Put(b *batch.Batch, convStates, deltaStates []*mlx.Array) {
+	if len(convStates) != len(deltaStates) || len(convStates) == 0 {
+		panic(fmt.Sprintf("recurrent cache: %d conv / %d delta boundary states", len(convStates), len(deltaStates)))
+	}
+
+	start := c.offset
+	splits := c.SnapshotSplits(int(b.SeqQueryLens[0]))
+	if len(splits) != len(convStates)-1 {
+		panic(fmt.Sprintf("recurrent cache: %d interior splits but %d boundary states", len(splits), len(convStates)))
+	}
+
+	// Leading entries are the interior split boundaries; capture each as a
+	// snapshot at its scheduled offset.
+	for i, s := range splits {
+		c.captureBoundaryState(start+s, convStates[i], deltaStates[i])
+	}
+
+	// The final entry is the forward-end state — the committed live state.
 	last := len(convStates) - 1
 	c.convState = c.setState(c.convState, convStates[last], true)
 	c.deltaState = c.setState(c.deltaState, deltaStates[last], false)
 	c.offset += int(b.SeqQueryLens[0])
+	c.captureBoundary(c.offset)
 }
 
 func (c *RecurrentCache) State() []*mlx.Array {
@@ -113,18 +179,30 @@ type recurrentSnapshot struct {
 func (s *recurrentSnapshot) Size() int { return s.convState.NumBytes() + s.deltaState.NumBytes() }
 func (s *recurrentSnapshot) Close()    { mlx.Unpin(s.convState, s.deltaState) }
 
+// SetMaterializeHook is a no-op: recurrent snapshots are always materialized
+// at construction.
+func (s *recurrentSnapshot) SetMaterializeHook(func(int)) {}
+
+// newRecurrentSnapshot clones and pins conv/delta into an owned snapshot at
+// offset. Recurrent state is not position-sliceable, so a snapshot always owns
+// a full copy.
+func newRecurrentSnapshot(conv, delta *mlx.Array, offset int) *recurrentSnapshot {
+	snap := &recurrentSnapshot{
+		convState:  conv.Clone(),
+		deltaState: delta.Clone(),
+		offset:     offset,
+	}
+	mlx.Pin(snap.convState, snap.deltaState)
+	return snap
+}
+
 func (c *RecurrentCache) Snapshot(fromOffset int) Snapshot {
 	// Recurrent state is not position-sliceable — always snapshot the full state.
 	if c.convState == nil && c.deltaState == nil {
 		return nil
 	}
 
-	snap := &recurrentSnapshot{offset: c.offset}
-	snap.convState = c.convState.Clone()
-	snap.deltaState = c.deltaState.Clone()
-	mlx.Pin(snap.convState, snap.deltaState)
-
-	return snap
+	return newRecurrentSnapshot(c.convState, c.deltaState, c.offset)
 }
 
 func (c *RecurrentCache) Restore(snapshot Snapshot, target int) bool {
@@ -168,6 +246,7 @@ func (c *RecurrentCache) Free() {
 	mlx.Unpin(c.convState, c.deltaState)
 	c.convState, c.deltaState = nil, nil
 	c.offset = 0
+	c.snapshots = pendingSnapshots{}
 }
 
 func (c *RecurrentCache) Offset() int { return c.offset }
