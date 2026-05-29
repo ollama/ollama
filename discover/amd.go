@@ -166,22 +166,88 @@ func applyLinuxROCmRefinement(devices []ml.DeviceInfo, sysfsRoot string) bool {
 		return false
 	}
 
-	for i, sysfsDevice := range sysfsDevices {
-		device := &devices[rocmIndexes[i]]
-		if sysfsDevice.gfxTarget != "" && device.GFXTarget != "" && sysfsDevice.gfxTarget != device.GFXTarget {
-			slog.Debug("linux rocm device refinement gfx target differs",
-				"device", device.Name, "llama_server_gfx", device.GFXTarget, "kfd_gfx", sysfsDevice.gfxTarget)
-		}
+	byPCI := map[string]rocmLinuxSysfsDevice{}
+	byGFX := uniqueROCmSysfsDevicesByGFX(sysfsDevices)
+	for _, sysfsDevice := range sysfsDevices {
 		if sysfsDevice.pciID != "" {
-			device.PCIID = sysfsDevice.pciID
-		}
-		if sysfsDevice.known {
-			device.Integrated = sysfsDevice.integrated
+			byPCI[strings.ToLower(sysfsDevice.pciID)] = sysfsDevice
 		}
 	}
 
-	slog.Debug("linux rocm device refinement applied", "devices", len(rocmIndexes))
+	refined := 0
+	for i, rocmIndex := range rocmIndexes {
+		device := &devices[rocmIndex]
+		sysfsDevice, ok := matchROCmLinuxSysfsDevice(*device, i, sysfsDevices, byPCI, byGFX)
+		if !ok {
+			slog.Debug("linux rocm device refinement skipped: no stable match",
+				"device", device.Name, "pci_id", device.PCIID, "gfx", device.GFXTarget)
+			continue
+		}
+		applyROCmLinuxSysfsDevice(device, sysfsDevice)
+		refined++
+	}
+
+	if refined == 0 {
+		return false
+	}
+
+	slog.Debug("linux rocm device refinement applied", "devices", refined)
 	return true
+}
+
+func uniqueROCmSysfsDevicesByGFX(sysfsDevices []rocmLinuxSysfsDevice) map[string]rocmLinuxSysfsDevice {
+	byGFX := map[string]rocmLinuxSysfsDevice{}
+	duplicates := map[string]bool{}
+	for _, sysfsDevice := range sysfsDevices {
+		if sysfsDevice.gfxTarget == "" {
+			continue
+		}
+		if _, ok := byGFX[sysfsDevice.gfxTarget]; ok {
+			duplicates[sysfsDevice.gfxTarget] = true
+			continue
+		}
+		byGFX[sysfsDevice.gfxTarget] = sysfsDevice
+	}
+	for gfx := range duplicates {
+		delete(byGFX, gfx)
+	}
+	return byGFX
+}
+
+func matchROCmLinuxSysfsDevice(device ml.DeviceInfo, index int, sysfsDevices []rocmLinuxSysfsDevice, byPCI, byGFX map[string]rocmLinuxSysfsDevice) (rocmLinuxSysfsDevice, bool) {
+	// ROCm visibility envs can remap backend ordinals while sysfs stays in
+	// physical KFD order, so prefer stable identity before index fallback.
+	if device.PCIID != "" {
+		if sysfsDevice, ok := byPCI[strings.ToLower(device.PCIID)]; ok {
+			return sysfsDevice, true
+		}
+	}
+
+	if device.GFXTarget != "" {
+		if sysfsDevice, ok := byGFX[device.GFXTarget]; ok {
+			return sysfsDevice, true
+		}
+	}
+
+	if index >= len(sysfsDevices) {
+		return rocmLinuxSysfsDevice{}, false
+	}
+	sysfsDevice := sysfsDevices[index]
+	if sysfsDevice.gfxTarget != "" && device.GFXTarget != "" && sysfsDevice.gfxTarget != device.GFXTarget {
+		slog.Debug("linux rocm device refinement index mismatch",
+			"device", device.Name, "llama_server_gfx", device.GFXTarget, "kfd_gfx", sysfsDevice.gfxTarget)
+		return rocmLinuxSysfsDevice{}, false
+	}
+	return sysfsDevice, true
+}
+
+func applyROCmLinuxSysfsDevice(device *ml.DeviceInfo, sysfsDevice rocmLinuxSysfsDevice) {
+	if sysfsDevice.pciID != "" {
+		device.PCIID = sysfsDevice.pciID
+	}
+	if sysfsDevice.known {
+		device.Integrated = sysfsDevice.integrated
+	}
 }
 
 func readROCmLinuxSysfsDevices(sysfsRoot string) ([]rocmLinuxSysfsDevice, error) {

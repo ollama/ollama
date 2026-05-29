@@ -334,7 +334,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 				updatedDevices := bootstrapDevicesWithMetalRetry(rctx, ctx, 3*time.Second, []string{ml.LibOllamaPath, dir}, devFilter)
 				for _, u := range updatedDevices {
 					for i := range devices {
-						if u.DeviceID == devices[i].DeviceID && u.PCIID == devices[i].PCIID {
+						if sameRefreshDevice(u, devices[i]) {
 							updated[i] = true
 							devices[i].FreeMemory = u.FreeMemory
 							break
@@ -353,6 +353,16 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 	}
 
 	return append([]ml.DeviceInfo{}, devices...)
+}
+
+func sameRefreshDevice(updated, existing ml.DeviceInfo) bool {
+	if updated.Library != existing.Library {
+		return false
+	}
+	if updated.PCIID != "" && existing.PCIID != "" {
+		return strings.EqualFold(updated.PCIID, existing.PCIID)
+	}
+	return updated.DeviceID == existing.DeviceID
 }
 
 func filterIntegratedGPUs(devices []ml.DeviceInfo) []ml.DeviceInfo {

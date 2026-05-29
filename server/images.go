@@ -69,7 +69,7 @@ type Model struct {
 	ParentModel        string
 	HasChatTemplate    bool
 	HasGoTemplate      bool
-	PreferChatTemplate bool // set when GGUF chat_template has more capabilities than Go TEMPLATE
+	PreferChatTemplate bool // set when GGUF chat_template should take precedence over Go TEMPLATE
 	AdapterPaths       []string
 	ProjectorPaths     []string
 	System             string
@@ -174,6 +174,23 @@ func chatTemplateHasToolSupport(chatTemplate string) bool {
 	return strings.Contains(chatTemplate, "tools") || strings.Contains(chatTemplate, "tool_call")
 }
 
+func chatTemplateHasToolRoundTrip(chatTemplate string) bool {
+	if !chatTemplateHasToolSupport(chatTemplate) {
+		return false
+	}
+
+	toolCalls := strings.Contains(chatTemplate, "tool_calls") || strings.Contains(chatTemplate, "assistant_tool_call")
+	return toolCalls && (strings.Contains(chatTemplate, "tool_response") ||
+		strings.Contains(chatTemplate, "tool_results") ||
+		strings.Contains(chatTemplate, "role'] == 'tool'") ||
+		strings.Contains(chatTemplate, `role'] == "tool"`) ||
+		strings.Contains(chatTemplate, `role"] == 'tool'`) ||
+		strings.Contains(chatTemplate, `role"] == "tool"`) ||
+		strings.Contains(chatTemplate, `message.role == 'tool'`) ||
+		strings.Contains(chatTemplate, `message.role == "tool"`) ||
+		strings.Contains(chatTemplate, "ipython"))
+}
+
 func chatTemplateHasThinkingSupport(chatTemplate string) bool {
 	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
 		return true
@@ -214,8 +231,31 @@ func goTemplateCapabilities(t *template.Template) []model.Capability {
 	return capabilities
 }
 
+func goTemplateHasToolRoundTrip(t *template.Template) bool {
+	if t == nil {
+		return false
+	}
+
+	v, err := t.Vars()
+	if err != nil || !slices.Contains(v, "tools") || !slices.Contains(v, "toolcalls") {
+		return false
+	}
+
+	raw := t.String()
+	return strings.Contains(raw, `eq .Role "tool"`) ||
+		strings.Contains(raw, "tool_response") ||
+		strings.Contains(raw, "TOOL_RESULTS")
+}
+
 func hasMoreCapabilities(candidate, current []model.Capability) bool {
 	return len(candidate) > len(current)
+}
+
+func shouldPreferChatTemplate(chatTemplate string, chatTemplateCaps []model.Capability, goTemplate *template.Template, goTemplateCaps []model.Capability) bool {
+	if !hasMoreCapabilities(chatTemplateCaps, goTemplateCaps) {
+		return false
+	}
+	return !goTemplateHasToolRoundTrip(goTemplate) || chatTemplateHasToolRoundTrip(chatTemplate)
 }
 
 func goTemplateEnvSet() bool {
@@ -584,7 +624,7 @@ func GetModel(name string) (*Model, error) {
 
 	ggufCaps := chatTemplateCapabilities(nil, ggufChatTemplate)
 	goCaps := goTemplateCapabilities(m.Template)
-	if !goTemplateEnvSet() && m.HasGoTemplate && ggufChatTemplate != "" && m.Config.Renderer == "" && m.Config.Parser == "" && !shouldUseHarmony(m) && hasMoreCapabilities(ggufCaps, goCaps) {
+	if !goTemplateEnvSet() && m.HasGoTemplate && ggufChatTemplate != "" && m.Config.Renderer == "" && m.Config.Parser == "" && !shouldUseHarmony(m) && shouldPreferChatTemplate(ggufChatTemplate, ggufCaps, m.Template, goCaps) {
 		m.PreferChatTemplate = true
 		slog.Debug("using GGUF chat_template because it has stronger capabilities than Go TEMPLATE", "model", m.Name, "chat_template_capabilities", ggufCaps, "go_template_capabilities", goCaps)
 	}

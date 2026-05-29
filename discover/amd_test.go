@@ -16,6 +16,7 @@ func TestApplyLinuxROCmRefinement(t *testing.T) {
 		devices        []ml.DeviceInfo
 		applied        bool
 		wantIntegrated []bool
+		wantPCIIDs     []string
 	}{
 		{
 			name: "apu is integrated",
@@ -81,6 +82,66 @@ func TestApplyLinuxROCmRefinement(t *testing.T) {
 			wantIntegrated: []bool{false, true},
 		},
 		{
+			name: "remapped visible order matches existing pci identity",
+			nodes: []fakeROCmNode{
+				{
+					node:        1,
+					renderMinor: 128,
+					pciID:       "0000:e3:00.0",
+					gfxVersion:  "110000",
+					vramTotal:   48 << 30,
+					gttTotal:    64 << 30,
+					vramVendor:  true,
+					boardInfo:   true,
+				},
+				{
+					node:        2,
+					renderMinor: 129,
+					pciID:       "0000:c3:00.0",
+					gfxVersion:  "120000",
+					vramTotal:   2 << 30,
+					gttTotal:    32 << 30,
+				},
+			},
+			devices: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0", GFXTarget: "gfx1200", PCIID: "0000:c3:00.0"},
+				{DeviceID: ml.DeviceID{ID: "1", Library: "ROCm"}, Name: "ROCm1", GFXTarget: "gfx1100", PCIID: "0000:e3:00.0"},
+			},
+			applied:        true,
+			wantIntegrated: []bool{true, false},
+			wantPCIIDs:     []string{"0000:c3:00.0", "0000:e3:00.0"},
+		},
+		{
+			name: "remapped visible order matches unique gfx when pci is absent",
+			nodes: []fakeROCmNode{
+				{
+					node:        1,
+					renderMinor: 128,
+					pciID:       "0000:e3:00.0",
+					gfxVersion:  "110000",
+					vramTotal:   48 << 30,
+					gttTotal:    64 << 30,
+					vramVendor:  true,
+					boardInfo:   true,
+				},
+				{
+					node:        2,
+					renderMinor: 129,
+					pciID:       "0000:c3:00.0",
+					gfxVersion:  "120000",
+					vramTotal:   2 << 30,
+					gttTotal:    32 << 30,
+				},
+			},
+			devices: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0", GFXTarget: "gfx1200"},
+				{DeviceID: ml.DeviceID{ID: "1", Library: "ROCm"}, Name: "ROCm1", GFXTarget: "gfx1100"},
+			},
+			applied:        true,
+			wantIntegrated: []bool{true, false},
+			wantPCIIDs:     []string{"0000:c3:00.0", "0000:e3:00.0"},
+		},
+		{
 			name: "missing kfd data leaves devices unchanged",
 			devices: []ml.DeviceInfo{{
 				DeviceID:   ml.DeviceID{ID: "0", Library: "ROCm"},
@@ -108,7 +169,26 @@ func TestApplyLinuxROCmRefinement(t *testing.T) {
 					t.Fatalf("device %d integrated = %v, want %v", i, devices[i].Integrated, want)
 				}
 			}
+			for i, want := range tt.wantPCIIDs {
+				if devices[i].PCIID != want {
+					t.Fatalf("device %d PCIID = %q, want %q", i, devices[i].PCIID, want)
+				}
+			}
 		})
+	}
+}
+
+func TestSameRefreshDeviceMatchesROCmByPCI(t *testing.T) {
+	updated := ml.DeviceInfo{
+		DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"},
+		PCIID:    "0000:c3:00.0",
+	}
+	existing := ml.DeviceInfo{
+		DeviceID: ml.DeviceID{ID: "1", Library: "ROCm"},
+		PCIID:    "0000:C3:00.0",
+	}
+	if !sameRefreshDevice(updated, existing) {
+		t.Fatal("sameRefreshDevice did not match remapped ROCm device by PCI ID")
 	}
 }
 
@@ -145,6 +225,7 @@ func TestFilterUnsupportedROCmDevicesRespectsHSAOverride(t *testing.T) {
 type fakeROCmNode struct {
 	node        int
 	renderMinor int
+	pciID       string
 	gfxVersion  string
 	vramTotal   uint64
 	gttTotal    uint64
@@ -168,7 +249,19 @@ func writeFakeROCmNode(t *testing.T, sysfsRoot string, node fakeROCmNode) {
 	}
 
 	deviceDir := filepath.Join(sysfsRoot, "class", "drm", "renderD"+strconv.Itoa(node.renderMinor), "device")
-	if err := os.MkdirAll(deviceDir, 0o755); err != nil {
+	if node.pciID != "" {
+		targetDir := filepath.Join(sysfsRoot, "devices", node.pciID)
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(deviceDir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(targetDir, deviceDir); err != nil {
+			t.Skipf("symlink unavailable for fake sysfs PCI path: %v", err)
+		}
+		deviceDir = targetDir
+	} else if err := os.MkdirAll(deviceDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeFakeSysfsFile(t, deviceDir, "vendor", "0x1002\n")

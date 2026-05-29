@@ -132,6 +132,44 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		}
 	})
 
+	t.Run("keeps Go TEMPLATE when chat template has weaker tool support", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture": "llama",
+			"tokenizer.chat_template": `{%- if tools and not available_tools -%}
+{{- set available_tools = tools -}}
+{%- endif -%}
+{%- if available_tools -%}
+{{ '<|start_of_role|>available_tools<|end_of_role|>' }}{{ available_tools | tojson }}{{ '<|end_of_text|>' }}
+{%- endif -%}
+{%- if thinking -%}<think></think><response></response>{%- endif -%}
+{%- for message in messages -%}
+{{ '<|start_of_role|>' + message['role'] + '<|end_of_role|>' + message['content'] + '<|end_of_text|>' }}
+{%- endfor -%}`,
+		}, nil)
+		writeTestModelManifest(t, "chat-template-weaker-tools", digest, `{{ if .Tools }}tools{{ end }}
+{{ range .Messages }}
+{{ if eq .Role "tool" }}tool_response{{ else }}{{ .Role }}{{ end }}
+{{ if .ToolCalls }}<|tool_call|>{{ range .ToolCalls }}{{ .Function.Name }}{{ end }}{{ else }}{{ .Content }}{{ end }}
+{{ end }}`)
+
+		m, err := GetModel("chat-template-weaker-tools")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.PreferChatTemplate {
+			t.Fatal("expected Go TEMPLATE to be preferred")
+		}
+		if got := m.CheckCapabilities(model.CapabilityTools); got != nil {
+			t.Fatalf("expected tools capability, got %v", got)
+		}
+		if got := m.CheckCapabilities(model.CapabilityThinking); got == nil {
+			t.Fatal("expected thinking capability to remain unavailable on Go TEMPLATE path")
+		}
+	})
+
 	t.Run("respects explicit Go TEMPLATE enablement", func(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "1")
