@@ -1298,6 +1298,47 @@ func TestLlamaServerEmbedding(t *testing.T) {
 	}
 }
 
+func TestLegacyEmbeddingsWereRaw(t *testing.T) {
+	tests := []struct {
+		name string
+		kv   ggml.KV
+		want bool
+	}{
+		{
+			name: "bert t5 raw like bge-m3",
+			kv: ggml.KV{
+				"general.architecture": "bert",
+				"bert.pooling_type":    uint32(1),
+				"tokenizer.ggml.model": "t5",
+			},
+			want: true,
+		},
+		{
+			name: "nomic bert default raw",
+			kv: ggml.KV{
+				"general.architecture":    "nomic-bert",
+				"nomic-bert.pooling_type": uint32(1),
+			},
+			want: true,
+		},
+		{
+			name: "qwen3 remains normalized",
+			kv: ggml.KV{
+				"general.architecture": "qwen3",
+				"qwen3.pooling_type":   uint32(1),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := legacyEmbeddingsWereRaw(tt.kv); got != tt.want {
+				t.Fatalf("legacyEmbeddingsWereRaw() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLlamaServerEmbeddingFallbackFormat(t *testing.T) {
 	// Fallback: non-OAI array format (from "content" field)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
