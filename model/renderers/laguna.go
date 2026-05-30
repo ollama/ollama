@@ -2,6 +2,7 @@ package renderers
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/ollama/ollama/api"
 )
@@ -10,6 +11,10 @@ const (
 	lagunaBOS          = "〈|EOS|〉"
 	lagunaThoughtOpen  = "<think>"
 	lagunaThoughtClose = "</think>"
+
+	// Default system message from the Laguna chat template, used when the
+	// request supplies no system message.
+	lagunaDefaultSystem = "You are a helpful, conversationally-fluent assistant made by Poolside. You are here to be helpful to users through natural language conversations."
 )
 
 type LagunaRenderer struct{}
@@ -22,40 +27,50 @@ func (r *LagunaRenderer) Render(messages []api.Message, tools []api.Tool, think 
 	var sb strings.Builder
 	sb.WriteString(lagunaBOS)
 
-	thinkingEnabled := think == nil || think.Bool()
-	systemMessage := ""
+	// The template signals thinking through the generation-prompt token
+	// (<think> vs </think>), not through the system message. It defaults off.
+	thinkingEnabled := think != nil && think.Bool()
+
+	// ── header (system message) ──
+	// The template seeds a default system message and lets an explicit leading
+	// system message override it. The header is emitted whenever there is a
+	// system message or tools to advertise.
+	systemMessage := lagunaDefaultSystem
 	firstMessageIsSystem := len(messages) > 0 && messages[0].Role == "system"
 	if firstMessageIsSystem {
-		systemMessage = strings.TrimRight(messages[0].Content, "\n")
+		systemMessage = messages[0].Content
 	}
 
-	sb.WriteString("<system>\n")
-	if thinkingEnabled {
-		sb.WriteString("You should use chain-of-thought reasoning. Put your reasoning inside <think> </think> tags before your response.")
-	} else {
-		sb.WriteString("You should respond directly without using chain-of-thought reasoning tags.")
-	}
-	if strings.TrimSpace(systemMessage) != "" {
-		sb.WriteByte('\n')
-		sb.WriteString(systemMessage)
-	}
-	if len(tools) > 0 {
-		sb.WriteString("\n\n### Tools\n\n")
-		sb.WriteString("You may call functions to assist with the user query.\n")
-		sb.WriteString("All available function signatures are listed below:\n")
-		sb.WriteString("<available_tools>\n")
-		for _, tool := range tools {
-			if b, err := marshalWithSpaces(tool); err == nil {
-				sb.Write(b)
-				sb.WriteByte('\n')
-			}
+	if strings.TrimSpace(systemMessage) != "" || len(tools) > 0 {
+		sb.WriteString("<system>\n")
+		if strings.TrimSpace(systemMessage) != "" {
+			sb.WriteByte('\n')
+			sb.WriteString(strings.TrimRightFunc(systemMessage, unicode.IsSpace))
 		}
-		sb.WriteString("</available_tools>\n\n")
-		sb.WriteString("For each function call, return a json object with function name and arguments within '<tool_call>' and '</tool_call>' tags:\n")
-		sb.WriteString("<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>")
+		if len(tools) > 0 {
+			sb.WriteString("\n\n### Tools\n\n")
+			sb.WriteString("You may call functions to assist with the user query.\n")
+			sb.WriteString("All available function signatures are listed below:\n")
+			sb.WriteString("<available_tools>\n")
+			for _, tool := range tools {
+				if b, err := marshalWithSpaces(tool); err == nil {
+					sb.Write(b)
+					sb.WriteByte('\n')
+				}
+			}
+			sb.WriteString("</available_tools>\n\n")
+			if thinkingEnabled {
+				sb.WriteString("Wrap your thinking in '<think>', '</think>' tags, followed by a function call. For each function call, return an unescaped XML-like object with function name and arguments within '<tool_call>' and '</tool_call>' tags, like here:\n")
+				sb.WriteString("<think> your thoughts here </think>\n")
+			} else {
+				sb.WriteString("For each function call, return an unescaped XML-like object with function name and arguments within '<tool_call>' and '</tool_call>' tags, like here:\n")
+			}
+			sb.WriteString("<tool_call>function-name\n<arg_key>argument-key</arg_key>\n<arg_value>value-of-argument-key</arg_value>\n</tool_call>")
+		}
+		sb.WriteString("\n</system>\n")
 	}
-	sb.WriteString("\n</system>\n")
 
+	// ── main loop ──
 	for i, message := range messages {
 		if i == 0 && firstMessageIsSystem {
 			continue
@@ -68,18 +83,26 @@ func (r *LagunaRenderer) Render(messages []api.Message, tools []api.Tool, think 
 			sb.WriteString("\n</user>\n")
 		case "assistant":
 			lastMessage := i == len(messages)-1
-			prefill := lastMessage && (content != "" || message.Thinking != "" || len(message.ToolCalls) > 0)
+			prefill := lastMessage && (strings.TrimSpace(content) != "" || strings.TrimSpace(message.Thinking) != "" || len(message.ToolCalls) > 0)
+
 			sb.WriteString("<assistant>\n")
-			if thinkingEnabled && message.Thinking != "" {
-				sb.WriteString(lagunaThoughtOpen)
-				sb.WriteString(message.Thinking)
-				sb.WriteString(lagunaThoughtClose)
+
+			// Every assistant turn opens with the reasoning block: a full
+			// <think>…</think> when there is reasoning, otherwise a bare
+			// </think> marking the turn as direct.
+			if reasoning := strings.TrimSpace(message.Thinking); reasoning != "" {
+				sb.WriteString("<think>\n")
+				sb.WriteString(reasoning)
+				sb.WriteString("\n</think>\n")
+			} else {
+				sb.WriteString("</think>\n")
+			}
+
+			if strings.TrimSpace(content) != "" {
+				sb.WriteString(strings.TrimSpace(content))
 				sb.WriteByte('\n')
 			}
-			if strings.Trim(content, "\n") != "" {
-				sb.WriteString(strings.Trim(content, "\n"))
-				sb.WriteByte('\n')
-			}
+
 			for _, toolCall := range message.ToolCalls {
 				sb.WriteString("<tool_call>")
 				sb.WriteString(toolCall.Function.Name)
@@ -94,6 +117,7 @@ func (r *LagunaRenderer) Render(messages []api.Message, tools []api.Tool, think 
 				}
 				sb.WriteString("</tool_call>\n")
 			}
+
 			if !prefill {
 				sb.WriteString("</assistant>\n")
 			}
@@ -108,8 +132,17 @@ func (r *LagunaRenderer) Render(messages []api.Message, tools []api.Tool, think 
 		}
 	}
 
+	// ── generation prompt ──
+	// Continue an assistant prefill in place; otherwise open a fresh assistant
+	// turn and prime the reasoning mode (<think> when thinking, else </think>).
 	if len(messages) == 0 || messages[len(messages)-1].Role != "assistant" {
 		sb.WriteString("<assistant>\n")
+		if thinkingEnabled {
+			sb.WriteString(lagunaThoughtOpen)
+		} else {
+			sb.WriteString(lagunaThoughtClose)
+		}
 	}
+
 	return sb.String(), nil
 }
