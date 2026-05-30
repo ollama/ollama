@@ -111,6 +111,17 @@ else()
     file(READ "${CMAKE_SOURCE_DIR}/LLAMA_CPP_VERSION" OLLAMA_LLAMA_CPP_GIT_TAG)
     string(STRIP "${OLLAMA_LLAMA_CPP_GIT_TAG}" OLLAMA_LLAMA_CPP_GIT_TAG)
     include(${CMAKE_SOURCE_DIR}/llama/compat/compat.cmake)
+    include(${CMAKE_SOURCE_DIR}/llama/models/models.cmake)
+
+    # When pre-fetching the shared llama.cpp source, apply the compat hooks
+    # patch plus every new-architecture registration patch (llama/models/*.patch).
+    # The llama/server sub-build then runs with OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH=ON
+    # and only links the Ollama-owned sources against this already-patched tree.
+    set(OLLAMA_LLAMA_CPP_PATCH_COMMAND
+        ${CMAKE_COMMAND}
+            -DPATCH_FILE=${OLLAMA_LLAMA_CPP_COMPAT_PATCH_FILE}
+            -DPATCH_DIR=${OLLAMA_LLAMA_CPP_MODELS_DIR}
+            -P ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/apply-patch.cmake)
     if(DEFINED FETCHCONTENT_SOURCE_DIR_LLAMA_CPP AND NOT "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" STREQUAL "")
         get_filename_component(OLLAMA_LLAMA_CPP_SOURCE_DIR
             "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
@@ -131,7 +142,7 @@ else()
             CONFIGURE_COMMAND ""
             BUILD_COMMAND ""
             INSTALL_COMMAND ""
-            PATCH_COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND}
+            PATCH_COMMAND ${OLLAMA_LLAMA_CPP_PATCH_COMMAND}
             USES_TERMINAL_DOWNLOAD TRUE
             USES_TERMINAL_PATCH TRUE)
     endif()

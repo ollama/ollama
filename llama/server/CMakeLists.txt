@@ -129,6 +129,15 @@ endif()
 # apply the patch by hand while iterating on the compat layer.
 set(_ollama_compat_patch_cmd "")
 include(${CMAKE_CURRENT_SOURCE_DIR}/../compat/compat.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../models/models.cmake)
+
+# Combined patch command: the compat hooks patch plus every new-architecture
+# registration patch in llama/models/, applied to the fetched llama.cpp source.
+set(OLLAMA_LLAMA_CPP_PATCH_COMMAND
+    ${CMAKE_COMMAND}
+        -DPATCH_FILE=${OLLAMA_LLAMA_CPP_COMPAT_PATCH_FILE}
+        -DPATCH_DIR=${OLLAMA_LLAMA_CPP_MODELS_DIR}
+        -P ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/apply-patch.cmake)
 option(OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH
     "Skip llama.cpp compat patch application because the source is already prepared"
     OFF)
@@ -144,7 +153,7 @@ elseif(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
             "Applying Ollama llama.cpp compat patch to source override: "
             "${_llama_cpp_source_override}")
         execute_process(
-            COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND}
+            COMMAND ${OLLAMA_LLAMA_CPP_PATCH_COMMAND}
             WORKING_DIRECTORY "${_llama_cpp_source_override}"
             RESULT_VARIABLE _ollama_compat_patch_result
         )
@@ -154,7 +163,7 @@ elseif(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
                 "${_llama_cpp_source_override}")
         endif()
     else()
-        set(_ollama_compat_patch_cmd PATCH_COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND})
+        set(_ollama_compat_patch_cmd PATCH_COMMAND ${OLLAMA_LLAMA_CPP_PATCH_COMMAND})
     endif()
 endif()
 
@@ -199,6 +208,21 @@ if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     endforeach()
     if(TARGET mtmd)
         target_compile_definitions(mtmd PRIVATE OLLAMA_COMPAT_MTMD_BUILD)
+    endif()
+endif()
+
+# Link the Ollama-owned new-architecture implementations (llama/models/*.cpp)
+# into the fetched llama target. Gated on the same condition as the compat
+# sources: when iterating against a local llama.cpp via OLLAMA_LLAMA_CPP_SOURCE,
+# the developer wires these in by hand.
+if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_MODELS_DIR)
+    file(GLOB _ollama_model_sources CONFIGURE_DEPENDS
+        ${OLLAMA_LLAMA_CPP_MODELS_DIR}/*.cpp)
+    if(_ollama_model_sources AND TARGET llama)
+        target_sources(llama PRIVATE ${_ollama_model_sources})
+        target_include_directories(llama PRIVATE
+            ${OLLAMA_LLAMA_CPP_MODELS_DIR}
+            ${llama_cpp_SOURCE_DIR}/src)
     endif()
 endif()
 
