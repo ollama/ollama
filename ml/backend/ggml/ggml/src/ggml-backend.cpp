@@ -692,7 +692,12 @@ static bool ggml_is_view_op(enum ggml_op op) {
 #endif
 
 #ifndef GGML_SCHED_MAX_SPLIT_INPUTS
-#define GGML_SCHED_MAX_SPLIT_INPUTS 30
+// Increased from 30 to 128 to support TurboQuant K+V compression on large MoE
+// models (e.g. qwen3-coder:30b/48-layer) where per-layer TQ encode ops and
+// MoE expert routing create more cross-backend split inputs than the original
+// limit allows. Upstream GGML has a FIXME here: the check only fires when the
+// split is exactly full, so multi-input ops can overshoot the limit.
+#define GGML_SCHED_MAX_SPLIT_INPUTS 128
 #endif
 
 #ifndef GGML_SCHED_MAX_COPIES
@@ -1941,13 +1946,14 @@ size_t ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, 
     int backend_index = ggml_backend_sched_backend_id(sched, backend);
     GGML_ASSERT(backend_index >= 0 && backend_index < sched->n_backends);
 
-    size_t size = ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
+    size_t gallocr_size = ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
+    size_t pool_size = 0;
 
     if (backend->iface.buffer_size != NULL) {
-        size += backend->iface.buffer_size(backend);
+        pool_size = backend->iface.buffer_size(backend);
     }
 
-    return size;
+    return gallocr_size + pool_size;
 }
 
 void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
