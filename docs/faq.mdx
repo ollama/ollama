@@ -363,6 +363,19 @@ The currently available K/V cache quantization types are:
 - `f16` - high precision and memory usage (default).
 - `q8_0` - 8-bit quantization, uses approximately 1/2 the memory of `f16` with a very small loss in precision, this usually has no noticeable impact on the model's quality (recommended if not using f16).
 - `q4_0` - 4-bit quantization, uses approximately 1/4 the memory of `f16` with a small-medium loss in precision that may be more noticeable at higher context sizes.
+- `tq4k` - TurboQuant 4-bit K-only quantization, uses approximately 2/3 the memory of `f16` with near-`f16` quality. Like the other `tq*k` presets, does not require Flash Attention.
+- `tq3k` - TurboQuant 3-bit K-only quantization, uses approximately 3/5 the memory of `f16` with negligible quality impact. Recommended default for memory savings.
+- `tq2k` - TurboQuant 2-bit K-only quantization, uses approximately 1/2 the memory of `f16` with a small quality impact. Best when memory pressure is the binding constraint.
+- `tq4` - TurboQuant 4-bit K and V quantization, uses approximately 1/4 the memory of `f16` with near-`f16` quality. Requires Flash Attention.
+- `tq3` - TurboQuant 3-bit K and V quantization, uses approximately 1/5 the memory of `f16` with negligible quality impact. Requires Flash Attention.
+- `tq2` - TurboQuant 2-bit K and V quantization, uses approximately 1/7 the memory of `f16` with a small quality impact. Requires Flash Attention.
+- `tq4v` - TurboQuant 4-bit V-only quantization, uses approximately 2/3 the memory of `f16` with near-`f16` quality. The `tq*v` presets compress only the V cache (K stays `f16`); because V tolerates quantization more gracefully than K, they trade the same memory for K-only at equal or better quality, and like `tq*k` they do not require Flash Attention.
+- `tq3v` - TurboQuant 3-bit V-only quantization, uses approximately 3/5 the memory of `f16` with negligible quality impact.
+- `tq2v` - TurboQuant 2-bit V-only quantization, uses approximately 1/2 the memory of `f16` with a small quality impact.
+
+<Note>
+  The `tq*` (TurboQuant) cache types require a wave32 GPU (NVIDIA Pascal or newer, AMD RDNA1 or newer, or Apple Silicon) and run only through Ollama's native engine. TurboQuant applies to full-context attention layers; sliding-window layers (e.g. in Gemma) continue to use `f16` storage. Models with a learned K projection bias (e.g. the Qwen 2 family) are supported via per-block mean centring at encode time, so their K distribution is handled correctly. When the context window fills and Ollama would normally shift the conversation tail to make room, TurboQuant cache types instead reprocess the prompt in full from the new starting position — packed cells cannot be RoPE-shifted in place. This is transparent but adds a one-time prefill cost on long-running conversations.
+</Note>
 
 How much the cache quantization impacts the model's response quality will depend on the model and the task. Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
 
