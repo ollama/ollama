@@ -130,6 +130,10 @@
 #define cudaGraphDestroy hipGraphDestroy
 #define cudaGraphKernelNodeSetParams hipGraphKernelNodeSetParams
 #define cudaErrorInvalidDeviceFunction hipErrorInvalidDeviceFunction
+// ollama: TurboQuant fused-attn kernels raise dynamic smem via
+// cudaFuncSetAttribute; map both to HIP for the ROCm build.
+#define cudaFuncSetAttribute hipFuncSetAttribute
+#define cudaFuncAttributeMaxDynamicSharedMemorySize hipFuncAttributeMaxDynamicSharedMemorySize
 #define cudaGraphKernelNodeGetParams hipGraphKernelNodeGetParams
 #define cudaGraphNodeGetType hipGraphNodeGetType
 #define cudaGraphGetNodes hipGraphGetNodes

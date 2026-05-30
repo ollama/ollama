@@ -60,6 +60,12 @@ file(GLOB   SRCS "../ggml-cuda/template-instances/fattn-tile*.cu")
 list(APPEND GGML_SOURCES_ROCM ${SRCS})
 file(GLOB   SRCS "../ggml-cuda/template-instances/fattn-mma*.cu")
 list(APPEND GGML_SOURCES_ROCM ${SRCS})
+# ollama: Phase D — mirror CUDA's tq-fattn-mma-template-instances glob so
+# the HIP backend picks up the same template-instance TUs (kernel body
+# gates to NO_DEVICE_CODE on HIP via TURING_MMA_AVAILABLE).
+# CONFIGURE_DEPENDS so newly-added instances re-glob automatically.
+file(GLOB   SRCS CONFIGURE_DEPENDS "../ggml-cuda/tq-fattn-mma-template-instances/*.cu")
+list(APPEND GGML_SOURCES_ROCM ${SRCS})
 file(GLOB   SRCS "../ggml-cuda/template-instances/mmq*.cu")
 list(APPEND GGML_SOURCES_ROCM ${SRCS})
 

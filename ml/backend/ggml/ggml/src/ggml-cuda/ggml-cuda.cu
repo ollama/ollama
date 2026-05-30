@@ -58,6 +58,10 @@
 #include "ggml-cuda/tri.cuh"
 #include "ggml-cuda/cumsum.cuh"
 #include "ggml-cuda/fill.cuh"
+#include "ggml-cuda/tq-encode.cuh"
+#include "ggml-cuda/tq-dequant.cuh"
+#include "ggml-cuda/tq-fattn.cuh"
+#include "ggml-cuda/tq-encode-v.cuh"
 #include "ggml.h"
 
 #include <algorithm>
@@ -332,7 +336,13 @@ static ggml_cuda_device_info ggml_cuda_init() {
         info.devices[id].cc = 100*prop.major + 10*prop.minor;
 #ifdef __CUDA_ARCH_LIST__
         if (std::getenv("GGML_CUDA_INIT") != NULL) {
-            GGML_ASSERT(ggml_cuda_has_arch(info.devices[id].cc) && "ggml was not compiled with support for this arch");
+            // ollama: use highest_compiled_arch rather than has_arch (exact match).
+            // has_arch rejects sm_120 when the arch list is {750,800,860,890} because
+            // 1200 is not in the list, even though 80-virtual PTX is present and the
+            // driver can JIT-compile it for sm_120. highest_compiled_arch(cc) returns
+            // the highest compiled arch ≤ cc (or 0 if none), which correctly captures
+            // both exact matches and the PTX-JIT-reachable case.
+            GGML_ASSERT(ggml_cuda_highest_compiled_arch(info.devices[id].cc) > 0 && "ggml was not compiled with support for this arch");
         }
 #endif // defined(__CUDA_ARCH_LIST__)
         GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
@@ -2872,6 +2882,34 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_FILL:
             ggml_cuda_op_fill(ctx, dst);
             break;
+        case GGML_OP_TQ_ENCODE:
+            ggml_cuda_tq_encode(ctx, dst);
+            break;
+        case GGML_OP_TQ_DEQUANT:
+            ggml_cuda_tq_dequant(ctx, dst);
+            break;
+        case GGML_OP_TQ_DEQUANT_KV:
+            ggml_cuda_tq_dequant_kv(ctx, dst);
+            break;
+            case GGML_OP_TQ_FLASH_ATTN_EXT:
+                ggml_cuda_tq_flash_attn_ext(ctx, dst);
+                break;
+        case GGML_OP_TQ_ENCODE_V:
+            ggml_cuda_tq_encode_v(ctx, dst);
+            break;
+        case GGML_OP_TQ_ENCODE_KV:
+            ggml_cuda_tq_encode_kv(ctx, dst);
+            break;
+        case GGML_OP_TQ_WHT:
+            ggml_cuda_tq_wht(ctx, dst);
+            break;
+        case GGML_OP_TQ_ENCODED_PROXY:
+            // No-op: dst is a view of src[1] (dep_tensor) whose data was
+            // already written by src[0] (encode_result) as a side effect.
+            // The op exists only to give gallocr a graph edge so the
+            // dep_tensor's memory isn't recycled before this proxy's
+            // downstream consumers (e.g. Phase D's TQ FA op) read it.
+            break;
         default:
             return false;
     }
@@ -3097,7 +3135,14 @@ static bool ggml_graph_node_has_matching_properties(ggml_tensor * node, ggml_gra
         }
     }
 
-    if ((node->op == GGML_OP_SCALE || node->op == GGML_OP_GLU) &&
+    if ((node->op == GGML_OP_SCALE || node->op == GGML_OP_GLU ||
+         // TQ ops carry nCells/firstCell in op_params; these change every decode step
+         // while output ne[] stays constant (single-token decode). Without this check
+         // the CUDA graph is captured once and replayed with a frozen nCells, causing
+         // the attention kernel to process the wrong number of K-cache entries.
+         node->op == GGML_OP_TQ_FLASH_ATTN_EXT ||
+         node->op == GGML_OP_TQ_DEQUANT ||
+         node->op == GGML_OP_TQ_DEQUANT_KV) &&
         memcmp(graph_node_properties->op_params, node->op_params, GGML_MAX_OP_PARAMS) != 0) {
         return false;
     }
@@ -3129,6 +3174,17 @@ static bool is_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx, 
         if (!has_matching_properties) {
             cuda_graph_update_required = true;
         }
+        // TQ ops encode nCells in grid.x (grid.x=nCells for TQ_DEQUANT), which grows
+        // each decode step.  Standard property checks don't detect this because firstCell
+        // stays 0 for non-SWA models and the ne[] comparison is unreliable in this path.
+        // Force update every step so 186e6783's always-reinstantiate fires with correct
+        // nCells; after 4 steps disable_due_to_too_many_updates falls back to direct
+        // execution (also correct).
+        if (cgraph->nodes[i]->op == GGML_OP_TQ_FLASH_ATTN_EXT ||
+            cgraph->nodes[i]->op == GGML_OP_TQ_DEQUANT ||
+            cgraph->nodes[i]->op == GGML_OP_TQ_DEQUANT_KV) {
+            cuda_graph_update_required = true;
+        }
         set_ggml_graph_node_properties(cgraph->nodes[i], &cuda_ctx->cuda_graph->ggml_graph_properties[i]);
     }
 
@@ -3136,30 +3192,19 @@ static bool is_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx, 
 }
 
 static void update_cuda_graph_executable(ggml_backend_cuda_context * cuda_ctx) {
-
-#if CUDART_VERSION >= 12000
-    cudaGraphExecUpdateResultInfo result_info;
-    cudaError_t stat = cudaGraphExecUpdate(cuda_ctx->cuda_graph->instance, cuda_ctx->cuda_graph->graph, &result_info);
-#else
-    cudaGraphNode_t errorNode;
-    cudaGraphExecUpdateResult result_info;
-    cudaError_t stat = cudaGraphExecUpdate(cuda_ctx->cuda_graph->instance, cuda_ctx->cuda_graph->graph, &errorNode, &result_info);
-#endif // CUDART_VERSION >= 12000
-
-    if (stat == cudaErrorGraphExecUpdateFailure) {
-#ifndef NDEBUG
-        GGML_LOG_DEBUG("%s: CUDA graph update failed\n", __func__);
-#endif
-
-        // The pre-existing graph exec cannot be updated due to violated constraints
-        // so instead clear error and re-instantiate
-        (void)cudaGetLastError();
+    // Always re-instantiate from the freshly-captured graph rather than relying
+    // on cudaGraphExecUpdate.  On sm_120 (Blackwell, driver 591.86, CUDA 12.8)
+    // cudaGraphExecUpdate returns cudaSuccess with result_info.result ==
+    // cudaGraphExecUpdateSuccess even when launch parameters changed (e.g. grid.x
+    // grows with nCells each decode step).  The API reports success but the exec
+    // is silently left unchanged, so the stale graph replays with frozen params.
+    // Re-instantiation is reliable on all architectures; the extra cost is paid
+    // only during the brief window before disable_due_to_too_many_updates fires.
+    if (cuda_ctx->cuda_graph->instance != nullptr) {
         CUDA_CHECK(cudaGraphExecDestroy(cuda_ctx->cuda_graph->instance));
         cuda_ctx->cuda_graph->instance = nullptr;
-        CUDA_CHECK(cudaGraphInstantiate(&cuda_ctx->cuda_graph->instance, cuda_ctx->cuda_graph->graph, NULL, NULL, 0));
-    } else {
-        GGML_ASSERT(stat == cudaSuccess);
     }
+    CUDA_CHECK(cudaGraphInstantiate(&cuda_ctx->cuda_graph->instance, cuda_ctx->cuda_graph->graph, NULL, NULL, 0));
 }
 #endif
 
@@ -4910,6 +4955,14 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_TRI:
         case GGML_OP_DIAG:
         case GGML_OP_SOLVE_TRI:
+        case GGML_OP_TQ_ENCODE:
+        case GGML_OP_TQ_DEQUANT:
+        case GGML_OP_TQ_DEQUANT_KV:
+        case GGML_OP_TQ_FLASH_ATTN_EXT:
+        case GGML_OP_TQ_ENCODE_V:
+        case GGML_OP_TQ_ENCODE_KV:
+        case GGML_OP_TQ_WHT:
+        case GGML_OP_TQ_ENCODED_PROXY:
             return true;
 
         default:

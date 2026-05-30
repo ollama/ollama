@@ -22,7 +22,12 @@ if (CUDAToolkit_FOUND)
         #
         # The default behavior for a non-native is to build virtual architectures as needed to cover all features needed
         #     for best performance and to also build real architectures for the most commonly used GPUs.
-        if (GGML_NATIVE AND CUDAToolkit_VERSION VERSION_GREATER_EQUAL "11.6" AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.24")
+        # CUDA 13+ has a ptxas code-gen regression for sm_120-real that produces
+        # wrong output on Blackwell. Exclude CUDA 13+ from the native branch so
+        # Blackwell dev builds fall through to the virtual list (which omits
+        # 120-real) and rely on driver JIT for correct sm_120 SASS instead.
+        if (GGML_NATIVE AND CUDAToolkit_VERSION VERSION_GREATER_EQUAL "11.6" AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.24"
+                        AND CUDAToolkit_VERSION VERSION_LESS "13.0")
             set(CMAKE_CUDA_ARCHITECTURES "native")
         else()
             if (CUDAToolkit_VERSION VERSION_LESS "13")
@@ -33,6 +38,13 @@ if (CUDAToolkit_FOUND)
 
             if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "11.8")
                 list(APPEND CMAKE_CUDA_ARCHITECTURES 89-real)
+            endif()
+            # 120 == Blackwell (RTX 5000 series), needs CUDA >= 12.8.
+            # nvcc 13.x ptxas has a code-gen regression for sm_120-real that
+            # produces wrong kernel output; omit 120-real on CUDA 13+ and rely
+            # on driver JIT from the virtual PTX already in the fatbin instead.
+            if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8" AND CUDAToolkit_VERSION VERSION_LESS "13.0")
+                list(APPEND CMAKE_CUDA_ARCHITECTURES 120-real)
             endif()
         endif()
     endif()
@@ -47,6 +59,11 @@ if (CUDAToolkit_FOUND)
     file(GLOB   SRCS "template-instances/fattn-tile*.cu")
     list(APPEND GGML_SOURCES_CUDA ${SRCS})
     file(GLOB   SRCS "template-instances/fattn-mma*.cu")
+    list(APPEND GGML_SOURCES_CUDA ${SRCS})
+    # ollama: Phase D — TQ-aware copy-and-patch of stock fattn-mma-f16.
+    # CONFIGURE_DEPENDS so newly-added template instances trigger a re-glob
+    # at the next `cmake --build` instead of needing a manual reconfigure.
+    file(GLOB   SRCS CONFIGURE_DEPENDS "tq-fattn-mma-template-instances/*.cu")
     list(APPEND GGML_SOURCES_CUDA ${SRCS})
     file(GLOB   SRCS "template-instances/mmq*.cu")
     list(APPEND GGML_SOURCES_CUDA ${SRCS})

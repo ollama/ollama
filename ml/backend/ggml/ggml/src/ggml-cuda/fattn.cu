@@ -320,7 +320,11 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
                     }
                 }
             }
-            if (!gqa_opt_applies && Q->ne[1] == 1) {
+            // ollama: && can_use_vector_kernel guards against OOB reads on
+            // unpadded TurboQuant-dequant K (ne[1] = exact ctx len, not a
+            // 256-multiple). Without it the VEC kernel reads cells past ne[1].
+            // Do not drop on upstream sync — see kvcache/turboquant.go.
+            if (!gqa_opt_applies && Q->ne[1] == 1 && can_use_vector_kernel) {
                 return BEST_FATTN_KERNEL_VEC;
             }
         }
