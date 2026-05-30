@@ -522,7 +522,8 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			predicted := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
 			loadGpus, launchOpts = selectLlamaServerPlacement(systemInfo, gpus, predicted, req.opts)
 			availableForBatch, _, _ := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
-			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch)
+			flashAttention := llm.LlamaServerFlashAttention(loadGpus)
+			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch, flashAttention, loadGpus)
 			launchOpts.NumBatch = req.opts.NumBatch
 			predictedForLoad := predicted + generationBatchSurchargeForCompletion(completion, launchOpts.NumBatch)
 
@@ -763,7 +764,7 @@ func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *ggml.GGML, numParallel int,
 	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
 	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
 	available, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
-	req.applyAutomaticGenerationBatch(completion, predictedCtx, predictedVRAM, available)
+	req.applyAutomaticGenerationBatch(completion, predictedCtx, predictedVRAM, available, llm.LlamaServerFlashAttention(gpus), gpus)
 	newNumBatch = req.opts.NumBatch
 	return oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch, true
 }
@@ -781,20 +782,21 @@ func effectiveLlamaServerContext(numCtx int, f *ggml.GGML, numParallel int) int 
 }
 
 const (
-	llamaServerGenerationBatchDefault = 512
-	llamaServerGenerationBatchMedium  = 1024
-	llamaServerGenerationBatchLarge   = 2048
+	llamaServerGenerationBatchDefault     = 512
+	llamaServerGenerationBatchConstrained = 256
+	llamaServerGenerationBatchMedium      = 1024
+	llamaServerGenerationBatchLarge       = 2048
 
 	llamaServerGenerationBatchMediumHeadroomPercent = 75
 	llamaServerGenerationBatchLargeHeadroomPercent  = 60
 )
 
-func (req *LlmRequest) applyAutomaticGenerationBatch(completion bool, effectiveCtx int, predictedVRAM, availableMemory uint64) {
+func (req *LlmRequest) applyAutomaticGenerationBatch(completion bool, effectiveCtx int, predictedVRAM, availableMemory uint64, flashAttention ml.FlashAttentionType, gpus []ml.DeviceInfo) {
 	if !completion || !req.numBatchAuto {
 		return
 	}
 
-	req.opts.NumBatch = automaticGenerationBatch(effectiveCtx, predictedVRAM, availableMemory)
+	req.opts.NumBatch = automaticGenerationBatch(effectiveCtx, predictedVRAM, availableMemory, flashAttention, gpus)
 }
 
 func generationBatchSurchargeForCompletion(completion bool, batch int) uint64 {
@@ -804,12 +806,41 @@ func generationBatchSurchargeForCompletion(completion bool, batch int) uint64 {
 	return generationBatchSurcharge(batch)
 }
 
-func automaticGenerationBatch(effectiveCtx int, predictedVRAM, availableMemory uint64) int {
+func automaticGenerationBatch(effectiveCtx int, predictedVRAM, availableMemory uint64, flashAttention ml.FlashAttentionType, gpus []ml.DeviceInfo) int {
+	if flashAttention == ml.FlashAttentionDisabled && hasCUDADevice(gpus) {
+		if constrainedCUDAWithoutFlashAttention(effectiveCtx, gpus) {
+			return llamaServerGenerationBatchConstrained
+		}
+		return llamaServerGenerationBatchDefault
+	}
+
 	batch := generationBatchForContext(effectiveCtx)
 	for batch > llamaServerGenerationBatchDefault && !generationBatchFits(batch, predictedVRAM, availableMemory) {
 		batch = nextLowerGenerationBatch(batch)
 	}
 	return batch
+}
+
+func hasCUDADevice(gpus []ml.DeviceInfo) bool {
+	return slices.ContainsFunc(gpus, func(gpu ml.DeviceInfo) bool {
+		return gpu.Library == "CUDA"
+	})
+}
+
+func constrainedCUDAWithoutFlashAttention(effectiveCtx int, gpus []ml.DeviceInfo) bool {
+	if effectiveCtx <= 4096 {
+		return false
+	}
+	return slices.ContainsFunc(gpus, func(gpu ml.DeviceInfo) bool {
+		if gpu.Library != "CUDA" {
+			return false
+		}
+		memory := gpu.FreeMemory
+		if memory == 0 || (gpu.TotalMemory > 0 && gpu.TotalMemory < memory) {
+			memory = gpu.TotalMemory
+		}
+		return memory > 0 && memory <= 8*format.GibiByte
+	})
 }
 
 func generationBatchForContext(effectiveCtx int) int {

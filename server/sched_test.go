@@ -1050,16 +1050,20 @@ func TestAutomaticGenerationBatch(t *testing.T) {
 		effectiveCtx int
 		predicted    uint64
 		available    uint64
+		flash        ml.FlashAttentionType
+		gpus         []ml.DeviceInfo
 		want         int
 	}{
 		{
 			name:         "small context keeps default",
 			effectiveCtx: 4096,
+			flash:        ml.FlashAttentionAuto,
 			want:         512,
 		},
 		{
 			name:         "medium context uses 1024 with unknown memory",
 			effectiveCtx: 32768,
+			flash:        ml.FlashAttentionAuto,
 			want:         1024,
 		},
 		{
@@ -1067,6 +1071,7 @@ func TestAutomaticGenerationBatch(t *testing.T) {
 			effectiveCtx: 131072,
 			predicted:    8 * format.GibiByte,
 			available:    14 * format.GibiByte,
+			flash:        ml.FlashAttentionAuto,
 			want:         2048,
 		},
 		{
@@ -1074,6 +1079,7 @@ func TestAutomaticGenerationBatch(t *testing.T) {
 			effectiveCtx: 131072,
 			predicted:    9 * format.GibiByte,
 			available:    14 * format.GibiByte,
+			flash:        ml.FlashAttentionAuto,
 			want:         1024,
 		},
 		{
@@ -1081,6 +1087,7 @@ func TestAutomaticGenerationBatch(t *testing.T) {
 			effectiveCtx: 131072,
 			predicted:    8 * format.GibiByte,
 			available:    11 * format.GibiByte,
+			flash:        ml.FlashAttentionAuto,
 			want:         1024,
 		},
 		{
@@ -1088,13 +1095,32 @@ func TestAutomaticGenerationBatch(t *testing.T) {
 			effectiveCtx: 32768,
 			predicted:    8500 * format.MebiByte,
 			available:    11 * format.GibiByte,
+			flash:        ml.FlashAttentionAuto,
 			want:         512,
+		},
+		{
+			name:         "flash attention disabled suppresses promotion",
+			effectiveCtx: 131072,
+			predicted:    8 * format.GibiByte,
+			available:    14 * format.GibiByte,
+			flash:        ml.FlashAttentionDisabled,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 14 * format.GibiByte}},
+			want:         512,
+		},
+		{
+			name:         "constrained CUDA without flash attention uses smaller batch",
+			effectiveCtx: 131072,
+			predicted:    3 * format.GibiByte,
+			available:    6 * format.GibiByte,
+			flash:        ml.FlashAttentionDisabled,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 6 * format.GibiByte}},
+			want:         256,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, automaticGenerationBatch(tt.effectiveCtx, tt.predicted, tt.available))
+			require.Equal(t, tt.want, automaticGenerationBatch(tt.effectiveCtx, tt.predicted, tt.available, tt.flash, tt.gpus))
 		})
 	}
 }

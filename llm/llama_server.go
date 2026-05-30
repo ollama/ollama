@@ -560,20 +560,32 @@ func appendBatchArgs(params []string, opts api.Options, embedding bool, numParal
 	return params
 }
 
-func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
+// LlamaServerFlashAttention resolves the flash-attention mode passed to llama-server.
+func LlamaServerFlashAttention(gpus []ml.DeviceInfo) ml.FlashAttentionType {
 	enabled := envconfig.FlashAttention(false)
 	userSet := enabled == envconfig.FlashAttention(true)
 	if userSet {
 		if enabled {
-			return append(params, "--flash-attn", "on")
+			return ml.FlashAttentionEnabled
 		}
-		return append(params, "--flash-attn", "off")
+		return ml.FlashAttentionDisabled
 	}
 
 	if !ml.FlashAttentionSupported(gpus) {
-		return append(params, "--flash-attn", "off")
+		return ml.FlashAttentionDisabled
 	}
-	return append(params, "--flash-attn", "auto")
+	return ml.FlashAttentionAuto
+}
+
+func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
+	switch LlamaServerFlashAttention(gpus) {
+	case ml.FlashAttentionEnabled:
+		return append(params, "--flash-attn", "on")
+	case ml.FlashAttentionDisabled:
+		return append(params, "--flash-attn", "off")
+	default:
+		return append(params, "--flash-attn", "auto")
+	}
 }
 
 func appendMainGPUArgs(params []string, opts api.Options) []string {
