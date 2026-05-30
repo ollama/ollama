@@ -39,6 +39,7 @@ type LagunaParser struct {
 	thinkingEnabled       bool
 	thinkingSuppressed    bool
 	allowLeadingThinkOpen bool
+	atContentStart        bool
 }
 
 func (p *LagunaParser) HasToolSupport() bool {
@@ -68,10 +69,28 @@ func (p *LagunaParser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 	p.tools = tools
 	p.callIndex = 0
 	p.buffer.Reset()
-	p.thinkingEnabled = thinkValue == nil || thinkValue.Bool()
-	p.thinkingSuppressed = thinkValue != nil && !thinkValue.Bool()
-	p.state = lagunaParserStateContent
-	p.allowLeadingThinkOpen = false
+	// The prompt primes the reasoning mode: <think> when thinking is enabled
+	// (so the model's output begins with reasoning and no opening tag), or
+	// </think> otherwise. Thinking defaults off, matching the chat template.
+	p.thinkingEnabled = thinkValue != nil && thinkValue.Bool()
+	p.thinkingSuppressed = !p.thinkingEnabled
+	p.atContentStart = true
+
+	// When the request ends with an assistant prefill, the renderer continues
+	// that turn in place instead of emitting a fresh generation prompt: it has
+	// already written the closing </think>, so the model resumes with content
+	// (or a tool call), not reasoning. Start in the content state even when
+	// thinking is enabled, otherwise the continuation would be reported as
+	// thinking until done and clients would receive an empty answer.
+	assistantPrefill := lastMessage != nil && lastMessage.Role == "assistant"
+
+	if p.thinkingEnabled && !assistantPrefill {
+		p.state = lagunaParserStateThinking
+		p.allowLeadingThinkOpen = true
+	} else {
+		p.state = lagunaParserStateContent
+		p.allowLeadingThinkOpen = false
+	}
 	return tools
 }
 
@@ -118,19 +137,28 @@ func (p *LagunaParser) consumeThinking(done bool) (bool, string) {
 	if p.allowLeadingThinkOpen {
 		trimmed := strings.TrimLeftFunc(acc, unicode.IsSpace)
 		if strings.HasPrefix(trimmed, lagunaThinkingOpenTag) {
+			// the model echoed the primed <think>; drop it
 			p.buffer.Reset()
 			p.buffer.WriteString(strings.TrimLeftFunc(strings.TrimPrefix(trimmed, lagunaThinkingOpenTag), unicode.IsSpace))
 			p.allowLeadingThinkOpen = false
 			return true, ""
 		}
 		if strings.HasPrefix(lagunaThinkingOpenTag, trimmed) && !done {
+			// possibly a partial opening tag; keep it (minus leading space) and wait
+			p.buffer.Reset()
+			p.buffer.WriteString(trimmed)
 			return false, ""
 		}
+		// reasoning begins here: drop the leading whitespace the model emits
+		// after the primed <think> (its trained format is "<think>\n…").
+		p.buffer.Reset()
+		p.buffer.WriteString(trimmed)
 		p.allowLeadingThinkOpen = false
+		acc = trimmed
 	}
 
 	if idx := strings.Index(acc, lagunaThinkingCloseTag); idx != -1 {
-		thinking := acc[:idx]
+		thinking := strings.TrimRightFunc(acc[:idx], unicode.IsSpace)
 		after := strings.TrimLeftFunc(acc[idx+len(lagunaThinkingCloseTag):], unicode.IsSpace)
 		p.buffer.Reset()
 		p.buffer.WriteString(after)
@@ -148,6 +176,7 @@ func (p *LagunaParser) consumeThinking(done bool) (bool, string) {
 	if done {
 		p.buffer.Reset()
 		p.state = lagunaParserStateContent
+		acc = strings.TrimRightFunc(acc, unicode.IsSpace)
 		return acc != "", acc
 	}
 
@@ -164,6 +193,17 @@ func (p *LagunaParser) consumeThinking(done bool) (bool, string) {
 }
 
 func (p *LagunaParser) consumeContent(done bool) (bool, string, []api.ToolCall, error) {
+	if p.atContentStart {
+		// Drop the leading whitespace the model emits before content (its trained
+		// format puts a newline after the primed/closed </think>).
+		trimmed := strings.TrimLeftFunc(p.buffer.String(), unicode.IsSpace)
+		p.buffer.Reset()
+		p.buffer.WriteString(trimmed)
+		if trimmed == "" {
+			return false, "", nil, nil
+		}
+		p.atContentStart = false
+	}
 	acc := p.buffer.String()
 	if p.thinkingEnabled || p.thinkingSuppressed {
 		if idx := strings.Index(acc, lagunaThinkingOpenTag); idx != -1 {
@@ -248,6 +288,7 @@ func (p *LagunaParser) consumeContent(done bool) (bool, string, []api.ToolCall, 
 	}
 	if done {
 		p.buffer.Reset()
+		acc = strings.TrimRightFunc(acc, unicode.IsSpace)
 		return acc != "", acc, nil, nil
 	}
 	overlapLen := max(overlap(acc, lagunaToolCallOpenTag), overlap(acc, lagunaUserOpenTag))
