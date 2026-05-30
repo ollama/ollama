@@ -49,6 +49,31 @@ func TestModelInventoryResolveRefreshesLocalMiss(t *testing.T) {
 	}
 }
 
+func TestModelInventoryResolveKeepsShowParameters(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4-fast","size":123,"details":{"context_length":262144}}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"parameters":"num_ctx 32768\n","model_info":{"general.context_length":262144}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	inventory := newModelInventory(api.NewClient(u, srv.Client()))
+
+	got := inventory.ResolveWithShowMetadata(context.Background(), []string{"gemma4-fast"})
+	if len(got) != 1 {
+		t.Fatalf("Resolve returned %d models, want 1", len(got))
+	}
+	if got[0].Parameters != "num_ctx 32768\n" {
+		t.Fatalf("Parameters = %q, want num_ctx line", got[0].Parameters)
+	}
+}
+
 func TestModelInventoryResolveDoesNotRefreshCloudMiss(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
