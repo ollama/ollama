@@ -212,7 +212,9 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	// Gemma 4's 512-dim attention heads require MMA FA kernels (Turing+, compute >= 7.5).
 	// Older CUDA GPUs only have tile/vec FA kernels which abort on dk512 non-GQA attention.
-	if fa && f.KV().Architecture() == "gemma4" {
+	// TurboQuant uses its own fused vec kernel (tq-fattn-vec.cuh) that supports D=512 on
+	// Pascal via ncols=2, so exempt TQ presets from this gate.
+	if fa && f.KV().Architecture() == "gemma4" && !strings.HasPrefix(strings.ToLower(envconfig.KvCacheType()), "tq") {
 		for _, gpu := range gpus {
 			if gpu.Library == "CUDA" && (gpu.ComputeMajor < 7 || (gpu.ComputeMajor == 7 && gpu.ComputeMinor < 5)) {
 				slog.Debug("disabling flash attention for gemma4 on pre-Turing GPU", "compute", fmt.Sprintf("%d.%d", gpu.ComputeMajor, gpu.ComputeMinor))
@@ -235,6 +237,14 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 
 		if kvct != "" {
+			// TurboQuant presets require the new Go engine; the old C++ runner
+			// does not implement TQ encode/decode and would silently fall back to f16.
+			switch kvct {
+			case "tq2", "tq3", "tq4", "tq2k", "tq3k", "tq4k", "tq2v", "tq3v", "tq4v":
+				slog.Warn("OLLAMA_KV_CACHE_TYPE requires OLLAMA_NEW_ENGINE=1", "type", kvct)
+				kvct = ""
+			}
+
 			if f.KVCacheTypeIsQuantized(kvct) {
 				if flashAttention != ml.FlashAttentionEnabled {
 					slog.Warn("OLLAMA_FLASH_ATTENTION must be enabled to use a quantized OLLAMA_KV_CACHE_TYPE", "type", kvct)
@@ -267,7 +277,17 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 				slog.Warn("kv cache type not supported by model", "type", kvct)
 			}
 		} else if kvct != "" && kvct != "f16" {
-			slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
+			// Some kv cache types — currently the TurboQuant K-only presets
+			// (tq2k/tq3k/tq4k) — dequant K back to f16 before the attention
+			// op runs, so they are compatible with the non-flash-attention
+			// path. Admit those when the model supports them.
+			if f.KVCacheTypeRequiresFlashAttention(kvct) {
+				slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
+			} else if f.SupportsKVCacheType(kvct) {
+				loadRequest.KvCacheType = kvct
+			} else {
+				slog.Warn("kv cache type not supported by model", "type", kvct)
+			}
 		}
 	}
 

@@ -41,6 +41,7 @@ set(GGML_LLAMAFILE ON)
 set(GGML_CUDA_PEER_MAX_BATCH_SIZE 128)
 set(GGML_CUDA_GRAPHS ON)
 set(GGML_CUDA_FA ON)
+set(GGML_CUDA_FA_ALL_QUANTS OFF)
 set(GGML_CUDA_COMPRESSION_MODE default)
 
 if((CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
@@ -110,11 +111,24 @@ install(TARGETS ggml-base ${CPU_VARIANTS}
 
 check_language(CUDA)
 if(CMAKE_CUDA_COMPILER)
-    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24" AND NOT CMAKE_CUDA_ARCHITECTURES)
+    # find_package must precede the native arch check so CUDAToolkit_VERSION
+    # is available. (CMAKE_CUDA_COMPILER_VERSION is only set after
+    # enable_language(CUDA) inside ggml-cuda/CMakeLists, not here.)
+    find_package(CUDAToolkit)
+    # nvcc 13.x ptxas has a code-gen regression for sm_120-real that produces
+    # wrong output on Blackwell. Exclude nvcc 13+ from native auto-detect so
+    # Blackwell builds fall through to the virtual list in ggml-cuda/CMakeLists
+    # and rely on driver JIT for correct sm_120 SASS instead.
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24" AND NOT CMAKE_CUDA_ARCHITECTURES
+            AND CUDAToolkit_VERSION VERSION_LESS "13.0")
         set(CMAKE_CUDA_ARCHITECTURES "native")
     endif()
 
-    find_package(CUDAToolkit)
+    if(MSVC)
+        # CUDA 13 headers use __VA_OPT__ and other C++20 preprocessor features
+        # that require MSVC's conformant preprocessor (/Zc:preprocessor).
+        string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler /Zc:preprocessor")
+    endif()
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cuda)
     target_include_directories(ggml-cuda PRIVATE ${GGML_INCLUDE_DIRS})
     install(TARGETS ggml-cuda

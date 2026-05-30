@@ -853,8 +853,43 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 	if cacheType == "" || cacheType == "f16" {
 		return true
 	}
-
+	if slices.Contains([]string{"tq2", "tq3", "tq4", "tq2k", "tq3k", "tq4k", "tq2v", "tq3v", "tq4v"}, cacheType) {
+		// TurboQuant encode/dequant/fused-FA kernels are only instantiated
+		// at headDim ∈ {64, 128, 256, 512}. Models outside that set (e.g.
+		// deepseek-v3 MLA at 576, lfm2 at 96) would fall back to f16 at
+		// runtime — but kvCacheBytesPerElement has already sized the cache
+		// as tq* B/elem, so the loader may admit a context that only fits
+		// compressed. Reject up front so admission and runtime agree.
+		//
+		// V-only presets (tq*v) require the V head-dim to be a valid TQ
+		// size; the K plane stays raw f16 so its head-dim is unconstrained
+		// here — but in practice K and V share head-dim in every supported
+		// architecture, so the V check below covers both.
+		switch cacheType {
+		case "tq2v", "tq3v", "tq4v":
+			if !isTQHeadDim(f.KV().EmbeddingHeadCountV()) {
+				return false
+			}
+		default:
+			headK := f.KV().EmbeddingHeadCountK()
+			if !isTQHeadDim(headK) {
+				return false
+			}
+			// K+V presets encode V too; reject when V head_dim is unsupported.
+			switch cacheType {
+			case "tq2", "tq3", "tq4":
+				if !isTQHeadDim(f.KV().EmbeddingHeadCountV()) {
+					return false
+				}
+			}
+		}
+		return true
+	}
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
+}
+
+func isTQHeadDim(d uint64) bool {
+	return d == 64 || d == 128 || d == 256 || d == 512
 }
 
 // KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
@@ -863,6 +898,25 @@ func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
 		return false
 	}
 	return true
+}
+
+// KVCacheTypeRequiresFlashAttention reports whether a KV cache type can only be
+// used when flash attention is enabled. Ggml-native quantized types (q8_0,
+// q4_0) store K/V as quantized tensors that the non-FA softmax+matmul attention
+// path cannot consume directly. TurboQuant K-only presets (tq2k, tq3k) dequant
+// the packed K buffer to f16 before the attention op runs, so they work with
+// either FA or the standard attention path.
+func (f GGML) KVCacheTypeRequiresFlashAttention(cacheType string) bool {
+	switch cacheType {
+	case "tq2k", "tq3k", "tq4k":
+		return false
+	case "tq2v", "tq3v", "tq4v":
+		// V-only presets materialise V back to f16 via DequantV + WHTUndo
+		// before stock flash-attn runs (mirrors the K-only dequant pattern).
+		// They work with either FA or the standard attention path.
+		return false
+	}
+	return f.KVCacheTypeIsQuantized(cacheType)
 }
 
 // SupportsFlashAttention checks if the model supports flash attention
@@ -908,13 +962,37 @@ func (f GGML) FlashAttention() bool {
 	}, f.KV().String("general.architecture"))
 }
 
-// kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type
+// kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type.
+// TQ presets include packed primary bits plus per-head per-cell metadata
+// (outlier index list + scale/zero scalars). That metadata is constant in
+// headDim, so the effective B/elem rises sharply at small headDim. The figures
+// below are the worst-case ratios at headDim=64 (the smallest dim TurboQuant
+// supports) so the loader admits a context that fits at every supported dim.
+// Larger headDims (128/256/512) end up with proportionally more headroom.
 func kvCacheBytesPerElement(cacheType string) float64 {
 	switch cacheType {
 	case "q8_0":
 		return 1 // 1/2 of fp16
 	case "q4_0":
 		return 0.5 // 1/4 of fp16
+	case "tq2":
+		return 0.95 // 2-bit K + 2-bit V (outlier=32 at 3-bit + asymmetric)
+	case "tq2k":
+		return 1.80 // 2-bit K + f16 V averaged
+	case "tq3":
+		return 1.10 // 3-bit K + 3-bit V (outlier=32 at 4-bit + asymmetric)
+	case "tq3k":
+		return 1.85 // 3-bit K + f16 V averaged
+	case "tq4":
+		return 1.20 // 4-bit K + 4-bit V (outlier=32 at 5-bit + asymmetric)
+	case "tq4k":
+		return 1.95 // 4-bit K + f16 V averaged
+	case "tq2v":
+		return 1.20 // f16 K + 2-bit V averaged (V encoder: WHT + Lloyd-Max, no outlier split)
+	case "tq3v":
+		return 1.25 // f16 K + 3-bit V averaged
+	case "tq4v":
+		return 1.30 // f16 K + 4-bit V averaged
 	case "f32":
 		return 4 // f32 (default for recurrent)
 	default:
