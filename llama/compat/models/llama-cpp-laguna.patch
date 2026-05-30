@@ -1,0 +1,140 @@
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index e95ba6daa..daff484e3 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -134,6 +134,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+     { LLM_ARCH_MAINCODER,        "maincoder"        },
+     { LLM_ARCH_KIMI_LINEAR,      "kimi-linear"      },
+     { LLM_ARCH_TALKIE,           "talkie"           },
++    { LLM_ARCH_LAGUNA,           "laguna"           },
+     { LLM_ARCH_UNKNOWN,          "(unknown)"        },
+ };
+
+@@ -370,6 +371,7 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
+     { LLM_TENSOR_ATTN_Q_NORM,                            "blk.%d.attn_q_norm" },
+     { LLM_TENSOR_ATTN_K_NORM,                            "blk.%d.attn_k_norm" },
+     { LLM_TENSOR_ATTN_GATE,                              "blk.%d.attn_gate" },
++    { LLM_TENSOR_ATTN_GATE_LAGUNA,                       "blk.%d.attn_g" },
+     { LLM_TENSOR_FFN_POST_NORM,                          "blk.%d.post_ffw_norm" },
+     { LLM_TENSOR_FFN_POST_NORM_1,                        "blk.%d.post_ffw_norm_1" },
+     { LLM_TENSOR_FFN_POST_NORM_2,                        "blk.%d.post_ffw_norm_2" },
+@@ -585,6 +587,7 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+     {LLM_TENSOR_ATTN_QKV,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_ATTN_OUT,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_ATTN_GATE,                  {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
++    {LLM_TENSOR_ATTN_GATE_LAGUNA,           {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_FFN_GATE,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_FFN_DOWN,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_FFN_UP,                     {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+diff --git a/src/llama-arch.h b/src/llama-arch.h
+index 7c1dcc4d6..c726452f8 100644
+--- a/src/llama-arch.h
++++ b/src/llama-arch.h
+@@ -138,6 +138,7 @@ enum llm_arch {
+     LLM_ARCH_MAINCODER,
+     LLM_ARCH_KIMI_LINEAR,
+     LLM_ARCH_TALKIE,
++    LLM_ARCH_LAGUNA,
+     LLM_ARCH_UNKNOWN,
+ };
+
+@@ -372,6 +373,7 @@ enum llm_tensor {
+     LLM_TENSOR_ATTN_ROT_EMBD,
+     LLM_TENSOR_ATTN_SINKS,
+     LLM_TENSOR_ATTN_GATE,
++    LLM_TENSOR_ATTN_GATE_LAGUNA,
+     LLM_TENSOR_FFN_GATE_INP,
+     LLM_TENSOR_FFN_GATE_INP_SHEXP,
+     LLM_TENSOR_FFN_NORM,
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 0c3e03a61..366d82730 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -286,6 +286,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
+             return new llama_model_kimi_linear(params);
+         case LLM_ARCH_STEP35:
+             return new llama_model_step35(params);
++        case LLM_ARCH_LAGUNA:
++            return new llama_model_laguna(params);
+         default:
+             throw std::runtime_error(std::string("unsupported model architecture: '") + llm_arch_name(arch) + "'");
+     }
+@@ -2356,6 +2358,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+         case LLM_ARCH_MIMO2:
+         case LLM_ARCH_STEP35:
+         case LLM_ARCH_TALKIE:
++        case LLM_ARCH_LAGUNA:
+             return LLAMA_ROPE_TYPE_NEOX;
+
+         case LLM_ARCH_QWEN2VL:
+diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
+index 473becade..898f6e080 100644
+--- a/src/llama-vocab.cpp
++++ b/src/llama-vocab.cpp
+@@ -358,6 +358,12 @@ struct llm_tokenizer_bpe : llm_tokenizer {
+                     "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)",
+                 };
+                 break;
++            case LLAMA_VOCAB_PRE_TYPE_LAGUNA:
++                regex_exprs = {
++                    "(?:\\r?\\n)+(?!\\r?\\n)",
++                    "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
++                };
++                break;
+             case LLAMA_VOCAB_PRE_TYPE_GPT2:
+             case LLAMA_VOCAB_PRE_TYPE_MPT:
+             case LLAMA_VOCAB_PRE_TYPE_OLMO:
+@@ -2050,6 +2056,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+             } else if (tokenizer_pre == "minicpm5") {
+                 pre_type = LLAMA_VOCAB_PRE_TYPE_MINICPM5;
+                 ignore_merges = true;
++            } else if (tokenizer_pre == "laguna") {
++                pre_type = LLAMA_VOCAB_PRE_TYPE_LAGUNA;
+             } else if (
+                     tokenizer_pre == "llama3"   ||
+                     tokenizer_pre == "llama-v3" ||
+@@ -2697,6 +2705,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+                     || t.first == "<turn|>"          // gemma4
+                     || t.first == "<|tool_response>" // gemma4
+                     || t.first == "<｜end▁of▁sentence｜>" // deepseek-ocr
++                    || t.first == "</assistant>"     // poolside Laguna (eos_token_ids)
+                ) {
+                 special_eog_ids.insert(t.second);
+                 if ((attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
+diff --git a/src/llama-vocab.h b/src/llama-vocab.h
+index 8ab775942..b69be9154 100644
+--- a/src/llama-vocab.h
++++ b/src/llama-vocab.h
+@@ -61,7 +61,8 @@ enum llama_vocab_pre_type {
+     LLAMA_VOCAB_PRE_TYPE_GEMMA4          = 50,
+     LLAMA_VOCAB_PRE_TYPE_SARVAM_MOE      = 51,
+     LLAMA_VOCAB_PRE_TYPE_MINICPM5        = 52,
+     LLAMA_VOCAB_PRE_TYPE_WHITESPACE      = 53,
++    LLAMA_VOCAB_PRE_TYPE_LAGUNA          = 54,
+ };
+
+ struct LLM_KV;
+diff --git a/src/models/models.h b/src/models/models.h
+index db228865d..dab40e4f8 100644
+--- a/src/models/models.h
++++ b/src/models/models.h
+@@ -1453,6 +1453,19 @@ struct llama_model_dots1 : public llama_model_base {
+ };
+
+
++struct llama_model_laguna : public llama_model_base {
++    llama_model_laguna(const struct llama_model_params & params) : llama_model_base(params) {}
++    void load_arch_hparams(llama_model_loader & ml) override;
++    void load_arch_tensors(llama_model_loader & ml) override;
++
++    struct graph : public llm_graph_context {
++        graph(const llama_model & model, const llm_graph_params & params);
++    };
++
++    std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
++};
++
++
+ struct llama_model_arcee : public llama_model_base {
+     llama_model_arcee(const struct llama_model_params & params) : llama_model_base(params) {}
+     void load_arch_hparams(llama_model_loader & ml) override;
