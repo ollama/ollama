@@ -10,12 +10,14 @@ on:
 permissions:
   id-token: write
   contents: read
-  actions: read
+  actions: write
   packages: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
@@ -45,9 +47,8 @@ jobs:
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Store/read the build layer cache in ghcr so subsequent runs reuse it.
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Verify ollama binary
         run: docker run --rm ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }} --version
       - name: Extract binary
@@ -66,3 +67,139 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: wow-look-at-my/buildhost/.github/actions/buildhost-publish@master
+
+  bench:
+    # needs: build so we can read needs.build.outputs.image_tag for the container field
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      OLLAMA_MODELS: /tmp/ollama-models
+    container:
+      image: ghcr.io/${{ github.repository }}:${{ needs.build.outputs.image_tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Install tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git-lfs jq hyperfine
+
+      # ── Model cache ─────────────────────────────────────────────────────────
+      - name: Cache Qwen2.5-0.5B safetensors
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hf-model
+          key: qwen2.5-0.5b-safetensors-v1
+
+      - name: Download Qwen2.5-0.5B
+        if: steps.cache-model.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 https://huggingface.co/Qwen/Qwen2.5-0.5B /tmp/hf-model
+
+      # ── Ollama server (runs in the same container as the steps) ─────────────
+      - name: Start ollama server
+        run: |
+          mkdir -p /tmp/ollama-models
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:11434/health >/dev/null 2>&1 \
+              && { echo "Ready after ${i}s"; exit 0; }
+            sleep 1
+          done
+          echo "Timed out waiting for ollama" >&2; exit 1
+
+      # ── Benchmarks ──────────────────────────────────────────────────────────
+      - name: Benchmark quantizations
+        run: |
+          printf 'FROM /tmp/hf-model\n' > /tmp/mf
+          mkdir -p "$GITHUB_WORKSPACE/.bench-sizes"
+
+          cat > /tmp/bench-quant.sh << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          NAME=$1; shift
+          MODEL="qwen25-$(echo "$NAME" | tr '[:upper:]_' '[:lower:]-')"
+          ollama create "$MODEL" -f /tmp/mf "$@"
+          {
+            manifest="${OLLAMA_MODELS}/manifests/registry.ollama.ai/library/${MODEL}/latest"
+            if [[ -f "$manifest" ]]; then
+              b=$(jq '[.layers[] | select(.mediaType | contains("model")) | .size] | add // 0' "$manifest")
+              if   (( b >= 1073741824 )); then awk "BEGIN{printf \"%.2f GiB\", $b/1073741824}"
+              elif (( b >= 1048576    )); then awk "BEGIN{printf \"%.2f MiB\", $b/1048576}"
+              else echo "${b} B"
+              fi
+            fi
+          } > "${GITHUB_WORKSPACE}/.bench-sizes/${NAME}" 2>/dev/null || true
+          EOF
+
+          hyperfine \
+            --runs 1 \
+            --warmup 0 \
+            --ignore-failure \
+            --export-json "$GITHUB_WORKSPACE/bench.json" \
+            --prepare 'rm -rf "$OLLAMA_MODELS/blobs" "$OLLAMA_MODELS/manifests"' \
+            --command-name F16    "bash /tmp/bench-quant.sh F16" \
+            --command-name Q8_0   "bash /tmp/bench-quant.sh Q8_0   --quantize Q8_0" \
+            --command-name Q5_K_M "bash /tmp/bench-quant.sh Q5_K_M --quantize Q5_K_M" \
+            --command-name Q5_K_S "bash /tmp/bench-quant.sh Q5_K_S --quantize Q5_K_S" \
+            --command-name Q4_K_M "bash /tmp/bench-quant.sh Q4_K_M --quantize Q4_K_M" \
+            --command-name Q4_K_S "bash /tmp/bench-quant.sh Q4_K_S --quantize Q4_K_S" \
+            --command-name Q4_0   "bash /tmp/bench-quant.sh Q4_0   --quantize Q4_0" \
+            --command-name Q3_K_M "bash /tmp/bench-quant.sh Q3_K_M --quantize Q3_K_M" \
+            --command-name Q2_K   "bash /tmp/bench-quant.sh Q2_K   --quantize Q2_K"
+
+      - name: Finalize summary
+        if: always()
+        uses: wow-look-at-my/actions@typescript#latest
+        with:
+          needs: ${{ toJSON(needs) }}
+          script: |
+            const ws = process.env.GITHUB_WORKSPACE!;
+            const benchPath = path.join(ws, 'bench.json');
+            const sizesDir  = path.join(ws, '.bench-sizes');
+            const image = `ghcr.io/${{ github.repository }}:${needs.build.outputs.image_tag}`;
+            const ncpu  = (require('os') as typeof import('os')).cpus().length;
+            const date  = new Date().toUTCString().replace(/:\d\d GMT$/, ' UTC');
+
+            const fmtDur = (s: number) => {
+              const t = Math.floor(s);
+              return t >= 60 ? `${Math.floor(t / 60)}m ${t % 60}s` : `${t}s`;
+            };
+
+            let rows: string;
+            if (fs.existsSync(benchPath)) {
+              const { results } = JSON.parse(fs.readFileSync(benchPath, 'utf8')) as {
+                results: Array<{ command: string; exit_codes: number[]; mean: number }>;
+              };
+              rows = results.map(r => {
+                const ok       = r.exit_codes[0] === 0;
+                const sizePath = path.join(sizesDir, r.command);
+                const size     = (ok && fs.existsSync(sizePath))
+                  ? fs.readFileSync(sizePath, 'utf8').trim() || '—'
+                  : '—';
+                return `| \`${r.command}\` | safetensors | ${fmtDur(r.mean)} | ${size} | ${ok ? '✅' : '❌'} |`;
+              }).join('\n');
+            } else {
+              rows = '| — | — | — | — | ⏭ benchmark did not run |';
+            }
+
+            await core.summary.addRaw([
+              '# Quantization Benchmarks — Qwen/Qwen2.5-0.5B',
+              '',
+              '> **Model**: [Qwen/Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) · safetensors input',
+              '>',
+              `> **Image**: \`${image}\``,
+              '>',
+              `> **Runner**: ubuntu-latest (CPU-only, ${ncpu} vCPUs) · ${date}`,
+              '',
+              '| Quant | From | Duration | GGUF Size | Status |',
+              '|:------|:-----|:--------:|----------:|:------:|',
+              rows,
+              '',
+              '_Unsupported quant types show ❌ — expected until ParseFileType covers them._',
+            ].join('\n')).write();

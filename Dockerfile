@@ -21,7 +21,8 @@ RUN chmod +x /usr/local/cuda/nvvm/bin/cicc-cache \
     && mv /usr/local/cuda/nvvm/bin/cicc /usr/local/cuda/nvvm/bin/cicc.real \
     && mv /usr/local/cuda/nvvm/bin/cicc-cache /usr/local/cuda/nvvm/bin/cicc
 
-RUN cmake --preset 'CUDA 13' -DCMAKE_CUDA_ARCHITECTURES=86 \
+RUN --mount=type=cache,target=/root/.cache/ccache \
+    cmake --preset 'CUDA 13' -DCMAKE_CUDA_ARCHITECTURES=86 \
     && cmake --build --preset 'CUDA 13' -j$(nproc) \
     && cmake --install build --component CUDA --strip
 
@@ -37,13 +38,10 @@ ENV PATH=/usr/local/go/bin:$PATH
 WORKDIR /build/ollama
 COPY go.mod go.sum ./
 
-RUN --mount=type=cache,target=/root/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    go mod download
+RUN go mod download
 COPY . .
 ENV CGO_ENABLED=1
-RUN --mount=type=cache,target=/root/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -ldflags='-w -s' -o /bin/ollama .
 
 FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04
