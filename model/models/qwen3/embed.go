@@ -18,6 +18,10 @@ type embedModel struct {
 	poolingType pooling.Type
 }
 
+func (m *embedModel) SetCache(cache kvcache.Cache) {
+	m.Base.SetCache(cache)
+}
+
 func (m *embedModel) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenStates, err := m.forward(ctx, batch)
 	if err != nil {
