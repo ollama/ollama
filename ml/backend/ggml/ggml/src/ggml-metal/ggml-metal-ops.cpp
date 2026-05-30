@@ -8,6 +8,24 @@
 #include "ggml-metal-common.h"
 #include "ggml-metal-device.h"
 
+#include <cstdlib>
+
+// Path B (adaptive RMS-vs-EDEN scale fallback) is ON by default — parity with
+// CUDA. The Metal kernels compute both the RMS-only and EDEN-refined scales,
+// then keep whichever has lower reconstruction error per cell-head. Provably
+// non-worse than RMS-only. OLLAMA_TQ_DISABLE_EDEN=1 forces RMS-only by nulling
+// the codebook pointer; used as a diagnostic escape hatch.
+static bool tq_metal_eden_enabled() {
+    static int cached = -1;
+    if (cached < 0) {
+        cached = 1;
+        if (const char * env = std::getenv("OLLAMA_TQ_DISABLE_EDEN")) {
+            cached = std::atoi(env) != 0 ? 0 : 1;
+        }
+    }
+    return cached != 0;
+}
+
 #include <cassert>
 #include <algorithm>
 #include <limits>
@@ -451,6 +469,43 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
         case GGML_OP_OPT_STEP_SGD:
             {
                 n_fuse = ggml_metal_op_opt_step_sgd(ctx, idx);
+            } break;
+        case GGML_OP_TQ_WHT:
+            {
+                n_fuse = ggml_metal_op_tq_wht(ctx, idx);
+            } break;
+        case GGML_OP_TQ_ENCODED_PROXY:
+            {
+                // No-op: dst is a view of src[1]; src[0] (encode_result)
+                // already wrote dep_tensor's data as a side effect. The
+                // op exists purely to give gallocr a graph edge so
+                // dep_tensor's memory isn't recycled before its
+                // downstream consumers read it.
+                n_fuse = 1;
+            } break;
+        case GGML_OP_TQ_ENCODE:
+            {
+                n_fuse = ggml_metal_op_tq_encode(ctx, idx);
+            } break;
+        case GGML_OP_TQ_ENCODE_V:
+            {
+                n_fuse = ggml_metal_op_tq_encode_v(ctx, idx);
+            } break;
+        case GGML_OP_TQ_ENCODE_KV:
+            {
+                n_fuse = ggml_metal_op_tq_encode_kv(ctx, idx);
+            } break;
+        case GGML_OP_TQ_DEQUANT:
+            {
+                n_fuse = ggml_metal_op_tq_dequant(ctx, idx);
+            } break;
+        case GGML_OP_TQ_DEQUANT_KV:
+            {
+                n_fuse = ggml_metal_op_tq_dequant_kv(ctx, idx);
+            } break;
+        case GGML_OP_TQ_FLASH_ATTN_EXT:
+            {
+                n_fuse = ggml_metal_op_tq_flash_attn_ext(ctx, idx);
             } break;
        default:
             {
@@ -2274,6 +2329,22 @@ size_t ggml_metal_op_flash_attn_ext_extra_tmp(const ggml_tensor * op) {
     }
 
     return res;
+}
+
+// Extra temp space for TQ flash-decode: partial_V + partial_lse per split per head.
+// Only needed for D∈{64,128} packed-outlier kernels. Always reserved to avoid
+// graph reallocations when the model switches decode mode.
+size_t ggml_metal_op_tq_flash_attn_ext_extra_tmp(const ggml_tensor * op) {
+    const int64_t D       = op->src[0]->ne[0];
+    const int64_t nHeadsQ = op->src[0]->ne[2];
+    const int64_t nSeq    = op->src[0]->ne[3];
+
+    if (D != 64 && D != 128 && D != 256 && D != 512) return 0;
+
+    const int64_t nSplits_max = 16;
+    // partial_V:   nSeq × nHeadsQ × nSplits × D floats
+    // partial_meta: nSeq × nHeadsQ × nSplits × 2 floats  {max_s, lse_s}
+    return (size_t)(nSeq * nHeadsQ * nSplits_max * (D + 2)) * sizeof(float);
 }
 
 int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
@@ -4152,5 +4223,1007 @@ int ggml_metal_op_opt_step_sgd(ggml_metal_op_t ctx, int idx) {
 
     ggml_metal_encoder_dispatch_threadgroups(enc, n, 1, 1, nth, 1, 1);
 
+    return 1;
+}
+
+// ── TurboQuant Metal ops ───────────────────────────────────────────────────
+
+int ggml_metal_op_tq_dequant(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    const int headDim      = (int)op->ne[0];
+    const int numKVHeads   = (int)op->ne[1];
+    const int nCells       = (int)op->ne[2];
+    const int bits         = (int)((const int32_t *)op->op_params)[0];
+    const int firstCell    = (int)((const int32_t *)op->op_params)[1];
+    const int outlierBits  = (int)((const int32_t *)op->op_params)[2];
+    const int outlierCount = (int)((const int32_t *)op->op_params)[3];
+
+    ggml_metal_buffer_id bid_dst = ggml_metal_get_buffer_id(op);
+
+    // Outlier kernel uses a 128-thread TG: threadgroup barriers + atomics on
+    // s_mask require all threads. Non-outlier kernel uses a single simdgroup
+    // (32 threads): it only reads tiisg and has no barriers, so a larger TG
+    // just replicates work across idle simdgroups.
+    const int outlier_block_size    = 128;
+    const int nonoutlier_block_size = 32;
+
+    // src[11] = locs (NULL = contiguous; [nCells] i32 = indexed slots).
+    const struct ggml_tensor * locs_t = op->src[11];
+    const int hasLocs = locs_t ? 1 : 0;
+    ggml_metal_buffer_id bid_locs = locs_t ? ggml_metal_get_buffer_id(locs_t) : bid_dst;
+
+    if (outlierCount > 0 && outlierBits > 0 && outlierCount < headDim) {
+        const int regular_count    = headDim - outlierCount;
+        const int reg_packed_raw   = (regular_count * bits + 7) / 8;
+        const int reg_packed_bytes = (reg_packed_raw + 3) & ~3;
+        const int out_packed_raw   = (outlierCount * outlierBits + 7) / 8;
+        const int out_packed_bytes = (out_packed_raw + 3) & ~3;
+
+        const int asymmetric = (int)((const int32_t *)op->op_params)[4];
+        // op_params[5] and src[9..10] are reserved.
+
+        ggml_metal_kargs_tq_dequant_outlier args = {
+            /*.headDim         =*/ headDim,
+            /*.numKVHeads      =*/ numKVHeads,
+            /*.bits            =*/ bits,
+            /*.firstCell       =*/ firstCell,
+            /*.reg_packed_bytes=*/ reg_packed_bytes,
+            /*.outlier_bits    =*/ outlierBits,
+            /*.outlier_count   =*/ outlierCount,
+            /*.out_packed_bytes=*/ out_packed_bytes,
+            /*.asymmetric      =*/ asymmetric,
+            /*.hasLocs         =*/ hasLocs,
+        };
+
+        const int mask_words = (headDim + 31) >> 5;
+
+        ggml_metal_buffer_id bid_zeros          = op->src[7]  ? ggml_metal_get_buffer_id(op->src[7])  : bid_dst;
+        ggml_metal_buffer_id bid_outlier_zeros  = op->src[8]  ? ggml_metal_get_buffer_id(op->src[8])  : bid_dst;
+
+        // WHT-fused path: when signs is provided (op->src[12]), dispatch
+        // kernel_tq_dequant_outlier_wht which applies apply_shs_wht in
+        // threadgroup memory before writing f16 output. Eliminates the
+        // separate GGML_OP_TQ_WHT graph node so the allocator collapses the
+        // K scratch across layers cleanly even on multi-sub-cache models
+        // (gemma local+global). One thread per element (headDim threads)
+        // engages apply_shs_wht's fast simd-shuffle path for D=128/256/512.
+        // Mirrors the K+V WHT path in ggml_metal_op_tq_dequant_kv.
+        if (op->src[12] != nullptr && op->src[13] != nullptr) {
+            // Fused encode+decode path: src[13]=k_new, src[14]=boundaries, src[15]=outl_bounds.
+            // op_params[5] carries the absolute encode cell index.
+            const int encCell    = (int)((const int32_t *)op->op_params)[5];
+            const int encKIsF32  = (op->src[13]->type == GGML_TYPE_F32) ? 1 : 0;
+            ggml_metal_kargs_tq_enc_dq_wht fargs = {
+                /*.headDim         =*/ headDim,
+                /*.numKVHeads      =*/ numKVHeads,
+                /*.bits            =*/ bits,
+                /*.firstCell       =*/ firstCell,
+                /*.reg_packed_bytes=*/ reg_packed_bytes,
+                /*.outlier_bits    =*/ outlierBits,
+                /*.outlier_count   =*/ outlierCount,
+                /*.out_packed_bytes=*/ out_packed_bytes,
+                /*.asymmetric      =*/ asymmetric,
+                /*.hasLocs         =*/ hasLocs,
+                /*.encEnabled      =*/ 1,
+                /*.encCellIdx      =*/ encCell,
+                /*.encKIsF32       =*/ encKIsF32,
+            };
+            auto pipeline_enc = ggml_metal_library_get_pipeline_tq_enc_dq_wht(lib);
+            const size_t nsimd = (size_t)(headDim / 32);
+            const size_t smem_enc = (size_t)headDim * sizeof(int8_t)
+                                  + (size_t)mask_words * sizeof(uint32_t)
+                                  + nsimd * sizeof(float)
+                                  + (size_t)headDim * sizeof(float)   // s_wht
+                                  + (size_t)headDim * sizeof(float)   // s_sort_mag
+                                  + (size_t)headDim * sizeof(int32_t); // s_sort_pos
+            ggml_metal_encoder_set_pipeline(enc, pipeline_enc);
+            ggml_metal_encoder_set_bytes   (enc, &fargs, sizeof(fargs), 0);
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]),  1); // reg packed
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]),  2); // reg scales
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]),  3); // reg codebook
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]),  4); // outlier packed
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]),  5); // outlier scales
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]),  6); // outlier indices
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]),  7); // outlier codebook
+            ggml_metal_encoder_set_buffer  (enc, bid_dst,                                8); // dst
+            ggml_metal_encoder_set_buffer  (enc, bid_zeros,                              9);
+            ggml_metal_encoder_set_buffer  (enc, bid_outlier_zeros,                     10);
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[12]), 11); // WHT signs
+            ggml_metal_encoder_set_buffer  (enc, bid_locs,                              12); // locs
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[13]), 13); // k_new
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[14]), 14); // boundaries
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[15]), 15); // outl_bounds
+            ggml_metal_encoder_set_threadgroup_memory_size(enc, smem_enc, 0);
+            ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, headDim, 1, 1);
+        } else if (op->src[12] != nullptr) {
+            auto pipeline_wht = ggml_metal_library_get_pipeline_tq_dequant_outlier_wht(lib);
+            const size_t smem_wht = (size_t)headDim * sizeof(int8_t)
+                                  + (size_t)mask_words * sizeof(uint32_t)
+                                  + (size_t)headDim * sizeof(float);
+            ggml_metal_encoder_set_pipeline(enc, pipeline_wht);
+            ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]),  1); // reg packed
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]),  2); // reg scales
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]),  3); // reg codebook
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]),  4); // outlier packed
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]),  5); // outlier scales
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]),  6); // outlier indices
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]),  7); // outlier codebook
+            ggml_metal_encoder_set_buffer  (enc, bid_dst,                                8); // dst
+            ggml_metal_encoder_set_buffer  (enc, bid_zeros,                              9);
+            ggml_metal_encoder_set_buffer  (enc, bid_outlier_zeros,                     10);
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[12]), 11); // WHT signs
+            ggml_metal_encoder_set_buffer  (enc, bid_locs,                              12); // locs (indexed addressing)
+            ggml_metal_encoder_set_threadgroup_memory_size(enc, smem_wht, 0);
+            ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, headDim, 1, 1);
+        } else {
+            auto pipeline = ggml_metal_library_get_pipeline_tq_dequant_outlier(lib);
+            const size_t smem = GGML_PAD((size_t)headDim * sizeof(int8_t) + (size_t)mask_words * sizeof(uint32_t), 16);
+            ggml_metal_encoder_set_pipeline(enc, pipeline);
+            ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // reg packed
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2); // reg scales
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]), 3); // reg codebook
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4); // outlier packed
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5); // outlier scales
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), 6); // outlier indices
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]), 7); // outlier codebook
+            ggml_metal_encoder_set_buffer  (enc, bid_dst,                             8); // dst
+            ggml_metal_encoder_set_buffer  (enc, bid_zeros,                           9);
+            ggml_metal_encoder_set_buffer  (enc, bid_outlier_zeros,                  10);
+            ggml_metal_encoder_set_buffer  (enc, bid_locs,                           11); // locs (indexed addressing)
+            ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
+            ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, outlier_block_size, 1, 1);
+        }
+        return 1;
+    }
+
+    const int packed_bytes  = (headDim * bits + 7) / 8;
+    const int codebook_len  = (int)op->src[2]->ne[0];
+
+    ggml_metal_kargs_tq_dequant args = {
+        /*.headDim      =*/ headDim,
+        /*.numKVHeads   =*/ numKVHeads,
+        /*.bits         =*/ bits,
+        /*.firstCell    =*/ firstCell,
+        /*.packed_bytes =*/ packed_bytes,
+        /*.codebook_len =*/ codebook_len,
+        /*.hasLocs      =*/ hasLocs,
+    };
+
+    auto pipeline = ggml_metal_library_get_pipeline_tq_dequant(lib);
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // packed
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2); // scales
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]), 3); // codebook
+    ggml_metal_encoder_set_buffer  (enc, bid_dst,                              4);
+    ggml_metal_encoder_set_buffer  (enc, bid_locs,                             5); // locs (indexed addressing)
+
+    ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, nonoutlier_block_size, 1, 1);
+    return 1;
+}
+
+int ggml_metal_op_tq_dequant_kv(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    const int headDim    = (int)op->ne[0];
+    const int numKVHeads = (int)op->ne[1];
+    const int nCells     = (int)op->ne[2];
+
+    int32_t k_bits, v_bits, firstCell, outlier_bits, outlier_count;
+    memcpy(&k_bits,        (const int32_t *)op->op_params + 0, sizeof(int32_t));
+    memcpy(&v_bits,        (const int32_t *)op->op_params + 1, sizeof(int32_t));
+    memcpy(&firstCell,     (const int32_t *)op->op_params + 2, sizeof(int32_t));
+    memcpy(&outlier_bits,  (const int32_t *)op->op_params + 3, sizeof(int32_t));
+    memcpy(&outlier_count, (const int32_t *)op->op_params + 4, sizeof(int32_t));
+    // op_params[5] and src[14..15] are reserved; src[13] = locs.
+
+    const struct ggml_tensor * locs_t = op->src[13];
+    const int hasLocs = locs_t ? 1 : 0;
+    ggml_metal_buffer_id bid_locs = locs_t ? ggml_metal_get_buffer_id(locs_t) : ggml_metal_get_buffer_id(op);
+
+    const int v_packed_bytes = (headDim * v_bits + 7) / 8;
+    const int v_codebook_len = (int)op->src[5]->ne[0];
+
+    const int simple_block_size  = 32;
+    const int outlier_block_size = 128;
+    const size_t plane_size = (size_t)headDim * numKVHeads * nCells;
+
+    ggml_metal_buffer_id bid_dst = ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_dst_v = bid_dst;
+    bid_dst_v.offs += plane_size * sizeof(uint16_t);
+
+    // K dequant → first plane.
+    const bool k_has_outliers = (op->src[7] != nullptr) && outlier_count > 0
+                                && outlier_bits > 0 && outlier_count < headDim;
+    if (k_has_outliers) {
+        const int regular_count    = headDim - outlier_count;
+        const int reg_packed_raw   = (regular_count * k_bits + 7) / 8;
+        const int reg_packed_bytes = (reg_packed_raw + 3) & ~3;
+        const int out_packed_raw   = (outlier_count * outlier_bits + 7) / 8;
+        const int out_packed_bytes = (out_packed_raw + 3) & ~3;
+        const int asymmetric       = (op->src[11] != nullptr) ? 1 : 0;
+
+        ggml_metal_kargs_tq_dequant_outlier args_k = {
+            /*.headDim         =*/ headDim,
+            /*.numKVHeads      =*/ numKVHeads,
+            /*.bits            =*/ k_bits,
+            /*.firstCell       =*/ firstCell,
+            /*.reg_packed_bytes=*/ reg_packed_bytes,
+            /*.outlier_bits    =*/ outlier_bits,
+            /*.outlier_count   =*/ outlier_count,
+            /*.out_packed_bytes=*/ out_packed_bytes,
+            /*.asymmetric      =*/ asymmetric,
+            /*.hasLocs         =*/ hasLocs,
+        };
+
+        const int mask_words = (headDim + 31) >> 5;
+        ggml_metal_buffer_id bid_zeros          = op->src[11] ? ggml_metal_get_buffer_id(op->src[11]) : bid_dst;
+        ggml_metal_buffer_id bid_outlier_zeros  = op->src[12] ? ggml_metal_get_buffer_id(op->src[12]) : bid_dst;
+
+        if (op->src[6] != nullptr) {
+            // WHT preset: fused decode + WHT undo in one kernel.
+            // Uses headDim threads per group to enable fast simd-shuffle butterfly.
+            auto pipeline_wht = ggml_metal_library_get_pipeline_tq_dequant_outlier_wht(lib);
+            const size_t smem_wht = (size_t)headDim * sizeof(int8_t)
+                                  + (size_t)mask_words * sizeof(uint32_t)
+                                  + (size_t)headDim * sizeof(float);
+            ggml_metal_encoder_set_pipeline(enc, pipeline_wht);
+            ggml_metal_encoder_set_bytes   (enc, &args_k, sizeof(args_k), 0);
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]),  1); // reg packed
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]),  2); // reg scales
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]),  3); // reg codebook
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[7]),  4); // outlier packed
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[8]),  5); // outlier scales
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[9]),  6); // outlier indices
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[10]), 7); // outlier codebook
+            ggml_metal_encoder_set_buffer  (enc, bid_dst,                                8); // dst (K plane)
+            ggml_metal_encoder_set_buffer  (enc, bid_zeros,                              9);
+            ggml_metal_encoder_set_buffer  (enc, bid_outlier_zeros,                     10);
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]),  11); // WHT signs
+            ggml_metal_encoder_set_buffer  (enc, bid_locs,                              12); // locs (indexed addressing)
+            ggml_metal_encoder_set_threadgroup_memory_size(enc, smem_wht, 0);
+            ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, headDim, 1, 1);
+        } else {
+            auto pipeline_outl = ggml_metal_library_get_pipeline_tq_dequant_outlier(lib);
+            const size_t smem = GGML_PAD((size_t)headDim * sizeof(int8_t) + (size_t)mask_words * sizeof(uint32_t), 16);
+            ggml_metal_encoder_set_pipeline(enc, pipeline_outl);
+            ggml_metal_encoder_set_bytes   (enc, &args_k, sizeof(args_k), 0);
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]),  1); // reg packed
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]),  2); // reg scales
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]),  3); // reg codebook
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[7]),  4); // outlier packed
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[8]),  5); // outlier scales
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[9]),  6); // outlier indices
+            ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[10]), 7); // outlier codebook
+            ggml_metal_encoder_set_buffer  (enc, bid_dst,                                8); // dst (K plane)
+            ggml_metal_encoder_set_buffer  (enc, bid_zeros,                              9);
+            ggml_metal_encoder_set_buffer  (enc, bid_outlier_zeros,                     10);
+            ggml_metal_encoder_set_buffer  (enc, bid_locs,                              11); // locs (indexed addressing)
+            ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
+            ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, outlier_block_size, 1, 1);
+        }
+    } else {
+        const int k_packed_bytes = (headDim * k_bits + 7) / 8;
+        const int k_codebook_len = (int)op->src[2]->ne[0];
+        ggml_metal_kargs_tq_dequant args_k = {
+            /*.headDim      =*/ headDim,
+            /*.numKVHeads   =*/ numKVHeads,
+            /*.bits         =*/ k_bits,
+            /*.firstCell    =*/ firstCell,
+            /*.packed_bytes =*/ k_packed_bytes,
+            /*.codebook_len =*/ k_codebook_len,
+            /*.hasLocs      =*/ hasLocs,
+        };
+        auto pipeline = ggml_metal_library_get_pipeline_tq_dequant(lib);
+        ggml_metal_encoder_set_pipeline(enc, pipeline);
+        ggml_metal_encoder_set_bytes   (enc, &args_k, sizeof(args_k), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]), 3);
+        ggml_metal_encoder_set_buffer  (enc, bid_dst, 4);
+        ggml_metal_encoder_set_buffer  (enc, bid_locs, 5); // locs (indexed addressing)
+        ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, simple_block_size, 1, 1);
+    }
+
+    // V dequant → second plane (V is symmetric, no outliers, plain dequant).
+    {
+        ggml_metal_kargs_tq_dequant args_v = {
+            /*.headDim      =*/ headDim,
+            /*.numKVHeads   =*/ numKVHeads,
+            /*.bits         =*/ v_bits,
+            /*.firstCell    =*/ firstCell,
+            /*.packed_bytes =*/ v_packed_bytes,
+            /*.codebook_len =*/ v_codebook_len,
+            /*.hasLocs      =*/ hasLocs,
+        };
+        auto pipeline_v = ggml_metal_library_get_pipeline_tq_dequant(lib);
+        ggml_metal_encoder_set_pipeline(enc, pipeline_v);
+        ggml_metal_encoder_set_bytes   (enc, &args_v, sizeof(args_v), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 1);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 2);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), 3);
+        ggml_metal_encoder_set_buffer  (enc, bid_dst_v, 4);
+        ggml_metal_encoder_set_buffer  (enc, bid_locs,  5); // locs (indexed addressing)
+        ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, simple_block_size, 1, 1);
+    }
+
+    // WHT preset: apply V WHT undo in-place after plain V dequant.
+    // Memory barrier required: V WHT reads bid_dst_v which V dequant just wrote.
+    if (op->src[6] != nullptr) {
+        ggml_metal_encoder_memory_barrier(enc);
+        const int v_block = headDim < 128 ? headDim : 128;
+        const size_t v_smem = (size_t)headDim * sizeof(float);
+        ggml_metal_kargs_tq_wht_f16_inplace args_wht = {
+            /*.headDim    =*/ headDim,
+            /*.numKVHeads =*/ numKVHeads,
+        };
+        auto pipeline_wht_v = ggml_metal_library_get_pipeline_tq_wht_f16_inplace(lib);
+        ggml_metal_encoder_set_pipeline(enc, pipeline_wht_v);
+        ggml_metal_encoder_set_bytes   (enc, &args_wht, sizeof(args_wht), 0);
+        ggml_metal_encoder_set_buffer  (enc, bid_dst_v,                            1); // V plane (in-place)
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]), 2); // WHT signs
+        ggml_metal_encoder_set_threadgroup_memory_size(enc, v_smem, 0);
+        ggml_metal_encoder_dispatch_threadgroups(enc, nCells, numKVHeads, 1, v_block, 1, 1);
+    }
+
+    return 1;
+}
+
+static int tq_encode_block_size(int headDim) {
+    int bs = 1;
+    int target = std::min(headDim, 128);
+    while (bs < target) bs <<= 1;
+    return bs;
+}
+
+int ggml_metal_op_tq_wht(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    const struct ggml_tensor * src   = op->src[0];
+    const struct ggml_tensor * signs = op->src[1];
+
+    // Accept f32 (standard path) and f16 (DequantV prefill WHT undo path).
+    const bool is_f16 = (src->nb[0] == sizeof(ggml_fp16_t));
+    GGML_ASSERT(is_f16 || src->nb[0] == sizeof(float));
+    GGML_ASSERT(ggml_is_contiguous(op));
+
+    const int headDim = (int)src->ne[0];
+    const int ne1     = (int)src->ne[1];
+    const int ne2     = (int)src->ne[2];
+    const int ne3     = (int)src->ne[3];
+
+    ggml_metal_kargs_tq_wht args = {
+        /*.headDim =*/ headDim,
+        /*.ne1     =*/ ne1,
+        /*.ne2     =*/ ne2,
+        /*.ne3     =*/ ne3,
+        /*.nb1     =*/ (uint64_t)src->nb[1],
+        /*.nb2     =*/ (uint64_t)src->nb[2],
+        /*.nb3     =*/ (uint64_t)src->nb[3],
+    };
+
+    const int    n_vecs     = ne1 * ne2 * ne3;
+    const int    block_size = headDim < 128 ? headDim : 128;
+    const size_t smem       = (size_t)headDim * sizeof(float);
+
+    auto pipeline = is_f16
+        ? ggml_metal_library_get_pipeline_tq_wht_f16(lib)
+        : ggml_metal_library_get_pipeline_tq_wht(lib);
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes  (enc, &args,                          sizeof(args), 0);
+    ggml_metal_encoder_set_buffer (enc, ggml_metal_get_buffer_id(src),   1); // src
+    ggml_metal_encoder_set_buffer (enc, ggml_metal_get_buffer_id(signs), 2); // signs
+    ggml_metal_encoder_set_buffer (enc, ggml_metal_get_buffer_id(op),    3); // dst
+
+    ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
+    ggml_metal_encoder_dispatch_threadgroups(enc, n_vecs, 1, 1, block_size, 1, 1);
+    return 1;
+}
+
+int ggml_metal_op_tq_encode(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    const int headDim    = (int)op->src[0]->ne[0];
+    const int numKVHeads = (int)op->src[0]->ne[1];
+    const int batchSize  = (int)op->src[0]->ne[2];
+    const int bits         = (int)((const int32_t *)op->op_params)[0];
+    const int firstCell    = (int)((const int32_t *)op->op_params)[1];
+    const int outlierBits  = (int)((const int32_t *)op->op_params)[2];
+    const int outlierCount = (int)((const int32_t *)op->op_params)[3];
+    const int kIsF32 = (op->src[0]->type == GGML_TYPE_F32) ? 1 : 0;
+
+    const int block_size = tq_encode_block_size(headDim);
+
+    // src[10] = locs (NULL = contiguous; [batchSize] i32 = indexed slots).
+    const struct ggml_tensor * locs_t_enc = op->src[10];
+    const int hasLocs = locs_t_enc ? 1 : 0;
+    ggml_metal_buffer_id bid_locs_enc = locs_t_enc ? ggml_metal_get_buffer_id(locs_t_enc) : ggml_metal_get_buffer_id(op);
+
+    if (outlierCount > 0 && outlierBits > 0 && outlierCount < headDim) {
+        const int asymmetric = (int)((const int32_t *)op->op_params)[4];
+        // op_params[5] and src[11..12] are reserved; src[10] is locs.
+        const int hasBias_outl       = (op->src[15] != nullptr) ? 1 : 0;
+        const bool eden_enabled      = tq_metal_eden_enabled();
+        const int hasCodebook        = (op->src[13] != nullptr && eden_enabled) ? 1 : 0;
+        const int hasOutlierCodebook = (op->src[14] != nullptr && eden_enabled) ? 1 : 0;
+
+        ggml_metal_kargs_tq_encode_outlier args = {
+            /*.headDim            =*/ headDim,
+            /*.numKVHeads         =*/ numKVHeads,
+            /*.bits               =*/ bits,
+            /*.firstCell          =*/ firstCell,
+            /*.kIsF32             =*/ kIsF32,
+            /*.outlierBits        =*/ outlierBits,
+            /*.outlierCount       =*/ outlierCount,
+            /*.asymmetric         =*/ asymmetric,
+            /*.hasBias            =*/ hasBias_outl,
+            /*.hasCodebook        =*/ hasCodebook,
+            /*.hasOutlierCodebook =*/ hasOutlierCodebook,
+            /*.hasLocs            =*/ hasLocs,
+        };
+
+        auto pipeline = ggml_metal_library_get_pipeline_tq_encode_outlier(lib);
+
+        // Canonical src layout (ggml.c ggml_tq_encode_outlier):
+        //   src[2]=zeros, src[9]=outlier_zeros, src[10]=locs, src[11..12]=reserved,
+        //   src[13]=codebook, src[14]=outlier_codebook, src[15]=k_bias
+        ggml_metal_buffer_id bid_zeros            = op->src[2]  ? ggml_metal_get_buffer_id(op->src[2])  : ggml_metal_get_buffer_id(op);
+        ggml_metal_buffer_id bid_outlier_zeros    = op->src[9]  ? ggml_metal_get_buffer_id(op->src[9])  : ggml_metal_get_buffer_id(op);
+        ggml_metal_buffer_id bid_codebook         = op->src[13] ? ggml_metal_get_buffer_id(op->src[13]) : ggml_metal_get_buffer_id(op);
+        ggml_metal_buffer_id bid_outlier_codebook = op->src[14] ? ggml_metal_get_buffer_id(op->src[14]) : ggml_metal_get_buffer_id(op);
+        ggml_metal_buffer_id bid_k_bias_outl      = op->src[15] ? ggml_metal_get_buffer_id(op->src[15]) : ggml_metal_get_buffer_id(op);
+
+        ggml_metal_encoder_set_pipeline(enc, pipeline);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // k
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2); // rotation
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3); // packed_out (dst)
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4); // scales
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5); // boundaries
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), 6); // outlier_packed
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]), 7); // outlier_scales
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[7]), 8); // outlier_indices
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[8]), 9); // outlier_boundaries
+        ggml_metal_encoder_set_buffer  (enc, bid_zeros,                           10); // zeros (or dummy)
+        ggml_metal_encoder_set_buffer  (enc, bid_outlier_zeros,                   11); // outlier zeros (or dummy)
+        ggml_metal_encoder_set_buffer  (enc, bid_locs_enc,                        12); // locs (indexed addressing)
+        // Buffers 13/14 are reserved.
+        ggml_metal_encoder_set_buffer  (enc, bid_codebook,                        15); // codebook (or dummy)
+        ggml_metal_encoder_set_buffer  (enc, bid_outlier_codebook,                16); // outlier codebook (or dummy)
+        ggml_metal_encoder_set_buffer  (enc, bid_k_bias_outl,                     17); // k_bias (or dummy)
+
+        ggml_metal_encoder_dispatch_threadgroups(enc, batchSize, numKVHeads, 1, block_size, 1, 1);
+        return 1;
+    }
+
+    const int hasRotation  = (op->src[1] != nullptr) ? 1 : 0;
+    const int asymmetric   = (int)((const int32_t *)op->op_params)[4]; // zeros != NULL
+    const int hasBias      = (op->src[5] != nullptr) ? 1 : 0;
+    const int hasCodebook  = (op->src[6] != nullptr && tq_metal_eden_enabled()) ? 1 : 0;
+
+    ggml_metal_kargs_tq_encode args = {
+        /*.headDim     =*/ headDim,
+        /*.numKVHeads  =*/ numKVHeads,
+        /*.bits        =*/ bits,
+        /*.firstCell   =*/ firstCell,
+        /*.kIsF32      =*/ kIsF32,
+        /*.hasRotation =*/ hasRotation,
+        /*.hasBias     =*/ hasBias,
+        /*.hasCodebook =*/ hasCodebook,
+        /*.asymmetric  =*/ asymmetric,
+        /*.hasLocs     =*/ hasLocs,
+    };
+
+    auto pipeline = ggml_metal_library_get_pipeline_tq_encode(lib);
+
+    ggml_metal_buffer_id bid_rot      = hasRotation
+        ? ggml_metal_get_buffer_id(op->src[1])
+        : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_k_bias   = hasBias
+        ? ggml_metal_get_buffer_id(op->src[5])
+        : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_codebook = hasCodebook
+        ? ggml_metal_get_buffer_id(op->src[6])
+        : ggml_metal_get_buffer_id(op);
+    // src[2] = zeros output tensor (non-null when asymmetric)
+    ggml_metal_buffer_id bid_zeros    = op->src[2]
+        ? ggml_metal_get_buffer_id(op->src[2])
+        : ggml_metal_get_buffer_id(op);
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // k
+    ggml_metal_encoder_set_buffer  (enc, bid_rot,       2); // rotation (or dummy)
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3); // packed_out (dst)
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4); // scales
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5); // boundaries
+    ggml_metal_encoder_set_buffer  (enc, bid_k_bias,    6); // k_bias (or dummy)
+    ggml_metal_encoder_set_buffer  (enc, bid_codebook,  7); // codebook (or dummy)
+    ggml_metal_encoder_set_buffer  (enc, bid_zeros,     8); // zeros_out (or dummy)
+    ggml_metal_encoder_set_buffer  (enc, bid_locs_enc,  9); // locs (indexed addressing)
+
+    ggml_metal_encoder_dispatch_threadgroups(enc, batchSize, numKVHeads, 1, block_size, 1, 1);
+    return 1;
+}
+
+int ggml_metal_op_tq_encode_v(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    const int headDim    = (int)op->src[0]->ne[0];
+    const int numKVHeads = (int)op->src[0]->ne[1];
+    const int batchSize  = (int)op->src[0]->ne[2];
+    const int bits       = (int)((const int32_t *)op->op_params)[0];
+    const int firstCell  = (int)((const int32_t *)op->op_params)[1];
+    const int vIsF32      = (op->src[0]->type == GGML_TYPE_F32) ? 1 : 0;
+    const int hasRotation = (op->src[1] != nullptr) ? 1 : 0;
+    const int hasCodebook = (op->src[5] != nullptr && tq_metal_eden_enabled()) ? 1 : 0; // src[5]=codebook for V
+    // src[6] = locs (NULL = contiguous; [batchSize] i32 = indexed slots).
+    const struct ggml_tensor * locs_v = op->src[6];
+    const int hasLocs_v = locs_v ? 1 : 0;
+    ggml_metal_buffer_id bid_locs_v = locs_v ? ggml_metal_get_buffer_id(locs_v) : ggml_metal_get_buffer_id(op);
+
+    const int block_size = tq_encode_block_size(headDim);
+
+    ggml_metal_kargs_tq_encode args = {
+        /*.headDim     =*/ headDim,
+        /*.numKVHeads  =*/ numKVHeads,
+        /*.bits        =*/ bits,
+        /*.firstCell   =*/ firstCell,
+        /*.kIsF32      =*/ vIsF32,
+        /*.hasRotation =*/ hasRotation,
+        /*.hasBias     =*/ 0,
+        /*.hasCodebook =*/ hasCodebook,
+        /*.asymmetric  =*/ 0, // V encode is always symmetric
+        /*.hasLocs     =*/ hasLocs_v,
+    };
+
+    auto pipeline = ggml_metal_library_get_pipeline_tq_encode_v(lib);
+
+    ggml_metal_buffer_id bid_rot      = hasRotation
+        ? ggml_metal_get_buffer_id(op->src[1])
+        : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_codebook = hasCodebook
+        ? ggml_metal_get_buffer_id(op->src[5])
+        : ggml_metal_get_buffer_id(op);
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // v
+    ggml_metal_encoder_set_buffer  (enc, bid_rot,      2); // rotation (or dummy)
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3); // packed_out (dst)
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4); // scales
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5); // boundaries
+    ggml_metal_encoder_set_buffer  (enc, bid_codebook, 6); // codebook (or dummy)
+    ggml_metal_encoder_set_buffer  (enc, bid_locs_v,   7); // locs (indexed addressing)
+
+    ggml_metal_encoder_dispatch_threadgroups(enc, batchSize, numKVHeads, 1, block_size, 1, 1);
+    return 1;
+}
+
+int ggml_metal_op_tq_encode_kv(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    // src layout: [0]=K, [1]=rotation, [2]=V, [3]=K_scales, [4]=K_bounds,
+    //             [5]=V_packed, [6]=V_scales, [7]=V_bounds
+    const int headDim    = (int)op->src[0]->ne[0];
+    const int numKVHeads = (int)op->src[0]->ne[1];
+    const int batchSize  = (int)op->src[0]->ne[2];
+    const int kIsF32     = (op->src[0]->type == GGML_TYPE_F32) ? 1 : 0;
+    const int vIsF32     = (op->src[2]->type == GGML_TYPE_F32) ? 1 : 0;
+    const int hasRotation = (op->src[1] != nullptr) ? 1 : 0;
+
+    int32_t k_bits, v_bits, firstCell;
+    memcpy(&k_bits,    (const int32_t *)op->op_params + 0, sizeof(int32_t));
+    memcpy(&v_bits,    (const int32_t *)op->op_params + 1, sizeof(int32_t));
+    memcpy(&firstCell, (const int32_t *)op->op_params + 2, sizeof(int32_t));
+
+    // src[11] = locs (NULL = contiguous; [batchSize] i32 = indexed slots).
+    const struct ggml_tensor * locs_kv = op->src[11];
+    const int hasLocs_kv = locs_kv ? 1 : 0;
+    ggml_metal_buffer_id bid_locs_kv = locs_kv ? ggml_metal_get_buffer_id(locs_kv) : ggml_metal_get_buffer_id(op);
+
+    const int block_size = tq_encode_block_size(headDim);
+
+    ggml_metal_buffer_id bid_rot = hasRotation
+        ? ggml_metal_get_buffer_id(op->src[1])
+        : ggml_metal_get_buffer_id(op);
+
+    // K encode: src[8]=k_bias, src[9]=k_codebook
+    const bool eden_enabled_kv = tq_metal_eden_enabled();
+    {
+        const int hasBias_k     = (op->src[8] != nullptr) ? 1 : 0;
+        const int hasCodebook_k = (op->src[9] != nullptr && eden_enabled_kv) ? 1 : 0;
+        ggml_metal_kargs_tq_encode args_k = {
+            /*.headDim     =*/ headDim,
+            /*.numKVHeads  =*/ numKVHeads,
+            /*.bits        =*/ k_bits,
+            /*.firstCell   =*/ firstCell,
+            /*.kIsF32      =*/ kIsF32,
+            /*.hasRotation =*/ hasRotation,
+            /*.hasBias     =*/ hasBias_k,
+            /*.hasCodebook =*/ hasCodebook_k,
+            /*.asymmetric  =*/ 0, // KV path never asymmetric (Go routes to separate K+V)
+            /*.hasLocs     =*/ hasLocs_kv,
+        };
+        ggml_metal_buffer_id bid_k_bias   = hasBias_k
+            ? ggml_metal_get_buffer_id(op->src[8])
+            : ggml_metal_get_buffer_id(op);
+        ggml_metal_buffer_id bid_k_codebook = hasCodebook_k
+            ? ggml_metal_get_buffer_id(op->src[9])
+            : ggml_metal_get_buffer_id(op);
+        auto pipeline_k = ggml_metal_library_get_pipeline_tq_encode(lib);
+        ggml_metal_encoder_set_pipeline(enc, pipeline_k);
+        ggml_metal_encoder_set_bytes   (enc, &args_k, sizeof(args_k), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1); // K
+        ggml_metal_encoder_set_buffer  (enc, bid_rot,        2); // rotation (or dummy)
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3); // dst = K packed
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[3]), 4); // K scales
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), 5); // K bounds
+        ggml_metal_encoder_set_buffer  (enc, bid_k_bias,     6); // k_bias (or dummy)
+        ggml_metal_encoder_set_buffer  (enc, bid_k_codebook, 7); // k_codebook (or dummy)
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 8); // zeros_out (dummy — KV path is always symmetric)
+        ggml_metal_encoder_set_buffer  (enc, bid_locs_kv,    9); // locs (indexed addressing)
+        ggml_metal_encoder_dispatch_threadgroups(enc, batchSize, numKVHeads, 1, block_size, 1, 1);
+    }
+
+    // V encode: src[10]=v_codebook
+    {
+        const int hasCodebook_v = (op->src[10] != nullptr && eden_enabled_kv) ? 1 : 0;
+        ggml_metal_kargs_tq_encode args_v = {
+            /*.headDim     =*/ headDim,
+            /*.numKVHeads  =*/ numKVHeads,
+            /*.bits        =*/ v_bits,
+            /*.firstCell   =*/ firstCell,
+            /*.kIsF32      =*/ vIsF32,
+            /*.hasRotation =*/ hasRotation,
+            /*.hasBias     =*/ 0,
+            /*.hasCodebook =*/ hasCodebook_v,
+            /*.asymmetric  =*/ 0,
+            /*.hasLocs     =*/ hasLocs_kv,
+        };
+        ggml_metal_buffer_id bid_v_codebook = hasCodebook_v
+            ? ggml_metal_get_buffer_id(op->src[10])
+            : ggml_metal_get_buffer_id(op);
+        auto pipeline_v = ggml_metal_library_get_pipeline_tq_encode_v(lib);
+        ggml_metal_encoder_set_pipeline(enc, pipeline_v);
+        ggml_metal_encoder_set_bytes   (enc, &args_v, sizeof(args_v), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[2]), 1); // V
+        ggml_metal_encoder_set_buffer  (enc, bid_rot,        2); // rotation (or dummy)
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), 3); // V packed
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]), 4); // V scales
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[7]), 5); // V bounds
+        ggml_metal_encoder_set_buffer  (enc, bid_v_codebook, 6); // v_codebook (or dummy)
+        ggml_metal_encoder_set_buffer  (enc, bid_locs_kv,    7); // locs (indexed addressing)
+        ggml_metal_encoder_dispatch_threadgroups(enc, batchSize, numKVHeads, 1, block_size, 1, 1);
+    }
+
+    return 1;
+}
+
+int ggml_metal_op_tq_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    const ggml_tensor * Q    = op->src[0];
+    const ggml_tensor * K_p  = op->src[1];
+    const ggml_tensor * V    = op->src[2];
+    const ggml_tensor * mask = op->src[3];
+    // src[4]=K_scales, src[5]=K_codebook, src[6]=V_scales (NULL for K-only), src[7]=V_codebook
+    const bool v_packed = (op->src[6] != nullptr);
+
+    float scale;
+    float logit_softcap;
+    int32_t bits;
+    int32_t firstCell;
+    int32_t v_bits;
+    int32_t asymmetric;
+    int32_t outlier_bits;
+    int32_t outlier_count;
+    int32_t outlier_packed_bytes;
+    memcpy(&scale,               (const float   *)op->op_params + 0, sizeof(float));
+    memcpy(&logit_softcap,       (const float   *)op->op_params + 1, sizeof(float));
+    memcpy(&bits,                (const int32_t *)op->op_params + 2, sizeof(int32_t));
+    memcpy(&firstCell,           (const int32_t *)op->op_params + 3, sizeof(int32_t));
+    memcpy(&v_bits,              (const int32_t *)op->op_params + 4, sizeof(int32_t));
+    int32_t outlier_idx_stride;
+    memcpy(&outlier_idx_stride,  (const int32_t *)op->op_params + 5, sizeof(int32_t));
+    memcpy(&asymmetric,          (const int32_t *)op->op_params + 6, sizeof(int32_t));
+    memcpy(&outlier_bits,        (const int32_t *)op->op_params + 7, sizeof(int32_t));
+    memcpy(&outlier_count,       (const int32_t *)op->op_params + 8, sizeof(int32_t));
+    memcpy(&outlier_packed_bytes,(const int32_t *)op->op_params + 9, sizeof(int32_t));
+
+    if (logit_softcap != 0.0f) { scale /= logit_softcap; }
+
+    const int D        = (int)Q->ne[0];
+    // Fallback for tensors encoded before this change (op_params[5] == 0).
+    if (outlier_idx_stride == 0) {
+        const int bmap_words     = D / 32;
+        const int prefix_int16s  = (bmap_words + 1) / 2;
+        outlier_idx_stride       = outlier_count + bmap_words * 2 + prefix_int16s;
+    }
+    const int nTokensQ = (int)Q->ne[1];
+    const int nHeadsQ  = (int)Q->ne[2];
+    const int nSeq     = (int)Q->ne[3];
+
+    int packedBytes;
+    if (outlier_count > 0) {
+        const int regular_count = D - outlier_count;
+        const int raw = (regular_count * bits + 7) / 8;
+        packedBytes = (raw + 3) & ~3;
+    } else {
+        packedBytes = (D * bits + 7) / 8;
+    }
+    const int v_packedBytes = v_packed ? ((D * v_bits + 7) / 8) : 0;
+    GGML_ASSERT((!v_packed || v_packedBytes > 0) && "v_packed path requires v_bits > 0");
+    const int nKVHeads      = v_packed ? ((int)V->ne[0] / v_packedBytes) : (int)V->ne[2];
+
+    int nCells;
+    if (v_packed) {
+        GGML_ASSERT(mask != nullptr);
+        nCells = (int)mask->ne[0];
+        // mask->ne[0] is the KV window length; it must not exceed the packed-V
+        // buffer's cell capacity (ne[1]), or the kernel would read past it.
+        GGML_ASSERT(nCells <= (int)V->ne[1] && "nCells (mask width) exceeds packed-V cell capacity");
+    } else {
+        nCells = (int)V->ne[1];
+    }
+
+    // ncols selection for packed+outlier paths (tq2/tq3/tq4):
+    //
+    //   ncols=8  packed+outlier D∈{64,128}, prefill (nTokensQ≥8)
+    //            4× fewer kernel dispatches; amortizes per-dispatch K-decode
+    //            overhead over 8 query columns. D=128 uses simdgroup_matrix
+    //            Q·K; D=64 uses scalar. Zero additional VRAM: K decode is
+    //            hoisted outside the ncols loop. Zero PPL impact: K layout
+    //            and scale application are identical across ncols values.
+    //
+    //   ncols=R  GQA-fused decode (nTokensQ==1, outlier+packed, D∈{64,128}, GQA ratio R>1).
+    //            Dispatch nKVHeads groups in Z (not nHeadsQ); each group decodes
+    //            K once and computes R QK dot products (one per sharing Q head).
+    //            Amortizes K decode overhead by R×, matching ncols=8 prefill gain.
+    //            ncols capped at 4 to stay in scalar path (avoids simdgroup_matrix).
+    //            Zero VRAM overhead; PPL identical (same arithmetic, different order).
+    //
+    //   ncols=2  all other prefill paths (non-outlier, D∉{64,128}, or
+    //            nTokensQ<8). Lower register pressure; scalar Q·K.
+    //
+    //   ncols=1  single-token decode.
+    const bool is_packed_outlier = (outlier_count > 0 && v_packed);
+    const bool is_packed_outlier_ncols8 = (is_packed_outlier && (D == 64 || D == 128));
+    const int gqa_decode_ratio = 0;  // GQA-fused decode disabled: fewer TGs hurts parallelism
+    const int ncols    = (nTokensQ == 1) ? 1
+        : (is_packed_outlier_ncols8 && nTokensQ >= 8 && nCells <= 1024 ? 8 : 2);
+    const int ntiles_x = (nTokensQ + ncols - 1) / ncols;
+    const int hasMask  = mask ? 1 : 0;
+    const int ne31     = mask ? (int)mask->ne[0] : 0;
+
+    // Flash-decode: split KV cells across multiple TGs for increased GPU parallelism.
+    // Decode (nTokensQ==1): nHeadsQ TGs ≈ nCores → underutilized. With nSplits=8,
+    // qwen3/8b dispatch: 8×32=256 TGs (16/core on M1 Pro) vs 32 (2/core) without splitting.
+    // Active for is_packed_outlier D∈{64,128,256,512}: all have dedicated _dec + _reduce kernels.
+    // Skip flash-decode for small KV caches: at nCells<=128 the 8-split dispatch overhead
+    // exceeds the parallelism benefit, hurting gemma4:e2b SWA layers at ctx<=256.
+    // f16_outlier: K quantized with outliers, V is f16 (v_packed==false, outlier_count>0).
+    // vonly implies v_packed && bits==0, so !v_packed already excludes vonly.
+    const bool is_f16_outlier = (outlier_count > 0 && !v_packed);
+    // WHT-Q fused FA: K stored in WHT domain; src[9] = wht_signs. Routes to
+    // kernel_tq_fattn_konly_wht_{d256,d512} which applies WHT to Q once and
+    // dequantizes K inline, eliminating per-cell WHT-undo dispatches (Path 2c).
+    // D=512 has a flash-decode variant (_dec) for gemma4:e2b global-attention layers.
+    const bool is_wht_q = (op->src[9] != nullptr && is_f16_outlier);
+    // f16_outlier flash-decode (_dec) kernels exist only for D=256 and D=512.
+    // Restrict the f16_outlier split to those head dims; otherwise D=64/128 would
+    // dispatch the reduce pass against a non-_dec kernel and combine uninitialized
+    // partials, silently corrupting the output.
+    const int seq_split_n = (nTokensQ == 1 &&
+        (is_packed_outlier ||
+         (is_f16_outlier && (!is_wht_q || D == 512) && (D == 256 || D == 512)))
+        && nCells > 128) ? 8 : 0;
+
+    // src[11] = locs (NULL = contiguous; [nCells] i32 = indexed slots).
+    const struct ggml_tensor * locs_fa = op->src[11];
+    const int hasLocs_fa = locs_fa ? 1 : 0;
+    ggml_metal_buffer_id bid_locs_fa = locs_fa ? ggml_metal_get_buffer_id(locs_fa) : ggml_metal_get_buffer_id(op);
+
+    ggml_metal_kargs_tq_fattn_vec args = {
+        /*.ncols             =*/ ncols,
+        /*.nTokensQ          =*/ nTokensQ,
+        /*.nHeadsQ           =*/ nHeadsQ,
+        /*.nSeq              =*/ nSeq,
+        /*.nCells            =*/ nCells,
+        /*.nKVHeads          =*/ nKVHeads,
+        /*.bits              =*/ bits,
+        /*.firstCell         =*/ firstCell,
+        /*.packedBytes       =*/ packedBytes,
+        /*.v_bits            =*/ v_bits,
+        /*.v_packedBytes     =*/ v_packedBytes,
+        /*.hasMask           =*/ hasMask,
+        /*.ne31              =*/ ne31,
+        /*.scale             =*/ scale,
+        /*.logit_softcap     =*/ logit_softcap,
+        /*.nb01              =*/ Q->nb[1],
+        /*.nb02              =*/ Q->nb[2],
+        /*.nb03              =*/ Q->nb[3],
+        /*.nb21              =*/ V->nb[1],
+        /*.nb22              =*/ V->nb[2],
+        /*.nb23              =*/ V->nb[3],
+        /*.nb31              =*/ mask ? mask->nb[1] : 0,
+        /*.asymmetric        =*/ asymmetric,
+        /*.outlierCount      =*/ outlier_count,
+        /*.outlierBits       =*/ outlier_bits,
+        /*.outlierPackedBytes=*/ outlier_packed_bytes,
+        /*.hasLocs           =*/ hasLocs_fa,
+        /*.gqa_decode_ratio  =*/ gqa_decode_ratio,
+        /*.seq_split_n       =*/ seq_split_n,
+        /*.outlierIdxStride  =*/ outlier_idx_stride,
+    };
+
+    // V-only: bits==0 means K is raw f16; repurpose nb21/22/23 as K cell/head/seq strides.
+    // K layout: [D, nKVHeads, nCells, nSeq] → nb[1]=head stride (D*2), nb[2]=cell stride (nKVHeads*D*2).
+    // Mirrors CUDA dispatch: nb_k11=K->nb[2] (cell), nb_k12=K->nb[1] (head), nb_k13=K->nb[3] (seq).
+    const bool vonly = (bits == 0 && v_packed);
+    if (vonly) {
+        args.nb21 = K_p->nb[2];  // K cell byte stride (nKVHeads * D * sizeof(half))
+        args.nb22 = K_p->nb[1];  // K head byte stride (D * sizeof(half))
+        args.nb23 = K_p->nb[3];  // K seq  byte stride
+    }
+
+    // Select pipeline by D. Supported: 64 (llama3.2:3b), 128 (llama3.1/qwen), 256 (gemma3), 512 (gemma4 global).
+    GGML_ASSERT(D == 64 || D == 128 || D == 256 || D == 512);
+    auto pipeline = vonly
+        ? (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_vonly_d512(lib)
+         : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_vonly_d256(lib)
+         : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_vonly_d64(lib)
+                    : ggml_metal_library_get_pipeline_tq_fattn_vec_vonly(lib))
+        : is_wht_q
+        ? (D == 512 ? (seq_split_n > 0 ? ggml_metal_library_get_pipeline_tq_fattn_konly_wht_d512_dec(lib)
+                                       : ggml_metal_library_get_pipeline_tq_fattn_konly_wht_d512(lib))
+                    : ggml_metal_library_get_pipeline_tq_fattn_konly_wht_d256(lib))
+        : (outlier_count > 0 && !v_packed)
+        ? (D == 512 ? (seq_split_n > 0 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d512_dec(lib)
+                                       : ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d512(lib))
+         : D == 256 ? (seq_split_n > 0 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d256_dec(lib)
+                                       : ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d256(lib))
+         : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d64(lib)
+                    : ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier(lib))
+        : (outlier_count > 0 && v_packed)
+            ? (D == 512 ? (seq_split_n > 0 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d512_dec(lib)
+                                           : ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d512(lib))
+             : D == 256 ? (seq_split_n > 0 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d256_dec(lib)
+                          : nCells > 1024  ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d256_noscm(lib)
+                                           : ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d256(lib))
+             : (D == 64  && seq_split_n > 0) ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d64_dec(lib)
+             : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d64(lib)
+             : seq_split_n > 0 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_dec(lib)
+             : nCells > 1024   ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_noscm(lib)
+                               : ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier(lib))
+            : v_packed
+                ? (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d512(lib)
+                 : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d256(lib)
+                 : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d64(lib)
+                            : ggml_metal_library_get_pipeline_tq_fattn_vec_packed(lib))
+                : (D == 512 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d512(lib)
+                 : D == 256 ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d256(lib)
+                 : D == 64  ? ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d64(lib)
+                            : ggml_metal_library_get_pipeline_tq_fattn_vec_f16(lib));
+
+    // For V-only (bits==0), K scales/codebook are NULL — use dst as dummy.
+    ggml_metal_buffer_id bid_k_scales        = (!vonly && op->src[4]) ? ggml_metal_get_buffer_id(op->src[4]) : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_k_codebook      = (!vonly && op->src[5]) ? ggml_metal_get_buffer_id(op->src[5]) : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_mask            = hasMask       ? ggml_metal_get_buffer_id(mask)        : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_v_scales        = v_packed      ? ggml_metal_get_buffer_id(op->src[6])  : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_v_codebook      = v_packed      ? ggml_metal_get_buffer_id(op->src[7])  : ggml_metal_get_buffer_id(op);
+    // *qa buffers: src[8]=zeros, src[9]=wht_signs (WHT-Q path only), src[10..11]=reserved, src[12..15]=outlier_*
+    ggml_metal_buffer_id bid_zeros           = op->src[8]  ? ggml_metal_get_buffer_id(op->src[8])  : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_wht_signs       = is_wht_q    ? ggml_metal_get_buffer_id(op->src[9])  : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_outl_packed     = op->src[12] ? ggml_metal_get_buffer_id(op->src[12]) : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_outl_scales     = op->src[13] ? ggml_metal_get_buffer_id(op->src[13]) : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_outl_indices    = op->src[14] ? ggml_metal_get_buffer_id(op->src[14]) : ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_outl_zeros      = op->src[15] ? ggml_metal_get_buffer_id(op->src[15]) : ggml_metal_get_buffer_id(op);
+
+    // Partial-output buffer: lives just past dst data in the same Metal buffer.
+    // Allocated via ggml_metal_op_tq_flash_attn_ext_extra_tmp reservation.
+    ggml_metal_buffer_id bid_partial = ggml_metal_get_buffer_id(op);
+    bid_partial.offs += ggml_nbytes(op);
+    // Buffer 18: wht_signs for WHT-Q single-dispatch; partial output for flash-decode; unused otherwise.
+    // WHT-Q _dec uses buffer 12 for wht_signs and buffer 18 for partial_data (see below).
+    const ggml_metal_buffer_id bid_18 = (is_wht_q && seq_split_n == 0) ? bid_wht_signs : bid_partial;
+
+    const int dispatch_z = nHeadsQ * nSeq;
+
+    if (seq_split_n > 0) {
+        // Flash-decode first pass: dispatch (1, nSplits, nHeadsQ*nSeq).
+        // Each TG processes cells [split_i*(nCells/nSplits), (split_i+1)*(nCells/nSplits)).
+        ggml_metal_encoder_set_pipeline(enc, pipeline);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(Q),   1);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(K_p), 2);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(V),   3);
+        ggml_metal_encoder_set_buffer  (enc, bid_mask,                      4);
+        ggml_metal_encoder_set_buffer  (enc, bid_k_scales,                  5);
+        ggml_metal_encoder_set_buffer  (enc, bid_k_codebook,                6);
+        ggml_metal_encoder_set_buffer  (enc, bid_v_scales,                  7);
+        ggml_metal_encoder_set_buffer  (enc, bid_v_codebook,                8);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),  9);   // dst (unused by first pass)
+        ggml_metal_encoder_set_buffer  (enc, bid_zeros,                    10);
+        ggml_metal_encoder_set_buffer  (enc, bid_locs_fa,                  11);
+        if (is_wht_q) ggml_metal_encoder_set_buffer(enc, bid_wht_signs,    12);  // konly_wht_d512_dec: wht_signs at 12
+        ggml_metal_encoder_set_buffer  (enc, bid_outl_packed,              14);
+        ggml_metal_encoder_set_buffer  (enc, bid_outl_scales,              15);
+        ggml_metal_encoder_set_buffer  (enc, bid_outl_indices,             16);
+        ggml_metal_encoder_set_buffer  (enc, bid_outl_zeros,               17);
+        ggml_metal_encoder_set_buffer  (enc, bid_18,                       18);   // partial_data output
+
+        // Grid: (1, nSplits, nHeadsQ*nSeq) — Y encodes split index, Z encodes head+seq.
+        ggml_metal_encoder_dispatch_threadgroups(enc, 1, seq_split_n, dispatch_z, 32, 4, 1);
+
+        // Barrier before reduction.
+        ggml_metal_op_concurrency_reset(ctx);
+
+        // Reduction pass: combine partial results → final dst.
+        ggml_metal_kargs_tq_fattn_reduce rargs = {
+            /*.nRows   =*/ dispatch_z,
+            /*.D       =*/ D,
+            /*.nSplits =*/ seq_split_n,
+        };
+        auto reduce_pipeline = (D == 64)  ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d64_reduce(lib)
+                             : (D == 256) ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d256_reduce(lib)
+                             : (D == 512) ? ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d512_reduce(lib)
+                             :              ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_reduce(lib);
+        ggml_metal_encoder_set_pipeline(enc, reduce_pipeline);
+        ggml_metal_encoder_set_bytes   (enc, &rargs, sizeof(rargs),         0);
+        ggml_metal_encoder_set_buffer  (enc, bid_partial,                   1);  // partial_data
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),  2);  // dst
+        // Dispatch: one TG per (head, seq), threads = D (one per dim).
+        ggml_metal_encoder_dispatch_threadgroups(enc, 1, 1, dispatch_z, D, 1, 1);
+    } else {
+        // Normal (non-flash) path: single dispatch.
+        ggml_metal_encoder_set_pipeline(enc, pipeline);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(Q),   1);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(K_p), 2);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(V),   3);
+        ggml_metal_encoder_set_buffer  (enc, bid_mask,                      4);
+        ggml_metal_encoder_set_buffer  (enc, bid_k_scales,                  5);
+        ggml_metal_encoder_set_buffer  (enc, bid_k_codebook,                6);
+        ggml_metal_encoder_set_buffer  (enc, bid_v_scales,                  7);
+        ggml_metal_encoder_set_buffer  (enc, bid_v_codebook,                8);
+        ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),  9);
+        ggml_metal_encoder_set_buffer  (enc, bid_zeros,                    10);
+        ggml_metal_encoder_set_buffer  (enc, bid_locs_fa,                  11);
+        ggml_metal_encoder_set_buffer  (enc, bid_outl_packed,              14);
+        ggml_metal_encoder_set_buffer  (enc, bid_outl_scales,              15);
+        ggml_metal_encoder_set_buffer  (enc, bid_outl_indices,             16);
+        ggml_metal_encoder_set_buffer  (enc, bid_outl_zeros,               17);
+        ggml_metal_encoder_set_buffer  (enc, bid_18,                       18);   // wht_signs (WHT-Q) or unused (seq_split_n==0)
+
+        // Block: (32, 4, 1) = 128 threads.
+        ggml_metal_encoder_dispatch_threadgroups(enc, ntiles_x, 1, dispatch_z, 32, 4, 1);
+    }
     return 1;
 }

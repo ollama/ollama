@@ -942,4 +942,153 @@ typedef struct {
     int64_t  np;
 } ggml_metal_kargs_opt_step_sgd;
 
+// TurboQuant (TQ) — dynamic KV-cache compression at inference time
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t bits;
+    int32_t firstCell;
+    int32_t packed_bytes;  // (headDim * bits + 7) / 8
+    int32_t codebook_len;
+    int32_t hasLocs;       // 1 = indexed (cell = locs[c]); 0 = contiguous (cell = firstCell + c)
+} ggml_metal_kargs_tq_dequant;
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t bits;
+    int32_t firstCell;
+    int32_t reg_packed_bytes;  // padded: (reg_count * bits + 7) / 8, aligned to 4
+    int32_t outlier_bits;
+    int32_t outlier_count;
+    int32_t out_packed_bytes;  // padded: (outlierCount * outlierBits + 7) / 8, aligned to 4
+    int32_t asymmetric;        // 1 = subtract mean before quant, store zero
+    int32_t hasLocs;           // 1 = indexed (cell = locs[c]); 0 = contiguous
+} ggml_metal_kargs_tq_dequant_outlier;
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t k_bits;
+    int32_t v_bits;
+    int32_t firstCell;
+    int32_t k_packed_bytes;
+    int32_t v_packed_bytes;
+    int32_t k_codebook_len;
+    int32_t v_codebook_len;
+    int32_t hasLocs;           // 1 = indexed (cell = locs[c]); 0 = contiguous
+} ggml_metal_kargs_tq_dequant_kv;
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t bits;
+    int32_t firstCell;
+    int32_t kIsF32;       // 1 = f32 input, 0 = f16
+    int32_t hasRotation;  // 1 = apply rotation matrix, 0 = skip
+    int32_t hasBias;      // 1 = K projection bias present in src[bias_slot]
+    int32_t hasCodebook;  // 1 = Lloyd-Max codebook provided, 0 = uniform quantization
+    int32_t asymmetric;   // 1 = compute mean, subtract before quant, write to zeros_out
+    int32_t hasLocs;      // 1 = indexed (cell = locs[c]); 0 = contiguous
+} ggml_metal_kargs_tq_encode;
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t bits;
+    int32_t firstCell;
+    int32_t kIsF32;
+    int32_t outlierBits;
+    int32_t outlierCount;
+    int32_t asymmetric;        // 1 = subtract mean before quant, store zero
+    int32_t hasBias;           // 1 = K projection bias present in src[15]
+    int32_t hasCodebook;       // 1 = regular codebook bound for EDEN refinement
+    int32_t hasOutlierCodebook;// 1 = outlier codebook bound for EDEN refinement
+    int32_t hasLocs;           // 1 = indexed (cell = locs[c]); 0 = contiguous
+} ggml_metal_kargs_tq_encode_outlier;
+
+// ggml_metal_kargs_tq_enc_dq_wht — fused TQ-encode + K-outlier dequant + WHT undo.
+// Extends tq_dequant_outlier with an encode prologue: for the designated cell
+// (encCellIdx), the kernel loads k_new, applies WHT forward, copies outlier
+// positions from the previous slot, computes stats, and packs — then falls
+// through to the standard decode path.  All other cells decode normally.
+// src layout in the corresponding GGML op:
+//   src[0..12]: same as tq_dequant_outlier (packed, scales, codebooks, …)
+//   src[13]: k_new — raw K input for the encode cell (f16 or f32)
+//   src[14]: boundaries — regular quantization boundary table
+//   src[15]: outlier_boundaries — outlier quantization boundary table
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+    int32_t bits;
+    int32_t firstCell;
+    int32_t reg_packed_bytes;  // padded: (reg_count * bits + 7) / 8, aligned to 4
+    int32_t outlier_bits;
+    int32_t outlier_count;
+    int32_t out_packed_bytes;  // padded: (outlierCount * outlierBits + 7) / 8, aligned to 4
+    int32_t asymmetric;        // 1 = subtract mean before quant, store zero
+    int32_t hasLocs;           // 1 = indexed (cell = locs[c]); 0 = contiguous
+    int32_t encEnabled;        // 1 = run encode prologue for encCellIdx
+    int32_t encCellIdx;        // absolute cell index to encode
+    int32_t encKIsF32;         // 0 = f16 k_new input, 1 = f32
+} ggml_metal_kargs_tq_enc_dq_wht;
+
+typedef struct {
+    int32_t  ncols;       // Q columns per threadgroup: 1 (decode), 2, or 8 (packed-outlier D64/D128 prefill)
+    int32_t  nTokensQ;
+    int32_t  nHeadsQ;
+    int32_t  nSeq;
+    int32_t  nCells;
+    int32_t  nKVHeads;
+    int32_t  bits;        // K bits
+    int32_t  firstCell;
+    int32_t  packedBytes; // K packed bytes per head
+    int32_t  v_bits;      // 0 when V is f16
+    int32_t  v_packedBytes;
+    int32_t  hasMask;     // 1 = mask buffer valid
+    int32_t  ne31;        // mask row width (= nCells)
+    float    scale;
+    float    logit_softcap;
+    uint64_t nb01; // Q stride: bytes between consecutive tokens
+    uint64_t nb02; // Q stride: bytes between consecutive heads
+    uint64_t nb03; // Q stride: bytes between consecutive sequences
+    uint64_t nb21; // V stride: bytes between cells  (f16 path only)
+    uint64_t nb22; // V stride: bytes between heads  (f16 path only)
+    uint64_t nb23; // V stride: bytes between seqs   (f16 path only)
+    uint64_t nb31; // mask stride: bytes between token rows
+    // *qa extension fields (asymmetric primary + outlier-split)
+    int32_t  asymmetric;          // 1 = asymmetric primary quantization
+    int32_t  outlierCount;        // 0 = no outlier-split
+    int32_t  outlierBits;         // bits per outlier index
+    int32_t  outlierPackedBytes;  // padded outlier packed bytes per cell-head
+    int32_t  hasLocs;             // 1 = indexed (cell = locs[c]); 0 = contiguous
+    int32_t  gqa_decode_ratio;    // 0 = normal; >0 = GQA-fused decode (Z dim = nKVHeads, ncols = ratio)
+    int32_t  seq_split_n;         // 0 = normal; >0 = flash-decode first pass (grid Y = nSplits)
+    int32_t  outlierIdxStride;    // int16 stride per cell-head in outlier_indices tensor
+                                  // = outlierCount + 2*bmapWords + prefixInt16s
+                                  // (bmapWords = D/32, prefixInt16s = (bmapWords+1)/2)
+} ggml_metal_kargs_tq_fattn_vec;
+
+typedef struct {
+    int32_t  nRows;      // nSeq * nHeadsQ (total output rows)
+    int32_t  D;          // head dim
+    int32_t  nSplits;    // number of sequence splits
+} ggml_metal_kargs_tq_fattn_reduce;
+
+typedef struct {
+    int32_t  headDim;  // ne[0], must be power-of-2
+    int32_t  ne1;      // src->ne[1]
+    int32_t  ne2;      // src->ne[2]
+    int32_t  ne3;      // src->ne[3]
+    uint64_t nb1;      // src->nb[1] in bytes
+    uint64_t nb2;      // src->nb[2] in bytes
+    uint64_t nb3;      // src->nb[3] in bytes
+} ggml_metal_kargs_tq_wht;
+
+typedef struct {
+    int32_t headDim;
+    int32_t numKVHeads;
+} ggml_metal_kargs_tq_wht_f16_inplace;
+
 #endif // GGML_METAL_IMPL

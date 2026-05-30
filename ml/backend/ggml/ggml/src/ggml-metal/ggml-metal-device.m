@@ -406,9 +406,9 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
 
         id<MTLComputePipelineState> obj = [lib->device newComputePipelineStateWithFunction:mtl_function error:&error];
 
-        [mtl_function release];
-
         if (!obj) {
+            [mtl_function release];
+
             [lib->lock unlock];
 
             GGML_LOG_ERROR("%s: failed to create pipeline state: base = '%s', name = '%s'\n", __func__, base, name);
@@ -418,6 +418,8 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
 
             return res;
         }
+
+        [mtl_function release];
 
         GGML_LOG_DEBUG("%s: loaded %-40s %16p | th_max = %4d | th_width = %4d\n", __func__, name,
                 (void *) obj,
@@ -1181,6 +1183,17 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         case GGML_OP_OPT_STEP_ADAMW:
         case GGML_OP_OPT_STEP_SGD:
             return has_simdgroup_reduction;
+        case GGML_OP_TQ_WHT:
+        case GGML_OP_TQ_ENCODE:
+        case GGML_OP_TQ_ENCODE_V:
+        case GGML_OP_TQ_ENCODE_KV:
+        case GGML_OP_TQ_DEQUANT:
+        case GGML_OP_TQ_DEQUANT_KV:
+        case GGML_OP_TQ_FLASH_ATTN_EXT:
+            return has_simdgroup_reduction;
+        case GGML_OP_TQ_ENCODED_PROXY:
+            // No-op proxy; safe regardless of hardware capability.
+            return true;
         default:
             return false;
     }

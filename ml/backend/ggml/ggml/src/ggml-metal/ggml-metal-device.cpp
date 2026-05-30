@@ -1704,3 +1704,59 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_opt_step_sgd(ggm
 
     return res;
 }
+
+// TurboQuant pipeline getters — fixed-name kernels, no variants
+
+static struct ggml_metal_pipeline_with_params tq_get_pipeline(ggml_metal_library_t lib, const char * name) {
+    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+    if (!res.pipeline) {
+        res = ggml_metal_library_compile_pipeline(lib, name, name, nullptr);
+    }
+    return res;
+}
+
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_wht           (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_wht");            }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_wht_f16       (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_wht_f16");        }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_dequant       (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_dequant");        }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_dequant_outlier(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_dequant_outlier"); }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_encode        (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_encode");          }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_encode_v      (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_encode_v");        }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_encode_outlier(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_encode_outlier");  }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16         (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16");          }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier     (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_outlier");      }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d64 (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_outlier_d64");  }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d256(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_outlier_d256"); }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d512(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_outlier_d512"); }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d256_dec(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_outlier_d256_dec"); }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_outlier_d512_dec(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_outlier_d512_dec"); }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_konly_wht_d256    (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_konly_wht_d256");     }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_konly_wht_d512    (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_konly_wht_d512");     }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_konly_wht_d512_dec(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_konly_wht_d512_dec"); }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier             (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier");              }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d64         (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_d64");          }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_dec         (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_dec");          }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d64_dec     (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_d64_dec");      }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d256        (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_d256");         }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d256_dec    (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_d256_dec");     }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d256_reduce (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_d256_reduce");  }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d512        (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_d512");         }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d512_dec    (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_d512_dec");     }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d512_reduce (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_d512_reduce");  }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_noscm    (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_noscm");     }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d256_noscm(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_d256_noscm"); }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed      (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed");       }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d64     (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_d64");      }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d64  (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_d64");   }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d256    (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_d256");     }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d256 (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_d256");  }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_f16_d512    (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_f16_d512");     }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_d512 (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_d512");  }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_dequant_outlier_wht   (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_dequant_outlier_wht");    }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_wht_f16_inplace       (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_wht_f16_inplace");         }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_vonly        (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_vonly");          }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_vonly_d64    (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_vonly_d64");       }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_vonly_d256   (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_vonly_d256");      }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_vonly_d512   (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_vonly_d512");      }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_reduce    (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_reduce");     }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_fattn_vec_packed_outlier_d64_reduce(ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_fattn_vec_packed_outlier_d64_reduce"); }
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq_enc_dq_wht                        (ggml_metal_library_t lib) { return tq_get_pipeline(lib, "kernel_tq_enc_dq_wht");                          }
