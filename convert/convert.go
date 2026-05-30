@@ -246,7 +246,10 @@ func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ofs.Config) error {
 		return errors.New("unsupported architecture")
 	}
 
-	ts, err := parseTensors(fsys, strings.NewReplacer(conv.Replacements()...))
+	ts, cleanup, err := parseTensors(fsys, strings.NewReplacer(conv.Replacements()...))
+	if cleanup != nil {
+		defer cleanup()
+	}
 	if err != nil {
 		return err
 	}
@@ -388,7 +391,10 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 	}
 	conv := kv.(ModelConverter)
 
-	ts, err := parseTensors(fsys, strings.NewReplacer(conv.Replacements()...))
+	ts, cleanup, err := parseTensors(fsys, strings.NewReplacer(conv.Replacements()...))
+	if cleanup != nil {
+		defer cleanup()
+	}
 	if err != nil {
 		return err
 	}
@@ -408,7 +414,10 @@ func ConvertModelWithDraft(fsys fs.FS, draftFsys fs.FS, f *os.File) error {
 	conv := kv.(ModelConverter)
 
 	replacer := strings.NewReplacer(conv.Replacements()...)
-	ts, err := parseTensors(fsys, replacer)
+	ts, cleanup, err := parseTensors(fsys, replacer)
+	if cleanup != nil {
+		defer cleanup()
+	}
 	if err != nil {
 		return err
 	}
@@ -427,7 +436,10 @@ func ConvertModelWithDraft(fsys fs.FS, draftFsys fs.FS, f *os.File) error {
 	// → (prefix) "draft.model.language_model.layers.0.self_attn.q_proj.weight"
 	// → (replace) "draft.blk.0.attn_q.weight"
 	identityReplacer := strings.NewReplacer()
-	draftTs, err := parseSafetensors(draftFsys, identityReplacer, draftMatches...)
+	draftTs, draftCleanup, err := parseSafetensors(draftFsys, identityReplacer, draftMatches...)
+	if draftCleanup != nil {
+		defer draftCleanup()
+	}
 	if err != nil {
 		return fmt.Errorf("draft: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"strings"
 )
 
@@ -80,10 +81,10 @@ func (t *tensorBase) SetRepacker(fn Repacker) {
 
 type Repacker func(string, []float32, []uint64) ([]float32, error)
 
-func parseTensors(fsys fs.FS, replacer *strings.Replacer) ([]Tensor, error) {
+func parseTensors(fsys fs.FS, replacer *strings.Replacer) ([]Tensor, func(), error) {
 	patterns := []struct {
 		Pattern string
-		Func    func(fs.FS, *strings.Replacer, ...string) ([]Tensor, error)
+		Func    func(fs.FS, *strings.Replacer, ...string) ([]Tensor, func(), error)
 	}{
 		{"*.safetensors", parseSafetensors},
 		{"pytorch_model-*-of-*.bin", parseTorch},
@@ -94,7 +95,7 @@ func parseTensors(fsys fs.FS, replacer *strings.Replacer) ([]Tensor, error) {
 	for _, pattern := range patterns {
 		matches, err := fs.Glob(fsys, pattern.Pattern)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		if len(matches) > 0 {
@@ -102,5 +103,38 @@ func parseTensors(fsys fs.FS, replacer *strings.Replacer) ([]Tensor, error) {
 		}
 	}
 
-	return nil, errors.New("unknown tensor format")
+	return nil, nil, errors.New("unknown tensor format")
+}
+
+type fileNamer interface {
+	Name() string
+}
+
+func tryMmapFiles(fsys fs.FS, paths []string) (map[string]*mmapRegion, func()) {
+	mmaps := make(map[string]*mmapRegion)
+	for _, p := range paths {
+		if _, ok := mmaps[p]; ok {
+			continue
+		}
+		f, err := fsys.Open(p)
+		if err != nil {
+			continue
+		}
+		if n, ok := f.(fileNamer); ok {
+			m, err := mmapOpen(n.Name())
+			if err == nil && m != nil {
+				mmaps[p] = m
+			} else if err != nil {
+				slog.Debug("mmap failed, using buffered reads", "path", p, "error", err)
+			}
+		}
+		f.Close()
+	}
+
+	cleanup := func() {
+		for _, m := range mmaps {
+			m.Close()
+		}
+	}
+	return mmaps, cleanup
 }

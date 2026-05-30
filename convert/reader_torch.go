@@ -9,12 +9,12 @@ import (
 	"github.com/nlpodyssey/gopickle/types"
 )
 
-func parseTorch(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]Tensor, error) {
+func parseTorch(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]Tensor, func(), error) {
 	var ts []Tensor
 	for _, p := range ps {
 		pt, err := pytorch.Load(p)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		for _, k := range pt.(*types.Dict).Keys() {
@@ -35,7 +35,7 @@ func parseTorch(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]Tensor,
 		}
 	}
 
-	return ts, nil
+	return ts, func() {}, nil
 }
 
 type torch struct {

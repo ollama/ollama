@@ -581,7 +581,6 @@ func WriteGGUF(f *os.File, kv fs.Config, ts []*Tensor) error {
 
 	var g errgroup.Group
 	g.SetLimit(runtime.GOMAXPROCS(0))
-	// TODO consider reducing if tensors size * gomaxprocs is larger than free memory
 	for _, t := range ts {
 		w := io.NewOffsetWriter(f, offset+int64(t.Offset))
 		g.Go(func() error {

@@ -362,7 +362,10 @@ func TestParseSafetensorsConsumesFP8ScaleCompanion(t *testing.T) {
 	})
 	writeFP8BlockConfig(t, tempDir, 128, 128)
 
-	tensors, err := parseSafetensors(os.DirFS(tempDir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
+	tensors, cleanup, err := parseSafetensors(os.DirFS(tempDir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
+	if cleanup != nil {
+		defer cleanup()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +395,7 @@ func TestParseSafetensorsRejectsFP8WithoutBlockMetadata(t *testing.T) {
 		},
 	})
 
-	_, err := parseSafetensors(os.DirFS(tempDir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
+	_, _, err := parseSafetensors(os.DirFS(tempDir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
 	if err == nil || !strings.Contains(err.Error(), "missing fp8 block size metadata") {
 		t.Fatalf("expected missing fp8 block size metadata error, got %v", err)
 	}
@@ -419,7 +422,7 @@ func TestParseSafetensorsRejectsAmbiguousFP8ScaleCompanion(t *testing.T) {
 	})
 	writeFP8BlockConfig(t, tempDir, 128, 128)
 
-	_, err := parseSafetensors(os.DirFS(tempDir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
+	_, _, err := parseSafetensors(os.DirFS(tempDir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
 	if err == nil || !strings.Contains(err.Error(), "multiple fp8 scale companions") {
 		t.Fatalf("expected ambiguous fp8 scale companion error, got %v", err)
 	}
