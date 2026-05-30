@@ -220,6 +220,18 @@ func TestLFM2Renderer_ChatTemplateParity(t *testing.T) {
 			expected:   "<|startoftext|><|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\nA1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
+			// The non-thinking variant must never emit <think> tags, even for a
+			// trailing assistant prefill (which is exempt from thinking stripping).
+			name:     "non_thinking_renderer_drops_thinking_metadata_on_prefill",
+			renderer: &LFM2Renderer{IsThinking: false},
+			messages: []api.Message{
+				{Role: "user", Content: "Hi"},
+				{Role: "assistant", Content: "Hello", Thinking: "some reasoning"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   "<|startoftext|><|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\nHello",
+		},
+		{
 			name:     "arbitrary_roles_are_rendered_verbatim",
 			renderer: &LFM2Renderer{IsThinking: false},
 			messages: []api.Message{

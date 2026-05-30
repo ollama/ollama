@@ -297,8 +297,10 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 		// Reconstruct the inline <think>...</think> block from the separate
 		// Thinking field so reasoning turns round-trip in the model's own format:
 		// thinking precedes any tool calls and content. A direct answer carries no
-		// Thinking, so nothing is added.
-		if message.Role == "assistant" && message.Thinking != "" && !strings.Contains(content, lfm2ThinkingCloseTag) {
+		// Thinking, so nothing is added. Only the thinking variant emits these tags;
+		// the non-thinking renderer must never send them, including for a trailing
+		// assistant prefill (which is exempt from the stripping below).
+		if r.IsThinking && message.Role == "assistant" && message.Thinking != "" && !strings.Contains(content, lfm2ThinkingCloseTag) {
 			content = lfm2ThinkingOpenTag + message.Thinking + lfm2ThinkingCloseTag + content
 		}
 		// Drop reasoning from earlier assistant turns unless thinking is kept; the
