@@ -11,13 +11,20 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-const (
-	lagunaDirectDirective = "You should respond directly without using chain-of-thought reasoning tags."
-	lagunaThinkDirective  = "You should use chain-of-thought reasoning. Put your reasoning inside <think> </think> tags before your response."
-)
+// lagunaToolJSON is the get_weather tool as serialized into <available_tools>,
+// matching lagunaWeatherTool().
+const lagunaToolJSON = `{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "City"}}}}}`
 
+// TestLagunaRendererReferenceFlowCoverage checks the renderer against the Laguna
+// chat template. Each want is byte-for-byte template output (verified by
+// rendering chat_template.jinja), except that history tool-calls use the clean
+// form — the template leaks Jinja indentation there.
 func TestLagunaRendererReferenceFlowCoverage(t *testing.T) {
 	weather := lagunaWeatherTool()
+	think := func(v bool) *api.ThinkValue { return &api.ThinkValue{Value: v} }
+
+	// system header is always emitted; with no system message the default is used
+	defaultHeader := "〈|EOS|〉<system>\n\n" + lagunaDefaultSystem + "\n</system>\n"
 
 	tests := []struct {
 		name     string
@@ -27,36 +34,21 @@ func TestLagunaRendererReferenceFlowCoverage(t *testing.T) {
 		want     string
 	}{
 		{
-			name:     "user_only_thinking_default_on",
+			name:     "user_only_default",
 			messages: []api.Message{{Role: "user", Content: "Hello"}},
-			want: "" +
-				"〈|EOS|〉<system>\n" +
-				lagunaThinkDirective +
-				"\n</system>\n" +
-				"<user>\nHello\n</user>\n" +
-				"<assistant>\n",
+			want:     defaultHeader + "<user>\nHello\n</user>\n<assistant>\n</think>",
 		},
 		{
-			name:     "user_only_thinking_enabled",
+			name:     "user_only_think",
 			messages: []api.Message{{Role: "user", Content: "Hello"}},
-			think:    &api.ThinkValue{Value: true},
-			want: "" +
-				"〈|EOS|〉<system>\n" +
-				lagunaThinkDirective +
-				"\n</system>\n" +
-				"<user>\nHello\n</user>\n" +
-				"<assistant>\n",
+			think:    think(true),
+			want:     defaultHeader + "<user>\nHello\n</user>\n<assistant>\n<think>",
 		},
 		{
-			name:     "user_only_thinking_disabled",
+			name:     "user_only_nothink",
 			messages: []api.Message{{Role: "user", Content: "Hello"}},
-			think:    &api.ThinkValue{Value: false},
-			want: "" +
-				"〈|EOS|〉<system>\n" +
-				lagunaDirectDirective +
-				"\n</system>\n" +
-				"<user>\nHello\n</user>\n" +
-				"<assistant>\n",
+			think:    think(false),
+			want:     defaultHeader + "<user>\nHello\n</user>\n<assistant>\n</think>",
 		},
 		{
 			name: "first_system_is_header",
@@ -64,29 +56,20 @@ func TestLagunaRendererReferenceFlowCoverage(t *testing.T) {
 				{Role: "system", Content: "Stay concise.\n\n"},
 				{Role: "user", Content: "Hi"},
 			},
-			want: "" +
-				"〈|EOS|〉<system>\n" +
-				lagunaThinkDirective +
-				"\nStay concise." +
-				"\n</system>\n" +
-				"<user>\nHi\n</user>\n" +
-				"<assistant>\n",
+			want: "〈|EOS|〉<system>\n\nStay concise.\n</system>\n" +
+				"<user>\nHi\n</user>\n<assistant>\n</think>",
 		},
 		{
-			name: "additional_system_message_renders_in_loop",
+			name: "additional_system",
 			messages: []api.Message{
 				{Role: "system", Content: "Primary."},
 				{Role: "user", Content: "Hi"},
 				{Role: "system", Content: "Secondary."},
 			},
-			want: "" +
-				"〈|EOS|〉<system>\n" +
-				lagunaThinkDirective +
-				"\nPrimary." +
-				"\n</system>\n" +
+			want: "〈|EOS|〉<system>\n\nPrimary.\n</system>\n" +
 				"<user>\nHi\n</user>\n" +
 				"<system>\nSecondary.\n</system>\n" +
-				"<assistant>\n",
+				"<assistant>\n</think>",
 		},
 		{
 			name: "tools_in_header",
@@ -95,46 +78,32 @@ func TestLagunaRendererReferenceFlowCoverage(t *testing.T) {
 				{Role: "user", Content: "Weather?"},
 			},
 			tools: weather,
-			think: &api.ThinkValue{Value: true},
-			want: "" +
-				"〈|EOS|〉<system>\n" +
-				lagunaThinkDirective +
-				"\nStay concise." +
-				"\n\n### Tools\n\n" +
+			think: think(true),
+			want: "〈|EOS|〉<system>\n\nStay concise.\n\n### Tools\n\n" +
 				"You may call functions to assist with the user query.\n" +
 				"All available function signatures are listed below:\n" +
-				"<available_tools>\n" +
-				`{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "City"}}}}}` + "\n" +
-				"</available_tools>\n\n" +
-				"For each function call, return a json object with function name and arguments within '<tool_call>' and '</tool_call>' tags:\n" +
-				"<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>" +
+				"<available_tools>\n" + lagunaToolJSON + "\n</available_tools>\n\n" +
+				"Wrap your thinking in '<think>', '</think>' tags, followed by a function call. For each function call, return an unescaped XML-like object with function name and arguments within '<tool_call>' and '</tool_call>' tags, like here:\n" +
+				"<think> your thoughts here </think>\n" +
+				"<tool_call>function-name\n<arg_key>argument-key</arg_key>\n<arg_value>value-of-argument-key</arg_value>\n</tool_call>" +
 				"\n</system>\n" +
-				"<user>\nWeather?\n</user>\n" +
-				"<assistant>\n",
+				"<user>\nWeather?\n</user>\n<assistant>\n<think>",
 		},
 		{
-			name: "tools_default_thinking_on_when_unspecified",
-			messages: []api.Message{
-				{Role: "user", Content: "Weather?"},
-			},
-			tools: weather,
-			want: "" +
-				"〈|EOS|〉<system>\n" +
-				lagunaThinkDirective +
-				"\n\n### Tools\n\n" +
+			name:     "tools_default",
+			messages: []api.Message{{Role: "user", Content: "Weather?"}},
+			tools:    weather,
+			want: "〈|EOS|〉<system>\n\n" + lagunaDefaultSystem + "\n\n### Tools\n\n" +
 				"You may call functions to assist with the user query.\n" +
 				"All available function signatures are listed below:\n" +
-				"<available_tools>\n" +
-				`{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "City"}}}}}` + "\n" +
-				"</available_tools>\n\n" +
-				"For each function call, return a json object with function name and arguments within '<tool_call>' and '</tool_call>' tags:\n" +
-				"<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>" +
+				"<available_tools>\n" + lagunaToolJSON + "\n</available_tools>\n\n" +
+				"For each function call, return an unescaped XML-like object with function name and arguments within '<tool_call>' and '</tool_call>' tags, like here:\n" +
+				"<tool_call>function-name\n<arg_key>argument-key</arg_key>\n<arg_value>value-of-argument-key</arg_value>\n</tool_call>" +
 				"\n</system>\n" +
-				"<user>\nWeather?\n</user>\n" +
-				"<assistant>\n",
+				"<user>\nWeather?\n</user>\n<assistant>\n</think>",
 		},
 		{
-			name: "assistant_history_with_thinking_content_tool_and_response",
+			name: "assistant_history",
 			messages: []api.Message{
 				{Role: "user", Content: "Add these."},
 				{
@@ -154,14 +123,11 @@ func TestLagunaRendererReferenceFlowCoverage(t *testing.T) {
 				{Role: "tool", Content: "5"},
 				{Role: "user", Content: "Thanks"},
 			},
-			think: &api.ThinkValue{Value: true},
-			want: "" +
-				"〈|EOS|〉<system>\n" +
-				lagunaThinkDirective +
-				"\n</system>\n" +
+			think: think(true),
+			want: defaultHeader +
 				"<user>\nAdd these.\n</user>\n" +
 				"<assistant>\n" +
-				"<think>Need addition.</think>\n" +
+				"<think>\nNeed addition.\n</think>\n" +
 				"Calling the tool.\n" +
 				"<tool_call>add\n" +
 				"<arg_key>a</arg_key>\n<arg_value>2</arg_value>\n" +
@@ -169,21 +135,15 @@ func TestLagunaRendererReferenceFlowCoverage(t *testing.T) {
 				"</tool_call>\n" +
 				"</assistant>\n" +
 				"<tool_response>\n5\n</tool_response>\n" +
-				"<user>\nThanks\n</user>\n" +
-				"<assistant>\n",
+				"<user>\nThanks\n</user>\n<assistant>\n<think>",
 		},
 		{
-			name: "final_assistant_prefill_is_continued",
+			name: "final_assistant_prefill",
 			messages: []api.Message{
 				{Role: "user", Content: "Complete this"},
 				{Role: "assistant", Content: "Partial"},
 			},
-			want: "" +
-				"〈|EOS|〉<system>\n" +
-				lagunaThinkDirective +
-				"\n</system>\n" +
-				"<user>\nComplete this\n</user>\n" +
-				"<assistant>\nPartial\n",
+			want: defaultHeader + "<user>\nComplete this\n</user>\n<assistant>\n</think>\nPartial\n",
 		},
 	}
 
@@ -195,7 +155,7 @@ func TestLagunaRendererReferenceFlowCoverage(t *testing.T) {
 				t.Fatal(err)
 			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {
-				t.Fatalf("renderer output mismatch (-want +got):\n%s", diff)
+				t.Fatalf("renderer output mismatch vs template (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -286,9 +246,9 @@ func renderLagunaChatTemplate(t *testing.T, python, modelDir string, messages []
 		t.Fatalf("failed to marshal messages: %v", err)
 	}
 
-	enableThinking := "True"
-	if think != nil && !think.Bool() {
-		enableThinking = "False"
+	enableThinking := "False"
+	if think != nil && think.Bool() {
+		enableThinking = "True"
 	}
 
 	script := `
