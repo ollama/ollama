@@ -108,3 +108,30 @@ func (c *WrapperCache) Remove(seq int, beginIndex, endIndex int32) error {
 
 	return nil
 }
+
+func (c *WrapperCache) SetLayerKWeight(layer int, wK ml.Tensor) {
+	type kWeightSetter interface{ SetLayerKWeight(layer int, wK ml.Tensor) }
+	for _, sub := range c.caches {
+		if kws, ok := sub.(kWeightSetter); ok {
+			kws.SetLayerKWeight(layer, wK)
+		}
+	}
+}
+
+func (c *WrapperCache) SetLayerKBias(layer int, bias ml.Tensor) {
+	type kBiasSetter interface{ SetLayerKBias(layer int, bias ml.Tensor) }
+	for _, sub := range c.caches {
+		if kbs, ok := sub.(kBiasSetter); ok {
+			kbs.SetLayerKBias(layer, bias)
+		}
+	}
+}
+
+func (c *WrapperCache) SetLayerKNormWeight(layer int, wKNorm ml.Tensor) {
+	type kNormWeightSetter interface{ SetLayerKNormWeight(layer int, wKNorm ml.Tensor) }
+	for _, sub := range c.caches {
+		if kns, ok := sub.(kNormWeightSetter); ok {
+			kns.SetLayerKNormWeight(layer, wKNorm)
+		}
+	}
+}

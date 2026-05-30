@@ -82,3 +82,12 @@ type Cache interface {
 type CheckpointCache interface {
 	PrepareRestore(seq int, targetPos int32) (int32, bool)
 }
+
+// CausalConfigurable is implemented by caches that accept CausalOptions
+// (the concrete *Causal type and any wrappers that delegate to it, e.g.,
+// *TurboQuantCache). Model code that needs to set per-layer masking options
+// should assert against this interface rather than the concrete *Causal so
+// that TurboQuant-wrapped global sub-caches still receive SetCausal calls.
+type CausalConfigurable interface {
+	SetCausal(ctx ml.Context, opts CausalOptions)
+}
