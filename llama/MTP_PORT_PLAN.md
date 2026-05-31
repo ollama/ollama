@@ -132,8 +132,43 @@ cmake -B /build -S /src -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DLLAMA_BUILD_{TESTS,E
 -DLLAMA_CURL=OFF; cmake --build /build --target llama -j"`. Only diag: cosmetic `-Wsuggest-attribute=noreturn`
 on the assistant's throwing `build_arch_graph` stub (never top-level called).
 
+## INTEGRATION REALITY (verified by reading post-uprev ollama-fork): ollama → llama-server only
+
+Mapped how ollama actually runs gemma4 (Explore sweep of the fork):
+- **All GGUF models route to the C++ `llama-server` subprocess** (`server/sched.go:511-578`;
+  `IsMLX()` sends only safetensors to mlx, everything else GGUF → `llm.NewLlamaServer`).
+  ollama's **pure-Go engine (`model/models/gemma4/` + `runner/ollamarunner/mtp.go`) is NOT
+  wired into the scheduler** — it's dead code for GGUF. There is **no Go cgo** in `llama/`
+  (subprocess + JSON-RPC only), so the planned "Go cgo DecodeMTP wrapper" has nowhere to live.
+- ollama ALREADY emits MTP flags to llama-server: `appendMTPDraftArgs()` (`llm/llama_server.go:645-660`)
+  appends `--spec-type draft-mtp --spec-draft-n-max N --spec-draft-backend-sampling
+  [--spec-draft-model PATH]`. Detection (`llm/llama_server.go:662-723`) only matches
+  `nextn_predict_layers` (Qwen) / legacy qwen35 `mtp.*` tensors — **does NOT recognize gemma4_assistant.**
+- **`--spec-type draft-mtp` = b9409's `common_speculative_impl_draft_mtp` = two-context Qwen-NextN**
+  (separate `ctx_dft` with its OWN KV, fed target hidden state via embd batches, self-attends).
+  **Gemma4's assistant cross-attends the TARGET's KV and has no KV of its own → architecturally
+  incompatible with that driver.** It must be driven by the single-context `llama_decode_mtp`.
+
+**Consequence — the end-to-end ollama wiring REQUIRES a new C++ driver first (not independent):**
+1. **C++ gemma4 spec driver (NEW, the real task #8):**
+   - `common/speculative.cpp`: a gemma4-specific speculative impl (or a new
+     `COMMON_SPECULATIVE_TYPE_*`) that calls `llama_decode_mtp` against the single context
+     (target with `mtp_assistant` loaded). NOT a reuse of `draft-mtp` (wrong topology).
+   - `common/arg.cpp`: a flag to load the assistant onto the target — `--mtp-head <assistant.gguf>`
+     (atomic ref ~3494-3516) wired to `llama_model_load_mtp_from_file()`.
+   - llama-server: load the assistant + select the gemma4 spec path when the flag is present.
+2. **ollama flag layer:** extend `appendMTPDraftArgs()` + detection (`llm/llama_server.go`) to
+   recognize gemma4_assistant (its `draft.*`/assistant GGUF or `requires_target_arch=gemma4` KV)
+   and emit the new flags + assistant path (`m.DraftPath`, `routes.go:2481`).
+
 REMAINING (in order):
-1. **Async MTP worker (deferred from task #7):** depth-2 overlap worker
+0. **DONE: repoint** (`acf9606e`) — `LLAMA_CPP_VERSION=mtp-b9409-0.1`, both FetchContent/
+   ExternalProject GIT_REPOSITORY → wow-look-at-my/llama.cpp. Compat patches apply (touch
+   llama-model-loader.cpp / clip.cpp / cuda common.cuh — untouched by MTP). ollama now builds
+   an MTP-capable libllama, but nothing drives gemma4 through it yet (needs the C++ driver above).
+1. **C++ gemma4 spec driver + `--mtp-head` flag** (see INTEGRATION REALITY block — the real #8).
+2. **ollama flag layer** in `llm/llama_server.go` (detection + appendMTPDraftArgs).
+3. **Async MTP worker (deferred from task #7):** depth-2 overlap worker
    (`decode_mtp_async`/`_wait`, `decode_mtp_run`, `mtp_worker_loop`, mtp_request/response,
    mutex/cv). Sync path is correct + verified first; add concurrency only when wiring perf.
    Atomic ref: `llama-context.{h,cpp}` ~2673-2856, 4249-4272.
