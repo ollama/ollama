@@ -105,9 +105,39 @@ linked into the fetched tree) + `llama/patches/` (now 1 patch, was 37).
 - `atomic-llama-cpp-turboquant` — branch feature/turboquant-kv-cache; reference for gemma4_assistant + TurboQuant.
 
 ### Next steps
-1. Find the pinned `LLAMA_CPP_GIT_TAG` in `llama/server/CMakeLists.txt`; confirm it has gemma4 target + the Qwen3.5 MTP framework (DECODER_MTP).
-2. In `llama.cpp-upstream` (gemma4-mtp): commit arch reg, port atomic's gemma4-assistant.cpp (turbo-stripped or with turbo per user), build_attn_mtp, model load, wire into DECODER_MTP idiom.
-3. Re-layer fork build customizations (task #11). Verify build. Repoint FetchContent. Bench.
+
+PROGRESS (branch `gemma4-mtp-b9409` on `wow-look-at-my/llama.cpp`, working tree
+`/mnt/ssdpool/projects/llama.cpp-upstream`, all PUSHED):
+- `7e41e35` arch reg (gemma4_assistant arch + mtp.* tensors + 5 KV keys).
+- `a4d7d3b` model+graph layer: hparams/model fields, `LLM_GRAPH_TYPE_MTP`,
+  `llm_graph_input_mtp`, `t_argmax`, turbo-free `build_attn_mtp`,
+  `llama_model_gemma4_assistant` class + factory reg, `src/models/gemma4-assistant.cpp`
+  (one-step builder + centroid head + in-graph argmax), gtype==MTP dispatch in
+  `llama_model_gemma4::build_arch_graph`.
+- `fa298ae` load path: `llama_model_load_mtp_from_file` + `llama_mtp_vocab_matches`
+  + accessors + `include/llama.h` decls. (task #6 DONE.)
+
+REMAINING (in order):
+1. **Decode driver (task #7, the intricate one):** port the path that runs the
+   `LLM_GRAPH_TYPE_MTP` graph and returns the drafted token. Atomic ref:
+   `src/llama-context.{h,cpp}` `decode_mtp_run`/`sched_mtp`/`mtp_worker_loop`/
+   `ensure_sched_mtp` + public `llama_decode_mtp{,_async,_wait}` (`llama-context.cpp`
+   ~2744-2843, 1248-1354, 4249-4272). **Do SYNC FIRST** (`decode_mtp_run` only),
+   add the async depth-2 worker after correctness. b9409 may have refactored
+   llama-context — map carefully. Needs `llama_decode_mtp*` decls in `include/llama.h`
+   (atomic llama.h ~1009-1045).
+2. **`--mtp-head` flag (task #8):** `common/arg.cpp` (atomic ~3494-3516), `-md` alias.
+   Speculative driver: check whether b9409's `common/speculative.cpp` already drives
+   MTP generically (it has DECODER_MTP for Qwen) — if so reuse it; else port atomic's
+   `common_speculative_state_mtp`.
+3. **Go cgo (task #8):** in ollama-fork `llama/llama.go` — `DecodeMTP*` wrappers over
+   the new C API.
+4. **Build/CI re-layer (task #11)** + Docker build verify (ALL BUILDS IN DOCKER — never
+   on host). Repoint ollama `llama/server/CMakeLists.txt` GIT_REPOSITORY →
+   wow-look-at-my/llama.cpp + bump `LLAMA_CPP_VERSION` to our MTP commit.
+5. **Bench** acceptance vs Go impl (~85-88% accept, +30-50% tok/s).
+
+NOT compile-verified yet (Docker build pending). TurboQuant = phase 2 (task #12).
 
 ## Patch workflow (legacy — pre-uprev in-tree approach, no longer used post-uprev)
 
