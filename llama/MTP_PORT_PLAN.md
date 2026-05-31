@@ -52,6 +52,22 @@ The uprev to upstream ollama main is DONE (merged 14 commits incl. #16031). It
 + `llama/compat/compat.cmake`); fork customizations apply via `llama/compat/` (compat source
 linked into the fetched tree) + `llama/patches/` (now 1 patch, was 37).
 
+### RESOLVED BASE DECISION (verified)
+- ollama pins llama.cpp via `LLAMA_CPP_VERSION` file = **`b9409`**, fetched from
+  `ggml-org/llama.cpp` (`llama/server/CMakeLists.txt:179` GIT_REPOSITORY, :180 GIT_TAG).
+- **Verified: tag `b9409` HAS the gemma4 target arch AND `DECODER_MTP` framework.** So we get
+  gemma4 + the MTP plumbing for free at ollama's pin.
+- **BASE = `ggml-org/llama.cpp @ b9409`**, develop in fork **`wow-look-at-my/llama.cpp`**.
+  Atomic = reference only (port its gemma4_assistant graph/decode + TurboQuant onto b9409).
+- **Integration = one-ish change in ollama fork:** set `llama/server/CMakeLists.txt` GIT_REPOSITORY
+  to `wow-look-at-my/llama.cpp` and bump root `LLAMA_CPP_VERSION` to our MTP tag/commit. Keep
+  `llama/compat/handle_gemma4` (BPE control-token fix).
+- Forks ready: `wow-look-at-my/atomic-llama-cpp-turboquant` (all branches, reference),
+  `wow-look-at-my/llama.cpp` (stale master — branch ours at b9409), `wow-look-at-my/ollama`
+  (uprev pushed to branch `uprev-main`). Push via SSH (`git@github.com:...`).
+- NOTE: my local arch-reg edits in `/mnt/ssdpool/projects/llama.cpp-upstream` are at master
+  `d749821`, not `b9409` — redo/rebase them on a fresh `b9409` checkout (trivial table additions).
+
 ### New MTP integration approach (simpler than patching in-tree)
 1. Build MTP into a **llama.cpp fork**: base = `/mnt/ssdpool/projects/llama.cpp-upstream`
    branch `gemma4-mtp` (arch registration for `gemma4_assistant` already landed there),
