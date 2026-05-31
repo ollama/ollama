@@ -1,5 +1,9 @@
 import React from "react";
-import { Streamdown, defaultRemarkPlugins } from "streamdown";
+import {
+  Streamdown,
+  defaultRehypePlugins,
+  defaultRemarkPlugins,
+} from "streamdown";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
 import type { BundledLanguage } from "shiki";
@@ -134,6 +138,9 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
         remarkCitationParser,
       ];
     }, []);
+    const rehypePlugins = React.useMemo(() => {
+      return [defaultRehypePlugins.katex];
+    }, []);
 
     return (
       <div
@@ -211,6 +218,9 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
             parseIncompleteMarkdown={isStreaming}
             isAnimating={isStreaming}
             remarkPlugins={remarkPlugins}
+            rehypePlugins={rehypePlugins}
+            skipHtml={true}
+            disallowedElements={["img"]}
             controls={false}
             components={{
               pre: CodeBlock,

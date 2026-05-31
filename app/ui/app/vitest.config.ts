@@ -15,6 +15,11 @@ export default defineConfig((configEnv) =>
       test: {
         environment: "node",
         globals: true,
+        server: {
+          deps: {
+            inline: ["streamdown"],
+          },
+        },
       },
     }),
   ),
