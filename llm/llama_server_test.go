@@ -1035,6 +1035,45 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 			prompt:     "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
 			wantPrompt: "<|turn>user\nhello<turn|>\n<|turn>model\n",
 		},
+		{
+			name:       "gemma4 model runtime bos override",
+			leadingBOS: "<bos>",
+			ggmlKV: ggml.KV{
+				"general.architecture":            "gemma4",
+				"tokenizer.ggml.model":            "gemma4",
+				"tokenizer.ggml.add_bos_token":    false,
+				"tokenizer.ggml.bos_token_id":     uint32(2),
+				"tokenizer.ggml.eos_token_id":     uint32(1),
+				"tokenizer.ggml.unknown_token_id": uint32(0),
+			},
+			prompt:     "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
+			wantPrompt: "<|turn>user\nhello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:       "lfm2 strips renderer bos",
+			leadingBOS: "<|startoftext|>",
+			ggmlKV: ggml.KV{
+				"general.architecture":         "lfm2",
+				"tokenizer.ggml.model":         "gpt2",
+				"tokenizer.ggml.pre":           "lfm2",
+				"tokenizer.ggml.add_bos_token": false,
+				"tokenizer.ggml.bos_token_id":  uint32(0),
+			},
+			prompt:     "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+			wantPrompt: "<|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			name:       "lfm2 missing bos metadata uses llama.cpp default",
+			leadingBOS: "<|startoftext|>",
+			ggmlKV: ggml.KV{
+				"general.architecture":        "lfm2",
+				"tokenizer.ggml.model":        "gpt2",
+				"tokenizer.ggml.pre":          "lfm2",
+				"tokenizer.ggml.bos_token_id": uint32(0),
+			},
+			prompt:     "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+			wantPrompt: "<|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+		},
 	}
 
 	for _, tt := range tests {

@@ -242,13 +242,20 @@ func (s *llamaServerRunner) tokenizerAddsBOS() bool {
 	}
 
 	kv := s.ggml.KV()
-	if kv.Bool("tokenizer.ggml.add_bos_token") {
+
+	if kv.String("tokenizer.ggml.pre") == "lfm2" {
 		return true
 	}
 
-	// llama.cpp forces add_bos on for Gemma4 at load time, even for older GGUFs
-	// whose tokenizer.ggml.add_bos_token metadata is false.
-	return kv.String("tokenizer.ggml.pre") == "gemma4"
+	// llama.cpp forces add_bos on for Gemma4 at load time, even for GGUFs
+	// whose tokenizer.ggml.add_bos_token metadata is explicitly false. Some
+	// GGUFs omit tokenizer.ggml.pre and are still treated as Gemma4 from
+	// tokenizer.ggml.model.
+	if kv.String("tokenizer.ggml.pre") == "gemma4" || kv.String("tokenizer.ggml.model") == "gemma4" {
+		return true
+	}
+
+	return kv.Bool("tokenizer.ggml.add_bos_token")
 }
 
 func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req CompletionRequest) (any, error) {
