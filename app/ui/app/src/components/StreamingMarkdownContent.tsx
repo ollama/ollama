@@ -3,13 +3,16 @@ import { Streamdown, defaultRemarkPlugins } from "streamdown";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
 import type { BundledLanguage } from "shiki";
-import { highlighter } from "@/lib/highlighter";
+import type { ThemeRegistrationAny, ThemedToken } from "@shikijs/types";
+import { highlighter, THEME_LIGHT, THEME_DARK } from "@/lib/highlighter";
+import { useTheme } from "@/hooks/useTheme";
 
 interface StreamingMarkdownContentProps {
   content: string;
   isStreaming?: boolean;
   size?: "sm" | "md" | "lg";
-  browserToolResult?: any; // TODO: proper type
+  browserToolResult?: { page_stack: string[] };
+  deferRendering?: boolean;
 }
 
 // Helper to extract text from React nodes
@@ -18,9 +21,9 @@ const extractText = (node: React.ReactNode): string => {
   if (typeof node === "number") return String(node);
   if (!node) return "";
   if (React.isValidElement(node)) {
-    const props = node.props as any;
-    if (props?.children) {
-      return extractText(props.children as React.ReactNode);
+    const props = node.props as { children?: React.ReactNode };
+    if (props.children) {
+      return extractText(props.children);
     }
   }
   if (Array.isArray(node)) {
@@ -31,6 +34,33 @@ const extractText = (node: React.ReactNode): string => {
 
 const CodeBlock = React.memo(
   ({ children }: React.HTMLAttributes<HTMLPreElement>) => {
+    const theme = useTheme();
+    const [, forceRender] = React.useReducer((x: number) => x + 1, 0);
+    const visibleRef = React.useRef(false);
+
+    // Callback ref: set up IntersectionObserver once when the DOM node mounts
+    const observerRef = React.useRef<IntersectionObserver | null>(null);
+    const setBlockRef = React.useCallback((node: HTMLDivElement | null) => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
+      if (!node || visibleRef.current) return;
+
+      observerRef.current = new IntersectionObserver(
+        ([entry]) => {
+          if (entry.isIntersecting) {
+            visibleRef.current = true;
+            observerRef.current?.disconnect();
+            observerRef.current = null;
+            forceRender();
+          }
+        },
+        { rootMargin: "200px" },
+      );
+      observerRef.current.observe(node);
+    }, [forceRender]);
+
     // Extract code and language from children
     const codeElement = children as React.ReactElement<{
       className?: string;
@@ -40,29 +70,42 @@ const CodeBlock = React.memo(
       codeElement.props.className?.replace(/language-/, "") || "";
     const codeText = extractText(codeElement.props.children);
 
-    // Synchronously highlight code using the pre-loaded highlighter
+    // Lazy per-theme token cache: tokenize active theme only, cache both for instant theme switches
+    const cacheRef = React.useRef<{
+      key: string;
+      light: ThemedToken[][] | null;
+      dark: ThemedToken[][] | null;
+    }>({ key: "", light: null, dark: null });
+
     const tokens = React.useMemo(() => {
-      if (!highlighter) return null;
+      if (!visibleRef.current || !highlighter) return null;
+      // Skip tokenization for unregistered languages to avoid Shiki throwing per code block
+      if (language && !highlighter.getLoadedLanguages().includes(language)) return null;
+
+      const cacheKey = `${codeText}:${language}`;
+      if (cacheRef.current.key !== cacheKey) {
+        cacheRef.current = { key: cacheKey, light: null, dark: null };
+      }
+
+      const cache = cacheRef.current;
+      if (cache[theme]) return cache[theme];
 
       try {
-        return {
-          light: highlighter.codeToTokensBase(codeText, {
-            lang: language as BundledLanguage,
-            theme: "one-light" as any,
-          }),
-          dark: highlighter.codeToTokensBase(codeText, {
-            lang: language as BundledLanguage,
-            theme: "one-dark" as any,
-          }),
-        };
+        const shikiTheme = theme === "dark" ? THEME_DARK : THEME_LIGHT;
+        cache[theme] = highlighter.codeToTokensBase(codeText, {
+          lang: language as BundledLanguage,
+          theme: shikiTheme as ThemeRegistrationAny,
+        });
+        return cache[theme];
       } catch (error) {
         console.error("Failed to highlight code:", error);
         return null;
       }
-    }, [codeText, language]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visibleRef.current, codeText, language, theme]);
 
     return (
-      <div className="relative bg-neutral-100 dark:bg-neutral-800 rounded-2xl overflow-hidden my-6">
+      <div ref={setBlockRef} className="relative bg-neutral-100 dark:bg-neutral-800 rounded-2xl overflow-hidden my-6">
         <div className="flex select-none">
           {language && (
             <div className="text-[13px] text-neutral-500 dark:text-neutral-400 font-mono px-4 py-2">
@@ -75,13 +118,12 @@ const CodeBlock = React.memo(
             className="copy-button text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800 ml-auto"
           />
         </div>
-        {/* Light mode */}
-        <pre className="dark:hidden m-0 bg-neutral-100 text-sm overflow-x-auto p-4">
+        <pre className={`m-0 text-sm overflow-x-auto p-4 ${theme === "dark" ? "bg-neutral-800" : "bg-neutral-100"}`}>
           <code className="font-mono text-sm">
-            {tokens?.light
-              ? tokens.light.map((line: any, i: number) => (
+            {tokens
+              ? tokens.map((line: ThemedToken[], i: number) => (
                   <React.Fragment key={i}>
-                    {line.map((token: any, j: number) => (
+                    {line.map((token: ThemedToken, j: number) => (
                       <span
                         key={j}
                         style={{
@@ -91,29 +133,7 @@ const CodeBlock = React.memo(
                         {token.content}
                       </span>
                     ))}
-                    {i < tokens.light.length - 1 && "\n"}
-                  </React.Fragment>
-                ))
-              : codeText}
-          </code>
-        </pre>
-        {/* Dark mode */}
-        <pre className="hidden dark:block m-0 bg-neutral-800 text-sm overflow-x-auto p-4">
-          <code className="font-mono text-sm">
-            {tokens?.dark
-              ? tokens.dark.map((line: any, i: number) => (
-                  <React.Fragment key={i}>
-                    {line.map((token: any, j: number) => (
-                      <span
-                        key={j}
-                        style={{
-                          color: token.color,
-                        }}
-                      >
-                        {token.content}
-                      </span>
-                    ))}
-                    {i < tokens.dark.length - 1 && "\n"}
+                    {i < tokens.length - 1 && "\n"}
                   </React.Fragment>
                 ))
               : codeText}
@@ -124,19 +144,46 @@ const CodeBlock = React.memo(
   },
 );
 
+const remarkPlugins = [
+  defaultRemarkPlugins.gfm,
+  defaultRemarkPlugins.math,
+  remarkCitationParser,
+];
+
 const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
-  React.memo(({ content, isStreaming = false, size, browserToolResult }) => {
-    // Build the remark plugins array - keep default GFM and Math, add citations
-    const remarkPlugins = React.useMemo(() => {
-      return [
-        defaultRemarkPlugins.gfm,
-        defaultRemarkPlugins.math,
-        remarkCitationParser,
-      ];
-    }, []);
+  React.memo(({ content, isStreaming = false, size, browserToolResult, deferRendering = false }) => {
+    const [, forceRender] = React.useReducer((x: number) => x + 1, 0);
+    const readyRef = React.useRef(!deferRendering);
+    const observerRef = React.useRef<IntersectionObserver | null>(null);
+
+    const setDeferRef = React.useCallback(
+      (node: HTMLDivElement | null) => {
+        if (observerRef.current) {
+          observerRef.current.disconnect();
+          observerRef.current = null;
+        }
+        if (!node || readyRef.current) return;
+        observerRef.current = new IntersectionObserver(
+          ([entry]) => {
+            if (entry.isIntersecting) {
+              readyRef.current = true;
+              observerRef.current?.disconnect();
+              observerRef.current = null;
+              forceRender();
+            }
+          },
+          { rootMargin: "200px" },
+        );
+        observerRef.current.observe(node);
+      },
+      [forceRender],
+    );
+
+    const showStreamdown = readyRef.current;
 
     return (
       <div
+        ref={deferRendering && !showStreamdown ? setDeferRef : undefined}
         className={`
           max-w-full
           ${size === "sm" ? "prose-sm" : size === "lg" ? "prose-lg" : ""}
@@ -203,82 +250,94 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           break-words
         `}
       >
-        <StreamingMarkdownErrorBoundary
-          content={content}
-          isStreaming={isStreaming}
-        >
-          <Streamdown
-            parseIncompleteMarkdown={isStreaming}
-            isAnimating={isStreaming}
-            remarkPlugins={remarkPlugins}
-            controls={false}
-            components={{
-              pre: CodeBlock,
-              table: ({
-                children,
-                ...props
-              }: React.HTMLAttributes<HTMLTableElement>) => (
-                <div className="overflow-x-auto max-w-full">
-                  <table
-                    {...props}
-                    className="border-collapse w-full border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden"
-                  >
-                    {children}
-                  </table>
-                </div>
-              ),
-              // @ts-expect-error: custom citation type
-              "ol-citation": ({
-                cursor,
-              }: {
-                cursor: number;
-                start: number;
-                end: number;
-              }) => {
-                const pageStack = browserToolResult?.page_stack;
-                const hasValidPage = pageStack && cursor < pageStack.length;
-                const pageUrl = hasValidPage ? pageStack[cursor] : null;
-
-                const getPageTitle = (url: string) => {
-                  if (url.startsWith("search_results_")) {
-                    const searchTerm = url.substring("search_results_".length);
-                    return `Search: ${searchTerm}`;
-                  }
-                  try {
-                    const urlObj = new URL(url);
-                    return urlObj.hostname;
-                  } catch {
-                    return url;
-                  }
-                };
-
-                const citationElement = (
-                  <span className="text-xs text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800 rounded-full px-2 py-1 ml-1">
-                    [{cursor}]
-                  </span>
-                );
-
-                if (pageUrl && pageUrl.startsWith("http")) {
-                  return (
-                    <a
-                      href={pageUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center hover:opacity-80 transition-opacity no-underline"
-                      title={getPageTitle(pageUrl)}
-                    >
-                      {citationElement}
-                    </a>
-                  );
-                }
-
-                return citationElement;
-              },
-            }}
+        {showStreamdown ? (
+          <StreamingMarkdownErrorBoundary
+            content={content}
+            isStreaming={isStreaming}
           >
+            <Streamdown
+              parseIncompleteMarkdown={isStreaming}
+              isAnimating={isStreaming}
+              remarkPlugins={remarkPlugins}
+              controls={false}
+              components={{
+                pre: CodeBlock,
+                code: ({
+                  children,
+                  className,
+                }: React.HTMLAttributes<HTMLElement>) => (
+                  <code className={className}>{children}</code>
+                ),
+                table: ({
+                  children,
+                  ...props
+                }: React.HTMLAttributes<HTMLTableElement>) => (
+                  <div className="overflow-x-auto max-w-full">
+                    <table
+                      {...props}
+                      className="border-collapse w-full border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden"
+                    >
+                      {children}
+                    </table>
+                  </div>
+                ),
+                // @ts-expect-error: custom citation type
+                "ol-citation": ({
+                  cursor,
+                }: {
+                  cursor: number;
+                  start: number;
+                  end: number;
+                }) => {
+                  const pageStack = browserToolResult?.page_stack;
+                  const hasValidPage = pageStack && cursor < pageStack.length;
+                  const pageUrl = hasValidPage ? pageStack[cursor] : null;
+
+                  const getPageTitle = (url: string) => {
+                    if (url.startsWith("search_results_")) {
+                      const searchTerm = url.substring("search_results_".length);
+                      return `Search: ${searchTerm}`;
+                    }
+                    try {
+                      const urlObj = new URL(url);
+                      return urlObj.hostname;
+                    } catch {
+                      return url;
+                    }
+                  };
+
+                  const citationElement = (
+                    <span className="text-xs text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800 rounded-full px-2 py-1 ml-1">
+                      [{cursor}]
+                    </span>
+                  );
+
+                  if (pageUrl && pageUrl.startsWith("http")) {
+                    return (
+                      <a
+                        href={pageUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center hover:opacity-80 transition-opacity no-underline"
+                        title={getPageTitle(pageUrl)}
+                      >
+                        {citationElement}
+                      </a>
+                    );
+                  }
+
+                  return citationElement;
+                },
+              }}
+            >
+              {content}
+            </Streamdown>
+          </StreamingMarkdownErrorBoundary>
+        ) : (
+          <div className="whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-200">
             {content}
-          </Streamdown>
-        </StreamingMarkdownErrorBoundary>
+          </div>
+        )}
       </div>
     );
   });
