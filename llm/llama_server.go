@@ -241,7 +241,14 @@ func (s *llamaServerRunner) tokenizerAddsBOS() bool {
 		return false
 	}
 
-	return s.ggml.KV().Bool("tokenizer.ggml.add_bos_token")
+	kv := s.ggml.KV()
+	if kv.Bool("tokenizer.ggml.add_bos_token") {
+		return true
+	}
+
+	// llama.cpp forces add_bos on for Gemma4 at load time, even for older GGUFs
+	// whose tokenizer.ggml.add_bos_token metadata is false.
+	return kv.String("tokenizer.ggml.pre") == "gemma4"
 }
 
 func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req CompletionRequest) (any, error) {
