@@ -74,13 +74,12 @@ func main() {
 		return
 	}
 
-	// Check if MLX initialized successfully
-	if !mlx.IsMLXAvailable() {
-		log.Fatalf("MLX initialization failed: %v", mlx.GetMLXInitError())
+	if err := mlx.InitMLX(); err != nil {
+		log.Fatalf("MLX initialization failed: %v", err)
 	}
 
 	// Restore strict error handling now that we know MLX is working.
-	// During init(), a safe handler prevented exit(-1) on GPU errors.
+	// During InitMLX(), a safe handler prevented exit(-1) on GPU errors.
 	mlx.RestoreDefaultErrorHandler()
 
 	// CPU profiling
