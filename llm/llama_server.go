@@ -650,6 +650,15 @@ func appendMTPDraftArgs(params []string, config LlamaServerConfig, opts api.Opti
 		return params
 	}
 
+	// Gemma 4 MTP: the gemma4_assistant is loaded INTO the target (cross-attends its KV,
+	// single context). Greedy argmax happens in-graph, so no backend-sampling flag.
+	if config.GemmaMTP {
+		params = append(params, "--spec-type", "gemma4-mtp")
+		params = append(params, "--mtp-head", config.DraftModelPath)
+		params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
+		return params
+	}
+
 	params = append(params, "--spec-type", "draft-mtp")
 	params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
 	params = append(params, "--spec-draft-backend-sampling")
@@ -721,6 +730,16 @@ func NewLlamaServerRunner(
 	}
 	if config.DraftModelPath == "" && hasMTPDraft(f) {
 		config.EnableMTP = true
+	}
+	// A separate draft GGUF with the gemma4_assistant arch is a Gemma 4 MTP head: it is
+	// loaded into the target and cross-attends its KV (single context), not run as a draft
+	// model. Detect it here so appendMTPDraftArgs emits the gemma4-mtp flags.
+	if config.DraftModelPath != "" {
+		if df, err := LoadModel(config.DraftModelPath, 0); err != nil {
+			slog.Warn("failed to inspect draft model; treating as a plain draft model", "path", config.DraftModelPath, "error", err)
+		} else if df.KV().Architecture() == "gemma4_assistant" {
+			config.GemmaMTP = true
+		}
 	}
 
 	gpuLibs := ml.LibraryPaths(gpus)

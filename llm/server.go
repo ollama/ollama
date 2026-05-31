@@ -82,6 +82,11 @@ type LlamaServerConfig struct {
 	ContextShift   bool
 	EnableMTP      bool
 	DraftModelPath string
+
+	// GemmaMTP is set when DraftModelPath points at a gemma4_assistant GGUF. Unlike Qwen
+	// NextN (draft-mtp), the assistant is loaded INTO the target and cross-attends its KV,
+	// so it is driven via --spec-type gemma4-mtp + --mtp-head instead of --spec-draft-model.
+	GemmaMTP bool
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.
