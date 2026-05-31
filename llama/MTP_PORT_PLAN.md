@@ -132,6 +132,41 @@ cmake -B /build -S /src -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DLLAMA_BUILD_{TESTS,E
 -DLLAMA_CURL=OFF; cmake --build /build --target llama -j"`. Only diag: cosmetic `-Wsuggest-attribute=noreturn`
 on the assistant's throwing `build_arch_graph` stub (never top-level called).
 
+### SESSION 2 PROGRESS — C++ spec driver + ollama flag layer DONE, end-to-end compile-verified
+
+**BASE MOVED:** the remote `wow-look-at-my/llama.cpp` branch `gemma4-mtp-b9409` was merged
+with master (`df7aee3 Merge branch 'master'`, brings in `d749821`, ~101 files / 4079 lines
+beyond b9409). My local work was rebased onto it cleanly (only `arg.cpp`/`common.h` overlapped,
+auto-merged). `speculative.cpp`/`common.cpp` unchanged upstream in that range. Everything below
+was (re)compile-verified against the MERGED base.
+
+llama.cpp fork (`wow-look-at-my/llama.cpp` @ `gemma4-mtp-b9409`, pushed):
+- `caee2ef` common: gemma4-mtp speculative driver + `--mtp-head`.
+    `COMMON_SPECULATIVE_TYPE_GEMMA4_MTP` (common.h); `common_speculative_impl_gemma4_mtp`
+    in `common/speculative.cpp` — conforms to b9409's multi-impl/multi-seq framework
+    (process() snapshots target post-norm h rows; accept() selects the row for the last
+    accepted token; draft() seeds `llama_decode_mtp()`; `need_embd()=true`). Assistant loaded
+    into the target in `common/common.cpp`; `--mtp-head <FNAME>` in `common/arg.cpp` (implies
+    `--spec-type gemma4-mtp`). NOTE: this is the SYNC `llama_decode_mtp` (no async worker yet).
+- `f02a0a6` server: `tools/server/server-context.cpp` routes gemma4-mtp to the single-context
+    path — skips separate model_dft + ctx_dft creation and the fit_params draft reservation,
+    sets `draft.ctx_tgt = ctx_tgt`. Everything else is generic (can_speculate()==!!spec, all
+    ctx_dft uses null-guarded, embeddings via common_speculative_need_embd()).
+- COMPILE-VERIFIED (Docker, CPU-only, ro mount): targets `llama` + `llama-common-base` and
+    the full `llama-server` executable all link (BUILD_EXIT=0). Same lone cosmetic noreturn warning.
+
+ollama fork (`wow-look-at-my/ollama` @ `uprev-main`, pushed):
+- `43c17094` api: remove duplicate `DraftFiles` (the uprev merge left upstream's `9db4bdbad`
+    AND my earlier `bf482278d` identical field → fork did not compile). Build-blocker, now fixed.
+- `d4786f4b` llm: detect a `gemma4_assistant` draft GGUF (via `LoadModel`) and emit
+    `--spec-type gemma4-mtp --mtp-head <path> --spec-draft-n-max N` (no backend-sampling flag;
+    argmax is in-graph). Qwen `draft-mtp` path unchanged. `go vet ./llm/` passes in Docker.
+
+End-to-end path now exists: ollama sees a gemma4_assistant draft → emits gemma4-mtp flags →
+llama-server loads the assistant into the target → server routes to the single-context driver →
+`common_speculative_impl_gemma4_mtp` drives `llama_decode_mtp`. NOT yet runtime-tested with real
+gemma4 + assistant GGUFs (no weights on hand); compile/type-check only.
+
 ## INTEGRATION REALITY (verified by reading post-uprev ollama-fork): ollama → llama-server only
 
 Mapped how ollama actually runs gemma4 (Explore sweep of the fork):
@@ -166,8 +201,12 @@ REMAINING (in order):
    ExternalProject GIT_REPOSITORY → wow-look-at-my/llama.cpp. Compat patches apply (touch
    llama-model-loader.cpp / clip.cpp / cuda common.cuh — untouched by MTP). ollama now builds
    an MTP-capable libllama, but nothing drives gemma4 through it yet (needs the C++ driver above).
-1. **C++ gemma4 spec driver + `--mtp-head` flag** (see INTEGRATION REALITY block — the real #8).
-2. **ollama flag layer** in `llm/llama_server.go` (detection + appendMTPDraftArgs).
+   PIN BUMPED: `LLAMA_CPP_VERSION` now = tag `mtp-b9409-0.2` (pushed, points at fork tip
+   `f02a0a6` on the master-merged base, includes the gemma4-mtp driver + server wiring).
+   Was `mtp-b9409-0.1` (old `f29e8e80`, pre-merge, no driver) — bumping it is required so an
+   ollama FetchContent build actually pulls a llama.cpp that understands `--spec-type gemma4-mtp`.
+1. **DONE: C++ gemma4 spec driver + `--mtp-head` flag** (`caee2ef`+`f02a0a6`). See SESSION 2.
+2. **DONE: ollama flag layer** (`d4786f4b`) + build-blocker fix (`43c17094`). See SESSION 2.
 3. **Async MTP worker (deferred from task #7):** depth-2 overlap worker
    (`decode_mtp_async`/`_wait`, `decode_mtp_run`, `mtp_worker_loop`, mtp_request/response,
    mutex/cv). Sync path is correct + verified first; add concurrency only when wiring perf.
