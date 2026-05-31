@@ -1,6 +1,8 @@
 package convert
 
 import (
+	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -14,28 +16,56 @@ type gemma3nModel struct {
 	ModelParameters
 
 	TextModel struct {
-		ActivationSparsityPattern []float32 `json:"activation_sparsity_pattern"`
-		AltupActiveIdx            uint32    `json:"altup_active_idx"`
-		AltupCoefClip             float32   `json:"altup_coef_clip"`
-		AltupCorrectScale         bool      `json:"altup_correct_scale"`
-		AltupLRMultiplier         float32   `json:"altup_lr_multiplier"`
-		AltupNumInputs            uint32    `json:"altup_num_inputs"`
-		HeadDim                   uint32    `json:"head_dim"`
-		HiddenSize                uint32    `json:"hidden_size"`
-		HiddenSizePerLayerInput   uint32    `json:"hidden_size_per_layer_input"`
-		IntermediateSize          uint32    `json:"intermediate_size"`
-		MaxPositionEmbeddings     uint32    `json:"max_position_embeddings"`
-		NumAttentionHeads         uint32    `json:"num_attention_heads"`
-		NumHiddenLayers           uint32    `json:"num_hidden_layers"`
-		NumKeyValueHeads          uint32    `json:"num_key_value_heads"`
-		NumKVSharedLayers         uint32    `json:"num_kv_shared_layers"`
-		RMSNormEPS                float32   `json:"rms_norm_eps"`
-		RopeLocalBaseFreq         float32   `json:"rope_local_base_freq"`
-		RopeTheta                 float32   `json:"rope_theta"`
-		SlidingWindow             uint32    `json:"sliding_window"`
-		LayerTypes                []string  `json:"layer_types"`
+		ActivationSparsityPattern []float32               `json:"activation_sparsity_pattern"`
+		AltupActiveIdx            uint32                  `json:"altup_active_idx"`
+		AltupCoefClip             float32                 `json:"altup_coef_clip"`
+		AltupCorrectScale         bool                    `json:"altup_correct_scale"`
+		AltupLRMultiplier         float32                 `json:"altup_lr_multiplier"`
+		AltupNumInputs            uint32                  `json:"altup_num_inputs"`
+		HeadDim                   uint32                  `json:"head_dim"`
+		HiddenSize                uint32                  `json:"hidden_size"`
+		HiddenSizePerLayerInput   uint32                  `json:"hidden_size_per_layer_input"`
+		IntermediateSize          gemma3nIntermediateSize `json:"intermediate_size"`
+		MaxPositionEmbeddings     uint32                  `json:"max_position_embeddings"`
+		NumAttentionHeads         uint32                  `json:"num_attention_heads"`
+		NumHiddenLayers           uint32                  `json:"num_hidden_layers"`
+		NumKeyValueHeads          uint32                  `json:"num_key_value_heads"`
+		NumKVSharedLayers         uint32                  `json:"num_kv_shared_layers"`
+		RMSNormEPS                float32                 `json:"rms_norm_eps"`
+		RopeLocalBaseFreq         float32                 `json:"rope_local_base_freq"`
+		RopeTheta                 float32                 `json:"rope_theta"`
+		SlidingWindow             uint32                  `json:"sliding_window"`
+		LayerTypes                []string                `json:"layer_types"`
 	} `json:"text_config"`
 	VisionModel struct{} `json:"vision_config"`
+}
+
+type gemma3nIntermediateSize uint32
+
+func (s *gemma3nIntermediateSize) UnmarshalJSON(data []byte) error {
+	var scalar uint32
+	if err := json.Unmarshal(data, &scalar); err == nil {
+		*s = gemma3nIntermediateSize(scalar)
+		return nil
+	}
+
+	var values []uint32
+	if err := json.Unmarshal(data, &values); err != nil {
+		return err
+	}
+	if len(values) == 0 {
+		return fmt.Errorf("intermediate_size must not be empty")
+	}
+
+	first := values[0]
+	for _, v := range values[1:] {
+		if v != first {
+			return fmt.Errorf("intermediate_size values must match")
+		}
+	}
+
+	*s = gemma3nIntermediateSize(first)
+	return nil
 }
 
 func (m *gemma3nModel) KV(t *Tokenizer) KV {
@@ -69,7 +99,7 @@ func (m *gemma3nModel) KV(t *Tokenizer) KV {
 	kv["gemma3n.context_length"] = m.TextModel.MaxPositionEmbeddings
 	kv["gemma3n.embedding_length_per_layer_input"] = m.TextModel.HiddenSizePerLayerInput
 	kv["gemma3n.embedding_length"] = m.TextModel.HiddenSize
-	kv["gemma3n.feed_forward_length"] = m.TextModel.IntermediateSize
+	kv["gemma3n.feed_forward_length"] = uint32(m.TextModel.IntermediateSize)
 	kv["gemma3n.head_dim"] = m.TextModel.HeadDim
 	kv["gemma3n.rope.freq_base_local"] = m.TextModel.RopeLocalBaseFreq
 	kv["gemma3n.rope.freq_base"] = m.TextModel.RopeTheta

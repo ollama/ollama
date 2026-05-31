@@ -59,6 +59,8 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	var messages []api.Message
 	var licenses []string
 	params := make(map[string]any)
+	var modelPaths []string
+	var draftPaths []string
 
 	for _, c := range f.Commands {
 		switch c.Name {
@@ -75,6 +77,10 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			} else if err != nil {
 				return nil, err
 			}
+			if err := rejectMatchingLocalPath("DRAFT", path, draftPaths); err != nil {
+				return nil, err
+			}
+			modelPaths = append(modelPaths, path)
 
 			if req.Files == nil {
 				req.Files = digestMap
@@ -93,8 +99,18 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			if err != nil {
 				return nil, err
 			}
+			if err := rejectMatchingLocalPath("DRAFT", path, modelPaths); err != nil {
+				return nil, err
+			}
+			draftPaths = append(draftPaths, path)
 
-			req.DraftFiles = digestMap
+			if req.DraftFiles == nil {
+				req.DraftFiles = digestMap
+			} else {
+				for k, v := range digestMap {
+					req.DraftFiles[k] = v
+				}
+			}
 		case "adapter":
 			path, err := expandPath(c.Args, relativeDir)
 			if err != nil {
@@ -164,6 +180,39 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	}
 
 	return req, nil
+}
+
+func rejectMatchingLocalPath(name, path string, existing []string) error {
+	for _, candidate := range existing {
+		same, err := sameLocalPath(path, candidate)
+		if err != nil {
+			return err
+		}
+		if same {
+			return fmt.Errorf("%s must not reference the same local path as FROM: %s", name, path)
+		}
+	}
+	return nil
+}
+
+func sameLocalPath(a, b string) (bool, error) {
+	aa, err := canonicalLocalPath(a)
+	if err != nil {
+		return false, err
+	}
+	bb, err := canonicalLocalPath(b)
+	if err != nil {
+		return false, err
+	}
+	return aa == bb, nil
+}
+
+func canonicalLocalPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
 }
 
 func fileDigestMap(path string) (map[string]string, error) {
@@ -290,6 +339,11 @@ func filesForModel(path string) ([]string, error) {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
 		files = append(files, st...)
+		nested, err := glob(filepath.Join(path, "*", "model*.safetensors"), "")
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, nested...)
 	} else if st, _ := glob(filepath.Join(path, "consolidated*.safetensors"), ""); len(st) > 0 {
 		// covers consolidated.safetensors
 		files = append(files, st...)

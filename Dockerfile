@@ -1,65 +1,292 @@
-# syntax=docker/dockerfile:1
 # vim: filetype=dockerfile
 
-FROM nvidia/cuda:13.0.0-devel-ubuntu24.04 AS build
+ARG FLAVOR=${TARGETARCH}
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    rm -f /etc/apt/apt.conf.d/docker-clean \
-    && apt-get update && apt-get install -y --no-install-recommends \
-        cmake ninja-build ccache ca-certificates curl gcc g++
+ARG ROCMVERSION=7.2.1
+ARG JETPACK5VERSION=r35.4.1
+ARG JETPACK6VERSION=r36.4.0
+ARG CMAKEVERSION=3.31.2
+ARG NINJAVERSION=1.12.1
+ARG VULKANVERSION=1.4.321.1
+
+# Default empty stages for local MLX source overrides.
+# Override with: docker build --build-context local-mlx=../mlx --build-context local-mlx-c=../mlx-c
+FROM scratch AS local-mlx
+FROM scratch AS local-mlx-c
+
+FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
+RUN dnf install -y yum-utils ccache gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ gcc-toolset-11-binutils \
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+
+FROM --platform=linux/arm64 almalinux:8 AS base-arm64
+# install epel-release for ccache
+RUN yum install -y yum-utils epel-release \
+    && dnf install -y clang ccache git \
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/sbsa/cuda-rhel8.repo
+ENV CC=clang CXX=clang++
+
+FROM base-${TARGETARCH} AS base
+ARG CMAKEVERSION
+ARG NINJAVERSION
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+RUN dnf install -y unzip \
+    && curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux$([ "$(uname -m)" = "aarch64" ] && echo "-aarch64").zip \
+    && unzip /tmp/ninja.zip -d /usr/local/bin \
+    && rm /tmp/ninja.zip
 ENV CMAKE_GENERATOR=Ninja
-ENV CMAKE_C_COMPILER_LAUNCHER=ccache
-ENV CMAKE_CXX_COMPILER_LAUNCHER=ccache
+ENV LDFLAGS=-s
 
-WORKDIR /build
-COPY CMakeLists.txt CMakePresets.json ./
-COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+#
+# GPU toolchain stages — provide compilers for llama-server GPU builds
+#
 
-COPY scripts/cicc-cache /usr/local/cuda/nvvm/bin/cicc-cache
-RUN chmod +x /usr/local/cuda/nvvm/bin/cicc-cache \
-    && mv /usr/local/cuda/nvvm/bin/cicc /usr/local/cuda/nvvm/bin/cicc.real \
-    && mv /usr/local/cuda/nvvm/bin/cicc-cache /usr/local/cuda/nvvm/bin/cicc
+FROM base AS cpu-deps
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
 
-RUN --mount=type=cache,target=/root/.cache/ccache \
-    cmake --preset 'CUDA 13' -DCMAKE_CUDA_ARCHITECTURES=86 \
-    && cmake --build --preset 'CUDA 13' -j$(nproc) \
-    && cmake --install build --component CUDA --strip
+FROM base AS cuda-12-deps
+ARG CUDA12VERSION=12.8
+RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
+ENV PATH=/usr/local/cuda-12/bin:$PATH
 
-RUN --mount=type=cache,target=/root/.cache/ccache \
-    cmake --preset CPU \
-    && cmake --build --preset CPU -j$(nproc) \
-    && cmake --install build --component CPU --strip
+FROM base AS cuda-13-deps
+ARG CUDA13VERSION=13.0
+RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-}
+ENV PATH=/usr/local/cuda-13/bin:$PATH
 
-ARG GO_VERSION=1.26.0
-ADD --unpack "https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz" /usr/local/
+FROM base AS rocm-7-deps
+ENV PATH=/opt/rocm/llvm/bin:/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:$PATH
+
+FROM base AS vulkan-deps
+ARG VULKANVERSION
+RUN ln -s /usr/bin/python3 /usr/bin/python \
+    && wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk.tar.xz \
+    && tar xvf /tmp/vulkansdk.tar.xz -C /tmp \
+    && /tmp/${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
+    && /tmp/${VULKANVERSION}/vulkansdk -j 8 spirv-headers \
+    && /tmp/${VULKANVERSION}/vulkansdk -j 8 shaderc \
+    && cp -r /tmp/${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
+    && cp -r /tmp/${VULKANVERSION}/x86_64/lib/* /usr/local/lib \
+    && cp -r /tmp/${VULKANVERSION}/x86_64/share/* /usr/local/share/ \
+    && cp -r /tmp/${VULKANVERSION}/x86_64/bin/* /usr/local/bin/ \
+    && rm -rf /tmp/${VULKANVERSION} /tmp/vulkansdk.tar.xz
+ENV VULKAN_SDK=/usr/local
+
+#
+# llama-server stages — rebuild when LLAMA_CPP_VERSION, llama/server/, or llama/compat/ changes.
+#
+# CPU stage: llama-server + ggml-base + ggml-cpu variants → lib/ollama/
+# GPU stages: GPU backend .so only → lib/ollama/<variant>/
+#
+
+FROM cpu-deps AS llama-server-cpu
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset cpu \
+        && cmake --build build/llama-server-cpu -- -l $(nproc) \
+        && cmake --install build/llama-server-cpu --component llama-server --strip \
+        && for lib in \
+            /usr/lib64/libgomp.so* \
+            /usr/lib64/libomp.so* \
+            /opt/rh/gcc-toolset-11/root/usr/lib64/libgomp.so* \
+            /opt/rh/gcc-toolset-11/root/usr/lib64/libomp.so*; do \
+                [ -e "$lib" ] && cp -a "$lib" dist/lib/ollama/ || true; \
+            done
+
+FROM cuda-12-deps AS llama-server-cuda_v12
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset llama_cuda_v12_linux \
+        && cmake --build build/llama-server-cuda_v12 -- -l $(nproc) \
+        && cmake --install build/llama-server-cuda_v12 --component llama-server --strip
+
+FROM cuda-13-deps AS llama-server-cuda_v13
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset llama_cuda_v13_linux \
+        && cmake --build build/llama-server-cuda_v13 -- -l $(nproc) \
+        && cmake --install build/llama-server-cuda_v13 --component llama-server --strip
+
+FROM rocm-7-deps AS llama-server-rocm_v7_2
+ENV CC=clang CXX=clang++
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset rocm_v7_2_linux \
+        && cmake --build build/llama-server-rocm_v7_2 -- -l $(nproc) \
+        && cmake --install build/llama-server-rocm_v7_2 --component llama-server --strip
+RUN rm -f dist/lib/ollama/rocm_v7_2/rocblas/library/*gfx90[06]*
+
+FROM vulkan-deps AS llama-server-vulkan
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset vulkan \
+        && cmake --build build/llama-server-vulkan -- -l $(nproc) \
+        && cmake --install build/llama-server-vulkan --component llama-server --strip
+
+#
+# JetPack stages — self-contained with their own base images
+#
+
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
+ARG CMAKEVERSION
+ARG NINJAVERSION
+RUN apt-get update && apt-get install -y curl ccache git unzip \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 \
+    && curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
+    && unzip /tmp/ninja.zip -d /usr/local/bin \
+    && rm /tmp/ninja.zip
+ENV CMAKE_GENERATOR=Ninja
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset llama_cuda_jetpack5 \
+        && cmake --build build/llama-server-cuda_jetpack5 -- -l $(nproc) \
+        && cmake --install build/llama-server-cuda_jetpack5 --component llama-server --strip
+
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
+ARG CMAKEVERSION
+ARG NINJAVERSION
+RUN apt-get update && apt-get install -y curl ccache git unzip \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 \
+    && curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
+    && unzip /tmp/ninja.zip -d /usr/local/bin \
+    && rm /tmp/ninja.zip
+ENV CMAKE_GENERATOR=Ninja
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset llama_cuda_jetpack6 \
+        && cmake --build build/llama-server-cuda_jetpack6 -- -l $(nproc) \
+        && cmake --install build/llama-server-cuda_jetpack6 --component llama-server --strip
+
+#
+# MLX stage
+#
+
+FROM base AS mlx
+ARG CUDA13VERSION=13.0
+ARG OLLAMA_MLX_BUILD_JOBS=
+ARG OLLAMA_MLX_NVCC_THREADS=2
+ARG MLX_CUDA_RAM_MB=
+RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
+    && dnf install -y openblas-devel lapack-devel \
+    && dnf install -y libcudnn9-cuda-13 libcudnn9-devel-cuda-13 \
+    && dnf install -y libnccl libnccl-devel
+ENV PATH=/usr/local/cuda-13/bin:$PATH
+ENV BLAS_INCLUDE_DIRS=/usr/include/openblas
+ENV LAPACK_INCLUDE_DIRS=/usr/include/openblas
+ENV CGO_LDFLAGS="-L/usr/local/cuda-13/lib64 -L/usr/local/cuda-13/targets/x86_64-linux/lib/stubs"
+WORKDIR /go/src/github.com/ollama/ollama
+COPY CMakeLists.txt CMakePresets.json .
+COPY cmake cmake
+COPY x/imagegen/mlx x/imagegen/mlx
+COPY go.mod go.sum .
+COPY MLX_VERSION MLX_C_VERSION .
+RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
 ENV PATH=/usr/local/go/bin:$PATH
+RUN go mod download
+RUN --mount=type=cache,target=/root/.ccache \
+    --mount=type=bind,from=local-mlx,target=/tmp/local-mlx \
+    --mount=type=bind,from=local-mlx-c,target=/tmp/local-mlx-c \
+    if [ -f /tmp/local-mlx/CMakeLists.txt ]; then \
+        export OLLAMA_MLX_SOURCE=/tmp/local-mlx; \
+    fi \
+    && if [ -f /tmp/local-mlx-c/CMakeLists.txt ]; then \
+        export OLLAMA_MLX_C_SOURCE=/tmp/local-mlx-c; \
+    fi \
+    && cmake -S . -B build/mlx_cuda_v13 -DOLLAMA_MLX_BACKENDS=cuda_v13 -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas -DCMAKE_CUDA_FLAGS="-t ${OLLAMA_MLX_NVCC_THREADS}" ${MLX_CUDA_RAM_MB:+-DMLX_CUDA_RAM_MB=${MLX_CUDA_RAM_MB}} -DOLLAMA_PAYLOAD_INSTALL_PREFIX=/go/src/github.com/ollama/ollama/dist \
+        && cmake --build build/mlx_cuda_v13 --target ollama-mlx-cuda_v13 -- -l $(nproc) ${OLLAMA_MLX_BUILD_JOBS:+-j ${OLLAMA_MLX_BUILD_JOBS}}
 
-WORKDIR /build/ollama
-COPY go.mod go.sum ./
+#
+# Go build
+#
 
+FROM base AS build
+WORKDIR /go/src/github.com/ollama/ollama
+COPY go.mod go.sum .
+RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
+ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
 COPY . .
+ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
+ARG CGO_CFLAGS
+ARG CGO_CXXFLAGS
+ENV CGO_CFLAGS="${CGO_CFLAGS}"
+ENV CGO_CXXFLAGS="${CGO_CXXFLAGS}"
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -buildmode=pie -ldflags='-w -s' -o /bin/ollama .
+    go build -trimpath -buildmode=pie -o /bin/ollama .
 
-FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04
+#
+# Assembly stages — combine llama-server variants + GPU runtime libs
+#
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    rm -f /etc/apt/apt.conf.d/docker-clean \
-    && apt-get update && apt-get install -y --no-install-recommends ca-certificates curl
+FROM --platform=linux/amd64 scratch AS amd64
+COPY --from=llama-server-cpu      dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-vulkan   dist/lib/ollama /lib/ollama/
+COPY --from=mlx     /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
 
-COPY --from=build /bin/ollama /usr/bin/ollama
-COPY --from=build /build/dist/lib/ollama /usr/lib/ollama
+FROM --platform=linux/arm64 scratch AS arm64
+COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
+COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
+COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
+FROM scratch AS rocm
+COPY --from=llama-server-cpu  dist/lib/ollama /lib/ollama
+COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama
+
+FROM --platform=linux/amd64 scratch AS amd64-archive
+COPY --from=amd64 /lib/ollama /lib/ollama/
+COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama/
+
+FROM --platform=linux/arm64 scratch AS arm64-archive
+COPY --from=arm64 /lib/ollama /lib/ollama/
+
+FROM ${TARGETARCH}-archive AS archive
+COPY --from=build /bin/ollama /bin/ollama
+
+FROM ${FLAVOR} AS image-archive
+COPY --from=build /bin/ollama /bin/ollama
+
+FROM ubuntu:24.04
+ARG APT_MIRROR=http://archive.ubuntu.com/ubuntu
+ARG APT_PORTS_MIRROR=http://ports.ubuntu.com/ubuntu-ports
+RUN sed -i \
+        -e "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g" \
+        -e "s|http://ports.ubuntu.com/ubuntu-ports|$APT_PORTS_MIRROR|g" \
+        /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
+    && apt-get install -y ca-certificates libvulkan1 libopenblas0 \
+    && sed -i \
+        -e "s|$APT_MIRROR|http://archive.ubuntu.com/ubuntu|g" \
+        -e "s|$APT_PORTS_MIRROR|http://ports.ubuntu.com/ubuntu-ports|g" \
+        /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=image-archive /bin /usr/bin
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+COPY --from=image-archive /lib/ollama /usr/lib/ollama
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:11434/health || exit 1
-ENTRYPOINT ["/usr/bin/ollama"]
+ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]

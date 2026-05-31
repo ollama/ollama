@@ -84,7 +84,7 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			t.Setenv("PATH", binDir)
 
 			configPath := tt.checkPath(home)
-			if err := tt.runner.Run("llama3.2", nil); err != nil {
+			if err := tt.runner.Run("llama3.2", nil, nil); err != nil {
 				t.Fatalf("Run returned error: %v", err)
 			}
 			if _, err := os.Stat(configPath); !os.IsNotExist(err) {

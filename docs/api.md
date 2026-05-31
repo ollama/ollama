@@ -400,6 +400,7 @@ curl http://localhost:11434/api/generate -d '{
     "num_keep": 5,
     "seed": 42,
     "num_predict": 100,
+    "draft_num_predict": 4,
     "top_k": 20,
     "top_p": 0.9,
     "min_p": 0.0,

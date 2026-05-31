@@ -73,20 +73,51 @@ DRAFT ./assistant
 	assert.Contains(t, modelfile.String(), "DRAFT ./assistant")
 }
 
-func TestCreateRequestDraftAccepted(t *testing.T) {
-	// Create a temp directory with a GGUF file for DRAFT to reference
-	draftPath, _ := createBinFile(t, nil, nil)
+func TestCreateRequestDraftFiles(t *testing.T) {
+	dir := t.TempDir()
+	draft := filepath.Join(dir, "draft.gguf")
+	require.NoError(t, os.WriteFile(draft, []byte("draft"), 0o644))
 
-	modelfile, err := ParseFile(strings.NewReader(fmt.Sprintf(`
+	modelfile, err := ParseFile(strings.NewReader(`
 FROM base
-DRAFT %s
-`, draftPath)))
+DRAFT ./draft.gguf
+`))
 	require.NoError(t, err)
 
-	req, err := modelfile.CreateRequest("")
+	req, err := modelfile.CreateRequest(dir)
 	require.NoError(t, err)
-	require.NotNil(t, req.DraftFiles)
 	require.Len(t, req.DraftFiles, 1)
+	assert.Contains(t, req.DraftFiles, draft)
+}
+
+func TestCreateRequestDraftRejectsSameFile(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "model.gguf")
+	require.NoError(t, os.WriteFile(model, []byte("model"), 0o644))
+
+	modelfile, err := ParseFile(strings.NewReader(`
+FROM ./model.gguf
+DRAFT ./model.gguf
+`))
+	require.NoError(t, err)
+
+	_, err = modelfile.CreateRequest(dir)
+	require.ErrorContains(t, err, "DRAFT must not reference the same local path as FROM")
+}
+
+func TestCreateRequestDraftRejectsSameDirectory(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "model.gguf"), make([]byte, 512), 0o644))
+
+	modelfile, err := ParseFile(strings.NewReader(`
+FROM .
+DRAFT .
+`))
+	require.NoError(t, err)
+
+	_, err = modelfile.CreateRequest(dir)
+	require.ErrorContains(t, err, "DRAFT must not reference the same local path as FROM")
 }
 
 func TestParseFileTrimSpace(t *testing.T) {
@@ -949,6 +980,38 @@ func TestFilesForModel(t *testing.T) {
 				"config.json",
 				"tokenizer.json",
 				"tokenizer.model",
+			},
+		},
+		{
+			name: "safetensors sentence transformers module weights",
+			setup: func(dir string) error {
+				files := []string{
+					"model.safetensors",
+					"config.json",
+					"modules.json",
+					filepath.Join("2_Dense", "config.json"),
+					filepath.Join("2_Dense", "model.safetensors"),
+					filepath.Join("3_Dense", "config.json"),
+					filepath.Join("3_Dense", "model.safetensors"),
+				}
+				for _, file := range files {
+					if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, file)), 0o755); err != nil {
+						return err
+					}
+					if err := os.WriteFile(filepath.Join(dir, file), []byte("test content"), 0o644); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			wantFiles: []string{
+				"model.safetensors",
+				"config.json",
+				"modules.json",
+				filepath.Join("2_Dense", "config.json"),
+				filepath.Join("2_Dense", "model.safetensors"),
+				filepath.Join("3_Dense", "config.json"),
+				filepath.Join("3_Dense", "model.safetensors"),
 			},
 		},
 		{

@@ -1570,8 +1570,8 @@ func TestCreateSafetensorsModel_Qwen35Transforms(t *testing.T) {
 		t.Fatalf("CreateSafetensorsModel failed: %v", err)
 	}
 
-	if _, ok := calls["mtp.layers.0.foo.weight"]; ok {
-		t.Fatal("mtp tensor should have been dropped")
+	if _, ok := calls["mtp.layers.0.foo.weight"]; !ok {
+		t.Fatal("mtp tensor should have been preserved")
 	}
 
 	layerNorm := calls["language_model.model.layers.0.input_layernorm.weight"]

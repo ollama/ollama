@@ -1525,36 +1525,65 @@ func TestCreateHandler(t *testing.T) {
 	}
 }
 
-func TestCreateHandlerDraftQuantizeRequiresExperimental(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().Bool("experimental", false, "")
-	cmd.Flags().String("draft-quantize", "mxfp8", "")
-	cmd.SetContext(t.Context())
+func TestCreateRequestFileNamesPreservesModelDirectoryLayout(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		filepath.Join(root, "model.safetensors"):            "sha256:model",
+		filepath.Join(root, "config.json"):                  "sha256:config",
+		filepath.Join(root, "2_Dense", "config.json"):       "sha256:dense-config",
+		filepath.Join(root, "2_Dense", "model.safetensors"): "sha256:dense-model",
+	}
 
-	err := CreateHandler(cmd, []string{"test-model"})
-	if err == nil || !strings.Contains(err.Error(), "--draft-quantize requires --experimental") {
-		t.Fatalf("error = %v, want draft-quantize requires experimental", err)
+	got := createRequestFileNames(files)
+	want := map[string]string{
+		filepath.Join(root, "model.safetensors"):            "model.safetensors",
+		filepath.Join(root, "config.json"):                  "config.json",
+		filepath.Join(root, "2_Dense", "config.json"):       "2_Dense/config.json",
+		filepath.Join(root, "2_Dense", "model.safetensors"): "2_Dense/model.safetensors",
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("mismatch (-want +got):\n%s", diff)
 	}
 }
 
-func TestCreateHandlerDraftAcceptedWithoutExperimental(t *testing.T) {
+func TestCreateRequestFileNamesPreservesRelativeModelDirectoryLayout(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	files := map[string]string{
+		"model.safetensors":         "sha256:model",
+		"config.json":               "sha256:config",
+		"2_Dense/config.json":       "sha256:dense-config",
+		"2_Dense/model.safetensors": "sha256:dense-model",
+		"3_Dense/config.json":       "sha256:dense-config",
+		"3_Dense/model.safetensors": "sha256:dense-model",
+	}
+
+	got := createRequestFileNames(files)
+	for file := range files {
+		if got[file] != filepath.ToSlash(file) {
+			t.Fatalf("%s = %q, want %q", file, got[file], filepath.ToSlash(file))
+		}
+	}
+}
+
+func TestCreateHandlerDraftQuantizeRequiresDraft(t *testing.T) {
 	dir := t.TempDir()
 	modelfile := filepath.Join(dir, "Modelfile")
-	if err := os.WriteFile(modelfile, []byte("FROM base\nDRAFT ./assistant\n"), 0o644); err != nil {
+	if err := os.WriteFile(modelfile, []byte("FROM base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	cmd := &cobra.Command{}
 	cmd.Flags().Bool("experimental", false, "")
-	cmd.Flags().String("draft-quantize", "", "")
 	cmd.Flags().String("file", modelfile, "")
+	cmd.Flags().String("draft-quantize", "mxfp8", "")
 	cmd.SetContext(t.Context())
 
 	err := CreateHandler(cmd, []string{"test-model"})
-	// DRAFT no longer requires --experimental; the error (if any) should be
-	// about the model not being found, not about needing --experimental.
-	if err != nil && strings.Contains(err.Error(), "DRAFT requires --experimental") {
-		t.Fatalf("DRAFT should not require --experimental, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "--draft-quantize requires a DRAFT model") {
+		t.Fatalf("error = %v, want draft-quantize requires DRAFT", err)
 	}
 }
 

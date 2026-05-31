@@ -52,13 +52,13 @@ func applyRoPEQwen3(x *mlx.Array, seqLen int32, theta float32) *mlx.Array {
 
 	freqsArr := make([]float32, half)
 	logTheta := float32(math.Log(float64(theta)))
-	for i := int32(0); i < half; i++ {
+	for i := range half {
 		freqsArr[i] = float32(math.Exp(float64(-logTheta * float32(i) / float32(half))))
 	}
 	freqs := mlx.NewArray(freqsArr, []int32{half})
 
 	posArr := make([]float32, seqLen)
-	for i := int32(0); i < seqLen; i++ {
+	for i := range seqLen {
 		posArr[i] = float32(i)
 	}
 	pos := mlx.NewArray(posArr, []int32{seqLen})
@@ -292,7 +292,7 @@ func (te *TextEncoder) EncodePrompt(tok *tokenizer.Tokenizer, prompt string, max
 	}
 
 	maskData := make([]float32, maxLen)
-	for i := 0; i < len(tokens); i++ {
+	for i := range tokens {
 		maskData[i] = 1.0
 	}
 
@@ -317,8 +317,8 @@ func (te *TextEncoder) EncodePrompt(tok *tokenizer.Tokenizer, prompt string, max
 	validLen := int32(len(tokens))
 	combinedMaskData := make([]float32, L*L)
 	negInf := float32(-1e9)
-	for i := int32(0); i < L; i++ {
-		for j := int32(0); j < L; j++ {
+	for i := range L {
+		for j := range L {
 			idx := i*L + j
 			if j <= i && j < validLen {
 				combinedMaskData[idx] = 0
@@ -365,8 +365,8 @@ func (te *TextEncoder) EncodePromptWithLayers(tok *tokenizer.Tokenizer, prompt s
 	validLen := int32(len(tokens))
 	maskData := make([]float32, L*L)
 	negInf := float32(-1e9)
-	for i := int32(0); i < L; i++ {
-		for j := int32(0); j < L; j++ {
+	for i := range L {
+		for j := range L {
 			idx := i*L + j
 			if j <= i && j < validLen {
 				maskData[idx] = 0 // allowed: causal OK and not PAD

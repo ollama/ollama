@@ -131,8 +131,10 @@ type radioConfig struct {
 	} `json:"args"`
 }
 
-var _ ModelConverter = (*nemotronHModel)(nil)
-var _ ModelConverter = (*nemotronHNanoVLModel)(nil)
+var (
+	_ ModelConverter = (*nemotronHModel)(nil)
+	_ ModelConverter = (*nemotronHNanoVLModel)(nil)
+)
 
 func (n *nemotronHNanoVLModel) parseMore(fsys fs.FS) error {
 	if n.MaxSequenceLength > 0 {

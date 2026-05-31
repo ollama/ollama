@@ -24,7 +24,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/d4l3k/go-bfloat16 v0.0.0-20211005043715-690c3bdd05f1
-	github.com/dlclark/regexp2 v1.11.4
+	github.com/dlclark/regexp2 v1.11.5
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/klauspost/compress v1.18.3
 	github.com/mattn/go-runewidth v0.0.16

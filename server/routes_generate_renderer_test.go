@@ -143,7 +143,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 	})
 
 	t.Run("custom template bypasses renderer", func(t *testing.T) {
-		// Test that providing a custom template uses the legacy flow
+		// Test that providing a custom template uses direct template execution.
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:    "test-renderer",
 			Prompt:   "Write a hello world function",
@@ -180,7 +180,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 	}
 
 	t.Run("suffix bypasses renderer", func(t *testing.T) {
-		// Test that providing a suffix uses the legacy flow
+		// Test that providing a suffix uses direct template execution.
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:  "test-suffix-renderer",
 			Prompt: "def add(",

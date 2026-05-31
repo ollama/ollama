@@ -147,7 +147,9 @@ func (ModelParameters) KV(t *Tokenizer) KV {
 	}
 
 	for _, sv := range t.SpecialVocabulary {
-		kv[fmt.Sprintf("tokenizer.ggml.add_%s_token", sv.Key())] = sv.AddToken
+		if sv.AddTokenSet {
+			kv[fmt.Sprintf("tokenizer.ggml.add_%s_token", sv.Key())] = sv.AddToken
+		}
 		kv[fmt.Sprintf("tokenizer.ggml.%s_token_id", sv.Key())] = uint32(sv.ID)
 		if len(sv.IDs) > 0 {
 			kv[fmt.Sprintf("tokenizer.ggml.%s_token_ids", sv.Key())] = sv.IDs
@@ -206,8 +208,30 @@ type DraftKVEmitter interface {
 	DraftKV(draftFsys fs.FS) (KV, error)
 }
 
+// MultimodalConverter splits checkpoints with embedded vision/projector
+// weights into a text model GGUF and a separate projector GGUF.
+type MultimodalConverter interface {
+	ModelConverter
+	TextKV(*Tokenizer) KV
+	TextTensors([]Tensor, *Tokenizer) []*ggml.Tensor
+	ProjectorKV(*Tokenizer) KV
+	ProjectorTensors([]Tensor) []*ggml.Tensor
+}
+
 type moreParser interface {
 	parseMore(fs.FS) error
+}
+
+type extraTensorParser interface {
+	extraTensors(fs.FS) ([]Tensor, error)
+}
+
+type tokenizerAdjuster interface {
+	adjustTokenizer(*Tokenizer)
+}
+
+type tokenizerAwareTensorConverter interface {
+	TensorsWithTokenizer([]Tensor, *Tokenizer) []*ggml.Tensor
 }
 
 type AdapterConverter interface {
@@ -297,6 +321,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &gemma2Model{}
 	case "Gemma3ForCausalLM", "Gemma3ForConditionalGeneration":
 		conv = &gemma3Model{Architecture: p.Architectures[0]}
+	case "Gemma3TextModel":
+		conv = &embeddingGemmaModel{}
 	case "Gemma3nForConditionalGeneration":
 		conv = &gemma3nModel{}
 	case "Gemma4ForCausalLM", "Gemma4ForConditionalGeneration", "Gemma4AssistantForCausalLM":
@@ -357,6 +383,9 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if ta, ok := conv.(tokenizerAdjuster); ok {
+		ta.adjustTokenizer(t)
+	}
 
 	vocabSize := int(cmp.Or(p.VocabSize, p.TextModel.VocabSize))
 
@@ -384,7 +413,7 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 // and files it finds in the input path.
 // Supported input model formats include safetensors.
 // Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
-func ConvertModel(fsys fs.FS, f *os.File) error {
+func ConvertModel(fsys fs.FS, f *os.File, projectorFiles ...*os.File) error {
 	kv, t, err := LoadModelMetadata(fsys)
 	if err != nil {
 		return err
@@ -399,7 +428,47 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		return err
 	}
 
-	return writeFile(f, conv.KV(t), conv.Tensors(ts))
+	if tp, ok := conv.(extraTensorParser); ok {
+		extra, err := tp.extraTensors(fsys)
+		if err != nil {
+			return err
+		}
+		ts = append(ts, extra...)
+	}
+
+	if err := ensureUniqueTensorNames(ts); err != nil {
+		return err
+	}
+
+	if mc, ok := conv.(MultimodalConverter); ok && len(projectorFiles) > 0 && projectorFiles[0] != nil {
+		projectorTensors := mc.ProjectorTensors(ts)
+		if len(projectorTensors) > 0 {
+			if err := writeFile(f, mc.TextKV(t), mc.TextTensors(ts, t)); err != nil {
+				return err
+			}
+			return writeFile(projectorFiles[0], mc.ProjectorKV(t), projectorTensors)
+		}
+	}
+
+	var tensors []*ggml.Tensor
+	if tc, ok := conv.(tokenizerAwareTensorConverter); ok {
+		tensors = tc.TensorsWithTokenizer(ts, t)
+	} else {
+		tensors = conv.Tensors(ts)
+	}
+
+	return writeFile(f, conv.KV(t), tensors)
+}
+
+func ensureUniqueTensorNames(ts []Tensor) error {
+	names := make(map[string]struct{}, len(ts))
+	for _, t := range ts {
+		if _, ok := names[t.Name()]; ok {
+			return fmt.Errorf("duplicate tensor name '%s' was found for this model", t.Name())
+		}
+		names[t.Name()] = struct{}{}
+	}
+	return nil
 }
 
 // ConvertModelWithDraft converts a model like ConvertModel, but also reads

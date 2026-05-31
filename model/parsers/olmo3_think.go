@@ -34,6 +34,12 @@ func (p *Olmo3ThinkParser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *Olmo3ThinkParser) PreservedTokens() []string {
+	return []string{
+		olmo3ThinkCloseTag,
+	}
+}
+
 func (p *Olmo3ThinkParser) setInitialState(lastMessage *api.Message) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 

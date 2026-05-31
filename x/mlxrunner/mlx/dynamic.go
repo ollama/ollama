@@ -18,9 +18,11 @@ import (
 	"unsafe"
 )
 
-var initError error
-var initLoadError string
-var initLoadedPath string
+var (
+	initError      error
+	initLoadError  string
+	initLoadedPath string
+)
 
 // CheckInit returns any error that occurred during MLX dynamic library initialization.
 func CheckInit() error {
@@ -68,7 +70,8 @@ func tryLoadFromDir(dir string) bool {
 }
 
 // libOllamaRoots returns candidate directories for MLX dynamic libraries.
-// Production: exe_dir/lib/ollama (dist tarball) and exe_dir (app bundle).
+// Production: exe_dir/lib/ollama (Windows release layout),
+// exe_dir/../lib/ollama (standard bin/lib layout), and exe_dir (macOS bundle).
 // Development: build/lib/ollama and build/*/lib/ollama.
 func libOllamaRoots() []string {
 	var roots []string
@@ -82,11 +85,13 @@ func libOllamaRoots() []string {
 		switch runtime.GOOS {
 		case "darwin":
 			roots = append(roots, filepath.Join(exeDir, "lib", "ollama"))
+			roots = append(roots, filepath.Join(exeDir, "..", "lib", "ollama"))
 			roots = append(roots, exeDir) // app bundle: Contents/Resources/
 		case "linux":
 			roots = append(roots, filepath.Join(exeDir, "..", "lib", "ollama"))
 		case "windows":
 			roots = append(roots, filepath.Join(exeDir, "lib", "ollama"))
+			roots = append(roots, filepath.Join(exeDir, "..", "lib", "ollama"))
 		}
 	}
 
@@ -96,6 +101,8 @@ func libOllamaRoots() []string {
 	// and incompatible variants are skipped. Without this, alphabetical
 	// order would always pick v3 over v4 in dev builds.
 	for _, base := range repoBuildDirs() {
+		platform := runtime.GOOS + "-" + runtime.GOARCH
+		platformAlt := runtime.GOOS + "_" + runtime.GOARCH
 		roots = append(roots, filepath.Join(base, "lib", "ollama"))
 		if matches, err := filepath.Glob(filepath.Join(base, "*", "lib", "ollama")); err == nil {
 			sort.Sort(sort.Reverse(sort.StringSlice(matches)))
@@ -108,8 +115,22 @@ func libOllamaRoots() []string {
 				}
 			}
 		}
+		if matches, err := filepath.Glob(filepath.Join(base, platform, "*", "lib", "ollama")); err == nil {
+			sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+			for _, m := range matches {
+				variant := filepath.Base(filepath.Dir(filepath.Dir(m)))
+				if isCompatibleMLXVariant(variant) {
+					roots = append(roots, m)
+				}
+			}
+		}
+		repoRoot := filepath.Dir(base)
+		roots = append(roots, filepath.Join(repoRoot, "dist", platform, "lib", "ollama"))
+		roots = append(roots, filepath.Join(repoRoot, "dist", platformAlt, "lib", "ollama"))
+		if runtime.GOOS == "darwin" {
+			roots = append(roots, filepath.Join(repoRoot, "dist", "darwin", "lib", "ollama"))
+		}
 	}
-
 	return roots
 }
 

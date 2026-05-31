@@ -19,7 +19,7 @@ var defaultVisionModels = []string{
 	"nemotron3:33b",
 	"gemma4",
 	"gemma3",
-	"llama3.2-vision",
+	// "llama3.2-vision", // TODO: re-enable when llama.cpp supports mllama.
 	"qwen2.5vl",
 	"qwen3-vl:8b",
 }
@@ -116,7 +116,7 @@ func TestVisionMultiTurn(t *testing.T) {
 						Images:  []api.ImageData{abbeyRoad},
 					},
 				},
-				Stream: &stream,
+				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
@@ -182,7 +182,7 @@ func TestVisionObjectCounting(t *testing.T) {
 						Images:  []api.ImageData{docs},
 					},
 				},
-				Stream: &stream,
+				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
@@ -225,7 +225,7 @@ func TestVisionSceneUnderstanding(t *testing.T) {
 						Images:  []api.ImageData{abbeyRoad},
 					},
 				},
-				Stream: &stream,
+				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
@@ -263,7 +263,7 @@ func TestVisionSpatialReasoning(t *testing.T) {
 						Images:  []api.ImageData{docs},
 					},
 				},
-				Stream: &stream,
+				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
@@ -299,7 +299,7 @@ func TestVisionDetailRecognition(t *testing.T) {
 						Images:  []api.ImageData{docs},
 					},
 				},
-				Stream: &stream,
+				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
@@ -344,7 +344,7 @@ func TestVisionMultiImage(t *testing.T) {
 						Images:  []api.ImageData{abbeyRoad, docs},
 					},
 				},
-				Stream: &stream,
+				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
@@ -383,7 +383,7 @@ func TestVisionImageDescription(t *testing.T) {
 						Images:  []api.ImageData{ollamaHome},
 					},
 				},
-				Stream: &stream,
+				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}

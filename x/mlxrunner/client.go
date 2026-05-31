@@ -211,6 +211,14 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	return nil
 }
 
+func (c *Client) Chat(ctx context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
+	return errors.New("MLX runner does not support native llama-server chat")
+}
+
+func (c *Client) ApplyChatTemplate(ctx context.Context, req llm.ChatRequest) (string, error) {
+	return "", errors.New("MLX runner does not support native llama-server chat templates")
+}
+
 func (c *Client) ContextLength() int {
 	return int(c.contextLength.Load())
 }

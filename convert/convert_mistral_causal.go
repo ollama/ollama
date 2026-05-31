@@ -58,24 +58,19 @@ func (p *mistral3CausalModel) KV(t *Tokenizer) KV {
 	kv["mistral3.rope.freq_base"] = cmp.Or(p.RopeTheta, p.RopeParameters.RopeTheta)
 	kv["mistral3.rope.scaling.factor"] = p.RopeParameters.Factor
 	kv["mistral3.rope.scaling.type"] = p.RopeParameters.RopeType
-	kv["mistral3.rope.scaling.beta_fast"] = p.RopeParameters.BetaFast
-	kv["mistral3.rope.scaling.beta_slow"] = p.RopeParameters.BetaSlow
-
-	if p.RopeParameters.Mscale != nil {
-		kv["mistral3.rope.scaling.mscale"] = *p.RopeParameters.Mscale
-	}
+	kv["mistral3.rope.scaling.yarn_beta_fast"] = p.RopeParameters.BetaFast
+	kv["mistral3.rope.scaling.yarn_beta_slow"] = p.RopeParameters.BetaSlow
 
 	if p.RopeParameters.MscaleAllDim != nil {
-		kv["mistral3.rope.scaling.mscale_all_dim"] = *p.RopeParameters.MscaleAllDim
+		kv["mistral3.rope.scaling.yarn_log_multiplier"] = *p.RopeParameters.MscaleAllDim
 	}
 
 	if p.RopeParameters.OrigMaxPositionEmbeddings > 0 {
 		kv["mistral3.rope.scaling.original_context_length"] = p.RopeParameters.OrigMaxPositionEmbeddings
-		kv["mistral3.rope.scaling_beta"] = *p.RopeParameters.Llama4ScalingBeta
 	}
 
 	if p.RopeParameters.Llama4ScalingBeta != nil {
-		kv["mistral3.rope.scaling_beta"] = *p.RopeParameters.Llama4ScalingBeta
+		kv["mistral3.attention.temperature_scale"] = *p.RopeParameters.Llama4ScalingBeta
 	}
 
 	return kv

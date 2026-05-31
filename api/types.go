@@ -600,12 +600,13 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	NumCtx    int   `json:"num_ctx,omitempty"`
-	NumBatch  int   `json:"num_batch,omitempty"`
-	NumGPU    int   `json:"num_gpu,omitempty"`
-	MainGPU   int   `json:"main_gpu,omitempty"`
-	UseMMap   *bool `json:"use_mmap,omitempty"`
-	NumThread int   `json:"num_thread,omitempty"`
+	NumCtx          int   `json:"num_ctx,omitempty"`
+	NumBatch        int   `json:"num_batch,omitempty"`
+	NumGPU          int   `json:"num_gpu,omitempty"`
+	MainGPU         *int  `json:"main_gpu,omitempty"`
+	UseMMap         *bool `json:"use_mmap,omitempty"`
+	NumThread       int   `json:"num_thread,omitempty"`
+	DraftNumPredict int   `json:"draft_num_predict,omitempty"`
 }
 
 // TokenizeRequest is the request passed to [Client.Tokenize].
@@ -729,6 +730,9 @@ type CreateRequest struct {
 	// Quantize is the quantization format for the model; leave blank to not change the quantization level.
 	Quantize string `json:"quantize,omitempty"`
 
+	// DraftQuantize is the quantization format for the draft model.
+	DraftQuantize string `json:"draft_quantize,omitempty"`
+
 	// From is the name of the model or file to use as the source.
 	From string `json:"from,omitempty"`
 
@@ -737,6 +741,9 @@ type CreateRequest struct {
 
 	// Files is a map of files include when creating the model.
 	Files map[string]string `json:"files,omitempty"`
+
+	// DraftFiles is a map of draft model files to include when creating the model.
+	DraftFiles map[string]string `json:"draft_files,omitempty"`
 
 	// Adapters is a map of LoRA adapters to include when creating the model.
 	Adapters map[string]string `json:"adapters,omitempty"`
@@ -884,14 +891,15 @@ type ProcessResponse struct {
 
 // ListModelResponse is a single model description in [ListResponse].
 type ListModelResponse struct {
-	Name        string       `json:"name"`
-	Model       string       `json:"model"`
-	RemoteModel string       `json:"remote_model,omitempty"`
-	RemoteHost  string       `json:"remote_host,omitempty"`
-	ModifiedAt  time.Time    `json:"modified_at"`
-	Size        int64        `json:"size"`
-	Digest      string       `json:"digest"`
-	Details     ModelDetails `json:"details,omitempty"`
+	Name         string             `json:"name"`
+	Model        string             `json:"model"`
+	RemoteModel  string             `json:"remote_model,omitempty"`
+	RemoteHost   string             `json:"remote_host,omitempty"`
+	ModifiedAt   time.Time          `json:"modified_at"`
+	Size         int64              `json:"size"`
+	Digest       string             `json:"digest"`
+	Details      ModelDetails       `json:"details,omitempty"`
+	Capabilities []model.Capability `json:"capabilities,omitempty"`
 }
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
@@ -984,6 +992,8 @@ type ModelDetails struct {
 	Families          []string `json:"families"`
 	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
+	ContextLength     int      `json:"context_length,omitempty"`
+	EmbeddingLength   int      `json:"embedding_length,omitempty"`
 }
 
 // UserResponse provides information about a user.
@@ -1106,14 +1116,25 @@ func (opts *Options) FromMap(m map[string]any) error {
 				}
 				field.Set(reflect.ValueOf(slice))
 			case reflect.Pointer:
-				var b bool
-				if field.Type() == reflect.TypeOf(&b) {
+				switch field.Type().Elem().Kind() {
+				case reflect.Bool:
 					val, ok := val.(bool)
 					if !ok {
 						return fmt.Errorf("option %q must be of type boolean", key)
 					}
 					field.Set(reflect.ValueOf(&val))
-				} else {
+				case reflect.Int:
+					var i int
+					switch t := val.(type) {
+					case int64:
+						i = int(t)
+					case float64:
+						i = int(t)
+					default:
+						return fmt.Errorf("option %q must be of type integer", key)
+					}
+					field.Set(reflect.ValueOf(&i))
+				default:
 					return fmt.Errorf("unknown type loading config params: %v %v", field.Kind(), field.Type())
 				}
 			default:
@@ -1146,11 +1167,12 @@ func DefaultOptions() Options {
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:    int(envconfig.ContextLength()),
-			NumBatch:  512,
-			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
-			NumThread: 0,  // let the runtime decide
-			UseMMap:   nil,
+			NumCtx:          int(envconfig.ContextLength()),
+			NumBatch:        512,
+			NumGPU:          -1, // -1 here indicates that NumGPU should be set dynamically
+			NumThread:       0,  // let the runtime decide
+			DraftNumPredict: 4,
+			UseMMap:         nil,
 		},
 	}
 }
@@ -1354,14 +1376,20 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 					// TODO: only string slices are supported right now
 					out[key] = vals
 				case reflect.Pointer:
-					var b bool
-					if field.Type() == reflect.TypeOf(&b) {
+					switch field.Type().Elem().Kind() {
+					case reflect.Bool:
 						boolVal, err := strconv.ParseBool(vals[0])
 						if err != nil {
 							return nil, fmt.Errorf("invalid bool value %s", vals)
 						}
 						out[key] = &boolVal
-					} else {
+					case reflect.Int:
+						intVal, err := strconv.ParseInt(vals[0], 10, 64)
+						if err != nil {
+							return nil, fmt.Errorf("invalid int value %s", vals)
+						}
+						out[key] = intVal
+					default:
 						return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
 					}
 				default:

@@ -179,7 +179,7 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 	}
 
 	// Handle pointers
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return
 		}
@@ -203,7 +203,7 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 
 	// Handle structs
 	if v.Kind() == reflect.Struct {
-		for i := 0; i < v.NumField(); i++ {
+		for i := range v.NumField() {
 			field := v.Field(i)
 			if field.CanInterface() {
 				collect(field, arrays, seen)
@@ -214,7 +214,7 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 
 	// Handle slices
 	if v.Kind() == reflect.Slice {
-		for i := 0; i < v.Len(); i++ {
+		for i := range v.Len() {
 			collect(v.Index(i), arrays, seen)
 		}
 		return
@@ -314,7 +314,7 @@ func DebugArraysVerbose(topN int) {
 	}
 
 	// Sort by size descending
-	for i := 0; i < len(infos)-1; i++ {
+	for i := range len(infos) - 1 {
 		for j := i + 1; j < len(infos); j++ {
 			if infos[j].bytes > infos[i].bytes {
 				infos[i], infos[j] = infos[j], infos[i]
@@ -1012,7 +1012,7 @@ func Slice(a *Array, start, stop []int32) *Array {
 	cStart := make([]C.int, n)
 	cStop := make([]C.int, n)
 	cStrides := make([]C.int, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		cStart[i] = C.int(start[i])
 		cStop[i] = C.int(stop[i])
 		cStrides[i] = 1 // Default stride of 1
@@ -1233,7 +1233,7 @@ func (a *Array) Dim(axis int) int32 {
 func (a *Array) Shape() []int32 {
 	ndim := a.Ndim()
 	shape := make([]int32, ndim)
-	for i := 0; i < ndim; i++ {
+	for i := range ndim {
 		shape[i] = a.Dim(i)
 	}
 	return shape
@@ -1659,7 +1659,7 @@ func SliceUpdate(a, update *Array, start, stop []int32) *Array {
 	cStart := make([]C.int, n)
 	cStop := make([]C.int, n)
 	cStrides := make([]C.int, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		cStart[i] = C.int(start[i])
 		cStop[i] = C.int(stop[i])
 		cStrides[i] = 1 // Default stride of 1
@@ -1719,6 +1719,28 @@ func mlxLibName() string {
 	}
 }
 
+func findMLXLibraryInDir(dir, libName string) string {
+	if dir == "" {
+		return ""
+	}
+
+	candidate := filepath.Join(dir, libName)
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+
+	if mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx*")); err == nil {
+		for _, mlxDir := range mlxDirs {
+			candidate = filepath.Join(mlxDir, libName)
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+	}
+
+	return ""
+}
+
 // findMLXLibrary searches for the MLX shared library in standard locations.
 // Returns the path to the library, or empty string if not found.
 func findMLXLibrary() string {
@@ -1727,17 +1749,8 @@ func findMLXLibrary() string {
 	// 1. OLLAMA_LIBRARY_PATH — check each dir and mlx_* subdirs
 	if paths, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH"); ok {
 		for _, dir := range filepath.SplitList(paths) {
-			candidate := filepath.Join(dir, libName)
-			if _, err := os.Stat(candidate); err == nil {
+			if candidate := findMLXLibraryInDir(dir, libName); candidate != "" {
 				return candidate
-			}
-			if mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx*")); err == nil {
-				for _, mlxDir := range mlxDirs {
-					candidate = filepath.Join(mlxDir, libName)
-					if _, err := os.Stat(candidate); err == nil {
-						return candidate
-					}
-				}
 			}
 		}
 	}
@@ -1750,8 +1763,7 @@ func findMLXLibrary() string {
 		exeDir := filepath.Dir(exe)
 
 		// Check exe dir directly (macOS copies dylib here)
-		candidate := filepath.Join(exeDir, libName)
-		if _, err := os.Stat(candidate); err == nil {
+		if candidate := findMLXLibraryInDir(exeDir, libName); candidate != "" {
 			return candidate
 		}
 
@@ -1761,22 +1773,27 @@ func findMLXLibrary() string {
 			filepath.Join(exeDir, "lib", "ollama"),
 			filepath.Join(exeDir, "..", "lib", "ollama"),
 		} {
-			if mlxDirs, err := filepath.Glob(filepath.Join(libOllamaDir, "mlx*")); err == nil {
-				for _, mlxDir := range mlxDirs {
-					candidate = filepath.Join(mlxDir, libName)
-					if _, err := os.Stat(candidate); err == nil {
-						return candidate
-					}
-				}
+			if candidate := findMLXLibraryInDir(libOllamaDir, libName); candidate != "" {
+				return candidate
 			}
 		}
 	}
 
 	// 3. Build directory (for tests run from repo root)
 	if cwd, err := os.Getwd(); err == nil {
-		candidate := filepath.Join(cwd, "build", "lib", "ollama", libName)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
+		for _, dir := range []string{
+			filepath.Join(cwd, "build", "lib", "ollama"),
+			filepath.Join(cwd, "dist", runtime.GOOS+"-"+runtime.GOARCH, "lib", "ollama"),
+			filepath.Join(cwd, "dist", runtime.GOOS+"_"+runtime.GOARCH, "lib", "ollama"),
+		} {
+			if candidate := findMLXLibraryInDir(dir, libName); candidate != "" {
+				return candidate
+			}
+		}
+		if runtime.GOOS == "darwin" {
+			if candidate := findMLXLibraryInDir(filepath.Join(cwd, "dist", "darwin"), libName); candidate != "" {
+				return candidate
+			}
 		}
 	}
 
@@ -2291,7 +2308,7 @@ func Pad(a *Array, paddings []int32) *Array {
 	// Convert to low/high pairs
 	lowPad := make([]C.int, numAxes)
 	highPad := make([]C.int, numAxes)
-	for i := 0; i < numAxes; i++ {
+	for i := range numAxes {
 		lowPad[i] = C.int(paddings[i*2])
 		highPad[i] = C.int(paddings[i*2+1])
 	}
@@ -2299,7 +2316,7 @@ func Pad(a *Array, paddings []int32) *Array {
 	res := C.mlx_array_new()
 	// mlx_pad takes axes, low, high arrays
 	axes := make([]C.int, numAxes)
-	for i := 0; i < numAxes; i++ {
+	for i := range numAxes {
 		axes[i] = C.int(i)
 	}
 	cMode := C.CString("constant")

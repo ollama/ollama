@@ -14,6 +14,10 @@ const (
 
 type LagunaRenderer struct{}
 
+func (r *LagunaRenderer) LeadingBOS() string {
+	return lagunaBOS
+}
+
 func (r *LagunaRenderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 	sb.WriteString(lagunaBOS)

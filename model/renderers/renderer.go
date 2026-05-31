@@ -8,6 +8,7 @@ import (
 
 type Renderer interface {
 	Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error)
+	LeadingBOS() string
 }
 
 type (
@@ -40,6 +41,15 @@ func RenderWithRenderer(name string, msgs []api.Message, tools []api.Tool, think
 		return "", fmt.Errorf("unknown renderer %q", name)
 	}
 	return renderer.Render(msgs, tools, think)
+}
+
+func LeadingBOSForRenderer(name string) string {
+	renderer := rendererForName(name)
+	if renderer == nil {
+		return ""
+	}
+
+	return renderer.LeadingBOS()
 }
 
 func rendererForName(name string) Renderer {

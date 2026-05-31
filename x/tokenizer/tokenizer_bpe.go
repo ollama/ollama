@@ -84,7 +84,7 @@ func (t *Tokenizer) encodeBPEMerge(encoded string, ids []int32) []int32 {
 
 	pairs := bpePairHeap{}
 	heap.Init(&pairs)
-	for i := 0; i < len(runes)-1; i++ {
+	for i := range len(runes) - 1 {
 		if pair := pairwise(i, i+1); pair != nil {
 			heap.Push(&pairs, pair)
 		}
