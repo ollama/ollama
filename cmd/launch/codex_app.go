@@ -85,14 +85,7 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) err
 	if err := writeCodexAppModelCatalog(catalogPath, primary, codexAppCatalogModels(primary, models)); err != nil {
 		return err
 	}
-	return writeCodexLaunchProfile(configPath, codexLaunchProfileOptions{
-		activate:           true,
-		profileName:        codexAppProfileName,
-		setRootModelConfig: true,
-		model:              primary,
-		modelCatalogPath:   catalogPath,
-		backupIntegration:  codexAppIntegrationName,
-	})
+	return writeCodexAppConfig(configPath, primary, catalogPath)
 }
 
 func (c *CodexApp) CurrentModel() string {
@@ -160,7 +153,7 @@ func codexAppCatalogHealthy(config codexParsedConfig, profileName string) bool {
 	if config.RootString(codexRootModelCatalogJSONKey) != catalogPath {
 		return false
 	}
-	if config.ProfileString(profileName, codexRootModelCatalogJSONKey) != catalogPath {
+	if config.Exists("profiles", profileName) && config.ProfileString(profileName, codexRootModelCatalogJSONKey) != catalogPath {
 		return false
 	}
 	data, err := os.ReadFile(catalogPath)
@@ -174,6 +167,69 @@ func codexAppCatalogHealthy(config codexParsedConfig, profileName string) bool {
 		return false
 	}
 	return len(catalog.Models) > 0
+}
+
+func writeCodexAppConfig(configPath, model, modelCatalogPath string) error {
+	baseURL := codexBaseURL()
+
+	content, readErr := os.ReadFile(configPath)
+	text := ""
+	if readErr == nil {
+		text = string(content)
+	} else if !os.IsNotExist(readErr) {
+		return readErr
+	}
+	if _, err := codexParseConfig(text); err != nil {
+		return err
+	}
+
+	text = codexRemoveRootValue(text, codexRootProfileKey)
+	text = codexRemoveSection(text, codexProfileHeaderFor(codexAppProfileName))
+	text = codexSetRootStringValue(text, codexRootModelKey, model)
+	text = codexSetRootStringValue(text, codexRootModelProviderKey, codexAppProfileName)
+	text = codexSetRootStringValue(text, codexRootModelCatalogJSONKey, modelCatalogPath)
+	text = codexUpsertSection(text, codexProviderHeaderFor(codexAppProfileName), []string{
+		fmt.Sprintf("name = %q", codexProviderName),
+		fmt.Sprintf("base_url = %q", baseURL),
+		`wire_api = "responses"`,
+	})
+
+	parsed, err := codexParseConfig(text)
+	if err != nil {
+		return err
+	}
+	if err := codexValidateAppConfigText(parsed, model, modelCatalogPath, baseURL); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return err
+	}
+	return fileutil.WriteWithBackup(configPath, []byte(text), codexAppIntegrationName)
+}
+
+func codexValidateAppConfigText(config codexParsedConfig, model, modelCatalogPath, baseURL string) error {
+	if got, ok := config.RootStringOK(codexRootProfileKey); ok {
+		return fmt.Errorf("generated Codex App config still contains legacy profile = %q", got)
+	}
+	if config.Exists("profiles", codexAppProfileName) {
+		return fmt.Errorf("generated Codex App config still contains legacy profiles.%s table", codexAppProfileName)
+	}
+	for _, check := range []struct {
+		path []string
+		want string
+	}{
+		{[]string{codexRootModelKey}, model},
+		{[]string{codexRootModelProviderKey}, codexAppProfileName},
+		{[]string{codexRootModelCatalogJSONKey}, modelCatalogPath},
+		{[]string{"model_providers", codexAppProfileName, "name"}, codexProviderName},
+		{[]string{"model_providers", codexAppProfileName, "base_url"}, baseURL},
+		{[]string{"model_providers", codexAppProfileName, "wire_api"}, "responses"},
+	} {
+		if got, ok := config.String(check.path...); !ok || got != check.want {
+			return fmt.Errorf("generated Codex App config missing %s = %q", strings.Join(check.path, "."), check.want)
+		}
+	}
+	return nil
 }
 
 func (c *CodexApp) Onboard() error {
