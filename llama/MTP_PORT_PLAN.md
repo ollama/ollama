@@ -33,6 +33,28 @@ upstream base that already has gemma4 target.
   gemma4 + gemma4_assistant + TurboQuant), develop an MTP-minus-TurboQuant variant there,
   then express as patches vs upstream.
 
+## SEQUENCING DECISION (verified by footprint): MTP first turbo-FREE, TurboQuant is phase 2
+
+Quantified TurboQuant's footprint in atomic — it is a **~1500+ line multi-backend ggml subsystem**,
+entirely orthogonal to MTP:
+- ggml core/CPU: `ggml-turbo-quant.c` (152), `ggml.c` (26), `ggml-cpu/ggml-cpu.c` (26), `ops.cpp`,
+  `ggml-common.h` (33), `ggml-quants.{h,c}`, `ggml/include/ggml.h` (10) — new TURBO2/3/4_0 quant types.
+- CUDA: `turbo-quant.cuh` (105), `turbo-wht.cu` (31), `turbo-innerq.{cu,cuh}`, `set-rows.cu` (139),
+  `fattn-*.cuh` (~205), many `fattn-vec-instance-turbo*` template instances, `convert.cu`, `dequantize.cuh`.
+- Metal: `ggml-metal.metal` (617!), `ggml-metal-ops.cpp`, device/impl/turbo-* headers.
+- Vulkan: `ggml-vulkan.cpp` + several shaders.
+- KV-cache plumbing: `get_turbo_innerq_scale_inv`, `self_k_rot/self_v_rot{,_swa}` graph-input fields.
+
+**The MTP port does NOT depend on TurboQuant.** `build_attn_mtp`'s turbo branches (atomic
+`src/llama-graph.cpp` ~2527-2552) only fire when the target KV tensor's type is `TURBO{2,3,4}_0`;
+with normal f16/q8_0 KV they are skipped and the helper degrades to plain `build_attn_mha`. So:
+- **Phase 1 (now): port MTP turbo-free.** `build_attn_mtp` ported WITHOUT the turbo padding/WHT/unpad
+  hunks and WITHOUT the `self_*_rot` fields. KV stored as normal types. MTP speculative decode works.
+- **Phase 2 (task #12): port TurboQuant** as its own multi-backend effort, then re-add the turbo
+  hunks to `build_attn_mtp` + the iswa rotation fields + kv-cache scale accessors.
+This honors "keep TurboQuant" (it is sequenced, not dropped) without blocking the MTP deliverable on a
+massive ggml-core/CUDA/Metal/Vulkan port. **SURFACE THIS to the user** — they reversed on TurboQuant once.
+
 ## TurboQuant entanglement (no clean historical extraction)
 
 Hoped to grab a pre-TurboQuant MTP commit; **doesn't exist.** In atomic, TurboQuant landed
@@ -128,7 +150,35 @@ on an append-only invariant (all MTP step positions strictly > max stored pos, s
 uniformly pass) rather than rollback. Validate that invariant holds in our integration; if
 we ever write speculative cells into the target cache, our rollback semantics are needed.
 
-## MAJOR FINDING: upstream already has a generic MTP framework
+## CORRECTION (verified on base b9409): the generic MTP framework is single-model NextN ONLY
+
+The "MAJOR FINDING" below assumed atomic's MTP machinery was obsolete because upstream ships
+a generic MTP path. **That is true for Qwen-style in-model NextN, but NOT for gemma4.** Verified
+on our actual base `ggml-org/llama.cpp @ b9409`:
+- ❌ NO `build_attn_mtp` (atomic's cross-model KV-attention helper) — grep returns nothing.
+- ❌ NO foreign/target-model reference anywhere in `llm_graph_context` / `src/llama-graph.h`.
+- ❌ NO `LLM_GRAPH_TYPE_MTP` (atomic's *separate-model* enum). Only `LLM_GRAPH_TYPE_DECODER_MTP`
+  (Qwen's *in-model* enum), which builds the MTP block as an extra layer of the SAME `llama_model`,
+  attending the SAME KV cache via `build_attn_inp_kv()`.
+- ✅ HAS `llm_graph_input_embd_h` (the generic hidden-state input, `inp->h` / `"mtp_h_input"`) — reusable.
+
+**Gemma4's assistant (HF `Gemma4AssistantForCausalLM`) is a SEPARATELY-LOADED model** that
+cross-attends the TARGET's *already-stored* KV at the last layer per attention type (full + sliding),
+with a centroid-routed LM head. That cross-model design has no expression in b9409's single-model
+framework. **So atomic's machinery is REQUIRED, not obsolete:**
+- PORT from atomic: `build_attn_mtp` (cross-model KV attn, TurboQuant kept per user), separate
+  assistant model load + accessors + public C API, centroid LM head + in-graph argmax, and a decode
+  driver (atomic's `decode_mtp{,_async,_wait}` or a synchronous equivalent).
+- REUSE from b9409: `llm_graph_input_embd_h` for feeding the target hidden state; the
+  `LLAMA_CONTEXT_TYPE_MTP` / graph-type scaffolding where it composes; gemma4 TARGET arch (free).
+- Tasks #6/#7/#8 do NOT shrink — they are the separate-model port. Our Go impl + atomic agree on
+  two-model cross-attention; follow that, not the Qwen NextN idiom.
+
+Atomic's graph builder signature confirms two models: `gemma4_mtp_build_one_step(gctx, const
+llama_model & target, const llama_model & mtp, llm_graph_input_attn_kv_iswa * inp_attn, ...)`. It
+reads `target.tok_embd` + cross-attends `target` KV at `il_kv` (last-of-type) using `mtp.layers[il].wo`.
+
+## MAJOR FINDING (SUPERSEDED for gemma4 — see CORRECTION above): upstream already has a generic MTP framework
 
 Upstream llama.cpp HEAD (`d749821`) already ships MTP infrastructure, used by **Qwen 3.5/3.6**:
 - `LLAMA_CONTEXT_TYPE_MTP` (include/llama.h:203) + `ctx_type` param (llama.h:345)
