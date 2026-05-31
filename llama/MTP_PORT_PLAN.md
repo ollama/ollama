@@ -116,16 +116,27 @@ PROGRESS (branch `gemma4-mtp-b9409` on `wow-look-at-my/llama.cpp`, working tree
   `llama_model_gemma4::build_arch_graph`.
 - `fa298ae` load path: `llama_model_load_mtp_from_file` + `llama_mtp_vocab_matches`
   + accessors + `include/llama.h` decls. (task #6 DONE.)
+- `32f39ab` KV slot path + sync decode driver + C API (tasks #4 + #7 DONE):
+  - `llama-kv-cache`: `mtp_slot_info()` (read-only slot at last stored cell / max pos).
+  - `llama-kv-cache-iswa`: `init_mtp()` (read-only iswa ctx over base+SWA last-cell slots).
+  - `llama-context`: `graph_params_mtp` / `ensure_sched_mtp` / `process_ubatch_mtp` /
+    `graph_compute_mtp` on a dedicated `sched_mtp` + `gf_res_prev_mtp`; synchronous
+    `decode_mtp()` (N single-token assistant graphs; argmax->next token, h_post->next h_prev).
+  - Public C API `llama_decode_mtp()` + `include/llama.h` decl.
+
+**COMPILE-VERIFIED (Docker, CPU-only, target `llama`): BUILD_EXIT=0, `libllama.so` links.**
+First full build of the whole port (arch reg + model/graph + load + KV slot + driver + API).
+Build cmd (ro repo mount, container-local /build, nothing written to host):
+`docker run --rm -v <repo>:/src:ro -w /src ubuntu:24.04 bash -c "apt-get install -y cmake g++;
+cmake -B /build -S /src -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DLLAMA_BUILD_{TESTS,EXAMPLES,TOOLS,SERVER}=OFF
+-DLLAMA_CURL=OFF; cmake --build /build --target llama -j"`. Only diag: cosmetic `-Wsuggest-attribute=noreturn`
+on the assistant's throwing `build_arch_graph` stub (never top-level called).
 
 REMAINING (in order):
-1. **Decode driver (task #7, the intricate one):** port the path that runs the
-   `LLM_GRAPH_TYPE_MTP` graph and returns the drafted token. Atomic ref:
-   `src/llama-context.{h,cpp}` `decode_mtp_run`/`sched_mtp`/`mtp_worker_loop`/
-   `ensure_sched_mtp` + public `llama_decode_mtp{,_async,_wait}` (`llama-context.cpp`
-   ~2744-2843, 1248-1354, 4249-4272). **Do SYNC FIRST** (`decode_mtp_run` only),
-   add the async depth-2 worker after correctness. b9409 may have refactored
-   llama-context — map carefully. Needs `llama_decode_mtp*` decls in `include/llama.h`
-   (atomic llama.h ~1009-1045).
+1. **Async MTP worker (deferred from task #7):** depth-2 overlap worker
+   (`decode_mtp_async`/`_wait`, `decode_mtp_run`, `mtp_worker_loop`, mtp_request/response,
+   mutex/cv). Sync path is correct + verified first; add concurrency only when wiring perf.
+   Atomic ref: `llama-context.{h,cpp}` ~2673-2856, 4249-4272.
 2. **`--mtp-head` flag (task #8):** `common/arg.cpp` (atomic ~3494-3516), `-md` alias.
    Speculative driver: check whether b9409's `common/speculative.cpp` already drives
    MTP generically (it has DECODER_MTP for Qwen) — if so reuse it; else port atomic's
