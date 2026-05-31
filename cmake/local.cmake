@@ -124,7 +124,9 @@ else()
     else()
         set(OLLAMA_LLAMA_CPP_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/llama_cpp-src")
         ExternalProject_Add(ollama-llama-cpp-source
-            GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
+            # wow-look-at-my/llama.cpp fork carrying the Gemma 4 MTP port (see
+            # llama/server/CMakeLists.txt); pinned by LLAMA_CPP_VERSION = mtp-b9409-0.1.
+            GIT_REPOSITORY "https://github.com/wow-look-at-my/llama.cpp.git"
             GIT_TAG ${OLLAMA_LLAMA_CPP_GIT_TAG}
             GIT_SHALLOW TRUE
             SOURCE_DIR ${OLLAMA_LLAMA_CPP_SOURCE_DIR}
