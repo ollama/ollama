@@ -1009,6 +1009,12 @@ func saveCodexAppRestoreState(configPath string) error {
 			return err
 		}
 		upgraded := codexAppRestoreStateFromText(configText)
+		if codexAppRootStillManaged(configText) {
+			// Legacy restore state did not record root model settings. If the
+			// current config is still ours, do not save our generated root
+			// values as the user's restore target.
+			upgraded = codexAppRestoreState{}
+		}
 		upgraded.HadProfile = existing.HadProfile
 		upgraded.Profile = existing.Profile
 		return writeCodexAppRestoreState(upgraded)
