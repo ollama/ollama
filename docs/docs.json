@@ -133,6 +133,7 @@
                   "/integrations/goose",
                   "/integrations/oh-my-pi",
                   "/integrations/pi",
+                  "/integrations/qwen",
                   "/integrations/pool"
                 ]
               },
