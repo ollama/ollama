@@ -533,6 +533,7 @@ func codexRootLineHasKey(line, key string) bool {
 
 func codexCatalogModel(modelName string, models []LaunchModel) LaunchModel {
 	if model, ok := findLaunchModel(models, modelName); ok {
+		model.Name = modelName
 		return model.WithCloudLimits()
 	}
 	return fallbackLaunchModel(modelName)

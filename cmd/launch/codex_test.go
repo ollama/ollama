@@ -416,6 +416,40 @@ func TestEnsureCodexConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("writes requested local alias as catalog slug", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		models := []LaunchModel{
+			{Name: "gemma4:latest", ContextLength: 65_536, Details: api.ModelDetails{Format: "gguf"}},
+		}
+		if err := ensureCodexConfig("gemma4", models); err != nil {
+			t.Fatal(err)
+		}
+
+		catalogPath := filepath.Join(tmpDir, ".codex", "model.json")
+		data, err := os.ReadFile(catalogPath)
+		if err != nil {
+			t.Fatalf("model.json not created: %v", err)
+		}
+
+		var catalog struct {
+			Models []map[string]any `json:"models"`
+		}
+		if err := json.Unmarshal(data, &catalog); err != nil {
+			t.Fatalf("model catalog should be valid JSON: %v", err)
+		}
+		if len(catalog.Models) != 1 {
+			t.Fatalf("catalog model count = %d, want 1", len(catalog.Models))
+		}
+		if got := catalog.Models[0]["slug"]; got != "gemma4" {
+			t.Fatalf("catalog slug = %v, want gemma4", got)
+		}
+		if got := catalog.Models[0]["context_window"]; got != float64(65_536) {
+			t.Fatalf("context_window = %v, want 65536", got)
+		}
+	})
+
 	t.Run("is idempotent", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
