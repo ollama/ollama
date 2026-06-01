@@ -356,6 +356,24 @@ func (c codexParsedConfig) String(path ...string) (string, bool) {
 	return value, true
 }
 
+func (c codexParsedConfig) Exists(path ...string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	var current any = c.values
+	for _, part := range path {
+		table, ok := current.(map[string]any)
+		if !ok {
+			return false
+		}
+		current, ok = table[part]
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func (c codexParsedConfig) RootString(key string) string {
 	value, _ := c.RootStringOK(key)
 	return value
