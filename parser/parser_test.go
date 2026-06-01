@@ -701,6 +701,33 @@ SYSTEM ""
 	}
 }
 
+func TestParseFileQuoteRoundtrip(t *testing.T) {
+	// A value whose content starts or ends with a double quote must survive a
+	// String() -> ParseFile round-trip. quote() previously only wrapped values
+	// containing newlines or leading/trailing spaces, so an edge-quote value was
+	// emitted verbatim and its surrounding quotes were stripped when re-parsed.
+	cases := []string{
+		`"quoted"`,
+		`"leading`,
+		`trailing"`,
+		`a "middle" quote`,
+	}
+
+	for _, args := range cases {
+		t.Run("", func(t *testing.T) {
+			modelfile := &Modelfile{Commands: []Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: args},
+			}}
+
+			modelfile2, err := ParseFile(strings.NewReader(modelfile.String()))
+			require.NoError(t, err)
+
+			assert.Equal(t, modelfile, modelfile2)
+		})
+	}
+}
+
 func TestParseFileUTF16ParseFile(t *testing.T) {
 	data := `FROM bob
 PARAMETER param1 1
