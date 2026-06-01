@@ -5,8 +5,12 @@ import (
 )
 
 func TestCompileFusion(t *testing.T) {
-	skipIfNoMLX(t)
+	withMLXThread(t, func() {
+		testCompileFusion(t)
+	})
+}
 
+func testCompileFusion(t *testing.T) {
 	// Compile fuses the ops inside a function body into a single kernel,
 	// eliminating intermediate buffers. Use a diamond-shaped graph where
 	// two branches must be materialized simultaneously without fusion,
@@ -63,8 +67,12 @@ func TestCompileFusion(t *testing.T) {
 }
 
 func TestCompileNested(t *testing.T) {
-	skipIfNoMLX(t)
+	withMLXThread(t, func() {
+		testCompileNested(t)
+	})
+}
 
+func testCompileNested(t *testing.T) {
 	// A compiled function that calls another compiled function should
 	// produce correct results. The inner function inlines via isTracing()
 	// during the outer's trace.
@@ -84,7 +92,7 @@ func TestCompileNested(t *testing.T) {
 	y := outer(gate, up)
 	Eval(y)
 
-	// silu(x) = x * sigmoid(x); for x=0 → 0, x=1 → ~0.7311, x=2 → ~1.7616
+	// silu(x) = x * sigmoid(x); for x=0 -> 0, x=1 -> ~0.7311, x=2 -> ~1.7616
 	got := y.Floats()
 	want := []float32{0, 0.7310586, 1.7615942}
 	for i, v := range got {
@@ -95,8 +103,12 @@ func TestCompileNested(t *testing.T) {
 }
 
 func TestCompileCallbackPanicRecovers(t *testing.T) {
-	skipIfNoMLX(t)
+	withMLXThread(t, func() {
+		testCompileCallbackPanicRecovers(t)
+	})
+}
 
+func testCompileCallbackPanicRecovers(t *testing.T) {
 	boom := Compile1("boom", func(a *Array) *Array {
 		panic("intentional test panic")
 	})
@@ -118,10 +130,14 @@ func TestCompileCallbackPanicRecovers(t *testing.T) {
 }
 
 func TestCompileNoTrackingGrowth(t *testing.T) {
-	skipIfNoMLX(t)
+	withMLXThread(t, func() {
+		testCompileNoTrackingGrowth(t)
+	})
+}
 
+func testCompileNoTrackingGrowth(t *testing.T) {
 	// Repeated invocations of a compiled kernel should not grow the
-	// tracked-arrays list — the callback's traceScratch collects
+	// tracked-arrays list; the callback's traceScratch collects
 	// intermediates during tracing and frees them when the callback returns.
 	fn := Compile2("mul_add", func(a, b *Array) *Array {
 		return a.Multiply(b).Add(b)

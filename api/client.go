@@ -259,6 +259,10 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
 	return nil
 }
 

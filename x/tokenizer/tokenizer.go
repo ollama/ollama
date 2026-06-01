@@ -47,7 +47,7 @@ type Tokenizer struct {
 var byteToRune [256]rune
 
 func init() {
-	for b := 0; b < 256; b++ {
+	for b := range 256 {
 		r := rune(b)
 		switch {
 		case r == 0x00ad:

@@ -17,7 +17,7 @@ func TestVisionModels(t *testing.T) {
 	defaultVisionModels := []string{
 		"gemma4",
 		"qwen2.5vl",
-		"llama3.2-vision",
+		// "llama3.2-vision", // TODO: re-enable when llama.cpp supports mllama.
 		"gemma3",
 		"qwen3-vl:8b",
 		"qwen3-vl:30b",

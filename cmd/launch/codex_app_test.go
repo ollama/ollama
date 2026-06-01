@@ -157,7 +157,7 @@ func TestCodexAppInstalledUsesMacBundleIDFallback(t *testing.T) {
 	}
 }
 
-func TestCodexAppConfigureActivatesOllamaProfile(t *testing.T) {
+func TestCodexAppConfigureActivatesOllamaProviderWithoutLegacyProfile(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:9999")
@@ -191,15 +191,9 @@ func TestCodexAppConfigureActivatesOllamaProfile(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		fmt.Sprintf(`profile = %q`, codexAppProfileName),
 		`model = "llama3.2"`,
 		fmt.Sprintf(`model_provider = %q`, codexAppProfileName),
 		fmt.Sprintf(`model_catalog_json = %q`, catalogPath),
-		codexProfileHeaderFor(codexAppProfileName),
-		`model = "llama3.2"`,
-		`openai_base_url = "http://127.0.0.1:9999/v1/"`,
-		fmt.Sprintf(`model_provider = %q`, codexAppProfileName),
-		`model_catalog_json = "`,
 		codexProviderHeaderFor(codexAppProfileName),
 		`name = "Ollama"`,
 		`base_url = "http://127.0.0.1:9999/v1/"`,
@@ -209,6 +203,12 @@ func TestCodexAppConfigureActivatesOllamaProfile(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Fatalf("expected config to contain %q, got:\n%s", want, content)
 		}
+	}
+	if got, ok := codexRootStringValueOK(content, "profile"); ok {
+		t.Fatalf("legacy root profile should be removed, got %q in:\n%s", got, content)
+	}
+	if strings.Contains(content, codexProfileHeaderFor(codexAppProfileName)) {
+		t.Fatalf("legacy app profile section should not be generated, got:\n%s", content)
 	}
 	if got := c.CurrentModel(); got != "llama3.2" {
 		t.Fatalf("CurrentModel = %q, want llama3.2", got)
@@ -270,8 +270,8 @@ func TestCodexAppConfigureUsesAppSpecificProfileWithoutTouchingCLIProfile(t *tes
 		t.Fatal(err)
 	}
 	content := string(data)
-	if got := codexRootStringValue(content, "profile"); got != codexAppProfileName {
-		t.Fatalf("root profile = %q, want %q", got, codexAppProfileName)
+	if got, ok := codexRootStringValueOK(content, "profile"); ok {
+		t.Fatalf("legacy root profile should be removed, got %q in:\n%s", got, content)
 	}
 	if got := codexSectionStringValue(content, codexProfileHeader(), "openai_base_url"); got != "http://cli.invalid/v1/" {
 		t.Fatalf("CLI profile base URL = %q, want preserved CLI URL in:\n%s", got, content)
@@ -279,8 +279,11 @@ func TestCodexAppConfigureUsesAppSpecificProfileWithoutTouchingCLIProfile(t *tes
 	if got := codexSectionStringValue(content, codexProviderHeader(), "name"); got != "CLI Ollama" {
 		t.Fatalf("CLI provider name = %q, want preserved CLI provider in:\n%s", got, content)
 	}
-	if got := codexSectionStringValue(content, codexProfileHeaderFor(codexAppProfileName), "model"); got != "llama3.2" {
-		t.Fatalf("app profile model = %q, want llama3.2", got)
+	if strings.Contains(content, codexProfileHeaderFor(codexAppProfileName)) {
+		t.Fatalf("legacy app profile section should not be generated, got:\n%s", content)
+	}
+	if got := codexRootStringValue(content, "model"); got != "llama3.2" {
+		t.Fatalf("root model = %q, want llama3.2", got)
 	}
 	if got := codexSectionStringValue(content, codexProviderHeaderFor(codexAppProfileName), "base_url"); got != "http://127.0.0.1:9999/v1/" {
 		t.Fatalf("app provider base URL = %q", got)
@@ -306,8 +309,8 @@ func TestCodexAppConfigureUsesConnectableHostForUnspecifiedBindAddress(t *testin
 	if strings.Contains(content, "0.0.0.0") {
 		t.Fatalf("config should not write bind-only host, got:\n%s", content)
 	}
-	if got := codexSectionStringValue(content, codexProfileHeaderFor(codexAppProfileName), "openai_base_url"); got != "http://127.0.0.1:11434/v1/" {
-		t.Fatalf("app profile openai_base_url = %q, want connectable loopback URL", got)
+	if strings.Contains(content, codexProfileHeaderFor(codexAppProfileName)) {
+		t.Fatalf("legacy app profile section should not be generated, got:\n%s", content)
 	}
 	if got := codexSectionStringValue(content, codexProviderHeaderFor(codexAppProfileName), "base_url"); got != "http://127.0.0.1:11434/v1/" {
 		t.Fatalf("app provider base_url = %q, want connectable loopback URL", got)
@@ -632,6 +635,105 @@ func TestCodexAppConfigureUpgradesLegacyRestoreState(t *testing.T) {
 	}
 	if !state.HadModelProvider || state.ModelProvider != "odc-resp-dev" {
 		t.Fatalf("model provider restore state = (%v, %q), want previous root provider", state.HadModelProvider, state.ModelProvider)
+	}
+}
+
+func TestCodexAppConfigureMigratesLegacyManagedConfigWithoutPollutingRestoreState(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:9999")
+	withCodexAppPlatform(t, "darwin")
+
+	var openCalls int
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { return nil },
+		func() error {
+			openCalls++
+			return nil
+		},
+	)
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	catalogPath := mustCodexAppModelCatalogPath(t)
+	existing := "" +
+		fmt.Sprintf(`profile = %q`, codexAppProfileName) + "\n" +
+		`model = "llama3.2"` + "\n" +
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n" +
+		fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n\n" +
+		codexProfileHeaderFor(codexAppProfileName) + "\n" +
+		`model = "llama3.2"` + "\n" +
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n" +
+		fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n\n" +
+		codexProviderHeaderFor(codexAppProfileName) + "\n" +
+		`name = "Ollama"` + "\n" +
+		`base_url = "http://127.0.0.1:9999/v1/"` + "\n" +
+		`wire_api = "responses"` + "\n\n" +
+		"[profiles.default]\n" +
+		`model = "gpt-5.5"` + "\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(codexAppRestoreStatePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codexAppRestoreStatePath(), []byte(`{"had_profile":true,"profile":"default"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &CodexApp{}
+	if err := c.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+		t.Fatalf("ConfigureWithModels returned error: %v", err)
+	}
+
+	state, err := loadCodexAppRestoreState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.HadProfile || state.Profile != "default" {
+		t.Fatalf("profile restore state = (%v, %q), want default", state.HadProfile, state.Profile)
+	}
+	if state.HadModel || state.HadModelProvider || state.HadModelCatalogJSON {
+		t.Fatalf("legacy restore state should not capture managed root values: %+v", state)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrated := string(data)
+	if got, ok := codexRootStringValueOK(migrated, "profile"); ok {
+		t.Fatalf("legacy root profile should be removed during migration, got %q in:\n%s", got, migrated)
+	}
+	if strings.Contains(migrated, codexProfileHeaderFor(codexAppProfileName)) {
+		t.Fatalf("legacy app profile section should be removed during migration, got:\n%s", migrated)
+	}
+
+	if err := c.Restore(); err != nil {
+		t.Fatalf("Restore returned error: %v", err)
+	}
+
+	data, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := string(data)
+	if got := codexRootStringValue(restored, "profile"); got != "default" {
+		t.Fatalf("root profile = %q, want default in:\n%s", got, restored)
+	}
+	for _, key := range []string{"model", "model_provider", "model_catalog_json"} {
+		if got, ok := codexRootStringValueOK(restored, key); ok {
+			t.Fatalf("root %s should be removed on restore, got %q in:\n%s", key, got, restored)
+		}
+	}
+	if strings.Contains(restored, codexProfileHeaderFor(codexAppProfileName)) || strings.Contains(restored, codexProviderHeaderFor(codexAppProfileName)) {
+		t.Fatalf("owned app config should be removed on restore, got:\n%s", restored)
+	}
+	if openCalls != 1 {
+		t.Fatalf("open calls = %d, want 1", openCalls)
 	}
 }
 

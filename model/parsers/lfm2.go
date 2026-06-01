@@ -45,6 +45,15 @@ func (p *LFM2Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *LFM2Parser) PreservedTokens() []string {
+	return []string{
+		lfm2ThinkingOpenTag,
+		lfm2ThinkingCloseTag,
+		lfm2ToolCallStartTag,
+		lfm2ToolCallEndTag,
+	}
+}
+
 func (p *LFM2Parser) setInitialState(lastMessage *api.Message, thinkValue *api.ThinkValue) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 

@@ -44,6 +44,15 @@ func (p *Qwen35Parser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *Qwen35Parser) PreservedTokens() []string {
+	return []string{
+		qwen35ThinkingOpenTag,
+		qwen35ThinkingCloseTag,
+		toolOpenTag,
+		toolCloseTag,
+	}
+}
+
 func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.buffer.Reset()
 	p.toolParser = Qwen3CoderParser{}

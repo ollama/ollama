@@ -149,6 +149,7 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 				if err := json.Unmarshal(bts, &sv.AddToken); err != nil {
 					return nil, err
 				}
+				sv.AddTokenSet = true
 			}
 
 			if bts, ok := p[fmt.Sprintf("%s_token", st)]; ok {
@@ -314,6 +315,10 @@ type SpecialVocabulary struct {
 	ID       int
 	Content  string
 	AddToken bool
+	// AddTokenSet tracks whether tokenizer_config.json explicitly defined the
+	// add_*_token setting. Missing and explicit false have different GGUF
+	// semantics for some tokenizers.
+	AddTokenSet bool
 
 	// IDs is populated by generation_config.json
 	IDs []int32

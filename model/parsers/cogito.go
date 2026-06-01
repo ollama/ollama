@@ -46,6 +46,21 @@ func (p *CogitoParser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *CogitoParser) PreservedTokens() []string {
+	return []string{
+		cogitoThinkingCloseTag,
+		cogitoToolCallsBeginTag,
+		cogitoToolCallsEndTag,
+		cogitoToolCallBeginTag,
+		cogitoToolCallEndTag,
+		cogitoToolSepTag,
+		cogitoToolOutputBeginTag,
+		cogitoToolOutputEndTag,
+		cogitoToolOutputsBeginTag,
+		cogitoToolOutputsEndTag,
+	}
+}
+
 func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Tool, thinkValue *api.ThinkValue) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 
