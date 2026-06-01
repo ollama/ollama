@@ -215,6 +215,34 @@ type XMLParameter struct {
 	Value string `xml:",chardata"`
 }
 
+// extractFunctionBlock narrows the tool-call payload to the first
+// <function=...>...</function> block in the input. Some models occasionally
+// drift from the documented chat_template format (e.g. qwen3.6, which is
+// trained on a wrapper from an earlier generation) and emit stray closing
+// tags or unrelated elements alongside an otherwise valid function block.
+// Anchoring on the function block lets the XML unmarshaler handle the
+// well-formed portion and discard the noise.
+//
+// If no <function= opening tag exists, the input is returned unchanged so
+// the unmarshaler still surfaces the same error it would have before — the
+// helper only tightens the input when it can find an anchor, it never
+// invents one.
+func extractFunctionBlock(raw string) string {
+	open := strings.Index(raw, "<function=")
+	if open < 0 {
+		return raw
+	}
+	// The first </function> after the opener is the matching close tag.
+	// Using LastIndex would accidentally absorb stray duplicates (e.g.
+	// `</function></function>`) into the slice and re-introduce the same
+	// xml.Unmarshal error this helper is meant to prevent.
+	end := strings.Index(raw[open:], "</function>")
+	if end < 0 {
+		return raw
+	}
+	return raw[open : open+end+len("</function>")]
+}
+
 // parseToolCall parses a raw tool call string into an api.ToolCall.
 // The raw string follows an xml-like format, here's an example:
 //
@@ -229,7 +257,7 @@ type XMLParameter struct {
 func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, error) {
 	toolCall := api.ToolCall{}
 
-	xmlString := transformToXML(raw.raw)
+	xmlString := transformToXML(extractFunctionBlock(raw.raw))
 
 	var functionCall XMLFunctionCall
 	err := xml.Unmarshal([]byte(xmlString), &functionCall)

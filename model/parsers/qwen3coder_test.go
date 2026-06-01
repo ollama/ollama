@@ -545,6 +545,70 @@ Hello! 你好! 🌟 مرحبا
 				},
 			},
 		},
+		// Regression: qwen3.6 occasionally emits a spurious extra </function> close
+		// tag after an otherwise valid block (drift from the documented
+		// chat_template format). The parser anchors on the function block and
+		// discards the stray tag.
+		{
+			name:  "trailing stray </function> close tag",
+			tools: []api.Tool{},
+			rawToolCall: `<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</function>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: testArgs(map[string]any{
+						"location": "Paris",
+					}),
+				},
+			},
+		},
+		// Regression: qwen3.6 was trained on a <function_invocation>...</function_invocation>
+		// wrapper from an earlier generation and intermittently leaks the close
+		// tag through even when the renderer specifies <tool_call>...</tool_call>.
+		{
+			name:  "stray </function_invocation> close tag from older wrapper format",
+			tools: []api.Tool{},
+			rawToolCall: `<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</function_invocation>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: testArgs(map[string]any{
+						"location": "Paris",
+					}),
+				},
+			},
+		},
+		// Regression: stray opening wrapper before the function block — handles
+		// the case where the model emits an unrelated container around the call.
+		{
+			name:  "stray <function_invocation> wrapper around function block",
+			tools: []api.Tool{},
+			rawToolCall: `<function_invocation>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</function_invocation>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: testArgs(map[string]any{
+						"location": "Paris",
+					}),
+				},
+			},
+		},
 	}
 
 	for i, step := range steps {
@@ -555,6 +619,53 @@ Hello! 你好! 🌟 مرحبا
 		if !toolCallEqual(gotToolCall, step.wantToolCall) {
 			t.Errorf("step %d (%s): got tool call %#v, want %#v", i, step.name, gotToolCall, step.wantToolCall)
 		}
+	}
+}
+
+func TestExtractFunctionBlock(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "passthrough — input is already a clean function block",
+			in:   `<function=foo><parameter=x>1</parameter></function>`,
+			want: `<function=foo><parameter=x>1</parameter></function>`,
+		},
+		{
+			name: "trims trailing stray closing tags",
+			in:   `<function=foo><parameter=x>1</parameter></function></function></function_invocation>`,
+			want: `<function=foo><parameter=x>1</parameter></function>`,
+		},
+		{
+			name: "trims leading wrapper",
+			in:   `<function_invocation><function=foo><parameter=x>1</parameter></function></function_invocation>`,
+			want: `<function=foo><parameter=x>1</parameter></function>`,
+		},
+		{
+			name: "no <function= anchor — returns input unchanged so existing error path fires",
+			in:   `<parameter=x>1</parameter></function>`,
+			want: `<parameter=x>1</parameter></function>`,
+		},
+		{
+			name: "no </function> close — returns input unchanged",
+			in:   `<function=foo><parameter=x>1</parameter>`,
+			want: `<function=foo><parameter=x>1</parameter>`,
+		},
+		{
+			name: "empty input",
+			in:   ``,
+			want: ``,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractFunctionBlock(tc.in); got != tc.want {
+				t.Errorf("extractFunctionBlock(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 
