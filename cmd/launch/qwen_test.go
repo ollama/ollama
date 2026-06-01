@@ -827,7 +827,7 @@ func TestQwenInstallerCommand(t *testing.T) {
 			name:      "windows",
 			goos:      "windows",
 			wantBin:   "powershell",
-			wantParts: []string{"-Command", "install-qwen.bat", "REM call qwen"},
+			wantParts: []string{"-Command", "-UseBasicParsing", "-OutFile", "Get-Content -Raw", "install-qwen.bat", "REM call qwen"},
 		},
 		{
 			name:    "unsupported",

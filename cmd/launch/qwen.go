@@ -210,7 +210,7 @@ func qwenInstallerCommand(goos string) (string, []string, error) {
 			"-ExecutionPolicy",
 			"Bypass",
 			"-Command",
-			"$installer = Join-Path $env:TEMP 'install-qwen.bat'; (Invoke-WebRequest 'https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.bat').Content -replace '(?m)^\\s*call qwen\\s*$', 'REM call qwen' | Set-Content -Path $installer -Encoding ASCII; & $installer",
+			"$installer = Join-Path $env:TEMP 'install-qwen.bat'; Invoke-WebRequest -UseBasicParsing -Uri 'https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.bat' -OutFile $installer; $content = Get-Content -Raw -Path $installer; $content = $content -replace '(?m)^\\s*call qwen\\s*$', 'REM call qwen'; Set-Content -Path $installer -Value $content -Encoding ASCII; & $installer",
 		}, nil
 	case "darwin", "linux":
 		return "bash", []string{
