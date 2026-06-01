@@ -151,7 +151,7 @@ func TestSchedLoadStoresEffectiveContextLength(t *testing.T) {
 	}
 }
 
-func TestSchedLoadPreservesExplicitContextLength(t *testing.T) {
+func TestSchedLoadStoresEffectiveExplicitContextLength(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
 
@@ -167,7 +167,7 @@ func TestSchedLoadPreservesExplicitContextLength(t *testing.T) {
 	case err := <-scenario.req.errCh:
 		require.NoError(t, err)
 	case runner := <-scenario.req.successCh:
-		require.Equal(t, 262144, runner.Options.NumCtx)
+		require.Equal(t, 131072, runner.Options.NumCtx)
 	}
 }
 
@@ -978,6 +978,34 @@ func TestSchedNeedsReloadUsesEffectiveAutomaticContextShift(t *testing.T) {
 	require.False(t, runner.needsReload(ctx, req))
 
 	req.numCtxAuto = false
+	require.True(t, runner.needsReload(ctx, req))
+}
+
+func TestSchedNeedsReloadUsesEffectiveExplicitContext(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	llm := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
+	opts := api.DefaultOptions()
+	opts.NumCtx = 2048
+	model := &Model{ModelPath: "model.gguf"}
+	runner := &runnerRef{
+		model:        model,
+		Options:      &opts,
+		llama:        llm,
+		numParallel:  1,
+		contextShift: true,
+		trainContext: 2048,
+	}
+	req := &LlmRequest{
+		model: model,
+		opts:  api.DefaultOptions(),
+	}
+	req.opts.NumCtx = 262144
+
+	require.False(t, runner.needsReload(ctx, req))
+
+	req.opts.NumCtx = 1024
 	require.True(t, runner.needsReload(ctx, req))
 }
 

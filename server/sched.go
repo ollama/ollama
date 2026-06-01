@@ -143,10 +143,20 @@ func resolveContextShift(shift *bool, numCtx int) bool {
 }
 
 func effectiveModelContext(numCtx int, f *ggml.GGML) int {
-	if f != nil {
-		if trainCtx := int(f.KV().ContextLength()); trainCtx > 0 && numCtx > trainCtx {
-			return trainCtx
-		}
+	return effectiveContext(numCtx, modelTrainContext(f))
+}
+
+func modelTrainContext(f *ggml.GGML) int {
+	if f == nil {
+		return 0
+	}
+
+	return int(f.KV().ContextLength())
+}
+
+func effectiveContext(numCtx, trainCtx int) int {
+	if trainCtx > 0 && numCtx > trainCtx {
+		return trainCtx
 	}
 
 	return numCtx
@@ -677,8 +687,10 @@ iGPUScan:
 	}
 
 	totalSize, vramSize := llama.MemorySize()
-	if effectiveNumCtx := llama.ContextLength(); req.numCtxAuto && effectiveNumCtx > 0 {
+	trainContext := modelTrainContext(f)
+	if effectiveNumCtx := llama.ContextLength(); req.model.ModelPath != "" && effectiveNumCtx > 0 {
 		req.opts.NumCtx = effectiveNumCtx
+		req.contextShift = resolveContextShift(req.shift, effectiveNumCtx)
 	}
 	runner := &runnerRef{
 		model:           req.model,
@@ -698,6 +710,7 @@ iGPUScan:
 		numBatchAuto:    req.numBatchAuto,
 		useMMapAuto:     req.useMMapAuto,
 		contextShift:    req.contextShift,
+		trainContext:    trainContext,
 	}
 	runner.numParallel = numParallel
 	runner.refMu.Lock() // hold lock until running or aborted
@@ -1347,6 +1360,7 @@ type runnerRef struct {
 	numBatchAuto bool
 	useMMapAuto  bool
 	contextShift bool
+	trainContext int
 	*api.Options
 }
 
@@ -1388,6 +1402,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	// Don't reload runner if num_gpu=-1 was provided
 	optsExisting := runner.Options.Runner
 	optsNew := req.opts.Runner
+	optsNew.NumCtx = effectiveContext(optsNew.NumCtx, runner.trainContext)
 	if runner.numCtxAuto && req.numCtxAuto {
 		optsNew.NumCtx = optsExisting.NumCtx
 	}
