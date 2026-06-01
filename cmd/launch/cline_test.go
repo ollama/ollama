@@ -148,8 +148,8 @@ func TestClineEdit(t *testing.T) {
 		}
 		providers, _ := providersConfig["providers"].(map[string]any)
 		provider, _ := providers[clineLaunchProvider].(map[string]any)
-		if provider["updatedAt"] != "2026-05-29T16:56:46.111Z" {
-			t.Errorf("updatedAt = %v, want preserved timestamp", provider["updatedAt"])
+		if provider["updatedAt"] == "2026-05-29T16:56:46.111Z" {
+			t.Errorf("updatedAt = %v, want refreshed timestamp after provider change", provider["updatedAt"])
 		}
 		settings, _ := provider["settings"].(map[string]any)
 		if settings["timeout"] != float64(30000) {
@@ -163,6 +163,52 @@ func TestClineEdit(t *testing.T) {
 		}
 		if settings["baseUrl"] != "http://127.0.0.1:11434/v1" {
 			t.Errorf("settings.baseUrl = %v, want http://127.0.0.1:11434/v1", settings["baseUrl"])
+		}
+	})
+
+	t.Run("validates both configs before writing providers config", func(t *testing.T) {
+		os.RemoveAll(filepath.Join(tmpDir, ".cline"))
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte("{not json"), 0o644)
+
+		err := c.Edit(testLaunchModels("kimi-k2.5:cloud"))
+		if err == nil {
+			t.Fatal("expected invalid legacy config error")
+		}
+		if _, statErr := os.Stat(providersPath); !os.IsNotExist(statErr) {
+			t.Fatalf("providers config should not be written when legacy config is invalid, stat err = %v", statErr)
+		}
+	})
+
+	t.Run("preserves updatedAt when provider settings are unchanged", func(t *testing.T) {
+		os.RemoveAll(filepath.Join(tmpDir, ".cline"))
+		os.MkdirAll(filepath.Dir(providersPath), 0o755)
+
+		existingProviders := map[string]any{
+			"providers": map[string]any{
+				clineLaunchProvider: map[string]any{
+					"updatedAt":   "2026-05-29T16:56:46.111Z",
+					"tokenSource": "manual",
+					"settings": map[string]any{
+						"provider": clineLaunchProvider,
+						"model":    "kimi-k2.5:cloud",
+						"baseUrl":  "http://127.0.0.1:11434/v1",
+					},
+				},
+			},
+		}
+		data, _ := json.Marshal(existingProviders)
+		os.WriteFile(providersPath, data, 0o644)
+
+		if err := c.Edit(testLaunchModels("kimi-k2.5:cloud")); err != nil {
+			t.Fatal(err)
+		}
+
+		providersConfig := readProvidersConfig()
+		providers, _ := providersConfig["providers"].(map[string]any)
+		provider, _ := providers[clineLaunchProvider].(map[string]any)
+		if provider["updatedAt"] != "2026-05-29T16:56:46.111Z" {
+			t.Errorf("updatedAt = %v, want preserved timestamp", provider["updatedAt"])
 		}
 	})
 
@@ -325,6 +371,27 @@ func TestClinePaths(t *testing.T) {
 		paths := c.Paths()
 		if len(paths) != 1 || paths[0] != configPath {
 			t.Errorf("Paths() = %v, want [%s]", paths, configPath)
+		}
+	})
+
+	t.Run("returns both paths when both configs exist", func(t *testing.T) {
+		os.RemoveAll(filepath.Join(tmpDir, ".cline"))
+		legacyPath := clineLegacyGlobalStatePath(tmpDir)
+		providersPath := clineProvidersPath(tmpDir)
+		os.MkdirAll(filepath.Dir(legacyPath), 0o755)
+		os.MkdirAll(filepath.Dir(providersPath), 0o755)
+		os.WriteFile(legacyPath, []byte("{}"), 0o644)
+		os.WriteFile(providersPath, []byte("{}"), 0o644)
+
+		paths := c.Paths()
+		want := []string{providersPath, legacyPath}
+		if len(paths) != len(want) {
+			t.Fatalf("Paths() = %v, want %v", paths, want)
+		}
+		for i := range want {
+			if paths[i] != want[i] {
+				t.Fatalf("Paths() = %v, want %v", paths, want)
+			}
 		}
 	})
 }

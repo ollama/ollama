@@ -65,10 +65,22 @@ func (c *Cline) Edit(models []LaunchModel) error {
 		return err
 	}
 
-	if err := writeClineProvidersConfig(clineProvidersPath(home), models[0].Name); err != nil {
+	providersPath := clineProvidersPath(home)
+	legacyPath := clineLegacyGlobalStatePath(home)
+
+	providersConfig, err := readClineConfig(providersPath)
+	if err != nil {
 		return err
 	}
-	return writeClineLegacyGlobalState(clineLegacyGlobalStatePath(home), models[0].Name)
+	legacyConfig, err := readClineConfig(legacyPath)
+	if err != nil {
+		return err
+	}
+
+	if err := writeClineProvidersConfig(providersPath, providersConfig, models[0].Name); err != nil {
+		return err
+	}
+	return writeClineLegacyGlobalState(legacyPath, legacyConfig, models[0].Name)
 }
 
 func clineProvidersPath(home string) string {
@@ -87,16 +99,21 @@ func clineProviderBaseURL() string {
 	return clineOllamaRootURL() + "/v1"
 }
 
-func writeClineProvidersConfig(configPath, model string) error {
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return err
-	}
-
+func readClineConfig(configPath string) (map[string]any, error) {
 	config := make(map[string]any)
 	if data, err := os.ReadFile(configPath); err == nil {
 		if err := json.Unmarshal(data, &config); err != nil {
-			return fmt.Errorf("failed to parse config: %w, at: %s", err, configPath)
+			return nil, fmt.Errorf("failed to parse config: %w, at: %s", err, configPath)
 		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	return config, nil
+}
+
+func writeClineProvidersConfig(configPath string, config map[string]any, model string) error {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return err
 	}
 
 	providers, _ := config["providers"].(map[string]any)
@@ -112,12 +129,21 @@ func writeClineProvidersConfig(configPath, model string) error {
 	if settings == nil {
 		settings = make(map[string]any)
 	}
+
+	baseURL := clineProviderBaseURL()
+	previousModel, _ := settings["model"].(string)
+	previousBaseURL, _ := settings["baseUrl"].(string)
+	previousTokenSource, _ := provider["tokenSource"].(string)
+
 	settings["provider"] = clineLaunchProvider
 	settings["model"] = model
-	settings["baseUrl"] = clineProviderBaseURL()
+	settings["baseUrl"] = baseURL
 	delete(settings, "apiKey")
 	provider["settings"] = settings
-	if _, ok := provider["updatedAt"].(string); !ok {
+
+	if previousModel != model || previousBaseURL != baseURL || previousTokenSource != "manual" {
+		provider["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+	} else if _, ok := provider["updatedAt"].(string); !ok {
 		provider["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	provider["tokenSource"] = "manual"
@@ -134,16 +160,9 @@ func writeClineProvidersConfig(configPath, model string) error {
 	return fileutil.WriteWithBackup(configPath, data, "cline")
 }
 
-func writeClineLegacyGlobalState(configPath, model string) error {
+func writeClineLegacyGlobalState(configPath string, config map[string]any, model string) error {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
-	}
-
-	config := make(map[string]any)
-	if data, err := os.ReadFile(configPath); err == nil {
-		if err := json.Unmarshal(data, &config); err != nil {
-			return fmt.Errorf("failed to parse config: %w, at: %s", err, configPath)
-		}
 	}
 
 	baseURL := clineOllamaRootURL()
