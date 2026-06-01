@@ -388,7 +388,7 @@ func filterIntegratedGPUs(devices []ml.DeviceInfo) []ml.DeviceInfo {
 			continue
 		}
 
-		slog.Info("dropping integrated GPU",
+		slog.Info("dropping integrated GPU; to enable, set OLLAMA_IGPU_ENABLE=1",
 			"id", device.ID,
 			"library", device.Library,
 			"compute", device.Compute(),

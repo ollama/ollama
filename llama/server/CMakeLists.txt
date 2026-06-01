@@ -96,6 +96,9 @@ if(GGML_HIP AND OLLAMA_RUNNER_DIR MATCHES "^rocm_v")
     ollama_set_cache_default(CMAKE_HIP_FLAGS STRING
         "-parallel-jobs=4" "HIP compiler flags")
     if(WIN32)
+        # Windows ROCm split-load needs peer copies disabled for correctness.
+        ollama_set_cache_default(GGML_CUDA_NO_PEER_COPY BOOL ON
+            "Disable direct peer device copies")
         # HIP on Windows currently emits attributes and deprecated pragma
         # warnings from ROCm headers. Keep the workaround local to Windows ROCm
         # so it can be removed when the ROCm toolchain no longer needs it.

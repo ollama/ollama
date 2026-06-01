@@ -35,6 +35,17 @@ func CheckInit() error {
 	return initError
 }
 
+// LoadedLibraryPath returns the MLX dynamic library path selected by this package.
+func LoadedLibraryPath() (string, error) {
+	if initLoadedPath != "" {
+		return initLoadedPath, nil
+	}
+	if initError != nil {
+		return "", initError
+	}
+	return "", fmt.Errorf("MLX dynamic library not loaded")
+}
+
 // tryLoadFromDir searches a directory for the mlxc shared library and loads it.
 func tryLoadFromDir(dir string) bool {
 	// On Windows, MSVC produces mlxc.dll (no lib prefix)
