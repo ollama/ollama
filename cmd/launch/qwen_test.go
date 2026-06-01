@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
 func setQwenTestHome(t *testing.T, home string) {
@@ -73,6 +74,177 @@ func TestQwenConfigure(t *testing.T) {
 	}
 	if provider["envKey"] != qwenOllamaEnvKey {
 		t.Fatalf("expected provider envKey %q, got %v", qwenOllamaEnvKey, provider["envKey"])
+	}
+}
+
+func TestQwenConfigureBacksUpUnderIntegrationDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	setQwenTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".qwen")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "settings.json")
+	if err := os.WriteFile(configPath, []byte(`{"original":true}`), 0o644); err != nil {
+		t.Fatalf("failed to write initial config: %v", err)
+	}
+
+	if err := (&Qwen{}).Configure("gemma4"); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	backups, err := filepath.Glob(filepath.Join(fileutil.BackupDir(), "qwen", "settings.json.*"))
+	if err != nil {
+		t.Fatalf("failed to glob backups: %v", err)
+	}
+	for _, backup := range backups {
+		data, err := os.ReadFile(backup)
+		if err != nil {
+			t.Fatalf("failed to read backup: %v", err)
+		}
+		if string(data) == `{"original":true}` {
+			return
+		}
+	}
+	t.Fatalf("backup with original content not found in %v", backups)
+}
+
+func TestQwenConfigureMergesWithExistingSettings(t *testing.T) {
+	tmpDir := t.TempDir()
+	setQwenTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".qwen")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "settings.json")
+	initialConfig := []byte(`{
+  "theme": "dark",
+  "env": {
+    "OPENROUTER_API_KEY": "openrouter-key",
+    "OLLAMA_API_KEY": "old-ollama-key"
+  },
+  "modelProviders": {
+    "openai": [
+      {
+        "id": "old-ollama",
+        "name": "old-ollama (Ollama)",
+        "envKey": "OLLAMA_API_KEY",
+        "baseUrl": "` + qwenBaseURL() + `"
+      },
+      {
+        "id": "openrouter/model",
+        "name": "OpenRouter Model",
+        "envKey": "OPENROUTER_API_KEY",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "customField": "preserved"
+      },
+      {
+        "id": "remote-ollama",
+        "name": "Remote Ollama",
+        "envKey": "OLLAMA_API_KEY",
+        "baseUrl": "http://10.0.0.20:11434/v1"
+      }
+    ],
+    "gemini": [
+      {
+        "id": "gemini-2.5-pro",
+        "envKey": "GEMINI_API_KEY"
+      }
+    ]
+  },
+  "security": {
+    "auth": {
+      "selectedType": "qwen-oauth",
+      "baseUrl": "https://old.example/v1",
+      "customAuthField": "preserved"
+    },
+    "trustedFolders": ["/tmp/project"]
+  },
+  "model": {
+    "name": "old-ollama",
+    "generationConfig": {
+      "temperature": 0.2
+    }
+  }
+}`)
+	if err := os.WriteFile(configPath, initialConfig, 0o644); err != nil {
+		t.Fatalf("failed to write initial config: %v", err)
+	}
+
+	if err := (&Qwen{}).Configure("gemma4"); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse config: %v", err)
+	}
+
+	if cfg["theme"] != "dark" {
+		t.Fatalf("expected top-level theme to be preserved, got %v", cfg["theme"])
+	}
+
+	envCfg := cfg["env"].(map[string]any)
+	if envCfg["OPENROUTER_API_KEY"] != "openrouter-key" {
+		t.Fatalf("expected OPENROUTER_API_KEY to be preserved, got %v", envCfg["OPENROUTER_API_KEY"])
+	}
+	if envCfg[qwenOllamaEnvKey] != "ollama" {
+		t.Fatalf("expected %s to be updated, got %v", qwenOllamaEnvKey, envCfg[qwenOllamaEnvKey])
+	}
+
+	modelProviders := cfg["modelProviders"].(map[string]any)
+	gemini := modelProviders["gemini"].([]any)
+	if len(gemini) != 1 {
+		t.Fatalf("expected gemini providers to be preserved, got %v", gemini)
+	}
+	openai := modelProviders["openai"].([]any)
+	if len(openai) != 3 {
+		t.Fatalf("expected new Ollama provider plus preserved OpenRouter and remote Ollama providers, got %v", openai)
+	}
+	ollamaProvider := openai[0].(map[string]any)
+	if ollamaProvider["id"] != "gemma4" {
+		t.Fatalf("expected Ollama provider to update to gemma4, got %v", ollamaProvider["id"])
+	}
+	openRouterProvider := openai[1].(map[string]any)
+	if openRouterProvider["id"] != "openrouter/model" {
+		t.Fatalf("expected OpenRouter provider to be preserved, got %v", openRouterProvider["id"])
+	}
+	if openRouterProvider["customField"] != "preserved" {
+		t.Fatalf("expected OpenRouter custom field to be preserved, got %v", openRouterProvider["customField"])
+	}
+	remoteOllamaProvider := openai[2].(map[string]any)
+	if remoteOllamaProvider["id"] != "remote-ollama" {
+		t.Fatalf("expected remote Ollama provider to be preserved, got %v", remoteOllamaProvider["id"])
+	}
+
+	security := cfg["security"].(map[string]any)
+	auth := security["auth"].(map[string]any)
+	if auth["selectedType"] != "openai" {
+		t.Fatalf("expected selectedType openai, got %v", auth["selectedType"])
+	}
+	if auth["baseUrl"] != qwenBaseURL() {
+		t.Fatalf("expected auth.baseUrl %q, got %v", qwenBaseURL(), auth["baseUrl"])
+	}
+	if auth["customAuthField"] != "preserved" {
+		t.Fatalf("expected custom auth field to be preserved, got %v", auth["customAuthField"])
+	}
+	if len(security["trustedFolders"].([]any)) != 1 {
+		t.Fatalf("expected security.trustedFolders to be preserved, got %v", security["trustedFolders"])
+	}
+
+	modelCfg := cfg["model"].(map[string]any)
+	if modelCfg["name"] != "gemma4" {
+		t.Fatalf("expected model.name gemma4, got %v", modelCfg["name"])
+	}
+	generationConfig := modelCfg["generationConfig"].(map[string]any)
+	if generationConfig["temperature"] != 0.2 {
+		t.Fatalf("expected model generationConfig to be preserved, got %v", generationConfig)
 	}
 }
 

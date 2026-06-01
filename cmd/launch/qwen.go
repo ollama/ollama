@@ -101,28 +101,78 @@ func (q *Qwen) Configure(model string) error {
 		return err
 	}
 
-	cfg["env"] = map[string]any{
-		qwenOllamaEnvKey: "ollama",
-	}
-	cfg["modelProviders"] = map[string]any{
-		"openai": []map[string]any{qwenProvider(model)},
-	}
-	cfg["security"] = map[string]any{
-		"auth": map[string]any{
-			"selectedType": "openai",
-			"baseUrl":      qwenBaseURL(),
-		},
-	}
-	cfg["model"] = map[string]any{
-		"name": model,
-	}
+	applyQwenOllamaConfig(cfg, model)
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return fileutil.WriteWithBackup(configPath, data)
+	return fileutil.WriteWithBackup(configPath, data, "qwen")
+}
+
+func applyQwenOllamaConfig(cfg map[string]any, model string) {
+	envCfg := qwenMap(cfg["env"])
+	envCfg[qwenOllamaEnvKey] = "ollama"
+	cfg["env"] = envCfg
+
+	modelProviders := qwenMap(cfg["modelProviders"])
+	modelProviders["openai"] = qwenMergeOpenAIProviders(modelProviders["openai"], qwenProvider(model))
+	cfg["modelProviders"] = modelProviders
+
+	security := qwenMap(cfg["security"])
+	auth := qwenMap(security["auth"])
+	auth["selectedType"] = "openai"
+	auth["baseUrl"] = qwenBaseURL()
+	security["auth"] = auth
+	cfg["security"] = security
+
+	modelCfg := qwenMap(cfg["model"])
+	modelCfg["name"] = model
+	cfg["model"] = modelCfg
+}
+
+func qwenMap(value any) map[string]any {
+	if m, ok := value.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{}
+}
+
+func qwenMergeOpenAIProviders(value any, provider map[string]any) []any {
+	merged := []any{provider}
+	for _, existing := range qwenProviderList(value) {
+		if qwenIsOllamaProvider(existing) {
+			continue
+		}
+		merged = append(merged, existing)
+	}
+	return merged
+}
+
+func qwenProviderList(value any) []any {
+	switch providers := value.(type) {
+	case []any:
+		return providers
+	case []map[string]any:
+		out := make([]any, 0, len(providers))
+		for _, provider := range providers {
+			out = append(out, provider)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func qwenIsOllamaProvider(value any) bool {
+	provider, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	envKey, _ := provider["envKey"].(string)
+	baseURL, _ := provider["baseUrl"].(string)
+	return envKey == qwenOllamaEnvKey && strings.TrimRight(baseURL, "/") == qwenBaseURL()
 }
 
 func (q *Qwen) CurrentModel() string {
