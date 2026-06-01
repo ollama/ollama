@@ -142,3 +142,72 @@ If you experience gibberish responses when models load across multiple AMD GPUs 
 ## Windows Terminal Errors
 
 Older versions of Windows 10 (e.g., 21H1) are known to have a bug where the standard terminal program does not display control characters correctly. This can result in a long string of strings like `←[?25h←[?25l` being displayed, sometimes erroring with `The parameter is incorrect` To resolve this problem, please update to Win 10 22H1 or newer.
+
+## WSL2 Port Forwarding Conflict
+
+### Symptom
+
+Ollama runs and responds normally inside WSL2 (e.g., `curl http://localhost:11434/api/tags` works inside the WSL2 environment), but attempts to connect from the Windows host — including via `http://localhost:11434` — fail with `connection refused`.
+
+### Root Cause
+
+WSL2 manages its own port forwarding from Windows to the WSL2 VM via `wsl.exe` and `netsh.exe`. If you (or a tool, Docker Desktop, or another service) have manually created `netsh interface portproxy` rules on the Windows side, those rules can intercept traffic destined for WSL2-managed ports before WSL2's internal forwarding can handle them.
+
+A common scenario is having a stale portproxy rule that forwards port `11434` to a specific WSL2 instance IP that is no longer current. WSL2 VM IPs can change across restarts, so a rule pointing to a stale IP will silently drop or refuse the connection.
+
+### Diagnosis
+
+Open **PowerShell as Administrator** and list all active portproxy rules:
+
+```powershell
+netsh interface portproxy show all
+```
+
+Look for entries referencing the port Ollama uses (default `11434`). An entry such as:
+
+```
+Listen on ipv4:             Connect to ipv4:
+
+Address         Port        Address         Port
+--------------- ----------  --------------- ----------
+0.0.0.0         11434       172.29.112.22   11434
+```
+
+indicates a manually-added rule that may conflict with WSL2's own forwarding.
+
+### Fix
+
+Remove the conflicting portproxy rule. In **PowerShell as Administrator**:
+
+```powershell
+netsh interface portproxy delete v4tov4 address=0.0.0.0 port=11434
+```
+
+Replace `0.0.0.0` and `11434` with the listen address and port shown in the `show all` output if they differ.
+
+After deletion, verify the rule is gone and the connection works:
+
+```powershell
+netsh interface portproxy show all
+curl http://localhost:11434/api/tags
+```
+
+### Prevention
+
+To prevent stale rules from accumulating, add the following command to your WSL2 startup scripts (e.g., `~/.bashrc` or `~/.zshrc` on the WSL2 side):
+
+```powershell
+# Run on the Windows host (e.g., via a scheduled task or WSL2 startup hook):
+netsh interface portproxy reset
+```
+
+Alternatively, you can run this command from within WSL2 using `powershell.exe`:
+
+```bash
+powershell.exe -Command "netsh interface portproxy reset"
+```
+
+### See Also
+
+- [WSL2 networking documentation](https://learn.microsoft.com/en-us/windows/wsl/networking)
+- [Ollama Windows setup](./windows)
