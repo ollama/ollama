@@ -210,12 +210,12 @@ func qwenInstallerCommand(goos string) (string, []string, error) {
 			"-ExecutionPolicy",
 			"Bypass",
 			"-Command",
-			"Invoke-WebRequest 'https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.bat' -OutFile (Join-Path $env:TEMP 'install-qwen.bat'); & (Join-Path $env:TEMP 'install-qwen.bat')",
+			"$installer = Join-Path $env:TEMP 'install-qwen.bat'; (Invoke-WebRequest 'https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.bat').Content -replace '(?m)^\\s*call qwen\\s*$', 'REM call qwen' | Set-Content -Path $installer -Encoding ASCII; & $installer",
 		}, nil
 	case "darwin", "linux":
 		return "bash", []string{
 			"-c",
-			"curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh | bash",
+			"set -o pipefail; curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh | sed '/log_info \"Starting Qwen Code...\"/,/exec qwen/d' | bash",
 		}, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported platform for qwen install: %s", goos)

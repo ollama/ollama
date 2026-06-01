@@ -558,13 +558,10 @@ func TestEnsureQwenInstalled(t *testing.T) {
 		writeFakeBinary(t, tmpDir, "curl")
 
 		installLog := filepath.Join(tmpDir, "bash.log")
-		shimLog := filepath.Join(tmpDir, "qwen-shim.log")
 		qwenPath := filepath.Join(homeDir, ".npm-global", "bin", "qwen")
 		bashScript := fmt.Sprintf(`#!/bin/sh
 echo "$@" >> %q
 if [ "$1" = "-c" ]; then
-  echo "$(command -v qwen)" > %q
-  qwen
   /bin/mkdir -p %q
   /bin/cat > %q <<'EOS'
 #!/bin/sh
@@ -573,7 +570,7 @@ EOS
   /bin/chmod +x %q
 fi
 exit 0
-`, installLog, shimLog, filepath.Dir(qwenPath), qwenPath, qwenPath)
+`, installLog, filepath.Dir(qwenPath), qwenPath, qwenPath)
 		if err := os.WriteFile(filepath.Join(tmpDir, "bash"), []byte(bashScript), 0o755); err != nil {
 			t.Fatalf("failed to write fake bash: %v", err)
 		}
@@ -597,13 +594,8 @@ exit 0
 		if !strings.Contains(string(logData), "install-qwen.sh") {
 			t.Fatalf("expected install-qwen.sh command in log, got:\n%s", string(logData))
 		}
-
-		shimData, err := os.ReadFile(shimLog)
-		if err != nil {
-			t.Fatalf("failed to read qwen shim log: %v", err)
-		}
-		if !strings.Contains(string(shimData), "ollama-qwen-install") {
-			t.Fatalf("expected installer qwen invocation to resolve to temporary shim, got %q", strings.TrimSpace(string(shimData)))
+		if !strings.Contains(string(logData), "exec qwen/d") {
+			t.Fatalf("expected command to remove installer auto-start block, got:\n%s", string(logData))
 		}
 	})
 
@@ -655,6 +647,9 @@ exit 0
 		}
 		if !strings.Contains(string(logData), "install-qwen.bat") {
 			t.Fatalf("expected install-qwen.bat command in log, got:\n%s", string(logData))
+		}
+		if !strings.Contains(string(logData), "REM call qwen") {
+			t.Fatalf("expected command to replace installer auto-start call, got:\n%s", string(logData))
 		}
 	})
 
@@ -820,19 +815,19 @@ func TestQwenInstallerCommand(t *testing.T) {
 			name:      "linux",
 			goos:      "linux",
 			wantBin:   "bash",
-			wantParts: []string{"-c", "install-qwen.sh"},
+			wantParts: []string{"-c", "install-qwen.sh", "sed", "exec qwen/d"},
 		},
 		{
 			name:      "darwin",
 			goos:      "darwin",
 			wantBin:   "bash",
-			wantParts: []string{"-c", "install-qwen.sh"},
+			wantParts: []string{"-c", "install-qwen.sh", "sed", "exec qwen/d"},
 		},
 		{
 			name:      "windows",
 			goos:      "windows",
 			wantBin:   "powershell",
-			wantParts: []string{"-Command", "install-qwen.bat"},
+			wantParts: []string{"-Command", "install-qwen.bat", "REM call qwen"},
 		},
 		{
 			name:    "unsupported",
