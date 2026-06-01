@@ -1761,6 +1761,11 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantEmpty: true,
 		},
 		{
+			name:    "qwen uses official install page",
+			input:   "qwen",
+			wantURL: "https://qwen.ai/qwencode",
+		},
+		{
 			name:      "empty name has no hint",
 			input:     "",
 			wantEmpty: true,
@@ -2016,6 +2021,7 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 		{"pi", true},
 		{"hermes", true},
 		{"cline", true},
+		{"qwen", true},
 		{"claude", false},
 		{"claude-desktop", false},
 		{"codex", false},
