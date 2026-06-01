@@ -29,6 +29,7 @@ const (
 	codexRootModelKey            = "model"
 	codexRootModelProviderKey    = "model_provider"
 	codexRootModelCatalogJSONKey = "model_catalog_json"
+	codexRootReasoningEffortKey  = "model_reasoning_effort"
 )
 
 func (c *Codex) args(model, modelCatalogPath string, extra []string) []string {
@@ -160,6 +161,9 @@ func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) 
 	profileLines := []string{}
 	if model != "" {
 		profileLines = append(profileLines, fmt.Sprintf("%s = %q", codexRootModelKey, model))
+	}
+	if reasoningEffort := codexLaunchReasoningEffort(parsed, profileName); reasoningEffort != "" {
+		profileLines = append(profileLines, fmt.Sprintf("%s = %q", codexRootReasoningEffortKey, reasoningEffort))
 	}
 	profileLines = append(profileLines,
 		fmt.Sprintf("openai_base_url = %q", baseURL),
@@ -298,6 +302,28 @@ func codexValidateLaunchProfileText(config codexParsedConfig, profileName string
 		}
 	}
 	return nil
+}
+
+func codexLaunchReasoningEffort(config codexParsedConfig, profileName string) string {
+	if effort := config.ProfileString(profileName, codexRootReasoningEffortKey); effort != "" {
+		return codexOllamaReasoningEffort(effort)
+	}
+	if effort := config.RootString(codexRootReasoningEffortKey); effort != "" {
+		return codexOllamaReasoningEffort(effort)
+	}
+	return ""
+}
+
+func codexOllamaReasoningEffort(effort string) string {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	switch effort {
+	case "low", "medium", "high", "max", "none":
+		return effort
+	case "xhigh":
+		return "high"
+	default:
+		return "none"
+	}
 }
 
 func codexUpsertSection(text, header string, lines []string) string {
