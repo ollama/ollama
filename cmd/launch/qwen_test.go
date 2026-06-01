@@ -2,10 +2,12 @@ package launch
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/cmd/config"
@@ -469,5 +471,254 @@ func TestQwenRunDoesNotRewriteConfig(t *testing.T) {
 	}
 	if string(data) != string(initialConfig) {
 		t.Fatalf("expected run not to rewrite config, got %s", string(data))
+	}
+}
+
+func TestEnsureQwenInstalled(t *testing.T) {
+	oldGOOS := qwenGOOS
+	t.Cleanup(func() { qwenGOOS = oldGOOS })
+
+	withConfirm := func(t *testing.T, fn func(prompt string) (bool, error)) {
+		t.Helper()
+		oldConfirm := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			return fn(prompt)
+		}
+		t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+	}
+
+	t.Run("already installed", func(t *testing.T) {
+		setQwenTestHome(t, t.TempDir())
+		tmpDir := t.TempDir()
+		t.Setenv("PATH", tmpDir)
+		writeFakeBinary(t, tmpDir, "qwen")
+		qwenGOOS = runtime.GOOS
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect prompt, got %q", prompt)
+			return false, nil
+		})
+
+		bin, err := ensureQwenInstalled()
+		if err != nil {
+			t.Fatalf("ensureQwenInstalled() error = %v", err)
+		}
+		if filepath.Base(bin) == "" {
+			t.Fatalf("expected qwen binary path, got %q", bin)
+		}
+	})
+
+	t.Run("missing dependencies", func(t *testing.T) {
+		setQwenTestHome(t, t.TempDir())
+		t.Setenv("PATH", t.TempDir())
+		qwenGOOS = "linux"
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect prompt, got %q", prompt)
+			return false, nil
+		})
+
+		_, err := ensureQwenInstalled()
+		if err == nil || !strings.Contains(err.Error(), "required dependencies are missing") {
+			t.Fatalf("expected missing dependency error, got %v", err)
+		}
+	})
+
+	t.Run("missing and user declines install", func(t *testing.T) {
+		setQwenTestHome(t, t.TempDir())
+		tmpDir := t.TempDir()
+		t.Setenv("PATH", tmpDir)
+		writeFakeBinary(t, tmpDir, "curl")
+		writeFakeBinary(t, tmpDir, "bash")
+		qwenGOOS = "linux"
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			if !strings.Contains(prompt, "Qwen Code is not installed.") {
+				t.Fatalf("unexpected prompt: %q", prompt)
+			}
+			return false, nil
+		})
+
+		_, err := ensureQwenInstalled()
+		if err == nil || !strings.Contains(err.Error(), "installation cancelled") {
+			t.Fatalf("expected cancellation error, got %v", err)
+		}
+	})
+
+	t.Run("missing and user confirms unix install succeeds", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("uses POSIX shell fake binaries")
+		}
+
+		setQwenTestHome(t, t.TempDir())
+		tmpDir := t.TempDir()
+		t.Setenv("PATH", tmpDir)
+		qwenGOOS = "linux"
+		writeFakeBinary(t, tmpDir, "curl")
+
+		installLog := filepath.Join(tmpDir, "bash.log")
+		qwenPath := filepath.Join(tmpDir, "qwen")
+		bashScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "-c" ]; then
+  /bin/cat > %q <<'EOS'
+#!/bin/sh
+exit 0
+EOS
+  /bin/chmod +x %q
+fi
+exit 0
+`, installLog, qwenPath, qwenPath)
+		if err := os.WriteFile(filepath.Join(tmpDir, "bash"), []byte(bashScript), 0o755); err != nil {
+			t.Fatalf("failed to write fake bash: %v", err)
+		}
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			return true, nil
+		})
+
+		bin, err := ensureQwenInstalled()
+		if err != nil {
+			t.Fatalf("ensureQwenInstalled() error = %v", err)
+		}
+		if bin != qwenPath {
+			t.Fatalf("bin = %q, want %q", bin, qwenPath)
+		}
+
+		logData, err := os.ReadFile(installLog)
+		if err != nil {
+			t.Fatalf("failed to read install log: %v", err)
+		}
+		if !strings.Contains(string(logData), "install-qwen.sh") {
+			t.Fatalf("expected install-qwen.sh command in log, got:\n%s", string(logData))
+		}
+	})
+
+	t.Run("missing and user confirms windows install succeeds", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("uses POSIX shell fake binaries")
+		}
+
+		setQwenTestHome(t, t.TempDir())
+		tmpDir := t.TempDir()
+		t.Setenv("PATH", tmpDir)
+		qwenGOOS = "windows"
+
+		installLog := filepath.Join(tmpDir, "powershell.log")
+		qwenPath := filepath.Join(tmpDir, "qwen")
+		powershellScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+/bin/cat > %q <<'EOS'
+#!/bin/sh
+exit 0
+EOS
+/bin/chmod +x %q
+exit 0
+`, installLog, qwenPath, qwenPath)
+		if err := os.WriteFile(filepath.Join(tmpDir, "powershell"), []byte(powershellScript), 0o755); err != nil {
+			t.Fatalf("failed to write fake powershell: %v", err)
+		}
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			return true, nil
+		})
+
+		bin, err := ensureQwenInstalled()
+		if err != nil {
+			t.Fatalf("ensureQwenInstalled() error = %v", err)
+		}
+		if bin != qwenPath {
+			t.Fatalf("bin = %q, want %q", bin, qwenPath)
+		}
+
+		logData, err := os.ReadFile(installLog)
+		if err != nil {
+			t.Fatalf("failed to read install log: %v", err)
+		}
+		if !strings.Contains(string(logData), "install-qwen.bat") {
+			t.Fatalf("expected install-qwen.bat command in log, got:\n%s", string(logData))
+		}
+	})
+
+	t.Run("install command fails", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("uses POSIX shell fake binaries")
+		}
+
+		setQwenTestHome(t, t.TempDir())
+		tmpDir := t.TempDir()
+		t.Setenv("PATH", tmpDir)
+		qwenGOOS = "linux"
+		writeFakeBinary(t, tmpDir, "curl")
+		if err := os.WriteFile(filepath.Join(tmpDir, "bash"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+			t.Fatalf("failed to write fake bash: %v", err)
+		}
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			return true, nil
+		})
+
+		_, err := ensureQwenInstalled()
+		if err == nil || !strings.Contains(err.Error(), "failed to install qwen") {
+			t.Fatalf("expected install failure error, got %v", err)
+		}
+	})
+}
+
+func TestQwenInstallerCommand(t *testing.T) {
+	tests := []struct {
+		name      string
+		goos      string
+		wantBin   string
+		wantParts []string
+		wantErr   bool
+	}{
+		{
+			name:      "linux",
+			goos:      "linux",
+			wantBin:   "bash",
+			wantParts: []string{"-c", "install-qwen.sh"},
+		},
+		{
+			name:      "darwin",
+			goos:      "darwin",
+			wantBin:   "bash",
+			wantParts: []string{"-c", "install-qwen.sh"},
+		},
+		{
+			name:      "windows",
+			goos:      "windows",
+			wantBin:   "powershell",
+			wantParts: []string{"-Command", "install-qwen.bat"},
+		},
+		{
+			name:    "unsupported",
+			goos:    "freebsd",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin, args, err := qwenInstallerCommand(tt.goos)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("qwenInstallerCommand() error = %v", err)
+			}
+			if bin != tt.wantBin {
+				t.Fatalf("bin = %q, want %q", bin, tt.wantBin)
+			}
+			joined := strings.Join(args, " ")
+			for _, part := range tt.wantParts {
+				if !strings.Contains(joined, part) {
+					t.Fatalf("args %q missing %q", joined, part)
+				}
+			}
+		})
 	}
 }

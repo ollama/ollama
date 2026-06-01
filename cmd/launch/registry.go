@@ -242,6 +242,10 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := (&Qwen{}).findPath()
 				return err == nil
 			},
+			EnsureInstalled: func() error {
+				_, err := ensureQwenInstalled()
+				return err
+			},
 			URL: "https://qwen.ai/qwencode",
 		},
 	},

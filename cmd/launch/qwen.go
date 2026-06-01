@@ -16,6 +16,8 @@ import (
 
 const qwenOllamaEnvKey = "OLLAMA_API_KEY"
 
+var qwenGOOS = runtime.GOOS
+
 type Qwen struct{}
 
 func (q *Qwen) String() string { return "Qwen Code" }
@@ -31,7 +33,7 @@ func (q *Qwen) findPath() (string, error) {
 	}
 
 	var candidates []string
-	switch runtime.GOOS {
+	switch qwenGOOS {
 	case "darwin":
 		candidates = []string{
 			"/opt/homebrew/bin/qwen",
@@ -59,6 +61,87 @@ func (q *Qwen) findPath() (string, error) {
 	}
 
 	return "", fmt.Errorf("qwen binary not found (checked PATH, ~/.local/bin, ~/.cargo/bin, /usr/local/bin)")
+}
+
+func ensureQwenInstalled() (string, error) {
+	if path, err := (&Qwen{}).findPath(); err == nil {
+		return path, nil
+	}
+
+	if err := checkQwenInstallerDependencies(); err != nil {
+		return "", err
+	}
+
+	ok, err := ConfirmPrompt("Qwen Code is not installed. Install now?")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("qwen installation cancelled")
+	}
+
+	bin, args, err := qwenInstallerCommand(qwenGOOS)
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Fprintf(os.Stderr, "\nInstalling Qwen Code...\n")
+	cmd := exec.Command(bin, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to install qwen: %w", err)
+	}
+
+	path, err := (&Qwen{}).findPath()
+	if err != nil {
+		return "", fmt.Errorf("qwen was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+	}
+
+	fmt.Fprintf(os.Stderr, "%sQwen Code installed successfully%s\n\n", ansiGreen, ansiReset)
+	return path, nil
+}
+
+func checkQwenInstallerDependencies() error {
+	switch qwenGOOS {
+	case "windows":
+		if _, err := exec.LookPath("powershell"); err != nil {
+			return fmt.Errorf("qwen is not installed and required dependencies are missing\n\nInstall the following first:\n  PowerShell: https://learn.microsoft.com/powershell/\n\nThen re-run:\n  ollama launch qwen")
+		}
+	default:
+		var missing []string
+		if _, err := exec.LookPath("curl"); err != nil {
+			missing = append(missing, "curl: https://curl.se/")
+		}
+		if _, err := exec.LookPath("bash"); err != nil {
+			missing = append(missing, "bash: https://www.gnu.org/software/bash/")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("qwen is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch qwen", strings.Join(missing, "\n  "))
+		}
+	}
+	return nil
+}
+
+func qwenInstallerCommand(goos string) (string, []string, error) {
+	switch goos {
+	case "windows":
+		return "powershell", []string{
+			"-NoProfile",
+			"-ExecutionPolicy",
+			"Bypass",
+			"-Command",
+			"Invoke-WebRequest 'https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.bat' -OutFile (Join-Path $env:TEMP 'install-qwen.bat'); & (Join-Path $env:TEMP 'install-qwen.bat')",
+		}, nil
+	case "darwin", "linux":
+		return "bash", []string{
+			"-c",
+			"curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh | bash",
+		}, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported platform for qwen install: %s", goos)
+	}
 }
 
 func (q *Qwen) Run(model string, _ []LaunchModel, args []string) error {
