@@ -21,16 +21,51 @@ type Cline struct{}
 func (c *Cline) String() string { return "Cline" }
 
 func (c *Cline) Run(model string, _ []LaunchModel, args []string) error {
-	if _, err := exec.LookPath("cline"); err != nil {
-		return fmt.Errorf("cline is not installed, install with: npm install -g cline")
+	bin, err := ensureClineInstalled()
+	if err != nil {
+		return err
 	}
 
 	launchArgs := clineLaunchArgs(model, args)
-	cmd := exec.Command("cline", launchArgs...)
+	cmd := exec.Command(bin, launchArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func ensureClineInstalled() (string, error) {
+	if _, err := exec.LookPath("cline"); err == nil {
+		return "cline", nil
+	}
+
+	if _, err := exec.LookPath("npm"); err != nil {
+		return "", fmt.Errorf("cline is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch cline")
+	}
+
+	ok, err := ConfirmPrompt("Cline is not installed. Install with npm?")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("cline installation cancelled")
+	}
+
+	fmt.Fprintf(os.Stderr, "\nInstalling Cline...\n")
+	cmd := exec.Command("npm", "install", "-g", "cline@latest")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to install cline: %w", err)
+	}
+
+	if _, err := exec.LookPath("cline"); err != nil {
+		return "", fmt.Errorf("cline was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+	}
+
+	fmt.Fprintf(os.Stderr, "%sCline installed successfully%s\n\n", ansiGreen, ansiReset)
+	return "cline", nil
 }
 
 func clineLaunchArgs(model string, extra []string) []string {

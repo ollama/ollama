@@ -71,6 +71,15 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     iconClassName: "h-7 w-7",
   },
   {
+    id: "cline",
+    name: "Cline",
+    command: "ollama launch cline",
+    description: "Autonomous coding agent with parallel execution",
+    icon: "/launch-icons/codex.svg",
+    darkIcon: "/launch-icons/codex-dark.svg",
+    iconClassName: "h-7 w-7",
+  },
+  {
     id: "droid",
     name: "Droid",
     command: "ollama launch droid",

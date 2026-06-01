@@ -1,0 +1,59 @@
+---
+title: Cline CLI
+---
+
+Cline CLI is an autonomous coding agent for interactive terminal sessions.
+
+## Install
+
+Install the [Cline CLI](https://docs.cline.bot/usage/cli-overview):
+
+```bash
+npm install -g cline
+```
+
+For the IDE extension, see [Cline](/integrations/cline).
+
+## Usage with Ollama
+
+### Quick setup
+
+```bash
+ollama launch cline
+```
+
+When launched through `ollama launch cline`, Ollama configures Cline to use the selected Ollama model. If Cline is not installed, Ollama can install it with npm.
+
+To configure without launching:
+
+```bash
+ollama launch cline --config
+```
+
+### Run directly with a model
+
+```bash
+ollama launch cline --model qwen3.5
+```
+
+To use a cloud model:
+
+```bash
+ollama launch cline --model kimi-k2.6:cloud
+```
+
+### Manual setup
+
+Cline CLI can be configured interactively:
+
+```bash
+cline auth
+```
+
+Select Ollama as the provider and choose a model such as `qwen3.5` or `kimi-k2.6:cloud`.
+
+To start an interactive session:
+
+```bash
+cline
+```

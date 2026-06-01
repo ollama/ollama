@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "codex", "copilot", "droid", "pi", "pool"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "codex", "copilot", "cline", "droid", "pi", "pool"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -65,13 +65,16 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "cline",
 		Runner:      &Cline{},
 		Description: "Autonomous coding agent with parallel execution",
-		Hidden:      true,
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := exec.LookPath("cline")
 				return err == nil
 			},
-			Command: []string{"npm", "install", "-g", "cline"},
+			EnsureInstalled: func() error {
+				_, err := ensureClineInstalled()
+				return err
+			},
+			Command: []string{"npm", "install", "-g", "cline@latest"},
 		},
 	},
 	{
