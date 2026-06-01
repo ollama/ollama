@@ -206,14 +206,11 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 			now = time.Now()
 		}
 
-		done, err := r.emitMTPToken(ctx, request, session, &dec, current, &final)
+		done, err := r.emitTokens(ctx, request, session, &dec, []sampler.Result{current}, &final, &generated)
 		if err != nil {
 			return err
 		}
-		if !done {
-			generated++
-		}
-		if done || generated >= request.Options.NumPredict {
+		if done {
 			break
 		}
 
@@ -349,14 +346,11 @@ func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, sessio
 			now = time.Now()
 		}
 
-		done, err := r.emitMTPToken(ctx, request, session, &dec, current, &final)
+		done, err := r.emitTokens(ctx, request, session, &dec, []sampler.Result{current}, &final, &generated)
 		if err != nil {
 			return err
 		}
-		if !done {
-			generated++
-		}
-		if done || generated >= request.Options.NumPredict {
+		if done {
 			break
 		}
 
@@ -634,26 +628,11 @@ func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, se
 	commitSpeculation(caches, accepted, draftCount, before)
 	*position = before + accepted
 
-	for _, id := range draftIDs[:accepted] {
-		if *generated >= request.Options.NumPredict {
-			done = true
-			break
-		}
-		res := sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
-		var err error
-		done, err = r.emitMTPToken(ctx, request, session, dec, res, final)
-		if err != nil {
-			return sampler.Result{}, accepted, done, err
-		}
-		if !done {
-			(*generated)++
-		}
-		if done {
-			break
-		}
+	emitted, err := r.emitTokens(ctx, request, session, dec, draftResults(draftIDs[:accepted]), final, generated)
+	if err != nil {
+		return sampler.Result{}, accepted, emitted || done, err
 	}
-
-	if done || *generated >= request.Options.NumPredict {
+	if emitted || done {
 		return sampler.Result{}, accepted, true, nil
 	}
 	if next.Token == nil {
@@ -711,26 +690,11 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 	commitSpeculation(caches, accepted, draftCount, before)
 	*position = before + accepted
 
-	for _, id := range draftIDs[:accepted] {
-		if *generated >= request.Options.NumPredict {
-			done = true
-			break
-		}
-		res := sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
-		var err error
-		done, err = r.emitMTPToken(ctx, request, session, dec, res, final)
-		if err != nil {
-			return sampler.Result{}, accepted, done, err
-		}
-		if !done {
-			(*generated)++
-		}
-		if done {
-			break
-		}
+	emitted, err := r.emitTokens(ctx, request, session, dec, draftResults(draftIDs[:accepted]), final, generated)
+	if err != nil {
+		return sampler.Result{}, accepted, emitted || done, err
 	}
-
-	if done || *generated >= request.Options.NumPredict {
+	if emitted || done {
 		r.Sampler.Commit(pipelineSlot, commitIDs)
 		return sampler.Result{}, accepted, true, nil
 	}
@@ -811,14 +775,11 @@ func (r *Runner) acceptMTPDraftsSerial(ctx context.Context, request Request, ses
 		accepted++
 
 		res := sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
-		done, err := r.emitMTPToken(ctx, request, session, dec, res, final)
+		done, err := r.emitTokens(ctx, request, session, dec, []sampler.Result{res}, final, generated)
 		if err != nil {
 			return sampler.Result{}, accepted, done, err
 		}
-		if !done {
-			(*generated)++
-		}
-		if done || *generated >= request.Options.NumPredict {
+		if done {
 			return sampler.Result{}, accepted, true, nil
 		}
 
@@ -828,23 +789,51 @@ func (r *Runner) acceptMTPDraftsSerial(ctx context.Context, request Request, ses
 	return sampler.Result{Token: greedyTokenFromLogits(logits)}, accepted, false, nil
 }
 
-func (r *Runner) emitMTPToken(ctx context.Context, request Request, session *cacheSession, dec *decoder, res sampler.Result, final *CompletionResponse) (bool, error) {
-	output := int32(tokenID(res.Token))
-	session.outputs = append(session.outputs, output)
-
-	if r.Tokenizer.IsEOS(output) {
-		final.DoneReason = 0
-		return true, nil
+// emitTokens records a run of generated tokens to session.outputs, then streams
+// them. A trailing EOS stops generation and is recorded but not streamed.
+// Returns whether to stop and any cancellation error.
+func (r *Runner) emitTokens(ctx context.Context, request Request, session *cacheSession, dec *decoder, results []sampler.Result, final *CompletionResponse, generated *int) (done bool, err error) {
+	stream := len(results)
+	for i, res := range results {
+		id := int32(tokenID(res.Token))
+		session.outputs = append(session.outputs, id)
+		if r.Tokenizer.IsEOS(id) {
+			final.DoneReason = 0
+			done = true
+			stream = i
+			break
+		}
+		(*generated)++
+	}
+	if *generated >= request.Options.NumPredict {
+		done = true
 	}
 
-	if resp, ok := dec.decode(res); ok {
+	// Record the whole run before streaming any of it: streaming returns early on
+	// a cancelled context, and a partial stream must not leave the cache ahead of
+	// session.outputs.
+	for _, res := range results[:stream] {
+		resp, ok := dec.decode(res)
+		if !ok {
+			continue
+		}
 		select {
 		case <-ctx.Done():
-			return false, ctx.Err()
+			return done, ctx.Err()
 		case request.Responses <- resp:
 		}
 	}
-	return false, nil
+	return done, nil
+}
+
+// draftResults wraps accepted draft token ids as sampler results for emitTokens.
+// Accepted drafts carry no logprobs, so only the token id is set.
+func draftResults(ids []int) []sampler.Result {
+	results := make([]sampler.Result, len(ids))
+	for i, id := range ids {
+		results[i] = sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
+	}
+	return results
 }
 
 func (r *Runner) lastLogits(hidden *mlx.Array) *mlx.Array {
