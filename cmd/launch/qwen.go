@@ -38,20 +38,28 @@ func (q *Qwen) findPath() (string, error) {
 		candidates = []string{
 			"/opt/homebrew/bin/qwen",
 			"/usr/local/bin/qwen",
+			filepath.Join(home, ".npm-global", "bin", "qwen"),
 			filepath.Join(home, ".local", "bin", "qwen"),
 			filepath.Join(home, "Library", "Application Support", "qwen", "bin", "qwen"),
 		}
+		candidates = append(candidates, qwenNVMCandidatePaths(home)...)
 	case "windows":
 		candidates = []string{
+			filepath.Join(qwenWindowsAppData(home), "npm", "qwen.cmd"),
+			filepath.Join(qwenWindowsAppData(home), "npm", "qwen.exe"),
+			filepath.Join(qwenWindowsLocalAppData(home), "npm", "qwen.cmd"),
+			filepath.Join(qwenWindowsLocalAppData(home), "npm", "qwen.exe"),
 			filepath.Join(home, "AppData", "Local", "Programs", "qwen", "qwen.exe"),
 			filepath.Join(home, "AppData", "Roaming", "qwen", "bin", "qwen.exe"),
 		}
 	default:
 		candidates = []string{
+			filepath.Join(home, ".npm-global", "bin", "qwen"),
 			filepath.Join(home, ".local", "bin", "qwen"),
 			filepath.Join(home, ".cargo", "bin", "qwen"),
 			"/usr/local/bin/qwen",
 		}
+		candidates = append(candidates, qwenNVMCandidatePaths(home)...)
 	}
 
 	for _, candidate := range candidates {
@@ -60,7 +68,29 @@ func (q *Qwen) findPath() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("qwen binary not found (checked PATH, ~/.local/bin, ~/.cargo/bin, /usr/local/bin)")
+	return "", fmt.Errorf("qwen binary not found (checked PATH and common npm install locations)")
+}
+
+func qwenNVMCandidatePaths(home string) []string {
+	matches, err := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", "qwen"))
+	if err != nil {
+		return nil
+	}
+	return matches
+}
+
+func qwenWindowsAppData(home string) string {
+	if appData := os.Getenv("APPDATA"); appData != "" {
+		return appData
+	}
+	return filepath.Join(home, "AppData", "Roaming")
+}
+
+func qwenWindowsLocalAppData(home string) string {
+	if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+		return localAppData
+	}
+	return filepath.Join(home, "AppData", "Local")
 }
 
 func ensureQwenInstalled() (string, error) {
@@ -86,10 +116,17 @@ func ensureQwenInstalled() (string, error) {
 	}
 
 	fmt.Fprintf(os.Stderr, "\nInstalling Qwen Code...\n")
+	shimDir, cleanup, err := qwenInstallShimDir()
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = qwenInstallerEnv(os.Environ(), shimDir)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("failed to install qwen: %w", err)
 	}
@@ -101,6 +138,47 @@ func ensureQwenInstalled() (string, error) {
 
 	fmt.Fprintf(os.Stderr, "%sQwen Code installed successfully%s\n\n", ansiGreen, ansiReset)
 	return path, nil
+}
+
+func qwenInstallShimDir() (string, func(), error) {
+	dir, err := os.MkdirTemp("", "ollama-qwen-install-*")
+	if err != nil {
+		return "", nil, err
+	}
+
+	cleanup := func() {
+		_ = os.RemoveAll(dir)
+	}
+
+	if qwenGOOS == "windows" {
+		for _, name := range []string{"qwen.cmd", "qwen.bat"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("@echo off\r\nexit /b 0\r\n"), 0o755); err != nil {
+				cleanup()
+				return "", nil, err
+			}
+		}
+		return dir, cleanup, nil
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "qwen"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return dir, cleanup, nil
+}
+
+func qwenInstallerEnv(env []string, shimDir string) []string {
+	out := make([]string, 0, len(env)+1)
+	pathEntry := "PATH=" + shimDir
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && strings.EqualFold(key, "PATH") {
+			pathEntry = key + "=" + shimDir + string(os.PathListSeparator) + value
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append(out, pathEntry)
 }
 
 func checkQwenInstallerDependencies() error {

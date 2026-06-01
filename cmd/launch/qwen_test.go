@@ -550,17 +550,22 @@ func TestEnsureQwenInstalled(t *testing.T) {
 			t.Skip("uses POSIX shell fake binaries")
 		}
 
-		setQwenTestHome(t, t.TempDir())
+		homeDir := t.TempDir()
+		setQwenTestHome(t, homeDir)
 		tmpDir := t.TempDir()
 		t.Setenv("PATH", tmpDir)
 		qwenGOOS = "linux"
 		writeFakeBinary(t, tmpDir, "curl")
 
 		installLog := filepath.Join(tmpDir, "bash.log")
-		qwenPath := filepath.Join(tmpDir, "qwen")
+		shimLog := filepath.Join(tmpDir, "qwen-shim.log")
+		qwenPath := filepath.Join(homeDir, ".npm-global", "bin", "qwen")
 		bashScript := fmt.Sprintf(`#!/bin/sh
 echo "$@" >> %q
 if [ "$1" = "-c" ]; then
+  echo "$(command -v qwen)" > %q
+  qwen
+  /bin/mkdir -p %q
   /bin/cat > %q <<'EOS'
 #!/bin/sh
 exit 0
@@ -568,7 +573,7 @@ EOS
   /bin/chmod +x %q
 fi
 exit 0
-`, installLog, qwenPath, qwenPath)
+`, installLog, shimLog, filepath.Dir(qwenPath), qwenPath, qwenPath)
 		if err := os.WriteFile(filepath.Join(tmpDir, "bash"), []byte(bashScript), 0o755); err != nil {
 			t.Fatalf("failed to write fake bash: %v", err)
 		}
@@ -592,6 +597,14 @@ exit 0
 		if !strings.Contains(string(logData), "install-qwen.sh") {
 			t.Fatalf("expected install-qwen.sh command in log, got:\n%s", string(logData))
 		}
+
+		shimData, err := os.ReadFile(shimLog)
+		if err != nil {
+			t.Fatalf("failed to read qwen shim log: %v", err)
+		}
+		if !strings.Contains(string(shimData), "ollama-qwen-install") {
+			t.Fatalf("expected installer qwen invocation to resolve to temporary shim, got %q", strings.TrimSpace(string(shimData)))
+		}
 	})
 
 	t.Run("missing and user confirms windows install succeeds", func(t *testing.T) {
@@ -599,22 +612,27 @@ exit 0
 			t.Skip("uses POSIX shell fake binaries")
 		}
 
-		setQwenTestHome(t, t.TempDir())
+		homeDir := t.TempDir()
+		setQwenTestHome(t, homeDir)
 		tmpDir := t.TempDir()
 		t.Setenv("PATH", tmpDir)
+		appData := filepath.Join(homeDir, "AppData", "Roaming")
+		t.Setenv("APPDATA", appData)
+		t.Setenv("LOCALAPPDATA", filepath.Join(homeDir, "AppData", "Local"))
 		qwenGOOS = "windows"
 
 		installLog := filepath.Join(tmpDir, "powershell.log")
-		qwenPath := filepath.Join(tmpDir, "qwen")
+		qwenPath := filepath.Join(appData, "npm", "qwen.cmd")
 		powershellScript := fmt.Sprintf(`#!/bin/sh
 echo "$@" >> %q
+/bin/mkdir -p %q
 /bin/cat > %q <<'EOS'
-#!/bin/sh
-exit 0
+@echo off
+exit /b 0
 EOS
 /bin/chmod +x %q
 exit 0
-`, installLog, qwenPath, qwenPath)
+`, installLog, filepath.Dir(qwenPath), qwenPath, qwenPath)
 		if err := os.WriteFile(filepath.Join(tmpDir, "powershell"), []byte(powershellScript), 0o755); err != nil {
 			t.Fatalf("failed to write fake powershell: %v", err)
 		}
@@ -663,6 +681,131 @@ exit 0
 			t.Fatalf("expected install failure error, got %v", err)
 		}
 	})
+}
+
+func TestQwenFindPathFallbacks(t *testing.T) {
+	oldGOOS := qwenGOOS
+	t.Cleanup(func() { qwenGOOS = oldGOOS })
+
+	t.Run("unix npm global bin", func(t *testing.T) {
+		homeDir := t.TempDir()
+		setQwenTestHome(t, homeDir)
+		t.Setenv("PATH", t.TempDir())
+		qwenGOOS = "linux"
+
+		target := filepath.Join(homeDir, ".npm-global", "bin", "qwen")
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("failed to create qwen dir: %v", err)
+		}
+		if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("failed to write qwen binary: %v", err)
+		}
+
+		got, err := (&Qwen{}).findPath()
+		if err != nil {
+			t.Fatalf("findPath() error = %v", err)
+		}
+		if got != target {
+			t.Fatalf("findPath() = %q, want %q", got, target)
+		}
+	})
+
+	t.Run("windows appdata npm shim", func(t *testing.T) {
+		homeDir := t.TempDir()
+		setQwenTestHome(t, homeDir)
+		t.Setenv("PATH", t.TempDir())
+		appData := filepath.Join(homeDir, "AppData", "Roaming")
+		t.Setenv("APPDATA", appData)
+		t.Setenv("LOCALAPPDATA", filepath.Join(homeDir, "AppData", "Local"))
+		qwenGOOS = "windows"
+
+		target := filepath.Join(appData, "npm", "qwen.cmd")
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("failed to create qwen dir: %v", err)
+		}
+		if err := os.WriteFile(target, []byte("@echo off\r\nexit /b 0\r\n"), 0o755); err != nil {
+			t.Fatalf("failed to write qwen shim: %v", err)
+		}
+
+		got, err := (&Qwen{}).findPath()
+		if err != nil {
+			t.Fatalf("findPath() error = %v", err)
+		}
+		if got != target {
+			t.Fatalf("findPath() = %q, want %q", got, target)
+		}
+	})
+
+	t.Run("unix nvm npm bin", func(t *testing.T) {
+		homeDir := t.TempDir()
+		setQwenTestHome(t, homeDir)
+		t.Setenv("PATH", t.TempDir())
+		qwenGOOS = "linux"
+
+		target := filepath.Join(homeDir, ".nvm", "versions", "node", "v20.18.1", "bin", "qwen")
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("failed to create qwen dir: %v", err)
+		}
+		if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("failed to write qwen binary: %v", err)
+		}
+
+		got, err := (&Qwen{}).findPath()
+		if err != nil {
+			t.Fatalf("findPath() error = %v", err)
+		}
+		if got != target {
+			t.Fatalf("findPath() = %q, want %q", got, target)
+		}
+	})
+}
+
+func TestQwenInstallShimDir(t *testing.T) {
+	oldGOOS := qwenGOOS
+	t.Cleanup(func() { qwenGOOS = oldGOOS })
+
+	t.Run("unix shim", func(t *testing.T) {
+		qwenGOOS = "linux"
+		dir, cleanup, err := qwenInstallShimDir()
+		if err != nil {
+			t.Fatalf("qwenInstallShimDir() error = %v", err)
+		}
+		defer cleanup()
+
+		if _, err := os.Stat(filepath.Join(dir, "qwen")); err != nil {
+			t.Fatalf("expected qwen shim: %v", err)
+		}
+	})
+
+	t.Run("windows shim", func(t *testing.T) {
+		qwenGOOS = "windows"
+		dir, cleanup, err := qwenInstallShimDir()
+		if err != nil {
+			t.Fatalf("qwenInstallShimDir() error = %v", err)
+		}
+		defer cleanup()
+
+		for _, name := range []string{"qwen.cmd", "qwen.bat"} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+				t.Fatalf("expected %s shim: %v", name, err)
+			}
+		}
+	})
+}
+
+func TestQwenInstallerEnvPrependsShimPath(t *testing.T) {
+	env := qwenInstallerEnv([]string{"FOO=bar", "PATH=/usr/bin"}, "/tmp/qwen-shim")
+	if !slices.Contains(env, "FOO=bar") {
+		t.Fatalf("expected unrelated env to be preserved, got %v", env)
+	}
+	if !slices.Contains(env, "PATH=/tmp/qwen-shim"+string(os.PathListSeparator)+"/usr/bin") {
+		t.Fatalf("expected shim path to be prepended, got %v", env)
+	}
+
+	env = qwenInstallerEnv([]string{"Path=C:\\Windows"}, "C:\\qwen-shim")
+	if !slices.Contains(env, "Path=C:\\qwen-shim"+string(os.PathListSeparator)+"C:\\Windows") {
+		t.Fatalf("expected existing Path casing to be preserved, got %v", env)
+	}
 }
 
 func TestQwenInstallerCommand(t *testing.T) {
