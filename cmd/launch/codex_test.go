@@ -27,28 +27,17 @@ func TestCodexArgs(t *testing.T) {
 	}{
 		{"with model", "llama3.2", nil, []string{"-c", catalogArg, "-m", "llama3.2"}},
 		{"empty model", "", nil, []string{"-c", catalogArg}},
-		{"with prompt flag", "qwen3.5", []string{"-p", "test prompt"}, []string{"exec", "-c", catalogArg, "-m", "qwen3.5", "test prompt"}},
-		{"with prompt flag and extra args", "qwen3.5", []string{"--sandbox", "read-only", "-p", "test prompt"}, []string{"exec", "-c", catalogArg, "-m", "qwen3.5", "--sandbox", "read-only", "test prompt"}},
+		{"with profile flag", "qwen3.5", []string{"-p", "myprofile"}, []string{"-c", catalogArg, "-m", "qwen3.5", "-p", "myprofile"}},
 		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, []string{"-c", catalogArg, "-m", "llama3.2", "--sandbox", "workspace-write"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := c.args(tt.model, catalogPath, tt.args)
-			if err != nil {
-				t.Fatal(err)
-			}
+			got := c.args(tt.model, catalogPath, tt.args)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.args, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestCodexArgsPromptRequiresValue(t *testing.T) {
-	_, err := (&Codex{}).args("llama3.2", filepath.Join("tmp", "model.json"), []string{"-p"})
-	if err == nil || !strings.Contains(err.Error(), "-p requires a prompt") {
-		t.Fatalf("args error = %v, want missing prompt error", err)
 	}
 }
 

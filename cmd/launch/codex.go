@@ -31,15 +31,8 @@ const (
 	codexRootModelCatalogJSONKey = "model_catalog_json"
 )
 
-func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, error) {
-	extra, prompt, headless, err := codexHeadlessPromptArgs(extra)
-	if err != nil {
-		return nil, err
-	}
+func (c *Codex) args(model, modelCatalogPath string, extra []string) []string {
 	args := []string{}
-	if headless {
-		args = append(args, "exec")
-	}
 	if modelCatalogPath != "" {
 		args = append(args, "-c", fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, modelCatalogPath))
 	}
@@ -47,10 +40,7 @@ func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, 
 		args = append(args, "-m", model)
 	}
 	args = append(args, extra...)
-	if headless {
-		args = append(args, prompt)
-	}
-	return args, nil
+	return args
 }
 
 func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
@@ -67,11 +57,7 @@ func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
-	codexArgs, err := c.args(model, catalogPath, args)
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command("codex", codexArgs...)
+	cmd := exec.Command("codex", c.args(model, catalogPath, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -79,27 +65,6 @@ func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 		"OPENAI_API_KEY=ollama",
 	)
 	return cmd.Run()
-}
-
-func codexHeadlessPromptArgs(args []string) ([]string, string, bool, error) {
-	out := make([]string, 0, len(args))
-	for i := range args {
-		arg := args[i]
-		switch {
-		case arg == "-p" || arg == "--prompt":
-			if i+1 >= len(args) {
-				return nil, "", false, fmt.Errorf("%s requires a prompt", arg)
-			}
-			out = append(out, args[i+2:]...)
-			return out, args[i+1], true, nil
-		case strings.HasPrefix(arg, "--prompt="):
-			out = append(out, args[i+1:]...)
-			return out, strings.TrimPrefix(arg, "--prompt="), true, nil
-		default:
-			out = append(out, arg)
-		}
-	}
-	return out, "", false, nil
 }
 
 // ensureCodexConfig writes Codex root config and model catalog so Codex uses the
