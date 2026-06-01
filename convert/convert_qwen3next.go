@@ -934,8 +934,11 @@ func safetensorFloat32Data(st safetensor) ([]float32, error) {
 func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	var out []*ggml.Tensor
 
-	merges := make([]merge, q.NumHiddenLayers*3)
-	for i := range q.NumHiddenLayers {
+	ts = q.renameMTPLayerTensors(ts)
+
+	blockCount := q.NumHiddenLayers + q.NumNextNPredictLayers
+	merges := make([]merge, blockCount*3)
+	for i := range blockCount {
 		merges[i*3+0] = merge{
 			fmt.Sprintf("blk.%d.mlp.experts.*.gate_proj.weight", i),
 			fmt.Sprintf("blk.%d.ffn_gate_exps.weight", i),
@@ -1065,6 +1068,57 @@ func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	return out
 }
 
+func (q *qwen3NextModel) renameMTPLayerTensors(ts []Tensor) []Tensor {
+	var out []Tensor
+	for i, t := range ts {
+		name, ok := q.mtpLayerTensorName(t.Name())
+		if !ok {
+			continue
+		}
+		if out == nil {
+			out = slices.Clone(ts)
+		}
+		out[i] = &renamedTensor{Tensor: t, name: name}
+	}
+	if out != nil {
+		return out
+	}
+	return ts
+}
+
+func (q *qwen3NextModel) mtpLayerTensorName(name string) (string, bool) {
+	rest := strings.TrimPrefix(name, "mtp.layers.")
+	if rest == name {
+		return "", false
+	}
+	layer, suffix, ok := strings.Cut(rest, ".")
+	if !ok {
+		return "", false
+	}
+	idx, err := strconv.ParseUint(layer, 10, 32)
+	if err != nil {
+		return "", false
+	}
+	return fmt.Sprintf("blk.%d.%s", q.NumHiddenLayers+uint32(idx), suffix), true
+}
+
+type renamedTensor struct {
+	Tensor
+	name string
+}
+
+func (t *renamedTensor) Name() string {
+	return t.name
+}
+
+func (t *renamedTensor) Clone() Tensor {
+	return &renamedTensor{Tensor: t.Tensor.Clone(), name: t.name}
+}
+
+func (t *renamedTensor) SourceDType() string {
+	return sourceDType(t.Tensor)
+}
+
 func (q *qwen3NextModel) appendDirectTensor(out []*ggml.Tensor, t Tensor, name string) []*ggml.Tensor {
 	if qwen3NextShouldShiftNorm(name) {
 		t = t.Clone()
@@ -1091,18 +1145,6 @@ func (q *qwen3NextModel) mtpTensorNames(name string) []string {
 	nextn := q.NumNextNPredictLayers
 	if nextn == 0 {
 		nextn = 1
-	}
-
-	if rest := strings.TrimPrefix(name, "mtp.layers."); rest != name {
-		layer, suffix, ok := strings.Cut(rest, ".")
-		if !ok {
-			return nil
-		}
-		idx, err := strconv.ParseUint(layer, 10, 32)
-		if err != nil {
-			return nil
-		}
-		return []string{fmt.Sprintf("blk.%d.%s", base+uint32(idx), suffix)}
 	}
 
 	var suffix string
