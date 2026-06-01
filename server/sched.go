@@ -671,6 +671,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 		req.errCh <- err
 		return false
 	}
+	logTemplateSelection(req.model)
 
 	// Determine if we have discrete GPUs which we should monitor VRAM usage on during shutdown
 	discreteGPUs := false
