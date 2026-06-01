@@ -37,7 +37,7 @@ import "C"
 
 import "runtime"
 
-func init() {
+func installCaptureHandler() {
 	// Replace the default exit(-1) error handler with one that captures
 	// the error message so we can surface it in Go.
 	C.mlx_install_capture_handler()
