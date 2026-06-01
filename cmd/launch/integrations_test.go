@@ -2016,13 +2016,13 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 	tests := []struct {
 		name string
 		want bool
-		}{
-			{"openclaw", true},
-			{"pi", true},
-			{"hermes", true},
-			{"cline", true},
-			{"qwen", true},
-			{"claude", false},
+	}{
+		{"openclaw", true},
+		{"pi", true},
+		{"hermes", true},
+		{"cline", true},
+		{"qwen", true},
+		{"claude", false},
 		{"claude-desktop", false},
 		{"codex", false},
 		{"opencode", false},
