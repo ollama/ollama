@@ -1,6 +1,6 @@
 ---
 name: project-scope
-description: Binds the context of the code base to describe and summarize the repo. Help to understand the project and its scope so that developer easily onboard Ollama on IBMZ and LinuxOne. Use when user asks about "project scope", "project achetecture", "project overview", or "project structure".
+description: Ollama is a popular open-source platform for running Large Language Models (LLMs) locally. The goal of this project is to use Ollama to enable open source models on IBM's frameworks. The benifit of using open-source LLMS locally is privacy and control. This skill binds the context of the code base to describe and summarize the repo to a developer so that the developer can better understand the project and its scope. Use when user asks about "project scope", "project achetecture", "project overview", or "project structure".
 ---
 # Project Scope
 ## Instructions
