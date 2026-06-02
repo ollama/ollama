@@ -131,8 +131,10 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	sseLines := []string{
 		`data: {"content":"Hello","stop":false}`,
 		``,
+		`:`,
 		`data: {"content":" world","stop":false}`,
 		``,
+		`:`,
 		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"prompt_n":5,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
 		``,
 	}
@@ -277,6 +279,7 @@ func TestLlamaServerChatPromptEvalCountIncludesCache(t *testing.T) {
 		case "/v1/chat/completions":
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+			fmt.Fprintln(w, `:`)
 			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"cache_n":12,"prompt_n":5,"prompt_ms":10,"predicted_n":2,"predicted_ms":20}}`)
 			fmt.Fprintln(w, `data: [DONE]`)
 		default:
