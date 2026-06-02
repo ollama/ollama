@@ -278,14 +278,12 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 				"output": []string{"text"},
 			}
 		}
-		if model.ContextLength > 0 || model.MaxOutputTokens > 0 {
+		if model.MaxOutputTokens > 0 {
 			limit := make(map[string]any)
 			if model.ContextLength > 0 {
 				limit["context"] = model.ContextLength
 			}
-			if model.MaxOutputTokens > 0 {
-				limit["output"] = model.MaxOutputTokens
-			}
+			limit["output"] = model.MaxOutputTokens
 			entry["limit"] = limit
 		}
 		models[model.Name] = entry
