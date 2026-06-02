@@ -839,18 +839,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
 	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
 
-	// TODO: remove the projector info and vision info checks below,
-	// these are left in for backwards compatibility with older servers
-	// that don't have the capabilities field in the model info
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
-		}
-	}
 
 	applyShowResponseToRunOptions(&opts, info)
 
@@ -1068,7 +1056,9 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	p.Stop()
-	spinner.Stop()
+	if spinner != nil {
+		spinner.Stop()
+	}
 
 	destination := n.String()
 	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
@@ -2189,18 +2179,6 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
 	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
 
-	// TODO: remove the projector info and vision info checks below,
-	// these are left in for backwards compatibility with older servers
-	// that don't have the capabilities field in the model info
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
-		}
-	}
 
 	applyShowResponseToRunOptions(&opts, info)
 
