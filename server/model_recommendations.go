@@ -384,6 +384,12 @@ var defaultModelRecommendations = []api.ModelRecommendation{
 		MaxOutputTokens: 32_768,
 	},
 	{
+		Model:           "minimax-m3:cloud",
+		Description:     "Long-context coding and agentic tool use with vision",
+		ContextLength:   524_288,
+		MaxOutputTokens: 128_000,
+	},
+	{
 		Model:           "minimax-m2.7:cloud",
 		Description:     "Fast, efficient coding and real-world productivity",
 		ContextLength:   204_800,
