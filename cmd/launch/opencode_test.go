@@ -197,11 +197,12 @@ func TestBuildModelEntries(t *testing.T) {
 		}
 	})
 
-	t.Run("omits context-only limits", func(t *testing.T) {
+	t.Run("uses default output for context-only limits", func(t *testing.T) {
 		models := buildModelEntries([]LaunchModel{{Name: "qwen2.5:0.5b", ContextLength: 32768}})
 		entry, _ := models["qwen2.5:0.5b"].(map[string]any)
-		if _, ok := entry["limit"]; ok {
-			t.Fatalf("limit should be omitted when output limit is unknown, got %v", entry["limit"])
+		limit, _ := entry["limit"].(map[string]any)
+		if limit["context"] != 32768 || limit["output"] != openCodeDefaultOutputLimit {
+			t.Fatalf("limit = %v, want context/default output", limit)
 		}
 	})
 }

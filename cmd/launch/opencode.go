@@ -20,6 +20,8 @@ type OpenCode struct {
 	configContent string // JSON config built by Edit, passed to Run via env var
 }
 
+const openCodeDefaultOutputLimit = 32_768
+
 func (o *OpenCode) String() string { return "OpenCode" }
 
 // findOpenCode returns the opencode binary path, checking PATH first then the
@@ -278,12 +280,16 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 				"output": []string{"text"},
 			}
 		}
-		if model.MaxOutputTokens > 0 {
+		if model.ContextLength > 0 || model.MaxOutputTokens > 0 {
 			limit := make(map[string]any)
 			if model.ContextLength > 0 {
 				limit["context"] = model.ContextLength
 			}
-			limit["output"] = model.MaxOutputTokens
+			if model.MaxOutputTokens > 0 {
+				limit["output"] = model.MaxOutputTokens
+			} else {
+				limit["output"] = openCodeDefaultOutputLimit
+			}
 			entry["limit"] = limit
 		}
 		models[model.Name] = entry
