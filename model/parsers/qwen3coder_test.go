@@ -624,48 +624,146 @@ Paris
 
 func TestExtractFunctionBlock(t *testing.T) {
 	cases := []struct {
-		name string
-		in   string
-		want string
+		name   string
+		in     string
+		want   string
+		wantOk bool
 	}{
 		{
-			name: "passthrough — input is already a clean function block",
-			in:   `<function=foo><parameter=x>1</parameter></function>`,
-			want: `<function=foo><parameter=x>1</parameter></function>`,
+			name:   "passthrough — input is already a clean function block",
+			in:     `<function=foo><parameter=x>1</parameter></function>`,
+			want:   `<function=foo><parameter=x>1</parameter></function>`,
+			wantOk: true,
 		},
 		{
-			name: "trims trailing stray closing tags",
-			in:   `<function=foo><parameter=x>1</parameter></function></function></function_invocation>`,
-			want: `<function=foo><parameter=x>1</parameter></function>`,
+			name:   "trims trailing stray closing tags",
+			in:     `<function=foo><parameter=x>1</parameter></function></function></function_invocation>`,
+			want:   `<function=foo><parameter=x>1</parameter></function>`,
+			wantOk: true,
 		},
 		{
-			name: "trims leading wrapper",
-			in:   `<function_invocation><function=foo><parameter=x>1</parameter></function></function_invocation>`,
-			want: `<function=foo><parameter=x>1</parameter></function>`,
+			name:   "trims leading wrapper",
+			in:     `<function_invocation><function=foo><parameter=x>1</parameter></function></function_invocation>`,
+			want:   `<function=foo><parameter=x>1</parameter></function>`,
+			wantOk: true,
 		},
 		{
-			name: "no <function= anchor — returns input unchanged so existing error path fires",
-			in:   `<parameter=x>1</parameter></function>`,
-			want: `<parameter=x>1</parameter></function>`,
+			name:   "no <function= anchor — empty envelope drift",
+			in:     `<parameter=x>1</parameter></function>`,
+			want:   ``,
+			wantOk: false,
 		},
 		{
-			name: "no </function> close — returns input unchanged",
-			in:   `<function=foo><parameter=x>1</parameter>`,
-			want: `<function=foo><parameter=x>1</parameter>`,
+			name:   "no </function> close — partial / truncated envelope",
+			in:     `<function=foo><parameter=x>1</parameter>`,
+			want:   ``,
+			wantOk: false,
 		},
 		{
-			name: "empty input",
-			in:   ``,
-			want: ``,
+			name:   "empty input — empty envelope (model emitted <tool_call></tool_call>)",
+			in:     ``,
+			want:   ``,
+			wantOk: false,
+		},
+		{
+			name:   "whitespace only — empty envelope",
+			in:     "\n   \t \n",
+			want:   ``,
+			wantOk: false,
+		},
+		{
+			name:   "non-XML prose — empty envelope (model put narration in <tool_call> tags)",
+			in:     `let me check the files`,
+			want:   ``,
+			wantOk: false,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := extractFunctionBlock(tc.in); got != tc.want {
-				t.Errorf("extractFunctionBlock(%q) = %q, want %q", tc.in, got, tc.want)
+			got, ok := extractFunctionBlock(tc.in)
+			if got != tc.want || ok != tc.wantOk {
+				t.Errorf("extractFunctionBlock(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.wantOk)
 			}
 		})
+	}
+}
+
+// TestQwenParserEmptyToolCallEnvelope covers the streaming behavior when
+// qwen3.6 emits a <tool_call>...</tool_call> envelope with no parseable
+// function block inside. These shapes used to return an error from
+// parseToolCall (EOF, "expected element type <function> but have
+// <parameter>", etc) which the runner surfaced as HTTP 500 — taking down
+// the entire chat request even though the rest of the stream was healthy.
+// The parser now treats these as silent no-ops so the agent loop can
+// retry or finalize on its own.
+func TestQwenParserEmptyToolCallEnvelope(t *testing.T) {
+	cases := []struct {
+		name        string
+		envelope    string
+		wantContent string
+	}{
+		{
+			name:        "completely empty envelope",
+			envelope:    `<tool_call></tool_call>`,
+			wantContent: "",
+		},
+		{
+			name:        "whitespace-only envelope",
+			envelope:    "<tool_call>\n   \n</tool_call>",
+			wantContent: "",
+		},
+		{
+			name:        "prose-only envelope (model put narration in tool_call tags)",
+			envelope:    `<tool_call>let me check the files</tool_call>`,
+			wantContent: "",
+		},
+		{
+			name:        "parameter-only drift (no <function= anchor)",
+			envelope:    `<tool_call><parameter=x>1</parameter></tool_call>`,
+			wantContent: "",
+		},
+		{
+			name:        "partial function block (missing </function> close)",
+			envelope:    `<tool_call><function=foo><parameter=x>1</parameter></tool_call>`,
+			wantContent: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			content, _, calls, err := p.Add(tc.envelope, true)
+			if err != nil {
+				t.Fatalf("Add returned error for empty envelope %q: %v", tc.envelope, err)
+			}
+			if len(calls) != 0 {
+				t.Errorf("expected 0 tool calls for empty envelope, got %d", len(calls))
+			}
+			if content != tc.wantContent {
+				t.Errorf("content = %q, want %q", content, tc.wantContent)
+			}
+		})
+	}
+}
+
+// TestQwenParserEmptyEnvelopeMixedWithRealCalls verifies that a stray
+// empty envelope doesn't poison the rest of the stream — adjacent real
+// tool calls in the same Add() invocation still get parsed.
+func TestQwenParserEmptyEnvelopeMixedWithRealCalls(t *testing.T) {
+	p := Qwen3CoderParser{}
+	p.Init(nil, nil, nil)
+	input := `<tool_call></tool_call><tool_call><function=get_weather><parameter=location>Paris</parameter></function></tool_call>`
+	_, _, calls, err := p.Add(input, true)
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call after skipping empty envelope, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("got call name %q, want %q", calls[0].Function.Name, "get_weather")
 	}
 }
 

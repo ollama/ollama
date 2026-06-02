@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -15,6 +16,14 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
 )
+
+// errEmptyToolCall is returned by parseToolCall when the model emitted a
+// <tool_call>…</tool_call> envelope that contains no parseable function
+// block. qwen3.6 occasionally does this when it changes its mind mid-stream
+// or drifts to an older training format whose tags don't match. Callers
+// should treat the envelope as a no-op and let the agent loop decide
+// whether to retry or finalize, rather than returning 500 from /api/chat.
+var errEmptyToolCall = errors.New("qwen tool call envelope contained no function block")
 
 type qwenParserState int
 
@@ -67,6 +76,13 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 		switch event := event.(type) {
 		case qwenEventRawToolCall:
 			toolCall, err := parseToolCall(event, p.tools)
+			if errors.Is(err, errEmptyToolCall) {
+				// Model emitted an empty or non-tool <tool_call> envelope.
+				// Skip silently — returning an error here would 500 the chat
+				// request even though the rest of the turn is fine.
+				slog.Warn("qwen tool call envelope was empty; skipping", "raw", event.raw)
+				continue
+			}
 			if err != nil {
 				slog.Warn("qwen tool call parsing failed", "error", err)
 				return "", "", nil, err
@@ -223,14 +239,14 @@ type XMLParameter struct {
 // Anchoring on the function block lets the XML unmarshaler handle the
 // well-formed portion and discard the noise.
 //
-// If no <function= opening tag exists, the input is returned unchanged so
-// the unmarshaler still surfaces the same error it would have before — the
-// helper only tightens the input when it can find an anchor, it never
-// invents one.
-func extractFunctionBlock(raw string) string {
+// Returns the extracted slice and ok=true on success. Returns ("", false)
+// when the envelope is empty, whitespace-only, or contains no usable
+// <function=...>...</function> pair — callers should treat that as a
+// silent no-op rather than an unmarshaler error.
+func extractFunctionBlock(raw string) (string, bool) {
 	open := strings.Index(raw, "<function=")
 	if open < 0 {
-		return raw
+		return "", false
 	}
 	// The first </function> after the opener is the matching close tag.
 	// Using LastIndex would accidentally absorb stray duplicates (e.g.
@@ -238,9 +254,9 @@ func extractFunctionBlock(raw string) string {
 	// xml.Unmarshal error this helper is meant to prevent.
 	end := strings.Index(raw[open:], "</function>")
 	if end < 0 {
-		return raw
+		return "", false
 	}
-	return raw[open : open+end+len("</function>")]
+	return raw[open : open+end+len("</function>")], true
 }
 
 // parseToolCall parses a raw tool call string into an api.ToolCall.
@@ -257,7 +273,13 @@ func extractFunctionBlock(raw string) string {
 func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, error) {
 	toolCall := api.ToolCall{}
 
-	xmlString := transformToXML(extractFunctionBlock(raw.raw))
+	extracted, ok := extractFunctionBlock(raw.raw)
+	if !ok {
+		// Empty / non-tool envelope. Surface as a sentinel so the streaming
+		// caller can skip silently instead of failing the whole request.
+		return api.ToolCall{}, errEmptyToolCall
+	}
+	xmlString := transformToXML(extracted)
 
 	var functionCall XMLFunctionCall
 	err := xml.Unmarshal([]byte(xmlString), &functionCall)
