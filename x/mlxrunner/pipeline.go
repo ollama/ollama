@@ -137,11 +137,8 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
-	if r.useGreedyMTP(request.SamplerOpts) {
-		return r.runGreedyMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
-	}
-	if r.useSampleMTP(request.SamplerOpts) {
-		return r.runSampleMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
+	if r.useMTP(request.SamplerOpts) {
+		return r.runMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
 	}
 
 	step := func(token *mlx.Array) sampler.Result {
