@@ -33,7 +33,7 @@ set(_compat_dir ${CMAKE_CURRENT_LIST_DIR})
 # Ollama's tree and makes the patch pure call-site insertions.
 set(OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND
     ${CMAKE_COMMAND}
-        -DPATCH_FILE=${_compat_dir}/llama-cpp-hooks.patch
+        -DPATCH_DIR=${_compat_dir}
         -P ${_compat_dir}/apply-patch.cmake
     CACHE INTERNAL "llama.cpp compat patch command for FetchContent")
 

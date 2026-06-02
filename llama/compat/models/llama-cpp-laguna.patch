@@ -1,0 +1,92 @@
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index be8f73cc1..70a268566 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -137,2 +137,3 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+     { LLM_ARCH_TALKIE,           "talkie"           },
++    { LLM_ARCH_LAGUNA,           "laguna"           },
+     { LLM_ARCH_UNKNOWN,          "(unknown)"        },
+@@ -374,2 +375,3 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
+     { LLM_TENSOR_ATTN_GATE,                              "blk.%d.attn_gate" },
++    { LLM_TENSOR_ATTN_GATE_LAGUNA,                       "blk.%d.attn_g" },
+     { LLM_TENSOR_FFN_POST_NORM,                          "blk.%d.post_ffw_norm" },
+@@ -589,2 +591,3 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+     {LLM_TENSOR_ATTN_GATE,                  {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
++    {LLM_TENSOR_ATTN_GATE_LAGUNA,           {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_FFN_GATE,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+diff --git a/src/llama-arch.h b/src/llama-arch.h
+index 2c71bbe81..1e0e059fc 100644
+--- a/src/llama-arch.h
++++ b/src/llama-arch.h
+@@ -141,2 +141,3 @@ enum llm_arch {
+     LLM_ARCH_TALKIE,
++    LLM_ARCH_LAGUNA,
+     LLM_ARCH_UNKNOWN,
+@@ -376,2 +377,3 @@ enum llm_tensor {
+     LLM_TENSOR_ATTN_GATE,
++    LLM_TENSOR_ATTN_GATE_LAGUNA,
+     LLM_TENSOR_FFN_GATE_INP,
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 914fc423b..b135cff88 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -291,2 +291,4 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
+             return new llama_model_step35(params);
++        case LLM_ARCH_LAGUNA:
++            return new llama_model_laguna(params);
+         default:
+@@ -2381,2 +2383,3 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+         case LLM_ARCH_TALKIE:
++        case LLM_ARCH_LAGUNA:
+             return LLAMA_ROPE_TYPE_NEOX;
+diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
+index b61397311..cbdc32eef 100644
+--- a/src/llama-vocab.cpp
++++ b/src/llama-vocab.cpp
+@@ -360,2 +360,8 @@ struct llm_tokenizer_bpe : llm_tokenizer {
+                 break;
++            case LLAMA_VOCAB_PRE_TYPE_LAGUNA:
++                regex_exprs = {
++                    "(?:\\r?\\n)+(?!\\r?\\n)",
++                    "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
++                };
++                break;
+             case LLAMA_VOCAB_PRE_TYPE_GPT2:
+@@ -2089,2 +2095,4 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+                 ignore_merges = true;
++            } else if (tokenizer_pre == "laguna") {
++                pre_type = LLAMA_VOCAB_PRE_TYPE_LAGUNA;
+             } else if (
+@@ -2740,2 +2748,3 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+                     || t.first == "<｜end▁of▁sentence｜>" // deepseek-ocr
++                    || t.first == "</assistant>"     // poolside Laguna (eos_token_ids)
+                ) {
+diff --git a/src/llama-vocab.h b/src/llama-vocab.h
+index 093e5d02c..04156676c 100644
+--- a/src/llama-vocab.h
++++ b/src/llama-vocab.h
+@@ -64,2 +64,3 @@ enum llama_vocab_pre_type {
+     LLAMA_VOCAB_PRE_TYPE_WHITESPACE      = 53,
++    LLAMA_VOCAB_PRE_TYPE_LAGUNA          = 54,
+ };
+diff --git a/src/models/models.h b/src/models/models.h
+index 5251e2d82..067230045 100644
+--- a/src/models/models.h
++++ b/src/models/models.h
+@@ -1468,2 +1468,15 @@ struct llama_model_dots1 : public llama_model_base {
+-
++
++struct llama_model_laguna : public llama_model_base {
++    llama_model_laguna(const struct llama_model_params & params) : llama_model_base(params) {}
++    void load_arch_hparams(llama_model_loader & ml) override;
++    void load_arch_tensors(llama_model_loader & ml) override;
++
++    struct graph : public llm_graph_context {
++        graph(const llama_model & model, const llm_graph_params & params);
++    };
++
++    std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
++};
++
++
+ struct llama_model_arcee : public llama_model_base {

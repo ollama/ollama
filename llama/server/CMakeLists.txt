@@ -205,6 +205,19 @@ if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     endif()
 endif()
 
+# Link temporary architecture sources (llama/compat/models/*.cpp) into the
+# llama target only (not the mtmd projector lib).
+if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
+    file(GLOB _ollama_model_sources CONFIGURE_DEPENDS
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models/*.cpp)
+    if(_ollama_model_sources AND TARGET llama)
+        target_sources(llama PRIVATE ${_ollama_model_sources})
+        target_include_directories(llama PRIVATE
+            ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models
+            ${llama_cpp_SOURCE_DIR}/src)
+    endif()
+endif()
+
 # Find GPU toolkits for runtime dependency bundling.
 # The llama.cpp build finds these internally, but we need the
 # variables (CUDAToolkit_LIBRARY_DIR, etc.) in our install scope.
