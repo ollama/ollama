@@ -10,7 +10,7 @@ import (
 
 type directURLContextKey struct{}
 
-var directURLPattern = regexp.MustCompile(`https?://[^\s<>"']+`)
+var directURLPattern = regexp.MustCompile("https?://[^\\s<>\"'`]+")
 
 func WithAllowedDirectURLs(ctx context.Context, text string) context.Context {
 	allowed := make(map[string]struct{})
@@ -40,9 +40,12 @@ func addAllowedDirectURLToMap(allowed map[string]struct{}, raw string) {
 
 func allowedDirectURL(ctx context.Context, raw string) bool {
 	allowed, _ := ctx.Value(directURLContextKey{}).(map[string]struct{})
-	raw = cleanDirectURL(raw)
+	cleaned := cleanDirectURL(raw)
+	if cleaned == "" || cleaned != raw {
+		return false
+	}
 
-	_, ok := allowed[raw]
+	_, ok := allowed[cleaned]
 	return ok
 }
 
