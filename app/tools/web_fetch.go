@@ -75,6 +75,9 @@ func (w *WebFetch) Execute(ctx context.Context, args map[string]any) (any, strin
 	if err != nil {
 		return nil, "", err
 	}
+	for _, link := range result.Links {
+		addAllowedDirectURL(ctx, link)
+	}
 
 	return result, "", nil
 }
