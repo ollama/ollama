@@ -100,6 +100,29 @@ How would you like to set up Hermes?
    Context length in tokens [leave blank for auto-detect]:
    ```
 
+### Configure desktop app with Ollama Cloud
+
+To configure Hermes Desktop with cloud models, run:
+
+```bash
+hermes model
+```
+
+In the model wizard:
+
+1. Select **Ollama Cloud** as the provider
+2. Enter your [Ollama API key](https://ollama.com/settings/keys)
+3. Leave the default base URL as `https://ollama.com/v1`
+4. Pick a model. Recommended: `glm-5.1` or `kimi-k2.6`
+
+Then launch Hermes Desktop:
+
+```bash
+hermes desktop
+```
+
+This can take some time to configure before the desktop app starts.
+
 ### Connect messaging
 
 Optionally connect a messaging platform during setup:
@@ -116,4 +139,3 @@ Connect a messaging platform? (Telegram, Discord, etc.)
 ```
 Launch hermes chat now? [Y/n]: Y
 ```
-
