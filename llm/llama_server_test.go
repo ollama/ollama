@@ -49,6 +49,12 @@ func TestLlamaServerHealthParsing(t *testing.T) {
 			wantStatus: ServerStatusLoadingModel,
 		},
 		{
+			name:       "loading error envelope",
+			body:       `{"error":{"message":"Loading model","type":"unavailable_error","code":503}}`,
+			statusCode: 503,
+			wantStatus: ServerStatusLoadingModel,
+		},
+		{
 			name:       "no slots",
 			body:       `{"status":"no slot available"}`,
 			statusCode: 503,
@@ -797,7 +803,7 @@ func TestLlamaServerWaitUntilRunningWaitsOnRecoverableStartupOOM(t *testing.T) {
 	}
 }
 
-func TestLlamaServerWaitUntilRunningTimesOutWhenLoadExceedsTimeout(t *testing.T) {
+func TestLlamaServerWaitUntilRunningTimesOutWhenLoadStalls(t *testing.T) {
 	t.Setenv("OLLAMA_LOAD_TIMEOUT", "10ms")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -825,6 +831,55 @@ func TestLlamaServerWaitUntilRunningTimesOutWhenLoadExceedsTimeout(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), "timed out waiting for llama-server to start") {
 		t.Fatalf("expected load timeout, got %q", err)
+	}
+}
+
+func TestLlamaServerWaitUntilRunningExtendsTimeoutOnOutputActivity(t *testing.T) {
+	t.Setenv("OLLAMA_LOAD_TIMEOUT", "20ms")
+
+	var activityCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		if activityCount.Load() < 5 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `{"error":{"message":"Loading model","type":"unavailable_error","code":503}}`)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port: portInt,
+		cmd:  fakeRunningCmd(),
+	}
+	runner.output = &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				activityCount.Add(1)
+				_, _ = runner.output.Write([]byte("."))
+			}
+		}
+	}()
+
+	if err := runner.WaitUntilRunning(t.Context()); err != nil {
+		t.Fatalf("WaitUntilRunning error: %v", err)
 	}
 }
 
@@ -2422,6 +2477,39 @@ func TestMemoryParsingWriter(t *testing.T) {
 				t.Errorf("MemorySize vram = %d, want %d", vram, expectedGPU)
 			}
 		})
+	}
+}
+
+func TestMemoryParsingWriterRecordsOutputActivityWithoutNewline(t *testing.T) {
+	runner := &llamaServerRunner{}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	runner.startLoadTracking(time.Now())
+	before := time.Now()
+	if _, err := w.Write([]byte("...")); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.lastLoadActivity(); got.Before(before) {
+		t.Fatalf("lastLoadActivity = %v, want after %v", got, before)
+	}
+}
+
+func TestMemoryParsingWriterIgnoresOutputActivityAfterLoadTrackingStops(t *testing.T) {
+	runner := &llamaServerRunner{}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	runner.startLoadTracking(time.Now())
+	if _, err := w.Write([]byte(".")); err != nil {
+		t.Fatal(err)
+	}
+	lastActivity := runner.lastLoadActivity()
+
+	runner.stopLoadTracking()
+	if _, err := w.Write([]byte(".")); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.lastLoadActivity(); !got.Equal(lastActivity) {
+		t.Fatalf("lastLoadActivity changed after tracking stopped: got %v, want %v", got, lastActivity)
 	}
 }
 
