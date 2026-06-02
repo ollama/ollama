@@ -24,6 +24,7 @@ const (
 	codexProfileName           = "ollama-launch"
 	codexProviderName          = "Ollama"
 	codexFallbackContextWindow = 128_000
+	codexRestoreSuccess        = "Codex launch configuration removed."
 
 	codexRootProfileKey          = "profile"
 	codexRootModelKey            = "model"
@@ -31,16 +32,20 @@ const (
 	codexRootModelCatalogJSONKey = "model_catalog_json"
 )
 
-func (c *Codex) args(model, modelCatalogPath string, extra []string) []string {
-	args := []string{}
-	if modelCatalogPath != "" {
-		args = append(args, "-c", fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, modelCatalogPath))
+func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, error) {
+	if err := codexValidateExtraArgs(extra); err != nil {
+		return nil, err
+	}
+
+	args := []string{"--profile", codexProfileName}
+	for _, override := range codexManagedConfigOverrides(modelCatalogPath) {
+		args = append(args, "-c", override)
 	}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
 	args = append(args, extra...)
-	return args
+	return args, nil
 }
 
 func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
@@ -57,7 +62,12 @@ func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
-	cmd := exec.Command("codex", c.args(model, catalogPath, args)...)
+	codexArgs, err := c.args(model, catalogPath, args)
+	if err != nil {
+		return fmt.Errorf("failed to configure codex: %w", err)
+	}
+
+	cmd := exec.Command("codex", codexArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -67,8 +77,134 @@ func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 	return cmd.Run()
 }
 
-// ensureCodexConfig writes Codex root config and model catalog so Codex uses the
-// local Ollama server and has model metadata available.
+func (c *Codex) Restore() error {
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return err
+	}
+
+	if err := removeCodexProfileConfig(); err != nil {
+		return codexRestoreFailure(configPath, err)
+	}
+	if err := removeCodexModelCatalogIfUnused(configPath); err != nil {
+		return codexRestoreFailure(configPath, err)
+	}
+	return nil
+}
+
+func (c *Codex) RestoreSuccessMessage() string {
+	return codexRestoreSuccess
+}
+
+func (c *Codex) SkipRestoreInstallCheck() bool {
+	return true
+}
+
+func codexRestoreFailure(configPath string, err error) error {
+	return fmt.Errorf("restore Codex config: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  CLI profile: %s\n  CLI model catalog: %s\n  Backups: %s",
+		err,
+		configPath,
+		codexProfileConfigPathForConfig(configPath),
+		codexModelCatalogPathForConfig(configPath),
+		fileutil.BackupDir(),
+	)
+}
+
+func removeCodexProfileConfig() error {
+	profilePath, err := codexProfileConfigPath()
+	if err != nil {
+		return err
+	}
+	return removeCodexFile(profilePath)
+}
+
+func removeCodexModelCatalogIfUnused(configPath string) error {
+	catalogPath := codexModelCatalogPathForConfig(configPath)
+	data, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		config, parseErr := codexParseConfig(string(data))
+		if parseErr != nil {
+			return parseErr
+		}
+		if config.RootString(codexRootModelCatalogJSONKey) == catalogPath {
+			return nil
+		}
+	}
+	return removeCodexFile(catalogPath)
+}
+
+func removeCodexFile(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func codexValidateExtraArgs(args []string) error {
+	for i, arg := range args {
+		switch {
+		case arg == "-p", strings.HasPrefix(arg, "-p"):
+			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --profile", arg)
+		case arg == "--profile", strings.HasPrefix(arg, "--profile="):
+			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --profile", arg)
+		case arg == "-m", strings.HasPrefix(arg, "-m"):
+			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --model", arg)
+		case arg == "--model", strings.HasPrefix(arg, "--model="):
+			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --model", arg)
+		case arg == "-c", arg == "--config":
+			if i+1 < len(args) && codexConfigOverrideConflicts(args[i+1]) {
+				return fmt.Errorf("conflicting extra config %q: ollama launch codex manages provider and model catalog config", args[i+1])
+			}
+		case strings.HasPrefix(arg, "-c") && len(arg) > len("-c"):
+			if codexConfigOverrideConflicts(strings.TrimPrefix(arg, "-c")) {
+				return fmt.Errorf("conflicting extra config %q: ollama launch codex manages provider and model catalog config", arg)
+			}
+		case strings.HasPrefix(arg, "--config="):
+			if codexConfigOverrideConflicts(strings.TrimPrefix(arg, "--config=")) {
+				return fmt.Errorf("conflicting extra config %q: ollama launch codex manages provider and model catalog config", arg)
+			}
+		}
+	}
+	return nil
+}
+
+func codexManagedConfigOverrides(modelCatalogPath string) []string {
+	overrides := []string{
+		fmt.Sprintf("%s=%q", codexRootModelProviderKey, codexProfileName),
+		fmt.Sprintf("model_providers.%s.name=%q", codexProfileName, codexProviderName),
+		fmt.Sprintf("model_providers.%s.base_url=%q", codexProfileName, codexBaseURL()),
+		fmt.Sprintf("model_providers.%s.wire_api=%q", codexProfileName, "responses"),
+	}
+	if modelCatalogPath != "" {
+		overrides = append(overrides, fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, modelCatalogPath))
+	}
+	return overrides
+}
+
+func codexConfigOverrideConflicts(value string) bool {
+	key, _, ok := strings.Cut(strings.TrimSpace(value), "=")
+	if !ok {
+		return false
+	}
+	key = strings.TrimSpace(key)
+	key = strings.Trim(key, `"'`)
+	switch {
+	case key == codexRootProfileKey,
+		key == codexRootModelKey,
+		key == codexRootModelProviderKey,
+		key == codexRootModelCatalogJSONKey:
+		return true
+	case strings.HasPrefix(key, "model_providers."):
+		return true
+	}
+	return false
+}
+
+// ensureCodexConfig writes a Codex profile file and model catalog so Codex uses
+// the local Ollama server without changing app-visible root config.
 func ensureCodexConfig(modelName string, models []LaunchModel) error {
 	configPath, err := codexConfigPath()
 	if err != nil {
@@ -85,7 +221,8 @@ func ensureCodexConfig(modelName string, models []LaunchModel) error {
 		return err
 	}
 
-	return writeCodexConfig(configPath, modelName, catalogPath)
+	profilePath := codexProfileConfigPathForConfig(configPath)
+	return writeCodexProfileConfig(profilePath, modelName, catalogPath)
 }
 
 func codexConfigPath() (string, error) {
@@ -108,49 +245,60 @@ func codexModelCatalogPathForConfig(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), "model.json")
 }
 
-// writeCodexConfig ensures ~/.codex/config.toml uses Ollama as the root model
-// provider without relying on Codex's legacy profile config.
-func writeCodexConfig(configPath, model, modelCatalogPath string) error {
+func codexProfileConfigPath() (string, error) {
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return "", err
+	}
+	return codexProfileConfigPathForConfig(configPath), nil
+}
+
+func codexProfileConfigPathForConfig(configPath string) string {
+	return codexNamedProfileConfigPathForConfig(configPath, codexProfileName)
+}
+
+func codexNamedProfileConfigPathForConfig(configPath, profileName string) string {
+	return filepath.Join(filepath.Dir(configPath), profileName+".config.toml")
+}
+
+// writeCodexProfileConfig ensures ~/.codex/ollama-launch.config.toml selects
+// the Ollama provider and catalog for CLI launches without changing root config.
+func writeCodexProfileConfig(profilePath, model, modelCatalogPath string) error {
+	return writeCodexNamedProfileConfig(profilePath, codexProfileName, model, modelCatalogPath, "")
+}
+
+func writeCodexNamedProfileConfig(profilePath, profileName, model, modelCatalogPath, backupSubdir string) error {
 	baseURL := codexBaseURL()
 
-	content, readErr := os.ReadFile(configPath)
-	text := ""
-	if readErr == nil {
-		text = string(content)
-	} else if !os.IsNotExist(readErr) {
-		return readErr
-	}
-	if _, err := codexParseConfig(text); err != nil {
-		return err
-	}
-
-	text = codexRemoveRootValue(text, codexRootProfileKey)
-	text = codexRemoveSection(text, codexProfileHeaderFor(codexProfileName))
+	var lines []string
 	if strings.TrimSpace(model) != "" {
-		text = codexSetRootStringValue(text, codexRootModelKey, model)
+		lines = append(lines, fmt.Sprintf("%s = %q", codexRootModelKey, model))
 	}
-	text = codexSetRootStringValue(text, codexRootModelProviderKey, codexProfileName)
+	lines = append(lines, fmt.Sprintf("%s = %q", codexRootModelProviderKey, profileName))
 	if strings.TrimSpace(modelCatalogPath) != "" {
-		text = codexSetRootStringValue(text, codexRootModelCatalogJSONKey, modelCatalogPath)
+		lines = append(lines, fmt.Sprintf("%s = %q", codexRootModelCatalogJSONKey, modelCatalogPath))
 	}
-	text = codexUpsertSection(text, codexProviderHeaderFor(codexProfileName), []string{
+	text := strings.Join(lines, "\n") + "\n\n"
+	text += strings.Join([]string{
+		codexProviderHeaderFor(profileName),
 		fmt.Sprintf("name = %q", codexProviderName),
 		fmt.Sprintf("base_url = %q", baseURL),
 		`wire_api = "responses"`,
-	})
+		"",
+	}, "\n")
 
 	parsed, err := codexParseConfig(text)
 	if err != nil {
 		return err
 	}
-	if err := codexValidateConfigTextForOllama(parsed, model, modelCatalogPath, baseURL); err != nil {
+	if err := codexValidateProfileConfigText(parsed, profileName, model, modelCatalogPath, baseURL); err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(configPath, []byte(text), "")
+	return fileutil.WriteWithBackup(profilePath, []byte(text), backupSubdir)
 }
 
 func codexBaseURL() string {
@@ -173,25 +321,27 @@ func codexProviderHeaderFor(profileName string) string {
 	return fmt.Sprintf("[model_providers.%s]", profileName)
 }
 
-func codexValidateConfigTextForOllama(config codexParsedConfig, model, modelCatalogPath, baseURL string) error {
-	if got, ok := config.RootStringOK(codexRootProfileKey); ok {
-		return fmt.Errorf("generated Codex config still contains legacy profile = %q", got)
-	}
-	if config.Exists("profiles", codexProfileName) {
-		return fmt.Errorf("generated Codex config still contains legacy profiles.%s table", codexProfileName)
+func codexValidateProfileConfigText(config codexParsedConfig, profileName, model, modelCatalogPath, baseURL string) error {
+	if config.Exists("profiles", profileName) {
+		return fmt.Errorf("generated Codex config still contains legacy profiles.%s table", profileName)
 	}
 	for _, check := range []struct {
 		path []string
 		want string
 	}{
-		{[]string{codexRootModelProviderKey}, codexProfileName},
-		{[]string{"model_providers", codexProfileName, "name"}, codexProviderName},
-		{[]string{"model_providers", codexProfileName, "base_url"}, baseURL},
-		{[]string{"model_providers", codexProfileName, "wire_api"}, "responses"},
+		{[]string{"model_providers", profileName, "name"}, codexProviderName},
+		{[]string{"model_providers", profileName, "base_url"}, baseURL},
+		{[]string{"model_providers", profileName, "wire_api"}, "responses"},
 	} {
 		if got, ok := config.String(check.path...); !ok || got != check.want {
 			return fmt.Errorf("generated Codex config missing %s = %q", strings.Join(check.path, "."), check.want)
 		}
+	}
+	if got, ok := config.RootStringOK(codexRootProfileKey); ok {
+		return fmt.Errorf("generated Codex config still contains legacy profile = %q", got)
+	}
+	if got := config.RootString(codexRootModelProviderKey); got != profileName {
+		return fmt.Errorf("generated Codex config missing model_provider = %q", profileName)
 	}
 	if model != "" {
 		if got := config.RootString(codexRootModelKey); got != model {
@@ -586,10 +736,10 @@ func checkCodexVersion() error {
 	}
 
 	version := "v" + fields[len(fields)-1]
-	minVersion := "v0.81.0"
+	minVersion := "v0.134.0"
 
 	if semver.Compare(version, minVersion) < 0 {
-		return fmt.Errorf("codex version %s is too old, minimum required is %s, update with: npm update -g @openai/codex", fields[len(fields)-1], "0.81.0")
+		return fmt.Errorf("codex version %s is too old, minimum required is %s, update with: npm update -g @openai/codex", fields[len(fields)-1], "0.134.0")
 	}
 
 	return nil
