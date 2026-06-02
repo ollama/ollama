@@ -259,7 +259,7 @@ func (c *CodexApp) Run(_ string, _ []LaunchModel, args []string) error {
 	if len(args) > 0 {
 		return fmt.Errorf("codex-app does not accept extra arguments")
 	}
-	return codexAppLaunchOrRestart("Restart Codex to use Ollama?")
+	return codexAppLaunchOrRestart("Restart Codex to use Ollama?", nil)
 }
 
 func (c *CodexApp) Restore() error {
@@ -277,7 +277,13 @@ func (c *CodexApp) Restore() error {
 			if err := removeCodexAppRestoreState(); err != nil {
 				return codexAppRestoreFailure(configPath, err)
 			}
-			return codexAppLaunchOrRestart("Restart Codex to use your usual profile?")
+			if err := removeCodexAppProfileConfig(); err != nil {
+				return codexAppRestoreFailure(configPath, err)
+			}
+			if err := codexAppRemoveOwnedCatalog(); err != nil {
+				return codexAppRestoreFailure(configPath, err)
+			}
+			return codexAppLaunchOrRestart("Restart Codex to use your usual profile?", nil)
 		}
 		return codexAppRestoreFailure(configPath, err)
 	}
@@ -304,13 +310,16 @@ func (c *CodexApp) Restore() error {
 	if err := fileutil.WriteWithBackup(configPath, []byte(text), codexAppIntegrationName); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
+	if err := removeCodexAppProfileConfig(); err != nil {
+		return codexAppRestoreFailure(configPath, err)
+	}
 	if err := codexAppRemoveOwnedCatalogIfUnused(text); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
 	if err := removeCodexAppRestoreState(); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
-	return codexAppLaunchOrRestart("Restart Codex to use your usual profile?")
+	return codexAppLaunchOrRestart("Restart Codex to use your usual profile?", nil)
 }
 
 func codexAppRestoreFailure(configPath string, err error) error {
@@ -354,6 +363,18 @@ func codexAppModelCatalogPath() (string, error) {
 	return codexAppModelCatalogPathForConfig(configPath), nil
 }
 
+func codexAppProfileConfigPath() (string, error) {
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return "", err
+	}
+	return codexAppProfileConfigPathForConfig(configPath), nil
+}
+
+func codexAppProfileConfigPathForConfig(configPath string) string {
+	return codexNamedProfileConfigPathForConfig(configPath, codexAppProfileName)
+}
+
 func codexAppModelCatalogPathForConfig(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), codexAppModelCatalogFilename)
 }
@@ -383,14 +404,20 @@ func codexAppCatalogModels(primary string, models []LaunchModel) []LaunchModel {
 	seen := make(map[string]bool, len(models)+1)
 	out := make([]LaunchModel, 0, len(models)+1)
 	add := func(model LaunchModel) {
-		if model.Name == "" || seen[model.Name] {
+		model.Name = strings.TrimSpace(model.Name)
+		if model.Name == "" {
 			return
 		}
-		seen[model.Name] = true
+		key := codexAppCatalogModelKey(model.Name)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
 		out = append(out, model)
 	}
 
 	if model, ok := findLaunchModel(models, primary); ok {
+		model.Name = primary
 		add(model)
 	} else {
 		add(fallbackLaunchModel(primary))
@@ -399,6 +426,10 @@ func codexAppCatalogModels(primary string, models []LaunchModel) []LaunchModel {
 		add(model)
 	}
 	return out
+}
+
+func codexAppCatalogModelKey(name string) string {
+	return strings.TrimSuffix(name, ":latest")
 }
 
 type codexAppModelMetadata struct {
@@ -579,13 +610,13 @@ func codexAppLocalAppData() (string, error) {
 	return filepath.Join(home, "AppData", "Local"), nil
 }
 
-func codexAppLaunchOrRestart(prompt string) error {
+func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 	if !codexAppIsRunning() {
-		return codexAppOpenApp()
+		return codexAppOpenApp(launchArgs)
 	}
 	restartAppID := ""
 	restartAppPath := ""
-	if codexAppGOOS == "windows" {
+	if len(launchArgs) == 0 && codexAppGOOS == "windows" {
 		restartAppID = codexAppStartID()
 		if restartAppID == "" {
 			restartAppPath = codexAppRunPath()
@@ -626,7 +657,7 @@ func codexAppLaunchOrRestart(prompt string) error {
 	if restartAppPath != "" {
 		return codexAppOpenPath(restartAppPath)
 	}
-	return codexAppOpenApp()
+	return codexAppOpenApp(launchArgs)
 }
 
 func codexAppForceQuitSupported() bool {
@@ -659,7 +690,15 @@ func waitForCodexAppCondition(timeout time.Duration, done func() bool) error {
 	return fmt.Errorf("Codex did not quit; quit it manually and re-run the command")
 }
 
-func defaultCodexAppOpenApp() error {
+func defaultCodexAppOpenApp(args []string) error {
+	if len(args) > 0 {
+		cmd := exec.Command("codex", args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Env = append(os.Environ(), "OPENAI_API_KEY=ollama")
+		return cmd.Run()
+	}
+
 	switch codexAppGOOS {
 	case "windows":
 		if path := codexAppAppPath(); path != "" {
@@ -922,11 +961,26 @@ func codexAppRemoveOwnedCatalogIfUnused(text string) error {
 	if codexAppRootReferencesCatalog(text) {
 		return nil
 	}
+	return codexAppRemoveOwnedCatalog()
+}
+
+func codexAppRemoveOwnedCatalog() error {
 	if catalogPath, err := codexAppModelCatalogPath(); err == nil {
 		if err := os.Remove(catalogPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	} else {
+		return err
+	}
+	return nil
+}
+
+func removeCodexAppProfileConfig() error {
+	profilePath, err := codexAppProfileConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(profilePath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
@@ -1022,7 +1076,11 @@ func saveCodexAppRestoreState(configPath string) error {
 		return err
 	}
 
-	return writeCodexAppRestoreState(codexAppRestoreStateFromText(configText))
+	state := codexAppRestoreStateFromText(configText)
+	if codexAppRootStillManaged(configText) {
+		state = codexAppRestoreState{}
+	}
+	return writeCodexAppRestoreState(state)
 }
 
 func codexAppRestoreStateHasRootConfig(data []byte) (bool, error) {
