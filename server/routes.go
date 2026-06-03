@@ -1135,10 +1135,16 @@ func (s *Server) PushHandler(c *gin.Context) {
 			Insecure: req.Insecure,
 		}
 
+		parsed := model.ParseName(mname)
+		if !parsed.IsValid() {
+			ch <- gin.H{"error": fmt.Sprintf("model name %q is invalid", mname)}
+			return
+		}
+
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		name, err := getExistingName(model.ParseName(mname))
+		name, err := getExistingName(parsed)
 		if err != nil {
 			ch <- gin.H{"error": err.Error()}
 			return
@@ -1649,25 +1655,6 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 }
 
 func (s *Server) CreateBlobHandler(c *gin.Context) {
-	if ib, ok := intermediateBlobs[c.Param("digest")]; ok {
-		p, err := manifest.BlobsPath(ib)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
-			slog.Info("evicting intermediate blob which no longer exists", "digest", ib)
-			delete(intermediateBlobs, c.Param("digest"))
-		} else if err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		} else {
-			c.Status(http.StatusOK)
-			return
-		}
-	}
-
 	path, err := manifest.BlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1991,8 +1978,10 @@ func Serve(ln net.Listener) error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		srvr.Close()
 		schedDone()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer shutdownCancel()
+		srvr.Shutdown(shutdownCtx)
 		sched.unloadAllRunners()
 		done()
 	}()
@@ -2779,7 +2768,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				}
 
 				if builtinParser != nil {
-					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser input", "parser", m.Config.Parser, "content", r.Content)
+					slog.Log(ctx, logutil.LevelTrace, "builtin parser input", "parser", m.Config.Parser, "content", r.Content)
 
 					content, thinking, toolCalls, err := builtinParser.Add(r.Content, r.Done)
 					if err != nil {
@@ -2803,10 +2792,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					}
 
 					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
-						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
+						slog.Log(ctx, logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
 						ch <- res
 					} else {
-						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser empty output", "parser", m.Config.Parser)
+						slog.Log(ctx, logutil.LevelTrace, "builtin parser empty output", "parser", m.Config.Parser)
 					}
 					return
 				}
