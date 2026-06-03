@@ -129,6 +129,52 @@ func TestModelOptionsNumCtxPriority(t *testing.T) {
 	}
 }
 
+func TestModelOptionsGenerationDefaultsPriority(t *testing.T) {
+	m := &Model{
+		GenerationDefaults: model.GenerationDefaults{
+			"top_k":          int64(12),
+			"top_p":          float64(0.7),
+			"min_p":          float64(0.05),
+			"temperature":    float64(0.4),
+			"repeat_last_n":  int64(128),
+			"repeat_penalty": float64(1.2),
+		},
+		Options: map[string]any{
+			"top_p":         float64(0.5),
+			"min_p":         float64(0),
+			"repeat_last_n": float64(0),
+		},
+	}
+	requestOpts := map[string]any{
+		"temperature":    float64(0),
+		"repeat_penalty": float64(1.5),
+	}
+
+	opts, err := (&Server{}).modelOptions(m, requestOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if opts.TopK != 12 {
+		t.Fatalf("TopK = %d, want 12", opts.TopK)
+	}
+	if opts.TopP != 0.5 {
+		t.Fatalf("TopP = %v, want 0.5", opts.TopP)
+	}
+	if opts.MinP != 0 {
+		t.Fatalf("MinP = %v, want 0", opts.MinP)
+	}
+	if opts.Temperature != 0 {
+		t.Fatalf("Temperature = %v, want 0", opts.Temperature)
+	}
+	if opts.RepeatLastN != 0 {
+		t.Fatalf("RepeatLastN = %d, want 0", opts.RepeatLastN)
+	}
+	if opts.RepeatPenalty != 1.5 {
+		t.Fatalf("RepeatPenalty = %v, want 1.5", opts.RepeatPenalty)
+	}
+}
+
 func TestModelOptionsEmbeddingNumBatchDefault(t *testing.T) {
 	tests := []struct {
 		name             string
