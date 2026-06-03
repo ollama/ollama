@@ -14,9 +14,9 @@ const (
 	FileTypeF16
 	fileTypeQ4_0
 	fileTypeQ4_1
-	fileTypeMXFP4 // originally fileTypeQ4_1_F16 // unused by GGML
-	fileTypeQ4_2  // unused by GGML
-	fileTypeQ4_3  // unused by GGML
+	fileTypeQ4_1_F16 // removed from GGUF files
+	fileTypeQ4_2     // removed from GGUF files
+	fileTypeQ4_3     // removed from GGUF files
 	FileTypeQ8_0
 	fileTypeQ5_0
 	fileTypeQ5_1
@@ -48,6 +48,9 @@ const (
 	fileTypeQ4_0_8_8 // unused by GGML
 	fileTypeTQ1_0
 	fileTypeTQ2_0
+	fileTypeMXFP4_MOE
+	fileTypeNVFP4
+	fileTypeQ1_0
 
 	FileTypeUnknown = 1024
 )
@@ -97,8 +100,6 @@ func (t FileType) String() string {
 		return "Q4_0"
 	case fileTypeQ4_1:
 		return "Q4_1"
-	case fileTypeMXFP4:
-		return "MXFP4"
 	case FileTypeQ8_0:
 		return "Q8_0"
 	case fileTypeQ5_0:
@@ -123,10 +124,44 @@ func (t FileType) String() string {
 		return "Q5_K_M"
 	case fileTypeQ6_K:
 		return "Q6_K"
+	case fileTypeIQ2_XXS:
+		return "IQ2_XXS"
+	case fileTypeIQ2_XS:
+		return "IQ2_XS"
 	case fileTypeQ2_K_S:
 		return "Q2_K_S"
+	case fileTypeIQ3_XS:
+		return "IQ3_XS"
+	case fileTypeIQ3_XXS:
+		return "IQ3_XXS"
+	case fileTypeIQ1_S:
+		return "IQ1_S"
+	case fileTypeIQ4_NL:
+		return "IQ4_NL"
+	case fileTypeIQ3_S:
+		return "IQ3_S"
+	case fileTypeIQ3_M:
+		return "IQ3_M"
+	case fileTypeIQ2_S:
+		return "IQ2_S"
+	case fileTypeIQ2_M:
+		return "IQ2_M"
+	case fileTypeIQ4_XS:
+		return "IQ4_XS"
+	case fileTypeIQ1_M:
+		return "IQ1_M"
 	case FileTypeBF16:
 		return "BF16"
+	case fileTypeTQ1_0:
+		return "TQ1_0"
+	case fileTypeTQ2_0:
+		return "TQ2_0"
+	case fileTypeMXFP4_MOE:
+		return "MXFP4_MOE"
+	case fileTypeNVFP4:
+		return "NVFP4"
+	case fileTypeQ1_0:
+		return "Q1_0"
 	default:
 		return "unknown"
 	}
@@ -170,12 +205,40 @@ func (ftype FileType) ToTensorType() TensorType {
 		return TensorTypeQ5_K
 	case fileTypeQ6_K:
 		return TensorTypeQ6_K
+	case fileTypeIQ2_XXS:
+		return tensorTypeIQ2_XXS
+	case fileTypeIQ2_XS:
+		return tensorTypeIQ2_XS
 	case fileTypeQ2_K_S:
 		return TensorTypeQ2_K
+	case fileTypeIQ3_XS:
+		return tensorTypeIQ3_S
+	case fileTypeIQ3_XXS:
+		return tensorTypeIQ3_XXS
+	case fileTypeIQ1_S:
+		return tensorTypeIQ1_S
+	case fileTypeIQ4_NL:
+		return tensorTypeIQ4_NL
+	case fileTypeIQ3_S, fileTypeIQ3_M:
+		return tensorTypeIQ3_S
+	case fileTypeIQ2_S, fileTypeIQ2_M:
+		return tensorTypeIQ2_S
+	case fileTypeIQ4_XS:
+		return tensorTypeIQ4_XS
+	case fileTypeIQ1_M:
+		return tensorTypeIQ1_M
 	case FileTypeBF16:
 		return TensorTypeBF16
-	case fileTypeMXFP4:
+	case fileTypeTQ1_0:
+		return tensorTypeTQ1_0
+	case fileTypeTQ2_0:
+		return tensorTypeTQ2_0
+	case fileTypeMXFP4_MOE:
 		return TensorTypeMXFP4
+	case fileTypeNVFP4:
+		return TensorTypeNVFP4
+	case fileTypeQ1_0:
+		return TensorTypeQ1_0
 	default:
 		slog.Warn("unsupported file type", "type", ftype)
 		return 0 // F32
@@ -227,6 +290,8 @@ const (
 	tensorTypeIQ4_NL_4_8 // unused by GGML
 	tensorTypeIQ4_NL_8_8 // unused by GGML
 	TensorTypeMXFP4
+	TensorTypeNVFP4
+	TensorTypeQ1_0
 )
 
 // ParseTensorType parses the provided GGUF tensor type
@@ -315,12 +380,46 @@ func (t TensorType) String() string {
 		return "Q6_K"
 	case TensorTypeQ8_K:
 		return "Q8_K"
+	case tensorTypeIQ2_XXS:
+		return "IQ2_XXS"
+	case tensorTypeIQ2_XS:
+		return "IQ2_XS"
+	case tensorTypeIQ3_XXS:
+		return "IQ3_XXS"
+	case tensorTypeIQ1_S:
+		return "IQ1_S"
+	case tensorTypeIQ4_NL:
+		return "IQ4_NL"
+	case tensorTypeIQ3_S:
+		return "IQ3_S"
+	case tensorTypeIQ2_S:
+		return "IQ2_S"
+	case tensorTypeIQ4_XS:
+		return "IQ4_XS"
+	case TensorTypeI8:
+		return "I8"
+	case TensorTypeI16:
+		return "I16"
+	case TensorTypeI32:
+		return "I32"
+	case TensorTypeI64:
+		return "I64"
 	case TensorTypeF64:
 		return "F64"
+	case tensorTypeIQ1_M:
+		return "IQ1_M"
 	case TensorTypeBF16:
 		return "BF16"
-	case 4, TensorTypeMXFP4:
+	case tensorTypeTQ1_0:
+		return "TQ1_0"
+	case tensorTypeTQ2_0:
+		return "TQ2_0"
+	case TensorTypeMXFP4:
 		return "MXFP4"
+	case TensorTypeNVFP4:
+		return "NVFP4"
+	case TensorTypeQ1_0:
+		return "Q1_0"
 	default:
 		return "unknown"
 	}

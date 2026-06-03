@@ -29,7 +29,7 @@ func TestImageGeneration(t *testing.T) {
 	testCases := []testCase{
 		{
 			imageGenModel: "jmorgan/z-image-turbo",
-			visionModel:   "llama3.2-vision",
+			visionModel:   "qwen2.5vl:3b",
 			prompt:        "A cartoon style llama flying like a superhero through the air with clouds in the background",
 			expectedWords: []string{"llama", "flying", "cartoon", "cloud", "sky", "superhero", "air", "animal", "camelid"},
 		},

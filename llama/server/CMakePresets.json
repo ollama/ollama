@@ -1,0 +1,321 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "default",
+      "binaryDir": "${sourceDir}/../../build/llama-server",
+      "installDir": "${sourceDir}/../../dist",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_SHARED_LIBS": "ON",
+        "GGML_BACKEND_DL": "ON",
+        "GGML_NATIVE": "OFF",
+        "GGML_OPENMP": "OFF"
+      }
+    },
+    {
+      "name": "cpu",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cpu",
+      "cacheVariables": {
+        "GGML_CPU_ALL_VARIANTS": "ON",
+        "OLLAMA_RUNNER_DIR": ""
+      }
+    },
+    {
+      "name": "cpu_windows",
+      "inherits": ["cpu"],
+      "cacheVariables": {
+        "GGML_OPENMP": "ON"
+      }
+    },
+    {
+      "name": "cpu_arm64",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cpu_arm64",
+      "toolchainFile": "${sourceDir}/../../cmake/windows-arm64-llvm-mingw.cmake",
+      "cacheVariables": {
+        "GGML_CPU_ALL_VARIANTS": "OFF",
+        "OLLAMA_RUNNER_DIR": "",
+        "OLLAMA_WINDOWS_RUNTIME_ARCH": "arm64"
+      }
+    },
+    {
+      "name": "darwin",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-darwin",
+      "cacheVariables": {
+        "BUILD_SHARED_LIBS": "OFF",
+        "GGML_BACKEND_DL": "OFF",
+        "GGML_METAL": "ON",
+        "GGML_METAL_EMBED_LIBRARY": "ON",
+        "OLLAMA_RUNNER_DIR": ""
+      }
+    },
+    {
+      "name": "llama_cuda_v12_base",
+      "hidden": true,
+      "inherits": ["default"],
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "CMAKE_CUDA_FLAGS": "-Wno-deprecated-gpu-targets -t 2",
+        "OLLAMA_RUNNER_DIR": "cuda_v12",
+        "OLLAMA_GPU_BACKEND": "cuda"
+      }
+    },
+    {
+      "name": "llama_cuda_v12_linux",
+      "inherits": ["llama_cuda_v12_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v12",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;52-virtual;60-virtual;61-virtual;70;75;80;86;89;90;90a;120"
+      }
+    },
+    {
+      "name": "llama_cuda_v12_windows",
+      "inherits": ["llama_cuda_v12_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v12",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;52-virtual;60-virtual;61-virtual;70;75;80;86;89;90;90a;120"
+      }
+    },
+    {
+      "name": "llama_cuda_v12_user_arch",
+      "inherits": ["llama_cuda_v12_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v12"
+    },
+    {
+      "name": "llama_cuda_v13_base",
+      "hidden": true,
+      "inherits": ["default"],
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "CMAKE_CUDA_FLAGS": "-t 4",
+        "OLLAMA_RUNNER_DIR": "cuda_v13",
+        "OLLAMA_GPU_BACKEND": "cuda"
+      }
+    },
+    {
+      "name": "llama_cuda_v13_linux",
+      "inherits": ["llama_cuda_v13_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual"
+      }
+    },
+    {
+      "name": "llama_cuda_v13_windows",
+      "inherits": ["llama_cuda_v13_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;89-virtual;100-virtual;120-virtual"
+      }
+    },
+    {
+      "name": "llama_cuda_v13_user_arch",
+      "inherits": ["llama_cuda_v13_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13"
+    },
+    {
+      "name": "llama_cuda_jetpack5_base",
+      "hidden": true,
+      "inherits": ["default"],
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "OLLAMA_RUNNER_DIR": "cuda_jetpack5",
+        "OLLAMA_GPU_BACKEND": "cuda"
+      }
+    },
+    {
+      "name": "llama_cuda_jetpack5",
+      "inherits": ["llama_cuda_jetpack5_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_jetpack5",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "72;87"
+      }
+    },
+    {
+      "name": "llama_cuda_jetpack5_user_arch",
+      "inherits": ["llama_cuda_jetpack5_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_jetpack5"
+    },
+    {
+      "name": "llama_cuda_jetpack6_base",
+      "hidden": true,
+      "inherits": ["default"],
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "OLLAMA_RUNNER_DIR": "cuda_jetpack6",
+        "OLLAMA_GPU_BACKEND": "cuda"
+      }
+    },
+    {
+      "name": "llama_cuda_jetpack6",
+      "inherits": ["llama_cuda_jetpack6_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_jetpack6",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "87"
+      }
+    },
+    {
+      "name": "llama_cuda_jetpack6_user_arch",
+      "inherits": ["llama_cuda_jetpack6_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_jetpack6"
+    },
+    {
+      "name": "rocm_v7_1_base",
+      "hidden": true,
+      "inherits": ["default"],
+      "cacheVariables": {
+        "GGML_HIP": "ON",
+        "CMAKE_HIP_PLATFORM": "amd",
+        "OLLAMA_RUNNER_DIR": "rocm_v7_1",
+        "OLLAMA_GPU_BACKEND": "hip"
+      }
+    },
+    {
+      "name": "rocm_v7_1_windows",
+      "inherits": ["rocm_v7_1_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_1",
+      "cacheVariables": {
+        "AMDGPU_TARGETS": "gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201"
+      }
+    },
+    {
+      "name": "rocm_v7_1_user_arch",
+      "inherits": ["rocm_v7_1_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_1"
+    },
+    {
+      "name": "rocm_v7_2_base",
+      "hidden": true,
+      "inherits": ["default"],
+      "cacheVariables": {
+        "GGML_HIP": "ON",
+        "CMAKE_HIP_PLATFORM": "amd",
+        "OLLAMA_RUNNER_DIR": "rocm_v7_2",
+        "OLLAMA_GPU_BACKEND": "hip"
+      }
+    },
+    {
+      "name": "rocm_v7_2_linux",
+      "inherits": ["rocm_v7_2_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_2",
+      "cacheVariables": {
+        "AMDGPU_TARGETS": "gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201"
+      }
+    },
+    {
+      "name": "rocm_v7_2_user_arch",
+      "inherits": ["rocm_v7_2_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_2"
+    },
+    {
+      "name": "vulkan",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-vulkan",
+      "cacheVariables": {
+        "GGML_VULKAN": "ON",
+        "OLLAMA_RUNNER_DIR": "vulkan",
+        "OLLAMA_GPU_BACKEND": "vulkan"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "cpu",
+      "configurePreset": "cpu",
+      "targets": ["llama-server", "llama-quantize"]
+    },
+    {
+      "name": "cpu_windows",
+      "configurePreset": "cpu_windows",
+      "targets": ["llama-server", "llama-quantize"]
+    },
+    {
+      "name": "cpu_arm64",
+      "configurePreset": "cpu_arm64",
+      "targets": ["llama-server", "llama-quantize"]
+    },
+    {
+      "name": "darwin",
+      "configurePreset": "darwin",
+      "targets": ["llama-server", "llama-quantize"]
+    },
+    {
+      "name": "llama_cuda_v12_linux",
+      "configurePreset": "llama_cuda_v12_linux",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_v12_windows",
+      "configurePreset": "llama_cuda_v12_windows",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_v12_user_arch",
+      "configurePreset": "llama_cuda_v12_user_arch",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_v13_linux",
+      "configurePreset": "llama_cuda_v13_linux",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_v13_windows",
+      "configurePreset": "llama_cuda_v13_windows",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_v13_user_arch",
+      "configurePreset": "llama_cuda_v13_user_arch",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_jetpack5",
+      "configurePreset": "llama_cuda_jetpack5",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_jetpack5_user_arch",
+      "configurePreset": "llama_cuda_jetpack5_user_arch",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_jetpack6",
+      "configurePreset": "llama_cuda_jetpack6",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_jetpack6_user_arch",
+      "configurePreset": "llama_cuda_jetpack6_user_arch",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "rocm_v7_1_windows",
+      "configurePreset": "rocm_v7_1_windows",
+      "targets": ["ggml-hip"]
+    },
+    {
+      "name": "rocm_v7_1_user_arch",
+      "configurePreset": "rocm_v7_1_user_arch",
+      "targets": ["ggml-hip"]
+    },
+    {
+      "name": "rocm_v7_2_linux",
+      "configurePreset": "rocm_v7_2_linux",
+      "targets": ["ggml-hip"]
+    },
+    {
+      "name": "rocm_v7_2_user_arch",
+      "configurePreset": "rocm_v7_2_user_arch",
+      "targets": ["ggml-hip"]
+    },
+    {
+      "name": "vulkan",
+      "configurePreset": "vulkan",
+      "targets": ["ggml-vulkan"]
+    }
+  ]
+}

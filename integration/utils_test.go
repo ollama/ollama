@@ -46,7 +46,7 @@ var (
 	// Note: add newer models at the top of the list to test them first
 	ollamaEngineChatModels = []string{
 		"nemotron3:33b",
-		"laguna-xs.2:q4_K_M",
+		// "laguna-xs.2:q4_K_M", // TODO: re-enable when llama.cpp supports laguna.
 		"gemma4",
 		"lfm2.5-thinking",
 		"ministral-3",
@@ -55,7 +55,7 @@ var (
 		"gemma3n:e2b",
 		"mistral-small3.2:latest",
 		"deepseek-r1:1.5b",
-		"llama3.2-vision:latest",
+		// "llama3.2-vision:latest", // TODO: re-enable when llama.cpp supports mllama.
 		"qwen2.5-coder:latest",
 		"qwen2.5vl:3b",
 		"qwen3:0.6b", // dense
@@ -74,8 +74,8 @@ var (
 	// failure into a test skip.
 	mlxEngineChatModels = []string{
 		"laguna-xs.2:nvfp4",
-		"qwen3.5:2b-nvfp4",  // ~2.5GB, Qwen3_5 arch
-		"gemma4:e2b-nvfp4",  // ~7.1GB, Gemma4 arch (skipped under low VRAM)
+		"qwen3.5:2b-nvfp4", // ~2.5GB, Qwen3_5 arch
+		"gemma4:e2b-nvfp4", // ~7.1GB, Gemma4 arch (skipped under low VRAM)
 	}
 	llamaRunnerChatModels = []string{
 		"mistral:latest",
@@ -84,7 +84,6 @@ var (
 		"command-r:latest",
 		"nemotron-mini:latest",
 		"phi3.5:latest",
-		"solar-pro:latest",
 		"internlm2:latest",
 		"codellama:latest", // arch=llama
 		"phi3:latest",
@@ -166,7 +165,7 @@ var (
 		"llama3-gradient",
 		"llama3-groq-tool-use",
 		"llama3.1",
-		"llama3.2-vision",
+		// "llama3.2-vision", // TODO: re-enable when llama.cpp supports mllama.
 		"llama3.2",
 		"llama3.3",
 		"llama3",
@@ -236,7 +235,6 @@ var (
 		"smallthinker",
 		"smollm",
 		"smollm2",
-		"solar-pro",
 		"solar",
 		"sqlcoder",
 		"stable-beluga",
@@ -278,7 +276,7 @@ var (
 	}
 	libraryToolsModels = []string{
 		"nemotron3:33b",
-		"laguna-xs.2",
+		// "laguna-xs.2", // TODO: re-enable when llama.cpp supports laguna.
 		"gemma4",
 		"lfm2.5-thinking",
 		"qwen3-vl",
@@ -555,7 +553,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 			<-serverDone
 			slog.Info("terminate complete")
 
-			if t.Failed() {
+			if t.Failed() || os.Getenv("OLLAMA_TEST_LOG_SERVER") != "" {
 				slog.Warn("SERVER LOG FOLLOWS")
 				io.Copy(os.Stderr, &serverLog)
 				slog.Warn("END OF SERVER")

@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/semver"
 )
@@ -19,8 +21,10 @@ type Codex struct{}
 func (c *Codex) String() string { return "Codex" }
 
 const (
-	codexProfileName  = "ollama-launch"
-	codexProviderName = "Ollama"
+	codexProfileName           = "ollama-launch"
+	codexProviderName          = "Ollama"
+	codexFallbackContextWindow = 128_000
+	codexRestoreSuccess        = "Codex launch configuration removed."
 
 	codexRootProfileKey          = "profile"
 	codexRootModelKey            = "model"
@@ -28,25 +32,42 @@ const (
 	codexRootModelCatalogJSONKey = "model_catalog_json"
 )
 
-func (c *Codex) args(model string, extra []string) []string {
+func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, error) {
+	if err := codexValidateExtraArgs(extra); err != nil {
+		return nil, err
+	}
+
 	args := []string{"--profile", codexProfileName}
+	for _, override := range codexManagedConfigOverrides(modelCatalogPath) {
+		args = append(args, "-c", override)
+	}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
 	args = append(args, extra...)
-	return args
+	return args, nil
 }
 
-func (c *Codex) Run(model string, args []string) error {
+func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 	if err := checkCodexVersion(); err != nil {
 		return err
 	}
 
-	if err := ensureCodexConfig(); err != nil {
+	if err := ensureCodexConfig(model, models); err != nil {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
-	cmd := exec.Command("codex", c.args(model, args)...)
+	catalogPath, err := codexModelCatalogPath()
+	if err != nil {
+		return fmt.Errorf("failed to configure codex: %w", err)
+	}
+
+	codexArgs, err := c.args(model, catalogPath, args)
+	if err != nil {
+		return fmt.Errorf("failed to configure codex: %w", err)
+	}
+
+	cmd := exec.Command("codex", codexArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -56,18 +77,152 @@ func (c *Codex) Run(model string, args []string) error {
 	return cmd.Run()
 }
 
-// ensureCodexConfig writes a [profiles.ollama-launch] section to ~/.codex/config.toml
-// with openai_base_url pointing to the local Ollama server.
-func ensureCodexConfig() error {
+func (c *Codex) Restore() error {
 	configPath, err := codexConfigPath()
 	if err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+	if err := removeCodexProfileConfig(); err != nil {
+		return codexRestoreFailure(configPath, err)
+	}
+	if err := removeCodexModelCatalogIfUnused(configPath); err != nil {
+		return codexRestoreFailure(configPath, err)
+	}
+	return nil
+}
+
+func (c *Codex) RestoreSuccessMessage() string {
+	return codexRestoreSuccess
+}
+
+func (c *Codex) SkipRestoreInstallCheck() bool {
+	return true
+}
+
+func codexRestoreFailure(configPath string, err error) error {
+	return fmt.Errorf("restore Codex config: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  CLI profile: %s\n  CLI model catalog: %s\n  Backups: %s",
+		err,
+		configPath,
+		codexProfileConfigPathForConfig(configPath),
+		codexModelCatalogPathForConfig(configPath),
+		fileutil.BackupDir(),
+	)
+}
+
+func removeCodexProfileConfig() error {
+	profilePath, err := codexProfileConfigPath()
+	if err != nil {
 		return err
 	}
-	return writeCodexProfile(configPath)
+	return removeCodexFile(profilePath)
+}
+
+func removeCodexModelCatalogIfUnused(configPath string) error {
+	catalogPath := codexModelCatalogPathForConfig(configPath)
+	data, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		config, parseErr := codexParseConfig(string(data))
+		if parseErr != nil {
+			return parseErr
+		}
+		if config.RootString(codexRootModelCatalogJSONKey) == catalogPath {
+			return nil
+		}
+	}
+	return removeCodexFile(catalogPath)
+}
+
+func removeCodexFile(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func codexValidateExtraArgs(args []string) error {
+	for i, arg := range args {
+		switch {
+		case arg == "-p", strings.HasPrefix(arg, "-p"):
+			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --profile", arg)
+		case arg == "--profile", strings.HasPrefix(arg, "--profile="):
+			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --profile", arg)
+		case arg == "-m", strings.HasPrefix(arg, "-m"):
+			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --model", arg)
+		case arg == "--model", strings.HasPrefix(arg, "--model="):
+			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --model", arg)
+		case arg == "-c", arg == "--config":
+			if i+1 < len(args) && codexConfigOverrideConflicts(args[i+1]) {
+				return fmt.Errorf("conflicting extra config %q: ollama launch codex manages provider and model catalog config", args[i+1])
+			}
+		case strings.HasPrefix(arg, "-c") && len(arg) > len("-c"):
+			if codexConfigOverrideConflicts(strings.TrimPrefix(arg, "-c")) {
+				return fmt.Errorf("conflicting extra config %q: ollama launch codex manages provider and model catalog config", arg)
+			}
+		case strings.HasPrefix(arg, "--config="):
+			if codexConfigOverrideConflicts(strings.TrimPrefix(arg, "--config=")) {
+				return fmt.Errorf("conflicting extra config %q: ollama launch codex manages provider and model catalog config", arg)
+			}
+		}
+	}
+	return nil
+}
+
+func codexManagedConfigOverrides(modelCatalogPath string) []string {
+	overrides := []string{
+		fmt.Sprintf("%s=%q", codexRootModelProviderKey, codexProfileName),
+		fmt.Sprintf("model_providers.%s.name=%q", codexProfileName, codexProviderName),
+		fmt.Sprintf("model_providers.%s.base_url=%q", codexProfileName, codexBaseURL()),
+		fmt.Sprintf("model_providers.%s.wire_api=%q", codexProfileName, "responses"),
+	}
+	if modelCatalogPath != "" {
+		overrides = append(overrides, fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, modelCatalogPath))
+	}
+	return overrides
+}
+
+func codexConfigOverrideConflicts(value string) bool {
+	key, _, ok := strings.Cut(strings.TrimSpace(value), "=")
+	if !ok {
+		return false
+	}
+	key = strings.TrimSpace(key)
+	key = strings.Trim(key, `"'`)
+	switch {
+	case key == codexRootProfileKey,
+		key == codexRootModelKey,
+		key == codexRootModelProviderKey,
+		key == codexRootModelCatalogJSONKey:
+		return true
+	case strings.HasPrefix(key, "model_providers."):
+		return true
+	}
+	return false
+}
+
+// ensureCodexConfig writes a Codex profile file and model catalog so Codex uses
+// the local Ollama server without changing app-visible root config.
+func ensureCodexConfig(modelName string, models []LaunchModel) error {
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return err
+	}
+
+	codexDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		return err
+	}
+
+	catalogPath := codexModelCatalogPathForConfig(configPath)
+	if err := writeCodexModelCatalog(catalogPath, codexCatalogModel(modelName, models)); err != nil {
+		return err
+	}
+
+	profilePath := codexProfileConfigPathForConfig(configPath)
+	return writeCodexProfileConfig(profilePath, modelName, catalogPath)
 }
 
 func codexConfigPath() (string, error) {
@@ -78,119 +233,72 @@ func codexConfigPath() (string, error) {
 	return filepath.Join(home, ".codex", "config.toml"), nil
 }
 
-// writeCodexProfile ensures ~/.codex/config.toml has the ollama-launch profile
-// and model provider sections with the correct base URL.
-func writeCodexProfile(configPath string) error {
-	return writeCodexLaunchProfile(configPath, codexLaunchProfileOptions{
-		forceAPIAuth: true,
-	})
-}
-
-type codexLaunchProfileOptions struct {
-	activate           bool
-	profileName        string
-	forceAPIAuth       bool
-	setRootModelConfig bool
-	model              string
-	modelCatalogPath   string
-	backupIntegration  string
-}
-
-func writeCodexLaunchProfile(configPath string, opts codexLaunchProfileOptions) error {
-	baseURL := codexBaseURL()
-	profileName := codexLaunchProfileName(opts)
-	profileHeader := codexProfileHeaderFor(profileName)
-	providerHeader := codexProviderHeaderFor(profileName)
-
-	content, readErr := os.ReadFile(configPath)
-	text := ""
-	if readErr == nil {
-		text = string(content)
-	} else if !os.IsNotExist(readErr) {
-		return readErr
+func codexModelCatalogPath() (string, error) {
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return "", err
 	}
+	return codexModelCatalogPathForConfig(configPath), nil
+}
+
+func codexModelCatalogPathForConfig(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "model.json")
+}
+
+func codexProfileConfigPath() (string, error) {
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return "", err
+	}
+	return codexProfileConfigPathForConfig(configPath), nil
+}
+
+func codexProfileConfigPathForConfig(configPath string) string {
+	return codexNamedProfileConfigPathForConfig(configPath, codexProfileName)
+}
+
+func codexNamedProfileConfigPathForConfig(configPath, profileName string) string {
+	return filepath.Join(filepath.Dir(configPath), profileName+".config.toml")
+}
+
+// writeCodexProfileConfig ensures ~/.codex/ollama-launch.config.toml selects
+// the Ollama provider and catalog for CLI launches without changing root config.
+func writeCodexProfileConfig(profilePath, model, modelCatalogPath string) error {
+	return writeCodexNamedProfileConfig(profilePath, codexProfileName, model, modelCatalogPath, "")
+}
+
+func writeCodexNamedProfileConfig(profilePath, profileName, model, modelCatalogPath, backupSubdir string) error {
+	baseURL := codexBaseURL()
+
+	var lines []string
+	if strings.TrimSpace(model) != "" {
+		lines = append(lines, fmt.Sprintf("%s = %q", codexRootModelKey, model))
+	}
+	lines = append(lines, fmt.Sprintf("%s = %q", codexRootModelProviderKey, profileName))
+	if strings.TrimSpace(modelCatalogPath) != "" {
+		lines = append(lines, fmt.Sprintf("%s = %q", codexRootModelCatalogJSONKey, modelCatalogPath))
+	}
+	text := strings.Join(lines, "\n") + "\n\n"
+	text += strings.Join([]string{
+		codexProviderHeaderFor(profileName),
+		fmt.Sprintf("name = %q", codexProviderName),
+		fmt.Sprintf("base_url = %q", baseURL),
+		`wire_api = "responses"`,
+		"",
+	}, "\n")
+
 	parsed, err := codexParseConfig(text)
 	if err != nil {
 		return err
 	}
-
-	model := strings.TrimSpace(opts.model)
-	if model == "" {
-		model = parsed.ProfileString(profileName, codexRootModelKey)
-	}
-	modelCatalogPath := strings.TrimSpace(opts.modelCatalogPath)
-	if modelCatalogPath == "" {
-		modelCatalogPath = parsed.ProfileString(profileName, codexRootModelCatalogJSONKey)
-	}
-
-	profileLines := []string{}
-	if model != "" {
-		profileLines = append(profileLines, fmt.Sprintf("%s = %q", codexRootModelKey, model))
-	}
-	profileLines = append(profileLines,
-		fmt.Sprintf("openai_base_url = %q", baseURL),
-		fmt.Sprintf("%s = %q", codexRootModelProviderKey, profileName),
-	)
-	if opts.forceAPIAuth {
-		profileLines = append(profileLines, `forced_login_method = "api"`)
-	}
-	if modelCatalogPath != "" {
-		profileLines = append(profileLines, fmt.Sprintf("%s = %q", codexRootModelCatalogJSONKey, modelCatalogPath))
-	}
-
-	sections := []struct {
-		header string
-		lines  []string
-	}{
-		{
-			header: profileHeader,
-			lines:  profileLines,
-		},
-		{
-			header: providerHeader,
-			lines: []string{
-				fmt.Sprintf("name = %q", codexProviderName),
-				fmt.Sprintf("base_url = %q", baseURL),
-				`wire_api = "responses"`,
-			},
-		},
-	}
-
-	if opts.activate {
-		text = codexSetRootStringValue(text, codexRootProfileKey, profileName)
-	}
-	if opts.setRootModelConfig {
-		if model != "" {
-			text = codexSetRootStringValue(text, codexRootModelKey, model)
-		}
-		text = codexSetRootStringValue(text, codexRootModelProviderKey, profileName)
-		if modelCatalogPath != "" {
-			text = codexSetRootStringValue(text, codexRootModelCatalogJSONKey, modelCatalogPath)
-		}
-	}
-
-	for _, s := range sections {
-		text = codexUpsertSection(text, s.header, s.lines)
-	}
-	parsed, err = codexParseConfig(text)
-	if err != nil {
-		return err
-	}
-	if err := codexValidateLaunchProfileText(parsed, profileName, opts, model, modelCatalogPath, baseURL); err != nil {
+	if err := codexValidateProfileConfigText(parsed, profileName, model, modelCatalogPath, baseURL); err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(configPath, []byte(text), opts.backupIntegration)
-}
-
-func codexLaunchProfileName(opts codexLaunchProfileOptions) string {
-	if name := strings.TrimSpace(opts.profileName); name != "" {
-		return name
-	}
-	return codexProfileName
+	return fileutil.WriteWithBackup(profilePath, []byte(text), backupSubdir)
 }
 
 func codexBaseURL() string {
@@ -213,13 +321,14 @@ func codexProviderHeaderFor(profileName string) string {
 	return fmt.Sprintf("[model_providers.%s]", profileName)
 }
 
-func codexValidateLaunchProfileText(config codexParsedConfig, profileName string, opts codexLaunchProfileOptions, model, modelCatalogPath, baseURL string) error {
+func codexValidateProfileConfigText(config codexParsedConfig, profileName, model, modelCatalogPath, baseURL string) error {
+	if config.Exists("profiles", profileName) {
+		return fmt.Errorf("generated Codex config still contains legacy profiles.%s table", profileName)
+	}
 	for _, check := range []struct {
 		path []string
 		want string
 	}{
-		{[]string{"profiles", profileName, "openai_base_url"}, baseURL},
-		{[]string{"profiles", profileName, codexRootModelProviderKey}, profileName},
 		{[]string{"model_providers", profileName, "name"}, codexProviderName},
 		{[]string{"model_providers", profileName, "base_url"}, baseURL},
 		{[]string{"model_providers", profileName, "wire_api"}, "responses"},
@@ -228,39 +337,20 @@ func codexValidateLaunchProfileText(config codexParsedConfig, profileName string
 			return fmt.Errorf("generated Codex config missing %s = %q", strings.Join(check.path, "."), check.want)
 		}
 	}
-	if opts.forceAPIAuth {
-		if got, ok := config.String("profiles", profileName, "forced_login_method"); !ok || got != "api" {
-			return fmt.Errorf("generated Codex config missing profiles.%s.forced_login_method = %q", profileName, "api")
-		}
+	if got, ok := config.RootStringOK(codexRootProfileKey); ok {
+		return fmt.Errorf("generated Codex config still contains legacy profile = %q", got)
+	}
+	if got := config.RootString(codexRootModelProviderKey); got != profileName {
+		return fmt.Errorf("generated Codex config missing model_provider = %q", profileName)
 	}
 	if model != "" {
-		if got, ok := config.String("profiles", profileName, codexRootModelKey); !ok || got != model {
-			return fmt.Errorf("generated Codex config missing profiles.%s.model = %q", profileName, model)
+		if got := config.RootString(codexRootModelKey); got != model {
+			return fmt.Errorf("generated Codex config missing model = %q", model)
 		}
 	}
 	if modelCatalogPath != "" {
-		if got, ok := config.String("profiles", profileName, codexRootModelCatalogJSONKey); !ok || got != modelCatalogPath {
-			return fmt.Errorf("generated Codex config missing profiles.%s.model_catalog_json = %q", profileName, modelCatalogPath)
-		}
-	}
-	if opts.activate {
-		if got := config.RootString(codexRootProfileKey); got != profileName {
-			return fmt.Errorf("generated Codex config missing profile = %q", profileName)
-		}
-	}
-	if opts.setRootModelConfig {
-		if model != "" {
-			if got := config.RootString(codexRootModelKey); got != model {
-				return fmt.Errorf("generated Codex config missing model = %q", model)
-			}
-		}
-		if got := config.RootString(codexRootModelProviderKey); got != profileName {
-			return fmt.Errorf("generated Codex config missing model_provider = %q", profileName)
-		}
-		if modelCatalogPath != "" {
-			if got := config.RootString(codexRootModelCatalogJSONKey); got != modelCatalogPath {
-				return fmt.Errorf("generated Codex config missing model_catalog_json = %q", modelCatalogPath)
-			}
+		if got := config.RootString(codexRootModelCatalogJSONKey); got != modelCatalogPath {
+			return fmt.Errorf("generated Codex config missing model_catalog_json = %q", modelCatalogPath)
 		}
 	}
 	return nil
@@ -320,6 +410,24 @@ func (c codexParsedConfig) String(path ...string) (string, bool) {
 		return "", false
 	}
 	return value, true
+}
+
+func (c codexParsedConfig) Exists(path ...string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	var current any = c.values
+	for _, part := range path {
+		table, ok := current.(map[string]any)
+		if !ok {
+			return false
+		}
+		current, ok = table[part]
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (c codexParsedConfig) RootString(key string) string {
@@ -538,6 +646,79 @@ func codexRootLineHasKey(line, key string) bool {
 	return ok
 }
 
+func codexCatalogModel(modelName string, models []LaunchModel) LaunchModel {
+	if model, ok := findLaunchModel(models, modelName); ok {
+		model.Name = modelName
+		return model.WithCloudLimits()
+	}
+	return fallbackLaunchModel(modelName)
+}
+
+func writeCodexModelCatalog(catalogPath string, model LaunchModel) error {
+	entry := buildCodexModelEntry(model)
+
+	catalog := map[string]any{
+		"models": []any{entry},
+	}
+
+	data, err := json.MarshalIndent(catalog, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(catalogPath, data, 0o644)
+}
+
+func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
+	modelName := launchModel.Name
+	contextWindow := codexFallbackContextWindow
+	systemPrompt := ""
+
+	if launchModel.ContextLength > 0 {
+		contextWindow = launchModel.ContextLength
+	} else if launchModel.Details.ContextLength > 0 {
+		contextWindow = launchModel.Details.ContextLength
+	}
+	if l, ok := lookupCloudModelLimit(modelName); ok {
+		contextWindow = l.Context
+	}
+
+	if !isCloudModelName(modelName) && launchModel.Details.Format != "safetensors" {
+		if ctxLen := envconfig.ContextLength(); ctxLen > 0 {
+			contextWindow = int(ctxLen)
+		}
+	}
+
+	modalities := []string{"text"}
+	if launchModel.HasCapability(model.CapabilityVision) {
+		modalities = append(modalities, "image")
+	}
+
+	truncationMode := "bytes"
+	if isCloudModelName(modelName) {
+		truncationMode = "tokens"
+	}
+
+	return map[string]any{
+		"slug":                         modelName,
+		"display_name":                 modelName,
+		"context_window":               contextWindow,
+		"shell_type":                   "default",
+		"visibility":                   "list",
+		"supported_in_api":             true,
+		"priority":                     0,
+		"truncation_policy":            map[string]any{"mode": truncationMode, "limit": 10000},
+		"input_modalities":             modalities,
+		"base_instructions":            systemPrompt,
+		"support_verbosity":            true,
+		"default_verbosity":            "low",
+		"supports_parallel_tool_calls": false,
+		"supports_reasoning_summaries": false,
+		"supported_reasoning_levels":   []any{},
+		"experimental_supported_tools": []any{},
+	}
+}
+
 func checkCodexVersion() error {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return fmt.Errorf("codex is not installed, install with: npm install -g @openai/codex")
@@ -555,10 +736,10 @@ func checkCodexVersion() error {
 	}
 
 	version := "v" + fields[len(fields)-1]
-	minVersion := "v0.81.0"
+	minVersion := "v0.134.0"
 
 	if semver.Compare(version, minVersion) < 0 {
-		return fmt.Errorf("codex version %s is too old, minimum required is %s, update with: npm update -g @openai/codex", fields[len(fields)-1], "0.81.0")
+		return fmt.Errorf("codex version %s is too old, minimum required is %s, update with: npm update -g @openai/codex", fields[len(fields)-1], "0.134.0")
 	}
 
 	return nil

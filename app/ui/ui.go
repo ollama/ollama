@@ -574,6 +574,18 @@ func (s *Server) getError(err error) responses.ErrorEvent {
 	}
 }
 
+func userMessageText(messages []store.Message) string {
+	var b strings.Builder
+	for _, message := range messages {
+		if message.Role != "user" {
+			continue
+		}
+		b.WriteString(message.Content)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 func (s *Server) browserState(chat *store.Chat) (*responses.BrowserStateData, bool) {
 	if len(chat.BrowserState) > 0 {
 		var st responses.BrowserStateData
@@ -839,6 +851,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	// Note: Skip agent/tools mode if user has attachments, as the agent doesn't handle file attachments properly
 	registry := tools.NewRegistry()
 	var browser *tools.Browser
+	ctx = tools.WithAllowedDirectURLs(ctx, userMessageText(chat.Messages))
 
 	if !hasAttachments {
 		WebSearchEnabled := req.WebSearch != nil && *req.WebSearch

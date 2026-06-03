@@ -12,6 +12,10 @@ func (m *mockRenderer) Render(msgs []api.Message, tools []api.Tool, think *api.T
 	return "mock-output", nil
 }
 
+func (m *mockRenderer) LeadingBOS() string {
+	return ""
+}
+
 func TestRegisterCustomRenderer(t *testing.T) {
 	// Register a custom renderer
 	Register("custom-renderer", func() Renderer {
@@ -48,6 +52,33 @@ func TestBuiltInRendererStillWorks(t *testing.T) {
 			}
 			if result == "" {
 				t.Fatalf("expected non-empty result from %s renderer", tt.name)
+			}
+		})
+	}
+}
+
+func TestLeadingBOSForRenderer(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "gemma4", want: "<bos>"},
+		{name: "gemma4-small", want: "<bos>"},
+		{name: "gemma4-large", want: "<bos>"},
+		{name: "functiongemma", want: "<bos>"},
+		{name: "lfm2", want: "<|startoftext|>"},
+		{name: "lfm2-thinking", want: "<|startoftext|>"},
+		{name: "laguna", want: "〈|EOS|〉"},
+		{name: "deepseek3.1", want: "<｜begin▁of▁sentence｜>"},
+		{name: "cogito", want: "<｜begin▁of▁sentence｜>"},
+		{name: "qwen3-coder", want: ""},
+		{name: "unknown", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := LeadingBOSForRenderer(tt.name); got != tt.want {
+				t.Fatalf("LeadingBOSForRenderer(%q) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
 	}

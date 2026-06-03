@@ -28,7 +28,7 @@ type Request struct {
 	Responses chan CompletionResponse
 	Pipeline  func(context.Context, Request) error
 
-	Ctx         context.Context //nolint:containedctx
+	Ctx         context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
 	Tokens      []int32
 	SamplerOpts sample.Options
 }
@@ -40,7 +40,6 @@ type Runner struct {
 	Requests      chan Request
 	Sampler       *sample.Sampler
 	cache         kvCache
-	dflashCache   kvCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
 }

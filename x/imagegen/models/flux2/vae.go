@@ -401,7 +401,7 @@ func (m *AutoencoderKLFlux2) loadWeights(weights safetensors.WeightSource, cfg *
 	// Load up blocks
 	numBlocks := len(cfg.BlockOutChannels)
 	m.DecoderUp = make([]*UpDecoderBlock2D, numBlocks)
-	for i := 0; i < numBlocks; i++ {
+	for i := range numBlocks {
 		prefix := fmt.Sprintf("decoder.up_blocks.%d", i)
 		hasUpsample := i < numBlocks-1
 		m.DecoderUp[i], err = loadUpDecoderBlock2D(weights, prefix, cfg.LayersPerBlock+1, cfg.NormNumGroups, hasUpsample)
@@ -508,7 +508,7 @@ func loadVAEAttentionBlock(weights safetensors.WeightSource, prefix string, numG
 // loadUpDecoderBlock2D loads an up decoder block.
 func loadUpDecoderBlock2D(weights safetensors.WeightSource, prefix string, numLayers, numGroups int32, hasUpsample bool) (*UpDecoderBlock2D, error) {
 	resnets := make([]*ResnetBlock2D, numLayers)
-	for i := int32(0); i < numLayers; i++ {
+	for i := range numLayers {
 		resPrefix := fmt.Sprintf("%s.resnets.%d", prefix, i)
 		resnet, err := loadResnetBlock2D(weights, resPrefix, numGroups)
 		if err != nil {
@@ -667,7 +667,7 @@ func (m *AutoencoderKLFlux2) loadEncoderWeights(weights safetensors.WeightSource
 	// Load encoder down blocks
 	numBlocks := len(cfg.BlockOutChannels)
 	m.EncoderDown = make([]*DownEncoderBlock2D, numBlocks)
-	for i := 0; i < numBlocks; i++ {
+	for i := range numBlocks {
 		prefix := fmt.Sprintf("encoder.down_blocks.%d", i)
 		hasDownsample := i < numBlocks-1
 		m.EncoderDown[i], err = loadDownEncoderBlock2D(weights, prefix, cfg.LayersPerBlock, cfg.NormNumGroups, hasDownsample)
@@ -707,7 +707,7 @@ func (m *AutoencoderKLFlux2) loadEncoderWeights(weights safetensors.WeightSource
 // loadDownEncoderBlock2D loads a down encoder block.
 func loadDownEncoderBlock2D(weights safetensors.WeightSource, prefix string, numLayers, numGroups int32, hasDownsample bool) (*DownEncoderBlock2D, error) {
 	resnets := make([]*ResnetBlock2D, numLayers)
-	for i := int32(0); i < numLayers; i++ {
+	for i := range numLayers {
 		resPrefix := fmt.Sprintf("%s.resnets.%d", prefix, i)
 		resnet, err := loadResnetBlock2D(weights, resPrefix, numGroups)
 		if err != nil {

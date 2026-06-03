@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,12 +8,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"time"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/types/model"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration.
@@ -23,8 +19,6 @@ import (
 type OpenCode struct {
 	configContent string // JSON config built by Edit, passed to Run via env var
 }
-
-const openCodeModelShowTimeout = 2 * time.Second
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
@@ -49,7 +43,7 @@ func findOpenCode() (string, bool) {
 	return "", false
 }
 
-func (o *OpenCode) Run(model string, args []string) error {
+func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error {
 	opencodePath, ok := findOpenCode()
 	if !ok {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
@@ -60,7 +54,7 @@ func (o *OpenCode) Run(model string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	if content := o.resolveContent(model); content != "" {
+	if content := o.resolveContent(model, models); content != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 	return cmd.Run()
@@ -69,19 +63,55 @@ func (o *OpenCode) Run(model string, args []string) error {
 // resolveContent returns the inline config to send via OPENCODE_CONFIG_CONTENT.
 // Returns content built by Edit if available, otherwise builds from model.json
 // with the requested model as primary (e.g. re-launch with saved config).
-func (o *OpenCode) resolveContent(model string) string {
+func (o *OpenCode) resolveContent(model string, models []LaunchModel) string {
 	if o.configContent != "" {
 		return o.configContent
 	}
-	models := readModelJSONModels()
-	if !slices.Contains(models, model) {
-		models = append([]string{model}, models...)
+	resolvedModels := resolveOpenCodeRunModels(model, models, readModelJSONModels())
+	if len(resolvedModels) == 0 {
+		return ""
 	}
-	content, err := buildInlineConfig(model, models)
+	content, err := buildInlineConfig(resolvedModels[0], resolvedModels)
 	if err != nil {
 		return ""
 	}
 	return content
+}
+
+func resolveOpenCodeRunModels(primary string, models []LaunchModel, stateModels []string) []LaunchModel {
+	if primary == "" {
+		return nil
+	}
+
+	resolved := make([]LaunchModel, 0, 1+len(models)+len(stateModels))
+	appendModel := func(name string) {
+		if name == "" || hasLaunchModel(resolved, name) {
+			return
+		}
+		if model, ok := findLaunchModel(models, name); ok {
+			resolved = append(resolved, model)
+			return
+		}
+		resolved = append(resolved, fallbackLaunchModel(name))
+	}
+
+	appendModel(primary)
+	for _, model := range models {
+		appendModel(model.Name)
+	}
+	for _, model := range stateModels {
+		appendModel(model)
+	}
+	return resolved
+}
+
+func hasLaunchModel(models []LaunchModel, name string) bool {
+	for _, model := range models {
+		if launchModelMatches(model.Name, name) || launchModelMatches(name, model.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *OpenCode) Paths() []string {
@@ -106,12 +136,13 @@ func openCodeStatePath() (string, error) {
 	return filepath.Join(home, ".local", "state", "opencode", "model.json"), nil
 }
 
-func (o *OpenCode) Edit(modelList []string) error {
+func (o *OpenCode) Edit(models []LaunchModel) error {
+	modelList := launchModelNames(models)
 	if len(modelList) == 0 {
 		return nil
 	}
 
-	content, err := buildInlineConfig(modelList[0], modelList)
+	content, err := buildInlineConfig(models[0], models)
 	if err != nil {
 		return err
 	}
@@ -178,14 +209,9 @@ func (o *OpenCode) Models() []string {
 
 // buildInlineConfig produces the JSON string for OPENCODE_CONFIG_CONTENT.
 // primary is the model to launch with, models is the full list of available models.
-func buildInlineConfig(primary string, models []string) (string, error) {
-	if primary == "" || len(models) == 0 {
+func buildInlineConfig(primary LaunchModel, models []LaunchModel) (string, error) {
+	if primary.Name == "" || len(models) == 0 {
 		return "", fmt.Errorf("buildInlineConfig: primary and models are required")
-	}
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		client = nil
 	}
 
 	config := map[string]any{
@@ -197,10 +223,10 @@ func buildInlineConfig(primary string, models []string) (string, error) {
 				"options": map[string]any{
 					"baseURL": envconfig.Host().String() + "/v1",
 				},
-				"models": buildModelEntries(context.Background(), client, models),
+				"models": buildModelEntries(models),
 			},
 		},
-		"model": "ollama/" + primary,
+		"model": "ollama/" + primary.Name,
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
@@ -240,39 +266,27 @@ func readModelJSONModels() []string {
 	return models
 }
 
-func buildModelEntries(ctx context.Context, client *api.Client, modelList []string) map[string]any {
-	if client != nil {
-		var cancel context.CancelFunc
-		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-			ctx, cancel = context.WithTimeout(ctx, openCodeModelShowTimeout)
-			defer cancel()
-		}
-	}
-
+func buildModelEntries(modelList []LaunchModel) map[string]any {
 	models := make(map[string]any)
-	for _, modelID := range modelList {
+	for _, model := range modelList {
 		entry := map[string]any{
-			"name": modelID,
+			"name": model.Name,
 		}
-		if client != nil {
-			if resp, err := client.Show(ctx, &api.ShowRequest{Model: modelID}); err == nil {
-				if slices.Contains(resp.Capabilities, model.CapabilityVision) {
-					entry["modalities"] = map[string]any{
-						"input":  []string{"text", "image"},
-						"output": []string{"text"},
-					}
-				}
+		if model.HasCapability("vision") {
+			entry["modalities"] = map[string]any{
+				"input":  []string{"text", "image"},
+				"output": []string{"text"},
 			}
 		}
-		if isCloudModelName(modelID) {
-			if l, ok := lookupCloudModelLimit(modelID); ok {
-				entry["limit"] = map[string]any{
-					"context": l.Context,
-					"output":  l.Output,
-				}
+		if model.MaxOutputTokens > 0 {
+			limit := make(map[string]any)
+			if model.ContextLength > 0 {
+				limit["context"] = model.ContextLength
 			}
+			limit["output"] = model.MaxOutputTokens
+			entry["limit"] = limit
 		}
-		models[modelID] = entry
+		models[model.Name] = entry
 	}
 	return models
 }
