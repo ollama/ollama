@@ -312,6 +312,63 @@ func TestEnsureCodexConfig(t *testing.T) {
 			t.Errorf("expected exactly one [model_providers.ollama-launch] section after two calls, got %d", strings.Count(content, "[model_providers.ollama-launch]"))
 		}
 	})
+
+	t.Run("cleans legacy root profile that conflicts with --profile", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		existing := "" +
+			`profile = "ollama-launch"` + "\n" +
+			`model = "gpt-5.5"` + "\n" +
+			`model_provider = "openai"` + "\n\n" +
+			"[profiles.ollama-launch]\n" +
+			`model = "old-local"` + "\n" +
+			`model_provider = "ollama-launch"` + "\n\n" +
+			"[profiles.default]\n" +
+			`model = "gpt-5.5"` + "\n"
+		if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := ensureCodexConfig("llama3.2", launchModelsFromNames([]string{"llama3.2"})); err != nil {
+			t.Fatal(err)
+		}
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(data)
+		if got, ok := codexRootStringValueOK(content, codexRootProfileKey); ok {
+			t.Fatalf("legacy root profile should be removed, got %q in:\n%s", got, content)
+		}
+		if strings.Contains(content, codexProfileHeader()) {
+			t.Fatalf("legacy profile table should be removed, got:\n%s", content)
+		}
+		for _, want := range []string{
+			`model = "gpt-5.5"`,
+			`model_provider = "openai"`,
+			"[profiles.default]",
+		} {
+			if !strings.Contains(content, want) {
+				t.Fatalf("expected %q to be preserved in:\n%s", want, content)
+			}
+		}
+
+		profilePath := filepath.Join(tmpDir, ".codex", "ollama-launch.config.toml")
+		profileData, err := os.ReadFile(profilePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(profileData), `model = "llama3.2"`) {
+			t.Fatalf("managed profile was not written with selected model:\n%s", profileData)
+		}
+		assertBackupContains(t, filepath.Join(fileutil.BackupDir(), "config.toml.*"), `profile = "ollama-launch"`)
+	})
 }
 
 func TestCodexRestoreRemovesCLIProfileAndCatalogWithoutChangingUserRootConfig(t *testing.T) {
