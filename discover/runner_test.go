@@ -137,7 +137,8 @@ func TestFilterIntegratedGPUs(t *testing.T) {
 		{DeviceID: ml.DeviceID{Library: "CUDA", ID: "0"}, Description: "NVIDIA integrated", Integrated: true},
 		{DeviceID: ml.DeviceID{Library: "Metal", ID: "0"}, Description: "Apple GPU", Integrated: true},
 		{DeviceID: ml.DeviceID{Library: "Vulkan", ID: "0"}, Description: "AMD Radeon(TM) Graphics", Integrated: true},
-		{DeviceID: ml.DeviceID{Library: "ROCm", ID: "0"}, Description: "AMD Radeon(TM) Graphics", Integrated: true},
+		{DeviceID: ml.DeviceID{Library: "ROCm", ID: "0"}, Description: "AMD Radeon 780M", Integrated: true, GFXTarget: "gfx1103"},
+		{DeviceID: ml.DeviceID{Library: "ROCm", ID: "1"}, Description: "AMD Radeon 8060S Graphics", Integrated: true, GFXTarget: "gfx1151"},
 		{DeviceID: ml.DeviceID{Library: "Vulkan", ID: "1"}, Description: "AMD Radeon RX 6800"},
 	}
 
@@ -149,6 +150,7 @@ func TestFilterIntegratedGPUs(t *testing.T) {
 			{Library: "Metal", ID: "0"},
 			{Library: "Vulkan", ID: "0"},
 			{Library: "ROCm", ID: "0"},
+			{Library: "ROCm", ID: "1"},
 			{Library: "Vulkan", ID: "1"},
 		}
 		assertDeviceIDs(t, got, want)
@@ -159,6 +161,7 @@ func TestFilterIntegratedGPUs(t *testing.T) {
 		got := filterIntegratedGPUs(append([]ml.DeviceInfo{}, devices...))
 		want := []ml.DeviceID{
 			{Library: "CUDA", ID: "0"},
+			{Library: "ROCm", ID: "1"},
 			{Library: "Vulkan", ID: "1"},
 		}
 		assertDeviceIDs(t, got, want)
@@ -172,6 +175,7 @@ func TestFilterIntegratedGPUs(t *testing.T) {
 			{Library: "Metal", ID: "0"},
 			{Library: "Vulkan", ID: "0"},
 			{Library: "ROCm", ID: "0"},
+			{Library: "ROCm", ID: "1"},
 			{Library: "Vulkan", ID: "1"},
 		}
 		assertDeviceIDs(t, got, want)

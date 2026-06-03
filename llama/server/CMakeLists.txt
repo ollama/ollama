@@ -96,6 +96,9 @@ if(GGML_HIP AND OLLAMA_RUNNER_DIR MATCHES "^rocm_v")
     ollama_set_cache_default(CMAKE_HIP_FLAGS STRING
         "-parallel-jobs=4" "HIP compiler flags")
     if(WIN32)
+        # Windows ROCm split-load needs peer copies disabled for correctness.
+        ollama_set_cache_default(GGML_CUDA_NO_PEER_COPY BOOL ON
+            "Disable direct peer device copies")
         # HIP on Windows currently emits attributes and deprecated pragma
         # warnings from ROCm headers. Keep the workaround local to Windows ROCm
         # so it can be removed when the ROCm toolchain no longer needs it.
@@ -199,6 +202,19 @@ if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     endforeach()
     if(TARGET mtmd)
         target_compile_definitions(mtmd PRIVATE OLLAMA_COMPAT_MTMD_BUILD)
+    endif()
+endif()
+
+# Link temporary architecture sources (llama/compat/models/*.cpp) into the
+# llama target only (not the mtmd projector lib).
+if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
+    file(GLOB _ollama_model_sources CONFIGURE_DEPENDS
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models/*.cpp)
+    if(_ollama_model_sources AND TARGET llama)
+        target_sources(llama PRIVATE ${_ollama_model_sources})
+        target_include_directories(llama PRIVATE
+            ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models
+            ${llama_cpp_SOURCE_DIR}/src)
     endif()
 endif()
 

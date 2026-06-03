@@ -819,6 +819,101 @@ func TestQwen35MoePackedExperts(t *testing.T) {
 	}
 }
 
+func TestQwen35MTPMoePackedExperts(t *testing.T) {
+	m := &qwen3NextModel{
+		qwen3NextTextConfig: qwen3NextTextConfig{
+			NumHiddenLayers:       40,
+			NumNextNPredictLayers: 1,
+		},
+	}
+
+	out := m.Tensors([]Tensor{
+		&fakeTensor{
+			name:  "mtp.layers.0.mlp.experts.gate_up_proj",
+			shape: []uint64{2, 4, 3},
+			data: []float32{
+				0, 1, 2,
+				3, 4, 5,
+				6, 7, 8,
+				9, 10, 11,
+				12, 13, 14,
+				15, 16, 17,
+				18, 19, 20,
+				21, 22, 23,
+			},
+		},
+		&fakeTensor{
+			name:  "mtp.layers.0.mlp.experts.down_proj",
+			shape: []uint64{2, 5, 3},
+			data:  make([]float32, 2*5*3),
+		},
+	})
+
+	byName := map[string]*ggml.Tensor{}
+	for _, tensor := range out {
+		if strings.Contains(tensor.Name, ".mlp.experts.") {
+			t.Fatalf("unexpected raw expert tensor %q", tensor.Name)
+		}
+		byName[tensor.Name] = tensor
+	}
+
+	gate := byName["blk.40.ffn_gate_exps.weight"]
+	if gate == nil {
+		t.Fatalf("missing tensor %q", "blk.40.ffn_gate_exps.weight")
+	}
+	if got, want := gate.Shape, []uint64{2, 2, 3}; !slices.Equal(got, want) {
+		t.Fatalf("unexpected gate shape: got %v want %v", got, want)
+	}
+	if got, want := readTensorData(t, gate), []float32{
+		0, 1, 2, 3, 4, 5,
+		12, 13, 14, 15, 16, 17,
+	}; !slices.Equal(got, want) {
+		t.Fatalf("unexpected gate values: got %v want %v", got, want)
+	}
+
+	if _, ok := byName["blk.40.ffn_up_exps.weight"]; !ok {
+		t.Fatalf("missing tensor %q", "blk.40.ffn_up_exps.weight")
+	}
+	if _, ok := byName["blk.40.ffn_down_exps.weight"]; !ok {
+		t.Fatalf("missing tensor %q", "blk.40.ffn_down_exps.weight")
+	}
+}
+
+func TestQwen35MTPMoePerExpertTensors(t *testing.T) {
+	m := &qwen3NextModel{
+		qwen3NextTextConfig: qwen3NextTextConfig{
+			NumHiddenLayers:       40,
+			NumNextNPredictLayers: 1,
+		},
+	}
+
+	out := m.Tensors([]Tensor{
+		&fakeTensor{
+			name:  "mtp.layers.0.mlp.experts.1.gate_proj.weight",
+			shape: []uint64{2, 2},
+			data:  []float32{10, 11, 12, 13},
+		},
+		&fakeTensor{
+			name:  "mtp.layers.0.mlp.experts.0.gate_proj.weight",
+			shape: []uint64{2, 2},
+			data:  []float32{0, 1, 2, 3},
+		},
+	})
+
+	if len(out) != 1 {
+		t.Fatalf("unexpected output tensor count: got %d want 1", len(out))
+	}
+	if got, want := out[0].Name, "blk.40.ffn_gate_exps.weight"; got != want {
+		t.Fatalf("unexpected tensor name: got %q want %q", got, want)
+	}
+	if got, want := out[0].Shape, []uint64{2, 2, 2}; !slices.Equal(got, want) {
+		t.Fatalf("unexpected tensor shape: got %v want %v", got, want)
+	}
+	if got, want := readTensorData(t, out[0]), []float32{0, 1, 2, 3, 10, 11, 12, 13}; !slices.Equal(got, want) {
+		t.Fatalf("unexpected tensor values: got %v want %v", got, want)
+	}
+}
+
 func TestQwen35SharedExpertGateKeepsMatrixShape(t *testing.T) {
 	m := &qwen3NextModel{}
 

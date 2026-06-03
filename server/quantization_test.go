@@ -26,6 +26,44 @@ func TestLlamaQuantizeArgs(t *testing.T) {
 			want:     []string{"--allow-requantize", "in.gguf", "out.gguf", "Q4_K_M"},
 		},
 		{
+			name:     "qwen35moe k quant keeps mtp projection q8",
+			arch:     "qwen35moe",
+			fileType: fsggml.FileTypeQ4_K_M,
+			want: []string{
+				"--allow-requantize",
+				"--tensor-type", `^blk\.[0-9]+\.nextn\.eh_proj\.weight$=q8_0`,
+				"in.gguf", "out.gguf", "Q4_K_M",
+			},
+		},
+		{
+			name:     "qwen35 k quant keeps mtp projection q8",
+			arch:     "qwen35",
+			fileType: fsggml.FileTypeQ4_K_S,
+			want: []string{
+				"--allow-requantize",
+				"--tensor-type", `^blk\.[0-9]+\.nextn\.eh_proj\.weight$=q8_0`,
+				"in.gguf", "out.gguf", "Q4_K_S",
+			},
+		},
+		{
+			name:     "qwen35moe f16 keeps mtp projection unquantized",
+			arch:     "qwen35moe",
+			fileType: fsggml.FileTypeF16,
+			want:     []string{"--allow-requantize", "in.gguf", "out.gguf", "F16"},
+		},
+		{
+			name:     "qwen35moe bf16 keeps mtp projection unquantized",
+			arch:     "qwen35moe",
+			fileType: fsggml.FileTypeBF16,
+			want:     []string{"--allow-requantize", "in.gguf", "out.gguf", "BF16"},
+		},
+		{
+			name:     "qwen35moe q8 already satisfies mtp projection floor",
+			arch:     "qwen35moe",
+			fileType: fsggml.FileTypeQ8_0,
+			want:     []string{"--allow-requantize", "in.gguf", "out.gguf", "Q8_0"},
+		},
+		{
 			name:     "gemma3n k quant keeps per layer token embedding f16",
 			arch:     "gemma3n",
 			fileType: fsggml.FileTypeQ4_K_M,
@@ -80,6 +118,13 @@ func TestLlamaQuantizeArgs(t *testing.T) {
 		{
 			name:     "copy does not add quantization overrides",
 			arch:     "gemma3n",
+			fileType: fsggml.FileTypeQ4_K_M,
+			typeName: "COPY",
+			want:     []string{"--allow-requantize", "in.gguf", "out.gguf", "COPY"},
+		},
+		{
+			name:     "qwen35moe copy does not add mtp projection override",
+			arch:     "qwen35moe",
 			fileType: fsggml.FileTypeQ4_K_M,
 			typeName: "COPY",
 			want:     []string{"--allow-requantize", "in.gguf", "out.gguf", "COPY"},

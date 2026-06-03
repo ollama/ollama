@@ -83,7 +83,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "codex", "codex-app", "kimi", "droid", "opencode", "hermes", "pool"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "codex-app", "kimi", "droid", "opencode", "hermes", "pool"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -100,7 +100,7 @@ func TestIntegrationRegistry(t *testing.T) {
 func TestHiddenIntegrationsExcludedFromVisibleLists(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		switch info.Name {
-		case "cline", "vscode", "kimi":
+		case "vscode", "kimi":
 			t.Fatalf("hidden integration %q should not appear in ListIntegrationInfos", info.Name)
 		}
 	}
@@ -1761,6 +1761,11 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantEmpty: true,
 		},
 		{
+			name:    "qwen uses official install page",
+			input:   "qwen",
+			wantURL: "https://qwen.ai/qwencode",
+		},
+		{
 			name:      "empty name has no hint",
 			input:     "",
 			wantEmpty: true,
@@ -1865,7 +1870,7 @@ func TestListIntegrationInfos(t *testing.T) {
 	})
 
 	t.Run("includes known integrations", func(t *testing.T) {
-		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
+		known := map[string]bool{"claude": false, "cline": false, "codex": false, "opencode": false}
 		if codexAppSupported() == nil {
 			known["codex-app"] = false
 		}
@@ -2015,6 +2020,8 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 		{"openclaw", true},
 		{"pi", true},
 		{"hermes", true},
+		{"cline", true},
+		{"qwen", true},
 		{"claude", false},
 		{"claude-desktop", false},
 		{"codex", false},

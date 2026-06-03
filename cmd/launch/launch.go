@@ -204,6 +204,12 @@ type RestoreSuccessIntegration interface {
 	RestoreSuccessMessage() string
 }
 
+// RestoreInstallCheckSkipper lets cleanup-only restore flows run even when the
+// external integration binary has already been removed.
+type RestoreInstallCheckSkipper interface {
+	SkipRestoreInstallCheck() bool
+}
+
 // ManagedRuntimeRefresher lets managed integrations refresh any long-lived
 // background runtime after launch rewrites their config.
 type ManagedRuntimeRefresher interface {
@@ -292,6 +298,7 @@ Supported integrations:
   pi              Pi
   pool            Pool
   cline           Cline
+  qwen            Qwen Code
   vscode          VS Code (aliases: code)
 
 Examples:
@@ -302,7 +309,7 @@ Examples:
   ollama launch codex-app --restore
   ollama launch hermes
   ollama launch droid --config (does not auto-launch)
-  ollama launch codex -- -p myprofile (pass extra args to integration)
+  ollama launch codex --restore
   ollama launch codex -- --sandbox workspace-write`,
 		Args: cobra.ArbitraryArgs,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
@@ -526,8 +533,10 @@ func restoreIntegration(name string, runner Runner, req IntegrationLaunchRequest
 	if !ok {
 		return fmt.Errorf("%s does not support --restore", name)
 	}
-	if err := EnsureIntegrationInstalled(name, runner); err != nil {
-		return err
+	if skipper, ok := runner.(RestoreInstallCheckSkipper); !ok || !skipper.SkipRestoreInstallCheck() {
+		if err := EnsureIntegrationInstalled(name, runner); err != nil {
+			return err
+		}
 	}
 	if err := restorable.Restore(); err != nil {
 		return err
