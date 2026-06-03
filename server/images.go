@@ -76,6 +76,7 @@ type Model struct {
 	License            []string
 	Digest             string
 	Options            map[string]any
+	GenerationDefaults model.GenerationDefaults
 	Messages           []api.Message
 
 	Template *template.Template
@@ -87,6 +88,38 @@ func (m *Model) IsMLX() bool {
 
 func (m *Model) isGGUF() bool {
 	return m.Config.ModelFormat == "" || m.Config.ModelFormat == "gguf"
+}
+
+func generationDefaultsFromGGUF(f *gguf.File) model.GenerationDefaults {
+	defaults := model.GenerationDefaults{}
+
+	addInt := func(ggufKey, option string) {
+		if kv := f.KeyValue(ggufKey); kv.Valid() {
+			if value, ok := kv.IntOK(); ok {
+				defaults[option] = value
+			}
+		}
+	}
+	addFloat := func(ggufKey, option string) {
+		if kv := f.KeyValue(ggufKey); kv.Valid() {
+			if value, ok := kv.FloatOK(); ok {
+				defaults[option] = value
+			}
+		}
+	}
+
+	addInt("general.sampling.top_k", "top_k")
+	addFloat("general.sampling.top_p", "top_p")
+	addFloat("general.sampling.min_p", "min_p")
+	addFloat("general.sampling.temp", "temperature")
+	addInt("general.sampling.penalty_last_n", "repeat_last_n")
+	addFloat("general.sampling.penalty_repeat", "repeat_penalty")
+
+	if len(defaults) == 0 {
+		return nil
+	}
+
+	return defaults
 }
 
 func appendCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
@@ -648,6 +681,7 @@ func GetModel(name string) (*Model, error) {
 		if err := json.NewDecoder(configFile).Decode(&m.Config); err != nil {
 			return nil, err
 		}
+		m.GenerationDefaults = m.Config.GenerationDefaults
 	}
 
 	modelHasPooling := false
@@ -671,6 +705,7 @@ func GetModel(name string) (*Model, error) {
 				ggufChatTemplate = f.KeyValue("tokenizer.chat_template").String()
 				m.HasChatTemplate = ggufChatTemplate != ""
 				modelHasPooling = f.KeyValue("pooling_type").Valid()
+				m.GenerationDefaults = generationDefaultsFromGGUF(f)
 				f.Close()
 			}
 		case manifest.MediaTypeImageDraft:
