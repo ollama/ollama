@@ -146,7 +146,12 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, 
 	segs := segmentRanges(cfg.splits, L)
 	states = make([]*mlx.Array, 0, len(segs))
 	for _, s := range segs {
-		states = append(states, convStateAt(concat, b.SeqQueryLens, convTail, s.end))
+		st := convStateAt(concat, b.SeqQueryLens, convTail, s.end)
+		if L > 1 {
+			// Detach the small window from the forward-sized concat; at L==1 it's tiny.
+			st = mlx.Contiguous(st, false)
+		}
+		states = append(states, st)
 	}
 	return out, states
 }
