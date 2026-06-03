@@ -628,6 +628,9 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "gemma4") {
 			return "gemma4"
 		}
+		if isQwen35Family(archLower) {
+			return "qwen3.5"
+		}
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3"
 		}
@@ -650,6 +653,9 @@ func getParserName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "gemma4") {
 			return "gemma4"
+		}
+		if isQwen35Family(typeLower) {
+			return "qwen3.5"
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3"
@@ -694,6 +700,9 @@ func getRendererName(modelDir string) string {
 		if strings.Contains(archLower, "deepseek") {
 			return "deepseek3"
 		}
+		if isQwen35Family(archLower) {
+			return "qwen3.5"
+		}
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3-coder"
 		}
@@ -716,6 +725,9 @@ func getRendererName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "deepseek") {
 			return "deepseek3"
+		}
+		if isQwen35Family(typeLower) {
+			return "qwen3.5"
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3-coder"
