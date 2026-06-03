@@ -1,22 +1,14 @@
 package launch
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
-	"sync"
 	"testing"
-	"time"
 
-	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestOpenCodeIntegration(t *testing.T) {
@@ -41,7 +33,7 @@ func TestOpenCodeEdit(t *testing.T) {
 	t.Run("builds config content with provider", func(t *testing.T) {
 		setTestHome(t, t.TempDir())
 		o := &OpenCode{}
-		if err := o.Edit([]string{"llama3.2"}); err != nil {
+		if err := o.Edit(testLaunchModels("llama3.2")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -75,7 +67,7 @@ func TestOpenCodeEdit(t *testing.T) {
 	t.Run("multiple models", func(t *testing.T) {
 		setTestHome(t, t.TempDir())
 		o := &OpenCode{}
-		if err := o.Edit([]string{"llama3.2", "qwen3:32b"}); err != nil {
+		if err := o.Edit(testLaunchModels("llama3.2", "qwen3:32b")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -100,7 +92,7 @@ func TestOpenCodeEdit(t *testing.T) {
 	t.Run("empty models is no-op", func(t *testing.T) {
 		setTestHome(t, t.TempDir())
 		o := &OpenCode{}
-		if err := o.Edit([]string{}); err != nil {
+		if err := o.Edit(testLaunchModels()); err != nil {
 			t.Fatal(err)
 		}
 		if o.configContent != "" {
@@ -112,7 +104,7 @@ func TestOpenCodeEdit(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 		o := &OpenCode{}
-		o.Edit([]string{"llama3.2"})
+		o.Edit(testLaunchModels("llama3.2"))
 
 		configDir := filepath.Join(tmpDir, ".config", "opencode")
 
@@ -127,7 +119,7 @@ func TestOpenCodeEdit(t *testing.T) {
 	t.Run("cloud model has limits", func(t *testing.T) {
 		setTestHome(t, t.TempDir())
 		o := &OpenCode{}
-		if err := o.Edit([]string{"glm-4.7:cloud"}); err != nil {
+		if err := o.Edit(testLaunchModels("glm-4.7:cloud")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -154,7 +146,7 @@ func TestOpenCodeEdit(t *testing.T) {
 	t.Run("local model has no limits", func(t *testing.T) {
 		setTestHome(t, t.TempDir())
 		o := &OpenCode{}
-		o.Edit([]string{"llama3.2"})
+		o.Edit(testLaunchModels("llama3.2"))
 
 		var cfg map[string]any
 		json.Unmarshal([]byte(o.configContent), &cfg)
@@ -169,37 +161,7 @@ func TestOpenCodeEdit(t *testing.T) {
 	})
 
 	t.Run("vision model gets image input modalities", func(t *testing.T) {
-		u, err := url.Parse("http://ollama.example")
-		if err != nil {
-			t.Fatalf("parse test URL: %v", err)
-		}
-		client := api.NewClient(u, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.Path != "/api/show" {
-				return &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(strings.NewReader("not found")),
-					Header:     make(http.Header),
-				}, nil
-			}
-
-			var body struct {
-				Model string `json:"model"`
-			}
-			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-				t.Fatalf("decode show request: %v", err)
-			}
-			if body.Model != "gemma4:26b" {
-				t.Fatalf("show request model = %q, want gemma4:26b", body.Model)
-			}
-
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(`{"capabilities":["vision"],"model_info":{}}`)),
-				Header:     make(http.Header),
-			}, nil
-		})})
-
-		models := buildModelEntries(context.Background(), client, []string{"gemma4:26b"})
+		models := buildModelEntries([]LaunchModel{{Name: "gemma4:26b", Capabilities: []model.Capability{"vision"}}})
 		entry, _ := models["gemma4:26b"].(map[string]any)
 		modalities, _ := entry["modalities"].(map[string]any)
 		input, _ := modalities["input"].([]string)
@@ -215,90 +177,23 @@ func TestOpenCodeEdit(t *testing.T) {
 }
 
 func TestBuildModelEntries(t *testing.T) {
-	t.Run("defaults to model name when capabilities cannot be probed", func(t *testing.T) {
-		models := buildModelEntries(context.Background(), nil, []string{"llama3.2"})
+	t.Run("defaults to model name without capabilities", func(t *testing.T) {
+		models := buildModelEntries(testLaunchModels("llama3.2"))
 		entry, _ := models["llama3.2"].(map[string]any)
 		if entry["name"] != "llama3.2" {
 			t.Fatalf("name = %v, want llama3.2", entry["name"])
 		}
 		if _, ok := entry["modalities"]; ok {
-			t.Fatalf("modalities should not be set without an API client, got %v", entry["modalities"])
-		}
-		if _, ok := entry["reasoning"]; ok {
-			t.Fatalf("reasoning should not be set without an API client, got %v", entry["reasoning"])
+			t.Fatalf("modalities should not be set without capabilities, got %v", entry["modalities"])
 		}
 	})
 
-	t.Run("uses one timeout budget across capability probes", func(t *testing.T) {
-		u, err := url.Parse("http://ollama.example")
-		if err != nil {
-			t.Fatalf("parse test URL: %v", err)
-		}
-
-		var mu sync.Mutex
-		waited := 0
-
-		client := api.NewClient(u, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			mu.Lock()
-			if req.Context().Err() == nil {
-				waited++
-			}
-			mu.Unlock()
-
-			<-req.Context().Done()
-			return nil, req.Context().Err()
-		})})
-
-		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
-		defer cancel()
-
-		models := buildModelEntries(ctx, client, []string{"slow-1", "slow-2"})
-		for _, modelID := range []string{"slow-1", "slow-2"} {
-			entry, _ := models[modelID].(map[string]any)
-			if entry["name"] != modelID {
-				t.Fatalf("name for %q = %v, want %q", modelID, entry["name"], modelID)
-			}
-			if _, ok := entry["modalities"]; ok {
-				t.Fatalf("modalities for %q should not be set after probe timeout, got %v", modelID, entry["modalities"])
-			}
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-		if waited != 1 {
-			t.Fatalf("expected shared timeout to block one probe, waited on %d probes", waited)
-		}
-	})
-}
-
-func TestBuildModelEntriesTimeoutWithBackgroundContext(t *testing.T) {
-	t.Run("uses timeout when probing capabilities with background context", func(t *testing.T) {
-		u, err := url.Parse("http://ollama.example")
-		if err != nil {
-			t.Fatalf("parse test URL: %v", err)
-		}
-
-		client := api.NewClient(u, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			<-req.Context().Done()
-			return nil, req.Context().Err()
-		})})
-
-		done := make(chan map[string]any, 1)
-		go func() {
-			done <- buildModelEntries(context.Background(), client, []string{"gpt-oss:120b-cloud"})
-		}()
-
-		select {
-		case models := <-done:
-			entry, _ := models["gpt-oss:120b-cloud"].(map[string]any)
-			if _, ok := entry["reasoning"]; ok {
-				t.Fatalf("reasoning should not be set after timed out capability probe, got %v", entry["reasoning"])
-			}
-			if entry["limit"] == nil {
-				t.Fatalf("cloud model limit should still be set after timed out capability probe")
-			}
-		case <-time.After(openCodeModelShowTimeout + time.Second):
-			t.Fatalf("buildModelEntries did not return within %v", openCodeModelShowTimeout+time.Second)
+	t.Run("uses context and output limits from metadata", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{Name: "glm-5:cloud", ContextLength: 202_752, MaxOutputTokens: 131_072}})
+		entry, _ := models["glm-5:cloud"].(map[string]any)
+		limit, _ := entry["limit"].(map[string]any)
+		if limit["context"] != 202_752 || limit["output"] != 131_072 {
+			t.Fatalf("limit = %v, want context/output", limit)
 		}
 	})
 }
@@ -385,133 +280,6 @@ func TestLookupCloudModelLimit(t *testing.T) {
 	}
 }
 
-// inlineConfigModel extracts a model entry from the inline config content.
-func inlineConfigModel(t *testing.T, content, model string) map[string]any {
-	t.Helper()
-	var cfg map[string]any
-	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
-		t.Fatalf("configContent is not valid JSON: %v", err)
-	}
-	provider, _ := cfg["provider"].(map[string]any)
-	ollama, _ := provider["ollama"].(map[string]any)
-	models, _ := ollama["models"].(map[string]any)
-	entry, ok := models[model].(map[string]any)
-	if !ok {
-		t.Fatalf("model %s not found in inline config", model)
-	}
-	return entry
-}
-
-func TestOpenCodeEdit_ReasoningOnThinkingModel(t *testing.T) {
-	setTestHome(t, t.TempDir())
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/show" {
-			fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	o := &OpenCode{}
-	if err := o.Edit([]string{"qwq"}); err != nil {
-		t.Fatal(err)
-	}
-
-	entry := inlineConfigModel(t, o.configContent, "qwq")
-	if entry["reasoning"] != true {
-		t.Error("expected reasoning = true for thinking model")
-	}
-	variants, ok := entry["variants"].(map[string]any)
-	if !ok {
-		t.Fatal("expected variants to be set")
-	}
-	none, ok := variants["none"].(map[string]any)
-	if !ok {
-		t.Fatal("expected none variant to be set")
-	}
-	if none["reasoningEffort"] != "none" {
-		t.Errorf("none variant reasoningEffort = %v, want none", none["reasoningEffort"])
-	}
-	// Built-in low/medium/high should be disabled
-	for _, level := range []string{"low", "medium", "high"} {
-		v, ok := variants[level].(map[string]any)
-		if !ok {
-			t.Errorf("expected %s variant to exist", level)
-			continue
-		}
-		if v["disabled"] != true {
-			t.Errorf("expected %s variant to be disabled", level)
-		}
-	}
-}
-
-func TestOpenCodeEdit_ReasoningLevelsOnGptOss(t *testing.T) {
-	setTestHome(t, t.TempDir())
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/show" {
-			fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	o := &OpenCode{}
-	if err := o.Edit([]string{"gpt-oss:120b-cloud"}); err != nil {
-		t.Fatal(err)
-	}
-
-	entry := inlineConfigModel(t, o.configContent, "gpt-oss:120b-cloud")
-	if entry["reasoning"] != true {
-		t.Error("expected reasoning = true")
-	}
-	// GPT-OSS cannot turn thinking off and supports levels,
-	// so no custom variants should be written.
-	if entry["variants"] != nil {
-		t.Errorf("expected no variants for gpt-oss, got %v", entry["variants"])
-	}
-	// Should default to medium reasoning effort
-	opts, ok := entry["options"].(map[string]any)
-	if !ok {
-		t.Fatal("expected options to be set for gpt-oss")
-	}
-	if opts["reasoningEffort"] != "medium" {
-		t.Errorf("reasoningEffort = %v, want medium", opts["reasoningEffort"])
-	}
-}
-
-func TestOpenCodeEdit_NoReasoningOnNonThinkingModel(t *testing.T) {
-	setTestHome(t, t.TempDir())
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/show" {
-			fmt.Fprintf(w, `{"capabilities":[],"model_info":{}}`)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	o := &OpenCode{}
-	if err := o.Edit([]string{"llama3.2"}); err != nil {
-		t.Fatal(err)
-	}
-
-	entry := inlineConfigModel(t, o.configContent, "llama3.2")
-	if entry["reasoning"] != nil {
-		t.Errorf("expected no reasoning for non-thinking model, got %v", entry["reasoning"])
-	}
-	if entry["variants"] != nil {
-		t.Errorf("expected no variants for non-thinking model, got %v", entry["variants"])
-	}
-}
-
 func TestFindOpenCode(t *testing.T) {
 	t.Run("fallback to ~/.opencode/bin", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -555,7 +323,7 @@ func TestOpenCodeEdit_CloudModelLimitStructure(t *testing.T) {
 
 	expected := cloudModelLimits["glm-4.7"]
 
-	if err := o.Edit([]string{"glm-4.7:cloud"}); err != nil {
+	if err := o.Edit(testLaunchModels("glm-4.7:cloud")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -585,7 +353,7 @@ func TestOpenCodeEdit_SpecialCharsInModelName(t *testing.T) {
 
 	specialModel := `model-with-"quotes"`
 
-	err := o.Edit([]string{specialModel})
+	err := o.Edit(testLaunchModels(specialModel))
 	if err != nil {
 		t.Fatalf("Edit with special chars failed: %v", err)
 	}
@@ -678,7 +446,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		o := &OpenCode{}
-		if err := o.Edit([]string{"gemma4"}); err != nil {
+		if err := o.Edit(testLaunchModels("gemma4")); err != nil {
 			t.Fatal(err)
 		}
 		editContent := o.configContent
@@ -693,7 +461,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		data, _ := json.MarshalIndent(state, "", "  ")
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
-		got := o.resolveContent("gemma4")
+		got := o.resolveContent("gemma4", nil)
 		if got != editContent {
 			t.Errorf("resolveContent returned different content than Edit set\ngot:  %s\nwant: %s", got, editContent)
 		}
@@ -715,7 +483,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		content := o.resolveContent("llama3.2")
+		content := o.resolveContent("llama3.2", nil)
 		if content == "" {
 			t.Fatal("resolveContent returned empty")
 		}
@@ -749,7 +517,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		content := o.resolveContent("qwen3:32b")
+		content := o.resolveContent("qwen3:32b", nil)
 
 		var cfg map[string]any
 		json.Unmarshal([]byte(content), &cfg)
@@ -773,7 +541,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		content := o.resolveContent("gemma4")
+		content := o.resolveContent("gemma4", nil)
 
 		var cfg map[string]any
 		json.Unmarshal([]byte(content), &cfg)
@@ -793,8 +561,53 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		o := &OpenCode{}
-		if got := o.resolveContent(""); got != "" {
+		if got := o.resolveContent("", nil); got != "" {
 			t.Errorf("resolveContent(\"\") = %q, want empty", got)
+		}
+	})
+
+	t.Run("uses run model metadata when Edit was not called", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+		state := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
+			},
+		}
+		data, _ := json.MarshalIndent(state, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		o := &OpenCode{}
+		content := o.resolveContent("gemma4", []LaunchModel{
+			{
+				Name:            "gemma4",
+				Capabilities:    []model.Capability{model.CapabilityVision},
+				ContextLength:   65_536,
+				MaxOutputTokens: 8_192,
+			},
+		})
+		if content == "" {
+			t.Fatal("resolveContent returned empty")
+		}
+
+		var cfg map[string]any
+		json.Unmarshal([]byte(content), &cfg)
+		provider, _ := cfg["provider"].(map[string]any)
+		ollama, _ := provider["ollama"].(map[string]any)
+		cfgModels, _ := ollama["models"].(map[string]any)
+		entry, _ := cfgModels["gemma4"].(map[string]any)
+		limit, _ := entry["limit"].(map[string]any)
+		if limit["context"] != float64(65_536) || limit["output"] != float64(8_192) {
+			t.Fatalf("limit = %v, want context/output from launch metadata", limit)
+		}
+		if _, ok := entry["modalities"].(map[string]any); !ok {
+			t.Fatalf("modalities should be set from launch metadata, got %v", entry["modalities"])
+		}
+		if cfgModels["llama3.2"] == nil {
+			t.Fatalf("state model missing from fallback config: %v", cfgModels)
 		}
 	})
 
@@ -813,7 +626,7 @@ func TestOpenCodeResolveContent(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		_ = o.resolveContent("llama3.2")
+		_ = o.resolveContent("llama3.2", nil)
 		if o.configContent != "" {
 			t.Errorf("resolveContent should not mutate configContent, got %q", o.configContent)
 		}
@@ -822,19 +635,19 @@ func TestOpenCodeResolveContent(t *testing.T) {
 
 func TestBuildInlineConfig(t *testing.T) {
 	t.Run("returns error for empty primary", func(t *testing.T) {
-		if _, err := buildInlineConfig("", []string{"llama3.2"}); err == nil {
+		if _, err := buildInlineConfig(LaunchModel{}, testLaunchModels("llama3.2")); err == nil {
 			t.Error("expected error for empty primary")
 		}
 	})
 
 	t.Run("returns error for empty models", func(t *testing.T) {
-		if _, err := buildInlineConfig("llama3.2", nil); err == nil {
+		if _, err := buildInlineConfig(fallbackLaunchModel("llama3.2"), nil); err == nil {
 			t.Error("expected error for empty models")
 		}
 	})
 
 	t.Run("primary differs from first model in list", func(t *testing.T) {
-		content, err := buildInlineConfig("qwen3:32b", []string{"llama3.2", "qwen3:32b"})
+		content, err := buildInlineConfig(fallbackLaunchModel("qwen3:32b"), testLaunchModels("llama3.2", "qwen3:32b"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -863,7 +676,7 @@ func TestOpenCodeEdit_PreservesRecentEntries(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		if err := o.Edit([]string{"new-X"}); err != nil {
+		if err := o.Edit(testLaunchModels("new-X")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -897,7 +710,7 @@ func TestOpenCodeEdit_PreservesRecentEntries(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		if err := o.Edit([]string{"X", "Y", "Z"}); err != nil {
+		if err := o.Edit(testLaunchModels("X", "Y", "Z")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -934,7 +747,7 @@ func TestOpenCodeEdit_PreservesRecentEntries(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		if err := o.Edit([]string{"qwen3:32b"}); err != nil {
+		if err := o.Edit(testLaunchModels("qwen3:32b")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -971,7 +784,7 @@ func TestOpenCodeEdit_PreservesRecentEntries(t *testing.T) {
 		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
 		o := &OpenCode{}
-		if err := o.Edit([]string{"llama3.2"}); err != nil {
+		if err := o.Edit(testLaunchModels("llama3.2")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -1013,7 +826,7 @@ func TestOpenCodeEdit_PreservesRecentEntries(t *testing.T) {
 
 		// Add 5 new models — should cap at 10 total
 		o := &OpenCode{}
-		if err := o.Edit([]string{"new-0", "new-1", "new-2", "new-3", "new-4"}); err != nil {
+		if err := o.Edit(testLaunchModels("new-0", "new-1", "new-2", "new-3", "new-4")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -1034,7 +847,7 @@ func TestOpenCodeEdit_BaseURL(t *testing.T) {
 	setTestHome(t, tmpDir)
 
 	// Default OLLAMA_HOST
-	o.Edit([]string{"llama3.2"})
+	o.Edit(testLaunchModels("llama3.2"))
 
 	var cfg map[string]any
 	json.Unmarshal([]byte(o.configContent), &cfg)
