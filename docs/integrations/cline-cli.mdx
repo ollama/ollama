@@ -12,6 +12,8 @@ Install the [Cline CLI](https://docs.cline.bot/usage/cli-overview). For the IDE 
 npm install -g cline
 ```
 
+<Note>If Cline CLI is not installed and `npm` is available, `ollama launch cline` will prompt to install `cline@latest`.</Note>
+
 ## Usage with Ollama
 
 ### Quick setup
@@ -20,7 +22,7 @@ npm install -g cline
 ollama launch cline
 ```
 
-When launched through `ollama launch cline`, Ollama configures Cline to use the selected Ollama model.
+When launched through `ollama launch cline`, Ollama sets Cline's provider to Ollama, points it at the local Ollama endpoint, and selects the model you choose.
 
 To configure without launching:
 
@@ -40,15 +42,35 @@ To use a cloud model:
 ollama launch cline --model kimi-k2.6:cloud
 ```
 
+### Pass a prompt to Cline
+
+Arguments after `--` are passed directly to Cline:
+
+```shell
+ollama launch cline -- "summarize this repository"
+```
+
 ### Manual setup
 
-Cline CLI can be configured interactively:
+To configure Cline CLI manually, first make sure Ollama is running and the model you want to use is available:
+
+```shell
+ollama pull qwen3.5
+```
+
+Then run Cline's interactive auth flow:
 
 ```shell
 cline auth
 ```
 
-Select Ollama as the provider and choose a model such as `qwen3.5` or `kimi-k2.6:cloud`.
+Select Ollama as the provider, use `http://localhost:11434` as the base URL if prompted, and choose a model such as `qwen3.5` or `kimi-k2.6:cloud`.
+
+To check the current Cline configuration:
+
+```shell
+cline config
+```
 
 To start an interactive session:
 
