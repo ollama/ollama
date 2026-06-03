@@ -12,7 +12,7 @@ static IOPMAssertionID assertionID = 0;
 void darwin_inhibit_sleep() {
     if (assertionID != 0) return;
     CFStringRef reason = CFStringCreateWithCString(NULL, "Ollama is running model inference", kCFStringEncodingUTF8);
-    IOPMAssertionCreateWithName(kIOPMAssertionTypeNoDisplaySleep,
+    IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep,
                                 kIOPMAssertionLevelOn,
                                 reason,
                                 &assertionID);
