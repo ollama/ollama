@@ -1979,6 +1979,9 @@ func Serve(ln net.Listener) error {
 	go func() {
 		<-signals
 		schedDone()
+		if s.requestLogger != nil {
+			s.requestLogger.Close()
+		}
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer shutdownCancel()
 		srvr.Shutdown(shutdownCtx)
