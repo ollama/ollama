@@ -1839,12 +1839,20 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 		{
-			name:        "integrated gpu disables projector offload",
+			name:        "integrated rocm gpu disables projector offload",
 			projectors:  []string{"model.gguf"},
 			opts:        defaultOpts,
 			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
 			modelLayers: 81,
 			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:        "integrated metal gpu keeps projector offload",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true, FreeMemory: 32 << 30}},
+			modelLayers: 81,
+			want:        []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
 			name:        "cpu only request disables projector offload",
