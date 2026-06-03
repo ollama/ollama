@@ -56,6 +56,8 @@ import (
 	xserver "github.com/ollama/ollama/x/server"
 )
 
+var apiHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 
 const (
@@ -276,8 +278,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	if modelRef.Source == modelSourceCloud {
-		// TODO(drifkin): evaluate an `/api/*` passthrough for cloud where the
-		// original body (modulo model name normalization) is sent to cloud.
 		req.Model = modelRef.Base
 		proxyCloudJSONRequest(c, req, cloudErrRemoteInferenceUnavailable)
 		return
@@ -303,11 +303,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
-		return
-	}
-
-	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
 	}
 
@@ -2158,7 +2153,7 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 		return
 	}
 
-	client := api.NewClient(u, http.DefaultClient)
+	client := api.NewClient(u, apiHTTPClient)
 	user, err := client.Whoami(c)
 	if err != nil {
 		var authErr api.AuthorizationError
@@ -2221,7 +2216,7 @@ func (s *Server) SignoutHandler(c *gin.Context) {
 		return
 	}
 
-	client := api.NewClient(u, http.DefaultClient)
+	client := api.NewClient(u, apiHTTPClient)
 	err = client.Disconnect(c, encKey)
 	if err != nil {
 		var authError api.AuthorizationError
@@ -2239,6 +2234,7 @@ func (s *Server) SignoutHandler(c *gin.Context) {
 func (s *Server) PsHandler(c *gin.Context) {
 	models := []api.ProcessModelResponse{}
 
+	s.sched.loadedMu.Lock()
 	for _, v := range s.sched.loaded {
 		m := v.model
 		displayName := model.ParseName(m.ShortName).DisplayShortest()
@@ -2275,6 +2271,7 @@ func (s *Server) PsHandler(c *gin.Context) {
 
 		models = append(models, mr)
 	}
+	s.sched.loadedMu.Unlock()
 
 	slices.SortStableFunc(models, func(i, j api.ProcessModelResponse) int {
 		// longest duration remaining listed first
@@ -2470,11 +2467,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
-		return
-	}
-
-	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
 	}
 
