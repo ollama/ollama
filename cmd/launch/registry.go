@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "vscode", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -259,7 +259,6 @@ var integrationSpecs = []*IntegrationSpec{
 		Runner:      &VSCode{},
 		Aliases:     []string{"code"},
 		Description: "Microsoft's open-source AI code editor",
-		Hidden:      true,
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return (&VSCode{}).findBinary() != ""
