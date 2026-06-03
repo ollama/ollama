@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -25,12 +26,12 @@ func TestVSCodeIntegration(t *testing.T) {
 		var _ Runner = v
 	})
 
-	t.Run("implements Editor", func(t *testing.T) {
-		var _ Editor = v
+	t.Run("implements ManagedSingleModel", func(t *testing.T) {
+		var _ ManagedSingleModel = v
 	})
 }
 
-func TestVSCodeEdit(t *testing.T) {
+func TestVSCodeConfigure(t *testing.T) {
 	v := &VSCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -40,20 +41,20 @@ func TestVSCodeEdit(t *testing.T) {
 	tests := []struct {
 		name     string
 		setup    string // initial chatLanguageModels.json content, empty means no file
-		models   []string
+		model    string
 		validate func(t *testing.T, data []byte)
 	}{
 		{
-			name:   "fresh install",
-			models: []string{"llama3.2"},
+			name:  "fresh install",
+			model: "llama3.2",
 			validate: func(t *testing.T, data []byte) {
 				assertOllamaVendorConfigured(t, data)
 			},
 		},
 		{
-			name:   "preserve other vendor entries",
-			setup:  `[{"vendor": "azure", "name": "Azure", "url": "https://example.com"}]`,
-			models: []string{"llama3.2"},
+			name:  "preserve other vendor entries",
+			setup: `[{"vendor": "azure", "name": "Azure", "url": "https://example.com"}]`,
+			model: "llama3.2",
 			validate: func(t *testing.T, data []byte) {
 				var entries []map[string]any
 				json.Unmarshal(data, &entries)
@@ -74,27 +75,27 @@ func TestVSCodeEdit(t *testing.T) {
 			},
 		},
 		{
-			name:   "update existing ollama entry",
-			setup:  `[{"vendor": "ollama", "name": "Ollama", "url": "http://old:11434"}]`,
-			models: []string{"llama3.2"},
+			name:  "update existing ollama entry",
+			setup: `[{"vendor": "ollama", "name": "Ollama", "url": "http://old:11434"}]`,
+			model: "llama3.2",
 			validate: func(t *testing.T, data []byte) {
 				assertOllamaVendorConfigured(t, data)
 			},
 		},
 		{
-			name:   "empty models is no-op",
-			setup:  `[{"vendor": "azure", "name": "Azure"}]`,
-			models: []string{},
+			name:  "empty model is no-op",
+			setup: `[{"vendor": "azure", "name": "Azure"}]`,
+			model: "",
 			validate: func(t *testing.T, data []byte) {
 				if string(data) != `[{"vendor": "azure", "name": "Azure"}]` {
-					t.Error("empty models should not modify file")
+					t.Error("empty model should not modify file")
 				}
 			},
 		},
 		{
-			name:   "corrupted JSON treated as empty",
-			setup:  `{corrupted json`,
-			models: []string{"llama3.2"},
+			name:  "corrupted JSON treated as empty",
+			setup: `{corrupted json`,
+			model: "llama3.2",
 			validate: func(t *testing.T, data []byte) {
 				var entries []map[string]any
 				if err := json.Unmarshal(data, &entries); err != nil {
@@ -113,7 +114,7 @@ func TestVSCodeEdit(t *testing.T) {
 				os.WriteFile(clmPath, []byte(tt.setup), 0o644)
 			}
 
-			if err := v.Edit(launchModelsFromNames(tt.models)); err != nil {
+			if err := v.Configure(tt.model); err != nil {
 				t.Fatal(err)
 			}
 
@@ -134,7 +135,7 @@ func TestVSCodeEditCleansUpOldSettings(t *testing.T) {
 	os.MkdirAll(filepath.Dir(settingsPath), 0o755)
 	os.WriteFile(settingsPath, []byte(`{"github.copilot.chat.byok.ollamaEndpoint": "http://old:11434", "ollama.launch.configured": true, "editor.fontSize": 14}`), 0o644)
 
-	if err := v.Edit(testLaunchModels("llama3.2")); err != nil {
+	if err := v.Configure("llama3.2"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,7 +181,7 @@ func TestVSCodeEdit_CreatesDistinctBackupsForManagedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := v.Edit(testLaunchModels("llama3.2")); err != nil {
+	if err := v.Configure("llama3.2"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -249,17 +250,20 @@ func assertOllamaVendorConfigured(t *testing.T, data []byte) {
 	}
 
 	for _, entry := range entries {
-		if vendor, _ := entry["vendor"].(string); vendor == "ollama" {
-			if name, _ := entry["name"].(string); name != "Ollama" {
-				t.Errorf("expected name \"Ollama\", got %q", name)
+		if vendor, _ := entry["vendor"].(string); vendor == vscodeOllamaVendor {
+			if name, _ := entry["name"].(string); name != vscodeOllamaName {
+				t.Errorf("expected name %q, got %q", vscodeOllamaName, name)
 			}
 			if url, _ := entry["url"].(string); url == "" {
 				t.Error("url not set")
 			}
+			if _, ok := entry["models"]; ok {
+				t.Fatalf("provider config should not pin models, got %#v", entry["models"])
+			}
 			return
 		}
 	}
-	t.Error("no ollama vendor entry found")
+	t.Errorf("no %s vendor entry found", vscodeOllamaVendor)
 }
 
 func TestShowInModelPicker(t *testing.T) {
@@ -310,7 +314,7 @@ func TestShowInModelPicker(t *testing.T) {
 		return prefs
 	}
 
-	t.Run("fresh DB creates table and shows models", func(t *testing.T) {
+	t.Run("fresh DB creates table and selects model", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 		t.Setenv("XDG_CONFIG_HOME", "")
@@ -318,67 +322,58 @@ func TestShowInModelPicker(t *testing.T) {
 			t.Setenv("APPDATA", tmpDir)
 		}
 
-		err := v.ShowInModelPicker([]string{"llama3.2"})
+		err := v.ShowInModelPicker("llama3.2")
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		dbPath := testVSCodePath(t, tmpDir, filepath.Join("globalStorage", "state.vscdb"))
 		prefs := readPrefs(t, dbPath)
-		if !prefs["ollama/Ollama/llama3.2"] {
-			t.Error("expected llama3.2 to be shown")
+		if len(prefs) != 0 {
+			t.Fatalf("expected no model picker overrides, got %#v", prefs)
 		}
-		if !prefs["ollama/Ollama/llama3.2:latest"] {
-			t.Error("expected llama3.2:latest to be shown")
-		}
+		assertSelectedChatModel(t, dbPath, vscodeOllamaVendor+"/llama3.2")
 	})
 
-	t.Run("configured models are shown", func(t *testing.T) {
+	t.Run("selected model is stored", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 		t.Setenv("XDG_CONFIG_HOME", "")
 		dbPath := setupDB(t, testVSCodePath(t, tmpDir, ""), nil, nil)
 
-		err := v.ShowInModelPicker([]string{"llama3.2", "qwen3:8b"})
+		err := v.ShowInModelPicker("llama3.2")
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		prefs := readPrefs(t, dbPath)
-		if !prefs["ollama/Ollama/llama3.2"] {
-			t.Error("expected llama3.2 to be shown")
+		if len(prefs) != 0 {
+			t.Fatalf("expected no model picker overrides, got %#v", prefs)
 		}
-		if !prefs["ollama/Ollama/qwen3:8b"] {
-			t.Error("expected qwen3:8b to be shown")
-		}
+		assertSelectedChatModel(t, dbPath, vscodeOllamaVendor+"/llama3.2")
 	})
 
-	t.Run("removed models are hidden", func(t *testing.T) {
+	t.Run("old launch-managed model visibility overrides are cleared", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 		t.Setenv("XDG_CONFIG_HOME", "")
 		dbPath := setupDB(t, testVSCodePath(t, tmpDir, ""), map[string]bool{
-			"ollama/Ollama/llama3.2":        true,
-			"ollama/Ollama/llama3.2:latest": true,
-			"ollama/Ollama/mistral":         true,
-			"ollama/Ollama/mistral:latest":  true,
+			vscodeOllamaVendor + "/llama3.2":        true,
+			vscodeOllamaVendor + "/llama3.2:latest": true,
+			vscodeOllamaVendor + "/mistral":         true,
+			vscodeOllamaVendor + "/mistral:latest":  true,
 		}, nil)
 
-		// Only configure llama3.2 — mistral should get hidden
-		err := v.ShowInModelPicker([]string{"llama3.2"})
+		err := v.ShowInModelPicker("llama3.2")
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		prefs := readPrefs(t, dbPath)
-		if !prefs["ollama/Ollama/llama3.2"] {
-			t.Error("expected llama3.2 to stay shown")
-		}
-		if prefs["ollama/Ollama/mistral"] {
-			t.Error("expected mistral to be hidden")
-		}
-		if prefs["ollama/Ollama/mistral:latest"] {
-			t.Error("expected mistral:latest to be hidden")
+		for id := range prefs {
+			if strings.HasPrefix(id, vscodeOllamaVendor+"/") {
+				t.Fatalf("expected %s overrides to be cleared, got %#v", vscodeOllamaVendor, prefs)
+			}
 		}
 	})
 
@@ -390,7 +385,7 @@ func TestShowInModelPicker(t *testing.T) {
 			"copilot/gpt-4o": true,
 		}, nil)
 
-		err := v.ShowInModelPicker([]string{"llama3.2"})
+		err := v.ShowInModelPicker("llama3.2")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -407,54 +402,89 @@ func TestShowInModelPicker(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", "")
 		cache := []map[string]any{
 			{
-				"identifier": "ollama/Ollama/4",
-				"metadata":   map[string]any{"vendor": "ollama", "name": "llama3.2"},
+				"identifier": vscodeOllamaVendor + "/" + vscodeOllamaName + "/4",
+				"metadata":   map[string]any{"vendor": vscodeOllamaVendor, "name": "llama3.2"},
 			},
 		}
 		dbPath := setupDB(t, testVSCodePath(t, tmpDir, ""), nil, cache)
 
-		err := v.ShowInModelPicker([]string{"llama3.2"})
+		err := v.ShowInModelPicker("llama3.2")
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		prefs := readPrefs(t, dbPath)
-		if !prefs["ollama/Ollama/4"] {
-			t.Error("expected numeric ID ollama/Ollama/4 to be shown")
+		if len(prefs) != 0 {
+			t.Fatalf("expected no model picker overrides, got %#v", prefs)
 		}
-		// Name-based fallback should also be set
-		if !prefs["ollama/Ollama/llama3.2"] {
-			t.Error("expected name-based ID to also be shown")
-		}
+		assertSelectedChatModel(t, dbPath, vscodeOllamaVendor+"/"+vscodeOllamaName+"/4")
 	})
 
-	t.Run("empty models is no-op", func(t *testing.T) {
-		err := v.ShowInModelPicker([]string{})
+	t.Run("empty model is no-op", func(t *testing.T) {
+		err := v.ShowInModelPicker("")
 		if err != nil {
 			t.Fatal(err)
 		}
 	})
 
-	t.Run("previously hidden model is re-shown when configured", func(t *testing.T) {
+	t.Run("previously hidden selected model uses extension default visibility", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 		t.Setenv("XDG_CONFIG_HOME", "")
 		dbPath := setupDB(t, testVSCodePath(t, tmpDir, ""), map[string]bool{
-			"ollama/Ollama/llama3.2":        false,
-			"ollama/Ollama/llama3.2:latest": false,
+			vscodeOllamaVendor + "/llama3.2":        false,
+			vscodeOllamaVendor + "/llama3.2:latest": false,
 		}, nil)
 
-		// Ollama config is authoritative — should override the hidden state
-		err := v.ShowInModelPicker([]string{"llama3.2"})
+		err := v.ShowInModelPicker("llama3.2")
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		prefs := readPrefs(t, dbPath)
-		if !prefs["ollama/Ollama/llama3.2"] {
-			t.Error("expected llama3.2 to be re-shown")
+		for id := range prefs {
+			if strings.HasPrefix(id, vscodeOllamaVendor+"/") {
+				t.Fatalf("expected %s overrides to be cleared, got %#v", vscodeOllamaVendor, prefs)
+			}
 		}
 	})
+}
+
+func assertSelectedChatModel(t *testing.T, dbPath, want string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var selected string
+	if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = 'chat.currentLanguageModel.panel'").Scan(&selected); err != nil {
+		t.Fatal(err)
+	}
+	if selected != want {
+		t.Fatalf("selected model = %q, want %q", selected, want)
+	}
+
+	var isDefault string
+	if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = 'chat.currentLanguageModel.panel.isDefault'").Scan(&isDefault); err != nil {
+		t.Fatal(err)
+	}
+	if isDefault != "false" {
+		t.Fatalf("selected model default flag = %q, want false", isDefault)
+	}
+
+	var recentJSON string
+	if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = 'chatModelRecentlyUsed'").Scan(&recentJSON); err != nil {
+		t.Fatal(err)
+	}
+	var recent []string
+	if err := json.Unmarshal([]byte(recentJSON), &recent); err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) == 0 || recent[0] != want {
+		t.Fatalf("recent models = %#v, want %q first", recent, want)
+	}
 }
 
 func TestParseCopilotChatVersion(t *testing.T) {
@@ -504,6 +534,23 @@ func TestParseCopilotChatVersion(t *testing.T) {
 				t.Errorf("version = %q, want %q", version, tt.wantVersion)
 			}
 		})
+	}
+}
+
+func TestHasVSCodeExtension(t *testing.T) {
+	output := "github.copilot-chat@0.41.0\nollama.ollama-vscode@0.0.1\nms-python.python\n"
+
+	if !hasVSCodeExtension(output, "ollama.ollama-vscode") {
+		t.Fatal("expected Ollama extension to be detected")
+	}
+	if !hasVSCodeExtension(output, "Ollama.Ollama-VSCode") {
+		t.Fatal("expected extension detection to be case-insensitive")
+	}
+	if hasVSCodeExtension(output, "ollama.missing") {
+		t.Fatal("unexpected missing extension detected")
+	}
+	if !hasVSCodeExtension(output, "ms-python.python") {
+		t.Fatal("expected extension without version to be detected")
 	}
 }
 
