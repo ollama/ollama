@@ -559,6 +559,39 @@ func TestToChunks_SplitsThinkingAndToolCalls(t *testing.T) {
 	}
 }
 
+func TestToChunks_SkipsEmptyDeltasWithoutFinishReason(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role: "assistant",
+		},
+	}
+
+	chunks := ToChunks("test-id", resp, false)
+	if len(chunks) != 0 {
+		t.Fatalf("expected empty response to produce no stream chunks, got %d", len(chunks))
+	}
+}
+
+func TestToChunks_KeepsEmptyDeltasWithFinishReason(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role: "assistant",
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+
+	chunks := ToChunks("test-id", resp, false)
+	if len(chunks) != 1 {
+		t.Fatalf("expected finish response to produce one stream chunk, got %d", len(chunks))
+	}
+	if chunks[0].Choices[0].FinishReason == nil || *chunks[0].Choices[0].FinishReason != "stop" {
+		t.Fatalf("expected finish reason %q, got %v", "stop", chunks[0].Choices[0].FinishReason)
+	}
+}
+
 func TestToChunks_SingleChunkForNonMixedResponses(t *testing.T) {
 	toolCalls := []api.ToolCall{
 		{
