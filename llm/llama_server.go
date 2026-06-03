@@ -631,7 +631,7 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 	}
 
 	for _, gpu := range gpus {
-		if gpu.Integrated {
+		if gpu.Integrated && gpu.Library != "Metal" {
 			return true, "shared-memory-gpu"
 		}
 		memory := gpu.FreeMemory
