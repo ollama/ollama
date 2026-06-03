@@ -73,7 +73,7 @@ This table tracks the dispatch surface. Keep it brief; the handler comments in
 | `gemma3` + embedding markers (`embeddinggemma`) | Maps to `gemma-embedding` metadata and fixes embedding dense/norm tensors. | n/a |
 | `bert` + Snowflake markers (`snowflake-arctic-embed2`) | Fixes Snowflake Arctic Embed 2 tokenizer metadata. | n/a |
 | `gemma3n` | Normalizes tokenizer/EOS metadata, truncates vocab-shaped tensors, and hides unused embedded vision/audio/projector tensors. | n/a |
-| `gemma4` | Normalizes tokenizer metadata and hides embedded audio/vision/projector tensors from the text loader. | Gemma 4 projector translation; audio remains disabled. |
+| `gemma4` | Normalizes tokenizer metadata and hides embedded audio/vision/projector tensors from the text loader. | Gemma 4 vision/audio projector translation for GGUF blobs. |
 | `gptoss` | Maps to `gpt-oss`, copies KVs, injects missing expert FFN metadata, and renames tensors. | n/a |
 | `lfm2` | Renames norm tensors and fixes feed-forward metadata. | n/a |
 | `olmo3` | Maps to the OLMo2-compatible loader path. | n/a |
