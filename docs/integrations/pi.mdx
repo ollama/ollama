@@ -4,23 +4,13 @@ title: Pi
 
 Pi is a minimal and extensible coding agent.
 
-## Install
-
-Install [Pi](https://github.com/badlogic/pi-mono):
-
-```bash
-npm install -g @mariozechner/pi-coding-agent
-```
-
-## Usage with Ollama
-
-### Quick setup
+## Quick setup
 
 ```bash
 ollama launch pi
 ```
 
-This installs Pi, configures Ollama as a provider including web tools, and drops you into an interactive session.
+This installs Pi if needed, configures Ollama as a provider including web tools, and drops you into an interactive session.
 
 To configure without launching:
 
@@ -79,6 +69,16 @@ Tell Pi what to optimize. It runs experiments, benchmarks each one, keeps improv
 Each kept experiment is automatically committed. Each failed one is reverted. When you're done, Pi can group improvements into independent branches for clean review and merge.
 
 ## Manual setup
+
+### Install
+
+Install [Pi](https://github.com/earendil-works/pi):
+
+```bash
+npm install -g @earendil-works/pi-coding-agent
+```
+
+
 
 Add a configuration block to `~/.pi/agent/models.json`:
 
