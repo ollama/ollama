@@ -1817,15 +1817,6 @@ func TestListIntegrationInfos(t *testing.T) {
 		}
 
 		want := append([]string(nil), integrationOrder...)
-		if poolsideGOOS == "windows" {
-			filtered := make([]string, 0, len(want))
-			for _, name := range want {
-				if name != "pool" {
-					filtered = append(filtered, name)
-				}
-			}
-			want = filtered
-		}
 		if codexAppSupported() != nil {
 			filtered := make([]string, 0, len(want))
 			for _, name := range want {
@@ -1874,9 +1865,7 @@ func TestListIntegrationInfos(t *testing.T) {
 		if codexAppSupported() == nil {
 			known["codex-app"] = false
 		}
-		if poolsideGOOS != "windows" {
-			known["pool"] = false
-		}
+		known["pool"] = false
 		for _, info := range infos {
 			if _, ok := known[info.Name]; ok {
 				known[info.Name] = true
@@ -1910,18 +1899,6 @@ func TestListIntegrationInfos(t *testing.T) {
 			t.Fatal("expected hermes integration runner to be present")
 		}
 	})
-}
-
-func TestListIntegrationInfos_HidesPoolsideOnWindows(t *testing.T) {
-	prev := poolsideGOOS
-	poolsideGOOS = "windows"
-	t.Cleanup(func() { poolsideGOOS = prev })
-
-	for _, info := range ListIntegrationInfos() {
-		if info.Name == "pool" {
-			t.Fatal("expected pool to be hidden on Windows")
-		}
-	}
 }
 
 func TestListIntegrationInfos_HidesClaudeDesktop(t *testing.T) {
@@ -2038,20 +2015,6 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 				t.Errorf("integrationFor(%q).autoInstallable = %v, want %v", tt.name, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestEnsureIntegrationInstalled_PoolsideUnsupportedOnWindows(t *testing.T) {
-	prev := poolsideGOOS
-	poolsideGOOS = "windows"
-	t.Cleanup(func() { poolsideGOOS = prev })
-
-	err := EnsureIntegrationInstalled("pool", &Poolside{})
-	if err == nil {
-		t.Fatal("expected Windows unsupported error")
-	}
-	if !strings.Contains(err.Error(), "not currently supported on Windows") {
-		t.Fatalf("expected Windows warning, got %v", err)
 	}
 }
 
