@@ -465,6 +465,44 @@ func TestCreateModelAddsDefaultLlavaProjectorType(t *testing.T) {
 	}
 }
 
+func TestGGUFLayersClassifiesMMProjAsProjector(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, digest := createBinFile(t, map[string]any{
+		"general.architecture":            "clip",
+		"general.type":                    "mmproj",
+		"clip.has_vision_encoder":         true,
+		"clip.vision.block_count":         uint32(0),
+		"clip.vision.projector_type":      "gemma4uv",
+		"clip.has_audio_encoder":          true,
+		"clip.audio.block_count":          uint32(0),
+		"clip.audio.projector_type":       "gemma4ua",
+		"clip.vision.projection_dim":      uint32(3840),
+		"clip.vision.embedding_length":    uint32(3840),
+		"clip.audio.projection_dim":       uint32(3840),
+		"clip.audio.embedding_length":     uint32(3840),
+		"clip.vision.feed_forward_length": uint32(0),
+		"clip.audio.feed_forward_length":  uint32(0),
+	}, []*ggml.Tensor{
+		{
+			Name:     "mm.input_projection.weight",
+			Kind:     uint32(ggml.TensorTypeF32),
+			Shape:    []uint64{1, 1},
+			WriterTo: bytes.NewReader(make([]byte, 4)),
+		},
+	})
+	layers, err := ggufLayers(digest, "mmproj-gemma-4-12B-it-bf16.gguf", func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layers) != 1 {
+		t.Fatalf("layers = %d, want 1", len(layers))
+	}
+	if got := layers[0].MediaType; got != "application/vnd.ollama.image.projector" {
+		t.Fatalf("media type = %q, want projector", got)
+	}
+}
+
 func TestCreateModelQuantizeRestoresEmbeddedCompatibilityTensors(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	oldRun := runLlamaQuantize
