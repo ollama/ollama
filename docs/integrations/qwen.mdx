@@ -50,11 +50,3 @@ Run directly with a model:
 ollama launch qwen --model kimi-k2.5:cloud
 ```
 
-`ollama launch qwen` updates `~/.qwen/settings.json` so Qwen Code uses Ollama's OpenAI-compatible endpoint.
-
-It sets:
-
-- `security.auth.selectedType` to `openai`
-- `env.OLLAMA_API_KEY` to `ollama`
-- `modelProviders.openai` to the selected Ollama model
-- `model.name` to the selected Ollama model
