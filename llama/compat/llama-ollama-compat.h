@@ -79,4 +79,10 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
                             ggml_tensor * cur,
                             size_t file_offset);
 
+// Called from clip_n_mmproj_embd() before the upstream switch. Returns a
+// positive embedding size only for Ollama compatibility cases whose projector
+// metadata already follows upstream naming, but whose legacy projector type
+// is missing from that helper in the pinned llama.cpp version.
+int maybe_clip_mmproj_embd(const char * projector_type, int projection_dim);
+
 } // namespace llama_ollama_compat

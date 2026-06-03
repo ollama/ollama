@@ -70,6 +70,18 @@ bool compat_disabled() {
     return value && std::strcmp(value, "0") == 0;
 }
 
+bool clip_mmproj_embd_uses_projection_dim(const char * projector_type) {
+    static constexpr const char * kProjectorTypes[] = {
+        "gemma4a",
+    };
+
+    if (!projector_type) return false;
+    for (const char * compat_type : kProjectorTypes) {
+        if (std::strcmp(projector_type, compat_type) == 0) return true;
+    }
+    return false;
+}
+
 // Per-loader file path registry — set by translate_metadata, read by
 // maybe_load_text_tensor so it can pass the path to load ops without a
 // separate patch insertion in the model loader's load_all_data path.
@@ -3385,6 +3397,12 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
     LoadOp op;
     if (!take_load_op(ggml_get_name(cur), op)) return false;
     return load_tensor_with_op(cur, path.c_str(), buft, op);
+}
+
+int maybe_clip_mmproj_embd(const char * projector_type, int projection_dim) {
+    if (compat_disabled() || projection_dim <= 0) return 0;
+    if (!clip_mmproj_embd_uses_projection_dim(projector_type)) return 0;
+    return projection_dim;
 }
 
 } // namespace llama_ollama_compat
