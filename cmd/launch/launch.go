@@ -291,10 +291,10 @@ Supported integrations:
   hermes          Hermes Agent
   openclaw        OpenClaw (aliases: clawdbot, moltbot)
   opencode        OpenCode
-  omp             OMP
   codex           Codex
   hermes-desktop  Hermes Desktop
   copilot         Copilot CLI (aliases: copilot-cli)
+  omp             OMP
   droid           Droid
   kimi            Kimi Code CLI
   pi              Pi
@@ -311,7 +311,6 @@ Examples:
   ollama launch codex-app --restore
   ollama launch hermes
   ollama launch hermes-desktop
-  ollama launch omp
   ollama launch droid --config (does not auto-launch)
   ollama launch codex --restore
   ollama launch codex -- --sandbox workspace-write`,

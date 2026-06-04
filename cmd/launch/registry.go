@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "omp", "copilot", "cline", "droid", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
