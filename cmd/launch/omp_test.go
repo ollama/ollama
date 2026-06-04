@@ -47,6 +47,13 @@ func runOMPTestHelper() {
 	os.Exit(0)
 }
 
+func setOMPTestHome(t *testing.T, dir string) {
+	t.Helper()
+	setTestHome(t, dir)
+	t.Setenv("PI_CONFIG_DIR", "")
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+}
+
 func TestOMPIntegration(t *testing.T) {
 	o := &OMP{}
 
@@ -135,7 +142,7 @@ func TestOMPRun_WebSearchPluginLifecycle(t *testing.T) {
 	setup := func(t *testing.T, pluginList string, cloudDisabled bool) (string, *OMP) {
 		t.Helper()
 		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
+		setOMPTestHome(t, tmpDir)
 		t.Setenv("PATH", tmpDir)
 		t.Setenv("OLLAMA_LAUNCH_OMP_TEST_HELPER", "1")
 		t.Setenv("OLLAMA_LAUNCH_OMP_TEST_PLUGIN_LIST", pluginList)
@@ -261,7 +268,7 @@ func TestOMPFindPath(t *testing.T) {
 
 	t.Run("falls back to ~/.local/bin/omp", func(t *testing.T) {
 		home := t.TempDir()
-		setTestHome(t, home)
+		setOMPTestHome(t, home)
 		t.Setenv("PATH", t.TempDir())
 
 		fallback := filepath.Join(home, ".local", "bin", ompExecutableNames()[0])
@@ -279,7 +286,7 @@ func TestOMPFindPath(t *testing.T) {
 
 	t.Run("falls back to ~/.bun/bin/omp", func(t *testing.T) {
 		home := t.TempDir()
-		setTestHome(t, home)
+		setOMPTestHome(t, home)
 		t.Setenv("PATH", t.TempDir())
 
 		fallback := filepath.Join(home, ".bun", "bin", ompExecutableNames()[0])
@@ -297,7 +304,7 @@ func TestOMPFindPath(t *testing.T) {
 
 	t.Run("returns error when not found", func(t *testing.T) {
 		home := t.TempDir()
-		setTestHome(t, home)
+		setOMPTestHome(t, home)
 		t.Setenv("PATH", t.TempDir())
 
 		if _, err := o.findPath(); err == nil {
@@ -308,7 +315,7 @@ func TestOMPFindPath(t *testing.T) {
 
 func TestOMPConfigureWithModelsWritesModelsYML(t *testing.T) {
 	home := t.TempDir()
-	setTestHome(t, home)
+	setOMPTestHome(t, home)
 	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
 
 	o := &OMP{}
@@ -385,7 +392,7 @@ func TestOMPConfigureWithModelsWritesModelsYML(t *testing.T) {
 
 func TestOMPConfigureWithModelsPreservesExistingConfig(t *testing.T) {
 	home := t.TempDir()
-	setTestHome(t, home)
+	setOMPTestHome(t, home)
 
 	modelsPath := filepath.Join(home, ".omp", "agent", "models.yml")
 	if err := os.MkdirAll(filepath.Dir(modelsPath), 0o755); err != nil {
@@ -470,7 +477,7 @@ theme: monochrome
 
 func TestOMPConfigureWithModelsAlwaysMarksSetupComplete(t *testing.T) {
 	home := t.TempDir()
-	setTestHome(t, home)
+	setOMPTestHome(t, home)
 
 	configPath := filepath.Join(home, ".omp", "agent", "config.yml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -492,6 +499,127 @@ func TestOMPConfigureWithModelsAlwaysMarksSetupComplete(t *testing.T) {
 	config := parseOMPConfigYAML(t, configData)
 	if got := numericYAMLValue(config["setupVersion"]); got != ompSetupVersion {
 		t.Fatalf("setupVersion = %d, want %d", got, ompSetupVersion)
+	}
+}
+
+func TestOMPConfigureWithModelsRespectsPiConfigDir(t *testing.T) {
+	home := t.TempDir()
+	setOMPTestHome(t, home)
+	t.Setenv("PI_CONFIG_DIR", ".custom-omp")
+
+	o := &OMP{}
+	if err := o.ConfigureWithModels("new-model", []LaunchModel{{Name: "new-model"}}); err != nil {
+		t.Fatalf("ConfigureWithModels returned error: %v", err)
+	}
+
+	modelsPath := filepath.Join(home, ".custom-omp", "agent", "models.yml")
+	configPath := filepath.Join(home, ".custom-omp", "agent", "config.yml")
+	for _, path := range []string{modelsPath, configPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s to be written: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".omp", "agent", "models.yml")); !os.IsNotExist(err) {
+		t.Fatalf("expected default OMP models path to be untouched, got err %v", err)
+	}
+	if paths := o.Paths(); !slices.Equal(paths, []string{modelsPath, configPath}) {
+		t.Fatalf("Paths = %v, want [%s %s]", paths, modelsPath, configPath)
+	}
+}
+
+func TestOMPConfigureWithModelsRespectsPiCodingAgentDir(t *testing.T) {
+	home := t.TempDir()
+	setOMPTestHome(t, home)
+	agentDir := filepath.Join(home, "agent-override")
+	t.Setenv("PI_CONFIG_DIR", ".ignored-omp")
+	t.Setenv("PI_CODING_AGENT_DIR", agentDir)
+
+	o := &OMP{}
+	if err := o.ConfigureWithModels("new-model", []LaunchModel{{Name: "new-model"}}); err != nil {
+		t.Fatalf("ConfigureWithModels returned error: %v", err)
+	}
+
+	modelsPath := filepath.Join(agentDir, "models.yml")
+	configPath := filepath.Join(agentDir, "config.yml")
+	for _, path := range []string{modelsPath, configPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s to be written: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".ignored-omp", "agent", "models.yml")); !os.IsNotExist(err) {
+		t.Fatalf("expected PI_CONFIG_DIR path to be ignored when PI_CODING_AGENT_DIR is set, got err %v", err)
+	}
+	if got := o.CurrentModel(); got != "new-model" {
+		t.Fatalf("CurrentModel = %q, want new-model", got)
+	}
+}
+
+func TestOMPCurrentModelRequiresHealthyProvider(t *testing.T) {
+	home := t.TempDir()
+	setOMPTestHome(t, home)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	modelsPath := filepath.Join(home, ".omp", "agent", "models.yml")
+	if err := os.MkdirAll(filepath.Dir(modelsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		provider string
+	}{
+		{
+			name: "wrong base url",
+			provider: "" +
+				"    baseUrl: http://127.0.0.1:9999/v1\n" +
+				"    api: openai-responses\n" +
+				"    auth: none\n" +
+				"    discovery:\n" +
+				"      type: ollama\n",
+		},
+		{
+			name: "wrong api",
+			provider: "" +
+				"    baseUrl: http://127.0.0.1:11434/v1\n" +
+				"    api: openai-chat\n" +
+				"    auth: none\n" +
+				"    discovery:\n" +
+				"      type: ollama\n",
+		},
+		{
+			name: "wrong auth",
+			provider: "" +
+				"    baseUrl: http://127.0.0.1:11434/v1\n" +
+				"    api: openai-responses\n" +
+				"    auth: api-key\n" +
+				"    discovery:\n" +
+				"      type: ollama\n",
+		},
+		{
+			name: "wrong discovery",
+			provider: "" +
+				"    baseUrl: http://127.0.0.1:11434/v1\n" +
+				"    api: openai-responses\n" +
+				"    auth: none\n" +
+				"    discovery:\n" +
+				"      type: static\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := "providers:\n" +
+				"  ollama:\n" +
+				tt.provider +
+				"    models:\n" +
+				"      - id: gemma4\n"
+			if err := os.WriteFile(modelsPath, []byte(cfg), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := (&OMP{}).CurrentModel(); got != "" {
+				t.Fatalf("expected stale config to return empty current model, got %q", got)
+			}
+		})
 	}
 }
 

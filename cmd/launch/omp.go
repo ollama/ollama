@@ -68,6 +68,9 @@ func (o *OMP) CurrentModel() string {
 	if !ok {
 		return ""
 	}
+	if !ompProviderHealthy(provider) {
+		return ""
+	}
 	models, _ := provider["models"].([]any)
 	for _, raw := range models {
 		entry, ok := raw.(map[string]any)
@@ -205,19 +208,38 @@ func ompPluginInstalled(bin, plugin string) (bool, error) {
 }
 
 func ompModelsPath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := ompAgentDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".omp", "agent", "models.yml"), nil
+	return filepath.Join(dir, "models.yml"), nil
 }
 
 func ompConfigPath() (string, error) {
+	dir, err := ompAgentDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.yml"), nil
+}
+
+func ompAgentDir() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); dir != "" {
+		return dir, nil
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".omp", "agent", "config.yml"), nil
+	configDir := strings.TrimSpace(os.Getenv("PI_CONFIG_DIR"))
+	if configDir == "" {
+		configDir = ".omp"
+	}
+	if filepath.IsAbs(configDir) {
+		return filepath.Join(configDir, "agent"), nil
+	}
+	return filepath.Join(home, configDir, "agent"), nil
 }
 
 func readOMPModelsConfig() (map[string]any, error) {
@@ -349,6 +371,27 @@ func ensureOMPProvider(cfg map[string]any) map[string]any {
 
 func ompBaseURL() string {
 	return strings.TrimRight(envconfig.ConnectableHost().String(), "/") + "/v1"
+}
+
+func ompProviderHealthy(provider map[string]any) bool {
+	baseURL, _ := provider["baseUrl"].(string)
+	if strings.TrimRight(baseURL, "/") != strings.TrimRight(ompBaseURL(), "/") {
+		return false
+	}
+	api, _ := provider["api"].(string)
+	if api != "openai-responses" {
+		return false
+	}
+	auth, _ := provider["auth"].(string)
+	if auth != "none" {
+		return false
+	}
+	discovery, _ := provider["discovery"].(map[string]any)
+	if discovery == nil {
+		return false
+	}
+	discoveryType, _ := discovery["type"].(string)
+	return discoveryType == "ollama"
 }
 
 func ompProvider(cfg map[string]any) (map[string]any, bool) {
