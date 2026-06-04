@@ -369,6 +369,82 @@ func TestChatWriter_StreamMixedThinkingAndContentWithoutDoneEmitsChunksOnly(t *t
 	}
 }
 
+func TestCompleteWriter_StreamUsageOnlyOnFinalChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &CompleteWriter{
+		stream:        true,
+		streamOptions: &openai.StreamOptions{IncludeUsage: true},
+		id:            "cmpl-test",
+		BaseWriter:    BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	// an intermediate (non-final) streaming chunk
+	intermediate, err := json.Marshal(api.GenerateResponse{
+		Model:    "test-model",
+		Response: "partial",
+		Done:     false,
+	})
+	if err != nil {
+		t.Fatalf("marshal intermediate response: %v", err)
+	}
+	if _, err = writer.Write(intermediate); err != nil {
+		t.Fatalf("write intermediate response: %v", err)
+	}
+
+	// the final streaming chunk carrying token counts
+	final, err := json.Marshal(api.GenerateResponse{
+		Model:      "test-model",
+		Response:   "",
+		Done:       true,
+		DoneReason: "stop",
+		Metrics: api.Metrics{
+			PromptEvalCount: 3,
+			EvalCount:       2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal final response: %v", err)
+	}
+	if _, err = writer.Write(final); err != nil {
+		t.Fatalf("write final response: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// intermediate chunk, final content chunk, usage chunk, [DONE]
+	if len(frames) != 4 {
+		t.Fatalf("expected 4 SSE data frames, got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if frames[3] != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", frames[3])
+	}
+
+	// the OpenAI streaming contract requires usage to be null on every chunk
+	// except the dedicated final usage chunk. Inspect the raw JSON so a
+	// zero-valued (but non-nil) usage object is not silently accepted.
+	for i := 0; i < 2; i++ {
+		if strings.Contains(frames[i], "\"usage\"") {
+			t.Fatalf("chunk %d should not contain a usage field, got %s", i, frames[i])
+		}
+	}
+
+	var usageChunk openai.CompletionChunk
+	if err := json.Unmarshal([]byte(frames[2]), &usageChunk); err != nil {
+		t.Fatalf("unmarshal usage chunk: %v", err)
+	}
+	if usageChunk.Usage == nil {
+		t.Fatal("expected usage chunk to include usage")
+	}
+	if usageChunk.Usage.TotalTokens != 5 {
+		t.Fatalf("expected usage total tokens 5, got %d", usageChunk.Usage.TotalTokens)
+	}
+	if len(usageChunk.Choices) != 0 {
+		t.Fatalf("expected usage chunk choices to be empty, got %d", len(usageChunk.Choices))
+	}
+}
+
 func TestChatMiddleware(t *testing.T) {
 	type testCase struct {
 		name string
