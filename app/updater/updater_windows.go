@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,30 @@ import (
 )
 
 var runningInstaller string
+
+var (
+	crypt32              = windows.NewLazySystemDLL("crypt32.dll")
+	procCryptMsgGetParam = crypt32.NewProc("CryptMsgGetParam")
+	procCryptMsgClose    = crypt32.NewProc("CryptMsgClose")
+)
+
+const cmsgSignerInfoParam = 6
+
+type cmsgSignerInfo struct {
+	Version                 uint32
+	Issuer                  windows.CertNameBlob
+	SerialNumber            windows.CryptIntegerBlob
+	HashAlgorithm           windows.CryptAlgorithmIdentifier
+	HashEncryptionAlgorithm windows.CryptAlgorithmIdentifier
+	EncryptedHash           windows.CryptDataBlob
+	AuthAttrs               cryptAttributes
+	UnauthAttrs             cryptAttributes
+}
+
+type cryptAttributes struct {
+	Count      uint32
+	Attributes unsafe.Pointer
+}
 
 type OSVERSIONINFOEXW struct {
 	dwOSVersionInfoSize uint32
@@ -97,6 +122,12 @@ func DoUpgrade(interactive bool) error {
 	bundle := getStagedUpdate()
 	if bundle == "" {
 		return fmt.Errorf("failed to lookup downloads")
+	}
+
+	if err := VerifyDownload(); err != nil {
+		_ = os.Remove(bundle)
+		slog.Warn("verification failure", "bundle", bundle, "error", err)
+		return fmt.Errorf("staged update verification failed: %w", err)
 	}
 
 	// We move the installer to ensure we don't race with multiple apps starting in quick succession
@@ -184,6 +215,150 @@ func DoPostUpgradeCleanup() error {
 }
 
 func verifyDownload() error {
+	bundle := getStagedUpdate()
+	if bundle == "" {
+		return fmt.Errorf("failed to lookup downloads")
+	}
+	slog.Debug("verifying update", "bundle", bundle)
+
+	if err := verifyWindowsInstallerSignature(bundle); err != nil {
+		return fmt.Errorf("signature verification failed: %w", err)
+	}
+	return nil
+}
+
+func verifyWindowsInstallerSignature(filename string) error {
+	filename16, err := windows.UTF16PtrFromString(filename)
+	if err != nil {
+		return err
+	}
+
+	data := &windows.WinTrustData{
+		Size:             uint32(unsafe.Sizeof(windows.WinTrustData{})),
+		UIChoice:         windows.WTD_UI_NONE,
+		RevocationChecks: windows.WTD_REVOKE_WHOLECHAIN,
+		UnionChoice:      windows.WTD_CHOICE_FILE,
+		StateAction:      windows.WTD_STATEACTION_VERIFY,
+		UIContext:        windows.WTD_UICONTEXT_INSTALL,
+		FileOrCatalogOrBlobOrSgnrOrCert: unsafe.Pointer(&windows.WinTrustFileInfo{
+			Size:     uint32(unsafe.Sizeof(windows.WinTrustFileInfo{})),
+			FilePath: filename16,
+		}),
+	}
+
+	verifyErr := windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, data)
+	data.StateAction = windows.WTD_STATEACTION_CLOSE
+	closeErr := windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, data)
+	if verifyErr != nil {
+		return verifyErr
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close WinVerifyTrust state: %w", closeErr)
+	}
+
+	subject, err := windowsInstallerSignerSubject(filename)
+	if err != nil {
+		return err
+	}
+	slog.Debug("verified update signature", "subject", subject)
+	return nil
+}
+
+func windowsInstallerSignerSubject(filename string) (string, error) {
+	filename16, err := windows.UTF16PtrFromString(filename)
+	if err != nil {
+		return "", err
+	}
+
+	var certStore windows.Handle
+	var msg windows.Handle
+	if err := windows.CryptQueryObject(
+		windows.CERT_QUERY_OBJECT_FILE,
+		unsafe.Pointer(filename16),
+		windows.CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
+		windows.CERT_QUERY_FORMAT_FLAG_BINARY,
+		0,
+		nil,
+		nil,
+		nil,
+		&certStore,
+		&msg,
+		nil,
+	); err != nil {
+		return "", err
+	}
+	defer windows.CertCloseStore(certStore, 0) //nolint:errcheck
+	defer cryptMsgClose(msg)                   //nolint:errcheck
+
+	var signerInfoSize uint32
+	if err := cryptMsgGetParam(msg, cmsgSignerInfoParam, 0, nil, &signerInfoSize); err != nil {
+		return "", err
+	}
+	if signerInfoSize == 0 {
+		return "", fmt.Errorf("missing signer info")
+	}
+
+	signerInfoBuf := make([]byte, signerInfoSize)
+	if err := cryptMsgGetParam(msg, cmsgSignerInfoParam, 0, unsafe.Pointer(&signerInfoBuf[0]), &signerInfoSize); err != nil {
+		return "", err
+	}
+	signerInfo := (*cmsgSignerInfo)(unsafe.Pointer(&signerInfoBuf[0]))
+	certInfo := windows.CertInfo{
+		Issuer:       signerInfo.Issuer,
+		SerialNumber: signerInfo.SerialNumber,
+	}
+
+	cert, err := windows.CertFindCertificateInStore(
+		certStore,
+		windows.X509_ASN_ENCODING|windows.PKCS_7_ASN_ENCODING,
+		0,
+		windows.CERT_FIND_SUBJECT_CERT,
+		unsafe.Pointer(&certInfo),
+		nil,
+	)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CertFreeCertificateContext(cert) //nolint:errcheck
+
+	parsed, err := x509.ParseCertificate(unsafe.Slice(cert.EncodedCert, cert.Length))
+	if err != nil {
+		return "", err
+	}
+
+	for _, org := range parsed.Subject.Organization {
+		if org == "Ollama Inc." {
+			return parsed.Subject.String(), nil
+		}
+	}
+	return "", fmt.Errorf("unexpected signer: %s", parsed.Subject.String())
+}
+
+func cryptMsgGetParam(msg windows.Handle, paramType, index uint32, data unsafe.Pointer, size *uint32) error {
+	r1, _, e1 := procCryptMsgGetParam.Call(
+		uintptr(msg),
+		uintptr(paramType),
+		uintptr(index),
+		uintptr(data),
+		uintptr(unsafe.Pointer(size)),
+	)
+	if r1 == 0 {
+		if e1 != syscall.Errno(0) {
+			return e1
+		}
+		return syscall.EINVAL
+	}
+	return nil
+}
+
+func cryptMsgClose(msg windows.Handle) error {
+	r1, _, e1 := procCryptMsgClose.Call(uintptr(msg))
+	if r1 == 0 {
+		if e1 != syscall.Errno(0) {
+			return e1
+		}
+		return syscall.EINVAL
+	}
 	return nil
 }
 

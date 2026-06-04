@@ -114,6 +114,61 @@ func TestRotatingKVCacheDecodeParity(t *testing.T) {
 	}
 }
 
+func TestAssistantSharedHistoryL1MasksMatchNoMask(t *testing.T) {
+	skipIfNoMLX(t)
+	if !mlx.MetalIsAvailable() {
+		t.Skip("MLX Metal not available")
+	}
+	const H, D = 1, 4
+	const window = 4
+	const total = 7
+	const scale = 1.0
+
+	q := mlx.FromValues([]float32{0.7, -0.4, 0.2, 0.9}, 1, H, 1, D)
+	mlx.Eval(q)
+
+	full := NewKVCache()
+	sliding := NewRotatingKVCache(window)
+	for pos := range total {
+		kVals := make([]float32, H*D)
+		vVals := make([]float32, H*D)
+		for i := range kVals {
+			kVals[i] = 0.1*float32(pos+1) + 0.01*float32(i)
+			vVals[i] = -0.1*float32(pos+1) + 0.01*float32(i)
+		}
+		k := mlx.FromValues(kVals, 1, H, 1, D)
+		v := mlx.FromValues(vVals, 1, H, 1, D)
+		full.Update(newKVBatch(full.Offset(), 1), k, v)
+		sliding.Update(newKVBatch(sliding.Offset(), 1), k, v)
+	}
+
+	b := newKVBatch(total-1, 1)
+	slidingHistory := sliding.View(b)
+	cases := []struct {
+		name string
+		h    *nn.KVHistory
+		mask nn.AttentionMask
+	}{
+		{name: "full", h: full.View(b), mask: nn.CausalMask()},
+		{name: "sliding", h: slidingHistory, mask: nn.CausalMask().Intersect(nn.SlidingWindowMask(b, slidingHistory.K().Dim(2), window, q.DType()))},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(tc.h), nn.WithMask(tc.mask))
+			want := mlx.FastScaledDotProductAttention(q, tc.h.K(), tc.h.V(), scale, "", nil)
+
+			mlx.Eval(got, want)
+			gs, ws := got.Floats(), want.Floats()
+			for i := range ws {
+				if math.Abs(float64(gs[i]-ws[i])) > 1e-5 {
+					t.Fatalf("index %d: got %v, want %v", i, gs[i], ws[i])
+				}
+			}
+		})
+	}
+}
+
 // TestRotatingKVCachePrefillParity drives an L>1 prefill into a
 // rotating cache and verifies SDPA output through WithKVHistory
 // matches a reference computed from the same K/V with the model mask

@@ -27,9 +27,40 @@ type Model interface {
 	LoadWeights(tensors map[string]*mlx.Array) error
 }
 
+// DraftModel is an auxiliary model stored alongside a target model.
+type DraftModel interface {
+	LoadWeights(tensors map[string]*mlx.Array) error
+}
+
+// MTPDefaults holds model-provided draft-token defaults for speculative
+// decoding. Environment settings in the runner may override these values.
+type MTPDefaults struct {
+	InitialDraftTokens int
+	MaxDraftTokens     int
+	Enabled            bool
+}
+
+// MTPDefaultsProvider lets a model provide MTP policy defaults from its own
+// config without teaching the runner model-specific shape heuristics.
+type MTPDefaultsProvider interface {
+	MTPDraftDefaults(sample bool) MTPDefaults
+}
+
+// MTPDraftModel is a draft model capable of Gemma-style multi-token
+// prediction from target token embeddings, target hidden states, and target KV.
+type MTPDraftModel interface {
+	Draft(inputEmbeds *mlx.Array, position int32, caches []cache.Cache) (logits, hidden *mlx.Array)
+}
+
+// MTPEmbeddingModel exposes the target token embedding path used by MTP drafts.
+type MTPEmbeddingModel interface {
+	TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array
+}
+
 var (
-	mu       sync.Mutex
-	registry = make(map[string]func(root *model.Root) (Model, error))
+	mu            sync.Mutex
+	registry      = make(map[string]func(root *model.Root) (Model, error))
+	draftRegistry = make(map[string]func(root *model.Root, target Model) (DraftModel, error))
 )
 
 // Register registers a model constructor by architecture name.
@@ -42,6 +73,17 @@ func Register(arch string, fn func(root *model.Root) (Model, error)) {
 		panic(fmt.Sprintf("model architecture %q already registered", arch))
 	}
 	registry[arch] = fn
+}
+
+// RegisterDraft registers a draft model constructor by architecture name.
+func RegisterDraft(arch string, fn func(root *model.Root, target Model) (DraftModel, error)) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if _, exists := draftRegistry[arch]; exists {
+		panic(fmt.Sprintf("draft model architecture %q already registered", arch))
+	}
+	draftRegistry[arch] = fn
 }
 
 // New reads config.json from the manifest, detects the architecture, looks up
@@ -76,6 +118,51 @@ func New(root *model.Root) (Model, error) {
 	}
 
 	return fn(root)
+}
+
+// NewDraft constructs the draft model described by the manifest config, if any.
+func NewDraft(root *model.Root, target Model) (DraftModel, error) {
+	if root == nil || root.Draft == nil {
+		return nil, nil
+	}
+
+	configPath := root.Draft.Config
+	if configPath == "" {
+		configPath = "draft/config.json"
+	}
+	configData, err := root.Manifest.ReadConfig(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", configPath, err)
+	}
+
+	var archConfig struct {
+		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
+	}
+	if err := json.Unmarshal(configData, &archConfig); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", configPath, err)
+	}
+
+	arch := root.Draft.Architecture
+	if arch == "" && len(archConfig.Architectures) > 0 {
+		arch = archConfig.Architectures[0]
+	}
+	if arch == "" {
+		arch = archConfig.ModelType
+	}
+	if arch == "" {
+		return nil, fmt.Errorf("no draft architecture found in %s", configPath)
+	}
+	slog.Info("Draft model architecture", "arch", arch)
+
+	mu.Lock()
+	fn, ok := draftRegistry[arch]
+	mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("unsupported draft architecture: %s", arch)
+	}
+
+	return fn(root, target)
 }
 
 // Weights returns a function that loads model weights, then pins all

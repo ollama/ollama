@@ -139,6 +139,9 @@ func runOllamaCreate(ctx context.Context, t *testing.T, args ...string) {
 }
 
 func TestCreateSafetensorsLLM(t *testing.T) {
+	if testModel != "" {
+		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
+	}
 	skipIfRemote(t)
 
 	modelDir := filepath.Join(testdataModelsDir, "TinyLlama-1.1B")
@@ -214,6 +217,9 @@ func TestCreateSafetensorsLLM(t *testing.T) {
 }
 
 func TestCreateGGUF(t *testing.T) {
+	if testModel != "" {
+		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
+	}
 	modelDir := filepath.Join(testdataModelsDir, "Llama-3.2-1B-GGUF")
 	downloadHFModel(t, "bartowski/Llama-3.2-1B-Instruct-GGUF", modelDir,
 		"--include", "Llama-3.2-1B-Instruct-IQ3_M.gguf")

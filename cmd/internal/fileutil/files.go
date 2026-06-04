@@ -8,8 +8,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
+
+// Keep a bounded number of backups per file so config backups do not grow
+// without limit. We keep the 5 most recent backups and do not pin the oldest.
+const maxBackupsPerFile = 5
 
 // ReadJSON reads a JSON object file into a generic map.
 func ReadJSON(path string) (map[string]any, error) {
@@ -36,34 +43,51 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, info.Mode().Perm())
 }
 
-// BackupDir returns the shared backup directory used before overwriting files.
+// BackupDir returns the shared backup root used before overwriting files.
 func BackupDir() string {
-	return filepath.Join(os.TempDir(), "ollama-backups")
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".ollama", "backup")
+	}
+	return filepath.Join(os.TempDir(), "ollama-backup")
 }
 
-func backupToTmp(srcPath string) (string, error) {
+func writeBackupCopy(srcPath string, integration string) (string, error) {
 	dir := BackupDir()
+	name := filepath.Base(srcPath)
+	if integration != "" {
+		dir = filepath.Join(dir, integration)
+	}
+
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 
-	backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", filepath.Base(srcPath), time.Now().Unix()))
+	backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", name, time.Now().Unix()))
 	if err := copyFile(srcPath, backupPath); err != nil {
 		return "", err
 	}
+	pruneOldBackups(dir, name, maxBackupsPerFile)
 	return backupPath, nil
 }
 
-// WriteWithBackup writes data to path via temp file + rename, backing up any existing file first.
-func WriteWithBackup(path string, data []byte) error {
+// WriteWithBackup writes data to path via temp file + rename, backing up any
+// existing file first. Callers may optionally pass one integration name to
+// store backups under BackupDir()/.../<integration>/.
+func WriteWithBackup(path string, data []byte, integration ...string) error {
+	backupIntegration := ""
+	if len(integration) > 0 {
+		backupIntegration = integration[0]
+	}
+
 	var backupPath string
 	// backup must be created before any writes to the target file
 	if existingContent, err := os.ReadFile(path); err == nil {
-		if !bytes.Equal(existingContent, data) {
-			backupPath, err = backupToTmp(path)
-			if err != nil {
-				return fmt.Errorf("backup failed: %w", err)
-			}
+		if bytes.Equal(existingContent, data) {
+			return nil
+		}
+		backupPath, err = writeBackupCopy(path, backupIntegration)
+		if err != nil {
+			return fmt.Errorf("backup failed: %w", err)
 		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("read existing file: %w", err)
@@ -100,4 +124,53 @@ func WriteWithBackup(path string, data []byte) error {
 	}
 
 	return nil
+}
+
+func pruneOldBackups(dir, name string, keep int) {
+	if keep < 1 {
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	type backupEntry struct {
+		name      string
+		timestamp int64
+	}
+
+	prefix := name + "."
+	backups := make([]backupEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+
+		timestamp, err := strconv.ParseInt(strings.TrimPrefix(entry.Name(), prefix), 10, 64)
+		if err != nil {
+			continue
+		}
+
+		backups = append(backups, backupEntry{
+			name:      entry.Name(),
+			timestamp: timestamp,
+		})
+	}
+
+	if len(backups) <= keep {
+		return
+	}
+
+	sort.Slice(backups, func(i, j int) bool {
+		if backups[i].timestamp != backups[j].timestamp {
+			return backups[i].timestamp > backups[j].timestamp
+		}
+		return backups[i].name > backups[j].name
+	})
+
+	for _, backup := range backups[keep:] {
+		_ = os.Remove(filepath.Join(dir, backup.name))
+	}
 }

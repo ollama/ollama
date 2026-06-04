@@ -1,5 +1,3 @@
-//go:build goexperiment.synctest
-
 package backoff
 
 import (
@@ -11,7 +9,7 @@ import (
 )
 
 func TestLoop(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		last := -1
 
 		ctx, cancel := context.WithCancel(t.Context())

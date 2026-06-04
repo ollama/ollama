@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -724,12 +725,16 @@ func detectModelOptQuantization(modelDir string) bool {
 }
 
 func resolveEffectiveQuantization(cfg sourceModelConfig, sourceKind sourceQuantizedKind, requested string) (string, error) {
+	return resolveEffectiveQuantizationForFlag(cfg, sourceKind, requested, "--quantize")
+}
+
+func resolveEffectiveQuantizationForFlag(cfg sourceModelConfig, sourceKind sourceQuantizedKind, requested, flagName string) (string, error) {
 	switch sourceKind {
 	case sourceQuantizedKindNone:
 		return requested, nil
 	case sourceQuantizedKindPrequantized:
 		if requested != "" {
-			return "", fmt.Errorf("cannot requantize already-quantized source model with --quantize %q", requested)
+			return "", fmt.Errorf("cannot requantize already-quantized source model with %s %q", flagName, requested)
 		}
 		return "", nil
 	case sourceQuantizedKindSourceFP8:
@@ -746,7 +751,7 @@ func resolveEffectiveQuantization(cfg sourceModelConfig, sourceKind sourceQuanti
 			case "nvfp4", "mxfp4", "mxfp8":
 				return requested, nil
 			default:
-				return "", fmt.Errorf("cannot convert already-quantized fp8 source model with --quantize %q", requested)
+				return "", fmt.Errorf("cannot convert already-quantized fp8 source model with %s %q", flagName, requested)
 			}
 		}
 		return "mxfp8", nil
@@ -810,6 +815,7 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Gemma4ForCausalLM":                    newGemma4ImportTransform,
 	"Gemma4ForConditionalGeneration":       newGemma4ImportTransform,
 	"LagunaForCausalLM":                    newLagunaImportTransform,
+	"Gemma4AssistantForCausalLM":           newGemma4ImportTransform,
 }
 
 func newTensorImportTransform(modelDir string, cfg sourceModelConfig) (tensorImportTransform, error) {
@@ -1165,6 +1171,136 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 
 	fn(fmt.Sprintf("successfully imported %s with %d layers", modelName, len(layers)))
 	return nil
+}
+
+func normalizeRequestedQuantization(flagName, quantize string) (string, error) {
+	q := normalizeQuantType(strings.TrimSpace(quantize))
+	switch q {
+	case "", "int4", "int8", "nvfp4", "mxfp4", "mxfp8":
+		return q, nil
+	default:
+		return "", fmt.Errorf("unsupported %s %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", flagName, quantize)
+	}
+}
+
+// CreateDraftSafetensorsLayers imports an assistant/draft safetensors model
+// into prefixed tensor and config layers. When draftQuantize is non-empty,
+// eligible draft tensors are quantized with the same per-architecture policy
+// used by target safetensors imports.
+func CreateDraftSafetensorsLayers(modelDir, tensorPrefix, configPrefix, draftQuantize string, createLayer LayerCreator, createTensorLayer QuantizingTensorLayerCreator, fn func(status string)) ([]LayerInfo, error) {
+	if tensorPrefix == "" {
+		return nil, fmt.Errorf("draft tensor prefix must not be empty")
+	}
+	if configPrefix == "" {
+		return nil, fmt.Errorf("draft config prefix must not be empty")
+	}
+	effectiveQuantize, err := normalizeRequestedQuantization("--draft-quantize", draftQuantize)
+	if err != nil {
+		return nil, err
+	}
+
+	var importTransform tensorImportTransform = noopImportTransform{}
+	if effectiveQuantize != "" {
+		sourceConfig, err := readSourceModelConfig(modelDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read draft config.json: %w", err)
+		}
+		sourceQuantKind, err := inspectSourceQuantization(modelDir, sourceConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to inspect draft quantization: %w", err)
+		}
+		effectiveQuantize, err = resolveEffectiveQuantizationForFlag(sourceConfig, sourceQuantKind, effectiveQuantize, "--draft-quantize")
+		if err != nil {
+			return nil, err
+		}
+		importTransform, err = newTensorImportTransform(modelDir, sourceConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to construct draft import transform for architecture %q: %w", sourceConfig.Architecture(), err)
+		}
+	}
+
+	entries, err := os.ReadDir(modelDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read draft directory: %w", err)
+	}
+
+	var layers []LayerInfo
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".safetensors") {
+			continue
+		}
+
+		stPath := filepath.Join(modelDir, entry.Name())
+		extractor, err := safetensors.OpenForExtraction(stPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open draft %s: %w", stPath, err)
+		}
+
+		tensorNames := extractor.ListTensors()
+		fn(fmt.Sprintf("importing draft %s (%d tensors%s)", entry.Name(), len(tensorNames), importQuantizationStatus(sourceQuantizedKindNone, effectiveQuantize)))
+		for _, tensorName := range tensorNames {
+			if importTransform.skipTensor(tensorName) {
+				continue
+			}
+			td, err := extractor.GetTensor(tensorName)
+			if err != nil {
+				extractor.Close()
+				return nil, fmt.Errorf("failed to get draft tensor %s: %w", tensorName, err)
+			}
+
+			outTDs, err := importTransform.transformTensor(td)
+			if err != nil {
+				extractor.Close()
+				return nil, fmt.Errorf("failed to transform draft tensor %s: %w", tensorName, err)
+			}
+			for _, transformedTD := range outTDs {
+				if transformedTD == nil {
+					continue
+				}
+				outTD := transformedTD.WithName(tensorPrefix + transformedTD.Name)
+				quantizeType := ""
+				if effectiveQuantize != "" {
+					quantizeType = importTransform.quantizationType(outTD.Name, outTD.Shape, effectiveQuantize)
+					if isEmbedTokensWeight(outTD.Name) {
+						quantizeType = ""
+					}
+				}
+				newLayers, err := createTensorLayer(outTD.SafetensorsReader(), outTD.Name, outTD.Dtype, outTD.Shape, quantizeType)
+				if err != nil {
+					extractor.Close()
+					return nil, fmt.Errorf("failed to create draft layer for %s: %w", tensorName, err)
+				}
+				layers = append(layers, newLayers...)
+			}
+		}
+		extractor.Close()
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		if entry.Name() == "model.safetensors.index.json" {
+			continue
+		}
+
+		cfgPath := entry.Name()
+		fullPath := filepath.Join(modelDir, cfgPath)
+		fn(fmt.Sprintf("importing draft config %s", cfgPath))
+
+		f, err := os.Open(fullPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open draft %s: %w", cfgPath, err)
+		}
+		layer, err := createLayer(f, "application/vnd.ollama.image.json", path.Join(configPrefix, cfgPath))
+		f.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create draft config layer for %s: %w", cfgPath, err)
+		}
+		layers = append(layers, layer)
+	}
+
+	return layers, nil
 }
 
 func shouldSkipSourceCompanion(name string, tensorSet map[string]struct{}, sourceTensorFiles map[string]string) bool {

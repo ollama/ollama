@@ -58,6 +58,32 @@ TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
 	assert.Equal(t, expectedCommands, modelfile.Commands)
 }
 
+func TestParseFileDraft(t *testing.T) {
+	modelfile, err := ParseFile(strings.NewReader(`
+FROM base
+DRAFT ./assistant
+`))
+	require.NoError(t, err)
+
+	expectedCommands := []Command{
+		{Name: "model", Args: "base"},
+		{Name: "draft", Args: "./assistant"},
+	}
+	assert.Equal(t, expectedCommands, modelfile.Commands)
+	assert.Contains(t, modelfile.String(), "DRAFT ./assistant")
+}
+
+func TestCreateRequestDraftRequiresExperimental(t *testing.T) {
+	modelfile, err := ParseFile(strings.NewReader(`
+FROM base
+DRAFT ./assistant
+`))
+	require.NoError(t, err)
+
+	_, err = modelfile.CreateRequest("")
+	require.ErrorContains(t, err, "DRAFT requires --experimental")
+}
+
 func TestParseFileTrimSpace(t *testing.T) {
 	input := `
 FROM "     model 1"

@@ -41,9 +41,10 @@ func TestModelsChat(t *testing.T) {
 
 	var chatModels []string
 	if s := os.Getenv("OLLAMA_NEW_ENGINE"); s != "" {
-		chatModels = ollamaEngineChatModels
+		chatModels = append(ollamaEngineChatModels, mlxEngineChatModels...)
 	} else {
 		chatModels = append(ollamaEngineChatModels, llamaRunnerChatModels...)
+		chatModels = append(chatModels, mlxEngineChatModels...)
 	}
 
 	for _, model := range testModels(chatModels) {
@@ -71,6 +72,7 @@ func TestModelsChat(t *testing.T) {
 				func(response api.GenerateResponse) error { return nil },
 			)
 			if err != nil {
+				skipIfMLXUnsupported(t, err)
 				t.Fatalf("failed to load model %s: %s", model, err)
 			}
 			gpuPercent := getGPUPercent(ctx, t, client, model)

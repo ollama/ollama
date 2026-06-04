@@ -43,7 +43,7 @@ func (c *Copilot) findPath() (string, error) {
 	return fallback, nil
 }
 
-func (c *Copilot) Run(model string, args []string) error {
+func (c *Copilot) Run(model string, _ []LaunchModel, args []string) error {
 	copilotPath, err := c.findPath()
 	if err != nil {
 		return fmt.Errorf("copilot is not installed, install from https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli")

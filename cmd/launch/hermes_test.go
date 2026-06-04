@@ -552,7 +552,7 @@ func TestHermesRunPassthroughArgs(t *testing.T) {
 	}
 
 	h := &Hermes{}
-	if err := h.Run("", []string{"--continue"}); err != nil {
+	if err := h.Run("", nil, []string{"--continue"}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
@@ -603,7 +603,7 @@ fi
 	}
 
 	h := &Hermes{}
-	if err := h.Run("", nil); err != nil {
+	if err := h.Run("", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
@@ -655,10 +655,10 @@ func TestHermesRun_SetUpLaterRepromptsOnLaterLaunches(t *testing.T) {
 	}
 
 	h := &Hermes{}
-	if err := h.Run("", nil); err != nil {
+	if err := h.Run("", nil, nil); err != nil {
 		t.Fatalf("first Run returned error: %v", err)
 	}
-	if err := h.Run("", nil); err != nil {
+	if err := h.Run("", nil, nil); err != nil {
 		t.Fatalf("second Run returned error: %v", err)
 	}
 
@@ -713,7 +713,7 @@ func TestHermesRun_SkipsMessagingPromptWhenConfigured(t *testing.T) {
 	}
 
 	h := &Hermes{}
-	if err := h.Run("", nil); err != nil {
+	if err := h.Run("", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
@@ -753,7 +753,7 @@ func TestHermesRun_SkipsMessagingPromptWithYesPolicy(t *testing.T) {
 	}
 
 	h := &Hermes{}
-	if err := h.Run("", nil); err != nil {
+	if err := h.Run("", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
@@ -798,7 +798,7 @@ fi
 	}
 
 	h := &Hermes{}
-	err := h.Run("", nil)
+	err := h.Run("", nil, nil)
 	if err == nil {
 		t.Fatal("expected messaging setup failure")
 	}

@@ -29,7 +29,7 @@ func (p *Poolside) args(model string, extra []string) []string {
 	return args
 }
 
-func (p *Poolside) Run(model string, args []string) error {
+func (p *Poolside) Run(model string, _ []LaunchModel, args []string) error {
 	if poolsideGOOS == "windows" {
 		return poolsideUnsupportedError()
 	}

@@ -31,13 +31,61 @@ type downloader struct {
 	baseURL      string
 	destDir      string
 	repository   string // Repository path for blob URLs (e.g., "library/model")
-	token        *string
+	tokenMu      sync.RWMutex
+	token        string
 	getToken     func(context.Context, AuthChallenge) (string, error)
 	userAgent    string
 	stallTimeout time.Duration
 	progress     *progressTracker
 	speeds       *speedTracker
 	logger       *slog.Logger
+	// bodySem caps the number of simultaneous body-bearing transfers so a
+	// modest home downlink isn't saturated. Always set by download(); nil
+	// only when tests build downloader directly (in which case holdBody is
+	// a no-op).
+	bodySem *semaphore.Weighted
+}
+
+// authToken returns the current bearer token. Safe to call concurrently with
+// refreshToken.
+func (d *downloader) authToken() string {
+	d.tokenMu.RLock()
+	defer d.tokenMu.RUnlock()
+	return d.token
+}
+
+// refreshToken coalesces token fetches so concurrent 401s don't all hit the
+// auth server. prev is the token the caller used in the request that got
+// rejected: if the stored token has already moved past prev, another
+// goroutine has refreshed and we just observe its result; otherwise the
+// caller holds the lock and performs the fetch.
+func (d *downloader) refreshToken(ctx context.Context, ch AuthChallenge, prev string) error {
+	d.tokenMu.Lock()
+	defer d.tokenMu.Unlock()
+	if d.token != prev {
+		return nil
+	}
+	if d.getToken == nil {
+		return errors.New("no token refresh callback")
+	}
+	t, err := d.getToken(ctx, ch)
+	if err != nil {
+		return err
+	}
+	d.token = t
+	return nil
+}
+
+// holdBody acquires a body-transfer slot. The returned release must be
+// called exactly once after the body-bearing request completes (defer is fine).
+func (d *downloader) holdBody(ctx context.Context) (func(), error) {
+	if d.bodySem == nil {
+		return func() {}, nil
+	}
+	if err := d.bodySem.Acquire(ctx, 1); err != nil {
+		return nil, err
+	}
+	return func() { d.bodySem.Release(1) }, nil
 }
 
 func download(ctx context.Context, opts DownloadOptions) error {
@@ -68,7 +116,6 @@ func download(ctx context.Context, opts DownloadOptions) error {
 		return nil
 	}
 
-	token := opts.Token
 	progress := newProgressTracker(total, opts.Progress)
 	progress.add(alreadyCompleted) // Report already-downloaded bytes upfront
 
@@ -77,7 +124,7 @@ func download(ctx context.Context, opts DownloadOptions) error {
 		baseURL:      opts.BaseURL,
 		destDir:      opts.DestDir,
 		repository:   cmp.Or(opts.Repository, "library/_"),
-		token:        &token,
+		token:        opts.Token,
 		getToken:     opts.GetToken,
 		userAgent:    cmp.Or(opts.UserAgent, defaultUserAgent),
 		stallTimeout: cmp.Or(opts.StallTimeout, defaultStallTimeout),
@@ -85,10 +132,13 @@ func download(ctx context.Context, opts DownloadOptions) error {
 		speeds:       &speedTracker{},
 		logger:       opts.Logger,
 	}
+	// 0 or negative serializes; never unbounded.
+	d.bodySem = semaphore.NewWeighted(int64(max(1, opts.BodyConcurrency)))
 
 	concurrency := cmp.Or(opts.Concurrency, DefaultDownloadConcurrency)
 	sem := semaphore.NewWeighted(int64(concurrency))
 
+	start := time.Now()
 	g, ctx := errgroup.WithContext(ctx)
 	for _, blob := range blobs {
 		g.Go(func() error {
@@ -99,7 +149,18 @@ func download(ctx context.Context, opts DownloadOptions) error {
 			return d.download(ctx, blob)
 		})
 	}
-	return g.Wait()
+	err := g.Wait()
+	elapsed := time.Since(start)
+	done := d.progress.completed.Load() - alreadyCompleted
+	mbps := float64(done) / 1e6 / max(0.001, elapsed.Seconds())
+	slog.Debug("download summary",
+		"blobs", len(blobs),
+		"bytes", done,
+		"duration", elapsed.Round(time.Millisecond),
+		"mb_per_sec", fmt.Sprintf("%.1f", mbps),
+		"max_transfers", max(1, opts.BodyConcurrency),
+	)
+	return err
 }
 
 func (d *downloader) download(ctx context.Context, blob Blob) error {
@@ -158,6 +219,14 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 		d.logger.Debug("downloading blob", "digest", blob.Digest, "size", blob.Size)
 	}
 
+	// Hold a body slot for the duration of the GET — released when the body
+	// has been read and the response closed.
+	release, err := d.holdBody(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+
 	baseURL, _ := url.Parse(d.baseURL)
 	u, err := d.resolve(ctx, fmt.Sprintf("%s/v2/%s/blobs/%s", d.baseURL, d.repository, blob.Digest))
 	if err != nil {
@@ -183,8 +252,10 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	req.Header.Set("User-Agent", d.userAgent)
 	// Add auth only for same-host (not CDN)
-	if u.Host == baseURL.Host && *d.token != "" {
-		req.Header.Set("Authorization", "Bearer "+*d.token)
+	if u.Host == baseURL.Host {
+		if t := d.authToken(); t != "" {
+			req.Header.Set("Authorization", "Bearer "+t)
+		}
 	}
 	if existingSize > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingSize))
@@ -331,8 +402,9 @@ func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, erro
 	for range 10 {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		req.Header.Set("User-Agent", d.userAgent)
-		if *d.token != "" {
-			req.Header.Set("Authorization", "Bearer "+*d.token)
+		prev := d.authToken()
+		if prev != "" {
+			req.Header.Set("Authorization", "Bearer "+prev)
 		}
 
 		resp, err := d.client.Do(req)
@@ -351,7 +423,7 @@ func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, erro
 				return nil, fmt.Errorf("unauthorized")
 			}
 			ch := parseAuthChallenge(resp.Header.Get("WWW-Authenticate"))
-			if *d.token, err = d.getToken(ctx, ch); err != nil {
+			if err := d.refreshToken(ctx, ch, prev); err != nil {
 				return nil, err
 			}
 		case http.StatusTemporaryRedirect, http.StatusFound, http.StatusMovedPermanently:

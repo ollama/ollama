@@ -54,34 +54,27 @@ import (
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcmd "github.com/ollama/ollama/x/cmd"
+	xcreate "github.com/ollama/ollama/x/create"
 	xcreateclient "github.com/ollama/ollama/x/create/client"
 	"github.com/ollama/ollama/x/imagegen"
 )
 
 func init() {
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
-	launch.DefaultSingleSelector = func(title string, items []launch.ModelItem, current string) (string, error) {
-		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-			return "", fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
-		}
-		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
-		result, err := tui.SelectSingle(title, tuiItems, current)
-		if errors.Is(err, tui.ErrCancelled) {
-			return "", launch.ErrCancelled
-		}
-		return result, err
+	launch.DefaultSingleSelector = func(title string, items []launch.SelectionItem, current string) (string, error) {
+		return runTUISingleSelector(title, items, current, nil)
 	}
 
-	launch.DefaultMultiSelector = func(title string, items []launch.ModelItem, preChecked []string) ([]string, error) {
-		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-			return nil, fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
-		}
-		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
-		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
-		if errors.Is(err, tui.ErrCancelled) {
-			return nil, launch.ErrCancelled
-		}
-		return result, err
+	launch.DefaultSingleSelectorWithUpdates = func(title string, items []launch.SelectionItem, current string, updates <-chan []launch.SelectionItem) (string, error) {
+		return runTUISingleSelector(title, items, current, updates)
+	}
+
+	launch.DefaultMultiSelector = func(title string, items []launch.SelectionItem, preChecked []string) ([]string, error) {
+		return runTUIMultiSelector(title, items, preChecked, nil)
+	}
+
+	launch.DefaultMultiSelectorWithUpdates = func(title string, items []launch.SelectionItem, preChecked []string, updates <-chan []launch.SelectionItem) ([]string, error) {
+		return runTUIMultiSelector(title, items, preChecked, updates)
 	}
 
 	launch.DefaultSignIn = func(modelName, signInURL string) (string, error) {
@@ -92,7 +85,53 @@ func init() {
 		return userName, err
 	}
 
+	launch.DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
+		plan, err := tui.RunUpgrade(modelName, requiredPlan)
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", launch.ErrCancelled
+		}
+		return plan, err
+	}
+
 	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
+}
+
+func runTUISingleSelector(title string, items []launch.SelectionItem, current string, updates <-chan []launch.SelectionItem) (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return "", fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+	}
+	tuiItems := tui.ReorderItems(tui.ConvertItems(items))
+	result, err := tui.SelectSingleWithUpdates(title, tuiItems, current, convertSelectionItemUpdates(updates))
+	if errors.Is(err, tui.ErrCancelled) {
+		return "", launch.ErrCancelled
+	}
+	return result, err
+}
+
+func runTUIMultiSelector(title string, items []launch.SelectionItem, preChecked []string, updates <-chan []launch.SelectionItem) ([]string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return nil, fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+	}
+	tuiItems := tui.ReorderItems(tui.ConvertItems(items))
+	result, err := tui.SelectMultipleWithUpdates(title, tuiItems, preChecked, convertSelectionItemUpdates(updates))
+	if errors.Is(err, tui.ErrCancelled) {
+		return nil, launch.ErrCancelled
+	}
+	return result, err
+}
+
+func convertSelectionItemUpdates(updates <-chan []launch.SelectionItem) <-chan []tui.SelectItem {
+	if updates == nil {
+		return nil
+	}
+	out := make(chan []tui.SelectItem, 1)
+	go func() {
+		defer close(out)
+		for items := range updates {
+			out <- tui.ReorderItems(tui.ConvertItems(items))
+		}
+	}()
+	return out
 }
 
 const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
@@ -145,6 +184,39 @@ func isLocalhost() bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
+func resolveExperimentalLocalModelDir(ref, filename string) string {
+	if ref == "" || filepath.IsAbs(ref) || filename == "" {
+		return ref
+	}
+
+	candidate := filepath.Join(filepath.Dir(filename), ref)
+	if xcreate.IsSafetensorsModelDir(candidate) || xcreate.IsTensorModelDir(candidate) {
+		return candidate
+	}
+
+	return ref
+}
+
+func resolveExperimentalDraftDir(ref, filename string) (string, error) {
+	if ref == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(ref) {
+		if xcreate.IsSafetensorsModelDir(ref) {
+			return ref, nil
+		}
+		return "", fmt.Errorf("draft %s is not a supported safetensors model directory", ref)
+	}
+	if filename != "" {
+		candidate := filepath.Join(filepath.Dir(filename), ref)
+		if xcreate.IsSafetensorsModelDir(candidate) {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("DRAFT model references are not supported with --experimental yet: %s", ref)
+}
+
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
@@ -159,6 +231,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	// Check for --experimental flag for safetensors model creation
 	// This gates both safetensors LLM and imagegen model creation
 	experimental, _ := cmd.Flags().GetBool("experimental")
+	draftQuantize, _ := cmd.Flags().GetString("draft-quantize")
+	if draftQuantize != "" && !experimental {
+		return errors.New("--draft-quantize requires --experimental")
+	}
 	if experimental {
 		if !isLocalhost() {
 			return errors.New("remote safetensor model creation not yet supported")
@@ -192,17 +268,22 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		// Resolve relative paths based on Modelfile location
-		if !filepath.IsAbs(modelDir) && filename != "" {
-			modelDir = filepath.Join(filepath.Dir(filename), modelDir)
+		modelDir = resolveExperimentalLocalModelDir(modelDir, filename)
+		if mfConfig.Draft != "" {
+			draftDir, err := resolveExperimentalDraftDir(mfConfig.Draft, filename)
+			if err != nil {
+				return err
+			}
+			mfConfig.Draft = draftDir
 		}
 
 		quantize, _ := cmd.Flags().GetString("quantize")
 		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
-			ModelName: modelName,
-			ModelDir:  modelDir,
-			Quantize:  quantize,
-			Modelfile: mfConfig,
+			ModelName:     modelName,
+			ModelDir:      modelDir,
+			Quantize:      quantize,
+			DraftQuantize: draftQuantize,
+			Modelfile:     mfConfig,
 		}, p)
 	}
 
@@ -1928,7 +2009,7 @@ func appendEnvDocs(cmd *cobra.Command, envs []envconfig.EnvVar) {
 Environment Variables:
 `
 	for _, e := range envs {
-		envUsage += fmt.Sprintf("      %-24s   %s\n", e.Name, e.Description)
+		envUsage += fmt.Sprintf("      %-27s   %s\n", e.Name, e.Description)
 	}
 
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
@@ -2047,12 +2128,15 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		return
 	}
 
+	accountPrefetch := launch.StartAccountStatePrefetch(cmd.Context())
 	deps := launcherDeps{
-		buildState:        launch.BuildLauncherState,
-		runMenu:           tui.RunMenu,
-		resolveRunModel:   launch.ResolveRunModel,
-		launchIntegration: launch.LaunchIntegration,
-		runModel:          launchInteractiveModel,
+		buildState:          launch.BuildLauncherState,
+		runMenu:             tui.RunMenu,
+		resolveRunModel:     launch.ResolveRunModel,
+		launchIntegration:   launch.LaunchIntegration,
+		runModel:            launchInteractiveModel,
+		accountState:        accountPrefetch.StateIfReady,
+		accountStateUpdates: accountPrefetch.StateUpdates,
 	}
 
 	for {
@@ -2067,17 +2151,22 @@ func runInteractiveTUI(cmd *cobra.Command) {
 }
 
 type launcherDeps struct {
-	buildState        func(context.Context) (*launch.LauncherState, error)
-	runMenu           func(*launch.LauncherState) (tui.TUIAction, error)
-	resolveRunModel   func(context.Context, launch.RunModelRequest) (string, error)
-	launchIntegration func(context.Context, launch.IntegrationLaunchRequest) error
-	runModel          func(*cobra.Command, string) error
+	buildState          func(context.Context) (*launch.LauncherState, error)
+	runMenu             func(*launch.LauncherState) (tui.TUIAction, error)
+	resolveRunModel     func(context.Context, launch.RunModelRequest) (string, error)
+	launchIntegration   func(context.Context, launch.IntegrationLaunchRequest) error
+	runModel            func(*cobra.Command, string) error
+	accountState        func() *launch.AccountState
+	accountStateUpdates func(context.Context) <-chan *launch.AccountState
 }
 
 func runInteractiveTUIStep(cmd *cobra.Command, deps launcherDeps) (bool, error) {
 	state, err := deps.buildState(cmd.Context())
 	if err != nil {
 		return false, fmt.Errorf("build launcher state: %w", err)
+	}
+	if state != nil && deps.accountState != nil {
+		state.AccountState = deps.accountState()
 	}
 
 	action, err := deps.runMenu(state)
@@ -2099,7 +2188,13 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 		return false, nil
 	case tui.TUIActionRunModel:
 		saveLauncherSelection(action)
-		modelName, err := deps.resolveRunModel(cmd.Context(), action.RunModelRequest())
+		req := action.RunModelRequest()
+		if deps.accountState != nil {
+			req.AccountState = deps.accountState()
+			req.AccountStateProvider = deps.accountState
+		}
+		req.AccountStateUpdates = deps.accountStateUpdates
+		modelName, err := deps.resolveRunModel(cmd.Context(), req)
 		if errors.Is(err, launch.ErrCancelled) {
 			return true, nil
 		}
@@ -2112,7 +2207,13 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 		return true, nil
 	case tui.TUIActionLaunchIntegration:
 		saveLauncherSelection(action)
-		err := deps.launchIntegration(cmd.Context(), action.IntegrationLaunchRequest())
+		req := action.IntegrationLaunchRequest()
+		if deps.accountState != nil {
+			req.AccountState = deps.accountState()
+			req.AccountStateProvider = deps.accountState
+		}
+		req.AccountStateUpdates = deps.accountStateUpdates
+		err := deps.launchIntegration(cmd.Context(), req)
 		if errors.Is(err, launch.ErrCancelled) {
 			return true, nil
 		}
@@ -2130,7 +2231,7 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 
 func launcherActionExitsLoop(integration string) bool {
 	switch integration {
-	case "claude-desktop", "vscode":
+	case "codex-app", "vscode":
 		return true
 	default:
 		return false
@@ -2176,6 +2277,9 @@ func NewCLI() *cobra.Command {
 			if experimental, _ := cmd.Flags().GetBool("experimental"); experimental {
 				return nil
 			}
+			if draftQuantize, _ := cmd.Flags().GetString("draft-quantize"); draftQuantize != "" {
+				return errors.New("--draft-quantize requires --experimental")
+			}
 			return checkServerHeartbeat(cmd, args)
 		},
 		RunE: CreateHandler,
@@ -2183,6 +2287,7 @@ func NewCLI() *cobra.Command {
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
+	createCmd.Flags().String("draft-quantize", "", "Quantize draft model to this level")
 	createCmd.Flags().Bool("experimental", false, "Enable experimental safetensors model creation")
 
 	showCmd := &cobra.Command{
@@ -2368,6 +2473,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_CONTEXT_LENGTH"],
 				envVars["OLLAMA_KEEP_ALIVE"],
 				envVars["OLLAMA_MAX_LOADED_MODELS"],
+				envVars["OLLAMA_MAX_TRANSFER_STREAMS"],
 				envVars["OLLAMA_MAX_QUEUE"],
 				envVars["OLLAMA_MODELS"],
 				envVars["OLLAMA_NUM_PARALLEL"],

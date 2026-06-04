@@ -15,6 +15,7 @@ import (
 
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/util/bufioutil"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -323,7 +324,7 @@ func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ..
 		return val, true
 	}
 
-	slog.Debug("key with type not found", "key", key, "default", defaultValue[0])
+	logutil.Trace("key with type not found", "key", key, "default", defaultValue[0])
 	return defaultValue[0], false
 }
 

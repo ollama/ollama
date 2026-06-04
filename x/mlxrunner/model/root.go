@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	modeltypes "github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
@@ -22,6 +23,7 @@ type TensorQuantInfo struct {
 // Root wraps a ModelManifest with pre-scanned quantization metadata.
 type Root struct {
 	Manifest *manifest.ModelManifest
+	Draft    *modeltypes.Draft
 
 	// Backwards-compatible model-level quant metadata (first tensor blob).
 	quantType string
@@ -43,6 +45,7 @@ func Open(modelName string) (*Root, error) {
 		Manifest:    m,
 		tensorQuant: make(map[string]*TensorQuantInfo),
 	}
+	root.Draft = readDraftConfig(m)
 
 	for _, layer := range m.GetTensorLayers("") {
 		blobPath := m.BlobPath(layer.Digest)
@@ -66,6 +69,34 @@ func Open(modelName string) (*Root, error) {
 	}
 
 	return root, nil
+}
+
+func readDraftConfig(m *manifest.ModelManifest) *modeltypes.Draft {
+	if m == nil || m.Manifest == nil || m.Manifest.Config.Digest == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(m.BlobPath(m.Manifest.Config.Digest))
+	if err != nil {
+		return nil
+	}
+
+	var cfg modeltypes.ConfigV2
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+	if cfg.Draft != nil {
+		return cfg.Draft
+	}
+
+	if m.GetConfigLayer("draft/config.json") != nil {
+		return &modeltypes.Draft{
+			ModelFormat:  "safetensors",
+			TensorPrefix: "draft.",
+			Config:       "draft/config.json",
+		}
+	}
+	return nil
 }
 
 // Close is a no-op for now (future: release resources).
