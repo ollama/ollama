@@ -11,6 +11,8 @@ import (
 	"github.com/ollama/ollama/envconfig"
 )
 
+const gooseInstallURL = "https://block.github.io/goose/docs/getting-started/installation/"
+
 var (
 	// gooseGOOS allows tests to override the detected operating system.
 	gooseGOOS = runtime.GOOS
@@ -173,7 +175,7 @@ func (g *Goose) runDesktopApp(model string) error {
 		if path := gooseDesktopAppPath(); path != "" {
 			return gooseOpenPath(path, env)
 		}
-		return fmt.Errorf("Goose.app was not found; install Goose Desktop and re-run 'ollama launch goose'")
+		return gooseDesktopNotInstalledError()
 	case "windows":
 		if path := gooseDesktopAppPath(); path != "" {
 			return gooseOpenPath(path, env)
@@ -184,9 +186,20 @@ func (g *Goose) runDesktopApp(model string) error {
 		if appID := gooseStartID(); appID != "" {
 			return gooseOpenStartID(appID, env)
 		}
-		return fmt.Errorf("Goose desktop app was not found; install Goose Desktop and re-run 'ollama launch goose'")
+		return gooseDesktopNotInstalledError()
 	default:
 		return fmt.Errorf("Goose desktop app is only supported on macOS and Windows; use 'ollama launch goose-cli' for the Goose CLI")
+	}
+}
+
+func gooseDesktopNotInstalledError() error {
+	switch gooseGOOS {
+	case "windows":
+		return fmt.Errorf("Goose Desktop wasn't found.\n\nIf you downloaded a zip or extracted Goose manually, open Goose once, then run:\n  ollama launch goose\n\nOr install Goose Desktop:\n  %s\n\nIf you prefer the CLI, run:\n  ollama launch goose-cli", gooseInstallURL)
+	case "darwin":
+		return fmt.Errorf("Goose Desktop wasn't found. Install Goose Desktop from %s, then re-run 'ollama launch goose'", gooseInstallURL)
+	default:
+		return (&Goose{}).Supported()
 	}
 }
 

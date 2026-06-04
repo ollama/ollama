@@ -153,7 +153,7 @@ var integrationSpecs = []*IntegrationSpec{
 			CheckInstalled: func() bool {
 				return (&Goose{}).installed()
 			},
-			URL: "https://block.github.io/goose/docs/getting-started/installation/",
+			URL: gooseInstallURL,
 		},
 	},
 	{
@@ -164,7 +164,7 @@ var integrationSpecs = []*IntegrationSpec{
 			CheckInstalled: func() bool {
 				return (&GooseCLI{}).installed()
 			},
-			URL: "https://block.github.io/goose/docs/getting-started/installation/",
+			URL: gooseInstallURL,
 		},
 	},
 	{
@@ -525,6 +525,9 @@ func EnsureIntegrationInstalled(name string, runner Runner) error {
 	}
 	if integration.autoInstallable {
 		return integration.spec.Install.EnsureInstalled()
+	}
+	if integration.spec.Name == "goose-desktop" {
+		return gooseDesktopNotInstalledError()
 	}
 
 	switch {

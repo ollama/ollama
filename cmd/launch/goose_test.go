@@ -206,6 +206,36 @@ func TestGooseRunDesktopDoesNotFallBackToCLI(t *testing.T) {
 	}
 }
 
+func TestEnsureGooseDesktopInstalledWindowsMessage(t *testing.T) {
+	prev := gooseGOOS
+	t.Cleanup(func() { gooseGOOS = prev })
+	gooseGOOS = "windows"
+
+	prevStat := gooseStatFn
+	t.Cleanup(func() { gooseStatFn = prevStat })
+	gooseStatFn = func(string) (os.FileInfo, error) { return nil, &fs.PathError{Err: errors.New("not exist")} }
+
+	prevRunPath := gooseRunPath
+	t.Cleanup(func() { gooseRunPath = prevRunPath })
+	gooseRunPath = func() string { return "" }
+
+	prevStartID := gooseStartID
+	t.Cleanup(func() { gooseStartID = prevStartID })
+	gooseStartID = func() string { return "" }
+
+	t.Setenv("PATH", t.TempDir())
+
+	err := EnsureIntegrationInstalled("goose", &Goose{})
+	if err == nil {
+		t.Fatal("expected missing Goose Desktop error")
+	}
+	for _, want := range []string{"Goose Desktop wasn't found", "open Goose once", "ollama launch goose", "ollama launch goose-cli", gooseInstallURL} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q, got:\n%v", want, err)
+		}
+	}
+}
+
 func TestGooseCLIRunNotInstalled(t *testing.T) {
 	// Force non-darwin so we hit runCLI path
 	prev := gooseGOOS
