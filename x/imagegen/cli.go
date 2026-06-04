@@ -167,28 +167,30 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 		return err
 	}
 
-	if imageBase64 != "" {
-		// Decode base64 and save to CWD
-		imageData, err := base64.StdEncoding.DecodeString(imageBase64)
-		if err != nil {
-			return fmt.Errorf("failed to decode image: %w", err)
-		}
-
-		// Create filename from prompt
-		safeName := sanitizeFilename(prompt)
-		if len(safeName) > 50 {
-			safeName = safeName[:50]
-		}
-		timestamp := time.Now().Format("20060102-150405")
-		filename := fmt.Sprintf("%s-%s.png", safeName, timestamp)
-
-		if err := os.WriteFile(filename, imageData, 0o644); err != nil {
-			return fmt.Errorf("failed to save image: %w", err)
-		}
-
-		displayImageInTerminal(filename)
-		fmt.Printf("Image saved to: %s\n", filename)
+	if imageBase64 == "" {
+		return fmt.Errorf("image generation completed but no image was returned; the model may not support image generation or an internal error occurred")
 	}
+
+	// Decode base64 and save to CWD
+	imageData, err := base64.StdEncoding.DecodeString(imageBase64)
+	if err != nil {
+		return fmt.Errorf("failed to decode image: %w", err)
+	}
+
+	// Create filename from prompt
+	safeName := sanitizeFilename(prompt)
+	if len(safeName) > 50 {
+		safeName = safeName[:50]
+	}
+	timestamp := time.Now().Format("20060102-150405")
+	filename := fmt.Sprintf("%s-%s.png", safeName, timestamp)
+
+	if err := os.WriteFile(filename, imageData, 0o644); err != nil {
+		return fmt.Errorf("failed to save image: %w", err)
+	}
+
+	displayImageInTerminal(filename)
+	fmt.Printf("Image saved to: %s\n", filename)
 
 	return nil
 }
@@ -336,31 +338,33 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 			continue
 		}
 
-		// Save image to current directory with descriptive name
-		if imageBase64 != "" {
-			// Decode base64 image data
-			imageData, err := base64.StdEncoding.DecodeString(imageBase64)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error decoding image: %v\n", err)
-				continue
-			}
-
-			// Create filename from prompt (sanitized)
-			safeName := sanitizeFilename(line)
-			if len(safeName) > 50 {
-				safeName = safeName[:50]
-			}
-			timestamp := time.Now().Format("20060102-150405")
-			filename := fmt.Sprintf("%s-%s.png", safeName, timestamp)
-
-			if err := os.WriteFile(filename, imageData, 0o644); err != nil {
-				fmt.Fprintf(os.Stderr, "Error saving image: %v\n", err)
-				continue
-			}
-
-			displayImageInTerminal(filename)
-			fmt.Printf("Image saved to: %s\n", filename)
+		if imageBase64 == "" {
+			fmt.Fprintf(os.Stderr, "Error: image generation completed but no image was returned\n")
+			continue
 		}
+
+		// Decode base64 image data
+		imageData, err := base64.StdEncoding.DecodeString(imageBase64)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error decoding image: %v\n", err)
+			continue
+		}
+
+		// Create filename from prompt (sanitized)
+		safeName := sanitizeFilename(line)
+		if len(safeName) > 50 {
+			safeName = safeName[:50]
+		}
+		timestamp := time.Now().Format("20060102-150405")
+		filename := fmt.Sprintf("%s-%s.png", safeName, timestamp)
+
+		if err := os.WriteFile(filename, imageData, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving image: %v\n", err)
+			continue
+		}
+
+		displayImageInTerminal(filename)
+		fmt.Printf("Image saved to: %s\n", filename)
 
 		fmt.Println()
 	}
