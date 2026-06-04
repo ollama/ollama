@@ -1847,9 +1847,9 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "codex", "hermes-desktop"}
+		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex"}
 		if codexAppSupported() != nil {
-			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "codex", "hermes-desktop"}
+			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "hermes-desktop", "codex"}
 		}
 		if len(got) < len(wantPrefix) {
 			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
