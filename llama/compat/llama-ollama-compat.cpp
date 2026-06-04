@@ -1133,6 +1133,63 @@ void handle_deepseekocr(const llama_model_loader * ml, gguf_context * meta,
 }
 
 // =========================================================================
+// deepseekocr2 (text side)
+// =========================================================================
+//
+// Same pattern as deepseekocr.  Ollama uses "deepseekocr2" / KV prefix
+// "deepseekocr2.*", llama.cpp uses "deepseek2-ocr" / "deepseek2-ocr.*".
+
+bool detect_ollama_deepseekocr2(const gguf_context * meta) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0) return false;
+    return std::strcmp(gguf_get_val_str(meta, arch_kid), "deepseekocr2") == 0;
+}
+
+void handle_deepseekocr2(const llama_model_loader * ml, gguf_context * meta,
+                         ggml_context * ctx, std::string & arch_name) {
+    if (!detect_ollama_deepseekocr2(meta)) return;
+
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format deepseekocr2 GGUF; applying compatibility fixes\n", __func__);
+
+    gguf_set_val_str(meta, "general.architecture", "deepseek2-ocr");
+    rename_kv_prefix(meta, "deepseekocr2.", "deepseek2-ocr.");
+    arch_name = "deepseek2-ocr";
+
+    // Inject defaults needed by the llama.cpp loader.
+    inject_f32_if_missing(meta, "deepseek2-ocr.attention.layer_norm_rms_epsilon",
+                          1e-6f);
+
+    // Recover expert_feed_forward_length from blk.1 (first MoE block; blk.0
+    // is dense). ne[0] of ffn_down_exps is the per-expert inner dim.
+    if (!has_key(meta, "deepseek2-ocr.expert_feed_forward_length")) {
+        if (ggml_tensor * t = ggml_get_tensor(ctx, "blk.1.ffn_down_exps.weight")) {
+            gguf_set_val_u32(meta, "deepseek2-ocr.expert_feed_forward_length",
+                             (uint32_t) t->ne[0]);
+        }
+    }
+
+    // Recover expert_shared_count from blk.1.ffn_down_shexp shape.
+    if (!has_key(meta, "deepseek2-ocr.expert_shared_count")) {
+        ggml_tensor * shexp = ggml_get_tensor(ctx, "blk.1.ffn_down_shexp.weight");
+        const int64_t fflen_kid = gguf_find_key(meta, "deepseek2-ocr.expert_feed_forward_length");
+        if (shexp && fflen_kid >= 0) {
+            const uint32_t fflen = gguf_get_val_u32(meta, fflen_kid);
+            if (fflen > 0) {
+                gguf_set_val_u32(meta, "deepseek2-ocr.expert_shared_count",
+                                 (uint32_t)(shexp->ne[0] / fflen));
+            }
+        }
+    }
+
+    // Hide embedded SAM (`s.*`), vision (`v.*`), projector (`mm.*`),
+    // and Qwen2 encoder (`q.*`) tensors from the text loader.
+    add_skip_prefix(ml, "s.");
+    add_skip_prefix(ml, "v.");
+    add_skip_prefix(ml, "mm.");
+    add_skip_prefix(ml, "q.");
+}
+
+// =========================================================================
 // nemotron_h_moe (text only)
 // =========================================================================
 //
@@ -2225,6 +2282,100 @@ void handle_deepseekocr_clip(gguf_context * meta, ggml_context * ctx) {
 }
 
 // =========================================================================
+// deepseekocr2 (clip side — deepseekocr2 projector)
+// =========================================================================
+//
+// Same pattern as deepseekocr clip, but with "deepseekocr2" prefix and
+// additional Qwen2 encoder tensors (q.*).
+
+void handle_deepseekocr2_clip(gguf_context * meta, ggml_context * ctx) {
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format deepseekocr2 GGUF used as mmproj; translating\n", __func__);
+
+    // CLIP encoder hparams.
+    copy_u32_kv(meta, "deepseekocr2.vision.block_count",      "clip.vision.block_count");
+    copy_u32_kv(meta, "deepseekocr2.vision.embedding_length", "clip.vision.embedding_length");
+    copy_u32_kv(meta, "deepseekocr2.vision.head_count",       "clip.vision.attention.head_count");
+    copy_u32_kv(meta, "deepseekocr2.vision.image_size",       "clip.vision.image_size");
+    copy_u32_kv(meta, "deepseekocr2.vision.patch_size",       "clip.vision.patch_size");
+
+    // SAM encoder hparams.
+    copy_u32_kv(meta, "deepseekocr2.sam.block_count",         "clip.vision.sam.block_count");
+    copy_u32_kv(meta, "deepseekocr2.sam.embedding_length",    "clip.vision.sam.embedding_length");
+    copy_u32_kv(meta, "deepseekocr2.sam.head_count",          "clip.vision.sam.head_count");
+
+    // Qwen2 encoder hparams.
+    copy_u32_kv(meta, "deepseekocr2.qwen2.block_count",       "clip.vision.qwen2.block_count");
+    copy_u32_kv(meta, "deepseekocr2.qwen2.embedding_length",  "clip.vision.qwen2.embedding_length");
+    copy_u32_kv(meta, "deepseekocr2.qwen2.head_count",        "clip.vision.qwen2.head_count");
+    copy_u32_kv(meta, "deepseekocr2.qwen2.head_count_kv",     "clip.vision.qwen2.head_count_kv");
+    copy_u32_kv(meta, "deepseekocr2.qwen2.intermediate_size", "clip.vision.qwen2.intermediate_size");
+
+    // Defaults.
+    inject_u32_if_missing(meta, "clip.vision.feed_forward_length",          64);
+    inject_u32_if_missing(meta, "clip.vision.projection_dim",               1280);
+    inject_u32_if_missing(meta, "clip.vision.projector.scale_factor",       1);
+    inject_u32_if_missing(meta, "clip.vision.window_size",                  14);
+    inject_f32_if_missing(meta, "clip.vision.attention.layer_norm_epsilon", 1e-6f);
+
+    static const float kHalfHalfHalf[3] = {0.5f, 0.5f, 0.5f};
+    inject_f32_arr_if_missing(meta, "clip.vision.image_mean", kHalfHalfHalf, 3);
+    inject_f32_arr_if_missing(meta, "clip.vision.image_std",  kHalfHalfHalf, 3);
+
+    inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
+    inject_bool_if_missing(meta, "clip.use_gelu",           true);
+    gguf_set_val_str(meta, "clip.projector_type",  "deepseekocr2");
+    gguf_set_val_str(meta, "general.architecture", "clip");
+
+    // Step 1: rename SAM prefix `s.` -> `v.sam.` only at the start of names.
+    {
+        std::vector<std::string> sam_names;
+        const int64_t n = gguf_get_n_tensors(meta);
+        for (int64_t i = 0; i < n; ++i) {
+            std::string name(gguf_get_tensor_name(meta, i));
+            if (name.size() >= 2 && name[0] == 's' && name[1] == '.') {
+                sam_names.push_back(std::move(name));
+            }
+        }
+        for (const auto & old_name : sam_names) {
+            rename_tensor(meta, ctx, old_name.c_str(),
+                          ("v.sam." + old_name.substr(2)).c_str());
+        }
+    }
+
+    // Step 2: rename Qwen2 prefix `q.` -> `v.qwen2.` only at the start of names.
+    {
+        std::vector<std::string> qwen2_names;
+        const int64_t n = gguf_get_n_tensors(meta);
+        for (int64_t i = 0; i < n; ++i) {
+            std::string name(gguf_get_tensor_name(meta, i));
+            if (name.size() >= 2 && name[0] == 'q' && name[1] == '.') {
+                qwen2_names.push_back(std::move(name));
+            }
+        }
+        for (const auto & old_name : qwen2_names) {
+            rename_tensor(meta, ctx, old_name.c_str(),
+                          ("v.qwen2." + old_name.substr(2)).c_str());
+        }
+    }
+
+    // Step 3: SAM `s.position_embd` (no `.weight` suffix).
+    rename_tensor(meta, ctx, "v.sam.position_embd", "v.sam.pos_embd.weight");
+
+    // Step 4: substring renames for CLIP, SAM block leaves, and projector.
+    for (const auto & [from, to] : kDeepseekocrClipRenames) {
+        rename_tensors_containing(meta, ctx, from, to);
+    }
+
+    // Metal IM2COL needs F32 patch_embd.
+    promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
+    promote_tensor_to_f32(meta, ctx, "v.sam.patch_embd.weight");
+    promote_tensor_to_f32(meta, ctx, "v.position_embd.weight");
+
+    // Qwen2 encoder tensors need F32 for some ops.
+    promote_tensor_to_f32(meta, ctx, "v.qwen2.query_embed.weight");
+}
+
+// =========================================================================
 // nemotron_h_omni (clip side — nemotron_v2_vl projector)
 // =========================================================================
 
@@ -3220,6 +3371,7 @@ bool translate_metadata(const llama_model_loader * ml,
     // glm4moelite switches arch_name to "deepseek2" — same pattern.
     if (arch_name == "glm4moelite")   handle_glm4moelite   (ml, meta, ctx, arch_name);
     if (arch_name == "deepseekocr")   handle_deepseekocr   (ml, meta, ctx, arch_name);
+    if (arch_name == "deepseekocr2")  handle_deepseekocr2  (ml, meta, ctx, arch_name);
     if (arch_name == "nemotron_h_omni") handle_nemotron_h_omni(ml, meta, ctx, arch_name);
     if (arch_name == "nemotron_h_moe")  handle_nemotron_h_moe (ml, meta, ctx);
     if (arch_name == "llama")         handle_llama3_metadata(meta);
@@ -3261,6 +3413,10 @@ void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     }
     if (detect_ollama_deepseekocr(meta)) {
         handle_deepseekocr_clip(meta, ctx);
+        return;
+    }
+    if (detect_ollama_deepseekocr2(meta)) {
+        handle_deepseekocr2_clip(meta, ctx);
         return;
     }
     if (detect_ollama_nemotron_h_omni(meta, ctx)) {
