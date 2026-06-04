@@ -943,26 +943,59 @@ func TestHermesMessagingConfiguredRecognizesSupportedGatewayVars(t *testing.T) {
 	}
 }
 
-func TestHermesEnsureInstalledWindowsShowsWSLGuidance(t *testing.T) {
+func TestHermesEnsureInstalledWindowsRunsPowerShellInstaller(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
 	withHermesPlatform(t, "windows")
 	t.Setenv("PATH", tmpDir)
+	t.Setenv("LOCALAPPDATA", filepath.Join(tmpDir, "AppData", "Local"))
+
+	powershell := filepath.Join(tmpDir, "powershell.exe")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+/bin/mkdir -p %q
+/bin/cat > %q <<'EOS'
+#!/bin/sh
+exit 0
+EOS
+/bin/chmod +x %q
+exit 0
+`,
+		filepath.Join(tmpDir, "powershell.log"),
+		filepath.Dir(filepath.Join(tmpDir, "AppData", "Local", "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe")),
+		filepath.Join(tmpDir, "AppData", "Local", "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe"),
+		filepath.Join(tmpDir, "AppData", "Local", "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe"),
+	)
+	if err := os.WriteFile(powershell, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "Hermes is not installed. Install now?" {
+			t.Fatalf("unexpected install prompt %q", prompt)
+		}
+		return true, nil
+	}
 
 	h := &Hermes{}
-	err := h.ensureInstalled()
-	if err == nil {
-		t.Fatal("expected WSL guidance error")
+	if err := h.ensureInstalled(); err != nil {
+		t.Fatalf("ensureInstalled returned error: %v", err)
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "wsl --install") {
-		t.Fatalf("expected install command in guidance, got %v", err)
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "powershell.log"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "hermes-agent.nousresearch.com") {
-		t.Fatalf("expected docs link in guidance, got %v", err)
-	}
-	if strings.Contains(msg, "hermes is not installed") {
-		t.Fatalf("guidance should not lead with 'hermes is not installed', got %v", err)
+	logs := string(data)
+	for _, want := range []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", hermesWindowsInstallURL, "-SkipSetup"} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected PowerShell installer args to contain %q, got logs:\n%s", want, logs)
+		}
 	}
 }
 

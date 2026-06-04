@@ -24,6 +24,8 @@ import (
 
 const (
 	hermesInstallScript     = "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup"
+	hermesWindowsInstallURL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1"
+	hermesWindowsInstallCmd = "& ([scriptblock]::Create((irm " + hermesWindowsInstallURL + "))) -SkipSetup"
 	hermesProviderName      = "Ollama"
 	hermesProviderKey       = "ollama-launch"
 	hermesLegacyKey         = "ollama"
@@ -187,14 +189,12 @@ func (h *Hermes) ensureInstalled() error {
 		return nil
 	}
 
-	if hermesGOOS == "windows" {
-		return hermesWindowsHint()
-	}
-
 	var missing []string
-	for _, dep := range []string{"bash", "curl", "git"} {
-		if _, err := hermesLookPath(dep); err != nil {
-			missing = append(missing, dep)
+	if hermesGOOS != "windows" {
+		for _, dep := range []string{"bash", "curl", "git"} {
+			if _, err := hermesLookPath(dep); err != nil {
+				missing = append(missing, dep)
+			}
 		}
 	}
 	if len(missing) > 0 {
@@ -210,7 +210,7 @@ func (h *Hermes) ensureInstalled() error {
 	}
 
 	fmt.Fprintf(os.Stderr, "\nInstalling Hermes...\n")
-	if err := hermesAttachedCommand("bash", "-lc", hermesInstallScript).Run(); err != nil {
+	if err := h.runInstallScript(); err != nil {
 		return fmt.Errorf("failed to install hermes: %w", err)
 	}
 
@@ -220,6 +220,13 @@ func (h *Hermes) ensureInstalled() error {
 
 	fmt.Fprintf(os.Stderr, "%sHermes installed successfully%s\n\n", ansiGreen, ansiReset)
 	return nil
+}
+
+func (h *Hermes) runInstallScript() error {
+	if hermesGOOS == "windows" {
+		return hermesAttachedCommand("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", hermesWindowsInstallCmd).Run()
+	}
+	return hermesAttachedCommand("bash", "-lc", hermesInstallScript).Run()
 }
 
 func (h *Hermes) listModels(defaultModel string) []string {
@@ -259,7 +266,12 @@ func (h *Hermes) binary() (string, error) {
 	}
 
 	if hermesGOOS == "windows" {
-		return "", hermesWindowsHint()
+		for _, fallback := range hermesWindowsBinaryFallbacks() {
+			if _, err := os.Stat(fallback); err == nil {
+				return fallback, nil
+			}
+		}
+		return "", fmt.Errorf("hermes is not installed")
 	}
 
 	home, err := hermesUserHome()
@@ -272,6 +284,36 @@ func (h *Hermes) binary() (string, error) {
 	}
 
 	return "", fmt.Errorf("hermes is not installed")
+}
+
+func hermesWindowsBinaryFallbacks() []string {
+	var roots []string
+	add := func(root string) {
+		root = strings.TrimSpace(root)
+		if root != "" {
+			roots = append(roots, filepath.Clean(root))
+		}
+	}
+
+	add(os.Getenv("HERMES_HOME"))
+	add(os.Getenv("LOCALAPPDATA"))
+	if home, err := hermesUserHome(); err == nil {
+		add(filepath.Join(home, "AppData", "Local"))
+	}
+
+	seen := make(map[string]bool, len(roots))
+	var fallbacks []string
+	for _, root := range roots {
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		fallbacks = append(fallbacks, filepath.Join(root, "hermes-agent", "venv", "Scripts", "hermes.exe"))
+		if filepath.Base(root) != "hermes" {
+			fallbacks = append(fallbacks, filepath.Join(root, "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe"))
+		}
+	}
+	return fallbacks
 }
 
 func hermesConfigPath() (string, error) {
@@ -670,10 +712,4 @@ func hermesAttachedCommand(name string, args ...string) *exec.Cmd {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd
-}
-
-func hermesWindowsHint() error {
-	return fmt.Errorf("Hermes on Windows requires WSL2. Install WSL with: wsl --install\n" +
-		"Then run 'ollama launch hermes' from inside your WSL shell.\n" +
-		"Docs: https://hermes-agent.nousresearch.com/docs/getting-started/installation/")
 }
