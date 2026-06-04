@@ -12,10 +12,10 @@ const (
 	gemma4RendererSmall  = "gemma4-small"
 	gemma4RendererLarge  = "gemma4-large"
 
-	// Gemma 4 small templates cover the e2b/e4b family, while 26b/31b use the
-	// large template. Default to the small prompt unless the model is clearly in
-	// the large range.
-	gemma4LargeMinParameterCount = 16_000_000_000
+	// Gemma 4 small templates cover the e2b/e4b family, while 12b/26b/31b use
+	// the large template. Default to the small prompt unless the model is
+	// clearly in the large range.
+	gemma4LargeMinParameterCount = 12_000_000_000
 )
 
 func resolveRendererName(m *Model) string {
@@ -67,7 +67,7 @@ func gemma4RendererFromName(name string) (string, bool) {
 	switch {
 	case strings.Contains(lower, "e2b"), strings.Contains(lower, "e4b"):
 		return gemma4RendererSmall, true
-	case strings.Contains(lower, "26b"), strings.Contains(lower, "31b"):
+	case strings.Contains(lower, "12b"), strings.Contains(lower, "26b"), strings.Contains(lower, "31b"):
 		return gemma4RendererLarge, true
 	default:
 		return "", false

@@ -87,3 +87,19 @@ index 2e0cfa6..a0f2955 100644
                  fin.seekg(offset, std::ios::beg);
                  if (!fin) {
                      throw std::runtime_error(string_format("%s: failed to seek for tensor %s\n", __func__, t->name));
+@@ -4312,6 +4320,15 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
++    const auto projector_type = PROJECTOR_TYPE_NAMES.find(ctx->model.proj_type);
++    if (projector_type != PROJECTOR_TYPE_NAMES.end()) {
++        if (int n = llama_ollama_compat::maybe_clip_mmproj_embd(
++                projector_type->second.c_str(),
++                ctx->model.hparams.projection_dim); n > 0) {
++            return n;
++        }
++    }
++
+     switch (ctx->model.proj_type) {
+         case PROJECTOR_TYPE_LDP:
+             return ctx->model.mm_model_block_1_block_2_1_b->ne[0];
+         case PROJECTOR_TYPE_LDPV2:
+             return ctx->model.mm_model_peg_0_b->ne[0];
+         case PROJECTOR_TYPE_MLP:

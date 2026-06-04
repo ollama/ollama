@@ -215,6 +215,9 @@ func ensureCodexConfig(modelName string, models []LaunchModel) error {
 	if err := os.MkdirAll(codexDir, 0o755); err != nil {
 		return err
 	}
+	if err := cleanupCodexLegacyProfileConfig(configPath); err != nil {
+		return err
+	}
 
 	catalogPath := codexModelCatalogPathForConfig(configPath)
 	if err := writeCodexModelCatalog(catalogPath, codexCatalogModel(modelName, models)); err != nil {
@@ -259,6 +262,36 @@ func codexProfileConfigPathForConfig(configPath string) string {
 
 func codexNamedProfileConfigPathForConfig(configPath, profileName string) string {
 	return filepath.Join(filepath.Dir(configPath), profileName+".config.toml")
+}
+
+func cleanupCodexLegacyProfileConfig(configPath string) error {
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	text := string(content)
+	parsed, err := codexParseConfig(text)
+	if err != nil {
+		return err
+	}
+
+	updated := text
+	if profile, ok := parsed.RootStringOK(codexRootProfileKey); ok && profile == codexProfileName {
+		updated = codexRemoveRootValue(updated, codexRootProfileKey)
+	}
+	if parsed.Exists("profiles", codexProfileName) {
+		updated = codexRemoveSection(updated, codexProfileHeader())
+	}
+	if updated == text {
+		return nil
+	}
+	if err := codexValidateConfigText(updated); err != nil {
+		return err
+	}
+	return fileutil.WriteWithBackup(configPath, []byte(updated), "")
 }
 
 // writeCodexProfileConfig ensures ~/.codex/ollama-launch.config.toml selects
