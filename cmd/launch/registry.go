@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "codex", "copilot", "cline", "droid", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "cline", "droid", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -216,6 +216,20 @@ var integrationSpecs = []*IntegrationSpec{
 			},
 			EnsureInstalled: func() error {
 				return (&Hermes{}).ensureInstalled()
+			},
+			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
+		},
+	},
+	{
+		Name:        "hermes-desktop",
+		Runner:      &HermesDesktop{},
+		Description: "Desktop app for Hermes Agent by Nous Research",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&Hermes{}).installed()
+			},
+			EnsureInstalled: func() error {
+				return (&Hermes{}).ensureInstalledFor("hermes-desktop")
 			},
 			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
 		},

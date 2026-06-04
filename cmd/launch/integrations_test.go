@@ -61,6 +61,7 @@ func TestIntegrationLookup(t *testing.T) {
 		{"codex app", "codex-app", true, "Codex App"},
 		{"codex app desktop alias", "codex-desktop", true, "Codex App"},
 		{"codex app gui alias", "codex-gui", true, "Codex App"},
+		{"hermes desktop", "hermes-desktop", true, "Hermes Desktop"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
 		{"droid", "droid", true, "Droid"},
 		{"opencode", "opencode", true, "OpenCode"},
@@ -83,7 +84,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "codex-app", "kimi", "droid", "opencode", "hermes", "pool"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "codex-app", "kimi", "droid", "opencode", "hermes", "hermes-desktop", "pool"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -1846,9 +1847,9 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw"}
+		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex"}
 		if codexAppSupported() != nil {
-			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode"}
+			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "hermes-desktop", "codex"}
 		}
 		if len(got) < len(wantPrefix) {
 			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
@@ -1896,6 +1897,15 @@ func TestListIntegrationInfos(t *testing.T) {
 			}
 		}
 		t.Fatal("expected hermes to be included in ListIntegrationInfos")
+	})
+
+	t.Run("includes hermes desktop", func(t *testing.T) {
+		for _, info := range infos {
+			if info.Name == "hermes-desktop" {
+				return
+			}
+		}
+		t.Fatal("expected hermes-desktop to be included in ListIntegrationInfos")
 	})
 
 	t.Run("hermes still resolves explicitly", func(t *testing.T) {
@@ -2020,6 +2030,7 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 		{"openclaw", true},
 		{"pi", true},
 		{"hermes", true},
+		{"hermes-desktop", true},
 		{"cline", true},
 		{"qwen", true},
 		{"claude", false},
