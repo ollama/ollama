@@ -1,0 +1,6 @@
+fastapi==0.115.6
+httpx==0.28.1
+uvicorn[standard]==0.34.0
+redis==5.2.1
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
