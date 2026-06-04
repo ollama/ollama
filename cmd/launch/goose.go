@@ -25,15 +25,28 @@ var (
 	gooseStartID     = defaultGooseStartAppID
 )
 
-// Goose implements Runner for the Goose coding agent integration.
+// Goose implements Runner for the Goose desktop app integration.
 //
 // Goose ships with a built-in `ollama` provider, so this launcher just sets
 // the standard GOOSE_PROVIDER / GOOSE_MODEL / OLLAMA_HOST env vars and
-// launches either the Goose.app desktop bundle (on macOS, when present) or
-// falls back to the `goose` CLI in `session` mode.
+// launches the Goose desktop app.
 type Goose struct{}
 
-func (g *Goose) String() string { return "Goose" }
+func (g *Goose) String() string { return "Goose Desktop" }
+
+func (g *Goose) Supported() error {
+	switch gooseGOOS {
+	case "darwin", "windows":
+		return nil
+	default:
+		return fmt.Errorf("Goose Desktop launch is only supported on macOS and Windows; use 'ollama launch goose-cli' for the Goose CLI")
+	}
+}
+
+// GooseCLI implements Runner for the Goose CLI integration.
+type GooseCLI struct{}
+
+func (g *GooseCLI) String() string { return "Goose CLI" }
 
 // envVars returns the environment variables that configure Goose to use
 // the local Ollama server as its model provider.
@@ -160,7 +173,7 @@ func (g *Goose) runDesktopApp(model string) error {
 		if path := gooseDesktopAppPath(); path != "" {
 			return gooseOpenPath(path, env)
 		}
-		return fmt.Errorf("Goose.app was not found")
+		return fmt.Errorf("Goose.app was not found; install Goose Desktop and re-run 'ollama launch goose'")
 	case "windows":
 		if path := gooseDesktopAppPath(); path != "" {
 			return gooseOpenPath(path, env)
@@ -171,9 +184,9 @@ func (g *Goose) runDesktopApp(model string) error {
 		if appID := gooseStartID(); appID != "" {
 			return gooseOpenStartID(appID, env)
 		}
-		return fmt.Errorf("Goose executable was not found; open Goose manually once and re-run 'ollama launch goose'")
+		return fmt.Errorf("Goose desktop app was not found; install Goose Desktop and re-run 'ollama launch goose'")
 	default:
-		return g.runCLI(model, nil)
+		return fmt.Errorf("Goose desktop app is only supported on macOS and Windows; use 'ollama launch goose-cli' for the Goose CLI")
 	}
 }
 
@@ -242,21 +255,26 @@ func (g *Goose) runCLI(model string, extra []string) error {
 	return cmd.Run()
 }
 
-// Run launches Goose with the given model. On macOS, if the Goose.app desktop
-// bundle is installed it is preferred; otherwise the `goose` CLI is used.
+// Run launches the Goose desktop app with the given model.
 func (g *Goose) Run(model string, _ []LaunchModel, args []string) error {
-	if g.desktopAppAvailable() {
-		return g.runDesktopApp(model)
+	if len(args) > 0 {
+		return fmt.Errorf("goose desktop does not accept extra arguments; use 'ollama launch goose-cli -- ...' to pass arguments to Goose CLI")
 	}
-	return g.runCLI(model, args)
+	return g.runDesktopApp(model)
 }
 
-// installed reports whether either the Goose desktop app or the `goose` CLI
-// is available on this machine.
+// Run launches Goose CLI in session mode with the given model.
+func (g *GooseCLI) Run(model string, _ []LaunchModel, args []string) error {
+	return (&Goose{}).runCLI(model, args)
+}
+
+// installed reports whether the Goose desktop app is available on this machine.
 func (g *Goose) installed() bool {
-	if g.desktopAppAvailable() {
-		return true
-	}
+	return g.desktopAppAvailable()
+}
+
+// installed reports whether the `goose` CLI is available on this machine.
+func (g *GooseCLI) installed() bool {
 	_, err := exec.LookPath("goose")
 	return err == nil
 }

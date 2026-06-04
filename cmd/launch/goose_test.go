@@ -14,14 +14,42 @@ func TestGooseIntegration(t *testing.T) {
 	g := &Goose{}
 
 	t.Run("String", func(t *testing.T) {
-		if got := g.String(); got != "Goose" {
-			t.Errorf("String() = %q, want %q", got, "Goose")
+		if got := g.String(); got != "Goose Desktop" {
+			t.Errorf("String() = %q, want %q", got, "Goose Desktop")
 		}
 	})
 
 	t.Run("implements Runner", func(t *testing.T) {
 		var _ Runner = g
+		var _ Runner = &GooseCLI{}
 	})
+}
+
+func TestGooseLookupIntegrations(t *testing.T) {
+	tests := []struct {
+		name      string
+		canonical string
+		runner    string
+	}{
+		{"goose", "goose-desktop", "Goose Desktop"},
+		{"goose-desktop", "goose-desktop", "Goose Desktop"},
+		{"goose-cli", "goose-cli", "Goose CLI"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			canonical, runner, err := LookupIntegration(tt.name)
+			if err != nil {
+				t.Fatalf("LookupIntegration(%q) error = %v", tt.name, err)
+			}
+			if canonical != tt.canonical {
+				t.Fatalf("canonical = %q, want %q", canonical, tt.canonical)
+			}
+			if runner.String() != tt.runner {
+				t.Fatalf("runner = %q, want %q", runner.String(), tt.runner)
+			}
+		})
+	}
 }
 
 func TestGooseEnvVars(t *testing.T) {
@@ -160,7 +188,25 @@ func TestGooseDesktopAppAvailable(t *testing.T) {
 	})
 }
 
-func TestGooseRunCLINotInstalled(t *testing.T) {
+func TestGooseRunDesktopDoesNotFallBackToCLI(t *testing.T) {
+	prev := gooseGOOS
+	t.Cleanup(func() { gooseGOOS = prev })
+	gooseGOOS = "linux"
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "goose")
+	t.Setenv("PATH", binDir)
+
+	err := (&Goose{}).Run("llama3.2", nil, nil)
+	if err == nil {
+		t.Fatal("expected error when desktop app is unavailable")
+	}
+	if !strings.Contains(err.Error(), "goose-cli") {
+		t.Errorf("expected error to mention goose-cli, got: %v", err)
+	}
+}
+
+func TestGooseCLIRunNotInstalled(t *testing.T) {
 	// Force non-darwin so we hit runCLI path
 	prev := gooseGOOS
 	t.Cleanup(func() { gooseGOOS = prev })
@@ -168,13 +214,38 @@ func TestGooseRunCLINotInstalled(t *testing.T) {
 
 	t.Setenv("PATH", t.TempDir()) // empty PATH
 
-	g := &Goose{}
+	g := &GooseCLI{}
 	err := g.Run("llama3.2", nil, nil)
 	if err == nil {
 		t.Fatal("expected error when goose binary not installed")
 	}
 	if !strings.Contains(err.Error(), "block.github.io/goose") {
 		t.Errorf("expected install hint in error, got: %v", err)
+	}
+}
+
+func TestGooseCLIRunIgnoresDesktopApp(t *testing.T) {
+	prev := gooseGOOS
+	t.Cleanup(func() { gooseGOOS = prev })
+	gooseGOOS = "darwin"
+
+	prevStat := gooseStatFn
+	t.Cleanup(func() { gooseStatFn = prevStat })
+	gooseStatFn = func(string) (os.FileInfo, error) { return nil, nil }
+
+	prevOpenPath := gooseOpenPath
+	t.Cleanup(func() { gooseOpenPath = prevOpenPath })
+	gooseOpenPath = func(string, []string) error {
+		t.Fatal("goose-cli should not launch the desktop app")
+		return nil
+	}
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "goose")
+	t.Setenv("PATH", binDir)
+
+	if err := (&GooseCLI{}).Run("llama3.2", nil, []string{"--debug"}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -230,7 +301,7 @@ func TestGooseInstalled(t *testing.T) {
 		}
 	})
 
-	t.Run("installed when cli on PATH", func(t *testing.T) {
+	t.Run("desktop not installed when only cli on PATH", func(t *testing.T) {
 		prev := gooseGOOS
 		t.Cleanup(func() { gooseGOOS = prev })
 		gooseGOOS = "linux"
@@ -239,8 +310,8 @@ func TestGooseInstalled(t *testing.T) {
 		writeFakeBinary(t, binDir, "goose")
 		t.Setenv("PATH", binDir)
 
-		if !g.installed() {
-			t.Error("installed() should be true when goose binary on PATH")
+		if g.installed() {
+			t.Error("desktop installed() should be false when only goose binary is on PATH")
 		}
 	})
 
@@ -270,6 +341,22 @@ func TestGooseInstalled(t *testing.T) {
 
 		if !g.installed() {
 			t.Error("installed() should be true when Windows desktop app exists")
+		}
+	})
+}
+
+func TestGooseCLIInstalled(t *testing.T) {
+	t.Run("installed when cli on PATH", func(t *testing.T) {
+		prev := gooseGOOS
+		t.Cleanup(func() { gooseGOOS = prev })
+		gooseGOOS = "linux"
+
+		binDir := t.TempDir()
+		writeFakeBinary(t, binDir, "goose")
+		t.Setenv("PATH", binDir)
+
+		if !(&GooseCLI{}).installed() {
+			t.Error("installed() should be true when goose binary is on PATH")
 		}
 	})
 }

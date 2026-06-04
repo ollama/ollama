@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "goose", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "goose-desktop", "goose-cli", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -145,12 +145,24 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
-		Name:        "goose",
+		Name:        "goose-desktop",
 		Runner:      &Goose{},
-		Description: "Block's open-source coding agent with desktop and CLI",
+		Aliases:     []string{"goose"},
+		Description: "Block's open-source coding agent desktop app",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return (&Goose{}).installed()
+			},
+			URL: "https://block.github.io/goose/docs/getting-started/installation/",
+		},
+	},
+	{
+		Name:        "goose-cli",
+		Runner:      &GooseCLI{},
+		Description: "Block's open-source coding agent CLI",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&GooseCLI{}).installed()
 			},
 			URL: "https://block.github.io/goose/docs/getting-started/installation/",
 		},

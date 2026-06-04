@@ -296,7 +296,8 @@ Supported integrations:
   copilot         Copilot CLI (aliases: copilot-cli)
   omp             OMP
   droid           Droid
-  goose           Goose
+  goose-desktop   Goose Desktop (aliases: goose)
+  goose-cli       Goose CLI
   kimi            Kimi Code CLI
   pi              Pi
   pool            Pool

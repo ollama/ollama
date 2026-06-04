@@ -70,9 +70,9 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			},
 		},
 		{
-			name:   "goose",
+			name:   "goose-cli",
 			binary: "goose",
-			runner: &Goose{},
+			runner: &GooseCLI{},
 			checkPath: func(home string) string {
 				return filepath.Join(home, ".config", "goose", "custom_providers", "ollama.json")
 			},
@@ -83,11 +83,6 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.name == "pool" && poolsideGOOS == "windows" {
 				t.Skip("Poolside is intentionally unsupported on Windows")
-			}
-			if tt.name == "goose" {
-				prev := gooseGOOS
-				t.Cleanup(func() { gooseGOOS = prev })
-				gooseGOOS = "linux" // force CLI path so we don't try to launch Goose.app
 			}
 
 			home := t.TempDir()
