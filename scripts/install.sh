@@ -211,6 +211,15 @@ configure_systemd() {
     status "Adding current user to ollama group..."
     $SUDO usermod -a -G ollama $(whoami)
 
+    # WSL2 ROCDXG needs HSA_ENABLE_DXG_DETECTION=1 for the runtime to reach the
+    # GPU through /dev/dxg; add it to the service env only in that case (ROCDXG is
+    # detected below, before this function is called).
+    ROCDXG_ENV=""
+    if [ "$ROCDXG" = true ]; then
+        ROCDXG_ENV='
+Environment="HSA_ENABLE_DXG_DETECTION=1"'
+    fi
+
     status "Creating ollama systemd service..."
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
@@ -223,7 +232,7 @@ User=ollama
 Group=ollama
 Restart=always
 RestartSec=3
-Environment="PATH=$PATH"
+Environment="PATH=$PATH"${ROCDXG_ENV}
 
 [Install]
 WantedBy=default.target
@@ -247,15 +256,41 @@ EOF
     esac
 }
 
+# rocminfo ships with ROCm (which ROCDXG requires) but isn't always on PATH — it
+# commonly lives in /opt/rocm/bin — so probe both. HSA_ENABLE_DXG_DETECTION=1 is
+# set here too, in case the runtime needs it to enumerate the device.
+rocdxg_rocminfo() {
+    if available rocminfo; then
+        HSA_ENABLE_DXG_DETECTION=1 rocminfo 2>/dev/null
+    elif [ -x /opt/rocm/bin/rocminfo ]; then
+        HSA_ENABLE_DXG_DETECTION=1 /opt/rocm/bin/rocminfo 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+# WSL2 hides the GPU from the PCI bus, exposing it through DXCore at /dev/dxg
+# instead, so the lspci/lshw checks below miss it. AMD's ROCm-on-WSL (ROCDXG)
+# drives the GPU through /dev/dxg; rocminfo confirms an AMD GPU is reachable there
+# (a positive check, so it won't fire on an NVIDIA WSL2 box).
+ROCDXG=false
+if [ "$IS_WSL2" = true ] && [ -e /dev/dxg ] && rocdxg_rocminfo | grep -qE 'gfx[0-9]'; then
+    ROCDXG=true
+fi
+
 if available systemctl; then
     configure_systemd
 fi
 
-# WSL2 only supports GPUs via nvidia passthrough
-# so check for nvidia-smi to determine if GPU is available
+# WSL2 exposes the GPU through DXCore, not the PCI bus, so the lspci/lshw checks
+# below can't see it. NVIDIA works via nvidia-smi + the base bundle's CUDA
+# backend; AMD (ROCDXG) is reached through /dev/dxg, so install the ROCm backend.
 if [ "$IS_WSL2" = true ]; then
     if available nvidia-smi && [ -n "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
         status "Nvidia GPU detected."
+    elif [ "$ROCDXG" = true ]; then
+        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
+        status "AMD GPU (WSL2 / ROCDXG) ready."
     fi
     install_success
     exit 0
