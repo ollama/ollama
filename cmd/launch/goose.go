@@ -11,7 +11,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 )
 
-const gooseInstallURL = "https://block.github.io/goose/docs/getting-started/installation/"
+const gooseInstallURL = "https://goose-docs.ai/docs/getting-started/installation/"
 
 var (
 	// gooseGOOS allows tests to override the detected operating system.
