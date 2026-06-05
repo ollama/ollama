@@ -294,6 +294,7 @@ Supported integrations:
   codex           Codex
   hermes-desktop  Hermes Desktop
   copilot         Copilot CLI (aliases: copilot-cli)
+  omp             OMP
   droid           Droid
   kimi            Kimi Code CLI
   pi              Pi
