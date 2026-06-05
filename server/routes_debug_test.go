@@ -210,6 +210,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 
 func TestChatDebugRenderOnly(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
 	gin.SetMode(gin.TestMode)
 
 	mock := mockRunner{

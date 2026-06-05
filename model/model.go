@@ -20,7 +20,6 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
-	_ "github.com/ollama/ollama/ml/backend"
 	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/tokenizer"

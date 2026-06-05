@@ -223,7 +223,7 @@ func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 		results := make([][]int32, numWorkers)
 		var wg sync.WaitGroup
 
-		for i := 0; i < numWorkers; i++ {
+		for i := range numWorkers {
 			start := i * chunksPer
 			end := start + chunksPer
 			if end > len(allChunks) {
@@ -272,7 +272,7 @@ func (t *Tokenizer) encodeChunkInto(s string, ids []int32) []int32 {
 	} else {
 		var sb strings.Builder
 		sb.Grow(len(s) * 2)
-		for i := 0; i < len(s); i++ {
+		for i := range len(s) {
 			sb.WriteRune(byteToRune[s[i]])
 		}
 		encoded = sb.String()

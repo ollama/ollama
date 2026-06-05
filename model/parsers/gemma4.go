@@ -30,9 +30,7 @@ const (
 	gemma4StringDelimiter  = `<|"|>`
 )
 
-var (
-	gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
-)
+var gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
 
 type Gemma4Parser struct {
 	state                 Gemma4ParserState
@@ -50,6 +48,17 @@ func (p *Gemma4Parser) HasToolSupport() bool {
 
 func (p *Gemma4Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
+}
+
+func (p *Gemma4Parser) PreservedTokens() []string {
+	return []string{
+		gemma4ThinkingOpenTag,
+		gemma4ThinkingCloseTag,
+		gemma4ToolCallOpenTag,
+		gemma4ToolCallCloseTag,
+		gemma4ToolResponseTag,
+		gemma4StringDelimiter,
+	}
 }
 
 func (p *Gemma4Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {

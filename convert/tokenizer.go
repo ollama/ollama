@@ -103,6 +103,8 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 			t.Pre = "qwen2"
 		case "00431aed57e696b747435f734d1e3b9b1bfd931a121fb5cac7129e97c181e9ba":
 			t.Pre = "qwen35"
+		case "b92c0824a58e1d8dc3221cf3e12c433c3a86f57e46d57229993489f0798e7702":
+			t.Pre = "laguna"
 		case "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855":
 			// noop, empty pretokenizer
 		default:
@@ -147,6 +149,7 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 				if err := json.Unmarshal(bts, &sv.AddToken); err != nil {
 					return nil, err
 				}
+				sv.AddTokenSet = true
 			}
 
 			if bts, ok := p[fmt.Sprintf("%s_token", st)]; ok {
@@ -312,6 +315,10 @@ type SpecialVocabulary struct {
 	ID       int
 	Content  string
 	AddToken bool
+	// AddTokenSet tracks whether tokenizer_config.json explicitly defined the
+	// add_*_token setting. Missing and explicit false have different GGUF
+	// semantics for some tokenizers.
+	AddTokenSet bool
 
 	// IDs is populated by generation_config.json
 	IDs []int32

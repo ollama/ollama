@@ -114,7 +114,7 @@ func TestWeightsSurvive(t *testing.T) {
 	Keep(weight)
 	weight.Eval()
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		x := NewArrayFloat32([]float32{1, 1}, []int32{1, 2})
 		result := Matmul(x, weight)
 		Keep(result)
@@ -227,7 +227,7 @@ func TestGenerationLoop(t *testing.T) {
 	var lastToken *Array
 
 	// Simulate 5 generation steps
-	for step := 0; step < 5; step++ {
+	for step := range 5 {
 		oldCache := cache
 
 		// Simulate forward pass
@@ -276,7 +276,7 @@ func BenchmarkCleanupOnly(b *testing.B) {
 	weight.Eval()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		// Create 100 arrays - minimal ops
 		arrays := make([]*Array, 100)
 		for j := range arrays {
@@ -290,7 +290,7 @@ func BenchmarkCleanupOnly(b *testing.B) {
 // BenchmarkNewArrayOnly measures array creation overhead.
 func BenchmarkNewArrayOnly(b *testing.B) {
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = NewArrayFloat32([]float32{1, 2, 3, 4}, []int32{2, 2})
 	}
 }
@@ -301,7 +301,7 @@ func BenchmarkCGOCallOverhead(b *testing.B) {
 	Keep(arr)
 	arr.Eval()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = arr.Ndim() // Simple CGO call
 	}
 }
@@ -327,9 +327,9 @@ func benchCleanup(b *testing.B, numArrays int) {
 	weight.Eval()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		x := NewArrayFloat32([]float32{1, 2}, []int32{1, 2})
-		for j := 0; j < numArrays; j++ {
+		for range numArrays {
 			x = Add(x, x)
 		}
 		result := Matmul(x, weight)
@@ -354,12 +354,12 @@ func benchGenerationLoop(b *testing.B, steps int) {
 	weight.Eval()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		cache := NewArrayFloat32([]float32{0, 0}, []int32{1, 2})
 		Keep(cache)
 		cache.Eval()
 
-		for step := 0; step < steps; step++ {
+		for step := range steps {
 			oldCache := cache
 			input := NewArrayFloat32([]float32{1, 2}, []int32{1, 2})
 			output := Matmul(input, weight)
@@ -389,11 +389,11 @@ func BenchmarkLLMForward(b *testing.B) {
 	Eval(weights...)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		x := NewArrayFloat32([]float32{1, 2}, []int32{1, 2})
 
 		// Simulate 32 transformer layers
-		for layer := 0; layer < numLayers; layer++ {
+		for layer := range numLayers {
 			// Attention block (simplified)
 			q := Matmul(x, weights[layer*4])
 			k := Matmul(x, weights[layer*4+1])
@@ -494,7 +494,7 @@ func TestCompileReuse(t *testing.T) {
 	})
 	defer compiled.Free()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		x := NewArrayFloat32([]float32{float32(i)}, []int32{1})
 		Keep(x)
 		x.Eval()
@@ -516,9 +516,9 @@ func BenchmarkGELUUncompiled(b *testing.B) {
 	x.Eval()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		y := x
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			y = gelu(y)
 		}
 		Keep(y)
@@ -534,7 +534,7 @@ func BenchmarkGELUCompiled(b *testing.B) {
 
 	compiled := Compile(func(inputs []*Array) []*Array {
 		y := inputs[0]
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			y = gelu(y)
 		}
 		return []*Array{y}
@@ -542,7 +542,7 @@ func BenchmarkGELUCompiled(b *testing.B) {
 	defer compiled.Free()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		result := compiled.Call(x)
 		Keep(result[0])
 		Eval(result[0])
@@ -557,7 +557,7 @@ func TestCompileNoMemoryLeak(t *testing.T) {
 
 	compiled := Compile(func(inputs []*Array) []*Array {
 		y := inputs[0]
-		for j := 0; j < 5; j++ {
+		for range 5 {
 			y = gelu(y)
 		}
 		return []*Array{y}
@@ -565,7 +565,7 @@ func TestCompileNoMemoryLeak(t *testing.T) {
 	defer compiled.Free()
 
 	// Warmup to establish baseline
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		result := compiled.Call(x)
 		Keep(result[0])
 		Eval(result[0])
@@ -575,7 +575,7 @@ func TestCompileNoMemoryLeak(t *testing.T) {
 	MetalResetPeakMemory()
 	initialMem := MetalGetActiveMemory()
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		result := compiled.Call(x)
 		Keep(result[0])
 		Eval(result[0])
@@ -624,7 +624,7 @@ func TestCompileWithRandomState(t *testing.T) {
 
 	// Run multiple sampling steps
 	samples := make([]int32, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		outputs := compiled.Call(logits, key)
 		Keep(outputs...)
 		Eval(outputs...)
@@ -715,7 +715,7 @@ func BenchmarkSwiGLUUncompiled(b *testing.B) {
 	const limit float32 = 7.0
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		result := swiGLU(gate, up, alpha, limit)
 		Keep(result)
 		Eval(result)
@@ -738,7 +738,7 @@ func BenchmarkSwiGLUCompiled(b *testing.B) {
 	defer compiled.Free()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		result := compiled.Call(gate, up)
 		Keep(result[0])
 		Eval(result[0])
@@ -755,9 +755,9 @@ func BenchmarkSwiGLU10xUncompiled(b *testing.B) {
 	const limit float32 = 7.0
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		y := x
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			y = swiGLU(y, y, alpha, limit)
 		}
 		Keep(y)
@@ -776,7 +776,7 @@ func BenchmarkSwiGLU10xCompiled(b *testing.B) {
 
 	compiled := Compile(func(inputs []*Array) []*Array {
 		y := inputs[0]
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			y = swiGLU(y, y, alpha, limit)
 		}
 		return []*Array{y}
@@ -784,7 +784,7 @@ func BenchmarkSwiGLU10xCompiled(b *testing.B) {
 	defer compiled.Free()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		result := compiled.Call(x)
 		Keep(result[0])
 		Eval(result[0])
@@ -827,7 +827,7 @@ func BenchmarkSampleTopKUncompiled(b *testing.B) {
 	Eval(logits, key)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		var token *Array
 		token, key = sampleTopK(logits, key, 40)
 		Keep(token, key)
@@ -850,7 +850,7 @@ func BenchmarkSampleTopKCompiled(b *testing.B) {
 	defer compiled.Free()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		outputs := compiled.Call(logits, key)
 		Keep(outputs...)
 		Eval(outputs[0])
@@ -867,7 +867,7 @@ func BenchmarkSampleTopPUncompiled(b *testing.B) {
 	Eval(logits, key)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		var token *Array
 		token, key = sampleTopP(logits, key, 0.9, vocabSize)
 		Keep(token, key)
@@ -890,7 +890,7 @@ func BenchmarkSampleTopPCompiled(b *testing.B) {
 	defer compiled.Free()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		outputs := compiled.Call(logits, key)
 		Keep(outputs...)
 		Eval(outputs[0])
@@ -919,7 +919,7 @@ func TestCompiledSamplerMemoryStable(t *testing.T) {
 	defer compiledTopP.Free()
 
 	// Warmup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		out := compiledTopK.Call(logits, key)
 		Keep(out...)
 		Eval(out[0])
@@ -931,7 +931,7 @@ func TestCompiledSamplerMemoryStable(t *testing.T) {
 	initialMem := MetalGetActiveMemory()
 
 	// Run 500 iterations of each sampler
-	for i := 0; i < 500; i++ {
+	for range 500 {
 		// TopK
 		out := compiledTopK.Call(logits, key)
 		Keep(out...)
@@ -969,7 +969,7 @@ func BenchmarkSimpleOps(b *testing.B) {
 	weight.Eval()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		x := NewArrayFloat32([]float32{1, 2}, []int32{1, 2})
 		result := Matmul(x, weight)
 		Keep(result)
@@ -986,13 +986,13 @@ func BenchmarkLayerLike(b *testing.B) {
 	w.Eval()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		x := Ones(1, hidden)
 		// Simulate attention-like ops with proper shapes
-		h := Matmul(x, w)                  // [1, 256] @ [256, 256] = [1, 256]
-		h = Add(h, Matmul(h, w))           // residual
-		h = Mul(h, Sigmoid(Matmul(h, w)))  // gating
-		h = Matmul(h, w)                   // output projection
+		h := Matmul(x, w)                    // [1, 256] @ [256, 256] = [1, 256]
+		h = Add(h, Matmul(h, w))             // residual
+		h = Mul(h, Sigmoid(Matmul(h, w)))    // gating
+		h = Matmul(h, w)                     // output projection
 		h = Add(x, RMSNormNoWeight(h, 1e-5)) // residual + norm
 		Keep(h)
 		AsyncEval(h)
@@ -1008,9 +1008,9 @@ func BenchmarkManyOps(b *testing.B) {
 
 	for _, numOps := range []int{10, 50, 100, 500, 1000} {
 		b.Run(fmt.Sprintf("ops_%d", numOps), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				x := Ones(1, 64)
-				for j := 0; j < numOps; j++ {
+				for range numOps {
 					x = Add(x, Matmul(x, w))
 				}
 				Keep(x)
@@ -1037,11 +1037,11 @@ func BenchmarkLLMScale(b *testing.B) {
 	Eval(weights...)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		x := Ones(1, hidden)
 
-		for layer := 0; layer < numLayers; layer++ {
-			for op := 0; op < opsPerLayer/4; op++ {
+		for layer := range numLayers {
+			for range opsPerLayer / 4 {
 				x = Add(x, Matmul(x, weights[layer*4]))
 				x = Mul(x, Sigmoid(x))
 			}
@@ -1056,10 +1056,10 @@ func BenchmarkLLMScale(b *testing.B) {
 func BenchmarkArrayFreeLoop(b *testing.B) {
 	for _, count := range []int{100, 500, 1000, 1500} {
 		b.Run(fmt.Sprintf("arrays_%d", count), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				arrays := make([]*Array, count)
-				for j := 0; j < count; j++ {
+				for j := range count {
 					arrays[j] = NewArrayFloat32([]float32{1, 2, 3, 4}, []int32{2, 2})
 				}
 				b.StartTimer()
@@ -1080,10 +1080,10 @@ func BenchmarkCleanupIsolated(b *testing.B) {
 	for _, count := range []int{100, 500, 1000, 1500} {
 		b.Run(fmt.Sprintf("arrays_%d", count), func(b *testing.B) {
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				x := NewArrayFloat32([]float32{1}, []int32{1})
-				for j := 0; j < count; j++ {
+				for range count {
 					x = Add(x, x)
 				}
 				Keep(x)
@@ -1115,7 +1115,7 @@ func TestMemoryStable(t *testing.T) {
 	Eval(keys, values)
 
 	// Warmup
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		oldKeys, oldValues := keys, values
 
 		newKeys := Add(keys, keys)
@@ -1132,7 +1132,7 @@ func TestMemoryStable(t *testing.T) {
 	initialMem := MetalGetActiveMemory()
 
 	// Run 100 steps
-	for step := 0; step < 100; step++ {
+	for range 100 {
 		oldKeys, oldValues := keys, values
 
 		newKeys := Add(keys, keys)

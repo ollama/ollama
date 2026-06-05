@@ -59,6 +59,8 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	var messages []api.Message
 	var licenses []string
 	params := make(map[string]any)
+	var modelPaths []string
+	var draftPaths []string
 
 	for _, c := range f.Commands {
 		switch c.Name {
@@ -75,12 +77,38 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			} else if err != nil {
 				return nil, err
 			}
+			if err := rejectMatchingLocalPath("DRAFT", path, draftPaths); err != nil {
+				return nil, err
+			}
+			modelPaths = append(modelPaths, path)
 
 			if req.Files == nil {
 				req.Files = digestMap
 			} else {
 				for k, v := range digestMap {
 					req.Files[k] = v
+				}
+			}
+		case "draft":
+			path, err := expandPath(c.Args, relativeDir)
+			if err != nil {
+				return nil, err
+			}
+
+			digestMap, err := fileDigestMap(path)
+			if err != nil {
+				return nil, err
+			}
+			if err := rejectMatchingLocalPath("DRAFT", path, modelPaths); err != nil {
+				return nil, err
+			}
+			draftPaths = append(draftPaths, path)
+
+			if req.DraftFiles == nil {
+				req.DraftFiles = digestMap
+			} else {
+				for k, v := range digestMap {
+					req.DraftFiles[k] = v
 				}
 			}
 		case "adapter":
@@ -152,6 +180,39 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	}
 
 	return req, nil
+}
+
+func rejectMatchingLocalPath(name, path string, existing []string) error {
+	for _, candidate := range existing {
+		same, err := sameLocalPath(path, candidate)
+		if err != nil {
+			return err
+		}
+		if same {
+			return fmt.Errorf("%s must not reference the same local path as FROM: %s", name, path)
+		}
+	}
+	return nil
+}
+
+func sameLocalPath(a, b string) (bool, error) {
+	aa, err := canonicalLocalPath(a)
+	if err != nil {
+		return false, err
+	}
+	bb, err := canonicalLocalPath(b)
+	if err != nil {
+		return false, err
+	}
+	return aa == bb, nil
+}
+
+func canonicalLocalPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
 }
 
 func fileDigestMap(path string) (map[string]string, error) {
@@ -278,6 +339,11 @@ func filesForModel(path string) ([]string, error) {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
 		files = append(files, st...)
+		nested, err := glob(filepath.Join(path, "*", "model*.safetensors"), "")
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, nested...)
 	} else if st, _ := glob(filepath.Join(path, "consolidated*.safetensors"), ""); len(st) > 0 {
 		// covers consolidated.safetensors
 		files = append(files, st...)
@@ -336,7 +402,7 @@ func (c Command) String() string {
 	switch c.Name {
 	case "model":
 		fmt.Fprintf(&sb, "FROM %s", c.Args)
-	case "license", "template", "system", "adapter", "renderer", "parser", "requires":
+	case "license", "template", "system", "adapter", "renderer", "parser", "requires", "draft":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
@@ -362,7 +428,7 @@ const (
 var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
-	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"renderer\", \"parser\", \"parameter\", \"message\", or \"requires\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"draft\", \"renderer\", \"parser\", \"parameter\", \"message\", or \"requires\"")
 )
 
 type ParserError struct {
@@ -622,7 +688,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "renderer", "parser", "parameter", "message", "requires":
+	case "from", "license", "template", "system", "adapter", "draft", "renderer", "parser", "parameter", "message", "requires":
 		return true
 	default:
 		return false

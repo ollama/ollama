@@ -75,6 +75,10 @@
     {
       "source": "/integrations/clawdbot",
       "destination": "/integrations/openclaw"
+    },
+    {
+      "source": "/integrations/poolside",
+      "destination": "/integrations/pool"
     }
   ],
   "navigation": {
@@ -119,11 +123,15 @@
                 "expanded": true,
                 "pages": [
                   "/integrations/claude-code",
+                  "/integrations/codex-app",
                   "/integrations/codex",
+                  "/integrations/copilot-cli",
+                  "/integrations/cline-cli",
                   "/integrations/opencode",
                   "/integrations/droid",
                   "/integrations/goose",
-                  "/integrations/pi"
+                  "/integrations/pi",
+                  "/integrations/pool"
                 ]
               },
               {

@@ -93,12 +93,21 @@ func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
 
 func TestRoutes(t *testing.T) {
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+
 	type testCase struct {
 		Name     string
 		Method   string
 		Path     string
 		Setup    func(t *testing.T, req *http.Request)
 		Expected func(t *testing.T, resp *http.Response)
+	}
+
+	s := &Server{modelCaches: &modelCaches{modelList: newModelListCache()}}
+	s.modelCaches.modelList.Start(context.Background())
+	if err := s.modelCaches.modelList.Wait(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 
 	createTestModel := func(t *testing.T, name string) {
@@ -122,7 +131,7 @@ func TestRoutes(t *testing.T) {
 
 		modelName := model.ParseName(name)
 
-		baseLayers, err := ggufLayers(digest, fn)
+		baseLayers, err := ggufLayers(digest, "test.gguf", fn)
 		if err != nil {
 			t.Fatalf("failed to create model: %v", err)
 		}
@@ -138,6 +147,7 @@ func TestRoutes(t *testing.T) {
 		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
 			t.Fatal(err)
 		}
+		s.refreshModelListCache(modelName)
 	}
 
 	testCases := []testCase{
@@ -496,9 +506,6 @@ func TestRoutes(t *testing.T) {
 		},
 	}
 
-	modelsDir := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", modelsDir)
-
 	rc := &ollama.Registry{
 		// This is a temporary measure to allow us to move forward,
 		// surfacing any code contacting ollama.com we do not intended
@@ -514,7 +521,6 @@ func TestRoutes(t *testing.T) {
 		HTTPClient: panicOnRoundTrip,
 	}
 
-	s := &Server{}
 	router, err := s.GenerateRoutes(rc)
 	if err != nil {
 		t.Fatalf("failed to generate routes: %v", err)
@@ -577,6 +583,42 @@ func TestGetModelInfo_SafetensorsUsesStoredFileType(t *testing.T) {
 
 	if resp.Details.QuantizationLevel != "mxfp8" {
 		t.Fatalf("QuantizationLevel = %q, want %q", resp.Details.QuantizationLevel, "mxfp8")
+	}
+}
+
+func TestGetModelInfoRepairsUnknownGGUFFileType(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture": "llama",
+		"general.file_type":    uint32(ggml.FileTypeQ4_K_M),
+	}, nil)
+	modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := createConfigLayer([]manifest.Layer{modelLayer}, model.ConfigV2{
+		ModelFormat:   "gguf",
+		ModelFamily:   "llama",
+		ModelFamilies: []string{"llama"},
+		FileType:      "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := model.ParseName("show-unknown-gguf")
+	if err := manifest.WriteManifest(name, *configLayer, []manifest.Layer{modelLayer}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if resp.Details.QuantizationLevel != "Q4_K_M" {
+		t.Fatalf("QuantizationLevel = %q, want %q", resp.Details.QuantizationLevel, "Q4_K_M")
 	}
 }
 
@@ -786,6 +828,33 @@ func TestShow(t *testing.T) {
 
 	if resp.ProjectorInfo["general.architecture"] != "clip" {
 		t.Fatal("Expected projector architecture to be 'clip', but got", resp.ProjectorInfo["general.architecture"])
+	}
+}
+
+func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+	chatTemplate := "{% if tools %}{{ tools }}{% endif %}{% set content = (content.split('</think>')|last) %}"
+	goTemplate := "{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}{{ end }}"
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":    "llama",
+		"tokenizer.chat_template": chatTemplate,
+	}, nil)
+	writeTestModelManifest(t, "show-selected-template", digest, goTemplate)
+
+	var s Server
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: "show-selected-template"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Template != chatTemplate {
+		t.Fatalf("template = %q, want selected chat_template %q", resp.Template, chatTemplate)
 	}
 }
 

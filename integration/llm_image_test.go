@@ -17,7 +17,7 @@ func TestVisionModels(t *testing.T) {
 	defaultVisionModels := []string{
 		"gemma4",
 		"qwen2.5vl",
-		"llama3.2-vision",
+		// "llama3.2-vision", // TODO: re-enable when llama.cpp supports mllama.
 		"gemma3",
 		"qwen3-vl:8b",
 		"qwen3-vl:30b",
@@ -56,6 +56,7 @@ func TestVisionModels(t *testing.T) {
 					"seed":        42,
 					"temperature": 0.0,
 				},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}
 
 			// Preload to skip if we're less than 80% on GPU to avoid extremely slow tests

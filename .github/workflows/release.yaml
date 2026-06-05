@@ -16,7 +16,7 @@ jobs:
     outputs:
       GOFLAGS: ${{ steps.goflags.outputs.GOFLAGS }}
       VERSION: ${{ steps.goflags.outputs.VERSION }}
-      vendorsha: ${{ steps.changes.outputs.vendorsha }}
+      vendorsha: ${{ steps.goflags.outputs.vendorsha }}
     steps:
       - uses: actions/checkout@v4
       - name: Set environment
@@ -24,7 +24,7 @@ jobs:
         run: |
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" | tee -a $GITHUB_OUTPUT
           echo VERSION="${GITHUB_REF_NAME#v}" | tee -a $GITHUB_OUTPUT
-          echo vendorsha=$(make -f Makefile.sync print-base) | tee -a $GITHUB_OUTPUT
+          echo vendorsha=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
 
   darwin-build:
     runs-on: macos-26-xlarge
@@ -57,7 +57,9 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: |
             go.sum
-            Makefile.sync
+            LLAMA_CPP_VERSION
+            MLX_VERSION
+            MLX_C_VERSION
       - run: |
           ./scripts/build_darwin.sh
       - name: Log build results
@@ -73,15 +75,18 @@ jobs:
             dist/*.dmg
 
   windows-depends:
+    needs: setup-environment
     strategy:
       matrix:
         os: [windows]
         arch: [amd64]
         preset: ['CPU']
+        build-steps: ['cpu cpuArm64']
         include:
           - os: windows
             arch: amd64
             preset: 'CUDA 12'
+            build-steps: cuda12
             install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
             cuda-components:
               - '"cudart"'
@@ -89,10 +94,10 @@ jobs:
               - '"cublas"'
               - '"cublas_dev"'
             cuda-version: '12.8'
-            flags: ''
           - os: windows
             arch: amd64
             preset: 'CUDA 13'
+            build-steps: cuda13
             install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
             cuda-components:
               - '"cudart"'
@@ -103,23 +108,23 @@ jobs:
               - '"nvvm"'
               - '"nvptxcompiler"'
             cuda-version: '13.0'
-            flags: ''
           - os: windows
             arch: amd64
-            preset: 'ROCm 6'
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
-            rocm-version: '6.2'
-            flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
-            runner_dir: 'rocm'
+            preset: 'ROCm 7'
+            build-steps: rocm7
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe
+            rocm-version: '7.1'
           - os: windows
             arch: amd64
             preset: Vulkan
+            build-steps: vulkan
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
-            flags: ''
-            runner_dir: 'vulkan'
           - os: windows
             arch: amd64
             preset: 'MLX CUDA 13'
+            build-steps: mlxCuda13
+            build-parallel: '16'
+            cmake-cuda-flags: '-t 6'
             install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
             cudnn-install: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.18.1.3_cuda13-archive.zip
             cuda-components:
@@ -135,17 +140,33 @@ jobs:
               - '"nvvm"'
               - '"nvptxcompiler"'
             cuda-version: '13.0'
-            flags: ''
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
+      VERSION: ${{ needs.setup-environment.outputs.VERSION }}
     steps:
+      - if: startsWith(matrix.preset, 'MLX ')
+        name: Increase pagefile to 200 GB
+        uses: al-cheb/configure-pagefile-action@v1.5
+        with:
+          minimum-size: 16GB
+          maximum-size: 200GB
+          disk-root: "D:"
       - name: Install system dependencies
         run: |
           choco install -y --no-progress ccache ninja
           if (Get-Command ccache -ErrorAction SilentlyContinue) {
             ccache -o cache_dir=${{ github.workspace }}\.ccache
+          }
+      - if: matrix.preset == 'CPU'
+        name: Install Windows ARM64 cross compiler
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
+          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-x86_64").path
+          if (!(Test-Path "$installPath\bin\aarch64-w64-mingw32-gcc.exe")) {
+            throw "llvm-mingw x86_64 package is missing the aarch64 cross compiler"
           }
       - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ') || startsWith(matrix.preset, 'Vulkan') || startsWith(matrix.preset, 'MLX ')
         id: cache-install
@@ -195,12 +216,12 @@ jobs:
           }
           
           $vulkanPath = (Resolve-Path "C:\VulkanSDK\*").path
+          $vulkanRuntime = Join-Path $vulkanPath "Helpers\VulkanRT.exe"
+          if (Test-Path $vulkanRuntime) {
+            Start-Process -FilePath $vulkanRuntime -ArgumentList "/s" -NoNewWindow -Wait
+          }
           echo "$vulkanPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
-      - if: matrix.preset == 'CPU'
-        run: |
-          echo "CC=clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "CXX=clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - if: startsWith(matrix.preset, 'MLX ')
         name: Install cuDNN for MLX
         run: |
@@ -232,72 +253,63 @@ jobs:
         with:
           path: ${{ github.workspace }}\.ccache
           key: ccache-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}-${{ needs.setup-environment.outputs.vendorsha }}
-      - name: Build target "${{ matrix.preset }}"
+      - name: Build Windows dependencies
         run: |
           Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
-          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
-          cmake --build --parallel ([Environment]::ProcessorCount) --preset "${{ matrix.preset }}"
-          cmake --install build --component "${{ startsWith(matrix.preset, 'MLX ') && 'MLX' || startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || startsWith(matrix.preset, 'Vulkan') && 'Vulkan' || 'CPU' }}" --strip
-          Remove-Item -Path dist\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
+          $steps = "${{ matrix.build-steps }}".Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)
+          ./scripts/build_windows.ps1 @steps
         env:
           CMAKE_GENERATOR: Ninja
+          OLLAMA_BUILD_PARALLEL: ${{ matrix.build-parallel || '' }}
+          OLLAMA_CMAKE_CUDA_FLAGS: ${{ matrix.cmake-cuda-flags || '' }}
       - name: Log build results
         run: |
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
+      - if: matrix.preset == 'CPU'
+        name: Verify Windows CPU payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          for payload in \
+            dist/windows-amd64/lib/ollama/llama-server.exe \
+            dist/windows-arm64/lib/ollama/llama-server.exe
+          do
+            [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: depends-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
           path: dist\*
 
   windows-build:
-    strategy:
-      matrix:
-        os: [windows]
-        arch: [amd64, arm64]
-        include:
-        - os: windows
-          arch: amd64
-          llvmarch: x86_64
-        - os: windows
-          arch: arm64
-          llvmarch: aarch64
-    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
+    runs-on: windows
     environment: release
     needs: [setup-environment]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
       VERSION: ${{ needs.setup-environment.outputs.VERSION }}
     steps:
-      - name: Install ARM64 system dependencies
-        if: matrix.arch == 'arm64'
-        run: |
-          $ErrorActionPreference = "Stop"
-          Set-ExecutionPolicy Bypass -Scope Process -Force
-          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-          echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-          Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vc_redist.arm64.exe -OutFile "${{ runner.temp }}\vc_redist.arm64.exe"
-          Start-Process -FilePath "${{ runner.temp }}\vc_redist.arm64.exe" -ArgumentList @("/install", "/quiet", "/norestart") -NoNewWindow -Wait
-
-          choco install -y --no-progress git gzip
-          echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install clang and gcc-compat
         run: |
           $ErrorActionPreference = "Stop"
           Set-ExecutionPolicy Bypass -Scope Process -Force
-          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-${{ matrix.llvmarch }}.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
           Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
-          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt*").path
+          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-x86_64").path
           echo "$installPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (!(Test-Path "$installPath\bin\aarch64-w64-mingw32-gcc.exe")) {
+            throw "llvm-mingw x86_64 package is missing the aarch64 cross compiler"
+          }
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache-dependency-path: |
             go.sum
-            Makefile.sync
+            LLAMA_CPP_VERSION
+            MLX_VERSION
+            MLX_C_VERSION
       - name: Verify gcc is actually clang
         run: |
           $ErrorActionPreference='Continue'
@@ -314,20 +326,30 @@ jobs:
         with:
           node-version: "20"
       - run: |
-          ./scripts/build_windows ollama app
+          ./scripts/build_windows ollama ollamaArm64 app appArm64
+      - name: Verify Windows build payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          for payload in \
+            dist/windows-amd64/ollama.exe \
+            dist/windows-arm64/ollama.exe
+          do
+            [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
       - name: Log build results
         run: |
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
       - uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.os }}-${{ matrix.arch }}
+          name: build-windows-amd64
           path: |
             dist\*
 
   windows-app:
     runs-on: windows
     environment: release
-    needs: [windows-build, windows-depends]
+    needs: [setup-environment, windows-build, windows-depends]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
       VERSION: ${{ needs.setup-environment.outputs.VERSION }}
@@ -353,7 +375,9 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: |
             go.sum
-            Makefile.sync
+            LLAMA_CPP_VERSION
+            MLX_VERSION
+            MLX_C_VERSION
       - uses: actions/download-artifact@v4
         with:
           pattern: depends-windows*
@@ -367,6 +391,18 @@ jobs:
       - name: Log dist contents after download
         run: |
           gci -path .\dist -recurse
+      - name: Verify Windows package inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for payload in \
+            dist/windows-amd64/ollama.exe \
+            dist/windows-amd64/lib/ollama/llama-server.exe \
+            dist/windows-arm64/ollama.exe \
+            dist/windows-arm64/lib/ollama/llama-server.exe
+          do
+            [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
       - run: |
           ./scripts/build_windows.ps1 deps sign installer zip
       - name: Log contents after build
@@ -380,20 +416,33 @@ jobs:
             dist/*.ps1
             dist/OllamaSetup.exe
 
-  linux-build:
+  linux-depends:
     strategy:
       matrix:
         include:
-          - os: linux
-            arch: amd64
-            target: archive
-          - os: linux
-            arch: amd64
-            target: rocm
-          - os: linux
-            arch: arm64
-            target: archive
-    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
+          - arch: amd64
+            target: llama-server-cpu
+          - arch: amd64
+            target: llama-server-cuda_v12
+          - arch: amd64
+            target: llama-server-cuda_v13
+          - arch: amd64
+            target: mlx
+          - arch: amd64
+            target: llama-server-rocm_v7_2
+          - arch: amd64
+            target: llama-server-vulkan
+          - arch: arm64
+            target: llama-server-cpu
+          - arch: arm64
+            target: llama-server-cuda_v12
+          - arch: arm64
+            target: llama-server-cuda_v13
+          - arch: arm64
+            target: jetpack-5
+          - arch: arm64
+            target: jetpack-6
+    runs-on: ${{ matrix.arch == 'arm64' && 'linux-arm64' || 'linux' }}
     environment: release
     needs: setup-environment
     env:
@@ -401,80 +450,114 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - if: matrix.target == 'mlx'
+        name: Increase Linux swap to 200 GB
+        shell: bash
+        run: |
+          set -e
+          SWAP_PATH=/swapfile-mlx
+          SWAP_SIZE_GB=200
+          if [ -f "$SWAP_PATH" ]; then
+              sudo swapoff "$SWAP_PATH" 2>/dev/null || true
+              sudo rm -f "$SWAP_PATH"
+          fi
+          if ! sudo fallocate -l ${SWAP_SIZE_GB}G "$SWAP_PATH" 2>/dev/null; then
+              echo "fallocate unsupported, falling back to dd"
+              sudo dd if=/dev/zero of="$SWAP_PATH" bs=1M count=$((SWAP_SIZE_GB * 1024))
+          fi
+          sudo chmod 600 "$SWAP_PATH"
+          sudo mkswap "$SWAP_PATH"
+          sudo swapon "$SWAP_PATH"
+          swapon --show
+          free -h
       - uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
           target: ${{ matrix.target }}
+          provenance: false
+          sbom: false
           build-args: |
             GOFLAGS=${{ env.GOFLAGS }}
             CGO_CFLAGS=${{ env.CGO_CFLAGS }}
             CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
-          outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
-          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
-          cache-to: type=inline
-      - name: Deduplicate CUDA libraries
-        run: |
-          ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
-      - run: |
-          for COMPONENT in bin/* lib/ollama/*; do
-            case "$COMPONENT" in
-              bin/ollama*)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
-              lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
-              lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
-            esac
-          done
-        working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
-      - run: |
-          echo "Manifests"
-          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in ; do
-            echo $ARCHIVE
-            cat $ARCHIVE
-          done
-      - run: |
-          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
-            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd --ultra -22 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
-          done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bundles-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
-          path: |
-            *.tar.zst
+            OLLAMA_MLX_BUILD_JOBS=16
+            OLLAMA_MLX_NVCC_THREADS=6
+            APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+            APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
+          cache-from: |
+            type=registry,ref=ollama/release:cache-${{ matrix.arch }}-${{ matrix.target }}
+            type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+          cache-to: type=registry,ref=ollama/release:cache-${{ matrix.arch }}-${{ matrix.target }},mode=max
 
   # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
+  # Heavy stages were pre-built by linux-depends; this job is cache-hit-only for those layers
+  # and just assembles, runs the Go build, pushes the final image, and extracts release bundles.
   docker-build-push:
     strategy:
       matrix:
         include:
           - os: linux
             arch: arm64
+            archive-target: archive
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
+              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+              APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
+              OLLAMA_MLX_BUILD_JOBS=16
+              OLLAMA_MLX_NVCC_THREADS=6
+            cache-from: |
+              type=registry,ref=ollama/release:cache-arm64-llama-server-cpu
+              type=registry,ref=ollama/release:cache-arm64-llama-server-cuda_v12
+              type=registry,ref=ollama/release:cache-arm64-llama-server-cuda_v13
+              type=registry,ref=ollama/release:cache-arm64-jetpack-5
+              type=registry,ref=ollama/release:cache-arm64-jetpack-6
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
           - os: linux
             arch: amd64
+            archive-target: archive
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
+              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+              APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
+              OLLAMA_MLX_BUILD_JOBS=16
+              OLLAMA_MLX_NVCC_THREADS=6
+            cache-from: |
+              type=registry,ref=ollama/release:cache-amd64-llama-server-cpu
+              type=registry,ref=ollama/release:cache-amd64-llama-server-cuda_v12
+              type=registry,ref=ollama/release:cache-amd64-llama-server-cuda_v13
+              type=registry,ref=ollama/release:cache-amd64-mlx
+              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v7_2
+              type=registry,ref=ollama/release:cache-amd64-llama-server-vulkan
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
           - os: linux
             arch: amd64
             suffix: '-rocm'
+            archive-target: image-archive
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
               FLAVOR=rocm
+              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
+              APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
+              OLLAMA_MLX_BUILD_JOBS=16
+              OLLAMA_MLX_NVCC_THREADS=6
+            cache-from: |
+              type=registry,ref=ollama/release:cache-amd64-llama-server-cpu
+              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v7_2
+              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
-    needs: setup-environment
+    needs: [setup-environment, linux-depends]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
@@ -494,8 +577,11 @@ jobs:
             VERSION=${{ needs.setup-environment.outputs.VERSION }}
             REVISION=${{ github.sha }}
             CREATED=${{ github.run_started_at }}
+          provenance: false
+          sbom: false
+          build-args: ${{ matrix.build-args }}
           outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
+          cache-from: ${{ matrix.cache-from }}
           cache-to: type=inline
       - run: |
           mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
@@ -506,6 +592,64 @@ jobs:
           name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
           path: |
             ${{ runner.temp }}/${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          target: ${{ matrix.archive-target }}
+          provenance: false
+          sbom: false
+          build-args: ${{ matrix.build-args }}
+          outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
+          cache-from: ${{ matrix.cache-from }}
+      - name: Deduplicate CUDA libraries
+        run: |
+          ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
+      - name: Verify Linux build payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="dist/${{ matrix.os }}-${{ matrix.arch }}"
+          for payload in \
+            "$base/bin/ollama" \
+            "$base/lib/ollama/llama-server"
+          do
+            [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
+      - run: |
+          for COMPONENT in bin/* lib/ollama/*; do
+            case "$COMPONENT" in
+              bin/ollama*)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/llama-server*|lib/ollama/llama-quantize*)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
+              lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
+              lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
+              lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
+              lib/ollama/rocm_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+            esac
+          done
+        working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
+      - if: matrix.suffix == '-rocm'
+        run: rm -f dist/${{ matrix.os }}-${{ matrix.arch }}/ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in
+      - run: |
+          echo "Manifests"
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in ; do
+            echo $ARCHIVE
+            cat $ARCHIVE
+          done
+      - run: |
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd -19 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst) &
+          done
+          wait
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
+          path: |
+            *.tar.zst
 
   # Merge Docker images for the same flavor into a single multi-arch manifest
   docker-merge-push:
@@ -545,7 +689,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     environment: release
-    needs: [darwin-build, windows-app, linux-build]
+    needs: [darwin-build, windows-app, docker-build-push]
     permissions:
       contents: write
     env:
@@ -563,6 +707,21 @@ jobs:
       - name: Copy install scripts to dist
         run: |
           cp scripts/install.sh dist/install.sh
+      - name: Verify release artifacts
+        run: |
+          required=(
+            dist/OllamaSetup.exe
+            dist/install.ps1
+            dist/install.sh
+            dist/ollama-windows-amd64.zip
+            dist/ollama-windows-arm64.zip
+          )
+          for payload in "${required[@]}"; do
+            if [ ! -f "$payload" ]; then
+              echo "::error::Missing expected release artifact: $payload"
+              exit 1
+            fi
+          done
       - name: Generate checksum file
         run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
         working-directory: dist

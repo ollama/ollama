@@ -2,29 +2,64 @@
 title: Hermes Agent
 ---
 
-Hermes Agent is a self-improving AI agent built by Nous Research. It features automatic skill creation, cross-session memory, and connects messaging platforms (Telegram, Discord, Slack, WhatsApp, Signal, Email) to models through a unified gateway.
+Hermes Agent is a self-improving AI agent built by Nous Research. It features automatic skill creation, cross-session memory, and 70+ skills that it ships with by default. 
+
+![Hermes Agent with Ollama](/images/hermes.png)
 
 ## Quick start
 
-### Pull a model
-
-Before running the setup wizard, make sure you have a model available. Hermes will auto-detect models downloaded through Ollama.
-
 ```bash
-ollama pull kimi-k2.5:cloud
+ollama launch hermes
 ```
 
-See [Recommended models](#recommended-models) for more options.
+Ollama handles everything automatically:
 
-### Install
+1. **Install** — If Hermes isn't installed, Ollama prompts to install it via the Nous Research install script
+2. **Model** — Pick a model from the selector (local or cloud)
+3. **Onboarding** — Ollama configures the Ollama provider, points Hermes at `http://127.0.0.1:11434/v1`, and sets your model as the primary
+4. **Gateway** — Optionally connects a messaging platform (Telegram, Discord, Slack, WhatsApp, Signal, Email) and launches the Hermes chat
+
+## Recommended models
+
+**Cloud models**:
+
+- `kimi-k2.5:cloud` — Multimodal reasoning with subagents
+- `glm-5.1:cloud` — Reasoning and code generation
+- `qwen3.5:cloud` — Reasoning, coding, and agentic tool use with vision
+- `minimax-m2.7:cloud` — Fast, efficient coding and real-world productivity
+
+**Local models:**
+
+- `gemma4` — Reasoning and code generation locally (~16 GB VRAM)
+- `qwen3.6` — Reasoning, coding, and visual understanding locally (~24 GB VRAM)
+
+More models at [ollama.com/search](https://ollama.com/search?c=cloud).
+
+## Connect messaging apps
+
+Link Telegram, Discord, Slack, WhatsApp, Signal, or Email to chat with your models from anywhere:
+
+```bash
+hermes gateway setup
+```
+
+## Reconfigure
+
+Re-run the full setup wizard at any time:
+
+```bash
+hermes setup
+```
+
+## Manual setup
+
+If you'd rather drive Hermes's own wizard instead of `ollama launch hermes`, install it directly:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
 ```
 
-### Set up
-
-After installation, Hermes launches the setup wizard automatically. Choose **Quick setup**:
+Hermes launches the setup wizard automatically. Choose **Quick setup**:
 
 ```
 How would you like to set up Hermes?
@@ -80,32 +115,25 @@ Connect a messaging platform? (Telegram, Discord, etc.)
 Launch hermes chat now? [Y/n]: Y
 ```
 
-## Recommended models
+### Configure desktop app with Ollama cloud models
 
-**Cloud models**:
-
-- `kimi-k2.5:cloud` — Multimodal reasoning with subagents
-- `qwen3.5:cloud` — Reasoning, coding, and agentic tool use with vision
-- `glm-5.1:cloud` — Reasoning and code generation
-- `minimax-m2.7:cloud` — Fast, efficient coding and real-world productivity
-
-**Local models:**
-
-- `gemma4` — Reasoning and code generation locally (~16 GB VRAM)
-- `qwen3.5` — Reasoning, coding, and visual understanding locally (~11 GB VRAM)
-
-More models at [ollama.com/search](https://ollama.com/models).
-
-## Configure later
-
-Re-run the setup wizard at any time:
+To configure Hermes Desktop with cloud models, run:
 
 ```bash
-hermes setup
+hermes model
 ```
 
-To configure just messaging:
+In the model wizard:
+
+1. Select **Ollama Cloud** as the provider
+2. Enter your [Ollama API key](https://ollama.com/settings/keys)
+3. Leave the default base URL as `https://ollama.com/v1`
+4. Pick a model. Recommended: `glm-5.1` or `kimi-k2.6`
+
+Then launch Hermes Desktop:
 
 ```bash
-hermes setup gateway
+hermes desktop
 ```
+
+This can take some time to configure before the desktop app starts.

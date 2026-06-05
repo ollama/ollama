@@ -31,6 +31,13 @@ type FunctionGemmaParser struct {
 func (p *FunctionGemmaParser) HasToolSupport() bool     { return true }
 func (p *FunctionGemmaParser) HasThinkingSupport() bool { return false }
 
+func (p *FunctionGemmaParser) PreservedTokens() []string {
+	return []string{
+		functionGemmaFunctionCallOpen,
+		functionGemmaFunctionCallClose,
+	}
+}
+
 func (p *FunctionGemmaParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.state = FunctionGemmaCollectingContent
