@@ -472,7 +472,7 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 			if !strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("non-installed recommended %q should have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
-		case "minimax-m2.7:cloud", "kimi-k2.6:cloud", "qwen3.5:cloud":
+		case "minimax-m3:cloud", "kimi-k2.6:cloud", "qwen3.5:cloud":
 			if strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("cloud model %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
@@ -685,7 +685,7 @@ func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
 	lastRecIdx := -1
 	firstNonRecIdx := len(got)
 	for i, name := range got {
-		isRec := name == "gemma4" || name == "qwen3.5" || name == "minimax-m2.7:cloud" || name == "glm-5.1:cloud" || name == "kimi-k2.6:cloud" || name == "qwen3.5:cloud"
+		isRec := name == "gemma4" || name == "qwen3.5" || name == "minimax-m3:cloud" || name == "glm-5.1:cloud" || name == "kimi-k2.6:cloud" || name == "qwen3.5:cloud"
 		if isRec && i > lastRecIdx {
 			lastRecIdx = i
 		}
@@ -718,7 +718,7 @@ func TestBuildModelList_StaleSavedKimiK25DoesNotReshuffleRecommendedOrder(t *tes
 		{Name: "kimi-k2.5:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud"}, "kimi-k2.5:cloud")
+	items, _, _, _ := buildModelList(existing, []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m3:cloud"}, "kimi-k2.5:cloud")
 	got := names(items)
 
 	want := recommendedNames("kimi-k2.5:cloud")
@@ -1522,7 +1522,7 @@ func TestRecommendedModelsDoNotIncludeRequiredPlanStubs(t *testing.T) {
 	if item := byName["kimi-k2.6:cloud"]; item.RequiredPlan != "" {
 		t.Fatalf("kimi fallback required plan should not be stubbed: %#v", item)
 	}
-	if item := byName["minimax-m2.7:cloud"]; item.RequiredPlan != "" {
+	if item := byName["minimax-m3:cloud"]; item.RequiredPlan != "" {
 		t.Fatalf("minimax fallback required plan should not be stubbed: %#v", item)
 	}
 	if item := byName["qwen3.5:cloud"]; item.RequiredPlan != "" {

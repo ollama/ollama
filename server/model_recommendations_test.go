@@ -27,7 +27,7 @@ func TestModelRecommendationsDefaultOrder(t *testing.T) {
 		"kimi-k2.6:cloud",
 		"glm-5.1:cloud",
 		"qwen3.5:cloud",
-		"minimax-m2.7:cloud",
+		"minimax-m3:cloud",
 		"gemma4",
 		"qwen3.5",
 	}
@@ -279,7 +279,7 @@ func TestValidateModelRecommendationsDoesNotSynthesizeRequiredPlans(t *testing.T
 		{Model: "kimi-k2.6:cloud", Description: "coding", ContextLength: 262_144, MaxOutputTokens: 262_144},
 		{Model: "qwen3.5:cloud", Description: "reasoning", ContextLength: 262_144, MaxOutputTokens: 32_768},
 		{Model: "custom:cloud", Description: "custom", ContextLength: 4096, MaxOutputTokens: 1024},
-		{Model: "minimax-m2.7:cloud", Description: "custom", ContextLength: 204_800, MaxOutputTokens: 128_000, RequiredPlan: "team"},
+		{Model: "minimax-m3:cloud", Description: "custom", ContextLength: 524_288, MaxOutputTokens: 131_072, RequiredPlan: "free"},
 	}
 
 	got, err := validateModelRecommendations(input)
@@ -301,7 +301,7 @@ func TestValidateModelRecommendationsDoesNotSynthesizeRequiredPlans(t *testing.T
 	if rec := byName["custom:cloud"]; rec.RequiredPlan != "" {
 		t.Fatalf("custom required plan should not be synthesized: %#v", rec)
 	}
-	if rec := byName["minimax-m2.7:cloud"]; rec.RequiredPlan != "team" {
+	if rec := byName["minimax-m3:cloud"]; rec.RequiredPlan != "free" {
 		t.Fatalf("explicit required plan should not be overwritten: %#v", rec)
 	}
 }

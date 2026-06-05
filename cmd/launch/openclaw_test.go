@@ -2349,7 +2349,7 @@ func TestOpenclawModelConfig(t *testing.T) {
 	})
 
 	t.Run("cloud model uses hardcoded limits", func(t *testing.T) {
-		cfg, isCloud := openclawModelConfig(fallbackLaunchModel("minimax-m2.7:cloud"))
+		cfg, isCloud := openclawModelConfig(fallbackLaunchModel("minimax-m3:cloud"))
 
 		if !isCloud {
 			t.Error("expected isCloud = true for cloud model")
