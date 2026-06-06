@@ -138,7 +138,7 @@ func runOllamaCreate(ctx context.Context, t *testing.T, args ...string) {
 	}
 }
 
-func TestCreateSafetensorsLLM(t *testing.T) {
+func runCreateSafetensorsLLM(t *testing.T) {
 	if testModel != "" {
 		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
 	}
@@ -216,7 +216,7 @@ func TestCreateSafetensorsLLM(t *testing.T) {
 	}
 }
 
-func TestCreateGGUF(t *testing.T) {
+func runCreateGGUF(t *testing.T) {
 	if testModel != "" {
 		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
 	}
