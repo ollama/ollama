@@ -1,0 +1,49 @@
+# SSH Configuration Example for Ollama Development
+
+# This is an example SSH config file for developers working on Ollama
+# Copy this to ~/.ssh/config and customize as needed
+
+# GitHub.com
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519
+    AddKeysToAgent yes
+    UseKeychain yes
+    # Increase timeout for slow connections
+    ServerAliveInterval 60
+    ServerAliveCountMax 10
+
+# GitHub Enterprise (if applicable)
+Host github-enterprise
+    HostName github.enterprise.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519_enterprise
+    AddKeysToAgent yes
+
+# Custom Git Server (example)
+Host custom-git
+    HostName git.example.com
+    User git
+    Port 22
+    IdentityFile ~/.ssh/id_ed25519_custom
+    AddKeysToAgent yes
+
+# Personal GitHub Account
+Host github-personal
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519_personal
+    AddKeysToAgent yes
+
+# Work GitHub Account
+Host github-work
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519_work
+    AddKeysToAgent yes
+
+# Usage examples:
+# git clone git@github.com:ollama/ollama.git
+# git clone git@github-personal:username/repo.git
+# git clone git@github-work:company/repo.git
