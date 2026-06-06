@@ -16,9 +16,16 @@ package mlx
 // Forward declare cpu_stream
 static mlx_stream cpu_stream();
 
-// Cached default GPU stream for all ops
-static mlx_stream _default_stream = {0};
-static mlx_stream _cpu_stream = {0};
+#if defined(_MSC_VER)
+#define MLX_THREAD_LOCAL __declspec(thread)
+#else
+#define MLX_THREAD_LOCAL __thread
+#endif
+
+// MLX streams are native-thread local. Production callers use mlxthread, but
+// direct package callers and tests can still enter from different OS threads.
+static MLX_THREAD_LOCAL mlx_stream _default_stream = {0};
+static MLX_THREAD_LOCAL mlx_stream _cpu_stream = {0};
 
 static inline mlx_stream default_stream() {
     if (_default_stream.ctx == NULL) {
@@ -1703,6 +1710,7 @@ var (
 )
 
 var (
+	mlxInitMu      sync.Mutex
 	mlxInitialized bool
 	mlxInitError   error
 )
@@ -1711,6 +1719,9 @@ var (
 // This must be called before using any MLX functions.
 // Returns an error if the library cannot be loaded.
 func InitMLX() error {
+	mlxInitMu.Lock()
+	defer mlxInitMu.Unlock()
+
 	if mlxInitialized {
 		return mlxInitError
 	}
@@ -1740,34 +1751,28 @@ func InitMLX() error {
 	mlxInitError = nil
 
 	// Enter safe mode: replace the default exit(-1) error handler with one
-	// that logs and stores errors. This prevents a GPU init failure from
-	// killing the entire process during startup.
+	// that logs and stores errors. This lets callers surface MLX errors
+	// instead of killing the entire process during initialization.
 	C.mlx_set_safe_init_mode()
 
 	// Lock main goroutine to OS thread for CUDA context stability.
 	// CUDA contexts are bound to threads; Go can migrate goroutines between threads.
 	runtime.LockOSThread()
-	RandomState[0] = RandomKey(uint64(time.Now().UnixMilli()))
-	Keep(RandomState[0]) // Global state should persist
-
-	// Check if the RandomKey call silently failed under safe mode
-	if C.mlx_had_init_error() != 0 {
-		msg := C.GoString(C.mlx_get_init_error())
-		mlxInitError = fmt.Errorf("MLX GPU init failed: %s", msg)
-		mlxInitialized = false
-		return mlxInitError
-	}
 
 	return nil
 }
 
-// IsMLXAvailable returns whether MLX was successfully initialized
+// IsMLXAvailable returns whether MLX was successfully initialized.
 func IsMLXAvailable() bool {
+	mlxInitMu.Lock()
+	defer mlxInitMu.Unlock()
 	return mlxInitialized && mlxInitError == nil
 }
 
-// GetMLXInitError returns any error that occurred during MLX initialization
+// GetMLXInitError returns any error that occurred during MLX initialization.
 func GetMLXInitError() error {
+	mlxInitMu.Lock()
+	defer mlxInitMu.Unlock()
 	return mlxInitError
 }
 
@@ -1803,6 +1808,10 @@ func RandomCategoricalWithKey(logits, key *Array, axis int, numSamples int) *Arr
 // For simple scripts - production code should use RandomCategoricalWithKey with explicit key management.
 func RandomCategorical(logits *Array, axis int, numSamples int) *Array {
 	randomStateMu.Lock()
+	if RandomState[0] == nil {
+		RandomState[0] = RandomKey(uint64(time.Now().UnixMilli()))
+		Keep(RandomState[0]) // Global state should persist
+	}
 	oldKey := RandomState[0]
 	key1, key2 := RandomSplit(oldKey)
 	Keep(key1) // key1 becomes the new global state

@@ -74,6 +74,7 @@ func main() {
 		return
 	}
 
+	// Initialize MLX only once this engine is actually running.
 	if err := mlx.InitMLX(); err != nil {
 		log.Fatalf("MLX initialization failed: %v", err)
 	}
