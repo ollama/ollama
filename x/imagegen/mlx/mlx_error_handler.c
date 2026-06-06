@@ -1,5 +1,5 @@
 // mlx_error_handler.c - Safe error handling for MLX initialization
-// Provides a non-fatal error handler for use during init(), so that
+// Provides a non-fatal error handler for use during InitMLX(), so that
 // GPU failures are captured instead of calling exit(-1).
 
 #include "mlx_error_handler.h"
