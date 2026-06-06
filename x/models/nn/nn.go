@@ -166,23 +166,13 @@ func (e *Embedding) AsLinear() LinearLayer {
 // QuantizedEmbedding performs row-wise embedding lookup from affine/nvfp4/etc.
 // packed weights and dequantizes only the selected rows.
 type QuantizedEmbedding struct {
-	Weight    *mlx.Array
-	Scales    *mlx.Array
-	QBiases   *mlx.Array
-	GroupSize int
-	Bits      int
-	Mode      string
-}
-
-func NewQuantizedEmbedding(weight, scales, qbiases *mlx.Array, groupSize, bits int, mode string) *QuantizedEmbedding {
-	return &QuantizedEmbedding{
-		Weight:    weight,
-		Scales:    scales,
-		QBiases:   qbiases,
-		GroupSize: groupSize,
-		Bits:      bits,
-		Mode:      mode,
-	}
+	Weight      *mlx.Array
+	Scales      *mlx.Array
+	QBiases     *mlx.Array
+	GlobalScale *mlx.Array // Per-tensor global scale for double-scale nvfp4 (nil for standard)
+	GroupSize   int
+	Bits        int
+	Mode        string
 }
 
 func (qe *QuantizedEmbedding) Forward(indices *mlx.Array) *mlx.Array {
@@ -192,17 +182,22 @@ func (qe *QuantizedEmbedding) Forward(indices *mlx.Array) *mlx.Array {
 	if qe.QBiases != nil && qe.QBiases.Valid() {
 		qbiases = qe.QBiases.TakeAxis(indices, 0)
 	}
-	return mlx.Dequantize(weight, scales, qbiases, qe.GroupSize, qe.Bits, qe.Mode)
+	out := mlx.Dequantize(weight, scales, qbiases, qe.GroupSize, qe.Bits, qe.Mode)
+	if qe.GlobalScale != nil {
+		out = mlx.Mul(out, qe.GlobalScale)
+	}
+	return out
 }
 
 func (qe *QuantizedEmbedding) AsLinear() LinearLayer {
 	return &QuantizedLinear{
-		Weight:    qe.Weight,
-		Scales:    qe.Scales,
-		QBiases:   qe.QBiases,
-		GroupSize: qe.GroupSize,
-		Bits:      qe.Bits,
-		Mode:      qe.Mode,
+		Weight:      qe.Weight,
+		Scales:      qe.Scales,
+		QBiases:     qe.QBiases,
+		GlobalScale: qe.GlobalScale,
+		GroupSize:   qe.GroupSize,
+		Bits:        qe.Bits,
+		Mode:        qe.Mode,
 	}
 }
 
