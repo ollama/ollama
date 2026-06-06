@@ -599,7 +599,13 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
 }
 
-const limitedMMProjOffloadMemory = 10 << 30
+// mmprojOffloadHeadroom is extra free VRAM kept above the raw projector
+// size when deciding whether the multimodal projector fits on the GPU. (#16496)
+const mmprojOffloadHeadroom = 1 << 30 // 1 GiB
+
+// limitedMMProjOffloadFallback is the conservative free-VRAM floor used only
+// when the projector file size is unknown. (#16496)
+const limitedMMProjOffloadFallback = 2 << 30 // 2 GiB
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
 	if len(launch.projectors) == 0 {
@@ -619,15 +625,30 @@ func (launch llamaServerLaunchConfig) mmprojOffloadDisabled() (bool, string) {
 	if launch.forceNoMMProjOffload {
 		return true, "startup-oom-retry"
 	}
-	return shouldDisableMMProjOffload(launch.opts, launch.gpus, launch.modelLayers)
+	var mmprojSize uint64
+	if len(launch.projectors) > 0 {
+		if fi, err := os.Stat(launch.projectors[0]); err == nil && fi.Size() > 0 {
+			mmprojSize = uint64(fi.Size())
+		}
+	}
+	return shouldDisableMMProjOffload(launch.opts, launch.gpus, launch.modelLayers, mmprojSize)
 }
 
-func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLayers uint64) (bool, string) {
+func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLayers, mmprojSize uint64) (bool, string) {
 	if opts.NumGPU == 0 {
 		return true, "cpu-only"
 	}
 	if opts.NumGPU > 0 && modelLayers > 0 && uint64(opts.NumGPU) < modelLayers {
 		return true, "partial-text-offload"
+	}
+
+	// Required free VRAM to keep the projector on the GPU. Compare against the
+	// actual projector size plus headroom instead of a blanket 10 GiB floor,
+	// which force-disabled offload on small discrete GPUs (e.g. 8 GB W7500) and
+	// regressed multimodal latency from ~3s to 5min+ since 0.24. (#16496)
+	required := uint64(limitedMMProjOffloadFallback)
+	if mmprojSize > 0 {
+		required = mmprojSize + mmprojOffloadHeadroom
 	}
 
 	for _, gpu := range gpus {
@@ -638,7 +659,7 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 		if memory == 0 || (gpu.TotalMemory > 0 && gpu.TotalMemory < memory) {
 			memory = gpu.TotalMemory
 		}
-		if memory > 0 && memory <= limitedMMProjOffloadMemory {
+		if memory > 0 && memory < required {
 			return true, "limited-vram"
 		}
 	}
