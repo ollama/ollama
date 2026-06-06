@@ -804,7 +804,7 @@ func NewLlamaServerRunner(
 
 	if err := s.startProcess(); err != nil {
 		msg := s.lastErrMsg()
-		return nil, fmt.Errorf("error starting llama-server: %v %s", err, msg)
+		return nil, fmt.Errorf("error starting llama-server: %w %s", err, msg)
 	}
 
 	return s, nil
@@ -1036,7 +1036,7 @@ func (s *llamaServerRunner) getServerStatus(ctx context.Context) (ServerStatus, 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", s.port), nil)
 	if err != nil {
-		return ServerStatusError, fmt.Errorf("error creating health request: %v", err)
+		return ServerStatusError, fmt.Errorf("error creating health request: %w", err)
 	}
 
 	resp, err := s.httpClient().Do(req)
@@ -1454,13 +1454,13 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	enc := json.NewEncoder(buffer)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(lsReq); err != nil {
-		return fmt.Errorf("failed to marshal completion request: %v", err)
+		return fmt.Errorf("failed to marshal completion request: %w", err)
 	}
 
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
 	serverReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
 	if err != nil {
-		return fmt.Errorf("error creating completion request: %v", err)
+		return fmt.Errorf("error creating completion request: %w", err)
 	}
 	serverReq.Header.Set("Content-Type", "application/json")
 
@@ -1518,7 +1518,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 
 			var lsResp llamaServerCompletionResponse
 			if err := json.Unmarshal(evt, &lsResp); err != nil {
-				return fmt.Errorf("error unmarshalling llama-server response: %v", err)
+				return fmt.Errorf("error unmarshalling llama-server response: %w", err)
 			}
 
 			// Token repeat detection
@@ -1574,11 +1574,11 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			if err := llamaServerStreamLimitError("response", err); err != nil {
 				return err
 			}
-			return fmt.Errorf("error reading llama-server response: %v", err)
+			return fmt.Errorf("error reading llama-server response: %w", err)
 		}
 
 		if err := res.Body.Close(); err != nil {
-			return fmt.Errorf("error closing llama-server response: %v", err)
+			return fmt.Errorf("error closing llama-server response: %w", err)
 		}
 
 		fn(finalResp)
@@ -1597,7 +1597,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			}
 			return fmt.Errorf("an error was encountered while running the model: %s", msg)
 		}
-		return fmt.Errorf("error reading llama-server response: %v", err)
+		return fmt.Errorf("error reading llama-server response: %w", err)
 	}
 
 	return nil
@@ -1676,13 +1676,13 @@ func (s *llamaServerRunner) ApplyChatTemplate(ctx context.Context, req ChatReque
 
 	body, err := json.Marshal(data)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal chat template request: %v", err)
+		return "", fmt.Errorf("failed to marshal chat template request: %w", err)
 	}
 
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/apply-template", s.port)
 	serverReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("error creating chat template request: %v", err)
+		return "", fmt.Errorf("error creating chat template request: %w", err)
 	}
 	serverReq.Header.Set("Content-Type", "application/json")
 
@@ -1705,7 +1705,7 @@ func (s *llamaServerRunner) ApplyChatTemplate(ctx context.Context, req ChatReque
 
 	var lsResp llamaServerApplyTemplateResponse
 	if err := json.Unmarshal(bodyBytes, &lsResp); err != nil {
-		return "", fmt.Errorf("error unmarshalling llama-server template response: %v", err)
+		return "", fmt.Errorf("error unmarshalling llama-server template response: %w", err)
 	}
 	if lsResp.Error != nil {
 		return "", fmt.Errorf("llama-server template error: %v", lsResp.Error)
@@ -1748,13 +1748,13 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 	enc := json.NewEncoder(buffer)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(lsReq); err != nil {
-		return fmt.Errorf("failed to marshal chat request: %v", err)
+		return fmt.Errorf("failed to marshal chat request: %w", err)
 	}
 
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/v1/chat/completions", s.port)
 	serverReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
 	if err != nil {
-		return fmt.Errorf("error creating chat request: %v", err)
+		return fmt.Errorf("error creating chat request: %w", err)
 	}
 	serverReq.Header.Set("Content-Type", "application/json")
 
@@ -1811,7 +1811,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 
 			var lsResp llamaServerChatResponse
 			if err := json.Unmarshal(evt, &lsResp); err != nil {
-				return fmt.Errorf("error unmarshalling llama-server chat response: %v", err)
+				return fmt.Errorf("error unmarshalling llama-server chat response: %w", err)
 			}
 			if lsResp.Error != nil {
 				return fmt.Errorf("llama-server chat error: %v", lsResp.Error)
@@ -1883,11 +1883,11 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 			if err := llamaServerStreamLimitError("chat response", err); err != nil {
 				return err
 			}
-			return fmt.Errorf("error reading llama-server chat response: %v", err)
+			return fmt.Errorf("error reading llama-server chat response: %w", err)
 		}
 
 		if err := res.Body.Close(); err != nil {
-			return fmt.Errorf("error closing llama-server chat response: %v", err)
+			return fmt.Errorf("error closing llama-server chat response: %w", err)
 		}
 
 		fn(finalResp)
@@ -1906,7 +1906,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 			}
 			return fmt.Errorf("an error was encountered while running the model: %s", msg)
 		}
-		return fmt.Errorf("error reading llama-server chat response: %v", err)
+		return fmt.Errorf("error reading llama-server chat response: %w", err)
 	}
 
 	return nil
