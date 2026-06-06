@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/ollama/ollama/ml"
 )
 
 func TestTensorLayers(t *testing.T) {
@@ -299,3 +301,71 @@ func TestHeadCount(t *testing.T) {
 		}
 	}
 }
+
+func TestGraphSizeGemma4AndQwen3GraphOverhead(t *testing.T) {
+	const (
+		nLayers = 12
+		context = 262144
+		batch   = 512
+	)
+
+	mkKV := func(arch string) KV {
+		pattern := make([]bool, nLayers)
+		for i := range pattern {
+			pattern[i] = (i+1)%6 != 0
+		}
+		return KV{
+			"general.architecture":                     arch,
+			arch + ".block_count":                      uint32(nLayers),
+			arch + ".context_length":                   uint32(context),
+			arch + ".embedding_length":                 uint32(3840),
+			arch + ".attention.head_count":             uint32(16),
+			arch + ".attention.head_count_kv":          uint32(4),
+			arch + ".attention.key_length":             uint32(512),
+			arch + ".attention.key_length_swa":         uint32(256),
+			arch + ".attention.value_length":           uint32(512),
+			arch + ".attention.sliding_window":         uint32(1024),
+			arch + ".attention.sliding_window_pattern": &array[bool]{size: len(pattern), values: pattern},
+			"tokenizer.ggml.tokens":                    &array[string]{size: 1, values: []string{"a"}},
+		}
+	}
+
+	ts := []*Tensor{{Name: "blk.0.attn_k.weight", Shape: []uint64{1, 1}}}
+	fGemma := GGML{model: modelGGUF{kv: mkKV("gemma4"), tensors: Tensors{items: ts}}}
+	fQwen := GGML{model: modelGGUF{kv: mkKV("qwen3"), tensors: Tensors{items: ts}}}
+	fUnknown := GGML{model: modelGGUF{kv: mkKV("somearch"), tensors: Tensors{items: ts}}}
+
+	_, partialGemma, _ := fGemma.GraphSize(context, batch, 1, "", ml.FlashAttentionEnabled)
+	_, partialQwen, _ := fQwen.GraphSize(context, batch, 1, "", ml.FlashAttentionEnabled)
+	fQwenMoe := GGML{model: modelGGUF{kv: mkKV("qwen3moe"), tensors: Tensors{items: ts}}}
+
+	_, partialUnknown, _ := fUnknown.GraphSize(context, batch, 1, "", ml.FlashAttentionEnabled)
+	_, partialQwenMoe, _ := fQwenMoe.GraphSize(context, batch, 1, "", ml.FlashAttentionEnabled)
+
+	_, smallGemma, _ := fGemma.GraphSize(8192, batch, 1, "", ml.FlashAttentionEnabled)
+	_, smallQwen, _ := fQwen.GraphSize(8192, batch, 1, "", ml.FlashAttentionEnabled)
+
+	if partialGemma <= partialUnknown {
+		t.Fatalf("gemma4 partialOffload=%d should exceed default fallback %d", partialGemma, partialUnknown)
+	}
+	if partialQwen <= partialUnknown {
+		t.Fatalf("qwen3 partialOffload=%d should exceed default fallback %d", partialQwen, partialUnknown)
+	}
+	if partialQwenMoe <= partialUnknown {
+		t.Fatalf("qwen3moe partialOffload=%d should exceed default fallback %d", partialQwenMoe, partialUnknown)
+	}
+	if partialGemma <= smallGemma {
+		t.Fatalf("gemma4 partialOffload must grow with context: 256K=%d <= 8K=%d", partialGemma, smallGemma)
+	}
+	if partialQwen <= smallQwen {
+		t.Fatalf("qwen3 partialOffload must grow with context: 256K=%d <= 8K=%d", partialQwen, smallQwen)
+	}
+}
+
+type modelGGUF struct {
+	kv      KV
+	tensors Tensors
+}
+
+func (m modelGGUF) KV() KV           { return m.kv }
+func (m modelGGUF) Tensors() Tensors { return m.tensors }

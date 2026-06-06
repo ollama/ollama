@@ -763,6 +763,70 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 				}
 			}
 		}
+	case "gemma4":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(2+context+context*heads+2*embedding+2*embeddingHeadsK*heads),
+		)
+
+		partialOffload = max(
+			4*embedding*batch+embedding*vocab*105/128+4*vocab*batch,
+			4*batch*(2*embedding+1+2*embeddingHeadsK*heads+context+context*heads)+
+				4*embeddingHeadsK*context*8+
+				embedding*embeddingHeadsK*heads*9/16,
+		)
+
+		slidingWindow := (uint64(numParallel) * uint64(f.KV().Uint("attention.sliding_window"))) + batch
+		headKSWA := uint64(f.KV().Uint("attention.key_length_swa", uint32(f.KV().Uint("attention.key_length"))))
+		headVSWA := uint64(f.KV().Uint("attention.value_length_swa", uint32(headKSWA)))
+		pattern := f.KV().Bools("attention.sliding_window_pattern")
+		sharedKV := int(f.KV().Uint("attention.shared_kv_layers"))
+		nLayers := len(kv)
+		for i := range kv {
+			if sharedKV > 0 && i >= nLayers-sharedKV {
+				kv[i] = 0
+				continue
+			}
+
+			isSliding := true
+			if i < len(pattern) {
+				isSliding = pattern[i]
+			}
+
+			headsKVL := headsKVArr[i]
+			if headsKVL == 0 {
+				headsKVL = headsKV
+			}
+
+			if isSliding {
+				kv[i] = uint64(float64(slidingWindow*(headKSWA+headVSWA)*headsKVL) * bytesPerElement)
+			}
+		}
+
+		if useFlashAttention == ml.FlashAttentionEnabled && context > 32*1024 {
+			// Large-context prefill graph overhead (aligned with gpt-oss estimate).
+			partialOffload = max(
+				partialOffload,
+				(4*uint64(numParallel)+context>>10+110)*format.MebiByte,
+			)
+		}
+	case "qwen3", "qwen3moe":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(1+2*embedding+context+context*heads),
+		)
+
+		partialOffload = max(
+			4*batch*(embedding+vocab)+embedding*vocab*105/128,
+			4*(batch*(1+2*embedding+context*(1+heads))+embedding*(1+context)),
+		)
+
+		if useFlashAttention == ml.FlashAttentionEnabled && context > 32*1024 {
+			partialOffload = max(
+				partialOffload,
+				(4*uint64(numParallel)+context>>10+110)*format.MebiByte,
+			)
+		}
 	case "command-r":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
