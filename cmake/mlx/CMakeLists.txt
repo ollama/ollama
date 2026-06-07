@@ -210,9 +210,10 @@ endif()
 # RUNTIME_DEPENDENCIES auto-excludes it via POST_EXCLUDE_FILES_STRICT because
 # dlfcn-win32 is a known CMake target with its own install rules (which install
 # to the wrong destination). We must install it explicitly here.
-if(WIN32)
-    install(FILES ${OLLAMA_BUILD_DIR}/dl.dll
-        DESTINATION ${OLLAMA_INSTALL_DIR}
+if(WIN32 AND TARGET dl)
+    install(TARGETS dl
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR}
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR}
         COMPONENT MLX)
 endif()
 
