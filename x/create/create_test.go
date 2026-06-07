@@ -17,50 +17,6 @@ import (
 	st "github.com/ollama/ollama/x/safetensors"
 )
 
-func TestIsTensorModelDir(t *testing.T) {
-	tests := []struct {
-		name     string
-		setup    func(dir string) error
-		expected bool
-	}{
-		{
-			name: "valid diffusers model with model_index.json",
-			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name": "FluxPipeline"}`), 0o644)
-			},
-			expected: true,
-		},
-		{
-			name: "empty directory",
-			setup: func(dir string) error {
-				return nil
-			},
-			expected: false,
-		},
-		{
-			name: "directory with other files but no model_index.json",
-			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644)
-			},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := tt.setup(dir); err != nil {
-				t.Fatalf("setup failed: %v", err)
-			}
-
-			got := IsTensorModelDir(dir)
-			if got != tt.expected {
-				t.Errorf("IsTensorModelDir() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestValidateScalarFloat32TensorData(t *testing.T) {
 	td := st.NewTensorDataFromBytes("linear.weight_scale_2", "F32", []int32{}, encodeFloat32s(2))
 
@@ -1876,10 +1832,6 @@ func TestShouldQuantize(t *testing.T) {
 		component string
 		want      bool
 	}{
-		// VAE component should never be quantized
-		{"vae weight", "decoder.weight", "vae", false},
-		{"vae bias", "decoder.bias", "vae", false},
-
 		// Embeddings should not be quantized
 		{"embedding weight", "embed_tokens.weight", "", false},
 		{"embedding in name", "token_embedding.weight", "", false},
@@ -1904,7 +1856,7 @@ func TestShouldQuantize(t *testing.T) {
 		{"attention weight", "self_attn.weight", "", true},
 		{"mlp weight", "mlp.gate_proj.weight", "", true},
 
-		// Transformer component weights should be quantized
+		// Component-prefixed weights should be quantized when otherwise eligible
 		{"transformer weight", "layers.0.weight", "transformer", true},
 		{"text_encoder weight", "encoder.weight", "text_encoder", true},
 	}
@@ -2345,138 +2297,6 @@ func TestCreateSafetensorsModel_WithQuantize(t *testing.T) {
 	}
 
 	// Verify quantize was passed to callback (will be false for small test tensor)
-	if len(quantizeRequested) == 0 {
-		t.Error("no tensors processed")
-	}
-}
-
-// createMinimalImageGenModel creates a minimal diffusers-style model directory
-func createMinimalImageGenModel(t *testing.T, dir string) {
-	t.Helper()
-
-	// Create model_index.json
-	modelIndex := `{"_class_name": "FluxPipeline", "_diffusers_version": "0.30.0"}`
-	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(modelIndex), 0o644); err != nil {
-		t.Fatalf("failed to write model_index.json: %v", err)
-	}
-
-	// Create transformer directory with a safetensors file
-	transformerDir := filepath.Join(dir, "transformer")
-	if err := os.MkdirAll(transformerDir, 0o755); err != nil {
-		t.Fatalf("failed to create transformer dir: %v", err)
-	}
-	createMinimalSafetensors(t, filepath.Join(transformerDir, "model.safetensors"))
-
-	// Create transformer config
-	transformerConfig := `{"hidden_size": 3072}`
-	if err := os.WriteFile(filepath.Join(transformerDir, "config.json"), []byte(transformerConfig), 0o644); err != nil {
-		t.Fatalf("failed to write transformer config: %v", err)
-	}
-}
-
-func TestCreateImageGenModel(t *testing.T) {
-	dir := t.TempDir()
-	createMinimalImageGenModel(t, dir)
-
-	var manifestWritten bool
-	var manifestModelName string
-	var statusMessages []string
-
-	createLayer := func(r io.Reader, mediaType, name string) (LayerInfo, error) {
-		io.ReadAll(r)
-		return LayerInfo{Name: name, Digest: "sha256:test"}, nil
-	}
-
-	createTensorLayer := func(r io.Reader, name, dtype string, shape []int32, quantize string) ([]LayerInfo, error) {
-		io.ReadAll(r)
-		return []LayerInfo{{Name: name, Digest: "sha256:tensor"}}, nil
-	}
-
-	writeManifest := func(modelName string, config LayerInfo, layers []LayerInfo) error {
-		manifestWritten = true
-		manifestModelName = modelName
-		return nil
-	}
-
-	progressFn := func(status string) {
-		statusMessages = append(statusMessages, status)
-	}
-
-	err := CreateImageGenModel("test-imagegen", dir, "", createLayer, createTensorLayer, writeManifest, progressFn)
-	if err != nil {
-		t.Fatalf("CreateImageGenModel failed: %v", err)
-	}
-
-	if !manifestWritten {
-		t.Error("manifest was not written")
-	}
-
-	if manifestModelName != "test-imagegen" {
-		t.Errorf("manifest model name = %q, want %q", manifestModelName, "test-imagegen")
-	}
-
-	if len(statusMessages) == 0 {
-		t.Error("no status messages received")
-	}
-}
-
-func TestCreateImageGenModel_NoModelIndex(t *testing.T) {
-	dir := t.TempDir()
-
-	// Create only transformer without model_index.json
-	transformerDir := filepath.Join(dir, "transformer")
-	if err := os.MkdirAll(transformerDir, 0o755); err != nil {
-		t.Fatalf("failed to create transformer dir: %v", err)
-	}
-	createMinimalSafetensors(t, filepath.Join(transformerDir, "model.safetensors"))
-
-	createLayer := func(r io.Reader, mediaType, name string) (LayerInfo, error) {
-		io.ReadAll(r)
-		return LayerInfo{Name: name}, nil
-	}
-	createTensorLayer := func(r io.Reader, name, dtype string, shape []int32, quantize string) ([]LayerInfo, error) {
-		io.ReadAll(r)
-		return []LayerInfo{{Name: name}}, nil
-	}
-	writeManifest := func(modelName string, config LayerInfo, layers []LayerInfo) error {
-		return nil
-	}
-	progressFn := func(status string) {}
-
-	err := CreateImageGenModel("test-imagegen", dir, "", createLayer, createTensorLayer, writeManifest, progressFn)
-	if err == nil {
-		t.Error("expected error for missing model_index.json, got nil")
-	}
-}
-
-func TestCreateImageGenModel_WithQuantize(t *testing.T) {
-	dir := t.TempDir()
-	createMinimalImageGenModel(t, dir)
-
-	var quantizeRequested []string
-
-	createLayer := func(r io.Reader, mediaType, name string) (LayerInfo, error) {
-		io.ReadAll(r)
-		return LayerInfo{Name: name, Digest: "sha256:test"}, nil
-	}
-
-	createTensorLayer := func(r io.Reader, name, dtype string, shape []int32, quantize string) ([]LayerInfo, error) {
-		io.ReadAll(r)
-		quantizeRequested = append(quantizeRequested, quantize)
-		return []LayerInfo{{Name: name}}, nil
-	}
-
-	writeManifest := func(modelName string, config LayerInfo, layers []LayerInfo) error {
-		return nil
-	}
-
-	progressFn := func(status string) {}
-
-	err := CreateImageGenModel("test-imagegen", dir, "int8", createLayer, createTensorLayer, writeManifest, progressFn)
-	if err != nil {
-		t.Fatalf("CreateImageGenModel failed: %v", err)
-	}
-
 	if len(quantizeRequested) == 0 {
 		t.Error("no tensors processed")
 	}

@@ -138,26 +138,22 @@ type CreateOptions struct {
 
 // CreateModel imports a model from a local directory.
 // This creates blobs and manifest directly on disk, bypassing the HTTP API.
-// Automatically detects model type (safetensors LLM vs image gen) and routes accordingly.
+// Automatically detects safetensors LLM model directories.
 func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	// Detect model type
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
-	isImageGen := create.IsTensorModelDir(opts.ModelDir)
 	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
 	isBaseModelWithDraft := hasDraft && !isSafetensors && create.IsSafetensorsLLMModel(opts.ModelDir)
 	if opts.DraftQuantize != "" && !hasDraft {
 		return fmt.Errorf("--draft-quantize requires a DRAFT model")
 	}
 
-	if !isSafetensors && !isImageGen && !isBaseModelWithDraft {
-		return fmt.Errorf("%s is not a supported model directory (needs config.json + *.safetensors or model_index.json)", opts.ModelDir)
+	if !isSafetensors && !isBaseModelWithDraft {
+		return fmt.Errorf("%s is not a supported model directory (needs config.json + *.safetensors)", opts.ModelDir)
 	}
 
 	if hasDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
 		return fmt.Errorf("draft %s is not a supported safetensors model directory", opts.Modelfile.Draft)
-	}
-	if hasDraft && isImageGen {
-		return fmt.Errorf("draft models are only supported for safetensors LLM models")
 	}
 
 	// Determine model type settings
@@ -175,10 +171,6 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	} else if isBaseModelWithDraft {
 		modelType = "safetensors model"
 		spinnerKey = "create"
-	} else {
-		modelType = "image generation model"
-		spinnerKey = "imagegen"
-		capabilities = []string{"image"}
 	}
 
 	// Set up progress spinner
@@ -221,27 +213,17 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		return nil
 	}
 
-	// Create the model using shared callbacks
-	if isSafetensors {
-		writer := newManifestWriter(opts, capabilities, parserName, rendererName)
-		if len(draftLayers) > 0 {
-			writer = appendLayersManifestWriter(writer, draftLayers)
-		}
-		err = create.CreateSafetensorsModel(
-			opts.ModelName, opts.ModelDir, opts.Quantize,
-			newLayerCreator(), newTensorLayerCreator(),
-			writer,
-			progressFn,
-			newPackedTensorLayerCreator(),
-		)
-	} else {
-		err = create.CreateImageGenModel(
-			opts.ModelName, opts.ModelDir, opts.Quantize,
-			newLayerCreator(), newTensorLayerCreator(),
-			newManifestWriter(opts, capabilities, "", ""),
-			progressFn,
-		)
+	writer := newManifestWriter(opts, capabilities, parserName, rendererName)
+	if len(draftLayers) > 0 {
+		writer = appendLayersManifestWriter(writer, draftLayers)
 	}
+	err = create.CreateSafetensorsModel(
+		opts.ModelName, opts.ModelDir, opts.Quantize,
+		newLayerCreator(), newTensorLayerCreator(),
+		writer,
+		progressFn,
+		newPackedTensorLayerCreator(),
+	)
 
 	spinner.Stop()
 	if err != nil {
@@ -510,18 +492,7 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 			return fmt.Errorf("invalid model name: %s", modelName)
 		}
 
-		// TODO: find a better way to detect image input support
-		// For now, hardcode Flux2KleinPipeline as supporting vision (image input)
 		caps := capabilities
-		modelIndex := filepath.Join(opts.ModelDir, "model_index.json")
-		if data, err := os.ReadFile(modelIndex); err == nil {
-			var cfg struct {
-				ClassName string `json:"_class_name"`
-			}
-			if json.Unmarshal(data, &cfg) == nil && cfg.ClassName == "Flux2KleinPipeline" {
-				caps = append(caps, "vision")
-			}
-		}
 
 		// Create config blob with version requirement.
 		configData := model.ConfigV2{}

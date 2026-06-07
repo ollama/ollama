@@ -50,7 +50,7 @@ endif()
 option(OLLAMA_MLX_GENERATE_WRAPPERS "Regenerate MLX Go wrappers" OFF)
 
 message(STATUS "Setting up MLX (this takes a while...)")
-add_subdirectory(${OLLAMA_SOURCE_DIR}/x/imagegen/mlx ${CMAKE_BINARY_DIR}/x/imagegen/mlx)
+add_subdirectory(${OLLAMA_SOURCE_DIR}/x/mlxrunner/mlx ${CMAKE_BINARY_DIR}/x/mlxrunner/mlx)
 
 # Find CUDA toolkit if MLX is built with CUDA support.
 find_package(CUDAToolkit)

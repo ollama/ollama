@@ -23,7 +23,6 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/mlxrunner"
 )
 
@@ -581,11 +580,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			}
 		} else {
 			modelName := req.model.ShortName
-			if slices.Contains(req.model.Config.Capabilities, "image") {
-				llama, err = imagegen.NewServer(modelName)
-			} else {
-				llama, err = mlxrunner.NewClient(modelName)
-			}
+			llama, err = mlxrunner.NewClient(modelName)
 		}
 		if err != nil {
 			slog.Info("failed to create server", "model", req.model.ShortName, "error", err)
@@ -702,7 +697,6 @@ iGPUScan:
 		sessionDuration: sessionDuration,
 		gpus:            gpuIDs,
 		discreteGPUs:    discreteGPUs,
-		isImagegen:      slices.Contains(req.model.Config.Capabilities, "image"),
 		totalSize:       totalSize,
 		vramSize:        vramSize,
 		loading:         true,
@@ -1345,7 +1339,6 @@ type runnerRef struct {
 	loading      bool          // True only during initial load, then false forever
 	gpus         []ml.DeviceID // Recorded at time of provisioning
 	discreteGPUs bool          // True if all devices are discrete GPUs - used to skip VRAM recovery check for iGPUs
-	isImagegen   bool          // True if loaded via imagegen runner (vs mlxrunner)
 	vramSize     uint64
 	totalSize    uint64
 
@@ -1384,12 +1377,6 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	slog.Debug("evaluating already loaded", "model", schedulerModelKey(req.model))
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
-
-	// Check if runner type (imagegen vs mlxrunner) matches what's requested.
-	wantImagegen := slices.Contains(req.model.Config.Capabilities, "image")
-	if runner.isImagegen != wantImagegen {
-		return true
-	}
 
 	timeout := 10 * time.Second
 	if runner.loading {
