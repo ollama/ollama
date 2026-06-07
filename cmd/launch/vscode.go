@@ -34,6 +34,10 @@ func (v *VSCode) findBinary() string {
 			"/Applications/Visual Studio Code.app",
 		}
 	case "windows":
+		candidates = []string{
+			"C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd",
+			"C:\\Program Files (x86)\\Microsoft VS Code\\bin\\code.cmd",
+		}
 		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
 			candidates = append(candidates, filepath.Join(localAppData, "Programs", "Microsoft VS Code", "bin", "code.cmd"))
 		}
