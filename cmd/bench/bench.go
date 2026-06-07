@@ -43,6 +43,18 @@ type flagOptions struct {
 	numCtx       *int
 	openaiURL    *string
 	apiKey       *string
+
+	// Direct runner targets bypass ollama serve. -runner connects to a running
+	// MLX runner or llama-server (auto-detected); -spawn launches one.
+	runner    *string
+	spawn     *bool
+	ollamaBin *string
+	mode      *string // prefill | decode | both (direct targets only)
+	ignoreEOS *bool   // generate exactly -max-tokens (direct targets only)
+}
+
+func (f flagOptions) direct() bool {
+	return (f.runner != nil && *f.runner != "") || (f.spawn != nil && *f.spawn)
 }
 
 type Metrics struct {
@@ -601,6 +613,10 @@ func BenchmarkModel(fOpt flagOptions) error {
 
 	if useOpenAI {
 		return benchmarkOpenAI(fOpt, models, out)
+	}
+
+	if fOpt.direct() {
+		return benchmarkDirect(fOpt, out)
 	}
 
 	var imgData api.ImageData
@@ -1255,6 +1271,12 @@ func main() {
 		numCtx:       flag.Int("num-ctx", 0, "Context size (0 = server default)"),
 		openaiURL:    flag.String("openai", "", "OpenAI-compatible API base URL (e.g. http://localhost:11434/v1)"),
 		apiKey:       flag.String("api-key", "", "API key for OpenAI endpoint (default: OPENAI_API_KEY env)"),
+
+		runner:    flag.String("runner", "", "Drive a runner directly at host:port, bypassing ollama serve (auto-detects MLX runner vs llama-server)"),
+		spawn:     flag.Bool("spawn", false, "Spawn the runner: MLX runner for an MLX model, llama-server for a GGUF model or path"),
+		ollamaBin: flag.String("ollama", "", "Path to the ollama binary for -spawn (default: PATH or next to this executable)"),
+		mode:      flag.String("mode", modeBoth, "Direct runner mode [prefill|decode|both]"),
+		ignoreEOS: flag.Bool("ignore-eos", false, "Disable stop tokens so generation runs exactly -max-tokens (direct runners only)"),
 	}
 
 	flag.Usage = func() {
@@ -1266,7 +1288,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  bench -model gemma3,llama3 -epochs 6\n")
 		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -epochs 6 -prompt-tokens 512 -format csv\n")
-		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -openai http://localhost:11434/v1\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -openai http://localhost:11434/v1\n\n")
+		fmt.Fprintf(os.Stderr, "  # Drive an MLX runner directly. Start it under a profiler first, e.g.\n")
+		fmt.Fprintf(os.Stderr, "  #   ollama runner --model gemma3 --port 8081 --profile\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -runner 127.0.0.1:8081 -mode prefill -prompt-tokens 2048\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -runner 127.0.0.1:8081 -mode decode -prompt-tokens 2048 -max-tokens 128 -ignore-eos\n\n")
+		fmt.Fprintf(os.Stderr, "  # Spawn the runner for a quick direct benchmark\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -spawn -mode decode -ignore-eos            # MLX model -> MLX runner\n")
+		fmt.Fprintf(os.Stderr, "  bench -model llama3.2:latest -spawn -mode decode -ignore-eos   # GGUF model -> llama-server\n")
 	}
 	flag.Parse()
 

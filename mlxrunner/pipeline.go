@@ -74,9 +74,10 @@ func (r *Runner) Prepare(request *Request) (err error) {
 		return fmt.Errorf("input length (%d tokens) exceeds the model's maximum context length (%d tokens)", len(tokens), r.contextLength)
 	}
 
-	// Cap generation to stay within the model's context length
+	// Cap generation to stay within the model's context length. A negative
+	// num_predict generates to the limit; zero is prefill-only.
 	maxGenerate := r.contextLength - len(tokens)
-	if request.Options.NumPredict <= 0 {
+	if request.Options.NumPredict < 0 {
 		request.Options.NumPredict = maxGenerate
 	} else {
 		request.Options.NumPredict = min(request.Options.NumPredict, maxGenerate)
@@ -122,6 +123,23 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 		return err
 	}
 
+	if request.Options.NumPredict == 0 {
+		cached := len(session.inputs) - len(session.remaining)
+		final := CompletionResponse{
+			Done:                  true,
+			DoneReason:            1,
+			PromptEvalCount:       len(request.Tokens),
+			PromptEvalCachedCount: &cached,
+			PromptEvalDuration:    promptEval,
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case request.Responses <- final:
+			return nil
+		}
+	}
+
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
 	defer r.Sampler.Remove(pipelineSlot)
@@ -130,6 +148,9 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 	if err != nil {
 		return err
 	}
+
+	mlx.ProfileRangePush("decode")
+	defer mlx.ProfileRangePop()
 
 	var d decoder
 	if spec != nil {
@@ -145,6 +166,9 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 // seed from, and schedules the prompt's periodic snapshots. It returns the
 // seed token, the resume position, and the prompt-evaluation duration.
 func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession, media *requestMedia) (*mlx.Array, int, time.Duration, error) {
+	mlx.ProfileRangePush("prefill")
+	defer mlx.ProfileRangePop()
+
 	start := time.Now()
 	inputs := session.inputs
 	tokens := session.remaining
@@ -308,7 +332,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 				if done {
 					continue
 				}
-				if r.Tokenizer.IsEOS(id) {
+				if !request.IgnoreEOS && r.Tokenizer.IsEOS(id) {
 					final.DoneReason = 0
 					done = true
 					stream = i

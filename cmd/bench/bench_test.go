@@ -39,6 +39,11 @@ func createTestFlagOptions() flagOptions {
 	numCtx := 0
 	openaiURL := ""
 	apiKey := ""
+	runner := ""
+	spawn := false
+	ollamaBin := ""
+	mode := modeBoth
+	ignoreEOS := false
 
 	return flagOptions{
 		models:       &models,
@@ -58,6 +63,11 @@ func createTestFlagOptions() flagOptions {
 		numCtx:       &numCtx,
 		openaiURL:    &openaiURL,
 		apiKey:       &apiKey,
+		runner:       &runner,
+		spawn:        &spawn,
+		ollamaBin:    &ollamaBin,
+		mode:         &mode,
+		ignoreEOS:    &ignoreEOS,
 	}
 }
 

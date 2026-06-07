@@ -100,6 +100,8 @@ type speculationSession struct {
 	layout  []any // the request's per-row layout state, stamped on every target forward
 	stats   specStats
 
+	ignoreEOS bool
+
 	// Cost sampling: each round's wall time (start to next start, spanning the
 	// next emit's sync) is attributed to its draft depth only when the depth
 	// matches the previous round's, since batch-shape transitions inflate it.
@@ -121,7 +123,7 @@ func (s *speculation) open(request Request, layout []any) *speculationSession {
 	opts := request.SamplerOpts
 	enabled := !opts.Logprobs && opts.TopLogprobs == 0
 
-	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
+	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1, ignoreEOS: request.IgnoreEOS}
 	if enabled {
 		spec.limit = s.depth.scheduled
 	}
@@ -473,7 +475,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	done := false
 	for i, id := range draftIDs[:accepted] {
 		commitIDs = append(commitIDs, id)
-		if r.Tokenizer.IsEOS(id) {
+		if !s.ignoreEOS && r.Tokenizer.IsEOS(id) {
 			done = true
 			accepted = i + 1
 			observed = accepted
