@@ -422,7 +422,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "image generation models are not supported"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "image generation models are not currently supported"})
 		return
 	}
 

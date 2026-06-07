@@ -3008,7 +3008,7 @@ func TestImageGenerateUnsupported(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "image generation models are not supported") {
+	if !strings.Contains(w.Body.String(), "image generation models are not currently supported") {
 		t.Fatalf("expected unsupported error in body, got %q", w.Body.String())
 	}
 }
