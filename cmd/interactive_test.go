@@ -8,6 +8,27 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestNormalizeFilePath(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`/path/with\ space/file.png`, `/path/with space/file.png`},
+		{`/path/with\~tilde/file.png`, `/path/with~tilde/file.png`},
+		{`/path/with%20space/file.png`, `/path/with space/file.png`},
+		{`/path/with\(parens\)/file.png`, `/path/with(parens)/file.png`},
+		{`/path/with\$$sign/file.png`, `/path/with$sign/file.png`},
+		{`/Users/me/Library/Mobile\ Documents/com\~apple\~CloudDocs/file.png`,
+			`/Users/me/Library/Mobile Documents/com~apple~CloudDocs/file.png`},
+	}
+	for _, tt := range tests {
+		got := normalizeFilePath(tt.input)
+		if got != tt.expected {
+			t.Errorf("normalizeFilePath(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
 func TestExtractFilenames(t *testing.T) {
 	// Unix style paths
 	input := ` some preamble 
@@ -62,6 +83,16 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[11], "c:")
 	assert.Contains(t, res[12], "thirteen.WEBP")
 	assert.Contains(t, res[12], "d:")
+}
+
+func TestExtractFilenamesTildeAndURLEncoding(t *testing.T) {
+	input := `/Users/me/Library/Mobile\ Documents/com\~apple\~CloudDocs/file.png inbetween /another/path%20with%20spaces/image.jpeg`
+	res := extractFileNames(input)
+	assert.Len(t, res, 2)
+	assert.Contains(t, res[0], "file.png")
+	assert.Contains(t, res[0], "/Users/me/Library/Mobile\\ Documents/com\\~apple\\~CloudDocs/file.png")
+	assert.Contains(t, res[1], "image.jpeg")
+	assert.NotContains(t, res, "inbetween")
 }
 
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
