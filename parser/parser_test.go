@@ -686,6 +686,11 @@ MESSAGE assistant Hello, I want to parse all the things!
 FROM foo
 SYSTEM ""
 `,
+		`
+FROM foo
+SYSTEM """"Always cite your sources" is the first rule."""
+TEMPLATE """"{{ .Prompt }}" goes here."""
+`,
 	}
 
 	for _, c := range cases {
