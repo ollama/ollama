@@ -16,7 +16,7 @@ set(CMAKE_INSTALL_RPATH "@loader_path")
 include(FetchContent)
 
 # Read MLX-C version from top-level file.
-file(READ "${CMAKE_SOURCE_DIR}/MLX_C_VERSION" MLX_C_GIT_TAG)
+file(READ "${CMAKE_CURRENT_LIST_DIR}/../../../MLX_C_VERSION" MLX_C_GIT_TAG)
 string(STRIP "${MLX_C_GIT_TAG}" MLX_C_GIT_TAG)
 
 FetchContent_Declare(
