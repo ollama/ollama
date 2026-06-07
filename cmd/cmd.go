@@ -876,7 +876,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if slices.Contains(info.Capabilities, model.CapabilityImage) {
-		return errors.New("image generation models are not supported")
+		return errors.New("image generation models are not currently supported")
 	}
 
 	// Check for experimental flag
