@@ -581,7 +581,7 @@ func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, se
 			break
 		}
 		accepted++
-		if r.Tokenizer.IsEOS(int32(id)) {
+		if !request.IgnoreEOS && r.Tokenizer.IsEOS(int32(id)) {
 			done = true
 			break
 		}
@@ -660,7 +660,7 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 	done := false
 	for i, id := range draftIDs[:accepted] {
 		commitIDs = append(commitIDs, int32(id))
-		if r.Tokenizer.IsEOS(int32(id)) {
+		if !request.IgnoreEOS && r.Tokenizer.IsEOS(int32(id)) {
 			done = true
 			accepted = i + 1
 			commitIDs = commitIDs[:accepted]
@@ -892,7 +892,7 @@ func (r *Runner) emitMTPToken(ctx context.Context, request Request, session *cac
 	output := int32(tokenID(res.Token))
 	session.outputs = append(session.outputs, output)
 
-	if r.Tokenizer.IsEOS(output) {
+	if !request.IgnoreEOS && r.Tokenizer.IsEOS(output) {
 		final.DoneReason = 0
 		return true, nil
 	}

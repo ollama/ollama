@@ -30,6 +30,12 @@ func createTestFlagOptions() flagOptions {
 	debug := false
 	warmup := 0
 	promptTokens := 0
+	numCtx := 0
+	runner := ""
+	spawn := false
+	ollamaBin := ""
+	mode := modeBoth
+	ignoreEOS := false
 
 	return flagOptions{
 		models:       &models,
@@ -46,6 +52,12 @@ func createTestFlagOptions() flagOptions {
 		debug:        &debug,
 		warmup:       &warmup,
 		promptTokens: &promptTokens,
+		numCtx:       &numCtx,
+		runner:       &runner,
+		spawn:        &spawn,
+		ollamaBin:    &ollamaBin,
+		mode:         &mode,
+		ignoreEOS:    &ignoreEOS,
 	}
 }
 
@@ -1132,55 +1144,69 @@ func TestGeneratePromptForTokenCount_VariesByEpoch(t *testing.T) {
 	}
 }
 
-func TestBuildGenerateRequest(t *testing.T) {
+func TestBuildParams(t *testing.T) {
 	fOpt := createTestFlagOptions()
-	req := buildGenerateRequest("test-model", fOpt, nil, 0)
+	p := buildParams(fOpt, modeBoth, nil, 0)
 
-	if req.Model != "test-model" {
-		t.Errorf("Expected model 'test-model', got '%s'", req.Model)
+	if !strings.Contains(p.prompt, "test prompt") {
+		t.Errorf("Expected prompt to contain 'test prompt', got '%s'", p.prompt)
 	}
-	if !req.Raw {
-		t.Error("Expected raw mode to be true")
-	}
-	if !strings.Contains(req.Prompt, "test prompt") {
-		t.Errorf("Expected prompt to contain 'test prompt', got '%s'", req.Prompt)
+	if p.numPredict != 50 {
+		t.Errorf("Expected numPredict 50, got %d", p.numPredict)
 	}
 }
 
-func TestBuildGenerateRequest_WithPromptTokens(t *testing.T) {
+func TestBuildParams_PrefillMode(t *testing.T) {
+	fOpt := createTestFlagOptions()
+	p := buildParams(fOpt, modePrefill, nil, 0)
+	if p.numPredict != 0 {
+		t.Errorf("Expected prefill mode numPredict 0, got %d", p.numPredict)
+	}
+}
+
+func TestBuildParams_DecodeModeFixedPrompt(t *testing.T) {
+	fOpt := createTestFlagOptions()
+	// Decode mode holds the prompt fixed across epochs for cache hits.
+	p0 := buildParams(fOpt, modeDecode, nil, 0)
+	p1 := buildParams(fOpt, modeDecode, nil, 1)
+	if p0.prompt != p1.prompt {
+		t.Errorf("Expected identical decode-mode prompts across epochs")
+	}
+}
+
+func TestBuildParams_WithPromptTokens(t *testing.T) {
 	fOpt := createTestFlagOptions()
 	promptTokens := 200
 	fOpt.promptTokens = &promptTokens
 
-	req := buildGenerateRequest("test-model", fOpt, nil, 0)
-	// Should not contain the original prompt
-	if strings.Contains(req.Prompt, "test prompt") {
+	p := buildParams(fOpt, modeBoth, nil, 0)
+	if strings.Contains(p.prompt, "test prompt") {
 		t.Error("Expected generated prompt when promptTokens is set")
 	}
 
-	wordCount := len(strings.Fields(req.Prompt))
+	wordCount := len(strings.Fields(p.prompt))
 	if wordCount < 100 || wordCount > 200 {
 		t.Errorf("Expected ~153 words for 200 tokens, got %d", wordCount)
 	}
 }
 
-func TestBuildGenerateRequest_WithImage(t *testing.T) {
+func TestBuildParams_WithImage(t *testing.T) {
 	fOpt := createTestFlagOptions()
 	imgData := api.ImageData([]byte("fake image"))
 
-	req := buildGenerateRequest("test-model", fOpt, imgData, 0)
-	if len(req.Images) != 1 {
-		t.Errorf("Expected 1 image, got %d", len(req.Images))
+	p := buildParams(fOpt, modeBoth, imgData, 0)
+	if p.image == nil {
+		t.Error("Expected image to be carried in params")
 	}
 }
 
-func TestBuildGenerateRequest_VariesByEpoch(t *testing.T) {
+func TestBuildParams_VariesByEpoch(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
-	req0 := buildGenerateRequest("test-model", fOpt, nil, 0)
-	req1 := buildGenerateRequest("test-model", fOpt, nil, 1)
+	p0 := buildParams(fOpt, modeBoth, nil, 0)
+	p1 := buildParams(fOpt, modeBoth, nil, 1)
 
-	if req0.Prompt == req1.Prompt {
+	if p0.prompt == p1.prompt {
 		t.Error("Expected different prompts for different epochs")
 	}
 }
