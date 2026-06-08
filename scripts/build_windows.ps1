@@ -966,7 +966,6 @@ try {
         cuda13
         rocm7
         vulkan
-        mlxCuda13
         ollama
         app
         cpuArm64
