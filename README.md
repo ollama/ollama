@@ -16,7 +16,16 @@ Start building with open models.
 - [Documentation](#documentation)
 - [Community Integrations](#community-integrations)
 - [Contributing](#contributing)
+- [## Table of Contents
+- [Download](#download)
+- [Get started](#get-started)
+- [REST API](#rest-apı)
+- [Supported backends](#supported-backends)
+- [Documentation](#documentation)
+- [Community Integrations](#community-ıntegrations)
+- [Contributing](#contributing)
 - [License](#license)
+](#license)
 
 
 ## Download
@@ -377,6 +386,24 @@ We welcome contributions! Whether it is bug reports, feature requests, documenta
 Please read our [development guide](https://github.com/ollama/ollama/blob/main/docs/development.md) before submitting PRs.
 
 
-## License
+## ## Table of Contents
+- [Download](#download)
+- [Get started](#get-started)
+- [REST API](#rest-apı)
+- [Supported backends](#supported-backends)
+- [Documentation](#documentation)
+- [Community Integrations](#community-ıntegrations)
+- [Contributing](#contributing)
+- [License](#license)
 
-Ollama is licensed under the [MIT License](LICENSE).
+
+Ollama is licensed under the [MIT ## Table of Contents
+- [Download](#download)
+- [Get started](#get-started)
+- [REST API](#rest-apı)
+- [Supported backends](#supported-backends)
+- [Documentation](#documentation)
+- [Community Integrations](#community-ıntegrations)
+- [Contributing](#contributing)
+- [License](#license)
+](LICENSE).
