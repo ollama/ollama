@@ -2,7 +2,9 @@ package gguf_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,6 +14,81 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/fs/gguf"
 )
+
+// TestOpenMalformedLengths verifies the lazy gguf parser rejects
+// attacker-controlled length fields rather than panicking or attempting
+// huge allocations.
+func TestOpenMalformedLengths(t *testing.T) {
+	write := func(t *testing.T, build func(w *bytes.Buffer)) string {
+		t.Helper()
+		var b bytes.Buffer
+		b.Write([]byte{'G', 'G', 'U', 'F'})
+		binary.Write(&b, binary.LittleEndian, uint32(3)) // version
+		binary.Write(&b, binary.LittleEndian, uint64(0)) // numTensor
+		binary.Write(&b, binary.LittleEndian, uint64(1)) // numKV
+		build(&b)
+		p := filepath.Join(t.TempDir(), "evil.gguf")
+		if err := os.WriteFile(p, b.Bytes(), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Run("string length is uint64-max", func(t *testing.T) {
+		p := write(t, func(w *bytes.Buffer) {
+			binary.Write(w, binary.LittleEndian, uint64(0xFFFFFFFFFFFFFFFF))
+		})
+		f, err := gguf.Open(p)
+		if err != nil {
+			return
+		}
+		for range f.KeyValues() {
+		}
+		if f.KeyValue("anything").Valid() {
+			t.Fatal("expected no usable KV from malformed file")
+		}
+	})
+
+	t.Run("array length is uint64-max", func(t *testing.T) {
+		p := write(t, func(w *bytes.Buffer) {
+			binary.Write(w, binary.LittleEndian, uint64(1))
+			w.WriteByte('x')
+			binary.Write(w, binary.LittleEndian, uint32(9)) // type = array
+			binary.Write(w, binary.LittleEndian, uint32(7)) // element = bool
+			binary.Write(w, binary.LittleEndian, uint64(0xFFFFFFFFFFFFFFFF))
+		})
+		f, err := gguf.Open(p)
+		if err != nil {
+			return
+		}
+		for range f.KeyValues() {
+		}
+	})
+
+	// Regression for the reviewer feedback: a float64 count that is <= the
+	// file size (so the old raw-byte check passed it) but whose make([]T, n)
+	// allocation exceeds the file. readArrayData here has no maxArraySize cap,
+	// so this is the only thing standing between the count and an 8x-amplified
+	// allocation.
+	t.Run("typed array count within file size but amplified", func(t *testing.T) {
+		p := write(t, func(w *bytes.Buffer) {
+			binary.Write(w, binary.LittleEndian, uint64(1))
+			w.WriteByte('x')
+			binary.Write(w, binary.LittleEndian, uint32(9))  // type = array
+			binary.Write(w, binary.LittleEndian, uint32(12)) // element = float64
+			binary.Write(w, binary.LittleEndian, uint64(10)) // 10 <= ~49B file, 10*8 > it
+		})
+		f, err := gguf.Open(p)
+		if err != nil {
+			return
+		}
+		for range f.KeyValues() {
+		}
+		if f.KeyValue("x").Valid() {
+			t.Fatal("expected no usable KV from amplified float64 array")
+		}
+	})
+}
 
 func createBinFile(tb testing.TB) string {
 	tb.Helper()

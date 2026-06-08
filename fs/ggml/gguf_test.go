@@ -2,6 +2,7 @@ package ggml
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -9,6 +10,56 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 )
+
+// TestDecodeMalformedLengths verifies that the GGUF decoder rejects
+// attacker-controlled length fields rather than panicking or attempting
+// huge allocations.
+func TestDecodeMalformedLengths(t *testing.T) {
+	build := func(write func(w *bytes.Buffer)) *bytes.Reader {
+		var b bytes.Buffer
+		binary.Write(&b, binary.LittleEndian, uint32(FILE_MAGIC_GGUF_LE))
+		binary.Write(&b, binary.LittleEndian, uint32(3))    // version
+		binary.Write(&b, binary.LittleEndian, uint64(0))    // numTensor
+		binary.Write(&b, binary.LittleEndian, uint64(1))    // numKV
+		write(&b)
+		return bytes.NewReader(b.Bytes())
+	}
+
+	t.Run("array length is uint64-max", func(t *testing.T) {
+		r := build(func(w *bytes.Buffer) {
+			binary.Write(w, binary.LittleEndian, uint64(1))
+			w.WriteByte('x')                                                // key "x"
+			binary.Write(w, binary.LittleEndian, uint32(9))                 // value type = array
+			binary.Write(w, binary.LittleEndian, uint32(7))                 // element type = bool
+			binary.Write(w, binary.LittleEndian, uint64(0xFFFFFFFFFFFFFFFF)) // length
+		})
+		if _, err := Decode(r, -1); err == nil {
+			t.Fatal("Decode should reject array length 0xFFFFFFFFFFFFFFFF")
+		}
+	})
+
+	t.Run("array length exceeds file size", func(t *testing.T) {
+		r := build(func(w *bytes.Buffer) {
+			binary.Write(w, binary.LittleEndian, uint64(1))
+			w.WriteByte('x')
+			binary.Write(w, binary.LittleEndian, uint32(9))
+			binary.Write(w, binary.LittleEndian, uint32(7))
+			binary.Write(w, binary.LittleEndian, uint64(1<<30)) // 1 GiB elements
+		})
+		if _, err := Decode(r, -1); err == nil {
+			t.Fatal("Decode should reject array length larger than file size")
+		}
+	})
+
+	t.Run("string length is uint64-max", func(t *testing.T) {
+		r := build(func(w *bytes.Buffer) {
+			binary.Write(w, binary.LittleEndian, uint64(0xFFFFFFFFFFFFFFFF)) // key length
+		})
+		if _, err := Decode(r, -1); err == nil {
+			t.Fatal("Decode should reject string length 0xFFFFFFFFFFFFFFFF")
+		}
+	})
+}
 
 func TestWriteGGUF(t *testing.T) {
 	tensorData := make([]byte, 2*3*4) // 6 F32 elements = 24 bytes
