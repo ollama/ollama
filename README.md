@@ -7,6 +7,17 @@
 # Ollama
 
 Start building with open models.
+## Table of Contents
+
+- [Download](#download)
+- [Get started](#get-started)
+- [REST API](#rest-api)
+- [Supported backends](#supported-backends)
+- [Documentation](#documentation)
+- [Community Integrations](#community-integrations)
+- [Contributing](#contributing)
+- [License](#license)
+
 
 ## Download
 
@@ -354,3 +365,18 @@ console.log(response.message.content);
 - [Gentoo](https://github.com/gentoo/guru/tree/master/app-misc/ollama)
 - [Flox](https://flox.dev/blog/ollama-part-one)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
+
+## Contributing
+
+We welcome contributions! Whether it is bug reports, feature requests, documentation improvements, or code changes - every contribution helps.
+
+- **Report bugs** - open an [issue](https://github.com/ollama/ollama/issues)
+- **Suggest features** - start a [discussion](https://github.com/ollama/ollama/discussions)
+- **Submit code** - fork the repo, make your changes, and open a pull request
+
+Please read our [development guide](https://github.com/ollama/ollama/blob/main/docs/development.md) before submitting PRs.
+
+
+## License
+
+Ollama is licensed under the [MIT License](LICENSE).
