@@ -449,6 +449,7 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 	var currLine int = 1
 	var b bytes.Buffer
 	var role string
+	var prevRune rune
 
 	var f Modelfile
 
@@ -463,9 +464,10 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 			return nil, err
 		}
 
-		if isNewline(r) {
+		if isNewline(r) && !(prevRune == '\r' && r == '\n') {
 			currLine++
 		}
+		prevRune = r
 
 		next, r, err := parseRuneForState(r, curr)
 		if errors.Is(err, io.ErrUnexpectedEOF) {

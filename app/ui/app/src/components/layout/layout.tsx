@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useSettings } from "@/hooks/useSettings";
+import { useState, useEffect } from "react";
 
 export function SidebarLayout({
   sidebar,
@@ -9,8 +10,17 @@ export function SidebarLayout({
   collapsible?: boolean;
   chatId?: string;
 }>) {
-  const { settings, setSettings } = useSettings();
+  const { settings, setSettings, settingsData } = useSettings();
   const isWindows = navigator.platform.toLowerCase().includes("win");
+  const [hasAnimated, setHasAnimated] = useState(false);
+
+  // Track when sidebar first opens to enable animation
+  // This prevents the animation on first load when sidebar should already be open
+  useEffect(() => {
+    if (settings.sidebarOpen && !hasAnimated) {
+      setHasAnimated(true);
+    }
+  }, [settings.sidebarOpen, hasAnimated]);
 
   return (
     <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
@@ -36,7 +46,7 @@ export function SidebarLayout({
           </svg>
         </button>
         <Link
-          to="/c/$chatId"
+          to="/$chatId"
           params={{ chatId: "new" }}
           title="New chat"
           className={`flex ml-1 items-center justify-center rounded-full transition-opacity duration-375 h-9 w-9 hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
@@ -57,14 +67,14 @@ export function SidebarLayout({
         </Link>
       </div>
       <div
-        className={`flex flex-col transition-[width] duration-300 max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
+        className={`flex flex-col ${hasAnimated ? "transition-[width] duration-300" : ""} max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
       >
         <div
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
           onMouseDown={() => window.drag && window.drag()}
           className="flex-none h-13 w-full"
         ></div>
-        {settings.sidebarOpen && sidebar}
+        {settings.sidebarOpen && settingsData && sidebar}
       </div>
       <main
         className={`flex flex-1 flex-col min-w-0 transition-all duration-300`}
