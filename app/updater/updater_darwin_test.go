@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -184,6 +185,134 @@ func TestDoUpgradeRejectsInvalidBundlePath(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(BundlePath, "Contents", "MacOS", "Ollama")); err != nil {
 		t.Fatalf("old app was not restored: %s", err)
+	}
+}
+
+func TestDoUpgradeInteractiveUsesAuthorizationOnPermissionFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	BundlePath = filepath.Join(tmpDir, "Ollama.app")
+	appBackupDir = filepath.Join(tmpDir, "backup")
+	UpdateStageDir = filepath.Join(tmpDir, "updates")
+	UpgradeMarkerFile = filepath.Join(tmpDir, "upgraded")
+	bundle := filepath.Join(UpdateStageDir, "foo", "ollama-darwin.zip")
+
+	if err := os.MkdirAll(filepath.Join(BundlePath, "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatal("failed to create app bundle")
+	}
+	if err := os.WriteFile(filepath.Join(BundlePath, "Contents", "MacOS", "Ollama"), []byte("old app"), 0o755); err != nil {
+		t.Fatal("failed to write old app")
+	}
+	if err := os.MkdirAll(filepath.Dir(bundle), 0o755); err != nil {
+		t.Fatal("failed to create update dir")
+	}
+	if err := zipCreationHelper(bundle, []testPayload{
+		{
+			Name: "Ollama.app/Contents/MacOS/Ollama",
+			Body: []byte("new app"),
+		},
+		{
+			Name: "Ollama.app/Contents/Resources/ollama",
+			Body: []byte("new cli"),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRenameBundle := renameBundle
+	oldReplaceBundleWithAuthorization := replaceBundleWithAuthorization
+	t.Cleanup(func() {
+		renameBundle = oldRenameBundle
+		replaceBundleWithAuthorization = oldReplaceBundleWithAuthorization
+	})
+
+	renameBundle = func(oldpath, newpath string) error {
+		if oldpath == BundlePath {
+			return &os.PathError{Op: "rename", Path: oldpath, Err: syscall.EACCES}
+		}
+		return os.Rename(oldpath, newpath)
+	}
+
+	authorized := false
+	replaceBundleWithAuthorization = func(stagedApp, backupApp, destApp, owner string) bool {
+		authorized = true
+		if owner == "" {
+			t.Fatal("expected owner for authorized backup handoff")
+		}
+		if backupApp != filepath.Join(appBackupDir, "Ollama.app") {
+			t.Fatalf("backup path = %s, want %s", backupApp, filepath.Join(appBackupDir, "Ollama.app"))
+		}
+		if destApp != BundlePath {
+			t.Fatalf("dest path = %s, want %s", destApp, BundlePath)
+		}
+		if got, err := os.ReadFile(filepath.Join(stagedApp, "Contents", "MacOS", "Ollama")); err != nil || string(got) != "new app" {
+			t.Fatalf("staged app binary = %q, %v", got, err)
+		}
+		if err := os.Rename(destApp, backupApp); err != nil {
+			t.Fatalf("failed to simulate authorized backup: %s", err)
+		}
+		if err := os.Rename(stagedApp, destApp); err != nil {
+			t.Fatalf("failed to simulate authorized install: %s", err)
+		}
+		return true
+	}
+
+	if err := DoUpgrade(true); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if !authorized {
+		t.Fatal("expected authorized replacement")
+	}
+	if got, err := os.ReadFile(filepath.Join(BundlePath, "Contents", "MacOS", "Ollama")); err != nil || string(got) != "new app" {
+		t.Fatalf("new app binary = %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(appBackupDir, "Ollama.app", "Contents", "MacOS", "Ollama")); err != nil || string(got) != "old app" {
+		t.Fatalf("backup app binary = %q, %v", got, err)
+	}
+	if _, err := os.Stat(UpgradeMarkerFile); err != nil {
+		t.Fatalf("missing marker %s", UpgradeMarkerFile)
+	}
+}
+
+func TestDoUpgradeInteractiveDoesNotAuthorizeNonPermissionFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	BundlePath = filepath.Join(tmpDir, "Ollama.app")
+	appBackupDir = filepath.Join(tmpDir, "backup")
+	UpdateStageDir = filepath.Join(tmpDir, "updates")
+	UpgradeMarkerFile = filepath.Join(tmpDir, "upgraded")
+	bundle := filepath.Join(UpdateStageDir, "foo", "ollama-darwin.zip")
+
+	if err := os.MkdirAll(filepath.Join(BundlePath, "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatal("failed to create app bundle")
+	}
+	if err := os.MkdirAll(filepath.Dir(bundle), 0o755); err != nil {
+		t.Fatal("failed to create update dir")
+	}
+	if err := zipCreationHelper(bundle, []testPayload{{
+		Name: "Ollama.app/Contents/MacOS/Ollama",
+		Body: []byte("new app"),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRenameBundle := renameBundle
+	oldReplaceBundleWithAuthorization := replaceBundleWithAuthorization
+	t.Cleanup(func() {
+		renameBundle = oldRenameBundle
+		replaceBundleWithAuthorization = oldReplaceBundleWithAuthorization
+	})
+
+	renameBundle = func(oldpath, newpath string) error {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
+	}
+	replaceBundleWithAuthorization = func(stagedApp, backupApp, destApp, owner string) bool {
+		t.Fatal("authorization should not be requested for non-permission rename failures")
+		return false
+	}
+
+	if err := DoUpgrade(true); err == nil {
+		t.Fatal("expected rename failure")
+	} else if !strings.Contains(err.Error(), "failed to stage old version") {
+		t.Fatalf("unexpected error: %s", err)
 	}
 }
 
