@@ -131,6 +131,7 @@
                   "/integrations/opencode",
                   "/integrations/droid",
                   "/integrations/goose",
+                  "/integrations/oh-my-pi",
                   "/integrations/pi",
                   "/integrations/pool"
                 ]
