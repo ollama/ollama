@@ -280,6 +280,7 @@ func (s *Server) Handler() http.Handler {
 
 	// API routes - handle first to take precedence
 	mux.Handle("GET /api/v1/chats", handle(s.listChats))
+	mux.Handle("DELETE /api/v1/chats", handle(s.deleteAllChats))
 	mux.Handle("GET /api/v1/chat/{id}", handle(s.getChat))
 	mux.Handle("POST /api/v1/chat/{id}", handle(s.chat))
 	mux.Handle("DELETE /api/v1/chat/{id}", handle(s.deleteChat))
@@ -1239,6 +1240,14 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	if len(chat.Messages) > 0 {
 		chat.Messages[len(chat.Messages)-1].Stream = false
 	}
+
+	// If the client disconnected (e.g. the stream was aborted because the
+	// user triggered "delete all conversations"), skip the final upsert.
+	// Without this guard, a goroutine that reaches this point after
+	// deleteAllChats has cleared the chats table would re-insert the row.
+	if ctx.Err() != nil {
+		return nil
+	}
 	return s.Store.SetChat(*chat)
 }
 
@@ -1351,6 +1360,15 @@ func (s *Server) deleteChat(w http.ResponseWriter, r *http.Request) error {
 	// Delete the chat
 	if err := s.Store.DeleteChat(cid); err != nil {
 		return fmt.Errorf("failed to delete chat: %w", err)
+	}
+
+	w.WriteHeader(http.StatusOK)
+	return nil
+}
+
+func (s *Server) deleteAllChats(w http.ResponseWriter, r *http.Request) error {
+	if err := s.Store.DeleteAllChats(); err != nil {
+		return fmt.Errorf("failed to delete all chats: %w", err)
 	}
 
 	w.WriteHeader(http.StatusOK)
