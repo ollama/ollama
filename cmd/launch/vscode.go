@@ -126,10 +126,9 @@ const (
 	minCopilotChatVersion = "0.41.0"
 	minVSCodeVersion      = "1.113"
 
-	// POC vendor for the local extension branch. Production should use "ollama"
-	// once VS Code has removed or handed off the built-in Ollama provider.
-	vscodeOllamaVendor = "ollama-dev"
-	vscodeOllamaName   = "Ollama"
+	vscodeOllamaVendor    = "ollama"
+	vscodeOllamaDevVendor = "ollama-dev"
+	vscodeOllamaName      = "Ollama"
 
 	vscodeOllamaExtensionID     = "ollama.ollama-vscode"
 	vscodeOllamaVSIXEnv         = "OLLAMA_VSCODE_EXTENSION_VSIX"
@@ -284,7 +283,7 @@ func (v *VSCode) writeProviderConfig() error {
 	// Remove any existing Ollama entries, preserve others.
 	filtered := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
-		if vendor, _ := entry["vendor"].(string); vendor != "ollama" && vendor != vscodeOllamaVendor {
+		if vendor, _ := entry["vendor"].(string); vendor != vscodeOllamaVendor && vendor != vscodeOllamaDevVendor {
 			filtered = append(filtered, entry)
 		}
 	}
@@ -437,7 +436,7 @@ func (v *VSCode) ShowInModelPicker(model string) error {
 	// The extension owns model discovery and picker visibility. Clear launch's
 	// old per-model overrides so previously hidden models can show up again.
 	for id := range prefs {
-		if strings.HasPrefix(id, vscodeOllamaVendor+"/") {
+		if strings.HasPrefix(id, vscodeOllamaVendor+"/") || strings.HasPrefix(id, vscodeOllamaDevVendor+"/") {
 			delete(prefs, id)
 		}
 	}
@@ -593,7 +592,7 @@ func (v *VSCode) ensureOllamaExtensionInstalled() {
 	}
 	if !fileExists(vsixPath) {
 		fmt.Fprintf(os.Stderr, "%s  Warning: Ollama VS Code extension is not installed and no VSIX was found at %s%s\n", ansiYellow, vsixPath, ansiReset)
-		fmt.Fprintf(os.Stderr, "     Build it with: cd extensions/vscode && npm run compile && npx --yes @vscode/vsce package --out %s\n\n", vsixPath)
+		fmt.Fprintf(os.Stderr, "     Build the VSIX from ollama/ollama-vscode and set %s, or place it at %s.\n\n", vscodeOllamaVSIXEnv, vscodeOllamaDefaultVSIXPath)
 		return
 	}
 
