@@ -787,6 +787,109 @@ func TestParser(t *testing.T) {
 	}
 }
 
+func TestUnmatchedToolNames(t *testing.T) {
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "GetWeather",
+			},
+		},
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "GetTemperature",
+			},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		buffer    []byte
+		n         int
+		wantNames []string
+	}{
+		{
+			name:      "mismatched tool name - case difference",
+			buffer:    []byte(`{"name": "get-weather", "arguments": {"location": "Tokyo"}}`),
+			n:         0,
+			wantNames: []string{"get-weather"},
+		},
+		{
+			name:      "matching tool name - no warning",
+			buffer:    []byte(`{"name": "GetWeather", "arguments": {"location": "Tokyo"}}`),
+			n:         0,
+			wantNames: nil,
+		},
+		{
+			name:      "plain text - no JSON",
+			buffer:    []byte("I don't have access to any tools."),
+			n:         0,
+			wantNames: nil,
+		},
+		{
+			name:      "multiple unmatched names",
+			buffer:    []byte(`{"name": "get-weather", "arguments": {}} {"name": "get-temp", "arguments": {}}`),
+			n:         0,
+			wantNames: []string{"get-weather", "get-temp"},
+		},
+		{
+			name:      "tool calls already found - skip check",
+			buffer:    []byte(`{"name": "unknown_tool", "arguments": {}}`),
+			n:         1,
+			wantNames: nil,
+		},
+		{
+			name:      "empty buffer",
+			buffer:    []byte{},
+			n:         0,
+			wantNames: nil,
+		},
+		{
+			name:      "json without name field",
+			buffer:    []byte(`{"action": "search", "query": "hello"}`),
+			n:         0,
+			wantNames: nil,
+		},
+		{
+			name:      "duplicate unmatched names",
+			buffer:    []byte(`{"name": "get-weather", "arguments": {}} {"name": "get-weather", "arguments": {}}`),
+			n:         0,
+			wantNames: []string{"get-weather"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Parser{
+				tools:  tools,
+				buffer: tt.buffer,
+				n:      tt.n,
+			}
+
+			got := parser.UnmatchedToolNames()
+			if diff := cmp.Diff(got, tt.wantNames); diff != "" {
+				t.Errorf("UnmatchedToolNames() mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestRegisteredToolNames(t *testing.T) {
+	tools := []api.Tool{
+		{Function: api.ToolFunction{Name: "GetWeather"}},
+		{Function: api.ToolFunction{Name: "GetTemperature"}},
+	}
+
+	parser := &Parser{tools: tools}
+	got := parser.RegisteredToolNames()
+	want := []string{"GetWeather", "GetTemperature"}
+
+	if diff := cmp.Diff(got, want); diff != "" {
+		t.Errorf("RegisteredToolNames() mismatch (-got +want):\n%s", diff)
+	}
+}
+
 func TestDone(t *testing.T) {
 	tests := []struct {
 		name   string
