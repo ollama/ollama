@@ -161,6 +161,7 @@
               {
                 "group": "Notebooks",
                 "pages": [
+                  "/integrations/mljar-studio",
                   "/integrations/marimo"
                 ]
               }
