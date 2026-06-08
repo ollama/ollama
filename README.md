@@ -268,6 +268,7 @@ console.log(response.message.content);
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
+- [LumaKit](https://github.com/patmakesapps/LumaKit) - Local-first AI agent for Ollama with a web UI, launcher flow, persistent tools, browser automation, reminders, and autonomous tasks
 
 ### RAG & Knowledge Bases
 
