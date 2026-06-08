@@ -239,9 +239,16 @@ func (s *Server) handlePortConflict(err error, reaped, notified *bool) bool {
 		return false
 	}
 
-	// Our child has already exited, so a failed bind proves a foreign process
-	// holds the address rather than our own (just-exited) server.
-	addr, inUse := addrInUse()
+	// Probe the address the child actually binds, which depends on the Expose
+	// setting (see cmd). Our child has already exited, so a failed bind proves a
+	// foreign process holds the address rather than our own (just-exited) server.
+	expose := false
+	if settings, err := s.store.Settings(); err != nil {
+		slog.Warn("failed to load settings for port conflict check", "err", err)
+	} else {
+		expose = settings.Expose
+	}
+	addr, inUse := addrInUse(expose)
 	if !inUse {
 		return false
 	}
@@ -269,11 +276,18 @@ func (s *Server) handlePortConflict(err error, reaped, notified *bool) bool {
 	return true
 }
 
-// addrInUse reports the configured ollama address and whether it is already
-// bound by another process. It returns true only when a bind attempt fails
-// specifically because the address is in use — not for other errors.
-func addrInUse() (string, bool) {
+// addrInUse reports the address the child server binds and whether it is
+// already bound by another process. When expose is set the child binds all
+// interfaces (0.0.0.0), matching cmd, so we probe that instead of the
+// configured host. It returns true only when a bind attempt fails specifically
+// because the address is in use — not for other errors.
+func addrInUse(expose bool) (string, bool) {
 	addr := envconfig.Host().Host
+	if expose {
+		if _, port, err := net.SplitHostPort(addr); err == nil {
+			addr = net.JoinHostPort("0.0.0.0", port)
+		}
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return addr, isAddrInUse(err)

@@ -26,12 +26,25 @@ func TestAddrInUse(t *testing.T) {
 
 	t.Run("in use", func(t *testing.T) {
 		t.Setenv("OLLAMA_HOST", busy)
-		addr, inUse := addrInUse()
+		addr, inUse := addrInUse(false)
 		if !inUse {
 			t.Errorf("expected addr %s to be reported in use", busy)
 		}
 		if addr != busy {
 			t.Errorf("addr = %q, want %q", addr, busy)
+		}
+	})
+
+	t.Run("expose probes all interfaces", func(t *testing.T) {
+		// With expose the child binds 0.0.0.0, so addrInUse must probe the
+		// wildcard address rather than the configured host.
+		_, port, err := net.SplitHostPort(busy)
+		if err != nil {
+			t.Fatalf("split host port: %v", err)
+		}
+		t.Setenv("OLLAMA_HOST", net.JoinHostPort("127.0.0.1", port))
+		if addr, _ := addrInUse(true); addr != net.JoinHostPort("0.0.0.0", port) {
+			t.Errorf("addr = %q, want %q", addr, net.JoinHostPort("0.0.0.0", port))
 		}
 	})
 
@@ -45,7 +58,7 @@ func TestAddrInUse(t *testing.T) {
 		free.Close()
 
 		t.Setenv("OLLAMA_HOST", addr)
-		if _, inUse := addrInUse(); inUse {
+		if _, inUse := addrInUse(false); inUse {
 			t.Errorf("expected addr %s to be free", addr)
 		}
 	})
