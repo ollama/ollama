@@ -57,7 +57,7 @@ func Open(path string) (f *File, err error) {
 		return nil, err
 	}
 
-	if bytes.Equal(f.Magic[:], []byte("gguf")) {
+	if !bytes.Equal(f.Magic[:], []byte("GGUF")) {
 		return nil, fmt.Errorf("%w file type %v", ErrUnsupported, f.Magic)
 	}
 
