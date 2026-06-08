@@ -1,0 +1,86 @@
+---
+title: ClearFrame
+description: Open-source agentic AI governance framework with GoalManifest enforcement, HMAC audit logs, and biometric trust layers.
+---
+
+> **Documentation Index**
+> Fetch the complete documentation index at: https://docs.ollama.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+ClearFrame is an open-source AI agent governance framework — a production-grade alternative to MCP. It enforces GoalManifest policies at runtime, provides HMAC-chained tamper-evident audit logs, and integrates with SafePulse biometric authentication and TrustRegistry certificate authority for enterprise-grade agent trust.
+
+## Quick start
+
+```shell
+ollama launch clearframe
+```
+
+Ollama handles everything automatically:
+
+1. **Install** — If ClearFrame isn't installed, Ollama prompts to install it via pip
+2. **Security** — On first launch, a security notice explains tool access risks
+3. **Model** — Pick a model from the selector (local or cloud)
+4. **Onboarding** — Ollama configures the provider and sets your model as the primary
+5. **Session** — ClearFrame starts with a GoalManifest prompt and opens the interactive session
+
+> **Note:** ClearFrame requires a larger context window. It is recommended to use a context window of at least 64k tokens for agentic tasks. See [Context length](https://docs.ollama.com/context-length) for more information.
+
+## GoalManifest
+
+Every ClearFrame session is governed by a GoalManifest — a signed policy document that defines what the agent is permitted to do:
+
+```shell
+clearframe launch --model qwen3.5 --goal "Summarise quarterly reports"
+```
+
+ClearFrame enforces the manifest at every tool call, blocking anything outside the declared scope.
+
+## Configure without launching
+
+To change the model without starting a session:
+
+```shell
+ollama launch clearframe --config
+```
+
+To use a specific model directly:
+
+```shell
+ollama launch clearframe --model qwen3.5:cloud
+```
+
+## Recommended models
+
+**Cloud models:**
+- `qwen3.5:cloud` — Reasoning, coding, and agentic tool use with vision
+- `kimi-k2.5:cloud` — Multimodal reasoning with subagents
+
+**Local models:**
+- `qwen3.5` — Reasoning, coding, and agentic tasks (~11 GB VRAM)
+- `gemma4` — Reasoning and code generation locally (~16 GB VRAM)
+
+More models at [ollama.com/search](https://ollama.com/search).
+
+## Non-interactive (headless) mode
+
+Run ClearFrame without interaction for Docker, CI/CD, or scripts:
+
+```shell
+ollama launch clearframe --model qwen3.5:cloud --yes
+```
+
+The `--yes` flag auto-pulls the model, skips selectors, and requires `--model` to be specified.
+
+## Audit log
+
+Every session produces a tamper-evident HMAC-chained audit log:
+
+```shell
+clearframe audit show --session <session-id>
+```
+
+## Stopping a session
+
+```shell
+clearframe session stop
+```
