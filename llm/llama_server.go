@@ -36,6 +36,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -144,6 +145,8 @@ type llamaServerRunner struct {
 	ggml          *ggml.GGML
 	totalLayers   uint64 // maximum offloadable model layers
 	loadStart     time.Time
+	loadActivity  atomic.Int64
+	loadTracking  atomic.Bool
 	rawEmbeddings bool
 
 	sem *semaphore.Weighted
@@ -628,7 +631,7 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 	}
 
 	for _, gpu := range gpus {
-		if gpu.Integrated {
+		if gpu.Integrated && gpu.Library != "Metal" {
 			return true, "shared-memory-gpu"
 		}
 		memory := gpu.FreeMemory
@@ -848,6 +851,7 @@ func (s *llamaServerRunner) startProcess() error {
 	s.done = make(chan struct{})
 	s.doneErr = nil
 	s.loadStart = time.Now()
+	s.startLoadTracking(s.loadStart)
 
 	// Reap subprocess when it exits.
 	go func(cmd *exec.Cmd, done chan struct{}) {
@@ -974,6 +978,51 @@ func (s *llamaServerRunner) hasParsedVRAM() bool {
 	return len(s.vramByDevice) > 0
 }
 
+func (s *llamaServerRunner) startLoadTracking(t time.Time) {
+	if s == nil {
+		return
+	}
+	s.loadTracking.Store(true)
+	s.noteLoadActivity(t)
+}
+
+func (s *llamaServerRunner) stopLoadTracking() {
+	if s == nil {
+		return
+	}
+	s.loadTracking.Store(false)
+}
+
+func (s *llamaServerRunner) noteLoadActivity(t time.Time) {
+	if s == nil || t.IsZero() {
+		return
+	}
+	if !s.loadTracking.Load() {
+		return
+	}
+
+	ns := t.UnixNano()
+	for {
+		prev := s.loadActivity.Load()
+		if ns <= prev {
+			return
+		}
+		if s.loadActivity.CompareAndSwap(prev, ns) {
+			return
+		}
+	}
+}
+
+func (s *llamaServerRunner) lastLoadActivity() time.Time {
+	if s == nil {
+		return time.Time{}
+	}
+	if ns := s.loadActivity.Load(); ns > 0 {
+		return time.Unix(0, ns)
+	}
+	return time.Time{}
+}
+
 // getServerStatus checks llama-server's /health endpoint.
 // llama-server returns {"status":"ok"}, {"status":"loading model"}, or {"status":"error"}.
 func (s *llamaServerRunner) getServerStatus(ctx context.Context) (ServerStatus, error) {
@@ -1010,6 +1059,9 @@ func (s *llamaServerRunner) getServerStatus(ctx context.Context) (ServerStatus, 
 	// llama-server returns {"status":"ok"}, {"status":"loading model"}, {"status":"error", ...}
 	var result struct {
 		Status string `json:"status"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return ServerStatusError, fmt.Errorf("health unmarshal: %w", err)
@@ -1023,6 +1075,14 @@ func (s *llamaServerRunner) getServerStatus(ctx context.Context) (ServerStatus, 
 	case "no slot available":
 		return ServerStatusNoSlotsAvailable, nil
 	default:
+		if result.Error != nil {
+			switch strings.ToLower(strings.TrimSpace(result.Error.Message)) {
+			case "loading model":
+				return ServerStatusLoadingModel, nil
+			case "no slot available":
+				return ServerStatusNoSlotsAvailable, nil
+			}
+		}
 		return ServerStatusError, fmt.Errorf("llama-server error: %s", string(body))
 	}
 }
@@ -1055,7 +1115,18 @@ func (s *llamaServerRunner) Ping(ctx context.Context) error {
 }
 
 func (s *llamaServerRunner) WaitUntilRunning(ctx context.Context) error {
-	loadDeadline := time.Now().Add(envconfig.LoadTimeout())
+	s.startLoadTracking(time.Now())
+	defer s.stopLoadTracking()
+
+	stallTimeout := envconfig.LoadTimeout()
+	lastActivity := s.lastLoadActivity()
+	if lastActivity.IsZero() {
+		lastActivity = s.loadStart
+	}
+	if lastActivity.IsZero() {
+		lastActivity = time.Now()
+	}
+	loadDeadline := lastActivity.Add(stallTimeout)
 
 	slog.Info("waiting for llama-server to start responding")
 	var lastStatus ServerStatus = -1
@@ -1091,6 +1162,11 @@ func (s *llamaServerRunner) WaitUntilRunning(ctx context.Context) error {
 		default:
 		}
 
+		if activity := s.lastLoadActivity(); activity.After(lastActivity) {
+			lastActivity = activity
+			loadDeadline = lastActivity.Add(stallTimeout)
+		}
+
 		if time.Now().After(loadDeadline) {
 			msg := s.lastErrMsg()
 			return fmt.Errorf("timed out waiting for llama-server to start - %s", msg)
@@ -1108,6 +1184,10 @@ func (s *llamaServerRunner) WaitUntilRunning(ctx context.Context) error {
 		statusChanged := lastStatus != status
 		if statusChanged && status != ServerStatusReady {
 			slog.Info("waiting for llama-server to become available", "status", status)
+		}
+		if statusChanged && status == ServerStatusLoadingModel {
+			lastActivity = time.Now()
+			loadDeadline = lastActivity.Add(stallTimeout)
 		}
 
 		switch status {
@@ -1223,15 +1303,10 @@ type llamaServerMultimodalPrompt struct {
 
 // llamaServerCompletionResponse is the response format from llama-server's /completion endpoint.
 type llamaServerCompletionResponse struct {
-	Content  string `json:"content"`
-	Stop     bool   `json:"stop"`
-	StopType string `json:"stop_type"`
-	Timings  struct {
-		PromptN   int     `json:"prompt_n"`
-		PromptMS  float64 `json:"prompt_ms"`
-		PredictN  int     `json:"predicted_n"`
-		PredictMS float64 `json:"predicted_ms"`
-	} `json:"timings"`
+	Content                 string                 `json:"content"`
+	Stop                    bool                   `json:"stop"`
+	StopType                string                 `json:"stop_type"`
+	Timings                 llamaServerTimings     `json:"timings"`
 	CompletionProbabilities []llamaServerTokenProb `json:"completion_probabilities"`
 }
 
@@ -1257,13 +1332,20 @@ type llamaServerChatChoice struct {
 
 type llamaServerChatResponse struct {
 	Choices []llamaServerChatChoice `json:"choices"`
-	Timings struct {
-		PromptN   int     `json:"prompt_n"`
-		PromptMS  float64 `json:"prompt_ms"`
-		PredictN  int     `json:"predicted_n"`
-		PredictMS float64 `json:"predicted_ms"`
-	} `json:"timings"`
-	Error any `json:"error"`
+	Timings llamaServerTimings      `json:"timings"`
+	Error   any                     `json:"error"`
+}
+
+type llamaServerTimings struct {
+	CacheN    int     `json:"cache_n"`
+	PromptN   int     `json:"prompt_n"`
+	PromptMS  float64 `json:"prompt_ms"`
+	PredictN  int     `json:"predicted_n"`
+	PredictMS float64 `json:"predicted_ms"`
+}
+
+func (t llamaServerTimings) promptEvalCount() int {
+	return t.CacheN + t.PromptN
 }
 
 type llamaServerApplyTemplateResponse struct {
@@ -1425,6 +1507,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			if len(line) == 0 {
 				continue
 			}
+			if bytes.HasPrefix(line, []byte(":")) {
+				continue
+			}
 
 			evt, ok := bytes.CutPrefix(line, []byte("data: "))
 			if !ok {
@@ -1467,7 +1552,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 					Content:            lsResp.Content,
 					Done:               true,
 					DoneReason:         doneReason,
-					PromptEvalCount:    lsResp.Timings.PromptN,
+					PromptEvalCount:    lsResp.Timings.promptEvalCount(),
 					PromptEvalDuration: time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond)),
 					EvalCount:          lsResp.Timings.PredictN,
 					EvalDuration:       time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond)),
@@ -1712,6 +1797,9 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 			if len(line) == 0 {
 				continue
 			}
+			if bytes.HasPrefix(line, []byte(":")) {
+				continue
+			}
 
 			evt, ok := bytes.CutPrefix(line, []byte("data: "))
 			if !ok {
@@ -1763,7 +1851,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 
 				resp.Done = true
 				resp.DoneReason = doneReason
-				resp.PromptEvalCount = lsResp.Timings.PromptN
+				resp.PromptEvalCount = lsResp.Timings.promptEvalCount()
 				resp.PromptEvalDuration = time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond))
 				resp.EvalCount = lsResp.Timings.PredictN
 				resp.EvalDuration = time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond))
@@ -2476,6 +2564,10 @@ func deviceName(backendName string) string {
 
 func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 	if w.runner != nil {
+		if len(b) > 0 && w.runner.loadTracking.Load() {
+			w.runner.noteLoadActivity(time.Now())
+		}
+
 		func() {
 			w.runner.memoryMu.Lock()
 			defer w.runner.memoryMu.Unlock()

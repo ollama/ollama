@@ -22,12 +22,18 @@ ollama launch codex
 ```
 
 When launched through `ollama launch codex`, Ollama refreshes the model catalog
-and passes it to Codex for that session.
+and uses a dedicated Codex profile for that session.
 
 To configure without launching:
 
 ```shell
 ollama launch codex --config
+```
+
+To remove the Ollama launch profile and generated model catalog:
+
+```shell
+ollama launch codex --restore
 ```
 
 ### Manual setup
@@ -52,25 +58,21 @@ codex --oss -m gpt-oss:120b-cloud
 
 ### Profile-based setup
 
-For a persistent configuration, add an Ollama provider and profiles to `~/.codex/config.toml`:
+For a persistent Codex CLI configuration, create `~/.codex/ollama-launch.config.toml`:
 
 ```toml
-[model_providers.ollama-launch]
-name = "Ollama"
-base_url = "http://localhost:11434/v1"
-
-[profiles.ollama-launch]
 model = "gpt-oss:120b"
 model_provider = "ollama-launch"
+model_catalog_json = "/Users/you/.codex/model.json"
 
-[profiles.ollama-cloud]
-model = "gpt-oss:120b-cloud"
-model_provider = "ollama-launch"
+[model_providers.ollama-launch]
+name = "Ollama"
+base_url = "http://localhost:11434/v1/"
+wire_api = "responses"
 ```
 
 Then run:
 
 ```
 codex --profile ollama-launch
-codex --profile ollama-cloud
 ```

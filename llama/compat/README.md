@@ -25,8 +25,13 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   small tensor repacking primitives.
 - `llama-cpp-hooks.patch` - small additive call-site edits in llama.cpp files.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/clip.cpp`.
-- `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent patch
-  applier used by `llama/server/CMakeLists.txt`.
+- `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent applier
+  (used by `llama/server/CMakeLists.txt`) that applies every `*.patch` under
+  this directory — the hooks patch plus each `models/` architecture patch.
+- `models/` - the sibling **new-architecture** layer: implementations of
+  architectures llama.cpp doesn't support yet, each added via a small
+  registration patch. (Those files *add* archs; the files above *translate*
+  existing GGUFs onto archs llama.cpp already has.)
 
 The compatibility source files stay in this directory and are linked into the
 fetched llama.cpp targets. The patch file only adds call sites.
@@ -68,7 +73,7 @@ This table tracks the dispatch surface. Keep it brief; the handler comments in
 | `gemma3` + embedding markers (`embeddinggemma`) | Maps to `gemma-embedding` metadata and fixes embedding dense/norm tensors. | n/a |
 | `bert` + Snowflake markers (`snowflake-arctic-embed2`) | Fixes Snowflake Arctic Embed 2 tokenizer metadata. | n/a |
 | `gemma3n` | Normalizes tokenizer/EOS metadata, truncates vocab-shaped tensors, and hides unused embedded vision/audio/projector tensors. | n/a |
-| `gemma4` | Normalizes tokenizer metadata and hides embedded audio/vision/projector tensors from the text loader. | Gemma 4 projector translation; audio remains disabled. |
+| `gemma4` | Normalizes tokenizer metadata and hides embedded audio/vision/projector tensors from the text loader. | Gemma 4 vision/audio projector translation for GGUF blobs. |
 | `gptoss` | Maps to `gpt-oss`, copies KVs, injects missing expert FFN metadata, and renames tensors. | n/a |
 | `lfm2` | Renames norm tensors and fixes feed-forward metadata. | n/a |
 | `olmo3` | Maps to the OLMo2-compatible loader path. | n/a |

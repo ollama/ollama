@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "codex", "copilot", "cline", "droid", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -157,6 +157,18 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
+		Name:        "omp",
+		Runner:      &OMP{},
+		Description: "AI coding agent with IDE integration",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&OMP{}).findPath()
+				return err == nil
+			},
+			URL: "https://omp.sh",
+		},
+	},
+	{
 		Name:        "openclaw",
 		Runner:      &Openclaw{},
 		Aliases:     []string{"clawdbot", "moltbot"},
@@ -191,7 +203,7 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := ensurePiInstalled()
 				return err
 			},
-			Command: []string{"npm", "install", "-g", "@mariozechner/pi-coding-agent@latest"},
+			Command: []string{"npm", "install", "-g", "@earendil-works/pi-coding-agent@latest"},
 		},
 	},
 	{
@@ -216,6 +228,20 @@ var integrationSpecs = []*IntegrationSpec{
 			},
 			EnsureInstalled: func() error {
 				return (&Hermes{}).ensureInstalled()
+			},
+			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
+		},
+	},
+	{
+		Name:        "hermes-desktop",
+		Runner:      &HermesDesktop{},
+		Description: "Desktop app for Hermes Agent by Nous Research",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&Hermes{}).installed()
+			},
+			EnsureInstalled: func() error {
+				return (&Hermes{}).ensureInstalledFor("hermes-desktop")
 			},
 			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
 		},

@@ -61,9 +61,11 @@ func TestIntegrationLookup(t *testing.T) {
 		{"codex app", "codex-app", true, "Codex App"},
 		{"codex app desktop alias", "codex-desktop", true, "Codex App"},
 		{"codex app gui alias", "codex-gui", true, "Codex App"},
+		{"hermes desktop", "hermes-desktop", true, "Hermes Desktop"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
 		{"droid", "droid", true, "Droid"},
 		{"opencode", "opencode", true, "OpenCode"},
+		{"omp", "omp", true, "OMP"},
 		{"pool", "pool", true, "Pool"},
 		{"unknown integration", "unknown", false, ""},
 		{"empty string", "", false, ""},
@@ -83,7 +85,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "codex-app", "kimi", "droid", "opencode", "hermes", "pool"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "codex-app", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -1846,9 +1848,9 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw"}
+		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		if codexAppSupported() != nil {
-			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode"}
+			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		}
 		if len(got) < len(wantPrefix) {
 			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
@@ -1870,7 +1872,7 @@ func TestListIntegrationInfos(t *testing.T) {
 	})
 
 	t.Run("includes known integrations", func(t *testing.T) {
-		known := map[string]bool{"claude": false, "cline": false, "codex": false, "opencode": false}
+		known := map[string]bool{"claude": false, "cline": false, "codex": false, "opencode": false, "omp": false}
 		if codexAppSupported() == nil {
 			known["codex-app"] = false
 		}
@@ -1896,6 +1898,15 @@ func TestListIntegrationInfos(t *testing.T) {
 			}
 		}
 		t.Fatal("expected hermes to be included in ListIntegrationInfos")
+	})
+
+	t.Run("includes hermes desktop", func(t *testing.T) {
+		for _, info := range infos {
+			if info.Name == "hermes-desktop" {
+				return
+			}
+		}
+		t.Fatal("expected hermes-desktop to be included in ListIntegrationInfos")
 	})
 
 	t.Run("hermes still resolves explicitly", func(t *testing.T) {
@@ -1996,6 +2007,7 @@ func TestIntegration_Editor(t *testing.T) {
 		{"claude", false},
 		{"claude-desktop", false},
 		{"codex", false},
+		{"omp", false},
 		{"nonexistent", false},
 	}
 	for _, tt := range tests {
@@ -2020,12 +2032,14 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 		{"openclaw", true},
 		{"pi", true},
 		{"hermes", true},
+		{"hermes-desktop", true},
 		{"cline", true},
 		{"qwen", true},
 		{"claude", false},
 		{"claude-desktop", false},
 		{"codex", false},
 		{"opencode", false},
+		{"omp", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
