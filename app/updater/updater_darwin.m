@@ -4,7 +4,7 @@
 #import <CoreServices/CoreServices.h>
 #import <Security/Security.h>
 #import <ServiceManagement/ServiceManagement.h>
-#import <sys/wait.h>
+#import <string.h>
 
 void appLogInfo(NSString *msg) {
     NSLog(@"%@", msg);
@@ -140,12 +140,15 @@ bool replaceBundleWithAuthorization(const char *stagedApp, const char *backupApp
         return NO;
     }
 
+    static const char *successMarker = "__OLLAMA_AUTHORIZED_UPDATE_SUCCESS__";
     static const char *script =
         "set -u\n"
+        "exec 2>&1\n"
         "staged=$1\n"
         "backup=$2\n"
         "dest=$3\n"
         "owner=$4\n"
+        "success_marker=$5\n"
         "if [ -e \"$backup\" ]; then\n"
         "  echo \"backup already exists: $backup\" >&2\n"
         "  exit 73\n"
@@ -154,6 +157,7 @@ bool replaceBundleWithAuthorization(const char *stagedApp, const char *backupApp
         "mv \"$dest\" \"$backup\" || exit 1\n"
         "if cp -pR \"$staged\" \"$dest\"; then\n"
         "  chown -R \"$owner\" \"$backup\" >/dev/null 2>&1 || true\n"
+        "  printf '%s\\n' \"$success_marker\"\n"
         "  exit 0\n"
         "fi\n"
         "status=$?\n"
@@ -163,16 +167,18 @@ bool replaceBundleWithAuthorization(const char *stagedApp, const char *backupApp
 
     const char *shellTool = "/bin/sh";
     const char *shellArgs[] = {"-c", script, "ollama-authorized-update",
-                               stagedApp, backupApp, destApp, owner, NULL};
+                               stagedApp, backupApp, destApp, owner,
+                               successMarker, NULL};
     appLogInfo([NSString
         stringWithFormat:@"requesting authorization to replace %@ from %@",
                          @(destApp), @(stagedApp)]);
 
+    FILE *pipe = NULL;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     OSStatus err = AuthorizationExecuteWithPrivileges(
         authRef, shellTool, kAuthorizationFlagDefaults,
-        (char *const *)shellArgs, NULL);
+        (char *const *)shellArgs, &pipe);
 #pragma clang diagnostic pop
 
     if (err != errAuthorizationSuccess) {
@@ -183,14 +189,29 @@ bool replaceBundleWithAuthorization(const char *stagedApp, const char *backupApp
         return NO;
     }
 
-    int status = 0;
-    pid_t pid = wait(&status);
+    BOOL succeeded = NO;
+    if (pipe != NULL) {
+        char line[4096];
+        while (fgets(line, sizeof(line), pipe) != NULL) {
+            line[strcspn(line, "\r\n")] = '\0';
+            appLogDebug([NSString
+                stringWithFormat:@"authorized update output: %s", line]);
+            if (strcmp(line, successMarker) == 0) {
+                succeeded = YES;
+            }
+        }
+        if (ferror(pipe)) {
+            appLogInfo(@"failed to read authorized update output");
+            succeeded = NO;
+        }
+        fclose(pipe);
+    } else {
+        appLogInfo(@"authorized update did not provide a completion pipe");
+    }
     AuthorizationFree(authRef, kAuthorizationFlagDestroyRights);
 
-    if (pid == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        appLogInfo([NSString
-            stringWithFormat:@"authorized update failed pid=%d exit=%d",
-                             pid, WIFEXITED(status) ? WEXITSTATUS(status) : -1]);
+    if (!succeeded) {
+        appLogInfo(@"authorized update failed or did not report success");
         return NO;
     }
 
