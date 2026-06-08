@@ -358,7 +358,3 @@ console.log(response.message.content);
   <a href="https://github.com/ollama/ollama/stargazers"><img src="https://img.shields.io/github/stars/ollama/ollama?style=social" alt="Stars"/></a>
   <a href="https://github.com/ollama/ollama/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"/></a>
 </p>
-
-## Contributing
-
-We welcome contributions! Please open an issue or pull request.
