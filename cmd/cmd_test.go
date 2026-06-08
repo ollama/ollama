@@ -434,6 +434,7 @@ func TestRunEmbeddingModel(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("thinkingstderr", false, "")
 
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
@@ -526,6 +527,7 @@ func TestRunEmbeddingModelWithFlags(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("thinkingstderr", false, "")
 
 	if err := cmd.Flags().Set("truncate", "true"); err != nil {
 		t.Fatalf("failed to set truncate flag: %v", err)
@@ -627,6 +629,7 @@ func TestRunEmbeddingModelPipedInput(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("thinkingstderr", false, "")
 
 	// Capture stdin
 	oldStdin := os.Stdin
@@ -702,6 +705,7 @@ func TestRunEmbeddingModelNoInput(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("thinkingstderr", false, "")
 
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
@@ -753,6 +757,7 @@ func TestRunHandler_CloudAuthErrorOnShow_PrintsSigninMessage(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("thinkingstderr", false, "")
 
 	oldStdout := os.Stdout
 	readOut, writeOut, _ := os.Pipe()
@@ -821,6 +826,7 @@ func TestRunHandler_CloudAuthErrorOnGenerate_PrintsSigninMessage(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("thinkingstderr", false, "")
 
 	oldStdout := os.Stdout
 	readOut, writeOut, _ := os.Pipe()
@@ -905,6 +911,7 @@ func TestRunHandler_ExplicitCloudStubMissing_PullsNormalizedNameTEMP(t *testing.
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("thinkingstderr", false, "")
 
 	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
 	if err != nil {
@@ -976,6 +983,7 @@ func TestRunHandler_ExplicitCloudStubPresent_SkipsPullTEMP(t *testing.T) {
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("thinkingstderr", false, "")
 
 	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
 	if err != nil {
@@ -1043,6 +1051,7 @@ func TestRunHandler_ExplicitCloudStubPullFailure_IsBestEffortTEMP(t *testing.T) 
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("thinkingstderr", false, "")
 
 	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
 	if err != nil {
