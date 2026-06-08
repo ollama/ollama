@@ -493,6 +493,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			CreatedAt:  time.Now().UTC(),
 			Done:       true,
 			DoneReason: "load",
+			Metrics: api.Metrics{
+				LoadDuration:  checkpointLoaded.Sub(checkpointStart),
+				TotalDuration: checkpointLoaded.Sub(checkpointStart),
+			},
 		})
 		return
 	}
@@ -2631,6 +2635,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			Message:    api.Message{Role: "assistant"},
 			Done:       true,
 			DoneReason: "load",
+			Metrics: api.Metrics{
+				LoadDuration:  checkpointLoaded.Sub(checkpointStart),
+				TotalDuration: checkpointLoaded.Sub(checkpointStart),
+			},
 		})
 		return
 	}
