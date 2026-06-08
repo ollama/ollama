@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,42 @@ import (
 
 	"github.com/ollama/ollama/app/store"
 )
+
+func TestAddrInUse(t *testing.T) {
+	// Occupy a port so we can assert addrInUse detects the conflict.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+	busy := ln.Addr().String()
+
+	t.Run("in use", func(t *testing.T) {
+		t.Setenv("OLLAMA_HOST", busy)
+		addr, inUse := addrInUse()
+		if !inUse {
+			t.Errorf("expected addr %s to be reported in use", busy)
+		}
+		if addr != busy {
+			t.Errorf("addr = %q, want %q", addr, busy)
+		}
+	})
+
+	t.Run("free", func(t *testing.T) {
+		// Grab a port then release it so it is free when we probe.
+		free, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to listen: %v", err)
+		}
+		addr := free.Addr().String()
+		free.Close()
+
+		t.Setenv("OLLAMA_HOST", addr)
+		if _, inUse := addrInUse(); inUse {
+			t.Errorf("expected addr %s to be free", addr)
+		}
+	})
+}
 
 func TestNew(t *testing.T) {
 	tmpDir := t.TempDir()
