@@ -235,6 +235,9 @@ func (s *Server) Run(ctx context.Context) error {
 // returns false so the caller can log it normally.
 func (s *Server) handlePortConflict(err error, reaped, notified *bool) bool {
 	var exitErr *exec.ExitError
+	// Skip anything that isn't an exit-1 (bind) failure. Also skip in dev mode:
+	// the developer typically runs their own ollama server (see app/README.md),
+	// so reaping it or showing a conflict dialog would be disruptive.
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || s.dev {
 		return false
 	}
@@ -254,12 +257,13 @@ func (s *Server) handlePortConflict(err error, reaped, notified *bool) bool {
 	}
 
 	// First time: a stale ollama process may hold the port. Reap it and retry
-	// before bothering the user.
+	// before bothering the user. Only mark it reaped on success so a failed
+	// reap is retried on the next restart attempt rather than silently skipped.
 	if !*reaped {
-		*reaped = true
 		if reapErr := reapServers(); reapErr != nil {
-			slog.Warn("failed to stop existing ollama server", "err", reapErr)
+			slog.Warn("failed to stop existing ollama server, will retry", "err", reapErr)
 		} else {
+			*reaped = true
 			slog.Debug("conflicting server stopped, waiting for port to be released")
 			return true
 		}
