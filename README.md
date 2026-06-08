@@ -7,26 +7,6 @@
 # Ollama
 
 Start building with open models.
-## Table of Contents
-
-- [Download](#download)
-- [Get started](#get-started)
-- [REST API](#rest-api)
-- [Supported backends](#supported-backends)
-- [Documentation](#documentation)
-- [Community Integrations](#community-integrations)
-- [Contributing](#contributing)
-- [## Table of Contents
-- [Download](#download)
-- [Get started](#get-started)
-- [REST API](#rest-apı)
-- [Supported backends](#supported-backends)
-- [Documentation](#documentation)
-- [Community Integrations](#community-ıntegrations)
-- [Contributing](#contributing)
-- [License](#license)
-](#license)
-
 
 ## Download
 
@@ -374,36 +354,11 @@ console.log(response.message.content);
 - [Gentoo](https://github.com/gentoo/guru/tree/master/app-misc/ollama)
 - [Flox](https://flox.dev/blog/ollama-part-one)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
+<p align="center">
+  <a href="https://github.com/ollama/ollama/stargazers"><img src="https://img.shields.io/github/stars/ollama/ollama?style=social" alt="Stars"/></a>
+  <a href="https://github.com/ollama/ollama/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"/></a>
+</p>
 
 ## Contributing
 
-We welcome contributions! Whether it is bug reports, feature requests, documentation improvements, or code changes - every contribution helps.
-
-- **Report bugs** - open an [issue](https://github.com/ollama/ollama/issues)
-- **Suggest features** - start a [discussion](https://github.com/ollama/ollama/discussions)
-- **Submit code** - fork the repo, make your changes, and open a pull request
-
-Please read our [development guide](https://github.com/ollama/ollama/blob/main/docs/development.md) before submitting PRs.
-
-
-## ## Table of Contents
-- [Download](#download)
-- [Get started](#get-started)
-- [REST API](#rest-apı)
-- [Supported backends](#supported-backends)
-- [Documentation](#documentation)
-- [Community Integrations](#community-ıntegrations)
-- [Contributing](#contributing)
-- [License](#license)
-
-
-Ollama is licensed under the [MIT ## Table of Contents
-- [Download](#download)
-- [Get started](#get-started)
-- [REST API](#rest-apı)
-- [Supported backends](#supported-backends)
-- [Documentation](#documentation)
-- [Community Integrations](#community-ıntegrations)
-- [Contributing](#contributing)
-- [License](#license)
-](LICENSE).
+We welcome contributions! Please open an issue or pull request.
