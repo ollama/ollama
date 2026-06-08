@@ -62,12 +62,38 @@ func writeBackupCopy(srcPath string, integration string) (string, error) {
 		return "", err
 	}
 
-	backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", name, time.Now().Unix()))
-	if err := copyFile(srcPath, backupPath); err != nil {
+	info, err := os.Stat(srcPath)
+	if err != nil {
 		return "", err
 	}
-	pruneOldBackups(dir, name, maxBackupsPerFile)
-	return backupPath, nil
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return "", err
+	}
+
+	timestamp := time.Now().UnixNano()
+	for i := int64(0); ; i++ {
+		backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", name, timestamp+i))
+		file, err := os.OpenFile(backupPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+
+		if _, err := file.Write(data); err != nil {
+			_ = file.Close()
+			_ = os.Remove(backupPath)
+			return "", err
+		}
+		if err := file.Close(); err != nil {
+			_ = os.Remove(backupPath)
+			return "", err
+		}
+		pruneOldBackups(dir, name, maxBackupsPerFile)
+		return backupPath, nil
+	}
 }
 
 // WriteWithBackup writes data to path via temp file + rename, backing up any
