@@ -12,9 +12,17 @@ terminal application. As usual the Ollama [API](/api) will be served on
 
 - Windows 10 22H2 or newer, Home or Pro
 - NVIDIA 452.39 or newer Drivers if you have an NVIDIA card
-- AMD Radeon Driver https://www.amd.com/en/support if you have a Radeon card
+- AMD ROCm v7 / HIP7-capable driver stack for ROCm acceleration, or a Vulkan-capable AMD Radeon driver for Vulkan acceleration
 
 Ollama uses unicode characters for progress indication, which may render as unknown squares in some older terminal fonts in Windows 10. If you see this, try changing your terminal font settings.
+
+<Note>
+  Some RDNA2 / Radeon RX 6000 systems, including RX 6800-class cards, may not
+  expose ROCm v7 on current Windows AMD drivers. Vulkan is enabled by default
+  and is the recommended fallback for those systems. If a mixed iGPU/dGPU
+  system selects an unstable Vulkan iGPU, set `GGML_VK_VISIBLE_DEVICES` to the
+  discrete GPU index.
+</Note>
 
 ## Filesystem Requirements
 
@@ -80,9 +88,13 @@ help you keep up to date.
 
 If you'd like to install or integrate Ollama as a service, a standalone
 `ollama-windows-amd64.zip` zip file is available containing only the Ollama CLI
-and GPU library dependencies for Nvidia. If you have an AMD GPU, also download
-and extract the additional ROCm package `ollama-windows-amd64-rocm.zip` into the
-same directory. This allows for embedding Ollama in existing applications, or
+and GPU library dependencies for Nvidia. Depending on your hardware, you may also
+need to download and extract additional packages into the same directory:
+
+- **AMD GPU**: `ollama-windows-amd64-rocm.zip`
+- **MLX (CUDA)**: `ollama-windows-amd64-mlx.zip`
+
+This allows for embedding Ollama in existing applications, or
 running it as a system service via `ollama serve` with tools such as
 [NSSM](https://nssm.cc/).
 

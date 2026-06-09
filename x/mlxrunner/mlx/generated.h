@@ -143,11 +143,13 @@
 #define mlx_distributed_recv_like mlx_distributed_recv_like_mlx_gen_orig_
 #define mlx_distributed_send mlx_distributed_send_mlx_gen_orig_
 #define mlx_distributed_sum_scatter mlx_distributed_sum_scatter_mlx_gen_orig_
+#define mlx_distributed_group_new mlx_distributed_group_new_mlx_gen_orig_
+#define mlx_distributed_group_free mlx_distributed_group_free_mlx_gen_orig_
+#define mlx_distributed_init mlx_distributed_init_mlx_gen_orig_
 #define mlx_distributed_group_rank mlx_distributed_group_rank_mlx_gen_orig_
 #define mlx_distributed_group_size mlx_distributed_group_size_mlx_gen_orig_
 #define mlx_distributed_group_split mlx_distributed_group_split_mlx_gen_orig_
 #define mlx_distributed_is_available mlx_distributed_is_available_mlx_gen_orig_
-#define mlx_distributed_init mlx_distributed_init_mlx_gen_orig_
 #define mlx_set_error_handler mlx_set_error_handler_mlx_gen_orig_
 #define _mlx_error _mlx_error_mlx_gen_orig_
 #define mlx_export_function mlx_export_function_mlx_gen_orig_
@@ -193,6 +195,7 @@
 #define mlx_fast_scaled_dot_product_attention mlx_fast_scaled_dot_product_attention_mlx_gen_orig_
 #define mlx_fft_fft mlx_fft_fft_mlx_gen_orig_
 #define mlx_fft_fft2 mlx_fft_fft2_mlx_gen_orig_
+#define mlx_fft_fftfreq mlx_fft_fftfreq_mlx_gen_orig_
 #define mlx_fft_fftn mlx_fft_fftn_mlx_gen_orig_
 #define mlx_fft_fftshift mlx_fft_fftshift_mlx_gen_orig_
 #define mlx_fft_ifft mlx_fft_ifft_mlx_gen_orig_
@@ -204,13 +207,22 @@
 #define mlx_fft_irfftn mlx_fft_irfftn_mlx_gen_orig_
 #define mlx_fft_rfft mlx_fft_rfft_mlx_gen_orig_
 #define mlx_fft_rfft2 mlx_fft_rfft2_mlx_gen_orig_
+#define mlx_fft_rfftfreq mlx_fft_rfftfreq_mlx_gen_orig_
 #define mlx_fft_rfftn mlx_fft_rfftn_mlx_gen_orig_
+#define mlx_node_namer_new mlx_node_namer_new_mlx_gen_orig_
+#define mlx_node_namer_free mlx_node_namer_free_mlx_gen_orig_
+#define mlx_node_namer_set_name mlx_node_namer_set_name_mlx_gen_orig_
+#define mlx_node_namer_get_name mlx_node_namer_get_name_mlx_gen_orig_
+#define mlx_export_to_dot mlx_export_to_dot_mlx_gen_orig_
+#define mlx_print_graph mlx_print_graph_mlx_gen_orig_
 #define mlx_load_reader mlx_load_reader_mlx_gen_orig_
 #define mlx_load mlx_load_mlx_gen_orig_
+#define mlx_load_gguf mlx_load_gguf_mlx_gen_orig_
 #define mlx_load_safetensors_reader mlx_load_safetensors_reader_mlx_gen_orig_
 #define mlx_load_safetensors mlx_load_safetensors_mlx_gen_orig_
 #define mlx_save_writer mlx_save_writer_mlx_gen_orig_
 #define mlx_save mlx_save_mlx_gen_orig_
+#define mlx_save_gguf mlx_save_gguf_mlx_gen_orig_
 #define mlx_save_safetensors_writer mlx_save_safetensors_writer_mlx_gen_orig_
 #define mlx_save_safetensors mlx_save_safetensors_mlx_gen_orig_
 #define mlx_io_reader_new mlx_io_reader_new_mlx_gen_orig_
@@ -221,6 +233,20 @@
 #define mlx_io_writer_descriptor mlx_io_writer_descriptor_mlx_gen_orig_
 #define mlx_io_writer_tostring mlx_io_writer_tostring_mlx_gen_orig_
 #define mlx_io_writer_free mlx_io_writer_free_mlx_gen_orig_
+#define mlx_io_gguf_new mlx_io_gguf_new_mlx_gen_orig_
+#define mlx_io_gguf_free mlx_io_gguf_free_mlx_gen_orig_
+#define mlx_io_gguf_get_keys mlx_io_gguf_get_keys_mlx_gen_orig_
+#define mlx_io_gguf_get_array mlx_io_gguf_get_array_mlx_gen_orig_
+#define mlx_io_gguf_get_metadata_array mlx_io_gguf_get_metadata_array_mlx_gen_orig_
+#define mlx_io_gguf_get_metadata_string mlx_io_gguf_get_metadata_string_mlx_gen_orig_
+#define mlx_io_gguf_get_metadata_vector_string mlx_io_gguf_get_metadata_vector_string_mlx_gen_orig_
+#define mlx_io_gguf_has_metadata_array mlx_io_gguf_has_metadata_array_mlx_gen_orig_
+#define mlx_io_gguf_has_metadata_string mlx_io_gguf_has_metadata_string_mlx_gen_orig_
+#define mlx_io_gguf_has_metadata_vector_string mlx_io_gguf_has_metadata_vector_string_mlx_gen_orig_
+#define mlx_io_gguf_set_array mlx_io_gguf_set_array_mlx_gen_orig_
+#define mlx_io_gguf_set_metadata_array mlx_io_gguf_set_metadata_array_mlx_gen_orig_
+#define mlx_io_gguf_set_metadata_string mlx_io_gguf_set_metadata_string_mlx_gen_orig_
+#define mlx_io_gguf_set_metadata_vector_string mlx_io_gguf_set_metadata_vector_string_mlx_gen_orig_
 #define mlx_linalg_cholesky mlx_linalg_cholesky_mlx_gen_orig_
 #define mlx_linalg_cholesky_inv mlx_linalg_cholesky_inv_mlx_gen_orig_
 #define mlx_linalg_cross mlx_linalg_cross_mlx_gen_orig_
@@ -300,10 +326,12 @@
 #define mlx_atleast_1d mlx_atleast_1d_mlx_gen_orig_
 #define mlx_atleast_2d mlx_atleast_2d_mlx_gen_orig_
 #define mlx_atleast_3d mlx_atleast_3d_mlx_gen_orig_
+#define mlx_bartlett mlx_bartlett_mlx_gen_orig_
 #define mlx_bitwise_and mlx_bitwise_and_mlx_gen_orig_
 #define mlx_bitwise_invert mlx_bitwise_invert_mlx_gen_orig_
 #define mlx_bitwise_or mlx_bitwise_or_mlx_gen_orig_
 #define mlx_bitwise_xor mlx_bitwise_xor_mlx_gen_orig_
+#define mlx_blackman mlx_blackman_mlx_gen_orig_
 #define mlx_block_masked_mm mlx_block_masked_mm_mlx_gen_orig_
 #define mlx_broadcast_arrays mlx_broadcast_arrays_mlx_gen_orig_
 #define mlx_broadcast_to mlx_broadcast_to_mlx_gen_orig_
@@ -356,6 +384,8 @@
 #define mlx_greater mlx_greater_mlx_gen_orig_
 #define mlx_greater_equal mlx_greater_equal_mlx_gen_orig_
 #define mlx_hadamard_transform mlx_hadamard_transform_mlx_gen_orig_
+#define mlx_hamming mlx_hamming_mlx_gen_orig_
+#define mlx_hanning mlx_hanning_mlx_gen_orig_
 #define mlx_identity mlx_identity_mlx_gen_orig_
 #define mlx_imag mlx_imag_mlx_gen_orig_
 #define mlx_inner mlx_inner_mlx_gen_orig_
@@ -451,6 +481,10 @@
 #define mlx_slice_dynamic mlx_slice_dynamic_mlx_gen_orig_
 #define mlx_slice_update mlx_slice_update_mlx_gen_orig_
 #define mlx_slice_update_dynamic mlx_slice_update_dynamic_mlx_gen_orig_
+#define mlx_slice_update_add mlx_slice_update_add_mlx_gen_orig_
+#define mlx_slice_update_max mlx_slice_update_max_mlx_gen_orig_
+#define mlx_slice_update_min mlx_slice_update_min_mlx_gen_orig_
+#define mlx_slice_update_prod mlx_slice_update_prod_mlx_gen_orig_
 #define mlx_softmax_axes mlx_softmax_axes_mlx_gen_orig_
 #define mlx_softmax_axis mlx_softmax_axis_mlx_gen_orig_
 #define mlx_softmax mlx_softmax_mlx_gen_orig_
@@ -732,11 +766,13 @@
 #undef mlx_distributed_recv_like
 #undef mlx_distributed_send
 #undef mlx_distributed_sum_scatter
+#undef mlx_distributed_group_new
+#undef mlx_distributed_group_free
+#undef mlx_distributed_init
 #undef mlx_distributed_group_rank
 #undef mlx_distributed_group_size
 #undef mlx_distributed_group_split
 #undef mlx_distributed_is_available
-#undef mlx_distributed_init
 #undef mlx_set_error_handler
 #undef _mlx_error
 #undef mlx_export_function
@@ -782,6 +818,7 @@
 #undef mlx_fast_scaled_dot_product_attention
 #undef mlx_fft_fft
 #undef mlx_fft_fft2
+#undef mlx_fft_fftfreq
 #undef mlx_fft_fftn
 #undef mlx_fft_fftshift
 #undef mlx_fft_ifft
@@ -793,13 +830,22 @@
 #undef mlx_fft_irfftn
 #undef mlx_fft_rfft
 #undef mlx_fft_rfft2
+#undef mlx_fft_rfftfreq
 #undef mlx_fft_rfftn
+#undef mlx_node_namer_new
+#undef mlx_node_namer_free
+#undef mlx_node_namer_set_name
+#undef mlx_node_namer_get_name
+#undef mlx_export_to_dot
+#undef mlx_print_graph
 #undef mlx_load_reader
 #undef mlx_load
+#undef mlx_load_gguf
 #undef mlx_load_safetensors_reader
 #undef mlx_load_safetensors
 #undef mlx_save_writer
 #undef mlx_save
+#undef mlx_save_gguf
 #undef mlx_save_safetensors_writer
 #undef mlx_save_safetensors
 #undef mlx_io_reader_new
@@ -810,6 +856,20 @@
 #undef mlx_io_writer_descriptor
 #undef mlx_io_writer_tostring
 #undef mlx_io_writer_free
+#undef mlx_io_gguf_new
+#undef mlx_io_gguf_free
+#undef mlx_io_gguf_get_keys
+#undef mlx_io_gguf_get_array
+#undef mlx_io_gguf_get_metadata_array
+#undef mlx_io_gguf_get_metadata_string
+#undef mlx_io_gguf_get_metadata_vector_string
+#undef mlx_io_gguf_has_metadata_array
+#undef mlx_io_gguf_has_metadata_string
+#undef mlx_io_gguf_has_metadata_vector_string
+#undef mlx_io_gguf_set_array
+#undef mlx_io_gguf_set_metadata_array
+#undef mlx_io_gguf_set_metadata_string
+#undef mlx_io_gguf_set_metadata_vector_string
 #undef mlx_linalg_cholesky
 #undef mlx_linalg_cholesky_inv
 #undef mlx_linalg_cross
@@ -889,10 +949,12 @@
 #undef mlx_atleast_1d
 #undef mlx_atleast_2d
 #undef mlx_atleast_3d
+#undef mlx_bartlett
 #undef mlx_bitwise_and
 #undef mlx_bitwise_invert
 #undef mlx_bitwise_or
 #undef mlx_bitwise_xor
+#undef mlx_blackman
 #undef mlx_block_masked_mm
 #undef mlx_broadcast_arrays
 #undef mlx_broadcast_to
@@ -945,6 +1007,8 @@
 #undef mlx_greater
 #undef mlx_greater_equal
 #undef mlx_hadamard_transform
+#undef mlx_hamming
+#undef mlx_hanning
 #undef mlx_identity
 #undef mlx_imag
 #undef mlx_inner
@@ -1040,6 +1104,10 @@
 #undef mlx_slice_dynamic
 #undef mlx_slice_update
 #undef mlx_slice_update_dynamic
+#undef mlx_slice_update_add
+#undef mlx_slice_update_max
+#undef mlx_slice_update_min
+#undef mlx_slice_update_prod
 #undef mlx_softmax_axes
 #undef mlx_softmax_axis
 #undef mlx_softmax
@@ -1498,11 +1566,20 @@ extern int (*mlx_distributed_sum_scatter_)(
     const mlx_array x,
     const mlx_distributed_group group /* may be null */,
     const mlx_stream s);
+extern mlx_distributed_group (*mlx_distributed_group_new_)(void);
+extern int (*mlx_distributed_group_free_)(mlx_distributed_group group);
+extern int (*mlx_distributed_init_)(
+    mlx_distributed_group* res,
+    bool strict,
+    const char* bk /* may be null */);
 extern int (*mlx_distributed_group_rank_)(mlx_distributed_group group);
 extern int (*mlx_distributed_group_size_)(mlx_distributed_group group);
-extern mlx_distributed_group (*mlx_distributed_group_split_)(mlx_distributed_group group, int color, int key);
-extern bool (*mlx_distributed_is_available_)(void);
-extern mlx_distributed_group (*mlx_distributed_init_)(bool strict);
+extern int (*mlx_distributed_group_split_)(
+    mlx_distributed_group* res,
+    mlx_distributed_group group,
+    int color,
+    int key);
+extern bool (*mlx_distributed_is_available_)(const char* bk /* may be null */);
 extern void (*mlx_set_error_handler_)(
     mlx_error_handler_func handler,
     void* data,
@@ -1690,6 +1767,7 @@ extern int (*mlx_fft_fft_)(
     const mlx_array a,
     int n,
     int axis,
+    mlx_fft_norm norm,
     const mlx_stream s);
 extern int (*mlx_fft_fft2_)(
     mlx_array* res,
@@ -1698,7 +1776,9 @@ extern int (*mlx_fft_fft2_)(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s);
+extern int (*mlx_fft_fftfreq_)(mlx_array* res, int n, double d, const mlx_stream s);
 extern int (*mlx_fft_fftn_)(
     mlx_array* res,
     const mlx_array a,
@@ -1706,6 +1786,7 @@ extern int (*mlx_fft_fftn_)(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s);
 extern int (*mlx_fft_fftshift_)(
     mlx_array* res,
@@ -1718,6 +1799,7 @@ extern int (*mlx_fft_ifft_)(
     const mlx_array a,
     int n,
     int axis,
+    mlx_fft_norm norm,
     const mlx_stream s);
 extern int (*mlx_fft_ifft2_)(
     mlx_array* res,
@@ -1726,6 +1808,7 @@ extern int (*mlx_fft_ifft2_)(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s);
 extern int (*mlx_fft_ifftn_)(
     mlx_array* res,
@@ -1734,6 +1817,7 @@ extern int (*mlx_fft_ifftn_)(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s);
 extern int (*mlx_fft_ifftshift_)(
     mlx_array* res,
@@ -1746,6 +1830,7 @@ extern int (*mlx_fft_irfft_)(
     const mlx_array a,
     int n,
     int axis,
+    mlx_fft_norm norm,
     const mlx_stream s);
 extern int (*mlx_fft_irfft2_)(
     mlx_array* res,
@@ -1754,6 +1839,7 @@ extern int (*mlx_fft_irfft2_)(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s);
 extern int (*mlx_fft_irfftn_)(
     mlx_array* res,
@@ -1762,12 +1848,14 @@ extern int (*mlx_fft_irfftn_)(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s);
 extern int (*mlx_fft_rfft_)(
     mlx_array* res,
     const mlx_array a,
     int n,
     int axis,
+    mlx_fft_norm norm,
     const mlx_stream s);
 extern int (*mlx_fft_rfft2_)(
     mlx_array* res,
@@ -1776,7 +1864,9 @@ extern int (*mlx_fft_rfft2_)(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s);
+extern int (*mlx_fft_rfftfreq_)(mlx_array* res, int n, double d, const mlx_stream s);
 extern int (*mlx_fft_rfftn_)(
     mlx_array* res,
     const mlx_array a,
@@ -1784,12 +1874,32 @@ extern int (*mlx_fft_rfftn_)(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s);
+extern mlx_node_namer (*mlx_node_namer_new_)();
+extern int (*mlx_node_namer_free_)(mlx_node_namer namer);
+extern int (*mlx_node_namer_set_name_)(
+    mlx_node_namer namer,
+    const mlx_array arr,
+    const char* name);
+extern int (*mlx_node_namer_get_name_)(
+    const char** name,
+    mlx_node_namer namer,
+    const mlx_array arr);
+extern int (*mlx_export_to_dot_)(
+    FILE* os,
+    const mlx_node_namer namer,
+    const mlx_vector_array outputs);
+extern int (*mlx_print_graph_)(
+    FILE* os,
+    const mlx_node_namer namer,
+    const mlx_vector_array outputs);
 extern int (*mlx_load_reader_)(
     mlx_array* res,
     mlx_io_reader in_stream,
     const mlx_stream s);
 extern int (*mlx_load_)(mlx_array* res, const char* file, const mlx_stream s);
+extern int (*mlx_load_gguf_)(mlx_io_gguf* gguf, const char* file, const mlx_stream s);
 extern int (*mlx_load_safetensors_reader_)(
     mlx_map_string_to_array* res_0,
     mlx_map_string_to_string* res_1,
@@ -1802,6 +1912,7 @@ extern int (*mlx_load_safetensors_)(
     const mlx_stream s);
 extern int (*mlx_save_writer_)(mlx_io_writer out_stream, const mlx_array a);
 extern int (*mlx_save_)(const char* file, const mlx_array a);
+extern int (*mlx_save_gguf_)(const char* file, mlx_io_gguf gguf);
 extern int (*mlx_save_safetensors_writer_)(
     mlx_io_writer in_stream,
     const mlx_map_string_to_array param,
@@ -1818,6 +1929,44 @@ extern mlx_io_writer (*mlx_io_writer_new_)(void* desc, mlx_io_vtable vtable);
 extern int (*mlx_io_writer_descriptor_)(void** desc_, mlx_io_writer io);
 extern int (*mlx_io_writer_tostring_)(mlx_string* str_, mlx_io_writer io);
 extern int (*mlx_io_writer_free_)(mlx_io_writer io);
+extern mlx_io_gguf (*mlx_io_gguf_new_)(void);
+extern int (*mlx_io_gguf_free_)(mlx_io_gguf io);
+extern int (*mlx_io_gguf_get_keys_)(mlx_vector_string* keys, mlx_io_gguf io);
+extern int (*mlx_io_gguf_get_array_)(mlx_array* arr, mlx_io_gguf io, const char* key);
+extern int (*mlx_io_gguf_get_metadata_array_)(
+    mlx_array* arr,
+    mlx_io_gguf io,
+    const char* key);
+extern int (*mlx_io_gguf_get_metadata_string_)(
+    mlx_string* str,
+    mlx_io_gguf io,
+    const char* key);
+extern int (*mlx_io_gguf_get_metadata_vector_string_)(
+    mlx_vector_string* vstr,
+    mlx_io_gguf io,
+    const char* key);
+extern int (*mlx_io_gguf_has_metadata_array_)(bool* flag, mlx_io_gguf io, const char* key);
+extern int (*mlx_io_gguf_has_metadata_string_)(
+    bool* flag,
+    mlx_io_gguf io,
+    const char* key);
+extern int (*mlx_io_gguf_has_metadata_vector_string_)(
+    bool* flag,
+    mlx_io_gguf io,
+    const char* key);
+extern int (*mlx_io_gguf_set_array_)(mlx_io_gguf io, const char* key, const mlx_array arr);
+extern int (*mlx_io_gguf_set_metadata_array_)(
+    mlx_io_gguf io,
+    const char* key,
+    const mlx_array marr);
+extern int (*mlx_io_gguf_set_metadata_string_)(
+    mlx_io_gguf io,
+    const char* key,
+    const char* mstr);
+extern int (*mlx_io_gguf_set_metadata_vector_string_)(
+    mlx_io_gguf io,
+    const char* key,
+    const mlx_vector_string mvstr);
 extern int (*mlx_linalg_cholesky_)(
     mlx_array* res,
     const mlx_array a,
@@ -2099,6 +2248,7 @@ extern int (*mlx_astype_)(
 extern int (*mlx_atleast_1d_)(mlx_array* res, const mlx_array a, const mlx_stream s);
 extern int (*mlx_atleast_2d_)(mlx_array* res, const mlx_array a, const mlx_stream s);
 extern int (*mlx_atleast_3d_)(mlx_array* res, const mlx_array a, const mlx_stream s);
+extern int (*mlx_bartlett_)(mlx_array* res, int M, const mlx_stream s);
 extern int (*mlx_bitwise_and_)(
     mlx_array* res,
     const mlx_array a,
@@ -2115,6 +2265,7 @@ extern int (*mlx_bitwise_xor_)(
     const mlx_array a,
     const mlx_array b,
     const mlx_stream s);
+extern int (*mlx_blackman_)(mlx_array* res, int M, const mlx_stream s);
 extern int (*mlx_block_masked_mm_)(
     mlx_array* res,
     const mlx_array a,
@@ -2295,6 +2446,7 @@ extern int (*mlx_dequantize_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     mlx_optional_dtype dtype,
     const mlx_stream s);
 extern int (*mlx_diag_)(mlx_array* res, const mlx_array a, int k, const mlx_stream s);
@@ -2431,6 +2583,8 @@ extern int (*mlx_hadamard_transform_)(
     const mlx_array a,
     mlx_optional_float scale,
     const mlx_stream s);
+extern int (*mlx_hamming_)(mlx_array* res, int M, const mlx_stream s);
+extern int (*mlx_hanning_)(mlx_array* res, int M, const mlx_stream s);
 extern int (*mlx_identity_)(mlx_array* res, int n, mlx_dtype dtype, const mlx_stream s);
 extern int (*mlx_imag_)(mlx_array* res, const mlx_array a, const mlx_stream s);
 extern int (*mlx_inner_)(
@@ -2723,6 +2877,8 @@ extern int (*mlx_qqmm_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale_x /* may be null */,
+    const mlx_array global_scale_w /* may be null */,
     const mlx_stream s);
 extern int (*mlx_quantize_)(
     mlx_vector_array* res,
@@ -2730,6 +2886,7 @@ extern int (*mlx_quantize_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     const mlx_stream s);
 extern int (*mlx_quantized_matmul_)(
     mlx_array* res,
@@ -2928,6 +3085,50 @@ extern int (*mlx_slice_update_dynamic_)(
     const mlx_array start,
     const int* axes,
     size_t axes_num,
+    const mlx_stream s);
+extern int (*mlx_slice_update_add_)(
+    mlx_array* res,
+    const mlx_array src,
+    const mlx_array update,
+    const int* start,
+    size_t start_num,
+    const int* stop,
+    size_t stop_num,
+    const int* strides,
+    size_t strides_num,
+    const mlx_stream s);
+extern int (*mlx_slice_update_max_)(
+    mlx_array* res,
+    const mlx_array src,
+    const mlx_array update,
+    const int* start,
+    size_t start_num,
+    const int* stop,
+    size_t stop_num,
+    const int* strides,
+    size_t strides_num,
+    const mlx_stream s);
+extern int (*mlx_slice_update_min_)(
+    mlx_array* res,
+    const mlx_array src,
+    const mlx_array update,
+    const int* start,
+    size_t start_num,
+    const int* stop,
+    size_t stop_num,
+    const int* strides,
+    size_t strides_num,
+    const mlx_stream s);
+extern int (*mlx_slice_update_prod_)(
+    mlx_array* res,
+    const mlx_array src,
+    const mlx_array update,
+    const int* start,
+    size_t start_num,
+    const int* stop,
+    size_t stop_num,
+    const int* strides,
+    size_t strides_num,
     const mlx_stream s);
 extern int (*mlx_softmax_axes_)(
     mlx_array* res,
@@ -4024,20 +4225,33 @@ static inline int mlx_distributed_sum_scatter(
     const mlx_stream s) {
     return mlx_distributed_sum_scatter_(res, x, group, s);
 }
+static inline mlx_distributed_group mlx_distributed_group_new(void) {
+    return mlx_distributed_group_new_();
+}
+static inline int mlx_distributed_group_free(mlx_distributed_group group) {
+    return mlx_distributed_group_free_(group);
+}
+static inline int mlx_distributed_init(
+    mlx_distributed_group* res,
+    bool strict,
+    const char* bk /* may be null */) {
+    return mlx_distributed_init_(res, strict, bk);
+}
 static inline int mlx_distributed_group_rank(mlx_distributed_group group) {
     return mlx_distributed_group_rank_(group);
 }
 static inline int mlx_distributed_group_size(mlx_distributed_group group) {
     return mlx_distributed_group_size_(group);
 }
-static inline mlx_distributed_group mlx_distributed_group_split(mlx_distributed_group group, int color, int key) {
-    return mlx_distributed_group_split_(group, color, key);
+static inline int mlx_distributed_group_split(
+    mlx_distributed_group* res,
+    mlx_distributed_group group,
+    int color,
+    int key) {
+    return mlx_distributed_group_split_(res, group, color, key);
 }
-static inline bool mlx_distributed_is_available(void) {
-    return mlx_distributed_is_available_();
-}
-static inline mlx_distributed_group mlx_distributed_init(bool strict) {
-    return mlx_distributed_init_(strict);
+static inline bool mlx_distributed_is_available(const char* bk /* may be null */) {
+    return mlx_distributed_is_available_(bk);
 }
 static inline void mlx_set_error_handler(
     mlx_error_handler_func handler,
@@ -4312,8 +4526,9 @@ static inline int mlx_fft_fft(
     const mlx_array a,
     int n,
     int axis,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_fft_(res, a, n, axis, s);
+    return mlx_fft_fft_(res, a, n, axis, norm, s);
 }
 static inline int mlx_fft_fft2(
     mlx_array* res,
@@ -4322,8 +4537,12 @@ static inline int mlx_fft_fft2(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_fft2_(res, a, n, n_num, axes, axes_num, s);
+    return mlx_fft_fft2_(res, a, n, n_num, axes, axes_num, norm, s);
+}
+static inline int mlx_fft_fftfreq(mlx_array* res, int n, double d, const mlx_stream s) {
+    return mlx_fft_fftfreq_(res, n, d, s);
 }
 static inline int mlx_fft_fftn(
     mlx_array* res,
@@ -4332,8 +4551,9 @@ static inline int mlx_fft_fftn(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_fftn_(res, a, n, n_num, axes, axes_num, s);
+    return mlx_fft_fftn_(res, a, n, n_num, axes, axes_num, norm, s);
 }
 static inline int mlx_fft_fftshift(
     mlx_array* res,
@@ -4348,8 +4568,9 @@ static inline int mlx_fft_ifft(
     const mlx_array a,
     int n,
     int axis,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_ifft_(res, a, n, axis, s);
+    return mlx_fft_ifft_(res, a, n, axis, norm, s);
 }
 static inline int mlx_fft_ifft2(
     mlx_array* res,
@@ -4358,8 +4579,9 @@ static inline int mlx_fft_ifft2(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_ifft2_(res, a, n, n_num, axes, axes_num, s);
+    return mlx_fft_ifft2_(res, a, n, n_num, axes, axes_num, norm, s);
 }
 static inline int mlx_fft_ifftn(
     mlx_array* res,
@@ -4368,8 +4590,9 @@ static inline int mlx_fft_ifftn(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_ifftn_(res, a, n, n_num, axes, axes_num, s);
+    return mlx_fft_ifftn_(res, a, n, n_num, axes, axes_num, norm, s);
 }
 static inline int mlx_fft_ifftshift(
     mlx_array* res,
@@ -4384,8 +4607,9 @@ static inline int mlx_fft_irfft(
     const mlx_array a,
     int n,
     int axis,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_irfft_(res, a, n, axis, s);
+    return mlx_fft_irfft_(res, a, n, axis, norm, s);
 }
 static inline int mlx_fft_irfft2(
     mlx_array* res,
@@ -4394,8 +4618,9 @@ static inline int mlx_fft_irfft2(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_irfft2_(res, a, n, n_num, axes, axes_num, s);
+    return mlx_fft_irfft2_(res, a, n, n_num, axes, axes_num, norm, s);
 }
 static inline int mlx_fft_irfftn(
     mlx_array* res,
@@ -4404,16 +4629,18 @@ static inline int mlx_fft_irfftn(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_irfftn_(res, a, n, n_num, axes, axes_num, s);
+    return mlx_fft_irfftn_(res, a, n, n_num, axes, axes_num, norm, s);
 }
 static inline int mlx_fft_rfft(
     mlx_array* res,
     const mlx_array a,
     int n,
     int axis,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_rfft_(res, a, n, axis, s);
+    return mlx_fft_rfft_(res, a, n, axis, norm, s);
 }
 static inline int mlx_fft_rfft2(
     mlx_array* res,
@@ -4422,8 +4649,12 @@ static inline int mlx_fft_rfft2(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_rfft2_(res, a, n, n_num, axes, axes_num, s);
+    return mlx_fft_rfft2_(res, a, n, n_num, axes, axes_num, norm, s);
+}
+static inline int mlx_fft_rfftfreq(mlx_array* res, int n, double d, const mlx_stream s) {
+    return mlx_fft_rfftfreq_(res, n, d, s);
 }
 static inline int mlx_fft_rfftn(
     mlx_array* res,
@@ -4432,8 +4663,39 @@ static inline int mlx_fft_rfftn(
     size_t n_num,
     const int* axes,
     size_t axes_num,
+    mlx_fft_norm norm,
     const mlx_stream s) {
-    return mlx_fft_rfftn_(res, a, n, n_num, axes, axes_num, s);
+    return mlx_fft_rfftn_(res, a, n, n_num, axes, axes_num, norm, s);
+}
+static inline mlx_node_namer mlx_node_namer_new() {
+    return mlx_node_namer_new_();
+}
+static inline int mlx_node_namer_free(mlx_node_namer namer) {
+    return mlx_node_namer_free_(namer);
+}
+static inline int mlx_node_namer_set_name(
+    mlx_node_namer namer,
+    const mlx_array arr,
+    const char* name) {
+    return mlx_node_namer_set_name_(namer, arr, name);
+}
+static inline int mlx_node_namer_get_name(
+    const char** name,
+    mlx_node_namer namer,
+    const mlx_array arr) {
+    return mlx_node_namer_get_name_(name, namer, arr);
+}
+static inline int mlx_export_to_dot(
+    FILE* os,
+    const mlx_node_namer namer,
+    const mlx_vector_array outputs) {
+    return mlx_export_to_dot_(os, namer, outputs);
+}
+static inline int mlx_print_graph(
+    FILE* os,
+    const mlx_node_namer namer,
+    const mlx_vector_array outputs) {
+    return mlx_print_graph_(os, namer, outputs);
 }
 static inline int mlx_load_reader(
     mlx_array* res,
@@ -4443,6 +4705,9 @@ static inline int mlx_load_reader(
 }
 static inline int mlx_load(mlx_array* res, const char* file, const mlx_stream s) {
     return mlx_load_(res, file, s);
+}
+static inline int mlx_load_gguf(mlx_io_gguf* gguf, const char* file, const mlx_stream s) {
+    return mlx_load_gguf_(gguf, file, s);
 }
 static inline int mlx_load_safetensors_reader(
     mlx_map_string_to_array* res_0,
@@ -4463,6 +4728,9 @@ static inline int mlx_save_writer(mlx_io_writer out_stream, const mlx_array a) {
 }
 static inline int mlx_save(const char* file, const mlx_array a) {
     return mlx_save_(file, a);
+}
+static inline int mlx_save_gguf(const char* file, mlx_io_gguf gguf) {
+    return mlx_save_gguf_(file, gguf);
 }
 static inline int mlx_save_safetensors_writer(
     mlx_io_writer in_stream,
@@ -4499,6 +4767,72 @@ static inline int mlx_io_writer_tostring(mlx_string* str_, mlx_io_writer io) {
 }
 static inline int mlx_io_writer_free(mlx_io_writer io) {
     return mlx_io_writer_free_(io);
+}
+static inline mlx_io_gguf mlx_io_gguf_new(void) {
+    return mlx_io_gguf_new_();
+}
+static inline int mlx_io_gguf_free(mlx_io_gguf io) {
+    return mlx_io_gguf_free_(io);
+}
+static inline int mlx_io_gguf_get_keys(mlx_vector_string* keys, mlx_io_gguf io) {
+    return mlx_io_gguf_get_keys_(keys, io);
+}
+static inline int mlx_io_gguf_get_array(mlx_array* arr, mlx_io_gguf io, const char* key) {
+    return mlx_io_gguf_get_array_(arr, io, key);
+}
+static inline int mlx_io_gguf_get_metadata_array(
+    mlx_array* arr,
+    mlx_io_gguf io,
+    const char* key) {
+    return mlx_io_gguf_get_metadata_array_(arr, io, key);
+}
+static inline int mlx_io_gguf_get_metadata_string(
+    mlx_string* str,
+    mlx_io_gguf io,
+    const char* key) {
+    return mlx_io_gguf_get_metadata_string_(str, io, key);
+}
+static inline int mlx_io_gguf_get_metadata_vector_string(
+    mlx_vector_string* vstr,
+    mlx_io_gguf io,
+    const char* key) {
+    return mlx_io_gguf_get_metadata_vector_string_(vstr, io, key);
+}
+static inline int mlx_io_gguf_has_metadata_array(bool* flag, mlx_io_gguf io, const char* key) {
+    return mlx_io_gguf_has_metadata_array_(flag, io, key);
+}
+static inline int mlx_io_gguf_has_metadata_string(
+    bool* flag,
+    mlx_io_gguf io,
+    const char* key) {
+    return mlx_io_gguf_has_metadata_string_(flag, io, key);
+}
+static inline int mlx_io_gguf_has_metadata_vector_string(
+    bool* flag,
+    mlx_io_gguf io,
+    const char* key) {
+    return mlx_io_gguf_has_metadata_vector_string_(flag, io, key);
+}
+static inline int mlx_io_gguf_set_array(mlx_io_gguf io, const char* key, const mlx_array arr) {
+    return mlx_io_gguf_set_array_(io, key, arr);
+}
+static inline int mlx_io_gguf_set_metadata_array(
+    mlx_io_gguf io,
+    const char* key,
+    const mlx_array marr) {
+    return mlx_io_gguf_set_metadata_array_(io, key, marr);
+}
+static inline int mlx_io_gguf_set_metadata_string(
+    mlx_io_gguf io,
+    const char* key,
+    const char* mstr) {
+    return mlx_io_gguf_set_metadata_string_(io, key, mstr);
+}
+static inline int mlx_io_gguf_set_metadata_vector_string(
+    mlx_io_gguf io,
+    const char* key,
+    const mlx_vector_string mvstr) {
+    return mlx_io_gguf_set_metadata_vector_string_(io, key, mvstr);
 }
 static inline int mlx_linalg_cholesky(
     mlx_array* res,
@@ -4939,6 +5273,9 @@ static inline int mlx_atleast_2d(mlx_array* res, const mlx_array a, const mlx_st
 static inline int mlx_atleast_3d(mlx_array* res, const mlx_array a, const mlx_stream s) {
     return mlx_atleast_3d_(res, a, s);
 }
+static inline int mlx_bartlett(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_bartlett_(res, M, s);
+}
 static inline int mlx_bitwise_and(
     mlx_array* res,
     const mlx_array a,
@@ -4962,6 +5299,9 @@ static inline int mlx_bitwise_xor(
     const mlx_array b,
     const mlx_stream s) {
     return mlx_bitwise_xor_(res, a, b, s);
+}
+static inline int mlx_blackman(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_blackman_(res, M, s);
 }
 static inline int mlx_block_masked_mm(
     mlx_array* res,
@@ -5193,9 +5533,10 @@ static inline int mlx_dequantize(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     mlx_optional_dtype dtype,
     const mlx_stream s) {
-    return mlx_dequantize_(res, w, scales, biases, group_size, bits, mode, dtype, s);
+    return mlx_dequantize_(res, w, scales, biases, group_size, bits, mode, global_scale, dtype, s);
 }
 static inline int mlx_diag(mlx_array* res, const mlx_array a, int k, const mlx_stream s) {
     return mlx_diag_(res, a, k, s);
@@ -5382,6 +5723,12 @@ static inline int mlx_hadamard_transform(
     mlx_optional_float scale,
     const mlx_stream s) {
     return mlx_hadamard_transform_(res, a, scale, s);
+}
+static inline int mlx_hamming(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_hamming_(res, M, s);
+}
+static inline int mlx_hanning(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_hanning_(res, M, s);
 }
 static inline int mlx_identity(mlx_array* res, int n, mlx_dtype dtype, const mlx_stream s) {
     return mlx_identity_(res, n, dtype, s);
@@ -5793,8 +6140,10 @@ static inline int mlx_qqmm(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale_x /* may be null */,
+    const mlx_array global_scale_w /* may be null */,
     const mlx_stream s) {
-    return mlx_qqmm_(res, x, w, w_scales, group_size, bits, mode, s);
+    return mlx_qqmm_(res, x, w, w_scales, group_size, bits, mode, global_scale_x, global_scale_w, s);
 }
 static inline int mlx_quantize(
     mlx_vector_array* res,
@@ -5802,8 +6151,9 @@ static inline int mlx_quantize(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     const mlx_stream s) {
-    return mlx_quantize_(res, w, group_size, bits, mode, s);
+    return mlx_quantize_(res, w, group_size, bits, mode, global_scale, s);
 }
 static inline int mlx_quantized_matmul(
     mlx_array* res,
@@ -6070,6 +6420,58 @@ static inline int mlx_slice_update_dynamic(
     size_t axes_num,
     const mlx_stream s) {
     return mlx_slice_update_dynamic_(res, src, update, start, axes, axes_num, s);
+}
+static inline int mlx_slice_update_add(
+    mlx_array* res,
+    const mlx_array src,
+    const mlx_array update,
+    const int* start,
+    size_t start_num,
+    const int* stop,
+    size_t stop_num,
+    const int* strides,
+    size_t strides_num,
+    const mlx_stream s) {
+    return mlx_slice_update_add_(res, src, update, start, start_num, stop, stop_num, strides, strides_num, s);
+}
+static inline int mlx_slice_update_max(
+    mlx_array* res,
+    const mlx_array src,
+    const mlx_array update,
+    const int* start,
+    size_t start_num,
+    const int* stop,
+    size_t stop_num,
+    const int* strides,
+    size_t strides_num,
+    const mlx_stream s) {
+    return mlx_slice_update_max_(res, src, update, start, start_num, stop, stop_num, strides, strides_num, s);
+}
+static inline int mlx_slice_update_min(
+    mlx_array* res,
+    const mlx_array src,
+    const mlx_array update,
+    const int* start,
+    size_t start_num,
+    const int* stop,
+    size_t stop_num,
+    const int* strides,
+    size_t strides_num,
+    const mlx_stream s) {
+    return mlx_slice_update_min_(res, src, update, start, start_num, stop, stop_num, strides, strides_num, s);
+}
+static inline int mlx_slice_update_prod(
+    mlx_array* res,
+    const mlx_array src,
+    const mlx_array update,
+    const int* start,
+    size_t start_num,
+    const int* stop,
+    size_t stop_num,
+    const int* strides,
+    size_t strides_num,
+    const mlx_stream s) {
+    return mlx_slice_update_prod_(res, src, update, start, start_num, stop, stop_num, strides, strides_num, s);
 }
 static inline int mlx_softmax_axes(
     mlx_array* res,

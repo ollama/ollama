@@ -11,7 +11,7 @@
 
 int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
 {{- range .Functions }}
-    CHECK_LOAD(handle, {{ .Name }});
+    {{ if .Optional }}OPTIONAL_LOAD{{ else }}CHECK_LOAD{{ end }}(handle, {{ .Name }});
 {{- end }}
     return 0;
 }

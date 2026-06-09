@@ -216,6 +216,41 @@ func TestUpdateScroll(t *testing.T) {
 	}
 }
 
+func TestSelectorModelWithCurrent_ScrollsToCurrentInMoreSection(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", mixedItems(), "other-10")
+
+	if m.cursor != 11 {
+		t.Fatalf("cursor = %d, want 11", m.cursor)
+	}
+	if m.scrollOffset == 0 {
+		t.Fatal("scrollOffset should move to reveal current item in More section")
+	}
+
+	content := m.renderContent()
+	if !strings.Contains(content, "▸ other-10") {
+		t.Fatalf("expected current item to be visible and highlighted\n%s", content)
+	}
+}
+
+func TestSelectorModelWithCurrent_HighlightsExactLocalWhenCloudVariantExists(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", []SelectItem{
+		{Name: "qwen3.5:cloud", Recommended: true},
+		{Name: "qwen3.5", Recommended: true},
+	}, "qwen3.5")
+
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1", m.cursor)
+	}
+
+	content := m.renderContent()
+	if !strings.Contains(content, "▸ qwen3.5") {
+		t.Fatalf("expected local qwen3.5 to be highlighted\n%s", content)
+	}
+	if strings.Contains(content, "▸ qwen3.5:cloud") {
+		t.Fatalf("did not expect cloud qwen3.5:cloud to be highlighted\n%s", content)
+	}
+}
+
 func TestRenderContent_SectionHeaders(t *testing.T) {
 	m := selectorModel{
 		title: "Pick:",
@@ -273,6 +308,91 @@ func TestRenderContent_SelectedItemIndicator(t *testing.T) {
 
 	if !strings.Contains(content, "▸") {
 		t.Error("selected item should have ▸ indicator")
+	}
+}
+
+func TestRenderContent_AvailabilityBadgeOnlyOnCursor(t *testing.T) {
+	m := selectorModel{
+		title: "Pick:",
+		items: []SelectItem{
+			{Name: "kimi-k2.6:cloud", AvailabilityBadge: "Upgrade required"},
+			{Name: "qwen3.5:cloud", AvailabilityBadge: "Sign in required"},
+			{Name: "glm-5:cloud", AvailabilityBadge: "Included"},
+		},
+		cursor: 0,
+	}
+	content := m.renderContent()
+
+	if !strings.Contains(content, "(Upgrade required)") {
+		t.Fatalf("cursor badge missing:\n%s", content)
+	}
+	if strings.Contains(content, "(Sign in required)") {
+		t.Fatalf("non-cursor badge should not render:\n%s", content)
+	}
+	if strings.Contains(content, "Included") {
+		t.Fatalf("included badge should not render:\n%s", content)
+	}
+}
+
+func TestSelectorModel_ItemsUpdatedPreservesCursorAndRendersBadge(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", []SelectItem{
+		{Name: "kimi-k2.6:cloud", Recommended: true},
+		{Name: "llama3.2"},
+	}, "kimi-k2.6:cloud")
+
+	updated, _ := m.Update(selectorItemsUpdatedMsg{items: []SelectItem{
+		{Name: "kimi-k2.6:cloud", Recommended: true, AvailabilityBadge: "Upgrade required"},
+		{Name: "llama3.2"},
+	}})
+	fm := updated.(selectorModel)
+	if fm.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0", fm.cursor)
+	}
+	content := fm.renderContent()
+	if !strings.Contains(content, "(Upgrade required)") {
+		t.Fatalf("updated badge missing:\n%s", content)
+	}
+}
+
+func TestMultiSelector_AvailabilityBadgePreservesDefaultSuffix(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", []SelectItem{
+		{Name: "kimi-k2.6:cloud", AvailabilityBadge: "Upgrade required"},
+		{Name: "qwen3.5:cloud"},
+	}, []string{"kimi-k2.6:cloud"})
+	m.multi = true
+	m.cursor = 0
+
+	content := m.View()
+	if !strings.Contains(content, "(Upgrade required)") {
+		t.Fatalf("cursor badge missing:\n%s", content)
+	}
+	if !strings.Contains(content, "(default)") {
+		t.Fatalf("default suffix missing:\n%s", content)
+	}
+}
+
+func TestMultiSelector_ItemsUpdatedPreservesCheckedStateAndRendersBadge(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", []SelectItem{
+		{Name: "kimi-k2.6:cloud", Recommended: true},
+		{Name: "llama3.2"},
+	}, []string{"kimi-k2.6:cloud"})
+	m.multi = true
+
+	updated, _ := m.Update(selectorItemsUpdatedMsg{items: []SelectItem{
+		{Name: "kimi-k2.6:cloud", Recommended: true, AvailabilityBadge: "Upgrade required"},
+		{Name: "llama3.2"},
+	}})
+	fm := updated.(multiSelectorModel)
+	idx := fm.itemIndex["kimi-k2.6:cloud"]
+	if !fm.checked[idx] {
+		t.Fatalf("checked state was not preserved: %#v", fm.checked)
+	}
+	content := fm.View()
+	if !strings.Contains(content, "(Upgrade required)") {
+		t.Fatalf("updated badge missing:\n%s", content)
+	}
+	if !strings.Contains(content, "(default)") {
+		t.Fatalf("default suffix missing after update:\n%s", content)
 	}
 }
 
@@ -415,6 +535,28 @@ func TestCursorForCurrent(t *testing.T) {
 				t.Errorf("cursorForCurrent(%q) = %d, want %d", tt.current, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCursorForCurrent_PrefersExactLocalOverCloudPrefix(t *testing.T) {
+	testItems := []SelectItem{
+		{Name: "qwen3.5:cloud", Recommended: true},
+		{Name: "qwen3.5", Recommended: true},
+	}
+
+	if got := cursorForCurrent(testItems, "qwen3.5"); got != 1 {
+		t.Errorf("cursorForCurrent(%q) = %d, want %d", "qwen3.5", got, 1)
+	}
+}
+
+func TestCursorForCurrent_PrefersExactCloudOverLocalPrefix(t *testing.T) {
+	testItems := []SelectItem{
+		{Name: "qwen3.5", Recommended: true},
+		{Name: "qwen3.5:cloud", Recommended: true},
+	}
+
+	if got := cursorForCurrent(testItems, "qwen3.5:cloud"); got != 1 {
+		t.Errorf("cursorForCurrent(%q) = %d, want %d", "qwen3.5:cloud", got, 1)
 	}
 }
 
@@ -725,6 +867,9 @@ func TestMulti_MultiModeHelpText(t *testing.T) {
 	if !strings.Contains(content, "tab select single") {
 		t.Error("multi mode should show 'tab select single' in help")
 	}
+	if !strings.Contains(content, "← back") {
+		t.Error("multi mode should show '← back' in help")
+	}
 }
 
 // --- preChecked initialization order ---
@@ -780,6 +925,74 @@ func TestMulti_LastCheckedIsDefault(t *testing.T) {
 		if strings.Contains(line, "alpha") && strings.Contains(line, "(default)") {
 			t.Error("'alpha' (first checked) should not have (default) tag")
 		}
+	}
+}
+
+func TestMulti_UncheckingDefaultFallsBackToNearestCheckedAbove(t *testing.T) {
+	// Default is "b", and checked models are "a", "b", "c".
+	// Unticking default should make "a" (the nearest checked item above) default.
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"b", "c", "a"})
+	m.multi = true
+	m.cursor = 1 // "b"
+	m.toggleItem()
+
+	lastIdx := m.checkOrder[len(m.checkOrder)-1]
+	if m.items[lastIdx].Name != "a" {
+		t.Fatalf("expected default to fall back to 'a', got %q", m.items[lastIdx].Name)
+	}
+}
+
+func TestMulti_UncheckingTopDefaultFallsBackToNearestCheckedBelow(t *testing.T) {
+	// Default is top item "a". With no checked item above, fallback should pick
+	// the nearest checked item below ("b").
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"a", "c", "b"})
+	m.multi = true
+	m.cursor = 0 // "a"
+	m.toggleItem()
+
+	lastIdx := m.checkOrder[len(m.checkOrder)-1]
+	if m.items[lastIdx].Name != "b" {
+		t.Fatalf("expected default to fall back to 'b', got %q", m.items[lastIdx].Name)
+	}
+}
+
+// --- Left arrow back navigation ---
+
+func TestSelectorLeftArrowCancelsWhenNoFilter(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", items("a", "b", "c"), "")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(selectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with empty filter should cancel (go back)")
+	}
+}
+
+func TestSelectorLeftArrowCancelsWhenFiltering(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", items("a", "b", "c"), "")
+	m.filter = "a"
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(selectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with active filter should still cancel (go back)")
+	}
+}
+
+func TestMultiSelectorLeftArrowCancelsWhenNoFilter(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(multiSelectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with empty filter should cancel (go back)")
+	}
+}
+
+func TestMultiSelectorLeftArrowCancelsWhenFiltering(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.filter = "a"
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(multiSelectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with active filter should still cancel (go back)")
 	}
 }
 

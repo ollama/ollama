@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package glm4_moe_lite provides the GLM4-MoE-Lite implementation for MLX.
 // This model uses Multi-head Latent Attention (MLA) and Mixture of Experts (MoE).
 package glm4_moe_lite
@@ -9,6 +7,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
@@ -89,7 +88,7 @@ type MLAAttention struct {
 }
 
 // Forward computes absorbed MLA attention output.
-func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (a *MLAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	q := a.QAProj.Forward(x)
 	q = a.QALayerNorm.Forward(q, cfg.RMSNormEps)
 	q = a.QBProj.Forward(q)
@@ -111,29 +110,31 @@ func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Con
 	kvLatent := a.KVALayerNorm.Forward(kvCompressed, cfg.RMSNormEps)
 	kvLatent = mlx.ExpandDims(kvLatent, 1)
 
-	offset := 0
-	if c != nil {
-		offset = c.Offset()
-	}
-	qPE = mlx.RoPEWithBase(qPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, offset)
-	kPE = mlx.RoPEWithBase(kPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, offset)
+	qPE = mlx.RoPEWithBase(qPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, positions)
+	kPE = mlx.RoPEWithBase(kPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, positions)
 
 	qLatent := a.EmbedQ.Forward(qNope)
 
 	keys := mlx.Concatenate([]*mlx.Array{kvLatent, kPE}, 3)
 
-	cachedL := L
+	// MLA compresses K and V into a single tensor: the cache stores
+	// [kvLatent, kPE] concatenated along the last dim as its keys,
+	// and V is the kvLatent prefix (first KVLoraRank positions) of
+	// that same tensor. WithMLAHistory handles the slice on our
+	// behalf so the model never touches the history's K/V.
+	var kv nn.SDPAOption
 	if c != nil {
 		placeholderValues := mlx.ZerosF32([]int32{B, 1, L, 0})
-		keys, _ = c.Update(keys, placeholderValues)
-		cachedL = int32(keys.Dim(2))
+		history := c.(cache.Attention).Update(b, keys, placeholderValues)
+		kv = nn.WithMLAHistory(history, int(cfg.KVLoraRank))
+	} else {
+		values := mlx.SliceStartStop(keys, []int32{0, 0, 0, 0}, []int32{B, 1, L, cfg.KVLoraRank})
+		kv = nn.WithKV(keys, values, b.SeqQueryLens)
 	}
-
-	values := mlx.SliceStartStop(keys, []int32{0, 0, 0, 0}, []int32{B, 1, cachedL, cfg.KVLoraRank})
 
 	queries := mlx.Concatenate([]*mlx.Array{qLatent, qPE}, 3)
 
-	out := mlx.ScaledDotProductAttentionCausal(queries, keys, values, cfg.Scale, L > 1)
+	out := nn.ScaledDotProductAttention(b, queries, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
 	out = a.UnembedOut.Forward(out)
 
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.VHeadDim)
@@ -150,9 +151,7 @@ type DenseMLP struct {
 
 // Forward applies the SwiGLU MLP
 func (m *DenseMLP) Forward(x *mlx.Array) *mlx.Array {
-	gate := mlx.SiLU(m.GateProj.Forward(x))
-	up := m.UpProj.Forward(x)
-	return m.DownProj.Forward(mlx.Mul(gate, up))
+	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
 }
 
 // MoEGate implements the expert gating mechanism
@@ -165,21 +164,21 @@ type MoEGate struct {
 func (g *MoEGate) Forward(x *mlx.Array, cfg *Config) (*mlx.Array, *mlx.Array) {
 	gates := g.Gate.Forward(x)
 
-	scores := mlx.Sigmoid(gates)
-	origScores := scores
-
+	var origScores, negScores *mlx.Array
 	if g.EScoreCorrectionBias != nil {
-		scores = mlx.Add(scores, g.EScoreCorrectionBias)
+		origScores, negScores = mlx.SigmoidRouter(gates, g.EScoreCorrectionBias)
+	} else {
+		origScores = mlx.Sigmoid(gates)
+		negScores = mlx.Neg(origScores)
 	}
 
 	topK := cfg.NumExpertsPerTok
-	negScores := mlx.Neg(scores)
 	inds := mlx.Argpartition(negScores, int(topK)-1, -1)
 
 	dims := inds.Dims()
 	inds = mlx.SliceStartStop(inds, []int32{0, 0, 0}, []int32{int32(dims[0]), int32(dims[1]), topK})
 
-	scores = mlx.TakeAlongAxis(origScores, inds, -1)
+	scores := mlx.TakeAlongAxis(origScores, inds, -1)
 
 	if topK > 1 && cfg.NormTopKProb {
 		sumScores := mlx.Sum(scores, -1, true)
@@ -244,7 +243,7 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
 			nil, idxFlat, true, s.UpGroupSize, s.UpBits, cfg.QuantMode, doSort)
 
-		hidden = mlx.Mul(mlx.SiLU(gate), up)
+		hidden = mlx.SwiGLU(gate, up)
 
 		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
 			nil, idxFlat, true, s.DownGroupSize, s.DownBits, cfg.QuantMode, doSort)
@@ -252,7 +251,7 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 		gate = mlx.GatherMM(xFlat, mlx.Transpose(s.GateWeight, 0, 2, 1), nil, idxFlat, doSort)
 		up = mlx.GatherMM(xFlat, mlx.Transpose(s.UpWeight, 0, 2, 1), nil, idxFlat, doSort)
 
-		hidden = mlx.Mul(mlx.SiLU(gate), up)
+		hidden = mlx.SwiGLU(gate, up)
 
 		down = mlx.GatherMM(hidden, mlx.Transpose(s.DownWeight, 0, 2, 1), nil, idxFlat, doSort)
 	}
@@ -275,9 +274,7 @@ type SharedExperts struct {
 
 // Forward applies the shared expert MLP
 func (s *SharedExperts) Forward(x *mlx.Array) *mlx.Array {
-	gate := mlx.SiLU(s.GateProj.Forward(x))
-	up := s.UpProj.Forward(x)
-	return s.DownProj.Forward(mlx.Mul(gate, up))
+	return s.DownProj.Forward(mlx.SwiGLU(s.GateProj.Forward(x), s.UpProj.Forward(x)))
 }
 
 // MoE implements the full Mixture of Experts layer
@@ -315,11 +312,11 @@ type DenseBlock struct {
 }
 
 // Forward applies the dense block
-func (b *DenseBlock) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
-	r := b.Attention.Forward(b.InputLayerNorm.Forward(x, cfg.RMSNormEps), c, B, L, cfg)
+func (blk *DenseBlock) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+	r := blk.Attention.Forward(blk.InputLayerNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, cfg)
 	h := mlx.Add(x, r)
 
-	r = b.MLP.Forward(b.PostAttentionLayerNorm.Forward(h, cfg.RMSNormEps))
+	r = blk.MLP.Forward(blk.PostAttentionLayerNorm.Forward(h, cfg.RMSNormEps))
 	return mlx.Add(h, r)
 }
 
@@ -332,22 +329,22 @@ type MoEBlock struct {
 }
 
 // Forward applies the MoE block
-func (b *MoEBlock) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
-	r := b.Attention.Forward(b.InputLayerNorm.Forward(x, cfg.RMSNormEps), c, B, L, cfg)
+func (blk *MoEBlock) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+	r := blk.Attention.Forward(blk.InputLayerNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, cfg)
 	h := mlx.Add(x, r)
 
-	r = b.MoE.Forward(b.PostAttentionLayerNorm.Forward(h, cfg.RMSNormEps), cfg)
+	r = blk.MoE.Forward(blk.PostAttentionLayerNorm.Forward(h, cfg.RMSNormEps), cfg)
 	return mlx.Add(h, r)
 }
 
 // Block interface for both dense and MoE blocks
 type Block interface {
-	Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array
+	Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array
 }
 
 // Model represents the complete GLM4-MoE-Lite model
 type Model struct {
-	EmbedTokens *nn.Embedding
+	EmbedTokens nn.EmbeddingLayer
 	Layers      []Block
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
@@ -433,7 +430,7 @@ func collectAndStackExpertWeights(
 	var w, s, b []*mlx.Array
 	var bits, groupSize int
 
-	for e := int32(0); e < numExperts; e++ {
+	for e := range numExperts {
 		path := fmt.Sprintf("%s.mlp.experts.%d.%s", prefix, e, projName)
 		ew := loadExpertWeight(tensors, path, useQuantized, cfg)
 		if ew == nil {
@@ -588,9 +585,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 
 	// Load embedding
-	if w := tensors["model.embed_tokens.weight"]; w != nil {
-		m.EmbedTokens = nn.NewEmbedding(w)
-	}
+	m.EmbedTokens = model.MakeEmbeddingLayer(tensors, "model.embed_tokens", cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
 
 	// Load final norm
 	if w := tensors["model.norm.weight"]; w != nil {
@@ -601,7 +596,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	m.LMHead = linears.Make("lm_head")
 
 	// Load layers
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		prefix := fmt.Sprintf("model.layers.%d", i)
 
 		// Load attention (same for both block types)
@@ -706,18 +701,19 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 }
 
 // Forward computes the forward pass of the model
-func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
-	dims := tokens.Dims()
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
+	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
-	h := m.EmbedTokens.Forward(tokens)
+	h := m.EmbedTokens.Forward(b.InputIDs)
 
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil {
 			c = caches[i]
 		}
-		h = layer.Forward(h, c, B, L, m.Config)
+		h = layer.Forward(h, b, c, positions, B, L, m.Config)
 	}
 
 	h = m.Norm.Forward(h, m.RMSNormEps)

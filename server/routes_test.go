@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
@@ -92,12 +93,21 @@ func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
 
 func TestRoutes(t *testing.T) {
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+
 	type testCase struct {
 		Name     string
 		Method   string
 		Path     string
 		Setup    func(t *testing.T, req *http.Request)
 		Expected func(t *testing.T, resp *http.Response)
+	}
+
+	s := &Server{modelCaches: &modelCaches{modelList: newModelListCache()}}
+	s.modelCaches.modelList.Start(context.Background())
+	if err := s.modelCaches.modelList.Wait(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 
 	createTestModel := func(t *testing.T, name string) {
@@ -121,7 +131,7 @@ func TestRoutes(t *testing.T) {
 
 		modelName := model.ParseName(name)
 
-		baseLayers, err := ggufLayers(digest, fn)
+		baseLayers, err := ggufLayers(digest, "test.gguf", fn)
 		if err != nil {
 			t.Fatalf("failed to create model: %v", err)
 		}
@@ -137,6 +147,7 @@ func TestRoutes(t *testing.T) {
 		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
 			t.Fatal(err)
 		}
+		s.refreshModelListCache(modelName)
 	}
 
 	testCases := []testCase{
@@ -495,9 +506,6 @@ func TestRoutes(t *testing.T) {
 		},
 	}
 
-	modelsDir := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", modelsDir)
-
 	rc := &ollama.Registry{
 		// This is a temporary measure to allow us to move forward,
 		// surfacing any code contacting ollama.com we do not intended
@@ -513,7 +521,6 @@ func TestRoutes(t *testing.T) {
 		HTTPClient: panicOnRoundTrip,
 	}
 
-	s := &Server{}
 	router, err := s.GenerateRoutes(rc)
 	if err != nil {
 		t.Fatalf("failed to generate routes: %v", err)
@@ -544,6 +551,109 @@ func TestRoutes(t *testing.T) {
 				tc.Expected(t, resp)
 			}
 		})
+	}
+}
+
+func TestGetModelInfo_SafetensorsUsesStoredFileType(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	cfgData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  "safetensors",
+		FileType:     "mxfp8",
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(cfgData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName("show-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if resp.Details.QuantizationLevel != "mxfp8" {
+		t.Fatalf("QuantizationLevel = %q, want %q", resp.Details.QuantizationLevel, "mxfp8")
+	}
+}
+
+func TestGetModelInfoRepairsUnknownGGUFFileType(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture": "llama",
+		"general.file_type":    uint32(ggml.FileTypeQ4_K_M),
+	}, nil)
+	modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := createConfigLayer([]manifest.Layer{modelLayer}, model.ConfigV2{
+		ModelFormat:   "gguf",
+		ModelFamily:   "llama",
+		ModelFamilies: []string{"llama"},
+		FileType:      "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := model.ParseName("show-unknown-gguf")
+	if err := manifest.WriteManifest(name, *configLayer, []manifest.Layer{modelLayer}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if resp.Details.QuantizationLevel != "Q4_K_M" {
+		t.Fatalf("QuantizationLevel = %q, want %q", resp.Details.QuantizationLevel, "Q4_K_M")
+	}
+}
+
+func TestGetModelInfo_SafetensorsModelfileUsesShortName(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	cfgData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  "safetensors",
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(cfgData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName("show-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if !strings.Contains(resp.Modelfile, "FROM show-safetensors:latest\n") {
+		t.Fatalf("Modelfile = %q, want FROM show-safetensors:latest", resp.Modelfile)
+	}
+
+	if strings.Contains(resp.Modelfile, "# To build a new Modelfile based on this, replace FROM with:") {
+		t.Fatalf("Modelfile should not include replacement hint: %q", resp.Modelfile)
 	}
 }
 
@@ -718,6 +828,138 @@ func TestShow(t *testing.T) {
 
 	if resp.ProjectorInfo["general.architecture"] != "clip" {
 		t.Fatal("Expected projector architecture to be 'clip', but got", resp.ProjectorInfo["general.architecture"])
+	}
+}
+
+func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+	chatTemplate := "{% if tools %}{{ tools }}{% endif %}{% set content = (content.split('</think>')|last) %}"
+	goTemplate := "{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}{{ end }}"
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":    "llama",
+		"tokenizer.chat_template": chatTemplate,
+	}, nil)
+	writeTestModelManifest(t, "show-selected-template", digest, goTemplate)
+
+	var s Server
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: "show-selected-template"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Template != chatTemplate {
+		t.Fatalf("template = %q, want selected chat_template %q", resp.Template, chatTemplate)
+	}
+}
+
+func TestShowCopilotUserAgentOverwritesExistingBasename(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "show-model",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		Info: map[string]any{
+			"model_family": "gptoss",
+			"base_name":    "upstream-base-name",
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
+	}
+
+	h, err := s.GenerateRoutes(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeRequest := func(userAgent string) api.ShowResponse {
+		t.Helper()
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/show", strings.NewReader(`{"model":"show-model"}`))
+		req.Header.Set("Content-Type", "application/json")
+		if userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status code 200, actual %d", w.Code)
+		}
+
+		var resp api.ShowResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	withoutCopilot := makeRequest("")
+	if withoutCopilot.ModelInfo["general.basename"] != "upstream-base-name" {
+		t.Fatalf("expected general.basename to be %q, got %v", "upstream-base-name", withoutCopilot.ModelInfo["general.basename"])
+	}
+
+	withCopilot := makeRequest("GitHubCopilotChat/0.41.1")
+	if withCopilot.ModelInfo["general.basename"] != "show-model" {
+		t.Fatalf("expected general.basename to be %q, got %v", "show-model", withCopilot.ModelInfo["general.basename"])
+	}
+
+	if withCopilot.ModelInfo["general.architecture"] != "gptoss" {
+		t.Fatalf("expected general.architecture to be %q, got %v", "gptoss", withCopilot.ModelInfo["general.architecture"])
+	}
+}
+
+func TestShowCopilotUserAgentSetsBasenameWhenModelInfoIsEmpty(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "show-remote",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		Stream:     &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
+	}
+
+	h, err := s.GenerateRoutes(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/show", strings.NewReader(`{"model":"show-remote"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "GitHubCopilotChat/0.41.1")
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.ModelInfo["general.basename"] != "show-remote" {
+		t.Fatalf("expected general.basename to be %q, got %v", "show-remote", resp.ModelInfo["general.basename"])
+	}
+
+	if len(resp.ModelInfo) != 1 {
+		t.Fatalf("expected model_info to contain only general.basename, got %#v", resp.ModelInfo)
 	}
 }
 

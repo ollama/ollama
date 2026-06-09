@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -18,7 +19,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -302,7 +302,7 @@ Weigh anchor!
 				ParameterSize:     "7B",
 				QuantizationLevel: "FP16",
 			},
-			Requires: "0.14.0",
+			Requires: "0.19.0",
 		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
@@ -311,10 +311,17 @@ Weigh anchor!
     architecture    test      
     parameters      7B        
     quantization    FP16      
-    requires        0.14.0    
+    requires        0.19.0
 
 `
-		if diff := cmp.Diff(expect, b.String()); diff != "" {
+		trimLinePadding := func(s string) string {
+			lines := strings.Split(s, "\n")
+			for i, line := range lines {
+				lines[i] = strings.TrimRight(line, " \t\r")
+			}
+			return strings.Join(lines, "\n")
+		}
+		if diff := cmp.Diff(trimLinePadding(expect), trimLinePadding(b.String())); diff != "" {
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
 		}
 	})
@@ -839,6 +846,214 @@ func TestRunHandler_CloudAuthErrorOnGenerate_PrintsSigninMessage(t *testing.T) {
 	}
 }
 
+func TestRunHandler_ExplicitCloudStubMissing_PullsNormalizedNameTEMP(t *testing.T) {
+	var pulledModel string
+	var generateCalled bool
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+				RemoteModel:  "gpt-oss:20b",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/tags" && r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ListResponse{Models: nil}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/pull" && r.Method == http.MethodPost:
+			var req api.PullRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			pulledModel = req.Model
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ProgressResponse{Status: "success"}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			generateCalled = true
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if pulledModel != "gpt-oss:20b-cloud" {
+		t.Fatalf("expected normalized pull model %q, got %q", "gpt-oss:20b-cloud", pulledModel)
+	}
+
+	if !generateCalled {
+		t.Fatal("expected /api/generate to be called")
+	}
+}
+
+func TestRunHandler_ExplicitCloudStubPresent_SkipsPullTEMP(t *testing.T) {
+	var pullCalled bool
+	var generateCalled bool
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+				RemoteModel:  "gpt-oss:20b",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/tags" && r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ListResponse{
+				Models: []api.ListModelResponse{{Name: "gpt-oss:20b-cloud"}},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/pull" && r.Method == http.MethodPost:
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ProgressResponse{Status: "success"}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			generateCalled = true
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if pullCalled {
+		t.Fatal("expected /api/pull not to be called when cloud stub already exists")
+	}
+
+	if !generateCalled {
+		t.Fatal("expected /api/generate to be called")
+	}
+}
+
+func TestRunHandler_ExplicitCloudStubPullFailure_IsBestEffortTEMP(t *testing.T) {
+	var generateCalled bool
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+				RemoteModel:  "gpt-oss:20b",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/tags" && r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ListResponse{Models: nil}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/pull" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusInternalServerError)
+			if err := json.NewEncoder(w).Encode(map[string]string{"error": "pull failed"}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			generateCalled = true
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if !generateCalled {
+		t.Fatal("expected /api/generate to be called despite pull failure")
+	}
+}
+
 func TestGetModelfileName(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1310,6 +1525,118 @@ func TestCreateHandler(t *testing.T) {
 	}
 }
 
+func TestCreateRequestFileNamesPreservesModelDirectoryLayout(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		filepath.Join(root, "model.safetensors"):            "sha256:model",
+		filepath.Join(root, "config.json"):                  "sha256:config",
+		filepath.Join(root, "2_Dense", "config.json"):       "sha256:dense-config",
+		filepath.Join(root, "2_Dense", "model.safetensors"): "sha256:dense-model",
+	}
+
+	got := createRequestFileNames(files)
+	want := map[string]string{
+		filepath.Join(root, "model.safetensors"):            "model.safetensors",
+		filepath.Join(root, "config.json"):                  "config.json",
+		filepath.Join(root, "2_Dense", "config.json"):       "2_Dense/config.json",
+		filepath.Join(root, "2_Dense", "model.safetensors"): "2_Dense/model.safetensors",
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCreateRequestFileNamesPreservesRelativeModelDirectoryLayout(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	files := map[string]string{
+		"model.safetensors":         "sha256:model",
+		"config.json":               "sha256:config",
+		"2_Dense/config.json":       "sha256:dense-config",
+		"2_Dense/model.safetensors": "sha256:dense-model",
+		"3_Dense/config.json":       "sha256:dense-config",
+		"3_Dense/model.safetensors": "sha256:dense-model",
+	}
+
+	got := createRequestFileNames(files)
+	for file := range files {
+		if got[file] != filepath.ToSlash(file) {
+			t.Fatalf("%s = %q, want %q", file, got[file], filepath.ToSlash(file))
+		}
+	}
+}
+
+func TestCreateHandlerDraftQuantizeRequiresDraft(t *testing.T) {
+	dir := t.TempDir()
+	modelfile := filepath.Join(dir, "Modelfile")
+	if err := os.WriteFile(modelfile, []byte("FROM base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool("experimental", false, "")
+	cmd.Flags().String("file", modelfile, "")
+	cmd.Flags().String("draft-quantize", "mxfp8", "")
+	cmd.SetContext(t.Context())
+
+	err := CreateHandler(cmd, []string{"test-model"})
+	if err == nil || !strings.Contains(err.Error(), "--draft-quantize requires a DRAFT model") {
+		t.Fatalf("error = %v, want draft-quantize requires DRAFT", err)
+	}
+}
+
+func TestResolveExperimentalLocalModelDir(t *testing.T) {
+	dir := t.TempDir()
+	modelfile := filepath.Join(dir, "Modelfile")
+	modelDir := filepath.Join(dir, "model")
+	if err := os.Mkdir(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model.safetensors"), []byte("dummy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resolveExperimentalLocalModelDir("gemma4", modelfile); got != "gemma4" {
+		t.Fatalf("resolveExperimentalLocalModelDir(model name) = %q, want gemma4", got)
+	}
+	if got := resolveExperimentalLocalModelDir("./model", modelfile); got != modelDir {
+		t.Fatalf("resolveExperimentalLocalModelDir(local dir) = %q, want %q", got, modelDir)
+	}
+}
+
+func TestResolveExperimentalDraftDir(t *testing.T) {
+	dir := t.TempDir()
+	modelfile := filepath.Join(dir, "Modelfile")
+	draftDir := filepath.Join(dir, "assistant")
+	if err := os.Mkdir(draftDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(draftDir, "config.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(draftDir, "model.safetensors"), []byte("dummy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveExperimentalDraftDir("./assistant", modelfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != draftDir {
+		t.Fatalf("resolveExperimentalDraftDir(local dir) = %q, want %q", got, draftDir)
+	}
+
+	_, err = resolveExperimentalDraftDir("assistant-model", modelfile)
+	if err == nil || !strings.Contains(err.Error(), "DRAFT model references are not supported with --experimental yet") {
+		t.Fatalf("error = %v, want unsupported draft model reference", err)
+	}
+}
+
 func TestNewCreateRequest(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1343,6 +1670,20 @@ func TestNewCreateRequest(t *testing.T) {
 			},
 			&api.CreateRequest{
 				From:  "parentmodel",
+				Model: "newmodel",
+			},
+		},
+		{
+			"explicit cloud model preserves source when parent lacks it",
+			"newmodel",
+			runOptions{
+				Model:       "qwen3.5:cloud",
+				ParentModel: "qwen3.5",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "qwen3.5:cloud",
 				Model: "newmodel",
 			},
 		},
@@ -1427,6 +1768,24 @@ func TestNewCreateRequest(t *testing.T) {
 				},
 			},
 		},
+		{
+			"loaded messages are preserved when saving",
+			"newmodel",
+			runOptions{
+				Model:          "mymodel",
+				ParentModel:    "parentmodel",
+				LoadedMessages: []api.Message{{Role: "assistant", Content: "loaded"}},
+				Messages:       []api.Message{{Role: "user", Content: "new"}},
+			},
+			&api.CreateRequest{
+				From:  "parentmodel",
+				Model: "newmodel",
+				Messages: []api.Message{
+					{Role: "assistant", Content: "loaded"},
+					{Role: "user", Content: "new"},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1439,15 +1798,43 @@ func TestNewCreateRequest(t *testing.T) {
 	}
 }
 
+func TestApplyShowResponseToRunOptions(t *testing.T) {
+	opts := runOptions{}
+	info := &api.ShowResponse{
+		Details: api.ModelDetails{
+			ParentModel: "parentmodel",
+		},
+		Messages: []api.Message{
+			{Role: "assistant", Content: "loaded"},
+		},
+	}
+
+	applyShowResponseToRunOptions(&opts, info)
+
+	if opts.ParentModel != "parentmodel" {
+		t.Fatalf("ParentModel = %q, want %q", opts.ParentModel, "parentmodel")
+	}
+
+	if !cmp.Equal(opts.LoadedMessages, info.Messages) {
+		t.Fatalf("LoadedMessages = %#v, want %#v", opts.LoadedMessages, info.Messages)
+	}
+
+	info.Messages[0].Content = "modified"
+	if opts.LoadedMessages[0].Content == "modified" {
+		t.Fatal("LoadedMessages should be copied independently from ShowResponse")
+	}
+}
+
 func TestRunOptions_Copy(t *testing.T) {
 	// Setup test data
 	originalKeepAlive := &api.Duration{Duration: 5 * time.Minute}
 	originalThink := &api.ThinkValue{Value: "test reasoning"}
 
 	original := runOptions{
-		Model:       "test-model",
-		ParentModel: "parent-model",
-		Prompt:      "test prompt",
+		Model:          "test-model",
+		ParentModel:    "parent-model",
+		LoadedMessages: []api.Message{{Role: "assistant", Content: "loaded hello"}},
+		Prompt:         "test prompt",
 		Messages: []api.Message{
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "hi there"},
@@ -1487,6 +1874,7 @@ func TestRunOptions_Copy(t *testing.T) {
 	}{
 		{"Model", copied.Model, original.Model},
 		{"ParentModel", copied.ParentModel, original.ParentModel},
+		{"LoadedMessages", copied.LoadedMessages, original.LoadedMessages},
 		{"Prompt", copied.Prompt, original.Prompt},
 		{"WordWrap", copied.WordWrap, original.WordWrap},
 		{"Format", copied.Format, original.Format},
@@ -1591,12 +1979,17 @@ func TestRunOptions_Copy(t *testing.T) {
 func TestRunOptions_Copy_EmptySlicesAndMaps(t *testing.T) {
 	// Test with empty slices and maps
 	original := runOptions{
-		Messages: []api.Message{},
-		Images:   []api.ImageData{},
-		Options:  map[string]any{},
+		LoadedMessages: []api.Message{},
+		Messages:       []api.Message{},
+		Images:         []api.ImageData{},
+		Options:        map[string]any{},
 	}
 
 	copied := original.Copy()
+
+	if copied.LoadedMessages == nil {
+		t.Error("Empty LoadedMessages slice should remain empty, not nil")
+	}
 
 	if copied.Messages == nil {
 		t.Error("Empty Messages slice should remain empty, not nil")
@@ -1612,6 +2005,10 @@ func TestRunOptions_Copy_EmptySlicesAndMaps(t *testing.T) {
 
 	if len(copied.Messages) != 0 {
 		t.Error("Empty Messages slice should remain empty")
+	}
+
+	if len(copied.LoadedMessages) != 0 {
+		t.Error("Empty LoadedMessages slice should remain empty")
 	}
 
 	if len(copied.Images) != 0 {
@@ -1691,7 +2088,7 @@ func TestShowInfoImageGen(t *testing.T) {
 			QuantizationLevel: "Q8",
 		},
 		Capabilities: []model.Capability{model.CapabilityImage},
-		Requires:     "0.14.0",
+		Requires:     "0.19.0",
 	}, false, &b)
 	if err != nil {
 		t.Fatal(err)
@@ -1701,7 +2098,7 @@ func TestShowInfoImageGen(t *testing.T) {
 		"    architecture    ZImagePipeline    \n" +
 		"    parameters      10.3B             \n" +
 		"    quantization    Q8                \n" +
-		"    requires        0.14.0            \n" +
+		"    requires        0.19.0            \n" +
 		"\n" +
 		"  Capabilities\n" +
 		"    image    \n" +
@@ -1759,16 +2156,20 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 	// Test that modifications to original don't affect copy
 	originalThink := &api.ThinkValue{Value: "original"}
 	original := runOptions{
-		Model:    "original-model",
-		Messages: []api.Message{{Role: "user", Content: "original"}},
-		Options:  map[string]any{"key": "value"},
-		Think:    originalThink,
+		Model:          "original-model",
+		LoadedMessages: []api.Message{{Role: "assistant", Content: "loaded"}},
+		Messages:       []api.Message{{Role: "user", Content: "original"}},
+		Options:        map[string]any{"key": "value"},
+		Think:          originalThink,
 	}
 
 	copied := original.Copy()
 
 	// Modify original
 	original.Model = "modified-model"
+	if len(original.LoadedMessages) > 0 {
+		original.LoadedMessages[0].Content = "modified loaded"
+	}
 	if len(original.Messages) > 0 {
 		original.Messages[0].Content = "modified"
 	}
@@ -1780,6 +2181,10 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 	// Verify copy is unchanged
 	if copied.Model == "modified-model" {
 		t.Error("Copy Model should not be affected by original modification")
+	}
+
+	if len(copied.LoadedMessages) > 0 && copied.LoadedMessages[0].Content == "modified loaded" {
+		t.Error("Copy LoadedMessages should not be affected by original modification")
 	}
 
 	if len(copied.Messages) > 0 && copied.Messages[0].Content == "modified" {
@@ -1797,13 +2202,16 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 
 func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 	tests := []struct {
-		name          string
-		model         string
-		remoteHost    string
-		remoteModel   string
-		whoamiStatus  int
-		whoamiResp    any
-		expectedError string
+		name            string
+		model           string
+		showStatus      int
+		remoteHost      string
+		remoteModel     string
+		whoamiStatus    int
+		whoamiResp      any
+		expectWhoami    bool
+		expectedError   string
+		expectAuthError bool
 	}{
 		{
 			name:         "ollama.com cloud model - user signed in",
@@ -1812,6 +2220,7 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			remoteModel:  "test-model",
 			whoamiStatus: http.StatusOK,
 			whoamiResp:   api.UserResponse{Name: "testuser"},
+			expectWhoami: true,
 		},
 		{
 			name:         "ollama.com cloud model - user not signed in",
@@ -1823,7 +2232,9 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 				"error":      "unauthorized",
 				"signin_url": "https://ollama.com/signin",
 			},
-			expectedError: "unauthorized",
+			expectWhoami:    true,
+			expectedError:   "unauthorized",
+			expectAuthError: true,
 		},
 		{
 			name:         "non-ollama.com remote - no auth check",
@@ -1840,6 +2251,17 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			remoteModel:  "",
 			whoamiStatus: http.StatusOK,
 			whoamiResp:   api.UserResponse{Name: "testuser"},
+			expectWhoami: true,
+		},
+		{
+			name:            "explicit :cloud model without local stub returns not found by default",
+			model:           "minimax-m2.7:cloud",
+			showStatus:      http.StatusNotFound,
+			whoamiStatus:    http.StatusOK,
+			whoamiResp:      api.UserResponse{Name: "testuser"},
+			expectedError:   "not found",
+			expectWhoami:    false,
+			expectAuthError: false,
 		},
 		{
 			name:         "explicit -cloud model - auth check without remote metadata",
@@ -1848,6 +2270,7 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			remoteModel:  "",
 			whoamiStatus: http.StatusOK,
 			whoamiResp:   api.UserResponse{Name: "testuser"},
+			expectWhoami: true,
 		},
 		{
 			name:         "dash cloud-like name without explicit source does not require auth",
@@ -1865,6 +2288,11 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/show":
+					if tt.showStatus != 0 && tt.showStatus != http.StatusOK {
+						w.WriteHeader(tt.showStatus)
+						_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+						return
+					}
 					w.Header().Set("Content-Type", "application/json")
 					if err := json.NewEncoder(w).Encode(api.ShowResponse{
 						RemoteHost:  tt.remoteHost,
@@ -1901,23 +2329,22 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 
 			err := loadOrUnloadModel(cmd, opts)
 
-			if strings.HasPrefix(tt.remoteHost, "https://ollama.com") || modelref.HasExplicitCloudSource(tt.model) {
-				if !whoamiCalled {
-					t.Error("expected whoami to be called for ollama.com cloud model")
-				}
-			} else {
-				if whoamiCalled {
-					t.Error("whoami should not be called for non-ollama.com remote")
-				}
+			if whoamiCalled != tt.expectWhoami {
+				t.Errorf("whoami called = %v, want %v", whoamiCalled, tt.expectWhoami)
 			}
 
 			if tt.expectedError != "" {
 				if err == nil {
 					t.Errorf("expected error containing %q, got nil", tt.expectedError)
 				} else {
-					var authErr api.AuthorizationError
-					if !errors.As(err, &authErr) {
-						t.Errorf("expected AuthorizationError, got %T: %v", err, err)
+					if !tt.expectAuthError && !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.expectedError)) {
+						t.Errorf("expected error containing %q, got %v", tt.expectedError, err)
+					}
+					if tt.expectAuthError {
+						var authErr api.AuthorizationError
+						if !errors.As(err, &authErr) {
+							t.Errorf("expected AuthorizationError, got %T: %v", err, err)
+						}
 					}
 				}
 			} else {

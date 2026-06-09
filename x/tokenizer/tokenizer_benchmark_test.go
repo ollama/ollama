@@ -1,5 +1,3 @@
-//go:build mlx
-
 package tokenizer
 
 import (
@@ -123,7 +121,7 @@ func BenchmarkTokenizerEncodeBPE(b *testing.B) {
 			b.SetBytes(int64(len(input.text)))
 			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				benchmarkSinkIDs = tok.Encode(input.text, false)
 			}
 		})
@@ -148,7 +146,7 @@ func BenchmarkTokenizerDecodeBPE(b *testing.B) {
 			b.SetBytes(int64(len(input.text)))
 			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				benchmarkSinkStr = tok.Decode(ids)
 			}
 		})
@@ -172,7 +170,7 @@ func BenchmarkTokenizerLoadFromBytes(b *testing.B) {
 		b.SetBytes(int64(len(data)))
 		b.ResetTimer()
 
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			tok, err := LoadFromBytes(data)
 			if err != nil {
 				b.Fatalf("LoadFromBytes failed: %v", err)
@@ -186,7 +184,7 @@ func BenchmarkTokenizerLoadFromBytes(b *testing.B) {
 		b.SetBytes(int64(len(data)))
 		b.ResetTimer()
 
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			tok, err := LoadFromBytesWithConfig(data, config)
 			if err != nil {
 				b.Fatalf("LoadFromBytesWithConfig failed: %v", err)
@@ -204,7 +202,7 @@ func BenchmarkTokenizerEncodeWordPiece(b *testing.B) {
 	b.SetBytes(int64(len(text)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		benchmarkSinkIDs = tok.Encode(text, false)
 	}
 }
@@ -218,7 +216,7 @@ func BenchmarkTokenizerDecodeWordPiece(b *testing.B) {
 	b.SetBytes(int64(len(text)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		benchmarkSinkStr = tok.Decode(ids)
 	}
 }
@@ -231,7 +229,7 @@ func BenchmarkTokenizerEncodeSentencePiece(b *testing.B) {
 	b.SetBytes(int64(len(text)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		benchmarkSinkIDs = tok.Encode(text, false)
 	}
 }
@@ -245,7 +243,7 @@ func BenchmarkTokenizerDecodeSentencePiece(b *testing.B) {
 	b.SetBytes(int64(len(text)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		benchmarkSinkStr = tok.Decode(ids)
 	}
 }

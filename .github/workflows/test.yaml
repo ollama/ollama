@@ -22,7 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.changes.outputs.changed }}
-      vendorsha: ${{ steps.changes.outputs.vendorsha }}
+      app_changed: ${{ steps.changes.outputs.app_changed }}
+      enginehash: ${{ steps.changes.outputs.enginehash }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,8 +38,42 @@ jobs:
               | xargs python3 -c "import sys; from pathlib import Path; print(any(Path(x).match(glob) for x in sys.argv[1:] for glob in '$*'.split(' ')))"
           }
 
-          echo changed=$(changed 'llama/llama.cpp/**/*' 'ml/backend/ggml/ggml/**/*') | tee -a $GITHUB_OUTPUT
-          echo vendorsha=$(make -f Makefile.sync print-base) | tee -a $GITHUB_OUTPUT
+          echo changed=$(changed \
+            'CMakeLists.txt' \
+            'CMakePresets.json' \
+            'cmake/**' \
+            'cmake/**/*' \
+            'llama/server/**/*' \
+            'llama/compat/**/*' \
+            'LLAMA_CPP_VERSION' \
+            'MLX_VERSION' \
+            'MLX_C_VERSION' \
+            'llama/llama.cpp/**/*' \
+            'ml/backend/ggml/ggml/**/*' \
+            'x/imagegen/mlx/**' \
+            'x/imagegen/mlx/**/*' \
+            '.github/**/*') | tee -a $GITHUB_OUTPUT
+          echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
+          echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
+
+  patches:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify patches apply cleanly
+        shell: bash
+        run: |
+          cmake -S llama/server -B "$RUNNER_TEMP/llama-server-patch-check" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DGGML_BACKEND_DL=ON \
+            -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=OFF \
+            -DGGML_CPU_ALL_VARIANTS=ON \
+            -DOLLAMA_RUNNER_DIR=
 
   linux:
     needs: [changes]
@@ -47,19 +82,42 @@ jobs:
       matrix:
         include:
           - preset: CPU
+            superbuild_target: ollama-local
+            superbuild_dir: build/local-superbuild
+            superbuild_args: ''
+            expected_payload: lib/ollama/llama-server
+            install-go: true
           - preset: CUDA
             container: nvidia/cuda:13.0.0-devel-ubuntu22.04
-            flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
+            superbuild_target: ollama-llama-server-cuda_v13
+            superbuild_dir: build/local-superbuild-cuda_v13
+            superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=cuda_v13 -DCMAKE_CUDA_ARCHITECTURES=87'
+            expected_payload: lib/ollama/cuda_v13/libggml-cuda.so
           - preset: ROCm
-            container: rocm/dev-ubuntu-22.04:6.1.2
+            container: rocm/dev-ubuntu-22.04:7.2.1
             extra-packages: rocm-libs
-            flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+            superbuild_target: ollama-llama-server-rocm_v7_2
+            superbuild_dir: build/local-superbuild-rocm_v7_2
+            superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=rocm_v7_2 -DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+            expected_payload: lib/ollama/rocm_v7_2/libggml-hip.so
           - preset: Vulkan
             container: ubuntu:22.04
             extra-packages: >
               mesa-vulkan-drivers vulkan-tools
               libvulkan1 libvulkan-dev
-              vulkan-sdk cmake ccache g++ make
+              vulkan-sdk spirv-headers cmake ccache g++ make
+            superbuild_target: ollama-llama-server-vulkan
+            superbuild_dir: build/local-superbuild-vulkan
+            superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=vulkan'
+            expected_payload: lib/ollama/vulkan/libggml-vulkan.so
+          - preset: 'MLX CUDA 13'
+            container: nvidia/cuda:13.0.0-devel-ubuntu22.04
+            extra-packages: libcudnn9-dev-cuda-13 libopenblas-dev liblapack-dev liblapacke-dev git curl
+            superbuild_target: ollama-mlx-cuda_v13
+            superbuild_dir: build/local-superbuild-mlx-cuda_v13
+            superbuild_args: '-DOLLAMA_MLX_BACKENDS=cuda_v13 -DCMAKE_CUDA_ARCHITECTURES=87 -DMLX_CUDA_ARCHITECTURES=80-virtual -DBLAS_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu -DLAPACK_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu'
+            expected_payload: lib/ollama/mlx_cuda_v13/libmlx.so
+            install-go: true
     runs-on: linux
     container: ${{ matrix.container }}
     steps:
@@ -75,21 +133,42 @@ jobs:
             echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg]  https://packages.lunarg.com/vulkan/1.4.313 jammy main" | $sudo tee /etc/apt/sources.list.d/lunarg-vulkan-1.4.313-jammy.list > /dev/null
             $sudo apt-get update
           fi
-          $sudo apt-get install -y cmake ccache ${{ matrix.extra-packages }}
+          $sudo apt-get install -y cmake ccache curl git ${{ matrix.extra-packages }}
+          # Use a current CMake for upstream llama.cpp and Vulkan dependency discovery.
+          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.2/cmake-3.31.2-linux-$(uname -m).tar.gz | $sudo tar xz -C /usr/local --strip-components 1
           # Export VULKAN_SDK if provided by LunarG package (defensive)
           if [ -d "/usr/lib/x86_64-linux-gnu/vulkan" ] && [ "${{ matrix.preset }}" = "Vulkan" ]; then
             echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
           fi
         env:
           DEBIAN_FRONTEND: noninteractive
+      - if: matrix.install-go
+        name: Install Go
+        run: |
+          [ -n "${{ matrix.container }}" ] || sudo=sudo
+          GO_VERSION=$(awk '/^go / { print $2 }' go.mod)
+          curl -fsSL "https://golang.org/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture).tar.gz" | $sudo tar xz -C /usr/local
+          echo "/usr/local/go/bin" >> $GITHUB_PATH
       - uses: actions/cache@v4
         with:
           path: /github/home/.cache/ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.vendorsha }}
-      - run: |
-          cmake --preset ${{ matrix.preset }} ${{ matrix.flags }}
-          cmake --build --preset ${{ matrix.preset }} --parallel
-
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.enginehash }}
+      - name: Build native superbuild
+        if: matrix.superbuild_target
+        run: |
+          cmake -S . -B "${{ matrix.superbuild_dir }}" ${{ matrix.superbuild_args }}
+          CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) cmake --build "${{ matrix.superbuild_dir }}" --target "${{ matrix.superbuild_target }}" -- -l $(nproc)
+          test -e "${{ matrix.superbuild_dir }}/${{ matrix.expected_payload }}"
+      - name: Verify local superbuild install
+        if: matrix.superbuild_target == 'ollama-local'
+        run: |
+          ./ollama --version
+          "${{ matrix.superbuild_dir }}/lib/ollama/llama-server" --version
+          test -x "${{ matrix.superbuild_dir }}/lib/ollama/llama-quantize"
+          cmake --install "${{ matrix.superbuild_dir }}" --component ollama-local --prefix "$RUNNER_TEMP/ollama-local"
+          "$RUNNER_TEMP/ollama-local/bin/ollama" --version
+          "$RUNNER_TEMP/ollama-local/lib/ollama/llama-server" --version
+          test -x "$RUNNER_TEMP/ollama-local/lib/ollama/llama-quantize"
   windows:
     needs: [changes]
     if: needs.changes.outputs.changed == 'True'
@@ -97,9 +176,16 @@ jobs:
       matrix:
         include:
           - preset: CPU
+            superbuild_target: ollama-local
+            superbuild_dir: build\local-superbuild
+            superbuild_args: ''
+            expected_payload: lib\ollama\llama-server.exe
           - preset: CUDA
             install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
-            flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
+            superbuild_target: ollama-llama-server-cuda_v13
+            superbuild_dir: build\local-superbuild-cuda_v13
+            superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=cuda_v13 -DCMAKE_CUDA_ARCHITECTURES=80'
+            expected_payload: lib\ollama\cuda_v13\ggml-cuda.dll
             cuda-components:
               - '"cudart"'
               - '"nvcc"'
@@ -110,16 +196,47 @@ jobs:
               - '"nvptxcompiler"'
             cuda-version: '13.0'
           - preset: ROCm
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
-            flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe
+            rocm-version: '7.1'
+            superbuild_target: ollama-llama-server-rocm_v7_1
+            superbuild_dir: build\local-superbuild-rocm_v7_1
+            superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=rocm_v7_1 -DAMDGPU_TARGETS=gfx1010'
+            expected_payload: lib\ollama\rocm_v7_1\ggml-hip.dll
           - preset: Vulkan
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
+            superbuild_target: ollama-llama-server-vulkan
+            superbuild_dir: build\local-superbuild-vulkan
+            superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=vulkan'
+            expected_payload: lib\ollama\vulkan\ggml-vulkan.dll
+          - preset: 'MLX CUDA 13'
+            install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
+            cudnn-install: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.18.1.3_cuda13-archive.zip
+            superbuild_target: ollama-mlx-cuda_v13
+            superbuild_dir: build\local-superbuild-mlx-cuda_v13
+            superbuild_args: '-DOLLAMA_MLX_BACKENDS=cuda_v13 -DCMAKE_CUDA_ARCHITECTURES=80 -DMLX_CUDA_ARCHITECTURES=80-virtual'
+            expected_payload: lib\ollama\mlx_cuda_v13\mlx.dll
+            install-go: true
+            cuda-components:
+              - '"cudart"'
+              - '"nvcc"'
+              - '"cublas"'
+              - '"cublas_dev"'
+              - '"cufft"'
+              - '"cufft_dev"'
+              - '"nvrtc"'
+              - '"nvrtc_dev"'
+              - '"crt"'
+              - '"nvvm"'
+              - '"nvptxcompiler"'
+            cuda-version: '13.0'
     runs-on: windows
     steps:
       - run: |
           choco install -y --no-progress ccache ninja
-          ccache -o cache_dir=${{ github.workspace }}\.ccache
-      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'Vulkan'
+          if (Get-Command ccache -ErrorAction SilentlyContinue) {
+            ccache -o cache_dir=${{ github.workspace }}\.ccache
+          }
+      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'Vulkan' || matrix.preset == 'MLX CUDA 13'
         id: cache-install
         uses: actions/cache/restore@v4
         with:
@@ -127,8 +244,9 @@ jobs:
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
-          key: ${{ matrix.install }}
-      - if: matrix.preset == 'CUDA'
+            C:\Program Files\NVIDIA\CUDNN
+          key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
+      - if: matrix.preset == 'CUDA' || matrix.preset == 'MLX CUDA 13'
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -164,10 +282,31 @@ jobs:
             Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
             Start-Process -FilePath .\install.exe -ArgumentList "-c","--am","--al","in" -NoNewWindow -Wait
           }
-          
+
           $vulkanPath = (Resolve-Path "C:\VulkanSDK\*").path
+          $vulkanRuntime = Join-Path $vulkanPath "Helpers\VulkanRT.exe"
+          if (Test-Path $vulkanRuntime) {
+            Start-Process -FilePath $vulkanRuntime -ArgumentList "/s" -NoNewWindow -Wait
+          }
           echo "$vulkanPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
+      - if: matrix.preset == 'MLX CUDA 13'
+        name: Install cuDNN for MLX
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cudnnRoot = "C:\Program Files\NVIDIA\CUDNN"
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.cudnn-install }}" -OutFile "cudnn.zip"
+            Expand-Archive -Path cudnn.zip -DestinationPath cudnn-extracted
+            $cudnnDir = (Get-ChildItem -Path cudnn-extracted -Directory)[0].FullName
+            New-Item -ItemType Directory -Force -Path $cudnnRoot
+            Copy-Item -Path "$cudnnDir\*" -Destination "$cudnnRoot\" -Recurse
+          }
+
+          echo "CUDNN_ROOT_DIR=$cudnnRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CUDNN_INCLUDE_PATH=$cudnnRoot\include" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CUDNN_LIBRARY_PATH=$cudnnRoot\lib\x64" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "$cudnnRoot\bin\x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
@@ -175,20 +314,47 @@ jobs:
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
-          key: ${{ matrix.install }}
+            C:\Program Files\NVIDIA\CUDNN
+          key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
       - uses: actions/checkout@v4
+      - if: matrix.superbuild_target == 'ollama-local' || matrix.install-go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
       - uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\.ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.vendorsha }}
-      - run: |
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.enginehash }}
+      - name: Build native superbuild
+        if: matrix.superbuild_target
+        run: |
+          $ErrorActionPreference = "Stop"
           Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
-          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
-          cmake --build --parallel --preset "${{ matrix.preset }}"
+          cmake -S . -B "${{ matrix.superbuild_dir }}" ${{ matrix.superbuild_args }}
+          $env:CMAKE_BUILD_PARALLEL_LEVEL = [Environment]::ProcessorCount
+          cmake --build "${{ matrix.superbuild_dir }}" --target "${{ matrix.superbuild_target }}" -- -l $([Environment]::ProcessorCount)
+          if (!(Test-Path "${{ matrix.superbuild_dir }}\${{ matrix.expected_payload }}")) {
+            throw "missing ${{ matrix.expected_payload }}"
+          }
         env:
           CMAKE_GENERATOR: Ninja
-
+      - name: Verify local superbuild install
+        if: matrix.superbuild_target == 'ollama-local'
+        run: |
+          $ErrorActionPreference = "Stop"
+          & ".\ollama.exe" --version
+          & "${{ matrix.superbuild_dir }}\lib\ollama\llama-server.exe" --version
+          if (!(Test-Path "${{ matrix.superbuild_dir }}\lib\ollama\llama-quantize.exe")) {
+            throw "missing llama-quantize.exe"
+          }
+          $installPrefix = Join-Path $env:RUNNER_TEMP "ollama-local"
+          cmake --install "${{ matrix.superbuild_dir }}" --component ollama-local --prefix "$installPrefix"
+          & "$installPrefix\bin\ollama.exe" --version
+          & "$installPrefix\lib\ollama\llama-server.exe" --version
+          if (!(Test-Path "$installPrefix\lib\ollama\llama-quantize.exe")) {
+            throw "missing installed llama-quantize.exe"
+          }
   go_mod_tidy:
     runs-on: ubuntu-latest
     steps:
@@ -197,6 +363,7 @@ jobs:
         run: go mod tidy --diff || (echo "Please run 'go mod tidy'." && exit 1)
 
   test:
+    needs: [changes]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -210,7 +377,9 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: |
             go.sum
-            Makefile.sync
+            LLAMA_CPP_VERSION
+            MLX_VERSION
+            MLX_C_VERSION
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -224,6 +393,17 @@ jobs:
         if: ${{ startsWith(matrix.os, 'ubuntu') }}
         working-directory: ./app/ui/app
         run: npm test
+      - name: Verify MLX generated files are current
+        if: ${{ startsWith(matrix.os, 'ubuntu') }}
+        run: |
+          cmake -S . -B build/mlx-generate -DOLLAMA_MLX_BACKENDS=cuda_v13
+          cmake --build build/mlx-generate --target ollama-mlx-generate-wrappers
+          git diff --exit-code -- \
+            x/imagegen/mlx/mlx.h \
+            x/imagegen/mlx/mlx.c \
+            x/mlxrunner/mlx/generated.h \
+            x/mlxrunner/mlx/generated.c \
+            x/mlxrunner/mlx/include/mlx/c
       - name: Run go generate
         run: go generate ./...
 
@@ -231,15 +411,10 @@ jobs:
         if: always()
         run: go test -count=1 -benchtime=1x ./...
 
+      - name: go test app with live updater tag
+        if: ${{ needs.changes.outputs.app_changed == 'True' && contains(fromJSON('["macos-latest","windows-latest"]'), matrix.os) }}
+        run: go test -count=1 -tags updater_live ./app/...
+
       - uses: golangci/golangci-lint-action@v9
         with:
           only-new-issues: true
-
-  patches:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify patches apply cleanly and do not change files
-        run: |
-          make -f Makefile.sync clean checkout apply-patches sync
-          git diff --compact-summary --exit-code

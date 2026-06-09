@@ -5,7 +5,7 @@ title: CLI Reference
 ### Run a model
 
 ```
-ollama run gemma3
+ollama run gemma4
 ```
 
 ### Launch integrations
@@ -21,6 +21,7 @@ Configure and launch external applications to use Ollama models. This provides a
 - **OpenCode** - Open-source coding assistant
 - **Claude Code** - Anthropic's agentic coding tool
 - **Codex** - OpenAI's coding assistant
+- **VS Code** - Microsoft's IDE with built-in AI chat
 - **Droid** - Factory's AI coding agent
 
 #### Examples
@@ -40,7 +41,7 @@ ollama launch claude
 Launch with a specific model:
 
 ```
-ollama launch claude --model qwen3-coder
+ollama launch claude --model qwen3.5
 ```
 
 Configure without launching:
@@ -63,7 +64,7 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 #### Multimodal models
 
 ```
-ollama run gemma3 "What's in this image? /Users/jmorgan/Desktop/smile.png"
+ollama run gemma4 "What's in this image? /Users/jmorgan/Desktop/smile.png"
 ```
 
 ### Generate embeddings
@@ -81,13 +82,13 @@ echo "Hello world" | ollama run nomic-embed-text
 ### Download a model
 
 ```
-ollama pull gemma3
+ollama pull gemma4
 ```
 
 ### Remove a model
 
 ```
-ollama rm gemma3
+ollama rm gemma4
 ```
 
 ### List models
@@ -113,7 +114,7 @@ ollama signout
 First, create a `Modelfile`
 
 ```
-FROM gemma3
+FROM gemma4
 SYSTEM """You are a happy cat."""
 ```
 
@@ -132,7 +133,7 @@ ollama ps
 ### Stop a running model
 
 ```
-ollama stop gemma3
+ollama stop gemma4
 ```
 
 ### Start Ollama

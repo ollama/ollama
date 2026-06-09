@@ -5,7 +5,7 @@ Experimental MLX backend for running models on Apple Silicon and CUDA.
 ## Build
 
 ```bash
-go build -tags mlx -o engine ./x/imagegen/cmd/engine
+go build -o engine ./x/imagegen/cmd/engine
 ```
 
 ## Text Generation

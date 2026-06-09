@@ -1,5 +1,3 @@
-//go:build mlx
-
 package main
 
 import (
@@ -76,10 +74,13 @@ func main() {
 		return
 	}
 
-	// Check if MLX initialized successfully
-	if !mlx.IsMLXAvailable() {
-		log.Fatalf("MLX initialization failed: %v", mlx.GetMLXInitError())
+	if err := mlx.InitMLX(); err != nil {
+		log.Fatalf("MLX initialization failed: %v", err)
 	}
+
+	// Restore strict error handling now that we know MLX is working.
+	// During InitMLX(), a safe handler prevented exit(-1) on GPU errors.
+	mlx.RestoreDefaultErrorHandler()
 
 	// CPU profiling
 	if *cpuProfile != "" {
@@ -180,7 +181,7 @@ func main() {
 			}
 		}
 
-		err = generate(context.Background(), m, input{
+		if err := generate(context.Background(), m, input{
 			Prompt:       *prompt,
 			Image:        image,
 			MaxTokens:    *maxTokens,
@@ -195,7 +196,9 @@ func main() {
 			if out.Done {
 				fmt.Printf("\n\n[prefill: %.1f tok/s, gen: %.1f tok/s]\n", out.PrefillTokSec, out.GenTokSec)
 			}
-		})
+		}); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	if err != nil {
@@ -215,17 +218,6 @@ func listModelTensors(modelPath string) error {
 	return nil
 }
 
-// loadModel builds and evaluates a model using the common load pattern.
-// Release safetensors BEFORE eval - lazy arrays have captured their data,
-// and this reduces peak memory by ~6GB (matches mlx-lm behavior).
-func loadModel[T Model](build func() T, cleanup func()) T {
-	m := build()
-	weights := mlx.Collect(m)
-	cleanup()
-	mlx.Eval(weights...)
-	return m
-}
-
 func load(modelPath string) (Model, error) {
 	kind, err := detectModelKind(modelPath)
 	if err != nil {
@@ -243,7 +235,7 @@ func detectModelKind(modelPath string) (string, error) {
 	if _, err := os.Stat(indexPath); err == nil {
 		data, err := os.ReadFile(indexPath)
 		if err != nil {
-			return "zimage", nil
+			return "", fmt.Errorf("read %s: %w", indexPath, err)
 		}
 		var index struct {
 			ClassName string `json:"_class_name"`

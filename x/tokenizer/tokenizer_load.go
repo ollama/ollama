@@ -1,5 +1,3 @@
-//go:build mlx
-
 package tokenizer
 
 import (
@@ -46,7 +44,6 @@ func LoadFromBytesWithConfig(data []byte, config *TokenizerConfig) (*Tokenizer, 
 
 // loadFromTokenizerJSON parses tokenizer.json content from bytes.
 func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
-
 	var raw struct {
 		Model struct {
 			Type   string           `json:"type"` // "BPE"
@@ -411,7 +408,7 @@ func initByteTokens(t *Tokenizer) {
 	for i := range t.vocab.byteTokens {
 		t.vocab.byteTokens[i] = -1
 	}
-	for b := 0; b < 256; b++ {
+	for b := range 256 {
 		token := fmt.Sprintf("<0x%02X>", b)
 		if id, ok := t.vocab.Reverse[token]; ok {
 			t.vocab.byteTokens[b] = id
@@ -449,7 +446,9 @@ func extractPretokenizer(data json.RawMessage) string {
 	if err := json.Unmarshal(data, &seq); err == nil && seq.Type == "Sequence" {
 		for _, pt := range seq.Pretokenizers {
 			if pt.Type == "Split" && pt.Pattern.Regex != "" {
-				return pt.Pattern.Regex
+				if _, err := regexp.Compile(rewritePatternForRE2(pt.Pattern.Regex)); err == nil {
+					return pt.Pattern.Regex
+				}
 			}
 		}
 	}

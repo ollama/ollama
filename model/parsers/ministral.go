@@ -44,6 +44,7 @@ type MinistralParser struct {
 	state              ministralParserState
 	buffer             strings.Builder
 	tools              []api.Tool
+	callIndex          int
 	hasThinkingSupport bool
 	pendingToolName    string // stores tool name while collecting args
 }
@@ -54,6 +55,15 @@ func (p *MinistralParser) HasToolSupport() bool {
 
 func (p *MinistralParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
+}
+
+func (p *MinistralParser) PreservedTokens() []string {
+	return []string{
+		ministralToolCallsTag,
+		ministralThinkTag,
+		ministralThinkEndTag,
+		ministralArgsTag,
+	}
 }
 
 func (p *MinistralParser) setInitialState(lastMessage *api.Message) {
@@ -73,6 +83,7 @@ func (p *MinistralParser) setInitialState(lastMessage *api.Message) {
 
 func (p *MinistralParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
+	p.callIndex = 0
 	p.setInitialState(lastMessage)
 	return tools
 }
@@ -286,6 +297,11 @@ func (p *MinistralParser) Add(s string, done bool) (content string, thinking str
 				},
 			})
 		}
+	}
+
+	for i := range toolCalls {
+		toolCalls[i].Function.Index = p.callIndex
+		p.callIndex++
 	}
 
 	return contentBuilder.String(), thinkingBuilder.String(), toolCalls, nil

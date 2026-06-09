@@ -6,21 +6,15 @@
 extern "C" {
 #endif
 
-// Initialize the MLX dynamic library
+// Initialize the MLX dynamic library from a specific path
 // Returns 0 on success, -1 on failure
-int mlx_dynamic_init(void);
+int mlx_dynamic_init_path(const char* path);
 
 // Get the last error message from dynamic loading
 const char* mlx_dynamic_error(void);
 
-// Check if MLX is initialized
-int mlx_dynamic_is_initialized(void);
-
 // Get the library handle (for use by generated wrappers)
 void* mlx_get_handle(void);
-
-// Cleanup resources (optional, for clean shutdown)
-void mlx_dynamic_cleanup(void);
 
 #ifdef __cplusplus
 }

@@ -17,11 +17,21 @@ import (
 //go:embed *.gotmpl
 var fsys embed.FS
 
+// optionalSymbols lists symbols that may not be present in all builds
+// (e.g., float16/bfloat16 are unavailable in CUDA builds of MLX).
+var optionalSymbols = map[string]bool{
+	"mlx_array_item_float16":  true,
+	"mlx_array_item_bfloat16": true,
+	"mlx_array_data_float16":  true,
+	"mlx_array_data_bfloat16": true,
+}
+
 type Function struct {
 	Type,
 	Name,
 	Parameters,
 	Args string
+	Optional bool
 }
 
 func ParseFunction(node *tree_sitter.Node, tc *tree_sitter.TreeCursor, source []byte) Function {
@@ -87,8 +97,18 @@ func main() {
 	qc := tree_sitter.NewQueryCursor()
 	defer qc.Close()
 
-	var funs []Function
+	var files []string
 	for _, arg := range flag.Args() {
+		matches, err := filepath.Glob(arg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error expanding glob %s: %v\n", arg, err)
+			continue
+		}
+		files = append(files, matches...)
+	}
+
+	var funs []Function
+	for _, arg := range files {
 		bts, err := os.ReadFile(arg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", arg, err)
@@ -104,7 +124,9 @@ func main() {
 		matches := qc.Matches(query, tree.RootNode(), bts)
 		for match := matches.Next(); match != nil; match = matches.Next() {
 			for _, capture := range match.Captures {
-				funs = append(funs, ParseFunction(&capture.Node, tc, bts))
+				fn := ParseFunction(&capture.Node, tc, bts)
+				fn.Optional = optionalSymbols[fn.Name]
+				funs = append(funs, fn)
 			}
 		}
 	}

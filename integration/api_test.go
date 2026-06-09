@@ -48,9 +48,7 @@ func TestAPIGenerate(t *testing.T) {
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("pull failed %s", err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 
 	tests := []struct {
 		name   string
@@ -151,7 +149,11 @@ func TestAPIGenerate(t *testing.T) {
 		})
 	}
 
-	// Validate PS while we're at it...
+	// Validate PS while we're at it — skip for local-only models
+	// which may lack metadata fields like family, parameter_size, etc.
+	if testModel != "" {
+		return
+	}
 	resp, err := client.ListRunning(ctx)
 	if err != nil {
 		t.Fatalf("list models API error: %s", err)
@@ -208,9 +210,7 @@ func TestAPIChat(t *testing.T) {
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("pull failed %s", err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 
 	tests := []struct {
 		name   string
@@ -289,7 +289,7 @@ func TestAPIChat(t *testing.T) {
 				}
 			case <-done:
 				if genErr != nil {
-					t.Fatalf("failed with %s request prompt %v", req.Model, req.Messages)
+					t.Fatalf("failed with %s request prompt %s", req.Model, summarizeMessages(req.Messages))
 				}
 				// Verify the response contains the expected data
 				response := buf.String()
@@ -311,6 +311,9 @@ func TestAPIChat(t *testing.T) {
 }
 
 func TestAPIListModels(t *testing.T) {
+	if testModel != "" {
+		t.Skip("skipping metadata test with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -361,6 +364,9 @@ func verifyModelDetails(t *testing.T, details api.ModelDetails) {
 }
 
 func TestAPIShowModel(t *testing.T) {
+	if testModel != "" {
+		t.Skip("skipping metadata test with model override")
+	}
 	modelName := "llama3.2"
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()

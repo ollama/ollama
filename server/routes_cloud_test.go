@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/middleware"
+	"github.com/ollama/ollama/version"
 )
 
 func TestStatusHandler(t *testing.T) {
@@ -206,6 +207,9 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 
 		if got := capture.header.Get("X-Test-Header"); got != "api-header" {
 			t.Fatalf("expected forwarded X-Test-Header=api-header, got %q", got)
+		}
+		if got := capture.header.Get(cloudProxyClientVersionHeader); got != version.Version {
+			t.Fatalf("expected %s=%q, got %q", cloudProxyClientVersionHeader, version.Version, got)
 		}
 	})
 
@@ -645,6 +649,67 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 
 		if !strings.Contains(capture.body, `"num_predict":10`) {
 			t.Fatalf("expected converted ollama options in upstream body, got %q", capture.body)
+		}
+	})
+
+	t.Run("v1 messages web_search fallback frames coalesced jsonl chunks", func(t *testing.T) {
+		type upstreamCapture struct {
+			path string
+		}
+		capture := &upstreamCapture{}
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capture.path = r.URL.Path
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.WriteHeader(http.StatusOK)
+
+			combined := strings.Join([]string{
+				`{"model":"gpt-oss:120b","created_at":"2024-01-01T00:00:00Z","message":{"role":"assistant","content":"Hel"},"done":false}`,
+				`{"model":"gpt-oss:120b","created_at":"2024-01-01T00:00:00Z","message":{"role":"assistant","content":"lo"},"done":true}`,
+			}, "\n") + "\n"
+			_, _ = w.Write([]byte(combined))
+		}))
+		defer upstream.Close()
+
+		original := cloudProxyBaseURL
+		cloudProxyBaseURL = upstream.URL
+		t.Cleanup(func() { cloudProxyBaseURL = original })
+
+		s := &Server{}
+		router, err := s.GenerateRoutes(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		local := httptest.NewServer(router)
+		defer local.Close()
+
+		reqBody := `{
+					"model":"gpt-oss:120b-cloud",
+					"max_tokens":10,
+					"stream":true,
+					"messages":[{"role":"user","content":"search the web"}],
+					"tools":[{"type":"web_search_20250305","name":"web_search"}]
+				}`
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/v1/messages?beta=true", bytes.NewBufferString(reqBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := local.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+		}
+		if capture.path != "/api/chat" {
+			t.Fatalf("expected upstream path /api/chat for web_search fallback, got %q", capture.path)
+		}
+		if !strings.Contains(string(body), "event: message_stop") {
+			t.Fatalf("expected anthropic streaming message_stop event, got body %q", string(body))
 		}
 	})
 

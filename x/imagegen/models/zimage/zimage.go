@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package zimage implements the Z-Image diffusion transformer model.
 package zimage
 
@@ -326,7 +324,7 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 	if cfg.Progress != nil {
 		cfg.Progress(0, cfg.Steps) // Start at 0%
 	}
-	for i := 0; i < cfg.Steps; i++ {
+	for i := range cfg.Steps {
 		// Check for cancellation
 		if ctx != nil {
 			select {

@@ -33,6 +33,22 @@ func TestConfirmModel_View_ContainsButtons(t *testing.T) {
 	}
 }
 
+func TestConfirmModel_View_ContainsCustomButtons(t *testing.T) {
+	m := confirmModel{
+		prompt:   "Connect a messaging app now?",
+		yesLabel: "Yes",
+		noLabel:  "Set up later",
+		yes:      true,
+	}
+	got := m.View()
+	if !strings.Contains(got, "Yes") {
+		t.Error("should contain custom yes button")
+	}
+	if !strings.Contains(got, "Set up later") {
+		t.Error("should contain custom no button")
+	}
+}
+
 func TestConfirmModel_View_ContainsHelp(t *testing.T) {
 	m := confirmModel{prompt: "Download?", yes: true}
 	got := m.View()
@@ -109,30 +125,33 @@ func TestConfirmModel_CtrlCCancels(t *testing.T) {
 	}
 }
 
-func TestConfirmModel_NCancels(t *testing.T) {
+func TestConfirmModel_NDoesNothing(t *testing.T) {
 	m := confirmModel{prompt: "Download?", yes: true}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	fm := updated.(confirmModel)
-	if !fm.cancelled {
-		t.Error("'n' should set cancelled=true")
+	if fm.cancelled {
+		t.Error("'n' should not cancel")
 	}
-	if cmd == nil {
-		t.Error("'n' should return tea.Quit")
+	if fm.confirmed {
+		t.Error("'n' should not confirm")
+	}
+	if cmd != nil {
+		t.Error("'n' should not quit")
 	}
 }
 
-func TestConfirmModel_YConfirmsYes(t *testing.T) {
+func TestConfirmModel_YDoesNothing(t *testing.T) {
 	m := confirmModel{prompt: "Download?", yes: false}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	fm := updated.(confirmModel)
-	if !fm.confirmed {
-		t.Error("'y' should set confirmed=true")
+	if fm.confirmed {
+		t.Error("'y' should not confirm")
 	}
-	if !fm.yes {
-		t.Error("'y' should set yes=true")
+	if fm.yes {
+		t.Error("'y' should not change selection")
 	}
-	if cmd == nil {
-		t.Error("'y' should return tea.Quit")
+	if cmd != nil {
+		t.Error("'y' should not quit")
 	}
 }
 
@@ -140,36 +159,33 @@ func TestConfirmModel_ArrowKeysNavigate(t *testing.T) {
 	m := confirmModel{prompt: "Download?", yes: true}
 
 	// Right moves to No
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	fm := updated.(confirmModel)
 	if fm.yes {
-		t.Error("right/l should move to No")
+		t.Error("right should move to No")
 	}
 	if fm.confirmed || fm.cancelled {
 		t.Error("navigation should not confirm or cancel")
 	}
 
 	// Left moves back to Yes
-	updated, _ = fm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	updated, _ = fm.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	fm = updated.(confirmModel)
 	if !fm.yes {
-		t.Error("left/h should move to Yes")
+		t.Error("left should move to Yes")
 	}
 }
 
-func TestConfirmModel_TabToggles(t *testing.T) {
+func TestConfirmModel_TabDoesNothing(t *testing.T) {
 	m := confirmModel{prompt: "Download?", yes: true}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	fm := updated.(confirmModel)
-	if fm.yes {
-		t.Error("tab should toggle from Yes to No")
-	}
-
-	updated, _ = fm.Update(tea.KeyMsg{Type: tea.KeyTab})
-	fm = updated.(confirmModel)
 	if !fm.yes {
-		t.Error("tab should toggle from No to Yes")
+		t.Error("tab should not change selection")
+	}
+	if fm.confirmed || fm.cancelled {
+		t.Error("tab should not confirm or cancel")
 	}
 }
 

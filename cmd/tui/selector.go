@@ -1,13 +1,12 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/launch"
 )
 
 var (
@@ -36,8 +35,7 @@ var (
 				Foreground(lipgloss.AdaptiveColor{Light: "235", Dark: "252"})
 
 	selectorDefaultTagStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
-				Italic(true)
+				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
 
 	selectorHelpStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "244"})
@@ -56,19 +54,42 @@ var (
 const maxSelectorItems = 10
 
 // ErrCancelled is returned when the user cancels the selection.
-var ErrCancelled = errors.New("cancelled")
+var ErrCancelled = launch.ErrCancelled
 
 type SelectItem struct {
-	Name        string
-	Description string
-	Recommended bool
+	Name              string
+	Description       string
+	Recommended       bool
+	AvailabilityBadge string
 }
 
-// ConvertItems converts config.ModelItem slice to SelectItem slice.
-func ConvertItems(items []config.ModelItem) []SelectItem {
+type selectorItemsUpdatedMsg struct {
+	items []SelectItem
+}
+
+func waitForSelectorItems(updates <-chan []SelectItem) tea.Cmd {
+	if updates == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		items, ok := <-updates
+		if !ok {
+			return nil
+		}
+		return selectorItemsUpdatedMsg{items: items}
+	}
+}
+
+// ConvertItems converts launch.SelectionItem slice to SelectItem slice.
+func ConvertItems(items []launch.SelectionItem) []SelectItem {
 	out := make([]SelectItem, len(items))
 	for i, item := range items {
-		out[i] = SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
+		out[i] = SelectItem{
+			Name:              item.Name,
+			Description:       item.Description,
+			Recommended:       item.Recommended,
+			AvailabilityBadge: item.AvailabilityBadge,
+		}
 	}
 	return out
 }
@@ -92,6 +113,7 @@ func ReorderItems(items []SelectItem) []SelectItem {
 type selectorModel struct {
 	title        string
 	items        []SelectItem
+	updates      <-chan []SelectItem
 	filter       string
 	cursor       int
 	scrollOffset int
@@ -99,6 +121,43 @@ type selectorModel struct {
 	cancelled    bool
 	helpText     string
 	width        int
+}
+
+func selectorModelWithCurrent(title string, items []SelectItem, current string) selectorModel {
+	m := selectorModel{
+		title:  title,
+		items:  items,
+		cursor: cursorForCurrent(items, current),
+	}
+	m.updateScroll(m.otherStart())
+	return m
+}
+
+func currentItemName(items []SelectItem, cursor int) string {
+	if cursor < 0 || cursor >= len(items) {
+		return ""
+	}
+	return items[cursor].Name
+}
+
+func cursorForItemName(items []SelectItem, name string, fallback int) int {
+	if len(items) == 0 {
+		return 0
+	}
+	if name != "" {
+		for i, item := range items {
+			if item.Name == name {
+				return i
+			}
+		}
+	}
+	if fallback < 0 {
+		return 0
+	}
+	if fallback >= len(items) {
+		return len(items) - 1
+	}
+	return fallback
 }
 
 func (m selectorModel) filteredItems() []SelectItem {
@@ -116,7 +175,7 @@ func (m selectorModel) filteredItems() []SelectItem {
 }
 
 func (m selectorModel) Init() tea.Cmd {
-	return nil
+	return waitForSelectorItems(m.updates)
 }
 
 // otherStart returns the index of the first non-recommended item in the filtered list.
@@ -226,9 +285,20 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case selectorItemsUpdatedMsg:
+		current := currentItemName(m.filteredItems(), m.cursor)
+		m.items = msg.items
+		m.cursor = cursorForItemName(m.filteredItems(), current, m.cursor)
+		m.updateScroll(m.otherStart())
+		return m, waitForSelectorItems(m.updates)
+
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
+			m.cancelled = true
+			return m, tea.Quit
+
+		case tea.KeyLeft:
 			m.cancelled = true
 			return m, tea.Quit
 
@@ -247,9 +317,17 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func cursorItemSuffix(item SelectItem) string {
+	if item.AvailabilityBadge == "" {
+		return ""
+	}
+	return " " + selectorDefaultTagStyle.Render("("+item.AvailabilityBadge+")")
+}
+
 func (m selectorModel) renderItem(s *strings.Builder, item SelectItem, idx int) {
 	if idx == m.cursor {
 		s.WriteString(selectorSelectedItemStyle.Render("▸ " + item.Name))
+		s.WriteString(cursorItemSuffix(item))
 	} else {
 		s.WriteString(selectorItemStyle.Render(item.Name))
 	}
@@ -344,7 +422,7 @@ func (m selectorModel) renderContent() string {
 	}
 
 	s.WriteString("\n")
-	help := "↑/↓ navigate • enter select • esc cancel"
+	help := "↑/↓ navigate • enter select • ← back"
 	if m.helpText != "" {
 		help = m.helpText
 	}
@@ -367,26 +445,38 @@ func (m selectorModel) View() string {
 
 // cursorForCurrent returns the item index matching current, or 0 if not found.
 func cursorForCurrent(items []SelectItem, current string) int {
-	if current != "" {
-		for i, item := range items {
-			if item.Name == current || strings.HasPrefix(item.Name, current+":") || strings.HasPrefix(current, item.Name+":") {
-				return i
-			}
+	if current == "" {
+		return 0
+	}
+
+	// Prefer exact name matches before tag-prefix fallback so "qwen3.5" does not
+	// incorrectly select "qwen3.5:cloud" (and vice versa) based on list order.
+	for i, item := range items {
+		if item.Name == current {
+			return i
 		}
 	}
+
+	for i, item := range items {
+		if strings.HasPrefix(item.Name, current+":") || strings.HasPrefix(current, item.Name+":") {
+			return i
+		}
+	}
+
 	return 0
 }
 
 func SelectSingle(title string, items []SelectItem, current string) (string, error) {
+	return SelectSingleWithUpdates(title, items, current, nil)
+}
+
+func SelectSingleWithUpdates(title string, items []SelectItem, current string, updates <-chan []SelectItem) (string, error) {
 	if len(items) == 0 {
 		return "", fmt.Errorf("no items to select from")
 	}
 
-	m := selectorModel{
-		title:  title,
-		items:  items,
-		cursor: cursorForCurrent(items, current),
-	}
+	m := selectorModelWithCurrent(title, items, current)
+	m.updates = updates
 
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
@@ -406,6 +496,7 @@ func SelectSingle(title string, items []SelectItem, current string) (string, err
 type multiSelectorModel struct {
 	title        string
 	items        []SelectItem
+	updates      <-chan []SelectItem
 	itemIndex    map[string]int
 	filter       string
 	cursor       int
@@ -453,6 +544,36 @@ func newMultiSelectorModel(title string, items []SelectItem, preChecked []string
 	}
 
 	return m
+}
+
+func (m *multiSelectorModel) rebuildItemIndex() {
+	m.itemIndex = make(map[string]int, len(m.items))
+	for i, item := range m.items {
+		m.itemIndex[item.Name] = i
+	}
+}
+
+func (m *multiSelectorModel) replaceItems(items []SelectItem) {
+	current := currentItemName(m.filteredItems(), m.cursor)
+	checkedNames := make([]string, 0, len(m.checkOrder))
+	for _, idx := range m.checkOrder {
+		if idx >= 0 && idx < len(m.items) {
+			checkedNames = append(checkedNames, m.items[idx].Name)
+		}
+	}
+
+	m.items = items
+	m.rebuildItemIndex()
+	m.checked = make(map[int]bool, len(checkedNames))
+	m.checkOrder = nil
+	for _, name := range checkedNames {
+		if idx, ok := m.itemIndex[name]; ok {
+			m.checked[idx] = true
+			m.checkOrder = append(m.checkOrder, idx)
+		}
+	}
+	m.cursor = cursorForItemName(m.filteredItems(), current, m.cursor)
+	m.updateScroll(m.otherStart())
 }
 
 func (m multiSelectorModel) filteredItems() []SelectItem {
@@ -523,11 +644,40 @@ func (m *multiSelectorModel) toggleItem() {
 	origIdx := m.itemIndex[item.Name]
 
 	if m.checked[origIdx] {
+		wasDefault := len(m.checkOrder) > 0 && m.checkOrder[len(m.checkOrder)-1] == origIdx
 		delete(m.checked, origIdx)
 		for i, idx := range m.checkOrder {
 			if idx == origIdx {
 				m.checkOrder = append(m.checkOrder[:i], m.checkOrder[i+1:]...)
 				break
+			}
+		}
+		if wasDefault {
+			// When removing the default, pick the nearest checked model above it
+			// (or below if none above) so default fallback follows list order.
+			newDefault := -1
+			for i := origIdx - 1; i >= 0; i-- {
+				if m.checked[i] {
+					newDefault = i
+					break
+				}
+			}
+			if newDefault == -1 {
+				for i := origIdx + 1; i < len(m.items); i++ {
+					if m.checked[i] {
+						newDefault = i
+						break
+					}
+				}
+			}
+			if newDefault != -1 {
+				for i, idx := range m.checkOrder {
+					if idx == newDefault {
+						m.checkOrder = append(m.checkOrder[:i], m.checkOrder[i+1:]...)
+						break
+					}
+				}
+				m.checkOrder = append(m.checkOrder, newDefault)
 			}
 		}
 	} else {
@@ -541,7 +691,7 @@ func (m multiSelectorModel) selectedCount() int {
 }
 
 func (m multiSelectorModel) Init() tea.Cmd {
-	return nil
+	return waitForSelectorItems(m.updates)
 }
 
 func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -554,11 +704,19 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case selectorItemsUpdatedMsg:
+		m.replaceItems(msg.items)
+		return m, waitForSelectorItems(m.updates)
+
 	case tea.KeyMsg:
 		filtered := m.filteredItems()
 
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
+			m.cancelled = true
+			return m, tea.Quit
+
+		case tea.KeyLeft:
 			m.cancelled = true
 			return m, tea.Quit
 
@@ -636,6 +794,7 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m multiSelectorModel) renderSingleItem(s *strings.Builder, item SelectItem, idx int) {
 	if idx == m.cursor {
 		s.WriteString(selectorSelectedItemStyle.Render("▸ " + item.Name))
+		s.WriteString(cursorItemSuffix(item))
 	} else {
 		s.WriteString(selectorItemStyle.Render(item.Name))
 	}
@@ -663,6 +822,7 @@ func (m multiSelectorModel) renderMultiItem(s *strings.Builder, item SelectItem,
 
 	if idx == m.cursor {
 		s.WriteString(selectorSelectedItemStyle.Render("▸ " + check + item.Name))
+		s.WriteString(cursorItemSuffix(item))
 	} else {
 		s.WriteString(selectorItemStyle.Render(check + item.Name))
 	}
@@ -763,17 +923,21 @@ func (m multiSelectorModel) View() string {
 
 	s.WriteString("\n")
 
+	count := m.selectedCount()
 	if !m.multi {
-		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • esc cancel"))
+		if count > 0 {
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press tab to edit", count)))
+			s.WriteString("\n\n")
+		}
+		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • ← back"))
 	} else {
-		count := m.selectedCount()
 		if count == 0 {
-			s.WriteString(selectorDescStyle.Render("  Select at least one model."))
+			s.WriteString(sectionHeaderStyle.Render("Select at least one model."))
 		} else {
-			s.WriteString(selectorDescStyle.Render(fmt.Sprintf("  %d selected - press enter to continue", count)))
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press enter to continue", count)))
 		}
 		s.WriteString("\n\n")
-		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • esc cancel"))
+		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back"))
 	}
 
 	result := s.String()
@@ -784,11 +948,16 @@ func (m multiSelectorModel) View() string {
 }
 
 func SelectMultiple(title string, items []SelectItem, preChecked []string) ([]string, error) {
+	return SelectMultipleWithUpdates(title, items, preChecked, nil)
+}
+
+func SelectMultipleWithUpdates(title string, items []SelectItem, preChecked []string, updates <-chan []SelectItem) ([]string, error) {
 	if len(items) == 0 {
 		return nil, fmt.Errorf("no items to select from")
 	}
 
 	m := newMultiSelectorModel(title, items, preChecked)
+	m.updates = updates
 
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()

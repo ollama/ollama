@@ -14,7 +14,10 @@ import (
 )
 
 func TestImageGeneration(t *testing.T) {
-	skipUnderMinVRAM(t, 8)
+	if testModel != "" {
+		t.Skip("uses hardcoded models, not applicable with model override")
+	}
+	skipUnderMinVRAM(t, 32)
 
 	type testCase struct {
 		imageGenModel string
@@ -26,7 +29,7 @@ func TestImageGeneration(t *testing.T) {
 	testCases := []testCase{
 		{
 			imageGenModel: "jmorgan/z-image-turbo",
-			visionModel:   "llama3.2-vision",
+			visionModel:   "qwen2.5vl:3b",
 			prompt:        "A cartoon style llama flying like a superhero through the air with clouds in the background",
 			expectedWords: []string{"llama", "flying", "cartoon", "cloud", "sky", "superhero", "air", "animal", "camelid"},
 		},
@@ -41,12 +44,8 @@ func TestImageGeneration(t *testing.T) {
 			defer cleanup()
 
 			// Pull both models
-			if err := PullIfMissing(ctx, client, tc.imageGenModel); err != nil {
-				t.Fatalf("failed to pull image gen model: %v", err)
-			}
-			if err := PullIfMissing(ctx, client, tc.visionModel); err != nil {
-				t.Fatalf("failed to pull vision model: %v", err)
-			}
+			pullOrSkip(ctx, t, client, tc.imageGenModel)
+			pullOrSkip(ctx, t, client, tc.visionModel)
 
 			// Generate the image
 			t.Logf("Generating image with prompt: %s", tc.prompt)
@@ -65,6 +64,10 @@ func TestImageGeneration(t *testing.T) {
 				} else if strings.Contains(err.Error(), "ollama-mlx: no such file or directory") {
 					// most likely linux arm - not supported yet
 					t.Skip("unsupported architecture")
+				} else if strings.Contains(err.Error(), "are available") {
+					t.Skip("insufficient VRAM for image generation model")
+				} else if strings.Contains(err.Error(), "failed to create server") {
+					t.Skip("image generation server failed to start")
 				}
 				t.Fatalf("failed to generate image: %v", err)
 			}

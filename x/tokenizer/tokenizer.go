@@ -1,5 +1,3 @@
-//go:build mlx
-
 // tokenizer.go - BPE and SentencePiece tokenizer for HuggingFace models
 //
 // Based on standard BPE algorithm (Sennrich et al. 2015) with:
@@ -49,7 +47,7 @@ type Tokenizer struct {
 var byteToRune [256]rune
 
 func init() {
-	for b := 0; b < 256; b++ {
+	for b := range 256 {
 		r := rune(b)
 		switch {
 		case r == 0x00ad:
@@ -71,6 +69,11 @@ func (t *Tokenizer) VocabSize() int {
 // BOS returns the beginning of sequence token ID
 func (t *Tokenizer) BOS() int32 {
 	return t.vocab.BOS
+}
+
+// AddBOS returns whether a BOS token should be prepended during encoding.
+func (t *Tokenizer) AddBOS() bool {
+	return t.vocab.AddBOS
 }
 
 // EOS returns the first end of sequence token ID (for backwards compatibility)

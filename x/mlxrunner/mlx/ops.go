@@ -1,5 +1,3 @@
-//go:build mlx
-
 package mlx
 
 // #include "generated.h"
@@ -74,6 +72,10 @@ func (t *Array) AsStrided(shape []int, strides []int, offset int) *Array {
 }
 
 func (t *Array) Concatenate(axis int, others ...*Array) *Array {
+	if len(others) == 0 {
+		return t.Clone()
+	}
+
 	vector := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(vector)
 
@@ -129,15 +131,39 @@ func (t *Array) GatherMM(other, lhs, rhs *Array, sorted bool) *Array {
 	return out
 }
 
-func (t *Array) Logsumexp(keepDims bool) *Array {
-	out := New("LOGSUMEXP")
-	C.mlx_logsumexp(&out.ctx, t.ctx, C.bool(keepDims), DefaultStream().ctx)
+func (t *Array) LogsumexpAxis(axis int, keepDims bool) *Array {
+	out := New("LOGSUMEXP_AXIS")
+	C.mlx_logsumexp_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) Equal(other *Array) *Array {
+	out := New("EQUAL")
+	C.mlx_equal(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) Greater(other *Array) *Array {
+	out := New("GREATER")
+	C.mlx_greater(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
 	return out
 }
 
 func (t *Array) Less(other *Array) *Array {
 	out := New("LESS")
 	C.mlx_less(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) LessEqual(other *Array) *Array {
+	out := New("LESS_EQUAL")
+	C.mlx_less_equal(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) MaxAxis(axis int, keepDims bool) *Array {
+	out := New("MAX_AXIS")
+	C.mlx_max_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
 	return out
 }
 
@@ -168,6 +194,12 @@ func (t *Array) Power(exponent *Array) *Array {
 func (t *Array) PutAlongAxis(indices, values *Array, axis int) *Array {
 	out := New("PUT_ALONG_AXIS")
 	C.mlx_put_along_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) ScatterAddAxis(indices, values *Array, axis int) *Array {
+	out := New("SCATTER_ADD_AXIS")
+	C.mlx_scatter_add_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx)
 	return out
 }
 

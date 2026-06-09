@@ -1,10 +1,7 @@
-//go:build mlx
-
 package mlxrunner
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -18,16 +15,13 @@ import (
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
 func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
-
-	if err := mlx.CheckInit(); err != nil {
-		return fmt.Errorf("MLX not available: %w", err)
-	}
 
 	var (
 		modelName string
@@ -40,13 +34,57 @@ func Execute(args []string) error {
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
 
-	runner := Runner{
-		Requests: make(chan Request),
-	}
+	worker, err := mlxthread.Start("mlxrunner", func() error {
+		if err := mlx.CheckInit(); err != nil {
+			return fmt.Errorf("MLX not available: %w", err)
+		}
 
-	if err := runner.Load(modelName); err != nil {
+		if mlx.GPUIsAvailable() {
+			mlx.SetDefaultDeviceGPU()
+			slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "gpu")
+		} else {
+			slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "cpu")
+		}
+
+		return nil
+	})
+	if err != nil {
 		return err
 	}
+	defer worker.Stop(context.Background(), func() {
+		mlx.Sweep()
+		mlx.ClearCache()
+	})
+	runnerCtx, cancelRunner := context.WithCancel(context.Background())
+	defer cancelRunner()
+
+	runner := Runner{
+		Requests:  make(chan Request),
+		mlxThread: worker,
+	}
+
+	if err := worker.Do(context.Background(), func() error {
+		return runner.Load(modelName)
+	}); err != nil {
+		return err
+	}
+
+	readMemory := func() (uint64, error) {
+		return uint64(mlx.ActiveMemory() + mlx.CacheMemory()), nil
+	}
+	initialMemory, err := mlxthread.Call(context.Background(), worker, readMemory)
+	if err != nil {
+		return err
+	}
+	memoryCache := newStatusMemoryCache(
+		runnerCtx,
+		initialMemory,
+		time.Now(),
+		statusMemoryRefreshWait,
+		func() (uint64, error) {
+			return mlxthread.Call(runnerCtx, worker, readMemory)
+		},
+	)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +92,7 @@ func Execute(args []string) error {
 			Status:        0,
 			Progress:      100,
 			ContextLength: runner.contextLength,
-			Memory:        uint64(mlx.ActiveMemory() + mlx.CacheMemory()),
+			Memory:        memoryCache.Memory(),
 		}); err != nil {
 			slog.Error("Failed to encode response", "error", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -82,23 +120,32 @@ func Execute(args []string) error {
 	mux.HandleFunc("POST /v1/completions", func(w http.ResponseWriter, r *http.Request) {
 		request := Request{Responses: make(chan CompletionResponse)}
 
-		if err := json.NewDecoder(r.Body).Decode(&request.TextCompletionsRequest); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&request.CompletionRequest); err != nil {
 			slog.Error("Failed to decode request", "error", err)
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
 
-		request.Options.MaxTokens = cmp.Or(request.Options.MaxTokens, request.Options.NumPredict)
-
 		request.Pipeline = runner.TextGenerationPipeline
-		request.Sampler = sample.New(
-			request.Options.Temperature,
-			request.Options.TopP,
-			request.Options.MinP,
-			request.Options.TopK,
-			request.Options.RepeatLastN,
-			request.Options.PresencePenalty,
-		)
+		request.SamplerOpts = sample.Options{
+			Temperature:      request.Options.Temperature,
+			TopP:             request.Options.TopP,
+			MinP:             request.Options.MinP,
+			TopK:             request.Options.TopK,
+			RepeatLastN:      request.Options.RepeatLastN,
+			RepeatPenalty:    request.Options.RepeatPenalty,
+			PresencePenalty:  request.Options.PresencePenalty,
+			FrequencyPenalty: request.Options.FrequencyPenalty,
+			Seed:             request.Options.Seed,
+			UseSeed:          request.Options.Seed >= 0,
+			Logprobs:         request.Logprobs,
+			TopLogprobs:      request.TopLogprobs,
+		}
+
+		if err := runner.Prepare(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		var cancel context.CancelFunc
 		request.Ctx, cancel = context.WithCancel(r.Context())
@@ -142,7 +189,7 @@ func Execute(args []string) error {
 			return
 		}
 
-		tokens := runner.Tokenizer.Encode(b.String(), true)
+		tokens := runner.Tokenizer.Encode(b.String(), runner.Tokenizer.AddBOS())
 
 		if err := json.NewEncoder(w).Encode(tokens); err != nil {
 			slog.Error("Failed to encode response", "error", err)

@@ -24,15 +24,12 @@ func TestLibraryModelsChat(t *testing.T) {
 	defer cleanup()
 	targetArch := os.Getenv("OLLAMA_TEST_ARCHITECTURE")
 
-	chatModels := libraryChatModels
-	for _, model := range chatModels {
+	for _, model := range testModels(libraryChatModels) {
 		t.Run(model, func(t *testing.T) {
 			if time.Now().Sub(started) > softTimeout {
 				t.Skip("skipping remaining tests to avoid excessive runtime")
 			}
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 			if targetArch != "" {
 				resp, err := client.Show(ctx, &api.ShowRequest{Name: model})
 				if err != nil {

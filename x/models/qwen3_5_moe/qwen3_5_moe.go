@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package qwen3_5_moe registers Qwen 3.5 MoE architecture aliases.
 package qwen3_5_moe
 

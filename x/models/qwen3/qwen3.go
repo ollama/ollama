@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package qwen3 provides the Qwen3 text model implementation for MLX.
 package qwen3
 
@@ -8,6 +6,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
@@ -47,7 +46,7 @@ type Config struct {
 
 // Model is the Qwen3 text-only model.
 type Model struct {
-	EmbedTokens *nn.Embedding
+	EmbedTokens nn.EmbeddingLayer
 	Layers      []*Layer
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
@@ -179,11 +178,11 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	prefix := m.weightPrefix
 	linears := model.NewLinearFactory(tensors, m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant)
 
-	embedWeight := tensors[prefix+"model.embed_tokens.weight"]
-	if embedWeight == nil {
+	embedTokens := model.MakeEmbeddingLayer(tensors, prefix+"model.embed_tokens", m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant)
+	if embedTokens == nil {
 		return fmt.Errorf("missing embedding weight: %smodel.embed_tokens.weight", prefix)
 	}
-	m.EmbedTokens = nn.NewEmbedding(embedWeight)
+	m.EmbedTokens = embedTokens
 
 	normWeight := tensors[prefix+"model.norm.weight"]
 	if normWeight == nil {
@@ -192,17 +191,17 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	m.Norm = nn.NewRMSNorm(normWeight, m.RMSNormEps)
 
 	if m.TieWordEmbeddings {
-		m.LMHead = nn.NewLinear(embedWeight, nil)
+		m.LMHead = m.EmbedTokens.AsLinear()
 	} else if lmHead := linears.Make(prefix + "lm_head"); lmHead != nil {
 		m.LMHead = lmHead
 	} else if lmHead := linears.Make("lm_head"); lmHead != nil {
 		m.LMHead = lmHead
 	} else {
 		// Qwen3 checkpoints commonly tie output projection to embeddings.
-		m.LMHead = nn.NewLinear(embedWeight, nil)
+		m.LMHead = m.EmbedTokens.AsLinear()
 	}
 
-	for i := int32(0); i < m.NumHiddenLayers; i++ {
+	for i := range m.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%smodel.layers.%d", prefix, i)
 
 		layer := &Layer{
@@ -255,17 +254,18 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
-func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
-	dims := tokens.Dims()
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
+	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
-	h := m.EmbedTokens.Forward(tokens)
+	h := m.EmbedTokens.Forward(b.InputIDs)
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
-		h = layer.Forward(h, c, B, L, m.Config)
+		h = layer.Forward(h, b, c, positions, B, L, m.Config)
 	}
 
 	return m.Norm.Forward(h, m.RMSNormEps)
@@ -295,12 +295,12 @@ func (m *Model) NewCaches() []cache.Cache {
 	return caches
 }
 
-func (l *Layer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
-	h := mlx.Add(x, l.Attention.Forward(l.AttentionNorm.Forward(x, cfg.RMSNormEps), c, B, L, cfg))
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+	h := mlx.Add(x, l.Attention.Forward(l.AttentionNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, cfg))
 	return mlx.Add(h, l.MLP.Forward(l.MLPNorm.Forward(h, cfg.RMSNormEps)))
 }
 
-func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	q := a.QProj.Forward(x)
 	k := a.KProj.Forward(x)
 	v := a.VProj.Forward(x)
@@ -316,24 +316,23 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	offset := 0
-	if c != nil {
-		offset = c.Offset()
-	}
-	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, offset)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, offset)
-
-	if c != nil {
-		k, v = c.Update(k, v)
-	}
+	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
+	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
 
 	// MLX SDPA supports grouped-query attention directly (Q heads can be a
 	// multiple of K/V heads), so avoid materializing repeated K/V tensors.
-	out := mlx.ScaledDotProductAttentionCausal(q, k, v, cfg.Scale, L > 1)
+	var kv nn.SDPAOption
+	if c != nil {
+		history := c.(cache.Attention).Update(b, k, v)
+		kv = nn.WithKVHistory(history)
+	} else {
+		kv = nn.WithKV(k, v, b.SeqQueryLens)
+	}
+	out := nn.ScaledDotProductAttention(b, q, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	return a.OProj.Forward(out)
 }
 
 func (m *MLP) Forward(x *mlx.Array) *mlx.Array {
-	return m.DownProj.Forward(mlx.Mul(mlx.SiLU(m.GateProj.Forward(x)), m.UpProj.Forward(x)))
+	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
 }

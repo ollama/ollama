@@ -1,5 +1,3 @@
-//go:build mlx
-
 package glm4_moe_lite
 
 import (

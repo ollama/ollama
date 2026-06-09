@@ -33,8 +33,9 @@ const (
 )
 
 type CogitoParser struct {
-	state  CogitoParserState
-	buffer strings.Builder
+	state     CogitoParserState
+	buffer    strings.Builder
+	callIndex int
 }
 
 func (p *CogitoParser) HasToolSupport() bool {
@@ -43,6 +44,21 @@ func (p *CogitoParser) HasToolSupport() bool {
 
 func (p *CogitoParser) HasThinkingSupport() bool {
 	return true
+}
+
+func (p *CogitoParser) PreservedTokens() []string {
+	return []string{
+		cogitoThinkingCloseTag,
+		cogitoToolCallsBeginTag,
+		cogitoToolCallsEndTag,
+		cogitoToolCallBeginTag,
+		cogitoToolCallEndTag,
+		cogitoToolSepTag,
+		cogitoToolOutputBeginTag,
+		cogitoToolOutputEndTag,
+		cogitoToolOutputsBeginTag,
+		cogitoToolOutputsEndTag,
+	}
 }
 
 func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Tool, thinkValue *api.ThinkValue) {
@@ -72,6 +88,7 @@ func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Too
 }
 
 func (p *CogitoParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
+	p.callIndex = 0
 	p.setInitialState(lastMessage, tools, thinkValue)
 	return tools
 }
@@ -112,6 +129,11 @@ func (p *CogitoParser) Add(s string, done bool) (content string, thinking string
 		case cogitoEventContent:
 			contentSb.WriteString(event.content)
 		}
+	}
+
+	for i := range toolCalls {
+		toolCalls[i].Function.Index = p.callIndex
+		p.callIndex++
 	}
 
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
