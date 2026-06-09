@@ -211,6 +211,7 @@ type CompletionRequest struct {
 
 	Grammar         string // set before sending the request to the subprocess
 	Shift           bool
+	CachePrompt     bool
 	Truncate        bool
 	PreservedTokens []string // parser tokens to render as text; ignored by non-llama-server runners
 	ToolCallTag     string   // raw generic tool parser tag, if any
@@ -230,12 +231,13 @@ type CompletionRequest struct {
 }
 
 type ChatRequest struct {
-	Messages []api.Message
-	Tools    api.Tools
-	Format   json.RawMessage
-	Options  *api.Options
-	Think    *api.ThinkValue
-	Shift    bool
+	Messages    []api.Message
+	Tools       api.Tools
+	Format      json.RawMessage
+	Options     *api.Options
+	Think       *api.ThinkValue
+	Shift       bool
+	CachePrompt bool
 
 	Logprobs    bool
 	TopLogprobs int

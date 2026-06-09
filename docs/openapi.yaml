@@ -109,6 +109,9 @@ components:
             - type: string
             - type: number
           description: Model keep-alive duration (for example `5m` or `0` to unload immediately)
+        cache_prompt:
+          type: boolean
+          description: Whether to cache the prompt for reuse. Defaults to true.
         options:
           $ref: "#/components/schemas/ModelOptions"
         logprobs:
@@ -298,6 +301,9 @@ components:
             - type: string
             - type: number
           description: Model keep-alive duration (for example `5m` or `0` to unload immediately)
+        cache_prompt:
+          type: boolean
+          description: Whether to cache the prompt for reuse. Defaults to true.
         logprobs:
           type: boolean
           description: Whether to return log probabilities of the output tokens
