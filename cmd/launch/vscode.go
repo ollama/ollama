@@ -126,19 +126,19 @@ const (
 	minCopilotChatVersion = "0.41.0"
 	minVSCodeVersion      = "1.113"
 
-	vscodeOllamaVendor    = "ollama"
-	vscodeOllamaDevVendor = "ollama-dev"
-	vscodeOllamaName      = "Ollama"
+	vscodeOllamaVendor = "ollama"
+	vscodeOllamaName   = "Ollama"
 
-	vscodeOllamaExtensionID     = "Ollama.ollama-vscode"
-	vscodeOllamaVSIXEnv         = "OLLAMA_VSCODE_EXTENSION_VSIX"
-	vscodeOllamaDefaultVSIXPath = "/tmp/ollama-vscode-0.0.1.vsix"
+	vscodeOllamaExtensionID = "Ollama.ollama-vscode"
 )
 
 func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 	v.checkVSCodeVersion()
 	v.checkCopilotChatVersion()
-	installedExtension := v.ensureOllamaExtensionInstalled()
+	installedExtension, err := v.ensureOllamaExtensionInstalled()
+	if err != nil {
+		return err
+	}
 
 	// VS Code discovers models from ollama ls. Cloud models that pass Show
 	// (the server knows about them) but aren't in ls need to be pulled to
@@ -265,7 +265,7 @@ func (v *VSCode) writeProviderConfig() error {
 	// Remove any existing Ollama entries, preserve others.
 	filtered := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
-		if vendor, _ := entry["vendor"].(string); vendor != vscodeOllamaVendor && vendor != vscodeOllamaDevVendor {
+		if vendor, _ := entry["vendor"].(string); vendor != vscodeOllamaVendor {
 			filtered = append(filtered, entry)
 		}
 	}
@@ -418,7 +418,7 @@ func (v *VSCode) ShowInModelPicker(model string) error {
 	// The extension owns model discovery and picker visibility. Clear launch's
 	// old per-model overrides so previously hidden models can show up again.
 	for id := range prefs {
-		if strings.HasPrefix(id, vscodeOllamaVendor+"/") || strings.HasPrefix(id, vscodeOllamaDevVendor+"/") {
+		if strings.HasPrefix(id, vscodeOllamaVendor+"/") {
 			delete(prefs, id)
 		}
 	}
@@ -552,41 +552,29 @@ func (v *VSCode) checkCopilotChatVersion() {
 	}
 }
 
-func (v *VSCode) ensureOllamaExtensionInstalled() bool {
+func (v *VSCode) ensureOllamaExtensionInstalled() (bool, error) {
 	codeCLI := v.findCodeCLI()
 	if codeCLI == "" {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not find VS Code CLI to install the Ollama extension%s\n", ansiYellow, ansiReset)
-		return false
+		return false, fmt.Errorf("could not find VS Code CLI to install the Ollama extension")
 	}
 
 	out, err := exec.Command(codeCLI, "--list-extensions", "--show-versions").Output()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not list VS Code extensions: %v%s\n", ansiYellow, err, ansiReset)
-		return false
+		return false, fmt.Errorf("could not list VS Code extensions: %w", err)
 	}
 	if hasVSCodeExtension(string(out), vscodeOllamaExtensionID) {
-		return false
-	}
-
-	vsixPath := os.Getenv(vscodeOllamaVSIXEnv)
-	if vsixPath == "" {
-		vsixPath = vscodeOllamaDefaultVSIXPath
-	}
-	if !fileExists(vsixPath) {
-		fmt.Fprintf(os.Stderr, "Installing Ollama VS Code extension...\n")
-		if out, err := exec.Command(codeCLI, "--install-extension", vscodeOllamaExtensionID, "--force").CombinedOutput(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s  Warning: could not install Ollama VS Code extension: %v%s\n%s\n", ansiYellow, err, ansiReset, strings.TrimSpace(string(out)))
-			return false
-		}
-		return true
+		return false, nil
 	}
 
 	fmt.Fprintf(os.Stderr, "Installing Ollama VS Code extension...\n")
-	if out, err := exec.Command(codeCLI, "--install-extension", vsixPath, "--force").CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not install Ollama VS Code extension: %v%s\n%s\n", ansiYellow, err, ansiReset, strings.TrimSpace(string(out)))
-		return false
+	if out, err := exec.Command(codeCLI, "--install-extension", vscodeOllamaExtensionID, "--force").CombinedOutput(); err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail != "" {
+			return false, fmt.Errorf("could not install Ollama VS Code extension: %w\n%s", err, detail)
+		}
+		return false, fmt.Errorf("could not install Ollama VS Code extension: %w", err)
 	}
-	return true
+	return true, nil
 }
 
 // findCodeCLI returns the path to the VS Code CLI for querying extensions.
