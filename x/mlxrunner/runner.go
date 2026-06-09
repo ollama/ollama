@@ -35,13 +35,15 @@ type Request struct {
 
 type Runner struct {
 	Model         base.Model
-	Draft         base.DraftModel
 	Tokenizer     *tokenizer.Tokenizer
 	Requests      chan Request
 	Sampler       *sample.Sampler
 	cache         kvCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
+	// spec is the speculative-decoding subsystem. Nil when the model ships no
+	// draft head.
+	spec *speculation
 }
 
 func (r *Runner) Load(modelName string) error {
@@ -69,7 +71,7 @@ func (r *Runner) Load(modelName string) error {
 		return err
 	}
 
-	r.Draft = nil
+	var draftModel base.DraftModel
 	draft, err := base.NewDraft(root, m)
 	if err != nil {
 		return err
@@ -78,7 +80,7 @@ func (r *Runner) Load(modelName string) error {
 		if err := draft.LoadWeights(tensors); err != nil {
 			return err
 		}
-		r.Draft = draft
+		draftModel = draft
 	}
 
 	collected := mlx.Collect(m)
@@ -101,8 +103,10 @@ func (r *Runner) Load(modelName string) error {
 	r.Tokenizer = m.Tokenizer()
 	r.contextLength = m.MaxContextLength()
 	r.Sampler = sample.New(r.contextLength)
+	r.spec = newSpeculation(r, draftModel)
 
 	mlx.EnableCompile()
+
 	return nil
 }
 

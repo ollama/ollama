@@ -3,11 +3,11 @@ package mlxrunner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
@@ -190,6 +190,15 @@ func collectResponses(ch chan CompletionResponse) (content string, final Complet
 	}
 }
 
+// resultIDs reads the token id of each result.
+func resultIDs(results []sampler.Result) []int {
+	ids := make([]int, 0, len(results))
+	for _, res := range results {
+		ids = append(ids, res.Token.Int())
+	}
+	return ids
+}
+
 func TestAcceptMTPDraftsGreedyAcceptAll(t *testing.T) {
 	skipIfNoMLX(t)
 	// Target predicts 1->2->3->4 along the accepted chain; the draft proposed
@@ -202,33 +211,26 @@ func TestAcceptMTPDraftsGreedyAcceptAll(t *testing.T) {
 	candidates := scriptedCandidates(r, []int32{2, 3, 4})
 	baseLogits := oneHotLogits([]int32{2}).Squeeze(1) // target prediction after the seed token 1
 
-	session, ch := newMTPTestSession(caches)
 	position := caches[0].Offset()
-	final := CompletionResponse{Done: true}
-	generated := 0
 
-	req := Request{Responses: ch, CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 100}}}
-	next, accepted, done, err := r.acceptMTPDrafts(context.Background(), req, session, &decoder{tokenizer: r.Tokenizer}, caches, &position, baseLogits, candidates, &final, &generated)
+	spec := testSpeculationSession(r, caches)
+	current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
+	results, accepted, err := spec.accept(&position, current, oneHotLogits([]int32{2}), baseLogits, candidates)
 	if err != nil {
-		t.Fatalf("acceptMTPDrafts: %v", err)
+		t.Fatalf("accept: %v", err)
 	}
 	if accepted != 3 {
 		t.Fatalf("accepted = %d, want 3", accepted)
 	}
-	if done {
-		t.Fatalf("done = true, want false")
-	}
-	if got := tokenID(next.Token); got != 5 {
-		t.Fatalf("bonus token = %d, want 5", got)
+	// The run is the accepted drafts followed by the bonus token (5).
+	if got := resultIDs(results); !slices.Equal(got, []int{2, 3, 4, 5}) {
+		t.Fatalf("results = %v, want [2 3 4 5]", got)
 	}
 	if position != 3 {
 		t.Fatalf("position = %d, want 3", position)
 	}
 	if got := caches[0].Offset(); got != 3 {
 		t.Fatalf("cache offset = %d, want 3 (all drafts kept)", got)
-	}
-	if generated != 3 {
-		t.Fatalf("generated = %d, want 3", generated)
 	}
 }
 
@@ -244,24 +246,21 @@ func TestAcceptMTPDraftsGreedyMismatch(t *testing.T) {
 	candidates := scriptedCandidates(r, []int32{2, 7})
 	baseLogits := oneHotLogits([]int32{2}).Squeeze(1)
 
-	session, ch := newMTPTestSession(caches)
 	position := caches[0].Offset()
-	final := CompletionResponse{Done: true}
-	generated := 0
 
-	req := Request{Responses: ch, CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 100}}}
-	next, accepted, done, err := r.acceptMTPDrafts(context.Background(), req, session, &decoder{tokenizer: r.Tokenizer}, caches, &position, baseLogits, candidates, &final, &generated)
+	spec := testSpeculationSession(r, caches)
+	current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
+	results, accepted, err := spec.accept(&position, current, oneHotLogits([]int32{2}), baseLogits, candidates)
 	if err != nil {
-		t.Fatalf("acceptMTPDrafts: %v", err)
+		t.Fatalf("accept: %v", err)
 	}
 	if accepted != 1 {
 		t.Fatalf("accepted = %d, want 1", accepted)
 	}
-	if done {
-		t.Fatalf("done = true, want false")
-	}
-	if got := tokenID(next.Token); got != 3 {
-		t.Fatalf("bonus token = %d, want 3 (target prediction at rejection)", got)
+	// The run is the one accepted draft (2) followed by the target's own
+	// prediction at the rejection point (3).
+	if got := resultIDs(results); !slices.Equal(got, []int{2, 3}) {
+		t.Fatalf("results = %v, want [2 3]", got)
 	}
 	if position != 1 {
 		t.Fatalf("position = %d, want 1", position)
@@ -274,7 +273,8 @@ func TestAcceptMTPDraftsGreedyMismatch(t *testing.T) {
 func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 	skipIfNoMLX(t)
 	// The second accepted draft token is EOS: it is recorded but stops
-	// generation, no bonus token is produced, and the cache keeps both tokens.
+	// generation and no bonus token is produced. Both accepted tokens are
+	// committed, so the caches hold the EOS's KV.
 	const eos int32 = 6
 	predict := map[int32]int32{1: 2, 2: eos, eos: 0}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
@@ -283,30 +283,30 @@ func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 	candidates := scriptedCandidates(r, []int32{2, eos})
 	baseLogits := oneHotLogits([]int32{2}).Squeeze(1)
 
-	session, ch := newMTPTestSession(caches)
 	position := caches[0].Offset()
-	final := CompletionResponse{Done: true, DoneReason: 1}
-	generated := 0
 
-	req := Request{Responses: ch, CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 100}}}
-	next, accepted, done, err := r.acceptMTPDrafts(context.Background(), req, session, &decoder{tokenizer: r.Tokenizer}, caches, &position, baseLogits, candidates, &final, &generated)
+	spec := testSpeculationSession(r, caches)
+	current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
+	results, accepted, err := spec.accept(&position, current, oneHotLogits([]int32{2}), baseLogits, candidates)
 	if err != nil {
-		t.Fatalf("acceptMTPDrafts: %v", err)
+		t.Fatalf("accept: %v", err)
 	}
 	if accepted != 2 {
 		t.Fatalf("accepted = %d, want 2 (token + EOS)", accepted)
 	}
-	if !done {
-		t.Fatalf("done = false, want true")
+	// The EOS ends generation, so the run is exactly the accepted tokens
+	// with no bonus appended.
+	if got := resultIDs(results); !slices.Equal(got, []int{2, int(eos)}) {
+		t.Fatalf("results = %v, want [2 %d]", got, eos)
 	}
-	if next.Token != nil {
-		t.Fatalf("bonus token = %d, want none after EOS", tokenID(next.Token))
-	}
-	if final.DoneReason != 0 {
-		t.Fatalf("DoneReason = %d, want 0 (EOS)", final.DoneReason)
+	if len(results) != accepted {
+		t.Fatalf("results has %d tokens, want exactly the %d accepted with no bonus after EOS", len(results), accepted)
 	}
 	if position != 2 {
-		t.Fatalf("position = %d, want 2", position)
+		t.Fatalf("position = %d, want 2 (both accepted tokens committed)", position)
+	}
+	if got := caches[0].Offset(); got != 2 {
+		t.Fatalf("cache offset = %d, want 2 (both accepted tokens committed)", got)
 	}
 }
 
@@ -320,7 +320,7 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
 	// The draft mirrors the target chain, so every drafted token is accepted.
 	draft := &fakeMTPDraft{predict: predict}
-	r.Draft = draft
+	r.spec = newSpeculation(r, draft)
 
 	caches, _ := newMTPTestCaches(1)
 	session, ch := newMTPTestSession(caches)
@@ -332,9 +332,11 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 		SamplerOpts:       sampler.Options{},
 	}
-	if err := r.runMTPDecode(context.Background(), req, session, caches, []int32{1}, &position, time.Now()); err != nil {
-		t.Fatalf("runMTPDecode: %v", err)
+	d := testDecoder(r, req, caches, []int32{1}, position)
+	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		t.Fatalf("decode: %v", err)
 	}
+	d.close()
 
 	content, final := collectResponses(ch)
 	if content != "234" {
@@ -360,9 +362,10 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 	}
 
 	// Single-position drafting anchors every Draft call in a round at the
-	// last target-seen position (the current token, offset 2), while the
-	// extended token advances along the proposed chain.
-	wantDraft := []draftCall{{2, 2}, {2, 3}, {2, 4}, {2, eos}}
+	// last committed position (offset 1 — the current token at offset 2 is
+	// not yet validated), while the extended token advances along the
+	// proposed chain.
+	wantDraft := []draftCall{{1, 2}, {1, 3}, {1, 4}, {1, eos}}
 	if !slices.Equal(draft.calls, wantDraft) {
 		t.Fatalf("draft calls = %v, want %v", draft.calls, wantDraft)
 	}
@@ -377,11 +380,7 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 	const eos int32 = 7
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: eos, eos: 0}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{Temperature: 1, Seed: 42, UseSeed: true})
-	r.Draft = &fakeMTPDraft{predict: predict}
-
-	if !r.useMTP(sampler.Options{Temperature: 1}) {
-		t.Fatalf("useMTP rejected a sampled request")
-	}
+	r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict})
 
 	caches, _ := newMTPTestCaches(1)
 	session, ch := newMTPTestSession(caches)
@@ -393,9 +392,11 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 		SamplerOpts:       sampler.Options{Temperature: 1, Seed: 42, UseSeed: true},
 	}
-	if err := r.runMTPDecode(context.Background(), req, session, caches, []int32{1}, &position, time.Now()); err != nil {
-		t.Fatalf("runMTPDecode: %v", err)
+	d := testDecoder(r, req, caches, []int32{1}, position)
+	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		t.Fatalf("decode: %v", err)
 	}
+	d.close()
 
 	content, final := collectResponses(ch)
 	if content != "234" {
@@ -407,6 +408,117 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 	if got := []int32{2, 3, 4, eos}; !slices.Equal(session.outputs, got) {
 		t.Fatalf("session outputs = %v, want %v", session.outputs, got)
 	}
+}
+
+func TestDecodePlain(t *testing.T) {
+	skipIfNoMLX(t)
+	// The same chain with no speculationSession: decode's pipelined loop runs,
+	// dispatching the forward that produces the next token before the
+	// current one is emitted.
+	const eos int32 = 7
+	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: eos, eos: 0}
+	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
+
+	caches, _ := newMTPTestCaches(1)
+	session, ch := newMTPTestSession(caches)
+	position := 1
+
+	req := Request{
+		Responses:         ch,
+		Tokens:            []int32{0},
+		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+		SamplerOpts:       sampler.Options{},
+	}
+	d := testDecoder(r, req, caches, []int32{1}, position)
+	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d.close()
+
+	content, final := collectResponses(ch)
+	if content != "234" {
+		t.Fatalf("content = %q, want %q", content, "234")
+	}
+	if final.DoneReason != 0 || final.EvalCount != 3 {
+		t.Fatalf("final DoneReason = %d, EvalCount = %d, want 0 (EOS) and 3", final.DoneReason, final.EvalCount)
+	}
+	if got := []int32{2, 3, 4, eos}; !slices.Equal(session.outputs, got) {
+		t.Fatalf("session outputs = %v, want %v", session.outputs, got)
+	}
+
+	// One forward per token: the seed at offset 1, then each sampled token
+	// in turn — including the ending EOS, whose forward is already in
+	// flight when the token is checked. Every forwarded token is recorded,
+	// so the caches rest exactly at the recorded path.
+	wantForwards := []forwardCall{{1, 1}, {2, 1}, {3, 1}, {4, 1}, {5, 1}}
+	model := r.Model.(*fakeMTPModel)
+	if !slices.Equal(model.forwards, wantForwards) {
+		t.Fatalf("target forwards = %v, want %v", model.forwards, wantForwards)
+	}
+}
+
+func TestDecodeCancelledMidStream(t *testing.T) {
+	skipIfNoMLX(t)
+	// Cancelling while accepted drafts stream must leave the session
+	// consistent: every token committed to the caches is recorded in
+	// session.outputs, no speculation snapshot schedule is left pending on
+	// the shared caches, and every captured snapshot is closed.
+	const eos int32 = 7
+	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: eos}
+	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
+	r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict})
+
+	caches, tr := newMTPTestCaches(1)
+	session := &cacheSession{caches: caches}
+	ch := make(chan CompletionResponse) // unbuffered: every send must rendezvous
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-ch // the first streamed token
+		cancel()
+		// Stop reading: the next send blocks until the emit select sees
+		// the cancelled context.
+	}()
+
+	position := 0
+	req := Request{
+		Responses:         ch,
+		Tokens:            []int32{1},
+		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+		SamplerOpts:       sampler.Options{},
+	}
+	d := testDecoder(r, req, caches, []int32{1}, position)
+	err := r.decode(ctx, req, session, d, 0)
+	d.close()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("decode error = %v, want context.Canceled", err)
+	}
+
+	// Every committed token is recorded, and the caches never run ahead of
+	// the record: the final recorded output is the round's next token,
+	// emitted before it is ever forwarded, so the caches rest one short.
+	rc := caches[0].(*fakeRewindableCache)
+	if want := 1 + len(session.outputs) - 1; rc.Offset() != want {
+		t.Fatalf("cache offset = %d, want %d (seed + recorded outputs %v minus the unforwarded final)", rc.Offset(), want, session.outputs)
+	}
+	if rc.pending.offsets != nil {
+		t.Fatalf("speculation snapshot schedule left pending: %v", rc.pending.offsets)
+	}
+	for i, s := range tr.all {
+		if s.closeCount == 0 {
+			t.Fatalf("snapshot #%d [%d,%d) leaked: never closed", i, s.from, s.to)
+		}
+	}
+}
+
+// testDecoder builds the decoder TextGenerationPipeline would construct for
+// this request; tests close it explicitly so close-time effects are visible
+// to assertions.
+func testDecoder(r *Runner, req Request, caches []cache.Cache, seed []int32, position int) decoder {
+	if spec := r.spec.open(req, caches); spec != nil {
+		return spec.decoder(seed, position)
+	}
+	return r.pipelinedDecoder(caches, seed, position)
 }
 
 // newMTPTestCaches returns n rewindable fake caches sharing one snapshot
@@ -427,20 +539,41 @@ func newMTPTestSession(caches []cache.Cache) (*cacheSession, chan CompletionResp
 	return &cacheSession{caches: caches}, ch
 }
 
-// scriptedCandidates builds draft candidates by running the real generator
-// against a draft whose prediction chain, starting from seed token 0, yields
-// exactly the requested tokens. Using the real generator means the proposal
-// distributions match what acceptMTPDrafts expects.
-func scriptedCandidates(r *Runner, tokens []int32) *mtpDraftCandidates {
+// testSpeculationSession wires a speculation engine around the runner's drafter and
+// caches for tests that drive accept directly. A runner without a draft
+// model gets a no-op drafter, since the engine requires one.
+func testSpeculationSession(r *Runner, caches []cache.Cache) *speculationSession {
+	s := r.spec
+	if s == nil {
+		s = &speculation{r: r}
+	}
+	var d drafter = nopDrafter{}
+	if md := newMTPDrafter(s, caches); md != nil {
+		d = md
+	}
+	return &speculationSession{spec: s, drafter: d, caches: caches}
+}
+
+// nopDrafter satisfies drafter for engine tests that supply candidates
+// directly and never propose.
+type nopDrafter struct{}
+
+func (nopDrafter) propose(*mlx.Array, int) *draftCandidates { return nil }
+func (nopDrafter) committed(_, _ *mlx.Array, _ int)         {}
+func (nopDrafter) close()                                   {}
+
+// scriptedCandidates builds draft candidates by running the real drafter
+// against a fake whose prediction chain, starting from seed token 0, yields
+// exactly the requested tokens. Using the real drafter means the proposal
+// distributions match what the engine's acceptance expects.
+func scriptedCandidates(r *Runner, tokens []int32) *draftCandidates {
 	chain := map[int32]int32{}
 	prev := int32(0)
 	for _, tok := range tokens {
 		chain[prev] = tok
 		prev = tok
 	}
-	draft := &fakeMTPDraft{predict: chain}
-	target := r.Model.(base.MTPEmbeddingModel)
-	seed := mlx.FromValues([]int32{0}, 1, 1)
-	hidden := mlx.Zeros(mlx.DTypeFloat32, 1, 1, mtpTestVocab)
-	return r.generateMTPDraftCandidates(draft, target, seed, hidden, nil, 0, len(tokens))
+	d := &mtpDrafter{spec: &speculation{r: r}, draft: &fakeMTPDraft{predict: chain}, target: r.Model.(base.MTPEmbeddingModel)}
+	d.committed(mlx.FromValues([]int32{0}, 1, 1), mlx.Zeros(mlx.DTypeFloat32, 1, 1, mtpTestVocab), 0)
+	return d.propose(mlx.FromValues([]int32{0}, 1), len(tokens))
 }
