@@ -38,9 +38,11 @@ func (r *Runner) Prepare(request *Request) error {
 		return fmt.Errorf("input length (%d tokens) exceeds the model's maximum context length (%d tokens)", len(tokens), r.contextLength)
 	}
 
-	// Cap generation to stay within the model's context length
+	// Cap generation to stay within the model's context length. A negative
+	// num_predict (the default is -1) means "generate to the context limit";
+	// zero is preserved and means prefill-only (no decode) for profiling.
 	maxGenerate := r.contextLength - len(tokens)
-	if request.Options.NumPredict <= 0 {
+	if request.Options.NumPredict < 0 {
 		request.Options.NumPredict = maxGenerate
 	} else {
 		request.Options.NumPredict = min(request.Options.NumPredict, maxGenerate)
@@ -107,6 +109,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	now := time.Now()
 	total, processed := len(tokens), 0
 	position := len(inputs) - len(tokens)
+	mlx.ProfileRangePush("prefill")
 	for total-processed > 1 {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -144,6 +147,27 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 		mlx.ClearCache()
 	}
+	mlx.ProfileRangePop() // prefill
+
+	// Prefill-only (num_predict==0): materialize the prompt's KV state so the
+	// prefill compute actually executes under a profiler, then stop before any
+	// decode or sampling. This yields a clean, single-phase prefill capture.
+	if request.Options.NumPredict == 0 {
+		materializeCaches()
+		final := CompletionResponse{
+			Done:               true,
+			DoneReason:         1,
+			PromptEvalCount:    len(inputs),
+			PromptEvalDuration: time.Since(now),
+			EvalCount:          0,
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case request.Responses <- final:
+			return nil
+		}
+	}
 
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
@@ -171,6 +195,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		return sample
 	}
 
+	mlx.ProfileRangePush("decode")
 	sample = step(mlx.FromValues(tokens[processed:], 1, total-processed))
 	logutil.TraceContext(ctx, "mlx decode seed", "tokens", total-processed, "memory", mlx.Memory{})
 
@@ -200,7 +225,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			logutil.TraceContext(ctx, "mlx decode first token", "memory", mlx.Memory{})
 		}
 
-		if r.Tokenizer.IsEOS(output) {
+		if !request.IgnoreEOS && r.Tokenizer.IsEOS(output) {
 			final.DoneReason = 0
 			final.EvalCount = i
 			break
@@ -221,6 +246,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			mlx.ClearCache()
 		}
 	}
+	mlx.ProfileRangePop() // decode
 
 	final.EvalDuration = time.Since(now)
 	select {

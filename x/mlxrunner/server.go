@@ -26,13 +26,17 @@ func Execute(args []string) error {
 	var (
 		modelName string
 		port      int
+		profile   bool
 	)
 
 	flagSet := flag.NewFlagSet("mlxrunner", flag.ExitOnError)
 	flagSet.StringVar(&modelName, "model", "", "Model name")
 	flagSet.IntVar(&port, "port", 0, "Port to listen on")
+	flagSet.BoolVar(&profile, "profile", false, "Emit GPU profiler phase markers (os_signpost/NVTX) around prefill and decode")
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
+
+	mlx.SetProfilingEnabled(profile)
 
 	worker, err := mlxthread.Start("mlxrunner", func() error {
 		if err := mlx.CheckInit(); err != nil {

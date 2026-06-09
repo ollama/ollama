@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -33,6 +34,20 @@ type flagOptions struct {
 	warmup       *int
 	promptTokens *int
 	numCtx       *int
+
+	// Target selection. When -runner is empty and -spawn is false, bench drives
+	// the full ollama server via the public API (legacy default). When -runner
+	// is set, bench probes it and auto-detects whether it is an MLX runner or a
+	// llama-server.
+	runner *string // host:port of a runner (MLX or llama-server) to drive directly
+
+	// MLX-runner spawn options (only when -runner is empty).
+	spawn     *bool
+	ollamaBin *string
+
+	// Profiling controls.
+	mode      *string // prefill | decode | both
+	ignoreEOS *bool   // disable stop tokens so generation runs exactly maxTokens
 }
 
 type Metrics struct {
@@ -50,6 +65,55 @@ type ModelInfo struct {
 	SizeBytes         int64
 	VRAMBytes         int64
 	NumCtx            int64
+}
+
+// Benchmark modes. prefill and decode produce single-phase workloads for clean
+// profiler capture windows; both is the legacy mixed run.
+const (
+	modePrefill = "prefill"
+	modeDecode  = "decode"
+	modeBoth    = "both"
+)
+
+// completionParams is the backend-agnostic description of one completion call.
+type completionParams struct {
+	prompt      string
+	numPredict  int // 0 = prefill-only
+	temperature float64
+	seed        int
+	numCtx      int
+	ignoreEOS   bool
+	image       api.ImageData
+	debug       bool
+}
+
+// completionResult carries the timing data every backend reports. Fields a
+// backend cannot supply are left zero.
+type completionResult struct {
+	promptEvalCount    int
+	promptEvalDuration time.Duration
+	evalCount          int
+	evalDuration       time.Duration
+	ttft               time.Duration
+	loadDuration       time.Duration
+	totalDuration      time.Duration
+}
+
+// errNoMetrics signals that a completion finished without delivering a final
+// (Done) metrics record, so its timings are unusable.
+var errNoMetrics = errors.New("no metrics received")
+
+// benchBackend abstracts the thing under test: the full ollama server, an MLX
+// runner driven directly, or a llama-server driven directly.
+type benchBackend interface {
+	// Name identifies the backend for logging.
+	Name() string
+	// ModelInfo returns best-effort display metadata.
+	ModelInfo(ctx context.Context, fOpt flagOptions) ModelInfo
+	// Complete runs one completion and returns its timing metrics.
+	Complete(ctx context.Context, p completionParams) (completionResult, error)
+	// Cleanup tears the backend down (unload model, kill spawned subprocess).
+	Cleanup(timeout int)
 }
 
 const DefaultPrompt = `Please write a descriptive story about a llama named Alonso who grows up to be President of the Land of Llamas. Include details about Alonso's childhood, adolescent years, and how he grew up to be a political mover and shaker. Write the story with a sense of whimsy.`
@@ -97,46 +161,61 @@ func calibratePromptTokens(targetTokens, actualTokens, wordCount int) {
 		tokensPerWord, targetTokens, actualTokens, wordCount, newWords)
 }
 
-func buildGenerateRequest(model string, fOpt flagOptions, imgData api.ImageData, epoch int) *api.GenerateRequest {
-	options := make(map[string]interface{})
-	if *fOpt.maxTokens > 0 {
-		options["num_predict"] = *fOpt.maxTokens
-	}
-	options["temperature"] = *fOpt.temperature
-	if fOpt.seed != nil && *fOpt.seed > 0 {
-		options["seed"] = *fOpt.seed
-	}
-	if fOpt.numCtx != nil && *fOpt.numCtx > 0 {
-		options["num_ctx"] = *fOpt.numCtx
+// buildParams derives the completion parameters for one epoch, shaping the
+// prompt, num_predict, and ignore_eos according to the benchmark mode:
+//
+//   - prefill: vary the prompt per epoch (force a cache miss) and request
+//     num_predict 0 so only the prompt is processed.
+//   - decode: hold the prompt fixed across epochs so the runner's prefix cache
+//     hits and the measured window is pure decode.
+//   - both: legacy mixed run, prompt varied per epoch.
+//
+// numPredict convention: -1 = generate to the context limit, 0 = prefill-only,
+// N>0 = exactly N tokens.
+func buildParams(fOpt flagOptions, mode string, imgData api.ImageData, epoch int) completionParams {
+	// decode mode keeps the prompt identical so the KV prefix cache hits;
+	// prefill/both vary it per epoch to defeat the cache.
+	promptEpoch := epoch
+	if mode == modeDecode {
+		promptEpoch = 0
 	}
 
-	var keepAliveDuration *api.Duration
-	if *fOpt.keepAlive > 0 {
-		duration := api.Duration{Duration: time.Duration(*fOpt.keepAlive * float64(time.Second))}
-		keepAliveDuration = &duration
-	}
-
-	prompt := *fOpt.prompt
+	var prompt string
 	if *fOpt.promptTokens > 0 {
-		prompt = generatePromptForTokenCount(*fOpt.promptTokens, epoch)
+		prompt = generatePromptForTokenCount(*fOpt.promptTokens, promptEpoch)
+	} else if mode == modeDecode {
+		prompt = *fOpt.prompt
 	} else {
-		// Vary the prompt per epoch to defeat KV cache prefix matching
-		prompt = fmt.Sprintf("[%d] %s", epoch, prompt)
+		prompt = fmt.Sprintf("[%d] %s", epoch, *fOpt.prompt)
 	}
 
-	req := &api.GenerateRequest{
-		Model:     model,
-		Prompt:    prompt,
-		Raw:       true,
-		Options:   options,
-		KeepAlive: keepAliveDuration,
+	numPredict := -1
+	if *fOpt.maxTokens > 0 {
+		numPredict = *fOpt.maxTokens
+	}
+	if mode == modePrefill {
+		numPredict = 0
 	}
 
-	if imgData != nil {
-		req.Images = []api.ImageData{imgData}
+	seed := 0
+	if fOpt.seed != nil {
+		seed = *fOpt.seed
+	}
+	numCtx := 0
+	if fOpt.numCtx != nil {
+		numCtx = *fOpt.numCtx
 	}
 
-	return req
+	return completionParams{
+		prompt:      prompt,
+		numPredict:  numPredict,
+		temperature: *fOpt.temperature,
+		seed:        seed,
+		numCtx:      numCtx,
+		ignoreEOS:   *fOpt.ignoreEOS && mode != modePrefill,
+		image:       imgData,
+		debug:       *fOpt.debug,
+	}
 }
 
 func fetchModelInfo(ctx context.Context, client *api.Client, model string) ModelInfo {
@@ -258,7 +337,10 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 }
 
 func BenchmarkModel(fOpt flagOptions) error {
-	models := strings.Split(*fOpt.models, ",")
+	mode := *fOpt.mode
+	if mode != modePrefill && mode != modeDecode && mode != modeBoth {
+		return fmt.Errorf("unknown -mode %q (want prefill|decode|both)", mode)
+	}
 
 	var imgData api.ImageData
 	var err error
@@ -268,16 +350,9 @@ func BenchmarkModel(fOpt flagOptions) error {
 			fmt.Fprintf(os.Stderr, "ERROR: Couldn't read image '%s': %v\n", *fOpt.imageFile, err)
 			return err
 		}
-	}
-
-	if *fOpt.debug && imgData != nil {
-		fmt.Fprintf(os.Stderr, "Read file '%s'\n", *fOpt.imageFile)
-	}
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Couldn't create ollama client: %v\n", err)
-		return err
+		if *fOpt.debug {
+			fmt.Fprintf(os.Stderr, "Read file '%s'\n", *fOpt.imageFile)
+		}
 	}
 
 	var out io.Writer = os.Stdout
@@ -293,208 +368,227 @@ func BenchmarkModel(fOpt flagOptions) error {
 
 	outputFormatHeader(out, *fOpt.format, *fOpt.verbose)
 
-	// Log prompt-tokens info in debug mode
 	if *fOpt.debug && *fOpt.promptTokens > 0 {
 		prompt := generatePromptForTokenCount(*fOpt.promptTokens, 0)
-		wordCount := len(strings.Fields(prompt))
-		fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (%d words, varied per epoch)\n", *fOpt.promptTokens, wordCount)
+		fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (%d words)\n", *fOpt.promptTokens, len(strings.Fields(prompt)))
 	}
 
-	for _, model := range models {
-		// Fetch model info
-		infoCtx, infoCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		info := fetchModelInfo(infoCtx, client, model)
-		infoCancel()
-
-		// Warmup phase (uses negative epoch numbers to avoid colliding with timed epochs)
-		for i := range *fOpt.warmup {
-			req := buildGenerateRequest(model, fOpt, imgData, -(i + 1))
-			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
-
-			var warmupMetrics *api.Metrics
-			err = client.Generate(ctx, req, func(resp api.GenerateResponse) error {
-				if resp.Done {
-					warmupMetrics = &resp.Metrics
-				}
-				return nil
-			})
-			cancel()
-
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "WARNING: Warmup %d/%d for %s failed: %v\n", i+1, *fOpt.warmup, model, err)
-			} else {
-				if *fOpt.debug {
-					fmt.Fprintf(os.Stderr, "Warmup %d/%d for %s complete\n", i+1, *fOpt.warmup, model)
-				}
-				// Calibrate prompt token count on last warmup run
-				if i == *fOpt.warmup-1 && *fOpt.promptTokens > 0 && warmupMetrics != nil {
-					prompt := generatePromptForTokenCount(*fOpt.promptTokens, -(i + 1))
-					wordCount := len(strings.Fields(prompt))
-					calibratePromptTokens(*fOpt.promptTokens, warmupMetrics.PromptEvalCount, wordCount)
-				}
-			}
+	// Direct backends serve a single, already-loaded model; the -model value is
+	// just a label. With -runner set, bench probes the endpoint and auto-detects
+	// MLX runner vs llama-server. The serve path iterates the comma-separated
+	// model list as before.
+	switch {
+	case *fOpt.runner != "" || *fOpt.spawn:
+		backend, err := newDirectBackend(fOpt)
+		if err != nil {
+			return err
 		}
-
-		// Fetch memory/context info once after warmup (model is loaded and stable)
-		memCtx, memCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		info.SizeBytes, info.VRAMBytes = fetchMemoryUsage(memCtx, client, model)
-		if fOpt.numCtx != nil && *fOpt.numCtx > 0 {
-			info.NumCtx = int64(*fOpt.numCtx)
-		} else {
-			info.NumCtx = fetchContextLength(memCtx, client, model)
+		defer backend.Cleanup(*fOpt.timeout)
+		runBenchmark(out, backend, fOpt, mode, imgData, *fOpt.models)
+	default:
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Couldn't create ollama client: %v\n", err)
+			return err
 		}
-		memCancel()
-
-		outputModelInfo(out, *fOpt.format, info)
-
-		// Timed epoch loop
-		shortCount := 0
-		for epoch := range *fOpt.epochs {
-			var responseMetrics *api.Metrics
-			var ttft time.Duration
-			short := false
-
-			// Retry loop: if the model hits a stop token before max-tokens,
-			// retry with a different prompt (up to maxRetries times).
-			const maxRetries = 3
-			for attempt := range maxRetries + 1 {
-				responseMetrics = nil
-				ttft = 0
-				var ttftOnce sync.Once
-
-				req := buildGenerateRequest(model, fOpt, imgData, epoch+attempt*1000)
-				requestStart := time.Now()
-
-				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
-
-				err = client.Generate(ctx, req, func(resp api.GenerateResponse) error {
-					if *fOpt.debug {
-						fmt.Fprintf(os.Stderr, "%s", cmp.Or(resp.Thinking, resp.Response))
-					}
-
-					// Capture TTFT on first content
-					ttftOnce.Do(func() {
-						if resp.Response != "" || resp.Thinking != "" {
-							ttft = time.Since(requestStart)
-						}
-					})
-
-					if resp.Done {
-						responseMetrics = &resp.Metrics
-					}
-					return nil
-				})
-				cancel()
-
-				if *fOpt.debug {
-					fmt.Fprintln(os.Stderr)
-				}
-
-				if err != nil {
-					if ctx.Err() == context.DeadlineExceeded {
-						fmt.Fprintf(os.Stderr, "ERROR: Request timed out with model '%s' after %vs\n", model, *fOpt.timeout)
-					} else {
-						fmt.Fprintf(os.Stderr, "ERROR: Couldn't generate with model '%s': %v\n", model, err)
-					}
-					break
-				}
-
-				if responseMetrics == nil {
-					fmt.Fprintf(os.Stderr, "ERROR: No metrics received for model '%s'\n", model)
-					break
-				}
-
-				// Check if the response was shorter than requested
-				short = *fOpt.maxTokens > 0 && responseMetrics.EvalCount < *fOpt.maxTokens
-				if !short || attempt == maxRetries {
-					break
-				}
-
-				if *fOpt.debug {
-					fmt.Fprintf(os.Stderr, "Short response (%d/%d tokens), retrying with different prompt (attempt %d/%d)\n",
-						responseMetrics.EvalCount, *fOpt.maxTokens, attempt+1, maxRetries)
-				}
-			}
-
-			if err != nil || responseMetrics == nil {
-				continue
-			}
-
-			if short {
-				shortCount++
-				if *fOpt.debug {
-					fmt.Fprintf(os.Stderr, "WARNING: Short response (%d/%d tokens) after %d retries for epoch %d\n",
-						responseMetrics.EvalCount, *fOpt.maxTokens, maxRetries, epoch+1)
-				}
-			}
-
-			metrics := []Metrics{
-				{
-					Model:    model,
-					Step:     "prefill",
-					Count:    responseMetrics.PromptEvalCount,
-					Duration: responseMetrics.PromptEvalDuration,
-				},
-				{
-					Model:    model,
-					Step:     "generate",
-					Count:    responseMetrics.EvalCount,
-					Duration: responseMetrics.EvalDuration,
-				},
-				{
-					Model:    model,
-					Step:     "ttft",
-					Count:    1,
-					Duration: ttft,
-				},
-				{
-					Model:    model,
-					Step:     "load",
-					Count:    1,
-					Duration: responseMetrics.LoadDuration,
-				},
-				{
-					Model:    model,
-					Step:     "total",
-					Count:    1,
-					Duration: responseMetrics.TotalDuration,
-				},
-			}
-
-			OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
-
-			if *fOpt.debug && *fOpt.promptTokens > 0 {
-				fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (actual: %d)\n",
-					*fOpt.promptTokens, responseMetrics.PromptEvalCount)
-			}
-
-			if *fOpt.keepAlive > 0 {
-				time.Sleep(time.Duration(*fOpt.keepAlive*float64(time.Second)) + 200*time.Millisecond)
-			}
+		for _, model := range strings.Split(*fOpt.models, ",") {
+			backend := &serveBackend{client: client, model: model}
+			runBenchmark(out, backend, fOpt, mode, imgData, model)
+			backend.Cleanup(*fOpt.timeout)
 		}
-
-		if shortCount > 0 {
-			fmt.Fprintf(os.Stderr, "WARNING: %d/%d epochs for '%s' had short responses (<%d tokens). Generation metrics may be unreliable.\n",
-				shortCount, *fOpt.epochs, model, *fOpt.maxTokens)
-		}
-
-		// Unload model before moving to the next one
-		unloadModel(client, model, *fOpt.timeout)
 	}
 
 	return nil
 }
 
-func unloadModel(client *api.Client, model string, timeout int) {
+// runBenchmark drives one backend: warmup (+ calibration and decode-cache
+// priming), then the timed epoch loop, emitting metrics through OutputMetrics.
+func runBenchmark(out io.Writer, backend benchBackend, fOpt flagOptions, mode string, imgData api.ImageData, model string) {
+	timeout := time.Duration(*fOpt.timeout) * time.Second
+
+	// Warmup. In decode mode the prompt is fixed, so warmup also primes the
+	// runner's prefix cache for the timed epochs.
+	for i := range *fOpt.warmup {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		res, err := backend.Complete(ctx, buildParams(fOpt, mode, imgData, -(i+1)))
+		cancel()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: Warmup %d/%d for %s failed: %v\n", i+1, *fOpt.warmup, model, err)
+			continue
+		}
+		if *fOpt.debug {
+			fmt.Fprintf(os.Stderr, "Warmup %d/%d for %s complete\n", i+1, *fOpt.warmup, model)
+		}
+		if i == *fOpt.warmup-1 && *fOpt.promptTokens > 0 && res.promptEvalCount > 0 {
+			prompt := generatePromptForTokenCount(*fOpt.promptTokens, -(i + 1))
+			calibratePromptTokens(*fOpt.promptTokens, res.promptEvalCount, len(strings.Fields(prompt)))
+		}
+	}
+
+	// Decode mode needs a primed cache; if the user disabled warmup, prime once.
+	if mode == modeDecode && *fOpt.warmup == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		if _, err := backend.Complete(ctx, buildParams(fOpt, mode, imgData, 0)); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: decode prime for %s failed: %v\n", model, err)
+		}
+		cancel()
+	}
+
+	info := backend.ModelInfo(context.Background(), fOpt)
+	outputModelInfo(out, *fOpt.format, info)
+
+	shortCount := 0
+	for epoch := range *fOpt.epochs {
+		var res completionResult
+		var err error
+		short := false
+
+		// Retry only matters when stop tokens can truncate generation: not in
+		// prefill mode and not when ignore_eos guarantees the full count.
+		const maxRetries = 3
+		for attempt := range maxRetries + 1 {
+			p := buildParams(fOpt, mode, imgData, epoch+attempt*1000)
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			res, err = backend.Complete(ctx, p)
+			timedOut := ctx.Err() == context.DeadlineExceeded
+			cancel()
+
+			if err != nil {
+				switch {
+				case errors.Is(err, errNoMetrics):
+					fmt.Fprintf(os.Stderr, "ERROR: No metrics received for model '%s'\n", model)
+				case timedOut:
+					fmt.Fprintf(os.Stderr, "ERROR: Request timed out with model '%s' after %vs\n", model, *fOpt.timeout)
+				default:
+					fmt.Fprintf(os.Stderr, "ERROR: Couldn't generate with model '%s': %v\n", model, err)
+				}
+				break
+			}
+
+			canRetry := !p.ignoreEOS && p.numPredict > 0
+			short = canRetry && res.evalCount < p.numPredict
+			if !short || attempt == maxRetries {
+				break
+			}
+			if *fOpt.debug {
+				fmt.Fprintf(os.Stderr, "Short response (%d/%d tokens), retrying (attempt %d/%d)\n",
+					res.evalCount, p.numPredict, attempt+1, maxRetries)
+			}
+		}
+
+		if err != nil {
+			continue
+		}
+		if short {
+			shortCount++
+		}
+
+		metrics := []Metrics{
+			{Model: model, Step: "prefill", Count: res.promptEvalCount, Duration: res.promptEvalDuration},
+			{Model: model, Step: "generate", Count: res.evalCount, Duration: res.evalDuration},
+			{Model: model, Step: "ttft", Count: 1, Duration: res.ttft},
+			{Model: model, Step: "load", Count: 1, Duration: res.loadDuration},
+			{Model: model, Step: "total", Count: 1, Duration: res.totalDuration},
+		}
+		OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
+
+		if *fOpt.debug && *fOpt.promptTokens > 0 {
+			fmt.Fprintf(os.Stderr, "Prompt targeting ~%d tokens (actual: %d)\n", *fOpt.promptTokens, res.promptEvalCount)
+		}
+
+		if *fOpt.keepAlive > 0 {
+			time.Sleep(time.Duration(*fOpt.keepAlive*float64(time.Second)) + 200*time.Millisecond)
+		}
+	}
+
+	if shortCount > 0 {
+		fmt.Fprintf(os.Stderr, "WARNING: %d/%d epochs for '%s' had short responses (<%d tokens). Use -ignore-eos for exact counts.\n",
+			shortCount, *fOpt.epochs, model, *fOpt.maxTokens)
+	}
+}
+
+// serveBackend drives the full ollama server through the public API (the legacy
+// default target).
+type serveBackend struct {
+	client *api.Client
+	model  string
+}
+
+func (b *serveBackend) Name() string { return "ollama-serve" }
+
+func (b *serveBackend) Complete(ctx context.Context, p completionParams) (completionResult, error) {
+	options := map[string]any{"temperature": p.temperature}
+	// num_predict convention: 0 = prefill-only, N>0 = exact; negative means
+	// "unlimited", which we express by leaving the option unset.
+	if p.numPredict >= 0 {
+		options["num_predict"] = p.numPredict
+	}
+	if p.seed > 0 {
+		options["seed"] = p.seed
+	}
+	if p.numCtx > 0 {
+		options["num_ctx"] = p.numCtx
+	}
+
+	req := &api.GenerateRequest{
+		Model:   b.model,
+		Prompt:  p.prompt,
+		Raw:     true,
+		Options: options,
+	}
+	if p.image != nil {
+		req.Images = []api.ImageData{p.image}
+	}
+
+	requestStart := time.Now()
+	var res completionResult
+	var ttftOnce sync.Once
+	gotDone := false
+	err := b.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+		if p.debug {
+			fmt.Fprintf(os.Stderr, "%s", cmp.Or(resp.Thinking, resp.Response))
+		}
+		ttftOnce.Do(func() {
+			if resp.Response != "" || resp.Thinking != "" {
+				res.ttft = time.Since(requestStart)
+			}
+		})
+		if resp.Done {
+			gotDone = true
+			res.promptEvalCount = resp.Metrics.PromptEvalCount
+			res.promptEvalDuration = resp.Metrics.PromptEvalDuration
+			res.evalCount = resp.Metrics.EvalCount
+			res.evalDuration = resp.Metrics.EvalDuration
+			res.loadDuration = resp.Metrics.LoadDuration
+			res.totalDuration = resp.Metrics.TotalDuration
+		}
+		return nil
+	})
+	if p.debug {
+		fmt.Fprintln(os.Stderr)
+	}
+	if err == nil && !gotDone {
+		return res, errNoMetrics
+	}
+	return res, err
+}
+
+func (b *serveBackend) ModelInfo(ctx context.Context, fOpt flagOptions) ModelInfo {
+	info := fetchModelInfo(ctx, b.client, b.model)
+	info.SizeBytes, info.VRAMBytes = fetchMemoryUsage(ctx, b.client, b.model)
+	if fOpt.numCtx != nil && *fOpt.numCtx > 0 {
+		info.NumCtx = int64(*fOpt.numCtx)
+	} else {
+		info.NumCtx = fetchContextLength(ctx, b.client, b.model)
+	}
+	return info
+}
+
+func (b *serveBackend) Cleanup(timeout int) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
-
 	zero := api.Duration{Duration: 0}
-	req := &api.GenerateRequest{
-		Model:     model,
-		KeepAlive: &zero,
-	}
-	_ = client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	_ = b.client.Generate(ctx, &api.GenerateRequest{Model: b.model, KeepAlive: &zero}, func(api.GenerateResponse) error {
 		return nil
 	})
 }
@@ -532,6 +626,12 @@ func main() {
 		warmup:       flag.Int("warmup", 1, "Number of warmup requests before timing"),
 		promptTokens: flag.Int("prompt-tokens", 0, "Generate prompt targeting ~N tokens (0 = use -p prompt)"),
 		numCtx:       flag.Int("num-ctx", 0, "Context size (0 = server default)"),
+
+		runner:    flag.String("runner", "", "Drive a runner directly at host:port, bypassing ollama serve (auto-detects MLX runner vs llama-server)"),
+		spawn:     flag.Bool("spawn", false, "Spawn the runner subprocess: MLX runner for an MLX model, or llama-server for a GGUF model/path"),
+		ollamaBin: flag.String("ollama", "", "Path to the ollama binary for -spawn (default: PATH or this executable)"),
+		mode:      flag.String("mode", "both", "Benchmark mode [prefill|decode|both]"),
+		ignoreEOS: flag.Bool("ignore-eos", false, "Disable stop tokens so generation runs exactly -max-tokens (direct backends only)"),
 	}
 
 	flag.Usage = func() {
@@ -541,8 +641,18 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "  # Benchmark via ollama serve (default)\n")
 		fmt.Fprintf(os.Stderr, "  bench -model gemma3,llama3 -epochs 6\n")
-		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -epochs 6 -prompt-tokens 512 -format csv\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -epochs 6 -prompt-tokens 512 -format csv\n\n")
+		fmt.Fprintf(os.Stderr, "  # Profile an MLX runner directly. Start it under a profiler first, e.g.\n")
+		fmt.Fprintf(os.Stderr, "  #   ollama runner --mlx-engine --model gemma3 --port 8081 --profile\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -runner 127.0.0.1:8081 -mode prefill -prompt-tokens 2048\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -runner 127.0.0.1:8081 -mode decode  -prompt-tokens 2048 -max-tokens 128 -ignore-eos\n\n")
+		fmt.Fprintf(os.Stderr, "  # Spawn the runner for a quick (unprofiled) direct benchmark\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -spawn -mode decode -ignore-eos               # MLX model -> MLX runner\n")
+		fmt.Fprintf(os.Stderr, "  bench -model llama3.2:latest -spawn -mode decode -ignore-eos      # GGUF model -> llama-server\n\n")
+		fmt.Fprintf(os.Stderr, "  # Compare against an already-running llama-server (same -runner flag; auto-detected)\n")
+		fmt.Fprintf(os.Stderr, "  bench -model llama3.2 -runner 127.0.0.1:8091 -mode decode -ignore-eos\n")
 	}
 	flag.Parse()
 

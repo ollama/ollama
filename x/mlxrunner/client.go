@@ -28,6 +28,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/manifest"
+	"github.com/ollama/ollama/x/mlxrunner/wire"
 )
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
@@ -95,27 +96,14 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 	}
 }
 
-type CompletionRequest struct {
-	Prompt      string
-	Options     api.Options
-	Logprobs    bool
-	TopLogprobs int
-}
-
-type CompletionResponse struct {
-	Content    string
-	Done       bool
-	DoneReason int
-
-	PromptEvalCount    int
-	PromptEvalDuration time.Duration
-	EvalCount          int
-	EvalDuration       time.Duration
-
-	Logprobs []llm.Logprob
-
-	Error *api.StatusError
-}
+// CompletionRequest and CompletionResponse are the runner's HTTP wire types.
+// They live in the cgo-free wire package so tools like cmd/bench can import
+// them without pulling in the MLX runtime; these aliases keep the existing
+// runner call sites unqualified.
+type (
+	CompletionRequest  = wire.CompletionRequest
+	CompletionResponse = wire.CompletionResponse
+)
 
 // Close terminates the subprocess.
 func (c *Client) Close() error {
