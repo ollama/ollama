@@ -316,6 +316,12 @@ func TestModelCapabilities(t *testing.T) {
 		"bert.pooling_type":    uint32(1),
 	}, []*ggml.Tensor{})
 
+	visionImplicitProjectorPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":   "clip",
+		"clip.projector_type":    "some_implicit_vision_projector",
+		"clip.block_count": uint32(1),
+	}, []*ggml.Tensor{})
+
 	audioProjectorPath, _ := createBinFile(t, ggml.KV{
 		"general.architecture":   "clip",
 		"clip.has_audio_encoder": true,
@@ -485,6 +491,15 @@ func TestModelCapabilities(t *testing.T) {
 				Template:       chatTemplate,
 			},
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio},
+		},
+		{
+			name: "model with audio projector and implicit vision capability",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioProjectorPath, visionImplicitProjectorPath},
+				Template:       chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio, model.CapabilityVision},
 		},
 		{
 			name: "model with audio and vision projector capability",
