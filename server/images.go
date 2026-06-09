@@ -506,6 +506,12 @@ func projectorHasAudio(f *gguf.File) bool {
 }
 
 func projectorHasVision(f *gguf.File) bool {
+	// Handle explicit bool before checking for implicit vision KVs
+	for _, kv := range f.KeyValues() {
+		if strings.Contains(kv.Key, "has_vision_encoder") {
+			return kv.Bool()
+		}
+	}
 	for _, kv := range f.KeyValues() {
 		if strings.Contains(kv.Key, "vision") {
 			return true
