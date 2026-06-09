@@ -317,6 +317,13 @@ func TestModelCapabilities(t *testing.T) {
 	}, []*ggml.Tensor{})
 
 	audioProjectorPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":   "clip",
+		"clip.has_audio_encoder": true,
+		"clip.projector_type":    "granite_speech",
+		"clip.audio.block_count": uint32(1),
+	}, []*ggml.Tensor{})
+
+	audioAndVisionProjectorPath, _ := createBinFile(t, ggml.KV{
 		"general.architecture":    "clip",
 		"clip.has_audio_encoder":  true,
 		"vision.projector_type":   "pixtral",
@@ -454,13 +461,22 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityEmbedding},
 		},
 		{
-			name: "model with audio projector capability",
+			name: "model with audio projector only capability",
 			model: Model{
 				ModelPath:      completionModelPath,
 				ProjectorPaths: []string{audioProjectorPath},
 				Template:       chatTemplate,
 			},
-			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio},
+		},
+		{
+			name: "model with audio and vision projector capability",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioAndVisionProjectorPath},
+				Template:       chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio, model.CapabilityVision},
 		},
 		{
 			name: "model with parser and projector capabilities without template",
@@ -471,7 +487,7 @@ func TestModelCapabilities(t *testing.T) {
 					Parser: "functiongemma",
 				},
 			},
-			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio, model.CapabilityTools},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio, model.CapabilityTools},
 		},
 		{
 			name: "gemma4 projector exposes audio capability",
@@ -486,7 +502,7 @@ func TestModelCapabilities(t *testing.T) {
 			name: "gemma4 gguf exposes audio capability",
 			model: Model{
 				ModelPath:      completionModelPath,
-				ProjectorPaths: []string{audioProjectorPath},
+				ProjectorPaths: []string{audioAndVisionProjectorPath},
 				Config: model.ConfigV2{
 					Renderer:     gemma4RendererSmall,
 					Capabilities: []string{"audio"},
@@ -507,7 +523,7 @@ func TestModelCapabilities(t *testing.T) {
 			name: "nemotron3 projector suppresses audio capability",
 			model: Model{
 				ModelPath:      completionModelPath,
-				ProjectorPaths: []string{audioProjectorPath},
+				ProjectorPaths: []string{audioAndVisionProjectorPath},
 				Config: model.ConfigV2{
 					ModelFamily: "nemotron_h_omni",
 				},
