@@ -387,33 +387,10 @@ func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.C
 		return capabilities
 	}
 
-	hasAudio := false
-	hasVision := false
 	for _, projectorPath := range m.ProjectorPaths {
-		f, err := gguf.Open(projectorPath)
-		if err != nil {
-			slog.Error("couldn't open projector file", "error", err)
-			continue
+		for _, capability := range projectorCapabilities(projectorPath) {
+			capabilities = appendCapability(capabilities, capability)
 		}
-		projHasAudio := projectorHasAudio(f) && !projectorSuppressesAudioCapability(f)
-		projHasVision := projectorHasVision(f)
-
-		// If the projector has neither explicitly, assume it has vision
-		if projHasVision || !projHasAudio {
-			hasVision = true
-		}
-		if projHasAudio {
-			hasAudio = true
-		}
-
-		f.Close()
-	}
-
-	if hasVision {
-		capabilities = appendCapability(capabilities, model.CapabilityVision)
-	}
-	if hasAudio {
-		capabilities = appendCapability(capabilities, model.CapabilityAudio)
 	}
 
 	return capabilities
@@ -532,6 +509,29 @@ func projectorSuppressesAudioCapability(f *gguf.File) bool {
 	}
 
 	return false
+}
+
+func projectorCapabilities(projectorPath string) []model.Capability {
+	var capabilities []model.Capability
+	f, err := gguf.Open(projectorPath)
+	if err != nil {
+		slog.Error("couldn't open projector file", "error", err)
+		return capabilities
+	}
+	defer f.Close()
+
+	projHasAudio := projectorHasAudio(f) && !projectorSuppressesAudioCapability(f)
+	projHasVision := projectorHasVision(f)
+
+	// If the projector has neither explicitly, assume it has vision
+	if projHasVision || !projHasAudio {
+		capabilities = appendCapability(capabilities, model.CapabilityVision)
+	}
+	if projHasAudio {
+		capabilities = appendCapability(capabilities, model.CapabilityAudio)
+	}
+
+	return capabilities
 }
 
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing
