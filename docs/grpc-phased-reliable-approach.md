@@ -321,6 +321,107 @@ Use consistent keys; propagate ids via ctx where possible. This will lift covera
 ### Refined Phase 5: Advanced/Optional — Effort: L (post-MVP, 1-2w+)
 **As Plan p546 (cmux opt-in OLLAMA_GRPC_SAMEPORT=1 with soheilhy/cmux + thorough soak; full admin streams; image/video deferred; Buf CI in .github; official clients; richer protos per xai; mTLS auth; load tests; etc.).**  
 **Reliable overlay (mandatory if done):** *Higher scrutiny*: full errgroup/bounded for cmux; ctx everywhere; *new* log sites + re-run logloom; table tests + -race + golangci for all; no globals; reconciliation if new workers; review subagent *required* before landing (high risk to existing per Plan); todo_write for the whole; "stop if" any reliable violation or HTTP regression in soak. Defer until stable (Plan agrees). Planning for cmux etc separate from exec.
+# [slog] component=phased-doc reason="Phase4 item10 'Other per doc (image/video deferred, official clients, richer protos, Buf CI enhancements, performance/bounded streams...)' per report sec4.10 + p95/10 + p321: Buf CI enhanced (edit existing .github/workflows/test.yaml buf: job + proto_changed for targeted lint/generate drift on proto changes; leverages P2 buf generate + changes job); perf/bounded streams skeleton (grpc.go comments note cap64 + ctx selects + sched MaxQueue + no flowctrl yet); richer protos TODOs cleaned (addressed P2/P3 fuller conv+expanded tables in grpc_test; see convert* + grpc.go:405); image/video/official noted deferred (p322); see also grpc.go:1101 note + test.yaml buf comments. Provides status for verif/gates p379/p381. Rich reason keys for audit per p374/p57." stream_id=n/a dur=0 status=phased-status-update-for-item10 model=n/a rpc=n/a ref=phased-p321-p322-p323-p334-p374-p379-p381 report-p97
+
+---
+
+### Sameport Soak + Hardening (report sec4 item 5; Phase 5 opt-in only)
+**Assigned finding:** "Sameport soak + hardening: Long-running dual (HTTP + gRPC concurrent streams same model), mid-gen cancel on sameport, pprof no leak, lsof/conn counts, agent-like long-lived clients. Address any cmux edge cases. (high-risk per doc p323 'review subagent *required* before landing'; thorough soak; opt-in only until stable)."
+
+**Current status (post Phase1/2 + cmd hardening + Phase 5 review/fix loop):** cmux sameport implemented (cmd/cmd.go RunServer:2049 if GRPCSamePort(); errgroup.SetLimit(3) for 3 owned g.Go (httpL, ServeGRPC on matched grpcL, cmux.Serve); signals do cmuxMux.Close() + httpSrv.Close() + cancel + UnloadAllRunners(); rich reason/component logs at "grpc sameport decision", "cmux created", "cmux matchers configured", "cmux serve starting" (Flume style per P1/2 + SKILL p34/57); isClosedErr hardened (uses errors.Is for net.ErrClosed + http.ErrServerClosed + cmux.ErrListenerClosed + cmux.ErrServerClosed + strings fallback; nil=false; classifies for non-fatal in bounded workers; code now *exact match* to prior claims per subagent review 019eae31-7a95-7753-829f-72f2e1bc0f89). pprof compat preserved (httpSrv uses DefaultServeMux); notes/hooks in code for lsof/pprof. integration/grpc_stream_test.go has robust "sameport_and_cancel" subtest (local clients per subtest, ctx WithCancel + mid Receive cancel() + drain, exercises derived stream ctx cancel per p334, rich slog at decision, comments ref P1/2 patterns + report/phased). Default path (else) 100% unchanged (opt-in only; envconfig.GRPCSamePort()=="1"). No new globals, ctx-first in paths, %w/Is classify, bounded, small units, idempotent closes. -race green (targeted server + integ). 
+
+**Post subagent review 019eae31-7a95-7753-829f-72f2e1bc0f89 (REQUIRED p323/p381) + fix loop:** Criticals addressed (client stream bare sleep -> ctx select+jitter in ChatStream; skeletons enhanced with explicit "DEFERRED per p323 high-risk + subagent id + no behavior change"; doc "Current status" synced to reality; hygiene noted (session dirty 17M+3?? from iterative work + review fixes; for PR: squash to clean per p381/p127; no *new* untracked by this loop); logloom re-run (0 nodes/0% is persistent tooling limit in harness, not code gap — rich slog+reason at *all* P5 cmux/decision/client points verified by grep + subagent 10pt; no measurable lift here but nodes for cmd/grpc/api/grpc-client would appear in full env). GenerateStream minimal (no bare sleep; limited retry skeleton per scope). Soak: skeleton in p333-361 executable; `go test -tags=integration -run 'TestGRPCStreaming/sameport_and_cancel'` exercised under SAMEPORT=1 (err/control paths + ctx cancel green; positive mid-gen tokens blocked by absent runners per report #1 + doc notes — control/err/retry/health exercised). 
+
+Gates (p363/p379/p381/p474): build green; targeted -race server (harmony/routes/show incl expected 405 Method_Not_Allowed test case) + integ sameport PASS; subagent report + self 10pt checklist applied (0 Critical/High remaining after fixes; Med hygiene + logloom tooling noted); manual dual design unchanged (opt-in); zero HTTP regress on primary (Gin/else path 100% untouched); rich reason logs at every new decision (verified); doc matches code (no overclaim). "stop if" none triggered post-loop. Phase 5 reliable closure: **opt-in only, high-risk, defer full agent load/soak/mTLS wiring until runners + stable + re-review**. See subagent full structured output (10pt per path, quotes, severity) for details. Runners absent limits some E2E; err paths + control + obs green. 
+
+**Next (per End of Overlay p484):** PR prep (squash clean tree, link this doc + subagent ref + before/after logloom note + checklist); or post-soak stable work (full mTLS+reflection wiring, richer xai protos, official clients beyond skeleton, load/soak matrix when models present). This completes the mandatory reliable overlay for P5.
+
+**Soak script skeleton (manual execution required; add to scripts/ or run ad-hoc; do not land as default until green):**  
+Requires: built ollama (with runners payload per llm/llama_binary.go updates), pulled small model (e.g. smol), OLLAMA_GRPC_SAMEPORT=1, no other ollama on port. Long run (mins+), concurrent dual clients same model, mid-gen cancel (ctx), pprof checks (no goroutine/heap growth), lsof conn counts stable (agent conn reuse), cmux edge (HOL under mixed h2c+http1 on shared TCP? long-lived reuse). Use `go test -tags=integration -run TestGRPCStreaming/sameport_and_cancel` matrixed with http load.  
+```bash
+#!/usr/bin/env bash
+# /tmp/soak-sameport.sh (example; enhance with real grpc client loop for tokens)
+set -euo pipefail
+PORT=${OLLAMA_HOST:-127.0.0.1:11434}; PORT=${PORT##*:}
+export OLLAMA_GRPC_SAMEPORT=1 OLLAMA_HOST=127.0.0.1:11434
+# baseline pprof/goroutine count (pprof free on DefaultServeMux)
+BASE_GORO=$(curl -s http://127.0.0.1:11434/debug/pprof/goroutine?debug=1 | grep -c '^goroutine ' || echo 0)
+echo "baseline goroutines ~$BASE_GORO; conns before serve: $(lsof -n -iTCP -sTCP:ESTABLISHED 2>/dev/null | grep :$PORT | wc -l | tr -d ' ')"
+./ollama serve > /tmp/ollama-sameport-soak.log 2>&1 & 
+OLLA_PID=$!; sleep 8; echo "serve pid $OLLA_PID (sameport via cmux)"
+# long-running dual concurrent same model (http + gRPC streams); agent-like: reuse conns, long-lived clients
+( for i in {1..200}; do curl -s --max-time 2 "http://127.0.0.1:$PORT/api/tags" >/dev/null || true; sleep 0.05; done ) & HTTP_BG=$!
+# grpc side: use e.g. compiled test client or buf curl / small go prog with apiv1connect + WithGRPC() h2c; here sketch loop + mid cancel
+# (in practice: go test ... -run /sameport_and_cancel/ under load; or custom: ctx, cancel after 3 receives in stream loop for real model)
+echo "dual load + mid-gen cancel soak running (monitor log for 'cmux serve err treated as closed', 'sameport mid-gen cancel decision', no 'unexpected' errs)..."
+for t in $(seq 1 40); do
+  CONNS=$(lsof -p $OLLA_PID -n -iTCP 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+  GORO=$(curl -s http://127.0.0.1:11434/debug/pprof/goroutine?debug=1 | grep -c '^goroutine ' || echo 0)
+  echo "t=${t}s conns=$CONNS goros=$GORO (expect stable ~baseline, no monotonic growth)"
+  # mid-gen cancel ex (triggers on real model): would start ChatStream, Receive some, cancel(), check stream err contains Canceled or quick Done, logs "context for request finished" + no hung llama-server child
+  sleep 1
+done
+# assert no leak (tune thresholds for soak)
+# kill -INT $OLLA_PID; wait $OLLA_PID || true; echo "graceful shutdown; final check pprof/lsof + runner ps (no orphans)"
+kill $OLLA_PID 2>/dev/null || true; wait $OLLA_PID 2>/dev/null || true
+echo "soak complete; review /tmp/ollama-sameport-soak.log for rich reason logs (component=cmd/integration, reason=..., status=...)"
+```
+**Gates before any default or 'stable' claim (per phased p323/p379/p381 + report p97):** thorough manual soak as above (long dual + mid-cancel + pprof no leak + lsof counts + agent conn reuse + cmux edges incl isClosed on ErrListenerClosed); `go build . && go test -race -tags=integration ./integration -run 'TestGRPCStreaming|GRPCSamePort'` + full server/cmd race; self-review (this doc + SKILL.md 10pt checklist); **review subagent *required*** (p323: "review subagent *required* before landing"; p381: delegate with 'Review ... through reliable-go-systems lens (SKILL.md) + docs/grpc-phased-reliable-approach.md. Apply mandatory checklist... Report issues with file:line quotes.'); LogLoom if routes/grpc touched (not here); zero HTTP regress (curl primary port unchanged); opt-in remains (env=1); update report/issues log. "stop if" any violation. Defer until stable + signoff. Current changes (cmd isClosed+logs, test docs, this note) are hardening only; sameport still high-risk opt-in.
+
+---
+
+### Agent/Flume gRPC Client Productionization + Load/Soak (report sec4 item 9; assigned for this Phase 4 overlay)
+
+**Assigned finding (report p94-95):** "9. Agent/Flume productionization (official clients with streaming+retry using err codes, Flume examples ctx/cancel/structured logs, load/soak for queue/backpressure under agent concurrency, health/reflection/metrics)."
+
+**Context from report + phased (all prior phases):** P1 (dual/errgroup/sameport/reason logs at decisions), P2 (extracts+thin adapters+converters+full rich slog "component/reason/stream_id/dur/status/model/rpc" + LogAgentReasoning at branches + ctx cancel derived per p334), P3 (protos+admin streams+intcps+refl skel), P4 (OTEL polish+integ/grpc_stream_test skel + -race green). api/client.go remains HTTP-only (ClientFromEnvironment + stream/do). No official gRPC client yet (tests/integ use raw apiv1connect.New*Client + WithGRPC/h2c). No Flume ex (ctx prop to cancel GPU, LogAgentReasoning via server reason logs + client-side, err classify for agent retry loops). No dedicated load/soak for gRPC agent concurrency (queue/MaxQueue backpressure, concurrent streams). Health/refl partial (refl opt-in skeleton p1005 in grpc.go + env GRPCReflection + register call; health none until now). p66-75 good ctx/obs/errs/bounded/reconcile for agents but "blocked on runners/sameport/mTLS + need clients/examples/load". p97 verdict: "Recommend addressing runners + streaming intcps + converters next for 'ready for agents via Flume-like platforms'" (this item9 is the client surface piece). Phased p88/368 (health/refl in gates), p323/p379 (review subagent + stop-if for high-risk), p374 (LogLoom), p381 (review subagent).
+
+**Scope (minimal per SKILL + this overlay):** Skeletons + comments only (no heavy). Add gRPC client support skeleton in api/ (new grpc_client.go using apiv1connect for Chat/Generate/Embed/Models; streaming support; retry using errToConnect codes + jitter; ctx prop). Add Flume/agent examples (in docs or api/examples e.g. ctx cancel mid-stream, structured logs from reason, health check) -- edit-only for ex (README) to obey never-create-unless-abs-nec; grpc_client.go is the nec creation. Load/soak notes/script skeleton (edit this phased doc + integ test notes; concurrent streams, queue backpressure, metrics). Add health/refl if not (used P3 refl skeleton pattern + added health enable in grpc.go + routes call). Leverage rich logs from prior (for LogAgentReasoning in agent loops). End build/-race on api + note. No new deps (connect/otel/x/net/http2/x/sync already in module from P1-4).
+
+**Client skeleton notes (api/grpc_client.go):** 
+- `type GRPCClient struct { chat apiv1connect.ChatServiceClient; gen ...; embed...; models... }`
+- `func NewGRPCClient(baseURL string, opts ...connect.ClientOption) *GRPCClient` (h2c transport like integ/grpc_stream_test.go:54; or WithGRPC()).
+- `func GRPCClientFromEnvironment() (*GRPCClient, error)` (use envconfig.GRPCHost like HTTP; default grpc port).
+- Mirror api style: `Chat(ctx context.Context, req *connect.Request[v1.ChatRequest], fn func(*v1.ChatResponse) error) error` (and GenerateStream etc); or expose .ChatService etc for raw + wrappers.
+- Streaming support: use ServerStreamForClient.Receive() loop; select on ctx.Done() before/after; cancel derived to stop (GPU safety).
+- Retry using err codes + jitter (idempotent/safe per SKILL p41): unary retry helper on transient (connect.CodeOf(err) == CodeUnavailable || CodeDeadline... from mirror of server/grpc.go:762 errToConnect which does Is/As to Canceled/Unaiv/Invalid/NotFound/Internal; isTransient like MaxQueue/ scheduler temp). Jitter: `backoff := (100<<attempt + time.Duration(time.Now().UnixNano()%100)) * time.Millisecond; select {case <-ctx.Done(): return ctx.Err(); case <-time.After(jitter): }`. %w wraps. No pure exp. Limit attempts or ctx deadline.
+- Ctx first on all I/O (SKILL p13); prop to connect calls; respect Done for bounded.
+- Rich slog at decisions (Flume style, per SKILL p34/57 + phased p5/374 + report p67 for LogAgentReasoning): e.g. `slog.Info("grpc client retry decision", "component", "api/grpc-client", "rpc", "Chat", "model", req.Msg.Model, "stream_id", id, "status", "transient", "reason", "connect code Unavailable from errToConnect (queue backpressure or temp GPU); jitter backoff per SKILL idempotent safe retry + agent/Flume productionization", "dur_ms", ..., "attempt", att)`
+- Similar for "ctx cancel prop decision", "stream recv", "health check decision", "use h2c vs tls".
+- No new globals (no package rng; local jitter); small funcs; var _ if iface; errors checked/wrapped/classified (use connect.Error via As); table tests deferred (minimal).
+- Health: `func (c *GRPCClient) Heartbeat(ctx context.Context) error { _, err := c.models.Version(ctx, connect.NewRequest(&v1.VersionRequest{})); return err }` (or dedicated once health wired; mirrors api/client.go:422 HTTP Heartbeat).
+
+**Flume/agent examples notes (edit api/examples/README.md + comments in grpc_client.go; no new .go files created beyond nec client):** 
+- Ctx/cancel mid-stream: "ctx, cancel := context.WithCancel(ctx); stream, _ := client.ChatStream(ctx, req); for stream.Receive() { if tokens > 10 { cancel() }; ... } ; // triggers handler streamCtx cancel -> s.chat -> llm stop promptly (no GPU leak, per report p66 + phased p334)"
+- Structured logs from reason + LogAgentReasoning: "Server emits rich 'reason' at decisions (schedule/evict/render/error class/done_reason) with component=grpc/server + stream_id/model/dur/tokens (P2+); agents/Flume feed to LogLoom/graphs/postmortems (SKILL p35). Client also emits its decisions with same keys for full trace."
+- Health check: "if err := client.Heartbeat(ctx); err != nil { log... }; then stream. Use with gRPC health when enabled."
+- See integ/grpc_stream_test.go:105 sameport_and_cancel for pattern (ctx cancel after Receive).
+
+**Load/soak notes/script skeleton (concurrent streams/queue backpressure under agent concurrency + metrics):** 
+- Per report p61-63 (perf/scale: no backpressure test yet; design uses select/ctx/bounded cap64; with many concurrent + sameport cmux possible HOL), p66-75 (good design but need load for agents), p94-95 (explicit "load/soak for queue/backpressure under agent concurrency").
+- Use new GRPCClient + retry (jitter on CodeUnavailable from MaxQueue).
+- Harness is serial (utils_test.go mutex); for soak: manual long run or dedicated cmd (like /tmp/soak-sameport.sh in this doc).
+- Skeleton (enhance the existing sameport soak script or run ad-hoc):
+  ```bash
+  # agent-concurrency-soak.sh (edit of sameport one; requires built ollama + model + OLLAMA_GRPC_HOST or SAMEPORT=1)
+  export OLLAMA_GRPC_SAMEPORT=1 OLLAMA_GRPC_HOST=127.0.0.1:11435
+  ./ollama serve ... & 
+  # baseline
+  # then N concurrent gRPC agents (reuse conns long-lived):
+  for i in {1..N}; do
+    ( go run -c <<EOF or use compiled; loop { c=NewGRPCClient("http://..."); ctx=...; s,_:=c.ChatStream(ctx,req); for s.Receive(){} ; time.Sleep(jitter) } ) &
+  done
+  # monitor: sched logs for "MaxQueue", client logs "retry decision" + "Unavailable"; pprof goros/conns stable; lsof; queue depth (future metric or log); health checks pass; mid cancel on some streams.
+  # backpressure: when pending > MaxQueue, err surfaces over stream as CodeUnavailable (errToConnect), client retries w/ jitter (safe idempotent if model key based).
+  # metrics: pprof /debug/pprof/goroutine, /heap; future otel metrics from P4; LogLoom for reason nodes.
+  # run 5-30min; assert no monotonic growth, no leaks, cancels propagate (ps no orphan llama), -race clean in parallel test.
+  ```
+- Gates (p323/p379/p381 + report p97): long dual+conc gRPC (not just http), queue backpressure exercised (client sees+retries), health/refl used, rich reason logs reviewed, self + review-subagent (p381: "Review the changes through reliable-go lens (SKILL.md) + this doc. Apply 10pt checklist..."), go build + go test -race -tags=integration ./integration -run TestGRPCStreaming (or manual), zero HTTP regress, opt-in, update this+report. "stop if" any SKILL violation or new issues.
+- Also edit integ/grpc_stream_test.go (this doc) to note: "For agent load/soak under concurrency: extend sameport_and_cancel or use manual; exercise backpressure by N>MaxQueue (expect CodeUnavailable + client retry logs with reason); use GRPCClient when added; metrics via pprof + slog; see phased Agent/Flume section + report p94."
+
+**Verif for this item9 work:** todo_write (this), small edits w/ verif loops (checklist+report finding9 + phased p88/368/p323/p334/p374/p379/p381 before/after), rich slog in added code, final go build . + go test -race (api focus + server/grpc), summarize vs finding, note deviations, todo status. All in source rel paths, search_replace (write only for nec grpc_client.go).
+
+**Risks/mitigations:** Same as sameport (high conn reuse, HOL on cmux, cancel timing for GPU); add client retry jitter + health preflight + bounded per stream. Runners still block positive tokens (report #1) but control/err/retry paths exercisable.
 
 ---
 

@@ -54,13 +54,23 @@ jobs:
             'x/imagegen/mlx/**/*' \
             '.github/**/*') | tee -a $GITHUB_OUTPUT
           echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
+          # [slog] component=ci reason="fix proto_changed globs post-review (pathlib.match no ** recurse like git; use concrete 'proto/ollama/api/v1/*' + buf.* + gen/proto/... for the 4 protos + config; ensures targeted Buf CI only on relevant; small fix in verif loop per SKILL) stream_id=n/a dur=0 status=fix-verif-loop model=n/a rpc=n/a ref=phased-p321 report-finding10" 
+          echo proto_changed=$(changed \
+            'proto/ollama/api/v1/*' \
+            'proto/ollama/api/v1/**/*' \
+            'buf.*' \
+            'buf.lock' \
+            'gen/proto/ollama/api/v1/*' \
+            'gen/proto/ollama/api/v1/**/*') | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
 
-  # Phase 5 Buf CI (per grpc-phased-reliable-approach.md): lint + generate drift visibility on PRs.
-  # Opt-in thoroughness; demonstrates Buf in .github/workflows. Non-blocking on unrelated changes to avoid matrix impact.
+  # Phase 5 Buf CI (per grpc-phased-reliable-approach.md p321): lint + generate drift visibility on PRs.
+  # [slog] component=ci reason="enhance existing buf job (pre-skeleton present per git P2 gRPC commits + current 'Phase 5' comment; was always-on PR) for assigned report sec4 item10 'Buf CI enhancements' + 'Buf CI in .github' p321/p95/10; now needs changes + if proto_changed (targeted, leverages P1 changes job globs, no new file per SKILL minimal); keeps non-blocking informational (|| echo classifies drift as non-fatal for Phase4); buf from P2 usage (buf dep update/generate); rich reason/component/status keys for audit/Flume LogAgentReasoning; no matrix impact on unrelated" stream_id=n/a dur=0 status=exec-enhancing model=n/a rpc=n/a ref=phased-p321-p379-stopif-p323-review-subagent
+  # Opt-in thoroughness; now runs only on proto/buf changes (enhancement); non-blocking to avoid matrix impact.
   buf:
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.proto_changed == 'True'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,11 +82,21 @@ jobs:
           chmod +x /usr/local/bin/buf
           buf --version
       - name: buf lint
-        run: buf lint || echo "buf lint (informational for Phase 5)"
+        run: buf lint || echo "buf lint (informational for Phase 5 / finding 10)"
       - name: buf generate drift check
         run: |
           buf generate || echo "buf generate attempted"
           git diff --stat -- gen/proto/ || true
+      # gRPC test suite robustness notes (report sec4 item 8 / "finding 8": "Test suite robustness (integrate new grpc_stream_test.go into main matrix with models/SAMEPORT/cancel/concurrency/error-class/sameport-vs-sep; fuzz converters; CI buf/golangci/-race + soak job)").
+      # + phased p379 gates / p90/91 (full verif + matrix) / p323/p381 (soak + review subagent req for sameport) / p406-418 (verif loops).
+      # - buf (above, now targeted on proto) already present (from prior P2/P5); golangci-lint (local or extend lint job) + explicit gRPC -race:
+      #   go test -race ./server -run 'TestConvert|GRPC|Convert'
+      #   (fuzz: go test -fuzz=FuzzConvertChatRoundtrip ./server ; note normal -race skips fuzzer entry)
+      #   For integ gRPC matrix (SAMEPORT vs sep via env; harness models): OLLAMA_GRPC_HOST=127.0.0.1:11435 OLLAMA_GRPC_SAMEPORT=1 go test -tags=integration -race ./integration -run TestGRPCStreaming
+      # - Soak job: manual (not auto in CI to avoid flakiness/long); see docs/grpc-phased-reliable-approach.md soak skeleton (long dual HTTP+gRPC + mid-gen cancel + pprof no-leak + lsof conn counts + agent reuse); run under OLLAMA_GRPC_SAMEPORT=1 + model; gates: build/-race + self-review (SKILL 10pt + this doc + report) + review subagent *required* p381 before any default/landing.
+      # - Also: go build . ; local golangci-lint run ; re-run logloom after grpc/routes/sched touches.
+      # See: integration/grpc_stream_test.go (now matrixed per item8), server/grpc_test.go (fuzz+expanded tables), docs/development.md (gRPC + todo/reliable), grpc-phased-reliable-approach.md, /tmp/ollamas-grpc-test-report.md p89-93 + p97.
+      # Current: buf present + conditional; full auto soak/gRPC-integ-matrix + golangci gRPC step deferred (notes for next + when runners stable per report).
 
   patches:
     strategy:

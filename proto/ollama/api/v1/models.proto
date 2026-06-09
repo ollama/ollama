@@ -5,6 +5,7 @@ package ollama.api.v1;
 option go_package = "github.com/ollama/ollama/gen/proto/ollama/api/v1;apiv1";
 
 // MVP Models service (List, Show basics, Version). Mirrors /api/tags, /api/version, /api/show.
+// Phase 5 per grpc-phased-reliable-approach.md + report finding 4: added Ps (running from sched), Pull/Push as server streams returning Progress (for api.ProgressResponse), using connect.ServerStream. Flesh Show details. Rich logs/ctx/errs per SKILL will be in impl. Proto source truth; buf generate updates gen/.
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/struct.proto";
@@ -45,9 +46,47 @@ message VersionResponse {
   string version = 1;
 }
 
+// Pull/Push progress (server stream). Mirrors api.ProgressResponse + Pull/PushRequest (insecure for reg).
+message PullModelRequest {
+  string model = 1;
+  bool insecure = 2;
+}
+
+message PushModelRequest {
+  string model = 1;
+  bool insecure = 2;
+}
+
+message ProgressResponse {
+  string status = 1;
+  string digest = 2;
+  int64 total = 3;
+  int64 completed = 4;
+}
+
+// Ps (running models). Returns basic process info (reuses/extends Model shape for MVP; richer via Show).
+message PsRequest {}
+
+message ProcessModel {
+  string model = 1;
+  string name = 2;
+  int64 size = 3;
+  int64 size_vram = 4;
+  string digest = 5;
+  map<string, string> details = 6;
+  google.protobuf.Timestamp expires_at = 7;
+}
+
+message PsResponse {
+  repeated ProcessModel models = 1;
+}
+
 service ModelsService {
   rpc List(ListModelsRequest) returns (ListModelsResponse);
   rpc Show(ShowModelRequest) returns (ShowModelResponse);
   rpc Version(VersionRequest) returns (VersionResponse);
-  // TODO(phase3+): Ps (running), Pull progress streams, etc.
+  // P5 admin streams per report #4 + phased overlay: progress for mutating ops (Pull/Push), Ps for running (from shared sched.loaded, ctx respected).
+  rpc Pull(PullModelRequest) returns (stream ProgressResponse);
+  rpc Push(PushModelRequest) returns (stream ProgressResponse);
+  rpc Ps(PsRequest) returns (PsResponse);
 }

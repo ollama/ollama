@@ -26,6 +26,9 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/image/webp"
@@ -245,6 +248,15 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	}
 
 	slog.Debug("schedule decision", "reason", "runner selected after VRAM fit/evict check", "model", name, "component", "server", "num_ctx_auto", numCtxAuto)
+
+	// OTEL custom attrs for schedule decision (full in extracts per finding; only enriches if gRPC span ctx, noop safe for HTTP paths)
+	if sp := trace.SpanFromContext(ctx); sp != nil {
+		sp.SetAttributes(
+			attribute.String("schedule.decision", "runner selected after VRAM fit/evict check"),
+			attribute.Bool("num_ctx_auto", numCtxAuto),
+			attribute.String("component", "server"),
+		)
+	}
 
 	return runner.llama, model, &opts, nil
 }
@@ -2170,13 +2182,14 @@ func SetupServer(primaryAddr net.Addr) (*Server, http.Handler, *Scheduler, error
 }
 
 func (s *Server) registerServices(mux *http.ServeMux) {
-	// Phase 4 polish: full interceptors (auth early, logging with stream_id/reason, OTEL, recovery).
-	// Per SKILL and phased doc: early auth (permissive local), rich logs, OTEL spans/attrs, bounded.
+	// Phase 4/5: full interceptors (auth early, logging with stream_id/reason/dur/status, OTEL, recovery) now for *both* unary + streams.
+	// Per finding (grpc.go TODO), SKILL, phased doc Phase5: update here wires streaming variants for Chat/Generate streams (via WithInterceptors + our full Interceptor impls providing WrapStreamingHandler); stream_id/correlation flows via ctx value from intercp to handlers.
+	// Per SKILL and phased doc: early auth (permissive local), rich logs+reason, OTEL spans/attrs, bounded (ctx).
 	interceptors := []connect.Interceptor{
 		authInterceptor(),       // early
-		loggingInterceptor(),    // with stream_id, model, dur, reason
-		otelInterceptor(),       // full OTEL
-		recoveryInterceptor(),   // panic to err
+		loggingInterceptor(),    // with stream_id, model, dur, reason (now streams too)
+		otelInterceptor(),       // full OTEL (already supported streams)
+		recoveryInterceptor(),   // panic to err (now streams too)
 	}
 	opt := connect.WithInterceptors(interceptors...)
 	{
@@ -2195,7 +2208,13 @@ func (s *Server) registerServices(mux *http.ServeMux) {
 		path, h := apiv1connect.NewModelsServiceHandler(&modelsHandler{s}, opt)
 		mux.Handle(path, h)
 	}
-	slog.Debug("registerServices complete (Phase 4 interceptors: auth/OTEL/recovery/logging)", "component", "grpc")
+	// Opt-in reflection skeleton (gated, per finding7 + phased p283; calls helper in grpc.go same pkg).
+	// Enables grpcurl dev (report p57); not default; mTLS/auth notes in helper + env.
+	enableGRPCReflectionIfOptIn(mux, interceptors...)
+	// Health skeleton (always basic, per P3 + item9; complements refl; see grpc.go enableGRPCHealthIfOptIn for details + rich reason log).
+	// Fulfills report sec4#9 "health/reflection/metrics", phased p283/368/379 gates for agent/Flume prod.
+	enableGRPCHealthIfOptIn(mux, interceptors...)
+	slog.Debug("registerServices complete (Phase 4/5 interceptors: auth/OTEL/recovery/logging for unary+streams)", "component", "grpc", "reason", "streaming interceptors now active for ChatStream/GenerateStream (correlation id + rich logs); Chat/Generate services updated per grpc report finding 2; reflection gate checked (opt-in only); health skeleton enabled for prod readiness (p94-95)")
 }
 
 // chat is the protocol-agnostic core for chat (Phase 2 extraction).
@@ -2254,6 +2273,11 @@ func (s *Server) chat(ctx context.Context, req api.ChatRequest, write func(api.C
 
 	checkpointLoaded := time.Now()
 	slog.Info("scheduled runner", "component", "server", "model", req.Model, "load_ms", time.Since(checkpointStart).Milliseconds(), "reason", "runner allocated (fits in VRAM after evictions or first load)")
+
+	// extend OTEL attrs into extract for load (custom for schedule/load per finding #6; uses span from gRPC handler ctx)
+	if sp := trace.SpanFromContext(ctx); sp != nil {
+		sp.SetAttributes(attribute.Int64("load_duration_ms", time.Since(checkpointStart).Milliseconds()))
+	}
 
 	if len(req.Messages) == 0 {
 		return write(api.ChatResponse{
@@ -2390,6 +2414,16 @@ func (s *Server) chat(ctx context.Context, req api.ChatRequest, write func(api.C
 				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				// OTEL inference attrs in chat extract cb (tokens/dur/done/load for gRPC spans; complements generate path)
+				if sp := trace.SpanFromContext(ctx); sp != nil {
+					sp.SetAttributes(
+						attribute.Int64("inference_duration_ms", res.TotalDuration.Milliseconds()),
+						attribute.Int64("prompt_tokens", int64(res.Metrics.PromptEvalCount)),
+						attribute.Int64("completion_tokens", int64(res.Metrics.EvalCount)),
+						attribute.String("done_reason", res.DoneReason),
+						attribute.Int64("load_duration_ms", res.LoadDuration.Milliseconds()),
+					)
+				}
 			}
 
 			if builtinParser != nil {
@@ -2603,6 +2637,11 @@ func (s *Server) generate(ctx context.Context, req api.GenerateRequest, write fu
 	checkpointLoaded := time.Now()
 	slog.Info("scheduled runner", "component", "server", "model", req.Model, "load_ms", time.Since(checkpointStart).Milliseconds(), "reason", "generate runner allocated")
 
+	// OTEL load attr in extract (for generate path custom attrs)
+	if sp := trace.SpanFromContext(ctx); sp != nil {
+		sp.SetAttributes(attribute.Int64("load_duration_ms", time.Since(checkpointStart).Milliseconds()))
+	}
+
 	// basic prompt for generate (full template/system/raw/suffix in full port)
 	prompt := req.Prompt
 	if req.System != "" {
@@ -2645,6 +2684,16 @@ func (s *Server) generate(ctx context.Context, req api.GenerateRequest, write fu
 			res.DoneReason = r.DoneReason.String()
 			res.TotalDuration = time.Since(checkpointStart)
 			res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			// custom OTEL attrs for inference (duration, tokens, done_reason, load) full in extract (not just handler) per assigned finding
+			if sp := trace.SpanFromContext(ctx); sp != nil {
+				sp.SetAttributes(
+					attribute.Int64("inference_duration_ms", res.TotalDuration.Milliseconds()),
+					attribute.Int64("prompt_tokens", int64(res.Metrics.PromptEvalCount)),
+					attribute.Int64("completion_tokens", int64(res.Metrics.EvalCount)),
+					attribute.String("done_reason", res.DoneReason),
+					attribute.Int64("load_duration_ms", res.LoadDuration.Milliseconds()),
+				)
+			}
 		}
 		if werr := write(res); werr != nil {
 			return

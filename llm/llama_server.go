@@ -306,7 +306,8 @@ func (s *llamaServerRunner) ContextLength() int {
 func FindLlamaServer() (string, error) {
 	path, candidates, err := findLlamaCppBinary("llama-server", defaultLlamaCppBinarySearch())
 	if err != nil {
-		return "", fmt.Errorf("llama-server binary not found (checked: %s). Run 'cmake -S llama/server --preset cpu && cmake --build --preset cpu' first", strings.Join(candidates, ", "))
+		slog.Info("llama-server binary not found (runner locate failed)", "component", "llm", "reason", "blocks positive token streaming/tool calls/harmony/structured over gRPC (and load/soak); integrate via cmake payload (root 'ollama-local' target) or colocated next to ollama binary (now supported cross-plat for test harness); update from old cpu-only subdir suggestion", "candidates", strings.Join(candidates, ","), "status", "missing-runner-for-e2e-tests", "suggested_fix", "cmake -B build . && cmake --build build --target ollama-local (mac arm: includes metal) OR (cd llama/server && cmake --preset cpu && cmake --build --preset cpu)")
+		return "", fmt.Errorf("llama-server binary not found (checked: %s). Run 'cmake -B build . && cmake --build build --target ollama-local' (or for explicit CPU: cmake -S llama/server --preset cpu -B build/llama-server-cpu && cmake --build build/llama-server-cpu --target llama-server) first", strings.Join(candidates, ", "))
 	}
 	return path, nil
 }

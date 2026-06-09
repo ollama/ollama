@@ -40,6 +40,7 @@ require (
 	github.com/tree-sitter/tree-sitter-cpp v0.23.4
 	github.com/wk8/go-ordered-map/v2 v2.1.8
 	go.opentelemetry.io/otel v1.29.0
+	go.opentelemetry.io/otel/sdk v1.29.0
 	golang.org/x/image v0.25.0
 	golang.org/x/mod v0.32.0
 	golang.org/x/tools v0.41.0

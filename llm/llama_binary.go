@@ -2,6 +2,7 @@ package llm
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/ollama/ollama/ml"
 )
+
+var _ = slog.LevelDebug // force reference for complex root 'go build .' graphs / cache (slog IS used in func below for obs reason logs)
 
 type llamaCppBinarySearch struct {
 	libOllamaPath string
@@ -99,11 +102,20 @@ func llamaCppBinaryCandidates(name string, search llamaCppBinarySearch) []string
 		case "linux":
 			// Linux packages install ollama in bin/ and helpers in ../lib/ollama/.
 			add(filepath.Join(base, "..", "lib", "ollama"))
+			// Support colocated payload (llama-server next to ollama binary) for
+			// dev/test harness scenarios ("payload in the test binary") + E2E gRPC
+			// streaming validation when using `go build .` + manual or cmake-produced
+			// runner without full dist layout.
+			add(base)
 		case "windows":
 			// Windows packages keep ollama.exe at top level with lib/ as a peer.
 			add(filepath.Join(base, "lib", "ollama"))
 			// Standard CMake installs put ollama.exe in bin/ and helpers in ../lib/ollama/.
 			add(filepath.Join(base, "..", "lib", "ollama"))
+			// Colocated runner payload support (uniform with darwin/linux) for test
+			// binary harness and `ollama serve` (with OLLAMA_GRPC_*) to find
+			// llama-server for positive token/tool/stream cases.
+			add(base)
 		default:
 			add(filepath.Join(base, "lib", "ollama"))
 			add(filepath.Join(base, "..", "lib", "ollama"))
@@ -153,6 +165,7 @@ func llamaCppBinaryCandidates(name string, search llamaCppBinarySearch) []string
 	}
 	addBuildOutputDirs(search.workingDir)
 
+	slog.Debug("llama cpp binary candidates computed (runner locate)", "component", "llm", "reason", "colocated payload support extended (add base dir for linux/windows) + existing layouts to integrate runners for full E2E streaming tests (cmake payload or next-to-ollama-binary for harness `ollama serve` under OLLAMA_GRPC_HOST/SAMEPORT); enables positive token/tool/harmony/structured gRPC validation+soak per report finding", "num_candidates", len(candidates), "status", "search-updated-for-payload")
 	return candidates
 }
 

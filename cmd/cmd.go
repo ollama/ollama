@@ -2057,7 +2057,7 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		// Falls back for HTTP/1.1 Gin + Connect JSON etc.
 		grpcL := m.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
 		httpL := m.Match(cmux.Any())
-		slog.Debug("cmux matchers configured", "component", "cmd", "reason", "grpcL matches HTTP2 content-type application/grpc -> gRPC handler; httpL Any() -> primary Gin routes (HTTP1 + fallback)")
+		slog.Debug("cmux matchers configured", "component", "cmd", "reason", "grpcL matches HTTP2 content-type application/grpc -> gRPC handler; httpL Any() -> primary Gin routes (HTTP1 + fallback); note: long-lived agent clients may reuse conns (report p71 issues), risking HOL blocking under concurrent dual HTTP+gRPC streams on same model; pprof/lsof soak hooks: during manual long-run use `lsof -p $(pgrep ollama) -n -iTCP | wc -l` for conn stability (expect no growth), `go tool pprof -http=:6061 http://localhost:11434/debug/pprof/goroutine` (pprof on DefaultServeMux preserved) + heap for leak check post mid-gen cancel; see soak skeleton in docs/grpc-phased-reliable-approach.md")
 
 		slog.Info("grpc sameport decision", "component", "cmd", "sameport", true, "primary_addr", lnHTTP.Addr().String(), "reason", "OLLAMA_GRPC_SAMEPORT=1 opt-in; using cmux to multiplex gRPC (h2c) and HTTP on single primary listener; separate-port remains the stable default for zero regression")
 
@@ -2077,6 +2077,7 @@ func RunServer(_ *cobra.Command, _ []string) error {
 			slog.Info("cmux serve starting", "component", "cmd", "addr", lnHTTP.Addr().String(), "reason", "cmux master loop accepting conns; grpc content-type -> gRPC h2c handler (registerServices + interceptors), remainder -> HTTP Gin routes; all bounded by errgroup owner + ctx shutdown")
 			if err := m.Serve(); err != nil {
 				if isClosedErr(err) {
+					slog.Debug("cmux serve err treated as closed (non-fatal graceful path)", "component", "cmd", "reason", "cmux edge case hardened (ErrListenerClosed/ErrServerClosed via Is + strings); supports long-running dual (HTTP+gRPC concurrent same model) + mid-gen cancel on sameport without conn leak (bounded errgroup/ctx from P1/2 + cmux Close idempotent); agent-like long-lived clients: conn reuse expected safe; monitor via lsof/pprof in soak (report sec4 item5); status=closed-expected", "status", "ok")
 					return nil
 				}
 				return err
@@ -2130,17 +2131,19 @@ func RunServer(_ *cobra.Command, _ []string) error {
 }
 
 // isClosedErr classifies listener/mux close errors from shutdown (cmux.Serve, http.Serve etc).
-// Used for non-fatal path in bounded errgroup workers (P5 cmux + existing). Prefers errors.Is +
-// fallback contains for strings from cmux/net (no sentinel exported in some cases).
+// Used for non-fatal path in bounded errgroup workers (P5 cmux + existing). Uses errors.Is for
+// known sentinels (including cmux ones) + fallback contains. Never returns true for nil (per SKILL
+// "Errors Are Values" + review finding on nil-true anti-pattern).
 func isClosedErr(err error) bool {
 	if err == nil {
-		return true
+		return false
 	}
-	if errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) {
+	if errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) ||
+		errors.Is(err, cmux.ErrListenerClosed) || errors.Is(err, cmux.ErrServerClosed) {
 		return true
 	}
 	es := err.Error()
-	return strings.Contains(es, "use of closed") || strings.Contains(es, "closed network") || strings.Contains(es, "Server closed")
+	return strings.Contains(es, "use of closed") || strings.Contains(es, "closed network") || strings.Contains(es, "Server closed") || strings.Contains(es, "listener closed")
 }
 
 func initializeKeypair() error {

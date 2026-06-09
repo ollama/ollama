@@ -142,6 +142,20 @@ func GRPCSamePort() bool {
 	return strings.TrimSpace(Var("OLLAMA_GRPC_SAMEPORT")) == "1"
 }
 
+// GRPCReflection reports whether to register server reflection for the gRPC/Connect services
+// (enables easier grpcurl/buf-style dev without --proto files for descriptor queries).
+// This directly addresses report p57 ("failed to query for service descriptor"), finding 7
+// ("Reflection for easier grpcurl in dev (opt-in)"), and phased doc p283/369 (basic health/reflection;
+// grpcurl in verif).
+// Opt-in gated (OLLAMA_GRPC_REFLECTION=1); NOT default (per phased p323 "stop if" high-scrutiny,
+// p379 gates, safety: reflection exposes descriptors on dedicated port; mTLS plan for prod agents).
+// Follows exact existing envconfig pattern (no new globals/vars like GRPCSamePort/GRPCHost;
+// computed from Var on each call; documented in AsMap/Values for users).
+// When enabled, registerServices (routes) will call helper from grpc.go for wiring (skeleton).
+func GRPCReflection() bool {
+	return strings.TrimSpace(Var("OLLAMA_GRPC_REFLECTION")) == "1"
+}
+
 // AllowedOrigins returns a list of allowed origins. AllowedOrigins can be configured via the OLLAMA_ORIGINS environment variable.
 func AllowedOrigins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
@@ -382,6 +396,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_HOST":                 {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_GRPC_HOST":            {"OLLAMA_GRPC_HOST", GRPCHost(), "IP Address for the optional gRPC/Connect server (default 127.0.0.1:11435; set empty to disable)"},
 		"OLLAMA_GRPC_SAMEPORT":        {"OLLAMA_GRPC_SAMEPORT", GRPCSamePort(), "Serve gRPC/Connect on the same port as HTTP via cmux (opt-in: set to \"1\"; high risk, see docs/grpc-phased-reliable-approach.md Phase 5; default separate port for safety/zero regression)"},
+		"OLLAMA_GRPC_REFLECTION":      {"OLLAMA_GRPC_REFLECTION", GRPCReflection(), "Enable gRPC/Connect server reflection for dev (grpcurl list/describe without protos; opt-in: \"1\" not default per report finding7 + phased p283/323/379; mTLS/auth per plan; see grpc.go enable helper + registerServices)"},
 		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":         {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},

@@ -395,6 +395,352 @@ func (x *VersionResponse) GetVersion() string {
 	return ""
 }
 
+// Pull/Push progress (server stream). Mirrors api.ProgressResponse + Pull/PushRequest (insecure for reg).
+type PullModelRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Model         string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
+	Insecure      bool                   `protobuf:"varint,2,opt,name=insecure,proto3" json:"insecure,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PullModelRequest) Reset() {
+	*x = PullModelRequest{}
+	mi := &file_ollama_api_v1_models_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PullModelRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PullModelRequest) ProtoMessage() {}
+
+func (x *PullModelRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_models_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PullModelRequest.ProtoReflect.Descriptor instead.
+func (*PullModelRequest) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_models_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *PullModelRequest) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *PullModelRequest) GetInsecure() bool {
+	if x != nil {
+		return x.Insecure
+	}
+	return false
+}
+
+type PushModelRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Model         string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
+	Insecure      bool                   `protobuf:"varint,2,opt,name=insecure,proto3" json:"insecure,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PushModelRequest) Reset() {
+	*x = PushModelRequest{}
+	mi := &file_ollama_api_v1_models_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PushModelRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PushModelRequest) ProtoMessage() {}
+
+func (x *PushModelRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_models_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PushModelRequest.ProtoReflect.Descriptor instead.
+func (*PushModelRequest) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_models_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *PushModelRequest) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *PushModelRequest) GetInsecure() bool {
+	if x != nil {
+		return x.Insecure
+	}
+	return false
+}
+
+type ProgressResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	Digest        string                 `protobuf:"bytes,2,opt,name=digest,proto3" json:"digest,omitempty"`
+	Total         int64                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	Completed     int64                  `protobuf:"varint,4,opt,name=completed,proto3" json:"completed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProgressResponse) Reset() {
+	*x = ProgressResponse{}
+	mi := &file_ollama_api_v1_models_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProgressResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProgressResponse) ProtoMessage() {}
+
+func (x *ProgressResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_models_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProgressResponse.ProtoReflect.Descriptor instead.
+func (*ProgressResponse) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_models_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ProgressResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ProgressResponse) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *ProgressResponse) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *ProgressResponse) GetCompleted() int64 {
+	if x != nil {
+		return x.Completed
+	}
+	return 0
+}
+
+// Ps (running models). Returns basic process info (reuses/extends Model shape for MVP; richer via Show).
+type PsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PsRequest) Reset() {
+	*x = PsRequest{}
+	mi := &file_ollama_api_v1_models_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PsRequest) ProtoMessage() {}
+
+func (x *PsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_models_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PsRequest.ProtoReflect.Descriptor instead.
+func (*PsRequest) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_models_proto_rawDescGZIP(), []int{10}
+}
+
+type ProcessModel struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Model         string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Size          int64                  `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	SizeVram      int64                  `protobuf:"varint,4,opt,name=size_vram,json=sizeVram,proto3" json:"size_vram,omitempty"`
+	Digest        string                 `protobuf:"bytes,5,opt,name=digest,proto3" json:"digest,omitempty"`
+	Details       map[string]string      `protobuf:"bytes,6,rep,name=details,proto3" json:"details,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProcessModel) Reset() {
+	*x = ProcessModel{}
+	mi := &file_ollama_api_v1_models_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProcessModel) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProcessModel) ProtoMessage() {}
+
+func (x *ProcessModel) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_models_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProcessModel.ProtoReflect.Descriptor instead.
+func (*ProcessModel) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_models_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ProcessModel) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *ProcessModel) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ProcessModel) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *ProcessModel) GetSizeVram() int64 {
+	if x != nil {
+		return x.SizeVram
+	}
+	return 0
+}
+
+func (x *ProcessModel) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *ProcessModel) GetDetails() map[string]string {
+	if x != nil {
+		return x.Details
+	}
+	return nil
+}
+
+func (x *ProcessModel) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+type PsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Models        []*ProcessModel        `protobuf:"bytes,1,rep,name=models,proto3" json:"models,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PsResponse) Reset() {
+	*x = PsResponse{}
+	mi := &file_ollama_api_v1_models_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PsResponse) ProtoMessage() {}
+
+func (x *PsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_models_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PsResponse.ProtoReflect.Descriptor instead.
+func (*PsResponse) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_models_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *PsResponse) GetModels() []*ProcessModel {
+	if x != nil {
+		return x.Models
+	}
+	return nil
+}
+
 var File_ollama_api_v1_models_proto protoreflect.FileDescriptor
 
 const file_ollama_api_v1_models_proto_rawDesc = "" +
@@ -431,11 +777,41 @@ const file_ollama_api_v1_models_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\x10\n" +
 	"\x0eVersionRequest\"+\n" +
 	"\x0fVersionResponse\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\tR\aversion2\xf1\x01\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\"D\n" +
+	"\x10PullModelRequest\x12\x14\n" +
+	"\x05model\x18\x01 \x01(\tR\x05model\x12\x1a\n" +
+	"\binsecure\x18\x02 \x01(\bR\binsecure\"D\n" +
+	"\x10PushModelRequest\x12\x14\n" +
+	"\x05model\x18\x01 \x01(\tR\x05model\x12\x1a\n" +
+	"\binsecure\x18\x02 \x01(\bR\binsecure\"v\n" +
+	"\x10ProgressResponse\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12\x16\n" +
+	"\x06digest\x18\x02 \x01(\tR\x06digest\x12\x14\n" +
+	"\x05total\x18\x03 \x01(\x03R\x05total\x12\x1c\n" +
+	"\tcompleted\x18\x04 \x01(\x03R\tcompleted\"\v\n" +
+	"\tPsRequest\"\xbc\x02\n" +
+	"\fProcessModel\x12\x14\n" +
+	"\x05model\x18\x01 \x01(\tR\x05model\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x03R\x04size\x12\x1b\n" +
+	"\tsize_vram\x18\x04 \x01(\x03R\bsizeVram\x12\x16\n" +
+	"\x06digest\x18\x05 \x01(\tR\x06digest\x12B\n" +
+	"\adetails\x18\x06 \x03(\v2(.ollama.api.v1.ProcessModel.DetailsEntryR\adetails\x129\n" +
+	"\n" +
+	"expires_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x1a:\n" +
+	"\fDetailsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"A\n" +
+	"\n" +
+	"PsResponse\x123\n" +
+	"\x06models\x18\x01 \x03(\v2\x1b.ollama.api.v1.ProcessModelR\x06models2\xc4\x03\n" +
 	"\rModelsService\x12K\n" +
 	"\x04List\x12 .ollama.api.v1.ListModelsRequest\x1a!.ollama.api.v1.ListModelsResponse\x12I\n" +
 	"\x04Show\x12\x1f.ollama.api.v1.ShowModelRequest\x1a .ollama.api.v1.ShowModelResponse\x12H\n" +
-	"\aVersion\x12\x1d.ollama.api.v1.VersionRequest\x1a\x1e.ollama.api.v1.VersionResponseB\xae\x01\n" +
+	"\aVersion\x12\x1d.ollama.api.v1.VersionRequest\x1a\x1e.ollama.api.v1.VersionResponse\x12J\n" +
+	"\x04Pull\x12\x1f.ollama.api.v1.PullModelRequest\x1a\x1f.ollama.api.v1.ProgressResponse0\x01\x12J\n" +
+	"\x04Push\x12\x1f.ollama.api.v1.PushModelRequest\x1a\x1f.ollama.api.v1.ProgressResponse0\x01\x129\n" +
+	"\x02Ps\x12\x18.ollama.api.v1.PsRequest\x1a\x19.ollama.api.v1.PsResponseB\xae\x01\n" +
 	"\x11com.ollama.api.v1B\vModelsProtoP\x01Z6github.com/ollama/ollama/gen/proto/ollama/api/v1;apiv1\xa2\x02\x03OAX\xaa\x02\rOllama.Api.V1\xca\x02\rOllama\\Api\\V1\xe2\x02\x19Ollama\\Api\\V1\\GPBMetadata\xea\x02\x0fOllama::Api::V1b\x06proto3"
 
 var (
@@ -450,7 +826,7 @@ func file_ollama_api_v1_models_proto_rawDescGZIP() []byte {
 	return file_ollama_api_v1_models_proto_rawDescData
 }
 
-var file_ollama_api_v1_models_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_ollama_api_v1_models_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_ollama_api_v1_models_proto_goTypes = []any{
 	(*ListModelsRequest)(nil),     // 0: ollama.api.v1.ListModelsRequest
 	(*ListModelsResponse)(nil),    // 1: ollama.api.v1.ListModelsResponse
@@ -459,28 +835,44 @@ var file_ollama_api_v1_models_proto_goTypes = []any{
 	(*ShowModelResponse)(nil),     // 4: ollama.api.v1.ShowModelResponse
 	(*VersionRequest)(nil),        // 5: ollama.api.v1.VersionRequest
 	(*VersionResponse)(nil),       // 6: ollama.api.v1.VersionResponse
-	nil,                           // 7: ollama.api.v1.Model.DetailsEntry
-	nil,                           // 8: ollama.api.v1.ShowModelResponse.ModelInfoEntry
-	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 10: google.protobuf.Struct
+	(*PullModelRequest)(nil),      // 7: ollama.api.v1.PullModelRequest
+	(*PushModelRequest)(nil),      // 8: ollama.api.v1.PushModelRequest
+	(*ProgressResponse)(nil),      // 9: ollama.api.v1.ProgressResponse
+	(*PsRequest)(nil),             // 10: ollama.api.v1.PsRequest
+	(*ProcessModel)(nil),          // 11: ollama.api.v1.ProcessModel
+	(*PsResponse)(nil),            // 12: ollama.api.v1.PsResponse
+	nil,                           // 13: ollama.api.v1.Model.DetailsEntry
+	nil,                           // 14: ollama.api.v1.ShowModelResponse.ModelInfoEntry
+	nil,                           // 15: ollama.api.v1.ProcessModel.DetailsEntry
+	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),       // 17: google.protobuf.Struct
 }
 var file_ollama_api_v1_models_proto_depIdxs = []int32{
 	2,  // 0: ollama.api.v1.ListModelsResponse.models:type_name -> ollama.api.v1.Model
-	9,  // 1: ollama.api.v1.Model.modified_at:type_name -> google.protobuf.Timestamp
-	7,  // 2: ollama.api.v1.Model.details:type_name -> ollama.api.v1.Model.DetailsEntry
-	10, // 3: ollama.api.v1.ShowModelResponse.details:type_name -> google.protobuf.Struct
-	8,  // 4: ollama.api.v1.ShowModelResponse.model_info:type_name -> ollama.api.v1.ShowModelResponse.ModelInfoEntry
-	0,  // 5: ollama.api.v1.ModelsService.List:input_type -> ollama.api.v1.ListModelsRequest
-	3,  // 6: ollama.api.v1.ModelsService.Show:input_type -> ollama.api.v1.ShowModelRequest
-	5,  // 7: ollama.api.v1.ModelsService.Version:input_type -> ollama.api.v1.VersionRequest
-	1,  // 8: ollama.api.v1.ModelsService.List:output_type -> ollama.api.v1.ListModelsResponse
-	4,  // 9: ollama.api.v1.ModelsService.Show:output_type -> ollama.api.v1.ShowModelResponse
-	6,  // 10: ollama.api.v1.ModelsService.Version:output_type -> ollama.api.v1.VersionResponse
-	8,  // [8:11] is the sub-list for method output_type
-	5,  // [5:8] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	16, // 1: ollama.api.v1.Model.modified_at:type_name -> google.protobuf.Timestamp
+	13, // 2: ollama.api.v1.Model.details:type_name -> ollama.api.v1.Model.DetailsEntry
+	17, // 3: ollama.api.v1.ShowModelResponse.details:type_name -> google.protobuf.Struct
+	14, // 4: ollama.api.v1.ShowModelResponse.model_info:type_name -> ollama.api.v1.ShowModelResponse.ModelInfoEntry
+	15, // 5: ollama.api.v1.ProcessModel.details:type_name -> ollama.api.v1.ProcessModel.DetailsEntry
+	16, // 6: ollama.api.v1.ProcessModel.expires_at:type_name -> google.protobuf.Timestamp
+	11, // 7: ollama.api.v1.PsResponse.models:type_name -> ollama.api.v1.ProcessModel
+	0,  // 8: ollama.api.v1.ModelsService.List:input_type -> ollama.api.v1.ListModelsRequest
+	3,  // 9: ollama.api.v1.ModelsService.Show:input_type -> ollama.api.v1.ShowModelRequest
+	5,  // 10: ollama.api.v1.ModelsService.Version:input_type -> ollama.api.v1.VersionRequest
+	7,  // 11: ollama.api.v1.ModelsService.Pull:input_type -> ollama.api.v1.PullModelRequest
+	8,  // 12: ollama.api.v1.ModelsService.Push:input_type -> ollama.api.v1.PushModelRequest
+	10, // 13: ollama.api.v1.ModelsService.Ps:input_type -> ollama.api.v1.PsRequest
+	1,  // 14: ollama.api.v1.ModelsService.List:output_type -> ollama.api.v1.ListModelsResponse
+	4,  // 15: ollama.api.v1.ModelsService.Show:output_type -> ollama.api.v1.ShowModelResponse
+	6,  // 16: ollama.api.v1.ModelsService.Version:output_type -> ollama.api.v1.VersionResponse
+	9,  // 17: ollama.api.v1.ModelsService.Pull:output_type -> ollama.api.v1.ProgressResponse
+	9,  // 18: ollama.api.v1.ModelsService.Push:output_type -> ollama.api.v1.ProgressResponse
+	12, // 19: ollama.api.v1.ModelsService.Ps:output_type -> ollama.api.v1.PsResponse
+	14, // [14:20] is the sub-list for method output_type
+	8,  // [8:14] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_ollama_api_v1_models_proto_init() }
@@ -494,7 +886,7 @@ func file_ollama_api_v1_models_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ollama_api_v1_models_proto_rawDesc), len(file_ollama_api_v1_models_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

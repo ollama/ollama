@@ -429,7 +429,7 @@ var (
 
 func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 	// Make sure the server has been built
-	CLIName, err := filepath.Abs("../ollama")
+	CLIName, err := filepath.Abs("ollama")
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
@@ -441,6 +441,7 @@ func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 	if err != nil {
 		return fmt.Errorf("CLI missing, did you forget to 'go build .' first?  %w", err)
 	}
+	slog.Info("selected CLI for test server spawn", "component", "integration", "cli", CLIName, "reason", "restored harness path from old '../ollama' (hardcoded relative that resolved to parent dir for module-root cwd after `go build .` or cmake ollama-go target) to 'ollama' so `ollama serve` (OLLAMA_GRPC_HOST/SAMEPORT) launched by test binary can discover/load llama-server runners (from cmake payload in build/lib/ollama or colocated) for full E2E gRPC positive token streaming/tool/harmony/structured validation + load/soak per grpc-test-report sec4 finding1 + phased doc", "status", "harness-ready")
 	serverMutex.Lock()
 	defer serverMutex.Unlock()
 	if serverReady {
@@ -464,7 +465,8 @@ func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 		t.Setenv("OLLAMA_GRPC_HOST", "")
 	}
 
-	serverCmd = exec.Command(CLIName, "serve")
+	// Use CommandContext so the long-running serve I/O respects caller's ctx (cancellation/deadline propagates to process; SKILL ctx discipline for spawn).
+	serverCmd = exec.CommandContext(ctx, CLIName, "serve")
 	serverCmd.Stderr = &serverLog
 	serverCmd.Stdout = &serverLog
 	go func() {

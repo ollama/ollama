@@ -39,6 +39,12 @@ const (
 	ModelsServiceShowProcedure = "/ollama.api.v1.ModelsService/Show"
 	// ModelsServiceVersionProcedure is the fully-qualified name of the ModelsService's Version RPC.
 	ModelsServiceVersionProcedure = "/ollama.api.v1.ModelsService/Version"
+	// ModelsServicePullProcedure is the fully-qualified name of the ModelsService's Pull RPC.
+	ModelsServicePullProcedure = "/ollama.api.v1.ModelsService/Pull"
+	// ModelsServicePushProcedure is the fully-qualified name of the ModelsService's Push RPC.
+	ModelsServicePushProcedure = "/ollama.api.v1.ModelsService/Push"
+	// ModelsServicePsProcedure is the fully-qualified name of the ModelsService's Ps RPC.
+	ModelsServicePsProcedure = "/ollama.api.v1.ModelsService/Ps"
 )
 
 // ModelsServiceClient is a client for the ollama.api.v1.ModelsService service.
@@ -46,6 +52,10 @@ type ModelsServiceClient interface {
 	List(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
 	Show(context.Context, *connect.Request[v1.ShowModelRequest]) (*connect.Response[v1.ShowModelResponse], error)
 	Version(context.Context, *connect.Request[v1.VersionRequest]) (*connect.Response[v1.VersionResponse], error)
+	// P5 admin streams per report #4 + phased overlay: progress for mutating ops (Pull/Push), Ps for running (from shared sched.loaded, ctx respected).
+	Pull(context.Context, *connect.Request[v1.PullModelRequest]) (*connect.ServerStreamForClient[v1.ProgressResponse], error)
+	Push(context.Context, *connect.Request[v1.PushModelRequest]) (*connect.ServerStreamForClient[v1.ProgressResponse], error)
+	Ps(context.Context, *connect.Request[v1.PsRequest]) (*connect.Response[v1.PsResponse], error)
 }
 
 // NewModelsServiceClient constructs a client for the ollama.api.v1.ModelsService service. By
@@ -77,6 +87,24 @@ func NewModelsServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(modelsServiceMethods.ByName("Version")),
 			connect.WithClientOptions(opts...),
 		),
+		pull: connect.NewClient[v1.PullModelRequest, v1.ProgressResponse](
+			httpClient,
+			baseURL+ModelsServicePullProcedure,
+			connect.WithSchema(modelsServiceMethods.ByName("Pull")),
+			connect.WithClientOptions(opts...),
+		),
+		push: connect.NewClient[v1.PushModelRequest, v1.ProgressResponse](
+			httpClient,
+			baseURL+ModelsServicePushProcedure,
+			connect.WithSchema(modelsServiceMethods.ByName("Push")),
+			connect.WithClientOptions(opts...),
+		),
+		ps: connect.NewClient[v1.PsRequest, v1.PsResponse](
+			httpClient,
+			baseURL+ModelsServicePsProcedure,
+			connect.WithSchema(modelsServiceMethods.ByName("Ps")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -85,6 +113,9 @@ type modelsServiceClient struct {
 	list    *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
 	show    *connect.Client[v1.ShowModelRequest, v1.ShowModelResponse]
 	version *connect.Client[v1.VersionRequest, v1.VersionResponse]
+	pull    *connect.Client[v1.PullModelRequest, v1.ProgressResponse]
+	push    *connect.Client[v1.PushModelRequest, v1.ProgressResponse]
+	ps      *connect.Client[v1.PsRequest, v1.PsResponse]
 }
 
 // List calls ollama.api.v1.ModelsService.List.
@@ -102,11 +133,30 @@ func (c *modelsServiceClient) Version(ctx context.Context, req *connect.Request[
 	return c.version.CallUnary(ctx, req)
 }
 
+// Pull calls ollama.api.v1.ModelsService.Pull.
+func (c *modelsServiceClient) Pull(ctx context.Context, req *connect.Request[v1.PullModelRequest]) (*connect.ServerStreamForClient[v1.ProgressResponse], error) {
+	return c.pull.CallServerStream(ctx, req)
+}
+
+// Push calls ollama.api.v1.ModelsService.Push.
+func (c *modelsServiceClient) Push(ctx context.Context, req *connect.Request[v1.PushModelRequest]) (*connect.ServerStreamForClient[v1.ProgressResponse], error) {
+	return c.push.CallServerStream(ctx, req)
+}
+
+// Ps calls ollama.api.v1.ModelsService.Ps.
+func (c *modelsServiceClient) Ps(ctx context.Context, req *connect.Request[v1.PsRequest]) (*connect.Response[v1.PsResponse], error) {
+	return c.ps.CallUnary(ctx, req)
+}
+
 // ModelsServiceHandler is an implementation of the ollama.api.v1.ModelsService service.
 type ModelsServiceHandler interface {
 	List(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
 	Show(context.Context, *connect.Request[v1.ShowModelRequest]) (*connect.Response[v1.ShowModelResponse], error)
 	Version(context.Context, *connect.Request[v1.VersionRequest]) (*connect.Response[v1.VersionResponse], error)
+	// P5 admin streams per report #4 + phased overlay: progress for mutating ops (Pull/Push), Ps for running (from shared sched.loaded, ctx respected).
+	Pull(context.Context, *connect.Request[v1.PullModelRequest], *connect.ServerStream[v1.ProgressResponse]) error
+	Push(context.Context, *connect.Request[v1.PushModelRequest], *connect.ServerStream[v1.ProgressResponse]) error
+	Ps(context.Context, *connect.Request[v1.PsRequest]) (*connect.Response[v1.PsResponse], error)
 }
 
 // NewModelsServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -134,6 +184,24 @@ func NewModelsServiceHandler(svc ModelsServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(modelsServiceMethods.ByName("Version")),
 		connect.WithHandlerOptions(opts...),
 	)
+	modelsServicePullHandler := connect.NewServerStreamHandler(
+		ModelsServicePullProcedure,
+		svc.Pull,
+		connect.WithSchema(modelsServiceMethods.ByName("Pull")),
+		connect.WithHandlerOptions(opts...),
+	)
+	modelsServicePushHandler := connect.NewServerStreamHandler(
+		ModelsServicePushProcedure,
+		svc.Push,
+		connect.WithSchema(modelsServiceMethods.ByName("Push")),
+		connect.WithHandlerOptions(opts...),
+	)
+	modelsServicePsHandler := connect.NewUnaryHandler(
+		ModelsServicePsProcedure,
+		svc.Ps,
+		connect.WithSchema(modelsServiceMethods.ByName("Ps")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/ollama.api.v1.ModelsService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ModelsServiceListProcedure:
@@ -142,6 +210,12 @@ func NewModelsServiceHandler(svc ModelsServiceHandler, opts ...connect.HandlerOp
 			modelsServiceShowHandler.ServeHTTP(w, r)
 		case ModelsServiceVersionProcedure:
 			modelsServiceVersionHandler.ServeHTTP(w, r)
+		case ModelsServicePullProcedure:
+			modelsServicePullHandler.ServeHTTP(w, r)
+		case ModelsServicePushProcedure:
+			modelsServicePushHandler.ServeHTTP(w, r)
+		case ModelsServicePsProcedure:
+			modelsServicePsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -161,4 +235,16 @@ func (UnimplementedModelsServiceHandler) Show(context.Context, *connect.Request[
 
 func (UnimplementedModelsServiceHandler) Version(context.Context, *connect.Request[v1.VersionRequest]) (*connect.Response[v1.VersionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ollama.api.v1.ModelsService.Version is not implemented"))
+}
+
+func (UnimplementedModelsServiceHandler) Pull(context.Context, *connect.Request[v1.PullModelRequest], *connect.ServerStream[v1.ProgressResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("ollama.api.v1.ModelsService.Pull is not implemented"))
+}
+
+func (UnimplementedModelsServiceHandler) Push(context.Context, *connect.Request[v1.PushModelRequest], *connect.ServerStream[v1.ProgressResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("ollama.api.v1.ModelsService.Push is not implemented"))
+}
+
+func (UnimplementedModelsServiceHandler) Ps(context.Context, *connect.Request[v1.PsRequest]) (*connect.Response[v1.PsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ollama.api.v1.ModelsService.Ps is not implemented"))
 }

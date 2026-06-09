@@ -83,6 +83,7 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 				goarch:     "amd64",
 			},
 			want: []string{
+				filepath.Join(root, "llama-server"), // colocated payload support (new for E2E test binary runner integration)
 				filepath.Join(root, "build", "lib", "ollama", "llama-server"),
 				filepath.Join(root, "dist", "linux-amd64", "lib", "ollama", "llama-server"),
 				filepath.Join(root, "dist", "linux_amd64", "lib", "ollama", "llama-server"),
@@ -97,6 +98,7 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 				goarch:     "amd64",
 			},
 			want: []string{
+				filepath.Join(root, "llama-server.exe"), // colocated payload (uniform cross-platform for harness/ `ollama serve` + gRPC streams)
 				filepath.Join(root, "build", "lib", "ollama", "llama-server.exe"),
 				filepath.Join(root, "dist", "windows-amd64", "lib", "ollama", "llama-server.exe"),
 			},
@@ -110,6 +112,7 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 				goarch:     "arm64",
 			},
 			want: []string{
+				filepath.Join(root, "llama-server"), // colocated now first (packaged base) + prior
 				filepath.Join(root, "build", "lib", "ollama", "llama-server"),
 				filepath.Join(root, "dist", "darwin-arm64", "lib", "ollama", "llama-server"),
 				filepath.Join(root, "dist", "darwin", "llama-server"),
