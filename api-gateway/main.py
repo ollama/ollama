@@ -20,6 +20,8 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434").rstrip("/")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "300"))
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "604800"))  # 7 days
+SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "")
+DEFAULT_REDIRECT_URI = "http://localhost:8080/api/auth/github/callback"
 
 FORMAT_SYSTEM_PROMPT = os.getenv(
     "FORMAT_SYSTEM_PROMPT",
@@ -57,6 +59,63 @@ app.add_middleware(
 # Global Redis client (initialized on startup)
 redis_client: redis.Redis | None = None
 
+# Redis keys for admin config
+CONFIG_KEY = "gateway:config"
+ADMIN_SESSION_PREFIX = "admin:session:"
+
+
+# ============================================================================
+# Configuration Store (Redis with .env fallback)
+# ============================================================================
+
+async def get_runtime_config() -> dict[str, str]:
+    """Get runtime config from Redis."""
+    if not redis_client:
+        return {}
+    data = await redis_client.hgetall(CONFIG_KEY)
+    return data or {}
+
+
+async def get_config_value(name: str, env_fallback: str = "") -> str:
+    """Get config value from Redis, fallback to environment variable."""
+    runtime = await get_runtime_config()
+    return runtime.get(name) or os.getenv(name, env_fallback)
+
+
+async def seed_config_from_env():
+    """Seed Redis config from .env on first startup if empty."""
+    if not redis_client:
+        return
+    
+    existing = await redis_client.exists(CONFIG_KEY)
+    if existing:
+        return  # Already seeded
+    
+    # Seed from .env
+    seed_data = {}
+    if os.getenv("API_KEYS"):
+        seed_data["API_KEYS"] = os.getenv("API_KEYS", "")
+    if os.getenv("GITHUB_CLIENT_ID"):
+        seed_data["GITHUB_CLIENT_ID"] = os.getenv("GITHUB_CLIENT_ID", "")
+    if os.getenv("GITHUB_CLIENT_SECRET"):
+        seed_data["GITHUB_CLIENT_SECRET"] = os.getenv("GITHUB_CLIENT_SECRET", "")
+    if os.getenv("GITHUB_REDIRECT_URI"):
+        seed_data["GITHUB_REDIRECT_URI"] = os.getenv("GITHUB_REDIRECT_URI", DEFAULT_REDIRECT_URI)
+    
+    if seed_data:
+        await redis_client.hset(CONFIG_KEY, mapping=seed_data)
+
+
+async def configured_api_keys() -> dict[str, str]:
+    """Returns {api_key: user_id} mapping from Redis or .env fallback."""
+    raw_keys = await get_config_value("API_KEYS", os.getenv("API_KEYS", ""))
+    keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
+    return {key: f"user_{abs(hash(key)) % 10000:04d}" for key in keys}
+
+
+# ============================================================================
+# Pydantic Models
+# ============================================================================
 
 class Message(BaseModel):
     role: str
@@ -84,10 +143,40 @@ class SessionResponse(BaseModel):
     updated_at: str
 
 
+# Admin models
+class AdminLoginRequest(BaseModel):
+    password: str
+
+
+class AdminLoginResponse(BaseModel):
+    admin_token: str
+    expires_in: int
+
+
+class AdminConfigResponse(BaseModel):
+    github_client_id: str
+    github_redirect_uri: str
+    github_client_secret_set: bool
+    api_keys: list[dict[str, str]]
+
+
+class AdminConfigUpdate(BaseModel):
+    github_client_id: str | None = None
+    github_client_secret: str | None = None
+    github_redirect_uri: str | None = None
+
+
+class GeneratedApiKeyResponse(BaseModel):
+    api_key: str
+    preview: str
+
+
 @app.on_event("startup")
 async def startup():
     global redis_client
     redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    # Seed config from .env on first startup
+    await seed_config_from_env()
 
 
 @app.on_event("shutdown")
@@ -96,13 +185,9 @@ async def shutdown():
         await redis_client.close()
 
 
-def configured_api_keys() -> dict[str, str]:
-    """Returns {api_key: user_id} mapping from .env."""
-    raw_keys = os.getenv("API_KEYS", "")
-    keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
-    # Simple mapping: hash the key to get a stable user_id
-    return {key: f"user_{abs(hash(key)) % 10000:04d}" for key in keys}
-
+# ============================================================================
+# Authentication
+# ============================================================================
 
 async def require_api_key(authorization: str | None) -> str:
     """Validate Bearer token and return user_id."""
@@ -120,7 +205,7 @@ async def require_api_key(authorization: str | None) -> str:
         )
 
     # Use constant-time comparison
-    key_map = configured_api_keys()
+    key_map = await configured_api_keys()
     if not key_map:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -135,6 +220,37 @@ async def require_api_key(authorization: str | None) -> str:
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid API key",
     )
+
+
+async def require_admin(authorization: str | None = Header(default=None)) -> None:
+    """Validate admin Bearer token."""
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing admin token",
+        )
+    
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Use Authorization: Bearer <admin-token>",
+        )
+    
+    # Check if session exists in Redis
+    session_key = f"{ADMIN_SESSION_PREFIX}{token}"
+    if not await redis_client.exists(session_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired admin session",
+        )
+
+
+def mask_key(key: str) -> str:
+    """Mask an API key for display (show last 4 chars)."""
+    if len(key) <= 4:
+        return "••••"
+    return f"{'•' * (len(key) - 4)}{key[-4:]}"
 
 
 def forward_request_headers(request: Request) -> dict[str, str]:
@@ -277,12 +393,131 @@ async def health() -> dict[str, str | bool]:
         except Exception:
             pass
 
+    api_keys = await configured_api_keys()
     return {
         "status": "ok",
         "ollama_url": OLLAMA_URL,
         "redis_connected": redis_ok,
-        "api_keys_configured": bool(configured_api_keys()),
+        "api_keys_configured": bool(api_keys),
     }
+
+
+# ============================================================================
+# Admin endpoints
+# ============================================================================
+
+@app.post("/admin/login", response_model=AdminLoginResponse)
+async def admin_login(body: AdminLoginRequest):
+    """Admin login - returns session token."""
+    if not SUPER_ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Super admin is not configured",
+        )
+    
+    if not secrets.compare_digest(body.password, SUPER_ADMIN_PASSWORD):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid admin password",
+        )
+    
+    # Generate admin session token
+    token = secrets.token_urlsafe(32)
+    session_key = f"{ADMIN_SESSION_PREFIX}{token}"
+    await redis_client.setex(session_key, 3600, "1")  # 1 hour
+    
+    return AdminLoginResponse(admin_token=token, expires_in=3600)
+
+
+@app.get("/admin/config", response_model=AdminConfigResponse)
+async def get_admin_config(authorization: str | None = Header(default=None)):
+    """Get current admin configuration."""
+    await require_admin(authorization)
+    
+    cfg = await get_runtime_config()
+    
+    # Parse API keys
+    raw_keys = cfg.get("API_KEYS", "")
+    keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
+    api_keys_list = [
+        {"id": str(i), "preview": mask_key(k)}
+        for i, k in enumerate(keys)
+    ]
+    
+    return AdminConfigResponse(
+        github_client_id=cfg.get("GITHUB_CLIENT_ID", ""),
+        github_redirect_uri=cfg.get("GITHUB_REDIRECT_URI", DEFAULT_REDIRECT_URI),
+        github_client_secret_set=bool(cfg.get("GITHUB_CLIENT_SECRET")),
+        api_keys=api_keys_list,
+    )
+
+
+@app.put("/admin/config")
+async def update_admin_config(
+    body: AdminConfigUpdate,
+    authorization: str | None = Header(default=None),
+):
+    """Update admin configuration."""
+    await require_admin(authorization)
+    
+    updates: dict[str, str] = {}
+    
+    if body.github_client_id is not None:
+        updates["GITHUB_CLIENT_ID"] = body.github_client_id.strip()
+    
+    if body.github_client_secret is not None and body.github_client_secret.strip():
+        updates["GITHUB_CLIENT_SECRET"] = body.github_client_secret.strip()
+    
+    if body.github_redirect_uri is not None:
+        updates["GITHUB_REDIRECT_URI"] = body.github_redirect_uri.strip()
+    
+    if updates:
+        await redis_client.hset(CONFIG_KEY, mapping=updates)
+    
+    return {"status": "ok", "updated_fields": list(updates.keys())}
+
+
+@app.post("/admin/api-keys/generate", response_model=GeneratedApiKeyResponse)
+async def generate_api_key(authorization: str | None = Header(default=None)):
+    """Generate a new API key."""
+    await require_admin(authorization)
+    
+    # Generate secure random key
+    new_key = secrets.token_urlsafe(32)
+    
+    # Get existing keys
+    cfg = await get_runtime_config()
+    existing = [k.strip() for k in cfg.get("API_KEYS", "").split(",") if k.strip()]
+    existing.append(new_key)
+    
+    # Save updated list
+    await redis_client.hset(CONFIG_KEY, "API_KEYS", ",".join(existing))
+    
+    return GeneratedApiKeyResponse(api_key=new_key, preview=mask_key(new_key))
+
+
+@app.delete("/admin/api-keys/{index}")
+async def revoke_api_key(
+    index: int,
+    authorization: str | None = Header(default=None),
+):
+    """Revoke an API key by index."""
+    await require_admin(authorization)
+    
+    cfg = await get_runtime_config()
+    keys = [k.strip() for k in cfg.get("API_KEYS", "").split(",") if k.strip()]
+    
+    if index < 0 or index >= len(keys):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+    
+    # Remove the key
+    keys.pop(index)
+    await redis_client.hset(CONFIG_KEY, "API_KEYS", ",".join(keys))
+    
+    return {"status": "ok", "remaining_keys": len(keys)}
 
 
 @app.post("/sessions", response_model=SessionResponse, status_code=201)

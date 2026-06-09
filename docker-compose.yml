@@ -38,6 +38,10 @@ services:
       REDIS_URL: redis://redis:6379
       API_KEYS: ${API_KEYS:?Set API_KEYS in your .env file}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:?Set SUPER_ADMIN_PASSWORD in your .env file}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-http://localhost:8080/api/auth/github/callback}
 
   frontend:
     build:
