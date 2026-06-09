@@ -387,7 +387,8 @@ func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.C
 		return capabilities
 	}
 
-	capabilities = appendCapability(capabilities, model.CapabilityVision)
+	hasAudio := false
+	hasVision := false
 	for _, projectorPath := range m.ProjectorPaths {
 		f, err := gguf.Open(projectorPath)
 		if err != nil {
@@ -395,9 +396,20 @@ func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.C
 			continue
 		}
 		if projectorHasAudio(f) && !projectorSuppressesAudioCapability(f) {
-			capabilities = appendCapability(capabilities, model.CapabilityAudio)
+			hasAudio = true
+		}
+		if projectorHasVision(f) {
+			hasVision = true
 		}
 		f.Close()
+	}
+
+	// If the projectors have neither explicitly, assume they have vision
+	if hasVision || !hasAudio {
+		capabilities = appendCapability(capabilities, model.CapabilityVision)
+	}
+	if hasAudio {
+		capabilities = appendCapability(capabilities, model.CapabilityAudio)
 	}
 
 	return capabilities
@@ -486,6 +498,16 @@ func projectorHasAudio(f *gguf.File) bool {
 
 	for _, kv := range f.KeyValues() {
 		if strings.HasSuffix(kv.Key, ".has_audio_encoder") && kv.Bool() {
+			return true
+		}
+	}
+
+	return false
+}
+
+func projectorHasVision(f *gguf.File) bool {
+	for _, kv := range f.KeyValues() {
+		if strings.Contains(kv.Key, "vision") {
 			return true
 		}
 	}
