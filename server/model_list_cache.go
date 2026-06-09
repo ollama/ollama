@@ -338,7 +338,7 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		},
 	}
 
-	modelPath, projectorCount, tmpl, err := readModelListLayers(mf, &summary)
+	modelPath, projectorCaps, tmpl, err := readModelListLayers(mf, &summary)
 	if err != nil {
 		return modelListSummary{}, err
 	}
@@ -387,8 +387,8 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		}
 	}
 
-	if projectorCount > 0 {
-		summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityVision)
+	for _, projectorCapability := range projectorCaps {
+		summary.Capabilities = appendModelListCapability(summary.Capabilities, projectorCapability)
 	}
 
 	if cfg.ModelFormat == "safetensors" && isGemma4Renderer(cfg.Renderer) {
@@ -419,9 +419,9 @@ func readModelListConfig(mf *manifest.Manifest) (model.ConfigV2, error) {
 	return cfg, nil
 }
 
-func readModelListLayers(mf *manifest.Manifest, summary *modelListSummary) (string, int, *ollamatemplate.Template, error) {
+func readModelListLayers(mf *manifest.Manifest, summary *modelListSummary) (string, []model.Capability, *ollamatemplate.Template, error) {
 	var modelPath string
-	var projectorCount int
+	var projectorCaps []model.Capability
 	tmpl := ollamatemplate.DefaultTemplate
 
 	for _, layer := range mf.Layers {
@@ -429,31 +429,37 @@ func readModelListLayers(mf *manifest.Manifest, summary *modelListSummary) (stri
 		case "application/vnd.ollama.image.model":
 			filename, err := manifest.BlobsPath(layer.Digest)
 			if err != nil {
-				return "", 0, nil, err
+				return "", []model.Capability{}, nil, err
 			}
 			modelPath = filename
 			summary.Details.ParentModel = layer.From
 		case "application/vnd.ollama.image.projector":
-			projectorCount++
+			filename, err := manifest.BlobsPath(layer.Digest)
+			if err != nil {
+				return "", []model.Capability{}, nil, err
+			}
+			for _, projectorCapability := range projectorCapabilities(filename) {
+				projectorCaps = appendCapability(projectorCaps, projectorCapability)
+			}
 		case "application/vnd.ollama.image.prompt",
 			"application/vnd.ollama.image.template":
 			filename, err := manifest.BlobsPath(layer.Digest)
 			if err != nil {
-				return "", 0, nil, err
+				return "", []model.Capability{}, nil, err
 			}
 			bts, err := os.ReadFile(filename)
 			if err != nil {
-				return "", 0, nil, err
+				return "", []model.Capability{}, nil, err
 			}
 
 			tmpl, err = ollamatemplate.Parse(string(bts))
 			if err != nil {
-				return "", 0, nil, err
+				return "", []model.Capability{}, nil, err
 			}
 		}
 	}
 
-	return modelPath, projectorCount, tmpl, nil
+	return modelPath, projectorCaps, tmpl, nil
 }
 
 type modelListGGUF struct {
