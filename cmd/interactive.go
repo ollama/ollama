@@ -583,33 +583,80 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 }
 
 func normalizeFilePath(fp string) string {
-	return strings.NewReplacer(
-		"\\ ", " ", // Escaped space
-		"\\(", "(", // Escaped left parenthesis
-		"\\)", ")", // Escaped right parenthesis
-		"\\[", "[", // Escaped left square bracket
-		"\\]", "]", // Escaped right square bracket
-		"\\{", "{", // Escaped left curly brace
-		"\\}", "}", // Escaped right curly brace
-		"\\$", "$", // Escaped dollar sign
-		"\\&", "&", // Escaped ampersand
-		"\\;", ";", // Escaped semicolon
-		"\\'", "'", // Escaped single quote
+	// Remove macOS drag-drop URL prefix
+	fp = strings.TrimPrefix(fp, "file://")
+
+	// Replace common shell escape sequences
+	replacer := strings.NewReplacer(
+		"\\ ", " ",   // Escaped space
+		"\\(", "(",   // Escaped left parenthesis
+		"\\)", ")",   // Escaped right parenthesis
+		"\\[", "[",   // Escaped left square bracket
+		"\\]", "]",   // Escaped right square bracket
+		"\\{", "{",   // Escaped left curly brace
+		"\\}", "}",   // Escaped right curly brace
+		"\\$", "$",   // Escaped dollar sign
+		"\\&", "&",   // Escaped ampersand
+		"\\;", ";",   // Escaped semicolon
+		"\\'", "'",   // Escaped single quote
 		"\\\\", "\\", // Escaped backslash
-		"\\*", "*", // Escaped asterisk
-		"\\?", "?", // Escaped question mark
-		"\\~", "~", // Escaped tilde
-	).Replace(fp)
+		"\\*", "*",   // Escaped asterisk
+		"\\?", "?",   // Escaped question mark
+		"\\~", "~",   // Escaped tilde
+		"\\!", "!",   // Escaped exclamation mark
+		"\\#", "#",   // Escaped hash
+		"\\@", "@",   // Escaped at sign
+	)
+	return replacer.Replace(fp)
 }
 
 func extractFileNames(input string) []string {
-	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
-	// and followed by more characters and a file extension
-	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
-	re := regexp.MustCompile(regexPattern)
+	// Match file paths with supported image/audio extensions.
+	// Handles absolute paths (/...), relative paths (./...), Windows paths (C:\...),
+	// and paths with escaped spaces from macOS drag-drop.
+	//
+	// Uses a two-pass approach:
+	// 1. Regex matching for well-formed paths
+	// 2. Token-based fallback for quoted or unescaped paths
+	var matches []string
 
-	return re.FindAllString(input, -1)
+	// Pass 1: Regex for well-formed paths with typical separators
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)\S+\.(?i:jpg|jpeg|png|webp|wav)\b`
+	re := regexp.MustCompile(regexPattern)
+	matches = re.FindAllString(input, -1)
+
+	// Pass 2: Token-based check for paths that didn't match the regex
+	// (e.g., paths with escaped spaces from macOS drag-drop, or quoted paths)
+	fields := strings.Fields(input)
+	for _, f := range fields {
+		// Skip empty fields
+		if f == "" {
+			continue
+		}
+
+		// Strip surrounding quotes if present
+		clean := strings.Trim(f, "\"'")
+
+		// Check if it has a supported extension
+		ext := strings.ToLower(filepath.Ext(clean))
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" && ext != ".wav" {
+			continue
+		}
+
+		// Avoid duplicates
+		duplicate := false
+		for _, m := range matches {
+			if m == clean {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			matches = append(matches, clean)
+		}
+	}
+
+	return matches
 }
 
 func extractFileData(input string) (string, []api.ImageData, error) {
