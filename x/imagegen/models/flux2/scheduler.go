@@ -52,7 +52,7 @@ func (s *FlowMatchScheduler) SetTimestepsWithMu(numSteps int, mu float32) {
 	// Then applies time shift, appends 0.0 at end
 	s.Sigmas = make([]float32, numSteps+1)
 
-	for i := 0; i < numSteps; i++ {
+	for i := range numSteps {
 		// linspace(1, 1/num_steps, num_steps)
 		var sigma float32
 		if numSteps == 1 {
@@ -87,7 +87,7 @@ func (s *FlowMatchScheduler) timeShift(mu float32, t float32) float32 {
 		return 0
 	}
 	if s.Config.TimeShiftType == "linear" {
-		return mu / (mu + (1.0/t-1.0))
+		return mu / (mu + (1.0/t - 1.0))
 	}
 	// Default: exponential
 	expMu := float32(math.Exp(float64(mu)))

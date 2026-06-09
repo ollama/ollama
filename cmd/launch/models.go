@@ -23,10 +23,10 @@ import (
 )
 
 var recommendedModels = []ModelItem{
-	{Name: "kimi-k2.6:cloud", Description: "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability", Recommended: true, ContextLength: 262_144, MaxOutputTokens: 262_144},
-	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true, ContextLength: 262_144, MaxOutputTokens: 32_768},
-	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true, ContextLength: 202_752, MaxOutputTokens: 131_072},
-	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true, ContextLength: 204_800, MaxOutputTokens: 128_000},
+	{Name: "kimi-k2.6:cloud", Description: "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 262_144},
+	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 32_768},
+	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true, Details: api.ModelDetails{ContextLength: 202_752}, MaxOutputTokens: 131_072},
+	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true, Details: api.ModelDetails{ContextLength: 204_800}, MaxOutputTokens: 128_000},
 	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true, VRAMBytes: 12 * format.GigaByte},
 	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true, VRAMBytes: 14 * format.GigaByte},
 }
@@ -115,7 +115,7 @@ func setDynamicCloudModelLimits(limits map[string]cloudModelLimit) {
 func cloudModelLimitsFromRecommendations(recommendations []ModelItem) map[string]cloudModelLimit {
 	limits := make(map[string]cloudModelLimit, len(recommendations))
 	for _, rec := range recommendations {
-		if !isCloudModelName(rec.Name) || rec.ContextLength <= 0 || rec.MaxOutputTokens <= 0 {
+		if !isCloudModelName(rec.Name) || rec.Details.ContextLength <= 0 || rec.MaxOutputTokens <= 0 {
 			continue
 		}
 		base, stripped := modelref.StripCloudSourceTag(rec.Name)
@@ -123,7 +123,7 @@ func cloudModelLimitsFromRecommendations(recommendations []ModelItem) map[string
 			continue
 		}
 		limits[base] = cloudModelLimit{
-			Context: rec.ContextLength,
+			Context: rec.Details.ContextLength,
 			Output:  rec.MaxOutputTokens,
 		}
 	}
@@ -299,18 +299,17 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 }
 
 // prepareEditorIntegration persists models and applies editor-managed config files.
-func prepareEditorIntegration(name string, editor Editor, models []string) error {
+func prepareEditorIntegration(name string, editor Editor, models []LaunchModel) error {
 	if err := editor.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
-	if err := config.SaveIntegration(name, models); err != nil {
+	if err := config.SaveIntegration(name, launchModelNames(models)); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
 	return nil
 }
 
-func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, model string, models []string) error {
-	models = dedupeModelList(append([]string{model}, models...))
+func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, model string, models []LaunchModel) error {
 	var err error
 	if withModels, ok := managed.(ManagedModelListConfigurer); ok {
 		err = withModels.ConfigureWithModels(model, models)
@@ -365,11 +364,11 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 		}
 		displayName := strings.TrimSuffix(m.Name, ":latest")
 		existingModels[displayName] = true
-		item := ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}
 		if rec, ok := recByName[displayName]; ok {
-			item = copyModelRecommendationFields(displayName, rec)
+			items = append(items, modelItemFromInventory(displayName, m, copyModelRecommendationFields(displayName, rec)))
+		} else {
+			items = append(items, modelItemFromInventory(displayName, m, ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}))
 		}
-		items = append(items, item)
 	}
 
 	for _, rec := range recommendations {
@@ -483,20 +482,18 @@ func copyModelRecommendationFields(name string, rec ModelItem) ModelItem {
 	return rec
 }
 
+func modelItemFromInventory(name string, info modelInfo, item ModelItem) ModelItem {
+	item.Name = name
+	item.ToolCapable = info.ToolCapable
+	item.Capabilities = slices.Clone(info.Capabilities)
+	item.Size = info.Size
+	item.Details = info.Details
+	return item
+}
+
 // isCloudModelName reports whether the model name has an explicit cloud source.
 func isCloudModelName(name string) bool {
 	return modelref.HasExplicitCloudSource(name)
-}
-
-// filterCloudModels drops remote-only models from the given inventory.
-func filterCloudModels(existing []modelInfo) []modelInfo {
-	filtered := existing[:0]
-	for _, m := range existing {
-		if !m.Remote {
-			filtered = append(filtered, m)
-		}
-	}
-	return filtered
 }
 
 // filterCloudItems removes cloud models from selection items.

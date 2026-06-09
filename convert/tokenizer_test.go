@@ -184,8 +184,8 @@ func TestParseTokenizer(t *testing.T) {
 				},
 				SpecialVocabulary: []*SpecialVocabulary{
 					{Type: "pad", Content: "<pad>", ID: 0, AddToken: false},
-					{Type: "eos", Content: "<eos>", ID: 1, AddToken: false},
-					{Type: "bos", Content: "<bos>", ID: 2, AddToken: true},
+					{Type: "eos", Content: "<eos>", ID: 1, AddToken: false, AddTokenSet: true},
+					{Type: "bos", Content: "<bos>", ID: 2, AddToken: true, AddTokenSet: true},
 					{Type: "unk", Content: "<unk>", ID: 3, AddToken: false},
 				},
 				Pre: "default",
@@ -380,8 +380,8 @@ func TestParseTokenizer(t *testing.T) {
 					Types:  []int32{3, 3, 3, 3},
 				},
 				SpecialVocabulary: []*SpecialVocabulary{
-					{Type: "eos", Content: "<eos>", ID: 1, IDs: []int32{1, 2, 3}, AddToken: false},
-					{Type: "bos", Content: "<bos>", ID: 0, AddToken: true},
+					{Type: "eos", Content: "<eos>", ID: 1, IDs: []int32{1, 2, 3}, AddToken: false, AddTokenSet: true},
+					{Type: "bos", Content: "<bos>", ID: 0, AddToken: true, AddTokenSet: true},
 				},
 				Pre: "default",
 			},
@@ -421,5 +421,25 @@ func TestParseTokenizer(t *testing.T) {
 				t.Errorf("unexpected tokenizer (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestModelParametersKVOmitsMissingAddToken(t *testing.T) {
+	kv := ModelParameters{}.KV(&Tokenizer{
+		Vocabulary: &Vocabulary{Model: "gpt2"},
+		SpecialVocabulary: []*SpecialVocabulary{
+			{Type: "bos", Content: "<bos>", ID: 1},
+			{Type: "eos", Content: "<eos>", ID: 2, AddToken: false, AddTokenSet: true},
+		},
+	})
+
+	if _, ok := kv["tokenizer.ggml.add_bos_token"]; ok {
+		t.Errorf("tokenizer.ggml.add_bos_token should be omitted when add_bos_token is absent")
+	}
+	if got := kv["tokenizer.ggml.bos_token_id"]; got != uint32(1) {
+		t.Errorf("tokenizer.ggml.bos_token_id = %v, want 1", got)
+	}
+	if got, ok := kv["tokenizer.ggml.add_eos_token"]; !ok || got != false {
+		t.Errorf("tokenizer.ggml.add_eos_token = %v, %v; want explicit false", got, ok)
 	}
 }

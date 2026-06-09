@@ -47,14 +47,14 @@ import "C"
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	mlxrunnermlx "github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 // Dtype represents MLX data types
@@ -179,7 +179,7 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 	}
 
 	// Handle pointers
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return
 		}
@@ -203,7 +203,7 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 
 	// Handle structs
 	if v.Kind() == reflect.Struct {
-		for i := 0; i < v.NumField(); i++ {
+		for i := range v.NumField() {
 			field := v.Field(i)
 			if field.CanInterface() {
 				collect(field, arrays, seen)
@@ -214,7 +214,7 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 
 	// Handle slices
 	if v.Kind() == reflect.Slice {
-		for i := 0; i < v.Len(); i++ {
+		for i := range v.Len() {
 			collect(v.Index(i), arrays, seen)
 		}
 		return
@@ -314,7 +314,7 @@ func DebugArraysVerbose(topN int) {
 	}
 
 	// Sort by size descending
-	for i := 0; i < len(infos)-1; i++ {
+	for i := range len(infos) - 1 {
 		for j := i + 1; j < len(infos); j++ {
 			if infos[j].bytes > infos[i].bytes {
 				infos[i], infos[j] = infos[j], infos[i]
@@ -1012,7 +1012,7 @@ func Slice(a *Array, start, stop []int32) *Array {
 	cStart := make([]C.int, n)
 	cStop := make([]C.int, n)
 	cStrides := make([]C.int, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		cStart[i] = C.int(start[i])
 		cStop[i] = C.int(stop[i])
 		cStrides[i] = 1 // Default stride of 1
@@ -1233,7 +1233,7 @@ func (a *Array) Dim(axis int) int32 {
 func (a *Array) Shape() []int32 {
 	ndim := a.Ndim()
 	shape := make([]int32, ndim)
-	for i := 0; i < ndim; i++ {
+	for i := range ndim {
 		shape[i] = a.Dim(i)
 	}
 	return shape
@@ -1659,7 +1659,7 @@ func SliceUpdate(a, update *Array, start, stop []int32) *Array {
 	cStart := make([]C.int, n)
 	cStop := make([]C.int, n)
 	cStrides := make([]C.int, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		cStart[i] = C.int(start[i])
 		cStop[i] = C.int(stop[i])
 		cStrides[i] = 1 // Default stride of 1
@@ -1707,82 +1707,6 @@ var (
 	mlxInitError   error
 )
 
-// mlxLibName returns the platform-specific shared library filename.
-func mlxLibName() string {
-	switch runtime.GOOS {
-	case "windows":
-		return "mlxc.dll"
-	case "darwin":
-		return "libmlxc.dylib"
-	default:
-		return "libmlxc.so"
-	}
-}
-
-// findMLXLibrary searches for the MLX shared library in standard locations.
-// Returns the path to the library, or empty string if not found.
-func findMLXLibrary() string {
-	libName := mlxLibName()
-
-	// 1. OLLAMA_LIBRARY_PATH — check each dir and mlx_* subdirs
-	if paths, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH"); ok {
-		for _, dir := range filepath.SplitList(paths) {
-			candidate := filepath.Join(dir, libName)
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate
-			}
-			if mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx*")); err == nil {
-				for _, mlxDir := range mlxDirs {
-					candidate = filepath.Join(mlxDir, libName)
-					if _, err := os.Stat(candidate); err == nil {
-						return candidate
-					}
-				}
-			}
-		}
-	}
-
-	// 2. Executable directory and lib/ollama/mlx* subdirs
-	if exe, err := os.Executable(); err == nil {
-		if eval, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = eval
-		}
-		exeDir := filepath.Dir(exe)
-
-		// Check exe dir directly (macOS copies dylib here)
-		candidate := filepath.Join(exeDir, libName)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-
-		// Check exe_dir/lib/ollama/mlx* subdirectories
-		// and exe_dir/../lib/ollama/mlx* (standard bin/lib sibling layout)
-		for _, libOllamaDir := range []string{
-			filepath.Join(exeDir, "lib", "ollama"),
-			filepath.Join(exeDir, "..", "lib", "ollama"),
-		} {
-			if mlxDirs, err := filepath.Glob(filepath.Join(libOllamaDir, "mlx*")); err == nil {
-				for _, mlxDir := range mlxDirs {
-					candidate = filepath.Join(mlxDir, libName)
-					if _, err := os.Stat(candidate); err == nil {
-						return candidate
-					}
-				}
-			}
-		}
-	}
-
-	// 3. Build directory (for tests run from repo root)
-	if cwd, err := os.Getwd(); err == nil {
-		candidate := filepath.Join(cwd, "build", "lib", "ollama", libName)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-
-	return ""
-}
-
 // InitMLX initializes the MLX library by dynamically loading libmlxc.
 // This must be called before using any MLX functions.
 // Returns an error if the library cannot be loaded.
@@ -1791,10 +1715,9 @@ func InitMLX() error {
 		return mlxInitError
 	}
 
-	// Search for the library using Go path discovery
-	libPath := findMLXLibrary()
-	if libPath == "" {
-		mlxInitError = fmt.Errorf("failed to initialize MLX: %s not found", mlxLibName())
+	libPath, err := mlxrunnermlx.LoadedLibraryPath()
+	if err != nil {
+		mlxInitError = fmt.Errorf("failed to initialize MLX: %w", err)
 		return mlxInitError
 	}
 
@@ -1815,27 +1738,6 @@ func InitMLX() error {
 
 	mlxInitialized = true
 	mlxInitError = nil
-	return nil
-}
-
-// IsMLXAvailable returns whether MLX was successfully initialized
-func IsMLXAvailable() bool {
-	return mlxInitialized && mlxInitError == nil
-}
-
-// GetMLXInitError returns any error that occurred during MLX initialization
-func GetMLXInitError() error {
-	return mlxInitError
-}
-
-func init() {
-	// Initialize MLX dynamic library first
-	if err := InitMLX(); err != nil {
-		// Don't panic in init - let the caller handle the error
-		// Store the error for later retrieval
-		mlxInitError = err
-		return
-	}
 
 	// Enter safe mode: replace the default exit(-1) error handler with one
 	// that logs and stores errors. This prevents a GPU init failure from
@@ -1853,8 +1755,20 @@ func init() {
 		msg := C.GoString(C.mlx_get_init_error())
 		mlxInitError = fmt.Errorf("MLX GPU init failed: %s", msg)
 		mlxInitialized = false
-		return
+		return mlxInitError
 	}
+
+	return nil
+}
+
+// IsMLXAvailable returns whether MLX was successfully initialized
+func IsMLXAvailable() bool {
+	return mlxInitialized && mlxInitError == nil
+}
+
+// GetMLXInitError returns any error that occurred during MLX initialization
+func GetMLXInitError() error {
+	return mlxInitError
 }
 
 // RestoreDefaultErrorHandler restores the default MLX error handler (exit on error).
@@ -2291,7 +2205,7 @@ func Pad(a *Array, paddings []int32) *Array {
 	// Convert to low/high pairs
 	lowPad := make([]C.int, numAxes)
 	highPad := make([]C.int, numAxes)
-	for i := 0; i < numAxes; i++ {
+	for i := range numAxes {
 		lowPad[i] = C.int(paddings[i*2])
 		highPad[i] = C.int(paddings[i*2+1])
 	}
@@ -2299,7 +2213,7 @@ func Pad(a *Array, paddings []int32) *Array {
 	res := C.mlx_array_new()
 	// mlx_pad takes axes, low, high arrays
 	axes := make([]C.int, numAxes)
-	for i := 0; i < numAxes; i++ {
+	for i := range numAxes {
 		axes[i] = C.int(i)
 	}
 	cMode := C.CString("constant")

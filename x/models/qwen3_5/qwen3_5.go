@@ -4,6 +4,7 @@ package qwen3_5
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 
@@ -400,7 +401,7 @@ func NewModel(root *model.Root) (base.Model, error) {
 		tok:    tok,
 	}
 
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		m.Layers[i] = &Layer{IsLinear: layerIsLinear(&cfg, i)}
 	}
 
@@ -570,7 +571,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	groupSize := 0
 	mode := cfg.QuantMode
 
-	for e := int32(0); e < numExperts; e++ {
+	for e := range numExperts {
 		base := fmt.Sprintf("%s.mlp.experts.%d.%s", layerPrefix, e, proj)
 		w, key := tensorByBase(tensors, base)
 		if w == nil {
@@ -872,7 +873,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 	moeLoadSummaries := make([]string, 0)
 
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", modelPrefix, i)
 		layer := &Layer{IsLinear: layerIsLinear(cfg, i)}
 
@@ -1069,6 +1070,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 		m.Layers[i] = layer
 	}
+	for _, summary := range moeLoadSummaries {
+		slog.Debug("qwen3.5 moe load", "summary", summary)
+	}
 
 	return nil
 }
@@ -1160,9 +1164,9 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 		}, -1)
 	}
 	convTail := cfg.LinearConvKernelDim - 1
-	var rc cache.Recurrent
+	var rc *cache.RecurrentCache
 	var rec nn.RecurrentOption
-	if typed, ok := c.(cache.Recurrent); ok {
+	if typed, ok := c.(*cache.RecurrentCache); ok {
 		rc = typed
 		rec = nn.WithRecurrentHistory(rc.Get(b, x.DType()))
 	} else {
@@ -1193,9 +1197,6 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 	gDecay = gDecay.AsType(alpha.DType())
 
 	betaGate := mlx.Sigmoid(beta)
-	if recorder, ok := rc.(cache.RecurrentRecorder); ok {
-		recorder.Record(qkv, q, k, v, gDecay, betaGate)
-	}
 
 	out, state := nn.GatedDelta(b, q, k, v, gDecay, betaGate, rec)
 	outDType := out.DType()
@@ -1303,46 +1304,24 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 }
 
 func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
-	out, _ := m.forward(b, caches, nil)
-	return out
-}
-
-func (m *Model) ForwardDFlash(b *batch.Batch, caches []cache.Cache, layerIDs []int) (hidden, targetHidden *mlx.Array) {
-	return m.forward(b, caches, layerIDs)
-}
-
-func (m *Model) forward(b *batch.Batch, caches []cache.Cache, captureLayerIDs []int) (*mlx.Array, *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
 	h := m.EmbedTokens.Forward(b.InputIDs)
-	captured := make([]*mlx.Array, 0, len(captureLayerIDs))
-	nextCapture := 0
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
 		h = layer.Forward(h, b, c, positions, B, L, m.Config)
-		if nextCapture < len(captureLayerIDs) && i == captureLayerIDs[nextCapture] {
-			captured = append(captured, h)
-			nextCapture++
-		}
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
-	if len(captured) == 0 {
-		return out, nil
-	}
-	return out, mlx.Concatenate(captured, -1)
+	return out
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
-}
-
-func (m *Model) TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array {
-	return m.EmbedTokens.Forward(inputIDs)
 }
 
 func (m *Model) NumLayers() int {

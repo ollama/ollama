@@ -18,8 +18,13 @@ import (
 func init() {
 	base.Register("Gemma4ForCausalLM", newModel)
 	base.Register("Gemma4ForConditionalGeneration", newModel)
+	base.Register("Gemma4UnifiedForCausalLM", newModel)
+	base.Register("Gemma4UnifiedForConditionalGeneration", newModel)
+	base.Register("gemma4_unified", newModel)
 	base.RegisterDraft("Gemma4AssistantForCausalLM", newAssistantModel)
+	base.RegisterDraft("Gemma4UnifiedAssistantForCausalLM", newAssistantModel)
 	base.RegisterDraft("gemma4_assistant", newAssistantModel)
+	base.RegisterDraft("gemma4_unified_assistant", newAssistantModel)
 }
 
 // Compile-time interface checks.
@@ -91,6 +96,10 @@ type TextConfig struct {
 	KVShareMap map[int32]int32 `json:"-"`
 	// Set of donor layer indices that need to store their KV.
 	KVDonors map[int32]bool `json:"-"`
+}
+
+type generationConfig struct {
+	SuppressTokens []int32 `json:"suppress_tokens"`
 }
 
 // sharedHistory carries a donor layer's K/V to donees that share
@@ -342,7 +351,8 @@ type Model struct {
 	tok *tokenizer.Tokenizer
 	*TextConfig
 
-	weightPrefix string
+	SuppressLogitBias *mlx.Array
+	weightPrefix      string
 }
 
 func parseTextConfig(configData []byte) (TextConfig, error) {
@@ -465,6 +475,14 @@ func parseTextConfig(configData []byte) (TextConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func parseSuppressTokens(configData []byte) []int32 {
+	var cfg generationConfig
+	if err := json.Unmarshal(configData, &cfg); err != nil {
+		return nil
+	}
+	return cfg.SuppressTokens
 }
 
 func (m *Model) EnableCompile() bool {
@@ -591,8 +609,10 @@ func newModel(root *model.Root) (base.Model, error) {
 	}
 
 	tokConfig := &tokenizer.TokenizerConfig{ConfigJSON: configData}
+	var suppressTokens []int32
 	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
 		tokConfig.GenerationConfigJSON = genConfigData
+		suppressTokens = parseSuppressTokens(genConfigData)
 	}
 	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
 		tokConfig.TokenizerConfigJSON = tokConfigData
@@ -604,9 +624,10 @@ func newModel(root *model.Root) (base.Model, error) {
 	}
 
 	m := &Model{
-		Layers:     make([]*DecoderLayer, cfg.NumHiddenLayers),
-		TextConfig: &cfg,
-		tok:        tok,
+		Layers:            make([]*DecoderLayer, cfg.NumHiddenLayers),
+		TextConfig:        &cfg,
+		tok:               tok,
+		SuppressLogitBias: makeSuppressLogitBias(suppressTokens, cfg.VocabSize),
 	}
 
 	for i := range m.Layers {
@@ -1076,7 +1097,40 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 		logits = mlx.LogitSoftcap(logits, cap)
 	}
 
-	return logits
+	return suppressTokenLogits(logits, m.SuppressLogitBias)
+}
+
+func makeSuppressLogitBias(tokenIDs []int32, vocabSize int32) *mlx.Array {
+	if len(tokenIDs) == 0 || vocabSize <= 0 {
+		return nil
+	}
+
+	bias := make([]float32, int(vocabSize))
+	any := false
+	for _, tokenID := range tokenIDs {
+		if tokenID >= 0 && tokenID < vocabSize {
+			bias[tokenID] = float32(math.Inf(-1))
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+
+	return mlx.FromValues(bias, 1, 1, int(vocabSize))
+}
+
+func suppressTokenLogits(logits, bias *mlx.Array) *mlx.Array {
+	if bias == nil {
+		return logits
+	}
+
+	dims := logits.Dims()
+	if len(dims) != 3 {
+		return logits
+	}
+
+	return logits.Add(bias.AsType(logits.DType()))
 }
 
 func (m *Model) NumLayers() int {

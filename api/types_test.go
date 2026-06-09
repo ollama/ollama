@@ -20,6 +20,10 @@ func testPropsMap(m map[string]ToolProperty) *ToolPropertiesMap {
 	return props
 }
 
+func testIntPtr(v int) *int {
+	return &v
+}
+
 // testArgs creates ToolCallFunctionArguments from a map (convenience function for tests, order not preserved)
 func testArgs(m map[string]any) ToolCallFunctionArguments {
 	args := NewToolCallFunctionArguments()
@@ -168,6 +172,47 @@ func TestUseMmapParsingFromJSON(t *testing.T) {
 	}
 }
 
+func TestMainGPUParsingFromJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     string
+		wantGPU *int
+	}{
+		{
+			name: "Undefined",
+			req:  `{}`,
+		},
+		{
+			name:    "Zero",
+			req:     `{ "main_gpu": 0 }`,
+			wantGPU: testIntPtr(0),
+		},
+		{
+			name:    "Nonzero",
+			req:     `{ "main_gpu": 1 }`,
+			wantGPU: testIntPtr(1),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var oMap map[string]any
+			err := json.Unmarshal([]byte(test.req), &oMap)
+			require.NoError(t, err)
+
+			opts := DefaultOptions()
+			err = opts.FromMap(oMap)
+			require.NoError(t, err)
+
+			if test.wantGPU == nil {
+				assert.Nil(t, opts.MainGPU)
+			} else if assert.NotNil(t, opts.MainGPU) {
+				assert.Equal(t, *test.wantGPU, *opts.MainGPU)
+			}
+		})
+	}
+}
+
 func TestUseMmapFormatParams(t *testing.T) {
 	tr := true
 	fa := false
@@ -230,6 +275,12 @@ func TestUseMmapFormatParams(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMainGPUFormatParams(t *testing.T) {
+	resp, err := FormatParams(map[string][]string{"main_gpu": {"0"}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), resp["main_gpu"])
 }
 
 func TestMessage_UnmarshalJSON(t *testing.T) {

@@ -83,6 +83,7 @@ type glmOcrModel struct {
 		HiddenSize          uint32  `json:"hidden_size"`
 		IntermediateSize    uint32  `json:"intermediate_size"`
 		NumHiddenLayers     uint32  `json:"num_hidden_layers"`
+		NumNextNPredict     uint32  `json:"num_nextn_predict_layers"`
 		NumAttentionHeads   uint32  `json:"num_attention_heads"`
 		NumKeyValueHeads    uint32  `json:"num_key_value_heads"`
 		HeadDim             uint32  `json:"head_dim"`
@@ -131,7 +132,7 @@ type glmOcrModel struct {
 	} `json:"-"`
 }
 
-var _ ModelConverter = (*glmOcrModel)(nil)
+var _ MultimodalConverter = (*glmOcrModel)(nil)
 
 func (m *glmOcrModel) parseMore(fsys fs.FS) error {
 	bts, err := fs.ReadFile(fsys, "preprocessor_config.json")
@@ -145,9 +146,14 @@ func (m *glmOcrModel) parseMore(fsys fs.FS) error {
 func (m *glmOcrModel) KV(t *Tokenizer) KV {
 	kv := m.ModelParameters.KV(t)
 	kv["general.architecture"] = "glmocr"
+	applyGlmOcrTokenizerKV(kv, t)
 
 	// Text model parameters
-	kv["glmocr.block_count"] = cmp.Or(m.TextConfig.NumHiddenLayers, 16)
+	numHiddenLayers := cmp.Or(m.TextConfig.NumHiddenLayers, 16)
+	kv["glmocr.block_count"] = numHiddenLayers + m.TextConfig.NumNextNPredict
+	if m.TextConfig.NumNextNPredict > 0 {
+		kv["glmocr.nextn_predict_layers"] = m.TextConfig.NumNextNPredict
+	}
 	kv["glmocr.embedding_length"] = cmp.Or(m.TextConfig.HiddenSize, 1536)
 	kv["glmocr.attention.head_count"] = cmp.Or(m.TextConfig.NumAttentionHeads, 16)
 	kv["glmocr.attention.head_count_kv"] = cmp.Or(m.TextConfig.NumKeyValueHeads, 8)
@@ -175,8 +181,6 @@ func (m *glmOcrModel) KV(t *Tokenizer) KV {
 	kv["glmocr.vision.intermediate_size"] = cmp.Or(m.VisionConfig.IntermediateSize, 4096)
 	kv["glmocr.vision.attention.layer_norm_rms_epsilon"] = cmp.Or(m.VisionConfig.RMSNormEps, 1e-5)
 
-	// Preprocessor-derived image settings (min/max pixels and normalization)
-	// Note: fs.Config.keyValue() auto-prepends architecture prefix, so use full key
 	if m.Preprocessor.Size.ShortestEdge > 0 {
 		kv["glmocr.vision.min_pixels"] = m.Preprocessor.Size.ShortestEdge
 	}
@@ -190,7 +194,6 @@ func (m *glmOcrModel) KV(t *Tokenizer) KV {
 		kv["glmocr.vision.image_std"] = m.Preprocessor.ImageStd
 	}
 
-	// Special tokens
 	kv["glmocr.image_token_id"] = m.ImageTokenID
 	kv["glmocr.image_start_token_id"] = m.ImageStartTokenID
 	kv["glmocr.image_end_token_id"] = m.ImageEndTokenID
@@ -201,31 +204,248 @@ func (m *glmOcrModel) KV(t *Tokenizer) KV {
 	return kv
 }
 
+func applyGlmOcrTokenizerKV(kv KV, t *Tokenizer) {
+	kv["tokenizer.ggml.pre"] = "chatglm-bpe"
+	if id, ok := glmOcrTokenID(t, "<|endoftext|>"); ok {
+		kv["tokenizer.ggml.bos_token_id"] = uint32(id)
+		kv["tokenizer.ggml.unknown_token_id"] = uint32(id)
+	}
+	if id, ok := glmOcrTokenID(t, "<|user|>"); ok {
+		kv["tokenizer.ggml.eot_token_id"] = uint32(id)
+	}
+}
+
+func (m *glmOcrModel) TextKV(t *Tokenizer) KV {
+	kv := m.ModelParameters.KV(t)
+	kv["general.architecture"] = "glm4"
+	applyGlmOcrTokenizerKV(kv, t)
+
+	numHiddenLayers := cmp.Or(m.TextConfig.NumHiddenLayers, 16)
+	kv["block_count"] = numHiddenLayers + m.TextConfig.NumNextNPredict
+	if m.TextConfig.NumNextNPredict > 0 {
+		kv["nextn_predict_layers"] = m.TextConfig.NumNextNPredict
+	}
+	kv["embedding_length"] = cmp.Or(m.TextConfig.HiddenSize, 1536)
+	kv["attention.head_count"] = cmp.Or(m.TextConfig.NumAttentionHeads, 16)
+	kv["attention.head_count_kv"] = cmp.Or(m.TextConfig.NumKeyValueHeads, 8)
+	headDim := cmp.Or(m.TextConfig.HeadDim, m.TextConfig.HiddenSize/m.TextConfig.NumAttentionHeads)
+	kv["attention.key_length"] = headDim
+	kv["attention.value_length"] = headDim
+	kv["feed_forward_length"] = cmp.Or(m.TextConfig.IntermediateSize, 4608)
+	kv["attention.layer_norm_rms_epsilon"] = cmp.Or(m.TextConfig.RMSNormEps, 1e-5)
+	kv["context_length"] = cmp.Or(m.TextConfig.MaxPositionEmbed, 131072)
+	kv["rope.freq_base"] = cmp.Or(m.TextConfig.RopeParameters.RopeTheta, float32(10000))
+	partialRotaryFactor := cmp.Or(m.TextConfig.RopeParameters.PartialRotaryFactor, m.TextConfig.PartialRotaryFactor, float32(1.0))
+	kv["rope.dimension_count"] = uint32(float32(headDim) * partialRotaryFactor)
+	if len(m.TextConfig.RopeParameters.MRopeSection) > 0 {
+		sections := append([]int32(nil), m.TextConfig.RopeParameters.MRopeSection...)
+		for len(sections) < 4 {
+			sections = append(sections, 0)
+		}
+		kv["rope.dimension_sections"] = sections
+	}
+
+	return kv
+}
+
+func (m *glmOcrModel) ProjectorKV(*Tokenizer) KV {
+	kv := KV{
+		"general.architecture":                     "clip",
+		"general.type":                             "mmproj",
+		"general.file_type":                        uint32(1),
+		"general.quantization_version":             uint32(2),
+		"clip.has_vision_encoder":                  true,
+		"clip.projector_type":                      "glm4v",
+		"clip.use_silu":                            true,
+		"clip.vision.block_count":                  cmp.Or(m.VisionConfig.Depth, 24),
+		"clip.vision.embedding_length":             cmp.Or(m.VisionConfig.HiddenSize, 1024),
+		"clip.vision.attention.head_count":         cmp.Or(m.VisionConfig.NumHeads, 16),
+		"clip.vision.image_size":                   cmp.Or(m.VisionConfig.ImageSize, 336),
+		"clip.vision.patch_size":                   cmp.Or(m.VisionConfig.PatchSize, m.Preprocessor.PatchSize, 14),
+		"clip.vision.spatial_merge_size":           cmp.Or(m.VisionConfig.SpatialMergeSize, m.Preprocessor.MergeSize, 2),
+		"clip.vision.temporal_patch_size":          cmp.Or(m.VisionConfig.TemporalPatchSize, m.Preprocessor.TemporalPatchSize, 2),
+		"clip.vision.projection_dim":               cmp.Or(m.VisionConfig.OutHiddenSize, 1536),
+		"clip.vision.out_hidden_size":              cmp.Or(m.VisionConfig.OutHiddenSize, 1536),
+		"clip.vision.feed_forward_length":          cmp.Or(m.VisionConfig.IntermediateSize, 4096),
+		"clip.vision.intermediate_size":            cmp.Or(m.VisionConfig.IntermediateSize, 4096),
+		"clip.vision.attention.layer_norm_epsilon": cmp.Or(m.VisionConfig.RMSNormEps, 1e-5),
+		"clip.vision.image_token_id":               m.ImageTokenID,
+		"clip.vision.image_start_token_id":         m.ImageStartTokenID,
+		"clip.vision.image_end_token_id":           m.ImageEndTokenID,
+	}
+	if m.Preprocessor.Size.ShortestEdge > 0 {
+		kv["clip.vision.min_pixels"] = m.Preprocessor.Size.ShortestEdge
+	}
+	if m.Preprocessor.Size.LongestEdge > 0 {
+		kv["clip.vision.max_pixels"] = m.Preprocessor.Size.LongestEdge
+	}
+	if len(m.Preprocessor.ImageMean) == 3 {
+		kv["clip.vision.image_mean"] = m.Preprocessor.ImageMean
+	}
+	if len(m.Preprocessor.ImageStd) == 3 {
+		kv["clip.vision.image_std"] = m.Preprocessor.ImageStd
+	}
+
+	return kv
+}
+
+func glmOcrTokenID(t *Tokenizer, token string) (int, bool) {
+	if t == nil || t.Vocabulary == nil {
+		return 0, false
+	}
+	for i, candidate := range t.Vocabulary.Tokens {
+		if candidate == token {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func isGlmOcrVisionTensor(name string) bool {
+	return strings.HasPrefix(name, "v.") || strings.HasPrefix(name, "mm.")
+}
+
+func (m *glmOcrModel) TextTensors(ts []Tensor, t *Tokenizer) []*ggml.Tensor {
+	textOnly := make([]Tensor, 0, len(ts))
+	for _, tensor := range ts {
+		if !isGlmOcrVisionTensor(tensor.Name()) {
+			textOnly = append(textOnly, tensor)
+		}
+	}
+	return m.Tensors(textOnly)
+}
+
+func (m *glmOcrModel) ProjectorTensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
+	for _, t := range ts {
+		if !isGlmOcrVisionTensor(t.Name()) {
+			continue
+		}
+
+		name := t.Name()
+		switch {
+		case strings.HasSuffix(name, "patch_embd_0.weight"):
+			name = strings.Replace(name, "patch_embd_0.weight", "patch_embd.weight", 1)
+		case strings.HasSuffix(name, "patch_embd_1.weight"):
+			name = strings.Replace(name, "patch_embd_1.weight", "patch_embd.weight.1", 1)
+		case strings.HasSuffix(name, "patch_embd.weight.0"):
+			name = strings.Replace(name, "patch_embd.weight.0", "patch_embd.weight", 1)
+		}
+		if strings.HasSuffix(name, "patch_embd.weight") {
+			shape := t.Shape()
+			if len(shape) == 5 && shape[2] == 2 {
+				newShape := []uint64{shape[0], shape[1], shape[3], shape[4]}
+
+				t0 := t.Clone()
+				t0.SetRepacker(func(_ string, data []float32, shape []uint64) ([]float32, error) {
+					dims := make([]int, len(shape))
+					for i := range shape {
+						dims[i] = int(shape[i])
+					}
+					var tt tensor.Tensor = tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
+					tt, err := tt.Slice(nil, nil, tensor.S(0, 1), nil, nil)
+					if err != nil {
+						return nil, err
+					}
+					tt = tensor.Materialize(tt)
+					newDims := []int{int(shape[0]), int(shape[1]), int(shape[3]), int(shape[4])}
+					if err := tt.Reshape(newDims...); err != nil {
+						return nil, err
+					}
+					if err := tt.Reshape(tt.Shape().TotalSize()); err != nil {
+						return nil, err
+					}
+					return native.VectorF32(tt.(*tensor.Dense))
+				})
+				out = append(out, &ggml.Tensor{
+					Name:     strings.Replace(name, "patch_embd.weight", "patch_embd.weight", 1),
+					Kind:     t.Kind(),
+					Shape:    newShape,
+					WriterTo: t0,
+				})
+
+				t1 := t.Clone()
+				t1.SetRepacker(func(_ string, data []float32, shape []uint64) ([]float32, error) {
+					dims := make([]int, len(shape))
+					for i := range shape {
+						dims[i] = int(shape[i])
+					}
+					var tt tensor.Tensor = tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
+					tt, err := tt.Slice(nil, nil, tensor.S(1, 2), nil, nil)
+					if err != nil {
+						return nil, err
+					}
+					tt = tensor.Materialize(tt)
+					newDims := []int{int(shape[0]), int(shape[1]), int(shape[3]), int(shape[4])}
+					if err := tt.Reshape(newDims...); err != nil {
+						return nil, err
+					}
+					if err := tt.Reshape(tt.Shape().TotalSize()); err != nil {
+						return nil, err
+					}
+					return native.VectorF32(tt.(*tensor.Dense))
+				})
+				out = append(out, &ggml.Tensor{
+					Name:     strings.Replace(name, "patch_embd.weight", "patch_embd.weight.1", 1),
+					Kind:     t.Kind(),
+					Shape:    newShape,
+					WriterTo: t1,
+				})
+
+				continue
+			}
+		}
+
+		out = append(out, &ggml.Tensor{
+			Name:     name,
+			Kind:     t.Kind(),
+			Shape:    t.Shape(),
+			WriterTo: t,
+		})
+	}
+	return out
+}
+
 func (m *glmOcrModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	var out []*ggml.Tensor
 
-	// Skip layers >= num_hidden_layers (Multi-Token Prediction layers not needed for basic inference)
 	numLayers := int(cmp.Or(m.TextConfig.NumHiddenLayers, 16))
-	skipLayer := func(name string) bool {
-		// Tensor names are already replaced to "blk.N.xxx" format
-		re := regexp.MustCompile(`^blk\.(\d+)`)
-		matches := re.FindStringSubmatch(name)
+	maxLayers := numLayers + int(m.TextConfig.NumNextNPredict)
+	layerRe := regexp.MustCompile(`^blk\.(\d+)`)
+	layerIndex := func(name string) (int, bool) {
+		matches := layerRe.FindStringSubmatch(name)
 		if matches == nil {
-			return false
+			return 0, false
 		}
 		blkNum, err := strconv.Atoi(matches[1])
 		if err != nil {
-			return false
+			return 0, false
 		}
-		return blkNum >= numLayers
+		return blkNum, true
 	}
 
 	for _, t := range ts {
 		name := t.Name()
 
-		// Skip next-n prediction layers (layers >= num_hidden_layers)
-		if skipLayer(name) {
+		blkNum, hasLayer := layerIndex(name)
+		if hasLayer && blkNum >= maxLayers {
 			continue
+		}
+		if hasLayer && blkNum >= numLayers {
+			switch {
+			case strings.HasSuffix(name, ".embed_tokens.weight"):
+				name = strings.Replace(name, ".embed_tokens.weight", ".nextn.embed_tokens.weight", 1)
+			case strings.HasSuffix(name, ".eh_proj.weight"):
+				name = strings.Replace(name, ".eh_proj.weight", ".nextn.eh_proj.weight", 1)
+			case strings.HasSuffix(name, ".enorm.weight"):
+				name = strings.Replace(name, ".enorm.weight", ".nextn.enorm.weight", 1)
+			case strings.HasSuffix(name, ".hnorm.weight"):
+				name = strings.Replace(name, ".hnorm.weight", ".nextn.hnorm.weight", 1)
+			case strings.HasSuffix(name, ".shared_head.head.weight"):
+				name = strings.Replace(name, ".shared_head.head.weight", ".nextn.shared_head_head.weight", 1)
+			case strings.HasSuffix(name, ".shared_head.norm.weight"):
+				name = strings.Replace(name, ".shared_head.norm.weight", ".nextn.shared_head_norm.weight", 1)
+			}
 		}
 
 		// Split ffn_gate_up into separate gate and up projections
@@ -440,16 +660,16 @@ func (m *glmOcrModel) Replacements() []string {
 		"self_attn.q_proj", "attn_q",
 		"self_attn.k_proj", "attn_k",
 		"self_attn.v_proj", "attn_v",
-		"self_attn.o_proj", "attn_out",
+		"self_attn.o_proj", "attn_output",
 
 		// Language model norms
 		"input_layernorm", "attn_norm",
 		"post_attention_layernorm", "ffn_norm",
-		"post_self_attn_layernorm", "post_attn_norm",
-		"post_mlp_layernorm", "post_ffn_norm",
+		"post_self_attn_layernorm", "post_attention_norm",
+		"post_mlp_layernorm", "post_ffw_norm",
 
-		// Language model MLP (remove mlp. prefix so ffn_* names work)
-		"mlp.gate_up_proj", "ffn_gate_up",
+		// Language model MLP
+		"mlp.gate_up_proj", "ffn_up",
 		"mlp.down_proj", "ffn_down",
 	}
 }

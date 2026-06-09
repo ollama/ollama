@@ -48,7 +48,7 @@ type TimestepEmbedder struct {
 func (t *TimestepEmbedder) Forward(timesteps *mlx.Array) *mlx.Array {
 	half := t.EmbedDim / 2
 	freqs := make([]float32, half)
-	for i := int32(0); i < half; i++ {
+	for i := range half {
 		freqs[i] = float32(math.Exp(-math.Log(10000.0) * float64(i) / float64(half)))
 	}
 	freqsArr := mlx.NewArray(freqs, []int32{1, half})
@@ -501,20 +501,6 @@ func (m *Flux2Transformer2DModel) Forward(patches, txtEmbeds *mlx.Array, timeste
 
 // Note: QK normalization uses mlx.RMSNorm (the fast version) directly
 // See applyQKNorm function below
-
-// compiledSwiGLU fuses: silu(gate) * up
-// Called 30x per step (10 in dual-stream + 20 in single-stream blocks)
-var compiledSwiGLU *mlx.CompiledFunc
-
-func getCompiledSwiGLU() *mlx.CompiledFunc {
-	if compiledSwiGLU == nil {
-		compiledSwiGLU = mlx.CompileShapeless(func(inputs []*mlx.Array) []*mlx.Array {
-			gate, up := inputs[0], inputs[1]
-			return []*mlx.Array{mlx.Mul(mlx.SiLU(gate), up)}
-		}, true)
-	}
-	return compiledSwiGLU
-}
 
 // Helper functions
 

@@ -25,7 +25,7 @@ type stubEditorRunner struct {
 	editErr  error
 }
 
-func (s *stubEditorRunner) Run(model string, args []string) error {
+func (s *stubEditorRunner) Run(model string, _ []LaunchModel, args []string) error {
 	s.ranModel = model
 	return nil
 }
@@ -34,11 +34,11 @@ func (s *stubEditorRunner) String() string { return "StubEditor" }
 
 func (s *stubEditorRunner) Paths() []string { return nil }
 
-func (s *stubEditorRunner) Edit(models []string) error {
+func (s *stubEditorRunner) Edit(models []LaunchModel) error {
 	if s.editErr != nil {
 		return s.editErr
 	}
-	cloned := append([]string(nil), models...)
+	cloned := launchModelNames(models)
 	s.edited = append(s.edited, cloned)
 	return nil
 }
@@ -61,9 +61,11 @@ func TestIntegrationLookup(t *testing.T) {
 		{"codex app", "codex-app", true, "Codex App"},
 		{"codex app desktop alias", "codex-desktop", true, "Codex App"},
 		{"codex app gui alias", "codex-gui", true, "Codex App"},
+		{"hermes desktop", "hermes-desktop", true, "Hermes Desktop"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
 		{"droid", "droid", true, "Droid"},
 		{"opencode", "opencode", true, "OpenCode"},
+		{"omp", "omp", true, "OMP"},
 		{"pool", "pool", true, "Pool"},
 		{"unknown integration", "unknown", false, ""},
 		{"empty string", "", false, ""},
@@ -83,7 +85,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "codex", "codex-app", "kimi", "droid", "opencode", "hermes", "pool"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "codex-app", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -100,7 +102,7 @@ func TestIntegrationRegistry(t *testing.T) {
 func TestHiddenIntegrationsExcludedFromVisibleLists(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		switch info.Name {
-		case "cline", "vscode", "kimi":
+		case "vscode", "kimi":
 			t.Fatalf("hidden integration %q should not appear in ListIntegrationInfos", info.Name)
 		}
 	}
@@ -206,7 +208,7 @@ func TestAllIntegrations_HaveRequiredMethods(t *testing.T) {
 			if displayName == "" {
 				t.Error("String() should not return empty")
 			}
-			var _ func(string, []string) error = r.Run
+			var _ func(string, []LaunchModel, []string) error = r.Run
 		})
 	}
 }
@@ -481,11 +483,11 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 func TestBuildModelList_PreservesRecommendationRequiredPlanForExistingCloudModel(t *testing.T) {
 	recommendations := []ModelItem{
 		{
-			Name:          "glm-5:cloud",
-			Description:   "Reasoning and code generation",
-			Recommended:   true,
-			RequiredPlan:  "pro",
-			ContextLength: 202_752,
+			Name:         "glm-5:cloud",
+			Description:  "Reasoning and code generation",
+			Recommended:  true,
+			RequiredPlan: "pro",
+			Details:      api.ModelDetails{ContextLength: 202_752},
 		},
 	}
 	existing := []modelInfo{{Name: "glm-5:cloud", Remote: true}}
@@ -866,7 +868,7 @@ func TestPrepareEditorIntegration_SavesOnlyAfterSuccessfulEdit(t *testing.T) {
 	}
 
 	editor := &stubEditorRunner{editErr: errors.New("boom")}
-	err := prepareEditorIntegration("droid", editor, []string{"new-model"})
+	err := prepareEditorIntegration("droid", editor, testLaunchModels("new-model"))
 	if err == nil || !strings.Contains(err.Error(), "setup failed") {
 		t.Fatalf("expected setup failure, got %v", err)
 	}
@@ -1761,6 +1763,11 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantEmpty: true,
 		},
 		{
+			name:    "qwen uses official install page",
+			input:   "qwen",
+			wantURL: "https://qwen.ai/qwencode",
+		},
+		{
 			name:      "empty name has no hint",
 			input:     "",
 			wantEmpty: true,
@@ -1841,9 +1848,9 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw"}
+		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		if codexAppSupported() != nil {
-			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode"}
+			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		}
 		if len(got) < len(wantPrefix) {
 			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
@@ -1865,7 +1872,7 @@ func TestListIntegrationInfos(t *testing.T) {
 	})
 
 	t.Run("includes known integrations", func(t *testing.T) {
-		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
+		known := map[string]bool{"claude": false, "cline": false, "codex": false, "opencode": false, "omp": false}
 		if codexAppSupported() == nil {
 			known["codex-app"] = false
 		}
@@ -1891,6 +1898,15 @@ func TestListIntegrationInfos(t *testing.T) {
 			}
 		}
 		t.Fatal("expected hermes to be included in ListIntegrationInfos")
+	})
+
+	t.Run("includes hermes desktop", func(t *testing.T) {
+		for _, info := range infos {
+			if info.Name == "hermes-desktop" {
+				return
+			}
+		}
+		t.Fatal("expected hermes-desktop to be included in ListIntegrationInfos")
 	})
 
 	t.Run("hermes still resolves explicitly", func(t *testing.T) {
@@ -1991,6 +2007,7 @@ func TestIntegration_Editor(t *testing.T) {
 		{"claude", false},
 		{"claude-desktop", false},
 		{"codex", false},
+		{"omp", false},
 		{"nonexistent", false},
 	}
 	for _, tt := range tests {
@@ -2015,10 +2032,14 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 		{"openclaw", true},
 		{"pi", true},
 		{"hermes", true},
+		{"hermes-desktop", true},
+		{"cline", true},
+		{"qwen", true},
 		{"claude", false},
 		{"claude-desktop", false},
 		{"codex", false},
 		{"opencode", false},
+		{"omp", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
