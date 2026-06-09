@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, Message } from '../api';
+import MessageRenderer from './MessageRenderer';
 import './Chat.css';
 
 interface ChatProps {
@@ -10,9 +11,11 @@ function Chat({ sessionId }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [codeMode, setCodeMode] = useState(false);
 
   useEffect(() => {
     loadMessages();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   const loadMessages = async () => {
@@ -43,10 +46,24 @@ function Chat({ sessionId }: ChatProps) {
 
   return (
     <div className="chat-container">
+      <div className="chat-header">
+        <button
+          className={`code-mode-toggle ${codeMode ? 'active' : ''}`}
+          onClick={() => setCodeMode(!codeMode)}
+          title={codeMode ? 'Disable Code Mode' : 'Enable Code Mode'}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <polyline points="16 18 22 12 16 6"></polyline>
+            <polyline points="8 6 2 12 8 18"></polyline>
+          </svg>
+          <span>Code Mode</span>
+        </button>
+      </div>
+
       <div className="messages">
         {messages.map((msg, idx) => (
           <div key={idx} className={`message ${msg.role}`}>
-            <div className="message-content">{msg.content}</div>
+            <MessageRenderer content={msg.content} codeMode={codeMode} />
           </div>
         ))}
         {isLoading && <div className="message assistant loading">Thinking...</div>}

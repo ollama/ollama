@@ -5,6 +5,46 @@
   background: #1a1a1a;
 }
 
+.chat-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0.75rem 2rem;
+  background: #0f0f0f;
+  border-bottom: 1px solid #333;
+}
+
+.code-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #e0e0e0;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.code-mode-toggle:hover {
+  background: #333;
+  border-color: #555;
+}
+
+.code-mode-toggle.active {
+  background: #1a73e8;
+  border-color: #1a73e8;
+  color: white;
+}
+
+.code-mode-toggle svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
+}
+
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -36,6 +76,10 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.5;
+}
+
+.message.user .message-content {
+  color: white;
 }
 
 .message.loading {
