@@ -7,14 +7,83 @@
 
 .chat-header {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
-  padding: 0.75rem 2rem;
+  gap: 0.75rem;
+  padding: 0.75rem 1.5rem;
   background: #0f0f0f;
   border-bottom: 1px solid #333;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.repo-context-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #24292e;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 0.85rem;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.repo-context-badge span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-context-badge svg {
+  flex-shrink: 0;
+  color: #8b949e;
+}
+
+.repo-ref {
+  color: #8b949e;
+  margin-left: 0.25rem;
+}
+
+.repo-files {
+  color: #58a6ff;
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.clear-repo-btn {
+  background: none;
+  border: none;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 0 0.25rem;
+  line-height: 1;
+}
+
+.clear-repo-btn:hover {
+  color: #f85149;
+}
+
+.repo-chat-hint {
+  padding: 1rem 1.25rem;
+  background: #1a2332;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  color: #8b949e;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.repo-chat-hint strong {
+  color: #58a6ff;
 }
 
 .code-mode-toggle {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -89,14 +158,17 @@
 
 .input-area {
   display: flex;
-  gap: 1rem;
-  padding: 1rem 2rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
   background: #0f0f0f;
   border-top: 1px solid #333;
+  flex-shrink: 0;
 }
 
 .input-area input {
   flex: 1;
+  min-width: 0;
   padding: 0.75rem;
   background: #2a2a2a;
   border: 1px solid #444;
@@ -111,13 +183,15 @@
 }
 
 .input-area button {
-  padding: 0.75rem 1.5rem;
+  flex-shrink: 0;
+  padding: 0.75rem 1.25rem;
   background: #1a73e8;
   color: white;
   border: none;
   border-radius: 6px;
   cursor: pointer;
   font-size: 1rem;
+  white-space: nowrap;
 }
 
 .input-area button:disabled {

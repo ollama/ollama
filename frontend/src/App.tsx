@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Login from './components/Login';
 import Chat from './components/Chat';
 import Sidebar from './components/Sidebar';
+import GitHubBrowser from './components/GitHubBrowser';
 import { api, Session } from './api';
 import './App.css';
 
@@ -10,6 +11,8 @@ function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [showGitHubBrowser, setShowGitHubBrowser] = useState(false);
+  const [chatRefreshKey, setChatRefreshKey] = useState(0);
 
   useEffect(() => {
     const apiKey = api.getApiKey();
@@ -18,6 +21,15 @@ function App() {
       loadSessions();
     } else {
       setIsLoading(false);
+    }
+
+    // Check for GitHub OAuth callback
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('github') === 'connected') {
+      // Remove the query parameter
+      window.history.replaceState({}, document.title, window.location.pathname);
+      // Show success message or open GitHub browser
+      setShowGitHubBrowser(true);
     }
   }, []);
 
@@ -93,10 +105,14 @@ function App() {
         onNewChat={handleNewChat}
         onDeleteSession={handleDeleteSession}
         onLogout={handleLogout}
+        onOpenGitHub={() => setShowGitHubBrowser(true)}
       />
       <div className="main">
         {activeSessionId ? (
-          <Chat sessionId={activeSessionId} />
+          <Chat
+            key={`${activeSessionId}-${chatRefreshKey}`}
+            sessionId={activeSessionId}
+          />
         ) : (
           <div className="empty-state">
             <h2>No active chat</h2>
@@ -105,6 +121,16 @@ function App() {
           </div>
         )}
       </div>
+      {showGitHubBrowser && (
+        <GitHubBrowser
+          sessionId={activeSessionId}
+          onClose={() => setShowGitHubBrowser(false)}
+          onRepoLinked={() => {
+            loadSessions();
+            setChatRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
     </div>
   );
 }

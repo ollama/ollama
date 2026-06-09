@@ -90,6 +90,28 @@
 .sidebar-footer {
   padding: 1rem;
   border-top: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sidebar-footer .github-button {
+  width: 100%;
+  padding: 0.75rem;
+  background: #24292e;
+  color: #e0e0e0;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.sidebar-footer .github-button:hover {
+  background: #2f363d;
 }
 
 .sidebar-footer .logout-button {
