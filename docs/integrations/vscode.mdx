@@ -2,84 +2,120 @@
 title: VS Code
 ---
 
-VS Code includes built-in AI chat through GitHub Copilot Chat. Ollama models can be used directly in the Copilot Chat model picker.
+Visual Studio Code is a code editor with built-in AI chat through GitHub Copilot Chat. The Ollama extension for VS Code lets you use Ollama models from the Copilot Chat model picker, so you can work with local models and Ollama Cloud models without leaving your editor.
 
+<img
+  src="/images/vscode.png"
+  alt="VS Code with Ollama selected"
+  style={{ borderRadius: "12px" }}
+/>
 
-![VS Code with Ollama](/images/vscode.png)
+## Why Use Ollama in VS Code
 
+Ollama brings your models into the same chat surface you already use for code questions, refactoring, debugging, and project navigation. Local models can run on your machine, while Ollama Cloud models are available when you want larger hosted models.
+
+The extension discovers models from your running Ollama server and makes them available under **Ollama** in the VS Code model picker.
 
 ## Prerequisites
 
-- Ollama v0.18.3+
-- [VS Code 1.113+](https://code.visualstudio.com/download)
-- [GitHub Copilot Chat extension 0.41.0+](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat)
+- [Ollama](https://ollama.com/download)
+- [VS Code](https://code.visualstudio.com/download)
+- GitHub Copilot Chat in VS Code
+- The Ollama VS Code extension
 
-<Note> VS Code requires you to be logged in to use its model selector, even for custom models. This doesn't require a paid GitHub Copilot account; GitHub Copilot Free will enable model selection for custom models.</Note>
+<Note>
+  Local Ollama models work without signing in to Ollama. Ollama Cloud models and cloud-only features may require signing in first.
+</Note>
 
-## Quick setup
+## Get Started
 
-```shell
-ollama launch vscode
+1. Install Ollama and make sure it is running.
+
+   ```shell
+   ollama serve
+   ```
+
+2. Pull a local model, or use an Ollama Cloud model.
+
+   ```shell
+   ollama pull qwen3.5
+   ```
+
+3. Install the Ollama extension from the VS Code Marketplace.
+
+   Search for **Ollama** in the VS Code Extensions view and install the official Ollama extension.
+
+4. Open Copilot Chat in VS Code.
+
+   <img
+     src="/images/vscode-sidebar.png"
+     alt="VS Code Copilot Chat sidebar"
+     style={{ borderRadius: "12px" }}
+   />
+
+5. Open the model picker and select a model from the **Ollama** section.
+
+   <img
+     src="/images/vscode-other-models.png"
+     alt="VS Code model picker"
+     style={{ borderRadius: "12px" }}
+   />
+
+## What You Can Do
+
+Use Ollama models in VS Code to:
+
+- ask questions about code
+- explain errors and stack traces
+- generate or revise code
+- summarize files or snippets
+- work with tool-capable models in agentic chat flows
+- use vision-capable models with image input when supported
+
+## Configure the Ollama Endpoint
+
+By default, the extension connects to Ollama at:
+
+```txt
+http://127.0.0.1:11434
 ```
 
-Recommended models will be shown after running the command. See the latest models at [ollama.com](https://ollama.com/search?c=tools).
+To use a different Ollama server, update your VS Code settings:
 
-Make sure **Local** is selected at the bottom of the Copilot Chat panel to use your Ollama models.
-<div style={{ display: "flex", justifyContent: "center" }}>
-  <img
-    src="/images/local.png"
-    alt="Ollama Local Models"
-    width="60%"
-    style={{ borderRadius: "4px", marginTop: "10px", marginBottom: "10px" }}
-  />
-</div>
+```json
+{
+  "ollama.endpoint": "http://127.0.0.1:11434"
+}
+```
 
+The extension lists models from `/api/tags` and reads model details from `/api/show`.
 
-## Run directly with a model
+## Install Manually from a VSIX
+
+If you are testing the extension before it is published, install a packaged VSIX manually:
 
 ```shell
-ollama launch vscode --model qwen3.5:cloud
+code --install-extension ollama-vscode-0.0.1.vsix
 ```
-Cloud models are also available at [ollama.com](https://ollama.com/search?c=cloud).
 
-## Manual setup
+You can also run **Extensions: Install from VSIX...** from the VS Code Command Palette.
 
-To configure Ollama manually without `ollama launch`:
+<Note>
+  Marketplace installation is recommended for most users because VS Code can discover and update Marketplace extensions normally.
+</Note>
 
-1. Open the **Copilot Chat** side bar from the top right corner
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-sidebar.png"
-       alt="VS Code chat Sidebar"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
-2. Click the **settings gear icon** (<Icon icon="gear" />) to bring up the Language Models window
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-other-models.png"
-       alt="VS Code model picker"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
-3. Click **Add Models** and select **Ollama** to load all your Ollama models into VS Code
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-add-ollama.png"
-       alt="VS Code model options dropdown to add ollama models"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
+## Troubleshooting
 
-4. Click the **Unhide** button in the model picker to show your Ollama models  
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-unhide.png"
-       alt="VS Code unhide models button"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
+If Ollama models do not appear in the model picker, make sure Ollama is running:
+
+```shell
+ollama list
+```
+
+If a cloud model prompts you to sign in, sign in to Ollama and try again:
+
+```shell
+ollama signin
+```
+
+If you changed `ollama.endpoint`, confirm the endpoint is reachable from the same VS Code window.
