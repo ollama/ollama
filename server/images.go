@@ -376,17 +376,21 @@ func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.C
 			slog.Error("couldn't open projector file", "error", err)
 			continue
 		}
-		if projectorHasAudio(f) && !projectorSuppressesAudioCapability(f) {
-			hasAudio = true
-		}
-		if projectorHasVision(f) {
+		projHasAudio := projectorHasAudio(f) && !projectorSuppressesAudioCapability(f)
+		projHasVision := projectorHasVision(f)
+
+		// If the projector has neither explicitly, assume it has vision
+		if projHasVision || !projHasAudio {
 			hasVision = true
 		}
+		if projHasAudio {
+			hasAudio = true
+		}
+
 		f.Close()
 	}
 
-	// If the projectors have neither explicitly, assume they have vision
-	if hasVision || !hasAudio {
+	if hasVision {
 		capabilities = appendCapability(capabilities, model.CapabilityVision)
 	}
 	if hasAudio {
