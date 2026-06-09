@@ -453,6 +453,12 @@ func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 		slog.Info("setting env", "OLLAMA_HOST", ollamaHost)
 		t.Setenv("OLLAMA_HOST", ollamaHost)
 	}
+	// Disable gRPC listener for integration test server starts (serial binary + global mutex;
+	// avoids port collisions on default 11435 and keeps test matrix HTTP-only unless explicitly
+	// enabled with a distinct port in future grpc integ tests). Per grpc-phased-reliable-approach.md Phase 1.
+	if os.Getenv("OLLAMA_GRPC_HOST") == "" {
+		t.Setenv("OLLAMA_GRPC_HOST", "")
+	}
 
 	serverCmd = exec.Command(CLIName, "serve")
 	serverCmd.Stderr = &serverLog

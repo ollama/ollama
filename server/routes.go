@@ -29,6 +29,8 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/image/webp"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
@@ -1915,6 +1917,9 @@ func (s *Server) ModelRecommendationsExperimentalHandler(c *gin.Context) {
 }
 
 func Serve(ln net.Listener) error {
+	// NOTE: This path still contains the full init logic (duplicated with SetupServer)
+	// to guarantee 100% identical behavior for any code that calls server.Serve directly.
+	// See TODO on SetupServer. When dual mode is active, cmd uses SetupServer instead.
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
 	cloudDisabled, _ := internalcloud.Status()
@@ -2038,6 +2043,180 @@ func Serve(ln net.Listener) error {
 	}
 	<-ctx.Done()
 	return nil
+}
+
+// SetupServer performs the common one-time initialization (prunes, *Server creation,
+// request logging, GenerateRoutes, scheduler, model caches, GPU/defaultNumCtx, webp, sched.Run).
+// It enables sharing a single *Server + *Scheduler across HTTP and gRPC (mandatory to avoid
+// VRAM contention, duplicate loads, and scheduler races per reliable overlay + research).
+// primaryAddr (if non-nil) is set on the returned *Server before GenerateRoutes so that
+// middleware such as allowedHostsMiddleware sees the correct listener address (critical
+// for preserving HTTP behavior and host checks when dual-listening).
+// Serve calls this (via its ln.Addr) to preserve its exact signature and behavior for back-compat.
+// cmd.RunServer calls this (when dual) before starting listeners via errgroup.
+//
+// TODO(phase 2 / reliability): the init logic here is still duplicated in the body of
+// the original Serve (for back-compat of any direct callers). Once the HTTP handlers
+// are extracted (phase 2), slim Serve to delegate fully to SetupServer + listener-specific
+// code only. This duplication currently violates the "small units / simplicity" rule
+// from the reliable-go SKILL.
+func SetupServer(primaryAddr net.Addr) (*Server, http.Handler, *Scheduler, error) {
+	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
+	slog.Info("server config", "env", envconfig.Values())
+	cloudDisabled, cloudSource := internalcloud.Status()
+	slog.Info(fmt.Sprintf("Ollama cloud disabled: %t", cloudDisabled), "cloud_source", cloudSource)
+
+	blobsDir, err := manifest.BlobsPath("")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := fixBlobs(blobsDir); err != nil {
+		return nil, nil, nil, err
+	}
+
+	if !envconfig.NoPrune() {
+		if _, err := manifest.Manifests(false); err != nil {
+			slog.Warn("corrupt manifests detected, skipping prune operation.  Re-pull or delete to clear", "error", err)
+		} else {
+			// clean up unused layers and manifests
+			if err := PruneLayers(); err != nil {
+				return nil, nil, nil, err
+			}
+
+			manifestsPath, err := manifest.Path()
+			if err != nil {
+				return nil, nil, nil, err
+			}
+
+			if err := manifest.PruneDirectory(manifestsPath); err != nil {
+				return nil, nil, nil, err
+			}
+		}
+	}
+
+	s := &Server{
+		modelCaches: newModelCaches(),
+	}
+	if primaryAddr != nil {
+		s.addr = primaryAddr
+	}
+	if err := s.initRequestLogging(); err != nil {
+		return nil, nil, nil, err
+	}
+
+	var rc *ollama.Registry
+	if useClient2 {
+		var err error
+		rc, err = ollama.DefaultRegistry()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	h, err := s.GenerateRoutes(rc)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Note: http.Handle("/", h) is performed by the caller (Serve for backcompat or cmd for the HTTP listener path)
+	// so that gRPC can register on its own mux.
+
+	ctx, done := context.WithCancel(context.Background())
+	schedCtx, schedDone := context.WithCancel(ctx)
+	sched := InitScheduler(schedCtx)
+	s.sched = sched
+	s.modelCaches.Start(ctx)
+
+	// The following were after signals in original Serve; they are common (not listener-specific)
+	// so run here for both paths. Listening log is emitted by callers per listener.
+	s.sched.Run(schedCtx)
+
+	// register the experimental webp decoder
+	// so webp images can be used in multimodal inputs
+	image.RegisterFormat("webp", "RIFF????WEBP", webp.Decode, webp.DecodeConfig)
+
+	// At startup we retrieve GPU information so we can get log messages before loading a model
+	// This will log warnings to the log in case we have problems with detected GPUs
+	gpus := discover.GPUDevices(ctx, nil)
+	discover.LogDetails(gpus)
+
+	var totalVRAM uint64
+	for _, gpu := range gpus {
+		totalVRAM += gpu.TotalMemory - envconfig.GpuOverhead()
+	}
+
+	// Set default context based on VRAM tier
+	// Use slightly lower thresholds (47/23 GiB vs. 48/24 GiB) to account for small differences in the exact value
+	switch {
+	case totalVRAM >= 47*format.GibiByte:
+		s.defaultNumCtx = 262144
+	case totalVRAM >= 23*format.GibiByte:
+		s.defaultNumCtx = 32768
+	default:
+		s.defaultNumCtx = 4096
+	}
+	slog.Info("vram-based default context", "total_vram", format.HumanBytes2(totalVRAM), "default_num_ctx", s.defaultNumCtx, "reason", "selected based on detected total VRAM tier (after GPU overhead) to balance context size vs. memory safety for local inference")
+
+	// Return handler for HTTP path caller to http.Handle; s and sched are populated for gRPC delegation.
+	// The internal ctx/done/schedDone are tied to this s lifetime (shutdown coordinated by caller).
+	_ = done     // coordinated by Serve or central cmd signal handler
+	_ = schedDone
+	return s, h, sched, nil
+}
+
+func (s *Server) registerServices(mux *http.ServeMux) {
+	// Stub for Phase 1 wiring. Phase 2 will register the connect handlers:
+	//   path, h := chatv1.NewChatServiceHandler(&chatHandler{s}, connect.WithInterceptors(...))
+	//   mux.Handle(path, h)
+	// plus models/embed etc. + health/reflection.
+	slog.Debug("registerServices stub (services registered in Phase 2)", "component", "grpc")
+}
+
+// UnloadAllRunners is a thin exported helper so cmd (and other callers) can trigger unload
+// on the shared scheduler during graceful shutdown without exposing the internal sched field.
+func (s *Server) UnloadAllRunners() {
+	if s != nil && s.sched != nil {
+		s.sched.unloadAllRunners()
+	}
+}
+
+// ServeGRPC starts a gRPC/Connect compatible listener using h2c (per connect getting-started for
+// unencrypted local use; supports gRPC, Connect, gRPC-Web from one handler).
+// ctx is first param (Context is King); derived from stream or passed for cancel propagation to core.
+// Bounded: goroutine owned by errCh + ctx select; on cancel/return, Shutdown to stop promptly (prevent GPU leak).
+// Logs use component:"grpc" + addr (per reliable overlay observability requirements).
+func (s *Server) ServeGRPC(ctx context.Context, ln net.Listener) error {
+	if ln == nil {
+		return nil
+	}
+	slog.Info("starting grpc listener", "component", "grpc", "addr", ln.Addr().String())
+
+	mux := http.NewServeMux()
+	s.registerServices(mux)
+
+	srv := &http.Server{
+		Handler: h2c.NewHandler(mux, &http2.Server{}),
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+		<-errCh
+		slog.Info("grpc shutdown complete", "component", "grpc", "addr", ln.Addr().String())
+		return ctx.Err()
+	case err := <-errCh:
+		return err
+	}
 }
 
 func waitForStream(c *gin.Context, ch chan any) {

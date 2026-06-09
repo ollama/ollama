@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package ollama.api.v1;
+
+option go_package = "github.com/ollama/ollama/gen/proto/ollama/api/v1;apiv1";
+
+// MVP Models service (List, Show basics, Version). Mirrors /api/tags, /api/version, /api/show.
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+message ListModelsRequest {}
+
+message ListModelsResponse {
+  repeated Model models = 1;
+}
+
+message Model {
+  string name = 1;
+  string model = 2; // full digest or tag
+  google.protobuf.Timestamp modified_at = 3;
+  int64 size = 4;
+  string digest = 5;
+  map<string, string> details = 6; // family, format, etc. (MVP flattened; later struct or dedicated)
+  // TODO: more details from api ListResponseModel
+}
+
+message ShowModelRequest {
+  string model = 1;
+  // verbose etc.
+}
+
+message ShowModelResponse {
+  string license = 1;
+  string modelfile = 2;
+  string parameters = 3;
+  string template = 4;
+  google.protobuf.Struct details = 5; // or map
+  map<string, bytes> model_info = 6; // or struct
+}
+
+message VersionRequest {}
+
+message VersionResponse {
+  string version = 1;
+}
+
+service ModelsService {
+  rpc List(ListModelsRequest) returns (ListModelsResponse);
+  rpc Show(ShowModelRequest) returns (ShowModelResponse);
+  rpc Version(VersionRequest) returns (VersionResponse);
+  // TODO(phase3+): Ps (running), Pull progress streams, etc.
+}

@@ -1,0 +1,5 @@
+# Ignore standard python artifacts
+**/__pycache__/**
+.venv/
+venv/
+.env

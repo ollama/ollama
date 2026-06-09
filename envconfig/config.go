@@ -82,6 +82,56 @@ func ConnectableHost() *url.URL {
 	return u
 }
 
+// GRPCHost returns the host for the optional gRPC/Connect listener.
+// It is configured via the OLLAMA_GRPC_HOST environment variable.
+// Default is "127.0.0.1:11435".
+// If OLLAMA_GRPC_HOST is empty (after trim), returns nil to disable the gRPC listener
+// (explicit opt-out while keeping default-on for the separate port).
+// Mirrors Host() logic exactly for scheme/port parsing (rarely used for gRPC but for consistency).
+func GRPCHost() *url.URL {
+	defaultPort := "11435"
+
+	s := strings.TrimSpace(Var("OLLAMA_GRPC_HOST"))
+	if s == "" {
+		return nil // disable gRPC listener
+	}
+
+	scheme, hostport, ok := strings.Cut(s, "://")
+	switch {
+	case !ok:
+		scheme, hostport = "http", s
+		if s == "ollama.com" {
+			scheme, hostport = "https", "ollama.com:443"
+		}
+	case scheme == "http":
+		defaultPort = "80"
+	case scheme == "https":
+		defaultPort = "443"
+	}
+
+	hostport, path, _ := strings.Cut(hostport, "/")
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host, port = "127.0.0.1", defaultPort
+		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
+			host = ip.String()
+		} else if hostport != "" {
+			host = hostport
+		}
+	}
+
+	if n, err := strconv.ParseInt(port, 10, 32); err != nil || n > 65535 || n < 0 {
+		slog.Warn("invalid port, using default", "port", port, "default", defaultPort)
+		port = defaultPort
+	}
+
+	return &url.URL{
+		Scheme: scheme,
+		Host:   net.JoinHostPort(host, port),
+		Path:   path,
+	}
+}
+
 // AllowedOrigins returns a list of allowed origins. AllowedOrigins can be configured via the OLLAMA_ORIGINS environment variable.
 func AllowedOrigins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
@@ -320,6 +370,7 @@ func AsMap() map[string]EnvVar {
 		"LLAMA_ARG_FIT":               {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},
 		"LLAMA_ARG_FIT_TARGET":        {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},
 		"OLLAMA_HOST":                 {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_GRPC_HOST":            {"OLLAMA_GRPC_HOST", GRPCHost(), "IP Address for the optional gRPC/Connect server (default 127.0.0.1:11435; set empty to disable)"},
 		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":         {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},

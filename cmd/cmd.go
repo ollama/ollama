@@ -1998,17 +1998,77 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", envconfig.Host().Host)
+	lnHTTP, err := net.Listen("tcp", envconfig.Host().Host)
 	if err != nil {
 		return err
 	}
 
-	err = server.Serve(ln)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	var lnGRPC net.Listener
+	if u := envconfig.GRPCHost(); u != nil && u.Host != "" {
+		lnGRPC, err = net.Listen("tcp", u.Host)
+		if err != nil {
+			return err
+		}
 	}
 
-	return err
+	// Setup once for shared *Server + *Scheduler (reconciliation/queue, VRAM, no contention).
+	// Mirrors the reliable requirement for single sched instance across protocols.
+	// Pass the HTTP listener addr so middleware (allowedHosts etc.) baked into the
+	// returned handler sees the correct primary address even in dual mode.
+	s, h, sched, err := server.SetupServer(lnHTTP.Addr())
+	if err != nil {
+		return err
+	}
+	_ = sched // attached to s; unload coordinated below
+
+	// Always wire via errgroup + bounded workers (no fire-and-forget). SetLimit(2) for the two potential listeners.
+	// Use explicit cancel so signal can propagate to ServeGRPC (ctx first) for prompt stop (no GPU leak).
+	ctx, cancel := context.WithCancel(context.Background())
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(2)
+
+	var httpSrv *http.Server
+	g.Go(func() error {
+		http.Handle("/", h)
+		httpSrv = &http.Server{
+			// Use http.DefaultServeMux so we get net/http/pprof for free (preserves prior behavior).
+			Handler: nil,
+		}
+		slog.Info(fmt.Sprintf("Listening on %s (version %s)", lnHTTP.Addr(), version.Version))
+		if err := httpSrv.Serve(lnHTTP); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	})
+
+	if lnGRPC != nil {
+		g.Go(func() error {
+			return s.ServeGRPC(gctx, lnGRPC)
+		})
+	}
+
+	// Centralized signals for dual (or single) graceful shutdown: close http, cancel ctx (for gRPC ServeGRPC),
+	// unload runners (shared sched), let errgroup wait.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-signals
+		slog.Info("received shutdown signal")
+		cancel()
+		if httpSrv != nil {
+			httpSrv.Close()
+		}
+		if s != nil {
+			s.UnloadAllRunners()
+		}
+		// cancel above + close will cause ServeGRPC (if running) to shutdown promptly
+		// (its select on ctx) and g.Wait to return.
+	}()
+
+	if err := g.Wait(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 func initializeKeypair() error {

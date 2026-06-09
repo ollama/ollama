@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package ollama.api.v1;
+
+option go_package = "github.com/ollama/ollama/gen/proto/ollama/api/v1;apiv1";
+
+// MVP Generate service. Mirrors api.GenerateRequest/Response.
+
+import "google/protobuf/timestamp.proto";
+
+message GenerateRequest {
+  string model = 1;
+  string prompt = 2;
+  string suffix = 3;
+  string system = 4;
+  string template = 5;
+  repeated int32 context = 6;
+  bool stream = 7;
+  bool raw = 8;
+  map<string, string> options = 9;
+  string keep_alive = 10;
+  repeated bytes images = 11;
+  // TODO: format, think, tools, etc.
+}
+
+message GenerateResponse {
+  string model = 1;
+  string response = 2;
+  bool done = 3;
+  string done_reason = 4;
+  repeated int32 context = 5;
+  int64 prompt_eval_count = 6;
+  int64 eval_count = 7;
+  google.protobuf.Timestamp created_at = 8;
+  // TODO: usage, thinking (for some models), etc.
+}
+
+service GenerateService {
+  rpc Generate(GenerateRequest) returns (GenerateResponse);
+  rpc GenerateStream(GenerateRequest) returns (stream GenerateResponse);
+}

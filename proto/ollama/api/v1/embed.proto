@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package ollama.api.v1;
+
+option go_package = "github.com/ollama/ollama/gen/proto/ollama/api/v1;apiv1";
+
+// MVP Embed service. Unary for now (EmbedRequest/Response from api).
+
+message EmbedRequest {
+  string model = 1;
+  repeated string input = 2; // texts to embed (or single via api compat)
+  map<string, string> options = 3;
+  string keep_alive = 4;
+  // TODO: truncate, etc.
+}
+
+message EmbedResponse {
+  string model = 1;
+  repeated Embeddings embeddings = 2; // list of float vectors
+}
+
+message Embeddings {
+  repeated float values = 1;
+}
+
+service EmbedService {
+  rpc Embed(EmbedRequest) returns (EmbedResponse);
+}

@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package ollama.api.v1;
+
+option go_package = "github.com/ollama/ollama/gen/proto/ollama/api/v1;apiv1";
+
+// MVP Chat service for gRPC/Connect (Phase 0 skeleton per grpc-phased-reliable-approach.md).
+// Enriched in later phases with oneofs for multimodal (images, content parts), tools,
+// sampling options (google.protobuf.Struct or dedicated), thinking, structured outputs, etc.
+// Mirrors key fields from api/types.go ChatRequest/ChatResponse + xai-proto patterns.
+
+import "google/protobuf/timestamp.proto";
+
+message Message {
+  string role = 1;
+  string content = 2;
+  string thinking = 3; // for .Think responses
+  repeated bytes images = 4; // raw image bytes for multimodal (MVP; later content oneof)
+  // TODO(phase3+): tool_calls, tool_name, tool_call_id, content parts oneof per xai
+}
+
+message ChatRequest {
+  string model = 1;
+  repeated Message messages = 2;
+  bool stream = 3;
+
+  // Simple MVP options; later: google.protobuf.Struct or rich Sampling message
+  map<string, string> options = 10;
+
+  // KeepAlive as seconds or special (MVP string for now; api uses Duration)
+  string keep_alive = 11;
+
+  bool think = 12;
+  // TODO: format (json schema etc), tools (oneof Function etc), truncate, shift, etc.
+}
+
+message ChatResponse {
+  string model = 1;
+  Message message = 2;
+  bool done = 3;
+  string done_reason = 4; // "stop", "length", "load", etc. (see api FinishReason)
+
+  // Usage basics (prompt/completion tokens); enriched later with detailed SamplingUsage
+  int64 prompt_eval_count = 5;
+  int64 eval_count = 6;
+
+  google.protobuf.Timestamp created_at = 7;
+
+  // TODO(phase3): usage object, citations, logprobs, etc.
+}
+
+service ChatService {
+  // Unary (non-stream) chat completion.
+  rpc Chat(ChatRequest) returns (ChatResponse);
+
+  // Server streaming chat (token-by-token). Primary perf win for gRPC vs NDJSON.
+  rpc ChatStream(ChatRequest) returns (stream ChatResponse);
+}

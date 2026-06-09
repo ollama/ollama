@@ -1,0 +1,17 @@
+{
+  "schema_version": "2.0",
+  "project": "ollamas",
+  "built_at": "2026-06-09T01:40:44.228078+00:00",
+  "commit_sha": "229a1303fb746393b784da791c30bebc0475f1af",
+  "branch": "feature/grpc-initial",
+  "nodes": {},
+  "redacted_patterns": [],
+  "coverage": {
+    "total_functions": 0,
+    "instrumented_functions": 0,
+    "coverage_pct": 0.0,
+    "uninstrumented": []
+  },
+  "models": {},
+  "imports": {}
+}

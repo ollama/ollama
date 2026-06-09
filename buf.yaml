@@ -1,0 +1,14 @@
+# buf.yaml v2 for ollama gRPC protos (per docs/grpc-phased-reliable-approach.md + arch plan + xai-proto patterns)
+version: v2
+modules:
+  - path: proto
+deps:
+  # - buf.build/grpc-ecosystem/grpc-gateway  # add if needed for annotations later
+lint:
+  use:
+    - MINIMAL
+  except:
+    - PACKAGE_DIRECTORY_MATCH
+breaking:
+  use:
+    - FILE

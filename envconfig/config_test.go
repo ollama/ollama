@@ -83,6 +83,42 @@ func TestConnectableHost(t *testing.T) {
 	}
 }
 
+func TestGRPCHost(t *testing.T) {
+	cases := map[string]struct {
+		value  string
+		expect string // "" means expect nil (disabled)
+	}{
+		"empty (disable)":           {"", ""},
+		"only address":              {"1.2.3.4", "http://1.2.3.4:11435"},
+		"only port":                 {":1234", "http://:1234"},
+		"default port used":         {"127.0.0.1", "http://127.0.0.1:11435"},
+		"custom port":               {"127.0.0.1:11435", "http://127.0.0.1:11435"},
+		"ipv6 localhost":            {"[::1]", "http://[::1]:11435"},
+		"extra space":               {"  127.0.0.1:11436  ", "http://127.0.0.1:11436"},
+		"with scheme":               {"http://0.0.0.0:11435", "http://0.0.0.0:11435"},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_GRPC_HOST", tt.value)
+			u := GRPCHost()
+			if tt.expect == "" {
+				if u != nil {
+					t.Errorf("%s: expected nil (disabled), got %v", name, u)
+				}
+				return
+			}
+			if u == nil || u.String() != tt.expect {
+				got := ""
+				if u != nil {
+					got = u.String()
+				}
+				t.Errorf("%s: expected %s, got %s", name, tt.expect, got)
+			}
+		})
+	}
+}
+
 func TestOrigins(t *testing.T) {
 	cases := []struct {
 		value  string

@@ -1,0 +1,20 @@
+# buf.gen.yaml v2 (managed for consistent go_package)
+# Generates to gen/proto/ollama/api/v1/... with connect handlers.
+# Run: buf dep update && buf lint && buf generate
+# See docs/grpc-phased-reliable-approach.md Phase 0 and development.md for prerequisites + process.
+version: v2
+clean: true
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/ollama/ollama/gen/proto
+plugins:
+  # Use local binaries (ensure protoc-gen-go and protoc-gen-connect-go in PATH via go bin or GOBIN).
+  # Alternative for Go modules: local: [go, tool, protoc-gen-go]
+  - local: protoc-gen-go
+    out: gen/proto
+    opt: paths=source_relative
+  - local: protoc-gen-connect-go
+    out: gen/proto
+    opt: paths=source_relative

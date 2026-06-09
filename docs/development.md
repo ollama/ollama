@@ -6,6 +6,7 @@ Install prerequisites:
 - [CMake](https://cmake.org/download/) 3.24 or newer
 - C/C++ compiler: Clang on macOS, Visual Studio 2022 C++ tools on Windows, or GCC/Clang on Linux
 - [Ninja](https://github.com/ninja-build/ninja/releases) in `PATH` is recommended, especially on Windows
+- For gRPC development (see `docs/grpc-phased-reliable-approach.md`): [buf](https://buf.build/docs/installation) (for proto lint/generate). Run `go get -tool google.golang.org/protobuf/cmd/protoc-gen-go connectrpc.com/connect/cmd/protoc-gen-connect-go` (or ensure in PATH via go bin). Re-run `~/.local/bin/logloom build && ~/.local/bin/logloom report` (or equiv) after any changes to `server/routes.go`, `server/sched.go`, or new gRPC code to measure observability lift per the reliable overlay. Always follow the phased approach in `docs/grpc-phased-reliable-approach.md` for implementation (use todo_write, reliable checklist, gates).
 
 For pure Go iteration against an existing native payload, run Ollama from the repository root:
 
