@@ -14,39 +14,65 @@ import "google/protobuf/timestamp.proto";
 message Message {
   string role = 1;
   string content = 2;
-  string thinking = 3; // for .Think responses
-  repeated bytes images = 4; // raw image bytes for multimodal (MVP; later content oneof)
-  // TODO(phase3+): tool_calls, tool_name, tool_call_id, content parts oneof per xai
+  string thinking = 3;
+  repeated bytes images = 4;
+  repeated ToolCall tool_calls = 5;
+  string tool_name = 6;
+  string tool_call_id = 7;
+  // TODO: content oneof for multimodal parts per xai-proto.
+}
+
+message ToolCall {
+  string id = 1;
+  ToolCallFunction function = 2;
+}
+
+message ToolCallFunction {
+  string name = 1;
+  string arguments = 2; // json
 }
 
 message ChatRequest {
   string model = 1;
   repeated Message messages = 2;
   bool stream = 3;
-
-  // Simple MVP options; later: google.protobuf.Struct or rich Sampling message
-  map<string, string> options = 10;
-
-  // KeepAlive as seconds or special (MVP string for now; api uses Duration)
+  map<string, string> options = 10; // MVP; P3+ google.protobuf.Struct or dedicated
   string keep_alive = 11;
-
   bool think = 12;
-  // TODO: format (json schema etc), tools (oneof Function etc), truncate, shift, etc.
+  bytes format = 13; // json schema or "json"
+  repeated Tool tools = 14; // oneof Function etc in P3+
+  bool truncate = 15;
+  bool shift = 16;
+  // TODO: full sampling, previous_response_id, etc.
+}
+
+message Tool {
+  string type = 1;
+  ToolFunction function = 2;
+}
+
+message ToolFunction {
+  string name = 1;
+  string description = 2;
+  bytes parameters = 3; // json schema
 }
 
 message ChatResponse {
   string model = 1;
   Message message = 2;
   bool done = 3;
-  string done_reason = 4; // "stop", "length", "load", etc. (see api FinishReason)
-
-  // Usage basics (prompt/completion tokens); enriched later with detailed SamplingUsage
+  string done_reason = 4;
   int64 prompt_eval_count = 5;
   int64 eval_count = 6;
-
   google.protobuf.Timestamp created_at = 7;
+  Usage usage = 8;
+  // TODO: citations, logprobs, etc.
+}
 
-  // TODO(phase3): usage object, citations, logprobs, etc.
+message Usage {
+  int64 prompt_tokens = 1;
+  int64 completion_tokens = 2;
+  int64 total_tokens = 3;
 }
 
 service ChatService {

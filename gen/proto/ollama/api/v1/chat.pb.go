@@ -26,8 +26,11 @@ type Message struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Role          string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`
 	Content       string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
-	Thinking      string                 `protobuf:"bytes,3,opt,name=thinking,proto3" json:"thinking,omitempty"` // for .Think responses
-	Images        [][]byte               `protobuf:"bytes,4,rep,name=images,proto3" json:"images,omitempty"`     // raw image bytes for multimodal (MVP; later content oneof)
+	Thinking      string                 `protobuf:"bytes,3,opt,name=thinking,proto3" json:"thinking,omitempty"`
+	Images        [][]byte               `protobuf:"bytes,4,rep,name=images,proto3" json:"images,omitempty"`
+	ToolCalls     []*ToolCall            `protobuf:"bytes,5,rep,name=tool_calls,json=toolCalls,proto3" json:"tool_calls,omitempty"`
+	ToolName      string                 `protobuf:"bytes,6,opt,name=tool_name,json=toolName,proto3" json:"tool_name,omitempty"`
+	ToolCallId    string                 `protobuf:"bytes,7,opt,name=tool_call_id,json=toolCallId,proto3" json:"tool_call_id,omitempty"` // TODO: content oneof for multimodal parts per xai-proto.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -90,23 +93,150 @@ func (x *Message) GetImages() [][]byte {
 	return nil
 }
 
+func (x *Message) GetToolCalls() []*ToolCall {
+	if x != nil {
+		return x.ToolCalls
+	}
+	return nil
+}
+
+func (x *Message) GetToolName() string {
+	if x != nil {
+		return x.ToolName
+	}
+	return ""
+}
+
+func (x *Message) GetToolCallId() string {
+	if x != nil {
+		return x.ToolCallId
+	}
+	return ""
+}
+
+type ToolCall struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Function      *ToolCallFunction      `protobuf:"bytes,2,opt,name=function,proto3" json:"function,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ToolCall) Reset() {
+	*x = ToolCall{}
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ToolCall) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ToolCall) ProtoMessage() {}
+
+func (x *ToolCall) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ToolCall.ProtoReflect.Descriptor instead.
+func (*ToolCall) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_chat_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ToolCall) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ToolCall) GetFunction() *ToolCallFunction {
+	if x != nil {
+		return x.Function
+	}
+	return nil
+}
+
+type ToolCallFunction struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Arguments     string                 `protobuf:"bytes,2,opt,name=arguments,proto3" json:"arguments,omitempty"` // json
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ToolCallFunction) Reset() {
+	*x = ToolCallFunction{}
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ToolCallFunction) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ToolCallFunction) ProtoMessage() {}
+
+func (x *ToolCallFunction) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ToolCallFunction.ProtoReflect.Descriptor instead.
+func (*ToolCallFunction) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_chat_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ToolCallFunction) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ToolCallFunction) GetArguments() string {
+	if x != nil {
+		return x.Arguments
+	}
+	return ""
+}
+
 type ChatRequest struct {
-	state    protoimpl.MessageState `protogen:"open.v1"`
-	Model    string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
-	Messages []*Message             `protobuf:"bytes,2,rep,name=messages,proto3" json:"messages,omitempty"`
-	Stream   bool                   `protobuf:"varint,3,opt,name=stream,proto3" json:"stream,omitempty"`
-	// Simple MVP options; later: google.protobuf.Struct or rich Sampling message
-	Options map[string]string `protobuf:"bytes,10,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// KeepAlive as seconds or special (MVP string for now; api uses Duration)
-	KeepAlive     string `protobuf:"bytes,11,opt,name=keep_alive,json=keepAlive,proto3" json:"keep_alive,omitempty"`
-	Think         bool   `protobuf:"varint,12,opt,name=think,proto3" json:"think,omitempty"` // TODO: format (json schema etc), tools (oneof Function etc), truncate, shift, etc.
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Model         string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
+	Messages      []*Message             `protobuf:"bytes,2,rep,name=messages,proto3" json:"messages,omitempty"`
+	Stream        bool                   `protobuf:"varint,3,opt,name=stream,proto3" json:"stream,omitempty"`
+	Options       map[string]string      `protobuf:"bytes,10,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // MVP; P3+ google.protobuf.Struct or dedicated
+	KeepAlive     string                 `protobuf:"bytes,11,opt,name=keep_alive,json=keepAlive,proto3" json:"keep_alive,omitempty"`
+	Think         bool                   `protobuf:"varint,12,opt,name=think,proto3" json:"think,omitempty"`
+	Format        []byte                 `protobuf:"bytes,13,opt,name=format,proto3" json:"format,omitempty"` // json schema or "json"
+	Tools         []*Tool                `protobuf:"bytes,14,rep,name=tools,proto3" json:"tools,omitempty"`   // oneof Function etc in P3+
+	Truncate      bool                   `protobuf:"varint,15,opt,name=truncate,proto3" json:"truncate,omitempty"`
+	Shift         bool                   `protobuf:"varint,16,opt,name=shift,proto3" json:"shift,omitempty"` // TODO: full sampling, previous_response_id, etc.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ChatRequest) Reset() {
 	*x = ChatRequest{}
-	mi := &file_ollama_api_v1_chat_proto_msgTypes[1]
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -118,7 +248,7 @@ func (x *ChatRequest) String() string {
 func (*ChatRequest) ProtoMessage() {}
 
 func (x *ChatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ollama_api_v1_chat_proto_msgTypes[1]
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -131,7 +261,7 @@ func (x *ChatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatRequest.ProtoReflect.Descriptor instead.
 func (*ChatRequest) Descriptor() ([]byte, []int) {
-	return file_ollama_api_v1_chat_proto_rawDescGZIP(), []int{1}
+	return file_ollama_api_v1_chat_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ChatRequest) GetModel() string {
@@ -176,23 +306,163 @@ func (x *ChatRequest) GetThink() bool {
 	return false
 }
 
+func (x *ChatRequest) GetFormat() []byte {
+	if x != nil {
+		return x.Format
+	}
+	return nil
+}
+
+func (x *ChatRequest) GetTools() []*Tool {
+	if x != nil {
+		return x.Tools
+	}
+	return nil
+}
+
+func (x *ChatRequest) GetTruncate() bool {
+	if x != nil {
+		return x.Truncate
+	}
+	return false
+}
+
+func (x *ChatRequest) GetShift() bool {
+	if x != nil {
+		return x.Shift
+	}
+	return false
+}
+
+type Tool struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	Function      *ToolFunction          `protobuf:"bytes,2,opt,name=function,proto3" json:"function,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Tool) Reset() {
+	*x = Tool{}
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Tool) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Tool) ProtoMessage() {}
+
+func (x *Tool) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Tool.ProtoReflect.Descriptor instead.
+func (*Tool) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_chat_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Tool) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *Tool) GetFunction() *ToolFunction {
+	if x != nil {
+		return x.Function
+	}
+	return nil
+}
+
+type ToolFunction struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	Parameters    []byte                 `protobuf:"bytes,3,opt,name=parameters,proto3" json:"parameters,omitempty"` // json schema
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ToolFunction) Reset() {
+	*x = ToolFunction{}
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ToolFunction) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ToolFunction) ProtoMessage() {}
+
+func (x *ToolFunction) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ToolFunction.ProtoReflect.Descriptor instead.
+func (*ToolFunction) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_chat_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ToolFunction) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ToolFunction) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *ToolFunction) GetParameters() []byte {
+	if x != nil {
+		return x.Parameters
+	}
+	return nil
+}
+
 type ChatResponse struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	Model      string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
-	Message    *Message               `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	Done       bool                   `protobuf:"varint,3,opt,name=done,proto3" json:"done,omitempty"`
-	DoneReason string                 `protobuf:"bytes,4,opt,name=done_reason,json=doneReason,proto3" json:"done_reason,omitempty"` // "stop", "length", "load", etc. (see api FinishReason)
-	// Usage basics (prompt/completion tokens); enriched later with detailed SamplingUsage
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Model           string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
+	Message         *Message               `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Done            bool                   `protobuf:"varint,3,opt,name=done,proto3" json:"done,omitempty"`
+	DoneReason      string                 `protobuf:"bytes,4,opt,name=done_reason,json=doneReason,proto3" json:"done_reason,omitempty"`
 	PromptEvalCount int64                  `protobuf:"varint,5,opt,name=prompt_eval_count,json=promptEvalCount,proto3" json:"prompt_eval_count,omitempty"`
 	EvalCount       int64                  `protobuf:"varint,6,opt,name=eval_count,json=evalCount,proto3" json:"eval_count,omitempty"`
 	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Usage           *Usage                 `protobuf:"bytes,8,opt,name=usage,proto3" json:"usage,omitempty"` // TODO: citations, logprobs, etc.
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ChatResponse) Reset() {
 	*x = ChatResponse{}
-	mi := &file_ollama_api_v1_chat_proto_msgTypes[2]
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -204,7 +474,7 @@ func (x *ChatResponse) String() string {
 func (*ChatResponse) ProtoMessage() {}
 
 func (x *ChatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ollama_api_v1_chat_proto_msgTypes[2]
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -217,7 +487,7 @@ func (x *ChatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatResponse.ProtoReflect.Descriptor instead.
 func (*ChatResponse) Descriptor() ([]byte, []int) {
-	return file_ollama_api_v1_chat_proto_rawDescGZIP(), []int{2}
+	return file_ollama_api_v1_chat_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ChatResponse) GetModel() string {
@@ -269,16 +539,94 @@ func (x *ChatResponse) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *ChatResponse) GetUsage() *Usage {
+	if x != nil {
+		return x.Usage
+	}
+	return nil
+}
+
+type Usage struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	PromptTokens     int64                  `protobuf:"varint,1,opt,name=prompt_tokens,json=promptTokens,proto3" json:"prompt_tokens,omitempty"`
+	CompletionTokens int64                  `protobuf:"varint,2,opt,name=completion_tokens,json=completionTokens,proto3" json:"completion_tokens,omitempty"`
+	TotalTokens      int64                  `protobuf:"varint,3,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *Usage) Reset() {
+	*x = Usage{}
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Usage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Usage) ProtoMessage() {}
+
+func (x *Usage) ProtoReflect() protoreflect.Message {
+	mi := &file_ollama_api_v1_chat_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Usage.ProtoReflect.Descriptor instead.
+func (*Usage) Descriptor() ([]byte, []int) {
+	return file_ollama_api_v1_chat_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *Usage) GetPromptTokens() int64 {
+	if x != nil {
+		return x.PromptTokens
+	}
+	return 0
+}
+
+func (x *Usage) GetCompletionTokens() int64 {
+	if x != nil {
+		return x.CompletionTokens
+	}
+	return 0
+}
+
+func (x *Usage) GetTotalTokens() int64 {
+	if x != nil {
+		return x.TotalTokens
+	}
+	return 0
+}
+
 var File_ollama_api_v1_chat_proto protoreflect.FileDescriptor
 
 const file_ollama_api_v1_chat_proto_rawDesc = "" +
 	"\n" +
-	"\x18ollama/api/v1/chat.proto\x12\rollama.api.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"k\n" +
+	"\x18ollama/api/v1/chat.proto\x12\rollama.api.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe2\x01\n" +
 	"\aMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\x12\x1a\n" +
 	"\bthinking\x18\x03 \x01(\tR\bthinking\x12\x16\n" +
-	"\x06images\x18\x04 \x03(\fR\x06images\"\xa3\x02\n" +
+	"\x06images\x18\x04 \x03(\fR\x06images\x126\n" +
+	"\n" +
+	"tool_calls\x18\x05 \x03(\v2\x17.ollama.api.v1.ToolCallR\ttoolCalls\x12\x1b\n" +
+	"\ttool_name\x18\x06 \x01(\tR\btoolName\x12 \n" +
+	"\ftool_call_id\x18\a \x01(\tR\n" +
+	"toolCallId\"W\n" +
+	"\bToolCall\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12;\n" +
+	"\bfunction\x18\x02 \x01(\v2\x1f.ollama.api.v1.ToolCallFunctionR\bfunction\"D\n" +
+	"\x10ToolCallFunction\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
+	"\targuments\x18\x02 \x01(\tR\targuments\"\x98\x03\n" +
 	"\vChatRequest\x12\x14\n" +
 	"\x05model\x18\x01 \x01(\tR\x05model\x122\n" +
 	"\bmessages\x18\x02 \x03(\v2\x16.ollama.api.v1.MessageR\bmessages\x12\x16\n" +
@@ -287,10 +635,23 @@ const file_ollama_api_v1_chat_proto_rawDesc = "" +
 	" \x03(\v2'.ollama.api.v1.ChatRequest.OptionsEntryR\aoptions\x12\x1d\n" +
 	"\n" +
 	"keep_alive\x18\v \x01(\tR\tkeepAlive\x12\x14\n" +
-	"\x05think\x18\f \x01(\bR\x05think\x1a:\n" +
+	"\x05think\x18\f \x01(\bR\x05think\x12\x16\n" +
+	"\x06format\x18\r \x01(\fR\x06format\x12)\n" +
+	"\x05tools\x18\x0e \x03(\v2\x13.ollama.api.v1.ToolR\x05tools\x12\x1a\n" +
+	"\btruncate\x18\x0f \x01(\bR\btruncate\x12\x14\n" +
+	"\x05shift\x18\x10 \x01(\bR\x05shift\x1a:\n" +
 	"\fOptionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x91\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"S\n" +
+	"\x04Tool\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x127\n" +
+	"\bfunction\x18\x02 \x01(\v2\x1b.ollama.api.v1.ToolFunctionR\bfunction\"d\n" +
+	"\fToolFunction\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x1e\n" +
+	"\n" +
+	"parameters\x18\x03 \x01(\fR\n" +
+	"parameters\"\xbd\x02\n" +
 	"\fChatResponse\x12\x14\n" +
 	"\x05model\x18\x01 \x01(\tR\x05model\x120\n" +
 	"\amessage\x18\x02 \x01(\v2\x16.ollama.api.v1.MessageR\amessage\x12\x12\n" +
@@ -301,7 +662,12 @@ const file_ollama_api_v1_chat_proto_rawDesc = "" +
 	"\n" +
 	"eval_count\x18\x06 \x01(\x03R\tevalCount\x129\n" +
 	"\n" +
-	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt2\x97\x01\n" +
+	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12*\n" +
+	"\x05usage\x18\b \x01(\v2\x14.ollama.api.v1.UsageR\x05usage\"|\n" +
+	"\x05Usage\x12#\n" +
+	"\rprompt_tokens\x18\x01 \x01(\x03R\fpromptTokens\x12+\n" +
+	"\x11completion_tokens\x18\x02 \x01(\x03R\x10completionTokens\x12!\n" +
+	"\ftotal_tokens\x18\x03 \x01(\x03R\vtotalTokens2\x97\x01\n" +
 	"\vChatService\x12?\n" +
 	"\x04Chat\x12\x1a.ollama.api.v1.ChatRequest\x1a\x1b.ollama.api.v1.ChatResponse\x12G\n" +
 	"\n" +
@@ -320,28 +686,38 @@ func file_ollama_api_v1_chat_proto_rawDescGZIP() []byte {
 	return file_ollama_api_v1_chat_proto_rawDescData
 }
 
-var file_ollama_api_v1_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_ollama_api_v1_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_ollama_api_v1_chat_proto_goTypes = []any{
 	(*Message)(nil),               // 0: ollama.api.v1.Message
-	(*ChatRequest)(nil),           // 1: ollama.api.v1.ChatRequest
-	(*ChatResponse)(nil),          // 2: ollama.api.v1.ChatResponse
-	nil,                           // 3: ollama.api.v1.ChatRequest.OptionsEntry
-	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
+	(*ToolCall)(nil),              // 1: ollama.api.v1.ToolCall
+	(*ToolCallFunction)(nil),      // 2: ollama.api.v1.ToolCallFunction
+	(*ChatRequest)(nil),           // 3: ollama.api.v1.ChatRequest
+	(*Tool)(nil),                  // 4: ollama.api.v1.Tool
+	(*ToolFunction)(nil),          // 5: ollama.api.v1.ToolFunction
+	(*ChatResponse)(nil),          // 6: ollama.api.v1.ChatResponse
+	(*Usage)(nil),                 // 7: ollama.api.v1.Usage
+	nil,                           // 8: ollama.api.v1.ChatRequest.OptionsEntry
+	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
 }
 var file_ollama_api_v1_chat_proto_depIdxs = []int32{
-	0, // 0: ollama.api.v1.ChatRequest.messages:type_name -> ollama.api.v1.Message
-	3, // 1: ollama.api.v1.ChatRequest.options:type_name -> ollama.api.v1.ChatRequest.OptionsEntry
-	0, // 2: ollama.api.v1.ChatResponse.message:type_name -> ollama.api.v1.Message
-	4, // 3: ollama.api.v1.ChatResponse.created_at:type_name -> google.protobuf.Timestamp
-	1, // 4: ollama.api.v1.ChatService.Chat:input_type -> ollama.api.v1.ChatRequest
-	1, // 5: ollama.api.v1.ChatService.ChatStream:input_type -> ollama.api.v1.ChatRequest
-	2, // 6: ollama.api.v1.ChatService.Chat:output_type -> ollama.api.v1.ChatResponse
-	2, // 7: ollama.api.v1.ChatService.ChatStream:output_type -> ollama.api.v1.ChatResponse
-	6, // [6:8] is the sub-list for method output_type
-	4, // [4:6] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	1,  // 0: ollama.api.v1.Message.tool_calls:type_name -> ollama.api.v1.ToolCall
+	2,  // 1: ollama.api.v1.ToolCall.function:type_name -> ollama.api.v1.ToolCallFunction
+	0,  // 2: ollama.api.v1.ChatRequest.messages:type_name -> ollama.api.v1.Message
+	8,  // 3: ollama.api.v1.ChatRequest.options:type_name -> ollama.api.v1.ChatRequest.OptionsEntry
+	4,  // 4: ollama.api.v1.ChatRequest.tools:type_name -> ollama.api.v1.Tool
+	5,  // 5: ollama.api.v1.Tool.function:type_name -> ollama.api.v1.ToolFunction
+	0,  // 6: ollama.api.v1.ChatResponse.message:type_name -> ollama.api.v1.Message
+	9,  // 7: ollama.api.v1.ChatResponse.created_at:type_name -> google.protobuf.Timestamp
+	7,  // 8: ollama.api.v1.ChatResponse.usage:type_name -> ollama.api.v1.Usage
+	3,  // 9: ollama.api.v1.ChatService.Chat:input_type -> ollama.api.v1.ChatRequest
+	3,  // 10: ollama.api.v1.ChatService.ChatStream:input_type -> ollama.api.v1.ChatRequest
+	6,  // 11: ollama.api.v1.ChatService.Chat:output_type -> ollama.api.v1.ChatResponse
+	6,  // 12: ollama.api.v1.ChatService.ChatStream:output_type -> ollama.api.v1.ChatResponse
+	11, // [11:13] is the sub-list for method output_type
+	9,  // [9:11] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_ollama_api_v1_chat_proto_init() }
@@ -355,7 +731,7 @@ func file_ollama_api_v1_chat_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ollama_api_v1_chat_proto_rawDesc), len(file_ollama_api_v1_chat_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
