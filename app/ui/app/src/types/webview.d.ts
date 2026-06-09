@@ -127,6 +127,7 @@ interface WebviewAPI {
 declare global {
   interface Window {
     webview?: WebviewAPI;
+    ready?: () => void;
     drag?: () => void;
     doubleClick?: () => void;
     activateOllama?: () => void;

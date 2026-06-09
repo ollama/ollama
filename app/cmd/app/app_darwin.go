@@ -127,13 +127,16 @@ var errClaudeDesktopAccessUnavailable = errors.New("Ollama couldn't verify the s
 //export StartUI
 func StartUI(path *C.cchar_t) {
 	p := C.GoString(path)
+	slog.Debug("StartUI called", "path", p)
 	wv.Run(p)
+	slog.Debug("StartUI: wv.Run returned")
 	styleWindow(wv.webview.Window())
 	C.setWindowDelegate(wv.webview.Window())
 }
 
 //export ShowUI
 func ShowUI() {
+	slog.Debug("ShowUI called")
 	openUI("/")
 }
 
@@ -144,9 +147,12 @@ func IsOnboardingActive() C.bool {
 
 func openUI(path string) {
 	if wv.IsRunning() && wv.webview != nil {
+		slog.Debug("ShowUI: webview running, navigating to root")
+		wv.webview.Eval(`history.pushState({}, '', '/');`)
 		showWindow(wv.webview.Window())
 		return
 	}
+	slog.Debug("ShowUI: webview not running, starting UI")
 	p := C.CString(path)
 	defer C.free(unsafe.Pointer(p))
 	StartUI(p)

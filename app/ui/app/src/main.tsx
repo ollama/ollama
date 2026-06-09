@@ -6,6 +6,7 @@ import { routeTree } from "./routeTree.gen";
 import { queryClient } from "./lib/queryClient";
 import { userQueryOptions } from "./hooks/useUser";
 import { StreamingProvider } from "./contexts/StreamingContext";
+import AppReady from "@/components/AppReady";
 
 void queryClient.prefetchQuery(userQueryOptions);
 
@@ -28,6 +29,7 @@ if (!rootElement.innerHTML) {
     <StrictMode>
       <QueryClientProvider client={queryClient}>
         <StreamingProvider>
+          <AppReady />
           <RouterProvider router={router} />
         </StreamingProvider>
       </QueryClientProvider>

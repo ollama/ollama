@@ -113,6 +113,7 @@ export async function fetchUser(): Promise<User | null> {
     headers: {
       "Content-Type": "application/json",
     },
+    credentials: "include",
   });
 
   if (response.ok) {
@@ -138,6 +139,7 @@ export async function fetchConnectUrl(): Promise<string> {
     headers: {
       "Content-Type": "application/json",
     },
+    credentials: "include",
   });
 
   if (response.status === 401) {
@@ -158,6 +160,7 @@ export async function disconnectUser(): Promise<void> {
     headers: {
       "Content-Type": "application/json",
     },
+    credentials: "include",
   });
 
   if (!response.ok) {
@@ -166,13 +169,17 @@ export async function disconnectUser(): Promise<void> {
 }
 
 export async function getChats(): Promise<ChatsResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/chats`);
+  const response = await fetch(`${API_BASE}/api/v1/chats`, {
+    credentials: "include",
+  });
   const data = await response.json();
   return new ChatsResponse(data);
 }
 
 export async function getChat(chatId: string): Promise<ChatResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`);
+  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`, {
+    credentials: "include",
+  });
   const data = await response.json();
   return new ChatResponse(data);
 }
@@ -402,7 +409,9 @@ export async function* sendMessage(
 export async function getSettings(): Promise<{
   settings: Settings;
 }> {
-  const response = await fetch(`${API_BASE}/api/v1/settings`);
+  const response = await fetch(`${API_BASE}/api/v1/settings`, {
+    credentials: "include",
+  });
   if (!response.ok) {
     throw new Error("Failed to fetch settings");
   }
@@ -421,6 +430,7 @@ export async function updateSettings(settings: Settings): Promise<{
       "Content-Type": "application/json",
     },
     body: JSON.stringify(settings),
+    credentials: "include",
   });
   if (!response.ok) {
     const error = await response.text();
@@ -441,6 +451,7 @@ export async function updateCloudSetting(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ enabled }),
+    credentials: "include",
   });
   if (!response.ok) {
     const error = await response.text();
@@ -461,6 +472,7 @@ export async function renameChat(chatId: string, title: string): Promise<void> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ title: title.trim() }),
+    credentials: "include",
   });
   if (!response.ok) {
     const error = await response.text();
@@ -471,6 +483,7 @@ export async function renameChat(chatId: string, title: string): Promise<void> {
 export async function deleteChat(chatId: string): Promise<void> {
   const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`, {
     method: "DELETE",
+    credentials: "include",
   });
   if (!response.ok) {
     const error = await response.text();
@@ -491,6 +504,7 @@ export async function getModelUpstreamInfo(
       body: JSON.stringify({
         model: model.model,
       }),
+      credentials: "include",
     });
 
     if (!response.ok) {
@@ -531,6 +545,7 @@ export async function* pullModel(
     },
     body: JSON.stringify({ name: modelName }),
     signal,
+    credentials: "include",
   });
 
   if (!response.ok) {
@@ -565,6 +580,7 @@ export async function getModelRecommendations(): Promise<
 > {
   const response = await fetch(
     `${API_BASE}/api/experimental/model-recommendations`,
+    { credentials: "include" },
   );
   if (!response.ok) {
     throw new Error(
@@ -576,7 +592,9 @@ export async function getModelRecommendations(): Promise<
 }
 
 export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/inference-compute`);
+  const response = await fetch(`${API_BASE}/api/v1/inference-compute`, {
+    credentials: "include",
+  });
   if (!response.ok) {
     throw new Error(
       `Failed to fetch inference compute: ${response.statusText}`,
@@ -595,6 +613,7 @@ export async function fetchHealth(): Promise<boolean> {
       headers: {
         "Content-Type": "application/json",
       },
+      credentials: "include",
     });
 
     if (response.ok) {
@@ -611,7 +630,9 @@ export async function fetchHealth(): Promise<boolean> {
 }
 
 export async function getCloudStatus(): Promise<CloudStatusResponse | null> {
-  const response = await fetch(`${API_BASE}/api/v1/cloud`);
+  const response = await fetch(`${API_BASE}/api/v1/cloud`, {
+    credentials: "include",
+  });
   if (!response.ok) {
     throw new Error(`Failed to fetch cloud status: ${response.status}`);
   }

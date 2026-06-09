@@ -10,7 +10,7 @@ export default defineConfig(() => ({
   base: "/",
 
   plugins: [
-    TanStackRouterVite({ target: "react" }),
+    TanStackRouterVite({ target: "react", autoCodeSplitting: true }),
     react(),
     tailwindcss(),
     tsconfigPaths(),
