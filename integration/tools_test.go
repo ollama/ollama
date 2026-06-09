@@ -23,13 +23,15 @@ func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
 func TestAPIToolCalling(t *testing.T) {
 	initialTimeout := 60 * time.Second
 	streamTimeout := 60 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	softTimeout, hardTimeout := getTimeouts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
 	defer cancel()
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
 	minVRAM := map[string]uint64{
+		"gemma4":        8,
 		"qwen3-vl":      16,
 		"gpt-oss:20b":   16,
 		"gpt-oss:120b":  70,
@@ -47,15 +49,23 @@ func TestAPIToolCalling(t *testing.T) {
 		"granite3.3":    7,
 	}
 
-	for _, model := range libraryToolsModels {
+	models := testModels(libraryToolsModels)
+
+	for _, model := range models {
 		t.Run(model, func(t *testing.T) {
+			if time.Now().Sub(started) > softTimeout {
+				t.Skip("skipping remaining tests to avoid excessive runtime")
+				return
+			}
+
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "tools")
+			}
 			if v, ok := minVRAM[model]; ok {
 				skipUnderMinVRAM(t, v)
 			}
 
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 
 			tools := []api.Tool{
 				{
@@ -89,6 +99,7 @@ func TestAPIToolCalling(t *testing.T) {
 				Options: map[string]any{
 					"temperature": 0,
 				},
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 			}
 
 			stallTimer := time.NewTimer(initialTimeout)

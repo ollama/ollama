@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -10,31 +9,25 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"time"
 
-	"golang.org/x/mod/semver"
-
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/types/model"
 )
 
 const defaultGatewayPort = 18789
 
-// Bound model capability probing so launch/config cannot hang on slow/unreachable API calls.
-var openclawModelShowTimeout = 5 * time.Second
-
 // openclawFreshInstall is set to true when ensureOpenclawInstalled performs an install
 var openclawFreshInstall bool
+
+var openclawCanInstallDaemon = canInstallDaemon
 
 type Openclaw struct{}
 
 func (c *Openclaw) String() string { return "OpenClaw" }
 
-func (c *Openclaw) Run(model string, args []string) error {
+func (c *Openclaw) Run(model string, _ []LaunchModel, args []string) error {
 	bin, err := ensureOpenclawInstalled()
 	if err != nil {
 		return err
@@ -60,6 +53,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 		// the newest wizard flags (e.g. --auth-choice ollama).
 		if !openclawFreshInstall {
 			update := exec.Command(bin, "update")
+			update.Env = openclawInstallEnv()
 			update.Stdout = os.Stdout
 			update.Stderr = os.Stderr
 			_ = update.Run() // best-effort; continue even if update fails
@@ -75,13 +69,18 @@ func (c *Openclaw) Run(model string, args []string) error {
 			"--auth-choice", "ollama",
 			"--custom-base-url", envconfig.Host().String(),
 			"--custom-model-id", model,
+			// Launch owns the first real gateway startup immediately after onboarding,
+			// so don't let OpenClaw fail the whole first-run flow on a transient
+			// daemon health probe.
+			"--skip-health",
 			"--skip-channels",
 			"--skip-skills",
 		}
-		if canInstallDaemon() {
+		if openclawCanInstallDaemon() {
 			onboardArgs = append(onboardArgs, "--install-daemon")
 		}
 		cmd := exec.Command(bin, onboardArgs...)
+		cmd.Env = openclawInstallEnv()
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -92,15 +91,23 @@ func (c *Openclaw) Run(model string, args []string) error {
 		patchDeviceScopes()
 	}
 
-	if ensureWebSearchPlugin() {
-		registerWebSearchPlugin()
-	}
-
-	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
+	configureOllamaWebSearch()
 
 	// When extra args are passed through, run exactly what the user asked for
 	// after setup and skip the built-in gateway+TUI convenience flow.
 	if len(args) > 0 {
+		cleanup := func() {}
+		if shouldEnsureGatewayForArgs(args) {
+			cleanupFn, _, _, err := c.ensureGatewayReady(bin)
+			if err != nil {
+				return windowsHint(err)
+			}
+			if cleanupFn != nil {
+				cleanup = cleanupFn
+			}
+		}
+		defer cleanup()
+
 		cmd := exec.Command(bin, args...)
 		cmd.Env = openclawEnv()
 		cmd.Stdin = os.Stdin
@@ -112,41 +119,20 @@ func (c *Openclaw) Run(model string, args []string) error {
 		return nil
 	}
 
-	token, port := c.gatewayInfo()
-	addr := fmt.Sprintf("localhost:%d", port)
-
-	// If the gateway is already running (e.g. via the daemon), restart it
-	// so it picks up any config changes (model, provider, etc.).
-	if portOpen(addr) {
-		restart := exec.Command(bin, "daemon", "restart")
-		restart.Env = openclawEnv()
-		if err := restart.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s  Warning: daemon restart failed: %v%s\n", ansiYellow, err, ansiReset)
-		}
-		if !waitForPort(addr, 10*time.Second) {
-			fmt.Fprintf(os.Stderr, "%s  Warning: gateway did not come back after restart%s\n", ansiYellow, ansiReset)
-		}
+	if err := c.runChannelSetupPreflight(bin); err != nil {
+		return err
 	}
+	// Keep local pairing scopes up to date before the gateway lifecycle
+	// (restart/start) regardless of channel preflight branch behavior.
+	patchDeviceScopes()
 
-	// If the gateway isn't running, start it as a background child process.
-	if !portOpen(addr) {
-		gw := exec.Command(bin, "gateway", "run", "--force")
-		gw.Env = openclawEnv()
-		if err := gw.Start(); err != nil {
-			return windowsHint(fmt.Errorf("failed to start gateway: %w", err))
-		}
-		defer func() {
-			if gw.Process != nil {
-				_ = gw.Process.Kill()
-				_ = gw.Wait()
-			}
-		}()
-	}
+	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
 
-	fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
-	if !waitForPort(addr, 30*time.Second) {
-		return windowsHint(fmt.Errorf("gateway did not start on %s", addr))
+	cleanup, token, port, err := c.ensureGatewayReady(bin)
+	if err != nil {
+		return windowsHint(err)
 	}
+	defer cleanup()
 
 	printOpenclawReady(bin, token, port, firstLaunch)
 
@@ -164,6 +150,154 @@ func (c *Openclaw) Run(model string, args []string) error {
 	}
 
 	return nil
+}
+
+func shouldEnsureGatewayForArgs(args []string) bool {
+	return len(args) > 0 && args[0] == "tui"
+}
+
+func (c *Openclaw) ensureGatewayReady(bin string) (func(), string, int, error) {
+	token, port := c.gatewayInfo()
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	// If the gateway is already running (e.g. via the daemon), restart it
+	// so it picks up any config changes (model, provider, etc.).
+	if portOpen(addr) {
+		restart := exec.Command(bin, "daemon", "restart")
+		restart.Env = openclawEnv()
+		if err := restart.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s  Warning: daemon restart failed: %v%s\n", ansiYellow, err, ansiReset)
+		}
+		if !waitForPort(addr, 10*time.Second) {
+			fmt.Fprintf(os.Stderr, "%s  Warning: gateway did not come back after restart%s\n", ansiYellow, ansiReset)
+		}
+	}
+
+	// If the daemon is installed but not currently listening, try to bring it
+	// up before falling back to a foreground child process.
+	if openclawCanInstallDaemon() && !portOpen(addr) {
+		start := exec.Command(bin, "daemon", "start")
+		start.Env = openclawEnv()
+		if err := start.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s  Warning: daemon start failed: %v%s\n", ansiYellow, err, ansiReset)
+		} else if waitForPort(addr, 10*time.Second) {
+			fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
+			return func() {}, token, port, nil
+		}
+	}
+
+	cleanup := func() {}
+
+	// If the gateway still isn't running, start it as a background child process.
+	if !portOpen(addr) {
+		gw := exec.Command(bin, "gateway", "run", "--force")
+		gw.Env = openclawEnv()
+		if err := gw.Start(); err != nil {
+			return nil, "", 0, fmt.Errorf("failed to start gateway: %w", err)
+		}
+		cleanup = func() {
+			if gw.Process != nil {
+				_ = gw.Process.Kill()
+				_ = gw.Wait()
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
+	if !waitForPort(addr, 30*time.Second) {
+		cleanup()
+		return nil, "", 0, fmt.Errorf("gateway did not start on %s", addr)
+	}
+
+	return cleanup, token, port, nil
+}
+
+// runChannelSetupPreflight prompts users to connect a messaging channel before
+// starting the built-in gateway+TUI flow. In interactive sessions, it loops
+// until a channel is configured, unless the user chooses "Set up later".
+func (c *Openclaw) runChannelSetupPreflight(bin string) error {
+	if !isInteractiveSession() {
+		return nil
+	}
+	// --yes is headless; channel setup spawns an interactive picker we can't
+	// auto-answer, so skip it. Users can run `openclaw channels add` later.
+	if currentLaunchConfirmPolicy.yes {
+		return nil
+	}
+
+	for {
+		if c.channelsConfigured() {
+			return nil
+		}
+
+		fmt.Fprintf(os.Stderr, "\nYour assistant can message you on WhatsApp, Telegram, Discord, and more.\n\n")
+		ok, err := ConfirmPromptWithOptions("Connect a channel (messaging app) now?", ConfirmOptions{
+			YesLabel: "Yes",
+			NoLabel:  "Set up later",
+		})
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+
+		cmd := exec.Command(bin, "channels", "add")
+		cmd.Env = openclawEnv()
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return windowsHint(fmt.Errorf("openclaw channel setup failed: %w\n\nTry running: %s channels add", err, bin))
+		}
+	}
+}
+
+// channelsConfigured reports whether local OpenClaw config contains at least
+// one meaningfully configured channel entry.
+func (c *Openclaw) channelsConfigured() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+
+	for _, path := range []string{
+		filepath.Join(home, ".openclaw", "openclaw.json"),
+		filepath.Join(home, ".clawdbot", "clawdbot.json"),
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		var cfg map[string]any
+		if json.Unmarshal(data, &cfg) != nil {
+			continue
+		}
+
+		channels, _ := cfg["channels"].(map[string]any)
+		if channels == nil {
+			return false
+		}
+
+		for key, value := range channels {
+			if key == "defaults" || key == "modelByChannel" {
+				continue
+			}
+			entry, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			for entryKey := range entry {
+				if entryKey != "enabled" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	return false
 }
 
 // gatewayInfo reads the gateway auth token and port from the OpenClaw config.
@@ -200,7 +334,7 @@ func (c *Openclaw) gatewayInfo() (token string, port int) {
 }
 
 func printOpenclawReady(bin, token string, port int, firstLaunch bool) {
-	u := fmt.Sprintf("http://localhost:%d", port)
+	u := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if token != "" {
 		u += "/#token=" + url.QueryEscape(token)
 	}
@@ -212,12 +346,9 @@ func printOpenclawReady(bin, token string, port int, firstLaunch bool) {
 	if firstLaunch {
 		fmt.Fprintf(os.Stderr, "%s  Quick start:%s\n", ansiBold, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s    /help             see all commands%s\n", ansiGray, ansiReset)
-		fmt.Fprintf(os.Stderr, "%s    %s configure --section channels   connect WhatsApp, Telegram, etc.%s\n", ansiGray, bin, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s    %s skills                         browse and install skills%s\n\n", ansiGray, bin, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s  The OpenClaw gateway is running in the background.%s\n", ansiYellow, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s  Stop it with: %s gateway stop%s\n\n", ansiYellow, bin, ansiReset)
-	} else {
-		fmt.Fprintf(os.Stderr, "%sTip: connect WhatsApp, Telegram, and more with: %s configure --section channels%s\n", ansiGray, bin, ansiReset)
 	}
 }
 
@@ -241,7 +372,28 @@ func openclawEnv() []string {
 			env = append(env, e)
 		}
 	}
+	if _, ok := os.LookupEnv("OPENCLAW_PLUGIN_STAGE_DIR"); !ok {
+		if dir := openclawPluginStageDir(); dir != "" {
+			env = append(env, "OPENCLAW_PLUGIN_STAGE_DIR="+dir)
+		}
+	}
 	return env
+}
+
+func openclawInstallEnv() []string {
+	env := openclawEnv()
+	if _, ok := os.LookupEnv("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"); !ok {
+		env = append(env, "OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS=1")
+	}
+	return env
+}
+
+func openclawPluginStageDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".openclaw", "plugin-runtime-deps")
 }
 
 // portOpen checks if a TCP port is currently accepting connections.
@@ -306,9 +458,10 @@ func (c *Openclaw) onboarded() bool {
 	return lastRunAt != ""
 }
 
-// patchDeviceScopes upgrades the local CLI device's paired scopes to include
-// operator.admin. Only patches the local device, not remote ones.
-// Best-effort: silently returns on any error.
+// patchDeviceScopes upgrades the local CLI device's paired operator scopes so
+// newer gateway auth baselines (approvedScopes) allow launch+TUI reconnects
+// without forcing an interactive re-pair. Only patches the local device,
+// not remote ones. Best-effort: silently returns on any error.
 func patchDeviceScopes() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -344,9 +497,15 @@ func patchDeviceScopes() {
 	}
 
 	changed := patchScopes(dev, "scopes", required)
+	if patchScopes(dev, "approvedScopes", required) {
+		changed = true
+	}
 	if tokens, ok := dev["tokens"].(map[string]any); ok {
-		for _, tok := range tokens {
+		for role, tok := range tokens {
 			if tokenMap, ok := tok.(map[string]any); ok {
+				if !isOperatorToken(role, tokenMap) {
+					continue
+				}
 				if patchScopes(tokenMap, "scopes", required) {
 					changed = true
 				}
@@ -402,6 +561,14 @@ func patchScopes(obj map[string]any, key string, required []string) bool {
 	return added
 }
 
+func isOperatorToken(tokenRole string, token map[string]any) bool {
+	if strings.EqualFold(strings.TrimSpace(tokenRole), "operator") {
+		return true
+	}
+	role, _ := token["role"].(string)
+	return strings.EqualFold(strings.TrimSpace(role), "operator")
+}
+
 // canInstallDaemon reports whether the openclaw daemon can be installed as a
 // background service. Returns false on Linux when systemd is absent (e.g.
 // containers) so that --install-daemon is omitted and the gateway is started
@@ -439,7 +606,7 @@ func ensureOpenclawInstalled() (string, error) {
 		if gitErr != nil {
 			missing = append(missing, "git: https://git-scm.com/")
 		}
-		return "", fmt.Errorf("openclaw is not installed and required dependencies are missing\n\nInstall the following first:\n  %s", strings.Join(missing, "\n  "))
+		return "", fmt.Errorf("OpenClaw is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch openclaw", strings.Join(missing, "\n  "))
 	}
 
 	ok, err := ConfirmPrompt("OpenClaw is not installed. Install with npm?")
@@ -452,6 +619,7 @@ func ensureOpenclawInstalled() (string, error) {
 
 	fmt.Fprintf(os.Stderr, "\nInstalling OpenClaw...\n")
 	cmd := exec.Command("npm", "install", "-g", "openclaw@latest")
+	cmd.Env = openclawInstallEnv()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -481,7 +649,7 @@ func (c *Openclaw) Paths() []string {
 	return nil
 }
 
-func (c *Openclaw) Edit(models []string) error {
+func (c *Openclaw) Edit(models []LaunchModel) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -535,13 +703,11 @@ func (c *Openclaw) Edit(models []string) error {
 		}
 	}
 
-	client, _ := api.ClientFromEnvironment()
-
 	var newModels []any
 	for _, m := range models {
-		entry, _ := openclawModelConfig(context.Background(), client, m)
+		entry, _ := openclawModelConfig(m)
 		// Merge existing fields (user customizations)
-		if existing, ok := existingByID[m]; ok {
+		if existing, ok := existingByID[m.Name]; ok {
 			for k, v := range existing {
 				if _, isNew := entry[k]; !isNew {
 					entry[k] = v
@@ -569,7 +735,7 @@ func (c *Openclaw) Edit(models []string) error {
 	if modelConfig == nil {
 		modelConfig = make(map[string]any)
 	}
-	modelConfig["primary"] = "ollama/" + models[0]
+	modelConfig["primary"] = "ollama/" + models[0].Name
 	defaults["model"] = modelConfig
 	agents["defaults"] = defaults
 	config["agents"] = agents
@@ -578,13 +744,13 @@ func (c *Openclaw) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := fileutil.WriteWithBackup(configPath, data); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, data, "openclaw"); err != nil {
 		return err
 	}
 
 	// Clear any per-session model overrides so the new primary takes effect
 	// immediately rather than being shadowed by a cached modelOverride.
-	clearSessionModelOverride(models[0])
+	clearSessionModelOverride(models[0].Name)
 	return nil
 }
 
@@ -609,6 +775,8 @@ func clearSessionModelOverride(primary string) {
 		if override, _ := sess["modelOverride"].(string); override != "" && override != primary {
 			delete(sess, "modelOverride")
 			delete(sess, "providerOverride")
+		}
+		if model, _ := sess["model"].(string); model != "" && model != primary {
 			sess["model"] = primary
 			changed = true
 		}
@@ -623,89 +791,13 @@ func clearSessionModelOverride(primary string) {
 	_ = os.WriteFile(path, out, 0o600)
 }
 
-const (
-	webSearchNpmPackage = "@ollama/openclaw-web-search"
-	webSearchMinVersion = "0.2.1"
-)
-
-// ensureWebSearchPlugin installs the openclaw-web-search extension into the
-// user-level extensions directory (~/.openclaw/extensions/) if it isn't already
-// present, or re-installs if the installed version is older than webSearchMinVersion.
-// Returns true if the extension is available.
-func ensureWebSearchPlugin() bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-
-	pluginDir := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
-	if webSearchPluginUpToDate(pluginDir) {
-		return true
-	}
-
-	npmBin, err := exec.LookPath("npm")
-	if err != nil {
-		return false
-	}
-
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
-		return false
-	}
-
-	// Download the tarball via `npm pack`, extract it flat into the plugin dir.
-	pack := exec.Command(npmBin, "pack", webSearchNpmPackage, "--pack-destination", pluginDir)
-	out, err := pack.Output()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not download web search plugin: %v%s\n", ansiYellow, err, ansiReset)
-		return false
-	}
-
-	tgzName := strings.TrimSpace(string(out))
-	tgzPath := filepath.Join(pluginDir, tgzName)
-	defer os.Remove(tgzPath)
-
-	tar := exec.Command("tar", "xzf", tgzPath, "--strip-components=1", "-C", pluginDir)
-	if err := tar.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not extract web search plugin: %v%s\n", ansiYellow, err, ansiReset)
-		return false
-	}
-
-	fmt.Fprintf(os.Stderr, "%s  ✓ Installed web search plugin%s\n", ansiGreen, ansiReset)
-	return true
-}
-
-// webSearchPluginUpToDate returns true if the plugin is installed and its
-// package.json version is >= webSearchMinVersion.
-func webSearchPluginUpToDate(pluginDir string) bool {
-	data, err := os.ReadFile(filepath.Join(pluginDir, "package.json"))
-	if err != nil {
-		return false
-	}
-	var pkg struct {
-		Version string `json:"version"`
-	}
-	if json.Unmarshal(data, &pkg) != nil || pkg.Version == "" {
-		return false
-	}
-	return !versionLessThan(pkg.Version, webSearchMinVersion)
-}
-
-// versionLessThan compares two semver version strings (major.minor.patch).
-// Inputs may omit the "v" prefix; it is added automatically for semver.Compare.
-func versionLessThan(a, b string) bool {
-	if !strings.HasPrefix(a, "v") {
-		a = "v" + a
-	}
-	if !strings.HasPrefix(b, "v") {
-		b = "v" + b
-	}
-	return semver.Compare(a, b) < 0
-}
-
-// registerWebSearchPlugin adds plugins.entries.openclaw-web-search to the OpenClaw
-// config so the gateway activates it on next start. Best-effort; silently returns
-// on any error.
-func registerWebSearchPlugin() {
+// configureOllamaWebSearch keeps launch-managed OpenClaw installs on the
+// bundled Ollama web_search provider. Older launch builds installed an
+// external openclaw-web-search plugin that added custom ollama_web_search and
+// ollama_web_fetch tools. Current OpenClaw versions ship Ollama web_search as
+// the bundled "ollama" plugin instead, so we migrate stale config and ensure
+// fresh installs select the bundled provider.
+func configureOllamaWebSearch() {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -720,6 +812,8 @@ func registerWebSearchPlugin() {
 		return
 	}
 
+	stalePluginConfigured := false
+
 	plugins, _ := config["plugins"].(map[string]any)
 	if plugins == nil {
 		plugins = make(map[string]any)
@@ -728,68 +822,100 @@ func registerWebSearchPlugin() {
 	if entries == nil {
 		entries = make(map[string]any)
 	}
-	entries["openclaw-web-search"] = map[string]any{"enabled": true}
-	plugins["entries"] = entries
-
-	// Pin trust so the gateway doesn't warn about untracked plugins.
-	allow, _ := plugins["allow"].([]any)
-	hasAllow := false
-	for _, v := range allow {
-		if s, ok := v.(string); ok && s == "openclaw-web-search" {
-			hasAllow = true
-			break
-		}
-	}
-	if !hasAllow {
-		allow = append(allow, "openclaw-web-search")
-	}
-	plugins["allow"] = allow
-
-	// Record install provenance so the loader can verify the plugin origin.
-	installs, _ := plugins["installs"].(map[string]any)
-	if installs == nil {
-		installs = make(map[string]any)
-	}
-	pluginDir := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
-	installs["openclaw-web-search"] = map[string]any{
-		"source":      "npm",
-		"spec":        webSearchNpmPackage,
-		"installPath": pluginDir,
-	}
-	plugins["installs"] = installs
-
-	config["plugins"] = plugins
-
-	// Add plugin tools to tools.alsoAllow so they survive the coding profile's
-	// policy pipeline (which has an explicit allow list of core tools only).
 	tools, _ := config["tools"].(map[string]any)
 	if tools == nil {
 		tools = make(map[string]any)
 	}
-
-	alsoAllow, _ := tools["alsoAllow"].([]any)
-	needed := []string{"ollama_web_search", "ollama_web_fetch"}
-	have := make(map[string]bool, len(alsoAllow))
-	for _, v := range alsoAllow {
-		if s, ok := v.(string); ok {
-			have[s] = true
-		}
-	}
-	for _, name := range needed {
-		if !have[name] {
-			alsoAllow = append(alsoAllow, name)
-		}
-	}
-	tools["alsoAllow"] = alsoAllow
-
-	// Disable built-in web search/fetch since our plugin replaces them.
 	web, _ := tools["web"].(map[string]any)
 	if web == nil {
 		web = make(map[string]any)
 	}
-	web["search"] = map[string]any{"enabled": false}
-	web["fetch"] = map[string]any{"enabled": false}
+	search, _ := web["search"].(map[string]any)
+	if search == nil {
+		search = make(map[string]any)
+	}
+	fetch, _ := web["fetch"].(map[string]any)
+	if fetch == nil {
+		fetch = make(map[string]any)
+	}
+
+	alsoAllow, _ := tools["alsoAllow"].([]any)
+	var filteredAlsoAllow []any
+	for _, v := range alsoAllow {
+		s, ok := v.(string)
+		if !ok {
+			filteredAlsoAllow = append(filteredAlsoAllow, v)
+			continue
+		}
+		if s == "ollama_web_search" || s == "ollama_web_fetch" {
+			stalePluginConfigured = true
+			continue
+		}
+		filteredAlsoAllow = append(filteredAlsoAllow, v)
+	}
+	if len(filteredAlsoAllow) > 0 {
+		tools["alsoAllow"] = filteredAlsoAllow
+	} else {
+		delete(tools, "alsoAllow")
+	}
+
+	if _, ok := entries["openclaw-web-search"]; ok {
+		delete(entries, "openclaw-web-search")
+		stalePluginConfigured = true
+	}
+	ollamaEntry, _ := entries["ollama"].(map[string]any)
+	if ollamaEntry == nil {
+		ollamaEntry = make(map[string]any)
+	}
+	ollamaEntry["enabled"] = true
+	entries["ollama"] = ollamaEntry
+	plugins["entries"] = entries
+
+	if allow, ok := plugins["allow"].([]any); ok {
+		var nextAllow []any
+		hasOllama := false
+		for _, v := range allow {
+			s, ok := v.(string)
+			if ok && s == "openclaw-web-search" {
+				stalePluginConfigured = true
+				continue
+			}
+			if ok && s == "ollama" {
+				hasOllama = true
+			}
+			nextAllow = append(nextAllow, v)
+		}
+		if !hasOllama {
+			nextAllow = append(nextAllow, "ollama")
+		}
+		plugins["allow"] = nextAllow
+	}
+
+	if installs, ok := plugins["installs"].(map[string]any); ok {
+		if _, exists := installs["openclaw-web-search"]; exists {
+			delete(installs, "openclaw-web-search")
+			stalePluginConfigured = true
+		}
+		if len(installs) > 0 {
+			plugins["installs"] = installs
+		} else {
+			delete(plugins, "installs")
+		}
+	}
+
+	if stalePluginConfigured || search["provider"] == nil {
+		search["provider"] = "ollama"
+	}
+	if stalePluginConfigured {
+		fetch["enabled"] = true
+	}
+	search["enabled"] = true
+	web["search"] = search
+	if len(fetch) > 0 {
+		web["fetch"] = fetch
+	}
 	tools["web"] = web
+	config["plugins"] = plugins
 	config["tools"] = tools
 
 	out, err := json.MarshalIndent(config, "", "  ")
@@ -801,10 +927,10 @@ func registerWebSearchPlugin() {
 
 // openclawModelConfig builds an OpenClaw model config entry with capability detection.
 // The second return value indicates whether the model is a cloud (remote) model.
-func openclawModelConfig(ctx context.Context, client *api.Client, modelID string) (map[string]any, bool) {
+func openclawModelConfig(model LaunchModel) (map[string]any, bool) {
 	entry := map[string]any{
-		"id":    modelID,
-		"name":  modelID,
+		"id":    model.Name,
+		"name":  model.Name,
 		"input": []any{"text"},
 		"cost": map[string]any{
 			"input":      0,
@@ -814,53 +940,24 @@ func openclawModelConfig(ctx context.Context, client *api.Client, modelID string
 		},
 	}
 
-	if client == nil {
-		return entry, false
-	}
-
-	showCtx := ctx
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		showCtx, cancel = context.WithTimeout(ctx, openclawModelShowTimeout)
-		defer cancel()
-	}
-
-	resp, err := client.Show(showCtx, &api.ShowRequest{Model: modelID})
-	if err != nil {
-		return entry, false
-	}
-
 	// Set input types based on vision capability
-	if slices.Contains(resp.Capabilities, model.CapabilityVision) {
+	if model.HasCapability("vision") {
 		entry["input"] = []any{"text", "image"}
 	}
 
 	// Set reasoning based on thinking capability
-	if slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+	if model.HasCapability("thinking") {
 		entry["reasoning"] = true
 	}
 
-	// Cloud models: use hardcoded limits for context/output tokens.
-	// Capability detection above still applies (vision, thinking).
-	if resp.RemoteModel != "" {
-		if l, ok := lookupCloudModelLimit(modelID); ok {
-			entry["contextWindow"] = l.Context
-			entry["maxTokens"] = l.Output
-		}
-		return entry, true
+	if model.ContextLength > 0 {
+		entry["contextWindow"] = model.ContextLength
+	}
+	if model.MaxOutputTokens > 0 {
+		entry["maxTokens"] = model.MaxOutputTokens
 	}
 
-	// Extract context window from ModelInfo (local models only)
-	for key, val := range resp.ModelInfo {
-		if strings.HasSuffix(key, ".context_length") {
-			if ctxLen, ok := val.(float64); ok && ctxLen > 0 {
-				entry["contextWindow"] = int(ctxLen)
-			}
-			break
-		}
-	}
-
-	return entry, false
+	return entry, model.Remote || isCloudModelName(model.Name)
 }
 
 func (c *Openclaw) Models() []string {

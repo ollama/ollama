@@ -60,7 +60,7 @@ type Tokenizer struct {
 var byteToRune [256]rune
 
 func init() {
-	for b := 0; b < 256; b++ {
+	for b := range 256 {
 		r := rune(b)
 		switch {
 		case r == 0x00ad:
@@ -264,10 +264,10 @@ func LoadFromBytes(data []byte) (*Tokenizer, error) {
 
 // TokenizerConfig holds optional configuration data that can be passed to LoadFromBytesWithConfig.
 type TokenizerConfig struct {
-	TokenizerConfigJSON   []byte // tokenizer_config.json content
-	GenerationConfigJSON  []byte // generation_config.json content
-	SpecialTokensMapJSON  []byte // special_tokens_map.json content
-	ConfigJSON            []byte // config.json content
+	TokenizerConfigJSON  []byte // tokenizer_config.json content
+	GenerationConfigJSON []byte // generation_config.json content
+	SpecialTokensMapJSON []byte // special_tokens_map.json content
+	ConfigJSON           []byte // config.json content
 }
 
 // LoadFromBytesWithConfig loads a tokenizer from tokenizer.json bytes with additional config files.
@@ -443,7 +443,6 @@ func Load(path string) (*Tokenizer, error) {
 
 // loadFromTokenizerJSON parses a tokenizer.json file
 func loadFromTokenizerJSON(data []byte, dir string) (*Tokenizer, error) {
-
 	var raw struct {
 		Model struct {
 			Type   string           `json:"type"` // "BPE" or "WordPiece"
@@ -601,7 +600,7 @@ func initByteTokens(t *Tokenizer) {
 	for i := range t.vocab.byteTokens {
 		t.vocab.byteTokens[i] = -1
 	}
-	for b := 0; b < 256; b++ {
+	for b := range 256 {
 		token := fmt.Sprintf("<0x%02X>", b)
 		if id, ok := t.vocab.Reverse[token]; ok {
 			t.vocab.byteTokens[b] = id
@@ -743,7 +742,7 @@ func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 			}
 
 			// Apply whitespace boundary fix for Python regex compatibility
-			for i := 0; i < len(matches)-1; i++ {
+			for i := range len(matches) - 1 {
 				m := part[matches[i].start:matches[i].end]
 				next := part[matches[i+1].start:matches[i+1].end]
 
@@ -809,7 +808,7 @@ func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 		results := make([][]int32, numWorkers)
 		var wg sync.WaitGroup
 
-		for i := 0; i < numWorkers; i++ {
+		for i := range numWorkers {
 			start := i * chunksPer
 			end := start + chunksPer
 			if end > len(allChunks) {
@@ -868,7 +867,7 @@ func (t *Tokenizer) encodeChunkInto(s string, ids []int32) []int32 {
 	} else {
 		var sb strings.Builder
 		sb.Grow(len(s) * 2)
-		for i := 0; i < len(s); i++ {
+		for i := range len(s) {
 			sb.WriteRune(byteToRune[s[i]])
 		}
 		encoded = sb.String()
@@ -898,7 +897,7 @@ func (t *Tokenizer) encodeBPEMerge(encoded string, ids []int32) []int32 {
 		minRank := int(0x7FFFFFFF)
 		minIdx := -1
 
-		for i := 0; i < len(parts)-1; i++ {
+		for i := range len(parts) - 1 {
 			// Merge key format: "token1 token2" (space-separated)
 			mergeKey := parts[i] + " " + parts[i+1]
 			if rank, ok := t.vocab.Merges[mergeKey]; ok {

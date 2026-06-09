@@ -20,6 +20,10 @@ type Olmo3Renderer struct {
 	UseExtendedSystemMessage bool
 }
 
+func (r *Olmo3Renderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 

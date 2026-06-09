@@ -28,7 +28,6 @@ var (
 		"falcon2:latest", // 2k model
 		"minicpm-v:latest",
 		"qwen:latest",
-		"solar-pro:latest",
 	}
 )
 
@@ -40,11 +39,7 @@ var (
 // cat int.log | grep MODEL_PERF_HEADER | head -1| cut -f2- -d: > perf.csv
 // cat int.log | grep MODEL_PERF_DATA | cut -f2- -d: >> perf.csv
 func TestModelsPerf(t *testing.T) {
-	if s := os.Getenv("OLLAMA_NEW_ENGINE"); s != "" {
-		doModelPerfTest(t, ollamaEngineChatModels)
-	} else {
-		doModelPerfTest(t, append(ollamaEngineChatModels, llamaRunnerChatModels...))
-	}
+	doModelPerfTest(t, append(ollamaEngineChatModels, llamaRunnerChatModels...))
 }
 
 func TestLibraryModelsPerf(t *testing.T) {
@@ -87,9 +82,7 @@ func doModelPerfTest(t *testing.T, chatModels []string) {
 			if time.Now().Sub(started) > softTimeout {
 				t.Skip("skipping remaining tests to avoid excessive runtime")
 			}
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 			var maxContext int
 
 			resp, err := client.Show(ctx, &api.ShowRequest{Model: model})

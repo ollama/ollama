@@ -17,31 +17,20 @@ import (
 // Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
 var CudaTegra string = os.Getenv("JETSON_JETPACK")
 
-// GetSystemInfo returns the last cached state of the GPUs on the system
+// GetSystemInfo returns host memory information used by scheduling.
 func GetSystemInfo() ml.SystemInfo {
-	logutil.Trace("performing CPU discovery")
+	logutil.Trace("performing system memory discovery")
 	startDiscovery := time.Now()
 	defer func() {
-		logutil.Trace("CPU discovery completed", "duration", time.Since(startDiscovery))
+		logutil.Trace("system memory discovery completed", "duration", time.Since(startDiscovery))
 	}()
 
 	memInfo, err := GetCPUMem()
 	if err != nil {
 		slog.Warn("error looking up system memory", "error", err)
 	}
-	var threadCount int
-	cpus := GetCPUDetails()
-	for _, c := range cpus {
-		threadCount += c.CoreCount - c.EfficiencyCoreCount
-	}
-
-	if threadCount == 0 {
-		// Fall back to Go's num CPU
-		threadCount = runtime.NumCPU()
-	}
 
 	return ml.SystemInfo{
-		ThreadCount: threadCount,
 		TotalMemory: memInfo.TotalMemory,
 		FreeMemory:  memInfo.FreeMemory,
 		FreeSwap:    memInfo.FreeSwap,

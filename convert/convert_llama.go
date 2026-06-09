@@ -34,8 +34,6 @@ type llamaModel struct {
 		LowFrequencyFactor            float32 `json:"low_freq_factor"`
 		HighFrequencyFactor           float32 `json:"high_freq_factor"`
 		OriginalMaxPositionEmbeddings uint32  `json:"original_max_position_embeddings"`
-
-		factors ropeFactor
 	} `json:"rope_scaling"`
 	RMSNormEPS       float32 `json:"rms_norm_eps"`
 	LayerNormEPS     float32 `json:"layer_norm_eps"`
@@ -83,27 +81,6 @@ func (p *llamaModel) KV(t *Tokenizer) KV {
 	if p.RopeScaling.Type == "linear" {
 		kv["llama.rope.scaling.type"] = p.RopeScaling.Type
 		kv["llama.rope.scaling.factor"] = p.RopeScaling.Factor
-	} else if p.RopeScaling.RopeType == "llama3" {
-		dim := p.HiddenSize / p.NumAttentionHeads
-		for i := uint32(0); i < dim; i += 2 {
-			factor := cmp.Or(p.RopeScaling.Factor, 8.0)
-			factorLow := cmp.Or(p.RopeScaling.LowFrequencyFactor, 1.0)
-			factorHigh := cmp.Or(p.RopeScaling.HighFrequencyFactor, 4.0)
-
-			original := cmp.Or(p.RopeScaling.OriginalMaxPositionEmbeddings, 8192)
-			lambdaLow := float32(original) / factorLow
-			lambdaHigh := float32(original) / factorHigh
-
-			lambda := 2 * math.Pi * math.Pow(float64(p.RopeTheta), float64(i)/float64(dim))
-			if lambda < float64(lambdaHigh) {
-				p.RopeScaling.factors = append(p.RopeScaling.factors, 1.0)
-			} else if lambda > float64(lambdaLow) {
-				p.RopeScaling.factors = append(p.RopeScaling.factors, factor)
-			} else {
-				smooth := (float32(original)/float32(lambda) - factorLow) / (factorHigh - factorLow)
-				p.RopeScaling.factors = append(p.RopeScaling.factors, 1.0/((1-smooth)/factor+smooth))
-			}
-		}
 	}
 
 	if p.NumKeyValueHeads > 0 {
@@ -129,12 +106,12 @@ func (p *llamaModel) KV(t *Tokenizer) KV {
 func (p *llamaModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	var out []*ggml.Tensor
 
-	if p.RopeScaling.factors != nil {
+	if factors := p.ropeFactors(); factors != nil {
 		out = append(out, &ggml.Tensor{
 			Name:     "rope_freqs.weight",
 			Kind:     0,
-			Shape:    []uint64{uint64(len(p.RopeScaling.factors))},
-			WriterTo: p.RopeScaling.factors,
+			Shape:    []uint64{uint64(len(factors))},
+			WriterTo: factors,
 		})
 	}
 
@@ -155,6 +132,40 @@ func (p *llamaModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	}
 
 	return out
+}
+
+func (p *llamaModel) ropeFactors() ropeFactor {
+	if p.RopeScaling.RopeType != "llama3" || p.HiddenSize == 0 || p.NumAttentionHeads == 0 || p.RopeTheta == 0 {
+		return nil
+	}
+
+	dim := p.HiddenSize / p.NumAttentionHeads
+	if dim == 0 {
+		return nil
+	}
+
+	factors := make(ropeFactor, 0, dim/2)
+	for i := uint32(0); i < dim; i += 2 {
+		factor := cmp.Or(p.RopeScaling.Factor, float32(8))
+		factorLow := cmp.Or(p.RopeScaling.LowFrequencyFactor, float32(1))
+		factorHigh := cmp.Or(p.RopeScaling.HighFrequencyFactor, float32(4))
+
+		original := cmp.Or(p.RopeScaling.OriginalMaxPositionEmbeddings, uint32(8192))
+		lambdaLow := float32(original) / factorLow
+		lambdaHigh := float32(original) / factorHigh
+
+		lambda := 2 * math.Pi * math.Pow(float64(p.RopeTheta), float64(i)/float64(dim))
+		if lambda < float64(lambdaHigh) {
+			factors = append(factors, 1)
+		} else if lambda > float64(lambdaLow) {
+			factors = append(factors, factor)
+		} else {
+			smooth := (float32(original)/float32(lambda) - factorLow) / (factorHigh - factorLow)
+			factors = append(factors, 1/((1-smooth)/factor+smooth))
+		}
+	}
+
+	return factors
 }
 
 func (p *llamaModel) Replacements() []string {

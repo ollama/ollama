@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -192,6 +193,35 @@ func TestClientStream(t *testing.T) {
 	}
 }
 
+func TestClientStreamReportsReadErrors(t *testing.T) {
+	client := NewClient(
+		&url.URL{Scheme: "http", Host: "example.com"},
+		&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			body := failingReader{
+				data: []byte(`{"message":{"content":"partial"}}` + "\n"),
+				err:  io.ErrUnexpectedEOF,
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(&body),
+				Header:     make(http.Header),
+			}, nil
+		})},
+	)
+
+	err := client.stream(t.Context(), http.MethodPost, "/api/chat", nil, func([]byte) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected stream read error")
+	}
+	if !strings.Contains(err.Error(), io.ErrUnexpectedEOF.Error()) {
+		t.Fatalf("expected unexpected EOF, got %v", err)
+	}
+}
+
 func TestClientDo(t *testing.T) {
 	testCases := []struct {
 		name           string
@@ -319,4 +349,24 @@ func TestClientDo(t *testing.T) {
 			}
 		})
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type failingReader struct {
+	data []byte
+	err  error
+}
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if len(r.data) > 0 {
+		n := copy(p, r.data)
+		r.data = r.data[n:]
+		return n, nil
+	}
+	return 0, r.err
 }

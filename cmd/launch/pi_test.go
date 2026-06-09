@@ -1,17 +1,18 @@
 package launch
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
 	"testing"
 
-	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -30,6 +31,851 @@ func TestPiIntegration(t *testing.T) {
 
 	t.Run("implements Editor", func(t *testing.T) {
 		var _ Editor = pi
+	})
+}
+
+func TestPiInstallSpec_UsesOfficialPackage(t *testing.T) {
+	spec, err := LookupIntegrationSpec("pi")
+	if err != nil {
+		t.Fatalf("LookupIntegrationSpec(pi) error = %v", err)
+	}
+
+	want := []string{"npm", "install", "-g", piNpmPackage + "@latest"}
+	if got := spec.Install.Command; !slices.Equal(got, want) {
+		t.Fatalf("pi install command = %v, want %v", got, want)
+	}
+}
+
+func TestPiNpmPrefixForPackageRoot(t *testing.T) {
+	prefix := filepath.Join(t.TempDir(), "npm-global")
+	t.Run("unix npm global layout", func(t *testing.T) {
+		packageRoot := filepath.Join(prefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent")
+		if got := npmPrefixForPackageRoot(packageRoot); got != prefix {
+			t.Fatalf("npmPrefixForPackageRoot() = %q, want %q", got, prefix)
+		}
+	})
+	tests := []struct {
+		name        string
+		goos        string
+		separator   string
+		packageRoot string
+		want        string
+	}{
+		{
+			name:        "macos npm global layout",
+			goos:        "darwin",
+			separator:   "/",
+			packageRoot: "/Users/parth/.npm-global/lib/node_modules/@mariozechner/pi-coding-agent",
+			want:        "/Users/parth/.npm-global",
+		},
+		{
+			name:        "linux npm global layout",
+			goos:        "linux",
+			separator:   "/",
+			packageRoot: "/home/parth/.npm-global/lib/node_modules/@mariozechner/pi-coding-agent",
+			want:        "/home/parth/.npm-global",
+		},
+		{
+			name:        "windows npm global layout",
+			goos:        "windows",
+			separator:   `\`,
+			packageRoot: `C:\Users\parth\AppData\Roaming\npm\node_modules\@mariozechner\pi-coding-agent`,
+			want:        `C:\Users\parth\AppData\Roaming\npm`,
+		},
+		{
+			name:        "windows lib npm global layout",
+			goos:        "windows",
+			separator:   `\`,
+			packageRoot: `C:\Users\parth\.npm-global\lib\node_modules\@mariozechner\pi-coding-agent`,
+			want:        `C:\Users\parth\.npm-global`,
+		},
+		{
+			name:        "non-windows direct node_modules layout",
+			goos:        "linux",
+			separator:   "/",
+			packageRoot: "/home/parth/.npm-global/node_modules/@mariozechner/pi-coding-agent",
+			want:        "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := npmPrefixForPackageRootForGOOS(tt.packageRoot, tt.goos, tt.separator)
+			if got != tt.want {
+				t.Fatalf("npmPrefixForPackageRootForGOOS() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	t.Run("host windows npm global layout", func(t *testing.T) {
+		packageRoot := filepath.Join(prefix, "node_modules", "@mariozechner", "pi-coding-agent")
+		want := ""
+		if runtime.GOOS == "windows" {
+			want = prefix
+		}
+		if got := npmPrefixForPackageRoot(packageRoot); got != want {
+			t.Fatalf("npmPrefixForPackageRoot() = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestPiRun_InstallAndWebSearchLifecycle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell test binaries")
+	}
+
+	writeScript := func(t *testing.T, path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seedPiScript := func(t *testing.T, dir string) {
+		t.Helper()
+		piPath := filepath.Join(dir, "pi")
+		listPath := filepath.Join(dir, "pi-list.txt")
+		piScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "list" ]; then
+  if [ -f %q ]; then
+    /bin/cat %q
+  fi
+  exit 0
+fi
+if [ "$1" = "update" ] && [ "$PI_FAIL_UPDATE" = "1" ]; then
+  echo "update failed" >&2
+  exit 1
+fi
+if [ "$1" = "install" ] && [ "$PI_FAIL_INSTALL" = "1" ]; then
+  echo "install failed" >&2
+  exit 1
+fi
+exit 0
+`, filepath.Join(dir, "pi.log"), listPath, listPath)
+		writeScript(t, piPath, piScript)
+	}
+
+	seedNpmNoop := func(t *testing.T, dir string) {
+		t.Helper()
+		writeScript(t, filepath.Join(dir, "npm"), "#!/bin/sh\nexit 0\n")
+	}
+
+	seedLegacyPiNpm := func(t *testing.T, dir string) {
+		t.Helper()
+		npmPath := filepath.Join(dir, "npm")
+		npmScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = %q ]; then
+  if [ "$PI_FAIL_OFFICIAL_INSTALL" = "1" ]; then
+    echo "install failed" >&2
+    exit 1
+  fi
+  : > %q
+  exit 0
+fi
+if [ "$1" = "uninstall" ] && [ "$2" = "-g" ] && [ "$3" = %q ]; then
+  : > %q
+  exit 0
+fi
+if [ "$1" = "ls" ] && [ "$2" = "-g" ] && [ "$4" = "--depth=0" ] && [ "$5" = "--json" ]; then
+  if [ "$3" = %q ]; then
+    if [ -f %q ]; then
+      printf '{"name":"lib","dependencies":{"%s":{"version":"0.58.0","overridden":false}}}\n'
+      exit 0
+    fi
+    printf '{"name":"lib"}\n'
+    exit 1
+  fi
+  if [ "$3" = %q ]; then
+    if [ ! -f %q ]; then
+      printf '{"name":"lib","dependencies":{"%s":{"version":"0.57.1","overridden":false}}}\n'
+      exit 0
+    fi
+    printf '{"name":"lib"}\n'
+    exit 1
+  fi
+fi
+exit 0
+`, filepath.Join(dir, "npm.log"), piNpmPackage+"@latest", filepath.Join(dir, "official-installed"), piLegacyNpmPackage, filepath.Join(dir, "legacy-removed"), piNpmPackage, filepath.Join(dir, "official-installed"), piNpmPackage, piLegacyNpmPackage, filepath.Join(dir, "legacy-removed"), piLegacyNpmPackage)
+		writeScript(t, npmPath, npmScript)
+	}
+
+	seedBothPiPackagesNpm := func(t *testing.T, dir string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "official-installed"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		npmPath := filepath.Join(dir, "npm")
+		npmScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = %q ]; then
+  : > %q
+  exit 0
+fi
+if [ "$1" = "uninstall" ] && [ "$2" = "-g" ] && [ "$3" = %q ]; then
+  : > %q
+  exit 0
+fi
+if [ "$1" = "ls" ] && [ "$2" = "-g" ] && [ "$4" = "--depth=0" ] && [ "$5" = "--json" ]; then
+  if [ "$3" = %q ]; then
+    if [ ! -f %q ]; then
+      printf '{"name":"lib","dependencies":{"%s":{"version":"0.57.1","overridden":false}}}\n'
+      exit 0
+    fi
+    printf '{"name":"lib"}\n'
+    exit 1
+  fi
+  if [ "$3" = %q ]; then
+    if [ -f %q ]; then
+      printf '{"name":"lib","dependencies":{"%s":{"version":"0.58.0","overridden":false}}}\n'
+      exit 0
+    fi
+    printf '{"name":"lib"}\n'
+    exit 1
+  fi
+fi
+exit 0
+`, filepath.Join(dir, "npm.log"), piNpmPackage+"@latest", filepath.Join(dir, "official-installed"), piLegacyNpmPackage, filepath.Join(dir, "legacy-removed"), piLegacyNpmPackage, filepath.Join(dir, "legacy-removed"), piLegacyNpmPackage, piNpmPackage, filepath.Join(dir, "official-installed"), piNpmPackage)
+		writeScript(t, npmPath, npmScript)
+	}
+
+	seedBrokenPiProbeNpm := func(t *testing.T, dir string) {
+		t.Helper()
+		npmPath := filepath.Join(dir, "npm")
+		npmScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "ls" ] && [ "$2" = "-g" ] && [ "$4" = "--depth=0" ] && [ "$5" = "--json" ]; then
+  echo "npm probe failed" >&2
+  exit 1
+fi
+exit 0
+`, filepath.Join(dir, "npm.log"))
+		writeScript(t, npmPath, npmScript)
+	}
+
+	withConfirm := func(t *testing.T, fn func(prompt string) (bool, error)) {
+		t.Helper()
+		oldConfirm := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			return fn(prompt)
+		}
+		t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+	}
+
+	setCloudStatus := func(t *testing.T, disabled bool) {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/status" {
+				fmt.Fprintf(w, `{"cloud":{"disabled":%t,"source":"config"}}`, disabled)
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		t.Cleanup(srv.Close)
+		t.Setenv("OLLAMA_HOST", srv.URL)
+	}
+
+	setNpmRegistryVersion := func(t *testing.T, version string) {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/latest") {
+				fmt.Fprintf(w, `{"version":%q}`, version)
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		oldRegistry := npmRegistryBaseURL
+		npmRegistryBaseURL = srv.URL
+		t.Cleanup(func() {
+			npmRegistryBaseURL = oldRegistry
+			srv.Close()
+		})
+	}
+
+	seedPiWebSearchPackage := func(t *testing.T, dir, version string) {
+		t.Helper()
+		packagePath := filepath.Join(dir, ".npm-global", "lib", "node_modules", "@ollama", "pi-web-search")
+		if err := os.MkdirAll(packagePath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		packageJSON := fmt.Sprintf(`{"name":%q,"version":%q}`, piWebSearchPkg, version)
+		if err := os.WriteFile(filepath.Join(packagePath, "package.json"), []byte(packageJSON), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		list := fmt.Sprintf("User packages:\n  %s\n    %s\n", piWebSearchSource, packagePath)
+		if err := os.WriteFile(filepath.Join(dir, "pi-list.txt"), []byte(list), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("pi missing + user accepts install", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		npmScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = %q ]; then
+  /bin/cat > %q <<'EOS'
+#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "list" ]; then
+  if [ -f %q ]; then
+    /bin/cat %q
+  fi
+  exit 0
+fi
+exit 0
+EOS
+  /bin/chmod +x %q
+fi
+exit 0
+`, filepath.Join(tmpDir, "npm.log"), piNpmPackage+"@latest", filepath.Join(tmpDir, "pi"), filepath.Join(tmpDir, "pi.log"), filepath.Join(tmpDir, "pi-list.txt"), filepath.Join(tmpDir, "pi-list.txt"), filepath.Join(tmpDir, "pi"))
+		writeScript(t, filepath.Join(tmpDir, "npm"), npmScript)
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			if strings.Contains(prompt, "Install Pi with npm?") {
+				return true, nil
+			}
+			return true, nil
+		})
+
+		p := &Pi{}
+		if err := p.Run("ignored", nil, []string{"--version"}); err != nil {
+			npmCalls, _ := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+			t.Fatalf("Run() error = %v\nnpm calls:\n%s", err, npmCalls)
+		}
+
+		npmCalls, err := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(npmCalls), "install -g "+piNpmPackage+"@latest") {
+			t.Fatalf("expected npm install call, got:\n%s", npmCalls)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(piCalls)
+		if !strings.Contains(got, "list\n") {
+			t.Fatalf("expected pi list call, got:\n%s", got)
+		}
+		if !strings.Contains(got, "install "+piWebSearchSource+"\n") {
+			t.Fatalf("expected pi web search install call, got:\n%s", got)
+		}
+		if !strings.Contains(got, "--version\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", got)
+		}
+	})
+
+	t.Run("pi missing + user declines install", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		writeScript(t, filepath.Join(tmpDir, "npm"), "#!/bin/sh\nexit 0\n")
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			if strings.Contains(prompt, "Install Pi with npm?") {
+				return false, nil
+			}
+			return true, nil
+		})
+
+		p := &Pi{}
+		err := p.Run("ignored", nil, nil)
+		if err == nil || !strings.Contains(err.Error(), "pi installation cancelled") {
+			t.Fatalf("expected install cancellation error, got %v", err)
+		}
+	})
+
+	t.Run("legacy pi package migrates automatically to official package", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.0")
+		seedPiScript(t, tmpDir)
+		seedLegacyPiNpm(t, tmpDir)
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect confirmation prompt, got %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		if err := p.Run("ignored", nil, []string{"--version"}); err != nil {
+			npmCalls, _ := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+			t.Fatalf("Run() error = %v\nnpm calls:\n%s", err, npmCalls)
+		}
+
+		npmCalls, err := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotNPM := string(npmCalls)
+		if !strings.Contains(gotNPM, "ls -g "+piLegacyNpmPackage+" --depth=0 --json\n") {
+			t.Fatalf("expected legacy npm probe, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "install -g "+piNpmPackage+"@latest --force\n") {
+			t.Fatalf("expected forced official npm install call, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "ls -g "+piNpmPackage+" --depth=0 --json\n") {
+			t.Fatalf("expected official npm verification probe, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "uninstall -g "+piLegacyNpmPackage+"\n") {
+			t.Fatalf("expected legacy npm uninstall call, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "install -g "+piNpmPackage+"@latest\n") {
+			t.Fatalf("expected official npm install call, got:\n%s", gotNPM)
+		}
+		if strings.Index(gotNPM, "install -g "+piNpmPackage+"@latest --force\n") > strings.Index(gotNPM, "uninstall -g "+piLegacyNpmPackage+"\n") {
+			t.Fatalf("expected official install before legacy uninstall, got:\n%s", gotNPM)
+		}
+		if strings.Index(gotNPM, "uninstall -g "+piLegacyNpmPackage+"\n") > strings.LastIndex(gotNPM, "install -g "+piNpmPackage+"@latest\n") {
+			t.Fatalf("expected official repair install after legacy uninstall, got:\n%s", gotNPM)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotPi := string(piCalls)
+		if strings.Contains(gotPi, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("did not expect pi update call when web search is current, got:\n%s", gotPi)
+		}
+		if !strings.Contains(gotPi, "--version\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", gotPi)
+		}
+	})
+
+	t.Run("legacy pi package migrates even when official package is also installed", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.0")
+		seedPiScript(t, tmpDir)
+		seedBothPiPackagesNpm(t, tmpDir)
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect confirmation prompt, got %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		if err := p.Run("ignored", nil, []string{"--version"}); err != nil {
+			npmCalls, _ := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+			t.Fatalf("Run() error = %v\nnpm calls:\n%s", err, npmCalls)
+		}
+
+		npmCalls, err := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotNPM := string(npmCalls)
+		if !strings.Contains(gotNPM, "ls -g "+piLegacyNpmPackage+" --depth=0 --json\n") {
+			t.Fatalf("expected legacy npm probe, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "install -g "+piNpmPackage+"@latest --force\n") {
+			t.Fatalf("expected forced official npm install call, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "ls -g "+piNpmPackage+" --depth=0 --json\n") {
+			t.Fatalf("expected official npm verification probe, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "uninstall -g "+piLegacyNpmPackage+"\n") {
+			t.Fatalf("expected legacy npm uninstall call, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "install -g "+piNpmPackage+"@latest\n") {
+			t.Fatalf("expected official npm install call, got:\n%s", gotNPM)
+		}
+	})
+
+	t.Run("legacy pi package outside current npm prefix migrates with binary prefix", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		setCloudStatus(t, false)
+
+		commandDir := filepath.Join(tmpDir, "commands")
+		prefix := filepath.Join(tmpDir, "npm-global")
+		legacyRoot := filepath.Join(prefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent")
+		legacyDist := filepath.Join(legacyRoot, "dist")
+		if err := os.MkdirAll(filepath.Join(prefix, "bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(legacyDist, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(legacyRoot, "package.json"), []byte(`{"name":"`+piLegacyNpmPackage+`","version":"0.67.1"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		writeScript(t, filepath.Join(legacyDist, "cli.js"), fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %q\nexit 0\n", filepath.Join(tmpDir, "pi.log")))
+		if err := os.Symlink(filepath.Join(legacyDist, "cli.js"), filepath.Join(prefix, "bin", "pi")); err != nil {
+			t.Fatal(err)
+		}
+
+		npmScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+prefix=""
+if [ "$1" = "--prefix" ]; then
+  prefix="$2"
+  shift 2
+fi
+if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = %q ]; then
+  : > %q
+  mkdir -p "$prefix/lib/node_modules/@earendil-works/pi-coding-agent/dist" "$prefix/bin"
+  printf '{"name":"%s","version":"0.75.3"}\n' > "$prefix/lib/node_modules/@earendil-works/pi-coding-agent/package.json"
+  printf '#!/bin/sh\necho "$@" >> %s\nexit 0\n' > "$prefix/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+  chmod +x "$prefix/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+  ln -sf "$prefix/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js" "$prefix/bin/pi"
+  exit 0
+fi
+if [ "$1" = "uninstall" ] && [ "$2" = "-g" ] && [ "$3" = %q ]; then
+  : > %q
+  exit 0
+fi
+if [ "$1" = "ls" ] && [ "$2" = "-g" ] && [ "$4" = "--depth=0" ] && [ "$5" = "--json" ]; then
+  if [ "$3" = %q ] && [ -f %q ]; then
+    printf '{"name":"lib","dependencies":{"%s":{"version":"0.75.3","overridden":false}}}\n'
+    exit 0
+  fi
+  if [ "$3" = %q ] && [ ! -f %q ]; then
+    printf '{"name":"lib","dependencies":{"%s":{"version":"0.67.1","overridden":false}}}\n'
+    exit 0
+  fi
+  printf '{"name":"lib"}\n'
+  exit 1
+fi
+exit 0
+`, filepath.Join(tmpDir, "npm.log"), piNpmPackage+"@latest", filepath.Join(tmpDir, "official-installed"), piNpmPackage, filepath.Join(tmpDir, "pi.log"), piLegacyNpmPackage, filepath.Join(tmpDir, "legacy-removed"), piNpmPackage, filepath.Join(tmpDir, "official-installed"), piNpmPackage, piLegacyNpmPackage, filepath.Join(tmpDir, "legacy-removed"), piLegacyNpmPackage)
+		if err := os.MkdirAll(commandDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeScript(t, filepath.Join(commandDir, "npm"), npmScript)
+		t.Setenv("PATH", commandDir+string(os.PathListSeparator)+filepath.Join(prefix, "bin"))
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect confirmation prompt, got %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		if err := p.Run("ignored", nil, []string{"--version"}); err != nil {
+			npmCalls, _ := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+			t.Fatalf("Run() error = %v\nnpm calls:\n%s", err, npmCalls)
+		}
+
+		npmCalls, err := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotNPM := string(npmCalls)
+		resolvedPrefix, err := filepath.EvalSymlinks(prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(gotNPM, "--prefix "+resolvedPrefix+" install -g "+piNpmPackage+"@latest --force\n") {
+			t.Fatalf("expected forced official install in pi binary prefix, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "--prefix "+resolvedPrefix+" uninstall -g "+piLegacyNpmPackage+"\n") {
+			t.Fatalf("expected legacy uninstall in pi binary prefix, got:\n%s", gotNPM)
+		}
+		if !strings.Contains(gotNPM, "--prefix "+resolvedPrefix+" install -g "+piNpmPackage+"@latest\n") {
+			t.Fatalf("expected official repair install in pi binary prefix, got:\n%s", gotNPM)
+		}
+	})
+
+	t.Run("legacy pi migration install failure does not remove legacy package", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		t.Setenv("PI_FAIL_OFFICIAL_INSTALL", "1")
+		seedPiScript(t, tmpDir)
+		seedLegacyPiNpm(t, tmpDir)
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect confirmation prompt, got %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		err := p.Run("ignored", nil, nil)
+		if err == nil || !strings.Contains(err.Error(), "failed to install pi") {
+			t.Fatalf("expected install failure error, got %v", err)
+		}
+
+		npmCalls, readErr := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		gotNPM := string(npmCalls)
+		if !strings.Contains(gotNPM, "install -g "+piNpmPackage+"@latest --force\n") {
+			t.Fatalf("expected forced official npm install call, got:\n%s", gotNPM)
+		}
+		if strings.Contains(gotNPM, "uninstall -g "+piLegacyNpmPackage+"\n") {
+			t.Fatalf("did not expect legacy uninstall after official install failure, got:\n%s", gotNPM)
+		}
+	})
+
+	t.Run("pi installed + package probe failure warns and still launches", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.0")
+		seedPiScript(t, tmpDir)
+		seedBrokenPiProbeNpm(t, tmpDir)
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect confirmation prompt, got %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		stderr := captureStderr(t, func() {
+			if err := p.Run("ignored", nil, []string{"--version"}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+		})
+		if !strings.Contains(stderr, "Could not verify which Pi package is installed") {
+			t.Fatalf("expected package probe warning, got:\n%s", stderr)
+		}
+		if !strings.Contains(stderr, "npm uninstall -g "+piLegacyNpmPackage) {
+			t.Fatalf("expected manual migration steps in warning, got:\n%s", stderr)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotPi := string(piCalls)
+		if strings.Contains(gotPi, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("did not expect pi update call when web search is current, got:\n%s", gotPi)
+		}
+		if !strings.Contains(gotPi, "--version\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", gotPi)
+		}
+	})
+
+	t.Run("pi installed + web search missing auto-installs", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect confirmation prompt, got %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		if err := p.Run("ignored", nil, []string{"session"}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(piCalls)
+		if !strings.Contains(got, "list\n") {
+			t.Fatalf("expected pi list call, got:\n%s", got)
+		}
+		if !strings.Contains(got, "install "+piWebSearchSource+"\n") {
+			t.Fatalf("expected pi install call, got:\n%s", got)
+		}
+		if strings.Contains(got, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("did not expect pi update call when package missing, got:\n%s", got)
+		}
+		if !strings.Contains(got, "session\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", got)
+		}
+	})
+
+	t.Run("pi installed + web search present skips update when current", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.0")
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+
+		p := &Pi{}
+		if err := p.Run("ignored", nil, []string{"doctor"}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(piCalls)
+		if strings.Contains(got, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("did not expect pi update call, got:\n%s", got)
+		}
+		if !strings.Contains(got, "doctor\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", got)
+		}
+	})
+
+	t.Run("pi installed + web search present updates when newer package exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.1")
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+
+		p := &Pi{}
+		if err := p.Run("ignored", nil, []string{"doctor"}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(piCalls)
+		if !strings.Contains(got, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("expected pi update call, got:\n%s", got)
+		}
+		if !strings.Contains(got, "doctor\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", got)
+		}
+	})
+
+	t.Run("web search update failure warns and continues", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		t.Setenv("PI_FAIL_UPDATE", "1")
+		seedPiWebSearchPackage(t, tmpDir, "1.0.0")
+		setNpmRegistryVersion(t, "1.0.1")
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+
+		p := &Pi{}
+		stderr := captureStderr(t, func() {
+			if err := p.Run("ignored", nil, []string{"session"}); err != nil {
+				t.Fatalf("Run() should continue after web search update failure, got %v", err)
+			}
+		})
+		if !strings.Contains(stderr, "Warning: could not update "+piWebSearchPkg) {
+			t.Fatalf("expected update warning, got:\n%s", stderr)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(piCalls), "session\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", piCalls)
+		}
+	})
+
+	t.Run("web search install failure warns and continues", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		t.Setenv("PI_FAIL_INSTALL", "1")
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect confirmation prompt, got %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		stderr := captureStderr(t, func() {
+			if err := p.Run("ignored", nil, []string{"session"}); err != nil {
+				t.Fatalf("Run() should continue after web search install failure, got %v", err)
+			}
+		})
+		if !strings.Contains(stderr, "Warning: could not install "+piWebSearchPkg) {
+			t.Fatalf("expected install warning, got:\n%s", stderr)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(piCalls), "session\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", piCalls)
+		}
+	})
+
+	t.Run("cloud disabled skips web search package management", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, true)
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+
+		p := &Pi{}
+		stderr := captureStderr(t, func() {
+			if err := p.Run("ignored", nil, []string{"session"}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+		})
+		if !strings.Contains(stderr, "Cloud is disabled; skipping "+piWebSearchPkg+" setup.") {
+			t.Fatalf("expected cloud-disabled skip message, got:\n%s", stderr)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(piCalls)
+		if strings.Contains(got, "list\n") || strings.Contains(got, "install "+piWebSearchSource+"\n") || strings.Contains(got, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("did not expect web search package management calls, got:\n%s", got)
+		}
+		if !strings.Contains(got, "session\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", got)
+		}
+	})
+
+	t.Run("missing npm returns error before pi flow", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		seedPiScript(t, tmpDir)
+
+		p := &Pi{}
+		err := p.Run("ignored", nil, []string{"session"})
+		if err == nil || !strings.Contains(err.Error(), "npm (Node.js) is required to launch pi") {
+			t.Fatalf("expected missing npm error, got %v", err)
+		}
+
+		if _, statErr := os.Stat(filepath.Join(tmpDir, "pi.log")); !os.IsNotExist(statErr) {
+			t.Fatalf("expected pi not to run when npm is missing, stat err = %v", statErr)
+		}
 	})
 }
 
@@ -97,7 +943,7 @@ func TestPiEdit(t *testing.T) {
 	}
 
 	t.Run("returns nil for empty models", func(t *testing.T) {
-		if err := pi.Edit([]string{}); err != nil {
+		if err := pi.Edit(testLaunchModels()); err != nil {
 			t.Errorf("Edit([]) error = %v, want nil", err)
 		}
 	})
@@ -106,7 +952,7 @@ func TestPiEdit(t *testing.T) {
 		cleanup()
 
 		models := []string{"llama3.2", "qwen3:8b"}
-		if err := pi.Edit(models); err != nil {
+		if err := pi.Edit(launchModelsFromNames(models)); err != nil {
 			t.Fatalf("Edit() error = %v", err)
 		}
 
@@ -159,7 +1005,7 @@ func TestPiEdit(t *testing.T) {
 		}
 
 		models := []string{"new-model"}
-		if err := pi.Edit(models); err != nil {
+		if err := pi.Edit(launchModelsFromNames(models)); err != nil {
 			t.Fatalf("Edit() error = %v", err)
 		}
 
@@ -212,7 +1058,7 @@ func TestPiEdit(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := pi.Edit([]string{"glm-5:cloud"}); err != nil {
+		if err := pi.Edit(testLaunchModels("glm-5:cloud")); err != nil {
 			t.Fatalf("Edit() error = %v", err)
 		}
 
@@ -257,7 +1103,7 @@ func TestPiEdit(t *testing.T) {
 		}
 
 		newModels := []string{"new-model-1", "new-model-2"}
-		if err := pi.Edit(newModels); err != nil {
+		if err := pi.Edit(launchModelsFromNames(newModels)); err != nil {
 			t.Fatalf("Edit() error = %v", err)
 		}
 
@@ -308,7 +1154,7 @@ func TestPiEdit(t *testing.T) {
 		}
 
 		newModels := []string{"keep-model", "add-model"}
-		if err := pi.Edit(newModels); err != nil {
+		if err := pi.Edit(launchModelsFromNames(newModels)); err != nil {
 			t.Fatalf("Edit() error = %v", err)
 		}
 
@@ -345,7 +1191,7 @@ func TestPiEdit(t *testing.T) {
 		}
 
 		models := []string{"test-model"}
-		if err := pi.Edit(models); err != nil {
+		if err := pi.Edit(launchModelsFromNames(models)); err != nil {
 			t.Fatalf("Edit() should not fail with corrupt config, got %v", err)
 		}
 
@@ -394,7 +1240,7 @@ func TestPiEdit(t *testing.T) {
 
 		// Add a new ollama-managed model
 		newModels := []string{"new-ollama-model"}
-		if err := pi.Edit(newModels); err != nil {
+		if err := pi.Edit(launchModelsFromNames(newModels)); err != nil {
 			t.Fatalf("Edit() error = %v", err)
 		}
 
@@ -455,7 +1301,7 @@ func TestPiEdit(t *testing.T) {
 		}
 
 		models := []string{"llama3.2"}
-		if err := pi.Edit(models); err != nil {
+		if err := pi.Edit(launchModelsFromNames(models)); err != nil {
 			t.Fatalf("Edit() error = %v", err)
 		}
 
@@ -493,7 +1339,7 @@ func TestPiEdit(t *testing.T) {
 		os.MkdirAll(configDir, 0o755)
 
 		models := []string{"qwen3:8b"}
-		if err := pi.Edit(models); err != nil {
+		if err := pi.Edit(launchModelsFromNames(models)); err != nil {
 			t.Fatalf("Edit() error = %v", err)
 		}
 
@@ -527,7 +1373,7 @@ func TestPiEdit(t *testing.T) {
 		}
 
 		models := []string{"test-model"}
-		if err := pi.Edit(models); err != nil {
+		if err := pi.Edit(launchModelsFromNames(models)); err != nil {
 			t.Fatalf("Edit() should not fail with corrupt settings, got %v", err)
 		}
 
@@ -548,6 +1394,62 @@ func TestPiEdit(t *testing.T) {
 			t.Errorf("defaultModel = %v, want test-model", settings["defaultModel"])
 		}
 	})
+}
+
+func TestPiEdit_CreatesDistinctBackupsForEachManagedFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprint(w, `{"capabilities":[],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	pi := &Pi{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".pi", "agent")
+	modelsPath := filepath.Join(configDir, "models.json")
+	settingsPath := filepath.Join(configDir, "settings.json")
+	backupDir := fileutil.BackupDir()
+
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	modelsOriginal := fmt.Sprintf(`{"marker":"models-%d","providers":{"ollama":{"models":[]}}}`, os.Getpid())
+	settingsOriginal := fmt.Sprintf(`{"marker":"settings-%d","defaultProvider":"other","defaultModel":"old"}`, os.Getpid())
+	if err := os.WriteFile(modelsPath, []byte(modelsOriginal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(settingsOriginal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pi.Edit(testLaunchModels("llama3.2")); err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+
+	assertBackupMatches := func(pattern, want string) {
+		t.Helper()
+		backups, err := filepath.Glob(filepath.Join(backupDir, pattern))
+		if err != nil {
+			t.Fatalf("glob %q failed: %v", pattern, err)
+		}
+		for _, backup := range backups {
+			data, err := os.ReadFile(backup)
+			if err == nil && string(data) == want {
+				return
+			}
+		}
+		t.Fatalf("backup matching %q with expected content not found", pattern)
+	}
+
+	assertBackupMatches(filepath.Join("pi", "models.json.*"), modelsOriginal)
+	assertBackupMatches(filepath.Join("pi", "settings.json.*"), settingsOriginal)
 }
 
 func TestPiModels(t *testing.T) {
@@ -693,19 +1595,7 @@ func TestIsPiOllamaModel(t *testing.T) {
 
 func TestCreateConfig(t *testing.T) {
 	t.Run("sets vision input when model has vision capability", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":["vision"],"model_info":{}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg := createConfig(context.Background(), client, "llava:7b")
+		cfg := createConfig(LaunchModel{Name: "llava:7b", Capabilities: []model.Capability{model.CapabilityVision}})
 
 		if cfg["id"] != "llava:7b" {
 			t.Errorf("id = %v, want llava:7b", cfg["id"])
@@ -720,19 +1610,7 @@ func TestCreateConfig(t *testing.T) {
 	})
 
 	t.Run("sets text-only input when model lacks vision", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":["completion"],"model_info":{}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg := createConfig(context.Background(), client, "llama3.2")
+		cfg := createConfig(LaunchModel{Name: "llama3.2", Capabilities: []model.Capability{model.CapabilityCompletion}})
 
 		input, ok := cfg["input"].([]string)
 		if !ok || len(input) != 1 || input[0] != "text" {
@@ -744,39 +1622,15 @@ func TestCreateConfig(t *testing.T) {
 	})
 
 	t.Run("sets reasoning when model has thinking capability", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg := createConfig(context.Background(), client, "qwq")
+		cfg := createConfig(LaunchModel{Name: "qwq", Capabilities: []model.Capability{model.CapabilityThinking}})
 
 		if cfg["reasoning"] != true {
 			t.Error("expected reasoning = true for thinking model")
 		}
 	})
 
-	t.Run("extracts context window from model info", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":[],"model_info":{"llama.context_length":131072}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg := createConfig(context.Background(), client, "llama3.2")
+	t.Run("sets context window from metadata", func(t *testing.T) {
+		cfg := createConfig(LaunchModel{Name: "llama3.2", ContextLength: 131072})
 
 		if cfg["contextWindow"] != 131072 {
 			t.Errorf("contextWindow = %v, want 131072", cfg["contextWindow"])
@@ -784,19 +1638,11 @@ func TestCreateConfig(t *testing.T) {
 	})
 
 	t.Run("handles all capabilities together", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":["vision","thinking"],"model_info":{"qwen3.context_length":32768}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg := createConfig(context.Background(), client, "qwen3-vision")
+		cfg := createConfig(LaunchModel{
+			Name:          "qwen3-vision",
+			Capabilities:  []model.Capability{model.CapabilityVision, model.CapabilityThinking},
+			ContextLength: 32768,
+		})
 
 		input := cfg["input"].([]string)
 		if len(input) != 2 || input[0] != "text" || input[1] != "image" {
@@ -810,17 +1656,8 @@ func TestCreateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("returns minimal config when show fails", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, `{"error":"model not found"}`)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg := createConfig(context.Background(), client, "missing-model")
+	t.Run("returns minimal config when metadata is unavailable", func(t *testing.T) {
+		cfg := createConfig(LaunchModel{Name: "missing-model"})
 
 		if cfg["id"] != "missing-model" {
 			t.Errorf("id = %v, want missing-model", cfg["id"])
@@ -828,49 +1665,29 @@ func TestCreateConfig(t *testing.T) {
 		if cfg["_launch"] != true {
 			t.Error("expected _launch = true")
 		}
-		// Should not have capability fields
-		if _, ok := cfg["input"]; ok {
-			t.Error("input should not be set when show fails")
+		// Input defaults to text even when capabilities are unavailable.
+		input, ok := cfg["input"].([]string)
+		if !ok || len(input) != 1 || input[0] != "text" {
+			t.Errorf("input = %v, want [text]", cfg["input"])
 		}
 		if _, ok := cfg["reasoning"]; ok {
-			t.Error("reasoning should not be set when show fails")
+			t.Error("reasoning should not be set when metadata is unavailable")
 		}
 		if _, ok := cfg["contextWindow"]; ok {
-			t.Error("contextWindow should not be set when show fails")
+			t.Error("contextWindow should not be set when metadata is unavailable")
 		}
 	})
 
-	t.Run("cloud model falls back to hardcoded context when show fails", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, `{"error":"model not found"}`)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg := createConfig(context.Background(), client, "kimi-k2.5:cloud")
+	t.Run("cloud model falls back to hardcoded context", func(t *testing.T) {
+		cfg := createConfig(fallbackLaunchModel("kimi-k2.5:cloud"))
 
 		if cfg["contextWindow"] != 262_144 {
 			t.Errorf("contextWindow = %v, want 262144", cfg["contextWindow"])
 		}
 	})
 
-	t.Run("cloud model falls back to hardcoded context when show omits model info", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":[],"model_info":{}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg := createConfig(context.Background(), client, "glm-5:cloud")
+	t.Run("cloud model uses hardcoded context when tags omit context", func(t *testing.T) {
+		cfg := createConfig(fallbackLaunchModel("glm-5:cloud"))
 
 		if cfg["contextWindow"] != 202_752 {
 			t.Errorf("contextWindow = %v, want 202752", cfg["contextWindow"])
@@ -878,35 +1695,14 @@ func TestCreateConfig(t *testing.T) {
 	})
 
 	t.Run("cloud model with dash suffix falls back to hardcoded context", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, `{"error":"model not found"}`)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg := createConfig(context.Background(), client, "gpt-oss:120b-cloud")
+		cfg := createConfig(fallbackLaunchModel("gpt-oss:120b-cloud"))
 
 		if cfg["contextWindow"] != 131_072 {
 			t.Errorf("contextWindow = %v, want 131072", cfg["contextWindow"])
 		}
 	})
 	t.Run("skips zero context length", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":[],"model_info":{"llama.context_length":0}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg := createConfig(context.Background(), client, "test-model")
+		cfg := createConfig(LaunchModel{Name: "test-model", ContextLength: 0})
 
 		if _, ok := cfg["contextWindow"]; ok {
 			t.Error("contextWindow should not be set for zero value")

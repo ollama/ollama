@@ -20,7 +20,6 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
-	_ "github.com/ollama/ollama/ml/backend"
 	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/tokenizer"
@@ -45,6 +44,12 @@ type Model interface {
 // loading will fail with the returned error.
 type Validator interface {
 	Validate() error
+}
+
+// PostLoader is an optional interface that models can implement to run
+// initialization steps after backend weights have been loaded.
+type PostLoader interface {
+	PostLoad() error
 }
 
 // MultimodalProcessor must be implemented by multimodal models.

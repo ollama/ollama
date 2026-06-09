@@ -390,3 +390,48 @@ func (t *Terminal) Read() (rune, error) {
 	}
 	return r, nil
 }
+
+// SetRawModeOn enables raw terminal mode and keeps it on.
+// Call SetRawModeOff to restore when done.
+func (i *Instance) SetRawModeOn() error {
+	if i.Terminal.rawmode {
+		return nil
+	}
+	fd := os.Stdin.Fd()
+	termios, err := SetRawMode(fd)
+	if err != nil {
+		return err
+	}
+	i.Terminal.rawmode = true
+	i.Terminal.termios = termios
+	return nil
+}
+
+// SetRawModeOff restores the terminal to its previous mode.
+func (i *Instance) SetRawModeOff() {
+	if !i.Terminal.rawmode {
+		return
+	}
+	fd := os.Stdin.Fd()
+	//nolint:errcheck
+	UnsetRawMode(fd, i.Terminal.termios)
+	i.Terminal.rawmode = false
+}
+
+// ReadRaw reads a single rune. If the terminal is already in raw mode
+// (via SetRawModeOn), it reads directly. Otherwise it temporarily enters
+// raw mode for the read.
+func (i *Instance) ReadRaw() (rune, error) {
+	if !i.Terminal.rawmode {
+		fd := os.Stdin.Fd()
+		termios, err := SetRawMode(fd)
+		if err != nil {
+			return 0, err
+		}
+		defer func() {
+			//nolint:errcheck
+			UnsetRawMode(fd, termios)
+		}()
+	}
+	return i.Terminal.Read()
+}

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"os"
 	"runtime"
 	"slices"
 	"sort"
@@ -312,14 +313,24 @@ type DeviceInfo struct {
 	DriverMajor int `json:"driver_major,omitempty"`
 	DriverMinor int `json:"driver_minor,omitempty"`
 
+	// NVIDIADriverMajor is the NVIDIA kernel driver branch. CUDA driver APIs
+	// expose a separate CUDA compatibility version, so keep this distinct.
+	NVIDIADriverMajor int `json:"-"`
+
+	// GFXTarget is the AMD GPU gfx target string (e.g. "gfx1100") for ROCm
+	// device validation. Empty on non-AMD devices.
+	GFXTarget string `json:"gfx_target,omitempty"`
+
 	// Where backends were loaded from
 	LibraryPath []string
+
+	// RunnerEnvOverrides stores exceptional per-device runner environment
+	// overrides discovered during bootstrap. This is internal server state and
+	// is not serialized.
+	RunnerEnvOverrides map[string]string `json:"-"`
 }
 
 type SystemInfo struct {
-	// ThreadCount is the optimal number of threads to use for inference
-	ThreadCount int `json:"threads,omitempty"`
-
 	// TotalMemory is the total amount of system memory
 	TotalMemory uint64 `json:"total_memory,omitempty"`
 
@@ -438,6 +449,18 @@ const (
 )
 
 func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
+	if a.PCIID != "" && b.PCIID != "" {
+		if !strings.EqualFold(a.PCIID, b.PCIID) {
+			return UniqueDevice
+		}
+		if a.Library == b.Library {
+			return SameBackendDevice
+		}
+		return DuplicateDevice
+	}
+	if likelyVulkanDuplicate(a, b) {
+		return DuplicateDevice
+	}
 	if a.PCIID != b.PCIID {
 		return UniqueDevice
 	}
@@ -449,6 +472,73 @@ func (a DeviceInfo) Compare(b DeviceInfo) DeviceComparison {
 		return SameBackendDevice
 	}
 	return DuplicateDevice
+}
+
+func likelyVulkanDuplicate(a, b DeviceInfo) bool {
+	if a.Library == b.Library {
+		return false
+	}
+	vulkan, other := a, b
+	if b.Library == "Vulkan" {
+		vulkan, other = b, a
+	}
+	if vulkan.Library != "Vulkan" {
+		return false
+	}
+	if other.Library != "CUDA" && other.Library != "ROCm" {
+		return false
+	}
+	if normalizeDeviceDescription(vulkan.Description) == "" {
+		return false
+	}
+	if !SimilarDeviceDescription(vulkan.Description, other.Description) {
+		return false
+	}
+	return SimilarDeviceMemory(vulkan.TotalMemory, other.TotalMemory)
+}
+
+// SimilarDeviceDescription reports whether two backend device descriptions are
+// close enough to identify the same physical GPU across different libraries.
+func SimilarDeviceDescription(a, b string) bool {
+	normalizedA := normalizeDeviceDescription(a)
+	return normalizedA != "" && normalizedA == normalizeDeviceDescription(b)
+}
+
+func normalizeDeviceDescription(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	depth := 0
+	for _, r := range s {
+		switch {
+		case r == '(':
+			depth++
+			continue
+		case r == ')':
+			if depth > 0 {
+				depth--
+				continue
+			}
+		case depth > 0:
+			continue
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func SimilarDeviceMemory(a, b uint64) bool {
+	if a == 0 || b == 0 {
+		return false
+	}
+	maxMemory := max(a, b)
+	tolerance := maxMemory / 20
+	if tolerance < 512*1024*1024 {
+		tolerance = 512 * 1024 * 1024
+	}
+	return maxMemory-min(a, b) <= tolerance
 }
 
 // For a SameBackendDevice, return true if b is better than a
@@ -476,12 +566,13 @@ func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
 	return cmp[0] == bLibSplit[1]
 }
 
-// For each GPU, check if it does NOT support flash attention
+// FlashAttentionSupported reports whether flash attention can be used across
+// all selected devices.
 func FlashAttentionSupported(l []DeviceInfo) bool {
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
-			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
+			cudaFlashAttentionSupported(gpu) ||
 			gpu.Library == "ROCm" ||
 			gpu.Library == "Vulkan"
 
@@ -490,6 +581,22 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 		}
 	}
 	return true
+}
+
+func cudaFlashAttentionSupported(gpu DeviceInfo) bool {
+	if gpu.Library != "CUDA" ||
+		gpu.ComputeMajor < 7 ||
+		(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2) {
+		return false
+	}
+
+	if gpu.DriverMajor == 0 {
+		slog.Warn("CUDA driver version unavailable; allowing flash attention based on compute capability",
+			"device", gpu.Description, "compute", gpu.Compute())
+		return true
+	}
+
+	return gpu.DriverMajor >= 7
 }
 
 type FlashAttentionType int32
@@ -519,17 +626,36 @@ func (f FlashAttentionType) String() string {
 }
 
 // Given the list of GPUs this instantiation is targeted for,
-// figure out the visible devices environment variables
-// Set mustFilter true to enable filtering of CUDA devices
-func GetVisibleDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
+// figure out the device environment variables and any recorded
+// per-device runner environment overrides.
+func GetDevicesEnv(l []DeviceInfo) map[string]string {
 	if len(l) == 0 {
 		return nil
 	}
+	// CUDA-only groups need filtering so devices removed during discovery do
+	// not reappear in the child process.
+	mustFilter := len(l) == 1 || allDevicesUseLibrary(l, "CUDA")
 	env := map[string]string{}
 	for _, d := range l {
 		d.updateVisibleDevicesEnv(env, mustFilter)
+		for k, v := range d.RunnerEnvOverrides {
+			if existing, ok := env[k]; ok && existing != v {
+				slog.Warn("conflicting device environment override", "key", k, "existing", existing, "new", v, "library", d.Library, "id", d.ID)
+			}
+			env[k] = v
+		}
 	}
+
 	return env
+}
+
+func allDevicesUseLibrary(l []DeviceInfo, library string) bool {
+	for _, d := range l {
+		if d.Library != library {
+			return false
+		}
+	}
+	return true
 }
 
 // NeedsInitValidation returns true if the device in question has the potential
@@ -561,25 +687,33 @@ func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
 
 func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bool) {
 	var envVar string
+	var rocmOrdinalEnv string
 	switch d.Library {
 	case "ROCm":
 		// ROCm must be filtered as it can crash the runner on unsupported devices
 		envVar = "ROCR_VISIBLE_DEVICES"
 		if runtime.GOOS != "linux" {
-			envVar = "HIP_VISIBLE_DEVICES"
+			envVar = rocmNonLinuxVisibleDevicesEnv()
+		} else {
+			rocmOrdinalEnv = rocmLinuxOrdinalVisibleDevicesEnv()
 		}
 	case "CUDA":
 		if !mustFilter {
 			// By default we try to avoid filtering CUDA devices because ROCm also
-			// looks at the CUDA env var, and gets confused in mixed vendor environments.
+			// looks at the CUDA env var, and gets confused in mixed-vendor environments.
 			return
 		}
 		envVar = "CUDA_VISIBLE_DEVICES"
+	case "Vulkan":
+		if !mustFilter {
+			return
+		}
+		envVar = "GGML_VK_VISIBLE_DEVICES"
 	default:
-		// Vulkan is not filtered via env var, but via scheduling decisions
 		return
 	}
 	v, existing := env[envVar]
+	childOrdinal := visibleDeviceCount(v)
 	if existing {
 		v = v + ","
 	}
@@ -589,6 +723,63 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 		v = v + d.ID
 	}
 	env[envVar] = v
+
+	if rocmOrdinalEnv != "" {
+		v, existing = env[rocmOrdinalEnv]
+		if existing {
+			v = v + ","
+		}
+		v = v + strconv.Itoa(childOrdinal)
+		env[rocmOrdinalEnv] = v
+	}
+}
+
+func visibleDeviceCount(value string) int {
+	count := 0
+	for _, field := range strings.Split(value, ",") {
+		if strings.TrimSpace(field) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func rocmLinuxOrdinalVisibleDevicesEnv() string {
+	if runtime.GOOS != "linux" || os.Getenv("ROCR_VISIBLE_DEVICES") != "" {
+		return ""
+	}
+	for _, name := range []string{"HIP_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL", "CUDA_VISIBLE_DEVICES"} {
+		if numericVisibleDeviceList(os.Getenv(name)) {
+			return name
+		}
+	}
+	return ""
+}
+
+func rocmNonLinuxVisibleDevicesEnv() string {
+	for _, name := range []string{"HIP_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL", "CUDA_VISIBLE_DEVICES"} {
+		if numericVisibleDeviceList(os.Getenv(name)) {
+			return name
+		}
+	}
+	return "HIP_VISIBLE_DEVICES"
+}
+
+func numericVisibleDeviceList(value string) bool {
+	fields := strings.Split(value, ",")
+	found := false
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		index, err := strconv.Atoi(field)
+		if err != nil || index < 0 {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 type BaseRunner interface {

@@ -115,36 +115,7 @@ func (s *Server) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 	// Spawn subprocess: ollama runner --imagegen-engine --model <path> --port <port>
 	cmd := exec.Command(exe, "runner", "--imagegen-engine", "--model", s.modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
-
-	// On Linux, set LD_LIBRARY_PATH to include MLX library directories
-	if runtime.GOOS == "linux" {
-		// Build library paths: start with LibOllamaPath, then add any mlx_* subdirectories
-		libraryPaths := []string{ml.LibOllamaPath}
-		if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_*")); err == nil {
-			libraryPaths = append(libraryPaths, mlxDirs...)
-		}
-
-		// Append existing LD_LIBRARY_PATH if set
-		if existingPath, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
-			libraryPaths = append(libraryPaths, filepath.SplitList(existingPath)...)
-		}
-
-		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
-
-		// Update or add LD_LIBRARY_PATH in cmd.Env
-		found := false
-		for i := range cmd.Env {
-			if strings.HasPrefix(cmd.Env[i], "LD_LIBRARY_PATH=") {
-				cmd.Env[i] = "LD_LIBRARY_PATH=" + pathEnvVal
-				found = true
-				break
-			}
-		}
-		if !found {
-			cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+pathEnvVal)
-		}
-		slog.Debug("mlx subprocess library path", "LD_LIBRARY_PATH", pathEnvVal)
-	}
+	configureMLXSubprocessEnv(cmd, ml.LibraryPaths(gpus))
 
 	s.cmd = cmd
 
@@ -200,6 +171,53 @@ func (s *Server) Ping(ctx context.Context) error {
 	return nil
 }
 
+func mlxLibraryPathEnv() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "PATH"
+	case "darwin":
+		return "DYLD_LIBRARY_PATH"
+	default:
+		return "LD_LIBRARY_PATH"
+	}
+}
+
+func configureMLXSubprocessEnv(cmd *exec.Cmd, libraryPaths []string) {
+	if len(libraryPaths) == 0 {
+		return
+	}
+
+	// Search order for the imagegen runner is:
+	//   1. bundled lib/ollama root
+	//   2. backend-specific library dirs selected during GPU discovery
+	//   3. any existing caller-provided library path values
+	pathEnv := mlxLibraryPathEnv()
+	pathEnvPaths := append([]string{}, libraryPaths...)
+	if existingPath, ok := os.LookupEnv(pathEnv); ok {
+		pathEnvPaths = append(pathEnvPaths, filepath.SplitList(existingPath)...)
+	}
+	setSubprocessEnv(cmd, pathEnv, strings.Join(pathEnvPaths, string(filepath.ListSeparator)))
+	slog.Debug("mlx subprocess library path", pathEnv, strings.Join(pathEnvPaths, string(filepath.ListSeparator)))
+
+	ollamaLibraryPaths := append([]string{}, libraryPaths...)
+	if existingPath, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH"); ok {
+		ollamaLibraryPaths = append(ollamaLibraryPaths, filepath.SplitList(existingPath)...)
+	}
+	setSubprocessEnv(cmd, "OLLAMA_LIBRARY_PATH", strings.Join(ollamaLibraryPaths, string(filepath.ListSeparator)))
+	slog.Debug("mlx subprocess library path", "OLLAMA_LIBRARY_PATH", strings.Join(ollamaLibraryPaths, string(filepath.ListSeparator)))
+}
+
+func setSubprocessEnv(cmd *exec.Cmd, key, value string) {
+	for i := range cmd.Env {
+		name, _, ok := strings.Cut(cmd.Env[i], "=")
+		if ok && strings.EqualFold(name, key) {
+			cmd.Env[i] = key + "=" + value
+			return
+		}
+	}
+	cmd.Env = append(cmd.Env, key+"="+value)
+}
+
 // getLastErr returns the last stderr line.
 func (s *Server) getLastErr() string {
 	s.lastErrLock.Lock()
@@ -243,10 +261,10 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		seed = time.Now().UnixNano()
 	}
 
-	// Extract raw image bytes from llm.ImageData slice
+	// Extract raw image bytes from the request media.
 	var images [][]byte
-	for _, img := range req.Images {
-		images = append(images, img.Data)
+	for _, media := range req.Media {
+		images = append(images, media.Data)
 	}
 
 	// Build request for subprocess
@@ -349,9 +367,24 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	// Check if subprocess is still alive
 	if s.HasExited() {
 		slog.Error("mlx subprocess has exited unexpectedly")
+		if errMsg := s.getLastErr(); errMsg != "" {
+			return fmt.Errorf("mlx runner closed response before completion: %s", errMsg)
+		}
 	}
 
-	return scanErr
+	if scanErr != nil {
+		return scanErr
+	}
+
+	return errors.New("mlx runner closed response before completion")
+}
+
+func (s *Server) Chat(ctx context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
+	return errors.New("image generation runner does not support native chat")
+}
+
+func (s *Server) ApplyChatTemplate(ctx context.Context, req llm.ChatRequest) (string, error) {
+	return "", errors.New("image generation runner does not support native chat templates")
 }
 
 // Close terminates the subprocess.

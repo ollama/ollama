@@ -55,6 +55,57 @@ func TestFromChatRequest_Basic(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_ReasoningEffort(t *testing.T) {
+	effort := func(s string) *string { return &s }
+
+	cases := []struct {
+		name    string
+		effort  *string
+		want    any // expected ThinkValue.Value; nil means req.Think should be nil
+		wantErr bool
+	}{
+		{name: "unset", effort: nil, want: nil},
+		{name: "high", effort: effort("high"), want: "high"},
+		{name: "medium", effort: effort("medium"), want: "medium"},
+		{name: "low", effort: effort("low"), want: "low"},
+		{name: "max", effort: effort("max"), want: "max"},
+		{name: "none disables", effort: effort("none"), want: false},
+		{name: "invalid", effort: effort("extreme"), wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := ChatCompletionRequest{
+				Model:           "test-model",
+				Messages:        []Message{{Role: "user", Content: "hi"}},
+				ReasoningEffort: tc.effort,
+			}
+			result, err := FromChatRequest(req)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for effort=%v, got none", *tc.effort)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.want == nil {
+				if result.Think != nil {
+					t.Fatalf("expected nil Think, got %+v", result.Think)
+				}
+				return
+			}
+			if result.Think == nil {
+				t.Fatalf("expected Think=%v, got nil", tc.want)
+			}
+			if result.Think.Value != tc.want {
+				t.Fatalf("got Think.Value=%v, want %v", result.Think.Value, tc.want)
+			}
+		})
+	}
+}
+
 func TestFromChatRequest_WithImage(t *testing.T) {
 	imgData, _ := base64.StdEncoding.DecodeString(image)
 
@@ -302,6 +353,48 @@ func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
 
 	if result.TopLogprobs != 5 {
 		t.Errorf("expected TopLogprobs to be 5, got %d", result.TopLogprobs)
+	}
+}
+
+func TestToListCompletionUsesModelIdentity(t *testing.T) {
+	modified := time.Unix(1234567890, 0).UTC()
+
+	result := ToListCompletion(api.ListResponse{
+		Models: []api.ListModelResponse{
+			{
+				Name:       "legacy-name:latest",
+				Model:      "namespace/exposed-model:latest",
+				ModifiedAt: modified,
+			},
+			{
+				Name:       "fallback-name:latest",
+				ModifiedAt: modified.Add(time.Second),
+			},
+		},
+	})
+
+	if result.Object != "list" {
+		t.Fatalf("object = %q, want list", result.Object)
+	}
+	if len(result.Data) != 2 {
+		t.Fatalf("models = %d, want 2", len(result.Data))
+	}
+
+	if result.Data[0].Id != "namespace/exposed-model:latest" {
+		t.Fatalf("id = %q, want model field", result.Data[0].Id)
+	}
+	if result.Data[0].OwnedBy != "namespace" {
+		t.Fatalf("owned_by = %q, want namespace", result.Data[0].OwnedBy)
+	}
+	if result.Data[0].Created != modified.Unix() {
+		t.Fatalf("created = %d, want %d", result.Data[0].Created, modified.Unix())
+	}
+
+	if result.Data[1].Id != "fallback-name:latest" {
+		t.Fatalf("fallback id = %q, want name field", result.Data[1].Id)
+	}
+	if result.Data[1].OwnedBy != "library" {
+		t.Fatalf("fallback owned_by = %q, want library", result.Data[1].OwnedBy)
 	}
 }
 

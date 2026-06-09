@@ -8,6 +8,7 @@ import (
 
 type Renderer interface {
 	Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error)
+	LeadingBOS() string
 }
 
 type (
@@ -40,6 +41,15 @@ func RenderWithRenderer(name string, msgs []api.Message, tools []api.Tool, think
 		return "", fmt.Errorf("unknown renderer %q", name)
 	}
 	return renderer.Render(msgs, tools, think)
+}
+
+func LeadingBOSForRenderer(name string) string {
+	renderer := rendererForName(name)
+	if renderer == nil {
+		return ""
+	}
+
+	return renderer.LeadingBOS()
 }
 
 func rendererForName(name string) Renderer {
@@ -81,6 +91,10 @@ func rendererForName(name string) Renderer {
 		return renderer
 	case "nemotron-3-nano":
 		return &Nemotron3NanoRenderer{}
+	case "gemma4", "gemma4-small":
+		return &Gemma4Renderer{useImgTags: RenderImgTags}
+	case "gemma4-large":
+		return &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true}
 	case "functiongemma":
 		return &FunctionGemmaRenderer{}
 	case "glm-4.7":
@@ -91,6 +105,8 @@ func rendererForName(name string) Renderer {
 		return &LFM2Renderer{IsThinking: false, useImgTags: RenderImgTags}
 	case "lfm2-thinking":
 		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
+	case "laguna":
+		return &LagunaRenderer{}
 	default:
 		return nil
 	}

@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"opencode", "droid", "pi", "cline"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -49,6 +49,19 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
+		Name:        "claude-desktop",
+		Runner:      &ClaudeDesktop{},
+		Aliases:     []string{"claude-app"},
+		Description: "Claude Desktop with Ollama Cloud",
+		Hidden:      true,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return claudeDesktopInstalled()
+			},
+			URL: "https://claude.com/download",
+		},
+	},
+	{
 		Name:        "cline",
 		Runner:      &Cline{},
 		Description: "Autonomous coding agent with parallel execution",
@@ -57,7 +70,11 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := exec.LookPath("cline")
 				return err == nil
 			},
-			Command: []string{"npm", "install", "-g", "cline"},
+			EnsureInstalled: func() error {
+				_, err := ensureClineInstalled()
+				return err
+			},
+			Command: []string{"npm", "install", "-g", "cline@latest"},
 		},
 	},
 	{
@@ -71,6 +88,48 @@ var integrationSpecs = []*IntegrationSpec{
 			},
 			URL:     "https://developers.openai.com/codex/cli/",
 			Command: []string{"npm", "install", "-g", "@openai/codex"},
+		},
+	},
+	{
+		Name:        "codex-app",
+		Runner:      &CodexApp{},
+		Aliases:     []string{"codex-desktop", "codex-gui"},
+		Description: "An AI agent you can delegate real work to, by OpenAI",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return codexAppInstalled()
+			},
+			URL: "https://developers.openai.com/codex/quickstart",
+		},
+	},
+	{
+		Name:        "kimi",
+		Runner:      &Kimi{},
+		Description: "Moonshot's coding agent for terminal and IDEs",
+		Hidden:      true,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := exec.LookPath("kimi")
+				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureKimiInstalled()
+				return err
+			},
+			URL: "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
+		},
+	},
+	{
+		Name:        "copilot",
+		Runner:      &Copilot{},
+		Aliases:     []string{"copilot-cli"},
+		Description: "GitHub's AI coding agent for the terminal",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&Copilot{}).findPath()
+				return err == nil
+			},
+			URL: "https://github.com/features/copilot/cli/",
 		},
 	},
 	{
@@ -91,10 +150,22 @@ var integrationSpecs = []*IntegrationSpec{
 		Description: "Anomaly's open-source coding agent",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
-				_, err := exec.LookPath("opencode")
-				return err == nil
+				_, ok := findOpenCode()
+				return ok
 			},
 			URL: "https://opencode.ai",
+		},
+	},
+	{
+		Name:        "omp",
+		Runner:      &OMP{},
+		Description: "AI coding agent with IDE integration",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&OMP{}).findPath()
+				return err == nil
+			},
+			URL: "https://omp.sh",
 		},
 	},
 	{
@@ -128,7 +199,80 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := exec.LookPath("pi")
 				return err == nil
 			},
-			Command: []string{"npm", "install", "-g", "@mariozechner/pi-coding-agent"},
+			EnsureInstalled: func() error {
+				_, err := ensurePiInstalled()
+				return err
+			},
+			Command: []string{"npm", "install", "-g", "@earendil-works/pi-coding-agent@latest"},
+		},
+	},
+	{
+		Name:        "pool",
+		Runner:      &Poolside{},
+		Description: "Poolside's software agent for enterprise development",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := exec.LookPath("pool")
+				return err == nil
+			},
+			URL: "https://github.com/poolsideai/pool",
+		},
+	},
+	{
+		Name:        "hermes",
+		Runner:      &Hermes{},
+		Description: "Self-improving AI agent built by Nous Research",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&Hermes{}).installed()
+			},
+			EnsureInstalled: func() error {
+				return (&Hermes{}).ensureInstalled()
+			},
+			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
+		},
+	},
+	{
+		Name:        "hermes-desktop",
+		Runner:      &HermesDesktop{},
+		Description: "Desktop app for Hermes Agent by Nous Research",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&Hermes{}).installed()
+			},
+			EnsureInstalled: func() error {
+				return (&Hermes{}).ensureInstalledFor("hermes-desktop")
+			},
+			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
+		},
+	},
+	{
+		Name:        "vscode",
+		Runner:      &VSCode{},
+		Aliases:     []string{"code"},
+		Description: "Microsoft's open-source AI code editor",
+		Hidden:      true,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&VSCode{}).findBinary() != ""
+			},
+			URL: "https://code.visualstudio.com",
+		},
+	},
+	{
+		Name:        "qwen",
+		Runner:      &Qwen{},
+		Description: "Qwen's AI coding agent with tool use",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&Qwen{}).findPath()
+				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureQwenInstalled()
+				return err
+			},
+			URL: "https://qwen.ai/qwencode",
 		},
 	},
 }
@@ -223,6 +367,12 @@ func ListVisibleIntegrationSpecs() []IntegrationSpec {
 		if spec.Hidden {
 			continue
 		}
+		if supported, ok := spec.Runner.(SupportedIntegration); ok && supported.Supported() != nil {
+			continue
+		}
+		if spec.Name == "pool" && poolsideGOOS == "windows" {
+			continue
+		}
 		visible = append(visible, *spec)
 	}
 
@@ -237,10 +387,10 @@ func ListVisibleIntegrationSpecs() []IntegrationSpec {
 			return aRank - bRank
 		}
 		if aRank > 0 {
-			return 1
+			return -1
 		}
 		if bRank > 0 {
-			return -1
+			return 1
 		}
 		return strings.Compare(a.Name, b.Name)
 	})
@@ -335,6 +485,16 @@ func EnsureIntegrationInstalled(name string, runner Runner) error {
 	integration, err := integrationFor(name)
 	if err != nil {
 		return fmt.Errorf("%s is not installed", runner)
+	}
+
+	if supported, ok := runner.(SupportedIntegration); ok {
+		if err := supported.Supported(); err != nil {
+			return err
+		}
+	}
+
+	if integration.spec.Name == "pool" && poolsideGOOS == "windows" {
+		return poolsideUnsupportedError()
 	}
 
 	if integration.installed {

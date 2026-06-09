@@ -35,7 +35,23 @@ func MakeEmbeddingLayer(
 			scales,
 		)
 
-		return nn.NewQuantizedEmbedding(w, scales, qbiases, groupSize, bits, mode)
+		// Check for per-tensor global scale (NVIDIA double-scale nvfp4).
+		// NVIDIA ModelOpt stores this as "weight_scale_2"; our import
+		// pipeline maps it to "weight.global_scale".
+		globalScale := tensors[path+".weight.global_scale"]
+		if globalScale == nil {
+			globalScale = tensors[path+".weight_scale_2"]
+		}
+
+		return &nn.QuantizedEmbedding{
+			Weight:      w,
+			Scales:      scales,
+			QBiases:     qbiases,
+			GlobalScale: globalScale,
+			GroupSize:   groupSize,
+			Bits:        bits,
+			Mode:        mode,
+		}
 	}
 
 	return nn.NewEmbedding(w)

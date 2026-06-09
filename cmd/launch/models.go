@@ -4,34 +4,42 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
-	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/format"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
 )
 
 var recommendedModels = []ModelItem{
-	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
-	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
-	{Name: "glm-5:cloud", Description: "Reasoning and code generation", Recommended: true},
-	{Name: "minimax-m2.5:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
-	{Name: "glm-4.7-flash", Description: "Reasoning and code generation locally", Recommended: true},
-	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true},
+	{Name: "kimi-k2.6:cloud", Description: "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 262_144},
+	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 32_768},
+	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true, Details: api.ModelDetails{ContextLength: 202_752}, MaxOutputTokens: 131_072},
+	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true, Details: api.ModelDetails{ContextLength: 204_800}, MaxOutputTokens: 128_000},
+	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true, VRAMBytes: 12 * format.GigaByte},
+	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true, VRAMBytes: 14 * format.GigaByte},
 }
 
-var recommendedVRAM = map[string]string{
-	"glm-4.7-flash": "~25GB",
-	"qwen3.5":       "~11GB",
+func displayVRAM(vramBytes int64) string {
+	if vramBytes <= 0 {
+		return ""
+	}
+	gb := float64(vramBytes) / format.GigaByte
+	if gb == math.Trunc(gb) {
+		return fmt.Sprintf("~%.0fGB", gb)
+	}
+	return fmt.Sprintf("~%.1fGB", gb)
 }
 
 // cloudModelLimit holds context and output token limits for a cloud model.
@@ -40,20 +48,23 @@ type cloudModelLimit struct {
 	Output  int
 }
 
-// cloudModelLimits maps cloud model base names to their token limits.
+// extraCloudModelLimits maps cloud model base names to token limits for models
+// that are not already covered by recommendedModels fallback entries.
 // TODO(parthsareen): grab context/output limits from model info instead of hardcoding
-var cloudModelLimits = map[string]cloudModelLimit{
-	"minimax-m2.5":        {Context: 204_800, Output: 128_000},
+var extraCloudModelLimits = map[string]cloudModelLimit{
 	"cogito-2.1:671b":     {Context: 163_840, Output: 65_536},
 	"deepseek-v3.1:671b":  {Context: 163_840, Output: 163_840},
 	"deepseek-v3.2":       {Context: 163_840, Output: 65_536},
+	"gemma4:31b":          {Context: 262_144, Output: 131_072},
 	"glm-4.6":             {Context: 202_752, Output: 131_072},
 	"glm-4.7":             {Context: 202_752, Output: 131_072},
 	"glm-5":               {Context: 202_752, Output: 131_072},
+	"glm-5.1":             {Context: 202_752, Output: 131_072},
 	"gpt-oss:120b":        {Context: 131_072, Output: 131_072},
 	"gpt-oss:20b":         {Context: 131_072, Output: 131_072},
 	"kimi-k2:1t":          {Context: 262_144, Output: 262_144},
 	"kimi-k2.5":           {Context: 262_144, Output: 262_144},
+	"kimi-k2.6":           {Context: 262_144, Output: 262_144},
 	"kimi-k2-thinking":    {Context: 262_144, Output: 262_144},
 	"nemotron-3-nano:30b": {Context: 1_048_576, Output: 131_072},
 	"qwen3-coder:480b":    {Context: 262_144, Output: 65_536},
@@ -62,16 +73,72 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"qwen3.5":             {Context: 262_144, Output: 32_768},
 }
 
+var cloudModelLimits = mergeCloudModelLimits(cloudModelLimitsFromRecommendations(recommendedModels), extraCloudModelLimits)
+
+var (
+	dynamicCloudModelLimitsMu sync.RWMutex
+	dynamicCloudModelLimits   = map[string]cloudModelLimit{}
+)
+
 // lookupCloudModelLimit returns the token limits for a cloud model.
 // It normalizes explicit cloud source suffixes before checking the shared limit map.
 func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
 	base, stripped := modelref.StripCloudSourceTag(name)
 	if stripped {
+		dynamicCloudModelLimitsMu.RLock()
+		l, ok := dynamicCloudModelLimits[base]
+		dynamicCloudModelLimitsMu.RUnlock()
+		if ok {
+			return l, true
+		}
 		if l, ok := cloudModelLimits[base]; ok {
 			return l, true
 		}
 	}
 	return cloudModelLimit{}, false
+}
+
+func setDynamicCloudModelLimits(limits map[string]cloudModelLimit) {
+	dynamicCloudModelLimitsMu.Lock()
+	defer dynamicCloudModelLimitsMu.Unlock()
+	if limits == nil {
+		dynamicCloudModelLimits = map[string]cloudModelLimit{}
+		return
+	}
+	cp := make(map[string]cloudModelLimit, len(limits))
+	for k, v := range limits {
+		cp[k] = v
+	}
+	dynamicCloudModelLimits = cp
+}
+
+func cloudModelLimitsFromRecommendations(recommendations []ModelItem) map[string]cloudModelLimit {
+	limits := make(map[string]cloudModelLimit, len(recommendations))
+	for _, rec := range recommendations {
+		if !isCloudModelName(rec.Name) || rec.Details.ContextLength <= 0 || rec.MaxOutputTokens <= 0 {
+			continue
+		}
+		base, stripped := modelref.StripCloudSourceTag(rec.Name)
+		if !stripped || base == "" {
+			continue
+		}
+		limits[base] = cloudModelLimit{
+			Context: rec.Details.ContextLength,
+			Output:  rec.MaxOutputTokens,
+		}
+	}
+	return limits
+}
+
+func mergeCloudModelLimits(base map[string]cloudModelLimit, overlay map[string]cloudModelLimit) map[string]cloudModelLimit {
+	out := make(map[string]cloudModelLimit, len(base)+len(overlay))
+	for name, limit := range base {
+		out[name] = limit
+	}
+	for name, limit := range overlay {
+		out[name] = limit
+	}
+	return out
 }
 
 // missingModelPolicy controls how model-not-found errors should be handled.
@@ -92,6 +159,10 @@ func OpenBrowser(url string) {
 	case "darwin":
 		_ = exec.Command("open", url).Start()
 	case "linux":
+		// Skip on headless systems where no display server is available
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			return
+		}
 		_ = exec.Command("xdg-open", url).Start()
 	case "windows":
 		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
@@ -109,21 +180,26 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 	if len(selectedCloudModels) == 0 {
 		return nil
 	}
+	return ensureCloudAuth(ctx, client, strings.Join(selectedCloudModels, ", "))
+}
+
+func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) error {
 	if disabled, known := cloudStatusDisabled(ctx, client); known && disabled {
 		return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
 	}
 
-	user, err := client.Whoami(ctx)
+	user, err := whoamiWithTimeout(ctx, client)
 	if err == nil && user != nil && user.Name != "" {
 		return nil
 	}
 
 	var aErr api.AuthorizationError
 	if !errors.As(err, &aErr) || aErr.SigninURL == "" {
-		return err
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("%s requires sign in", modelList)
 	}
-
-	modelList := strings.Join(selectedCloudModels, ", ")
 
 	if DefaultSignIn != nil {
 		_, err := DefaultSignIn(modelList, aErr.SigninURL)
@@ -167,7 +243,7 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 			fmt.Fprintf(os.Stderr, "\r\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[frame%len(spinnerFrames)])
 
 			if frame%10 == 0 {
-				u, err := client.Whoami(ctx)
+				u, err := whoamiWithTimeout(ctx, client)
 				if err == nil && u != nil && u.Name != "" {
 					fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1msigned in:\033[0m %s\n", u.Name)
 					return nil
@@ -223,47 +299,59 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 }
 
 // prepareEditorIntegration persists models and applies editor-managed config files.
-func prepareEditorIntegration(name string, runner Runner, editor Editor, models []string) error {
-	if ok, err := confirmEditorEdit(runner, editor); err != nil {
-		return err
-	} else if !ok {
-		return errCancelled
-	}
+func prepareEditorIntegration(name string, editor Editor, models []LaunchModel) error {
 	if err := editor.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
-	if err := config.SaveIntegration(name, models); err != nil {
+	if err := config.SaveIntegration(name, launchModelNames(models)); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
 	return nil
 }
 
-func confirmEditorEdit(runner Runner, editor Editor) (bool, error) {
-	paths := editor.Paths()
-	if len(paths) == 0 {
-		return true, nil
+func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, model string, models []LaunchModel) error {
+	var err error
+	if withModels, ok := managed.(ManagedModelListConfigurer); ok {
+		err = withModels.ConfigureWithModels(model, models)
+	} else {
+		err = managed.Configure(model)
 	}
-
-	fmt.Fprintf(os.Stderr, "This will modify your %s configuration:\n", runner)
-	for _, path := range paths {
-		fmt.Fprintf(os.Stderr, "  %s\n", path)
+	if err != nil {
+		return fmt.Errorf("setup failed: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", fileutil.BackupDir())
+	if err := config.SaveIntegration(name, []string{model}); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
+	}
+	return nil
+}
 
-	return ConfirmPrompt("Proceed?")
+func prepareManagedAutodiscoveryIntegration(name string, autodiscovery ManagedAutodiscoveryIntegration, model string) error {
+	if err := autodiscovery.ConfigureAutodiscovery(); err != nil {
+		return fmt.Errorf("setup failed: %w", err)
+	}
+	if err := config.SaveIntegration(name, []string{model}); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
+	}
+	return nil
 }
 
 // buildModelList merges existing models with recommendations for selection UIs.
 func buildModelList(existing []modelInfo, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
+	return buildModelListWithRecommendations(existing, recommendedModels, preChecked, current)
+}
+
+func buildModelListWithRecommendations(existing []modelInfo, recommendations []ModelItem, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
 	existingModels = make(map[string]bool)
 	cloudModels = make(map[string]bool)
 	recommended := make(map[string]bool)
 	var hasLocalModel, hasCloudModel bool
 
 	recDesc := make(map[string]string)
-	for _, rec := range recommendedModels {
+	recByName := make(map[string]ModelItem)
+	for _, rec := range recommendations {
 		recommended[rec.Name] = true
 		recDesc[rec.Name] = rec.Description
+		recByName[rec.Name] = rec
 	}
 
 	for _, m := range existing {
@@ -276,11 +364,14 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 		}
 		displayName := strings.TrimSuffix(m.Name, ":latest")
 		existingModels[displayName] = true
-		item := ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}
-		items = append(items, item)
+		if rec, ok := recByName[displayName]; ok {
+			items = append(items, modelItemFromInventory(displayName, m, copyModelRecommendationFields(displayName, rec)))
+		} else {
+			items = append(items, modelItemFromInventory(displayName, m, ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}))
+		}
 	}
 
-	for _, rec := range recommendedModels {
+	for _, rec := range recommendations {
 		if existingModels[rec.Name] || existingModels[rec.Name+":latest"] {
 			continue
 		}
@@ -326,7 +417,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 			if items[i].Description != "" {
 				parts = append(parts, items[i].Description)
 			}
-			if vram := recommendedVRAM[items[i].Name]; vram != "" {
+			if vram := displayVRAM(items[i].VRAMBytes); vram != "" {
 				parts = append(parts, vram)
 			}
 			parts = append(parts, "(not downloaded)")
@@ -335,25 +426,17 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	}
 
 	recRank := make(map[string]int)
-	for i, rec := range recommendedModels {
+	for i, rec := range recommendations {
 		recRank[rec.Name] = i + 1
 	}
 
-	onlyLocal := hasLocalModel && !hasCloudModel
-
 	if hasLocalModel || hasCloudModel {
+		// Keep the Recommended section pinned to recommendation order. Checked
+		// and default-model priority only apply within the More section.
 		slices.SortStableFunc(items, func(a, b ModelItem) int {
 			ac, bc := checked[a.Name], checked[b.Name]
 			aNew, bNew := notInstalled[a.Name], notInstalled[b.Name]
 			aRec, bRec := recRank[a.Name] > 0, recRank[b.Name] > 0
-			aCloud, bCloud := cloudModels[a.Name], cloudModels[b.Name]
-
-			if ac != bc {
-				if ac {
-					return -1
-				}
-				return 1
-			}
 			if aRec != bRec {
 				if aRec {
 					return -1
@@ -361,19 +444,24 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 				return 1
 			}
 			if aRec && bRec {
-				if aCloud != bCloud {
-					if onlyLocal {
-						if aCloud {
-							return 1
-						}
-						return -1
-					}
-					if aCloud {
+				return recRank[a.Name] - recRank[b.Name]
+			}
+			if ac != bc {
+				if ac {
+					return -1
+				}
+				return 1
+			}
+			// Among checked non-recommended items - put the default first
+			if ac && !aRec && current != "" {
+				aCurrent := a.Name == current
+				bCurrent := b.Name == current
+				if aCurrent != bCurrent {
+					if aCurrent {
 						return -1
 					}
 					return 1
 				}
-				return recRank[a.Name] - recRank[b.Name]
 			}
 			if aNew != bNew {
 				if aNew {
@@ -388,20 +476,24 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	return items, preChecked, existingModels, cloudModels
 }
 
+func copyModelRecommendationFields(name string, rec ModelItem) ModelItem {
+	rec.Name = name
+	rec.Recommended = true
+	return rec
+}
+
+func modelItemFromInventory(name string, info modelInfo, item ModelItem) ModelItem {
+	item.Name = name
+	item.ToolCapable = info.ToolCapable
+	item.Capabilities = slices.Clone(info.Capabilities)
+	item.Size = info.Size
+	item.Details = info.Details
+	return item
+}
+
 // isCloudModelName reports whether the model name has an explicit cloud source.
 func isCloudModelName(name string) bool {
 	return modelref.HasExplicitCloudSource(name)
-}
-
-// filterCloudModels drops remote-only models from the given inventory.
-func filterCloudModels(existing []modelInfo) []modelInfo {
-	filtered := existing[:0]
-	for _, m := range existing {
-		if !m.Remote {
-			filtered = append(filtered, m)
-		}
-	}
-	return filtered
 }
 
 // filterCloudItems removes cloud models from selection items.

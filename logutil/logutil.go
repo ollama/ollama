@@ -23,8 +23,9 @@ func NewLogger(w io.Writer, level slog.Level) *slog.Logger {
 					attr.Value = slog.StringValue("TRACE")
 				}
 			case slog.SourceKey:
-				source := attr.Value.Any().(*slog.Source)
-				source.File = filepath.Base(source.File)
+				if source, ok := attr.Value.Any().(*slog.Source); ok {
+					source.File = filepath.Base(source.File)
+				}
 			}
 			return attr
 		},

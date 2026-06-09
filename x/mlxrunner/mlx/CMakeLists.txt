@@ -15,7 +15,9 @@ set(CMAKE_INSTALL_RPATH "@loader_path")
 
 include(FetchContent)
 
-set(MLX_C_GIT_TAG "v0.5.0" CACHE STRING "")
+# Read MLX-C version from top-level file (shared with imagegen CMakeLists)
+file(READ "${CMAKE_SOURCE_DIR}/MLX_C_VERSION" MLX_C_GIT_TAG)
+string(STRIP "${MLX_C_GIT_TAG}" MLX_C_GIT_TAG)
 
 FetchContent_Declare(
   mlx-c

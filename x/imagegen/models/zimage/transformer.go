@@ -48,7 +48,7 @@ func (te *TimestepEmbedder) Forward(t *mlx.Array) *mlx.Array {
 
 	// freqs = exp(-log(10000) * arange(half) / half)
 	freqs := make([]float32, half)
-	for i := int32(0); i < half; i++ {
+	for i := range half {
 		freqs[i] = float32(math.Exp(-math.Log(10000.0) * float64(i) / float64(half)))
 	}
 	freqsArr := mlx.NewArray(freqs, []int32{1, half})
@@ -261,7 +261,7 @@ func applyRoPE3D(x *mlx.Array, cos, sin *mlx.Array) *mlx.Array {
 	// Create even/odd index arrays
 	evenIdx := make([]int32, half)
 	oddIdx := make([]int32, half)
-	for i := int32(0); i < half; i++ {
+	for i := range half {
 		evenIdx[i] = i * 2
 		oddIdx[i] = i*2 + 1
 	}
@@ -659,9 +659,9 @@ func createCoordinateGrid(d0, d1, d2, s0, s1, s2 int32) *mlx.Array {
 	coords := make([]float32, total*3)
 
 	idx := 0
-	for i := int32(0); i < d0; i++ {
-		for j := int32(0); j < d1; j++ {
-			for k := int32(0); k < d2; k++ {
+	for i := range d0 {
+		for j := range d1 {
+			for k := range d2 {
 				coords[idx*3+0] = float32(s0 + i)
 				coords[idx*3+1] = float32(s1 + j)
 				coords[idx*3+2] = float32(s2 + k)
@@ -683,10 +683,10 @@ func prepareRoPE3D(positions *mlx.Array, axesDims []int32) (*mlx.Array, *mlx.Arr
 	ropeTheta := float32(256.0)
 
 	freqs := make([]*mlx.Array, 3)
-	for axis := 0; axis < 3; axis++ {
+	for axis := range 3 {
 		half := axesDims[axis] / 2
 		f := make([]float32, half)
-		for i := int32(0); i < half; i++ {
+		for i := range half {
 			f[i] = float32(math.Exp(-math.Log(float64(ropeTheta)) * float64(i) / float64(half)))
 		}
 		freqs[axis] = mlx.NewArray(f, []int32{1, 1, 1, half})

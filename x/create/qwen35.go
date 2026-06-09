@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 type qwen35ImportTransform struct {
@@ -58,7 +58,6 @@ func qwen35InspectSource(modelDir string) (qwen35SourceInfo, error) {
 				info.hasPrequantizedWeights = true
 				return info, nil
 			}
-			// This should change when MTP is supported
 			if strings.Contains(name, "mtp.") {
 				info.shouldShiftNormWeights = true
 				continue
@@ -84,7 +83,28 @@ func qwen35InspectSource(modelDir string) (qwen35SourceInfo, error) {
 }
 
 func (t qwen35ImportTransform) skipTensor(name string) bool {
-	return strings.Contains(name, "mtp.")
+	return false
+}
+
+func qwen35ShouldKeepBF16ForDirectNonAffine(name string) bool {
+	switch {
+	case strings.HasSuffix(name, "embed_tokens.weight"):
+		return true
+	case strings.HasSuffix(name, "lm_head.weight"):
+		return true
+	case strings.HasSuffix(name, ".linear_attn.in_proj_a.weight"):
+		return true
+	case strings.HasSuffix(name, ".linear_attn.in_proj_b.weight"):
+		return true
+	case strings.HasSuffix(name, ".linear_attn.in_proj_ba.weight"):
+		return true
+	case strings.HasSuffix(name, ".mlp.gate.weight") && !strings.Contains(name, "_proj"):
+		return true
+	case strings.HasSuffix(name, ".mlp.shared_expert_gate.weight"):
+		return true
+	default:
+		return false
+	}
 }
 
 func (t qwen35ImportTransform) quantizationType(name string, shape []int32, quantize string) string {
@@ -124,6 +144,13 @@ func (t qwen35ImportTransform) quantizationType(name string, shape []int32, quan
 		groupSize = 64
 	}
 	if shape[len(shape)-1]%groupSize != 0 {
+		return ""
+	}
+
+	// Match the working HF-FP8 import policy for direct NVFP4/MXFP4/MXFP8 imports:
+	// keep embeddings, LM head, low-rank linear_attn projections, and routing
+	// gates in BF16 rather than forcing them into a non-affine quantized format.
+	if (quantNorm == "nvfp4" || quantNorm == "mxfp4" || quantNorm == "mxfp8") && qwen35ShouldKeepBF16ForDirectNonAffine(name) {
 		return ""
 	}
 
@@ -226,6 +253,8 @@ func (t qwen35ImportTransform) canonicalTensorName(name string) string {
 		return "vision_tower." + strings.TrimPrefix(name, "model.visual.")
 	case strings.HasPrefix(name, "vision_tower."):
 		return name
+	case strings.HasPrefix(name, "mtp."):
+		return name
 	}
 
 	// Language model tensors: normalize to language_model.model.* prefix
@@ -246,6 +275,8 @@ func qwen35ShouldShiftNormKey(key string) bool {
 	for _, suffix := range []string{
 		".input_layernorm.weight",
 		".post_attention_layernorm.weight",
+		"mtp.pre_fc_norm_embedding.weight",
+		"mtp.pre_fc_norm_hidden.weight",
 		"model.norm.weight",
 		".q_norm.weight",
 		".k_norm.weight",

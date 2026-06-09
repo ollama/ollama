@@ -78,13 +78,14 @@ func (l *Linear) OutputDim() int32 {
 
 // QuantizedLinear applies an affine transformation using quantized weights.
 type QuantizedLinear struct {
-	Weight    *mlx.Array // Quantized weight data
-	Scales    *mlx.Array // Scale factors for dequantization
-	QBiases   *mlx.Array // Quantization biases (nil for nvfp4)
-	Bias      *mlx.Array // Layer bias [output_dims] or nil
-	GroupSize int
-	Bits      int
-	Mode      string
+	Weight      *mlx.Array // Quantized weight data
+	Scales      *mlx.Array // Scale factors for dequantization
+	QBiases     *mlx.Array // Quantization biases (nil for nvfp4)
+	Bias        *mlx.Array // Layer bias [output_dims] or nil
+	GlobalScale *mlx.Array // Per-tensor global scale for double-scale nvfp4 (nil for standard)
+	GroupSize   int
+	Bits        int
+	Mode        string
 }
 
 func NewQuantizedLinear(weight *mlx.Array, bias *mlx.Array, groupSize, bits int, mode string) *QuantizedLinear {
@@ -106,7 +107,18 @@ func NewQuantizedLinear(weight *mlx.Array, bias *mlx.Array, groupSize, bits int,
 }
 
 func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
-	out := mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true, ql.GroupSize, ql.Bits, ql.Mode)
+	var out *mlx.Array
+	if ql.GlobalScale != nil {
+		// Double-scale nvfp4 (e.g., NVIDIA ModelOpt): standard quantized_matmul
+		// followed by global_scale multiply. The global_scale is a per-tensor
+		// F32 scalar (weight_scale_2 in NVIDIA's format).
+		// TODO: switch to a fused double-scale matmul once MLX has kernel
+		// coverage for this path.
+		out = mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true, ql.GroupSize, ql.Bits, ql.Mode)
+		out = mlx.Mul(out, ql.GlobalScale)
+	} else {
+		out = mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true, ql.GroupSize, ql.Bits, ql.Mode)
+	}
 	if ql.Bias != nil && ql.Bias.Valid() {
 		out = out.Add(ql.Bias)
 	}
@@ -154,23 +166,13 @@ func (e *Embedding) AsLinear() LinearLayer {
 // QuantizedEmbedding performs row-wise embedding lookup from affine/nvfp4/etc.
 // packed weights and dequantizes only the selected rows.
 type QuantizedEmbedding struct {
-	Weight    *mlx.Array
-	Scales    *mlx.Array
-	QBiases   *mlx.Array
-	GroupSize int
-	Bits      int
-	Mode      string
-}
-
-func NewQuantizedEmbedding(weight, scales, qbiases *mlx.Array, groupSize, bits int, mode string) *QuantizedEmbedding {
-	return &QuantizedEmbedding{
-		Weight:    weight,
-		Scales:    scales,
-		QBiases:   qbiases,
-		GroupSize: groupSize,
-		Bits:      bits,
-		Mode:      mode,
-	}
+	Weight      *mlx.Array
+	Scales      *mlx.Array
+	QBiases     *mlx.Array
+	GlobalScale *mlx.Array // Per-tensor global scale for double-scale nvfp4 (nil for standard)
+	GroupSize   int
+	Bits        int
+	Mode        string
 }
 
 func (qe *QuantizedEmbedding) Forward(indices *mlx.Array) *mlx.Array {
@@ -180,17 +182,22 @@ func (qe *QuantizedEmbedding) Forward(indices *mlx.Array) *mlx.Array {
 	if qe.QBiases != nil && qe.QBiases.Valid() {
 		qbiases = qe.QBiases.TakeAxis(indices, 0)
 	}
-	return mlx.Dequantize(weight, scales, qbiases, qe.GroupSize, qe.Bits, qe.Mode)
+	out := mlx.Dequantize(weight, scales, qbiases, qe.GroupSize, qe.Bits, qe.Mode)
+	if qe.GlobalScale != nil {
+		out = mlx.Mul(out, qe.GlobalScale)
+	}
+	return out
 }
 
 func (qe *QuantizedEmbedding) AsLinear() LinearLayer {
 	return &QuantizedLinear{
-		Weight:    qe.Weight,
-		Scales:    qe.Scales,
-		QBiases:   qe.QBiases,
-		GroupSize: qe.GroupSize,
-		Bits:      qe.Bits,
-		Mode:      qe.Mode,
+		Weight:      qe.Weight,
+		Scales:      qe.Scales,
+		QBiases:     qe.QBiases,
+		GlobalScale: qe.GlobalScale,
+		GroupSize:   qe.GroupSize,
+		Bits:        qe.Bits,
+		Mode:        qe.Mode,
 	}
 }
 

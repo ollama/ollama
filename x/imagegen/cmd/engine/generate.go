@@ -351,7 +351,10 @@ func generate(ctx context.Context, m Model, in input, cb func(output)) error {
 	}
 
 	fmt.Printf("\nPeak memory: %.2fGB\n", float64(mlx.MetalGetPeakMemory())/(1<<30))
-	cb(output{Done: true, PrefillTokSec: prefillTokSec,
-		GenTokSec: float64(genTokens) / time.Since(genStart).Seconds()})
+	cb(output{
+		Done:          true,
+		PrefillTokSec: prefillTokSec,
+		GenTokSec:     float64(genTokens) / time.Since(genStart).Seconds(),
+	})
 	return nil
 }
