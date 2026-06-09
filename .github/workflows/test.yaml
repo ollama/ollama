@@ -56,6 +56,28 @@ jobs:
           echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
 
+  # Phase 5 Buf CI (per grpc-phased-reliable-approach.md): lint + generate drift visibility on PRs.
+  # Opt-in thoroughness; demonstrates Buf in .github/workflows. Non-blocking on unrelated changes to avoid matrix impact.
+  buf:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Install buf
+        run: |
+          set -e
+          curl -sSL "https://github.com/bufbuild/buf/releases/latest/download/buf-$(uname -s)-$(uname -m)" -o /usr/local/bin/buf
+          chmod +x /usr/local/bin/buf
+          buf --version
+      - name: buf lint
+        run: buf lint || echo "buf lint (informational for Phase 5)"
+      - name: buf generate drift check
+        run: |
+          buf generate || echo "buf generate attempted"
+          git diff --stat -- gen/proto/ || true
+
   patches:
     strategy:
       matrix:

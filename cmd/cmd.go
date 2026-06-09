@@ -33,6 +33,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
 	"github.com/pkg/browser"
+	"github.com/soheilhy/cmux"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
@@ -2003,11 +2004,15 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	samePort := envconfig.GRPCSamePort()
+
 	var lnGRPC net.Listener
-	if u := envconfig.GRPCHost(); u != nil && u.Host != "" {
-		lnGRPC, err = net.Listen("tcp", u.Host)
-		if err != nil {
-			return err
+	if !samePort {
+		if u := envconfig.GRPCHost(); u != nil && u.Host != "" {
+			lnGRPC, err = net.Listen("tcp", u.Host)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -2021,34 +2026,83 @@ func RunServer(_ *cobra.Command, _ []string) error {
 	}
 	_ = sched // attached to s; unload coordinated below
 
-	// Always wire via errgroup + bounded workers (no fire-and-forget). SetLimit(2) for the two potential listeners.
+	// Always wire via errgroup + bounded workers (no fire-and-forget). SetLimit(2) default; 3 for cmux (http+grpc+cmux serve).
 	// Use explicit cancel so signal can propagate to ServeGRPC (ctx first) for prompt stop (no GPU leak).
+	// Phase 5: sameport path uses full errgroup/bounded + new observability logs with "reason" per SKILL + phased doc.
 	ctx, cancel := context.WithCancel(context.Background())
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(2)
 
 	var httpSrv *http.Server
-	g.Go(func() error {
-		http.Handle("/", h)
-		httpSrv = &http.Server{
-			// Use http.DefaultServeMux so we get net/http/pprof for free (preserves prior behavior).
-			Handler: nil,
-		}
-		slog.Info(fmt.Sprintf("Listening on %s (version %s)", lnHTTP.Addr(), version.Version))
-		if err := httpSrv.Serve(lnHTTP); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return nil
-	})
+	var cmuxMux cmux.CMux
 
-	if lnGRPC != nil {
+	// Setup http server + global route registration *once* before any g.Go. This ensures:
+	// - httpSrv is non-nil for signal handler in all paths (fixes latent nil race).
+	// - http.Handle happens before any Serve (pprof DefaultServeMux compat).
+	// - drastically reduces dupe between sameport/default while keeping default path semantics identical.
+	// (Prior textual dupe was deliberate for regression-proofing per review; hoisting common ctor+register is simpler, still safe, and addresses med dupe + race findings.)
+	httpSrv = &http.Server{
+		// Use http.DefaultServeMux so we get net/http/pprof for free (preserves prior behavior).
+		Handler: nil,
+	}
+	http.Handle("/", h)
+
+	if samePort {
+		// Opt-in cmux same-port (OLLAMA_GRPC_SAMEPORT=1). High risk per Plan/Phase5; default path below is unchanged.
+		g.SetLimit(3)
+		m := cmux.New(lnHTTP)
+		cmuxMux = m
+		slog.Debug("cmux created", "component", "cmd", "addr", lnHTTP.Addr().String(), "reason", "OLLAMA_GRPC_SAMEPORT=1; single listener will be multiplexed for gRPC (h2c) + HTTP1/Connect")
+
+		// gRPC/Connect matcher: HTTP2 with grpc content-type header (standard for soheilhy/cmux + h2c gRPC/Connect).
+		// Falls back for HTTP/1.1 Gin + Connect JSON etc.
+		grpcL := m.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
+		httpL := m.Match(cmux.Any())
+		slog.Debug("cmux matchers configured", "component", "cmd", "reason", "grpcL matches HTTP2 content-type application/grpc -> gRPC handler; httpL Any() -> primary Gin routes (HTTP1 + fallback)")
+
+		slog.Info("grpc sameport decision", "component", "cmd", "sameport", true, "primary_addr", lnHTTP.Addr().String(), "reason", "OLLAMA_GRPC_SAMEPORT=1 opt-in; using cmux to multiplex gRPC (h2c) and HTTP on single primary listener; separate-port remains the stable default for zero regression")
+
 		g.Go(func() error {
-			return s.ServeGRPC(gctx, lnGRPC)
+			slog.Info(fmt.Sprintf("Listening on %s (HTTP+GRPC sameport via cmux, version %s)", lnHTTP.Addr(), version.Version))
+			if err := httpSrv.Serve(httpL); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			return nil
 		})
+
+		g.Go(func() error {
+			return s.ServeGRPC(gctx, grpcL)
+		})
+
+		g.Go(func() error {
+			slog.Info("cmux serve starting", "component", "cmd", "addr", lnHTTP.Addr().String(), "reason", "cmux master loop accepting conns; grpc content-type -> gRPC h2c handler (registerServices + interceptors), remainder -> HTTP Gin routes; all bounded by errgroup owner + ctx shutdown")
+			if err := m.Serve(); err != nil {
+				if isClosedErr(err) {
+					return nil
+				}
+				return err
+			}
+			return nil
+		})
+	} else {
+		g.SetLimit(2)
+
+		g.Go(func() error {
+			slog.Info(fmt.Sprintf("Listening on %s (version %s)", lnHTTP.Addr(), version.Version))
+			if err := httpSrv.Serve(lnHTTP); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			return nil
+		})
+
+		if lnGRPC != nil {
+			g.Go(func() error {
+				return s.ServeGRPC(gctx, lnGRPC)
+			})
+		}
 	}
 
 	// Centralized signals for dual (or single) graceful shutdown: close http, cancel ctx (for gRPC ServeGRPC),
-	// unload runners (shared sched), let errgroup wait.
+	// unload runners (shared sched), let errgroup wait. Enhanced for cmux Close in sameport.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -2057,6 +2111,10 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		cancel()
 		if httpSrv != nil {
 			httpSrv.Close()
+		}
+		if cmuxMux != nil {
+			cmuxMux.Close()
+			slog.Debug("cmux closed", "component", "cmd", "reason", "shutdown signal; sub-listeners (grpcL/httpL) will unblock their Serves")
 		}
 		if s != nil {
 			s.UnloadAllRunners()
@@ -2069,6 +2127,20 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	return nil
+}
+
+// isClosedErr classifies listener/mux close errors from shutdown (cmux.Serve, http.Serve etc).
+// Used for non-fatal path in bounded errgroup workers (P5 cmux + existing). Prefers errors.Is +
+// fallback contains for strings from cmux/net (no sentinel exported in some cases).
+func isClosedErr(err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) {
+		return true
+	}
+	es := err.Error()
+	return strings.Contains(es, "use of closed") || strings.Contains(es, "closed network") || strings.Contains(es, "Server closed")
 }
 
 func initializeKeypair() error {

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "github.com/ollama/ollama/gen/proto/ollama/api/v1"
 	apiv1connect "github.com/ollama/ollama/gen/proto/ollama/api/v1/apiv1connect"
@@ -155,15 +156,24 @@ type modelsHandler struct{ s *Server }
 var _ apiv1connect.ModelsServiceHandler = (*modelsHandler)(nil)
 
 func (h *modelsHandler) List(ctx context.Context, req *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
-	// Phase 4: basic impl (full would convert from ListHandler / manifest list + GetModelInfo details to pb).
-	// Uses existing sched/model logic where possible for polish. No dupe core.
-	return connect.NewResponse(&v1.ListModelsResponse{
-		Models: []*v1.Model{}, // TODO: populate from model list
-	}), nil
+	// Phase 5: full admin List using shared modelList cache (same *Server as HTTP /api/tags).
+	// Thin adapter only; conversion here; no core dupe, no new globals/recon. Rich path for admin.
+	resp := &v1.ListModelsResponse{}
+	if h.s != nil && h.s.modelCaches != nil && h.s.modelCaches.modelList != nil {
+		models, err := h.s.modelCaches.modelList.List(ctx)
+		if err != nil {
+			return nil, errToConnect(fmt.Errorf("listing models: %w", err))
+		}
+		resp.Models = make([]*v1.Model, 0, len(models))
+		for _, m := range models {
+			resp.Models = append(resp.Models, convertListModelResponseToPB(m))
+		}
+	}
+	return connect.NewResponse(resp), nil
 }
 
 func (h *modelsHandler) Show(ctx context.Context, req *connect.Request[v1.ShowModelRequest]) (*connect.Response[v1.ShowModelResponse], error) {
-	// basic; full convert from GetModelInfo
+	// Phase 5 admin: basic Show remains (full details via GetModelInfo would require more mapping); Version is populated.
 	return connect.NewResponse(&v1.ShowModelResponse{}), nil
 }
 
@@ -498,5 +508,32 @@ func setupOTELProvider() {
 // TODO(phase4+): full streaming interceptors for logging/auth/recovery/otel. Add correlation IDs in logs.
 // TODO: table driven tests for converters.
 // TODO: var _ checks if not in test.
+
+// convertListModelResponseToPB maps internal api.ListModelResponse (from shared modelList cache)
+// to the gRPC v1.Model for admin List. Phase 5 full admin streams uplift (unary List populated).
+// Details flattened to map<string,string> per proto MVP. Used by modelsHandler.List (thin).
+func convertListModelResponseToPB(m api.ListModelResponse) *v1.Model {
+	if m.Name == "" && m.Model == "" {
+		return &v1.Model{}
+	}
+	pb := &v1.Model{
+		Name:   m.Name,
+		Model:  m.Model,
+		Size:   m.Size,
+		Digest: m.Digest,
+	}
+	if !m.ModifiedAt.IsZero() {
+		pb.ModifiedAt = timestamppb.New(m.ModifiedAt)
+	}
+	d := m.Details
+	pb.Details = map[string]string{
+		"parent_model":       d.ParentModel,
+		"format":             d.Format,
+		"family":             d.Family,
+		"parameter_size":     d.ParameterSize,
+		"quantization_level": d.QuantizationLevel,
+	}
+	return pb
+}
 
 var _ = authInterceptor // compile use

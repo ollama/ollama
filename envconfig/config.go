@@ -132,6 +132,16 @@ func GRPCHost() *url.URL {
 	}
 }
 
+// GRPCSamePort reports whether to serve gRPC/Connect on the same TCP port as the primary HTTP
+// listener (via cmux multiplexing). This is the Phase 5 opt-in (OLLAMA_GRPC_SAMEPORT=1).
+// When enabled, the primary OLLAMA_HOST listener is used for both HTTP (Gin) and gRPC/Connect (h2c)
+// traffic; no separate GRPCHost listener is created. High-scrutiny reliable patterns apply (errgroup
+// bounded, new logs with reason, thorough soak, review subagent required before landing).
+// Default false (separate port behavior preserved exactly for zero HTTP regression on 11434).
+func GRPCSamePort() bool {
+	return strings.TrimSpace(Var("OLLAMA_GRPC_SAMEPORT")) == "1"
+}
+
 // AllowedOrigins returns a list of allowed origins. AllowedOrigins can be configured via the OLLAMA_ORIGINS environment variable.
 func AllowedOrigins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
@@ -371,6 +381,7 @@ func AsMap() map[string]EnvVar {
 		"LLAMA_ARG_FIT_TARGET":        {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},
 		"OLLAMA_HOST":                 {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_GRPC_HOST":            {"OLLAMA_GRPC_HOST", GRPCHost(), "IP Address for the optional gRPC/Connect server (default 127.0.0.1:11435; set empty to disable)"},
+		"OLLAMA_GRPC_SAMEPORT":        {"OLLAMA_GRPC_SAMEPORT", GRPCSamePort(), "Serve gRPC/Connect on the same port as HTTP via cmux (opt-in: set to \"1\"; high risk, see docs/grpc-phased-reliable-approach.md Phase 5; default separate port for safety/zero regression)"},
 		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":         {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},

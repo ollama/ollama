@@ -21,6 +21,7 @@ require (
 
 require (
 	connectrpc.com/connect v1.20.0
+	connectrpc.com/otelconnect v0.9.0
 	github.com/agnivade/levenshtein v1.1.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -33,10 +34,12 @@ require (
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c
 	github.com/pelletier/go-toml/v2 v2.2.2
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
+	github.com/soheilhy/cmux v0.1.5
 	github.com/tkrajina/typescriptify-golang-structs v0.2.0
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-cpp v0.23.4
 	github.com/wk8/go-ordered-map/v2 v2.1.8
+	go.opentelemetry.io/otel v1.29.0
 	golang.org/x/image v0.25.0
 	golang.org/x/mod v0.32.0
 	golang.org/x/tools v0.41.0
@@ -44,7 +47,6 @@ require (
 )
 
 require (
-	connectrpc.com/otelconnect v0.9.0 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
@@ -79,7 +81,6 @@ require (
 	github.com/tkrajina/go-reflector v0.5.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/xtgo/set v1.0.0 // indirect
-	go.opentelemetry.io/otel v1.29.0 // indirect
 	go.opentelemetry.io/otel/metric v1.29.0 // indirect
 	go.opentelemetry.io/otel/trace v1.29.0 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20231121144256-b99613f794b6 // indirect

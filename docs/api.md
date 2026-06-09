@@ -1972,4 +1972,11 @@ For full tests: integration with OLLAMA_GRPC_HOST or direct connect client (seri
 
 See docs/development.md for buf/grpc dev, and phased reliable doc for SKILL compliance (ctx, logs, bounded, etc.).
 
-Version: gRPC support stabilized in this release.
+### Phase 5 (opt-in, advanced)
+- Same-port multiplexing (cmux): set `OLLAMA_GRPC_SAMEPORT=1` to serve gRPC/Connect on the primary OLLAMA_HOST port (e.g. 11434) alongside HTTP. Uses soheilhy/cmux with HTTP2 gRPC content-type match. Default remains separate port (zero regression on 11434).
+- Full admin: models List now populates from shared cache (real model metadata over gRPC).
+- Buf CI present in .github/workflows (lint + generate visibility).
+- See docs/grpc-phased-reliable-approach.md for reliable overlay (errgroup bounded cmux, new logs+reason, review subagent required, soak gates, "stop if" on regression).
+- mTLS, richer xai protos, official clients, load tests, image/video: deferred or future per plan.
+
+Version: gRPC support stabilized in this release. (Phase 5 sameport is opt-in/high-scrutiny.)

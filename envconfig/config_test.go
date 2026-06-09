@@ -119,6 +119,28 @@ func TestGRPCHost(t *testing.T) {
 	}
 }
 
+func TestGRPCSamePort(t *testing.T) {
+	cases := map[string]struct {
+		value string
+		want  bool
+	}{
+		"empty (default separate port)": {"", false},
+		"0 (explicit separate)":         {"0", false},
+		"false (not 1)":                 {"false", false},
+		"1 (sameport opt-in)":           {"1", true},
+		"1 with spaces":                 {" 1 ", true},
+		"other value":                   {"true", false},
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_GRPC_SAMEPORT", tt.value)
+			if got := GRPCSamePort(); got != tt.want {
+				t.Errorf("%s: GRPCSamePort()=%v want %v", name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestOrigins(t *testing.T) {
 	cases := []struct {
 		value  string

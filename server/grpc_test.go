@@ -72,3 +72,42 @@ func TestConvertGenerateEmbedBasic(t *testing.T) {
 	assert.Equal(t, "nomic", pbEmb.Model)
 }
 
+// Phase 5: table test for admin models convert (List uplift using shared cache path).
+// Verifiability + small units per SKILL.
+func TestConvertListModelToPB(t *testing.T) {
+	tests := []struct {
+		name string
+		in   api.ListModelResponse
+		want string // expected .Name in pb
+	}{
+		{
+			name: "basic",
+			in:   api.ListModelResponse{Name: "llama3:latest", Model: "llama3:latest", Size: 4200000000, Digest: "sha256:abc"},
+			want: "llama3:latest",
+		},
+		{
+			name: "with details",
+			in: api.ListModelResponse{
+				Name: "qwen2:7b",
+				Model: "qwen2:7b",
+				Details: api.ModelDetails{Family: "qwen2", Format: "gguf", ParameterSize: "7B", QuantizationLevel: "Q4_K_M"},
+			},
+			want: "qwen2:7b",
+		},
+		{
+			name: "empty",
+			in:   api.ListModelResponse{},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pb := convertListModelResponseToPB(tt.in)
+			assert.Equal(t, tt.want, pb.Name)
+			if tt.in.Details.Family != "" {
+				assert.Equal(t, tt.in.Details.Family, pb.Details["family"])
+			}
+		})
+	}
+}
+
