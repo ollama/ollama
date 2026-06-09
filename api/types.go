@@ -1341,3 +1341,21 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 
 	return out, nil
 }
+
+// ServerConfigRequest is the request passed to [Client.SetServerConfig].
+type ServerConfigRequest struct {
+	// PowerLimit is the GPU power limit in watts. 0 means no limit.
+	PowerLimit *int `json:"power_limit,omitempty"`
+}
+
+// ServerConfigResponse is the response from [Client.GetServerConfig].
+type ServerConfigResponse struct {
+	// PowerLimit is the current GPU power limit in watts. 0 means no limit.
+	PowerLimit int `json:"power_limit"`
+
+	// GPUPowerLimits contains the power limit for each GPU (in milliwatts)
+	GPUPowerLimits []uint32 `json:"gpu_power_limits,omitempty"`
+
+	// GPUCount is the number of NVIDIA GPUs detected
+	GPUCount int `json:"gpu_count"`
+}

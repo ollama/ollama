@@ -490,3 +490,18 @@ func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
 	}
 	return &resp, nil
 }
+
+// GetServerConfig retrieves the current server configuration including power limits.
+func (c *Client) GetServerConfig(ctx context.Context) (*ServerConfigResponse, error) {
+	var resp ServerConfigResponse
+	if err := c.do(ctx, http.MethodGet, "/api/config", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// SetServerConfig updates the server configuration including power limits.
+// Power limit is specified in watts. Set to 0 to remove the limit.
+func (c *Client) SetServerConfig(ctx context.Context, req *ServerConfigRequest) error {
+	return c.do(ctx, http.MethodPost, "/api/config", req, nil)
+}
