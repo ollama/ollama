@@ -292,6 +292,14 @@ func TestModelCapabilities(t *testing.T) {
 		"clip.audio.block_count": uint32(1),
 	}, []*ggml.Tensor{})
 
+	audioOnlyExplicitProjectorPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":   "clip",
+		"clip.has_audio_encoder": true,
+		"clip.projector_type":    "granite_speech",
+		"clip.audio.block_count": uint32(1),
+		"clip.has_vision_encoder": false,
+	}, []*ggml.Tensor{})
+
 	audioAndVisionProjectorPath, _ := createBinFile(t, ggml.KV{
 		"general.architecture":    "clip",
 		"clip.has_audio_encoder":  true,
@@ -434,6 +442,15 @@ func TestModelCapabilities(t *testing.T) {
 			model: Model{
 				ModelPath:      completionModelPath,
 				ProjectorPaths: []string{audioProjectorPath},
+				Template:       chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio},
+		},
+		{
+			name: "model with audio projector and vision false only capability",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioOnlyExplicitProjectorPath},
 				Template:       chatTemplate,
 			},
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio},
