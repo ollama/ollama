@@ -135,7 +135,24 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, arrays map[string]
 // Tensor keys use the original tensor name: name, name.scale, name.bias.
 // The blob includes __metadata__ with quant_type and group_size.
 // Supported quantization types: "int4", "nvfp4", "mxfp4", "int8", "mxfp8".
+//
+// All MLX work is dispatched to the package-level MLX worker thread to satisfy
+// the per-thread MLX state requirement (see mlxworker.go).
 func quantizeTensor(r io.Reader, tensorName, dtype string, shape []int32, quantize string) (blobData []byte, err error) {
+	werr := runOnMLXWorker(func() error {
+		data, ferr := quantizeTensorOnMLXThread(r, tensorName, dtype, shape, quantize)
+		blobData = data
+		return ferr
+	})
+	if werr != nil {
+		return nil, werr
+	}
+	return blobData, nil
+}
+
+// quantizeTensorOnMLXThread is the implementation; must be called from the
+// MLX worker thread (via runOnMLXWorker).
+func quantizeTensorOnMLXThread(r io.Reader, tensorName, dtype string, shape []int32, quantize string) (blobData []byte, err error) {
 	arrays := make(map[string]*mlx.Array)
 	tmpPath, toEval, st, err := loadAndQuantizeArray(r, tensorName, quantize, arrays)
 	if tmpPath != "" {
@@ -190,7 +207,25 @@ func quantizeTensor(r io.Reader, tensorName, dtype string, shape []int32, quanti
 // they are stacked into 3D switch_mlp tensors before quantization.
 // Each tensor may have a different quantization type (mixed-precision).
 // Returns the blob bytes.
+//
+// All MLX work is dispatched to the package-level MLX worker thread to satisfy
+// the per-thread MLX state requirement (see mlxworker.go).
 func quantizePackedGroup(groupName string, inputs []create.PackedTensorInput) ([]byte, error) {
+	var blobData []byte
+	werr := runOnMLXWorker(func() error {
+		data, ferr := quantizePackedGroupOnMLXThread(groupName, inputs)
+		blobData = data
+		return ferr
+	})
+	if werr != nil {
+		return nil, werr
+	}
+	return blobData, nil
+}
+
+// quantizePackedGroupOnMLXThread is the implementation; must be called from
+// the MLX worker thread (via runOnMLXWorker).
+func quantizePackedGroupOnMLXThread(groupName string, inputs []create.PackedTensorInput) ([]byte, error) {
 	// Check if inputs are per-expert tensors that should be stacked into 3D
 	if projGroups, projQuantize := parsePerExpertInputs(groupName, inputs); projGroups != nil {
 		return stackAndQuantizeExpertGroup(groupName, projGroups, projQuantize)
