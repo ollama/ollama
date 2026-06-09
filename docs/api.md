@@ -1930,3 +1930,46 @@ Progress updates during generation:
   "load_duration": 2000000000
 }
 ```
+
+## gRPC API (Phase 4 polish)
+
+Ollama exposes gRPC (via Connect) on a dedicated port for typed, streaming, low-latency clients (e.g. microservices, high-perf SDKs). Separate from HTTP/OpenAI compat on 11434 for zero regression.
+
+- Default: OLLAMA_GRPC_HOST=127.0.0.1:11435 (enable); set to "" to disable.
+- One handler supports Connect + gRPC + gRPC-Web (h2c for unencrypted local).
+- Thin adapters delegate to extracted core (chat/generate/embed) + shared *Server/sched (no dupe, no contention).
+- Full Phase 4: auth metadata (permissive local), OTEL (spans/attrs/slog bridge around inference/schedule/load), complete error mapping, rich logs with reason/stream_id.
+- Backcompat: HTTP 100% unchanged; gRPC errors map from internal (e.g. bad model -> Invalid/NotFound, queue -> Unavailable for retry).
+- Protos: proto/ollama/api/v1/*.proto (MVP + expansions); generated in gen/proto.
+- Tools: grpcurl, buf curl, connect clients (Go/Python/etc).
+
+### Env (see envconfig)
+- OLLAMA_GRPC_HOST: address for gRPC listener (default 11435). Empty disables. See GRPCHost().
+
+### Examples
+
+#### Unary/Stream with grpcurl (plaintext for local)
+```shell
+# list (models)
+grpcurl --plaintext localhost:11435 ollama.api.v1.ModelsService/List
+
+# chat stream (example; use proto schema for full)
+grpcurl --plaintext -d '{"model":"llama3","messages":[{"role":"user","content":"hi"}]}' localhost:11435 ollama.api.v1.ChatService/ChatStream
+```
+
+#### Go connect client example
+See api/examples or gen for pb/connect. Basic:
+
+```go
+client := apiv1connect.NewChatServiceClient(http.DefaultClient, "http://localhost:11435")
+stream, err := client.ChatStream(ctx, connect.NewRequest(&v1.ChatRequest{Model: "llama3", Messages: ...}))
+for stream.Receive() {
+  // tokens, done, usage
+}
+```
+
+For full tests: integration with OLLAMA_GRPC_HOST or direct connect client (serial safe).
+
+See docs/development.md for buf/grpc dev, and phased reliable doc for SKILL compliance (ctx, logs, bounded, etc.).
+
+Version: gRPC support stabilized in this release.

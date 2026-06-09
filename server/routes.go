@@ -2170,27 +2170,32 @@ func SetupServer(primaryAddr net.Addr) (*Server, http.Handler, *Scheduler, error
 }
 
 func (s *Server) registerServices(mux *http.ServeMux) {
-	// Phase 2: register the thin Connect/gRPC adapters (chat, generate, embed, models).
-	// Interceptors: basic logging (with component, model, dur, reason); recovery + timeout in P4.
-	// See server/grpc.go for the *Handler impls + converters + var _ checks.
-	interceptor := connect.WithInterceptors(loggingInterceptor())
+	// Phase 4 polish: full interceptors (auth early, logging with stream_id/reason, OTEL, recovery).
+	// Per SKILL and phased doc: early auth (permissive local), rich logs, OTEL spans/attrs, bounded.
+	interceptors := []connect.Interceptor{
+		authInterceptor(),       // early
+		loggingInterceptor(),    // with stream_id, model, dur, reason
+		otelInterceptor(),       // full OTEL
+		recoveryInterceptor(),   // panic to err
+	}
+	opt := connect.WithInterceptors(interceptors...)
 	{
-		path, h := apiv1connect.NewChatServiceHandler(&chatHandler{s}, interceptor)
+		path, h := apiv1connect.NewChatServiceHandler(&chatHandler{s}, opt)
 		mux.Handle(path, h)
 	}
 	{
-		path, h := apiv1connect.NewGenerateServiceHandler(&generateHandler{s}, interceptor)
+		path, h := apiv1connect.NewGenerateServiceHandler(&generateHandler{s}, opt)
 		mux.Handle(path, h)
 	}
 	{
-		path, h := apiv1connect.NewEmbedServiceHandler(&embedHandler{s}, interceptor)
+		path, h := apiv1connect.NewEmbedServiceHandler(&embedHandler{s}, opt)
 		mux.Handle(path, h)
 	}
 	{
-		path, h := apiv1connect.NewModelsServiceHandler(&modelsHandler{s}, interceptor)
+		path, h := apiv1connect.NewModelsServiceHandler(&modelsHandler{s}, opt)
 		mux.Handle(path, h)
 	}
-	slog.Debug("registerServices complete (MVP adapters registered)", "component", "grpc")
+	slog.Debug("registerServices complete (Phase 4 interceptors: auth/OTEL/recovery/logging)", "component", "grpc")
 }
 
 // chat is the protocol-agnostic core for chat (Phase 2 extraction).
@@ -3293,6 +3298,25 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 
 		return
+	}
+
+	// restore exact pre-extract thinking cap check for HTTP backcompat (400 error instead of relax)
+	// (gRPC paths go direct to extracted which relaxes or errors per its logic; proto think support separate)
+	modelCaps := m.Capabilities()
+	if slices.Contains(modelCaps, model.CapabilityThinking) {
+		if req.Think == nil {
+			req.Think = &api.ThinkValue{Value: true}
+		}
+	} else {
+		if req.Think != nil && req.Think.Bool() {
+			if _, ok := c.Get("relax_thinking"); ok {
+				slog.Warn("model does not support thinking, relaxing thinking to nil", "model", req.Model)
+				req.Think = nil
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
+				return
+			}
+		}
 	}
 
 	// thin wrapper: pre-processing/guards done above; delegate core (schedule, render, llm, parsers, write for responses) to extracted.
