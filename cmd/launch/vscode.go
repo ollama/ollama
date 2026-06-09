@@ -130,7 +130,7 @@ const (
 	vscodeOllamaDevVendor = "ollama-dev"
 	vscodeOllamaName      = "Ollama"
 
-	vscodeOllamaExtensionID     = "ollama.ollama-vscode"
+	vscodeOllamaExtensionID     = "Ollama.ollama-vscode"
 	vscodeOllamaVSIXEnv         = "OLLAMA_VSCODE_EXTENSION_VSIX"
 	vscodeOllamaDefaultVSIXPath = "/tmp/ollama-vscode-0.0.1.vsix"
 )
@@ -138,7 +138,7 @@ const (
 func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 	v.checkVSCodeVersion()
 	v.checkCopilotChatVersion()
-	v.ensureOllamaExtensionInstalled()
+	installedExtension := v.ensureOllamaExtensionInstalled()
 
 	// VS Code discovers models from ollama ls. Cloud models that pass Show
 	// (the server knows about them) but aren't in ls need to be pulled to
@@ -147,26 +147,12 @@ func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 		v.ensureModelsRegistered(context.Background(), client, []string{model})
 	}
 
-	// Warn if the default model doesn't support tool calling
-	if client, err := api.ClientFromEnvironment(); err == nil {
-		if resp, err := client.Show(context.Background(), &api.ShowRequest{Model: model}); err == nil {
-			hasTools := false
-			for _, c := range resp.Capabilities {
-				if c == "tools" {
-					hasTools = true
-					break
-				}
-			}
-			if !hasTools {
-				fmt.Fprintf(os.Stderr, "Note: %s does not support tool calling and may not appear in the Copilot Chat model picker.\n", model)
-			}
-		}
-	}
-
-	v.printModelAccessTip(model)
-
 	if v.IsRunning() {
-		restart, err := ConfirmPrompt("Restart VS Code?")
+		prompt := "Restart VS Code?"
+		if installedExtension {
+			prompt = "Restart VS Code to finish installing the Ollama extension?"
+		}
+		restart, err := ConfirmPrompt(prompt)
 		if err != nil {
 			restart = false
 		}
@@ -177,7 +163,11 @@ func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 			}
 			v.FocusVSCode()
 		} else {
-			fmt.Fprintf(os.Stderr, "\nTo get the latest model configuration, restart VS Code when you're ready.\n")
+			if installedExtension {
+				fmt.Fprintf(os.Stderr, "\nRestart VS Code when you're ready to use the Ollama extension.\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "\nTo get the latest model configuration, restart VS Code when you're ready.\n")
+			}
 		}
 	} else {
 		if err := v.ShowInModelPicker(model); err != nil {
@@ -249,14 +239,6 @@ func (v *VSCode) FocusVSCode() {
 	} else {
 		_ = exec.Command(binary).Start()
 	}
-}
-
-// printModelAccessTip shows instructions for using the configured Ollama model
-// in VS Code's Copilot Chat UI.
-func (v *VSCode) printModelAccessTip(model string) {
-	fmt.Fprintf(os.Stderr, "\nTip: Open Copilot Chat in VS Code.\n")
-	fmt.Fprintf(os.Stderr, "     %s should appear under \"%s\" in the model picker, and it may already be selected.\n", model, vscodeOllamaName)
-	fmt.Fprintf(os.Stderr, "     If it isn't selected, open the model picker and choose it from the \"%s\" section.\n\n", vscodeOllamaName)
 }
 
 func (v *VSCode) Paths() []string {
@@ -570,20 +552,20 @@ func (v *VSCode) checkCopilotChatVersion() {
 	}
 }
 
-func (v *VSCode) ensureOllamaExtensionInstalled() {
+func (v *VSCode) ensureOllamaExtensionInstalled() bool {
 	codeCLI := v.findCodeCLI()
 	if codeCLI == "" {
 		fmt.Fprintf(os.Stderr, "%s  Warning: could not find VS Code CLI to install the Ollama extension%s\n", ansiYellow, ansiReset)
-		return
+		return false
 	}
 
 	out, err := exec.Command(codeCLI, "--list-extensions", "--show-versions").Output()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s  Warning: could not list VS Code extensions: %v%s\n", ansiYellow, err, ansiReset)
-		return
+		return false
 	}
 	if hasVSCodeExtension(string(out), vscodeOllamaExtensionID) {
-		return
+		return false
 	}
 
 	vsixPath := os.Getenv(vscodeOllamaVSIXEnv)
@@ -591,15 +573,20 @@ func (v *VSCode) ensureOllamaExtensionInstalled() {
 		vsixPath = vscodeOllamaDefaultVSIXPath
 	}
 	if !fileExists(vsixPath) {
-		fmt.Fprintf(os.Stderr, "%s  Warning: Ollama VS Code extension is not installed and no VSIX was found at %s%s\n", ansiYellow, vsixPath, ansiReset)
-		fmt.Fprintf(os.Stderr, "     Build the VSIX from ollama/ollama-vscode and set %s, or place it at %s.\n\n", vscodeOllamaVSIXEnv, vscodeOllamaDefaultVSIXPath)
-		return
+		fmt.Fprintf(os.Stderr, "Installing Ollama VS Code extension...\n")
+		if out, err := exec.Command(codeCLI, "--install-extension", vscodeOllamaExtensionID, "--force").CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s  Warning: could not install Ollama VS Code extension: %v%s\n%s\n", ansiYellow, err, ansiReset, strings.TrimSpace(string(out)))
+			return false
+		}
+		return true
 	}
 
-	fmt.Fprintf(os.Stderr, "Installing Ollama VS Code extension from %s...\n", vsixPath)
+	fmt.Fprintf(os.Stderr, "Installing Ollama VS Code extension...\n")
 	if out, err := exec.Command(codeCLI, "--install-extension", vsixPath, "--force").CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "%s  Warning: could not install Ollama VS Code extension: %v%s\n%s\n", ansiYellow, err, ansiReset, strings.TrimSpace(string(out)))
+		return false
 	}
+	return true
 }
 
 // findCodeCLI returns the path to the VS Code CLI for querying extensions.
