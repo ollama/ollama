@@ -317,9 +317,9 @@ func TestModelCapabilities(t *testing.T) {
 	}, []*ggml.Tensor{})
 
 	visionImplicitProjectorPath, _ := createBinFile(t, ggml.KV{
-		"general.architecture":   "clip",
-		"clip.projector_type":    "some_implicit_vision_projector",
-		"clip.block_count": uint32(1),
+		"general.architecture": "clip",
+		"clip.projector_type":  "some_implicit_vision_projector",
+		"clip.block_count":     uint32(1),
 	}, []*ggml.Tensor{})
 
 	audioProjectorPath, _ := createBinFile(t, ggml.KV{
@@ -330,10 +330,10 @@ func TestModelCapabilities(t *testing.T) {
 	}, []*ggml.Tensor{})
 
 	audioOnlyExplicitProjectorPath, _ := createBinFile(t, ggml.KV{
-		"general.architecture":   "clip",
-		"clip.has_audio_encoder": true,
-		"clip.projector_type":    "granite_speech",
-		"clip.audio.block_count": uint32(1),
+		"general.architecture":    "clip",
+		"clip.has_audio_encoder":  true,
+		"clip.projector_type":     "granite_speech",
+		"clip.audio.block_count":  uint32(1),
 		"clip.has_vision_encoder": false,
 	}, []*ggml.Tensor{})
 
