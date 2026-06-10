@@ -2,11 +2,8 @@ package mlxrunner
 
 import (
 	"fmt"
-	"log/slog"
-	"os"
 	"slices"
-	"strconv"
-	"strings"
+	"time"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -39,73 +36,13 @@ type drafter interface {
 	close()
 }
 
-type draftSchedule string
-
-const (
-	draftScheduleHeuristic draftSchedule = "heuristic"
-	draftScheduleConstant  draftSchedule = "constant"
-)
-
-type specStats struct {
-	iterations  int
-	drafted     int
-	accepted    int
-	mismatches  int
-	allAccepted int
-	maxDraft    int
-}
-
-type specOptions struct {
-	initialDraftTokens int
-	maxDraftTokens     int
-	draftSchedule      draftSchedule
-}
-
-func (r *Runner) loadSpecOptions(sample bool) specOptions {
-	defaults := r.mtpDefaults(sample)
-
-	opts := specOptions{
-		initialDraftTokens: defaults.InitialDraftTokens,
-		maxDraftTokens:     defaults.MaxDraftTokens,
-		draftSchedule:      draftScheduleConstant,
-	}
-	if v := positiveEnvInt("OLLAMA_MLX_MTP_MAX_DRAFT_TOKENS"); v > 0 {
-		opts.maxDraftTokens = v
-	}
-	if v := positiveEnvInt("OLLAMA_MLX_MTP_INITIAL_DRAFT_TOKENS"); v > 0 {
-		opts.initialDraftTokens = v
-	}
-	if opts.initialDraftTokens > opts.maxDraftTokens {
-		opts.initialDraftTokens = opts.maxDraftTokens
-	}
-	switch schedule := strings.ToLower(strings.TrimSpace(os.Getenv("OLLAMA_MLX_MTP_DRAFT_SCHEDULE"))); schedule {
-	case "", string(draftScheduleConstant):
-		opts.draftSchedule = draftScheduleConstant
-	case string(draftScheduleHeuristic):
-		opts.draftSchedule = draftScheduleHeuristic
-	default:
-		slog.Warn("invalid MTP env setting", "key", "OLLAMA_MLX_MTP_DRAFT_SCHEDULE", "value", schedule)
-	}
-	return opts
-}
-
-func positiveEnvInt(key string) int {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return 0
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v <= 0 {
-		slog.Warn("invalid MTP env setting", "key", key, "value", raw)
-		return 0
-	}
-	return v
-}
-
-// speculation is the persistent speculative-decoding subsystem of a Runner,
-// one per loaded model. It holds the draft model; as the feature grows it
-// also holds the cache partition and the depth state learned across requests.
-// A nil *speculation means the checkpoint ships no draft head.
+// speculation is the persistent speculative-decoding subsystem of a Runner —
+// one per loaded model, holding everything that outlives a request: the draft
+// model, the target-cache partition, and the depth state learned across
+// requests so each request starts at the proven-out depth. Each request opens a
+// short-lived speculationSession cursor over it; nothing here is rebuilt per request. A
+// nil *speculation means the checkpoint ships no draft head, so every request
+// decodes plainly.
 type speculation struct {
 	r     *Runner
 	draft base.DraftModel
@@ -118,6 +55,10 @@ type speculation struct {
 	caches  []cache.Cache
 	draftKV []cache.Cache
 	targets []cache.Cache
+
+	// depth selects each request's draft length and owns the cost/acceptance
+	// models and probe cadence it learns across requests.
+	depth *depthController
 }
 
 // newSpeculation builds the speculative-decoding subsystem for a loaded model,
@@ -126,7 +67,7 @@ func newSpeculation(r *Runner, draft base.DraftModel) *speculation {
 	if draft == nil {
 		return nil
 	}
-	return &speculation{r: r, draft: draft}
+	return &speculation{r: r, draft: draft, depth: newDepthController()}
 }
 
 // bind computes the draft/target cache partition the first time the persistent
@@ -157,17 +98,22 @@ func (s *speculation) bind(caches []cache.Cache) {
 	s.targets = targets
 }
 
-// speculationSession is the speculation cursor for one request over a speculation. A
-// nil speculationSession is a plain decode.
+// speculationSession is the per-request cursor over the persistent speculation:
+// it owns the drafter and runs the validate rounds. A nil session is a plain
+// decode.
 type speculationSession struct {
 	spec    *speculation
 	drafter drafter
-	// enabled selects speculative rounds; a maintain-only engine decodes
-	// plainly while streaming committed runs to keep draft KV prefix-cached.
-	enabled bool
-	opts    specOptions
-	limit   int // current draft length
+	enabled bool // whether this request drafts; false parks (maintain-only)
+	limit   int  // current draft length
 	stats   specStats
+
+	// Cost sampling: each round's wall time (start to next start, spanning the
+	// next emit's sync) is attributed to its draft depth only when the depth
+	// matches the previous round's, since batch-shape transitions inflate it.
+	lastRoundStart time.Time
+	prevDrafts     int
+	roundDrafts    int
 }
 
 // open returns the speculation cursor for this request or nil when the model ships
@@ -178,22 +124,49 @@ func (s *speculation) open(request Request, caches []cache.Cache) *speculationSe
 	}
 	s.bind(caches)
 	d := newMTPDrafter(s)
-	if d == nil {
-		return nil
-	}
 
+	// Logprobs are not yet supported, so a logprobs request keeps a speculationSession
+	// only to maintain a draft cache in lockstep (permanently parked).
 	opts := request.SamplerOpts
-	enabled := s.r.mtpDefaults(opts.Temperature != 0).Enabled &&
-		!opts.Logprobs && opts.TopLogprobs == 0
+	enabled := !opts.Logprobs && opts.TopLogprobs == 0
 
-	specOpts := s.r.loadSpecOptions(opts.Temperature != 0)
-	return &speculationSession{
-		spec:    s,
-		drafter: d,
-		enabled: enabled,
-		opts:    specOpts,
-		limit:   specOpts.initialDraftTokens,
-		stats:   specStats{maxDraft: specOpts.initialDraftTokens},
+	spec := &speculationSession{spec: s, drafter: d, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
+	if enabled {
+		spec.limit = s.depth.scheduled
+		spec.stats.maxDraft = spec.limit
+	}
+	return spec
+}
+
+// beginRound records the previous round's cost sample (its wall time runs to
+// this round's start) and starts timing the new one.
+func (s *speculationSession) beginRound() {
+	now := time.Now()
+	if !s.lastRoundStart.IsZero() && s.roundDrafts >= 0 {
+		s.stats.recordRound(s.roundDrafts)
+		if s.roundDrafts == s.prevDrafts {
+			s.spec.depth.cost.observe(s.roundDrafts, now.Sub(s.lastRoundStart))
+		}
+		s.prevDrafts = s.roundDrafts
+	}
+	s.lastRoundStart = now
+}
+
+// endRound records a completed round's draft depth, proposal outcome, and the
+// controller's next draft length. observed is the leading draft positions the
+// acceptance model learns from: the full round, except an accepted EOS holds out
+// positions past it (a terminator, not a target rejection).
+func (s *speculationSession) endRound(drafted, accepted, observed int) {
+	s.roundDrafts = drafted
+	s.stats.iterations++
+	s.stats.drafted += drafted
+	s.stats.accepted += accepted
+	if s.enabled {
+		if observed > 0 {
+			s.spec.depth.acc.observe(observed, accepted)
+		}
+		s.limit = s.spec.depth.next()
+		s.stats.maxDraft = max(s.stats.maxDraft, s.limit)
 	}
 }
 
@@ -229,129 +202,114 @@ func (s *speculationSession) close() {
 }
 
 // speculativeDecoder decodes one speculative round per call: the engine
-// forwards the current token — emitted by the previous call, so a token
-// that ends generation is never forwarded — fused with the drafter's
-// proposals, and the call returns the round's accepted tokens followed by
-// the engine's next token. The last returned token becomes the next call's
-// current; the seed token primes current and is never returned.
+// forwards the current token (emitted by the previous call, so a token that
+// ends generation is never forwarded) fused with the drafter's proposals,
+// returning the round's accepted tokens followed by the next token. The seed
+// primes current and is never returned. While the engine cannot draft (parked
+// at depth zero, or nothing committed to propose from) calls delegate to an
+// inner pipelined decoder at plain decode speed.
 type speculativeDecoder struct {
 	s        *speculationSession
 	position int
-	current  sampler.Result // emitted (or the seed), not yet forwarded
+	current  sampler.Result    // emitted (or the seed), not yet forwarded
+	inner    *pipelinedDecoder // pipelines plain tokens while parked; nil while drafting
 }
 
-// decoder returns the decoder for this engine's session. A maintain-only
-// engine decodes plainly via the pipelined decoder, which reports every
-// forwarded token to keep draft KV level with the target.
+// decoder returns the decoder for this engine's session. A speculationSession that
+// cannot draft (logprobs) has no depth controller and permanently parks,
+// running the inner pipelined decoder whose reports keep the draft KV level.
 func (s *speculationSession) decoder(seed []int32, position int) decoder {
-	if !s.enabled {
-		return s.spec.r.pipelinedDecoder(s, s.spec.caches, seed, position)
-	}
 	current := sampler.Result{Token: mlx.FromValues(seed, len(seed))}
 	mlx.Pin(current.Arrays()...)
 	return &speculativeDecoder{s: s, position: position, current: current}
 }
 
 func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
-	results, next, err := st.s.round(&st.position, st.current, remaining)
-	if err != nil {
-		return nil, err
-	}
-	if next.Token != nil {
-		results = append(results, next)
+	// Route: end a parked stretch by emitting the inner sample, draft on a
+	// positive length and a primed drafter, else decode parked.
+	var results []sampler.Result
+	if s := st.s; st.inner != nil && s.limit > 0 {
+		results = st.resume()
+	} else {
+		s.beginRound()
+		var candidates *draftCandidates
+		if s.limit > 0 {
+			// A round emits the accepted drafts plus one more token (the bonus
+			// or residual), so cap the draft one below the remaining budget to
+			// land that extra token within it rather than overshooting. At
+			// remaining 1 the cap is 0 and the last token decodes plainly.
+			candidates = s.drafter.propose(st.current.Token, min(s.limit, remaining-1))
+		}
+		var accepted, observed int
+		var err error
+		if candidates == nil {
+			results, err = st.park(remaining)
+		} else {
+			// candidates stays pinned across accept's internal sweep and the
+			// draft-count read below; accept pins only its own intermediates.
+			mlx.Pin(candidates.tokens)
+			defer mlx.Unpin(candidates.tokens)
+			results, accepted, observed, err = st.s.accept(&st.position, st.current, candidates)
+		}
+		if err != nil {
+			return nil, err
+		}
+		drafted := 0
+		if candidates != nil {
+			drafted = candidates.tokens.Dim(1)
+		}
+		s.endRound(drafted, accepted, observed)
 	}
 
-	last := results[len(results)-1]
-	mlx.Pin(last.Arrays()...)
-	mlx.Unpin(st.current.Arrays()...)
-	st.current = last
-	mlx.AsyncEval(st.current.Arrays()...)
+	st.advance(results[len(results)-1])
 	return results, nil
 }
 
+// advance retires the last returned token as the next call's current, pinned
+// across the sweeps the next call runs before reading it. Nothing is forced here.
+func (st *speculativeDecoder) advance(next sampler.Result) {
+	mlx.Pin(next.Arrays()...)
+	mlx.Unpin(st.current.Arrays()...)
+	st.current = next
+}
+
+// resume ends a parked stretch: the inner decoder's in-flight sample (sampled
+// but never forwarded) is exactly the current token a drafting round expects,
+// so emit it and let the next call draft from it.
+func (st *speculativeDecoder) resume() []sampler.Result {
+	next, position := st.inner.detach()
+	st.position = position
+	st.inner = nil
+	// No round spans this call, so the next beginRound attributes no cost.
+	st.s.roundDrafts = -1
+	// detach handed over the pin; advance re-pins, no sweep in between.
+	mlx.Unpin(next.Arrays()...)
+	return []sampler.Result{next}
+}
+
+// park decodes one pipelined plain token while the engine cannot draft. Each
+// is a depth-0 round in the controller's accounting, and the inner decoder's
+// reports keep the drafter primed and maintained.
+func (st *speculativeDecoder) park(remaining int) ([]sampler.Result, error) {
+	s := st.s
+	if st.inner == nil {
+		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.caches, st.current.Token.ExpandDims(-1), st.position)
+	}
+	return st.inner.next(remaining)
+}
+
 func (st *speculativeDecoder) close() {
-	// Generation always ends with a final token that was emitted but never
-	// forwarded; its report lets the drafter settle level with the caches'
-	// resting offset.
-	st.s.finish(st.current.Token)
+	if st.inner != nil {
+		// Ended while parked: the inner decoder's close settles the drafter
+		// with its in-flight sample.
+		st.inner.close()
+	} else {
+		// The final token was emitted but never forwarded; its report settles
+		// the drafter level with the caches' resting offset.
+		st.s.finish(st.current.Token)
+	}
 	mlx.Unpin(st.current.Arrays()...)
 	st.s.logStats()
-}
-
-// round runs one speculative decode round: fuse the current token with the
-// drafter's proposals in one target forward, validate the proposals, and
-// return the accepted run and the bonus or resampled next token.
-func (s *speculationSession) round(position *int, current sampler.Result, remaining int) (results []sampler.Result, next sampler.Result, err error) {
-	r := s.spec.r
-	s.stats.iterations++
-
-	// A round emits the accepted drafts plus one more token (the bonus or
-	// residual), so cap the draft one below the remaining budget to land that
-	// extra token within it rather than overshooting. At remaining 1 the cap is
-	// 0 and the last token decodes plainly.
-	maxDraft := min(s.limit, remaining-1)
-	candidates := s.drafter.propose(current.Token, maxDraft)
-	if candidates == nil {
-		// Nothing to validate: a plain single-token round.
-		tok := tokenInput(current.Token)
-		hidden := r.Model.Forward(&batch.Batch{
-			InputIDs:     tok,
-			SeqOffsets:   []int32{int32(*position)},
-			SeqQueryLens: []int32{1},
-		}, s.spec.caches)
-		*position++
-		s.drafter.committed(tok, hidden, *position-1)
-		return nil, r.Sampler.Sample([]int{pipelineSlot}, lastLogits(r.Model.Unembed(hidden))), nil
-	}
-
-	draftCount := candidates.tokens.Dim(1)
-	candidateArrays := candidates.Arrays()
-	mlx.Pin(candidateArrays...)
-	mlx.Sweep()
-	defer mlx.Unpin(candidateArrays...)
-	s.stats.drafted += draftCount
-
-	results, accepted, err := s.accept(position, current, candidates)
-	if err != nil {
-		return nil, sampler.Result{}, err
-	}
-	// accept folds the bonus token into its results; surface it back out as
-	// the next step's current.
-	if len(results) > accepted {
-		next = results[len(results)-1]
-		results = results[:accepted]
-	}
-
-	s.stats.accepted += accepted
-	if accepted == draftCount {
-		s.stats.allAccepted++
-	} else {
-		s.stats.mismatches++
-	}
-	if s.opts.draftSchedule == draftScheduleHeuristic {
-		if accepted == draftCount {
-			s.limit = min(s.opts.maxDraftTokens, s.limit+2)
-		} else {
-			s.limit = max(1, s.limit-1)
-		}
-		s.stats.maxDraft = max(s.stats.maxDraft, s.limit)
-	}
-	return results, next, nil
-}
-
-// logStats reports the per-request speculation summary.
-func (s *speculationSession) logStats() {
-	acceptance := 0.0
-	if s.stats.drafted > 0 {
-		acceptance = float64(s.stats.accepted) / float64(s.stats.drafted)
-	}
-	avgDraft := 0.0
-	avgAccepted := 0.0
-	if s.stats.iterations > 0 {
-		avgDraft = float64(s.stats.drafted) / float64(s.stats.iterations)
-		avgAccepted = float64(s.stats.accepted) / float64(s.stats.iterations)
-	}
-	slog.Info("speculative decode stats", "drafted", s.stats.drafted, "accepted", s.stats.accepted, "acceptance", acceptance, "iterations", s.stats.iterations, "avg_draft", avgDraft, "avg_accepted", avgAccepted, "mismatches", s.stats.mismatches, "all_accepted", s.stats.allAccepted, "max_draft", s.stats.maxDraft, "draft_schedule", s.opts.draftSchedule)
 }
 
 // draftCandidates is one round's draft tokens and the proposal distribution
@@ -417,20 +375,18 @@ func commitSpeculation(caches []cache.Cache, accepted, draftCount, before int) {
 	}
 }
 
-// accept accepts the longest draft prefix that survives rejection sampling
-// against the target model. At temperature 0 the distributions are point
-// masses, so acceptance reduces to argmax-match. It returns the accepted
-// drafts followed by the target's own next token — the residual at the
-// rejection point, or the bonus past a fully accepted run — so a round
-// yields accepted+1 tokens, except when an accepted EOS ends generation,
-// where the run stops at the EOS with no continuation. The accepted run is
-// reported back to the drafter with its hidden states.
+// accept accepts the longest draft prefix that survives rejection sampling,
+// returning the accepted drafts followed by the target's own next token
+// (residual at a rejection, bonus past a full run), except an accepted EOS
+// ends the run with no continuation. observed is the leading positions the
+// acceptance model learns from, capped at the EOS (a terminator, not a target
+// rejection). NumPredict is the decode loop's to enforce, so a token past the
+// budget is left for decode to drop, not cut here.
 //
-// The NumPredict budget is the decode loop's to enforce; the drafter is
-// already capped to the remaining budget, so an accepted run never
-// overshoots, and a legitimate token past the budget is left for decode to
-// drop rather than cut here.
-func (s *speculationSession) accept(position *int, current sampler.Result, candidates *draftCandidates) (results []sampler.Result, accepted int, err error) {
+// The caller keeps current and the candidate tokens pinned across the call,
+// since accept sweeps before its eval and reads both afterward; accept pins
+// only the intermediates it produces.
+func (s *speculationSession) accept(position *int, current sampler.Result, candidates *draftCandidates) (results []sampler.Result, accepted, observed int, err error) {
 	r := s.spec.r
 	before := *position
 	draftCount := candidates.tokens.Dim(1)
@@ -471,6 +427,15 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	// point is known.
 	residualTokens := r.Sampler.SampleDistribution(pipelineSlot, targetDist.SliceRows(0, draftCount).ResidualAgainst(draftDist))
 	bonusToken := r.sampleTokenAt(targetDist, draftCount)
+
+	// Pin the arrays read after the eval, then sweep so the draft proposal
+	// chain and this validation forward's intermediates are freed as the eval
+	// consumes them, the way the plain decode dispatch sweeps before its eval.
+	// current and the candidate tokens stay pinned by the caller across the call.
+	live := []*mlx.Array{hiddenSeq, acceptedMask, residualTokens, bonusToken}
+	mlx.Pin(live...)
+	defer mlx.Unpin(live...)
+	mlx.Sweep()
 	mlx.Eval(candidates.tokens, acceptedMask, residualTokens, bonusToken)
 
 	draftIDs := candidates.tokens.Ints()
@@ -482,11 +447,13 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 		accepted++
 	}
 	if accepted > draftCount {
-		return nil, 0, fmt.Errorf("speculation validation accepted %d tokens for %d draft tokens", accepted, draftCount)
+		return nil, 0, 0, fmt.Errorf("speculation validation accepted %d tokens for %d draft tokens", accepted, draftCount)
 	}
+	observed = draftCount
 
 	// Find where an accepted EOS ends the run, before committing, so the cut
-	// is known while the per-token rollback snapshots still exist.
+	// is known while the per-token rollback snapshots still exist. The EOS also
+	// caps observed: positions past it are held out, not logged as rejections.
 	commitIDs := make([]int32, 0, accepted+1)
 	keep := accepted
 	done := false
@@ -495,6 +462,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 		if r.Tokenizer.IsEOS(int32(id)) {
 			done = true
 			accepted = i + 1
+			observed = accepted
 			// Leave the EOS's own state uncommitted: the next sequence won't
 			// contain this EOS, and recurrent state can't drop a folded-in
 			// token, so committing it would carry the caches past the
@@ -507,11 +475,9 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	commit(keep)
 	*position = before + 1 + keep
 
-	// Report the validated run — current plus the kept drafts, with the
-	// fused hidden state at each token's own slot — to the drafter before
-	// returning, so even a cancelled emission leaves the drafter's state
-	// describing exactly what the target caches hold. A done generation's
-	// final token is never committed; it reaches the drafter through finish.
+	// Report the validated run (current plus kept drafts) to the drafter before
+	// returning, so a cancelled emission still leaves it matching the caches. A
+	// done generation's final token is uncommitted; it reaches finish instead.
 	runIDs := append([]int32{int32(current.Token.Int())}, commitIDs[:keep]...)
 	s.drafter.committed(
 		mlx.FromValues(runIDs, 1, len(runIDs)),
@@ -521,7 +487,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	results = draftResults(draftIDs[:accepted])
 	if done {
 		r.Sampler.Commit(pipelineSlot, commitIDs)
-		return results, accepted, nil
+		return results, accepted, observed, nil
 	}
 
 	var nextID int32
@@ -534,7 +500,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	r.Sampler.Commit(pipelineSlot, commitIDs)
 
 	results = append(results, sampler.Result{Token: mlx.FromValues([]int32{nextID}, 1)})
-	return results, accepted, nil
+	return results, accepted, observed, nil
 }
 
 func (r *Runner) sampleAcceptedMask(targetDist, draftDist sampler.Distribution, draftTokens *mlx.Array) *mlx.Array {
@@ -556,17 +522,4 @@ func draftResults(ids []int) []sampler.Result {
 		results[i] = sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
 	}
 	return results
-}
-
-func tokenInput(token *mlx.Array) *mlx.Array {
-	switch token.NumDims() {
-	case 0:
-		return token.Reshape(1, 1)
-	case 1:
-		return token.ExpandDims(-1)
-	case 2:
-		return token
-	default:
-		panic(fmt.Sprintf("token must be rank 0, 1, or 2, got rank %d", token.NumDims()))
-	}
 }

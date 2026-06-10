@@ -5,37 +5,13 @@ import (
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
-	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
-)
-
-const (
-	mtpDefaultInitialDraftTokens = 4
-	mtpDefaultMaxDraftTokens     = 16
 )
 
 // mtpPendingFlushTokens caps how many committed look-ahead tokens wait in the
 // pending buffer before a batched flush, bounding the pinned hidden states
 // regardless of what else triggers a flush.
 const mtpPendingFlushTokens = 32
-
-func (r *Runner) mtpDefaults(sample bool) base.MTPDefaults {
-	defaults := base.MTPDefaults{
-		InitialDraftTokens: mtpDefaultInitialDraftTokens,
-		MaxDraftTokens:     mtpDefaultMaxDraftTokens,
-		Enabled:            true,
-	}
-	if p, ok := r.Model.(base.MTPDefaultsProvider); ok {
-		defaults = p.MTPDraftDefaults(sample)
-	}
-	if defaults.InitialDraftTokens <= 0 {
-		defaults.InitialDraftTokens = mtpDefaultInitialDraftTokens
-	}
-	if defaults.MaxDraftTokens <= 0 {
-		defaults.MaxDraftTokens = mtpDefaultMaxDraftTokens
-	}
-	return defaults
-}
 
 // mtpDrafter drafts with a model's multi-token-prediction head, fed through
 // the committed-stream reports. The draft KV pairs each slot S with the

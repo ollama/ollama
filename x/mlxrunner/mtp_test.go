@@ -268,12 +268,14 @@ func TestAcceptMTPDraftsGreedyAcceptAll(t *testing.T) {
 
 	spec := testSpeculationSession(r, caches)
 	current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
-	results, accepted, err := spec.accept(&position, current, candidates)
+	unpin := pinAcceptInputs(current, candidates)
+	defer unpin()
+	results, accepted, observed, err := spec.accept(&position, current, candidates)
 	if err != nil {
 		t.Fatalf("accept: %v", err)
 	}
-	if accepted != 3 {
-		t.Fatalf("accepted = %d, want 3", accepted)
+	if accepted != 3 || observed != 3 {
+		t.Fatalf("accepted = %d, observed = %d, want 3 and 3", accepted, observed)
 	}
 	// The run is the accepted drafts followed by the bonus token (5).
 	if got := resultIDs(results); !slices.Equal(got, []int{2, 3, 4, 5}) {
@@ -302,12 +304,14 @@ func TestAcceptMTPDraftsGreedyMismatch(t *testing.T) {
 
 	spec := testSpeculationSession(r, caches)
 	current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
-	results, accepted, err := spec.accept(&position, current, candidates)
+	unpin := pinAcceptInputs(current, candidates)
+	defer unpin()
+	results, accepted, observed, err := spec.accept(&position, current, candidates)
 	if err != nil {
 		t.Fatalf("accept: %v", err)
 	}
-	if accepted != 1 {
-		t.Fatalf("accepted = %d, want 1", accepted)
+	if accepted != 1 || observed != 2 {
+		t.Fatalf("accepted = %d, observed = %d, want 1 and 2 (a rejection judges the full round)", accepted, observed)
 	}
 	// The run is the one accepted draft (2) followed by the target's own
 	// prediction at the rejection point (3).
@@ -338,12 +342,14 @@ func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 
 	spec := testSpeculationSession(r, caches)
 	current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
-	results, accepted, err := spec.accept(&position, current, candidates)
+	unpin := pinAcceptInputs(current, candidates)
+	defer unpin()
+	results, accepted, observed, err := spec.accept(&position, current, candidates)
 	if err != nil {
 		t.Fatalf("accept: %v", err)
 	}
-	if accepted != 2 {
-		t.Fatalf("accepted = %d, want 2 (token + EOS)", accepted)
+	if accepted != 2 || observed != 2 {
+		t.Fatalf("accepted = %d, observed = %d, want 2 and 2 (token + EOS)", accepted, observed)
 	}
 	// The EOS ends generation, so the run is exactly the accepted tokens
 	// with no bonus appended.
@@ -403,20 +409,21 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 		t.Fatalf("session outputs = %v, want %v", session.outputs, got)
 	}
 
-	// The target writes the caches contiguously: the seed token at offset 1,
-	// then one fused forward validating the current token and the 4 drafts
-	// together at offset 2.
-	wantForwards := []forwardCall{{offset: 1, n: 1}, {offset: 2, n: 5}}
+	// The unprimed drafter parks the first call, so the seed token and the
+	// stretch's in-flight successor decode as pipelined plain forwards; the
+	// resumed round then validates the current token and the 4 drafts in one
+	// fused forward at offset 3.
+	wantForwards := []forwardCall{{offset: 1, n: 1}, {offset: 2, n: 1}, {offset: 3, n: 5}}
 	model := r.Model.(*fakeMTPModel)
 	if !slices.Equal(model.forwards, wantForwards) {
 		t.Fatalf("target forwards = %v, want %v", model.forwards, wantForwards)
 	}
 
 	// Single-position drafting anchors every Draft call in a round at the
-	// last committed position (offset 1 — the current token at offset 2 is
-	// not yet validated), while the extended token advances along the
-	// proposed chain.
-	wantDraft := []draftCall{{1, 2}, {1, 3}, {1, 4}, {1, eos}}
+	// last committed position (offset 2 — the current token at offset 3 is
+	// not yet validated), while the input token advances along the proposed
+	// chain.
+	wantDraft := []draftCall{{2, 3}, {2, 4}, {2, eos}, {2, 0}}
 	if !slices.Equal(draft.calls, wantDraft) {
 		t.Fatalf("draft calls = %v, want %v", draft.calls, wantDraft)
 	}
@@ -445,8 +452,9 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 	}
 	spec := r.spec.open(req, caches)
 	if spec == nil || !spec.enabled {
-		t.Fatalf("newSpeculationSession rejected a sampled request")
+		t.Fatalf("open rejected a sampled request")
 	}
+	pinDraftLimit(spec, 4)
 	d := spec.decoder([]int32{1}, position)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -483,10 +491,11 @@ func TestRunMTPDecodeWarmDrafter(t *testing.T) {
 	req := Request{
 		Responses:         ch,
 		Tokens:            []int32{0},
-		CompletionRequest: CompletionRequest{Options: api.Options{Runner: api.Runner{DraftNumPredict: 4}, NumPredict: 20}},
+		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 		SamplerOpts:       sampler.Options{},
 	}
 	spec := r.spec.open(req, caches)
+	pinDraftLimit(spec, 4)
 	// The prefill chunk's committed report: token 0 at slot 0 with its
 	// hidden row, leaving the drafter ready to propose from slot 1.
 	spec.committed(mlx.FromValues([]int32{0}, 1, 1), oneHotLogits([]int32{1}), 0)
@@ -521,6 +530,65 @@ func TestRunMTPDecodeWarmDrafter(t *testing.T) {
 	wantDraft := []draftCall{{0, 1}, {0, 2}, {0, 3}, {0, 4}}
 	if !slices.Equal(draft.calls, wantDraft) {
 		t.Fatalf("draft calls = %v, want %v", draft.calls, wantDraft)
+	}
+}
+
+func TestRunMTPDecodeEOSCutLeavesPositionsUnjudged(t *testing.T) {
+	skipIfNoMLX(t)
+	// An accepted EOS inside the draft ends the round at a terminator, not a
+	// target rejection. The persisted acceptance model records outcomes only
+	// up to the EOS: the positions past it lie beyond where the round stopped,
+	// and folding them in as rejections would bias the depth controller
+	// shallow.
+	const eos int32 = 7
+	predict := map[int32]int32{1: 2, 2: 3, 3: eos, eos: 0}
+	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
+	r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict})
+
+	caches, _ := newMTPTestCaches(1)
+	session, ch := newMTPTestSession(caches)
+	position := 1
+
+	req := Request{
+		Responses:         ch,
+		Tokens:            []int32{0},
+		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+		SamplerOpts:       sampler.Options{},
+	}
+	spec := r.spec.open(req, caches)
+	if spec == nil || !spec.enabled {
+		t.Fatalf("want an enabled speculationSession with a depth controller, got %+v", spec)
+	}
+	// Force a four-token first round so the EOS (third draft) is interior;
+	// the controller still records the round's outcomes.
+	spec.limit = 4
+	spec.committed(mlx.FromValues([]int32{0}, 1, 1), oneHotLogits([]int32{1}), 0)
+
+	d := spec.decoder([]int32{1}, position)
+	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d.close()
+
+	content, _ := collectResponses(ch)
+	if content != "23" {
+		t.Fatalf("content = %q, want %q", content, "23")
+	}
+	if got := []int32{2, 3, eos}; !slices.Equal(session.outputs, got) {
+		t.Fatalf("session outputs = %v, want %v", session.outputs, got)
+	}
+
+	// The round drafted {2, 3, eos, 0} and the target accepted through the
+	// EOS at position 3; the fourth draft was cut, not judged. Positions
+	// 1..3 record accepts and position 4 is never grown.
+	acc := r.spec.depth.acc
+	if len(acc.seen) != 4 {
+		t.Fatalf("acceptance model grew to %d positions, want 4 (the cut position stays unjudged)", len(acc.seen))
+	}
+	for i := 1; i <= 3; i++ {
+		if acc.seen[i] != 1 || acc.rate[i] != 1 {
+			t.Fatalf("position %d: seen = %d, rate = %v, want 1 and 1", i, acc.seen[i], acc.rate[i])
+		}
 	}
 }
 
@@ -625,24 +693,36 @@ func TestDecodeCancelledMidStream(t *testing.T) {
 	}
 }
 
+// pinDraftLimit fixes an engine's draft length for the whole run: decode
+// tests assert engine mechanics at known widths, so they disable adaptive
+// depth rather than steer what it learns.
+func pinDraftLimit(spec *speculationSession, limit int) {
+	spec.enabled = false
+	spec.limit = limit
+}
+
 // testDecoder builds the decoder TextGenerationPipeline would construct for
-// this request; tests close it explicitly so close-time effects are visible
-// to assertions.
+// this request, with the draft length pinned to a fixed width; tests close it
+// explicitly so close-time effects are visible to assertions.
 func testDecoder(r *Runner, req Request, caches []cache.Cache, seed []int32, position int) decoder {
 	if spec := r.spec.open(req, caches); spec != nil {
+		if spec.enabled {
+			pinDraftLimit(spec, 4)
+		}
 		return spec.decoder(seed, position)
 	}
-	return r.pipelinedDecoder(nil, caches, seed, position)
+	return r.pipelinedDecoder(nil, caches, mlx.FromValues(seed, 1, len(seed)), position)
 }
 
 func TestDecodeKVDraft(t *testing.T) {
 	skipIfNoMLX(t)
 	// A draft with its own KV cache mirroring the target chain
 	// 1->2->3->4->5->6->EOS.
-	// The decode seed catch-up writes the draft pair for the prompt token,
-	// the first proposal comes from the catch-up's held logits (no draft
-	// call), speculative entries are written at advancing slots, and the
-	// post-accept rebuild rewrites the committed range from target hiddens.
+	// The unprimed drafter parks the first call, whose pipelined tokens pair
+	// the prompt token and the first generated token; the first proposal
+	// comes from the catch-up's held logits (no draft call), speculative
+	// entries are written at advancing slots, and the post-accept rebuild
+	// rewrites the committed range from target hiddens.
 	const eos int32 = 7
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: eos, eos: 0}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
@@ -663,6 +743,7 @@ func TestDecodeKVDraft(t *testing.T) {
 	if spec == nil || !spec.enabled || len(spec.spec.targets) != 1 {
 		t.Fatalf("speculation engine not built around the draft caches")
 	}
+	pinDraftLimit(spec, 4)
 	defer spec.close()
 	d := spec.decoder([]int32{1}, position)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
@@ -693,15 +774,17 @@ func TestDecodeKVDraft(t *testing.T) {
 	// Every committed draft slot S fuses look-ahead token x_{S+1} with the
 	// target hidden at S (whose hot index equals the look-ahead id on this
 	// mirrored chain); speculative steps fuse the head's own projections
-	// (-1), seeded by the catch-up flush's held projection. The first
-	// proposal of the round consumes the catch-up's held logits, so the
-	// four-token draft makes only three head calls before the rebuild.
+	// (-1), seeded by the catch-up flush's held projection. The unprimed
+	// drafter parks the first call, so two pipelined tokens precede the
+	// round and their pairs flush together at the first proposal, which
+	// consumes the catch-up's held logits — the four-token draft makes only
+	// three head calls before the rebuild.
 	wantExtends := []extendCall{
-		{offset: 0, ids: []int32{2}, hiddens: []int32{2}},                             // frontier pair flushed at the first proposal
-		{offset: 1, ids: []int32{3}, hiddens: []int32{-1}},                            // speculative step 2 (held projection)
-		{offset: 2, ids: []int32{4}, hiddens: []int32{-1}},                            // speculative step 3 (projection)
-		{offset: 3, ids: []int32{5}, hiddens: []int32{-1}},                            // speculative step 4 (projection)
-		{offset: 1, ids: []int32{3, 4, 5, 6, eos}, hiddens: []int32{3, 4, 5, 6, eos}}, // committed pairs from the validated run + finish
+		{offset: 0, ids: []int32{2, 3}, hiddens: []int32{2, 3}},                 // parked pairs flushed at the first proposal
+		{offset: 2, ids: []int32{4}, hiddens: []int32{-1}},                      // speculative step 2 (held projection)
+		{offset: 3, ids: []int32{5}, hiddens: []int32{-1}},                      // speculative step 3 (projection)
+		{offset: 4, ids: []int32{6}, hiddens: []int32{-1}},                      // speculative step 4 (projection)
+		{offset: 2, ids: []int32{4, 5, 6, eos}, hiddens: []int32{4, 5, 6, eos}}, // committed pairs from the validated run + finish
 	}
 	if !reflect.DeepEqual(draft.extends, wantExtends) {
 		t.Fatalf("draft extends = %+v, want %+v", draft.extends, wantExtends)
@@ -741,7 +824,7 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 		SamplerOpts:       sampler.Options{},
 	}
 	spec := r.spec.open(req, caches)
-	spec.limit = 4
+	pinDraftLimit(spec, 4)
 	defer spec.close()
 	d := spec.decoder([]int32{1}, position)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
@@ -787,10 +870,11 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 func TestDecodeMaintainsDraftCacheWithoutDrafting(t *testing.T) {
 	skipIfNoMLX(t)
 	// A request that cannot speculate (logprobs) on a model whose draft has
-	// its own KV cache still maintains it: the pipelined decoder
-	// reports each forwarded token, the pairs wait in the pending list, and
-	// one batched extend at close — its final pair completed by the decoder's
-	// discarded in-flight sample — leaves the draft level with the target.
+	// its own KV cache still maintains it: the speculationSession permanently parks,
+	// so the inner pipelined decoder reports each forwarded token, the pairs
+	// wait in the pending list, and one batched extend at close — its final
+	// pair completed by the decoder's discarded in-flight sample — leaves the
+	// draft level with the target.
 	const eos int32 = 7
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: eos, eos: 0}
 	opts := sampler.Options{Logprobs: true}
@@ -810,7 +894,7 @@ func TestDecodeMaintainsDraftCacheWithoutDrafting(t *testing.T) {
 	}
 	spec := r.spec.open(req, caches)
 	if spec == nil || spec.enabled {
-		t.Fatalf("want a maintain-only speculationSession, got %+v", spec)
+		t.Fatalf("want a permanent-park speculationSession, got %+v", spec)
 	}
 	d := spec.decoder([]int32{1}, position)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
@@ -927,6 +1011,94 @@ func TestCommittedRunBatchesPastFlushCap(t *testing.T) {
 	}
 }
 
+func TestDecodeParkedDraftResume(t *testing.T) {
+	skipIfNoMLX(t)
+	// Leaving a parked stretch: the inner decoder's in-flight sample is
+	// emitted without any new forward, becomes the round's current, and the
+	// next call drafts from it — with the draft pairs contiguous across the
+	// boundary.
+	const eos int32 = 7
+	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: eos, eos: 0}
+	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
+	draft := &fakeKVDraft{predict: predict}
+	r.spec = newSpeculation(r, draft)
+
+	caches, _ := newMTPTestCaches(2)
+	req := Request{
+		Tokens:            []int32{1},
+		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+		SamplerOpts:       sampler.Options{},
+	}
+	spec := r.spec.open(req, caches)
+	if spec == nil || !spec.enabled {
+		t.Fatalf("want a drafting speculationSession, got %+v", spec)
+	}
+	pinDraftLimit(spec, 0)
+	d := spec.decoder([]int32{1}, 0).(*speculativeDecoder)
+
+	// Two parked calls arrive pipelined, one token each.
+	for _, want := range []int{2, 3} {
+		results, err := d.next(20)
+		if err != nil {
+			t.Fatalf("parked next: %v", err)
+		}
+		if got := resultIDs(results); !slices.Equal(got, []int{want}) {
+			t.Fatalf("parked results = %v, want [%d]", got, want)
+		}
+	}
+
+	// The controller picks a positive depth: the next call hands back the
+	// in-flight sample without dispatching another forward.
+	model := r.Model.(*fakeMTPModel)
+	forwards := len(model.forwards)
+	spec.limit = 2
+	results, err := d.next(20)
+	if err != nil {
+		t.Fatalf("resume next: %v", err)
+	}
+	if got := resultIDs(results); !slices.Equal(got, []int{4}) {
+		t.Fatalf("resume results = %v, want [4]", got)
+	}
+	if len(model.forwards) != forwards {
+		t.Fatalf("resume dispatched a forward: %v", model.forwards[forwards:])
+	}
+
+	// The following call runs a fused round drafting from the resumed
+	// current token.
+	results, err = d.next(20)
+	if err != nil {
+		t.Fatalf("round next: %v", err)
+	}
+	if got := resultIDs(results); !slices.Equal(got, []int{5, 6, int(eos)}) {
+		t.Fatalf("round results = %v, want [5 6 %d]", got, eos)
+	}
+	wantForwards := []forwardCall{{0, 1}, {1, 1}, {2, 1}, {3, 3}}
+	if !slices.Equal(model.forwards, wantForwards) {
+		t.Fatalf("target forwards = %v, want %v", model.forwards, wantForwards)
+	}
+
+	// The stretch's reports, the resume pair, and the round's validated run
+	// extend the draft cache contiguously: the catch-up flush at the round's
+	// propose, its speculative entry, and the rebuild from target hiddens at
+	// close.
+	d.close()
+	spec.close()
+	wantExtends := []extendCall{
+		{offset: 0, ids: []int32{2, 3, 4}, hiddens: []int32{2, 3, 4}},
+		{offset: 3, ids: []int32{5}, hiddens: []int32{-1}},
+		{offset: 3, ids: []int32{5, 6, eos}, hiddens: []int32{5, 6, eos}},
+	}
+	if !reflect.DeepEqual(draft.extends, wantExtends) {
+		t.Fatalf("draft extends = %+v, want %+v", draft.extends, wantExtends)
+	}
+	if got, want := caches[0].Offset(), 6; got != want {
+		t.Fatalf("target offset = %d, want %d (EOS never forwarded)", got, want)
+	}
+	if got, want := caches[1].Offset(), 6; got != want {
+		t.Fatalf("draft cache offset = %d, want %d (lockstep with target)", got, want)
+	}
+}
+
 // newMTPTestCaches returns n rewindable fake caches sharing one snapshot
 // tracker, matching the cache.Cache the speculation helpers drive.
 func newMTPTestCaches(n int) ([]cache.Cache, *snapshotTracker) {
@@ -982,4 +1154,13 @@ func scriptedCandidates(r *Runner, tokens []int32) *draftCandidates {
 	d := &mtpDrafter{spec: s}
 	d.committed(mlx.FromValues([]int32{0}, 1, 1), mlx.Zeros(mlx.DTypeFloat32, 1, 1, mtpTestVocab), 0)
 	return d.propose(mlx.FromValues([]int32{0}, 1), len(tokens))
+}
+
+// pinAcceptInputs pins the arrays accept's caller must keep alive across
+// accept's internal sweep — current and the candidate tokens — as the decoder
+// and next do in the live engine. It returns the matching unpin.
+func pinAcceptInputs(current sampler.Result, candidates *draftCandidates) func() {
+	arrays := append(current.Arrays(), candidates.tokens)
+	mlx.Pin(arrays...)
+	return func() { mlx.Unpin(arrays...) }
 }

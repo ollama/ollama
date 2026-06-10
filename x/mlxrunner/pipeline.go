@@ -92,16 +92,15 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	if spec != nil {
 		d = spec.decoder(seed, position)
 	} else {
-		d = r.pipelinedDecoder(nil, caches, seed, position)
+		d = r.pipelinedDecoder(nil, caches, mlx.FromValues(seed, 1, len(seed)), position)
 	}
 	defer d.close()
 	return r.decode(ctx, request, session, d, promptEval)
 }
 
-// prefill evaluates the prompt's unprocessed tokens in chunks, leaving
-// one token for decode to seed from, and schedules the prompt's periodic
-// snapshots. It returns the seed tokens, the resume position, and the
-// prompt-evaluation duration.
+// prefill evaluates the prompt in chunks, leaving one token for decode to
+// seed from, and schedules the prompt's periodic snapshots. It returns the
+// seed tokens, the resume position, and the prompt-evaluation duration.
 func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession) ([]int32, int, time.Duration, error) {
 	start := time.Now()
 	inputs := session.inputs
@@ -280,9 +279,9 @@ type pipelinedDecoder struct {
 	emitted  sampler.Result // last call's result, pinned until the next call
 }
 
-func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache, seed []int32, position int) *pipelinedDecoder {
+func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache, seed *mlx.Array, position int) *pipelinedDecoder {
 	t := &pipelinedDecoder{r: r, spec: spec, caches: caches, position: position}
-	t.sample = t.dispatch(mlx.FromValues(seed, 1, len(seed)))
+	t.sample = t.dispatch(seed)
 	return t
 }
 
@@ -311,16 +310,21 @@ func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
 	return []sampler.Result{t.emitted}, nil
 }
 
+// detach ends a parked stretch: it hands the in-flight sample (sampled but
+// never forwarded) and the resume position to the caller, releasing the
+// decoder's emitted pin but not settling the drafter. The caller drafts from
+// the sample next, and that round completes the still-open frontier pair.
+func (t *pipelinedDecoder) detach() (sampler.Result, int) {
+	mlx.Unpin(t.emitted.Arrays()...)
+	return t.sample, t.position
+}
+
 func (t *pipelinedDecoder) close() {
-	// The in-flight sample's forward was never dispatched; its report lets
-	// the drafter settle level with the caches' resting offset.
+	// The in-flight sample's forward was never dispatched; its report settles
+	// the drafter level with the caches' resting offset.
 	t.spec.finish(t.sample.Token)
 	mlx.Unpin(t.emitted.Arrays()...)
 	mlx.Unpin(t.sample.Arrays()...)
-}
-
-func lastLogits(logits *mlx.Array) *mlx.Array {
-	return logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 }
 
 // detokenizer serializes sampled tokens into response chunks, holding bytes
