@@ -66,6 +66,14 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 				// contained <tool_call> tags as plain text). Fall back to
 				// treating it as regular content so the server can return a
 				// usable response instead of an HTTP 500 error.
+				//
+				// This fallback is intentional and also covers markup that is
+				// structurally valid XML but unusable as a tool call here (for
+				// example when it references a tool that was never registered).
+				// In those cases the assistant text will contain the literal
+				// <tool_call>...</tool_call> markup, mirroring exactly what the
+				// model produced; clients must not treat that substring as a
+				// parsed tool call.
 				slog.Warn("qwen tool call parsing failed, returning as content", "error", err)
 				sb.WriteString(toolOpenTag)
 				sb.WriteString(event.raw)
