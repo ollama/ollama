@@ -15,4 +15,6 @@ __debug_bin*
 llama/build
 llama/vendor
 /ollama
+integration/ollama
 integration/testdata/models/
+*logloom*.json

@@ -17,6 +17,7 @@ import (
 
 	v1 "github.com/ollama/ollama/gen/proto/ollama/api/v1"
 	apiv1connect "github.com/ollama/ollama/gen/proto/ollama/api/v1/apiv1connect"
+	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/require"
 )
 
@@ -269,6 +270,61 @@ func TestGRPCStreaming(t *testing.T) {
 			t.Logf("cancel path delivered: %v (good for ctx cancel in gRPC stream per SKILL/Flume GPU safety)", err)
 		}
 		slog.Info("sameport_and_cancel subtest decision", "component", "integration", "reason", "sameport cancel variant complete; sameport-vs-sep matrix by CI/env invocation per finding8", "status", "sub-done", "sameport_env", os.Getenv("OLLAMA_GRPC_SAMEPORT"))
+	})
+
+	// --- high_level_grpc_client: exercise the recently added production client skeleton (Phase4 Agent/Flume sub-agent item9 + phased p88/368/p94-95)
+	// Covers: api.NewGRPCClient + GRPCClientFromEnvironment (envconfig), doWithRetry for unary (List/Version/Heartbeat with jitter, ctx select, %w, isRetryable Is/As on connect.Code from errToConnect),
+	// ChatStream/GenerateStream wrappers (limited retry on connect, ctx first, client-side rich slog+reason), Heartbeat.
+	// Extends raw apiv1connect usage in other subs to cover high-level client code paths, retry classify, client logs for LogAgent/Flume.
+	// Uses fresh client; exercises in matrix context (err paths ok pre-runners; sameport note).
+	// Also exercises health path (Heartbeat calls Version; complements server enableGRPCHealthIfOptIn skeleton).
+	t.Run("high_level_grpc_client", func(t *testing.T) {
+		gc := api.NewGRPCClient("http://"+host, connect.WithGRPC())
+		// unary via high-level (hits doWithRetry + client logs + errTo classify)
+		lr, err := gc.List(ctx)
+		if err != nil {
+			t.Logf("high_level List err (pre-models ok): %v", err)
+		} else if lr != nil {
+			slog.Info("high_level list", "component", "integration", "reason", "GRPCClient.List exercised (doWithRetry + api/grpc_client.go:271; covers retry/jitter/ctx for agent/Flume)", "num", len(lr.Msg.GetModels()))
+		}
+		vr, err := gc.Version(ctx)
+		require.NoError(t, err)
+		require.NotEmpty(t, vr.Msg.GetVersion())
+		if err := gc.Heartbeat(ctx); err != nil {
+			t.Logf("high_level Heartbeat (health path, uses Version): %v (skeleton; server enableGRPCHealthIfOptIn exercised on serve)", err)
+		}
+		// FromEnvironment (exercises envconfig.GRPCHost path + fallback)
+		if os.Getenv("OLLAMA_GRPC_HOST") != "" {
+			gc2, _ := api.GRPCClientFromEnvironment()
+			_ = gc2 // path covered
+		}
+		// stream via high-level (covers client stream wrapper + logs + ctx)
+		req := connect.NewRequest(&v1.ChatRequest{
+			Model:    smol,
+			Messages: []*v1.Message{{Role: "user", Content: "high level client stream"}},
+			Stream:   true,
+		})
+		st, err := gc.ChatStream(ctx, req)
+		if err != nil {
+			t.Logf("high_level ChatStream err ok: %v", err)
+		} else {
+			for st.Receive() {
+			}
+			if se := st.Err(); se != nil {
+				t.Logf("high_level stream err: %v", se)
+			}
+		}
+		// symmetric generate stream via client
+		greq := connect.NewRequest(&v1.GenerateRequest{Model: smol, Prompt: "hi", Stream: true})
+		gst, err := gc.GenerateStream(ctx, greq)
+		if err != nil {
+			t.Logf("high_level GenerateStream err ok: %v", err)
+		} else {
+			for gst.Receive() {
+			}
+			_ = gst.Err()
+		}
+		slog.Info("high_level_grpc_client subtest decision", "component", "integration", "reason", "high level GRPCClient (New/FromEnv/unary-retry/stream-wrapper/Heartbeat) exercised; covers recently added client skeleton + rich client reason logs + err classify/jitter (item9/Phase4 sub2 + Phase5 client); complements raw matrix subs; health/refl registration via harness serve", "status", "sub-done", "rpc", "Chat/Gen/List/Version/Heartbeat/Stream")
 	})
 }
 

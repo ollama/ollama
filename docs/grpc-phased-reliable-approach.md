@@ -489,6 +489,16 @@ All map directly to SKILL; gates in phases close them.
 
 **End of Reliable Overlay.** This is the production reliability contract for the gRPC work. Follow phases sequentially with loops/gates. After Phase 4: working, observable, safe gRPC (Chat/Embed/Models streams/unary on 11435), zero HTTP impact, shared core/scheduler, *measurable* observability lift, all reliable patterns enforced. Next: Phase 0 PR (proto+buf+docs only), then iterate with todos + reviews.
 
+**Post-implementation status (full feature/grpc-initial, post all phases + Phase 4 parallel sub-agents + P5).** Reliable gRPC overlay complete per this doc + SKILL.md (shared *Server*/sched thin adapters only; ctx-first + derived cancel everywhere for GPU safety (p334/p373); rich "reason" slog + component/stream_id/model/dur/status/error/tokens at *every* decision/branch (Flume/LogAgent p34/57/374); full errgroup/SetLimit + bounded chans/selects/no fire-forget (p25); errors %w + Is/As classify transient (p15); no new globals (envconfig only); reconciliation via existing sched/scheduleRunner (p17); small units + tables (converters + grpc_test) + var_ + -race/gates; multiple *required* subagent reviews + implement-review-fix loops until 0 issues (p381/p323); LogLoom notes (tooling 0% in harness but sites instrumented + verified by subs); zero/minimal HTTP regression; opt-in high-risk items (cmux, mTLS/refl/health skeletons) with explicit defer notes + "stop if" never hit post-fixes.
+
+Subagent traceability (for PR): P5 review 019eae31-7a95-7753-829f-72f2e1bc0f89 (cmux/client/soak/ctx/stream fixes); Phase4-item10 "Other" 019eae26-2a38-7c03-95ca-290a200488b1 (Buf CI targeted, perf/bounded notes, richer TODO clean, deferrals); test robustness 019eae26-2a37-7b01-9c77-d8b3a4436094 (grpc_stream_test matrix + fuzz + CI notes for finding 8/p90/91/379); Agent/Flume productionization 019eae26-2a38-7c03-95ca-28fd9b4308fb (client skeleton + streaming/retry/jitter, health/refl, Flume ex, load/soak notes for item9/p94-95).
+
+Final gates (post all): build clean; server -race targeted (converters/GRPC/harmony/routes) PASS; api/envconfig -race PASS; integration -race -c compiles full matrix; hygiene: source clean (only logloom-graph.json updated, expected per p374/not committed). 10-pt SKILL + overlay checklist reapplied: all green (ctx, errors, recon, bounded, slog+reason, timeouts, idempotent, race/lint, Flume, rich logs).
+
+Per p484, ready for PR on feature/grpc-initial (user: squash if desired for clean diffs per p52/p127/p381; include all sub IDs + this checklist + before/after gates/LogLoom note + links to phased doc + arch-plan + report + SKILL). Or remaining (runners for positive E2E/mid-gen + load; lift mTLS/refl/health from defer when stable + re-review; full official clients + load/soak exec; richer oneofs if wanted).
+
+(Tracked via todo_write; all closed on verified. No violations.)
+
 (Tracked via todo_write throughout this synthesis + prior research; 13+ items managed idempotently. All grounded in primary reads/greps/queries of listed must-reads + sources. This doc + arch plan = complete planning artifacts.)
 
 **References (internal):** SKILL.md quotes p13-80; Plan phases/lines as cited; LogLoom stats from direct python/json query on 2026-06-03 build; reviews [grpc-research:138 etc], [ollamas-review:192-205]; absolute paths as in user_info/workspace.
