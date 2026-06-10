@@ -11,7 +11,7 @@ message EmbedRequest {
   repeated string input = 2; // texts to embed (or single via api compat)
   map<string, string> options = 3;
   string keep_alive = 4;
-  // TODO: truncate, etc.
+  bool truncate = 5;
 }
 
 message EmbedResponse {

@@ -48,6 +48,8 @@ require (
 )
 
 require (
+	connectrpc.com/grpchealth v1.4.0 // indirect
+	connectrpc.com/grpcreflect v1.3.0 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

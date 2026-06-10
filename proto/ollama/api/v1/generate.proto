@@ -20,7 +20,10 @@ message GenerateRequest {
   map<string, string> options = 9;
   string keep_alive = 10;
   repeated bytes images = 11;
-  // TODO: format, think, tools, etc.
+  bytes format = 12;        // json schema or "json"
+  bool think = 13;
+  bool truncate = 14;
+  bool shift = 15;
 }
 
 message GenerateResponse {
@@ -32,7 +35,8 @@ message GenerateResponse {
   int64 prompt_eval_count = 6;
   int64 eval_count = 7;
   google.protobuf.Timestamp created_at = 8;
-  // TODO: usage, thinking (for some models), etc.
+  Usage usage = 9;
+  string thinking = 10;
 }
 
 service GenerateService {

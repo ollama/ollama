@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"connectrpc.com/grpchealth"
+	"connectrpc.com/grpcreflect"
 	"connectrpc.com/otelconnect"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
@@ -24,6 +26,7 @@ import (
 	apiv1connect "github.com/ollama/ollama/gen/proto/ollama/api/v1/apiv1connect"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -91,6 +94,21 @@ func (h *chatHandler) Chat(ctx context.Context, req *connect.Request[v1.ChatRequ
 		final.Message.ToolCalls = toolCalls
 	}
 	slog.Info("gRPC handler completed", "component", "grpc", "rpc", "ChatService/Chat", "model", apiReq.Model, "stream_id", streamID, "status", "ok", "content_len", content.Len(), "reason", "unary success; accumulated content merged into final response")
+	// Phase 2b: Add token-level metrics to OTEL span for observability (aligns with Triton/vLLM patterns).
+	if final.PromptEvalDuration > 0 {
+		span.SetAttributes(attribute.Int64("ollama.prompt_eval_count", int64(final.PromptEvalCount)))
+		span.SetAttributes(attribute.Int64("ollama.eval_count", int64(final.EvalCount)))
+		span.SetAttributes(attribute.Int64("ollama.ttft_ms", final.PromptEvalDuration.Milliseconds()))
+		if final.EvalDuration > 0 {
+			span.SetAttributes(attribute.Float64("ollama.tps", float64(final.EvalCount)/final.EvalDuration.Seconds()))
+		}
+		if final.TotalDuration > 0 {
+			span.SetAttributes(attribute.Int64("ollama.total_duration_ms", final.TotalDuration.Milliseconds()))
+		}
+		if final.LoadDuration > 0 {
+			span.SetAttributes(attribute.Int64("ollama.load_duration_ms", final.LoadDuration.Milliseconds()))
+		}
+	}
 	return connect.NewResponse(convertToPBChat(&final)), nil
 }
 
@@ -192,6 +210,21 @@ func (h *generateHandler) Generate(ctx context.Context, req *connect.Request[v1.
 	// Merge accumulated response text into the final Done response.
 	final.Response = response.String()
 	slog.Info("gRPC handler completed", "component", "grpc", "rpc", "GenerateService/Generate", "model", apiReq.Model, "stream_id", streamID, "status", "ok", "response_len", response.Len(), "reason", "unary success; accumulated response merged into final")
+	// Phase 2b: Add token-level metrics to OTEL span for observability.
+	if final.PromptEvalDuration > 0 {
+		span.SetAttributes(attribute.Int64("ollama.prompt_eval_count", int64(final.PromptEvalCount)))
+		span.SetAttributes(attribute.Int64("ollama.eval_count", int64(final.EvalCount)))
+		span.SetAttributes(attribute.Int64("ollama.ttft_ms", final.PromptEvalDuration.Milliseconds()))
+		if final.EvalDuration > 0 {
+			span.SetAttributes(attribute.Float64("ollama.tps", float64(final.EvalCount)/final.EvalDuration.Seconds()))
+		}
+		if final.TotalDuration > 0 {
+			span.SetAttributes(attribute.Int64("ollama.total_duration_ms", final.TotalDuration.Milliseconds()))
+		}
+		if final.LoadDuration > 0 {
+			span.SetAttributes(attribute.Int64("ollama.load_duration_ms", final.LoadDuration.Milliseconds()))
+		}
+	}
 	return connect.NewResponse(convertToPBGenerate(&final)), nil
 }
 
@@ -706,7 +739,11 @@ func convertToAPIGenerate(pb *v1.GenerateRequest) api.GenerateRequest {
 		Options:   convertMapStringToAny(pb.Options),
 		KeepAlive: parseKeepAlive(pb.KeepAlive),
 		Images:    convertBytesToImageData(pb.Images),
-		// Format/think/tools deferred to gen proto enrichment; sampling in options
+		Format:    json.RawMessage(pb.Format),
+		Think:     parseThink(pb.Think),
+		Truncate:  boolPtr(pb.Truncate),
+		Shift:     boolPtr(pb.Shift),
+		// tools etc via other converters; sampling in options
 	}
 }
 
@@ -734,7 +771,7 @@ func convertToPBGenerate(r *api.GenerateResponse) *v1.GenerateResponse {
 	for i, c := range r.Context {
 		ctx32[i] = int32(c)
 	}
-	return &v1.GenerateResponse{
+	pb := &v1.GenerateResponse{
 		Model:           r.Model,
 		Response:        r.Response,
 		Done:            r.Done,
@@ -743,7 +780,14 @@ func convertToPBGenerate(r *api.GenerateResponse) *v1.GenerateResponse {
 		PromptEvalCount: int64(r.Metrics.PromptEvalCount),
 		EvalCount:       int64(r.Metrics.EvalCount),
 		CreatedAt:       timestamppb.New(r.CreatedAt),
+		Usage: &v1.Usage{
+			PromptTokens:     int64(r.Metrics.PromptEvalCount),
+			CompletionTokens: int64(r.Metrics.EvalCount),
+			TotalTokens:      int64(r.Metrics.PromptEvalCount + r.Metrics.EvalCount),
+		},
+		Thinking: r.Thinking,
 	}
+	return pb
 }
 
 func convertToAPIEmbed(pb *v1.EmbedRequest) api.EmbedRequest {
@@ -755,6 +799,7 @@ func convertToAPIEmbed(pb *v1.EmbedRequest) api.EmbedRequest {
 		Input:     pb.Input,
 		Options:   convertMapStringToAny(pb.Options),
 		KeepAlive: parseKeepAlive(pb.KeepAlive),
+		Truncate:  boolPtr(pb.Truncate),
 	}
 }
 
@@ -866,11 +911,19 @@ func errToConnect(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return connect.NewError(connect.CodeDeadlineExceeded, err)
+	}
+	if errors.Is(err, context.Canceled) {
 		return connect.NewError(connect.CodeCanceled, err)
 	}
 	if errors.Is(err, ErrMaxQueue) {
 		return connect.NewError(connect.CodeUnavailable, err)
+	}
+	// Phase 2a: OOM/GPU exhaustion → ResourceExhausted (distinct from Unavailable).
+	// Clients can use this to avoid retrying on permanent capacity issues.
+	if llm.IsOutOfMemory(err) {
+		return connect.NewError(connect.CodeResourceExhausted, err)
 	}
 	var statusErr api.StatusError
 	if errors.As(err, &statusErr) {
@@ -1103,53 +1156,40 @@ func authInterceptor() connect.Interceptor {
 	}
 }
 
-// enableGRPCReflectionIfOptIn is skeleton (per finding7 "Reflection for easier grpcurl in dev (opt-in)", report p57 grpcurl fail + "connect supports but not enabled",
-// phased p283 "Basic health/reflection (connect equiv or dual)", p369 grpcurl in verif gates, p323/379 "gated not default" + review subagent).
-// Called from registerServices (routes.go, same pkg) after New*Handler wiring + interceptors slice.
-// Gated by envconfig.GRPCReflection() (existing pattern from env edit, no new global/var).
-// Rich slog (component/reason/stream? n/a here/status/model n/a/rpc n/a) at the enable *decision* (Flume style).
-// When enabled (OLLAMA_GRPC_REFLECTION=1 not default): logs; pseudocode to register connect reflection handler (for grpcurl list/desc without protos).
-// Skeleton only: no new dep (would need go get connectrpc.com/grpcreflect or grpc/reflection + dual setup for full grpc compat); no change to mux/listener now.
-// mTLS note: reflection on dedicated port; pair with future stronger auth/mTLS per plan for agents.
-// Safe, idempotent, small, no I/O, no ctx (setup time).
+// enableGRPCReflectionIfOptIn registers the gRPC server reflection service,
+// enabling grpcurl/grpcui to discover services without .proto files.
+// Gated by OLLAMA_GRPC_REFLECTION=1 (not default — exposes API schema).
 func enableGRPCReflectionIfOptIn(mux *http.ServeMux, interceptors ...connect.Interceptor) {
 	if !envconfig.GRPCReflection() {
 		return
 	}
-	slog.Info("gRPC reflection opt-in enabled (skeleton)", "component", "grpc", "reason", "OLLAMA_GRPC_REFLECTION=1 (per finding7 + report p57 'no gRPC reflection' + phased p283/369); grpcurl --plaintext will now list services without --proto (connect reflection was supported but not enabled); gated not default (p323 high-scrutiny, p379 gates); mTLS/auth stronger in future plan for prod. Full: add dep + grpcreflect.NewStaticReflector(apiv1connect.*ServiceName...) + NewHandler + mux.Handle; see comments. Current no-op beyond this log (safe for local). DEFERRED per Phase 5 overlay p323 (high risk to existing + review subagent 019eae31-7a95-7753-829f-72f2e1bc0f89 findings); do not wire real until post-soak stable + re-review. Skeletons + permissive local satisfy MVP opt-in gates.", "status", "opt-in")
-	// Skeleton registration (future when dep added; keep pseudocode for review/plan):
-	// ref := grpcreflect.NewStaticReflector(
-	// 	apiv1connect.ChatServiceName,
-	// 	apiv1connect.GenerateServiceName,
-	// 	apiv1connect.EmbedServiceName,
-	// 	apiv1connect.ModelsServiceName,
-	// )
-	// path, h := grpcreflect.NewHandler(ref, connect.WithInterceptors(interceptors...))
-	// mux.Handle(path, h)
-	// slog.Debug("gRPC reflection handler wired", "component", "grpc", "reason", "grpcurl friendly now active")
+	reflector := grpcreflect.NewStaticReflector(
+		apiv1connect.ChatServiceName,
+		apiv1connect.GenerateServiceName,
+		apiv1connect.EmbedServiceName,
+		apiv1connect.ModelsServiceName,
+	)
+	// Mount both v1 and v1alpha for compatibility with older grpcurl versions
+	path1, handler1 := grpcreflect.NewHandlerV1(reflector, connect.WithInterceptors(interceptors...))
+	path1a, handler1a := grpcreflect.NewHandlerV1Alpha(reflector, connect.WithInterceptors(interceptors...))
+	mux.Handle(path1, handler1)
+	mux.Handle(path1a, handler1a)
+	slog.Info("gRPC reflection enabled", "component", "grpc", "services", 4, "status", "active")
 }
 
-// enableGRPCHealthIfOptIn adds basic gRPC health support skeleton (P3 complete).
-// Per docs/grpc-phased-reliable-approach.md p283 ("Basic health/reflection (connect equiv or dual)"),
-// p368 (recs for new code), p88/379 (gates + "stop if"), report sec4 item9 + p94-95 ("Agent/Flume productionization ( ... health/reflection/metrics)"), p66-75 (obs/errs for agents), p97 verdict (need clients+health for prod).
-// Complements enableGRPCReflectionIfOptIn (the P3 partial skeleton). Always active (cheap readiness, unlike opt-in refl for grpcurl/dev).
-// No new deps (pseudocode for grpchealth later; current no-op beyond log to satisfy minimal+no-dep scope).
-// Rich slog (component/reason/status/rpc/model n/a/stream_id n/a/dur n/a) at enable *decision* (Flume/LogAgentReasoning style; agents/Flume consume for pre-stream checks).
-// Ctx n/a (setup); errors n/a; idempotent/safe; small unit; no globals; no I/O. When wired full: HealthService Check returns SERVING for Chat/Generate/Embed/Models (respecting stream ctx for watch); integrates with otel/auth intcps.
-// Use by gRPC clients (future api/grpc_client.go health check) + k8s/grpc probes before agent concurrency/load.
-// Called from registerServices (routes.go) like refl.
+// enableGRPCHealthIfOptIn registers the gRPC health check service.
+// Always active (cheap readiness for k8s probes, load balancers, and agent health checks).
+// Reports SERVING for all 4 inference/admin services.
 func enableGRPCHealthIfOptIn(mux *http.ServeMux, interceptors ...connect.Interceptor) {
-	slog.Info("gRPC health skeleton active", "component", "grpc", "reason", "basic health per P3 phased p283/368 + report item9 (health/refl/metrics for agent/Flume prod + load/soak under concurrency); complements refl opt-in (p57 grpcurl); no gate (readiness default for prod agents); no dep (pseudocode only); status=skeleton; mTLS/auth stronger future per plan. DEFERRED per Phase 5 overlay p323 (high risk + subagent 019eae31-7a95-7753-829f-72f2e1bc0f89 Critical on skeletons); explicit defer for soak/review cycle; current always-log + cheap readiness satisfies minimal gates for opt-in (no behavior change).", "status", "skeleton")
-	// Full impl (defer dep add per "no new deps if possible" + SKILL minimal):
-	// checker := grpchealth.NewStaticChecker(
-	//	apiv1connect.ChatServiceName,
-	//	apiv1connect.GenerateServiceName,
-	//	apiv1connect.EmbedServiceName,
-	//	apiv1connect.ModelsServiceName,
-	// )
-	// path, h := grpchealth.NewHandler(checker, connect.WithInterceptors(interceptors...))
-	// mux.Handle(path, h)
-	// slog.Debug("gRPC health handler wired", "component", "grpc", "reason", "SERVING status for inference+admin services; agents can health-check before ChatStream/queue load")
+	checker := grpchealth.NewStaticChecker(
+		apiv1connect.ChatServiceName,
+		apiv1connect.GenerateServiceName,
+		apiv1connect.EmbedServiceName,
+		apiv1connect.ModelsServiceName,
+	)
+	path, handler := grpchealth.NewHandler(checker, connect.WithInterceptors(interceptors...))
+	mux.Handle(path, handler)
+	slog.Info("gRPC health check active", "component", "grpc", "services", 4, "status", "SERVING")
 }
 
 // recoveryInterceptor: recover panic to connect err (per SKILL bounded, verifiability).

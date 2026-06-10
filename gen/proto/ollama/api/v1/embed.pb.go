@@ -26,7 +26,8 @@ type EmbedRequest struct {
 	Model         string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
 	Input         []string               `protobuf:"bytes,2,rep,name=input,proto3" json:"input,omitempty"` // texts to embed (or single via api compat)
 	Options       map[string]string      `protobuf:"bytes,3,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	KeepAlive     string                 `protobuf:"bytes,4,opt,name=keep_alive,json=keepAlive,proto3" json:"keep_alive,omitempty"` // TODO: truncate, etc.
+	KeepAlive     string                 `protobuf:"bytes,4,opt,name=keep_alive,json=keepAlive,proto3" json:"keep_alive,omitempty"`
+	Truncate      bool                   `protobuf:"varint,5,opt,name=truncate,proto3" json:"truncate,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

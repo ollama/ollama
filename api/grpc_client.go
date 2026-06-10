@@ -45,16 +45,14 @@ package api
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
-	"golang.org/x/net/http2"
 
 	v1 "github.com/ollama/ollama/gen/proto/ollama/api/v1"
 	apiv1connect "github.com/ollama/ollama/gen/proto/ollama/api/v1/apiv1connect"
@@ -85,15 +83,8 @@ type GRPCClient struct {
 // h2c transport for plaintext (common for local dedicated gRPC port or SAMEPORT).
 // Ctx not stored (SKILL). No globals. Small.
 func NewGRPCClient(baseURL string, opts ...connect.ClientOption) *GRPCClient {
-	hc := &http.Client{
-		Transport: &http2.Transport{
-			AllowHTTP: true,
-			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, network, addr)
-			},
-		},
-	}
+	hc := H2CClient()  // central (Phase 4a); includes keepalive (Phase 2c) + correct h2c DialTLS
+
 	baseURL = trimTrailingSlash(baseURL)
 	return &GRPCClient{
 		chat:       apiv1connect.NewChatServiceClient(hc, baseURL, opts...),
@@ -158,12 +149,54 @@ func isRetryable(err error) bool {
 // doWithRetry: bounded retry helper (free func, generic OK; no type param on methods).
 // Small unit. Logs rich reason at retry decision (Flume style for LogAgentReasoning).
 // Idempotent/safe (only on classified transient; server reconcile safe). Ctx respected.
+// simple circuit breaker state (Phase 4c). Global for process simplicity (one client usually);
+// production clients often scope per-endpoint or per-model.
+var (
+	cbMu        sync.Mutex
+	cbFailures  int
+	cbLastFail  time.Time
+)
+
+const (
+	cbThreshold = 5               // consecutive retryable fails
+	cbWindow    = 30 * time.Second
+	cbCooldown  = 10 * time.Second // fail-fast window
+)
+
+func circuitAllows() bool {
+	cbMu.Lock()
+	defer cbMu.Unlock()
+	if cbFailures >= cbThreshold && time.Since(cbLastFail) < cbCooldown {
+		return false
+	}
+	if time.Since(cbLastFail) > cbWindow {
+		cbFailures = 0 // auto reset outside window
+	}
+	return true
+}
+
+func recordFailure() {
+	cbMu.Lock()
+	cbFailures++
+	cbLastFail = time.Now()
+	cbMu.Unlock()
+}
+
+func recordSuccess() {
+	cbMu.Lock()
+	cbFailures = 0
+	cbMu.Unlock()
+}
+
 func doWithRetry[T any](
 	ctx context.Context,
 	rpc, model string,
 	op func(context.Context) (*connect.Response[T], error),
 ) (*connect.Response[T], error) {
 	const maxAttempts = 3
+	if !circuitAllows() {
+		return nil, fmt.Errorf("grpc client %s %s: circuit breaker open (recent failures >= %d)", rpc, model, cbThreshold)
+	}
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		start := time.Now()
@@ -171,10 +204,14 @@ func doWithRetry[T any](
 		res, err := op(ctx)
 		dur := time.Since(start).Milliseconds()
 		if err == nil {
+			recordSuccess()
 			slog.Info("grpc client unary done", "component", "api/grpc-client", "rpc", rpc, "model", model, "duration_ms", dur, "status", "ok", "reason", "success; no retry needed (idempotent safe path)")
 			return res, nil
 		}
 		lastErr = err
+		if isRetryable(err) {
+			recordFailure()
+		}
 		if !isRetryable(err) || attempt == maxAttempts-1 {
 			slog.Info("grpc client unary done", "component", "api/grpc-client", "rpc", rpc, "model", model, "duration_ms", dur, "error", err, "status", "error", "reason", "non-retryable or max attempts (permanent per errToConnect classify: Invalid/NotFound/Unauth/Internal/Canceled); propagate %w wrapped")
 			return nil, fmt.Errorf("grpc client %s %s: %w", rpc, model, err)
@@ -272,6 +309,42 @@ func (c *GRPCClient) GenerateStream(ctx context.Context, req *connect.Request[v1
 		return nil, fmt.Errorf("grpc client GenerateStream %s: %w", model, err)
 	}
 	slog.Info("grpc client stream connected", "component", "api/grpc-client", "rpc", "GenerateStream", "model", model, "duration_ms", dur, "status", "ok", "reason", "stream open (limited retry skeleton)")
+	return stream, nil
+}
+
+// Pull (server stream over ModelsService). Added per Phase 4b to match ChatStream/GenerateStream
+// pattern + server-side modelsHandler Pull (progress for registry ops). Limited retry on initial
+// connect only; caller owns the Receive() loop + ctx cancel for safety.
+func (c *GRPCClient) Pull(ctx context.Context, req *connect.Request[v1.PullModelRequest]) (*connect.ServerStreamForClient[v1.ProgressResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, errors.New("grpc client pull: nil req")
+	}
+	model := req.Msg.Model
+	start := time.Now()
+	slog.Debug("grpc client stream start", "component", "api/grpc-client", "rpc", "Pull", "model", model, "reason", "ctx first; admin stream like ChatStream", "status", "start")
+	stream, err := c.models.Pull(ctx, req)
+	dur := time.Since(start).Milliseconds()
+	if err != nil {
+		return nil, fmt.Errorf("grpc client Pull %s: %w", model, err)
+	}
+	slog.Info("grpc client stream connected", "component", "api/grpc-client", "rpc", "Pull", "model", model, "duration_ms", dur, "status", "ok", "reason", "pull progress stream open")
+	return stream, nil
+}
+
+// Push (server stream). Symmetric to Pull.
+func (c *GRPCClient) Push(ctx context.Context, req *connect.Request[v1.PushModelRequest]) (*connect.ServerStreamForClient[v1.ProgressResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, errors.New("grpc client push: nil req")
+	}
+	model := req.Msg.Model
+	start := time.Now()
+	slog.Debug("grpc client stream start", "component", "api/grpc-client", "rpc", "Push", "model", model, "reason", "ctx first; admin stream", "status", "start")
+	stream, err := c.models.Push(ctx, req)
+	dur := time.Since(start).Milliseconds()
+	if err != nil {
+		return nil, fmt.Errorf("grpc client Push %s: %w", model, err)
+	}
+	slog.Info("grpc client stream connected", "component", "api/grpc-client", "rpc", "Push", "model", model, "duration_ms", dur, "status", "ok", "reason", "push progress stream open")
 	return stream, nil
 }
 

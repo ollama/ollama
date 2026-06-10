@@ -34,7 +34,11 @@ type GenerateRequest struct {
 	Raw           bool                   `protobuf:"varint,8,opt,name=raw,proto3" json:"raw,omitempty"`
 	Options       map[string]string      `protobuf:"bytes,9,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	KeepAlive     string                 `protobuf:"bytes,10,opt,name=keep_alive,json=keepAlive,proto3" json:"keep_alive,omitempty"`
-	Images        [][]byte               `protobuf:"bytes,11,rep,name=images,proto3" json:"images,omitempty"` // TODO: format, think, tools, etc.
+	Images        [][]byte               `protobuf:"bytes,11,rep,name=images,proto3" json:"images,omitempty"`
+	Format        []byte                 `protobuf:"bytes,12,opt,name=format,proto3" json:"format,omitempty"`
+	Think         bool                   `protobuf:"varint,13,opt,name=think,proto3" json:"think,omitempty"`
+	Truncate      bool                   `protobuf:"varint,14,opt,name=truncate,proto3" json:"truncate,omitempty"`
+	Shift         bool                   `protobuf:"varint,15,opt,name=shift,proto3" json:"shift,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -155,7 +159,9 @@ type GenerateResponse struct {
 	Context         []int32                `protobuf:"varint,5,rep,packed,name=context,proto3" json:"context,omitempty"`
 	PromptEvalCount int64                  `protobuf:"varint,6,opt,name=prompt_eval_count,json=promptEvalCount,proto3" json:"prompt_eval_count,omitempty"`
 	EvalCount       int64                  `protobuf:"varint,7,opt,name=eval_count,json=evalCount,proto3" json:"eval_count,omitempty"`
-	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // TODO: usage, thinking (for some models), etc.
+	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Usage           *Usage                 `protobuf:"bytes,9,opt,name=usage,proto3" json:"usage,omitempty"`
+	Thinking        string                 `protobuf:"bytes,10,opt,name=thinking,proto3" json:"thinking,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }

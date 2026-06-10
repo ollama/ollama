@@ -4,11 +4,9 @@ package integration
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -16,7 +14,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"golang.org/x/net/http2"
 	"golang.org/x/sync/errgroup"
 
 	v1 "github.com/ollama/ollama/gen/proto/ollama/api/v1"
@@ -25,20 +22,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// h2cClient returns an http.Client configured for h2c (HTTP/2 cleartext)
-// with the DialTLSContext override required for plaintext gRPC connections.
-// Without DialTLSContext, http2.Transport attempts TLS on the cleartext
-// connection, producing "server gave HTTP response to HTTPS client".
+// h2cClient returns an http.Client configured for h2c using the centralized
+// implementation (api.H2CClient). This ensures keepalive (G7), correct DialTLS
+// for plaintext, and single source for all h2c usage (client + tests).
 func h2cClient() *http.Client {
-	return &http.Client{
-		Transport: &http2.Transport{
-			AllowHTTP: true,
-			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, network, addr)
-			},
-		},
-	}
+	return api.H2CClient()
 }
 
 // TestGRPCStreaming exercises the gRPC streaming paths (ChatStream, GenerateStream)

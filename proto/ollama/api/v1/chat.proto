@@ -69,12 +69,6 @@ message ChatResponse {
   // TODO: citations, logprobs, etc.
 }
 
-message Usage {
-  int64 prompt_tokens = 1;
-  int64 completion_tokens = 2;
-  int64 total_tokens = 3;
-}
-
 service ChatService {
   // Unary (non-stream) chat completion.
   rpc Chat(ChatRequest) returns (ChatResponse);
