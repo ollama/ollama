@@ -27,8 +27,21 @@ type Model interface {
 	LoadWeights(tensors map[string]*mlx.Array) error
 }
 
-// DraftModel is an auxiliary model stored alongside a target model.
+// DraftModel is an auxiliary model alongside a target that proposes speculative
+// tokens.
 type DraftModel interface {
+	// Draft fuses b.Hidden (the target hidden state) into its own forward and
+	// returns the head's hidden plus the projected hidden seeding the next step.
+	Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *mlx.Array)
+
+	// Unembed projects a hidden state to vocabulary logits.
+	Unembed(x *mlx.Array) *mlx.Array
+
+	// DraftCaches selects the draft model's own KV caches from the full
+	// per-request slice — any subset, or nil when the draft keeps no KV.
+	DraftCaches(caches []cache.Cache) []cache.Cache
+
+	// LoadWeights assigns manifest tensors to the draft head's fields.
 	LoadWeights(tensors map[string]*mlx.Array) error
 }
 
@@ -46,15 +59,10 @@ type MTPDefaultsProvider interface {
 	MTPDraftDefaults(sample bool) MTPDefaults
 }
 
-// MTPDraftModel is a draft model capable of Gemma-style multi-token
-// prediction from target token embeddings, target hidden states, and target KV.
-type MTPDraftModel interface {
-	Draft(inputEmbeds *mlx.Array, position int32, caches []cache.Cache) (logits, hidden *mlx.Array)
-}
-
-// MTPEmbeddingModel exposes the target token embedding path used by MTP drafts.
-type MTPEmbeddingModel interface {
-	TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array
+// SelfDraft is implemented by models whose draft head ships inline with the
+// target weights; it returns the head, or nil when the checkpoint shipped none.
+type SelfDraft interface {
+	SelfDraft() DraftModel
 }
 
 var (

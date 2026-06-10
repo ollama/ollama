@@ -75,7 +75,12 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	defer session.close()
 	caches := session.caches
 
-	seed, position, promptEval, err := r.prefill(ctx, session)
+	// Built before prefill so a drafter with draft caches follows the prompt
+	// through prefill alongside the target.
+	spec := r.spec.open(request, caches)
+	defer spec.close()
+
+	seed, position, promptEval, err := r.prefill(ctx, session, spec)
 	if err != nil {
 		return err
 	}
@@ -83,14 +88,11 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
 
-	spec := r.spec.open(request, caches)
-	defer spec.close()
-
 	var d decoder
 	if spec != nil {
 		d = spec.decoder(seed, position)
 	} else {
-		d = r.pipelinedDecoder(caches, seed, position)
+		d = r.pipelinedDecoder(nil, caches, seed, position)
 	}
 	defer d.close()
 	return r.decode(ctx, request, session, d, promptEval)
@@ -100,7 +102,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 // one token for decode to seed from, and schedules the prompt's periodic
 // snapshots. It returns the seed tokens, the resume position, and the
 // prompt-evaluation duration.
-func (r *Runner) prefill(ctx context.Context, session *cacheSession) ([]int32, int, time.Duration, error) {
+func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession) ([]int32, int, time.Duration, error) {
 	start := time.Now()
 	inputs := session.inputs
 	tokens := session.remaining
@@ -143,11 +145,13 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession) ([]int32, i
 
 		n := min(prefillChunk, total-processed-1)
 
-		r.Model.Forward(&batch.Batch{
-			InputIDs:     mlx.FromValues(tokens[processed:processed+n], 1, n),
+		chunkIDs := mlx.FromValues(tokens[processed:processed+n], 1, n)
+		hidden := r.Model.Forward(&batch.Batch{
+			InputIDs:     chunkIDs,
 			SeqOffsets:   []int32{int32(position)},
 			SeqQueryLens: []int32{int32(n)},
 		}, caches)
+		spec.committed(chunkIDs, hidden, position)
 		mlx.Sweep()
 		materializeCaches()
 		processed += n
@@ -158,7 +162,10 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession) ([]int32, i
 		mlx.ClearCache()
 	}
 
-	// Attach the snapshots captured during prefill to the trie.
+	// Flush before attaching: snapshots attach only at offsets every cache
+	// has crossed, and a drafter with draft caches keeps buffered pairs that
+	// would otherwise hold those caches short of the scheduled offsets.
+	spec.flush()
 	session.attachPrefillSnapshots()
 
 	return tokens[processed:], position, time.Since(start), nil
@@ -263,15 +270,18 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 // the next token's chain is dispatched before the returned one is
 // synchronized, so the device runs ahead of host emission.
 type pipelinedDecoder struct {
-	r        *Runner
+	r *Runner
+	// spec, when non-nil, receives every forwarded token and settles its
+	// drafter at close, keeping a non-drafting session's draft KV level.
+	spec     *speculationSession
 	caches   []cache.Cache
 	position int
 	sample   sampler.Result // in flight: sampled, not yet forwarded
 	emitted  sampler.Result // last call's result, pinned until the next call
 }
 
-func (r *Runner) pipelinedDecoder(caches []cache.Cache, seed []int32, position int) *pipelinedDecoder {
-	t := &pipelinedDecoder{r: r, caches: caches, position: position}
+func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache, seed []int32, position int) *pipelinedDecoder {
+	t := &pipelinedDecoder{r: r, spec: spec, caches: caches, position: position}
 	t.sample = t.dispatch(mlx.FromValues(seed, 1, len(seed)))
 	return t
 }
@@ -285,8 +295,10 @@ func (t *pipelinedDecoder) dispatch(token *mlx.Array) sampler.Result {
 		SeqOffsets:   []int32{int32(t.position)},
 		SeqQueryLens: []int32{int32(token.Dim(1))},
 	}, t.caches)
+	t.spec.committed(token, hidden, t.position)
 	t.position += token.Dim(1)
-	next := r.Sampler.Sample([]int{pipelineSlot}, lastLogits(r.Model.Unembed(hidden)))
+	logits := r.Model.Unembed(hidden)
+	next := r.Sampler.Sample([]int{pipelineSlot}, logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1))
 	mlx.Pin(next.Arrays()...)
 	mlx.Sweep()
 	mlx.AsyncEval(next.Arrays()...)
@@ -300,6 +312,9 @@ func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
 }
 
 func (t *pipelinedDecoder) close() {
+	// The in-flight sample's forward was never dispatched; its report lets
+	// the drafter settle level with the caches' resting offset.
+	t.spec.finish(t.sample.Token)
 	mlx.Unpin(t.emitted.Arrays()...)
 	mlx.Unpin(t.sample.Arrays()...)
 }
