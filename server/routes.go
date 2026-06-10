@@ -2772,8 +2772,15 @@ func (s *Server) ServeGRPC(ctx context.Context, ln net.Listener) error {
 	mux := http.NewServeMux()
 	s.registerServices(mux)
 
+	// Use explicit *http2.Server + ConfigureServer for proper h2c + gRPC wire protocol
+	// support on separate port (no TLS assumptions; h2c hijack + ServeConn handles prior
+	// knowledge from connect.WithGRPC clients or grpcurl -plaintext).
+	h2s := &http2.Server{}
 	srv := &http.Server{
-		Handler: h2c.NewHandler(mux, &http2.Server{}),
+		Handler: h2c.NewHandler(mux, h2s),
+	}
+	if err := http2.ConfigureServer(srv, h2s); err != nil {
+		slog.Debug("http2.ConfigureServer (non-fatal for h2c; proceeding with h2c handler)", "error", err, "component", "grpc", "reason", "configure may set http2 params; h2c.NewHandler is authoritative for plaintext gRPC/Connect compat per fix; error checked per SKILL")
 	}
 
 	errCh := make(chan error, 1)
@@ -2786,7 +2793,8 @@ func (s *Server) ServeGRPC(ctx context.Context, ln net.Listener) error {
 
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		// Use Background for grace period (ctx is already done here; WithTimeout on done ctx would give zero grace, breaking bounded shutdown).
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if shErr := srv.Shutdown(shutdownCtx); shErr != nil && !errors.Is(shErr, http.ErrServerClosed) {
 			slog.Debug("grpc shutdown err (non-fatal)", "error", shErr, "component", "grpc")

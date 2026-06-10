@@ -45,9 +45,11 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -84,7 +86,13 @@ type GRPCClient struct {
 // Ctx not stored (SKILL). No globals. Small.
 func NewGRPCClient(baseURL string, opts ...connect.ClientOption) *GRPCClient {
 	hc := &http.Client{
-		Transport: &http2.Transport{AllowHTTP: true},
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, network, addr)
+			},
+		},
 	}
 	baseURL = trimTrailingSlash(baseURL)
 	return &GRPCClient{
@@ -291,8 +299,22 @@ func (c *GRPCClient) Heartbeat(ctx context.Context) error {
 	return nil
 }
 
-// Show, Ps, Pull, Push etc can be added similarly (models client has them; Pull/Push return streams).
-// Skeleton minimal: above covers Chat/Generate/Embed/Models core + health per item9 scope.
+// Show (admin) unary.
+func (c *GRPCClient) Show(ctx context.Context, model string) (*connect.Response[v1.ShowModelResponse], error) {
+	return doWithRetry(ctx, "Show", model, func(ctx context.Context) (*connect.Response[v1.ShowModelResponse], error) {
+		return c.models.Show(ctx, connect.NewRequest(&v1.ShowModelRequest{Model: model}))
+	})
+}
+
+// Ps (admin) unary — list running models.
+func (c *GRPCClient) Ps(ctx context.Context) (*connect.Response[v1.PsResponse], error) {
+	return doWithRetry(ctx, "Ps", "", func(ctx context.Context) (*connect.Response[v1.PsResponse], error) {
+		return c.models.Ps(ctx, connect.NewRequest(&v1.PsRequest{}))
+	})
+}
+
+// Pull/Push return server streams and can be added similarly to ChatStream/GenerateStream.
+// Skeleton minimal: above covers Chat/Generate/Embed/Models core + Show + Ps + health.
 
 // Note: for full stream retry or advanced (circuit, metrics), wrap further in agent layer.
 // All errors wrapped %w; classify via isRetryable (Is/As + connect codes from errToConnect).

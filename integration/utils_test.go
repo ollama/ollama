@@ -465,6 +465,13 @@ func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 		t.Setenv("OLLAMA_GRPC_HOST", "")
 	}
 
+	// Phase 4/5 support for OLLAMA_GRPC_SAMEPORT=1 to enable mixed REST + gRPC on the *same* port
+	// (for grpc_stream_test subtests covering SAMEPORT=1 + high-level api.GRPCClient + mixed clients).
+	// Explicitly propagate so child `ollama serve` (spawned from test binary + local payload) sees it.
+	if sp := os.Getenv("OLLAMA_GRPC_SAMEPORT"); sp != "" {
+		t.Setenv("OLLAMA_GRPC_SAMEPORT", sp)
+	}
+
 	// Use CommandContext so the long-running serve I/O respects caller's ctx (cancellation/deadline propagates to process; SKILL ctx discipline for spawn).
 	serverCmd = exec.CommandContext(ctx, CLIName, "serve")
 	serverCmd.Stderr = &serverLog

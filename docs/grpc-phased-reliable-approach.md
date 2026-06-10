@@ -337,10 +337,10 @@ Gates (p363/p379/p381/p474): build green; targeted -race server (harmony/routes/
 **Next (per End of Overlay p484):** PR prep (squash clean tree, link this doc + subagent ref + before/after logloom note + checklist); or post-soak stable work (full mTLS+reflection wiring, richer xai protos, official clients beyond skeleton, load/soak matrix when models present). This completes the mandatory reliable overlay for P5.
 
 **Soak script skeleton (manual execution required; add to scripts/ or run ad-hoc; do not land as default until green):**  
-Requires: built ollama (with runners payload per llm/llama_binary.go updates), pulled small model (e.g. smol), OLLAMA_GRPC_SAMEPORT=1, no other ollama on port. Long run (mins+), concurrent dual clients same model, mid-gen cancel (ctx), pprof checks (no goroutine/heap growth), lsof conn counts stable (agent conn reuse), cmux edge (HOL under mixed h2c+http1 on shared TCP? long-lived reuse). Use `go test -tags=integration -run TestGRPCStreaming/sameport_and_cancel` matrixed with http load.  
+Requires: built ollama (with runners payload per llm/llama_binary.go updates), pulled small model (e.g. smol), OLLAMA_GRPC_SAMEPORT=1, no other ollama on port. Long run (mins+), concurrent dual clients same model, mid-gen cancel (ctx), pprof checks (no goroutine/heap growth), lsof conn counts stable (agent conn reuse), cmux edge (HOL under mixed h2c+http1 on shared TCP? long-lived reuse). Use `go test -tags=integration -run TestGRPCStreaming/sameport_and_cancel` matrixed with http load. Prefer `scripts/quality-grpc-comparison.go` (now in workspace) for the "real gRPC client loop + token counts + comparative metrics + OTEL probe" parts (see below).  
 ```bash
 #!/usr/bin/env bash
-# /tmp/soak-sameport.sh (example; enhance with real grpc client loop for tokens)
+# /tmp/soak-sameport.sh (example; enhance/complement with scripts/quality-grpc-comparison.go for real grpc client loop for tokens, metrics, cancel+partial-tok reporting, OTEL checks)
 set -euo pipefail
 PORT=${OLLAMA_HOST:-127.0.0.1:11434}; PORT=${PORT##*:}
 export OLLAMA_GRPC_SAMEPORT=1 OLLAMA_HOST=127.0.0.1:11434
@@ -352,7 +352,7 @@ OLLA_PID=$!; sleep 8; echo "serve pid $OLLA_PID (sameport via cmux)"
 # long-running dual concurrent same model (http + gRPC streams); agent-like: reuse conns, long-lived clients
 ( for i in {1..200}; do curl -s --max-time 2 "http://127.0.0.1:$PORT/api/tags" >/dev/null || true; sleep 0.05; done ) & HTTP_BG=$!
 # grpc side: use e.g. compiled test client or buf curl / small go prog with apiv1connect + WithGRPC() h2c; here sketch loop + mid cancel
-# (in practice: go test ... -run /sameport_and_cancel/ under load; or custom: ctx, cancel after 3 receives in stream loop for real model)
+# (in practice: go test ... -run /sameport_and_cancel/ under load; or better: go run scripts/quality-grpc-comparison.go -sameport ... which covers cancel+tokens+metrics)
 echo "dual load + mid-gen cancel soak running (monitor log for 'cmux serve err treated as closed', 'sameport mid-gen cancel decision', no 'unexpected' errs)..."
 for t in $(seq 1 40); do
   CONNS=$(lsof -p $OLLA_PID -n -iTCP 2>/dev/null | wc -l | tr -d ' ' || echo 0)
@@ -369,6 +369,31 @@ echo "soak complete; review /tmp/ollama-sameport-soak.log for rich reason logs (
 **Gates before any default or 'stable' claim (per phased p323/p379/p381 + report p97):** thorough manual soak as above (long dual + mid-cancel + pprof no leak + lsof counts + agent conn reuse + cmux edges incl isClosed on ErrListenerClosed); `go build . && go test -race -tags=integration ./integration -run 'TestGRPCStreaming|GRPCSamePort'` + full server/cmd race; self-review (this doc + SKILL.md 10pt checklist); **review subagent *required*** (p323: "review subagent *required* before landing"; p381: delegate with 'Review ... through reliable-go-systems lens (SKILL.md) + docs/grpc-phased-reliable-approach.md. Apply mandatory checklist... Report issues with file:line quotes.'); LogLoom if routes/grpc touched (not here); zero HTTP regress (curl primary port unchanged); opt-in remains (env=1); update report/issues log. "stop if" any violation. Defer until stable + signoff. Current changes (cmd isClosed+logs, test docs, this note) are hardening only; sameport still high-risk opt-in.
 
 ---
+
+### Monitoring Edge Cases (Quality Comparison Tooling + gRPC Data)
+
+**Script location:** `scripts/quality-grpc-comparison.go` (created/adapted in this work; proper workspace home for the prior /tmp/ollama_quality_comparative.go logic). Uses the exact Connect/gRPC client setup (http2 + WithGRPC(), apiv1connect) for post-build runs against the real server binary. Fully supports both separate-port (`OLLAMA_GRPC_HOST=...11435`) and SAMEPORT (`OLLAMA_GRPC_SAMEPORT=1` or `-sameport` flag; pass same port for `-grpc` as for `-rest`).
+
+**Build + run (references updated in development.md + build-local.sh):**
+- `make local` (or `./scripts/build-local.sh` / `--go-only` for fast iteration).
+- Start: `OLLAMA_GRPC_HOST=127.0.0.1:11435 ./ollama serve` (or `OLLAMA_GRPC_SAMEPORT=1 ./ollama serve`).
+- Run comparison (from repo root, after pulling e.g. `llama3.2:1b`): `go run scripts/quality-grpc-comparison.go -model llama3.2:1b` (or with `-sameport -rest http://127.0.0.1:11434 -grpc 127.0.0.1:11434`).
+- Output: side-by-side metrics table (InTok/OutTok/TTFT/TPS/wire bytes/done/tool_calls/structured/cancel/chunks) + detailed analysis report. Expect prompt/completion token counts to match (shared core normalization + inference after adapters; only wire/client framing differs). Use to validate transport fixes produce parity.
+
+**Edge cases added/enhanced (gRPC streams focus, non-overlapping scope):**
+- **gRPC with tools:** `agentic_with_tools` test case (plus structured) runs for gRPC unary + stream (and REST baseline). Verifies `tool_calls` count + fidelity (shared render/converters); wire bytes delta noted (gRPC often smaller).
+- **Stream cancellation with token counts (mid-gen over gRPC):** `testCancelWithTokenCounts` (invoked for `simple_user_prompt`); performs ChatStream, receives N chunks, `cancel()`, sleeps, checks clean stop. Reports `chunks_before_cancel`, partial `prompt_tokens`/`completion_tokens` (from last chunk if present), `CancelledCleanly` (based on count >=3 + err is cancel or nil). Synthetic metrics row included in table/analysis. Covers "mid-gen cancellation over gRPC" rec + reliable ctx prop (derived cancel stops gen promptly, no GPU leak).
+- **OTEL spans / metrics / observability if exposed:** `checkObservability(base)` at end probes primary listener (pprof/goroutine + heap for growth under dual load; /metrics; /debug/vars; /api/version). Reports byte sizes + goroutine sample counts (run under quality cases to compare baseline vs loaded; useful with sameport concurrent). Documents that full OTEL (spans around schedule/inference, GenAI attrs, metrics) arrive via `otelconnect` interceptors + SDK (controlled by OTEL_* env; push model to collector/console, not always pullable /metrics). Cross-references rich slog (`component:"grpc"`, `reason`, `stream_id`, `tokens`, `duration_ms`) added per reliable overlay. Complements pprof/lsof in soak skeletons.
+
+**Side-by-side metrics + recommendations coverage:** Table + `produceAnalysis` always emitted (In/OutTok parity checks, wire deltas, TTFT, TPS, cancel status, tool/struct). Updated analysis text calls out shared-core identity for tokens, efficiency of gRPC for agentic (tools/cancel/obs), use-cases. Explicit "Recommendations coverage" footer lists the edges + SAMEPORT support + run instructions + "now that transport should be fixed".
+
+**How to use for monitoring (in phased flow):** Run this script (plus integ sameport_and_cancel + logloom + manual pprof) before/after changes to streams, ctx handling, converters, interceptors, sameport (esp P2 extracts, P5). Add to soak notes / gates. Combine with `curl .../debug/pprof/...` during runs. Since only edits scripts/ + docs/, this is the dedicated quality harness outside server/integration/grpc.go. Replaces ad-hoc /tmp scripts; now `go run`-able post-build with correct clients.
+
+Update soak/agent load notes to prefer/complement with this script for token+cancel+OTEL quality loops (in addition to test matrix). This fulfills the task to create/update the quality test program, doc it for real gRPC data, enhance edges, and include monitoring section -- all scoped to scripts/ + docs/.
+
+---
+
+### Agent/Flume gRPC Client Productionization + Load/Soak (report sec4 item 9; assigned for this Phase 4 overlay)
 
 ### Agent/Flume gRPC Client Productionization + Load/Soak (report sec4 item 9; assigned for this Phase 4 overlay)
 

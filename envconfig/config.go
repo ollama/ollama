@@ -84,10 +84,9 @@ func ConnectableHost() *url.URL {
 
 // GRPCHost returns the host for the optional gRPC/Connect listener.
 // It is configured via the OLLAMA_GRPC_HOST environment variable.
-// Default is "127.0.0.1:11435".
-// If OLLAMA_GRPC_HOST is empty (after trim), returns nil to disable the gRPC listener
-// (explicit opt-out while keeping default-on for the separate port).
-// Mirrors Host() logic exactly for scheme/port parsing (rarely used for gRPC but for consistency).
+// Returns nil when OLLAMA_GRPC_HOST is unset or empty, disabling the gRPC listener.
+// Set OLLAMA_GRPC_HOST=127.0.0.1:11435 (or another address) to enable.
+// Mirrors Host() logic for scheme/port parsing.
 func GRPCHost() *url.URL {
 	defaultPort := "11435"
 
@@ -107,6 +106,14 @@ func GRPCHost() *url.URL {
 		defaultPort = "80"
 	case scheme == "https":
 		defaultPort = "443"
+	}
+
+	// gRPC/Connect separate port (when !GRPCSamePort) uses h2c (no TLS); force http
+	// to prevent https scheme from propagating to clients (e.g. GRPCClientFromEnvironment)
+	// which would cause TLS dial vs plain server ("http: server gave HTTP response to HTTPS client").
+	// Server-side h2c fix in routes.go is authoritative for compat; this avoids misconfig.
+	if scheme == "https" {
+		scheme = "http"
 	}
 
 	hostport, path, _ := strings.Cut(hostport, "/")
@@ -394,7 +401,7 @@ func AsMap() map[string]EnvVar {
 		"LLAMA_ARG_FIT":               {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},
 		"LLAMA_ARG_FIT_TARGET":        {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},
 		"OLLAMA_HOST":                 {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
-		"OLLAMA_GRPC_HOST":            {"OLLAMA_GRPC_HOST", GRPCHost(), "IP Address for the optional gRPC/Connect server (default 127.0.0.1:11435; set empty to disable)"},
+		"OLLAMA_GRPC_HOST":            {"OLLAMA_GRPC_HOST", GRPCHost(), "IP Address for the optional gRPC/Connect server (set OLLAMA_GRPC_HOST=127.0.0.1:11435 to enable; unset to disable)"},
 		"OLLAMA_GRPC_SAMEPORT":        {"OLLAMA_GRPC_SAMEPORT", GRPCSamePort(), "Serve gRPC/Connect on the same port as HTTP via cmux (opt-in: set to \"1\"; high risk, see docs/grpc-phased-reliable-approach.md Phase 5; default separate port for safety/zero regression)"},
 		"OLLAMA_GRPC_REFLECTION":      {"OLLAMA_GRPC_REFLECTION", GRPCReflection(), "Enable gRPC/Connect server reflection for dev (grpcurl list/describe without protos; opt-in: \"1\" not default per report finding7 + phased p283/323/379; mTLS/auth per plan; see grpc.go enable helper + registerServices)"},
 		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},

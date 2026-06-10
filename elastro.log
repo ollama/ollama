@@ -1,0 +1,26 @@
+2026-06-10 17:57:12 - elastro.core.client - INFO - Connecting to Elasticsearch at ['http://localhost:9205']...
+2026-06-10 17:57:12 - elastro.core.client - INFO - Connecting with params: hosts=['http://localhost:9205'], auth={'type': 'basic', 'username': 'elastic', 'password': '******', 'api_key': '******'}, basic_auth=('elastic', '******')
+2026-06-10 17:57:12 - elastro.core.client - INFO - Successfully connected to Elasticsearch
+2026-06-10 18:02:56 - elastro.core.client - INFO - Connecting to Elasticsearch at ['http://localhost:9205']...
+2026-06-10 18:02:56 - elastro.core.client - INFO - Connecting with params: hosts=['http://localhost:9205'], auth={'type': 'basic', 'username': 'elastic', 'password': '******', 'api_key': '******'}, basic_auth=('elastic', '******')
+2026-06-10 18:02:56 - elastro.core.client - INFO - Successfully connected to Elasticsearch
+2026-06-10 18:03:00 - elastro.core.client - INFO - Connecting to Elasticsearch at ['http://localhost:9205']...
+2026-06-10 18:03:00 - elastro.core.client - INFO - Connecting with params: hosts=['http://localhost:9205'], auth={'type': 'basic', 'username': 'elastic', 'password': '******', 'api_key': '******'}, basic_auth=('elastic', '******')
+2026-06-10 18:03:00 - elastro.core.client - INFO - Successfully connected to Elasticsearch
+2026-06-10 18:03:04 - elastro.core.client - INFO - Connecting to Elasticsearch at ['http://localhost:9200']...
+2026-06-10 18:03:04 - elastro.core.client - INFO - Connecting with params: hosts=['http://localhost:9200'], auth={'type': 'basic', 'username': 'elastic', 'password': '******', 'api_key': '******'}, basic_auth=('elastic', '******')
+2026-06-10 18:03:04 - elastro.core.client - ERROR - Ping failed during connection attempt
+2026-06-10 18:03:04 - elastro.core.client - ERROR - Unexpected connection error: Failed to connect to Elasticsearch
+Traceback (most recent call last):
+  File [35m"/Users/jonathandoughty/.local/pipx/venvs/elastro-client/lib/python3.13/site-packages/elastro/core/client.py"[0m, line [35m216[0m, in [35mconnect[0m
+    raise ConnectionError("Failed to connect to Elasticsearch")
+[1;35melastro.core.errors.ConnectionError[0m: [35mFailed to connect to Elasticsearch[0m
+2026-06-10 18:03:04 - elastro.core.client - INFO - Connecting to Elasticsearch at ['http://localhost:9200']...
+2026-06-10 18:03:04 - elastro.core.client - INFO - Connecting with params: hosts=['http://localhost:9200'], auth={'type': 'basic', 'username': 'elastic', 'password': '******', 'api_key': '******'}, basic_auth=('elastic', '******')
+2026-06-10 18:03:04 - elastro.core.client - ERROR - Ping failed during connection attempt
+2026-06-10 18:03:04 - elastro.core.client - ERROR - Unexpected connection error: Failed to connect to Elasticsearch
+Traceback (most recent call last):
+  File [35m"/Users/jonathandoughty/.local/pipx/venvs/elastro-client/lib/python3.13/site-packages/elastro/core/client.py"[0m, line [35m216[0m, in [35mconnect[0m
+    raise ConnectionError("Failed to connect to Elasticsearch")
+[1;35melastro.core.errors.ConnectionError[0m: [35mFailed to connect to Elasticsearch[0m
+2026-06-10 18:03:04 - elastro.core.index - ERROR - Failed to list indices with pattern '*': Unexpected error connecting to Elasticsearch: Failed to connect to Elasticsearch

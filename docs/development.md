@@ -17,7 +17,59 @@ go run . serve
 > [!NOTE]
 > Ollama includes native code compiled with CGO.  From time to time these data structures can change and CGO can get out of sync resulting in unexpected crashes.  You can force a full build of the native code by running `go clean -cache` first. 
 
-## Native build model
+## Quick local iteration (recommended on this branch)
+
+When working on gRPC changes, adapters, converters, the scheduler, clients, or any code that needs **real model execution** (non-zero `prompt_eval_count` / `eval_count`, actual streaming, tools, etc.), you need both the Go API layer **and** a fresh `llama-server` native payload (Metal on Apple Silicon).
+
+Use the convenience target / script:
+
+```shell
+make local          # or: make dev
+# or directly:
+./scripts/build-local.sh
+```
+
+This runs the full cmake + Go build and produces:
+- `./ollama` (the Go binary with REST + gRPC/Connect surfaces)
+- `build/lib/ollama/llama-server` (and supporting Metal libs) — the runner the Go code actually spawns
+
+Both the script and the Makefile are the supported workflow for fast iteration. See `./scripts/build-local.sh --help` for flags:
+
+- `make go` (or `./scripts/build-local.sh --go-only`) — extremely fast Go-only rebuild once the native payload has been built once. Use this for most day-to-day gRPC handler / client / converter work.
+- `make clean`
+- Passing extra args: `OLLAMA_MLX_BACKENDS= ./scripts/build-local.sh` (lighter build, no MLX).
+
+After the build you can immediately test the dual surface exactly as used in the gRPC reports and harness:
+
+```shell
+OLLAMA_GRPC_HOST=127.0.0.1:11435 ./ollama serve
+```
+
+Or run the integration matrix:
+
+```shell
+OLLAMA_GRPC_HOST=127.0.0.1:11435 go test -tags=integration -run TestGRPCStreaming ./integration -count=1 -timeout=5m
+```
+
+**Quality + parity + edge case comparison script (recommended for validating gRPC transport fixes, token counts, and advanced behaviors with real model runs):**
+
+After `./ollama serve` (with gRPC enabled), run the comparison from repo root. It exercises REST vs gRPC (Connect client) side-by-side for the same inputs, produces metrics tables (prompt/completion tokens, TTFT, TPS, wire bytes, tool calls, etc.), and covers edges. Supports separate-port (default) and SAMEPORT.
+
+```shell
+# Separate ports (most common for dev/reports)
+OLLAMA_GRPC_HOST=127.0.0.1:11435 ./ollama serve &
+go run scripts/quality-grpc-comparison.go -model llama3.2:1b
+
+# SAMEPORT (cmux on primary port)
+OLLAMA_GRPC_SAMEPORT=1 ./ollama serve &
+go run scripts/quality-grpc-comparison.go -sameport -rest http://127.0.0.1:11434 -grpc 127.0.0.1:11434 -model llama3.2:1b
+```
+
+See script header comments and `docs/grpc-phased-reliable-approach.md` for full usage, expected matching tokens (core is shared), and edge monitoring (tools in gRPC streams, mid-gen cancellation reporting partial tokens, OTEL/metrics/pprof probes if exposed).
+
+All artifacts (`build/`, the root `/ollama` binary, `dist/`, `integration/ollama`, etc.) are covered by `.gitignore`.
+
+## Native build model (manual equivalent)
 
 For a fresh checkout, or after changing native code, build from the repository root. On macOS arm64, this builds Metal inference. On all other platforms this builds CPU-only inference. It builds the Go binary at the repository root and installs the native runtime payload under `build/lib/ollama`.
 

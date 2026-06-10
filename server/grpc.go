@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -37,10 +38,15 @@ type chatHandler struct {
 var _ apiv1connect.ChatServiceHandler = (*chatHandler)(nil)
 
 func (h *chatHandler) Chat(ctx context.Context, req *connect.Request[v1.ChatRequest]) (*connect.Response[v1.ChatResponse], error) {
+	slog.Info("gRPC handler received Chat request", "component", "grpc", "method", "Chat", "model", req.Msg.Model, "stream_id", streamIDFromContext(ctx), "reason", "handler entry point (post transport/interceptors); logs incoming calls to distinguish transport vs handler issues")
 	if isCloudModel(req.Msg.Model) {
+		slog.Info("gRPC handler cloud reject", "component", "grpc", "method", "Chat", "model", req.Msg.Model, "stream_id", streamIDFromContext(ctx), "reason", "early unimplemented for cloud models; client must use HTTP path")
 		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cloud models require HTTP API (remove :cloud or use /v1)"))
 	}
 	apiReq := convertToAPIChat(req.Msg)
+	if len(apiReq.Tools) > 0 {
+		slog.Debug("gRPC handler tool handling", "component", "grpc", "rpc", "ChatService/Chat", "model", apiReq.Model, "stream_id", streamIDFromContext(ctx), "has_tools", true, "reason", "tools present in request; converted and ctx+tools will propagate to core chat for tool call responses")
+	}
 	// Use stream_id from interceptor (if present) for correlation (unifies intercp "grpc start" id with handler/span id).
 	// Falls back to fresh only if no intercp (degraded path). This adds "stream_id everywhere" + correlation per finding.
 	streamID := streamIDFromContext(ctx)
@@ -54,26 +60,50 @@ func (h *chatHandler) Chat(ctx context.Context, req *connect.Request[v1.ChatRequ
 		attribute.String("stream_id", streamID),
 		attribute.String("rpc", "Chat"),
 	)
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "ChatService/Chat", "model", apiReq.Model, "stream_id", streamID, "reason", "ctx (with stream_id) propagated to core; delegating to h.s.chat now")
 	slog.Info("gRPC handler start", "component", "grpc", "rpc", "ChatService/Chat", "model", apiReq.Model, "stream_id", streamID, "reason", "local path (post cloud guard), delegating to extracted chat core with ctx for OTEL attrs")
-	// For unary, collect the final response via write callback.
+	// For unary, accumulate all streamed content then return merged final.
+	// The core s.chat() callback fires per-token (Content populated) and a final
+	// time (Done=true with metrics but empty Content). We must collect across all.
+	var content strings.Builder
+	var thinking strings.Builder
+	var toolCalls []api.ToolCall
 	var final api.ChatResponse
 	err := h.s.chat(ctx, apiReq, func(r api.ChatResponse) error {
+		content.WriteString(r.Message.Content)
+		thinking.WriteString(r.Message.Thinking)
+		if len(r.Message.ToolCalls) > 0 {
+			toolCalls = append(toolCalls, r.Message.ToolCalls...)
+		}
 		if r.Done {
 			final = r
 		}
 		return nil
 	})
 	if err != nil {
+		slog.Info("gRPC handler error", "component", "grpc", "rpc", "ChatService/Chat", "model", apiReq.Model, "stream_id", streamID, "error", err, "status", "error", "reason", "error from core delegation (or internal); errToConnect maps for client (see intercp done log for full transport view)")
 		return nil, errToConnect(err)
 	}
+	// Merge accumulated content into the final Done response.
+	final.Message.Content = content.String()
+	final.Message.Thinking = thinking.String()
+	if len(toolCalls) > 0 {
+		final.Message.ToolCalls = toolCalls
+	}
+	slog.Info("gRPC handler completed", "component", "grpc", "rpc", "ChatService/Chat", "model", apiReq.Model, "stream_id", streamID, "status", "ok", "content_len", content.Len(), "reason", "unary success; accumulated content merged into final response")
 	return connect.NewResponse(convertToPBChat(&final)), nil
 }
 
 func (h *chatHandler) ChatStream(ctx context.Context, req *connect.Request[v1.ChatRequest], stream *connect.ServerStream[v1.ChatResponse]) error {
+	slog.Info("gRPC handler received ChatStream request", "component", "grpc", "method", "ChatStream", "model", req.Msg.Model, "stream_id", streamIDFromContext(ctx), "reason", "handler entry point for stream (post transport/interceptors); incoming call log to distinguish transport vs handler/stream issues")
 	if isCloudModel(req.Msg.Model) {
+		slog.Info("gRPC handler cloud reject", "component", "grpc", "method", "ChatStream", "model", req.Msg.Model, "stream_id", streamIDFromContext(ctx), "reason", "early unimplemented for cloud models; client must use HTTP path")
 		return connect.NewError(connect.CodeUnimplemented, errors.New("cloud models require HTTP API (remove :cloud or use /v1)"))
 	}
 	apiReq := convertToAPIChat(req.Msg)
+	if len(apiReq.Tools) > 0 {
+		slog.Debug("gRPC handler tool handling", "component", "grpc", "rpc", "ChatService/ChatStream", "model", apiReq.Model, "stream_id", streamIDFromContext(ctx), "has_tools", true, "reason", "tools present in request; converted and will propagate via streamCtx to core for possible tool-using stream responses")
+	}
 	streamID := streamIDFromContext(ctx)
 	if streamID == "" {
 		streamID = uuid.New().String()
@@ -85,13 +115,15 @@ func (h *chatHandler) ChatStream(ctx context.Context, req *connect.Request[v1.Ch
 		attribute.String("stream_id", streamID),
 		attribute.String("rpc", "ChatStream"),
 	)
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "ChatService/ChatStream", "model", apiReq.Model, "stream_id", streamID, "reason", "streamCtx derived next for cancel propagation; delegating to h.s.chat stream now")
 	slog.Info("gRPC handler start", "component", "grpc", "rpc", "ChatService/ChatStream", "model", apiReq.Model, "stream_id", streamID, "reason", "local path (post cloud guard), streamCtx derived for cancel+extract; OTEL span will get schedule/load/inference attrs from core")
 	// derive cancel from the stream-associated ctx (the ctx param here is prepared by connect's NewServerStreamHandler + newHandlerContext on the conn;
 	// flows from our intercp's WithValue for stream_id correlation). Per phased-reliable-approach.md p334 + SKILL "Context is King" + report stream ctx reqs:
 	// always derive WithCancel from stream's ctx (here the handler ctx) + defer cancel so client cancel or Send err promptly stops LLM (GPU leak prevention, bounded).
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	return h.s.chat(streamCtx, apiReq, func(r api.ChatResponse) error {
+	slog.Debug("gRPC handler ctx propagation", "component", "grpc", "rpc", "ChatService/ChatStream", "model", apiReq.Model, "stream_id", streamID, "reason", "streamCtx=WithCancel(handlerCtx) + defer cancel; ensures client cancel/err propagates to stop core LLM promptly")
+	streamErr := h.s.chat(streamCtx, apiReq, func(r api.ChatResponse) error {
 		select {
 		case <-streamCtx.Done():
 			cancel()
@@ -100,10 +132,20 @@ func (h *chatHandler) ChatStream(ctx context.Context, req *connect.Request[v1.Ch
 		}
 		if err := stream.Send(convertToPBChat(&r)); err != nil {
 			cancel() // stop gen
+			slog.Debug("gRPC handler stream send error event", "component", "grpc", "rpc", "ChatService/ChatStream", "model", apiReq.Model, "stream_id", streamID, "error", err, "reason", "Send failed (transport or client cancel/backpressure); canceled core to bound")
 			return err
+		}
+		if r.Done {
+			slog.Debug("gRPC handler stream final event", "component", "grpc", "rpc", "ChatService/ChatStream", "model", apiReq.Model, "stream_id", streamID, "done_reason", r.DoneReason, "reason", "final chunk received from core and sent; stream will close after")
 		}
 		return nil
 	})
+	if streamErr != nil {
+		slog.Info("gRPC handler stream error", "component", "grpc", "rpc", "ChatService/ChatStream", "model", apiReq.Model, "stream_id", streamID, "error", streamErr, "status", "error", "reason", "stream terminated with err from core/callback/ctx/send; distinguishes handler stream activity failure from pure transport")
+		return streamErr
+	}
+	slog.Info("gRPC handler stream completed", "component", "grpc", "rpc", "ChatService/ChatStream", "model", apiReq.Model, "stream_id", streamID, "status", "ok", "reason", "full ChatStream finished cleanly; no err from delegate")
+	return nil
 }
 
 // generateHandler and embedHandler follow the same thin adapter pattern (see Phase 2/3).
@@ -112,7 +154,9 @@ type generateHandler struct{ s *Server }
 var _ apiv1connect.GenerateServiceHandler = (*generateHandler)(nil)
 
 func (h *generateHandler) Generate(ctx context.Context, req *connect.Request[v1.GenerateRequest]) (*connect.Response[v1.GenerateResponse], error) {
+	slog.Info("gRPC handler received Generate request", "component", "grpc", "method", "Generate", "model", req.Msg.Model, "stream_id", streamIDFromContext(ctx), "reason", "handler entry point (post transport/interceptors); logs incoming calls to distinguish transport vs handler issues")
 	if isCloudModel(req.Msg.Model) {
+		slog.Info("gRPC handler cloud reject", "component", "grpc", "method", "Generate", "model", req.Msg.Model, "stream_id", streamIDFromContext(ctx), "reason", "early unimplemented for cloud models; client must use HTTP path")
 		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cloud models require HTTP API (remove :cloud or use /v1)"))
 	}
 	apiReq := convertToAPIGenerate(req.Msg)
@@ -129,22 +173,32 @@ func (h *generateHandler) Generate(ctx context.Context, req *connect.Request[v1.
 		attribute.String("stream_id", streamID),
 		attribute.String("rpc", "Generate"),
 	)
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "GenerateService/Generate", "model", apiReq.Model, "stream_id", streamID, "reason", "ctx (with stream_id) propagated to core; delegating to h.s.generate now")
 	slog.Info("gRPC handler start", "component", "grpc", "rpc", "GenerateService/Generate", "model", apiReq.Model, "stream_id", streamID, "reason", "local path (post cloud guard), delegating to extracted generate core; OTEL will receive load/inference attrs from inside")
+	// For unary, accumulate all response text then return merged final.
+	var response strings.Builder
 	var final api.GenerateResponse
 	err := h.s.generate(ctx, apiReq, func(r api.GenerateResponse) error {
+		response.WriteString(r.Response)
 		if r.Done {
 			final = r
 		}
 		return nil
 	})
 	if err != nil {
+		slog.Info("gRPC handler error", "component", "grpc", "rpc", "GenerateService/Generate", "model", apiReq.Model, "stream_id", streamID, "error", err, "status", "error", "reason", "error from core delegation (or internal); errToConnect maps for client (see intercp done log for full transport view)")
 		return nil, errToConnect(err)
 	}
+	// Merge accumulated response text into the final Done response.
+	final.Response = response.String()
+	slog.Info("gRPC handler completed", "component", "grpc", "rpc", "GenerateService/Generate", "model", apiReq.Model, "stream_id", streamID, "status", "ok", "response_len", response.Len(), "reason", "unary success; accumulated response merged into final")
 	return connect.NewResponse(convertToPBGenerate(&final)), nil
 }
 
 func (h *generateHandler) GenerateStream(ctx context.Context, req *connect.Request[v1.GenerateRequest], stream *connect.ServerStream[v1.GenerateResponse]) error {
+	slog.Info("gRPC handler received GenerateStream request", "component", "grpc", "method", "GenerateStream", "model", req.Msg.Model, "stream_id", streamIDFromContext(ctx), "reason", "handler entry point for stream (post transport/interceptors); incoming call log to distinguish transport vs handler/stream issues")
 	if isCloudModel(req.Msg.Model) {
+		slog.Info("gRPC handler cloud reject", "component", "grpc", "method", "GenerateStream", "model", req.Msg.Model, "stream_id", streamIDFromContext(ctx), "reason", "early unimplemented for cloud models; client must use HTTP path")
 		return connect.NewError(connect.CodeUnimplemented, errors.New("cloud models require HTTP API (remove :cloud or use /v1)"))
 	}
 	apiReq := convertToAPIGenerate(req.Msg)
@@ -159,13 +213,15 @@ func (h *generateHandler) GenerateStream(ctx context.Context, req *connect.Reque
 		attribute.String("stream_id", streamID),
 		attribute.String("rpc", "GenerateStream"),
 	)
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "GenerateService/GenerateStream", "model", apiReq.Model, "stream_id", streamID, "reason", "streamCtx derived next for cancel propagation; delegating to h.s.generate stream now")
 	slog.Info("gRPC handler start", "component", "grpc", "rpc", "GenerateService/GenerateStream", "model", apiReq.Model, "stream_id", streamID, "reason", "local path, stream ctx for bounded cancel to core; custom attrs for schedule/inference populated in extract")
 	// derive cancel from the stream-associated ctx (the ctx param here is prepared by connect's NewServerStreamHandler + newHandlerContext on the conn;
 	// flows from our intercp's WithValue for stream_id correlation). Per phased-reliable-approach.md p334 + SKILL "Context is King" + report stream ctx reqs:
 	// always derive WithCancel from stream's ctx (here the handler ctx) + defer cancel so client cancel or Send err promptly stops LLM (GPU leak prevention, bounded).
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	return h.s.generate(streamCtx, apiReq, func(r api.GenerateResponse) error {
+	slog.Debug("gRPC handler ctx propagation", "component", "grpc", "rpc", "GenerateService/GenerateStream", "model", apiReq.Model, "stream_id", streamID, "reason", "streamCtx=WithCancel(handlerCtx) + defer cancel; ensures client cancel/err propagates to stop core LLM promptly")
+	streamErr := h.s.generate(streamCtx, apiReq, func(r api.GenerateResponse) error {
 		select {
 		case <-streamCtx.Done():
 			cancel()
@@ -174,10 +230,20 @@ func (h *generateHandler) GenerateStream(ctx context.Context, req *connect.Reque
 		}
 		if err := stream.Send(convertToPBGenerate(&r)); err != nil {
 			cancel()
+			slog.Debug("gRPC handler stream send error event", "component", "grpc", "rpc", "GenerateService/GenerateStream", "model", apiReq.Model, "stream_id", streamID, "error", err, "reason", "Send failed (transport or client cancel/backpressure); canceled core to bound")
 			return err
+		}
+		if r.Done {
+			slog.Debug("gRPC handler stream final event", "component", "grpc", "rpc", "GenerateService/GenerateStream", "model", apiReq.Model, "stream_id", streamID, "done_reason", r.DoneReason, "reason", "final chunk received from core and sent; stream will close after")
 		}
 		return nil
 	})
+	if streamErr != nil {
+		slog.Info("gRPC handler stream error", "component", "grpc", "rpc", "GenerateService/GenerateStream", "model", apiReq.Model, "stream_id", streamID, "error", streamErr, "status", "error", "reason", "stream terminated with err from core/callback/ctx/send; distinguishes handler stream activity failure from pure transport")
+		return streamErr
+	}
+	slog.Info("gRPC handler stream completed", "component", "grpc", "rpc", "GenerateService/GenerateStream", "model", apiReq.Model, "stream_id", streamID, "status", "ok", "reason", "full GenerateStream finished cleanly; no err from delegate")
+	return nil
 }
 
 type embedHandler struct{ s *Server }
@@ -185,7 +251,9 @@ type embedHandler struct{ s *Server }
 var _ apiv1connect.EmbedServiceHandler = (*embedHandler)(nil)
 
 func (h *embedHandler) Embed(ctx context.Context, req *connect.Request[v1.EmbedRequest]) (*connect.Response[v1.EmbedResponse], error) {
+	slog.Info("gRPC handler received Embed request", "component", "grpc", "method", "Embed", "model", req.Msg.Model, "stream_id", streamIDFromContext(ctx), "reason", "handler entry point (post transport/interceptors); logs incoming calls to distinguish transport vs handler issues")
 	if isCloudModel(req.Msg.Model) {
+		slog.Info("gRPC handler cloud reject", "component", "grpc", "method", "Embed", "model", req.Msg.Model, "stream_id", streamIDFromContext(ctx), "reason", "early unimplemented for cloud models; client must use HTTP path")
 		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cloud models require HTTP API (remove :cloud or use /v1)"))
 	}
 	apiReq := convertToAPIEmbed(req.Msg)
@@ -200,11 +268,14 @@ func (h *embedHandler) Embed(ctx context.Context, req *connect.Request[v1.EmbedR
 		attribute.String("stream_id", streamID),
 		attribute.String("rpc", "Embed"),
 	)
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "EmbedService/Embed", "model", apiReq.Model, "stream_id", streamID, "reason", "ctx (with stream_id) propagated to core; delegating to h.s.embed now")
 	slog.Info("gRPC handler start", "component", "grpc", "rpc", "EmbedService/Embed", "model", apiReq.Model, "stream_id", streamID, "reason", "local path (post cloud guard), schedule exercised in core extract for OTEL attrs")
 	resp, err := h.s.embed(ctx, apiReq)
 	if err != nil {
+		slog.Info("gRPC handler error", "component", "grpc", "rpc", "EmbedService/Embed", "model", apiReq.Model, "stream_id", streamID, "error", err, "status", "error", "reason", "error from core embed; errToConnect maps for client (see intercp done log for full transport view)")
 		return nil, errToConnect(err)
 	}
+	slog.Info("gRPC handler completed", "component", "grpc", "rpc", "EmbedService/Embed", "model", apiReq.Model, "stream_id", streamID, "status", "ok", "reason", "embed success after core; response converted and sent")
 	return connect.NewResponse(convertToPBEmbed(resp)), nil
 }
 
@@ -218,15 +289,18 @@ type modelsHandler struct{ s *Server }
 var _ apiv1connect.ModelsServiceHandler = (*modelsHandler)(nil)
 
 func (h *modelsHandler) List(ctx context.Context, req *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
+	slog.Info("gRPC handler received List request", "component", "grpc", "method", "List", "model", "", "stream_id", streamIDFromContext(ctx), "reason", "handler entry point (post transport/interceptors); logs incoming admin calls to distinguish transport vs handler issues")
 	streamID := streamIDFromContext(ctx)
 	if streamID == "" {
 		streamID = uuid.New().String()
 	}
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "ModelsService/List", "model", "", "stream_id", streamID, "reason", "ctx (with stream_id) to cache; delegating to modelCaches.modelList.List now")
 	slog.Info("gRPC handler start", "component", "grpc", "rpc", "ModelsService/List", "model", "", "stream_id", streamID, "reason", "admin List using shared modelCaches.modelList (post Phase1 intercp correlation); thin, delegates to cache.List(ctx first)")
 	resp := &v1.ListModelsResponse{}
 	if h.s != nil && h.s.modelCaches != nil && h.s.modelCaches.modelList != nil {
 		models, err := h.s.modelCaches.modelList.List(ctx)
 		if err != nil {
+			slog.Info("gRPC handler error", "component", "grpc", "rpc", "ModelsService/List", "model", "", "stream_id", streamID, "error", err, "status", "error", "reason", "error from model list cache; errToConnect maps for client")
 			return nil, errToConnect(fmt.Errorf("listing models: %w", err))
 		}
 		resp.Models = make([]*v1.Model, 0, len(models))
@@ -234,10 +308,12 @@ func (h *modelsHandler) List(ctx context.Context, req *connect.Request[v1.ListMo
 			resp.Models = append(resp.Models, convertListModelResponseToPB(m))
 		}
 	}
+	slog.Info("gRPC handler completed", "component", "grpc", "rpc", "ModelsService/List", "model", "", "stream_id", streamID, "status", "ok", "reason", "List success after cache; response returned")
 	return connect.NewResponse(resp), nil
 }
 
 func (h *modelsHandler) Show(ctx context.Context, req *connect.Request[v1.ShowModelRequest]) (*connect.Response[v1.ShowModelResponse], error) {
+	slog.Info("gRPC handler received Show request", "component", "grpc", "method", "Show", "model", req.Msg.GetModel(), "stream_id", streamIDFromContext(ctx), "reason", "handler entry point (post transport/interceptors); logs incoming admin calls to distinguish transport vs handler issues")
 	modelName := req.Msg.GetModel()
 	streamID := streamIDFromContext(ctx)
 	if streamID == "" {
@@ -245,12 +321,14 @@ func (h *modelsHandler) Show(ctx context.Context, req *connect.Request[v1.ShowMo
 	}
 	slog.Info("gRPC handler start", "component", "grpc", "rpc", "ModelsService/Show", "model", modelName, "stream_id", streamID, "reason", "fleshing Show details per report #4/P5 (use cache.GetLocal or GetModelInfo; cloud guard like inference; ctx respected on cache path)")
 	if isCloudModel(modelName) {
+		slog.Info("gRPC handler cloud reject", "component", "grpc", "method", "Show", "model", modelName, "stream_id", streamID, "reason", "early unimplemented for cloud models; client must use HTTP path")
 		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cloud models require HTTP API (remove :cloud or use /v1)"))
 	}
 	apiReq := api.ShowRequest{Model: modelName}
 	var resp *api.ShowResponse
 	var err error
 	// decision: prefer cache (SWR/local) when possible, like ShowHandler; falls to GetModelInfo (I/O)
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "ModelsService/Show", "model", modelName, "stream_id", streamID, "reason", "ctx (with stream_id) respected; delegating to cache.GetLocal or GetModelInfo now")
 	if h.s != nil && h.s.modelCaches != nil && h.s.modelCaches.show != nil && modelShowCacheable(apiReq) {
 		resp, err = h.s.modelCaches.show.GetLocal(apiReq)
 		slog.Debug("show cache decision", "component", "grpc", "model", modelName, "stream_id", streamID, "reason", "modelShowCacheable true + cache present; using GetLocal (no GetModelInfo I/O)")
@@ -259,25 +337,32 @@ func (h *modelsHandler) Show(ctx context.Context, req *connect.Request[v1.ShowMo
 		slog.Debug("show cache decision", "component", "grpc", "model", modelName, "stream_id", streamID, "reason", "no cache or not cacheable; falling to GetModelInfo for full details")
 	}
 	if err != nil {
+		slog.Info("gRPC handler error", "component", "grpc", "rpc", "ModelsService/Show", "model", modelName, "stream_id", streamID, "error", err, "status", "error", "reason", "error from show cache or GetModelInfo; errToConnect maps for client")
 		return nil, errToConnect(fmt.Errorf("show model %s: %w", modelName, err))
 	}
+	slog.Info("gRPC handler completed", "component", "grpc", "rpc", "ModelsService/Show", "model", modelName, "stream_id", streamID, "status", "ok", "reason", "Show success after details fetch; response converted and sent")
 	return connect.NewResponse(convertShowResponseToPB(resp)), nil
 }
 
 func (h *modelsHandler) Version(ctx context.Context, req *connect.Request[v1.VersionRequest]) (*connect.Response[v1.VersionResponse], error) {
+	slog.Debug("gRPC handler received Version request", "component", "grpc", "method", "Version", "model", "", "stream_id", streamIDFromContext(ctx), "reason", "handler entry point (post transport/interceptors); logs incoming admin calls (no model) to distinguish transport vs handler issues")
 	streamID := streamIDFromContext(ctx)
 	if streamID == "" {
 		streamID = uuid.New().String()
 	}
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "ModelsService/Version", "stream_id", streamID, "reason", "trivial; no core I/O, direct version const")
 	slog.Debug("gRPC handler", "component", "grpc", "rpc", "ModelsService/Version", "stream_id", streamID, "reason", "real version (no model); unchanged from Phase4")
+	slog.Debug("gRPC handler completed", "component", "grpc", "rpc", "ModelsService/Version", "stream_id", streamID, "status", "ok", "reason", "Version success (no err path)")
 	return connect.NewResponse(&v1.VersionResponse{Version: version.Version}), nil
 }
 
 func (h *modelsHandler) Ps(ctx context.Context, req *connect.Request[v1.PsRequest]) (*connect.Response[v1.PsResponse], error) {
+	slog.Info("gRPC handler received Ps request", "component", "grpc", "method", "Ps", "model", "", "stream_id", streamIDFromContext(ctx), "reason", "handler entry point (post transport/interceptors); logs incoming admin calls to distinguish transport vs handler issues")
 	streamID := streamIDFromContext(ctx)
 	if streamID == "" {
 		streamID = uuid.New().String()
 	}
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "ModelsService/Ps", "model", "", "stream_id", streamID, "reason", "ctx (with stream_id) to sched; reading s.sched.loaded directly (no I/O core call)")
 	slog.Info("gRPC handler start", "component", "grpc", "rpc", "ModelsService/Ps", "model", "", "stream_id", streamID, "reason", "add Ps (running) per report #4; direct from shared s.sched.loaded (post scheduler reconcile/evict/load); no new state; thin copy of PsHandler fields for v1.ProcessModel")
 	resp := &v1.PsResponse{}
 	if h.s != nil && h.s.sched != nil {
@@ -312,10 +397,12 @@ func (h *modelsHandler) Ps(ctx context.Context, req *connect.Request[v1.PsReques
 			resp.Models = append(resp.Models, pm)
 		}
 	}
+	slog.Info("gRPC handler completed", "component", "grpc", "rpc", "ModelsService/Ps", "model", "", "stream_id", streamID, "status", "ok", "reason", "Ps success after sched read; response returned")
 	return connect.NewResponse(resp), nil
 }
 
 func (h *modelsHandler) Pull(ctx context.Context, req *connect.Request[v1.PullModelRequest], stream *connect.ServerStream[v1.ProgressResponse]) error {
+	slog.Info("gRPC handler received Pull request", "component", "grpc", "method", "Pull", "model", req.Msg.GetModel(), "stream_id", streamIDFromContext(ctx), "reason", "handler entry point for admin stream (post transport/interceptors); logs incoming calls to distinguish transport vs handler/stream issues")
 	modelName := req.Msg.GetModel()
 	streamID := streamIDFromContext(ctx)
 	if streamID == "" {
@@ -324,20 +411,25 @@ func (h *modelsHandler) Pull(ctx context.Context, req *connect.Request[v1.PullMo
 	start := time.Now()
 	slog.Info("gRPC handler start", "component", "grpc", "rpc", "ModelsService/Pull", "model", modelName, "stream_id", streamID, "reason", "Pull as server stream w/ progress per report #4/P5 (connect.ServerStream); cloud guard; derive streamCtx for cancel to core PullModel; fn sends via Send with bounded select; post-success refresh cache (idempotent); Phase1 intercp/OTEL apply")
 	if isCloudModel(modelName) {
+		slog.Info("gRPC handler cloud reject", "component", "grpc", "method", "Pull", "model", modelName, "stream_id", streamID, "reason", "early unimplemented for cloud models; client must use HTTP path")
 		return connect.NewError(connect.CodeUnimplemented, errors.New("cloud models require HTTP API (remove :cloud or use /v1)"))
 	}
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "ModelsService/Pull", "model", modelName, "stream_id", streamID, "reason", "parsed model ref; about to derive streamCtx then call PullModel core with progressFn")
 	modelRef, err := parseNormalizePullModelRef(modelName)
 	if err != nil {
+		slog.Info("gRPC handler error", "component", "grpc", "rpc", "ModelsService/Pull", "model", modelName, "stream_id", streamID, "error", err, "status", "error", "reason", "parse error before core; errToConnect for client")
 		return errToConnect(fmt.Errorf("pull model ref %s: %w", modelName, err))
 	}
 	name := modelRef.Name
 	name, err = getExistingName(name)
 	if err != nil {
+		slog.Info("gRPC handler error", "component", "grpc", "rpc", "ModelsService/Pull", "model", modelName, "stream_id", streamID, "error", err, "status", "error", "reason", "get existing name error; errToConnect for client")
 		return errToConnect(fmt.Errorf("pull get existing %s: %w", modelName, err))
 	}
 	// derive cancel from stream ctx (SKILL Context is King + phased p334 + report cancel for GPU safety)
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	slog.Debug("gRPC handler ctx propagation", "component", "grpc", "rpc", "ModelsService/Pull", "model", modelName, "stream_id", streamID, "reason", "streamCtx=WithCancel(ctx) + defer; bounds PullModel progress to client lifetime for cancel safety")
 	regOpts := &registryOptions{Insecure: req.Msg.GetInsecure()}
 	progressFn := func(r api.ProgressResponse) {
 		select {
@@ -349,10 +441,11 @@ func (h *modelsHandler) Pull(ctx context.Context, req *connect.Request[v1.PullMo
 		if err := stream.Send(convertProgressToPB(r)); err != nil {
 			cancel()
 			// err returned below via PullModel? but fn can't easily; caller will see on next or return
-			slog.Debug("pull progress send err", "component", "grpc", "model", modelName, "stream_id", streamID, "status", r.Status, "reason", "Send failed (client cancel or backpressure); cancel to stop core promptly")
+			slog.Debug("gRPC handler stream send error event", "component", "grpc", "rpc", "ModelsService/Pull", "model", modelName, "stream_id", streamID, "status", r.Status, "error", err, "reason", "Send failed (client cancel or backpressure); cancel to stop core promptly")
 		}
 	}
 	if err := PullModel(streamCtx, name.DisplayShortest(), regOpts, progressFn); err != nil {
+		slog.Info("gRPC handler stream error", "component", "grpc", "rpc", "ModelsService/Pull", "model", modelName, "stream_id", streamID, "error", err, "status", "error", "reason", "PullModel core returned err (or progress send propagated); errToConnect maps")
 		return errToConnect(fmt.Errorf("pull model %s: %w", modelName, err))
 	}
 	h.s.refreshModelListCache(name)
@@ -361,6 +454,7 @@ func (h *modelsHandler) Pull(ctx context.Context, req *connect.Request[v1.PullMo
 }
 
 func (h *modelsHandler) Push(ctx context.Context, req *connect.Request[v1.PushModelRequest], stream *connect.ServerStream[v1.ProgressResponse]) error {
+	slog.Info("gRPC handler received Push request", "component", "grpc", "method", "Push", "model", req.Msg.GetModel(), "stream_id", streamIDFromContext(ctx), "reason", "handler entry point for admin stream (post transport/interceptors); logs incoming calls to distinguish transport vs handler/stream issues")
 	modelName := req.Msg.GetModel()
 	streamID := streamIDFromContext(ctx)
 	if streamID == "" {
@@ -369,18 +463,23 @@ func (h *modelsHandler) Push(ctx context.Context, req *connect.Request[v1.PushMo
 	start := time.Now()
 	slog.Info("gRPC handler start", "component", "grpc", "rpc", "ModelsService/Push", "model", modelName, "stream_id", streamID, "reason", "Push as server stream w/ progress (symmetric to Pull); uses PushModel core + streamCtx + bounded Send; cache refresh on success")
 	if isCloudModel(modelName) {
+		slog.Info("gRPC handler cloud reject", "component", "grpc", "method", "Push", "model", modelName, "stream_id", streamID, "reason", "early unimplemented for cloud models; client must use HTTP path")
 		return connect.NewError(connect.CodeUnimplemented, errors.New("cloud models require HTTP API (remove :cloud or use /v1)"))
 	}
+	slog.Debug("gRPC handler before core delegate", "component", "grpc", "rpc", "ModelsService/Push", "model", modelName, "stream_id", streamID, "reason", "parsed model ref; about to derive streamCtx then call PushModel core with progressFn")
 	modelRef, err := parseNormalizePullModelRef(modelName)
 	if err != nil {
+		slog.Info("gRPC handler error", "component", "grpc", "rpc", "ModelsService/Push", "model", modelName, "stream_id", streamID, "error", err, "status", "error", "reason", "parse error before core; errToConnect for client")
 		return errToConnect(fmt.Errorf("push model ref %s: %w", modelName, err))
 	}
 	n, err := getExistingName(modelRef.Name)
 	if err != nil {
+		slog.Info("gRPC handler error", "component", "grpc", "rpc", "ModelsService/Push", "model", modelName, "stream_id", streamID, "error", err, "status", "error", "reason", "get existing name error; errToConnect for client")
 		return errToConnect(fmt.Errorf("push get existing %s: %w", modelName, err))
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	slog.Debug("gRPC handler ctx propagation", "component", "grpc", "rpc", "ModelsService/Push", "model", modelName, "stream_id", streamID, "reason", "streamCtx=WithCancel(ctx) + defer; bounds PushModel progress to client lifetime for cancel safety")
 	regOpts := &registryOptions{Insecure: req.Msg.GetInsecure()}
 	progressFn := func(r api.ProgressResponse) {
 		select {
@@ -391,10 +490,11 @@ func (h *modelsHandler) Push(ctx context.Context, req *connect.Request[v1.PushMo
 		}
 		if err := stream.Send(convertProgressToPB(r)); err != nil {
 			cancel()
-			slog.Debug("push progress send err", "component", "grpc", "model", modelName, "stream_id", streamID, "status", r.Status, "reason", "Send failed during push; canceling core")
+			slog.Debug("gRPC handler stream send error event", "component", "grpc", "rpc", "ModelsService/Push", "model", modelName, "stream_id", streamID, "status", r.Status, "error", err, "reason", "Send failed during push; canceling core")
 		}
 	}
 	if err := PushModel(streamCtx, n.DisplayShortest(), regOpts, progressFn); err != nil {
+		slog.Info("gRPC handler stream error", "component", "grpc", "rpc", "ModelsService/Push", "model", modelName, "stream_id", streamID, "error", err, "status", "error", "reason", "PushModel core returned err (or progress send propagated); errToConnect maps")
 		return errToConnect(fmt.Errorf("push model %s: %w", modelName, err))
 	}
 	h.s.refreshModelListCache(n)
@@ -635,13 +735,14 @@ func convertToPBGenerate(r *api.GenerateResponse) *v1.GenerateResponse {
 		ctx32[i] = int32(c)
 	}
 	return &v1.GenerateResponse{
-		Model:      r.Model,
-		Response:   r.Response,
-		Done:       r.Done,
-		DoneReason: r.DoneReason,
-		Context:    ctx32,
-		CreatedAt:  timestamppb.New(r.CreatedAt),
-		// Usage not in current gen proto; counts top level in pb already handled by caller if needed
+		Model:           r.Model,
+		Response:        r.Response,
+		Done:            r.Done,
+		DoneReason:      r.DoneReason,
+		Context:         ctx32,
+		PromptEvalCount: int64(r.Metrics.PromptEvalCount),
+		EvalCount:       int64(r.Metrics.EvalCount),
+		CreatedAt:       timestamppb.New(r.CreatedAt),
 	}
 }
 
@@ -684,7 +785,7 @@ func convertToPBEmbed(r *api.EmbedResponse) *v1.EmbedResponse {
 		embs[i] = &v1.Embeddings{Values: e}
 	}
 	return &v1.EmbedResponse{
-		Model:     r.Model,
+		Model:      r.Model,
 		Embeddings: embs,
 	}
 }

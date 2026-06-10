@@ -1,3 +1,11 @@
+# =============================================================================
+# Local development build artifacts
+# Produced by: make local / make dev, ./scripts/build-local.sh,
+#              cmake -B build ., go build, and the harness.
+#
+# These must never be committed. The script + Makefile + .gitignore
+# combination guarantees this for quick iteration on gRPC / feature branches.
+# =============================================================================
 .DS_Store
 .vscode
 .env
@@ -18,3 +26,5 @@ llama/vendor
 integration/ollama
 integration/testdata/models/
 *logloom*.json
+
+# (everything below is pre-existing ignore rules)
