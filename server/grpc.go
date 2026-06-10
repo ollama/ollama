@@ -155,6 +155,16 @@ func (h *chatHandler) ChatStream(ctx context.Context, req *connect.Request[v1.Ch
 		}
 		if r.Done {
 			slog.Debug("gRPC handler stream final event", "component", "grpc", "rpc", "ChatService/ChatStream", "model", apiReq.Model, "stream_id", streamID, "done_reason", r.DoneReason, "reason", "final chunk received from core and sent; stream will close after")
+			// Phase 2b (plan): token-level OTEL attrs on the *stream* span too (not just unary).
+			// Uses the final response chunk's metrics (populated by core extract/scheduler/llama).
+			if r.PromptEvalDuration > 0 {
+				span.SetAttributes(attribute.Int64("ollama.prompt_eval_count", int64(r.PromptEvalCount)))
+				span.SetAttributes(attribute.Int64("ollama.eval_count", int64(r.EvalCount)))
+				span.SetAttributes(attribute.Int64("ollama.ttft_ms", r.PromptEvalDuration.Milliseconds()))
+				if r.EvalDuration > 0 {
+					span.SetAttributes(attribute.Float64("ollama.tps", float64(r.EvalCount)/r.EvalDuration.Seconds()))
+				}
+			}
 		}
 		return nil
 	})
@@ -268,6 +278,15 @@ func (h *generateHandler) GenerateStream(ctx context.Context, req *connect.Reque
 		}
 		if r.Done {
 			slog.Debug("gRPC handler stream final event", "component", "grpc", "rpc", "GenerateService/GenerateStream", "model", apiReq.Model, "stream_id", streamID, "done_reason", r.DoneReason, "reason", "final chunk received from core and sent; stream will close after")
+			// Phase 2b (plan): token-level OTEL on GenerateStream span from the final chunk (matches unary + ChatStream).
+			if r.PromptEvalDuration > 0 {
+				span.SetAttributes(attribute.Int64("ollama.prompt_eval_count", int64(r.PromptEvalCount)))
+				span.SetAttributes(attribute.Int64("ollama.eval_count", int64(r.EvalCount)))
+				span.SetAttributes(attribute.Int64("ollama.ttft_ms", r.PromptEvalDuration.Milliseconds()))
+				if r.EvalDuration > 0 {
+					span.SetAttributes(attribute.Float64("ollama.tps", float64(r.EvalCount)/r.EvalDuration.Seconds()))
+				}
+			}
 		}
 		return nil
 	})

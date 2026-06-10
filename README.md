@@ -104,6 +104,16 @@ curl http://localhost:11434/api/chat -d '{
 
 See the [API documentation](https://docs.ollama.com/api) for all endpoints.
 
+## gRPC API
+
+Ollama also exposes a gRPC (via Connect) API on a dedicated port (`11435` by default) for high-performance, typed, and low-latency client applications.
+
+```shell
+grpcurl --plaintext -d '{"model":"gemma3","messages":[{"role":"user","content":"Why is the sky blue?"}]}' localhost:11435 ollama.api.v1.ChatService/ChatStream
+```
+
+See the [API documentation](docs/api/introduction.mdx) (gRPC / Connect sections) for details on endpoints, error mappings, reflection, and tracing.
+
 ### Python
 
 ```

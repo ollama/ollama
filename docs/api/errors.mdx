@@ -34,3 +34,19 @@ If an error occurs mid-stream, the error will be returned as an object in the `a
 {"model":"gemma3","created_at":"2025-10-26T17:21:21.231094Z","response":"can","done":false}
 {"error":"an error was encountered while running the model"}
 ```
+
+## gRPC Error Mapping
+
+The gRPC API translates standard internal errors and HTTP status codes into standard Connect/gRPC codes:
+
+| Internal / HTTP Error / Context | gRPC Code | Description |
+| :--- | :--- | :--- |
+| `context.Canceled` | `CodeCanceled` | Client cancels the request (e.g. mid-stream cancel to reclaim VRAM). |
+| `context.DeadlineExceeded` | `CodeDeadlineExceeded` | The request context timed out. |
+| GPU / RAM Out of Memory (OOM) | `CodeResourceExhausted` | Server is out of memory/VRAM to load or run the model. |
+| Queue full / Rate limit / Backpressure | `CodeUnavailable` | The request was rejected due to concurrent scheduler queue limits (retryable). |
+| Missing/Invalid parameters | `CodeInvalidArgument` | Invalid prompt, parameters, or model configurations. |
+| Model not found | `CodeNotFound` | The requested model is not loaded or does not exist locally. |
+| Cloud models | `CodeUnimplemented` | Cloud-only models are only supported via the HTTP REST API. |
+| All other internal errors | `CodeInternal` | Generic fallback for unexpected backend engine failures. |
+

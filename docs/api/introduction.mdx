@@ -22,6 +22,16 @@ For running cloud models on **ollama.com**, the same API is available with the f
 https://ollama.com/api
 ```
 
+## gRPC / Connect API
+
+In addition to the REST API, this fork implements a native gRPC API (using the Connect protocol) for high-performance, typed, and low-latency client communication. It is served by default at:
+
+```
+http://localhost:11435
+```
+
+The gRPC API supports the full lifecycle of models including Chat, Generate, Embed, List, and Show. It is fully backwards compatible and runs on a separate port without affecting your existing REST endpoints.
+
 ## Example request
 
 Once Ollama is running, its API is automatically available and can be accessed via `curl`:

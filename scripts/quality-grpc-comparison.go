@@ -3,23 +3,21 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
-	"golang.org/x/net/http2"
 	"google.golang.org/protobuf/proto"
 
 	v1 "github.com/ollama/ollama/gen/proto/ollama/api/v1"
 	apiv1connect "github.com/ollama/ollama/gen/proto/ollama/api/v1/apiv1connect"
+	"github.com/ollama/ollama/api"
 )
 
 // quality-grpc-comparison.go
@@ -103,25 +101,12 @@ func main() {
 	fmt.Printf("Config: REST=%s  gRPC=http://%s  model=%s  (post-build quality parity + edge cases)\n\n",
 		restBase, grpcHost, model)
 
-	// h2cClient returns an http.Client configured for h2c (HTTP/2 cleartext)
-	// with the DialTLSContext override required for plaintext gRPC connections over
-	// the gRPC listener (separate port or SAMEPORT). Matches the working setup in
-	// integration/grpc_stream_test.go to avoid "server gave HTTP response to HTTPS client".
-	// (Fix carried into quality script for reliable comparative runs post-transport fixes.)
-	h2cClient := func() *http.Client {
-		return &http.Client{
-			Transport: &http2.Transport{
-				AllowHTTP: true,
-				DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-					var d net.Dialer
-					return d.DialContext(ctx, network, addr)
-				},
-			},
-		}
-	}
+	// Use the centralized H2C client (api.H2CClient) for consistency with GRPCClient,
+	// keepalive (Phase 2c), and single source of truth. Avoids duplicating the DialTLS +
+	// keepalive logic that lives in api/h2c.go.
+	httpClient := api.H2CClient()
 
 	// Exact integration-test / report client setup for gRPC (Connect + h2c + WithGRPC for compat).
-	httpClient := h2cClient()
 	grpcClient := apiv1connect.NewChatServiceClient(httpClient, "http://"+grpcHost, connect.WithGRPC())
 
 	testCases := []struct {
@@ -197,7 +182,7 @@ func main() {
 		if tc.name == "simple_user_prompt" {
 			// Enhanced edge: mid-gen cancellation over gRPC with token counts
 			clean, chunks, pTok, cTok := testCancelWithTokenCounts(grpcClient, model)
-			fmt.Printf("  gRPC cancel test (mid-stream): cleanly_stopped=%v chunks_before_cancel=%d partial_prompt_tokens=%d partial_completion_tokens=%d\n",
+			fmt.Printf("  gRPC cancel test (mid-stream): cleanly_stopped=%v chunks_before_cancel=%d partial_prompt_tokens=%d (0 expected pre-Done) partial_completion_tokens=%d (0 expected pre-Done)\n",
 				clean, chunks, pTok, cTok)
 			// Record a synthetic metrics row for the cancel run (for table/analysis)
 			cancelM := Metrics{
@@ -535,6 +520,10 @@ func testCancelWithTokenCounts(client apiv1connect.ChatServiceClient, model stri
 	// Consider clean if we got a reasonable number before explicit cancel and no hard error on the stream after.
 	errAfter := st.Err()
 	clean = (count >= 3) && (errAfter == nil || strings.Contains(errAfter.Error(), "canceled") || strings.Contains(errAfter.Error(), "Canceled"))
+	// Note: pTok/cTok from PB chunks are typically 0 when cancelling *before* the final Done chunk
+	// (prompt/eval counts are populated by core only on the terminal response). chunks + clean stop
+	// are the primary signals of successful mid-gen cancellation (prevents GPU waste). Content length
+	// of last provides a proxy for "partial work done".
 	return clean, chunks, pTok, cTok
 }
 

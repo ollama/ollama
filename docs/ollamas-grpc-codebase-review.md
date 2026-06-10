@@ -1,6 +1,6 @@
 # Detailed Technical Review Report: Adding gRPC Support to the ollamas Fork (feature/grpc-initial branch)
 
-**Date of review**: 2026-06-03 (workspace: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas`).  
+**Date of review**: 2026-06-03. This review was performed against the source tree in this repository.  
 **Scope**: Exhaustive hands-on static analysis via `list_dir`, `grep` (with path/glob limits), `read_file` (full and offset/limited chunks across dozens of files), targeted `run_terminal_command` (git, find, grep -n, ls), and selective MCP GitHub search via `search_tool` + `use_tool` (for upstream context only). No files were created or modified. All exploration tracked via internal `todo_write` (9 phases, marked complete sequentially; started broad with root + git, narrowed to key files like `server/routes.go`, cross-checked callers/tests/build). Branch confirmed `feature/grpc-initial` with (near-)clean tree (only local dotfiles ignored in "clean" claim). No pre-existing gRPC code (confirmed via targeted greps returning 0 matches in `**/*.go` for `grpc|gRPC|google.golang.org/grpc` in source; only transitive in `go.sum` + tokenizer testdata + sentencepiece generated pb).
 
 **Summary of findings**: The codebase is a faithful but extended fork of ollama/ollama (heavy recent llama.cpp/CMake activity, cloud/remote model features via `internal/modelref` + `model_resolver.go`, experimental runners in `x/`). HTTP API surface (gin-based) is centralized and the *only* production transport. No multi-listener, cmux, or gRPC scaffolding. Request path is tightly coupled to `gin.Context` (bind + writer + abort + streaming channels). Core business logic (model resolution, scheduling, prompt rendering, inference dispatch) lives in `server/` and is reusable in-package. Adding gRPC is very feasible with minimal disruption to existing HTTP users if done via a thin protocol adapter + shared scheduler/*Server* instance. Separate ports (easiest, lowest risk) or later cmux are viable. **Single best entrypoint identified below**.
@@ -96,14 +96,14 @@ Other paths (pull/push/create use registry + progress chans; blobs are direct).
 ### 2. Entrypoints + Lifecycle (Code Pointers)
 
 **Primary server start**:
-- `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/cmd/cmd.go:1996` (`func RunServer`): `ln, _ := net.Listen("tcp", envconfig.Host().Host); server.Serve(ln)`. Also `initializeKeypair` (ed25519 ssh for cloud).
-- `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/main.go:12`: simple `cmd.NewCLI().Execute`.
+- `cmd/cmd.go` (around `RunServer`): the listener + serve entrypoint. Also related cloud keypair initialization.
+- `main.go`: thin CLI entry (`cmd.NewCLI().Execute`).
 - `NewCLI` (~2334): wires "serve" (alias start) -> RunServer; PreRun checks for other cmds use heartbeat + auto background `startApp` (via app/ or exec).
 - Desktop: `app/server/*.go` (manages `ollama serve` subprocess for tray/app); `app/cmd/app/app.go:284` (separate *UI* http server on its own port/ln, not inference); `cmd/launch/` (TUI selectors, no direct serve); `cmd/start*.go` + background_*.go.
 
 **Core server surface**:
-- `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/server/routes.go:1917` (`func Serve(ln)`): *the* place. Inits everything (s, sched, caches, logging, GPU, signals, prune). Registers on DefaultServeMux. Blocks on `srvr.Serve`.
-- `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/server/routes.go:1794` (`func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error)`): gin setup, *all* route registration (core + /v1 + middleware chains), cors, allowedHosts (loopback/private + local TLDs). Returns handler; cloud registry wrapper possible.
+- `server/routes.go` (around `Serve`): central lifecycle (server creation, scheduler init, route registration on the mux, GPU discovery, signal handling). This is the primary place to add gRPC listener wiring.
+- `server/routes.go` (around `GenerateRoutes`): all HTTP route registration (core endpoints + /v1 compat + middleware). gRPC registration should happen alongside or via a parallel path on the same `*Server` instance.
 - `Server` struct (routes.go:100): tiny (`addr net.Addr; sched *Scheduler; defaultNumCtx int; requestLogger; modelCaches`). No transport inside.
 - Handlers (examples): `ChatHandler:2422`, `GenerateHandler:256`, `EmbedHandler:754`, `ListHandler:1585`, `PsHandler:2239`, `PullHandler:1049`, `StatusHandler:2119` etc. All `*gin.Context`.
 - `scheduleRunner:205` (private helper used by handlers).
@@ -129,9 +129,9 @@ Other paths (pull/push/create use registry + progress chans; blobs are direct).
 
 **The SINGLE best, most efficient + standardized entrypoint**: Extend the existing `server.Serve` lifecycle + `*Server` (the natural "service" holder) rather than GenerateRoutes or a completely separate path.
 
-- **Primary plug point**: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/server/routes.go:1917` (`Serve`) + supporting inits (1951 Server creation, 1977 sched, 1968 GenerateRoutes). Add (or call from Serve) gRPC listener wiring + registration after core init but before/parallel to http serve. Introduce e.g. `func (s *Server) RegisterGRPC(gs *grpc.Server)` (or a `ServeGRPC(ln net.Listener) error` that shares the `*Server`).
-- **Wiring point**: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/cmd/cmd.go:1996` (`RunServer`): after/beside the HTTP `ln`, compute gRPC addr (new `envconfig`), `net.Listen`, start gRPC serve (goroutine + errgroup for shutdown), share the `*Server` instance.
-- **Config point**: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/envconfig/config.go:22` (mirror `Host()` for `GRPCHost()` / `OLLAMA_GRPC_HOST`; default e.g. 127.0.0.1:11435 or derived; update AsMap + docs).
+- **Primary plug point**: `server/routes.go` (`Serve` + supporting inits for Server creation, scheduler, `GenerateRoutes`). Add gRPC listener wiring + registration after core init but before/parallel to HTTP serve (e.g. via a `RegisterGRPC` helper or `ServeGRPC` that reuses the `*Server` instance).
+- **Wiring point**: `cmd/cmd.go` (`RunServer`): after/beside the HTTP listener, start the gRPC listener (goroutine + errgroup for shutdown), share the `*Server`.
+- **Config point**: `envconfig/config.go` (add `GRPCHost()` / `OLLAMA_GRPC_HOST` mirroring the existing `Host()` pattern; default e.g. `127.0.0.1:11435`).
 - **Logic extraction**: Core of handlers (Chat:2422, Generate:256, Embed:754, scheduleRunner:205, List/Ps/Show etc.) + prompt funcs + model ref handling. (scheduleRunner + sched already protocol-agnostic.)
 
 This keeps HTTP 100% unchanged (same routes, gin, middleware, behavior, port, pprof). gRPC is additive. All exploration confirmed this centralization.
@@ -221,15 +221,60 @@ This is principal-architect level: low-risk incremental addition to a large fork
 6. Expand surface, add converters, error mapping, auth metadata if needed, docs.
 7. (Later) cmux opt-in behind env, full client in api/, health checking, reflection, etc.
 
-**Absolute paths for key references** (as required):
-- Entrypoint: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/server/routes.go:1917` (Serve), `:1794` (GenerateRoutes), `:205` (scheduleRunner), `:2422` (ChatHandler example).
-- Lifecycle start: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/cmd/cmd.go:2001` (Listen), `:2006` (Serve).
-- Config: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/envconfig/config.go:22` (Host model to copy).
-- Pipeline core: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/server/sched.go:91` (Init), `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/llm/server.go:59` (LlamaServer iface), `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/server/images.go:622` (GetModel).
-- Compat: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/middleware/openai.go:408` (example middleware), `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/api/types.go:62` (GenerateRequest etc.).
-- Resolver/cloud: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/server/model_resolver.go:36`.
-- Existing proto: `/Users/jonathandoughty/clients/fremenlabs/ollamas/ollamas/convert/sentencepiece_model.proto`.
+**Key references in the source** (relative to repository root):
+- Entrypoint: `server/routes.go` (around line 1917 for `Serve`), `server/routes.go:1794` (`GenerateRoutes`), `server/sched.go` (scheduler), `server/routes.go` (handlers such as ChatHandler).
+- Lifecycle start: `cmd/cmd.go` (around `RunServer` / listen + serve).
+- Config: `envconfig/config.go` (mirror `Host()` pattern for `GRPCHost()` / `OLLAMA_GRPC_HOST`; default e.g. `127.0.0.1:11435`).
+- Pipeline core: `server/sched.go`, `llm/server.go` (LlamaServer interface), `server/images.go` (model loading).
+- Compat layers: `middleware/openai.go`, `api/types.go` (canonical request/response types).
+- Model resolution: `server/model_resolver.go`.
+- Existing protobuf work: `convert/sentencepiece_model.proto` (and the new `proto/ollama/api/v1/` files).
 
 All recommendations derived directly from code reads/greps. This enables adding gRPC "the Ollama way"—centralized, non-breaking, leveraging the fork's existing strengths. Ready for implementation.
 
 (subagent id: 019e8fd4-e6fa-78f2-9a97-28e0991375d2)
+
+---
+
+## Post-Implementation Review: Implemented gRPC/Connect Integration Changes
+
+Following the static analysis, the gRPC/Connect integration has been fully implemented in the `feature/grpc-initial` branch. The following robust features, error handling protocols, and compliance standards have been successfully coded and verified:
+
+### 1. Robust Client-Side Features (Resiliency & Tuning)
+* **Client-Side Circuit Breaking**:
+  - Implemented a localized, thread-safe `circuitBreaker` struct per client instance in `api/grpc_client.go`.
+  - Prevents upstream cascading failures by failing fast (throwing error) after 5 consecutive transient failures within a 30-second window.
+  - Automatically resets after a 10-second cooldown period. Since it is scoped per-client, transient issues on one endpoint or model do not poison calls to others.
+* **Plaintext HTTP/2 Cleartext (h2c) Dialing**:
+  - Centralized the transport configuration in `api/h2c.go` (exposed via `api.H2CClient()`).
+  - Configures an `http.Client` with the custom `DialTLSContext` override required to dial plaintext gRPC/Connect ports correctly, avoiding the "server gave HTTP response to HTTPS client" error common in standard Go HTTP/2 setups.
+* **Keepalive Connection Tuning**:
+  - Configured `ReadIdleTimeout` (30 seconds) and `PingTimeout` (15 seconds) on the client transport. This keeps connection paths active during long idle periods (common in interactive reasoning or slow generation tasks) and cleanly tears down stale connections.
+
+### 2. Protocol Compliance & Diagnostics
+* **Graceful Context / Deadline Handling**:
+  - In `server/grpc.go`, mapped standard errors properly: `context.DeadlineExceeded` is now correctly mapped to the standard gRPC status `CodeDeadlineExceeded`, while `context.Canceled` is mapped to `CodeCanceled`.
+* **Standard gRPC Health Checking**:
+  - Added full support for the standard gRPC Health Checking protocol.
+  - Registers `grpchealth.NewStaticChecker` for all core inference and management services (`ChatService`, `GenerateService`, `EmbedService`, `ModelsService`) so Kubernetes, load balancers, and external tools can query the serving status (`grpcurl ... grpc.health.v1.Health/Check`).
+* **Server Reflection**:
+  - Wired in `grpcreflect.NewStaticReflector` to publish gRPC service descriptors.
+  - Developers can run CLI tools (e.g. `grpcurl` or `buf curl`) to interactively discover and debug APIs, gated behind the environment variable `OLLAMA_GRPC_REFLECTION=1`.
+
+### 3. Rich Observability & Trace Instrumentation
+* **Token-Level OpenTelemetry (OTEL) Span Attributes**:
+  - Embedded detailed metrics directly into OTEL trace spans for both Unary and Streaming RPCs (`ChatService`, `GenerateService`).
+  - Upon completion of a request or stream, the server extracts tokens and duration stats from the final generation chunk and attaches them as standard attributes:
+    - `ollama.prompt_eval_count` (int64)
+    - `ollama.eval_count` (int64)
+    - `ollama.ttft_ms` (int64)
+    - `ollama.tps` (float64)
+* **Structured Decision logging (`slog`)**:
+  - Standardized all logs using the structured `log/slog` framework.
+  - Decisions around queue allocation, evictions, scheduler delays, and retry backoffs are logged with contextual metadata (`component="grpc"`, `model`, `rpc`, `stream_id`, `duration_ms`).
+
+### 4. Engine & Scheduler Error Mapping
+* **OOM Detection**:
+  - Leverages engine-level `llm.IsOutOfMemory(err)` checks during runner allocation.
+  - If a model fails to load due to insufficient host or device memory (VRAM/RAM), the gRPC server maps this to `connect.CodeResourceExhausted` (or `codes.ResourceExhausted`), allowing clients to differentiate transient resource constraint states from static invalid configurations.
+

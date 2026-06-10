@@ -75,6 +75,9 @@ type GRPCClient struct {
 	baseURL string
 	// httpClient held for potential future (e.g. custom transport); connect clients use it internally.
 	httpClient *http.Client
+
+	// breaker is per-client (not global) for Phase 4c circuit breaking on retryable errors.
+	breaker circuitBreaker
 }
 
 // NewGRPCClient constructs a gRPC client for the given baseURL (e.g. "http://127.0.0.1:11435").
@@ -149,52 +152,55 @@ func isRetryable(err error) bool {
 // doWithRetry: bounded retry helper (free func, generic OK; no type param on methods).
 // Small unit. Logs rich reason at retry decision (Flume style for LogAgentReasoning).
 // Idempotent/safe (only on classified transient; server reconcile safe). Ctx respected.
-// simple circuit breaker state (Phase 4c). Global for process simplicity (one client usually);
-// production clients often scope per-endpoint or per-model.
-var (
-	cbMu        sync.Mutex
-	cbFailures  int
-	cbLastFail  time.Time
-)
+// circuitBreaker provides simple fail-fast after N consecutive retryable failures
+// within a window (Phase 4c / G11). Per-client instance (no package globals) so one
+// bad model/endpoint does not poison others. Follows SKILL "no globals" + bounded.
+type circuitBreaker struct {
+	mu       sync.Mutex
+	failures int
+	lastFail time.Time
+}
 
 const (
-	cbThreshold = 5               // consecutive retryable fails
+	cbThreshold = 5
 	cbWindow    = 30 * time.Second
-	cbCooldown  = 10 * time.Second // fail-fast window
+	cbCooldown  = 10 * time.Second
 )
 
-func circuitAllows() bool {
-	cbMu.Lock()
-	defer cbMu.Unlock()
-	if cbFailures >= cbThreshold && time.Since(cbLastFail) < cbCooldown {
+func (b *circuitBreaker) allows() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.failures >= cbThreshold && time.Since(b.lastFail) < cbCooldown {
 		return false
 	}
-	if time.Since(cbLastFail) > cbWindow {
-		cbFailures = 0 // auto reset outside window
+	if time.Since(b.lastFail) > cbWindow {
+		b.failures = 0
 	}
 	return true
 }
 
-func recordFailure() {
-	cbMu.Lock()
-	cbFailures++
-	cbLastFail = time.Now()
-	cbMu.Unlock()
+func (b *circuitBreaker) recordFailure() {
+	b.mu.Lock()
+	b.failures++
+	b.lastFail = time.Now()
+	b.mu.Unlock()
 }
 
-func recordSuccess() {
-	cbMu.Lock()
-	cbFailures = 0
-	cbMu.Unlock()
+func (b *circuitBreaker) recordSuccess() {
+	b.mu.Lock()
+	b.failures = 0
+	b.mu.Unlock()
 }
 
 func doWithRetry[T any](
 	ctx context.Context,
 	rpc, model string,
+	b *circuitBreaker,
 	op func(context.Context) (*connect.Response[T], error),
 ) (*connect.Response[T], error) {
 	const maxAttempts = 3
-	if !circuitAllows() {
+	if !b.allows() {
+		slog.Info("grpc client circuit breaker open", "component", "api/grpc-client", "rpc", rpc, "model", model, "reason", "N consecutive retryable failures within window; failing fast to protect upstream (Phase 4c / G11 + SKILL no-globals + bounded)", "failures", b.failures, "cooldown_s", cbCooldown.Seconds(), "status", "circuit_open")
 		return nil, fmt.Errorf("grpc client %s %s: circuit breaker open (recent failures >= %d)", rpc, model, cbThreshold)
 	}
 	var lastErr error
@@ -204,13 +210,15 @@ func doWithRetry[T any](
 		res, err := op(ctx)
 		dur := time.Since(start).Milliseconds()
 		if err == nil {
-			recordSuccess()
+			b.recordSuccess()
 			slog.Info("grpc client unary done", "component", "api/grpc-client", "rpc", rpc, "model", model, "duration_ms", dur, "status", "ok", "reason", "success; no retry needed (idempotent safe path)")
 			return res, nil
 		}
 		lastErr = err
 		if isRetryable(err) {
-			recordFailure()
+			b.recordFailure()
+			// Rich reasoning log on every failure that contributes to breaker state (Flume/LogAgentReasoning).
+			slog.Info("grpc client retryable failure", "component", "api/grpc-client", "rpc", rpc, "model", model, "reason", "transient error counted toward circuit breaker (CodeUnavailable/ResourceExhausted/etc from errToConnect)", "error", err, "current_failures", b.failures, "status", "transient")
 		}
 		if !isRetryable(err) || attempt == maxAttempts-1 {
 			slog.Info("grpc client unary done", "component", "api/grpc-client", "rpc", rpc, "model", model, "duration_ms", dur, "error", err, "status", "error", "reason", "non-retryable or max attempts (permanent per errToConnect classify: Invalid/NotFound/Unauth/Internal/Canceled); propagate %w wrapped")
@@ -236,7 +244,7 @@ func (c *GRPCClient) Chat(ctx context.Context, req *connect.Request[v1.ChatReque
 	if req == nil || req.Msg == nil {
 		return nil, errors.New("grpc client chat: nil req")
 	}
-	return doWithRetry(ctx, "Chat", req.Msg.Model, func(ctx context.Context) (*connect.Response[v1.ChatResponse], error) {
+	return doWithRetry(ctx, "Chat", req.Msg.Model, &c.breaker, func(ctx context.Context) (*connect.Response[v1.ChatResponse], error) {
 		return c.chat.Chat(ctx, req)
 	})
 }
@@ -246,7 +254,7 @@ func (c *GRPCClient) Generate(ctx context.Context, req *connect.Request[v1.Gener
 	if req == nil || req.Msg == nil {
 		return nil, errors.New("grpc client generate: nil req")
 	}
-	return doWithRetry(ctx, "Generate", req.Msg.Model, func(ctx context.Context) (*connect.Response[v1.GenerateResponse], error) {
+	return doWithRetry(ctx, "Generate", req.Msg.Model, &c.breaker, func(ctx context.Context) (*connect.Response[v1.GenerateResponse], error) {
 		return c.gen.Generate(ctx, req)
 	})
 }
@@ -256,7 +264,7 @@ func (c *GRPCClient) Embed(ctx context.Context, req *connect.Request[v1.EmbedReq
 	if req == nil || req.Msg == nil {
 		return nil, errors.New("grpc client embed: nil req")
 	}
-	return doWithRetry(ctx, "Embed", req.Msg.Model, func(ctx context.Context) (*connect.Response[v1.EmbedResponse], error) {
+	return doWithRetry(ctx, "Embed", req.Msg.Model, &c.breaker, func(ctx context.Context) (*connect.Response[v1.EmbedResponse], error) {
 		return c.embed.Embed(ctx, req)
 	})
 }
@@ -350,14 +358,14 @@ func (c *GRPCClient) Push(ctx context.Context, req *connect.Request[v1.PushModel
 
 // List (admin) unary.
 func (c *GRPCClient) List(ctx context.Context) (*connect.Response[v1.ListModelsResponse], error) {
-	return doWithRetry(ctx, "List", "", func(ctx context.Context) (*connect.Response[v1.ListModelsResponse], error) {
+	return doWithRetry(ctx, "List", "", &c.breaker, func(ctx context.Context) (*connect.Response[v1.ListModelsResponse], error) {
 		return c.models.List(ctx, connect.NewRequest(&v1.ListModelsRequest{}))
 	})
 }
 
 // Version (health-ish) unary.
 func (c *GRPCClient) Version(ctx context.Context) (*connect.Response[v1.VersionResponse], error) {
-	return doWithRetry(ctx, "Version", "", func(ctx context.Context) (*connect.Response[v1.VersionResponse], error) {
+	return doWithRetry(ctx, "Version", "", &c.breaker, func(ctx context.Context) (*connect.Response[v1.VersionResponse], error) {
 		return c.models.Version(ctx, connect.NewRequest(&v1.VersionRequest{}))
 	})
 }
@@ -374,14 +382,14 @@ func (c *GRPCClient) Heartbeat(ctx context.Context) error {
 
 // Show (admin) unary.
 func (c *GRPCClient) Show(ctx context.Context, model string) (*connect.Response[v1.ShowModelResponse], error) {
-	return doWithRetry(ctx, "Show", model, func(ctx context.Context) (*connect.Response[v1.ShowModelResponse], error) {
+	return doWithRetry(ctx, "Show", model, &c.breaker, func(ctx context.Context) (*connect.Response[v1.ShowModelResponse], error) {
 		return c.models.Show(ctx, connect.NewRequest(&v1.ShowModelRequest{Model: model}))
 	})
 }
 
 // Ps (admin) unary — list running models.
 func (c *GRPCClient) Ps(ctx context.Context) (*connect.Response[v1.PsResponse], error) {
-	return doWithRetry(ctx, "Ps", "", func(ctx context.Context) (*connect.Response[v1.PsResponse], error) {
+	return doWithRetry(ctx, "Ps", "", &c.breaker, func(ctx context.Context) (*connect.Response[v1.PsResponse], error) {
 		return c.models.Ps(ctx, connect.NewRequest(&v1.PsRequest{}))
 	})
 }

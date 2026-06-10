@@ -33,3 +33,21 @@ Streaming can be disabled by providing `{"stream": false}` in the request body f
   - Simpler to process
   - Better for short responses, or structured outputs
   - Easier to handle in some applications
+
+## gRPC Streaming
+
+While the REST API streams responses using newline-delimited JSON (NDJSON/SSE) over standard HTTP, the gRPC integration provides a native HTTP/2 stream via **Connect**.
+
+### Benefits of gRPC Streaming:
+1. **Flow Control & Backpressure**: The server will automatically slow down token generation if the client is slow to consume, preventing buffer bloat and unnecessary GPU utilization.
+2. **Cancellation propagation**: Cancelling the gRPC client's stream context immediately signals the server to abort inference, unloading native resources and reclaiming VRAM instantly.
+3. **Structured framing**: Tokens are delivered as type-safe protobuf messages rather than text streams requiring manual deserialization and error checking.
+4. **Token-level Tracing**: Stream metadata contains precise metrics on prompt evaluation, evaluation duration, tokens generated, and TPS, which are mapped directly to open telemetry spans.
+
+For Go, client-side streaming can be initiated using:
+```go
+stream, err := client.ChatStream(ctx, connect.NewRequest(&v1.ChatRequest{
+    Model: "llama3.2:1b",
+    Messages: []*v1.Message{{Role: "user", Content: "Hello"}},
+}))
+```
