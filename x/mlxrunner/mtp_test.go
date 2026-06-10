@@ -263,13 +263,12 @@ func TestAcceptMTPDraftsGreedyAcceptAll(t *testing.T) {
 
 	caches, _ := newMTPTestCaches(1)
 	candidates := scriptedCandidates(r, []int32{2, 3, 4})
-	baseLogits := oneHotLogits([]int32{2}).Squeeze(1) // target prediction after the seed token 1
 
 	position := caches[0].Offset()
 
 	spec := testSpeculationSession(r, caches)
 	current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
-	results, accepted, err := spec.accept(&position, current, oneHotLogits([]int32{1}), baseLogits, candidates)
+	results, accepted, err := spec.accept(&position, current, candidates)
 	if err != nil {
 		t.Fatalf("accept: %v", err)
 	}
@@ -280,11 +279,11 @@ func TestAcceptMTPDraftsGreedyAcceptAll(t *testing.T) {
 	if got := resultIDs(results); !slices.Equal(got, []int{2, 3, 4, 5}) {
 		t.Fatalf("results = %v, want [2 3 4 5]", got)
 	}
-	if position != 3 {
-		t.Fatalf("position = %d, want 3", position)
+	if position != 4 {
+		t.Fatalf("position = %d, want 4 (current + accepted)", position)
 	}
-	if got := caches[0].Offset(); got != 3 {
-		t.Fatalf("cache offset = %d, want 3 (all drafts kept)", got)
+	if got := caches[0].Offset(); got != 4 {
+		t.Fatalf("cache offset = %d, want 4 (current + all drafts kept)", got)
 	}
 }
 
@@ -298,13 +297,12 @@ func TestAcceptMTPDraftsGreedyMismatch(t *testing.T) {
 
 	caches, _ := newMTPTestCaches(1)
 	candidates := scriptedCandidates(r, []int32{2, 7})
-	baseLogits := oneHotLogits([]int32{2}).Squeeze(1)
 
 	position := caches[0].Offset()
 
 	spec := testSpeculationSession(r, caches)
 	current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
-	results, accepted, err := spec.accept(&position, current, oneHotLogits([]int32{1}), baseLogits, candidates)
+	results, accepted, err := spec.accept(&position, current, candidates)
 	if err != nil {
 		t.Fatalf("accept: %v", err)
 	}
@@ -316,11 +314,11 @@ func TestAcceptMTPDraftsGreedyMismatch(t *testing.T) {
 	if got := resultIDs(results); !slices.Equal(got, []int{2, 3}) {
 		t.Fatalf("results = %v, want [2 3]", got)
 	}
-	if position != 1 {
-		t.Fatalf("position = %d, want 1", position)
+	if position != 2 {
+		t.Fatalf("position = %d, want 2 (current + accepted)", position)
 	}
-	if got := caches[0].Offset(); got != 1 {
-		t.Fatalf("cache offset = %d, want 1 (rolled back to accepted)", got)
+	if got := caches[0].Offset(); got != 2 {
+		t.Fatalf("cache offset = %d, want 2 (rolled back to accepted)", got)
 	}
 }
 
@@ -335,13 +333,12 @@ func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 
 	caches, _ := newMTPTestCaches(1)
 	candidates := scriptedCandidates(r, []int32{2, eos})
-	baseLogits := oneHotLogits([]int32{2}).Squeeze(1)
 
 	position := caches[0].Offset()
 
 	spec := testSpeculationSession(r, caches)
 	current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
-	results, accepted, err := spec.accept(&position, current, oneHotLogits([]int32{1}), baseLogits, candidates)
+	results, accepted, err := spec.accept(&position, current, candidates)
 	if err != nil {
 		t.Fatalf("accept: %v", err)
 	}
@@ -356,11 +353,11 @@ func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 	if len(results) != accepted {
 		t.Fatalf("results has %d tokens, want exactly the %d accepted with no bonus after EOS", len(results), accepted)
 	}
-	if position != 1 {
-		t.Fatalf("position = %d, want 1 (kept draft committed, EOS dropped)", position)
+	if position != 2 {
+		t.Fatalf("position = %d, want 2 (current + kept draft, EOS dropped)", position)
 	}
-	if got := caches[0].Offset(); got != 1 {
-		t.Fatalf("cache offset = %d, want 1 (one behind the recorded outputs, EOS dropped)", got)
+	if got := caches[0].Offset(); got != 2 {
+		t.Fatalf("cache offset = %d, want 2 (one behind the recorded outputs, EOS dropped)", got)
 	}
 }
 
@@ -407,9 +404,9 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 	}
 
 	// The target writes the caches contiguously: the seed token at offset 1,
-	// the round's current token at offset 2, then the 4-token validation
-	// forward at offset 3.
-	wantForwards := []forwardCall{{offset: 1, n: 1}, {offset: 2, n: 1}, {offset: 3, n: 4}}
+	// then one fused forward validating the current token and the 4 drafts
+	// together at offset 2.
+	wantForwards := []forwardCall{{offset: 1, n: 1}, {offset: 2, n: 5}}
 	model := r.Model.(*fakeMTPModel)
 	if !slices.Equal(model.forwards, wantForwards) {
 		t.Fatalf("target forwards = %v, want %v", model.forwards, wantForwards)
@@ -465,6 +462,65 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 	}
 	if got := []int32{2, 3, 4, eos}; !slices.Equal(session.outputs, got) {
 		t.Fatalf("session outputs = %v, want %v", session.outputs, got)
+	}
+}
+
+func TestRunMTPDecodeWarmDrafter(t *testing.T) {
+	skipIfNoMLX(t)
+	// A drafter warmed by a prefill report proposes in the very first round:
+	// the last prompt token seeds the decode loop and is forwarded fused
+	// with the drafts, so generation runs no plain forward at all.
+	const eos int32 = 7
+	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: eos, eos: 0}
+	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
+	draft := &fakeMTPDraft{predict: predict}
+	r.spec = newSpeculation(r, draft)
+
+	caches, _ := newMTPTestCaches(1)
+	session, ch := newMTPTestSession(caches)
+	position := 1 // one prefill token already processed
+
+	req := Request{
+		Responses:         ch,
+		Tokens:            []int32{0},
+		CompletionRequest: CompletionRequest{Options: api.Options{Runner: api.Runner{DraftNumPredict: 4}, NumPredict: 20}},
+		SamplerOpts:       sampler.Options{},
+	}
+	spec := r.spec.open(req, caches)
+	// The prefill chunk's committed report: token 0 at slot 0 with its
+	// hidden row, leaving the drafter ready to propose from slot 1.
+	spec.committed(mlx.FromValues([]int32{0}, 1, 1), oneHotLogits([]int32{1}), 0)
+
+	d := spec.decoder([]int32{1}, position)
+	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d.close()
+
+	content, final := collectResponses(ch)
+	if content != "234" {
+		t.Fatalf("content = %q, want %q", content, "234")
+	}
+	if final.DoneReason != 0 {
+		t.Fatalf("DoneReason = %d, want 0 (EOS)", final.DoneReason)
+	}
+	if got := []int32{2, 3, 4, eos}; !slices.Equal(session.outputs, got) {
+		t.Fatalf("session outputs = %v, want %v", session.outputs, got)
+	}
+
+	// One fused forward validates the seed token and all 4 proposals
+	// together at the seed token's slot.
+	wantForwards := []forwardCall{{offset: 1, n: 5}}
+	model := r.Model.(*fakeMTPModel)
+	if !slices.Equal(model.forwards, wantForwards) {
+		t.Fatalf("target forwards = %v, want %v", model.forwards, wantForwards)
+	}
+
+	// Warm drafting anchors at the last reported slot (0) and extends the
+	// seed token through the proposal chain.
+	wantDraft := []draftCall{{0, 1}, {0, 2}, {0, 3}, {0, 4}}
+	if !slices.Equal(draft.calls, wantDraft) {
+		t.Fatalf("draft calls = %v, want %v", draft.calls, wantDraft)
 	}
 }
 

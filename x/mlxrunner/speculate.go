@@ -228,12 +228,12 @@ func (s *speculationSession) close() {
 	s.drafter.close()
 }
 
-// speculativeDecoder decodes one speculative round per call: it forwards
-// the current token — emitted by the previous call, so a token that ends
-// generation is never forwarded — has the engine draft and validate ahead
-// of it, and returns the round's accepted tokens followed by the engine's
-// next token. The last returned token becomes the next call's current; the
-// seed token primes current and is never returned.
+// speculativeDecoder decodes one speculative round per call: the engine
+// forwards the current token — emitted by the previous call, so a token
+// that ends generation is never forwarded — fused with the drafter's
+// proposals, and the call returns the round's accepted tokens followed by
+// the engine's next token. The last returned token becomes the next call's
+// current; the seed token primes current and is never returned.
 type speculativeDecoder struct {
 	s        *speculationSession
 	position int
@@ -253,17 +253,7 @@ func (s *speculationSession) decoder(seed []int32, position int) decoder {
 }
 
 func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
-	s := st.s
-	r := s.spec.r
-
-	hidden := r.Model.Forward(&batch.Batch{
-		InputIDs:     tokenInput(st.current.Token),
-		SeqOffsets:   []int32{int32(st.position)},
-		SeqQueryLens: []int32{1},
-	}, s.spec.caches)
-	st.position++
-
-	results, next, err := s.round(&st.position, st.current, hidden, remaining)
+	results, next, err := st.s.round(&st.position, st.current, remaining)
 	if err != nil {
 		return nil, err
 	}
@@ -288,11 +278,10 @@ func (st *speculativeDecoder) close() {
 	st.s.logStats()
 }
 
-// round runs one speculative decode round for the just-forwarded current
-// token and its hidden state: draft candidates after it, validate them
-// against the target, and return the accepted run and the bonus or
-// resampled next token.
-func (s *speculationSession) round(position *int, current sampler.Result, hidden *mlx.Array, remaining int) (results []sampler.Result, next sampler.Result, err error) {
+// round runs one speculative decode round: fuse the current token with the
+// drafter's proposals in one target forward, validate the proposals, and
+// return the accepted run and the bonus or resampled next token.
+func (s *speculationSession) round(position *int, current sampler.Result, remaining int) (results []sampler.Result, next sampler.Result, err error) {
 	r := s.spec.r
 	s.stats.iterations++
 
@@ -302,22 +291,27 @@ func (s *speculationSession) round(position *int, current sampler.Result, hidden
 	// 0 and the last token decodes plainly.
 	maxDraft := min(s.limit, remaining-1)
 	candidates := s.drafter.propose(current.Token, maxDraft)
-	baseLogits := lastLogits(r.Model.Unembed(hidden))
 	if candidates == nil {
-		s.drafter.committed(tokenInput(current.Token), lastHiddenRow(hidden), *position-1)
-		return nil, r.Sampler.Sample([]int{pipelineSlot}, baseLogits), nil
+		// Nothing to validate: a plain single-token round.
+		tok := tokenInput(current.Token)
+		hidden := r.Model.Forward(&batch.Batch{
+			InputIDs:     tok,
+			SeqOffsets:   []int32{int32(*position)},
+			SeqQueryLens: []int32{1},
+		}, s.spec.caches)
+		*position++
+		s.drafter.committed(tok, hidden, *position-1)
+		return nil, r.Sampler.Sample([]int{pipelineSlot}, lastLogits(r.Model.Unembed(hidden))), nil
 	}
 
 	draftCount := candidates.tokens.Dim(1)
-	// hidden survives the sweep alongside the candidates: the post-accept
-	// report fuses it into the committed stream.
-	candidateArrays := append([]*mlx.Array{baseLogits, hidden}, candidates.Arrays()...)
+	candidateArrays := candidates.Arrays()
 	mlx.Pin(candidateArrays...)
 	mlx.Sweep()
 	defer mlx.Unpin(candidateArrays...)
 	s.stats.drafted += draftCount
 
-	results, accepted, err := s.accept(position, current, hidden, baseLogits, candidates)
+	results, accepted, err := s.accept(position, current, candidates)
 	if err != nil {
 		return nil, sampler.Result{}, err
 	}
@@ -436,11 +430,11 @@ func commitSpeculation(caches []cache.Cache, accepted, draftCount, before int) {
 // already capped to the remaining budget, so an accepted run never
 // overshoots, and a legitimate token past the budget is left for decode to
 // drop rather than cut here.
-func (s *speculationSession) accept(position *int, current sampler.Result, hidden, baseLogits *mlx.Array, candidates *draftCandidates) (results []sampler.Result, accepted int, err error) {
+func (s *speculationSession) accept(position *int, current sampler.Result, candidates *draftCandidates) (results []sampler.Result, accepted int, err error) {
 	r := s.spec.r
 	before := *position
 	draftCount := candidates.tokens.Dim(1)
-	scheduleSpeculation(s.spec.targets, before, draftCount)
+	scheduleSpeculation(s.spec.targets, before+1, draftCount)
 
 	// Every exit between schedule and commit must drain the snapshot
 	// schedule and roll the speculative writes back out of the live caches:
@@ -452,17 +446,21 @@ func (s *speculationSession) accept(position *int, current sampler.Result, hidde
 			return
 		}
 		committed = true
-		commitSpeculation(s.spec.targets, keep, draftCount, before)
+		commitSpeculation(s.spec.targets, keep, draftCount, before+1)
 	}
 	defer commit(0)
 
 	hiddenSeq := r.Model.Forward(&batch.Batch{
-		InputIDs:     candidates.tokens,
+		InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
 		SeqOffsets:   []int32{int32(before)},
-		SeqQueryLens: []int32{int32(draftCount)},
+		SeqQueryLens: []int32{int32(draftCount + 1)},
 	}, s.spec.caches)
 
-	targetDist := r.Sampler.Distribution(pipelineSlot, validationLogits(r, baseLogits, hiddenSeq), candidates.tokens)
+	// Row i of the fused hidden is the state after the token at before+i, so
+	// the rows already line up with the drafts: row 0 (current's state)
+	// predicts draft 0, and the row after the last accepted draft is the
+	// bonus row. No separate base-logits forward exists on this path.
+	targetDist := r.Sampler.Distribution(pipelineSlot, r.Model.Unembed(hiddenSeq), candidates.tokens)
 	draftDist := candidates.dist
 	acceptedMask := r.sampleAcceptedMask(targetDist.SliceRows(0, draftCount), draftDist, candidates.tokens)
 	mlx.Eval(candidates.tokens, acceptedMask)
@@ -482,35 +480,35 @@ func (s *speculationSession) accept(position *int, current sampler.Result, hidde
 	// Find where an accepted EOS ends the run, before committing, so the cut
 	// is known while the per-token rollback snapshots still exist.
 	commitIDs := make([]int32, 0, accepted+1)
+	keep := accepted
 	done := false
 	for i, id := range draftIDs[:accepted] {
 		commitIDs = append(commitIDs, int32(id))
 		if r.Tokenizer.IsEOS(int32(id)) {
 			done = true
 			accepted = i + 1
+			// Leave the EOS's own state uncommitted: the next sequence won't
+			// contain this EOS, and recurrent state can't drop a folded-in
+			// token, so committing it would carry the caches past the
+			// reusable prefix and force the next sequence to recompute.
+			keep = i
 			break
 		}
 	}
-	// The final token of a generation is recorded and streamed but its KV
-	// is never committed: the caches rest at the trie frontier.
-	keep := accepted
-	if done {
-		keep--
-	}
+
 	commit(keep)
-	*position = before + keep
+	*position = before + 1 + keep
 
 	// Report the validated run — current plus the kept drafts, with the
-	// hidden state at each token's own slot — to the drafter before
+	// fused hidden state at each token's own slot — to the drafter before
 	// returning, so even a cancelled emission leaves the drafter's state
 	// describing exactly what the target caches hold. A done generation's
 	// final token is never committed; it reaches the drafter through finish.
 	runIDs := append([]int32{int32(current.Token.Int())}, commitIDs[:keep]...)
-	runHiddens := lastHiddenRow(hidden)
-	if keep > 0 {
-		runHiddens = runHiddens.Concatenate(1, hiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, keep), mlx.Slice()))
-	}
-	s.drafter.committed(mlx.FromValues(runIDs, 1, len(runIDs)), runHiddens, before-1)
+	s.drafter.committed(
+		mlx.FromValues(runIDs, 1, len(runIDs)),
+		hiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, len(runIDs)), mlx.Slice()),
+		before)
 
 	results = draftResults(draftIDs[:accepted])
 	if done {
@@ -531,13 +529,6 @@ func (s *speculationSession) accept(position *int, current sampler.Result, hidde
 
 	results = append(results, sampler.Result{Token: nextToken})
 	return results, accepted, nil
-}
-
-// validationLogits stacks the current token's logits ahead of the draft
-// positions' logits so row i scores draft i.
-func validationLogits(r *Runner, baseLogits, hiddenSeq *mlx.Array) *mlx.Array {
-	seqLogits := r.Model.Unembed(hiddenSeq)
-	return baseLogits.ExpandDims(1).Concatenate(1, seqLogits)
 }
 
 func (r *Runner) sampleAcceptedMask(targetDist, draftDist sampler.Distribution, draftTokens *mlx.Array) *mlx.Array {
