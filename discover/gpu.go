@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 )
@@ -28,6 +29,11 @@ func GetSystemInfo() ml.SystemInfo {
 	memInfo, err := GetCPUMem()
 	if err != nil {
 		slog.Warn("error looking up system memory", "error", err)
+	}
+
+        if userThreadCount := envconfig.NumThreads(); userThreadCount > 0 {
+		slog.Info("user override thread count", "override", userThreadCount, "default", threadCount)
+		threadCount = int(userThreadCount)
 	}
 
 	return ml.SystemInfo{
