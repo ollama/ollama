@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,16 +98,12 @@ func Open(dir string) (*DiskCache, error) {
 	return c, nil
 }
 
-// cacheDirTagSignature is the first line every CACHEDIR.TAG file must contain
-// for backup tools to recognize the directory as a cache. The value is fixed by
-// the specification at https://bford.info/cachedir/.
+// cacheDirTagSignature is the fixed first line of a CACHEDIR.TAG file, per
+// https://bford.info/cachedir/. Backup tools use it to skip cache directories.
 const cacheDirTagSignature = "Signature: 8a477f597d28d172789f06886806bc55\n"
 
-// writeCacheDirTag writes a CACHEDIR.TAG file into dir so that backup programs
-// configured to skip cache directories (for example restic's --exclude-caches)
-// ignore the model store. Writing is best-effort: any failure must not prevent
-// the cache from opening, and an existing tag is left untouched so a
-// user-customized file is preserved.
+// writeCacheDirTag adds a CACHEDIR.TAG to dir so backup tools can skip the
+// model store. It is best-effort and leaves any existing tag untouched.
 func writeCacheDirTag(dir string) {
 	tag := filepath.Join(dir, "CACHEDIR.TAG")
 	if _, err := os.Stat(tag); err == nil {
@@ -116,7 +113,9 @@ func writeCacheDirTag(dir string) {
 		"# This file is a cache directory tag created by Ollama.\n" +
 		"# For information about cache directory tags, see:\n" +
 		"#\thttps://bford.info/cachedir/\n"
-	_ = os.WriteFile(tag, []byte(contents), 0o644)
+	if err := os.WriteFile(tag, []byte(contents), 0o644); err != nil {
+		slog.Warn("failed to write CACHEDIR.TAG", "path", tag, "error", err)
+	}
 }
 
 func readAndSum(filename string, limit int64) (data []byte, _ Digest, err error) {
