@@ -635,6 +635,17 @@ components:
             quantization_level:
               type: string
               description: Quantization level used (for example `Q4_0`)
+            context_length:
+              type: integer
+              description: Maximum context length the model supports, when known
+            embedding_length:
+              type: integer
+              description: Embedding dimension of the model, when known
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Capabilities the model supports (for example `completion`, `tools`, `vision`, `thinking`, `insert`)
     ListResponse:
       type: object
       properties:
@@ -1160,6 +1171,11 @@ paths:
                         - "gemma4"
                       parameter_size: "8.0B"
                       quantization_level: "Q4_K_M"
+                      context_length: 131072
+                      embedding_length: 2560
+                    capabilities:
+                      - "completion"
+                      - "vision"
   /api/ps:
     get:
       summary: List running models
