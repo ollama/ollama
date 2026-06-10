@@ -81,6 +81,9 @@ func (r *Runner) Load(modelName string) error {
 			return err
 		}
 		draftModel = draft
+	} else if sd, ok := m.(base.SelfDraft); ok {
+		// Inline draft head: already loaded with the target; nil if none shipped.
+		draftModel = sd.SelfDraft()
 	}
 
 	collected := mlx.Collect(m)

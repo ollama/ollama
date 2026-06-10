@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,9 +24,17 @@ type drafter interface {
 
 	// committed reports a run of tokens committed to the target caches:
 	// tokens[i] sits at slot position+i and hiddens row i is the target
-	// hidden state at that slot. Runs arrive in slot order — the decode
-	// seed, then each round's validated tokens.
+	// hidden state at that slot. Runs arrive in slot order — prefill
+	// chunks, the decode seed, then each round's validated tokens.
 	committed(tokens, hiddens *mlx.Array, position int)
+
+	// finish reports generation ended with current sampled but never
+	// committed, so the drafter can settle state tracking the target caches.
+	finish(current *mlx.Array)
+
+	// flush writes any buffered committed reports through to the draft
+	// caches. A drafter without draft caches has nothing to write.
+	flush()
 
 	close()
 }
@@ -100,6 +109,15 @@ func positiveEnvInt(key string) int {
 type speculation struct {
 	r     *Runner
 	draft base.DraftModel
+
+	// caches is the whole persistent slice, passed to every forward; draftKV
+	// are the draft head's own caches and targets are the rest — the caches the
+	// target forward writes, which speculation snapshots and rollback cover.
+	// Bound the first time the caches exist (the Runner reuses one cache slice
+	// for its life) and stable thereafter.
+	caches  []cache.Cache
+	draftKV []cache.Cache
+	targets []cache.Cache
 }
 
 // newSpeculation builds the speculative-decoding subsystem for a loaded model,
@@ -111,41 +129,68 @@ func newSpeculation(r *Runner, draft base.DraftModel) *speculation {
 	return &speculation{r: r, draft: draft}
 }
 
+// bind computes the draft/target cache partition the first time the persistent
+// caches exist; later requests reuse the same slice, so it runs once.
+func (s *speculation) bind(caches []cache.Cache) {
+	if s.caches != nil {
+		if !slices.Equal(s.caches, caches) {
+			panic("speculation: cache slice changed between requests")
+		}
+		return
+	}
+	draftKV := s.draft.DraftCaches(caches)
+
+	// Partition caches into target slots (everything not in draftKV) in one
+	// pass. The count check rejects a draft slot that isn't a member of caches.
+	targets := make([]cache.Cache, 0, len(caches))
+	for _, c := range caches {
+		if !slices.Contains(draftKV, c) {
+			targets = append(targets, c)
+		}
+	}
+	if len(caches)-len(targets) != len(draftKV) {
+		panic("speculation: DraftCaches must select slots of the cache slice")
+	}
+
+	s.caches = caches
+	s.draftKV = draftKV
+	s.targets = targets
+}
+
 // speculationSession is the speculation cursor for one request over a speculation. A
 // nil speculationSession is a plain decode.
 type speculationSession struct {
 	spec    *speculation
 	drafter drafter
-	caches  []cache.Cache
+	// enabled selects speculative rounds; a maintain-only engine decodes
+	// plainly while streaming committed runs to keep draft KV prefix-cached.
+	enabled bool
 	opts    specOptions
 	limit   int // current draft length
 	stats   specStats
 }
 
-// open returns the speculation cursor for this request, or nil when the model
-// carries no draft head or the request cannot speculate. Logprobs are not yet
-// supported. A nil receiver (no draft head) decodes plainly.
+// open returns the speculation cursor for this request or nil when the model ships
+// no draft head (a nil receiver), which decodes plainly.
 func (s *speculation) open(request Request, caches []cache.Cache) *speculationSession {
 	if s == nil {
 		return nil
 	}
-	d := newMTPDrafter(s, caches)
+	s.bind(caches)
+	d := newMTPDrafter(s)
 	if d == nil {
 		return nil
 	}
+
 	opts := request.SamplerOpts
-	if !s.r.mtpDefaults(opts.Temperature != 0).Enabled {
-		return nil
-	}
-	if opts.Logprobs || opts.TopLogprobs > 0 {
-		return nil
-	}
+	enabled := s.r.mtpDefaults(opts.Temperature != 0).Enabled &&
+		!opts.Logprobs && opts.TopLogprobs == 0
 
 	specOpts := s.r.loadSpecOptions(opts.Temperature != 0)
 	return &speculationSession{
 		spec:    s,
 		drafter: d,
-		caches:  caches,
+		enabled: enabled,
 		opts:    specOpts,
 		limit:   specOpts.initialDraftTokens,
 		stats:   specStats{maxDraft: specOpts.initialDraftTokens},
@@ -157,6 +202,23 @@ func (s *speculationSession) committed(tokens, hiddens *mlx.Array, position int)
 		return
 	}
 	s.drafter.committed(tokens, hiddens, position)
+}
+
+// finish reports the end of generation to the drafter: current was sampled
+// after the last committed slot and will never be committed.
+func (s *speculationSession) finish(current *mlx.Array) {
+	if s == nil {
+		return
+	}
+	s.drafter.finish(current)
+}
+
+// flush writes the drafter's buffered committed reports to the draft caches.
+func (s *speculationSession) flush() {
+	if s == nil {
+		return
+	}
+	s.drafter.flush()
 }
 
 func (s *speculationSession) close() {
@@ -178,7 +240,13 @@ type speculativeDecoder struct {
 	current  sampler.Result // emitted (or the seed), not yet forwarded
 }
 
-func (s *speculationSession) decoder(seed []int32, position int) *speculativeDecoder {
+// decoder returns the decoder for this engine's session. A maintain-only
+// engine decodes plainly via the pipelined decoder, which reports every
+// forwarded token to keep draft KV level with the target.
+func (s *speculationSession) decoder(seed []int32, position int) decoder {
+	if !s.enabled {
+		return s.spec.r.pipelinedDecoder(s, s.spec.caches, seed, position)
+	}
 	current := sampler.Result{Token: mlx.FromValues(seed, len(seed))}
 	mlx.Pin(current.Arrays()...)
 	return &speculativeDecoder{s: s, position: position, current: current}
@@ -192,7 +260,7 @@ func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
 		InputIDs:     tokenInput(st.current.Token),
 		SeqOffsets:   []int32{int32(st.position)},
 		SeqQueryLens: []int32{1},
-	}, s.caches)
+	}, s.spec.caches)
 	st.position++
 
 	results, next, err := s.round(&st.position, st.current, hidden, remaining)
@@ -212,6 +280,10 @@ func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
 }
 
 func (st *speculativeDecoder) close() {
+	// Generation always ends with a final token that was emitted but never
+	// forwarded; its report lets the drafter settle level with the caches'
+	// resting offset.
+	st.s.finish(st.current.Token)
 	mlx.Unpin(st.current.Arrays()...)
 	st.s.logStats()
 }
@@ -368,7 +440,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, hidde
 	r := s.spec.r
 	before := *position
 	draftCount := candidates.tokens.Dim(1)
-	scheduleSpeculation(s.caches, before, draftCount)
+	scheduleSpeculation(s.spec.targets, before, draftCount)
 
 	// Every exit between schedule and commit must drain the snapshot
 	// schedule and roll the speculative writes back out of the live caches:
@@ -380,7 +452,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, hidde
 			return
 		}
 		committed = true
-		commitSpeculation(s.caches, keep, draftCount, before)
+		commitSpeculation(s.spec.targets, keep, draftCount, before)
 	}
 	defer commit(0)
 
@@ -388,7 +460,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, hidde
 		InputIDs:     candidates.tokens,
 		SeqOffsets:   []int32{int32(before)},
 		SeqQueryLens: []int32{int32(draftCount)},
-	}, s.caches)
+	}, s.spec.caches)
 
 	targetDist := r.Sampler.Distribution(pipelineSlot, validationLogits(r, baseLogits, hiddenSeq), candidates.tokens)
 	draftDist := candidates.dist
@@ -419,18 +491,24 @@ func (s *speculationSession) accept(position *int, current sampler.Result, hidde
 			break
 		}
 	}
+	// The final token of a generation is recorded and streamed but its KV
+	// is never committed: the caches rest at the trie frontier.
+	keep := accepted
+	if done {
+		keep--
+	}
+	commit(keep)
+	*position = before + keep
 
-	commit(accepted)
-	*position = before + accepted
-
-	// Report the validated run — current plus the accepted drafts, with the
+	// Report the validated run — current plus the kept drafts, with the
 	// hidden state at each token's own slot — to the drafter before
 	// returning, so even a cancelled emission leaves the drafter's state
-	// describing exactly what the target caches hold.
-	runIDs := append([]int32{int32(current.Token.Int())}, commitIDs...)
+	// describing exactly what the target caches hold. A done generation's
+	// final token is never committed; it reaches the drafter through finish.
+	runIDs := append([]int32{int32(current.Token.Int())}, commitIDs[:keep]...)
 	runHiddens := lastHiddenRow(hidden)
-	if accepted > 0 {
-		runHiddens = runHiddens.Concatenate(1, hiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, accepted), mlx.Slice()))
+	if keep > 0 {
+		runHiddens = runHiddens.Concatenate(1, hiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, keep), mlx.Slice()))
 	}
 	s.drafter.committed(mlx.FromValues(runIDs, 1, len(runIDs)), runHiddens, before-1)
 

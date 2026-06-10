@@ -12,10 +12,7 @@ import (
 	"github.com/ollama/ollama/x/models/nn"
 )
 
-var (
-	_ base.DraftModel    = (*AssistantModel)(nil)
-	_ base.MTPDraftModel = (*AssistantModel)(nil)
-)
+var _ base.DraftModel = (*AssistantModel)(nil)
 
 type AssistantConfig struct {
 	TextConfig               TextConfig `json:"text_config"`
@@ -36,6 +33,10 @@ type AssistantModel struct {
 	Norm           *nn.RMSNorm
 
 	NormScaled *mlx.Array
+
+	// target supplies the scaled token embeddings the MTP head fuses with
+	// the target hidden state.
+	target *Model
 
 	*AssistantConfig
 	tensorPrefix string
@@ -145,6 +146,7 @@ func newAssistantModel(root *model.Root, target base.Model) (base.DraftModel, er
 	m := &AssistantModel{
 		AssistantConfig: &cfg,
 		tensorPrefix:    tensorPrefix,
+		target:          targetGemma,
 		Layers:          make([]*AssistantLayer, cfg.TextConfig.NumHiddenLayers),
 		TensorQuant:     root.AllTensorQuant(),
 	}
@@ -267,26 +269,42 @@ func (m *AssistantModel) precomputeScaledWeights() {
 	}
 }
 
-func (m *AssistantModel) Draft(inputsEmbeds *mlx.Array, position int32, caches []cache.Cache) (logits, hidden *mlx.Array) {
+// DraftCaches returns nil: the assistant keeps no KV and re-attends the
+// target's caches read-only each step.
+func (m *AssistantModel) DraftCaches([]cache.Cache) []cache.Cache { return nil }
+
+// Draft is single-position: the head drafts every token as if it sat at the
+// last target-seen position, so it anchors RoPE and the mask there — from the
+// non-moving target full-attention cache — regardless of the advancing offset
+// in b. The input fuses the target's scaled token embedding with b.Hidden.
+func (m *AssistantModel) Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *mlx.Array) {
+	inputsEmbeds := m.target.TokenEmbeddings(b.InputIDs).Concatenate(-1, b.Hidden)
 	dims := inputsEmbeds.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
-	b := &batch.Batch{
+
+	anchor := int32(0)
+	if len(caches) > 0 {
+		if full := caches[len(caches)-1]; full != nil {
+			anchor = int32(full.Offset() - 1)
+		}
+	}
+	ab := &batch.Batch{
 		InputIDs:     mlx.Zeros(mlx.DTypeInt32, int(B), int(L)),
-		SeqOffsets:   []int32{position},
+		SeqOffsets:   []int32{anchor},
 		SeqQueryLens: []int32{L},
 	}
 
-	sliding, full := m.sharedHistories(b, caches)
+	sliding, full := m.sharedHistories(ab, caches)
 	h := m.PreProjection.Forward(inputsEmbeds)
 
-	positions := mlx.FromValues([]int32{position}, 1)
+	positions := mlx.FromValues([]int32{anchor}, 1)
 	for _, layer := range m.Layers {
-		h = layer.Forward(h, b, positions, B, L, &m.TextConfig, sliding, full)
+		h = layer.Forward(h, ab, positions, B, L, &m.TextConfig, sliding, full)
 	}
 
 	hidden = mlx.RMSNormFn(h, m.NormScaled, m.TextConfig.RMSNormEps)
-	projected := m.PostProjection.Forward(hidden)
-	return m.unembed(hidden), projected
+	projected = m.PostProjection.Forward(hidden)
+	return hidden, projected
 }
 
 func (m *AssistantModel) sharedHistories(b *batch.Batch, caches []cache.Cache) (sliding, full *nn.KVHistory) {
@@ -302,7 +320,7 @@ func (m *AssistantModel) sharedHistories(b *batch.Batch, caches []cache.Cache) (
 	return sliding, full
 }
 
-func (m *AssistantModel) unembed(hidden *mlx.Array) *mlx.Array {
+func (m *AssistantModel) Unembed(hidden *mlx.Array) *mlx.Array {
 	if m.UseOrderedEmbeddings {
 		return m.applyCentroidMasking(hidden)
 	}
