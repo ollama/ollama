@@ -45,20 +45,6 @@ type DraftModel interface {
 	LoadWeights(tensors map[string]*mlx.Array) error
 }
 
-// MTPDefaults holds model-provided draft-token defaults for speculative
-// decoding. Environment settings in the runner may override these values.
-type MTPDefaults struct {
-	InitialDraftTokens int
-	MaxDraftTokens     int
-	Enabled            bool
-}
-
-// MTPDefaultsProvider lets a model provide MTP policy defaults from its own
-// config without teaching the runner model-specific shape heuristics.
-type MTPDefaultsProvider interface {
-	MTPDraftDefaults(sample bool) MTPDefaults
-}
-
 // SelfDraft is implemented by models whose draft head ships inline with the
 // target weights; it returns the head, or nil when the checkpoint shipped none.
 type SelfDraft interface {

@@ -28,10 +28,7 @@ func init() {
 }
 
 // Compile-time interface checks.
-var (
-	_ base.Model               = (*Model)(nil)
-	_ base.MTPDefaultsProvider = (*Model)(nil)
-)
+var _ base.Model = (*Model)(nil)
 
 // RopeParams holds per-layer-type RoPE settings.
 type RopeParams struct {
@@ -487,24 +484,6 @@ func parseSuppressTokens(configData []byte) []int32 {
 
 func (m *Model) EnableCompile() bool {
 	return true
-}
-
-func (m *Model) MTPDraftDefaults(_ bool) base.MTPDefaults {
-	defaults := base.MTPDefaults{
-		InitialDraftTokens: 4,
-		MaxDraftTokens:     16,
-		Enabled:            true,
-	}
-	if m == nil || m.TextConfig == nil {
-		return defaults
-	}
-	switch {
-	case !m.EnableMoeBlock && m.HiddenSize == 5376 && m.NumHiddenLayers == 60:
-		defaults.InitialDraftTokens = 14
-	case m.EnableMoeBlock && m.HiddenSize == 2816 && m.NumHiddenLayers == 30:
-		defaults.InitialDraftTokens = 8
-	}
-	return defaults
 }
 
 func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
