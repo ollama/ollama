@@ -224,7 +224,7 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	}
 }
 
-func TestLlamaServerCompletionCachePromptUsesRequestField(t *testing.T) {
+func TestLlamaServerCompletionCachePromptIndependentFromShift(t *testing.T) {
 	var capturedReq llamaServerCompletionRequest
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -267,11 +267,11 @@ func TestLlamaServerCompletionCachePromptUsesRequestField(t *testing.T) {
 	}
 
 	if !capturedReq.CachePrompt {
-		t.Fatal("expected cache_prompt to follow CachePrompt, not Shift")
+		t.Fatal("expected cache_prompt to follow CachePrompt even when Shift is false")
 	}
 }
 
-func TestLlamaServerChatCachePromptUsesRequestField(t *testing.T) {
+func TestLlamaServerChatCachePromptIndependentFromShift(t *testing.T) {
 	runner := &llamaServerRunner{}
 	opts := api.DefaultOptions()
 

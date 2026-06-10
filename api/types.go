@@ -116,9 +116,6 @@ type GenerateRequest struct {
 	// when hitting the context length limit instead of erroring.
 	Shift *bool `json:"shift,omitempty"`
 
-	// CachePrompt controls whether llama-server caches the prompt for reuse.
-	CachePrompt *bool `json:"cache_prompt,omitempty"`
-
 	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
 	// template instead of calling the model.
 	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
@@ -182,9 +179,6 @@ type ChatRequest struct {
 	// Shift is a boolean that, when set to true, shifts the chat history
 	// when hitting the context length limit instead of erroring.
 	Shift *bool `json:"shift,omitempty"`
-
-	// CachePrompt controls whether llama-server caches the prompt for reuse.
-	CachePrompt *bool `json:"cache_prompt,omitempty"`
 
 	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
 	// template instead of calling the model.

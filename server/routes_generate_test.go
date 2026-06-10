@@ -356,20 +356,6 @@ func TestChatHandlerCachePromptIndependentFromShift(t *testing.T) {
 		t.Fatal("expected cache_prompt to default true even when shift is false")
 	}
 
-	cachePrompt := false
-	w = createRequest(t, s.ChatHandler, api.ChatRequest{
-		Model:       "cache-prompt-chat",
-		Messages:    []api.Message{{Role: "user", Content: "hello"}},
-		Stream:      &stream,
-		Shift:       &shift,
-		CachePrompt: &cachePrompt,
-	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if mock.ChatRequest.CachePrompt {
-		t.Fatal("expected explicit cache_prompt false to reach chat request")
-	}
 }
 
 func TestChatHandlerChatTemplateRouteTruncatesMessages(t *testing.T) {
@@ -1511,20 +1497,6 @@ func TestGenerate(t *testing.T) {
 			t.Fatal("expected cache_prompt to default true even when shift is false")
 		}
 
-		cachePrompt := false
-		w = createRequest(t, s.GenerateHandler, api.GenerateRequest{
-			Model:       "test",
-			Prompt:      "hello",
-			Stream:      &stream,
-			Shift:       &shift,
-			CachePrompt: &cachePrompt,
-		})
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-		if mock.CompletionRequest.CachePrompt {
-			t.Fatal("expected explicit cache_prompt false to reach completion request")
-		}
 	})
 
 	checkGenerateResponse := func(t *testing.T, body io.Reader, model, content string) {
