@@ -143,14 +143,13 @@ func TestAssistantSharedHistoryL1MasksMatchNoMask(t *testing.T) {
 	}
 
 	b := newKVBatch(total-1, 1)
-	slidingHistory := sliding.View(b)
 	cases := []struct {
 		name string
 		h    *nn.KVHistory
 		mask nn.AttentionMask
 	}{
 		{name: "full", h: full.View(b), mask: nn.CausalMask()},
-		{name: "sliding", h: slidingHistory, mask: nn.CausalMask().Intersect(nn.SlidingWindowMask(b, slidingHistory.K().Dim(2), window, q.DType()))},
+		{name: "sliding", h: sliding.View(b), mask: nn.CausalMask()},
 	}
 
 	for _, tc := range cases {
@@ -249,6 +248,86 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRotatingKVCacheScheduledSnapshotParity verifies that scheduling per-token
+// snapshots over a batched write past the wrap point does not change the
+// attention the write returns: the history must produce the same SDPA output as
+// an identical write with no snapshots scheduled. Capture happens after the
+// write via lazy snapshots, so it must not perturb the write itself.
+func TestRotatingKVCacheScheduledSnapshotParity(t *testing.T) {
+	skipIfNoMLX(t)
+	const H, D = 1, 4
+	const window = 4
+	const before = 5 // past wrap before the batched write
+	const draft = 4
+	const scale = 1.0
+
+	perPosKV := func(pos int) (k, v *mlx.Array) {
+		kVals := make([]float32, H*D)
+		vVals := make([]float32, H*D)
+		for i := range kVals {
+			kVals[i] = 0.1*float32(pos+1) + 0.01*float32(i)
+			vVals[i] = -0.1*float32(pos+1) + 0.01*float32(i)
+		}
+		return mlx.FromValues(kVals, 1, H, 1, D), mlx.FromValues(vVals, 1, H, 1, D)
+	}
+
+	// Build the batched K/V for offsets [before, before+draft).
+	batchK := make([]*mlx.Array, draft)
+	batchV := make([]*mlx.Array, draft)
+	for i := range draft {
+		batchK[i], batchV[i] = perPosKV(before + i)
+	}
+	kBatch := mlx.Concatenate(batchK, 2)
+	vBatch := mlx.Concatenate(batchV, 2)
+
+	qVals := make([]float32, H*draft*D)
+	for i := range qVals {
+		qVals[i] = 0.5 + 0.05*float32(i)
+	}
+	q := mlx.FromValues(qVals, 1, H, draft, D)
+	b := newKVBatch(before, draft)
+
+	// Run the same write twice: once with snapshots scheduled, once without.
+	run := func(schedule bool) []float32 {
+		c := NewRotatingKVCache(window)
+		for pos := range before {
+			k, v := perPosKV(pos)
+			c.Update(newKVBatch(c.Offset(), 1), k, v)
+		}
+		if schedule {
+			offsets := make([]int, draft)
+			for i := range offsets {
+				offsets[i] = before + i
+			}
+			c.PrepareSnapshots(offsets)
+		}
+		history := c.Update(b, kBatch, vBatch)
+		out := nn.ScaledDotProductAttention(b, q, scale,
+			nn.WithKVHistory(history),
+			nn.WithMask(nn.CausalMask()))
+		if schedule {
+			for _, s := range c.TakeSnapshots() {
+				if s != nil {
+					s.Close()
+				}
+			}
+		}
+		mlx.Eval(out)
+		return out.Floats()
+	}
+
+	withSnap := run(true)
+	noSnap := run(false)
+	if len(withSnap) != len(noSnap) {
+		t.Fatalf("output length %d vs %d", len(withSnap), len(noSnap))
+	}
+	for i := range noSnap {
+		if math.Abs(float64(withSnap[i]-noSnap[i])) > 1e-5 {
+			t.Fatalf("index %d: scheduled=%v, unscheduled=%v", i, withSnap[i], noSnap[i])
+		}
 	}
 }
 

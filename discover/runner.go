@@ -28,6 +28,11 @@ var (
 	bootstrapped bool
 )
 
+var defaultIntegratedROCmGFXTargets = map[string]struct{}{
+	// AMD Radeon 8060S / Ryzen AI Max+ 395.
+	"gfx1151": {},
+}
+
 func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
 	deviceMu.Lock()
 	defer deviceMu.Unlock()
@@ -388,7 +393,7 @@ func filterIntegratedGPUs(devices []ml.DeviceInfo) []ml.DeviceInfo {
 			continue
 		}
 
-		slog.Info("dropping integrated GPU",
+		slog.Info("dropping integrated GPU; to enable, set OLLAMA_IGPU_ENABLE=1",
 			"id", device.ID,
 			"library", device.Library,
 			"compute", device.Compute(),
@@ -410,7 +415,15 @@ func integratedGPUAdmission() (allow, explicit bool) {
 }
 
 func integratedGPUAllowedByDefault(device ml.DeviceInfo) bool {
-	return device.Library == "CUDA"
+	switch device.Library {
+	case "CUDA":
+		return true
+	case "ROCm":
+		_, ok := defaultIntegratedROCmGFXTargets[device.GFXTarget]
+		return ok
+	default:
+		return false
+	}
 }
 
 func filterOverlapByLibrary(supported map[string]map[string]map[string]int, needsDelete []bool) {

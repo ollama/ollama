@@ -1,8 +1,51 @@
 package create
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestGemma4UnifiedImportTransformRegistration(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		cfg        sourceModelConfig
+	}{
+		{
+			name:       "unified conditional generation architecture",
+			configJSON: `{"architectures":["Gemma4UnifiedForConditionalGeneration"],"text_config":{"num_hidden_layers":48}}`,
+			cfg:        sourceModelConfig{Architectures: []string{"Gemma4UnifiedForConditionalGeneration"}},
+		},
+		{
+			name:       "unified model type fallback",
+			configJSON: `{"model_type":"gemma4_unified","text_config":{"num_hidden_layers":48}}`,
+			cfg:        sourceModelConfig{ModelType: "gemma4_unified"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			transform, err := newTensorImportTransform(dir, tt.cfg)
+			if err != nil {
+				t.Fatalf("newTensorImportTransform() error = %v", err)
+			}
+
+			gemmaTransform, ok := transform.(gemma4ImportTransform)
+			if !ok {
+				t.Fatalf("newTensorImportTransform() = %T, want gemma4ImportTransform", transform)
+			}
+			if gemmaTransform.numLayers != 48 {
+				t.Fatalf("numLayers = %d, want 48", gemmaTransform.numLayers)
+			}
+		})
+	}
+}
 
 func TestGemma4QuantizationType(t *testing.T) {
 	// 26B MoE: 30 layers, 128 experts

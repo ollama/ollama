@@ -530,6 +530,81 @@ func TestLaunchIntegration_ManagedSingleIntegrationPrintsConfigurationSuccessAft
 	}
 }
 
+func TestLaunchIntegration_QwenConfiguresSingleModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("failed to create bin dir: %v", err)
+	}
+	writeFakeBinary(t, binDir, "qwen")
+	t.Setenv("PATH", binDir)
+
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
+		return "gemma4", nil
+	}
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "qwen",
+		ConfigureOnly: true,
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".qwen", "settings.json"))
+	if err != nil {
+		t.Fatalf("failed to read qwen config: %v", err)
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse qwen config: %v", err)
+	}
+
+	modelCfg := cfg["model"].(map[string]any)
+	if modelCfg["name"] != "gemma4" {
+		t.Fatalf("expected model.name gemma4, got %v", modelCfg["name"])
+	}
+
+	modelProviders := cfg["modelProviders"].(map[string]any)
+	openai := modelProviders["openai"].([]any)
+	if len(openai) != 1 {
+		t.Fatalf("expected one provider, got %d", len(openai))
+	}
+
+	saved, err := config.LoadIntegration("qwen")
+	if err != nil {
+		t.Fatalf("failed to reload qwen integration config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"gemma4"}); diff != "" {
+		t.Fatalf("saved models mismatch: %s", diff)
+	}
+	if !saved.Onboarded {
+		t.Fatal("expected qwen integration to be marked onboarded")
+	}
+}
+
 func TestLaunchIntegration_ManagedSingleIntegrationDoesNotPrintRestoreHintWhenUnchanged(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
@@ -2078,7 +2153,11 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	writeFakeBinary(t, binDir, "droid")
 	t.Setenv("PATH", binDir)
 
-	editor := &launcherEditorRunner{paths: []string{"/tmp/settings.json"}}
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(settingsPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("failed to seed editor settings: %v", err)
+	}
+	editor := &launcherEditorRunner{paths: []string{settingsPath}}
 	withIntegrationOverride(t, "droid", editor)
 
 	var multiCalled bool
@@ -2778,7 +2857,11 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 	writeFakeBinary(t, binDir, "droid")
 	t.Setenv("PATH", binDir)
 
-	editor := &launcherEditorRunner{paths: []string{"/tmp/settings.json"}}
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(settingsPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("failed to seed editor settings: %v", err)
+	}
+	editor := &launcherEditorRunner{paths: []string{settingsPath}}
 	withIntegrationOverride(t, "droid", editor)
 
 	if err := config.SaveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {

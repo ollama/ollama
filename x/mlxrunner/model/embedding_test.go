@@ -76,3 +76,51 @@ func TestMakeEmbeddingLayerQuantized(t *testing.T) {
 		t.Fatalf("AsLinear type = %T, want *nn.QuantizedLinear", emb.AsLinear())
 	}
 }
+
+func TestMakeEmbeddingLayerQuantizedGlobalScale(t *testing.T) {
+	weight := &mlx.Array{}
+	scales := &mlx.Array{}
+	globalScale := &mlx.Array{}
+
+	emb := MakeEmbeddingLayer(map[string]*mlx.Array{
+		"model.embed_tokens.weight":              weight,
+		"model.embed_tokens.weight_scale":        scales,
+		"model.embed_tokens.weight.global_scale": globalScale,
+	}, "model.embed_tokens", 16, 4, "nvfp4", nil)
+
+	qemb, ok := emb.(*nn.QuantizedEmbedding)
+	if !ok {
+		t.Fatalf("embedding type = %T, want *nn.QuantizedEmbedding", emb)
+	}
+	if qemb.GlobalScale != globalScale {
+		t.Fatalf("GlobalScale = %p, want %p", qemb.GlobalScale, globalScale)
+	}
+
+	linear, ok := qemb.AsLinear().(*nn.QuantizedLinear)
+	if !ok {
+		t.Fatalf("AsLinear type = %T, want *nn.QuantizedLinear", qemb.AsLinear())
+	}
+	if linear.GlobalScale != globalScale {
+		t.Fatalf("AsLinear GlobalScale = %p, want %p", linear.GlobalScale, globalScale)
+	}
+}
+
+func TestMakeEmbeddingLayerQuantizedGlobalScaleFallback(t *testing.T) {
+	weight := &mlx.Array{}
+	scales := &mlx.Array{}
+	globalScale := &mlx.Array{}
+
+	emb := MakeEmbeddingLayer(map[string]*mlx.Array{
+		"model.embed_tokens.weight":         weight,
+		"model.embed_tokens.weight_scale":   scales,
+		"model.embed_tokens.weight_scale_2": globalScale,
+	}, "model.embed_tokens", 16, 4, "nvfp4", nil)
+
+	qemb, ok := emb.(*nn.QuantizedEmbedding)
+	if !ok {
+		t.Fatalf("embedding type = %T, want *nn.QuantizedEmbedding", emb)
+	}
+	if qemb.GlobalScale != globalScale {
+		t.Fatalf("GlobalScale = %p, want %p", qemb.GlobalScale, globalScale)
+	}
+}

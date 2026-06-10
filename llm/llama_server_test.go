@@ -49,6 +49,12 @@ func TestLlamaServerHealthParsing(t *testing.T) {
 			wantStatus: ServerStatusLoadingModel,
 		},
 		{
+			name:       "loading error envelope",
+			body:       `{"error":{"message":"Loading model","type":"unavailable_error","code":503}}`,
+			statusCode: 503,
+			wantStatus: ServerStatusLoadingModel,
+		},
+		{
 			name:       "no slots",
 			body:       `{"status":"no slot available"}`,
 			statusCode: 503,
@@ -125,8 +131,10 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	sseLines := []string{
 		`data: {"content":"Hello","stop":false}`,
 		``,
+		`:`,
 		`data: {"content":" world","stop":false}`,
 		``,
+		`:`,
 		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"prompt_n":5,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
 		``,
 	}
@@ -213,6 +221,103 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	}
 	if responses[2].EvalCount != 2 {
 		t.Errorf("EvalCount = %d, want 2", responses[2].EvalCount)
+	}
+}
+
+func TestLlamaServerCompletionPromptEvalCountIncludesCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/completion":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"eos","timings":{"cache_n":12,"prompt_n":5,"prompt_ms":10,"predicted_n":2,"predicted_ms":20}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var responses []CompletionResponse
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:  "test prompt",
+		Options: &opts,
+	}, func(cr CompletionResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+	if len(responses) != 1 {
+		t.Fatalf("got %d responses, want 1", len(responses))
+	}
+	if responses[0].PromptEvalCount != 17 {
+		t.Errorf("PromptEvalCount = %d, want 17", responses[0].PromptEvalCount)
+	}
+	if responses[0].PromptEvalDuration != 10*time.Millisecond {
+		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[0].PromptEvalDuration)
+	}
+}
+
+func TestLlamaServerChatPromptEvalCountIncludesCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+			fmt.Fprintln(w, `:`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"cache_n":12,"prompt_n":5,"prompt_ms":10,"predicted_n":2,"predicted_ms":20}}`)
+			fmt.Fprintln(w, `data: [DONE]`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var responses []ChatResponse
+	opts := api.DefaultOptions()
+	err := runner.Chat(t.Context(), ChatRequest{
+		Messages: []api.Message{{Role: "user", Content: "test prompt"}},
+		Options:  &opts,
+	}, func(cr ChatResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if len(responses) != 2 {
+		t.Fatalf("got %d responses, want 2", len(responses))
+	}
+	if responses[1].PromptEvalCount != 17 {
+		t.Errorf("PromptEvalCount = %d, want 17", responses[1].PromptEvalCount)
+	}
+	if responses[1].PromptEvalDuration != 10*time.Millisecond {
+		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[1].PromptEvalDuration)
 	}
 }
 
@@ -701,7 +806,7 @@ func TestLlamaServerWaitUntilRunningWaitsOnRecoverableStartupOOM(t *testing.T) {
 	}
 }
 
-func TestLlamaServerWaitUntilRunningTimesOutWhenLoadExceedsTimeout(t *testing.T) {
+func TestLlamaServerWaitUntilRunningTimesOutWhenLoadStalls(t *testing.T) {
 	t.Setenv("OLLAMA_LOAD_TIMEOUT", "10ms")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -729,6 +834,55 @@ func TestLlamaServerWaitUntilRunningTimesOutWhenLoadExceedsTimeout(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), "timed out waiting for llama-server to start") {
 		t.Fatalf("expected load timeout, got %q", err)
+	}
+}
+
+func TestLlamaServerWaitUntilRunningExtendsTimeoutOnOutputActivity(t *testing.T) {
+	t.Setenv("OLLAMA_LOAD_TIMEOUT", "20ms")
+
+	var activityCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		if activityCount.Load() < 5 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `{"error":{"message":"Loading model","type":"unavailable_error","code":503}}`)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port: portInt,
+		cmd:  fakeRunningCmd(),
+	}
+	runner.output = &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				activityCount.Add(1)
+				_, _ = runner.output.Write([]byte("."))
+			}
+		}
+	}()
+
+	if err := runner.WaitUntilRunning(t.Context()); err != nil {
+		t.Fatalf("WaitUntilRunning error: %v", err)
 	}
 }
 
@@ -1298,6 +1452,47 @@ func TestLlamaServerEmbedding(t *testing.T) {
 	}
 }
 
+func TestLegacyEmbeddingsWereRaw(t *testing.T) {
+	tests := []struct {
+		name string
+		kv   ggml.KV
+		want bool
+	}{
+		{
+			name: "bert t5 raw like bge-m3",
+			kv: ggml.KV{
+				"general.architecture": "bert",
+				"bert.pooling_type":    uint32(1),
+				"tokenizer.ggml.model": "t5",
+			},
+			want: true,
+		},
+		{
+			name: "nomic bert default raw",
+			kv: ggml.KV{
+				"general.architecture":    "nomic-bert",
+				"nomic-bert.pooling_type": uint32(1),
+			},
+			want: true,
+		},
+		{
+			name: "qwen3 remains normalized",
+			kv: ggml.KV{
+				"general.architecture": "qwen3",
+				"qwen3.pooling_type":   uint32(1),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := legacyEmbeddingsWereRaw(tt.kv); got != tt.want {
+				t.Fatalf("legacyEmbeddingsWereRaw() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLlamaServerEmbeddingFallbackFormat(t *testing.T) {
 	// Fallback: non-OAI array format (from "content" field)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1644,12 +1839,20 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 		{
-			name:        "integrated gpu disables projector offload",
+			name:        "integrated rocm gpu disables projector offload",
 			projectors:  []string{"model.gguf"},
 			opts:        defaultOpts,
 			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
 			modelLayers: 81,
 			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:        "integrated metal gpu keeps projector offload",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true, FreeMemory: 32 << 30}},
+			modelLayers: 81,
+			want:        []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
 			name:        "cpu only request disables projector offload",
@@ -2285,6 +2488,39 @@ func TestMemoryParsingWriter(t *testing.T) {
 				t.Errorf("MemorySize vram = %d, want %d", vram, expectedGPU)
 			}
 		})
+	}
+}
+
+func TestMemoryParsingWriterRecordsOutputActivityWithoutNewline(t *testing.T) {
+	runner := &llamaServerRunner{}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	runner.startLoadTracking(time.Now())
+	before := time.Now()
+	if _, err := w.Write([]byte("...")); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.lastLoadActivity(); got.Before(before) {
+		t.Fatalf("lastLoadActivity = %v, want after %v", got, before)
+	}
+}
+
+func TestMemoryParsingWriterIgnoresOutputActivityAfterLoadTrackingStops(t *testing.T) {
+	runner := &llamaServerRunner{}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	runner.startLoadTracking(time.Now())
+	if _, err := w.Write([]byte(".")); err != nil {
+		t.Fatal(err)
+	}
+	lastActivity := runner.lastLoadActivity()
+
+	runner.stopLoadTracking()
+	if _, err := w.Write([]byte(".")); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.lastLoadActivity(); !got.Equal(lastActivity) {
+		t.Fatalf("lastLoadActivity changed after tracking stopped: got %v, want %v", got, lastActivity)
 	}
 }
 

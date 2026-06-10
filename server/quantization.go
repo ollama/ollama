@@ -284,6 +284,15 @@ func llamaQuantizeArgs(arch string, newFileType fsggml.FileType, input, output, 
 	if typeName == "COPY" {
 		return append(args, input, output, typeName)
 	}
+	// Qwen3.5 MTP uses this projection to combine hidden and embedding states
+	// for the draft layer. Keep it at least Q8 when quantizing lower than Q8,
+	// while preserving unquantized outputs such as F16/BF16.
+	if arch == "qwen35" || arch == "qwen35moe" {
+		switch newFileType {
+		case fsggml.FileTypeQ4_K_S, fsggml.FileTypeQ4_K_M:
+			args = append(args, "--tensor-type", `^blk\.[0-9]+\.nextn\.eh_proj\.weight$=q8_0`)
+		}
+	}
 	// gemma3n's per_layer_token_embd is read on every layer for every token
 	// (not just once at input like token_embd), so it's far more quality-sensitive
 	// than a normal token embedding. Keep it at F16 on K-quants via an anchored

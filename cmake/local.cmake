@@ -575,6 +575,7 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
             ollama_append_cache_arg_if_set(_rocm_args AMDGPU_TARGETS)
             ollama_append_cache_arg_if_set(_rocm_args CMAKE_HIP_ARCHITECTURES)
             ollama_append_cache_arg_if_set(_rocm_args CMAKE_HIP_FLAGS)
+            ollama_append_cache_arg_if_set(_rocm_args GGML_CUDA_NO_PEER_COPY)
             ollama_append_cache_arg_if_set(_rocm_args CMAKE_PREFIX_PATH)
             ollama_add_llama_server_build(${_backend}
                 PRESET ${_rocm_preset}
