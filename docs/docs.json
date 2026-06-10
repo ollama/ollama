@@ -103,7 +103,8 @@
               "/capabilities/vision",
               "/capabilities/embeddings",
               "/capabilities/tool-calling",
-              "/capabilities/web-search"
+              "/capabilities/web-search",
+              "/capabilities/image-generation"
             ]
           },
           {
