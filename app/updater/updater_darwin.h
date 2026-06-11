@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <Security/Security.h>
 
 // TODO make these macros so we can extract line numbers from the native code
 void appLogInfo(NSString *msg);
@@ -14,3 +15,5 @@ AuthorizationRef getAppInstallAuthorization();
 
 const char* verifyExtractedBundle(char *path);
 bool chownWithAuthorization(const char *user);
+bool replaceBundleWithAuthorization(const char *stagedApp, const char *backupApp,
+                                    const char *destApp, const char *owner);

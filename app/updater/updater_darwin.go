@@ -32,8 +32,10 @@ const (
 )
 
 var (
-	appBackupDir   string
-	SystemWidePath = "/Applications/Ollama.app"
+	appBackupDir                   string
+	SystemWidePath                 = "/Applications/Ollama.app"
+	renameBundle                   = os.Rename
+	replaceBundleWithAuthorization = replaceBundleWithAuthorizationNative
 )
 
 var BundlePath = func() string {
@@ -130,23 +132,21 @@ func DoUpgrade(interactive bool) error {
 	defer r.Close()
 
 	slog.Debug("temporarily staging old version", "staging", appBackup)
-	if err := os.Rename(BundlePath, appBackup); err != nil {
+	if err := renameBundle(BundlePath, appBackup); err != nil {
 		if !interactive {
 			// We don't want to prompt for permission if we're attempting to upgrade at startup
 			return fmt.Errorf("unable to upgrade in non-interactive mode with permission problems: %w", err)
 		}
-		// TODO actually inspect the error and look for permission problems before trying chown
-		slog.Warn("unable to backup old version due to permission problems, changing ownership", "error", err)
-		u, err := user.Current()
-		if err != nil {
-			return err
-		}
-		if !chownWithAuthorization(u.Username) {
-			return fmt.Errorf("unable to change permissions to complete upgrade")
-		}
-		if err := os.Rename(BundlePath, appBackup); err != nil {
+		if !isPermissionProblem(err) {
 			return fmt.Errorf("unable to perform upgrade - failed to stage old version: %w", err)
 		}
+
+		slog.Warn("unable to backup old version due to permission problems, requesting authorization", "error", err)
+		if err := doUpgradeWithAuthorization(r.File, appBackup); err != nil {
+			return err
+		}
+		completeUpgrade()
+		return nil
 	}
 
 	// Get ready to try to unwind a partial upgade failure during unzip
@@ -160,100 +160,30 @@ func DoUpgrade(interactive bool) error {
 				// At this point, we're basically hosed and the user will need to re-install
 				return
 			}
-			if err := os.Rename(appBackup, BundlePath); err != nil {
+			if err := renameBundle(appBackup, BundlePath); err != nil {
 				slog.Error("failed to revert to prior version", "path", contentsName, "error", err)
 			}
 		}
 	}()
 
-	// Bundle contents Ollama.app/Contents/...
-	links := []*zip.File{}
-	for _, f := range r.File {
-		s := strings.SplitN(f.Name, "/", 2)
-		if len(s) < 2 || s[1] == "" {
-			slog.Debug("skipping", "file", f.Name)
-			continue
-		}
-		name := s[1]
-		if strings.HasSuffix(name, "/") {
-			d, err := bundleEntryPath(BundlePath, name, bundleEntryRelative)
-			if err != nil {
-				anyFailures = true
-				return err
-			}
-			err = os.MkdirAll(d, 0o755)
-			if err != nil {
-				anyFailures = true
-				return fmt.Errorf("failed to mkdir %s: %w", d, err)
-			}
-			continue
-		}
-		if f.Mode()&os.ModeSymlink != 0 {
-			// Defer links to the end
-			links = append(links, f)
-			continue
-		}
-
-		destName, err := bundleEntryPath(BundlePath, name, bundleEntryRelative)
-		if err != nil {
-			anyFailures = true
-			return err
-		}
-		if err := extractBundleFile(f, destName, name); err != nil {
-			anyFailures = true
-			return err
-		}
-	}
-	for _, f := range links {
-		s := strings.SplitN(f.Name, "/", 2) // Strip off Ollama.app/
-		if len(s) < 2 || s[1] == "" {
-			slog.Debug("skipping link", "file", f.Name)
-			continue
-		}
-		name := s[1]
-		src, err := f.Open()
-		if err != nil {
-			anyFailures = true
-			return err
-		}
-		buf, err := io.ReadAll(src)
-		if err != nil {
-			anyFailures = true
-			return err
-		}
-		link := string(buf)
-		if link == "" {
-			anyFailures = true
-			return fmt.Errorf("bundle contains empty symlink %s", f.Name)
-		}
-		if filepath.IsAbs(link) {
-			anyFailures = true
-			return fmt.Errorf("bundle contains absolute symlink %s -> %s", f.Name, link)
-		}
-		if !validBundleLinkTarget(name, link, bundleEntryRelative) {
-			anyFailures = true
-			return fmt.Errorf("bundle contains invalid symlink %s -> %s", f.Name, link)
-		}
-		destName, err := bundleEntryPath(BundlePath, name, bundleEntryRelative)
-		if err != nil {
-			anyFailures = true
-			return err
-		}
-		if err = os.Symlink(link, destName); err != nil {
-			anyFailures = true
-			return err
-		}
+	if err := extractUpdateBundle(r.File, BundlePath, bundleEntryRelative); err != nil {
+		anyFailures = true
+		return err
 	}
 
+	completeUpgrade()
+	return nil
+}
+
+func completeUpgrade() {
 	f, err := os.OpenFile(UpgradeMarkerFile, os.O_RDONLY|os.O_CREATE, 0o666)
 	if err != nil {
 		slog.Warn("unable to create marker file", "file", UpgradeMarkerFile, "error", err)
+	} else if err := f.Close(); err != nil {
+		slog.Warn("unable to close marker file", "file", UpgradeMarkerFile, "error", err)
 	}
-	f.Close()
 	// Make sure to remove the staged download now that we succeeded so we don't inadvertently try again.
 	cleanupOldDownloads(UpdateStageDir)
-
-	return nil
 }
 
 func DoPostUpgradeCleanup() error {
@@ -284,10 +214,55 @@ func verifyDownload() error {
 		return fmt.Errorf("unable to open upgrade bundle %s: %w", bundle, err)
 	}
 	defer r.Close()
+	if err := extractUpdateBundle(r.File, dir, bundleEntryWithArchiveRoot); err != nil {
+		return err
+	}
+
+	if err := verifyExtractedBundle(filepath.Join(dir, "Ollama.app")); err != nil {
+		return fmt.Errorf("signature verification failed: %s", err)
+	}
+	return nil
+}
+
+func doUpgradeWithAuthorization(files []*zip.File, appBackup string) error {
+	u, err := user.Current()
+	if err != nil {
+		return err
+	}
+	owner := u.Uid
+	if owner == "" {
+		owner = u.Username
+	}
+
+	stagingDir, err := os.MkdirTemp(appBackupDir, "authorized-update-")
+	if err != nil {
+		return fmt.Errorf("unable to create authorized update staging dir: %w", err)
+	}
+	defer os.RemoveAll(stagingDir)
+
+	if err := extractUpdateBundle(files, stagingDir, bundleEntryWithArchiveRoot); err != nil {
+		return err
+	}
+	stagedApp := filepath.Join(stagingDir, updateArchiveRoot)
+	if _, err := os.Stat(stagedApp); err != nil {
+		return fmt.Errorf("staged update is missing app bundle: %w", err)
+	}
+	if !replaceBundleWithAuthorization(stagedApp, appBackup, BundlePath, owner) {
+		return fmt.Errorf("unable to replace app bundle with authorization")
+	}
+	return nil
+}
+
+func extractUpdateBundle(files []*zip.File, root string, scope bundleEntryScope) error {
 	links := []*zip.File{}
-	for _, f := range r.File {
-		if strings.HasSuffix(f.Name, "/") {
-			d, err := bundleEntryPath(dir, f.Name, bundleEntryWithArchiveRoot)
+	for _, f := range files {
+		name, ok := bundleArchiveName(f.Name, scope)
+		if !ok {
+			slog.Debug("skipping", "file", f.Name)
+			continue
+		}
+		if strings.HasSuffix(name, "/") {
+			d, err := bundleEntryPath(root, name, scope)
 			if err != nil {
 				return err
 			}
@@ -298,24 +273,33 @@ func verifyDownload() error {
 			continue
 		}
 		if f.Mode()&os.ModeSymlink != 0 {
-			// Defer links to the end
+			// Defer links until their target files have been extracted.
 			links = append(links, f)
 			continue
 		}
-		destName, err := bundleEntryPath(dir, f.Name, bundleEntryWithArchiveRoot)
+
+		destName, err := bundleEntryPath(root, name, scope)
 		if err != nil {
 			return err
 		}
-		if err := extractBundleFile(f, destName, f.Name); err != nil {
+		if err := extractBundleFile(f, destName, name); err != nil {
 			return err
 		}
 	}
 	for _, f := range links {
+		name, ok := bundleArchiveName(f.Name, scope)
+		if !ok {
+			slog.Debug("skipping link", "file", f.Name)
+			continue
+		}
 		src, err := f.Open()
 		if err != nil {
 			return err
 		}
 		buf, err := io.ReadAll(src)
+		if closeErr := src.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
 		if err != nil {
 			return err
 		}
@@ -326,10 +310,10 @@ func verifyDownload() error {
 		if filepath.IsAbs(link) {
 			return fmt.Errorf("bundle contains absolute symlink %s -> %s", f.Name, link)
 		}
-		if !validBundleLinkTarget(f.Name, link, bundleEntryWithArchiveRoot) {
+		if !validBundleLinkTarget(name, link, scope) {
 			return fmt.Errorf("bundle contains invalid symlink %s -> %s", f.Name, link)
 		}
-		destName, err := bundleEntryPath(dir, f.Name, bundleEntryWithArchiveRoot)
+		destName, err := bundleEntryPath(root, name, scope)
 		if err != nil {
 			return err
 		}
@@ -337,11 +321,19 @@ func verifyDownload() error {
 			return err
 		}
 	}
-
-	if err := verifyExtractedBundle(filepath.Join(dir, "Ollama.app")); err != nil {
-		return fmt.Errorf("signature verification failed: %s", err)
-	}
 	return nil
+}
+
+func bundleArchiveName(name string, scope bundleEntryScope) (string, bool) {
+	if scope == bundleEntryWithArchiveRoot {
+		return name, true
+	}
+
+	parts := strings.SplitN(name, "/", 2)
+	if len(parts) < 2 || parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
 }
 
 func bundleEntryPath(root, name string, scope bundleEntryScope) (string, error) {
@@ -391,6 +383,12 @@ func validBundleLinkTarget(name, link string, scope bundleEntryScope) bool {
 		strings.HasPrefix(cleanTarget, updateArchiveRoot+string(os.PathSeparator))
 }
 
+func isPermissionProblem(err error) bool {
+	return errors.Is(err, os.ErrPermission) ||
+		errors.Is(err, syscall.EACCES) ||
+		errors.Is(err, syscall.EPERM)
+}
+
 // If we detect an upgrade bundle, attempt to upgrade at startup
 func DoUpgradeAtStartup() error {
 	bundle := getStagedUpdate()
@@ -435,6 +433,18 @@ func chownWithAuthorization(user string) bool {
 	u := C.CString(user)
 	defer C.free(unsafe.Pointer(u))
 	return (bool)(C.chownWithAuthorization(u))
+}
+
+func replaceBundleWithAuthorizationNative(stagedApp, backupApp, destApp, owner string) bool {
+	staged := C.CString(stagedApp)
+	defer C.free(unsafe.Pointer(staged))
+	backup := C.CString(backupApp)
+	defer C.free(unsafe.Pointer(backup))
+	dest := C.CString(destApp)
+	defer C.free(unsafe.Pointer(dest))
+	ownerName := C.CString(owner)
+	defer C.free(unsafe.Pointer(ownerName))
+	return (bool)(C.replaceBundleWithAuthorization(staged, backup, dest, ownerName))
 }
 
 func verifyExtractedBundle(path string) error {

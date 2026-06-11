@@ -4,6 +4,7 @@
 #import <CoreServices/CoreServices.h>
 #import <Security/Security.h>
 #import <ServiceManagement/ServiceManagement.h>
+#import <string.h>
 
 void appLogInfo(NSString *msg) {
     NSLog(@"%@", msg);
@@ -130,6 +131,94 @@ bool chownWithAuthorization(const char *user) {
     appLogDebug([NSString stringWithFormat:@"XXX finished chown"]);
     AuthorizationFree(authRef, kAuthorizationFlagDestroyRights);
     return true;
+}
+
+bool replaceBundleWithAuthorization(const char *stagedApp, const char *backupApp,
+                                    const char *destApp, const char *owner) {
+    AuthorizationRef authRef = getAppInstallAuthorization();
+    if (authRef == NULL) {
+        return NO;
+    }
+
+    static const char *successMarker = "__OLLAMA_AUTHORIZED_UPDATE_SUCCESS__";
+    static const char *script =
+        "set -u\n"
+        "exec 2>&1\n"
+        "staged=$1\n"
+        "backup=$2\n"
+        "dest=$3\n"
+        "owner=$4\n"
+        "success_marker=$5\n"
+        "if [ -e \"$backup\" ]; then\n"
+        "  echo \"backup already exists: $backup\" >&2\n"
+        "  exit 73\n"
+        "fi\n"
+        "mkdir -p \"$(dirname \"$backup\")\" || exit 1\n"
+        "mv \"$dest\" \"$backup\" || exit 1\n"
+        "if cp -pR \"$staged\" \"$dest\"; then\n"
+        "  chown -R \"$owner\" \"$backup\" >/dev/null 2>&1 || true\n"
+        "  printf '%s\\n' \"$success_marker\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "status=$?\n"
+        "rm -rf \"$dest\" >/dev/null 2>&1 || true\n"
+        "mv \"$backup\" \"$dest\" >/dev/null 2>&1 || true\n"
+        "exit \"$status\"\n";
+
+    const char *shellTool = "/bin/sh";
+    const char *shellArgs[] = {"-c", script, "ollama-authorized-update",
+                               stagedApp, backupApp, destApp, owner,
+                               successMarker, NULL};
+    appLogInfo([NSString
+        stringWithFormat:@"requesting authorization to replace %@ from %@",
+                         @(destApp), @(stagedApp)]);
+
+    FILE *pipe = NULL;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    OSStatus err = AuthorizationExecuteWithPrivileges(
+        authRef, shellTool, kAuthorizationFlagDefaults,
+        (char *const *)shellArgs, &pipe);
+#pragma clang diagnostic pop
+
+    if (err != errAuthorizationSuccess) {
+        appLogInfo([NSString
+            stringWithFormat:@"Failed to start authorized update. Status = %d",
+                             err]);
+        AuthorizationFree(authRef, kAuthorizationFlagDestroyRights);
+        return NO;
+    }
+
+    BOOL succeeded = NO;
+    if (pipe != NULL) {
+        char line[4096];
+        while (fgets(line, sizeof(line), pipe) != NULL) {
+            line[strcspn(line, "\r\n")] = '\0';
+            appLogDebug([NSString
+                stringWithFormat:@"authorized update output: %s", line]);
+            if (strcmp(line, successMarker) == 0) {
+                succeeded = YES;
+            }
+        }
+        if (ferror(pipe)) {
+            appLogInfo(@"failed to read authorized update output");
+            succeeded = NO;
+        }
+        fclose(pipe);
+    } else {
+        appLogInfo(@"authorized update did not provide a completion pipe");
+    }
+    AuthorizationFree(authRef, kAuthorizationFlagDestroyRights);
+
+    if (!succeeded) {
+        appLogInfo(@"authorized update failed or did not report success");
+        return NO;
+    }
+
+    appLogInfo([NSString
+        stringWithFormat:@"authorized update replaced %@ successfully",
+                         @(destApp)]);
+    return YES;
 }
 
 // nil if bundle is good, error string otherwise
