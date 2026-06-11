@@ -2990,6 +2990,53 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 	}
 }
 
+func TestLaunchIntegration_ConfiguredEditorLaunchRepairsLiveDrift(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	editor := &launcherEditorRunner{models: []string{"old-model"}}
+	withIntegrationOverride(t, "droid", editor)
+
+	if err := config.SaveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			fmt.Fprintf(w, `{"model":%q}`, req.Model)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "droid"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2", "qwen3:8b"}}); diff != "" {
+		t.Fatalf("unexpected editor rewrites (-want +got):\n%s", diff)
+	}
+	if editor.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to use saved primary model, got %q", editor.ranModel)
+	}
+
+	saved, err := config.LoadIntegration("droid")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"llama3.2", "qwen3:8b"}); diff != "" {
+		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
+	}
+}
+
 func TestLaunchIntegration_OpenclawPreservesExistingModelList(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
