@@ -765,7 +765,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 
 	var launchModels []LaunchModel
 	liveConfigMatches := editorLiveConfigMatchesModels(editor, models)
-	if (needsConfigure || req.ModelOverride != "") && (!savedMatchesModels(saved, models) || !liveConfigMatches) {
+	if !savedMatchesModels(saved, models) || !liveConfigMatches {
 		launchModels = c.modelInventory().Resolve(ctx, models)
 		if err := prepareEditorIntegration(name, editor, launchModels); err != nil {
 			return err

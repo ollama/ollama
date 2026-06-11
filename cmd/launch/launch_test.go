@@ -23,6 +23,7 @@ import (
 type launcherEditorRunner struct {
 	paths    []string
 	edited   [][]string
+	models   []string
 	ranModel string
 }
 
@@ -36,11 +37,15 @@ func (r *launcherEditorRunner) String() string { return "LauncherEditor" }
 func (r *launcherEditorRunner) Paths() []string { return r.paths }
 
 func (r *launcherEditorRunner) Edit(models []LaunchModel) error {
-	r.edited = append(r.edited, launchModelNames(models))
+	names := launchModelNames(models)
+	r.edited = append(r.edited, names)
+	r.models = append([]string(nil), names...)
 	return nil
 }
 
-func (r *launcherEditorRunner) Models() []string { return nil }
+func (r *launcherEditorRunner) Models() []string {
+	return append([]string(nil), r.models...)
+}
 
 type launcherSingleRunner struct {
 	ranModel string
@@ -2260,8 +2265,7 @@ func TestLaunchIntegration_ClineRewritesWhenLiveProviderDrifted(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
 	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
-		Name:          "cline",
-		ModelOverride: "llama3.2",
+		Name: "cline",
 	}); err != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
@@ -2874,7 +2878,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchValidatesPrimaryOnly(t *testing
 	writeFakeBinary(t, binDir, "droid")
 	t.Setenv("PATH", binDir)
 
-	editor := &launcherEditorRunner{}
+	editor := &launcherEditorRunner{models: []string{"llama3.2", "missing-local"}}
 	withIntegrationOverride(t, "droid", editor)
 
 	if err := config.SaveIntegration("droid", []string{"llama3.2", "missing-local"}); err != nil {
@@ -2943,7 +2947,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 	if err := os.WriteFile(settingsPath, []byte("{}"), 0o644); err != nil {
 		t.Fatalf("failed to seed editor settings: %v", err)
 	}
-	editor := &launcherEditorRunner{paths: []string{settingsPath}}
+	editor := &launcherEditorRunner{paths: []string{settingsPath}, models: []string{"llama3.2", "qwen3:8b"}}
 	withIntegrationOverride(t, "droid", editor)
 
 	if err := config.SaveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
@@ -2995,7 +2999,7 @@ func TestLaunchIntegration_OpenclawPreservesExistingModelList(t *testing.T) {
 	writeFakeBinary(t, binDir, "openclaw")
 	t.Setenv("PATH", binDir)
 
-	editor := &launcherEditorRunner{}
+	editor := &launcherEditorRunner{models: []string{"llama3.2", "mistral"}}
 	withIntegrationOverride(t, "openclaw", editor)
 
 	if err := config.SaveIntegration("openclaw", []string{"llama3.2", "mistral"}); err != nil {
