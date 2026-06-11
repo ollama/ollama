@@ -368,17 +368,10 @@ func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.C
 		return capabilities
 	}
 
-	capabilities = appendCapability(capabilities, model.CapabilityVision)
 	for _, projectorPath := range m.ProjectorPaths {
-		f, err := gguf.Open(projectorPath)
-		if err != nil {
-			slog.Error("couldn't open projector file", "error", err)
-			continue
+		for _, capability := range projectorCapabilities(projectorPath) {
+			capabilities = appendCapability(capabilities, capability)
 		}
-		if projectorHasAudio(f) && !projectorSuppressesAudioCapability(f) {
-			capabilities = appendCapability(capabilities, model.CapabilityAudio)
-		}
-		f.Close()
 	}
 
 	return capabilities
@@ -474,6 +467,22 @@ func projectorHasAudio(f *gguf.File) bool {
 	return false
 }
 
+func projectorHasVision(f *gguf.File) bool {
+	// Handle explicit bool before checking for implicit vision KVs
+	for _, kv := range f.KeyValues() {
+		if strings.Contains(kv.Key, "has_vision_encoder") {
+			return kv.Bool()
+		}
+	}
+	for _, kv := range f.KeyValues() {
+		if strings.Contains(kv.Key, "vision") {
+			return true
+		}
+	}
+
+	return false
+}
+
 func projectorSuppressesAudioCapability(f *gguf.File) bool {
 	switch f.KeyValue("vision.projector_type").String() {
 	case "gemma3nv":
@@ -481,6 +490,29 @@ func projectorSuppressesAudioCapability(f *gguf.File) bool {
 	}
 
 	return false
+}
+
+func projectorCapabilities(projectorPath string) []model.Capability {
+	var capabilities []model.Capability
+	f, err := gguf.Open(projectorPath)
+	if err != nil {
+		slog.Error("couldn't open projector file", "error", err)
+		return capabilities
+	}
+	defer f.Close()
+
+	projHasAudio := projectorHasAudio(f) && !projectorSuppressesAudioCapability(f)
+	projHasVision := projectorHasVision(f)
+
+	// If the projector has neither explicitly, assume it has vision
+	if projHasVision || !projHasAudio {
+		capabilities = appendCapability(capabilities, model.CapabilityVision)
+	}
+	if projHasAudio {
+		capabilities = appendCapability(capabilities, model.CapabilityAudio)
+	}
+
+	return capabilities
 }
 
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing
