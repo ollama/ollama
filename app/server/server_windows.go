@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,6 +28,13 @@ func commandContext(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	}
 
 	return cmd
+}
+
+// isAddrInUse reports whether err is the "address already in use" error
+// returned by net.Listen when the port is held by another process. On Windows
+// the socket error is WSAEADDRINUSE.
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.WSAEADDRINUSE) || errors.Is(err, syscall.EADDRINUSE)
 }
 
 func terminate(proc *os.Process) error {
