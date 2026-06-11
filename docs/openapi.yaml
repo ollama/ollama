@@ -618,6 +618,9 @@ components:
           type: object
           description: Additional information about the model's format and family
           properties:
+            parent_model:
+              type: string
+              description: Name of the parent model this model was derived from, when applicable
             format:
               type: string
               description: Model file format (for example `gguf`)
@@ -645,7 +648,16 @@ components:
           type: array
           items:
             type: string
-          description: Capabilities the model supports (for example `completion`, `tools`, `vision`, `thinking`, `insert`)
+            enum:
+              - completion
+              - tools
+              - insert
+              - vision
+              - embedding
+              - thinking
+              - image
+              - audio
+          description: Capabilities the model supports
     ListResponse:
       type: object
       properties:
@@ -1165,6 +1177,7 @@ paths:
                     size: 9608350245
                     digest: "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb"
                     details:
+                      parent_model: ""
                       format: "gguf"
                       family: "gemma4"
                       families:
