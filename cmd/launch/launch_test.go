@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
 type launcherEditorRunner struct {
@@ -2205,6 +2206,87 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 	if diff := compareStrings(saved.Models, []string{"llama3.2", "qwen3:8b"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
+	}
+}
+
+func TestLaunchIntegration_ClineRewritesWhenLiveProviderDrifted(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "cline")
+	t.Setenv("PATH", binDir)
+
+	if err := config.SaveIntegration("cline", []string{"llama3.2"}); err != nil {
+		t.Fatalf("failed to seed saved config: %v", err)
+	}
+
+	providersPath := clineProvidersPath(tmpDir)
+	if err := os.MkdirAll(filepath.Dir(providersPath), 0o755); err != nil {
+		t.Fatalf("failed to create providers dir: %v", err)
+	}
+	existingProviders := map[string]any{
+		"version":          float64(1),
+		"lastUsedProvider": "openai-codex-cli",
+		"providers": map[string]any{
+			"openai-codex-cli": map[string]any{
+				"settings": map[string]any{
+					"provider":  "openai-codex-cli",
+					"model":     "gpt-5.5",
+					"reasoning": "medium",
+				},
+				"updatedAt":   "2026-06-01T12:00:00Z",
+				"tokenSource": "manual",
+			},
+		},
+	}
+	data, _ := json.Marshal(existingProviders)
+	if err := os.WriteFile(providersPath, data, 0o644); err != nil {
+		t.Fatalf("failed to seed providers config: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			fmt.Fprintf(w, `{"model":%q}`, req.Model)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "cline",
+		ModelOverride: "llama3.2",
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	providersConfig, err := fileutil.ReadJSON(providersPath)
+	if err != nil {
+		t.Fatalf("failed to read providers config: %v", err)
+	}
+	if providersConfig["lastUsedProvider"] != clineLaunchProvider {
+		t.Fatalf("lastUsedProvider = %v, want %s", providersConfig["lastUsedProvider"], clineLaunchProvider)
+	}
+	providers, _ := providersConfig["providers"].(map[string]any)
+	if _, ok := providers["openai-codex-cli"]; !ok {
+		t.Fatal("expected existing openai-codex-cli provider to be preserved")
+	}
+	ollamaProvider, _ := providers[clineLaunchProvider].(map[string]any)
+	settings, _ := ollamaProvider["settings"].(map[string]any)
+	if settings["provider"] != clineLaunchProvider {
+		t.Fatalf("ollama settings.provider = %v, want %s", settings["provider"], clineLaunchProvider)
+	}
+	if settings["model"] != "llama3.2" {
+		t.Fatalf("ollama settings.model = %v, want llama3.2", settings["model"])
+	}
+	if settings["baseUrl"] != srv.URL+"/v1" {
+		t.Fatalf("ollama settings.baseUrl = %v, want %s/v1", settings["baseUrl"], srv.URL)
 	}
 }
 
