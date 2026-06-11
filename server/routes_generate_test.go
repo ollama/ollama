@@ -60,6 +60,7 @@ type mockRunner struct {
 	ChatRequest   llm.ChatRequest
 	ChatResponse  llm.ChatResponse
 	ChatFn        func(context.Context, llm.ChatRequest, func(llm.ChatResponse)) error
+	EmbeddingFn   func(context.Context, string) ([]float32, int, error)
 	Template      string
 	TemplateFn    func(context.Context, llm.ChatRequest) (string, error)
 	DetokenizeFn  func(context.Context, []int) (string, error)
@@ -97,6 +98,13 @@ func (m *mockRunner) Detokenize(ctx context.Context, tokens []int) (string, erro
 		return m.DetokenizeFn(ctx, tokens)
 	}
 	return "", nil
+}
+
+func (m *mockRunner) Embedding(ctx context.Context, input string) ([]float32, int, error) {
+	if m.EmbeddingFn != nil {
+		return m.EmbeddingFn(ctx, input)
+	}
+	return nil, 0, errors.New("embedding not implemented")
 }
 
 func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error) {
