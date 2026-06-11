@@ -126,8 +126,9 @@ const (
 	minCopilotChatVersion = "0.41.0"
 	minVSCodeVersion      = "1.113"
 
-	vscodeOllamaVendor = "ollama"
+	vscodeOllamaVendor = "ollama-vscode"
 	vscodeOllamaName   = "Ollama"
+	legacyVSCodeOllamaVendor = "ollama"
 
 	vscodeOllamaExtensionID = "Ollama.ollama-vscode"
 )
@@ -242,73 +243,45 @@ func (v *VSCode) FocusVSCode() {
 }
 
 func (v *VSCode) Paths() []string {
+	var paths []string
 	if p := v.chatLanguageModelsPath(); fileExists(p) {
-		return []string{p}
+		paths = append(paths, p)
 	}
-	return nil
+	if p := v.settingsPath(); fileExists(p) {
+		paths = append(paths, p)
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	return paths
 }
 
 func (v *VSCode) writeProviderConfig() error {
-	// Write chatLanguageModels.json with an Ollama provider group. The
-	// extension intentionally discovers the full model catalog itself, so the
-	// launcher only persists connection config here.
 	clmPath := v.chatLanguageModelsPath()
-	if err := os.MkdirAll(filepath.Dir(clmPath), 0o755); err != nil {
-		return err
-	}
+	if fileExists(clmPath) {
+		var entries []map[string]any
+		if data, err := os.ReadFile(clmPath); err == nil {
+			_ = json.Unmarshal(data, &entries)
+		}
 
-	var entries []map[string]any
-	if data, err := os.ReadFile(clmPath); err == nil {
-		_ = json.Unmarshal(data, &entries)
-	}
-
-	// Remove any existing Ollama entries, preserve others.
-	filtered := make([]map[string]any, 0, len(entries))
-	for _, entry := range entries {
-		if vendor, _ := entry["vendor"].(string); vendor != vscodeOllamaVendor {
+		filtered := make([]map[string]any, 0, len(entries))
+		for _, entry := range entries {
+			if isManagedOllamaProviderEntry(entry) {
+				continue
+			}
 			filtered = append(filtered, entry)
 		}
-	}
 
-	// Add new Ollama entry
-	filtered = append(filtered, map[string]any{
-		"vendor": vscodeOllamaVendor,
-		"name":   vscodeOllamaName,
-		"url":    envconfig.Host().String(),
-	})
-
-	data, err := json.MarshalIndent(filtered, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := fileutil.WriteWithBackup(clmPath, data, "vscode"); err != nil {
-		return err
-	}
-
-	// Clean up legacy settings from older Ollama integrations
-	v.updateSettings()
-
-	return nil
-}
-
-// hasOllamaVendor checks if chatLanguageModels.json contains an Ollama vendor entry.
-func (v *VSCode) hasOllamaVendor() bool {
-	data, err := os.ReadFile(v.chatLanguageModelsPath())
-	if err != nil {
-		return false
-	}
-
-	var entries []map[string]any
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return false
-	}
-
-	for _, entry := range entries {
-		if vendor, _ := entry["vendor"].(string); vendor == vscodeOllamaVendor {
-			return true
+		data, err := json.MarshalIndent(filtered, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := fileutil.WriteWithBackup(clmPath, data, "vscode"); err != nil {
+			return err
 		}
 	}
-	return false
+
+	return v.updateSettings()
 }
 
 func (v *VSCode) chatLanguageModelsPath() string {
@@ -320,16 +293,18 @@ func (v *VSCode) settingsPath() string {
 }
 
 // updateSettings cleans up legacy settings from older Ollama integrations.
-func (v *VSCode) updateSettings() {
+func (v *VSCode) updateSettings() error {
 	settingsPath := v.settingsPath()
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return err
 	}
 
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return
+	settings := make(map[string]any)
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return nil
+		}
 	}
 
 	changed := false
@@ -339,16 +314,32 @@ func (v *VSCode) updateSettings() {
 			changed = true
 		}
 	}
+	if current, _ := settings["ollama.endpoint"].(string); current != envconfig.Host().String() {
+		settings["ollama.endpoint"] = envconfig.Host().String()
+		changed = true
+	}
 
 	if !changed {
-		return
+		return nil
 	}
 
 	updated, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
-	_ = fileutil.WriteWithBackup(settingsPath, updated, "vscode")
+	return fileutil.WriteWithBackup(settingsPath, updated, "vscode")
+}
+
+func isManagedOllamaProviderEntry(entry map[string]any) bool {
+	vendor, _ := entry["vendor"].(string)
+	if vendor == vscodeOllamaVendor || vendor == legacyVSCodeOllamaVendor {
+		return true
+	}
+	if vendor != "customendpoint" {
+		return false
+	}
+	name, _ := entry["name"].(string)
+	return strings.EqualFold(strings.TrimSpace(name), vscodeOllamaName)
 }
 
 func (v *VSCode) statePath() string {
@@ -399,7 +390,14 @@ func (v *VSCode) ShowInModelPicker(model string) error {
 	if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = 'chat.cachedLanguageModels.v2'").Scan(&cacheJSON); err == nil {
 		var cached []map[string]any
 		if json.Unmarshal([]byte(cacheJSON), &cached) == nil {
+			filtered := cached[:0]
+			cacheChanged := false
 			for _, entry := range cached {
+				if isStaleCachedOllamaModelEntry(entry) {
+					cacheChanged = true
+					continue
+				}
+				filtered = append(filtered, entry)
 				meta, _ := entry["metadata"].(map[string]any)
 				if meta == nil {
 					continue
@@ -410,6 +408,11 @@ func (v *VSCode) ShowInModelPicker(model string) error {
 					if name != "" && id != "" {
 						nameToID[name] = id
 					}
+				}
+			}
+			if cacheChanged {
+				if data, err := json.Marshal(filtered); err == nil {
+					_, _ = db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('chat.cachedLanguageModels.v2', ?)", string(data))
 				}
 			}
 		}
@@ -457,6 +460,11 @@ func (v *VSCode) modelVSCodeIDs(model string, nameToID map[string]string) []stri
 
 func (v *VSCode) primaryModelVSCodeID(model string, nameToID map[string]string) string {
 	return v.modelVSCodeIDs(model, nameToID)[0]
+}
+
+func isStaleCachedOllamaModelEntry(entry map[string]any) bool {
+	identifier, _ := entry["identifier"].(string)
+	return strings.HasPrefix(identifier, vscodeOllamaVendor+"/"+vscodeOllamaName+"/")
 }
 
 func (v *VSCode) selectChatModel(db *sql.DB, modelID string) error {
