@@ -11,6 +11,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/envconfig"
 )
 
 func TestVSCodeIntegration(t *testing.T) {
@@ -37,58 +38,86 @@ func TestVSCodeConfigure(t *testing.T) {
 	setTestHome(t, tmpDir)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	clmPath := testVSCodePath(t, tmpDir, "chatLanguageModels.json")
+	settingsPath := testVSCodePath(t, tmpDir, "settings.json")
 
 	tests := []struct {
-		name     string
-		setup    string // initial chatLanguageModels.json content, empty means no file
-		model    string
-		validate func(t *testing.T, data []byte)
+		name          string
+		setup         string // initial chatLanguageModels.json content, empty means no file
+		model         string
+		validate      func(t *testing.T, clmData []byte, settingsData []byte)
+		wantSettings  bool
 	}{
 		{
 			name:  "fresh install",
 			model: "llama3.2",
-			validate: func(t *testing.T, data []byte) {
-				assertOllamaVendorConfigured(t, data)
+			wantSettings: true,
+			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
+				if len(clmData) != 0 {
+					t.Fatalf("expected no chatLanguageModels.json to be created, got %q", string(clmData))
+				}
+				assertSettingsConfigured(t, settingsData, nil)
 			},
 		},
 		{
 			name:  "preserve other vendor entries",
 			setup: `[{"vendor": "azure", "name": "Azure", "url": "https://example.com"}]`,
 			model: "llama3.2",
-			validate: func(t *testing.T, data []byte) {
+			wantSettings: true,
+			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
 				var entries []map[string]any
-				json.Unmarshal(data, &entries)
-				if len(entries) != 2 {
-					t.Errorf("expected 2 entries, got %d", len(entries))
+				json.Unmarshal(clmData, &entries)
+				if len(entries) != 1 {
+					t.Errorf("expected 1 entry, got %d", len(entries))
 				}
-				// Check Azure entry preserved
-				found := false
-				for _, e := range entries {
-					if v, _ := e["vendor"].(string); v == "azure" {
-						found = true
-					}
+				if vendor, _ := entries[0]["vendor"].(string); vendor != "azure" {
+					t.Fatalf("expected azure entry to be preserved, got %#v", entries[0])
 				}
-				if !found {
-					t.Error("azure vendor entry was not preserved")
-				}
-				assertOllamaVendorConfigured(t, data)
+				assertSettingsConfigured(t, settingsData, nil)
 			},
 		},
 		{
 			name:  "update existing ollama entry",
 			setup: `[{"vendor": "ollama", "name": "Ollama", "url": "http://old:11434"}]`,
 			model: "llama3.2",
-			validate: func(t *testing.T, data []byte) {
-				assertOllamaVendorConfigured(t, data)
+			wantSettings: true,
+			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
+				assertChatLanguageModelsCleaned(t, clmData)
+				assertSettingsConfigured(t, settingsData, nil)
+			},
+		},
+		{
+			name:  "remove legacy, current, and old custom endpoint ollama entries",
+			setup: `[{"vendor": "ollama", "name": "Ollama", "url": "http://old:11434"},{"vendor": "ollama-vscode", "name": "Ollama", "url": "http://older:11434"},{"vendor": "customendpoint", "name": "Ollama", "url": "http://127.0.0.1:11434"},{"vendor": "azure", "name": "Azure"}]`,
+			model: "llama3.2",
+			wantSettings: true,
+			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
+				var entries []map[string]any
+				if err := json.Unmarshal(clmData, &entries); err != nil {
+					t.Fatalf("invalid JSON: %v", err)
+				}
+
+				if len(entries) != 1 {
+					t.Fatalf("expected only the non-Ollama entry to remain, got %#v", entries)
+				}
+				for _, entry := range entries {
+					if isManagedOllamaProviderEntry(entry) {
+						t.Fatalf("expected managed Ollama provider entries to be removed, got %#v", entries)
+					}
+				}
+				assertSettingsConfigured(t, settingsData, nil)
 			},
 		},
 		{
 			name:  "empty model is no-op",
 			setup: `[{"vendor": "azure", "name": "Azure"}]`,
 			model: "",
-			validate: func(t *testing.T, data []byte) {
-				if string(data) != `[{"vendor": "azure", "name": "Azure"}]` {
+			wantSettings: false,
+			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
+				if string(clmData) != `[{"vendor": "azure", "name": "Azure"}]` {
 					t.Error("empty model should not modify file")
+				}
+				if len(settingsData) != 0 {
+					t.Fatalf("empty model should not create settings, got %q", string(settingsData))
 				}
 			},
 		},
@@ -96,11 +125,10 @@ func TestVSCodeConfigure(t *testing.T) {
 			name:  "corrupted JSON treated as empty",
 			setup: `{corrupted json`,
 			model: "llama3.2",
-			validate: func(t *testing.T, data []byte) {
-				var entries []map[string]any
-				if err := json.Unmarshal(data, &entries); err != nil {
-					t.Errorf("result is not valid JSON: %v", err)
-				}
+			wantSettings: true,
+			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
+				assertChatLanguageModelsCleaned(t, clmData)
+				assertSettingsConfigured(t, settingsData, nil)
 			},
 		},
 	}
@@ -118,8 +146,12 @@ func TestVSCodeConfigure(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			data, _ := os.ReadFile(clmPath)
-			tt.validate(t, data)
+			clmData, _ := os.ReadFile(clmPath)
+			settingsData, _ := os.ReadFile(settingsPath)
+			if tt.wantSettings && len(settingsData) == 0 {
+				t.Fatalf("expected settings.json to be written")
+			}
+			tt.validate(t, clmData, settingsData)
 		})
 	}
 }
@@ -152,6 +184,9 @@ func TestVSCodeEditCleansUpOldSettings(t *testing.T) {
 	}
 	if _, ok := settings["ollama.launch.configured"]; ok {
 		t.Error("ollama.launch.configured should have been removed")
+	}
+	if settings["ollama.endpoint"] != envconfig.Host().String() {
+		t.Errorf("ollama.endpoint = %v, want %q", settings["ollama.endpoint"], envconfig.Host().String())
 	}
 	if settings["editor.fontSize"] != float64(14) {
 		t.Error("editor.fontSize should have been preserved")
@@ -210,9 +245,11 @@ func TestVSCodePaths(t *testing.T) {
 	setTestHome(t, tmpDir)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	clmPath := testVSCodePath(t, tmpDir, "chatLanguageModels.json")
+	settingsPath := testVSCodePath(t, tmpDir, "settings.json")
 
 	t.Run("no file returns nil", func(t *testing.T) {
 		os.Remove(clmPath)
+		os.Remove(settingsPath)
 		if paths := v.Paths(); paths != nil {
 			t.Errorf("expected nil, got %v", paths)
 		}
@@ -224,6 +261,16 @@ func TestVSCodePaths(t *testing.T) {
 
 		if paths := v.Paths(); len(paths) != 1 {
 			t.Errorf("expected 1 path, got %d", len(paths))
+		}
+	})
+
+	t.Run("settings file is included", func(t *testing.T) {
+		os.Remove(clmPath)
+		os.MkdirAll(filepath.Dir(settingsPath), 0o755)
+		os.WriteFile(settingsPath, []byte(`{}`), 0o644)
+
+		if paths := v.Paths(); len(paths) != 1 || paths[0] != settingsPath {
+			t.Errorf("expected settings path, got %v", paths)
 		}
 	})
 }
@@ -242,7 +289,7 @@ func testVSCodePath(t *testing.T, tmpDir, filename string) string {
 	}
 }
 
-func assertOllamaVendorConfigured(t *testing.T, data []byte) {
+func assertChatLanguageModelsCleaned(t *testing.T, data []byte) {
 	t.Helper()
 	var entries []map[string]any
 	if err := json.Unmarshal(data, &entries); err != nil {
@@ -250,20 +297,33 @@ func assertOllamaVendorConfigured(t *testing.T, data []byte) {
 	}
 
 	for _, entry := range entries {
-		if vendor, _ := entry["vendor"].(string); vendor == vscodeOllamaVendor {
-			if name, _ := entry["name"].(string); name != vscodeOllamaName {
-				t.Errorf("expected name %q, got %q", vscodeOllamaName, name)
-			}
-			if url, _ := entry["url"].(string); url == "" {
-				t.Error("url not set")
-			}
-			if _, ok := entry["models"]; ok {
-				t.Fatalf("provider config should not pin models, got %#v", entry["models"])
-			}
-			return
+		if isManagedOllamaProviderEntry(entry) {
+			t.Fatalf("expected managed Ollama provider entries to be removed, got %#v", entries)
 		}
 	}
-	t.Errorf("no %s vendor entry found", vscodeOllamaVendor)
+}
+
+func assertSettingsConfigured(t *testing.T, data []byte, extras map[string]any) {
+	t.Helper()
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("invalid settings JSON: %v", err)
+	}
+
+	if settings["ollama.endpoint"] != envconfig.Host().String() {
+		t.Fatalf("ollama.endpoint = %v, want %q", settings["ollama.endpoint"], envconfig.Host().String())
+	}
+	if _, ok := settings["github.copilot.chat.byok.ollamaEndpoint"]; ok {
+		t.Fatal("github.copilot.chat.byok.ollamaEndpoint should have been removed")
+	}
+	if _, ok := settings["ollama.launch.configured"]; ok {
+		t.Fatal("ollama.launch.configured should have been removed")
+	}
+	for key, want := range extras {
+		if settings[key] != want {
+			t.Fatalf("%s = %v, want %v", key, settings[key], want)
+		}
+	}
 }
 
 func TestShowInModelPicker(t *testing.T) {
@@ -396,13 +456,13 @@ func TestShowInModelPicker(t *testing.T) {
 		}
 	})
 
-	t.Run("uses cached numeric IDs when available", func(t *testing.T) {
+	t.Run("uses cached IDs when available", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 		t.Setenv("XDG_CONFIG_HOME", "")
 		cache := []map[string]any{
 			{
-				"identifier": vscodeOllamaVendor + "/" + vscodeOllamaName + "/4",
+				"identifier": vscodeOllamaVendor + "/4",
 				"metadata":   map[string]any{"vendor": vscodeOllamaVendor, "name": "llama3.2"},
 			},
 		}
@@ -417,7 +477,32 @@ func TestShowInModelPicker(t *testing.T) {
 		if len(prefs) != 0 {
 			t.Fatalf("expected no model picker overrides, got %#v", prefs)
 		}
-		assertSelectedChatModel(t, dbPath, vscodeOllamaVendor+"/"+vscodeOllamaName+"/4")
+		assertSelectedChatModel(t, dbPath, vscodeOllamaVendor+"/4")
+	})
+
+	t.Run("removes stale named ollama cache entries", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		cache := []map[string]any{
+			{
+				"identifier": vscodeOllamaVendor + "/qwen3.6-latest-8e5d0015",
+				"metadata":   map[string]any{"vendor": vscodeOllamaVendor, "name": "qwen3.6:latest"},
+			},
+			{
+				"identifier": vscodeOllamaVendor + "/" + vscodeOllamaName + "/qwen3.6-latest-8e5d0015",
+				"metadata":   map[string]any{"vendor": vscodeOllamaVendor, "name": "qwen3.6:latest", "detail": vscodeOllamaName},
+			},
+		}
+		dbPath := setupDB(t, testVSCodePath(t, tmpDir, ""), nil, cache)
+
+		err := v.ShowInModelPicker("qwen3.6:latest")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assertSelectedChatModel(t, dbPath, vscodeOllamaVendor+"/qwen3.6-latest-8e5d0015")
+		assertNoStaleCachedOllamaEntries(t, dbPath)
 	})
 
 	t.Run("empty model is no-op", func(t *testing.T) {
@@ -484,6 +569,31 @@ func assertSelectedChatModel(t *testing.T, dbPath, want string) {
 	}
 	if len(recent) == 0 || recent[0] != want {
 		t.Fatalf("recent models = %#v, want %q first", recent, want)
+	}
+}
+
+func assertNoStaleCachedOllamaEntries(t *testing.T, dbPath string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var cacheJSON string
+	if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = 'chat.cachedLanguageModels.v2'").Scan(&cacheJSON); err != nil {
+		t.Fatal(err)
+	}
+
+	var cached []map[string]any
+	if err := json.Unmarshal([]byte(cacheJSON), &cached); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, entry := range cached {
+		if isStaleCachedOllamaModelEntry(entry) {
+			t.Fatalf("stale cached Ollama entry still present: %#v", entry)
+		}
 	}
 }
 
