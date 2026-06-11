@@ -7,7 +7,7 @@ Vision models accept images alongside text so the model can describe, classify, 
 ## Quick start
 
 ```shell
-ollama run gemma3 ./image.png whats in this image?
+ollama run gemma4 ./image.png whats in this image?
 ```
 
 
@@ -28,7 +28,7 @@ Provide an `images` array. SDKs accept file paths, URLs or raw bytes while the R
     curl -X POST http://localhost:11434/api/chat \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "gemma3",
+        "model": "gemma4",
         "messages": [{
         "role": "user",
         "content": "What is in this image?",
@@ -52,7 +52,7 @@ Provide an `images` array. SDKs accept file paths, URLs or raw bytes while the R
     # img = Path(path).read_bytes()
 
     response = chat(
-      model='gemma3',
+      model='gemma4',
       messages=[
         {
           'role': 'user',
@@ -71,7 +71,7 @@ Provide an `images` array. SDKs accept file paths, URLs or raw bytes while the R
 
     const imagePath = '/absolute/path/to/image.jpg'
     const response = await ollama.chat({
-      model: 'gemma3',
+      model: 'gemma4',
       messages: [
         { role: 'user', content: 'What is in this image?', images: [imagePath] }
       ],
