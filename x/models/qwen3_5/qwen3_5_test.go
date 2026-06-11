@@ -5,6 +5,7 @@ import (
 
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model"
 )
 
 func skipIfNoMLX(t *testing.T) {
@@ -83,25 +84,45 @@ func TestLayerSelectionHelpers(t *testing.T) {
 	}
 }
 
-func TestSupportsGatherQMM(t *testing.T) {
-	tests := []struct {
-		mode string
-		bits int
-		want bool
-	}{
-		{mode: "affine", bits: 4, want: true},
-		{mode: "affine", bits: 8, want: true},
-		{mode: "mxfp8", bits: 8, want: true},
-		{mode: "nvfp4", bits: 4, want: true},
-		{mode: "mxfp4", bits: 4, want: true},
-		{mode: "mxfp8", bits: 4, want: false},
-		{mode: "affine", bits: 3, want: false},
+func TestLoadStackedProjectionMixedPrecisionBits(t *testing.T) {
+	skipIfNoMLX(t)
+
+	// Simulate an imported mixed-precision MLX checkpoint: experts quantized
+	// at 6 bits while per-tensor metadata carries the model-level 4-bit
+	// params (the import pipeline only records the global quantization).
+	const experts, outDim, inDim = 2, 8, 64
+	vals := make([]float32, experts*outDim*inDim)
+	for i := range vals {
+		vals[i] = float32(i%23)/11 - 1
+	}
+	dense := mlx.FromValues(vals, experts, outDim, inDim).AsType(mlx.DTypeBFloat16)
+	qw, scales, qbiases := mlx.Quantize(dense, 64, 6, "affine")
+	mlx.Eval(qw, scales, qbiases)
+
+	key := "model.layers.0.mlp.switch_mlp.gate_proj.weight"
+	tensors := map[string]*mlx.Array{
+		key:            qw,
+		key + "_scale": scales,
+		key + "_qbias": qbiases,
+	}
+	cfg := &Config{
+		QuantGroupSize: 64,
+		QuantBits:      4,
+		QuantMode:      "affine",
+		TensorQuant: map[string]*model.TensorQuantInfo{
+			key: {QuantType: "INT4", GroupSize: 64},
+		},
 	}
 
-	for _, tt := range tests {
-		if got := supportsGatherQMM(tt.mode, tt.bits); got != tt.want {
-			t.Fatalf("supportsGatherQMM(%q, %d) = %v, want %v", tt.mode, tt.bits, got, tt.want)
-		}
+	w := loadStackedProjection(tensors, cfg, true, "model.layers.0.mlp.switch_mlp.gate_proj")
+	if w == nil {
+		t.Fatal("loadStackedProjection returned nil")
+	}
+	if w.Bits != 6 || w.GroupSize != 64 {
+		t.Fatalf("resolved (bits=%d, groupSize=%d), want (6, 64)", w.Bits, w.GroupSize)
+	}
+	if w.Scales == nil {
+		t.Fatal("expected quantized gather path (scales retained) for 6-bit affine experts")
 	}
 }
 

@@ -421,19 +421,6 @@ func tensorByBase(tensors map[string]*mlx.Array, base string) (*mlx.Array, strin
 	return tensorAny(tensors, base+".weight", base)
 }
 
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
-	}
-}
-
 func freeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
 	for _, k := range keys {
 		if k == "" {
@@ -474,7 +461,7 @@ func describeMoEProjection(prefix string, w *stackedExpertWeights) string {
 	}
 	if w.Bits > 0 || w.Mode != "" {
 		reason := "dequantized"
-		if !supportsGatherQMM(w.Mode, w.Bits) {
+		if !model.SupportsGatherQMM(w.Mode, w.Bits) {
 			reason = "unsupported_gather_qmm"
 		}
 		return fmt.Sprintf("%s=%s(mode=%s,bits=%d,gs=%d)", prefix, reason, w.Mode, w.Bits, w.GroupSize)
@@ -491,7 +478,7 @@ func summarizeMoEFallbackReason(gateW, upW, downW *stackedExpertWeights) string 
 			continue
 		}
 		if w.Bits > 0 || w.Mode != "" {
-			if !supportsGatherQMM(w.Mode, w.Bits) {
+			if !model.SupportsGatherQMM(w.Mode, w.Bits) {
 				return fmt.Sprintf("unsupported_gather_qmm(mode=%s,bits=%d)", w.Mode, w.Bits)
 			}
 			return "dequantized_quant_weights"
@@ -540,7 +527,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 			w,
 			scales,
 		)
-		if useQuantized && supportsGatherQMM(mode, bits) {
+		if useQuantized && model.SupportsGatherQMM(mode, bits) {
 			return &stackedExpertWeights{
 				Weight:    w,
 				Scales:    scales,
@@ -603,7 +590,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 			groupSize = gs
 			mode = m
 		}
-		if useQuantized && supportsGatherQMM(m, b) {
+		if useQuantized && model.SupportsGatherQMM(m, b) {
 			weights = append(weights, w)
 			scales = append(scales, s)
 			if qb != nil {
@@ -650,7 +637,7 @@ func splitGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 			gateUp,
 			scales,
 		)
-		if useQuantized && supportsGatherQMM(mode, bits) {
+		if useQuantized && model.SupportsGatherQMM(mode, bits) {
 			gate = &stackedExpertWeights{
 				Bits:      bits,
 				GroupSize: groupSize,
@@ -726,7 +713,7 @@ func splitGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 			downW,
 			scales,
 		)
-		if useQuantized && supportsGatherQMM(mode, bits) {
+		if useQuantized && model.SupportsGatherQMM(mode, bits) {
 			down = &stackedExpertWeights{
 				Weight:    downW,
 				Scales:    scales,
@@ -858,14 +845,14 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		m.LMHead = m.EmbedTokens.AsLinear()
 	}
 
-	useQuantizedExperts := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	useQuantizedExperts := model.SupportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
 	if !useQuantizedExperts && cfg.TensorQuant != nil {
 		for _, tq := range cfg.TensorQuant {
 			if tq == nil {
 				continue
 			}
 			_, bits, mode := model.QuantizationParams(tq.QuantType)
-			if supportsGatherQMM(mode, bits) {
+			if model.SupportsGatherQMM(mode, bits) {
 				useQuantizedExperts = true
 				break
 			}

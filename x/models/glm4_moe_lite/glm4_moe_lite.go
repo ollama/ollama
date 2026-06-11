@@ -364,11 +364,6 @@ func computeScale(cfg *Config) float32 {
 	return scale
 }
 
-// supportsGatherQMM returns true if the quantization mode has GatherQMM kernel support.
-func supportsGatherQMM(mode string, bits int) bool {
-	return mode == "affine" && (bits == 4 || bits == 8)
-}
-
 // ExpertWeight holds a single expert's weight with optional quantization components.
 type ExpertWeight struct {
 	Weight    *mlx.Array
@@ -399,7 +394,7 @@ func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized b
 			scales,
 		)
 
-		if useQuantized && supportsGatherQMM(mode, bits) {
+		if useQuantized && model.SupportsGatherQMM(mode, bits) {
 			return &ExpertWeight{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
 		}
 
@@ -570,14 +565,14 @@ func newModel(root *model.Root) (base.Model, error) {
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	cfg := m.Config
 	linears := model.NewLinearFactory(tensors, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
-	useQuantized := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	useQuantized := model.SupportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
 	if !useQuantized && cfg.TensorQuant != nil {
 		for _, tq := range cfg.TensorQuant {
 			if tq == nil {
 				continue
 			}
 			_, bits, mode := model.QuantizationParams(tq.QuantType)
-			if supportsGatherQMM(mode, bits) {
+			if model.SupportsGatherQMM(mode, bits) {
 				useQuantized = true
 				break
 			}
