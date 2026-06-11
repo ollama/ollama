@@ -313,49 +313,6 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	if !mock.ChatRequest.Shift {
 		t.Fatal("expected chat_template route to preserve default cache_prompt shift")
 	}
-	if !mock.ChatRequest.CachePrompt {
-		t.Fatal("expected chat_template route to preserve default cache_prompt")
-	}
-}
-
-func TestChatHandlerCachePromptIndependentFromShift(t *testing.T) {
-	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
-	t.Setenv("OLLAMA_GO_TEMPLATE", "")
-	gin.SetMode(gin.TestMode)
-
-	mock := mockRunner{
-		ChatFn: func(_ context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
-			fn(llm.ChatResponse{
-				Message:    api.Message{Role: "assistant", Content: "ok"},
-				Done:       true,
-				DoneReason: llm.DoneReasonStop,
-			})
-			return nil
-		},
-	}
-	s := newServerWithMockRunner(t, &mock)
-	createMinimalGGUFModel(t, s, "cache-prompt-chat", ggml.KV{
-		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
-	}, "", nil)
-
-	stream := false
-	shift := false
-	w := createRequest(t, s.ChatHandler, api.ChatRequest{
-		Model:    "cache-prompt-chat",
-		Messages: []api.Message{{Role: "user", Content: "hello"}},
-		Stream:   &stream,
-		Shift:    &shift,
-	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if mock.ChatRequest.Shift {
-		t.Fatal("expected shift false to reach chat request")
-	}
-	if !mock.ChatRequest.CachePrompt {
-		t.Fatal("expected cache_prompt to default true even when shift is false")
-	}
-
 }
 
 func TestChatHandlerChatTemplateRouteTruncatesMessages(t *testing.T) {
@@ -1476,27 +1433,6 @@ func TestGenerate(t *testing.T) {
 		if actual.DoneReason != "load" {
 			t.Errorf("expected done reason load, got %s", actual.DoneReason)
 		}
-	})
-
-	t.Run("cache_prompt independent from shift", func(t *testing.T) {
-		stream := false
-		shift := false
-		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
-			Model:  "test",
-			Prompt: "hello",
-			Stream: &stream,
-			Shift:  &shift,
-		})
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-		if mock.CompletionRequest.Shift {
-			t.Fatal("expected shift false to reach completion request")
-		}
-		if !mock.CompletionRequest.CachePrompt {
-			t.Fatal("expected cache_prompt to default true even when shift is false")
-		}
-
 	})
 
 	checkGenerateResponse := func(t *testing.T, body io.Reader, model, content string) {

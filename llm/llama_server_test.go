@@ -257,17 +257,16 @@ func TestLlamaServerCompletionCachePromptIndependentFromShift(t *testing.T) {
 
 	opts := api.DefaultOptions()
 	err := runner.Completion(t.Context(), CompletionRequest{
-		Prompt:      "test prompt",
-		Options:     &opts,
-		Shift:       false,
-		CachePrompt: true,
+		Prompt:  "test prompt",
+		Options: &opts,
+		Shift:   false,
 	}, func(CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
 	}
 
 	if !capturedReq.CachePrompt {
-		t.Fatal("expected cache_prompt to follow CachePrompt even when Shift is false")
+		t.Fatal("expected cache_prompt to stay enabled when Shift is false")
 	}
 }
 
@@ -276,10 +275,9 @@ func TestLlamaServerChatCachePromptIndependentFromShift(t *testing.T) {
 	opts := api.DefaultOptions()
 
 	body, err := runner.llamaServerChatRequest(ChatRequest{
-		Messages:    []api.Message{{Role: "user", Content: "hello"}},
-		Options:     &opts,
-		Shift:       false,
-		CachePrompt: true,
+		Messages: []api.Message{{Role: "user", Content: "hello"}},
+		Options:  &opts,
+		Shift:    false,
 	}, true)
 	if err != nil {
 		t.Fatalf("llamaServerChatRequest error: %v", err)
