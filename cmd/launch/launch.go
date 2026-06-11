@@ -764,7 +764,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	}
 
 	var launchModels []LaunchModel
-	liveConfigMatches := editorLiveConfigMatchesModels(editor, models)
+	liveConfigMatches := slices.Equal(editor.Models(), models)
 	if ((needsConfigure || req.ModelOverride != "") && !savedMatchesModels(saved, models)) || !liveConfigMatches {
 		launchModels = c.modelInventory().Resolve(ctx, models)
 		if err := prepareEditorIntegration(name, editor, launchModels); err != nil {
@@ -1481,10 +1481,6 @@ func savedMatchesModels(saved *config.IntegrationConfig, models []string) bool {
 		return false
 	}
 	return slices.Equal(saved.Models, models)
-}
-
-func editorLiveConfigMatchesModels(editor Editor, models []string) bool {
-	return slices.Equal(editor.Models(), models)
 }
 
 func editorPreCheckedModels(saved *config.IntegrationConfig, override string) []string {
