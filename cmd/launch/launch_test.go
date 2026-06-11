@@ -22,8 +22,8 @@ import (
 
 type launcherEditorRunner struct {
 	paths    []string
-	edited   [][]string
 	models   []string
+	edited   [][]string
 	ranModel string
 }
 
@@ -39,7 +39,6 @@ func (r *launcherEditorRunner) Paths() []string { return r.paths }
 func (r *launcherEditorRunner) Edit(models []LaunchModel) error {
 	names := launchModelNames(models)
 	r.edited = append(r.edited, names)
-	r.models = append([]string(nil), names...)
 	return nil
 }
 
@@ -2303,7 +2302,7 @@ func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *t
 	writeFakeBinary(t, binDir, "droid")
 	t.Setenv("PATH", binDir)
 
-	editor := &launcherEditorRunner{}
+	editor := &launcherEditorRunner{models: []string{"llama3.2", "missing-local"}}
 	withIntegrationOverride(t, "droid", editor)
 
 	if err := config.SaveIntegration("droid", []string{"qwen3.5:cloud", "qwen3.5"}); err != nil {
@@ -2990,7 +2989,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 	}
 }
 
-func TestLaunchIntegration_ConfiguredEditorLaunchRepairsLiveDrift(t *testing.T) {
+func TestLaunchIntegration_ConfiguredEditorLaunchRewritesDriftedLiveConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -2999,11 +2998,16 @@ func TestLaunchIntegration_ConfiguredEditorLaunchRepairsLiveDrift(t *testing.T) 
 	writeFakeBinary(t, binDir, "droid")
 	t.Setenv("PATH", binDir)
 
-	editor := &launcherEditorRunner{models: []string{"old-model"}}
+	editor := &launcherEditorRunner{models: []string{"qwen3:8b"}}
 	withIntegrationOverride(t, "droid", editor)
 
-	if err := config.SaveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
+	if err := config.SaveIntegration("droid", []string{"llama3.2", "mistral"}); err != nil {
 		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect prompt during a normal editor launch: %s", prompt)
+		return false, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3021,8 +3025,8 @@ func TestLaunchIntegration_ConfiguredEditorLaunchRepairsLiveDrift(t *testing.T) 
 	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "droid"}); err != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
-	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2", "qwen3:8b"}}); diff != "" {
-		t.Fatalf("unexpected editor rewrites (-want +got):\n%s", diff)
+	if diff := cmp.Diff([][]string{{"llama3.2", "mistral"}}, editor.edited); diff != "" {
+		t.Fatalf("expected editor config rewrite when live config drifts (-want +got):\n%s", diff)
 	}
 	if editor.ranModel != "llama3.2" {
 		t.Fatalf("expected launch to use saved primary model, got %q", editor.ranModel)
@@ -3032,7 +3036,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchRepairsLiveDrift(t *testing.T) 
 	if err != nil {
 		t.Fatalf("failed to reload saved config: %v", err)
 	}
-	if diff := compareStrings(saved.Models, []string{"llama3.2", "qwen3:8b"}); diff != "" {
+	if diff := compareStrings(saved.Models, []string{"llama3.2", "mistral"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
 }
