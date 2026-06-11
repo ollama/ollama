@@ -463,7 +463,15 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	targetDist := r.Sampler.Distribution(pipelineSlot, r.Model.Unembed(hiddenSeq), candidates.tokens)
 	draftDist := candidates.dist
 	acceptedMask := r.sampleAcceptedMask(targetDist.SliceRows(0, draftCount), draftDist, candidates.tokens)
-	mlx.Eval(candidates.tokens, acceptedMask)
+
+	// The next token is sampled for every possible outcome before anything
+	// is evaluated — the residual at each rejection point in one batched
+	// draw, plus the bonus row — so a single Eval covers acceptance and the
+	// next token instead of a second host round trip after the rejection
+	// point is known.
+	residualTokens := r.Sampler.SampleDistribution(pipelineSlot, targetDist.SliceRows(0, draftCount).ResidualAgainst(draftDist))
+	bonusToken := r.sampleTokenAt(targetDist, draftCount)
+	mlx.Eval(candidates.tokens, acceptedMask, residualTokens, bonusToken)
 
 	draftIDs := candidates.tokens.Ints()
 	acceptedFlags := acceptedMask.Ints()
@@ -516,18 +524,16 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 		return results, accepted, nil
 	}
 
-	var nextToken *mlx.Array
-	if accepted == draftCount {
-		nextToken = r.sampleTokenAt(targetDist, draftCount)
+	var nextID int32
+	if accepted < draftCount {
+		nextID = int32(residualTokens.Ints()[accepted])
 	} else {
-		nextToken = r.sampleResidualToken(targetDist, draftDist, accepted)
+		nextID = int32(bonusToken.Int())
 	}
-	mlx.Eval(nextToken)
-	nextID := int32(nextToken.Int())
 	commitIDs = append(commitIDs, nextID)
 	r.Sampler.Commit(pipelineSlot, commitIDs)
 
-	results = append(results, sampler.Result{Token: nextToken})
+	results = append(results, sampler.Result{Token: mlx.FromValues([]int32{nextID}, 1)})
 	return results, accepted, nil
 }
 
@@ -540,11 +546,6 @@ func (r *Runner) sampleAcceptedMask(targetDist, draftDist sampler.Distribution, 
 
 func (r *Runner) sampleTokenAt(dist sampler.Distribution, index int) *mlx.Array {
 	return r.Sampler.SampleDistribution(pipelineSlot, dist.SliceRows(index, index+1))
-}
-
-func (r *Runner) sampleResidualToken(targetDist, draftDist sampler.Distribution, index int) *mlx.Array {
-	residual := targetDist.SliceRows(index, index+1).ResidualAgainst(draftDist.SliceRows(index, index+1))
-	return tokenVector(r.Sampler.SampleDistribution(pipelineSlot, residual))
 }
 
 // draftResults wraps accepted draft ids as sampler results; drafts carry no
@@ -567,16 +568,5 @@ func tokenInput(token *mlx.Array) *mlx.Array {
 		return token
 	default:
 		panic(fmt.Sprintf("token must be rank 0, 1, or 2, got rank %d", token.NumDims()))
-	}
-}
-
-func tokenVector(token *mlx.Array) *mlx.Array {
-	switch token.NumDims() {
-	case 0:
-		return token.Reshape(1)
-	case 1:
-		return token
-	default:
-		panic(fmt.Sprintf("sampled token must be rank 0 or 1, got rank %d", token.NumDims()))
 	}
 }
