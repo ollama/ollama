@@ -28,6 +28,13 @@ type chatResumePicker struct {
 	scroll int
 }
 
+type chatModelPicker struct {
+	models []ChatModelOption
+	filter string
+	cursor int
+	scroll int
+}
+
 type chatHistoryPopup struct {
 	content       string
 	scroll        int
@@ -108,6 +115,157 @@ func (m chatModel) historyPopupBodyLinesForWidth(width int) []string {
 	}
 	content := strings.TrimPrefix(m.historyPopup.content, "**Message History**\n\n")
 	return renderHistoryLines(content, width)
+}
+
+func (m *chatModel) openModelPicker(filter string) (tea.Model, tea.Cmd) {
+	if m.opts.ModelOptions == nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: "Model picker is unavailable.", err: "Model picker is unavailable."}))
+		m.status = "error"
+		return *m, nil
+	}
+
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	models, err := m.opts.ModelOptions(ctx)
+	if err != nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not list models: %v", err), err: err.Error()}))
+		m.status = "error"
+		return *m, nil
+	}
+	models = normalizeModelOptions(models)
+	if len(models) == 0 {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: "No models available."}))
+		m.status = "ready"
+		return *m, nil
+	}
+
+	m.modelPicker = newChatModelPicker(models, m.opts.Model, filter)
+	m.status = "model"
+	return *m, nil
+}
+
+func normalizeModelOptions(models []ChatModelOption) []ChatModelOption {
+	seen := make(map[string]struct{}, len(models))
+	out := make([]ChatModelOption, 0, len(models))
+	for _, model := range models {
+		model.Name = strings.TrimSpace(model.Name)
+		model.Description = strings.TrimSpace(model.Description)
+		if model.Name == "" {
+			continue
+		}
+		key := strings.ToLower(model.Name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, model)
+	}
+	return out
+}
+
+func newChatModelPicker(models []ChatModelOption, current, filter string) *chatModelPicker {
+	picker := &chatModelPicker{models: slices.Clone(models), filter: strings.TrimSpace(filter)}
+	if picker.filter != "" {
+		return picker
+	}
+	for i, model := range picker.models {
+		if model.Name == current {
+			picker.cursor = i
+			picker.updateScroll()
+			break
+		}
+	}
+	return picker
+}
+
+func (m chatModel) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC, tea.KeyEsc:
+		m.modelPicker = nil
+		m.status = "ready"
+		return m, nil
+	case tea.KeyEnter:
+		return m.selectModel()
+	case tea.KeyUp:
+		m.modelPicker.move(-1)
+	case tea.KeyDown:
+		m.modelPicker.move(1)
+	case tea.KeyPgUp:
+		m.modelPicker.move(-maxResumePickerItems)
+	case tea.KeyPgDown:
+		m.modelPicker.move(maxResumePickerItems)
+	case tea.KeyBackspace:
+		if len(m.modelPicker.filter) > 0 {
+			runes := []rune(m.modelPicker.filter)
+			m.modelPicker.filter = string(runes[:len(runes)-1])
+			m.modelPicker.cursor = 0
+			m.modelPicker.scroll = 0
+		}
+	case tea.KeyCtrlU:
+		m.modelPicker.filter = ""
+		m.modelPicker.cursor = 0
+		m.modelPicker.scroll = 0
+	case tea.KeySpace:
+		m.modelPicker.filter += " "
+		m.modelPicker.cursor = 0
+		m.modelPicker.scroll = 0
+	case tea.KeyRunes:
+		m.modelPicker.filter += string(msg.Runes)
+		m.modelPicker.cursor = 0
+		m.modelPicker.scroll = 0
+	}
+	return m, nil
+}
+
+func (m chatModel) selectModel() (tea.Model, tea.Cmd) {
+	if m.modelPicker == nil {
+		return m, nil
+	}
+	selected, ok := m.modelPicker.selected()
+	if !ok {
+		return m, nil
+	}
+
+	m.modelPicker = nil
+	previous := m.opts.Model
+	if err := m.applyModelSelection(selected.Name, true); err != nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not switch model: %v", err), err: err.Error()}))
+		m.status = "error"
+		return m, nil
+	}
+	if selected.Name == previous {
+		m.status = "model unchanged"
+	} else {
+		m.status = "model " + selected.Name
+	}
+	return m, nil
+}
+
+func (m *chatModel) applyModelSelection(modelName string, persist bool) error {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return nil
+	}
+	m.opts.Model = modelName
+	if m.opts.ToolRegistryForModel != nil {
+		m.opts.Tools = m.opts.ToolRegistryForModel(m.ctx, modelName)
+	}
+	if m.opts.SystemPromptForModel != nil {
+		m.opts.SystemPrompt = m.opts.SystemPromptForModel(m.ctx, modelName, m.opts.Tools)
+	}
+	m.refreshContextWindowTokens(modelName)
+	m.contextTokens = m.estimatePromptTokens(m.messages, "")
+	m.contextEstimate = true
+	if persist && m.opts.OnModelSelected != nil {
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return m.opts.OnModelSelected(ctx, modelName)
+	}
+	return nil
 }
 
 func (m *chatModel) openResumePicker() (tea.Model, tea.Cmd) {
@@ -213,12 +371,8 @@ func (m *chatModel) resumeSelectedChat() (tea.Model, tea.Cmd) {
 	m.resumePicker = nil
 	m.chatID = chat.ID
 	if chat.Model != "" && chat.Model != m.opts.Model {
-		m.opts.Model = chat.Model
-		if m.opts.ToolRegistryForModel != nil {
-			m.opts.Tools = m.opts.ToolRegistryForModel(m.ctx, chat.Model)
-		}
+		_ = m.applyModelSelection(chat.Model, false)
 	}
-	m.refreshContextWindowTokens(m.opts.Model)
 	m.messages = slices.Clone(chat.Messages)
 	m.entries = entriesFromMessages(m.messages)
 	m.input = nil
@@ -280,6 +434,57 @@ func (m chatModel) renderResumePicker(width int) string {
 
 	b.WriteString("\n")
 	b.WriteString(chatResumeMetaStyle.Render("↑/↓ move • enter resume • type search • esc cancel"))
+	return b.String()
+}
+
+func (m chatModel) renderModelPicker(width int) string {
+	picker := m.modelPicker
+	if picker == nil {
+		return ""
+	}
+	if width <= 0 {
+		width = 80
+	}
+
+	var b strings.Builder
+	b.WriteString(chatResumeTitleStyle.Render("Switch model"))
+	b.WriteString("\n\n")
+	b.WriteString(renderResumeSearchBox(picker.filter, width))
+	b.WriteString("\n\n")
+
+	filtered := picker.filtered()
+	if len(filtered) == 0 {
+		b.WriteString(chatResumeMetaStyle.Render("No matching models"))
+		b.WriteString("\n")
+	} else {
+		start := clamp(picker.scroll, 0, max(0, len(filtered)-1))
+		end := min(len(filtered), start+maxResumePickerItems)
+		for i := start; i < end; i++ {
+			model := filtered[i]
+			selected := i == picker.cursor
+			if selected {
+				b.WriteString(chatResumeSelectedStyle.Render("› " + model.Name))
+			} else {
+				b.WriteString("  ")
+				b.WriteString(chatResumeTextStyle.Render(model.Name))
+			}
+			b.WriteByte('\n')
+			if meta := modelOptionMeta(model, m.opts.Model); meta != "" {
+				b.WriteString(chatResumeMetaStyle.Render("  " + meta))
+				b.WriteByte('\n')
+			}
+			if i < end-1 {
+				b.WriteByte('\n')
+			}
+		}
+		if end < len(filtered) {
+			b.WriteString(chatResumeMetaStyle.Render(fmt.Sprintf("\n  +%d more", len(filtered)-end)))
+			b.WriteByte('\n')
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(chatResumeMetaStyle.Render("↑/↓ move • enter switch • type search • esc cancel"))
 	return b.String()
 }
 
@@ -403,6 +608,78 @@ func (p *chatResumePicker) selected() (chatstore.ChatSummary, bool) {
 		return chatstore.ChatSummary{}, false
 	}
 	return filtered[p.cursor], true
+}
+
+func (p *chatModelPicker) filtered() []ChatModelOption {
+	if p == nil {
+		return nil
+	}
+	filter := strings.ToLower(strings.TrimSpace(p.filter))
+	if filter == "" {
+		return p.models
+	}
+	var out []ChatModelOption
+	for _, model := range p.models {
+		haystack := strings.ToLower(strings.Join([]string{
+			model.Name,
+			model.Description,
+		}, " "))
+		if strings.Contains(haystack, filter) {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
+func (p *chatModelPicker) move(delta int) {
+	if p == nil {
+		return
+	}
+	filtered := p.filtered()
+	if len(filtered) == 0 {
+		p.cursor = 0
+		p.scroll = 0
+		return
+	}
+	p.cursor = clamp(p.cursor+delta, 0, len(filtered)-1)
+	p.updateScroll()
+}
+
+func (p *chatModelPicker) updateScroll() {
+	if p == nil {
+		return
+	}
+	if p.cursor < p.scroll {
+		p.scroll = p.cursor
+	}
+	if p.cursor >= p.scroll+maxResumePickerItems {
+		p.scroll = p.cursor - maxResumePickerItems + 1
+	}
+	if p.scroll < 0 {
+		p.scroll = 0
+	}
+}
+
+func (p *chatModelPicker) selected() (ChatModelOption, bool) {
+	if p == nil {
+		return ChatModelOption{}, false
+	}
+	filtered := p.filtered()
+	if len(filtered) == 0 || p.cursor < 0 || p.cursor >= len(filtered) {
+		return ChatModelOption{}, false
+	}
+	return filtered[p.cursor], true
+}
+
+func modelOptionMeta(model ChatModelOption, current string) string {
+	var parts []string
+	if model.Name == current {
+		parts = append(parts, "current")
+	}
+	if model.Description != "" {
+		parts = append(parts, model.Description)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func resumeChatTitle(chat chatstore.ChatSummary) string {

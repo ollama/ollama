@@ -21,8 +21,11 @@ import (
 	"github.com/ollama/ollama/agent/skills"
 	agenttools "github.com/ollama/ollama/agent/tools"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/tui"
+	"github.com/ollama/ollama/format"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -149,6 +152,15 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		Tools:    registry,
 		ToolRegistryForModel: func(ctx context.Context, model string) *coreagent.Registry {
 			return agentToolsRegistry(ctx, client, model, skillCatalog)
+		},
+		ModelOptions: func(ctx context.Context) ([]tui.ChatModelOption, error) {
+			return agentModelOptions(ctx, client)
+		},
+		OnModelSelected: func(_ context.Context, model string) error {
+			return config.SetLastModel(model)
+		},
+		SystemPromptForModel: func(_ context.Context, _ string, registry *coreagent.Registry) string {
+			return agentSystemPrompt(skillCatalog, registry != nil && registry.Has("skill"), "")
 		},
 		Approval:         approval,
 		AutoApproveTools: opts.AutoApproveTools,
@@ -440,6 +452,95 @@ func agentSystemPrompt(catalog *skills.Catalog, skillToolAvailable bool, extra s
 		parts = append(parts, strings.TrimSpace(extra))
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func agentModelOptions(ctx context.Context, client *api.Client) ([]tui.ChatModelOption, error) {
+	if client == nil {
+		return nil, errors.New("model picker requires an API client")
+	}
+
+	list, err := client.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]struct{})
+	var options []tui.ChatModelOption
+	add := func(name, description string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		options = append(options, tui.ChatModelOption{Name: name, Description: strings.TrimSpace(description)})
+	}
+
+	if disabled, known := agentCloudStatusDisabled(ctx, client); !known || !disabled {
+		if recs, err := client.ModelRecommendationsExperimental(ctx); err == nil {
+			for _, rec := range recs.Recommendations {
+				name := strings.TrimSpace(rec.Model)
+				if !modelref.HasExplicitCloudSource(name) {
+					continue
+				}
+				add(name, agentRecommendationDescription(rec))
+			}
+		}
+	}
+
+	local := slices.Clone(list.Models)
+	slices.SortStableFunc(local, func(a, b api.ListModelResponse) int {
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+	for _, model := range local {
+		name := strings.TrimSpace(model.Name)
+		if name == "" {
+			name = strings.TrimSpace(model.Model)
+		}
+		name = strings.TrimSuffix(name, ":latest")
+		add(name, agentLocalModelDescription(model))
+	}
+
+	return options, nil
+}
+
+func agentRecommendationDescription(rec api.ModelRecommendation) string {
+	var parts []string
+	if description := strings.TrimSpace(rec.Description); description != "" {
+		parts = append(parts, description)
+	} else {
+		parts = append(parts, "cloud")
+	}
+	if rec.ContextLength > 0 {
+		parts = append(parts, format.HumanNumber(uint64(rec.ContextLength))+" ctx")
+	}
+	if rec.RequiredPlan != "" {
+		parts = append(parts, rec.RequiredPlan+" plan")
+	}
+	return strings.Join(parts, " · ")
+}
+
+func agentLocalModelDescription(model api.ListModelResponse) string {
+	parts := []string{"local"}
+	if model.Details.Family != "" {
+		parts = append(parts, model.Details.Family)
+	}
+	if model.Details.ParameterSize != "" {
+		parts = append(parts, model.Details.ParameterSize)
+	}
+	if model.Details.QuantizationLevel != "" {
+		parts = append(parts, model.Details.QuantizationLevel)
+	}
+	if model.Details.ContextLength > 0 {
+		parts = append(parts, format.HumanNumber(uint64(model.Details.ContextLength))+" ctx")
+	}
+	if model.Size > 0 {
+		parts = append(parts, format.HumanBytes(model.Size))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func agentToolsRegistry(ctx context.Context, client *api.Client, modelName string, catalog *skills.Catalog) *coreagent.Registry {

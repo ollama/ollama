@@ -204,6 +204,123 @@ func TestChatResumeCommandOpensPicker(t *testing.T) {
 	}
 }
 
+func TestChatModelCommandOpensPicker(t *testing.T) {
+	m := chatModel{
+		ctx:    context.Background(),
+		input:  []rune("/model"),
+		width:  100,
+		height: 20,
+		opts: ChatOptions{
+			Model: "llama3.2",
+			ModelOptions: func(context.Context) ([]ChatModelOption, error) {
+				return []ChatModelOption{
+					{Name: "kimi-k2.6:cloud", Description: "cloud coding"},
+					{Name: "llama3.2", Description: "local"},
+				}, nil
+			},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("model command should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.modelPicker == nil {
+		t.Fatal("model picker was not opened")
+	}
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Switch model") ||
+		!strings.Contains(view, "Search...") ||
+		!strings.Contains(view, "kimi-k2.6:cloud") ||
+		!strings.Contains(view, "llama3.2") ||
+		!strings.Contains(view, "current") {
+		t.Fatalf("model picker view missing content: %q", view)
+	}
+}
+
+func TestChatModelPickerFiltersAndSwitchesModel(t *testing.T) {
+	var savedModel string
+	m := chatModel{
+		ctx:    context.Background(),
+		input:  []rune("/model qwen"),
+		width:  100,
+		height: 20,
+		opts: ChatOptions{
+			Model: "llama3.2",
+			ModelOptions: func(context.Context) ([]ChatModelOption, error) {
+				return []ChatModelOption{
+					{Name: "llama3.2", Description: "local"},
+					{Name: "qwen3.5:cloud", Description: "cloud reasoning"},
+				}, nil
+			},
+			ToolRegistryForModel: func(ctx context.Context, model string) *coreagent.Registry {
+				if model != "qwen3.5:cloud" {
+					t.Fatalf("tool registry model = %q, want qwen3.5:cloud", model)
+				}
+				registry := coreagent.NewRegistry()
+				registry.Register(chatTestTool{})
+				return registry
+			},
+			ContextWindowTokensForModel: func(ctx context.Context, model string, fallback int) int {
+				if model != "qwen3.5:cloud" {
+					t.Fatalf("context model = %q, want qwen3.5:cloud", model)
+				}
+				return 262144
+			},
+			SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry) string {
+				if model != "qwen3.5:cloud" {
+					t.Fatalf("system prompt model = %q, want qwen3.5:cloud", model)
+				}
+				if registry == nil || !registry.Has("fake_tool") {
+					t.Fatalf("system prompt registry missing fake tool: %#v", registry)
+				}
+				return "system for " + model
+			},
+			OnModelSelected: func(ctx context.Context, model string) error {
+				savedModel = model
+				return nil
+			},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("model command should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.modelPicker == nil || m.modelPicker.filter != "qwen" {
+		t.Fatalf("model picker = %#v, want qwen filter", m.modelPicker)
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "qwen3.5:cloud") || strings.Contains(view, "llama3.2") {
+		t.Fatalf("filtered model picker view = %q", view)
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("switching models should not start a command")
+	}
+	if m.modelPicker != nil {
+		t.Fatal("model picker should close after selection")
+	}
+	if m.opts.Model != "qwen3.5:cloud" {
+		t.Fatalf("model = %q, want qwen3.5:cloud", m.opts.Model)
+	}
+	if savedModel != "qwen3.5:cloud" {
+		t.Fatalf("saved model = %q, want qwen3.5:cloud", savedModel)
+	}
+	if m.opts.Tools == nil || !m.opts.Tools.Has("fake_tool") {
+		t.Fatalf("tools registry was not rebuilt for model: %#v", m.opts.Tools)
+	}
+	if m.opts.ContextWindowTokens != 262144 {
+		t.Fatalf("context window = %d, want 262144", m.opts.ContextWindowTokens)
+	}
+	if m.opts.SystemPrompt != "system for qwen3.5:cloud" {
+		t.Fatalf("system prompt = %q", m.opts.SystemPrompt)
+	}
+}
+
 func TestChatResumePickerFiltersAndLoadsSelection(t *testing.T) {
 	store := &chatResumeTestStore{
 		chats: []chatstore.ChatSummary{
