@@ -164,6 +164,77 @@ class ApiClient {
     });
   }
 
+  async *sendMessageStreaming(
+    sessionId: string,
+    message: string,
+    model?: string
+  ): AsyncGenerator<string, void, unknown> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new Error('API key not set');
+    }
+
+    const response = await fetch(`${this.baseUrl}/sessions/${sessionId}/chat`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message, model, stream: true }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`API error: ${response.status} - ${error}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('Response body is not readable');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') {
+              return;
+            }
+            if (data) {
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.error) {
+                  throw new Error(parsed.error);
+                }
+                if (parsed.choices && parsed.choices[0]?.delta?.content) {
+                  yield parsed.choices[0].delta.content;
+                }
+              } catch (e) {
+                if (e instanceof Error && e.message.startsWith('API error')) {
+                  throw e;
+                }
+                // Ignore JSON parse errors for partial chunks
+              }
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     await this.request(`/sessions/${sessionId}`, {
       method: 'DELETE',

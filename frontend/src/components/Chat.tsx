@@ -11,6 +11,7 @@ function Chat({ sessionId }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [streamingMessage, setStreamingMessage] = useState<string>('');
   const [codeMode, setCodeMode] = useState(false);
   const [githubContext, setGithubContext] = useState<GitHubContext | null>(null);
 
@@ -53,12 +54,31 @@ function Chat({ sessionId }: ChatProps) {
     const userMessage = input;
     setInput('');
     setIsLoading(true);
+    setStreamingMessage('');
+
+    // Add user message to local state immediately
+    const newUserMessage: Message = { role: 'user', content: userMessage };
+    setMessages(prev => [...prev, newUserMessage]);
 
     try {
-      await api.sendMessage(sessionId, userMessage);
+      let accumulatedContent = '';
+      
+      // Use streaming API
+      for await (const chunk of api.sendMessageStreaming(sessionId, userMessage)) {
+        accumulatedContent += chunk;
+        setStreamingMessage(accumulatedContent);
+      }
+
+      // Clear streaming message
+      setStreamingMessage('');
+      
+      // Reload messages from server to ensure sync with Redis
       await loadMessages();
     } catch (error) {
       console.error('Failed to send message:', error);
+      // Remove user message on error
+      setMessages(prev => prev.slice(0, -1));
+      setStreamingMessage('');
     } finally {
       setIsLoading(false);
     }
@@ -114,7 +134,12 @@ function Chat({ sessionId }: ChatProps) {
             <MessageRenderer content={msg.content} codeMode={codeMode} />
           </div>
         ))}
-        {isLoading && <div className="message assistant loading">Thinking...</div>}
+        {streamingMessage && (
+          <div className="message assistant">
+            <MessageRenderer content={streamingMessage} codeMode={codeMode} />
+          </div>
+        )}
+        {isLoading && !streamingMessage && <div className="message assistant loading">Loading...</div>}
       </div>
 
       <div className="input-area">

@@ -88,6 +88,9 @@ CONFIG_KEY = "gateway:config"
 ADMIN_SESSION_PREFIX = "admin:session:"
 OAUTH_STATE_PREFIX = "oauth:state:"
 GITHUB_TOKEN_PREFIX = "github:token:"
+GITHUB_CONTEXT_CACHE_PREFIX = "github:context:"
+GITHUB_CONTEXT_CACHE_TTL = int(os.getenv("GITHUB_CONTEXT_CACHE_TTL", "3600"))  # 1 hour
+API_KEY_USER_MAP_KEY = "gateway:api_key_user_map"
 
 
 # ============================================================================
@@ -132,11 +135,34 @@ async def seed_config_from_env():
         await redis_client.hset(CONFIG_KEY, mapping=seed_data)
 
 
+async def get_or_create_user_id_for_key(api_key: str) -> str:
+    """Get stable user_id for an API key, creating one if needed."""
+    if not redis_client:
+        # Fallback to hash-based (only during startup before Redis ready)
+        return f"user_{abs(hash(api_key)) % 10000:04d}"
+    
+    # Check if we already have a user_id for this key
+    user_id = await redis_client.hget(API_KEY_USER_MAP_KEY, api_key)
+    if user_id:
+        return user_id
+    
+    # Create new stable user_id
+    new_user_id = f"user_{uuid.uuid4().hex[:12]}"
+    await redis_client.hset(API_KEY_USER_MAP_KEY, api_key, new_user_id)
+    return new_user_id
+
+
 async def configured_api_keys() -> dict[str, str]:
     """Returns {api_key: user_id} mapping from Redis or .env fallback."""
     raw_keys = await get_config_value("API_KEYS", os.getenv("API_KEYS", ""))
     keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
-    return {key: f"user_{abs(hash(key)) % 10000:04d}" for key in keys}
+    
+    # Build mapping with stable user IDs
+    mapping = {}
+    for key in keys:
+        mapping[key] = await get_or_create_user_id_for_key(key)
+    
+    return mapping
 
 
 # ============================================================================
@@ -696,8 +722,20 @@ async def _collect_repo_file_paths(
     return collected[:MAX_REPO_FILES]
 
 
+def _github_context_cache_key(user_id: str, owner: str, repo: str, ref: str, paths: list[str]) -> str:
+    """Generate cache key for GitHub context."""
+    paths_hash = hash(tuple(sorted(paths)))
+    return f"{GITHUB_CONTEXT_CACHE_PREFIX}{user_id}:{owner}/{repo}:{ref}:{paths_hash}"
+
+
+async def _invalidate_github_context_cache(user_id: str, owner: str, repo: str, ref: str, paths: list[str]) -> None:
+    """Invalidate cached GitHub context."""
+    cache_key = _github_context_cache_key(user_id, owner, repo, ref, paths)
+    await redis_client.delete(cache_key)
+
+
 async def build_github_context_for_chat(user_id: str, session: dict[str, Any]) -> str:
-    """Build repository context text for the LLM (not stored in message history)."""
+    """Build repository context text for the LLM (not stored in message history). Uses caching to reduce load."""
     if not session_has_github_context(session):
         return ""
 
@@ -714,6 +752,13 @@ async def build_github_context_for_chat(user_id: str, session: dict[str, Any]) -
         if not ref:
             ref = "main"
 
+    # Check cache first
+    cache_key = _github_context_cache_key(user_id, owner, repo, ref, extra_paths)
+    cached = await redis_client.get(cache_key)
+    if cached:
+        return cached
+
+    # Build context if not cached
     file_paths = await _collect_repo_file_paths(user_id, owner, repo, ref, extra_paths)
 
     parts: list[str] = [
@@ -742,7 +787,12 @@ async def build_github_context_for_chat(user_id: str, session: dict[str, Any]) -
     if len(parts) <= 3:
         return ""
 
-    return "\n".join(parts)
+    result = "\n".join(parts)
+    
+    # Cache the result
+    await redis_client.setex(cache_key, GITHUB_CONTEXT_CACHE_TTL, result)
+    
+    return result
 
 
 # ============================================================================
@@ -880,7 +930,11 @@ async def revoke_api_key(
             detail="API key not found",
         )
     
-    # Remove the key
+    # Remove the key from user mapping
+    removed_key = keys[index]
+    await redis_client.hdel(API_KEY_USER_MAP_KEY, removed_key)
+    
+    # Remove the key from config
     keys.pop(index)
     await redis_client.hset(CONFIG_KEY, "API_KEYS", ",".join(keys))
     
@@ -979,6 +1033,15 @@ async def set_session_github_context_endpoint(
         ref = repo_meta.get("default_branch", "main")
 
     paths = [p.strip().lstrip("/") for p in body.paths if p.strip()]
+    
+    # Invalidate old cache if context exists
+    if session_has_github_context(session):
+        old_owner = session["github_owner"]
+        old_repo = session["github_repo"]
+        old_ref = session.get("github_ref") or ref
+        old_paths = session.get("github_paths", [])
+        await _invalidate_github_context_cache(user_id, old_owner, old_repo, old_ref, old_paths)
+    
     await set_session_github_context(user_id, session_id, owner, repo, ref, paths)
 
     key = session_key(user_id, session_id)
@@ -1019,12 +1082,19 @@ async def add_session_github_files_endpoint(
             seen.add(normalized)
             existing.append(normalized)
 
+    # Invalidate cache when paths change
+    owner = session["github_owner"]
+    repo = session["github_repo"]
+    ref = session.get("github_ref") or "main"
+    old_paths = session.get("github_paths", [])
+    await _invalidate_github_context_cache(user_id, owner, repo, ref, old_paths)
+
     await set_session_github_context(
         user_id,
         session_id,
-        session["github_owner"],
-        session["github_repo"],
-        session.get("github_ref") or None,
+        owner,
+        repo,
+        ref,
         existing,
     )
     updated = await get_session(user_id, session_id)
@@ -1041,6 +1111,15 @@ async def clear_session_github_context_endpoint(
     session = await get_session(user_id, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Invalidate cache before clearing
+    if session_has_github_context(session):
+        owner = session["github_owner"]
+        repo = session["github_repo"]
+        ref = session.get("github_ref") or "main"
+        paths = session.get("github_paths", [])
+        await _invalidate_github_context_cache(user_id, owner, repo, ref, paths)
+    
     await clear_session_github_context(user_id, session_id)
     return {"status": "ok"}
 
@@ -1091,31 +1170,85 @@ async def session_chat(
 
     client = httpx.AsyncClient(timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS, connect=10.0))
 
-    try:
-        response = await client.post(
-            f"{OLLAMA_URL}/v1/chat/completions",
-            json=ollama_body,
-            headers={"Content-Type": "application/json"},
+    # Handle streaming vs non-streaming
+    if body.stream:
+        # Streaming mode: forward SSE chunks and accumulate content
+        async def stream_and_save():
+            accumulated_content = ""
+            line_buffer = ""
+            try:
+                async with client.stream(
+                    "POST",
+                    f"{OLLAMA_URL}/v1/chat/completions",
+                    json=ollama_body,
+                    headers={"Content-Type": "application/json"},
+                ) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes():
+                        # Forward chunk immediately
+                        yield chunk
+                        
+                        # Parse SSE chunks to accumulate content (with line buffering)
+                        line_buffer += chunk.decode("utf-8")
+                        while "\n" in line_buffer:
+                            line, line_buffer = line_buffer.split("\n", 1)
+                            if line.startswith("data: "):
+                                data_str = line[6:].strip()
+                                if data_str and data_str != "[DONE]":
+                                    try:
+                                        data = json.loads(data_str)
+                                        if "choices" in data and len(data["choices"]) > 0:
+                                            delta = data["choices"][0].get("delta", {})
+                                            content = delta.get("content", "")
+                                            if content:
+                                                accumulated_content += content
+                                    except json.JSONDecodeError:
+                                        pass
+            except httpx.HTTPError as exc:
+                error_chunk = f'data: {{"error": "Ollama request failed: {str(exc)}"}}\n\n'
+                yield error_chunk.encode()
+            finally:
+                await client.aclose()
+                # Always save messages (user message already in messages array)
+                # Add assistant response if we got content
+                if accumulated_content:
+                    messages.append({"role": "assistant", "content": accumulated_content})
+                else:
+                    # Even if empty, save the user message
+                    pass
+                await update_session(user_id, session_id, messages, model)
+
+        return StreamingResponse(
+            stream_and_save(),
+            media_type="text/event-stream",
         )
-        response.raise_for_status()
-        result = response.json()
-    except httpx.HTTPError as exc:
-        await client.aclose()
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Ollama request failed: {exc}",
-        )
-    finally:
-        await client.aclose()
+    else:
+        # Non-streaming mode: original behavior
+        try:
+            response = await client.post(
+                f"{OLLAMA_URL}/v1/chat/completions",
+                json=ollama_body,
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            result = response.json()
+        except httpx.HTTPError as exc:
+            await client.aclose()
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Ollama request failed: {exc}",
+            )
+        finally:
+            await client.aclose()
 
-    # Extract assistant reply
-    assistant_message = result["choices"][0]["message"]["content"]
-    messages.append({"role": "assistant", "content": assistant_message})
+        # Extract assistant reply
+        assistant_message = result["choices"][0]["message"]["content"]
+        messages.append({"role": "assistant", "content": assistant_message})
 
-    # Update session
-    await update_session(user_id, session_id, messages, model)
+        # Update session
+        await update_session(user_id, session_id, messages, model)
 
-    return result
+        return result
 
 
 # ============================================================================
