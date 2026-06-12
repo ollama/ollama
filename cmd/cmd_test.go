@@ -18,6 +18,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/cobra"
 
+	"github.com/ollama/ollama/agent/chatstore"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/types/model"
 )
@@ -327,6 +328,99 @@ Weigh anchor!
 	})
 }
 
+func TestContextWindowTokensForRunUsesRunningModel(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/ps" || r.Method != http.MethodGet {
+			t.Fatalf("unexpected request to %s %s", r.URL.Path, r.Method)
+		}
+		if err := json.NewEncoder(w).Encode(api.ProcessResponse{
+			Models: []api.ProcessModelResponse{
+				{Name: "llama3.2:latest", Model: "llama3.2:latest", ContextLength: 8192},
+				{Name: "qwen3:8b", Model: "qwen3:8b", ContextLength: 16384},
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer mockServer.Close()
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := contextWindowTokensForRun(t.Context(), client, "qwen3:8b", 4096); got != 16384 {
+		t.Fatalf("contextWindowTokensForRun exact = %d, want 16384", got)
+	}
+	if got := contextWindowTokensForRun(t.Context(), client, "llama3.2", 4096); got != 8192 {
+		t.Fatalf("contextWindowTokensForRun default tag = %d, want 8192", got)
+	}
+	if got := contextWindowTokensForRun(t.Context(), client, "llama3.2:8b", 4096); got != 4096 {
+		t.Fatalf("contextWindowTokensForRun different tag = %d, want fallback", got)
+	}
+}
+
+func TestContextWindowTokensFromShowResponse(t *testing.T) {
+	if got := contextWindowTokensFromShowResponse(&api.ShowResponse{
+		Details: api.ModelDetails{ContextLength: 262144},
+	}); got != 262144 {
+		t.Fatalf("contextWindowTokensFromShowResponse details = %d, want 262144", got)
+	}
+
+	if got := contextWindowTokensFromShowResponse(&api.ShowResponse{
+		ModelInfo: map[string]any{
+			"general.architecture": "test",
+			"test.context_length":  float64(131072),
+		},
+	}); got != 131072 {
+		t.Fatalf("contextWindowTokensFromShowResponse model_info = %d, want 131072", got)
+	}
+}
+
+func TestRunCommandArgsAllowsResumeWithoutModel(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool("resume", true, "")
+
+	if err := runCommandArgs(cmd, nil); err != nil {
+		t.Fatalf("runCommandArgs resume = %v, want nil", err)
+	}
+
+	cmd = &cobra.Command{}
+	cmd.Flags().Bool("resume", false, "")
+	if err := runCommandArgs(cmd, nil); err == nil {
+		t.Fatal("runCommandArgs without model = nil, want error")
+	}
+}
+
+func TestResumeModelFromLatestChat(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+
+	store, err := chatstore.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	if err := store.AppendMessageWithModel(ctx, "chat-old", api.Message{Role: "assistant", Content: "old"}, "llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendMessageWithModel(ctx, "chat-new", api.Message{Role: "assistant", Content: "new"}, "qwen3:8b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resumeModelFromLatestChat(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "qwen3:8b" {
+		t.Fatalf("resume model = %q, want qwen3:8b", got)
+	}
+}
+
 func TestDeleteHandler(t *testing.T) {
 	stopped := false
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -372,6 +466,8 @@ func TestDeleteHandler(t *testing.T) {
 	}))
 
 	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Cleanup(mockServer.Close)
 
 	cmd := &cobra.Command{}
@@ -421,6 +517,8 @@ func TestRunEmbeddingModel(t *testing.T) {
 	}))
 
 	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Cleanup(mockServer.Close)
 
 	cmd := &cobra.Command{}
@@ -477,6 +575,169 @@ func TestRunEmbeddingModel(t *testing.T) {
 	expectOutput := "[0.1,0.2,0.3]\n"
 	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
 		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestRunHandlerResumeRequiresInteractive(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("resume", true, "")
+	cmd.Flags().String("keepalive", "", "")
+
+	err := RunHandler(cmd, []string{"llama3.2", "hello"})
+	if err == nil || !strings.Contains(err.Error(), "--resume requires an interactive terminal") {
+		t.Fatalf("RunHandler error = %v, want interactive resume error", err)
+	}
+}
+
+func TestRunHandlerHeadlessAgent(t *testing.T) {
+	var chatReq api.ChatRequest
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			if r.Method != http.MethodPost {
+				t.Errorf("show method = %s, want POST", r.Method)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/chat":
+			if r.Method != http.MethodPost {
+				t.Errorf("chat method = %s, want POST", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			enc := json.NewEncoder(w)
+			if err := enc.Encode(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "hello"}}); err != nil {
+				t.Fatal(err)
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			if err := enc.Encode(api.ChatResponse{Done: true, DoneReason: "stop"}); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(mockServer.Close)
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("resume", false, "")
+	cmd.Flags().Bool("headless", true, "")
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().Bool("verbose", false, "")
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := RunHandler(cmd, []string{"test-model", "hello"})
+	w.Close()
+	os.Stdout = oldStdout
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	var out bytes.Buffer
+	if _, err := io.Copy(&out, r); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "hello\n" {
+		t.Fatalf("stdout = %q, want hello newline", got)
+	}
+	if chatReq.Model != "test-model" {
+		t.Fatalf("chat model = %q, want test-model", chatReq.Model)
+	}
+	if len(chatReq.Messages) != 1 || chatReq.Messages[0].Role != "user" || chatReq.Messages[0].Content != "hello" {
+		t.Fatalf("chat messages = %#v", chatReq.Messages)
+	}
+}
+
+func TestRunHandlerPromptUsesAgentLoopByDefault(t *testing.T) {
+	var chatReq api.ChatRequest
+	var generateCalled bool
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/chat":
+			if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			enc := json.NewEncoder(w)
+			if err := enc.Encode(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "hello"}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := enc.Encode(api.ChatResponse{Done: true, DoneReason: "stop"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/generate":
+			generateCalled = true
+			http.Error(w, "legacy generate path should not be used", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(mockServer.Close)
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("resume", false, "")
+	cmd.Flags().Bool("headless", false, "")
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().Bool("verbose", false, "")
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := RunHandler(cmd, []string{"test-model", "hello"})
+	w.Close()
+	os.Stdout = oldStdout
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		t.Fatal(err)
+	}
+
+	if generateCalled {
+		t.Fatal("expected default prompt path to use agent chat, not /api/generate")
+	}
+	if chatReq.Model != "test-model" {
+		t.Fatalf("chat model = %q, want test-model", chatReq.Model)
+	}
+	if len(chatReq.Messages) != 1 || chatReq.Messages[0].Role != "user" || chatReq.Messages[0].Content != "hello" {
+		t.Fatalf("chat messages = %#v", chatReq.Messages)
 	}
 }
 
@@ -782,7 +1043,7 @@ func TestRunHandler_CloudAuthErrorOnShow_PrintsSigninMessage(t *testing.T) {
 	}
 }
 
-func TestRunHandler_CloudAuthErrorOnGenerate_PrintsSigninMessage(t *testing.T) {
+func TestRunHandler_CloudAuthErrorOnAgentChat_PrintsSigninMessage(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
@@ -793,7 +1054,7 @@ func TestRunHandler_CloudAuthErrorOnGenerate_PrintsSigninMessage(t *testing.T) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
-		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+		case r.URL.Path == "/api/chat" && r.Method == http.MethodPost:
 			w.WriteHeader(http.StatusUnauthorized)
 			if err := json.NewEncoder(w).Encode(map[string]string{
 				"error":      "unauthorized",
@@ -808,6 +1069,8 @@ func TestRunHandler_CloudAuthErrorOnGenerate_PrintsSigninMessage(t *testing.T) {
 	}))
 
 	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Cleanup(mockServer.Close)
 
 	cmd := &cobra.Command{}
@@ -848,7 +1111,7 @@ func TestRunHandler_CloudAuthErrorOnGenerate_PrintsSigninMessage(t *testing.T) {
 
 func TestRunHandler_ExplicitCloudStubMissing_PullsNormalizedNameTEMP(t *testing.T) {
 	var pulledModel string
-	var generateCalled bool
+	var chatCalled bool
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -879,10 +1142,10 @@ func TestRunHandler_ExplicitCloudStubMissing_PullsNormalizedNameTEMP(t *testing.
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
-		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
-			generateCalled = true
+		case r.URL.Path == "/api/chat" && r.Method == http.MethodPost:
+			chatCalled = true
 			w.WriteHeader(http.StatusOK)
-			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+			if err := json.NewEncoder(w).Encode(api.ChatResponse{Done: true, DoneReason: "stop"}); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
@@ -892,6 +1155,8 @@ func TestRunHandler_ExplicitCloudStubMissing_PullsNormalizedNameTEMP(t *testing.
 	}))
 
 	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Cleanup(mockServer.Close)
 
 	cmd := &cobra.Command{}
@@ -915,14 +1180,14 @@ func TestRunHandler_ExplicitCloudStubMissing_PullsNormalizedNameTEMP(t *testing.
 		t.Fatalf("expected normalized pull model %q, got %q", "gpt-oss:20b-cloud", pulledModel)
 	}
 
-	if !generateCalled {
-		t.Fatal("expected /api/generate to be called")
+	if !chatCalled {
+		t.Fatal("expected /api/chat to be called")
 	}
 }
 
 func TestRunHandler_ExplicitCloudStubPresent_SkipsPullTEMP(t *testing.T) {
 	var pullCalled bool
-	var generateCalled bool
+	var chatCalled bool
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -950,10 +1215,10 @@ func TestRunHandler_ExplicitCloudStubPresent_SkipsPullTEMP(t *testing.T) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
-		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
-			generateCalled = true
+		case r.URL.Path == "/api/chat" && r.Method == http.MethodPost:
+			chatCalled = true
 			w.WriteHeader(http.StatusOK)
-			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+			if err := json.NewEncoder(w).Encode(api.ChatResponse{Done: true, DoneReason: "stop"}); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
@@ -963,6 +1228,8 @@ func TestRunHandler_ExplicitCloudStubPresent_SkipsPullTEMP(t *testing.T) {
 	}))
 
 	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Cleanup(mockServer.Close)
 
 	cmd := &cobra.Command{}
@@ -986,13 +1253,13 @@ func TestRunHandler_ExplicitCloudStubPresent_SkipsPullTEMP(t *testing.T) {
 		t.Fatal("expected /api/pull not to be called when cloud stub already exists")
 	}
 
-	if !generateCalled {
-		t.Fatal("expected /api/generate to be called")
+	if !chatCalled {
+		t.Fatal("expected /api/chat to be called")
 	}
 }
 
 func TestRunHandler_ExplicitCloudStubPullFailure_IsBestEffortTEMP(t *testing.T) {
-	var generateCalled bool
+	var chatCalled bool
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1017,10 +1284,10 @@ func TestRunHandler_ExplicitCloudStubPullFailure_IsBestEffortTEMP(t *testing.T) 
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
-		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
-			generateCalled = true
+		case r.URL.Path == "/api/chat" && r.Method == http.MethodPost:
+			chatCalled = true
 			w.WriteHeader(http.StatusOK)
-			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+			if err := json.NewEncoder(w).Encode(api.ChatResponse{Done: true, DoneReason: "stop"}); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
@@ -1030,6 +1297,8 @@ func TestRunHandler_ExplicitCloudStubPullFailure_IsBestEffortTEMP(t *testing.T) 
 	}))
 
 	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Cleanup(mockServer.Close)
 
 	cmd := &cobra.Command{}
@@ -1049,8 +1318,8 @@ func TestRunHandler_ExplicitCloudStubPullFailure_IsBestEffortTEMP(t *testing.T) 
 		t.Fatalf("RunHandler returned error: %v", err)
 	}
 
-	if !generateCalled {
-		t.Fatal("expected /api/generate to be called despite pull failure")
+	if !chatCalled {
+		t.Fatal("expected /api/chat to be called despite pull failure")
 	}
 }
 
@@ -2353,6 +2622,50 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLoadOrUnloadModel_CloudModelDoesNotPrintConnectBanner(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(api.ShowResponse{
+				RemoteHost:  "https://ollama.com",
+				RemoteModel: "minimax-m3:cloud",
+			})
+		case "/api/me":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(api.UserResponse{Name: "testuser"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer mockServer.Close()
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+
+	oldStderr := os.Stderr
+	readErr, writeErr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = writeErr
+	t.Cleanup(func() { os.Stderr = oldStderr })
+
+	err = loadOrUnloadModel(cmd, &runOptions{Model: "minimax-m3:cloud", ShowConnect: true})
+	_ = writeErr.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	if _, err := io.Copy(&stderr, readErr); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stderr.String(), "Connecting to") || strings.Contains(stderr.String(), "ollama.com") {
+		t.Fatalf("unexpected cloud connect banner: %q", stderr.String())
 	}
 }
 
