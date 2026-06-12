@@ -25,6 +25,12 @@ type chatCaptureClient struct {
 	requests []*api.ChatRequest
 }
 
+type chatShowTestClient struct {
+	chatTestClient
+	resp *api.ShowResponse
+	req  *api.ShowRequest
+}
+
 type chatResumeTestStore struct {
 	chats   []chatstore.ChatSummary
 	byID    map[string]*chatstore.Chat
@@ -57,6 +63,17 @@ func (c *chatCaptureClient) Chat(ctx context.Context, req *api.ChatRequest, fn a
 		Message: api.Message{Role: "assistant", Content: "ok"},
 		Done:    true,
 	})
+}
+
+func (c *chatShowTestClient) Show(ctx context.Context, req *api.ShowRequest) (*api.ShowResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.req = req
+	if c.resp != nil {
+		return c.resp, nil
+	}
+	return &api.ShowResponse{}, nil
 }
 
 func (s *chatResumeTestStore) EnsureChat(context.Context, string, string) error {

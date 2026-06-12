@@ -59,12 +59,18 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 		!strings.Contains(fm.entries[0].content, "- `/copy-all`: copy all model output") ||
 		!strings.Contains(fm.entries[0].content, "- `/tools`: show available tools") ||
 		!strings.Contains(fm.entries[0].content, "- `/model`: switch models") ||
+		!strings.Contains(fm.entries[0].content, "- `/think`: set thinking mode") ||
 		!strings.Contains(fm.entries[0].content, "- `/history`: show prompt message history") ||
+		!strings.Contains(fm.entries[0].content, "- `/verbose`: toggle model metrics") ||
 		!strings.Contains(fm.entries[0].content, "- `/<skill>`: run the next message with a skill") ||
 		!strings.Contains(fm.entries[0].content, "**Shortcuts**") ||
 		!strings.Contains(fm.entries[0].content, "- `ctrl+o`: toggle tool output and details") ||
+		!strings.Contains(fm.entries[0].content, "- `shift+enter`: insert a newline") ||
 		!strings.Contains(fm.entries[0].content, "- `shift+tab`: toggle permission mode") {
 		t.Fatalf("help output = %q", fm.entries[0].content)
+	}
+	if strings.Contains(fm.entries[0].content, "/set think") || strings.Contains(fm.entries[0].content, "/set nothink") {
+		t.Fatalf("legacy think commands should stay hidden from help: %q", fm.entries[0].content)
 	}
 }
 
@@ -95,6 +101,70 @@ func TestChatInputAcceptsTextWhileRunning(t *testing.T) {
 
 	if got := string(m.input); got != "next prompt" {
 		t.Fatalf("input = %q, want queued draft text", got)
+	}
+}
+
+func TestChatInputAltEnterInsertsNewline(t *testing.T) {
+	m := chatModel{input: []rune("line one")}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m = updated.(chatModel)
+
+	if cmd != nil {
+		t.Fatal("alt+enter should not submit")
+	}
+	if got := string(m.input); got != "line one\n" {
+		t.Fatalf("input = %q, want newline appended", got)
+	}
+}
+
+func TestChatInputCtrlJInsertsNewline(t *testing.T) {
+	m := chatModel{input: []rune("line one")}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	m = updated.(chatModel)
+
+	if cmd != nil {
+		t.Fatal("ctrl+j should not submit")
+	}
+	if got := string(m.input); got != "line one\n" {
+		t.Fatalf("input = %q, want newline appended", got)
+	}
+}
+
+func TestChatInputOptionBackspaceDeletesPreviousWord(t *testing.T) {
+	m := chatModel{input: []rune("alpha beta   ")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace, Alt: true})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "alpha " {
+		t.Fatalf("input = %q, want alpha with trailing space", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace, Alt: true})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "" {
+		t.Fatalf("input = %q, want empty", got)
+	}
+}
+
+func TestChatInputCtrlWDeletesPreviousWord(t *testing.T) {
+	m := chatModel{input: []rune("alpha beta")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "alpha " {
+		t.Fatalf("input = %q, want alpha with trailing space", got)
+	}
+}
+
+func TestChatInputCtrlUClearsPrompt(t *testing.T) {
+	m := chatModel{input: []rune("alpha beta")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "" {
+		t.Fatalf("input = %q, want empty", got)
 	}
 }
 
@@ -238,6 +308,54 @@ func TestChatSlashCommandSuggestionsFilter(t *testing.T) {
 	}
 }
 
+func TestChatSlashCommandSuggestionsIncludeVerbose(t *testing.T) {
+	m := chatModel{
+		input: []rune("/ve"),
+	}
+
+	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+	if !strings.Contains(lines, "/verbose") || !strings.Contains(lines, "toggle model metrics") {
+		t.Fatalf("suggestions missing /verbose: %q", lines)
+	}
+}
+
+func TestChatSlashCommandSuggestionsIncludeThink(t *testing.T) {
+	m := chatModel{
+		input: []rune("/th"),
+	}
+
+	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+	if !strings.Contains(lines, "/think") || !strings.Contains(lines, "set thinking mode") {
+		t.Fatalf("suggestions missing /think: %q", lines)
+	}
+}
+
+func TestChatSlashCommandSuggestionsHideLegacySetThink(t *testing.T) {
+	m := chatModel{
+		input: []rune("/set"),
+	}
+
+	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+	if strings.Contains(lines, "/set think") || strings.Contains(lines, "/set nothink") {
+		t.Fatalf("legacy think commands should not be suggested: %q", lines)
+	}
+	if !strings.Contains(lines, "No matching commands") {
+		t.Fatalf("legacy /set should remain hidden from suggestions: %q", lines)
+	}
+}
+
+func TestChatSlashCommandSuggestionsHideLegacyRunCommands(t *testing.T) {
+	for _, input := range []string{"/show", "/load"} {
+		t.Run(input, func(t *testing.T) {
+			m := chatModel{input: []rune(input)}
+			lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+			if strings.Contains(lines, input) || !strings.Contains(lines, "No matching commands") {
+				t.Fatalf("legacy command %s should stay hidden from suggestions: %q", input, lines)
+			}
+		})
+	}
+}
+
 func TestChatEnterAcceptsSelectedSlashCommand(t *testing.T) {
 	m := chatModel{
 		input:    []rune("/"),
@@ -258,6 +376,357 @@ func TestChatEnterAcceptsSelectedSlashCommand(t *testing.T) {
 	}
 	if !strings.Contains(m.entries[0].content, "No tools are available") {
 		t.Fatalf("entry content = %q, want tools command output", m.entries[0].content)
+	}
+}
+
+func TestChatThinkCommandOpensPicker(t *testing.T) {
+	m := chatModel{input: []rune("/think")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("think command should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.thinkPicker == nil {
+		t.Fatal("think picker should open")
+	}
+	if view := stripANSI(m.renderThinkPicker(80)); !strings.Contains(view, "Thinking mode") || !strings.Contains(view, "high") {
+		t.Fatalf("think picker view missing options: %q", view)
+	}
+}
+
+func TestChatThinkPickerSelectsMode(t *testing.T) {
+	m := chatModel{}
+	updated, _ := m.openThinkPicker()
+	m = updated.(chatModel)
+
+	for i := 0; i < 5; i++ {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(chatModel)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("think picker selection should not return a command")
+	}
+	m = updated.(chatModel)
+
+	if m.thinkPicker != nil {
+		t.Fatal("think picker should close after selection")
+	}
+	if m.opts.Think == nil || m.opts.Think.Value != "high" {
+		t.Fatalf("think = %#v, want high", m.opts.Think)
+	}
+	if m.status != "think high" {
+		t.Fatalf("status = %q, want think high", m.status)
+	}
+}
+
+func TestChatThinkCommandSetsModes(t *testing.T) {
+	tests := []struct {
+		input string
+		want  any
+	}{
+		{input: "/think auto", want: nil},
+		{input: "/think on", want: true},
+		{input: "/think off", want: false},
+		{input: "/think low", want: "low"},
+		{input: "/think medium", want: "medium"},
+		{input: "/think high", want: "high"},
+		{input: "/think max", want: "max"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			m := chatModel{input: []rune(tt.input)}
+			updated, cmd := m.handleSubmit()
+			if cmd != nil {
+				t.Fatal("think command should not return a command")
+			}
+			m = updated.(chatModel)
+			if tt.want == nil {
+				if m.opts.Think != nil {
+					t.Fatalf("think = %#v, want nil", m.opts.Think)
+				}
+				return
+			}
+			if m.opts.Think == nil || m.opts.Think.Value != tt.want {
+				t.Fatalf("think = %#v, want %v", m.opts.Think, tt.want)
+			}
+		})
+	}
+}
+
+func TestChatLegacySetThinkCommandsStaySupported(t *testing.T) {
+	tests := []struct {
+		input string
+		want  any
+	}{
+		{input: "/set think", want: true},
+		{input: "/set think high", want: "high"},
+		{input: "/set nothink", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			m := chatModel{input: []rune(tt.input)}
+			updated, cmd := m.handleSubmit()
+			if cmd != nil {
+				t.Fatal("legacy think command should not return a command")
+			}
+			m = updated.(chatModel)
+			if m.opts.Think == nil || m.opts.Think.Value != tt.want {
+				t.Fatalf("think = %#v, want %v", m.opts.Think, tt.want)
+			}
+		})
+	}
+}
+
+func TestChatThinkCommandRejectsInvalidMode(t *testing.T) {
+	m := chatModel{input: []rune("/think turbo")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("think command should not return a command")
+	}
+	m = updated.(chatModel)
+	if len(m.entries) != 1 || m.entries[0].role != "error" || !strings.Contains(m.entries[0].content, "Usage: /think") {
+		t.Fatalf("entries = %#v, want usage error", m.entries)
+	}
+}
+
+func TestChatVerboseCommandTogglesMetrics(t *testing.T) {
+	m := chatModel{input: []rune("/verbose")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("verbose command should not return a command")
+	}
+	m = updated.(chatModel)
+	if !m.opts.Verbose {
+		t.Fatal("verbose should be enabled")
+	}
+	if m.status != "verbose on" {
+		t.Fatalf("status = %q, want verbose on", m.status)
+	}
+	if footer := m.footerLine(); !strings.Contains(footer, "verbose") {
+		t.Fatalf("footer should show verbose mode: %q", footer)
+	}
+
+	m.input = []rune("/verbose")
+	updated, cmd = m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("verbose command should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.opts.Verbose {
+		t.Fatal("verbose should be disabled")
+	}
+	if m.status != "verbose off" {
+		t.Fatalf("status = %q, want verbose off", m.status)
+	}
+}
+
+func TestChatVerboseCommandAcceptsExplicitState(t *testing.T) {
+	m := chatModel{input: []rune("/verbose on")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("verbose command should not return a command")
+	}
+	m = updated.(chatModel)
+	if !m.opts.Verbose {
+		t.Fatal("verbose should be enabled")
+	}
+
+	m.input = []rune("/verbose off")
+	updated, cmd = m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("verbose command should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.opts.Verbose {
+		t.Fatal("verbose should be disabled")
+	}
+}
+
+func TestChatVerboseCommandRejectsInvalidState(t *testing.T) {
+	m := chatModel{input: []rune("/verbose maybe")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("verbose command should not return a command")
+	}
+	m = updated.(chatModel)
+	if len(m.entries) != 1 || m.entries[0].role != "error" || !strings.Contains(m.entries[0].content, "Usage: /verbose") {
+		t.Fatalf("entries = %#v, want usage error", m.entries)
+	}
+}
+
+func TestChatLegacySetVerboseQuietCommandsStaySupported(t *testing.T) {
+	m := chatModel{input: []rune("/set verbose")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy set verbose should not return a command")
+	}
+	m = updated.(chatModel)
+	if !m.opts.Verbose {
+		t.Fatal("verbose should be enabled")
+	}
+
+	m.input = []rune("/set quiet")
+	updated, cmd = m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy set quiet should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.opts.Verbose {
+		t.Fatal("verbose should be disabled")
+	}
+}
+
+func TestChatLegacySetFormatCommandsStaySupported(t *testing.T) {
+	m := chatModel{input: []rune("/set format json")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy set format should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.opts.Format != "json" {
+		t.Fatalf("format = %q, want json", m.opts.Format)
+	}
+
+	m.input = []rune("/set noformat")
+	updated, cmd = m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy set noformat should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.opts.Format != "" {
+		t.Fatalf("format = %q, want empty", m.opts.Format)
+	}
+}
+
+func TestChatLegacySetParameterCommandStaySupported(t *testing.T) {
+	m := chatModel{input: []rune("/set parameter temperature 0.2")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy set parameter should not return a command")
+	}
+	m = updated.(chatModel)
+	got, ok := m.opts.Options["temperature"].(float32)
+	if !ok || got != 0.2 {
+		t.Fatalf("temperature = %#v, want float32(0.2)", m.opts.Options["temperature"])
+	}
+}
+
+func TestChatLegacySetHistoryStaysUnsupported(t *testing.T) {
+	m := chatModel{input: []rune("/set history")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy set history should not return a command")
+	}
+	m = updated.(chatModel)
+	if len(m.entries) != 1 || m.entries[0].role != "error" || !strings.Contains(m.entries[0].content, "Unknown command `/set history`") {
+		t.Fatalf("entries = %#v, want unsupported history error", m.entries)
+	}
+}
+
+func TestChatLegacyLoadCommandSwitchesModel(t *testing.T) {
+	var savedModel string
+	m := chatModel{
+		ctx:   context.Background(),
+		input: []rune("/load qwen3"),
+		opts: ChatOptions{
+			Model: "llama3.2",
+			OnModelSelected: func(_ context.Context, model string) error {
+				savedModel = model
+				return nil
+			},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy load should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.opts.Model != "qwen3" || savedModel != "qwen3" {
+		t.Fatalf("model = %q saved = %q, want qwen3", m.opts.Model, savedModel)
+	}
+}
+
+func TestChatLegacyShowCommandRendersModelInfo(t *testing.T) {
+	client := &chatShowTestClient{resp: &api.ShowResponse{
+		License:    "MIT",
+		Modelfile:  "FROM llama3.2",
+		Parameters: "temperature 0.7",
+		System:     "model system",
+		Template:   "{{ .Prompt }}",
+		Details: api.ModelDetails{
+			Family:            "llama",
+			ParameterSize:     "3B",
+			QuantizationLevel: "Q4_K_M",
+			ContextLength:     8192,
+		},
+	}}
+	m := chatModel{
+		ctx:   context.Background(),
+		input: []rune("/show info"),
+		opts: ChatOptions{
+			Model:   "llama3.2",
+			Client:  client,
+			Options: map[string]any{"top_k": int64(10)},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy show should not return a command")
+	}
+	m = updated.(chatModel)
+	if client.req == nil || client.req.Model != "llama3.2" || client.req.Options["top_k"] != int64(10) {
+		t.Fatalf("show request = %#v", client.req)
+	}
+	if len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "Model info") || !strings.Contains(m.entries[0].content, "context length") {
+		t.Fatalf("show info entry = %#v", m.entries)
+	}
+
+	m.input = []rune("/show parameters")
+	updated, cmd = m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy show parameters should not return a command")
+	}
+	m = updated.(chatModel)
+	if !strings.Contains(m.entries[len(m.entries)-1].content, "temperature 0.7") ||
+		!strings.Contains(m.entries[len(m.entries)-1].content, "`top_k`: `10`") {
+		t.Fatalf("show parameters entry = %q", m.entries[len(m.entries)-1].content)
+	}
+}
+
+func TestChatLegacyHelpCommandsStaySupported(t *testing.T) {
+	m := chatModel{input: []rune("/help set")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy help should not return a command")
+	}
+	m = updated.(chatModel)
+	if len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "Legacy set commands") {
+		t.Fatalf("help set entry = %#v", m.entries)
+	}
+
+	m.input = []rune("/? show")
+	updated, cmd = m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("legacy show help should not return a command")
+	}
+	m = updated.(chatModel)
+	if !strings.Contains(m.entries[len(m.entries)-1].content, "Legacy show commands") {
+		t.Fatalf("help show entry = %#v", m.entries[len(m.entries)-1])
 	}
 }
 

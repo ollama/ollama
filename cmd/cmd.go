@@ -780,6 +780,13 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 		opts.Skill = skill
 	}
+	if cmd.Flags().Lookup("verbose") != nil {
+		verbose, err := cmd.Flags().GetBool("verbose")
+		if err != nil {
+			return err
+		}
+		opts.Verbose = verbose
+	}
 	if len(args) == 0 {
 		if !opts.Resume {
 			return errors.New("model is required")
@@ -1661,6 +1668,7 @@ type runOptions struct {
 	Resume              bool
 	Headless            bool
 	AutoApproveTools    bool
+	Verbose             bool
 	Skill               string
 }
 
@@ -1717,6 +1725,7 @@ func (r runOptions) Copy() runOptions {
 		Resume:              r.Resume,
 		Headless:            r.Headless,
 		AutoApproveTools:    r.AutoApproveTools,
+		Verbose:             r.Verbose,
 		Skill:               r.Skill,
 	}
 }

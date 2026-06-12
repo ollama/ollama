@@ -154,6 +154,7 @@ type ChatOptions struct {
 	Think                       *api.ThinkValue
 	KeepAlive                   *api.Duration
 	HideThinking                bool
+	Verbose                     bool
 	Compactor                   coreagent.Compactor
 	ContextWindowTokens         int
 	ContextWindowTokensForModel func(context.Context, string, int) int
@@ -197,6 +198,7 @@ type chatModel struct {
 	contextEstimate  bool
 	resumePicker     *chatResumePicker
 	modelPicker      *chatModelPicker
+	thinkPicker      *chatThinkPicker
 	historyPopup     *chatHistoryPopup
 	approvalPrompt   *chatApprovalPrompt
 	reviewApproval   coreagent.ApprovalHandler
@@ -314,6 +316,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "error"
 			return m, nil
 		}
+		if msg.result != nil {
+			m.attachVerboseMetrics(msg.result.Latest.Metrics)
+		}
 		m.status = "ready"
 		return m, m.startNextQueued()
 
@@ -363,6 +368,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.modelPicker != nil {
 			return m.updateModelPicker(msg)
 		}
+		if m.thinkPicker != nil {
+			return m.updateThinkPicker(msg)
+		}
 		if m.resumePicker != nil {
 			return m.updateResumePicker(msg)
 		}
@@ -404,7 +412,14 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case tea.KeyEnter:
+			if msg.Alt {
+				m.insertInputNewline()
+				return m, nil
+			}
 			return m.handleSubmit()
+		case tea.KeyCtrlJ:
+			m.insertInputNewline()
+			return m, nil
 		case tea.KeyUp:
 			if m.running || m.compacting {
 				m.scrollBy(1)
@@ -451,10 +466,18 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyBackspace:
 			m.resetPromptHistoryCursor()
-			if len(m.input) > 0 {
+			if msg.Alt {
+				m.input = deleteInputWord(m.input)
+				m.complete = 0
+			} else if len(m.input) > 0 {
 				m.input = m.input[:len(m.input)-1]
 				m.complete = 0
 			}
+			return m, nil
+		case tea.KeyCtrlW:
+			m.resetPromptHistoryCursor()
+			m.input = deleteInputWord(m.input)
+			m.complete = 0
 			return m, nil
 		case tea.KeyCtrlU:
 			m.resetPromptHistoryCursor()
@@ -481,6 +504,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	if m.canEditInput() && isShiftEnterCSI(msg) {
+		m.insertInputNewline()
+		return m, nil
+	}
 	return m, nil
 }
 
@@ -503,6 +530,9 @@ func (m chatModel) View() string {
 	}
 	if m.modelPicker != nil {
 		return renderFullFrame(m.renderModelPicker(width), width, height)
+	}
+	if m.thinkPicker != nil {
+		return renderFullFrame(m.renderThinkPicker(width), width, height)
 	}
 	if m.historyPopup != nil {
 		return renderFullFrame(m.renderHistoryPopup(width, height), width, height)
@@ -704,7 +734,7 @@ func (m *chatModel) startRunWithPrompt(displayInput, userInput, extraSystemPromp
 }
 
 func (m *chatModel) startNextQueued() tea.Cmd {
-	for len(m.queued) > 0 && !m.running && !m.compacting && !m.quitting && m.resumePicker == nil && m.modelPicker == nil && m.historyPopup == nil {
+	for len(m.queued) > 0 && !m.running && !m.compacting && !m.quitting && m.resumePicker == nil && m.modelPicker == nil && m.thinkPicker == nil && m.historyPopup == nil {
 		input := m.queued[0]
 		m.queued = m.queued[1:]
 		_, cmd := m.submitInput(input)
@@ -723,6 +753,10 @@ func (m *chatModel) disarmQuit() {
 	if m.status == "press ctrl+c again to quit" {
 		m.status = "ready"
 	}
+}
+
+func (m chatModel) canEditInput() bool {
+	return m.approvalPrompt == nil && m.modelPicker == nil && m.thinkPicker == nil && m.resumePicker == nil && m.historyPopup == nil
 }
 
 const (
