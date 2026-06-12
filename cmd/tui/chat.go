@@ -4144,12 +4144,12 @@ type chatPermissionApprovalHandler struct {
 	review coreagent.ApprovalHandler
 }
 
-func (h chatPermissionApprovalHandler) RequiresApprovalForTool(ctx context.Context, tool coreagent.Tool, req coreagent.ApprovalRequest) bool {
+func (h chatPermissionApprovalHandler) RequiresApproval(ctx context.Context, tool coreagent.Tool, req coreagent.ApprovalRequest) bool {
 	if h.mode != nil && h.mode.AutoApprove() {
 		return false
 	}
-	if manager, ok := h.review.(*coreagent.ApprovalManager); ok {
-		return manager.RequiresApproval(ctx, req)
+	if h.review != nil {
+		return h.review.RequiresApproval(ctx, tool, req)
 	}
 	return coreagent.ToolRequiresApproval(tool, req.Args)
 }

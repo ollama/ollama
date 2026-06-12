@@ -40,10 +40,6 @@ type Session struct {
 	Compactor  Compactor
 }
 
-type approvalToolRequirement interface {
-	RequiresApprovalForTool(context.Context, Tool, ApprovalRequest) bool
-}
-
 type RunOptions struct {
 	ChatID       string
 	Model        string
@@ -402,13 +398,7 @@ func canonicalSessionPath(path string) (string, error) {
 }
 
 func toolNeedsApproval(ctx context.Context, approval ApprovalHandler, tool Tool, req ApprovalRequest) bool {
-	if handler, ok := approval.(approvalToolRequirement); ok {
-		return handler.RequiresApprovalForTool(ctx, tool, req)
-	}
-	if manager, ok := approval.(*ApprovalManager); ok {
-		return manager.RequiresApproval(ctx, req)
-	}
-	return ToolRequiresApproval(tool, req.Args)
+	return approval.RequiresApproval(ctx, tool, req)
 }
 
 func (s *Session) maybeCompact(ctx context.Context, opts RunOptions, messages []api.Message, latest api.ChatResponse, skipNotified bool) ([]api.Message, bool) {

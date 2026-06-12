@@ -626,11 +626,11 @@ func TestChatPermissionApprovalHandlerReadsModeAtApprovalTime(t *testing.T) {
 		Args:     map[string]any{"command": "pwd"},
 	}
 
-	if !handler.RequiresApprovalForTool(context.Background(), chatTestTool{}, req) {
+	if !handler.RequiresApproval(context.Background(), chatTestTool{}, req) {
 		t.Fatal("review mode should require approval for bash")
 	}
 	mode.SetAutoApprove(true)
-	if handler.RequiresApprovalForTool(context.Background(), chatTestTool{}, req) {
+	if handler.RequiresApproval(context.Background(), chatTestTool{}, req) {
 		t.Fatal("auto-approve mode should not require approval")
 	}
 	result, err := handler.Approve(context.Background(), req)

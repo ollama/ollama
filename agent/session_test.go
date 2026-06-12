@@ -58,7 +58,18 @@ type approvalTestTool struct {
 	called *bool
 }
 
+type policyOnlyApprovalTool struct {
+	name   string
+	called *bool
+}
+
 type cwdTestTool struct{}
+
+type wrappingApprovalHandler struct {
+	inner         ApprovalHandler
+	requiresCalls int
+	approveCalls  int
+}
 
 func (staticTool) Name() string {
 	return "echo_tool"
@@ -112,6 +123,41 @@ func (t approvalTestTool) Execute(context.Context, ToolContext, map[string]any) 
 		*t.called = true
 	}
 	return ToolResult{Content: "approved"}, nil
+}
+
+func (t policyOnlyApprovalTool) Name() string {
+	return t.name
+}
+
+func (t policyOnlyApprovalTool) Description() string {
+	return "does not self-declare approval"
+}
+
+func (t policyOnlyApprovalTool) Schema() api.ToolFunction {
+	return api.ToolFunction{
+		Name:        t.name,
+		Description: "does not self-declare approval",
+		Parameters: api.ToolFunctionParameters{
+			Type: "object",
+		},
+	}
+}
+
+func (t policyOnlyApprovalTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
+	if t.called != nil {
+		*t.called = true
+	}
+	return ToolResult{Content: "ran"}, nil
+}
+
+func (h *wrappingApprovalHandler) RequiresApproval(ctx context.Context, tool Tool, req ApprovalRequest) bool {
+	h.requiresCalls++
+	return h.inner.RequiresApproval(ctx, tool, req)
+}
+
+func (h *wrappingApprovalHandler) Approve(ctx context.Context, req ApprovalRequest) (ApprovalResult, error) {
+	h.approveCalls++
+	return h.inner.Approve(ctx, req)
 }
 
 func (cwdTestTool) Name() string {
@@ -479,6 +525,60 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 	}
 	if result.Messages[2].Content == "" || result.Messages[2].Content == "approved" || result.Messages[2].Content == "tool says hello" {
 		t.Fatalf("tool denial content = %q", result.Messages[2].Content)
+	}
+}
+
+func TestSessionConsultsWrappedApprovalRequirement(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("command", "pwd")
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "bash",
+						Arguments: args,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done"}},
+			},
+		},
+	}
+	called := false
+	registry := NewRegistry()
+	registry.Register(policyOnlyApprovalTool{name: "bash", called: &called})
+	approval := &wrappingApprovalHandler{inner: NewApprovalManager(ApprovalManagerOptions{})}
+	session := &Session{
+		Client:   client,
+		Tools:    registry,
+		Approval: approval,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use bash"}},
+		UseTools:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approval.requiresCalls != 1 {
+		t.Fatalf("requires calls = %d, want 1", approval.requiresCalls)
+	}
+	if approval.approveCalls != 1 {
+		t.Fatalf("approve calls = %d, want 1", approval.approveCalls)
+	}
+	if called {
+		t.Fatal("tool ran despite wrapped approval manager requiring approval")
+	}
+	if client.calls != 1 {
+		t.Fatalf("client calls = %d, want 1 after denial", client.calls)
+	}
+	if len(result.Messages) != 3 || result.Messages[2].Role != "tool" {
+		t.Fatalf("messages = %#v", result.Messages)
 	}
 }
 
