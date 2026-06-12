@@ -31,6 +31,33 @@ prepare() {
   sed -i 's/ .*//' LLAMA_CPP_VERSION
   # Corregir la URL del repositorio remoto en cmake/local.cmake
   sed -i 's|https://github.com/ggml-org/llama.cpp.git|https://github.com/nomadstar/llama-cpp-turboquant.git|' cmake/local.cmake
+  # Eliminar parche y código fuente roto de laguna que no compila en turboquant
+  rm -rf llama/compat/models
+  
+  # Eliminar flag no soportado por el fork antiguo
+  sed -i '/--no-log-prefix/d' llm/llama_server.go
+
+  # Añadir stubs débiles (weak symbols) para las funciones CUDA de turboquant
+  # de modo que el build de CPU local pueda enlazar libllama.so correctamente.
+  cat << 'EOF' > llama/compat/turboquant-stubs.cpp
+#include <cstdint>
+#include <cstddef>
+
+extern "C" {
+    __attribute__((weak)) float g_innerq_scale_inv_host[128] = {0};
+    __attribute__((weak)) int turbo_innerq_needs_tensor_update(void) { return 0; }
+    __attribute__((weak)) void turbo_innerq_mark_tensor_updated(void) {}
+
+    __attribute__((weak)) void * triattention_gpu_init(const void * config, const void * head_calibs, const float * omega, const float * freq_scale_sq, const float * offsets, void * stream) { return nullptr; }
+    __attribute__((weak)) void triattention_gpu_score_head(void * state, const void * k_data_dev, uint64_t n_embd_k_gqa, size_t row_bytes, uint32_t kv_head_idx, uint32_t head_calib_idx, const uint32_t * cell_indices_dev, const int32_t * positions_dev, uint32_t n_cells, int64_t round_start, int agg_mode, float * scores_dev, void * stream) {}
+    __attribute__((weak)) void triattention_gpu_scores_to_host(float * scores_host, const float * scores_dev, uint32_t n_cells, void * stream) {}
+    __attribute__((weak)) void triattention_gpu_upload_cells(uint32_t ** cell_indices_dev, int32_t ** positions_dev, const uint32_t * cell_indices_host, const int32_t * positions_host, uint32_t n_cells, void * stream) {}
+    __attribute__((weak)) float * triattention_gpu_alloc_scores(uint32_t n_cells, void * stream) { return nullptr; }
+    __attribute__((weak)) void triattention_gpu_free_dev(void * ptr) {}
+    __attribute__((weak)) void triattention_gpu_free(void * state) {}
+}
+EOF
+  sed -i '/llama-ollama-compat-util.cpp"/a \    "${_compat_dir}/turboquant-stubs.cpp"' llama/compat/compat.cmake
 }
 
 build() {
@@ -67,11 +94,18 @@ package() {
 
   # Install payloads (llama.cpp runner binaries/libs)
   mkdir -p "$pkgdir/usr/lib/ollama"
-  cp -r staging-install/usr/lib/ollama/cuda* "$pkgdir/usr/lib/ollama/" 2>/dev/null || true
-
-  # Install go binary
+  cd "$srcdir/ollama"
   install -Dm755 ollama "$pkgdir/usr/bin/ollama"
   
+  # Instalar los binarios y librerías generados (llama-server, libllama.so, etc.)
+  if [ -d "staging-install/usr/lib/ollama" ]; then
+    cp -dr --no-preserve=ownership staging-install/usr/lib/ollama/* "$pkgdir/usr/lib/ollama/"
+  fi
+  # Copiar la librería CUDA que se generó de forma no estándar
+  if [ -f "build/llama-server-local/bin/libggml-cuda.so" ]; then
+    cp build/llama-server-local/bin/libggml-cuda.so "$pkgdir/usr/lib/ollama/"
+  fi
+
   # Ensure state directory exists
   install -dm755 "$pkgdir/var/lib/ollama"
   
