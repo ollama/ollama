@@ -572,6 +572,11 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          build-args: |
+            ${{ matrix.build-args }}
+            VERSION=${{ needs.setup-environment.outputs.VERSION }}
+            REVISION=${{ github.sha }}
+            CREATED=${{ github.run_started_at }}
           provenance: false
           sbom: false
           build-args: ${{ matrix.build-args }}
