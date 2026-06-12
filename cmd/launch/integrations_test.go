@@ -1837,6 +1837,15 @@ func TestListIntegrationInfos(t *testing.T) {
 			}
 			want = filtered
 		}
+		if (&Goose{}).Supported() != nil {
+			filtered := make([]string, 0, len(want))
+			for _, name := range want {
+				if name != "goose-desktop" {
+					filtered = append(filtered, name)
+				}
+			}
+			want = filtered
+		}
 
 		if diff := compareStrings(got, want); diff != "" {
 			t.Fatalf("launcher integration order mismatch: %s", diff)
