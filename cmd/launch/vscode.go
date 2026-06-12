@@ -126,8 +126,8 @@ const (
 	minCopilotChatVersion = "0.41.0"
 	minVSCodeVersion      = "1.113"
 
-	vscodeOllamaVendor = "ollama-vscode"
-	vscodeOllamaName   = "Ollama"
+	vscodeOllamaVendor       = "ollama-vscode"
+	vscodeOllamaName         = "Ollama"
 	legacyVSCodeOllamaVendor = "ollama"
 
 	vscodeOllamaExtensionID = "Ollama.ollama-vscode"
@@ -303,7 +303,7 @@ func (v *VSCode) updateSettings() error {
 	data, err := os.ReadFile(settingsPath)
 	if err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
-			return nil
+			settings = make(map[string]any)
 		}
 	}
 

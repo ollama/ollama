@@ -41,15 +41,15 @@ func TestVSCodeConfigure(t *testing.T) {
 	settingsPath := testVSCodePath(t, tmpDir, "settings.json")
 
 	tests := []struct {
-		name          string
-		setup         string // initial chatLanguageModels.json content, empty means no file
-		model         string
-		validate      func(t *testing.T, clmData []byte, settingsData []byte)
-		wantSettings  bool
+		name         string
+		setup        string // initial chatLanguageModels.json content, empty means no file
+		model        string
+		validate     func(t *testing.T, clmData []byte, settingsData []byte)
+		wantSettings bool
 	}{
 		{
-			name:  "fresh install",
-			model: "llama3.2",
+			name:         "fresh install",
+			model:        "llama3.2",
 			wantSettings: true,
 			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
 				if len(clmData) != 0 {
@@ -59,9 +59,9 @@ func TestVSCodeConfigure(t *testing.T) {
 			},
 		},
 		{
-			name:  "preserve other vendor entries",
-			setup: `[{"vendor": "azure", "name": "Azure", "url": "https://example.com"}]`,
-			model: "llama3.2",
+			name:         "preserve other vendor entries",
+			setup:        `[{"vendor": "azure", "name": "Azure", "url": "https://example.com"}]`,
+			model:        "llama3.2",
 			wantSettings: true,
 			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
 				var entries []map[string]any
@@ -76,9 +76,9 @@ func TestVSCodeConfigure(t *testing.T) {
 			},
 		},
 		{
-			name:  "update existing ollama entry",
-			setup: `[{"vendor": "ollama", "name": "Ollama", "url": "http://old:11434"}]`,
-			model: "llama3.2",
+			name:         "update existing ollama entry",
+			setup:        `[{"vendor": "ollama", "name": "Ollama", "url": "http://old:11434"}]`,
+			model:        "llama3.2",
 			wantSettings: true,
 			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
 				assertChatLanguageModelsCleaned(t, clmData)
@@ -86,9 +86,9 @@ func TestVSCodeConfigure(t *testing.T) {
 			},
 		},
 		{
-			name:  "remove legacy, current, and old custom endpoint ollama entries",
-			setup: `[{"vendor": "ollama", "name": "Ollama", "url": "http://old:11434"},{"vendor": "ollama-vscode", "name": "Ollama", "url": "http://older:11434"},{"vendor": "customendpoint", "name": "Ollama", "url": "http://127.0.0.1:11434"},{"vendor": "azure", "name": "Azure"}]`,
-			model: "llama3.2",
+			name:         "remove legacy, current, and old custom endpoint ollama entries",
+			setup:        `[{"vendor": "ollama", "name": "Ollama", "url": "http://old:11434"},{"vendor": "ollama-vscode", "name": "Ollama", "url": "http://older:11434"},{"vendor": "customendpoint", "name": "Ollama", "url": "http://127.0.0.1:11434"},{"vendor": "azure", "name": "Azure"}]`,
+			model:        "llama3.2",
 			wantSettings: true,
 			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
 				var entries []map[string]any
@@ -108,9 +108,9 @@ func TestVSCodeConfigure(t *testing.T) {
 			},
 		},
 		{
-			name:  "empty model is no-op",
-			setup: `[{"vendor": "azure", "name": "Azure"}]`,
-			model: "",
+			name:         "empty model is no-op",
+			setup:        `[{"vendor": "azure", "name": "Azure"}]`,
+			model:        "",
 			wantSettings: false,
 			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
 				if string(clmData) != `[{"vendor": "azure", "name": "Azure"}]` {
@@ -122,9 +122,9 @@ func TestVSCodeConfigure(t *testing.T) {
 			},
 		},
 		{
-			name:  "corrupted JSON treated as empty",
-			setup: `{corrupted json`,
-			model: "llama3.2",
+			name:         "corrupted JSON treated as empty",
+			setup:        `{corrupted json`,
+			model:        "llama3.2",
 			wantSettings: true,
 			validate: func(t *testing.T, clmData []byte, settingsData []byte) {
 				assertChatLanguageModelsCleaned(t, clmData)
