@@ -55,39 +55,40 @@ index 4e65a45..a6e4fe2 100644
          if (use_mmap) {
              const auto & mapping = mappings.at(weight->idx);
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
-index 2e0cfa6..a0f2955 100644
+index b7237d661..2100506aa 100644
 --- a/tools/mtmd/clip.cpp
 +++ b/tools/mtmd/clip.cpp
-@@ -10,6 +10,8 @@
+@@ -9,6 +9,7 @@
+ #include "ggml-alloc.h"
  #include "ggml-backend.h"
  #include "gguf.h"
- 
 +#include "llama-ollama-compat.h"
-+
+ 
  #include <algorithm>
  #include <cassert>
- #include <cmath>
-@@ -1009,6 +1011,11 @@ struct clip_model_loader {
+@@ -923,6 +924,10 @@ struct clip_model_loader {
+         }
  
          ctx_meta.reset(meta);
- 
 +        // If this is an Ollama-format monolithic GGUF (text + embedded
 +        // vision), translate its metadata and tensor names into the
 +        // upstream mmproj shape so the rest of this loader runs unchanged.
 +        llama_ollama_compat::translate_clip_metadata(ctx_gguf.get(), meta);
-+
+ 
          const int n_tensors = gguf_get_n_tensors(ctx_gguf.get());
  
-         // print gguf info
-@@ -2611,6 +2618,7 @@ struct clip_model_loader {
-                 auto it_off = tensor_offset.find(t->name);
-                 GGML_ASSERT(it_off != tensor_offset.end() && "no offset for tensor");
-                 const size_t offset = it_off->second;
+@@ -1999,6 +2004,7 @@ struct clip_model_loader {
+             for (auto & t : tensors_to_load) {
+                 ggml_tensor * cur = ggml_get_tensor(ctx_clip.ctx_data.get(), t->name);
+                 const size_t offset = tensor_offset[t->name];
 +                if (llama_ollama_compat::maybe_load_tensor(cur, fname.c_str(), offset, buft)) continue;
                  fin.seekg(offset, std::ios::beg);
                  if (!fin) {
                      throw std::runtime_error(string_format("%s: failed to seek for tensor %s\n", __func__, t->name));
-@@ -4312,6 +4320,15 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
+@@ -4527,6 +4533,16 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
+ }
+ 
+ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
 +    const auto projector_type = PROJECTOR_TYPE_NAMES.find(ctx->model.proj_type);
 +    if (projector_type != PROJECTOR_TYPE_NAMES.end()) {
 +        if (int n = llama_ollama_compat::maybe_clip_mmproj_embd(
@@ -97,9 +98,7 @@ index 2e0cfa6..a0f2955 100644
 +        }
 +    }
 +
++
      switch (ctx->model.proj_type) {
          case PROJECTOR_TYPE_LDP:
              return ctx->model.mm_model_block_1_block_2_1_b->ne[0];
-         case PROJECTOR_TYPE_LDPV2:
-             return ctx->model.mm_model_peg_0_b->ne[0];
-         case PROJECTOR_TYPE_MLP:

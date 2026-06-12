@@ -177,10 +177,12 @@ set(LLAMA_TOOLS_INSTALL OFF CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
 
+# Use the turboquant fork of llama.cpp for TurboQuant KV cache compression
+# https://github.com/nomadstar/llama-cpp-turboquant - feature/triattention branch
 FetchContent_Declare(
     llama_cpp
-    GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
-    GIT_TAG ${LLAMA_CPP_GIT_TAG}
+    GIT_REPOSITORY "https://github.com/nomadstar/llama-cpp-turboquant.git"
+    GIT_TAG "feature/triattention"
     GIT_SHALLOW TRUE
     ${_ollama_compat_patch_cmd}
 )
