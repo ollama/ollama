@@ -92,6 +92,39 @@ func TestGooseEnvVars(t *testing.T) {
 	})
 }
 
+func TestGooseSupportedPlatforms(t *testing.T) {
+	tests := []struct {
+		goos    string
+		wantErr string
+	}{
+		{goos: "darwin"},
+		{goos: "windows"},
+		{goos: "linux", wantErr: "goose-cli"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.goos, func(t *testing.T) {
+			prev := gooseGOOS
+			t.Cleanup(func() { gooseGOOS = prev })
+			gooseGOOS = tt.goos
+
+			err := (&Goose{}).Supported()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Supported() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("Supported() error = nil, want error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Supported() error = %v, want to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestGooseDesktopAppAvailable(t *testing.T) {
 	g := &Goose{}
 
@@ -188,6 +221,50 @@ func TestGooseDesktopAppAvailable(t *testing.T) {
 	})
 }
 
+func TestGooseRunDesktopAppDarwin(t *testing.T) {
+	prev := gooseGOOS
+	t.Cleanup(func() { gooseGOOS = prev })
+	gooseGOOS = "darwin"
+
+	home := t.TempDir()
+	appPath := filepath.Join(home, "Applications", "Goose.app")
+
+	prevUserHome := gooseUserHome
+	t.Cleanup(func() { gooseUserHome = prevUserHome })
+	gooseUserHome = func() (string, error) { return home, nil }
+
+	prevStat := gooseStatFn
+	t.Cleanup(func() { gooseStatFn = prevStat })
+	gooseStatFn = func(path string) (os.FileInfo, error) {
+		if path == appPath {
+			return nil, nil
+		}
+		return nil, &fs.PathError{Path: path, Err: errors.New("not exist")}
+	}
+
+	prevOpenPath := gooseOpenPath
+	t.Cleanup(func() { gooseOpenPath = prevOpenPath })
+	var gotPath string
+	var gotEnv []string
+	gooseOpenPath = func(path string, env []string) error {
+		gotPath = path
+		gotEnv = append([]string(nil), env...)
+		return nil
+	}
+
+	if err := (&Goose{}).runDesktopApp("llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != appPath {
+		t.Fatalf("runDesktopApp opened %q, want %q", gotPath, appPath)
+	}
+	for _, want := range []string{"GOOSE_PROVIDER=ollama", "GOOSE_MODEL=llama3.2"} {
+		if !slices.Contains(gotEnv, want) {
+			t.Errorf("runDesktopApp env missing %q, got %v", want, gotEnv)
+		}
+	}
+}
+
 func TestGooseRunDesktopDoesNotFallBackToCLI(t *testing.T) {
 	prev := gooseGOOS
 	t.Cleanup(func() { gooseGOOS = prev })
@@ -236,6 +313,48 @@ func TestEnsureGooseDesktopInstalledWindowsMessage(t *testing.T) {
 	}
 }
 
+func TestGooseRunDesktopAppWindowsStartMenu(t *testing.T) {
+	prev := gooseGOOS
+	t.Cleanup(func() { gooseGOOS = prev })
+	gooseGOOS = "windows"
+
+	prevStat := gooseStatFn
+	t.Cleanup(func() { gooseStatFn = prevStat })
+	gooseStatFn = func(path string) (os.FileInfo, error) {
+		return nil, &fs.PathError{Path: path, Err: errors.New("not exist")}
+	}
+
+	prevRunPath := gooseRunPath
+	t.Cleanup(func() { gooseRunPath = prevRunPath })
+	gooseRunPath = func() string { return "" }
+
+	prevStartID := gooseStartID
+	t.Cleanup(func() { gooseStartID = prevStartID })
+	gooseStartID = func() string { return "Block.Goose_abc123!App" }
+
+	prevOpenStartID := gooseOpenStartID
+	t.Cleanup(func() { gooseOpenStartID = prevOpenStartID })
+	var gotAppID string
+	var gotEnv []string
+	gooseOpenStartID = func(appID string, env []string) error {
+		gotAppID = appID
+		gotEnv = append([]string(nil), env...)
+		return nil
+	}
+
+	if err := (&Goose{}).runDesktopApp("llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+	if gotAppID != "Block.Goose_abc123!App" {
+		t.Fatalf("runDesktopApp opened Start Menu app %q, want %q", gotAppID, "Block.Goose_abc123!App")
+	}
+	for _, want := range []string{"GOOSE_PROVIDER=ollama", "GOOSE_MODEL=llama3.2"} {
+		if !slices.Contains(gotEnv, want) {
+			t.Errorf("runDesktopApp env missing %q, got %v", want, gotEnv)
+		}
+	}
+}
+
 func TestGooseCLIRunNotInstalled(t *testing.T) {
 	// Force non-darwin so we hit runCLI path
 	prev := gooseGOOS
@@ -251,6 +370,38 @@ func TestGooseCLIRunNotInstalled(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "block.github.io/goose") {
 		t.Errorf("expected install hint in error, got: %v", err)
+	}
+}
+
+func TestGooseCLIRunPlatforms(t *testing.T) {
+	for _, goos := range []string{"darwin", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			prev := gooseGOOS
+			t.Cleanup(func() { gooseGOOS = prev })
+			gooseGOOS = goos
+
+			prevOpenPath := gooseOpenPath
+			t.Cleanup(func() { gooseOpenPath = prevOpenPath })
+			gooseOpenPath = func(string, []string) error {
+				t.Fatal("goose-cli should not launch the desktop app")
+				return nil
+			}
+
+			prevOpenStartID := gooseOpenStartID
+			t.Cleanup(func() { gooseOpenStartID = prevOpenStartID })
+			gooseOpenStartID = func(string, []string) error {
+				t.Fatal("goose-cli should not launch the desktop app")
+				return nil
+			}
+
+			binDir := t.TempDir()
+			writeFakeBinary(t, binDir, "goose")
+			t.Setenv("PATH", binDir)
+
+			if err := (&GooseCLI{}).Run("llama3.2", nil, []string{"--debug"}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
