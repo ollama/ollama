@@ -202,13 +202,14 @@ type chatModel struct {
 	reviewApproval   coreagent.ApprovalHandler
 	permissionMode   *chatPermissionMode
 
-	width    int
-	height   int
-	status   string
-	spinner  int
-	complete int
-	quitting bool
-	err      error
+	width     int
+	height    int
+	status    string
+	spinner   int
+	complete  int
+	quitting  bool
+	quitArmed bool
+	err       error
 }
 
 func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
@@ -368,12 +369,29 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.historyPopup != nil {
 			return m.updateHistoryPopup(msg)
 		}
+		if msg.Type != tea.KeyCtrlC {
+			m.disarmQuit()
+		}
 
 		switch msg.Type {
 		case tea.KeyCtrlC:
+			if len(m.input) > 0 {
+				m.input = nil
+				m.complete = 0
+				m.resetPromptHistoryCursor()
+				m.disarmQuit()
+				m.status = "input cleared"
+				return m, nil
+			}
 			if (m.running || m.compacting) && m.cancel != nil {
 				m.cancel()
+				m.quitArmed = false
 				m.status = "canceling"
+				return m, nil
+			}
+			if !m.quitArmed {
+				m.quitArmed = true
+				m.status = "press ctrl+c again to quit"
 				return m, nil
 			}
 			m.quitting = true
@@ -500,7 +518,7 @@ func (m chatModel) View() string {
 	}
 	headerLines = append(headerLines, "")
 
-	bottomLines := m.bottomLines(width)
+	bottomLines := m.bottomLines(width, height-len(headerLines))
 	available := height - len(headerLines) - len(bottomLines)
 	if available < 0 {
 		available = 0
@@ -695,6 +713,16 @@ func (m *chatModel) startNextQueued() tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (m *chatModel) disarmQuit() {
+	if !m.quitArmed {
+		return
+	}
+	m.quitArmed = false
+	if m.status == "press ctrl+c again to quit" {
+		m.status = "ready"
+	}
 }
 
 const (

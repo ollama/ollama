@@ -257,7 +257,7 @@ func (m chatModel) transcriptHeight() int {
 	if height <= 0 {
 		height = 24
 	}
-	return max(0, height-2-len(m.bottomLines(width)))
+	return max(0, height-2-len(m.bottomLines(width, height-2)))
 }
 
 func (m chatModel) maxScroll() int {
@@ -268,14 +268,19 @@ func (m chatModel) maxScroll() int {
 	return max(0, len(m.transcriptLines(width))-m.transcriptHeight())
 }
 
-func (m chatModel) bottomLines(width int) []string {
+func (m chatModel) bottomLines(width, maxHeight int) []string {
 	var lines []string
 	lines = append(lines, m.completionLines(width)...)
 	lines = append(lines, m.queuedLines(width)...)
 	if activity := m.activityLine(); activity != "" {
 		lines = append(lines, chatMetaStyle.Render(activity))
 	}
-	lines = append(lines, strings.Split(renderInputBox(string(m.input), width), "\n")...)
+	fixedLines := len(lines) + 3
+	inputBodyLines := maxInputBoxBodyLines
+	if maxHeight > 0 {
+		inputBodyLines = min(inputBodyLines, max(1, maxHeight-fixedLines))
+	}
+	lines = append(lines, renderInputBoxLines(string(m.input), width, inputBodyLines)...)
 	lines = append(lines, m.renderFooterLine())
 	return lines
 }
@@ -918,7 +923,7 @@ func (m chatModel) footerParts() []string {
 	if m.approvalPrompt != nil {
 		controls += " • ←/→ choose • o once • s session • d deny • esc deny"
 	} else {
-		controls += " • ctrl+c cancel/quit"
+		controls += " • ctrl+c clear/cancel/quit"
 	}
 	controls += " • shift+tab"
 	if m.lastExpandableToolEntry() >= 0 {

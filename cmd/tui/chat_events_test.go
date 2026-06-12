@@ -332,6 +332,108 @@ func TestChatCtrlCCancelsQuietly(t *testing.T) {
 	}
 }
 
+func TestChatCtrlCClearsDraftInsteadOfQuitting(t *testing.T) {
+	m := chatModel{
+		input:     []rune("draft"),
+		complete:  2,
+		quitArmed: true,
+		status:    "press ctrl+c again to quit",
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(chatModel)
+
+	if cmd != nil {
+		t.Fatal("ctrl+c with draft input should not quit")
+	}
+	if got := string(m.input); got != "" {
+		t.Fatalf("input = %q, want cleared", got)
+	}
+	if m.complete != 0 {
+		t.Fatalf("complete = %d, want reset", m.complete)
+	}
+	if m.quitArmed || m.quitting {
+		t.Fatalf("quit state = armed %v quitting %v, want false", m.quitArmed, m.quitting)
+	}
+	if m.status != "input cleared" {
+		t.Fatalf("status = %q, want input cleared", m.status)
+	}
+}
+
+func TestChatCtrlCClearsDraftWhileRunningBeforeCanceling(t *testing.T) {
+	canceled := false
+	m := chatModel{
+		input:   []rune("queued prompt"),
+		running: true,
+		cancel: func() {
+			canceled = true
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(chatModel)
+
+	if cmd != nil {
+		t.Fatal("ctrl+c with draft input should not quit")
+	}
+	if canceled {
+		t.Fatal("ctrl+c should clear draft input before canceling a run")
+	}
+	if got := string(m.input); got != "" {
+		t.Fatalf("input = %q, want cleared", got)
+	}
+	if !m.running {
+		t.Fatal("run should remain active after clearing draft input")
+	}
+	if m.status != "input cleared" {
+		t.Fatalf("status = %q, want input cleared", m.status)
+	}
+}
+
+func TestChatCtrlCRequiresSecondPressToQuit(t *testing.T) {
+	m := chatModel{}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("first idle ctrl+c should only arm quit")
+	}
+	if !m.quitArmed || m.quitting {
+		t.Fatalf("quit state = armed %v quitting %v, want armed only", m.quitArmed, m.quitting)
+	}
+	if m.status != "press ctrl+c again to quit" {
+		t.Fatalf("status = %q, want quit confirmation", m.status)
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("second idle ctrl+c should quit")
+	}
+	if !m.quitting {
+		t.Fatal("model should be marked quitting")
+	}
+}
+
+func TestChatCtrlCQuitWarningDisarmsOnOtherKey(t *testing.T) {
+	m := chatModel{}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m = updated.(chatModel)
+
+	if m.quitArmed {
+		t.Fatal("typing should disarm quit confirmation")
+	}
+	if m.status != "ready" {
+		t.Fatalf("status = %q, want ready", m.status)
+	}
+	if got := string(m.input); got != "x" {
+		t.Fatalf("input = %q, want x", got)
+	}
+}
+
 func TestChatClearCommandResetsConversation(t *testing.T) {
 	m := chatModel{
 		ctx:      context.Background(),
