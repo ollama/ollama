@@ -254,6 +254,9 @@ func signinURL() (string, error) {
 }
 
 func (s *Server) GenerateHandler(c *gin.Context) {
+	restoreSleep := preventSleep()
+	defer restoreSleep()
+
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
@@ -2420,6 +2423,9 @@ func writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {
+	restoreSleep := preventSleep()
+	defer restoreSleep()
+
 	checkpointStart := time.Now()
 
 	var req api.ChatRequest
