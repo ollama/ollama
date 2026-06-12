@@ -124,7 +124,7 @@ else()
     else()
         set(OLLAMA_LLAMA_CPP_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/llama_cpp-src")
         ExternalProject_Add(ollama-llama-cpp-source
-            GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
+            GIT_REPOSITORY "https://github.com/nomadstar/llama-cpp-turboquant.git"
             GIT_TAG ${OLLAMA_LLAMA_CPP_GIT_TAG}
             GIT_SHALLOW TRUE
             SOURCE_DIR ${OLLAMA_LLAMA_CPP_SOURCE_DIR}

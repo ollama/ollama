@@ -1,0 +1,88 @@
+# Maintainer: Your Name <youremail@example.com>
+pkgname=ollama-turboquant-git
+pkgver=0.30.8.r2.g78b547b
+pkgrel=1
+pkgdesc='Create, run and share large language models (LLMs) - TurboQuant fork with CUDA'
+arch=('x86_64')
+url='https://github.com/nomadstar/ollama'
+license=('MIT')
+depends=('libgcc' 'libstdc++' 'glibc')
+makedepends=('cmake' 'git' 'go' 'cuda')
+provides=('ollama')
+conflicts=('ollama')
+options=('!lto')
+source=("git+https://github.com/nomadstar/ollama.git#branch=turboquant"
+        "ollama.service"
+        "sysusers.conf"
+        "tmpfiles.conf")
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+pkgver() {
+  cd "$srcdir/ollama"
+  git describe --long --tags --abbrev=7 | sed 's/\([^-]*-g\)/r\1/;s/-/./g' | sed 's/^v//'
+}
+
+prepare() {
+  cd "$srcdir/ollama"
+  # Limpiar cualquier comentario en la versión que rompa cmake FetchContent
+  sed -i 's/ .*//' LLAMA_CPP_VERSION
+  # Corregir la URL del repositorio remoto en cmake/local.cmake
+  sed -i 's|https://github.com/ggml-org/llama.cpp.git|https://github.com/nomadstar/llama-cpp-turboquant.git|' cmake/local.cmake
+}
+
+build() {
+  export CGO_CPPFLAGS="${CPPFLAGS}"
+  export CGO_CFLAGS="${CFLAGS}"
+  export CGO_CXXFLAGS="${CXXFLAGS}"
+  export CGO_LDFLAGS="${LDFLAGS}"
+  export GOPATH="${srcdir}"
+  export GOFLAGS="-buildmode=pie -mod=readonly -modcacherw -ldflags=-linkmode=external"
+
+  cd ollama
+
+  # Remove the runtime dependencies from installation so CMake doesn't install
+  # lots of system dependencies into the target path.
+  sed -i 's/PRE_INCLUDE_REGEXES.*/PRE_INCLUDE_REGEXES = ""/' CMakeLists.txt
+
+  local cmake_options=(
+    -B build
+    -W no-dev
+    -D CMAKE_BUILD_TYPE=Release
+    -D CMAKE_INSTALL_PREFIX=/usr
+    -D GGML_CUDA=ON
+  )
+
+  cmake "${cmake_options[@]}"
+  cmake --build build -j$(nproc)
+  go build .
+
+  DESTDIR=staging-install cmake --install build
+}
+
+package() {
+  cd ollama
+
+  # Install payloads (llama.cpp runner binaries/libs)
+  mkdir -p "$pkgdir/usr/lib/ollama"
+  cp -r staging-install/usr/lib/ollama/cuda* "$pkgdir/usr/lib/ollama/" 2>/dev/null || true
+
+  # Install go binary
+  install -Dm755 ollama "$pkgdir/usr/bin/ollama"
+  
+  # Ensure state directory exists
+  install -dm755 "$pkgdir/var/lib/ollama"
+  
+  # Install system files
+  install -Dm644 "$srcdir/ollama.service" "$pkgdir/usr/lib/systemd/system/ollama.service"
+  install -Dm644 "$srcdir/sysusers.conf" "$pkgdir/usr/lib/sysusers.d/ollama.conf"
+  install -Dm644 "$srcdir/tmpfiles.conf" "$pkgdir/usr/lib/tmpfiles.d/ollama.conf"
+  
+  # Install license
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  # Link state dir to /usr/share/ollama as expected by some setups
+  ln -s /var/lib/ollama "$pkgdir/usr/share/ollama"
+}

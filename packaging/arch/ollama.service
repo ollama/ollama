@@ -1,0 +1,15 @@
+[Unit]
+Description=Ollama Service (TurboQuant fork)
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/ollama serve
+User=ollama
+Group=ollama
+Restart=always
+RestartSec=3
+Environment="OLLAMA_HOST=0.0.0.0"
+Environment="OLLAMA_KV_CACHE_TYPE=turbo3_0"
+
+[Install]
+WantedBy=default.target

@@ -16,3 +16,9 @@ llama/build
 llama/vendor
 /ollama
 integration/testdata/models/
+
+# Arch Linux packaging artifacts
+packaging/arch/src/
+packaging/arch/pkg/
+packaging/arch/*.pkg.tar.zst
+packaging/arch/ollama/
