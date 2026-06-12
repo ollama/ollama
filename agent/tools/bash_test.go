@@ -34,3 +34,33 @@ func TestBashReportsFinalWorkingDir(t *testing.T) {
 		t.Fatalf("content = %q, want pwd output", result.Content)
 	}
 }
+
+func TestReadFinalWorkingDirRejectsInvalidPaths(t *testing.T) {
+	dir := t.TempDir()
+	cwdFile := filepath.Join(dir, "cwd")
+	notDir := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(notDir, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(cwdFile, []byte(notDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFinalWorkingDir(cwdFile); got != "" {
+		t.Fatalf("regular file cwd = %q, want empty", got)
+	}
+
+	if err := os.WriteFile(cwdFile, []byte(filepath.Join(dir, "missing")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFinalWorkingDir(cwdFile); got != "" {
+		t.Fatalf("missing cwd = %q, want empty", got)
+	}
+
+	if err := os.WriteFile(cwdFile, []byte(dir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFinalWorkingDir(cwdFile); got != dir {
+		t.Fatalf("directory cwd = %q, want %q", got, dir)
+	}
+}

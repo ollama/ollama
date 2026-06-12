@@ -113,7 +113,15 @@ func readFinalWorkingDir(path string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(content))
+	workingDir := strings.TrimSpace(string(content))
+	if workingDir == "" {
+		return ""
+	}
+	info, err := os.Stat(workingDir)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	return workingDir
 }
 
 func shellQuote(value string) string {
