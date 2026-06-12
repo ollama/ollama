@@ -15,6 +15,8 @@ const (
 	defaultCompactionThreshold           = 0.8
 
 	compactionSummaryMessagePrefix = "Conversation summary:\n"
+	maxCompactionSummaryBytes      = 16 * 1024
+	compactionSummaryTruncated     = "\n\n[summary truncated]"
 )
 
 type Compactor interface {
@@ -91,7 +93,7 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 		result.Reason = err.Error()
 		return result, err
 	}
-	summary = strings.TrimSpace(summary)
+	summary = truncateCompactionSummary(strings.TrimSpace(summary))
 	if summary == "" {
 		result.Reason = "summary was empty"
 		return result, nil
@@ -199,6 +201,24 @@ func (c *SimpleCompactor) summarize(ctx context.Context, req CompactionRequest, 
 		return "", err
 	}
 	return summary.String(), nil
+}
+
+func truncateCompactionSummary(summary string) string {
+	if len(summary) <= maxCompactionSummaryBytes {
+		return summary
+	}
+	limit := maxCompactionSummaryBytes - len(compactionSummaryTruncated)
+	if limit < 0 {
+		limit = 0
+	}
+	var b strings.Builder
+	for _, r := range summary {
+		if b.Len()+len(string(r)) > limit {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String()) + compactionSummaryTruncated
 }
 
 func estimateCompactionTokens(text string) int {

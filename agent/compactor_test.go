@@ -85,6 +85,50 @@ func TestSimpleCompactorSummarizesOldMessages(t *testing.T) {
 	}
 }
 
+func TestSimpleCompactorTruncatesOversizedSummary(t *testing.T) {
+	longSummary := strings.Repeat("x", maxCompactionSummaryBytes+1024)
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{{
+			{Message: api.Message{Role: "assistant", Content: longSummary}},
+		}},
+	}
+	store := &compactionStore{}
+	compactor := NewSimpleCompactor(client, store, CompactionOptions{
+		ContextWindowTokens: 100,
+		KeepUserTurns:       1,
+		Threshold:           0.5,
+	})
+
+	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
+		ChatID: "chat-1",
+		Model:  "model",
+		Messages: []api.Message{
+			{Role: "user", Content: "old one"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "recent one"},
+		},
+		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 75}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Compacted {
+		t.Fatal("expected compaction")
+	}
+	if len(result.Summary) > maxCompactionSummaryBytes {
+		t.Fatalf("summary bytes = %d, want <= %d", len(result.Summary), maxCompactionSummaryBytes)
+	}
+	if !strings.HasSuffix(result.Summary, compactionSummaryTruncated) {
+		t.Fatalf("summary missing truncation marker")
+	}
+	if store.summary != result.Summary {
+		t.Fatalf("stored summary mismatch")
+	}
+	if !strings.Contains(result.Messages[0].Content, compactionSummaryTruncated) {
+		t.Fatalf("compacted message missing truncation marker: %#v", result.Messages)
+	}
+}
+
 func TestSimpleCompactorSkipsBelowThreshold(t *testing.T) {
 	client := &fakeClient{}
 	compactor := NewSimpleCompactor(client, nil, CompactionOptions{
