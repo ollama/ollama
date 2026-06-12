@@ -1,12 +1,16 @@
 package tools
 
-import "testing"
+import (
+	"testing"
 
-func TestWebToolsRequireApproval(t *testing.T) {
-	if !NewWebSearch().RequiresApproval(map[string]any{"query": "ollama"}) {
-		t.Fatal("web search should require approval")
+	coreagent "github.com/ollama/ollama/agent"
+)
+
+func TestWebToolsDoNotRequireApproval(t *testing.T) {
+	if coreagent.ToolRequiresApproval(NewWebSearch(), map[string]any{"query": "ollama"}) {
+		t.Fatal("web search should not require approval")
 	}
-	if !NewWebFetch().RequiresApproval(map[string]any{"url": "https://ollama.com"}) {
-		t.Fatal("web fetch should require approval")
+	if coreagent.ToolRequiresApproval(NewWebFetch(), map[string]any{"url": "https://ollama.com"}) {
+		t.Fatal("web fetch should not require approval")
 	}
 }

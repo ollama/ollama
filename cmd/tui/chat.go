@@ -226,7 +226,7 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
 
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, err
@@ -361,6 +361,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			return m.handleSubmit()
 		case tea.KeyUp:
+			if m.running || m.compacting {
+				m.scrollBy(1)
+				return m, nil
+			}
 			if m.promptActive && m.movePromptHistory(-1) {
 				return m, nil
 			}
@@ -373,6 +377,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollBy(1)
 			return m, nil
 		case tea.KeyDown:
+			if m.running || m.compacting {
+				m.scrollBy(-1)
+				return m, nil
+			}
 			if m.promptActive && m.movePromptHistory(1) {
 				return m, nil
 			}

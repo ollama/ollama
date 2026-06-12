@@ -185,27 +185,24 @@ func TestBashApprovalClassifiesDynamicShellEvasions(t *testing.T) {
 	}
 }
 
-func TestWebApprovalPromptsLowRiskWithSessionKey(t *testing.T) {
+func TestWebApprovalAllowsWithoutPrompt(t *testing.T) {
 	tests := []struct {
-		name       string
-		tool       string
-		args       map[string]any
-		sessionKey string
-		summary    string
+		name    string
+		tool    string
+		args    map[string]any
+		summary string
 	}{
 		{
-			name:       "search",
-			tool:       "web_search",
-			args:       map[string]any{"query": "Ollama agents"},
-			sessionKey: "web_search:Ollama agents",
-			summary:    "Web Search wants to search for Ollama agents",
+			name:    "search",
+			tool:    "web_search",
+			args:    map[string]any{"query": "Ollama agents"},
+			summary: "Web Search can run without approval",
 		},
 		{
-			name:       "fetch",
-			tool:       "web_fetch",
-			args:       map[string]any{"url": "https://ollama.com"},
-			sessionKey: "web_fetch:https://ollama.com",
-			summary:    "Web Fetch wants to fetch https://ollama.com",
+			name:    "fetch",
+			tool:    "web_fetch",
+			args:    map[string]any{"url": "https://ollama.com"},
+			summary: "Web Fetch can run without approval",
 		},
 	}
 
@@ -215,14 +212,14 @@ func TestWebApprovalPromptsLowRiskWithSessionKey(t *testing.T) {
 				ToolName: tt.tool,
 				Args:     tt.args,
 			})
-			if !evaluation.RequirePrompt {
-				t.Fatal("web tool should require prompt")
+			if evaluation.RequirePrompt {
+				t.Fatal("web tool should not require prompt")
+			}
+			if evaluation.Decision != ApprovalAllowOnce {
+				t.Fatalf("decision = %q, want allow once", evaluation.Decision)
 			}
 			if evaluation.Risk != ApprovalRiskLow {
 				t.Fatalf("risk = %q, want low", evaluation.Risk)
-			}
-			if evaluation.SessionKey != tt.sessionKey {
-				t.Fatalf("session key = %q, want %q", evaluation.SessionKey, tt.sessionKey)
 			}
 			if evaluation.Summary != tt.summary {
 				t.Fatalf("summary = %q, want %q", evaluation.Summary, tt.summary)
