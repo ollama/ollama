@@ -245,6 +245,63 @@ func TestChatScrollsTranscript(t *testing.T) {
 	}
 }
 
+func TestChatMouseWheelScrollsTranscriptWhileRunning(t *testing.T) {
+	m := chatModel{
+		width:   80,
+		height:  10,
+		running: true,
+	}
+	for i := 0; i < 12; i++ {
+		m.entries = append(m.entries, chatEntry{role: "user", content: "line"})
+	}
+	if m.maxScroll() == 0 {
+		t.Fatal("test setup should produce scrollable transcript")
+	}
+
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseWheelUp})
+	m = updated.(chatModel)
+	if m.scroll == 0 {
+		t.Fatal("mouse wheel up should scroll transcript while running")
+	}
+
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
+	m = updated.(chatModel)
+	if m.scroll != 0 {
+		t.Fatalf("mouse wheel down should return to bottom, got scroll %d", m.scroll)
+	}
+}
+
+func TestChatArrowKeysScrollTranscriptWhileRunning(t *testing.T) {
+	m := chatModel{
+		input:         []rune("queued draft"),
+		promptHistory: []string{"old prompt"},
+		width:         80,
+		height:        10,
+		running:       true,
+	}
+	for i := 0; i < 12; i++ {
+		m.entries = append(m.entries, chatEntry{role: "user", content: "line"})
+	}
+	if m.maxScroll() == 0 {
+		t.Fatal("test setup should produce scrollable transcript")
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(chatModel)
+	if m.scroll != 1 {
+		t.Fatalf("key up should scroll transcript while running, got %d", m.scroll)
+	}
+	if got := string(m.input); got != "queued draft" {
+		t.Fatalf("key up should not recall prompt history while running, got input %q", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(chatModel)
+	if m.scroll != 0 {
+		t.Fatalf("key down should return to bottom while running, got %d", m.scroll)
+	}
+}
+
 func TestEntriesFromMessagesSkipsToolCallOnlyAssistant(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("command", "pwd")
