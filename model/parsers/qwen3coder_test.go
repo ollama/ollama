@@ -49,6 +49,41 @@ func TestQwenParserStreaming(t *testing.T) {
 			},
 		},
 		{
+			// qwen3-coder sometimes omits the opening <tool_call> tag while still
+			// emitting the function block and a stray closing </tool_call>. The bare
+			// <function=...> block should still be recovered as a tool call instead
+			// of leaking into content.
+			desc: "bare function block without opening tool_call tag",
+			steps: []step{
+				{
+					input: "I'll use the tool.\n\n<function=Glob>\n<parameter=pattern>\n*.md\n</parameter>\n</function>\n</tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "I'll use the tool."},
+						qwenEventRawToolCall{raw: "<function=Glob>\n<parameter=pattern>\n*.md\n</parameter>\n</function>"},
+					},
+				},
+			},
+		},
+		{
+			desc: "bare function streamed across chunks withholds partial open tag",
+			steps: []step{
+				{
+					input:      "text <func",
+					wantEvents: []qwenEvent{qwenEventContent{content: "text"}},
+				},
+				{
+					input:      "tion=Glob><parameter=p>x</parameter>",
+					wantEvents: []qwenEvent{},
+				},
+				{
+					input: "</function></tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "<function=Glob><parameter=p>x</parameter></function>"},
+					},
+				},
+			},
+		},
+		{
 			desc: "multiple tool calls in one message",
 			steps: []step{
 				{
@@ -1112,6 +1147,36 @@ func TestQwen3CoderParserToolCallIndexResetOnInit(t *testing.T) {
 
 	want := api.ToolCall{
 		Function: api.ToolCallFunction{Name: "second", Arguments: testArgs(map[string]any{"b": "2"}), Index: 0},
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if !toolCallEqual(calls[0], want) {
+		t.Fatalf("got %#v, want %#v", calls[0], want)
+	}
+}
+
+func TestQwen3CoderParserBareFunctionWithoutToolCallTag(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init([]api.Tool{
+		tool("get_weather", map[string]api.ToolProperty{
+			"city": {Type: api.PropertyType{"string"}},
+		}),
+	}, nil, nil)
+
+	// The model omits the opening <tool_call> but still emits the function block
+	// and a trailing </tool_call>. The whole call should be recovered, the leading
+	// content preserved, and the orphan </tool_call> not leaked into content.
+	content, _, calls, err := parser.Add("Let me check.\n\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if content != "Let me check." {
+		t.Fatalf("got content %q, want %q", content, "Let me check.")
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"}), Index: 0},
 	}
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %d", len(calls))
