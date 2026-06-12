@@ -539,6 +539,45 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 	}
 }
 
+func TestChatApprovalPromptClosesHistoryPopup(t *testing.T) {
+	reply := make(chan coreagent.ApprovalResult, 1)
+	m := chatModel{
+		width:        100,
+		height:       24,
+		historyPopup: &chatHistoryPopup{content: "**Message History**\n\n**user**\n  content: old"},
+	}
+
+	updated, cmd := m.Update(chatApprovalPromptMsg{
+		request: coreagent.ApprovalRequest{
+			ToolCallID: "call-1",
+			ToolName:   "bash",
+			Args:       map[string]any{"command": "git status"},
+			Summary:    "Bash wants to run a command",
+		},
+		reply: reply,
+	})
+	if cmd != nil {
+		t.Fatal("opening approval prompt should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.historyPopup != nil {
+		t.Fatal("approval prompt should close history popup")
+	}
+	if m.approvalPrompt == nil {
+		t.Fatal("approval prompt should open")
+	}
+
+	view := stripANSI(m.View())
+	if strings.Contains(view, "Message history") {
+		t.Fatalf("history popup should not render over approval prompt:\n%s", view)
+	}
+	for _, want := range []string{"Bash wants to run a command", "Approve once", "Approve session", "Deny"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("approval view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestChatApprovalPromptDenyShortcut(t *testing.T) {
 	reply := make(chan coreagent.ApprovalResult, 1)
 	m := chatModel{

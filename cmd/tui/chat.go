@@ -430,6 +430,8 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForChatMsg(m.events)
 
 	case chatApprovalPromptMsg:
+		m.resumePicker = nil
+		m.historyPopup = nil
 		m.openApprovalPrompt(msg)
 		return m, nil
 
