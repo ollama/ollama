@@ -26,11 +26,14 @@ import { DisplayLogin } from "@/components/DisplayLogin";
 import { ErrorEvent, Message } from "@/gotypes";
 import { useSettings } from "@/hooks/useSettings";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
+import { getInferenceCompute } from "@/api";
 import { ThinkButton } from "./ThinkButton";
 import { ErrorMessage } from "./ErrorMessage";
+import { buildContextUsageData } from "@/utils/contextUsage";
 import { processFiles } from "@/utils/fileValidation";
 import type { ImageData } from "@/types/webview";
 import { PlusIcon } from "@heroicons/react/24/outline";
+import { useQuery } from "@tanstack/react-query";
 
 export type ThinkingLevel = "low" | "medium" | "high";
 
@@ -52,6 +55,7 @@ interface MessageInput {
 
 interface ChatFormProps {
   hasMessages: boolean;
+  messages?: Message[];
   onSubmit?: (
     message: string,
     options: {
@@ -83,6 +87,7 @@ interface ChatFormProps {
 
 function ChatForm({
   hasMessages,
+  messages = [],
   onSubmit,
   autoFocus = false,
   chatId = "new",
@@ -148,9 +153,14 @@ function ChatForm({
       thinkEnabled,
       thinkLevel: settingsThinkLevel,
     },
+    settingsData,
     setSettings,
   } = useSettings();
   const { cloudDisabled } = useCloudStatus();
+  const { data: inferenceComputeResponse } = useQuery({
+    queryKey: ["inferenceCompute"],
+    queryFn: getInferenceCompute,
+  });
 
   const supportsWebSearch = useHasToolsCapability(selectedModel?.model);
   // Use per-chat thinking level instead of global
@@ -257,6 +267,21 @@ function ChatForm({
   };
 
   const activeFeatureForBanner = getActiveFeatureForBanner();
+  const effectiveContextLength =
+    settingsData?.ContextLength && settingsData.ContextLength > 0
+      ? settingsData.ContextLength
+      : selectedModel?.isCloud()
+        ? undefined
+        : inferenceComputeResponse?.defaultContextLength;
+  const contextUsage = buildContextUsageData({
+    messages,
+    contextLength: effectiveContextLength,
+    isStreaming,
+  });
+  const contextRingRadius = 9;
+  const contextRingCircumference = 2 * Math.PI * contextRingRadius;
+  const contextRingOffset =
+    contextRingCircumference * (1 - contextUsage.visibleContextUsageRatio);
 
   const resetChatForm = () => {
     setMessage({
@@ -950,6 +975,74 @@ function ChatForm({
 
           {/* Model picker and submit button */}
           <div className="flex items-center gap-2 relative z-20">
+            {contextUsage.shouldShowContextUsage && (
+              <div className="group relative">
+                <button
+                  type="button"
+                  aria-label={contextUsage.tooltip}
+                  className="flex h-9 w-9 cursor-help items-center justify-center rounded-full bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:bg-neutral-700 dark:focus-visible:ring-neutral-500/70"
+                >
+                  <svg
+                    className="-rotate-90"
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r={contextRingRadius}
+                      fill="none"
+                      strokeWidth="2.5"
+                      className="stroke-neutral-200 dark:stroke-neutral-600"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r={contextRingRadius}
+                      fill="none"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeDasharray={contextRingCircumference}
+                      strokeDashoffset={contextRingOffset}
+                      className={`transition-[stroke-dashoffset] duration-300 ease-out ${contextUsage.tone.strokeClass}`}
+                    />
+                  </svg>
+                </button>
+
+                <div className="pointer-events-none absolute bottom-full right-0 z-30 mb-2 w-max min-w-[220px] translate-y-1 rounded-2xl border border-neutral-200/80 bg-white/95 px-3 py-2 opacity-0 shadow-lg transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 dark:border-neutral-700/80 dark:bg-neutral-900/95">
+                  <div className="flex items-center justify-between gap-3 text-[11px]">
+                    <span className="font-medium text-neutral-700 dark:text-neutral-200">
+                      Conversation context
+                    </span>
+                    {contextUsage.contextUsagePercent !== null && (
+                      <span
+                        className={`rounded-full px-2 py-0.5 font-medium ${contextUsage.tone.badgeClass}`}
+                      >
+                        {contextUsage.contextUsagePercent}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 tabular-nums text-[11px] text-neutral-500 dark:text-neutral-400">
+                    {contextUsage.summary}
+                  </div>
+                  <div className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                    {contextUsage.breakdown}
+                  </div>
+                  <div
+                    className={`mt-1 text-[11px] font-medium ${contextUsage.tone.textClass}`}
+                  >
+                    {contextUsage.tone.label}
+                  </div>
+                  {contextUsage.hint && (
+                    <div className="mt-1 max-w-[240px] text-[11px] text-neutral-500 dark:text-neutral-400">
+                      {contextUsage.hint}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <ModelPicker
               ref={modelPickerRef}
               chatId={chatId}

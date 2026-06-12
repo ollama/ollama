@@ -37,6 +37,8 @@ type Message struct {
 	Thinking          string           `json:"thinking"`
 	Stream            bool             `json:"stream"`
 	Model             string           `json:"model,omitempty"`
+	PromptEvalCount   int              `json:"promptEvalCount,omitempty" ts_type:"number | undefined"`
+	EvalCount         int              `json:"evalCount,omitempty" ts_type:"number | undefined"`
 	Attachments       []File           `json:"attachments,omitempty"`
 	ToolCalls         []ToolCall       `json:"tool_calls,omitempty"`
 	ToolCall          *ToolCall        `json:"tool_call,omitempty"`
@@ -51,6 +53,8 @@ type Message struct {
 // MessageOptions contains optional parameters for creating a Message
 type MessageOptions struct {
 	Model             string
+	PromptEvalCount   int
+	EvalCount         int
 	Attachments       []File
 	Stream            bool
 	Thinking          string
@@ -73,6 +77,8 @@ func NewMessage(role, content string, opts *MessageOptions) Message {
 
 	if opts != nil {
 		msg.Model = opts.Model
+		msg.PromptEvalCount = opts.PromptEvalCount
+		msg.EvalCount = opts.EvalCount
 		msg.Attachments = opts.Attachments
 		msg.Stream = opts.Stream
 		msg.Thinking = opts.Thinking
