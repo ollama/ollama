@@ -1831,10 +1831,22 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want:        []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
-			name:        "small discrete gpu disables projector offload",
+			// #16496: an 8 GB discrete GPU must keep projector offload now that
+			// the decision is size-aware. The projector path here does not exist,
+			// so the size is unknown and the conservative 2 GiB fallback applies;
+			// 8 GiB clears it, so offload stays on.
+			name:        "small discrete gpu keeps projector offload for small projector",
 			projectors:  []string{"model.gguf"},
 			opts:        defaultOpts,
 			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, TotalMemory: 8 << 30}},
+			modelLayers: 81,
+			want:        []string{"base", "--mmproj", "model.gguf"},
+		},
+		{
+			name:        "tiny discrete gpu disables projector offload",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, TotalMemory: 1 << 30}},
 			modelLayers: 81,
 			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
@@ -3021,4 +3033,35 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+func TestShouldDisableMMProjOffload16496(t *testing.T) {
+	const gib = uint64(1) << 30
+	opts := api.DefaultOptions() // NumGPU = -1 (auto)
+	w7500 := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, FreeMemory: 7900 << 20, TotalMemory: 8 * gib}}
+	gemmaMMProj := uint64(933) << 20 // ~933 MiB Gemma3 mmproj
+
+	// Regression (#16496): the ~933 MiB projector fits in 7.9 GiB free VRAM on an
+	// 8 GB discrete W7500, so GPU offload must NOT be disabled. The pre-fix 10 GiB
+	// floor wrongly returned "limited-vram" here.
+	if disable, reason := shouldDisableMMProjOffload(opts, w7500, 0, gemmaMMProj); disable {
+		t.Fatalf("W7500 + 933MiB projector should keep GPU offload, got disabled (%q)", reason)
+	}
+
+	// Safety: a projector larger than free VRAM must still be CPU-offloaded.
+	if disable, reason := shouldDisableMMProjOffload(opts, w7500, 0, 9*gib); !disable || reason != "limited-vram" {
+		t.Fatalf("oversized projector must disable offload, got disable=%v reason=%q", disable, reason)
+	}
+
+	// Integrated/shared-memory GPU stays disabled regardless of projector size.
+	igpu := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 * gib}}
+	if disable, reason := shouldDisableMMProjOffload(opts, igpu, 0, gemmaMMProj); !disable || reason != "shared-memory-gpu" {
+		t.Fatalf("integrated gpu must disable offload, got disable=%v reason=%q", disable, reason)
+	}
+
+	// Unknown projector size on tiny VRAM falls back to the conservative floor.
+	tiny := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, FreeMemory: 1 * gib, TotalMemory: 2 * gib}}
+	if disable, _ := shouldDisableMMProjOffload(opts, tiny, 0, 0); !disable {
+		t.Fatalf("tiny VRAM with unknown projector size should disable via fallback")
+	}
 }
