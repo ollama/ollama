@@ -99,6 +99,45 @@ function findWindowsCPUCompiler {
     return $null
 }
 
+function getProcessPath {
+    $pathValue = [Environment]::GetEnvironmentVariable("Path", "Process")
+    if (-not $pathValue) {
+        $pathValue = $env:Path
+    }
+    if (-not $pathValue) {
+        $pathValue = $env:PATH
+    }
+    return $pathValue
+}
+
+function repairDuplicateProcessPath {
+    try {
+        Get-ChildItem Env: | Out-Null
+    } catch {
+        Remove-Item Env:PATH -ErrorAction SilentlyContinue
+    }
+}
+
+function setProcessPath {
+    param([string]$Value)
+
+    repairDuplicateProcessPath
+    [Environment]::SetEnvironmentVariable("Path", $Value, "Process")
+    $env:Path = $Value
+}
+
+function prependProcessPath {
+    param([string[]]$Entries)
+
+    $existingEntries = @()
+    $existingPath = getProcessPath
+    if ($existingPath) {
+        $existingEntries = $existingPath -split ';' | Where-Object { $_ }
+    }
+    $newPath = (($Entries + $existingEntries) | Select-Object -Unique) -join ';'
+    setProcessPath $newPath
+}
+
 function ensureMsvcForNinja {
     if ($env:CMAKE_GENERATOR -notlike "Ninja*") {
         return
@@ -109,6 +148,7 @@ function ensureMsvcForNinja {
         if ($vsInstall) {
             $devShell = Join-Path $vsInstall "Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
             if (Test-Path $devShell) {
+                setProcessPath (getProcessPath)
                 Import-Module $devShell
                 Enter-VsDevShell -VsInstallPath $vsInstall -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -no_logo"
             }
@@ -120,6 +160,26 @@ function ensureMsvcForNinja {
         exit(1)
     }
     Write-Output "MSVC cl.exe available for Ninja builds"
+}
+
+function ensureNinjaOnPath {
+    if (Get-Command -Name "ninja.exe" -ErrorAction SilentlyContinue) {
+        return
+    }
+
+    $vsInstall = findVisualStudioInstall
+    if ($vsInstall) {
+        $ninja = Get-ChildItem -Path (Join-Path $vsInstall "**\ninja.exe") -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object -Property FullName -Descending |
+            Select-Object -First 1
+        if ($ninja) {
+            prependProcessPath @($ninja.Directory.FullName)
+            return
+        }
+    }
+
+    Write-Error "Ninja is required for ROCm builds but was not found. Install Ninja or run from an environment where ninja.exe is on PATH."
+    exit(1)
 }
 
 function checkEnv {
@@ -191,6 +251,18 @@ function checkEnv {
     $script:HIP_PATH=$script:HIP_PATH_V7
     if (-not $script:HIP_PATH) {
         $script:HIP_PATH=$script:HIP_PATH_V6
+    }
+
+    if ($env:OLLAMA_THEROCK_ROCM_PATH -and (Test-Path $env:OLLAMA_THEROCK_ROCM_PATH)) {
+        $script:THEROCK_ROCM_PATH=$env:OLLAMA_THEROCK_ROCM_PATH
+    } else {
+        $theRockEnv = Get-ChildItem -Path "${script:SRC_DIR}\.cache\therock-rocm\windows-*\ollama-therock-env.ps1" -ErrorAction SilentlyContinue |
+            Sort-Object -Property FullName -Descending |
+            Select-Object -First 1
+        if ($theRockEnv) {
+            $script:THEROCK_ROCM_ENV=$theRockEnv.FullName
+            $script:THEROCK_ROCM_PATH=$theRockEnv.Directory.FullName
+        }
     }
     
     $inoSetup=(get-item "C:\Program Files*\Inno Setup*\")
@@ -462,8 +534,7 @@ function rocm7 {
             $rocmBackend = "rocm_v$($Matches[1])_$($Matches[2])"
             $rocmPreset = "${rocmBackend}_windows"
             if (-Not (get-command -ErrorAction silent ninja)) {
-                $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
-                $env:PATH="$NINJA_DIR;$env:PATH"
+                ensureNinjaOnPath
             }
             $oldHIPCXX = $env:HIPCXX
             $oldHIP_PLATFORM = $env:HIP_PLATFORM
@@ -491,6 +562,101 @@ function rocm7 {
             Write-Output "ROCm v7 not detected, skipping"
         }
     }
+}
+
+function rocm_v7_1 {
+    mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
+    if ($script:ARCH -eq "arm64") {
+        return
+    }
+    if (-not $script:HIP_PATH_V7) {
+        Write-Output "ROCm v7.1.1 not detected, skipping rocm_v7_1"
+        return
+    }
+
+    Write-Output "Building llama-server ROCm v7.1 backend $script:HIP_PATH_V7"
+    if (-Not (get-command -ErrorAction silent ninja)) {
+        ensureNinjaOnPath
+    }
+    $oldHIPCXX = $env:HIPCXX
+    $oldHIP_PLATFORM = $env:HIP_PLATFORM
+    $oldCMAKE_PREFIX_PATH = $env:CMAKE_PREFIX_PATH
+    $oldCC = $env:CC
+    $oldCXX = $env:CXX
+    $env:HIPCXX="${script:HIP_PATH_V7}\bin\clang++.exe"
+    $env:HIP_PLATFORM="amd"
+    $env:CMAKE_PREFIX_PATH="${script:HIP_PATH_V7}"
+    $env:CC="${script:HIP_PATH_V7}\bin\clang.exe"
+    $env:CXX="${script:HIP_PATH_V7}\bin\clang++.exe"
+    & cmake -S llama\server --preset rocm_v7_1_windows -G Ninja `
+        --install-prefix $script:DIST_DIR
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    $env:HIPCXX=$oldHIPCXX
+    $env:HIP_PLATFORM=$oldHIP_PLATFORM
+    $env:CMAKE_PREFIX_PATH=$oldCMAKE_PREFIX_PATH
+    $env:CC=$oldCC
+    $env:CXX=$oldCXX
+    & cmake --build build\llama-server-rocm_v7_1 --config Release --parallel $script:JOBS
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    & cmake --install build\llama-server-rocm_v7_1 --component llama-server --strip
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+}
+
+function rocm_v7_14_nightly {
+    mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
+    if ($script:ARCH -eq "arm64") {
+        return
+    }
+    if (-not $script:THEROCK_ROCM_PATH) {
+        Write-Output "TheRock ROCm not detected, skipping rocm_v7_14_nightly"
+        Write-Output "Run scripts\fetch_therock_rocm_windows.ps1 first or set OLLAMA_THEROCK_ROCM_PATH."
+        return
+    }
+
+    Write-Output "Building llama-server ROCm v7.14 TheRock backend $script:THEROCK_ROCM_PATH"
+    if (-Not (get-command -ErrorAction silent ninja)) {
+        ensureNinjaOnPath
+    }
+
+    $oldHIP_PATH = $env:HIP_PATH
+    $oldROCM_PATH = $env:ROCM_PATH
+    $oldHIPCXX = $env:HIPCXX
+    $oldHIP_PLATFORM = $env:HIP_PLATFORM
+    $oldCMAKE_PREFIX_PATH = $env:CMAKE_PREFIX_PATH
+    $oldCC = $env:CC
+    $oldCXX = $env:CXX
+    $oldPATH = getProcessPath
+
+    if ($script:THEROCK_ROCM_ENV -and (Test-Path $script:THEROCK_ROCM_ENV)) {
+        . $script:THEROCK_ROCM_ENV
+    } else {
+        $env:HIP_PATH=$script:THEROCK_ROCM_PATH
+        $env:ROCM_PATH=$script:THEROCK_ROCM_PATH
+        $env:HIPCXX="${script:THEROCK_ROCM_PATH}\bin\clang++.exe"
+        $env:HIP_PLATFORM="amd"
+        $env:CMAKE_PREFIX_PATH="${script:THEROCK_ROCM_PATH}"
+        $env:CC="${script:THEROCK_ROCM_PATH}\bin\clang.exe"
+        $env:CXX="${script:THEROCK_ROCM_PATH}\bin\clang++.exe"
+        prependProcessPath @("${script:THEROCK_ROCM_PATH}\bin", "${script:THEROCK_ROCM_PATH}\lib\llvm\bin")
+    }
+
+    & cmake -S llama\server --preset rocm_v7_14_nightly_windows -G Ninja `
+        --install-prefix $script:DIST_DIR
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+
+    $env:HIP_PATH=$oldHIP_PATH
+    $env:ROCM_PATH=$oldROCM_PATH
+    $env:HIPCXX=$oldHIPCXX
+    $env:HIP_PLATFORM=$oldHIP_PLATFORM
+    $env:CMAKE_PREFIX_PATH=$oldCMAKE_PREFIX_PATH
+    $env:CC=$oldCC
+    $env:CXX=$oldCXX
+    setProcessPath $oldPATH
+
+    & cmake --build build\llama-server-rocm_v7_14_nightly --config Release --parallel $script:JOBS
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    & cmake --install build\llama-server-rocm_v7_14_nightly --component llama-server --strip
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
 function vulkan {
@@ -584,7 +750,7 @@ function withWindowsArm64GoEnv {
     $oldCGO_ENABLED = $env:CGO_ENABLED
     $oldCC = $env:CC
     $oldCXX = $env:CXX
-    $oldPath = $env:PATH
+    $oldPath = getProcessPath
     $compilerDir = Split-Path -Parent $script:WINDOWS_ARM64_CC
     $compiler = Split-Path -Leaf $script:WINDOWS_ARM64_CC
     $compilerXX = Split-Path -Leaf $script:WINDOWS_ARM64_CXX
@@ -592,7 +758,7 @@ function withWindowsArm64GoEnv {
         $env:GOOS = "windows"
         $env:GOARCH = "arm64"
         $env:CGO_ENABLED = "1"
-        $env:PATH = "$compilerDir;$oldPath"
+        prependProcessPath @($compilerDir)
         $env:CC = $compiler
         $env:CXX = $compilerXX
         & $body
@@ -602,7 +768,7 @@ function withWindowsArm64GoEnv {
         $env:CGO_ENABLED = $oldCGO_ENABLED
         $env:CC = $oldCC
         $env:CXX = $oldCXX
-        $env:PATH = $oldPath
+        setProcessPath $oldPath
     }
 }
 
@@ -645,16 +811,12 @@ function prepareApp {
         exit 1
     }
 
-    if (!(Get-Command tsc -ErrorAction SilentlyContinue)) {
-        Write-Output "Installing TypeScript compiler..."
-        npm install -g typescript
-    }
     if (!(Get-Command tscriptify -ErrorAction SilentlyContinue)) {
         Write-Output "Installing tscriptify..."
         go install github.com/tkrajina/typescriptify-golang-structs/tscriptify@latest
     }
     if (!(Get-Command tscriptify -ErrorAction SilentlyContinue)) {
-        $env:PATH="$env:PATH;$(go env GOPATH)\bin"
+        prependProcessPath @("$(go env GOPATH)\bin")
     }
 
     Push-Location app/ui/app
@@ -827,9 +989,21 @@ function newDependencyAuditJob($payloadDir, $label, $reportPath, $dependencyDirs
 
         foreach ($binary in $binaries) {
             $reportLines.Add("[$($binary.FullName)]")
-            $output = & $dumpbinPath /nologo /dependents $binary.FullName 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw "dumpbin failed for $($binary.FullName) with exit code $LASTEXITCODE"
+            $output = $null
+            $dumpbinExitCode = 0
+            for ($attempt = 1; $attempt -le 10; $attempt++) {
+                $output = & $dumpbinPath /nologo /dependents $binary.FullName 2>&1
+                $dumpbinExitCode = $LASTEXITCODE
+                if ($dumpbinExitCode -eq 0) {
+                    break
+                }
+                if ($attempt -lt 10) {
+                    Start-Sleep -Seconds 2
+                }
+            }
+            if ($dumpbinExitCode -ne 0) {
+                $dumpbinOutput = [System.String]::Join([Environment]::NewLine, @($output))
+                throw "dumpbin failed for $($binary.FullName) with exit code $dumpbinExitCode`n$dumpbinOutput"
             }
 
             foreach ($line in $output) {
@@ -901,11 +1075,16 @@ function zip {
 
     try {
         if (Test-Path -Path $amd64Dir) {
-            # Stage ROCm into its own directory for independent compression.
-            if (stageComponents $amd64Dir "${distDir}\windows-amd64-rocm" "rocm_v*" "ROCm") {
-                Write-Output "Generating ${distDir}\ollama-windows-amd64-rocm.zip"
-                $jobs += newZipJob "${distDir}\windows-amd64-rocm" "${distDir}\ollama-windows-amd64-rocm.zip"
-                $jobs += newDependencyAuditJob "${distDir}\windows-amd64-rocm" "windows-amd64-rocm" "${distDir}\dependency-audit-windows-amd64-rocm.txt" $amd64Dir
+            # Stage stable ROCm (rocm_v7_1, rocm_v7_2, ...) separately from nightly TheRock
+            if (stageComponents $amd64Dir "${distDir}\windows-amd64-rocm-stable" "rocm_v7_?" "ROCm-stable") {
+                Write-Output "Generating ${distDir}\ollama-windows-amd64-rocm-stable.zip"
+                $jobs += newZipJob "${distDir}\windows-amd64-rocm-stable" "${distDir}\ollama-windows-amd64-rocm-stable.zip"
+                $jobs += newDependencyAuditJob "${distDir}\windows-amd64-rocm-stable" "windows-amd64-rocm-stable" "${distDir}\dependency-audit-windows-amd64-rocm-stable.txt" $amd64Dir
+            }
+            if (stageComponents $amd64Dir "${distDir}\windows-amd64-rocm-nightly" "*nightly*" "ROCm-nightly") {
+                Write-Output "Generating ${distDir}\ollama-windows-amd64-rocm-nightly.zip"
+                $jobs += newZipJob "${distDir}\windows-amd64-rocm-nightly" "${distDir}\ollama-windows-amd64-rocm-nightly.zip"
+                $jobs += newDependencyAuditJob "${distDir}\windows-amd64-rocm-nightly" "windows-amd64-rocm-nightly" "${distDir}\dependency-audit-windows-amd64-rocm-nightly.txt" $amd64Dir
             }
 
             # Stage MLX into its own directory for independent compression
@@ -948,7 +1127,8 @@ function zip {
         }
     } finally {
         # Always restore staged components back into the main tree
-        restoreComponents $amd64Dir "${distDir}\windows-amd64-rocm"
+        restoreComponents $amd64Dir "${distDir}\windows-amd64-rocm-stable"
+        restoreComponents $amd64Dir "${distDir}\windows-amd64-rocm-nightly"
         restoreComponents $amd64Dir "${distDir}\windows-amd64-mlx"
     }
 }
@@ -965,6 +1145,7 @@ try {
         cuda12
         cuda13
         rocm7
+        rocm_v7_14_nightly
         vulkan
         mlxCuda13
         ollama
@@ -985,6 +1166,7 @@ try {
 } catch {
     Write-Error "Build Failed: $($_.Exception.Message)"
     Write-Error "$($_.ScriptStackTrace)"
+    exit 1
 } finally {
     set-location $script:SRC_DIR
     $env:PKG_VERSION=""

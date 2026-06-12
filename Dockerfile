@@ -58,6 +58,29 @@ ENV PATH=/usr/local/cuda-13/bin:$PATH
 FROM base AS rocm-7-deps
 ENV PATH=/opt/rocm/llvm/bin:/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:$PATH
 
+FROM --platform=linux/amd64 almalinux:8 AS rocm-nightly-base
+ARG CMAKEVERSION
+ARG NINJAVERSION
+RUN yum install -y yum-utils epel-release \
+    && dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ gcc-toolset-11-binutils \
+       ccache curl git unzip
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-x86_64.tar.gz | tar xz -C /usr/local --strip-components 1
+RUN curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux.zip \
+    && unzip /tmp/ninja.zip -d /usr/local/bin \
+    && rm /tmp/ninja.zip
+ENV CMAKE_GENERATOR=Ninja
+ENV LDFLAGS=-s
+
+FROM rocm-nightly-base AS rocm-nightly-deps
+ARG THEROCK_VERSION=latest
+ARG THEROCK_TARGET=multiarch
+COPY scripts/fetch_therock_rocm_linux.sh scripts/fetch_therock_rocm_linux.sh
+RUN bash scripts/fetch_therock_rocm_linux.sh \
+        --prefix /opt/therock-rocm \
+        --target "${THEROCK_TARGET:-multiarch}" \
+        --version "${THEROCK_VERSION:-latest}"
+
 FROM base AS vulkan-deps
 ARG VULKANVERSION
 RUN ln -s /usr/bin/python3 /usr/bin/python \
@@ -136,6 +159,16 @@ RUN rm -f dist/lib/ollama/rocm_v7_2/rocblas/library/*gfx90[06]*
 
 FROM scratch AS publish-llama-server-rocm_v7_2
 COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama/
+
+FROM rocm-nightly-deps AS llama-server-rocm-nightly
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    . /opt/therock-rocm/linux-current/ollama-therock-env.sh \
+        && cmake -S llama/server --preset rocm_v7_14_nightly_linux \
+        && cmake --build build/llama-server-rocm_v7_14_nightly -- -l $(nproc) \
+        && cmake --install build/llama-server-rocm_v7_14_nightly --component llama-server --strip
 
 FROM vulkan-deps AS llama-server-vulkan
 COPY LLAMA_CPP_VERSION .
@@ -278,10 +311,12 @@ COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 FROM scratch AS rocm
 COPY --from=llama-server-cpu  dist/lib/ollama /lib/ollama
 COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama
+COPY --from=llama-server-rocm-nightly dist/lib/ollama /lib/ollama
 
 FROM --platform=linux/amd64 scratch AS amd64-archive
 COPY --from=amd64 /lib/ollama /lib/ollama/
 COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-rocm-nightly dist/lib/ollama /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64-archive
 COPY --from=arm64 /lib/ollama /lib/ollama/
