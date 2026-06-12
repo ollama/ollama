@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/agent/skills"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/tui"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
 
@@ -77,4 +79,108 @@ func TestAgentToolsRegistryRegistersSkillTool(t *testing.T) {
 	if registry == nil || !registry.Has("skill") {
 		t.Fatalf("registry missing skill tool: %#v", registry)
 	}
+}
+
+func TestAgentModelOptionsIncludesCloudRecommendationsAndLocalModels(t *testing.T) {
+	var recommendationsCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			_ = json.NewEncoder(w).Encode(api.ListResponse{
+				Models: []api.ListModelResponse{{
+					Name: "llama3.2:latest",
+					Details: api.ModelDetails{
+						Family:            "llama",
+						ParameterSize:     "3B",
+						QuantizationLevel: "Q4_K_M",
+						ContextLength:     131072,
+					},
+					Size: 2_000_000_000,
+				}},
+			})
+		case "/api/status":
+			_ = json.NewEncoder(w).Encode(api.StatusResponse{})
+		case "/api/experimental/model-recommendations":
+			recommendationsCalled = true
+			_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{
+				Recommendations: []api.ModelRecommendation{
+					{Model: "qwen3.5:cloud", Description: "cloud reasoning", ContextLength: 262144},
+					{Model: "gemma4", Description: "local recommendation should be ignored"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	baseURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := agentModelOptions(context.Background(), api.NewClient(baseURL, srv.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recommendationsCalled {
+		t.Fatal("expected recommendations endpoint to be called")
+	}
+	if got, want := modelOptionNames(options), []string{"qwen3.5:cloud", "llama3.2"}; !slices.Equal(got, want) {
+		t.Fatalf("model options = %#v, want %#v", got, want)
+	}
+	if options[0].Description == "" || options[1].Description == "" {
+		t.Fatalf("expected descriptions for model options: %#v", options)
+	}
+}
+
+func TestAgentModelOptionsNoCloudSkipsCloudRecommendations(t *testing.T) {
+	t.Setenv("OLLAMA_NO_CLOUD", "1")
+
+	var recommendationsCalled bool
+	var statusCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			_ = json.NewEncoder(w).Encode(api.ListResponse{
+				Models: []api.ListModelResponse{{Name: "llama3.2:latest"}},
+			})
+		case "/api/status":
+			statusCalled = true
+			_ = json.NewEncoder(w).Encode(api.StatusResponse{})
+		case "/api/experimental/model-recommendations":
+			recommendationsCalled = true
+			_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{
+				Recommendations: []api.ModelRecommendation{{Model: "qwen3.5:cloud"}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	baseURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := agentModelOptions(context.Background(), api.NewClient(baseURL, srv.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recommendationsCalled {
+		t.Fatal("recommendations endpoint should not be called when no-cloud is set")
+	}
+	if statusCalled {
+		t.Fatal("status endpoint should not be called when local no-cloud short-circuits")
+	}
+	if got, want := modelOptionNames(options), []string{"llama3.2"}; !slices.Equal(got, want) {
+		t.Fatalf("model options = %#v, want %#v", got, want)
+	}
+}
+
+func modelOptionNames(options []tui.ChatModelOption) []string {
+	names := make([]string, 0, len(options))
+	for _, option := range options {
+		names = append(names, option.Name)
+	}
+	return names
 }

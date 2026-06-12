@@ -34,6 +34,7 @@ type chatCompletion struct {
 var chatSlashCommands = []chatSlashCommand{
 	{name: "/clear", description: "clear this chat"},
 	{name: "/tools", description: "show available tools"},
+	{name: "/model", description: "switch models"},
 	{name: "/history", description: "show prompt message history"},
 	{name: "/skills", description: "show or import installed skills"},
 	{name: "/new", description: "start a new chat"},
@@ -89,6 +90,9 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	case input == "/tools":
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: m.toolsSummary()}))
 		return *m, nil
+	case input == "/model" || strings.HasPrefix(input, "/model "):
+		filter := strings.TrimSpace(strings.TrimPrefix(input, "/model"))
+		return m.openModelPicker(filter)
 	case input == "/history":
 		return m.openHistoryPopup()
 	case input == "/skills" || strings.HasPrefix(input, "/skills "):
@@ -281,6 +285,9 @@ func (m chatModel) slashCompletions() []chatCompletion {
 		})
 	}
 	completions = append(completions, skillCompletions...)
+	if len(completions) > maxSlashCompletions {
+		completions = completions[:maxSlashCompletions]
+	}
 	return completions
 }
 
@@ -459,6 +466,7 @@ func (m chatModel) helpSummary() string {
 		"**Commands**",
 		"",
 		"- `/tools`: show available tools",
+		"- `/model`: switch models",
 		"- `/history`: show prompt message history",
 		"- `/skills`: show or import skills",
 		"- `/<skill>`: run the next message with a skill",

@@ -123,9 +123,15 @@ var chatSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦"
 
 const (
 	maxResumePickerItems = 8
+	maxSlashCompletions  = 5
 	maxPromptHistory     = 50
 )
 const chatCompactionSummaryPrefix = "Conversation summary:\n"
+
+type ChatModelOption struct {
+	Name        string
+	Description string
+}
 
 type ChatOptions struct {
 	Model                       string
@@ -135,6 +141,9 @@ type ChatOptions struct {
 	Store                       coreagent.ChatStore
 	Tools                       *coreagent.Registry
 	ToolRegistryForModel        func(context.Context, string) *coreagent.Registry
+	ModelOptions                func(context.Context) ([]ChatModelOption, error)
+	OnModelSelected             func(context.Context, string) error
+	SystemPromptForModel        func(context.Context, string, *coreagent.Registry) string
 	Approval                    coreagent.ApprovalHandler
 	AutoApproveTools            bool
 	WorkingDir                  string
@@ -186,6 +195,7 @@ type chatModel struct {
 	contextTokens    int
 	contextEstimate  bool
 	resumePicker     *chatResumePicker
+	modelPicker      *chatModelPicker
 	historyPopup     *chatHistoryPopup
 	approvalPrompt   *chatApprovalPrompt
 	reviewApproval   coreagent.ApprovalHandler
@@ -266,6 +276,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatApprovalPromptMsg:
 		m.resumePicker = nil
+		m.modelPicker = nil
 		m.historyPopup = nil
 		m.openApprovalPrompt(msg)
 		return m, nil
@@ -311,6 +322,15 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForChatMsg(m.compactEvents)
 
 	case tea.MouseMsg:
+		if m.modelPicker != nil {
+			switch msg.Type {
+			case tea.MouseWheelUp:
+				m.modelPicker.move(-3)
+			case tea.MouseWheelDown:
+				m.modelPicker.move(3)
+			}
+			return m, nil
+		}
 		if m.historyPopup != nil {
 			switch msg.Type {
 			case tea.MouseWheelUp:
@@ -334,6 +354,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.approvalPrompt != nil {
 			return m.updateApprovalPrompt(msg)
+		}
+		if m.modelPicker != nil {
+			return m.updateModelPicker(msg)
 		}
 		if m.resumePicker != nil {
 			return m.updateResumePicker(msg)
@@ -455,6 +478,9 @@ func (m chatModel) View() string {
 
 	if m.resumePicker != nil {
 		return renderFullFrame(m.renderResumePicker(width), width, height)
+	}
+	if m.modelPicker != nil {
+		return renderFullFrame(m.renderModelPicker(width), width, height)
 	}
 	if m.historyPopup != nil {
 		return renderFullFrame(m.renderHistoryPopup(width, height), width, height)
@@ -656,7 +682,7 @@ func (m *chatModel) startRunWithPrompt(displayInput, userInput, extraSystemPromp
 }
 
 func (m *chatModel) startNextQueued() tea.Cmd {
-	for len(m.queued) > 0 && !m.running && !m.compacting && !m.quitting && m.resumePicker == nil && m.historyPopup == nil {
+	for len(m.queued) > 0 && !m.running && !m.compacting && !m.quitting && m.resumePicker == nil && m.modelPicker == nil && m.historyPopup == nil {
 		input := m.queued[0]
 		m.queued = m.queued[1:]
 		_, cmd := m.submitInput(input)

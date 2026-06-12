@@ -55,6 +55,7 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 	}
 	if !strings.Contains(fm.entries[0].content, "**Commands**") ||
 		!strings.Contains(fm.entries[0].content, "- `/tools`: show available tools") ||
+		!strings.Contains(fm.entries[0].content, "- `/model`: switch models") ||
 		!strings.Contains(fm.entries[0].content, "- `/history`: show prompt message history") ||
 		!strings.Contains(fm.entries[0].content, "- `/<skill>`: run the next message with a skill") ||
 		!strings.Contains(fm.entries[0].content, "**Shortcuts**") ||
@@ -171,14 +172,17 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	if !strings.Contains(view, "/tools") || !strings.Contains(view, "show available tools") {
 		t.Fatalf("view missing tools suggestion: %q", view)
 	}
+	if !strings.Contains(view, "/model") || !strings.Contains(view, "switch models") {
+		t.Fatalf("view missing model suggestion: %q", view)
+	}
 	if !strings.Contains(view, "/history") || !strings.Contains(view, "show prompt message history") {
 		t.Fatalf("view missing history suggestion: %q", view)
 	}
-	if !strings.Contains(view, "/new") || !strings.Contains(view, "start a new chat") {
-		t.Fatalf("view missing new suggestion: %q", view)
+	if strings.Contains(view, "/new") || strings.Contains(view, "/resume") {
+		t.Fatalf("bare slash should show only top suggestions: %q", view)
 	}
-	if !strings.Contains(view, "/resume") || !strings.Contains(view, "resume a saved chat") {
-		t.Fatalf("view missing resume suggestion: %q", view)
+	if got := len(m.slashCommandLines(80)); got != maxSlashCompletions {
+		t.Fatalf("slash suggestions = %d, want %d", got, maxSlashCompletions)
 	}
 	if !strings.Contains(view, "> /█") {
 		t.Fatalf("view missing slash input row: %q", view)
