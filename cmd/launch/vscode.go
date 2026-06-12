@@ -15,11 +15,12 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
 
-// VSCode implements Runner and Editor for Visual Studio Code integration.
+// VSCode implements Runner and ManagedSingleModel for Visual Studio Code.
 type VSCode struct{}
 
 func (v *VSCode) String() string { return "Visual Studio Code" }
@@ -124,65 +125,81 @@ func (v *VSCode) Quit() {
 const (
 	minCopilotChatVersion = "0.41.0"
 	minVSCodeVersion      = "1.113"
+
+	vscodeOllamaVendor       = "ollama-vscode"
+	vscodeOllamaName         = "Ollama"
+	legacyVSCodeOllamaVendor = "ollama"
+
+	vscodeOllamaExtensionID = "Ollama.ollama-vscode"
 )
 
 func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 	v.checkVSCodeVersion()
 	v.checkCopilotChatVersion()
-
-	// Get all configured models (saved by the launcher framework before Run is called)
-	models := []string{model}
-	if cfg, err := loadStoredIntegrationConfig("vscode"); err == nil && len(cfg.Models) > 0 {
-		models = cfg.Models
+	installedExtension, err := v.ensureOllamaExtensionInstalled()
+	if err != nil {
+		return err
 	}
 
 	// VS Code discovers models from ollama ls. Cloud models that pass Show
 	// (the server knows about them) but aren't in ls need to be pulled to
 	// register them so VS Code can find them.
 	if client, err := api.ClientFromEnvironment(); err == nil {
-		v.ensureModelsRegistered(context.Background(), client, models)
+		v.ensureModelsRegistered(context.Background(), client, []string{model})
 	}
-
-	// Warn if the default model doesn't support tool calling
-	if client, err := api.ClientFromEnvironment(); err == nil {
-		if resp, err := client.Show(context.Background(), &api.ShowRequest{Model: models[0]}); err == nil {
-			hasTools := false
-			for _, c := range resp.Capabilities {
-				if c == "tools" {
-					hasTools = true
-					break
-				}
-			}
-			if !hasTools {
-				fmt.Fprintf(os.Stderr, "Note: %s does not support tool calling and may not appear in the Copilot Chat model picker.\n", models[0])
-			}
-		}
-	}
-
-	v.printModelAccessTip()
 
 	if v.IsRunning() {
-		restart, err := ConfirmPrompt("Restart VS Code?")
+		prompt := "Restart VS Code?"
+		if installedExtension {
+			prompt = "Restart VS Code to finish installing the Ollama extension?"
+		}
+		restart, err := ConfirmPrompt(prompt)
 		if err != nil {
 			restart = false
 		}
 		if restart {
 			v.Quit()
-			if err := v.ShowInModelPicker(models); err != nil {
+			if err := v.ShowInModelPicker(model); err != nil {
 				fmt.Fprintf(os.Stderr, "%s  Warning: could not update VS Code model picker: %v%s\n", ansiYellow, err, ansiReset)
 			}
 			v.FocusVSCode()
 		} else {
-			fmt.Fprintf(os.Stderr, "\nTo get the latest model configuration, restart VS Code when you're ready.\n")
+			if installedExtension {
+				fmt.Fprintf(os.Stderr, "\nRestart VS Code when you're ready to use the Ollama extension.\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "\nTo get the latest model configuration, restart VS Code when you're ready.\n")
+			}
 		}
 	} else {
-		if err := v.ShowInModelPicker(models); err != nil {
+		if err := v.ShowInModelPicker(model); err != nil {
 			fmt.Fprintf(os.Stderr, "%s  Warning: could not update VS Code model picker: %v%s\n", ansiYellow, err, ansiReset)
 		}
 		v.FocusVSCode()
 	}
 
 	return nil
+}
+
+func (v *VSCode) Configure(model string) error {
+	if model == "" {
+		return nil
+	}
+	return v.writeProviderConfig()
+}
+
+func (v *VSCode) CurrentModel() string {
+	if cfg, err := loadStoredIntegrationConfig("vscode"); err == nil {
+		return primaryModelFromConfig(cfg)
+	}
+	return ""
+}
+
+func (v *VSCode) Onboard() error {
+	return config.MarkIntegrationOnboarded("vscode")
+}
+
+func (v *VSCode) RequiresInteractiveOnboarding() bool {
+	return false
 }
 
 // ensureModelsRegistered pulls models that the server knows about (Show succeeds)
@@ -225,92 +242,46 @@ func (v *VSCode) FocusVSCode() {
 	}
 }
 
-// printModelAccessTip shows instructions for finding Ollama models in VS Code.
-func (v *VSCode) printModelAccessTip() {
-	fmt.Fprintf(os.Stderr, "\nTip: To use Ollama models, open Copilot Chat and click the model picker.\n")
-	fmt.Fprintf(os.Stderr, "     If you don't see your models, click \"Other models\" to find them.\n\n")
-}
-
 func (v *VSCode) Paths() []string {
+	var paths []string
 	if p := v.chatLanguageModelsPath(); fileExists(p) {
-		return []string{p}
+		paths = append(paths, p)
 	}
-	return nil
-}
-
-func (v *VSCode) Edit(models []LaunchModel) error {
-	if len(models) == 0 {
+	if p := v.settingsPath(); fileExists(p) {
+		paths = append(paths, p)
+	}
+	if len(paths) == 0 {
 		return nil
 	}
+	return paths
+}
 
-	// Write chatLanguageModels.json with Ollama vendor entry
+func (v *VSCode) writeProviderConfig() error {
 	clmPath := v.chatLanguageModelsPath()
-	if err := os.MkdirAll(filepath.Dir(clmPath), 0o755); err != nil {
-		return err
-	}
+	if fileExists(clmPath) {
+		var entries []map[string]any
+		if data, err := os.ReadFile(clmPath); err == nil {
+			_ = json.Unmarshal(data, &entries)
+		}
 
-	var entries []map[string]any
-	if data, err := os.ReadFile(clmPath); err == nil {
-		_ = json.Unmarshal(data, &entries)
-	}
-
-	// Remove any existing Ollama entries, preserve others
-	filtered := make([]map[string]any, 0, len(entries))
-	for _, entry := range entries {
-		if vendor, _ := entry["vendor"].(string); vendor != "ollama" {
+		filtered := make([]map[string]any, 0, len(entries))
+		for _, entry := range entries {
+			if isManagedOllamaProviderEntry(entry) {
+				continue
+			}
 			filtered = append(filtered, entry)
 		}
-	}
 
-	// Add new Ollama entry
-	filtered = append(filtered, map[string]any{
-		"vendor": "ollama",
-		"name":   "Ollama",
-		"url":    envconfig.Host().String(),
-	})
-
-	data, err := json.MarshalIndent(filtered, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := fileutil.WriteWithBackup(clmPath, data, "vscode"); err != nil {
-		return err
-	}
-
-	// Clean up legacy settings from older Ollama integrations
-	v.updateSettings()
-
-	return nil
-}
-
-func (v *VSCode) Models() []string {
-	if !v.hasOllamaVendor() {
-		return nil
-	}
-	if cfg, err := loadStoredIntegrationConfig("vscode"); err == nil {
-		return cfg.Models
-	}
-	return nil
-}
-
-// hasOllamaVendor checks if chatLanguageModels.json contains an Ollama vendor entry.
-func (v *VSCode) hasOllamaVendor() bool {
-	data, err := os.ReadFile(v.chatLanguageModelsPath())
-	if err != nil {
-		return false
-	}
-
-	var entries []map[string]any
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return false
-	}
-
-	for _, entry := range entries {
-		if vendor, _ := entry["vendor"].(string); vendor == "ollama" {
-			return true
+		data, err := json.MarshalIndent(filtered, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := fileutil.WriteWithBackup(clmPath, data, "vscode"); err != nil {
+			return err
 		}
 	}
-	return false
+
+	return v.updateSettings()
 }
 
 func (v *VSCode) chatLanguageModelsPath() string {
@@ -322,16 +293,18 @@ func (v *VSCode) settingsPath() string {
 }
 
 // updateSettings cleans up legacy settings from older Ollama integrations.
-func (v *VSCode) updateSettings() {
+func (v *VSCode) updateSettings() error {
 	settingsPath := v.settingsPath()
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return err
 	}
 
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return
+	settings := make(map[string]any)
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			settings = make(map[string]any)
+		}
 	}
 
 	changed := false
@@ -341,28 +314,43 @@ func (v *VSCode) updateSettings() {
 			changed = true
 		}
 	}
+	if current, _ := settings["ollama.endpoint"].(string); current != envconfig.Host().String() {
+		settings["ollama.endpoint"] = envconfig.Host().String()
+		changed = true
+	}
 
 	if !changed {
-		return
+		return nil
 	}
 
 	updated, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
-	_ = fileutil.WriteWithBackup(settingsPath, updated, "vscode")
+	return fileutil.WriteWithBackup(settingsPath, updated, "vscode")
+}
+
+func isManagedOllamaProviderEntry(entry map[string]any) bool {
+	vendor, _ := entry["vendor"].(string)
+	if vendor == vscodeOllamaVendor || vendor == legacyVSCodeOllamaVendor {
+		return true
+	}
+	if vendor != "customendpoint" {
+		return false
+	}
+	name, _ := entry["name"].(string)
+	return strings.EqualFold(strings.TrimSpace(name), vscodeOllamaName)
 }
 
 func (v *VSCode) statePath() string {
 	return v.vscodePath("globalStorage", "state.vscdb")
 }
 
-// ShowInModelPicker ensures the given models are visible in VS Code's Copilot
-// Chat model picker. It sets the configured models to true in the picker
-// preferences so they appear in the dropdown. Models use the VS Code identifier
-// format "ollama/Ollama/<name>".
-func (v *VSCode) ShowInModelPicker(models []string) error {
-	if len(models) == 0 {
+// ShowInModelPicker selects the requested model in VS Code's Copilot Chat
+// model picker. Model visibility is left to the extension, which discovers the
+// full Ollama catalog.
+func (v *VSCode) ShowInModelPicker(model string) error {
+	if model == "" {
 		return nil
 	}
 
@@ -394,19 +382,27 @@ func (v *VSCode) ShowInModelPicker(models []string) error {
 		_ = json.Unmarshal([]byte(prefsJSON), &prefs)
 	}
 
-	// Build name→ID map from VS Code's cached model list.
-	// VS Code uses numeric IDs like "ollama/Ollama/4", not "ollama/Ollama/kimi-k2.5:cloud".
+	// Build name→ID map from VS Code's cached model list. If VS Code has
+	// already resolved this provider, the cached identifier is the most exact
+	// representation of the model.
 	nameToID := make(map[string]string)
 	var cacheJSON string
 	if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = 'chat.cachedLanguageModels.v2'").Scan(&cacheJSON); err == nil {
 		var cached []map[string]any
 		if json.Unmarshal([]byte(cacheJSON), &cached) == nil {
+			filtered := cached[:0]
+			cacheChanged := false
 			for _, entry := range cached {
+				if isStaleCachedOllamaModelEntry(entry) {
+					cacheChanged = true
+					continue
+				}
+				filtered = append(filtered, entry)
 				meta, _ := entry["metadata"].(map[string]any)
 				if meta == nil {
 					continue
 				}
-				if vendor, _ := meta["vendor"].(string); vendor == "ollama" {
+				if vendor, _ := meta["vendor"].(string); vendor == vscodeOllamaVendor {
 					name, _ := meta["name"].(string)
 					id, _ := entry["identifier"].(string)
 					if name != "" && id != "" {
@@ -414,26 +410,29 @@ func (v *VSCode) ShowInModelPicker(models []string) error {
 					}
 				}
 			}
+			if cacheChanged {
+				if data, err := json.Marshal(filtered); err == nil {
+					_, _ = db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('chat.cachedLanguageModels.v2', ?)", string(data))
+				}
+			}
 		}
 	}
 
-	// Ollama config is authoritative: always show configured models,
-	// hide Ollama models that are no longer in the config.
-	configuredIDs := make(map[string]bool)
-	for _, m := range models {
-		for _, id := range v.modelVSCodeIDs(m, nameToID) {
-			prefs[id] = true
-			configuredIDs[id] = true
-		}
-	}
+	// The extension owns model discovery and picker visibility. Clear launch's
+	// old per-model overrides so previously hidden models can show up again.
 	for id := range prefs {
-		if strings.HasPrefix(id, "ollama/") && !configuredIDs[id] {
-			prefs[id] = false
+		if strings.HasPrefix(id, vscodeOllamaVendor+"/") {
+			delete(prefs, id)
 		}
 	}
 
 	data, _ := json.Marshal(prefs)
 	if _, err = db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('chatModelPickerPreferences', ?)", string(data)); err != nil {
+		return err
+	}
+
+	selectedID := v.primaryModelVSCodeID(model, nameToID)
+	if err := v.selectChatModel(db, selectedID); err != nil {
 		return err
 	}
 
@@ -450,11 +449,51 @@ func (v *VSCode) modelVSCodeIDs(model string, nameToID map[string]string) []stri
 			ids = append(ids, id)
 		}
 	}
-	ids = append(ids, "ollama/Ollama/"+model)
+	ids = append(ids, vscodeOllamaVendor+"/"+model)
+	ids = append(ids, vscodeOllamaVendor+"/"+vscodeOllamaName+"/"+model)
 	if !strings.Contains(model, ":") {
-		ids = append(ids, "ollama/Ollama/"+model+":latest")
+		ids = append(ids, vscodeOllamaVendor+"/"+model+":latest")
+		ids = append(ids, vscodeOllamaVendor+"/"+vscodeOllamaName+"/"+model+":latest")
 	}
 	return ids
+}
+
+func (v *VSCode) primaryModelVSCodeID(model string, nameToID map[string]string) string {
+	return v.modelVSCodeIDs(model, nameToID)[0]
+}
+
+func isStaleCachedOllamaModelEntry(entry map[string]any) bool {
+	identifier, _ := entry["identifier"].(string)
+	return strings.HasPrefix(identifier, vscodeOllamaVendor+"/"+vscodeOllamaName+"/")
+}
+
+func (v *VSCode) selectChatModel(db *sql.DB, modelID string) error {
+	if _, err := db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('chat.currentLanguageModel.panel', ?)", modelID); err != nil {
+		return err
+	}
+	if _, err := db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('chat.currentLanguageModel.panel.isDefault', 'false')"); err != nil {
+		return err
+	}
+
+	recent := []string{}
+	var recentJSON string
+	if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = 'chatModelRecentlyUsed'").Scan(&recentJSON); err == nil {
+		_ = json.Unmarshal([]byte(recentJSON), &recent)
+	}
+
+	updated := []string{modelID}
+	for _, id := range recent {
+		if id != modelID {
+			updated = append(updated, id)
+		}
+	}
+	if len(updated) > 20 {
+		updated = updated[:20]
+	}
+
+	data, _ := json.Marshal(updated)
+	_, err := db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('chatModelRecentlyUsed', ?)", string(data))
+	return err
 }
 
 func (v *VSCode) vscodePath(parts ...string) string {
@@ -496,8 +535,10 @@ func (v *VSCode) checkVSCodeVersion() {
 	}
 }
 
-// checkCopilotChatVersion warns if the GitHub Copilot Chat extension is
-// missing or older than minCopilotChatVersion.
+// checkCopilotChatVersion warns if the explicitly installed GitHub Copilot
+// Chat extension is older than the recommended version. Missing is not treated
+// as an error because newer VS Code builds may provide chat without listing
+// github.copilot-chat in --list-extensions output.
 func (v *VSCode) checkCopilotChatVersion() {
 	codeCLI := v.findCodeCLI()
 	if codeCLI == "" {
@@ -511,14 +552,37 @@ func (v *VSCode) checkCopilotChatVersion() {
 
 	installed, version := parseCopilotChatVersion(string(out))
 	if !installed {
-		fmt.Fprintf(os.Stderr, "\n%sWarning: GitHub Copilot Chat extension is not installed%s\n", ansiYellow, ansiReset)
-		fmt.Fprintf(os.Stderr, "Install it in VS Code: Extensions → search \"GitHub Copilot Chat\" → Install\n\n")
 		return
 	}
 	if compareVersions(version, minCopilotChatVersion) < 0 {
 		fmt.Fprintf(os.Stderr, "\n%sWarning: GitHub Copilot Chat extension version (%s) is older than the recommended version (%s)%s\n", ansiYellow, version, minCopilotChatVersion, ansiReset)
 		fmt.Fprintf(os.Stderr, "Please update it in VS Code: Extensions → search \"GitHub Copilot Chat\" → Update\n\n")
 	}
+}
+
+func (v *VSCode) ensureOllamaExtensionInstalled() (bool, error) {
+	codeCLI := v.findCodeCLI()
+	if codeCLI == "" {
+		return false, fmt.Errorf("could not find VS Code CLI to install the Ollama extension")
+	}
+
+	out, err := exec.Command(codeCLI, "--list-extensions", "--show-versions").Output()
+	if err != nil {
+		return false, fmt.Errorf("could not list VS Code extensions: %w", err)
+	}
+	if hasVSCodeExtension(string(out), vscodeOllamaExtensionID) {
+		return false, nil
+	}
+
+	fmt.Fprintf(os.Stderr, "Installing Ollama VS Code extension...\n")
+	if out, err := exec.Command(codeCLI, "--install-extension", vscodeOllamaExtensionID, "--force").CombinedOutput(); err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail != "" {
+			return false, fmt.Errorf("could not install Ollama VS Code extension: %w\n%s", err, detail)
+		}
+		return false, fmt.Errorf("could not install Ollama VS Code extension: %w", err)
+	}
+	return true, nil
 }
 
 // findCodeCLI returns the path to the VS Code CLI for querying extensions.
@@ -554,6 +618,23 @@ func parseCopilotChatVersion(output string) (installed bool, version string) {
 		return true, strings.TrimSpace(parts[1])
 	}
 	return false, ""
+}
+
+func hasVSCodeExtension(output, extensionID string) bool {
+	extensionID = strings.ToLower(extensionID)
+	for _, line := range strings.Split(output, "\n") {
+		id := strings.TrimSpace(line)
+		if id == "" {
+			continue
+		}
+		if beforeVersion, _, ok := strings.Cut(id, "@"); ok {
+			id = beforeVersion
+		}
+		if strings.ToLower(id) == extensionID {
+			return true
+		}
+	}
+	return false
 }
 
 // compareVersions compares two dot-separated version strings.
