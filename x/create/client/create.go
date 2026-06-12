@@ -9,6 +9,7 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -348,6 +349,17 @@ func readConfigV2(m *imagemanifest.ModelManifest) (*model.ConfigV2, error) {
 	return &cfg, nil
 }
 
+func readHFGenerationDefaults(modelDir string) (model.GenerationDefaults, error) {
+	data, err := os.ReadFile(filepath.Join(modelDir, "generation_config.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	return model.ParseHFGenerationDefaults(data)
+}
+
 func inferSafetensorsCapabilities(modelDir, parserName string) []string {
 	capabilities := []string{"completion"}
 
@@ -539,6 +551,15 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		}
 		configData.Parser = resolveParserName(opts.Modelfile, parserName)
 		configData.Renderer = resolveRendererName(opts.Modelfile, rendererName)
+		if slices.Contains(caps, "completion") {
+			defaults, err := readHFGenerationDefaults(opts.ModelDir)
+			if err != nil {
+				return fmt.Errorf("failed to read generation_config.json: %w", err)
+			}
+			if len(defaults) > 0 {
+				configData.GenerationDefaults = defaults
+			}
+		}
 		if opts.Modelfile != nil && opts.Modelfile.Draft != "" {
 			draft, err := draftMetadata(opts.Modelfile.Draft)
 			if err != nil {
