@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/ollama/ollama/agent"
@@ -13,8 +12,7 @@ import (
 )
 
 const (
-	maxReadBytes   = 200000
-	maxListEntries = 300
+	maxReadBytes = 200000
 )
 
 type Read struct{}
@@ -81,87 +79,6 @@ func (r *Read) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		return agent.ToolResult{}, err
 	}
 	return agent.ToolResult{Content: string(content)}, nil
-}
-
-type List struct{}
-
-func NewList() *List {
-	return &List{}
-}
-
-func (l *List) Name() string {
-	return "list"
-}
-
-func (l *List) Description() string {
-	return "List files and directories in the current working directory."
-}
-
-func (l *List) Schema() api.ToolFunction {
-	props := api.NewToolPropertiesMap()
-	props.Set("path", api.ToolProperty{
-		Type:        api.PropertyType{"string"},
-		Description: "Directory path to list, relative to the working directory. Defaults to the working directory.",
-	})
-	return api.ToolFunction{
-		Name:        l.Name(),
-		Description: l.Description(),
-		Parameters: api.ToolFunctionParameters{
-			Type:       "object",
-			Properties: props,
-		},
-	}
-}
-
-func (l *List) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
-	path := "."
-	if raw, ok := args["path"].(string); ok && strings.TrimSpace(raw) != "" {
-		path = raw
-	}
-
-	resolved, err := resolvePath(toolCtx.WorkingDir, path)
-	if err != nil {
-		return agent.ToolResult{}, err
-	}
-
-	entries, err := os.ReadDir(resolved)
-	if err != nil {
-		return agent.ToolResult{}, err
-	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].IsDir() != entries[j].IsDir() {
-			return entries[i].IsDir()
-		}
-		return entries[i].Name() < entries[j].Name()
-	})
-
-	var sb strings.Builder
-	count := len(entries)
-	limit := count
-	if limit > maxListEntries {
-		limit = maxListEntries
-	}
-	for i := 0; i < limit; i++ {
-		select {
-		case <-ctx.Done():
-			return agent.ToolResult{}, ctx.Err()
-		default:
-		}
-
-		name := entries[i].Name()
-		if entries[i].IsDir() {
-			name += string(os.PathSeparator)
-		}
-		sb.WriteString(name)
-		sb.WriteByte('\n')
-	}
-	if count > limit {
-		sb.WriteString(fmt.Sprintf("... (%d entries omitted)\n", count-limit))
-	}
-	if sb.Len() == 0 {
-		return agent.ToolResult{Content: "(empty directory)"}, nil
-	}
-	return agent.ToolResult{Content: sb.String()}, nil
 }
 
 type Edit struct{}

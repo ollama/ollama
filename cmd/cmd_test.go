@@ -665,7 +665,11 @@ func TestRunHandlerHeadlessAgent(t *testing.T) {
 	if chatReq.Model != "test-model" {
 		t.Fatalf("chat model = %q, want test-model", chatReq.Model)
 	}
-	if len(chatReq.Messages) != 1 || chatReq.Messages[0].Role != "user" || chatReq.Messages[0].Content != "hello" {
+	if len(chatReq.Messages) != 2 ||
+		chatReq.Messages[0].Role != "system" ||
+		!strings.Contains(chatReq.Messages[0].Content, "You are Ollama, a helpful local AI assistant.") ||
+		chatReq.Messages[1].Role != "user" ||
+		chatReq.Messages[1].Content != "hello" {
 		t.Fatalf("chat messages = %#v", chatReq.Messages)
 	}
 }
@@ -736,7 +740,11 @@ func TestRunHandlerPromptUsesAgentLoopByDefault(t *testing.T) {
 	if chatReq.Model != "test-model" {
 		t.Fatalf("chat model = %q, want test-model", chatReq.Model)
 	}
-	if len(chatReq.Messages) != 1 || chatReq.Messages[0].Role != "user" || chatReq.Messages[0].Content != "hello" {
+	if len(chatReq.Messages) != 2 ||
+		chatReq.Messages[0].Role != "system" ||
+		!strings.Contains(chatReq.Messages[0].Content, "You are Ollama, a helpful local AI assistant.") ||
+		chatReq.Messages[1].Role != "user" ||
+		chatReq.Messages[1].Content != "hello" {
 		t.Fatalf("chat messages = %#v", chatReq.Messages)
 	}
 }

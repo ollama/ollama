@@ -125,11 +125,50 @@ func TestChatViewCapsTallInputBoxAndKeepsFooter(t *testing.T) {
 	if got := inputBoxBodyLineCount(t, view, 32); got > maxInputBoxBodyLines {
 		t.Fatalf("input body lines = %d, want <= %d:\n%s", got, maxInputBoxBodyLines, view)
 	}
-	if !strings.Contains(view, "enter send") || !strings.Contains(view, "ctrl+c clear/cancel") {
+	if !strings.Contains(view, "enter send") || !strings.Contains(view, "shift+tab") || !strings.Contains(view, "review") {
 		t.Fatalf("view should keep footer visible:\n%s", view)
 	}
 	if !strings.Contains(view, "> ... ") {
 		t.Fatalf("truncated pasted prompt should show an omission marker:\n%s", view)
+	}
+}
+
+func TestChatViewWrapsFooterWhenNarrow(t *testing.T) {
+	m := chatModel{
+		input:          []rune("hello"),
+		width:          28,
+		height:         14,
+		status:         "cache will break by turning system prompt off",
+		permissionMode: newChatPermissionMode(true),
+		opts: ChatOptions{
+			Verbose:             true,
+			ContextWindowTokens: 262144,
+		},
+		contextTokens:   12345,
+		contextEstimate: true,
+	}
+
+	view := stripANSI(m.View())
+	if got := len(strings.Split(view, "\n")); got != 14 {
+		t.Fatalf("view height = %d, want 14:\n%s", got, view)
+	}
+	for _, want := range []string{
+		"cache will break by",
+		"system prompt off",
+		"enter",
+		"send",
+		"full access",
+		"ctx",
+		"~12,345/262,144",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("wrapped footer missing %q:\n%s", want, view)
+		}
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if len([]rune(line)) > 28 {
+			t.Fatalf("line width = %d, want <= 28: %q\n%s", len([]rune(line)), line, view)
+		}
 	}
 }
 
@@ -271,10 +310,10 @@ func TestChatScrollsTranscript(t *testing.T) {
 		t.Fatalf("scrollStatus = %q, want ↑ more", got)
 	}
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 	m = updated.(chatModel)
-	if m.scroll != 1 {
-		t.Fatalf("scroll = %d, want 1", m.scroll)
+	if m.scroll == 0 {
+		t.Fatal("page up should scroll transcript")
 	}
 	if got := m.scrollStatus(); got != "↑/↓ more" {
 		t.Fatalf("scrollStatus = %q, want ↑/↓ more", got)
@@ -328,7 +367,7 @@ func TestChatMouseWheelScrollsTranscriptWhileRunning(t *testing.T) {
 	}
 }
 
-func TestChatArrowKeysScrollTranscriptWhileRunning(t *testing.T) {
+func TestChatArrowKeysNavigatePromptHistoryWhenTranscriptScrollable(t *testing.T) {
 	m := chatModel{
 		input:         []rune("queued draft"),
 		promptHistory: []string{"old prompt"},
@@ -345,17 +384,20 @@ func TestChatArrowKeysScrollTranscriptWhileRunning(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m = updated.(chatModel)
-	if m.scroll != 1 {
-		t.Fatalf("key up should scroll transcript while running, got %d", m.scroll)
+	if m.scroll != 0 {
+		t.Fatalf("key up should not scroll transcript, got %d", m.scroll)
 	}
-	if got := string(m.input); got != "queued draft" {
-		t.Fatalf("key up should not recall prompt history while running, got input %q", got)
+	if got := string(m.input); got != "old prompt" {
+		t.Fatalf("key up should recall prompt history, got %q", got)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(chatModel)
 	if m.scroll != 0 {
-		t.Fatalf("key down should return to bottom while running, got %d", m.scroll)
+		t.Fatalf("key down should not scroll transcript, got %d", m.scroll)
+	}
+	if got := string(m.input); got != "queued draft" {
+		t.Fatalf("key down should restore draft, got %q", got)
 	}
 }
 

@@ -204,14 +204,15 @@ type chatModel struct {
 	reviewApproval   coreagent.ApprovalHandler
 	permissionMode   *chatPermissionMode
 
-	width     int
-	height    int
-	status    string
-	spinner   int
-	complete  int
-	quitting  bool
-	quitArmed bool
-	err       error
+	width                int
+	height               int
+	status               string
+	spinner              int
+	complete             int
+	systemPromptDisabled bool
+	quitting             bool
+	quitArmed            bool
+	err                  error
 }
 
 func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
@@ -243,7 +244,7 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
 
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, err
@@ -421,10 +422,6 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.insertInputNewline()
 			return m, nil
 		case tea.KeyUp:
-			if m.running || m.compacting {
-				m.scrollBy(1)
-				return m, nil
-			}
 			if m.promptActive && m.movePromptHistory(-1) {
 				return m, nil
 			}
@@ -434,23 +431,15 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.movePromptHistory(-1) {
 				return m, nil
 			}
-			m.scrollBy(1)
 			return m, nil
 		case tea.KeyDown:
-			if m.running || m.compacting {
-				m.scrollBy(-1)
-				return m, nil
-			}
 			if m.promptActive && m.movePromptHistory(1) {
 				return m, nil
 			}
 			if m.moveCompletion(1) {
 				return m, nil
 			}
-			if m.movePromptHistory(1) {
-				return m, nil
-			}
-			m.scrollBy(-1)
+			m.movePromptHistory(1)
 			return m, nil
 		case tea.KeyPgUp:
 			m.scrollBy(m.transcriptHeight() - 1)
