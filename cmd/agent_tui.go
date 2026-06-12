@@ -44,6 +44,7 @@ type AgentTUIOptions struct {
 	ContextWindowTokens int
 	Resume              bool
 	AutoApproveTools    bool
+	Verbose             bool
 	MultiModal          bool
 	Skill               string
 	Skills              *skills.Catalog
@@ -65,6 +66,7 @@ func agentOptionsFromRunOptions(opts runOptions) AgentTUIOptions {
 		ContextWindowTokens: opts.ContextWindowTokens,
 		Resume:              opts.Resume,
 		AutoApproveTools:    opts.AutoApproveTools,
+		Verbose:             opts.Verbose,
 		MultiModal:          opts.MultiModal,
 		Skill:               opts.Skill,
 	}
@@ -172,6 +174,7 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		Think:            opts.Think,
 		KeepAlive:        opts.KeepAlive,
 		HideThinking:     opts.HideThinking,
+		Verbose:          opts.Verbose,
 		Compactor: coreagent.NewSimpleCompactor(client, persistentStore, coreagent.CompactionOptions{
 			ContextWindowTokens: opts.ContextWindowTokens,
 		}),
@@ -350,9 +353,13 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 		fmt.Fprintln(os.Stdout)
 	}
 
-	verbose, err := cmd.Flags().GetBool("verbose")
-	if err != nil {
-		return err
+	verbose := opts.Verbose
+	if cmd != nil && cmd.Flags().Lookup("verbose") != nil {
+		flagVerbose, err := cmd.Flags().GetBool("verbose")
+		if err != nil {
+			return err
+		}
+		verbose = verbose || flagVerbose
 	}
 	if verbose {
 		result.Latest.Summary()

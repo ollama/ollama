@@ -43,6 +43,8 @@ var chatSlashCommands = []chatSlashCommand{
 	{name: "/skills", description: "show or import installed skills"},
 	{name: "/new", description: "start a new chat"},
 	{name: "/resume", description: "resume a saved chat"},
+	{name: "/think", description: "set thinking mode"},
+	{name: "/verbose", description: "toggle model metrics"},
 	{name: "/compact", description: "summarize older context"},
 	{name: "/help", description: "show commands"},
 	{name: "/bye", description: "exit"},
@@ -89,6 +91,8 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	case input == "/?" || input == "/help":
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: m.helpSummary()}))
 		return *m, nil
+	case strings.HasPrefix(input, "/? ") || strings.HasPrefix(input, "/help "):
+		return m.handleLegacyHelpCommand(input)
 	case input == "/copy":
 		return m.copyModelOutput(false)
 	case input == "/copy-all":
@@ -101,6 +105,16 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	case input == "/model" || strings.HasPrefix(input, "/model "):
 		filter := strings.TrimSpace(strings.TrimPrefix(input, "/model"))
 		return m.openModelPicker(filter)
+	case input == "/load" || strings.HasPrefix(input, "/load "):
+		return m.handleLegacyLoadCommand(input)
+	case input == "/think":
+		return m.openThinkPicker()
+	case strings.HasPrefix(input, "/think "):
+		return m.handleThinkCommand(strings.TrimSpace(strings.TrimPrefix(input, "/think")))
+	case input == "/set" || strings.HasPrefix(input, "/set "):
+		return m.handleLegacySetCommand(input)
+	case input == "/show" || strings.HasPrefix(input, "/show "):
+		return m.handleLegacyShowCommand(input)
 	case input == "/history":
 		return m.openHistoryPopup()
 	case input == "/skills" || strings.HasPrefix(input, "/skills "):
@@ -110,6 +124,8 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.resetChat("new chat")
 	case input == "/resume":
 		return m.openResumePicker()
+	case input == "/verbose" || strings.HasPrefix(input, "/verbose "):
+		return m.handleVerboseCommand(input)
 	case input == "/compact":
 		return m.startManualCompaction()
 	case strings.HasPrefix(input, "/"):
@@ -126,6 +142,28 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	}
 
 	return m.startRun(input)
+}
+
+func (m *chatModel) handleVerboseCommand(input string) (tea.Model, tea.Cmd) {
+	arg := strings.TrimSpace(strings.TrimPrefix(input, "/verbose"))
+	switch strings.ToLower(arg) {
+	case "":
+		m.opts.Verbose = !m.opts.Verbose
+	case "on", "true", "1":
+		m.opts.Verbose = true
+	case "off", "false", "0":
+		m.opts.Verbose = false
+	default:
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: `Usage: /verbose [on|off]`}))
+		m.status = "error"
+		return *m, nil
+	}
+	if m.opts.Verbose {
+		m.status = "verbose on"
+	} else {
+		m.status = "verbose off"
+	}
+	return *m, nil
 }
 
 func initialPromptHistory(ctx context.Context, opts ChatOptions) []string {
@@ -208,6 +246,36 @@ func (m *chatModel) resetPromptHistoryCursor() {
 	m.promptActive = false
 	m.promptCursor = 0
 	m.promptDraft = nil
+}
+
+func (m *chatModel) insertInputNewline() {
+	m.resetPromptHistoryCursor()
+	m.disarmQuit()
+	m.input = append(m.input, '\n')
+	m.complete = 0
+}
+
+func deleteInputWord(input []rune) []rune {
+	end := len(input)
+	for end > 0 && unicode.IsSpace(input[end-1]) {
+		end--
+	}
+	start := end
+	for start > 0 && !unicode.IsSpace(input[start-1]) {
+		start--
+	}
+	return input[:start]
+}
+
+func isShiftEnterCSI(msg tea.Msg) bool {
+	switch fmt.Sprint(msg) {
+	case "?CSI[49 51 59 50 117]?", // \x1b[13;2u
+		"?CSI[49 51 59 50 126]?",          // \x1b[13;2~
+		"?CSI[50 55 59 50 59 49 51 126]?": // \x1b[27;2;13~
+		return true
+	default:
+		return false
+	}
 }
 
 func renderInputBox(input string, width int) string {
@@ -527,11 +595,13 @@ func (m chatModel) helpSummary() string {
 		"- `/copy-all`: copy all model output",
 		"- `/tools`: show available tools",
 		"- `/model`: switch models",
+		"- `/think`: set thinking mode",
 		"- `/history`: show prompt message history",
 		"- `/skills`: show or import skills",
 		"- `/<skill>`: run the next message with a skill",
 		"- `/new`: start a new chat",
 		"- `/resume`: resume a saved chat",
+		"- `/verbose`: toggle model metrics",
 		"- `/compact`: summarize older context",
 		"- `/clear`: clear this chat",
 		"- `/bye`: exit",
@@ -539,6 +609,7 @@ func (m chatModel) helpSummary() string {
 		"**Shortcuts**",
 		"",
 		"- `ctrl+o`: toggle tool output and details",
+		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
 		"- `↑/↓`, `pgup/pgdn`, `home/end`: scroll transcript",
 	}, "\n")

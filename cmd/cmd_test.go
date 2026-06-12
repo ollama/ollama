@@ -1964,6 +1964,7 @@ func TestRunOptions_Copy(t *testing.T) {
 		Think:        originalThink,
 		HideThinking: false,
 		ShowConnect:  true,
+		Verbose:      true,
 	}
 
 	// Test the copy
@@ -1990,6 +1991,7 @@ func TestRunOptions_Copy(t *testing.T) {
 		{"MultiModal", copied.MultiModal, original.MultiModal},
 		{"HideThinking", copied.HideThinking, original.HideThinking},
 		{"ShowConnect", copied.ShowConnect, original.ShowConnect},
+		{"Verbose", copied.Verbose, original.Verbose},
 	}
 
 	for _, tt := range tests {
@@ -2081,6 +2083,14 @@ func TestRunOptions_Copy(t *testing.T) {
 	if !reflect.DeepEqual(zeroCopy, zeroOriginal) {
 		fmt.Printf("orig: %#v\ncopy: %#v\n", zeroOriginal, zeroCopy)
 		t.Error("Copy of zero value should equal original zero value")
+	}
+}
+
+func TestAgentOptionsFromRunOptionsCopiesVerbose(t *testing.T) {
+	opts := agentOptionsFromRunOptions(runOptions{Model: "llama3.2", Verbose: true})
+
+	if !opts.Verbose {
+		t.Fatal("Verbose should be copied into agent TUI options")
 	}
 }
 

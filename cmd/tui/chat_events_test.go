@@ -5,6 +5,7 @@ import (
 
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -261,6 +262,67 @@ func TestChatRunDoneKeepsAPIPromptEvalCount(t *testing.T) {
 	}
 	if fm.contextEstimate {
 		t.Fatal("API prompt eval count should not be marked estimated")
+	}
+}
+
+func TestChatVerboseRunDoneRendersModelMetrics(t *testing.T) {
+	m := chatModel{
+		opts:    ChatOptions{Verbose: true},
+		entries: []chatEntry{newChatEntry(chatEntry{role: "assistant", content: "done"})},
+	}
+
+	updated, _ := m.Update(chatRunDoneMsg{
+		result: &coreagent.RunResult{
+			Messages: []api.Message{{Role: "assistant", Content: "done"}},
+			Latest: api.ChatResponse{
+				Metrics: api.Metrics{
+					TotalDuration:      617565500 * time.Nanosecond,
+					LoadDuration:       222099916 * time.Nanosecond,
+					PromptEvalCount:    55,
+					PromptEvalDuration: 103384 * time.Microsecond,
+					EvalCount:          28,
+					EvalDuration:       290393 * time.Microsecond,
+				},
+			},
+		},
+	})
+	m = updated.(chatModel)
+
+	transcript := stripANSI(m.renderTranscript(160))
+	for _, want := range []string{
+		"done",
+		"total duration:       617.5655ms",
+		"load duration:        222.099916ms",
+		"prompt eval count:    55 token(s)",
+		"prompt eval duration: 103.384ms",
+		"prompt eval rate:     532.00 tokens/s",
+		"eval count:           28 token(s)",
+		"eval duration:        290.393ms",
+		"eval rate:            96.42 tokens/s",
+	} {
+		if !strings.Contains(transcript, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, transcript)
+		}
+	}
+}
+
+func TestChatRunDoneOmitsModelMetricsWithoutVerbose(t *testing.T) {
+	m := chatModel{
+		entries: []chatEntry{newChatEntry(chatEntry{role: "assistant", content: "done"})},
+	}
+
+	updated, _ := m.Update(chatRunDoneMsg{
+		result: &coreagent.RunResult{
+			Messages: []api.Message{{Role: "assistant", Content: "done"}},
+			Latest: api.ChatResponse{
+				Metrics: api.Metrics{TotalDuration: time.Second, EvalCount: 1},
+			},
+		},
+	})
+	m = updated.(chatModel)
+
+	if transcript := stripANSI(m.renderTranscript(120)); strings.Contains(transcript, "total duration:") {
+		t.Fatalf("non-verbose transcript should not include metrics:\n%s", transcript)
 	}
 }
 

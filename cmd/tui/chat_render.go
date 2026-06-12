@@ -31,6 +31,7 @@ type chatEntry struct {
 	startedAt  time.Time
 	finishedAt time.Time
 	tools      []chatEntry
+	metrics    *api.Metrics
 
 	version     int
 	renderKey   chatEntryRenderKey
@@ -323,7 +324,11 @@ func (m chatModel) renderEntryLines(entry chatEntry, body string, width int) []s
 		width = 20
 	}
 	switch entry.role {
-	case "assistant", "system":
+	case "assistant":
+		lines := splitRenderedBody(renderMarkdownForView(body, width))
+		lines = append(lines, renderMetricsLines(entry.metrics, width)...)
+		return lines
+	case "system":
 		return splitRenderedBody(renderMarkdownForView(body, width))
 	case "history":
 		return renderHistoryLines(body, width)
@@ -348,6 +353,57 @@ func (m chatModel) renderEntryLines(entry chatEntry, body string, width int) []s
 
 func renderUserMessageLines(content string, width int) []string {
 	return renderPromptRow("> "+content, width)
+}
+
+func renderMetricsLines(metrics *api.Metrics, width int) []string {
+	summary := metricsSummaryLines(metrics)
+	if len(summary) == 0 {
+		return nil
+	}
+	var lines []string
+	for _, line := range summary {
+		for _, wrapped := range wrapChatText(line, width) {
+			lines = append(lines, chatMetaStyle.Render(wrapped))
+		}
+	}
+	return lines
+}
+
+func metricsSummaryLines(metrics *api.Metrics) []string {
+	if metrics == nil || metricsEmpty(*metrics) {
+		return nil
+	}
+	var lines []string
+	if metrics.TotalDuration > 0 {
+		lines = append(lines, fmt.Sprintf("total duration:       %v", metrics.TotalDuration))
+	}
+	if metrics.LoadDuration > 0 {
+		lines = append(lines, fmt.Sprintf("load duration:        %v", metrics.LoadDuration))
+	}
+	if metrics.PromptEvalCount > 0 {
+		lines = append(lines, fmt.Sprintf("prompt eval count:    %d token(s)", metrics.PromptEvalCount))
+	}
+	if metrics.PromptEvalDuration > 0 {
+		lines = append(lines, fmt.Sprintf("prompt eval duration: %s", metrics.PromptEvalDuration))
+		lines = append(lines, fmt.Sprintf("prompt eval rate:     %.2f tokens/s", float64(metrics.PromptEvalCount)/metrics.PromptEvalDuration.Seconds()))
+	}
+	if metrics.EvalCount > 0 {
+		lines = append(lines, fmt.Sprintf("eval count:           %d token(s)", metrics.EvalCount))
+	}
+	if metrics.EvalDuration > 0 {
+		lines = append(lines, fmt.Sprintf("eval duration:        %s", metrics.EvalDuration))
+		lines = append(lines, fmt.Sprintf("eval rate:            %.2f tokens/s", float64(metrics.EvalCount)/metrics.EvalDuration.Seconds()))
+	}
+	return lines
+}
+
+func metricsEmpty(metrics api.Metrics) bool {
+	return metrics.TotalDuration <= 0 &&
+		metrics.LoadDuration <= 0 &&
+		metrics.PromptEvalCount <= 0 &&
+		metrics.PromptEvalDuration <= 0 &&
+		metrics.EvalCount <= 0 &&
+		metrics.EvalDuration <= 0
 }
 
 func renderHistoryLines(history string, width int) []string {
@@ -930,6 +986,9 @@ func (m chatModel) footerParts() []string {
 		controls += " • ctrl+o details"
 	}
 	parts = append(parts, controls)
+	if m.opts.Verbose {
+		parts = append(parts, "verbose")
+	}
 	parts = append(parts, m.permissionModeStatus())
 	if cwd := m.cwdStatus(); cwd != "" {
 		parts = append(parts, cwd)
@@ -1096,6 +1155,19 @@ func (m *chatModel) applyResponseMetrics(response *api.ChatResponse) {
 		m.contextTokens = response.PromptEvalCount
 		m.contextEstimate = false
 	}
+}
+
+func (m *chatModel) attachVerboseMetrics(metrics api.Metrics) {
+	if !m.opts.Verbose || metricsEmpty(metrics) {
+		return
+	}
+	if len(m.entries) == 0 || m.entries[len(m.entries)-1].role != "assistant" {
+		return
+	}
+	copied := metrics
+	idx := len(m.entries) - 1
+	m.entries[idx].metrics = &copied
+	m.markEntryDirty(idx)
 }
 
 func eventEvalCount(event coreagent.Event) int {
@@ -1367,6 +1439,7 @@ func writeEntryRenderHash(b *strings.Builder, entry chatEntry) {
 		strconv.FormatBool(entry.expanded),
 		strconv.FormatInt(entry.startedAt.UnixNano(), 10),
 		strconv.FormatInt(entry.finishedAt.UnixNano(), 10),
+		strings.Join(metricsSummaryLines(entry.metrics), "\n"),
 	} {
 		b.WriteString(value)
 		b.WriteByte(0)
