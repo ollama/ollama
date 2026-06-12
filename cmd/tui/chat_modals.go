@@ -511,9 +511,6 @@ func (m chatModel) renderHistoryPopup(width, height int) string {
 
 	var b strings.Builder
 	b.WriteString(chatResumeTitleStyle.Render("Message history"))
-	if len(bodyLines) > visibleHeight {
-		b.WriteString(chatResumeMetaStyle.Render(fmt.Sprintf("  %d/%d", scroll+1, maxScroll+1)))
-	}
 	b.WriteString("\n\n")
 	if len(bodyLines) == 0 {
 		b.WriteString(chatResumeMetaStyle.Render("No messages yet."))

@@ -276,13 +276,22 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 	if activity := m.activityLine(); activity != "" {
 		lines = append(lines, chatMetaStyle.Render(activity))
 	}
-	fixedLines := len(lines) + 3
+
+	footerLines := m.renderFooterLines(width)
+	if maxHeight > 0 {
+		maxFooterLines := max(1, maxHeight-len(lines)-3)
+		if len(footerLines) > maxFooterLines {
+			footerLines = footerLines[:maxFooterLines]
+		}
+	}
+
+	fixedLines := len(lines) + len(footerLines) + 2
 	inputBodyLines := maxInputBoxBodyLines
 	if maxHeight > 0 {
 		inputBodyLines = min(inputBodyLines, max(1, maxHeight-fixedLines))
 	}
 	lines = append(lines, renderInputBoxLines(string(m.input), width, inputBodyLines)...)
-	lines = append(lines, m.renderFooterLine())
+	lines = append(lines, footerLines...)
 	return lines
 }
 
@@ -978,8 +987,6 @@ func (m chatModel) footerParts() []string {
 	controls := action
 	if m.approvalPrompt != nil {
 		controls += " • ←/→ choose • o once • s session • d deny • esc deny"
-	} else {
-		controls += " • ctrl+c clear/cancel/quit"
 	}
 	controls += " • shift+tab"
 	if m.lastExpandableToolEntry() >= 0 {
@@ -1009,6 +1016,35 @@ func (m chatModel) renderFooterLine() string {
 		parts[i] = chatMetaStyle.Render(part)
 	}
 	return strings.Join(parts, chatMetaStyle.Render(" • "))
+}
+
+func (m chatModel) renderFooterLines(width int) []string {
+	lines := wrapChatText(m.footerLine(), width)
+	for i, line := range lines {
+		lines[i] = renderFooterPlainLine(line)
+	}
+	return lines
+}
+
+func renderFooterPlainLine(line string) string {
+	const fullAccess = "full access"
+	if !strings.Contains(line, fullAccess) {
+		return chatMetaStyle.Render(line)
+	}
+
+	var b strings.Builder
+	for {
+		before, after, ok := strings.Cut(line, fullAccess)
+		if before != "" {
+			b.WriteString(chatMetaStyle.Render(before))
+		}
+		if !ok {
+			break
+		}
+		b.WriteString(chatFullAccessStyle.Render(fullAccess))
+		line = after
+	}
+	return b.String()
 }
 
 func (m chatModel) permissionModeStatus() string {

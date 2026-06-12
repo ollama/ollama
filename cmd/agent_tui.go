@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -424,8 +425,6 @@ func agentHeadlessToolLabel(name string, args map[string]any) string {
 		displayName = "Bash"
 	case "read":
 		displayName = "Read"
-	case "list":
-		displayName = "List"
 	case "edit":
 		displayName = "Edit"
 	}
@@ -451,7 +450,12 @@ func loadAgentSkills() *skills.Catalog {
 }
 
 func agentSystemPrompt(catalog *skills.Catalog, skillToolAvailable bool, extra string) string {
+	return agentSystemPromptAt(time.Now(), catalog, skillToolAvailable, extra)
+}
+
+func agentSystemPromptAt(now time.Time, catalog *skills.Catalog, skillToolAvailable bool, extra string) string {
 	var parts []string
+	parts = append(parts, agentDefaultSystemPrompt(now))
 	if catalogPrompt := catalog.SystemPrompt(skillToolAvailable); strings.TrimSpace(catalogPrompt) != "" {
 		parts = append(parts, catalogPrompt)
 	}
@@ -459,6 +463,21 @@ func agentSystemPrompt(catalog *skills.Catalog, skillToolAvailable bool, extra s
 		parts = append(parts, strings.TrimSpace(extra))
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func agentDefaultSystemPrompt(now time.Time) string {
+	date := now.Format("Monday, January 2, 2006")
+	return strings.Join([]string{
+		"You are Ollama, a helpful local AI assistant.",
+		"",
+		"Current date: " + date + ".",
+		"",
+		"Be concise, practical, and action-oriented. Use tools when they materially help. Verify current or fast-changing facts with web tools when available; otherwise state uncertainty.",
+		"",
+		"Use bash carefully. Prefer read-only inspection first. Stay within the current working directory unless explicitly asked. Surface intent before risky actions such as writes, deletes, moves, installs, git state changes, service changes, sudo, secrets access, network scripts, or commands outside the working directory. Request approval when required and do not work around denied approvals.",
+		"",
+		"Tell the user about meaningful changes, verification, failures, blockers, assumptions, and risks. Summarize routine tool output instead of dumping it.",
+	}, "\n")
 }
 
 func agentModelOptions(ctx context.Context, client *api.Client) ([]tui.ChatModelOption, error) {
@@ -564,7 +583,6 @@ func agentToolsRegistry(ctx context.Context, client *api.Client, modelName strin
 		registry.Register(agenttools.NewBash())
 	}
 	registry.Register(agenttools.NewRead())
-	registry.Register(agenttools.NewList())
 	registry.Register(agenttools.NewEdit())
 	if !catalog.Empty() {
 		registry.Register(agenttools.NewSkill(catalog))

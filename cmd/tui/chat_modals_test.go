@@ -144,6 +144,9 @@ func TestChatHistoryCommandStartsAtBottom(t *testing.T) {
 	if strings.Contains(view, "prompt 0") {
 		t.Fatalf("history popup started at oldest messages:\n%s", view)
 	}
+	if title := strings.Split(view, "\n")[0]; strings.Contains(title, "/") {
+		t.Fatalf("history popup should not show scroll counter in title:\n%s", view)
+	}
 }
 
 func TestChatHistoryCommandFormatsMultilineContentWithLabel(t *testing.T) {

@@ -7,13 +7,29 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/agent/skills"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/tui"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
+
+func TestAgentSystemPromptFormatsCurrentDate(t *testing.T) {
+	prompt := agentSystemPromptAt(time.Date(2026, time.June, 12, 9, 30, 0, 0, time.UTC), nil, false, "")
+	for _, want := range []string{
+		"You are Ollama, a helpful local AI assistant.",
+		"Current date: Friday, June 12, 2026.",
+		"Be concise, practical, and action-oriented.",
+		"Use bash carefully.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
 
 func TestAgentToolsRegistryNoCloudDisablesWebTools(t *testing.T) {
 	t.Setenv("OLLAMA_NO_CLOUD", "1")
@@ -44,8 +60,11 @@ func TestAgentToolsRegistryNoCloudDisablesWebTools(t *testing.T) {
 	if registry == nil {
 		t.Fatal("registry = nil, want local tools")
 	}
-	if !registry.Has("bash") || !registry.Has("read") || !registry.Has("list") || !registry.Has("edit") {
+	if !registry.Has("bash") || !registry.Has("read") || !registry.Has("edit") {
 		t.Fatalf("local tools missing: %v", registry.Names())
+	}
+	if registry.Has("list") {
+		t.Fatalf("list tool should not be registered; got %v", registry.Names())
 	}
 	if registry.Has("web_search") || registry.Has("web_fetch") {
 		t.Fatalf("web tools should be disabled when OLLAMA_NO_CLOUD is set: %v", registry.Names())

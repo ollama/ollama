@@ -62,6 +62,7 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 		!strings.Contains(fm.entries[0].content, "- `/think`: set thinking mode") ||
 		!strings.Contains(fm.entries[0].content, "- `/history`: show prompt message history") ||
 		!strings.Contains(fm.entries[0].content, "- `/verbose`: toggle model metrics") ||
+		!strings.Contains(fm.entries[0].content, "- `/system`: toggle or set system prompt") ||
 		!strings.Contains(fm.entries[0].content, "- `/<skill>`: run the next message with a skill") ||
 		!strings.Contains(fm.entries[0].content, "**Shortcuts**") ||
 		!strings.Contains(fm.entries[0].content, "- `ctrl+o`: toggle tool output and details") ||
@@ -330,6 +331,17 @@ func TestChatSlashCommandSuggestionsIncludeThink(t *testing.T) {
 	}
 }
 
+func TestChatSlashCommandSuggestionsIncludeSystem(t *testing.T) {
+	m := chatModel{
+		input: []rune("/sys"),
+	}
+
+	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+	if !strings.Contains(lines, "/system") || !strings.Contains(lines, "toggle or set system prompt") {
+		t.Fatalf("suggestions missing /system: %q", lines)
+	}
+}
+
 func TestChatSlashCommandSuggestionsHideLegacySetThink(t *testing.T) {
 	m := chatModel{
 		input: []rune("/set"),
@@ -559,6 +571,72 @@ func TestChatVerboseCommandRejectsInvalidState(t *testing.T) {
 	m = updated.(chatModel)
 	if len(m.entries) != 1 || m.entries[0].role != "error" || !strings.Contains(m.entries[0].content, "Usage: /verbose") {
 		t.Fatalf("entries = %#v, want usage error", m.entries)
+	}
+}
+
+func TestChatSystemCommandTogglesPrompt(t *testing.T) {
+	m := chatModel{
+		input: []rune("/system"),
+		opts:  ChatOptions{SystemPrompt: "base prompt"},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("system command should not return a command")
+	}
+	m = updated.(chatModel)
+	if !m.systemPromptDisabled {
+		t.Fatal("system prompt should be disabled")
+	}
+	if got := m.systemPrompt(""); got != "" {
+		t.Fatalf("system prompt = %q, want empty", got)
+	}
+	if m.status != "cache will break by turning system prompt off" {
+		t.Fatalf("status = %q", m.status)
+	}
+	if footer := m.footerLine(); !strings.Contains(footer, "cache will break by turning system prompt off") {
+		t.Fatalf("footer missing cache warning: %q", footer)
+	}
+
+	m.input = []rune("/system")
+	updated, cmd = m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("system command should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.systemPromptDisabled {
+		t.Fatal("system prompt should be enabled")
+	}
+	if got := m.systemPrompt(""); got != "base prompt" {
+		t.Fatalf("system prompt = %q, want base prompt", got)
+	}
+	if m.status != "cache will break by turning system prompt on" {
+		t.Fatalf("status = %q", m.status)
+	}
+}
+
+func TestChatSystemCommandSetsPrompt(t *testing.T) {
+	m := chatModel{
+		input:                []rune("/system You are concise."),
+		systemPromptDisabled: true,
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("system command should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.systemPromptDisabled {
+		t.Fatal("setting system prompt should enable it")
+	}
+	if got := m.opts.SystemPrompt; got != "You are concise." {
+		t.Fatalf("stored system prompt = %q", got)
+	}
+	if got := m.systemPrompt(""); got != "You are concise." {
+		t.Fatalf("system prompt = %q", got)
+	}
+	if m.status != "system prompt set; cache will break" {
+		t.Fatalf("status = %q", m.status)
 	}
 }
 

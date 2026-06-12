@@ -251,7 +251,7 @@ type DefaultApprovalPolicy struct{}
 
 func (DefaultApprovalPolicy) EvaluateApproval(_ context.Context, req ApprovalRequest) ApprovalEvaluation {
 	switch req.ToolName {
-	case "read", "list":
+	case "read":
 		if path, ok := stringApprovalArg(req.Args, "path"); ok {
 			if reason := approvalPathEscapeReason(req.WorkingDir, path); reason != "" {
 				return denyApproval(req.ToolName, ApprovalRiskHigh, reason)
@@ -613,8 +613,6 @@ func toolApprovalDisplayName(name string) string {
 		return "Bash"
 	case "read":
 		return "Read"
-	case "list":
-		return "List"
 	case "edit":
 		return "Edit"
 	default:

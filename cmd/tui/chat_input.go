@@ -43,6 +43,7 @@ var chatSlashCommands = []chatSlashCommand{
 	{name: "/skills", description: "show or import installed skills"},
 	{name: "/new", description: "start a new chat"},
 	{name: "/resume", description: "resume a saved chat"},
+	{name: "/system", description: "toggle or set system prompt"},
 	{name: "/think", description: "set thinking mode"},
 	{name: "/verbose", description: "toggle model metrics"},
 	{name: "/compact", description: "summarize older context"},
@@ -124,6 +125,8 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.resetChat("new chat")
 	case input == "/resume":
 		return m.openResumePicker()
+	case input == "/system" || strings.HasPrefix(input, "/system "):
+		return m.handleSystemCommand(input)
 	case input == "/verbose" || strings.HasPrefix(input, "/verbose "):
 		return m.handleVerboseCommand(input)
 	case input == "/compact":
@@ -142,6 +145,23 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	}
 
 	return m.startRun(input)
+}
+
+func (m *chatModel) handleSystemCommand(input string) (tea.Model, tea.Cmd) {
+	arg := strings.TrimSpace(strings.TrimPrefix(input, "/system"))
+	if arg == "" {
+		m.systemPromptDisabled = !m.systemPromptDisabled
+		state := "on"
+		if m.systemPromptDisabled {
+			state = "off"
+		}
+		m.status = "cache will break by turning system prompt " + state
+		return *m, nil
+	}
+	m.opts.SystemPrompt = arg
+	m.systemPromptDisabled = false
+	m.status = "system prompt set; cache will break"
+	return *m, nil
 }
 
 func (m *chatModel) handleVerboseCommand(input string) (tea.Model, tea.Cmd) {
@@ -601,6 +621,7 @@ func (m chatModel) helpSummary() string {
 		"- `/<skill>`: run the next message with a skill",
 		"- `/new`: start a new chat",
 		"- `/resume`: resume a saved chat",
+		"- `/system`: toggle or set system prompt",
 		"- `/verbose`: toggle model metrics",
 		"- `/compact`: summarize older context",
 		"- `/clear`: clear this chat",
@@ -611,7 +632,9 @@ func (m chatModel) helpSummary() string {
 		"- `ctrl+o`: toggle tool output and details",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
-		"- `↑/↓`, `pgup/pgdn`, `home/end`: scroll transcript",
+		"- `↑/↓`: previous or next prompt",
+		"- `mouse wheel`, `pgup/pgdn`, `home/end`: scroll transcript",
+		"- `shift+drag`: select text to copy (`option+drag` in iTerm2)",
 	}, "\n")
 }
 
@@ -901,7 +924,7 @@ func (m *chatModel) importSkills(args []string) string {
 
 func (m chatModel) systemPrompt(extra string) string {
 	var parts []string
-	if strings.TrimSpace(m.opts.SystemPrompt) != "" {
+	if !m.systemPromptDisabled && strings.TrimSpace(m.opts.SystemPrompt) != "" {
 		parts = append(parts, strings.TrimSpace(m.opts.SystemPrompt))
 	}
 	if strings.TrimSpace(extra) != "" {
