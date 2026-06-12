@@ -1,15 +1,19 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
@@ -170,6 +174,36 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		}
 	})
 
+	t.Run("prefers Mistral chat template with tool call IDs", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture": "llama",
+			"tokenizer.chat_template": `{% if tools %}{{ tools }}{% endif %}
+{% for message in messages %}
+{% if message.get('tool_calls') %}{% for tool_call in message.tool_calls %}[TOOL_CALLS]{{ tool_call.function.name }}[CALL_ID]{{ tool_call.id }}[ARGS]{{ tool_call['function']['arguments']|tojson }}{% endfor %}{% endif %}
+{% if message['role'] == 'tool' %}tool_response{{ message['content'] }}{% endif %}
+{% endfor %}`,
+		}, nil)
+		writeTestModelManifest(t, "chat-template-tool-call-ids", digest, `{{ if .Tools }}tools{{ end }}
+{{ range .Messages }}
+{{ if eq .Role "tool" }}tool_response{{ else }}{{ .Role }}{{ end }}
+{{ if .ToolCalls }}[TOOL_CALLS]{{ range .ToolCalls }}{{ .Function.Name }}[CALL_ID]0[ARGS]{{ .Function.Arguments }}{{ end }}{{ else }}{{ .Content }}{{ end }}
+{{ end }}`)
+
+		m, err := GetModel("chat-template-tool-call-ids")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !m.PreferChatTemplate {
+			t.Fatal("expected chat template to be preferred")
+		}
+		if got := m.CheckCapabilities(model.CapabilityTools); got != nil {
+			t.Fatalf("expected tools capability, got %v", got)
+		}
+	})
+
 	t.Run("respects explicit Go TEMPLATE enablement", func(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "1")
@@ -259,6 +293,203 @@ func writeTestModelManifest(t *testing.T, name, digest, tmpl string) {
 	}
 	if err := manifest.WriteManifest(model.ParseName(name), *configLayer, layers); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPushLayersForManifestListIncludesChildManifests(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeChild := func(name, runner, formatName, layerMediaType string) (manifest.Manifest, manifest.Layer, manifest.Layer) {
+		t.Helper()
+
+		config, err := manifest.NewLayer(strings.NewReader(name+" config"), "application/vnd.docker.container.image.v1+json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		layer, err := manifest.NewLayer(strings.NewReader(name+" layer"), layerMediaType)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manifest.WriteManifestWithMetadata(model.ParseName(name), config, []manifest.Layer{layer}, runner, formatName); err != nil {
+			t.Fatal(err)
+		}
+		mf, err := manifest.ParseNamedManifestForRunner(model.ParseName(name), runner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return *mf, config, layer
+	}
+
+	mlx, mlxConfig, mlxLayer := writeChild("library/push-mlx:latest", manifest.RunnerMLX, manifest.FormatSafetensors, manifest.MediaTypeImageTensor)
+	ggml, ggmlConfig, ggmlLayer := writeChild("library/push-ggml:latest", manifest.RunnerGGML, manifest.FormatGGUF, "application/vnd.ollama.image.model")
+
+	mlxRef, err := manifest.NewManifestReference(mlx.BlobDigest(), mlx.Runner, mlx.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlRef, err := manifest.NewManifestReference(ggml.BlobDigest(), ggml.Runner, ggml.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layers, err := pushLayersForManifestList(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{mlxRef, ggmlRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{
+		mlx.BlobDigest():  manifest.MediaTypeManifest,
+		ggml.BlobDigest(): manifest.MediaTypeManifest,
+		mlxConfig.Digest:  mlxConfig.MediaType,
+		mlxLayer.Digest:   mlxLayer.MediaType,
+		ggmlConfig.Digest: ggmlConfig.MediaType,
+		ggmlLayer.Digest:  ggmlLayer.MediaType,
+	}
+	if len(layers) != len(want) {
+		t.Fatalf("layer count = %d, want %d: %#v", len(layers), len(want), layers)
+	}
+	for _, layer := range layers {
+		if wantMediaType, ok := want[layer.Digest]; !ok {
+			t.Fatalf("unexpected layer digest %q", layer.Digest)
+		} else if layer.MediaType != wantMediaType {
+			t.Fatalf("layer %q media type = %q, want %q", layer.Digest, layer.MediaType, wantMediaType)
+		}
+		if layer.Size == 0 {
+			t.Fatalf("layer %q has zero size", layer.Digest)
+		}
+	}
+	if !hasTensorLayers(layers) {
+		t.Fatal("manifest list push layers did not preserve tensor media type")
+	}
+}
+
+func TestPullModelManifestListDownloadsSelectedChildOnly(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	configData := []byte(`{"architecture":"test"}`)
+	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(configData))
+	layerData := []byte("selected tensor layer")
+	layerDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(layerData))
+
+	child := manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifest,
+		Runner:        manifest.RunnerLlamaCPP,
+		Format:        manifest.FormatGGUF,
+		Config: manifest.Layer{
+			MediaType: "application/vnd.docker.container.image.v1+json",
+			Digest:    configDigest,
+			Size:      int64(len(configData)),
+		},
+		Layers: []manifest.Layer{
+			{
+				MediaType: manifest.MediaTypeImageTensor,
+				Digest:    layerDigest,
+				Size:      int64(len(layerData)),
+			},
+		},
+	}
+	childData, err := json.Marshal(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(childData))
+	childRef, err := manifest.NewManifestReference(childDigest, manifest.RunnerLlamaCPP, manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unselectedDigest := "sha256:" + strings.Repeat("f", 64)
+	unselectedRef, err := manifest.NewManifestReference(unselectedDigest, manifest.RunnerGGML, manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{childRef, unselectedRef},
+	}
+	parentData, err := json.Marshal(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blobs := map[string][]byte{
+		childDigest:  childData,
+		configDigest: configData,
+		layerDigest:  layerData,
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v2/library/test/manifests/latest":
+			w.Header().Set("Content-Type", manifest.MediaTypeManifestList)
+			w.Header().Set("Content-Length", strconv.Itoa(len(parentData)))
+			_, _ = w.Write(parentData)
+		case (r.Method == http.MethodHead || r.Method == http.MethodGet) && strings.HasPrefix(r.URL.Path, "/v2/library/test/blobs/"):
+			digest := strings.TrimPrefix(r.URL.Path, "/v2/library/test/blobs/")
+			if digest == unselectedDigest {
+				t.Errorf("requested unselected child manifest %s", digest)
+				http.Error(w, "unselected child requested", http.StatusNotFound)
+				return
+			}
+			data, ok := blobs[digest]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+			if r.Method == http.MethodGet {
+				_, _ = w.Write(data)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	name := strings.TrimPrefix(ts.URL, "http://") + "/library/test:latest"
+	if err := PullModel(t.Context(), name, "", &registryOptions{Insecure: true}, func(api.ProgressResponse) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	n := model.ParseName(name)
+	gotParentData, err := manifest.ReadManifestData(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotParentData, parentData) {
+		t.Fatal("named manifest does not contain the parent manifest list")
+	}
+
+	m, err := manifest.ParseNamedManifest(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Runner != manifest.RunnerLlamaCPP {
+		t.Fatalf("runner = %q, want %q", m.Runner, manifest.RunnerLlamaCPP)
+	}
+	if m.Config.Digest != configDigest {
+		t.Fatalf("config digest = %q, want %q", m.Config.Digest, configDigest)
+	}
+
+	for _, digest := range []string{childDigest, configDigest, layerDigest} {
+		path, err := manifest.BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected blob %s to exist: %v", digest, err)
+		}
+	}
+	path, err := manifest.BlobsPath(unselectedDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("unselected child manifest blob exists: %v", err)
 	}
 }
 

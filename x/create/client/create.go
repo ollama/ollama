@@ -577,7 +577,7 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 			manifestLayers = append(manifestLayers, modelfileLayers...)
 		}
 
-		return manifest.WriteManifest(name, configLayer, manifestLayers)
+		return manifest.WriteManifestWithMetadata(name, configLayer, manifestLayers, manifest.RunnerMLX, manifest.FormatSafetensors)
 	}
 }
 

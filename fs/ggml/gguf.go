@@ -3,6 +3,7 @@ package ggml
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/ollama/ollama/fs"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 type containerGGUF struct {
@@ -523,7 +525,18 @@ func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
 	return binary.Write(w, binary.LittleEndian, s)
 }
 
+type WriteGGUFOptions struct {
+	// AvailableMemory is a rough estimate of currently available physical
+	// memory. When set, tensor writes use a memory budget derived from this
+	// value so machines with headroom can run more writers.
+	AvailableMemory uint64
+}
+
 func WriteGGUF(f *os.File, kv fs.Config, ts []*Tensor) error {
+	return WriteGGUFWithOptions(f, kv, ts, WriteGGUFOptions{})
+}
+
+func WriteGGUFWithOptions(f *os.File, kv fs.Config, ts []*Tensor, opts WriteGGUFOptions) error {
 	arch := kv.String("general.architecture")
 	if arch == "" {
 		return fmt.Errorf("architecture not set")
@@ -579,18 +592,134 @@ func WriteGGUF(f *os.File, kv fs.Config, ts []*Tensor) error {
 	}
 	offset += ggufPadding(offset, int64(alignment))
 
-	var g errgroup.Group
-	g.SetLimit(runtime.GOMAXPROCS(0))
-	// TODO consider reducing if tensors size * gomaxprocs is larger than free memory
+	// Tensor writes are offset-based, so independent tensors can be written
+	// concurrently. Bound the fan-out by memory first and CPU second: many
+	// WriterTo implementations stream cheaply, but tensor surgery writers can
+	// materialize whole tensors plus f32 intermediates.
+	memoryBudget := ggufWriteMemoryBudget(opts.AvailableMemory)
+	limit := ggufWriteConcurrencyLimitForBudget(memoryBudget)
+	sem := semaphore.NewWeighted(ggufWriteSemaphoreLimit(limit, memoryBudget))
+	g, ctx := errgroup.WithContext(context.Background())
+	g.SetLimit(limit)
 	for _, t := range ts {
 		w := io.NewOffsetWriter(f, offset+int64(t.Offset))
+		weight := ggufTensorWriteWeight(t, limit, memoryBudget)
 		g.Go(func() error {
+			if err := sem.Acquire(ctx, weight); err != nil {
+				return err
+			}
+			defer sem.Release(weight)
 			_, err := t.WriteTo(w)
 			return err
 		})
 	}
 
 	return g.Wait()
+}
+
+func ggufWriteConcurrencyLimit() int {
+	return ggufWriteConcurrencyLimitForBudget(0)
+}
+
+func ggufWriteConcurrencyLimitForBudget(memoryBudget uint64) int {
+	limit := runtime.GOMAXPROCS(0)
+	if memoryBudget == 0 {
+		// Keep file-backed GGUF copies and tensor surgery from scaling with
+		// every logical CPU. The semaphore below applies tensor-size pressure;
+		// this cap avoids flooding the output file with offset writes.
+		limit = min(limit, 4)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	return limit
+}
+
+type ggufWriteMemoryEstimator interface {
+	GGUFWriteMemoryEstimate() uint64
+}
+
+const (
+	ggufWriteMemoryReserve = 8 << 30
+	maxInt64Uint           = ^uint64(0) >> 1
+)
+
+func ggufWriteMemoryBudget(availableMemory uint64) uint64 {
+	if availableMemory == 0 {
+		return 0
+	}
+	if availableMemory > maxInt64Uint {
+		return 0
+	}
+
+	budget := availableMemory - availableMemory/4
+	if availableMemory > ggufWriteMemoryReserve {
+		budget = min(budget, availableMemory-ggufWriteMemoryReserve)
+	}
+	return budget
+}
+
+func ggufWriteSemaphoreLimit(limit int, memoryBudget uint64) int64 {
+	if memoryBudget > 0 {
+		if memoryBudget > maxInt64Uint {
+			return int64(maxInt64Uint)
+		}
+		return int64(memoryBudget)
+	}
+	return int64(limit)
+}
+
+func ggufTensorWriteWeight(t *Tensor, limit int, memoryBudget uint64) int64 {
+	if memoryBudget > 0 {
+		return ggufTensorWriteMemoryWeight(t, memoryBudget)
+	}
+
+	if limit <= 1 {
+		return 1
+	}
+
+	estimate := ggufTensorWriteMemoryEstimate(t)
+	switch {
+	case estimate >= 8<<30:
+		return int64(limit)
+	case estimate >= 1<<30:
+		return int64(min(2, limit))
+	default:
+		return 1
+	}
+}
+
+func ggufTensorWriteMemoryWeight(t *Tensor, memoryBudget uint64) int64 {
+	estimate := ggufTensorWriteMemoryEstimate(t)
+	if estimate == 0 {
+		return 1
+	}
+	estimate = min(estimate, memoryBudget)
+	if estimate > maxInt64Uint {
+		return int64(maxInt64Uint)
+	}
+	return int64(estimate)
+}
+
+func ggufTensorWriteMemoryEstimate(t *Tensor) uint64 {
+	if t.WriterTo != nil {
+		if estimator, ok := t.WriterTo.(ggufWriteMemoryEstimator); ok {
+			return estimator.GGUFWriteMemoryEstimate()
+		}
+	}
+
+	estimate := t.Size()
+	if TensorType(t.Kind).IsQuantized() {
+		estimate = max(estimate, saturatingMul(t.Elements(), 4))
+	}
+	return estimate
+}
+
+func saturatingMul(a, b uint64) uint64 {
+	if b != 0 && a > ^uint64(0)/b {
+		return ^uint64(0)
+	}
+	return a * b
 }
 
 func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {
@@ -634,6 +763,14 @@ func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {
 		err = writeGGUFArray(ws, ggufTypeInt64, v)
 	case *array[int64]:
 		err = writeGGUFArray(ws, ggufTypeInt64, v.values)
+	case []int8:
+		err = writeGGUFArray(ws, ggufTypeInt8, v)
+	case *array[int8]:
+		err = writeGGUFArray(ws, ggufTypeInt8, v.values)
+	case []uint8:
+		err = writeGGUFArray(ws, ggufTypeUint8, v)
+	case *array[uint8]:
+		err = writeGGUFArray(ws, ggufTypeUint8, v.values)
 	case []uint32:
 		err = writeGGUFArray(ws, ggufTypeUint32, v)
 	case *array[uint32]:

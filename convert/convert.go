@@ -224,6 +224,20 @@ type tokenizerAdjuster interface {
 	adjustTokenizer(*Tokenizer)
 }
 
+func truncateTokenizerVocabulary(t *Tokenizer, n int) {
+	if t == nil || t.Vocabulary == nil || n == 0 || len(t.Vocabulary.Tokens) <= n {
+		return
+	}
+
+	t.Vocabulary.Tokens = t.Vocabulary.Tokens[:n]
+	if len(t.Vocabulary.Scores) > n {
+		t.Vocabulary.Scores = t.Vocabulary.Scores[:n]
+	}
+	if len(t.Vocabulary.Types) > n {
+		t.Vocabulary.Types = t.Vocabulary.Types[:n]
+	}
+}
+
 type tokenizerAwareTensorConverter interface {
 	TensorsWithTokenizer([]Tensor, *Tokenizer) []*ggml.Tensor
 }

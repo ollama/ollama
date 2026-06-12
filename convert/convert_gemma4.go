@@ -2,8 +2,10 @@ package convert
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strings"
@@ -66,10 +68,12 @@ type gemma4Model struct {
 	} `json:"audio_config"`
 }
 
+var _ MultimodalConverter = (*gemma4Model)(nil)
+
 func (p *gemma4Model) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma4"
-	kv["tokenizer.ggml.model"] = "llama"
+	kv["tokenizer.ggml.model"] = "gemma4"
 	kv["tokenizer.ggml.pre"] = "gemma4"
 
 	tc := p.TextModel
@@ -206,6 +210,95 @@ func (p *gemma4Model) KV(t *Tokenizer) KV {
 	return kv
 }
 
+func (p *gemma4Model) TextKV(t *Tokenizer) KV {
+	kv := p.KV(t)
+	for key := range kv {
+		if strings.HasPrefix(key, "gemma4.vision.") || strings.HasPrefix(key, "gemma4.audio.") {
+			delete(kv, key)
+		}
+	}
+	return kv
+}
+
+func (p *gemma4Model) ProjectorKV(*Tokenizer) KV {
+	kv := KV{
+		"general.architecture":         "clip",
+		"general.type":                 "mmproj",
+		"general.file_type":            uint32(1),
+		"general.quantization_version": uint32(2),
+	}
+
+	if vc := p.VisionModel; vc.NumHiddenLayers > 0 {
+		kv["clip.has_vision_encoder"] = true
+		kv["clip.vision.projector_type"] = "gemma4v"
+		kv["clip.vision.block_count"] = vc.NumHiddenLayers
+		kv["clip.vision.embedding_length"] = vc.HiddenSize
+		kv["clip.vision.feed_forward_length"] = vc.IntermediateSize
+		kv["clip.vision.attention.head_count"] = vc.NumAttentionHeads
+		kv["clip.vision.attention.layer_norm_epsilon"] = cmp.Or(vc.LayerNormEps, float32(1e-6))
+		kv["clip.vision.patch_size"] = vc.PatchSize
+		kv["clip.vision.num_channels"] = cmp.Or(vc.NumChannels, uint32(3))
+		kv["clip.vision.image_size"] = uint32(224)
+		kv["clip.vision.projection_dim"] = p.TextModel.HiddenSize
+		kv["clip.vision.projector.scale_factor"] = cmp.Or(vc.PoolingKernelSize, uint32(3))
+		kv["clip.vision.image_mean"] = []float32{0, 0, 0}
+		kv["clip.vision.image_std"] = []float32{1, 1, 1}
+	}
+
+	if p.AudioModel != nil && p.AudioModel.NumHiddenLayers > 0 {
+		ac := p.AudioModel
+		kv["clip.has_audio_encoder"] = true
+		kv["clip.audio.projector_type"] = "gemma4a"
+		kv["clip.audio.block_count"] = ac.NumHiddenLayers
+		kv["clip.audio.embedding_length"] = ac.HiddenSize
+		kv["clip.audio.feed_forward_length"] = ac.HiddenSize * 4
+		kv["clip.audio.attention.head_count"] = ac.NumAttentionHeads
+		kv["clip.audio.attention.layer_norm_epsilon"] = cmp.Or(ac.RMSNormEps, float32(1e-6))
+		kv["clip.audio.num_mel_bins"] = uint32(128)
+		kv["clip.audio.projection_dim"] = p.TextModel.HiddenSize
+	}
+
+	return kv
+}
+
+func (p *gemma4Model) TextTensors(ts []Tensor, _ *Tokenizer) []*ggml.Tensor {
+	return slices.DeleteFunc(p.Tensors(ts), func(t *ggml.Tensor) bool {
+		return gemma4ProjectorTensor(t.Name)
+	})
+}
+
+func (p *gemma4Model) ProjectorTensors(ts []Tensor) []*ggml.Tensor {
+	tensors := slices.DeleteFunc(p.Tensors(ts), func(t *ggml.Tensor) bool {
+		return !gemma4ProjectorTensor(t.Name)
+	})
+	for _, tensor := range tensors {
+		tensor.Name = gemma4ProjectorTensorName(tensor.Name)
+	}
+	return tensors
+}
+
+func gemma4ProjectorTensor(name string) bool {
+	return strings.HasPrefix(name, "v.") || strings.HasPrefix(name, "a.") || strings.HasPrefix(name, "mm.")
+}
+
+func gemma4ProjectorTensorName(name string) string {
+	switch {
+	case strings.HasPrefix(name, "a.pre_encode.out."):
+		name = strings.Replace(name, "a.pre_encode.out.", "a.input_projection.", 1)
+	case strings.HasPrefix(name, "mm.a.fc."):
+		name = strings.Replace(name, "mm.a.fc.", "a.pre_encode.out.", 1)
+	}
+
+	if strings.HasPrefix(name, "a.blk.") {
+		name = strings.Replace(name, ".ln1.", ".attn_pre_norm.", 1)
+		name = strings.Replace(name, ".ln2.", ".attn_post_norm.", 1)
+		name = strings.Replace(name, ".layer_pre_norm.", ".ln2.", 1)
+		name = strings.Replace(name, ".linear_pos.", ".attn_k_rel.", 1)
+	}
+
+	return name
+}
+
 func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 	// First pass: collect vision clamp scalar values into a packed tensor.
 	// Layout: per vision layer (0..N-1), 7 linears (q,k,v,out,gate,up,down) × 4 values (inMin,inMax,outMin,outMax).
@@ -278,10 +371,13 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 		// Audio conv weights are forced to F32 via tensorBase.Kind() in reader.go
 		// (im2col doesn't support BF16). No kindOverride needed — the Kind() method
 		// controls both the GGUF header type AND the WriteTo data encoding path.
-		var kindOverride *uint32
+		var (
+			kindOverride   *uint32
+			writerOverride io.WriterTo
+		)
 
-		// Vision patch embedding: reshape from [n_embd, ksize_sq_c] to [n_embd, 3, patch_size, patch_size]
-		// Must be stored as F16 (not BF16) because the Conv2D im2col kernel requires F16/F32.
+		// Vision patch embedding: reshape from [n_embd, ksize_sq_c] to [n_embd, 3, patch_size, patch_size].
+		// Store as F32 to match llama.cpp projector files and avoid Metal im2col BF16 failures.
 		if strings.Contains(name, "v.patch_embd.weight") && len(shape) == 2 {
 			nEmbd := shape[0]
 			patchSize := uint64(p.VisionModel.PatchSize)
@@ -292,10 +388,10 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 			if numCh == 0 {
 				numCh = 3
 			}
-			t.SetRepacker(p.reshapePatchEmbed)
 			shape = []uint64{nEmbd, numCh, patchSize, patchSize}
-			f16Kind := uint32(1) // tensorKindFP16
-			kindOverride = &f16Kind
+			f32Kind := tensorKindFP32
+			kindOverride = &f32Kind
+			writerOverride = tensorFloat32Writer{tensor: t, repacker: p.reshapePatchEmbed}
 		}
 
 		// Vision position embedding: keep 3D [2, maxPos, nEmbd] — matching published mmproj format.
@@ -305,11 +401,15 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 		if kindOverride != nil {
 			kind = *kindOverride
 		}
+		var writer io.WriterTo = t
+		if writerOverride != nil {
+			writer = writerOverride
+		}
 		out = append(out, &ggml.Tensor{
 			Name:     name,
 			Kind:     kind,
 			Shape:    shape,
-			WriterTo: t,
+			WriterTo: writer,
 		})
 	}
 
