@@ -45,6 +45,7 @@ type ApprovalResult struct {
 }
 
 type ApprovalHandler interface {
+	RequiresApproval(context.Context, Tool, ApprovalRequest) bool
 	Approve(context.Context, ApprovalRequest) (ApprovalResult, error)
 }
 
@@ -66,6 +67,10 @@ type ApprovalEvaluation struct {
 }
 
 type AutoAllowApproval struct{}
+
+func (AutoAllowApproval) RequiresApproval(context.Context, Tool, ApprovalRequest) bool {
+	return false
+}
 
 func (AutoAllowApproval) Approve(context.Context, ApprovalRequest) (ApprovalResult, error) {
 	return ApprovalResult{Decision: ApprovalAllowOnce}, nil
@@ -117,11 +122,20 @@ func (m *ApprovalManager) AutoApproveEnabled() bool {
 	return m != nil && m.autoApprove
 }
 
-func (m *ApprovalManager) RequiresApproval(ctx context.Context, req ApprovalRequest) bool {
+func (m *ApprovalManager) RequiresApproval(ctx context.Context, tool Tool, req ApprovalRequest) bool {
 	if m == nil || m.autoApprove {
 		return false
 	}
 	evaluation := m.evaluate(ctx, req)
+	if ToolRequiresApproval(tool, req.Args) && evaluation.Decision != ApprovalDeny {
+		evaluation.RequirePrompt = true
+		if evaluation.Summary == "" {
+			evaluation.Summary = fmt.Sprintf("%s wants to run", toolApprovalDisplayName(req.ToolName))
+		}
+		if len(evaluation.Reasons) == 0 {
+			evaluation.Reasons = []string{"tool requires approval"}
+		}
+	}
 	if evaluation.Decision == ApprovalDeny {
 		return true
 	}
