@@ -115,6 +115,7 @@ func (s *Store) init(ctx context.Context) error {
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);
+		CREATE INDEX IF NOT EXISTS idx_messages_chat_id_id ON messages(chat_id, id);
 
 		CREATE TABLE IF NOT EXISTS tool_calls (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
