@@ -17,7 +17,19 @@ var markdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)
 
 var markdownTableSeparatorPattern = regexp.MustCompile(`^:?-{3,}:?$`)
 
-var chatMarkdownRenderers sync.Map
+const maxMarkdownRendererCacheEntries = 8
+
+var chatMarkdownRenderers = newMarkdownRendererCache()
+
+type markdownRendererCache struct {
+	mu        sync.Mutex
+	renderers map[int]*cachedMarkdownRenderer
+	order     []int
+}
+
+func newMarkdownRendererCache() *markdownRendererCache {
+	return &markdownRendererCache{renderers: make(map[int]*cachedMarkdownRenderer)}
+}
 
 type cachedMarkdownRenderer struct {
 	renderer *glamour.TermRenderer
@@ -461,10 +473,15 @@ func widestColumn(widths []int) int {
 }
 
 func markdownRendererForWidth(width int) (*cachedMarkdownRenderer, error) {
-	if cached, ok := chatMarkdownRenderers.Load(width); ok {
-		return cached.(*cachedMarkdownRenderer), nil
-	}
+	return chatMarkdownRenderers.renderer(width)
+}
 
+func (c *markdownRendererCache) renderer(width int) (*cachedMarkdownRenderer, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cached, ok := c.renderers[width]; ok {
+		return cached, nil
+	}
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStyles(compactMarkdownStyle()),
 		glamour.WithWordWrap(width),
@@ -475,8 +492,20 @@ func markdownRendererForWidth(width int) (*cachedMarkdownRenderer, error) {
 		return nil, err
 	}
 	cached := &cachedMarkdownRenderer{renderer: renderer}
-	actual, _ := chatMarkdownRenderers.LoadOrStore(width, cached)
-	return actual.(*cachedMarkdownRenderer), nil
+	if len(c.order) >= maxMarkdownRendererCacheEntries {
+		evict := c.order[0]
+		c.order = c.order[1:]
+		delete(c.renderers, evict)
+	}
+	c.renderers[width] = cached
+	c.order = append(c.order, width)
+	return cached, nil
+}
+
+func (c *markdownRendererCache) len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.renderers)
 }
 
 func renderMarkdownDiffFences(markdown string, width int) (string, bool) {

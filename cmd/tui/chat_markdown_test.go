@@ -21,6 +21,23 @@ func TestChatMarkdownRendersAssistantAndSystemOutput(t *testing.T) {
 	}
 }
 
+func TestMarkdownRendererCacheIsBounded(t *testing.T) {
+	previous := chatMarkdownRenderers
+	chatMarkdownRenderers = newMarkdownRendererCache()
+	defer func() {
+		chatMarkdownRenderers = previous
+	}()
+
+	for i := 0; i < maxMarkdownRendererCacheEntries+4; i++ {
+		if _, err := markdownRendererForWidth(40 + i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := chatMarkdownRenderers.len(); got != maxMarkdownRendererCacheEntries {
+		t.Fatalf("cache size = %d, want %d", got, maxMarkdownRendererCacheEntries)
+	}
+}
+
 func TestChatMarkdownExposesLinks(t *testing.T) {
 	m := chatModel{width: 100, height: 30}
 	m.entries = []chatEntry{{
