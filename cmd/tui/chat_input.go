@@ -238,6 +238,9 @@ func (m chatModel) renderCompletions(completions []chatCompletion, width int) []
 		return nil
 	}
 	selected := clamp(m.complete, 0, len(completions)-1)
+	start, end := completionWindow(len(completions), selected, m.completionVisibleLimit(len(completions)))
+	completions = completions[start:end]
+
 	nameWidth := 0
 	for _, completion := range completions {
 		nameWidth = max(nameWidth, lipgloss.Width(completion.label))
@@ -246,7 +249,7 @@ func (m chatModel) renderCompletions(completions []chatCompletion, width int) []
 	lines := make([]string, 0, len(completions))
 	for i, completion := range completions {
 		marker := "  "
-		if i == selected {
+		if start+i == selected {
 			marker = "› "
 		}
 		name := chatCommandNameStyle.Render(completion.label)
@@ -255,6 +258,30 @@ func (m chatModel) renderCompletions(completions []chatCompletion, width int) []
 		lines = append(lines, truncateRenderedLine(line, width))
 	}
 	return lines
+}
+
+func (m chatModel) completionVisibleLimit(total int) int {
+	if strings.HasPrefix(strings.TrimSpace(string(m.input)), "/") {
+		return min(maxSlashCompletions, total)
+	}
+	return total
+}
+
+func completionWindow(total, selected, limit int) (int, int) {
+	if total <= 0 || limit <= 0 || limit >= total {
+		return 0, total
+	}
+	selected = clamp(selected, 0, total-1)
+	start := selected - limit + 1
+	if start < 0 {
+		start = 0
+	}
+	end := start + limit
+	if end > total {
+		end = total
+		start = max(0, end-limit)
+	}
+	return start, end
 }
 
 func (m chatModel) completions() []chatCompletion {
@@ -285,9 +312,6 @@ func (m chatModel) slashCompletions() []chatCompletion {
 		})
 	}
 	completions = append(completions, skillCompletions...)
-	if len(completions) > maxSlashCompletions {
-		completions = completions[:maxSlashCompletions]
-	}
 	return completions
 }
 

@@ -189,6 +189,35 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	}
 }
 
+func TestChatSlashCommandSuggestionsScroll(t *testing.T) {
+	m := chatModel{
+		input: []rune("/"),
+	}
+
+	if got := len(m.slashCompletions()); got <= maxSlashCompletions {
+		t.Fatalf("test setup needs more than %d slash completions, got %d", maxSlashCompletions, got)
+	}
+
+	for i := 0; i < 6; i++ {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(chatModel)
+	}
+
+	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+	if got := len(m.slashCommandLines(80)); got != maxSlashCompletions {
+		t.Fatalf("rendered slash suggestions = %d, want %d", got, maxSlashCompletions)
+	}
+	if !strings.Contains(lines, "/resume") {
+		t.Fatalf("scrolled suggestions missing later command: %q", lines)
+	}
+	if strings.Contains(lines, "/clear") {
+		t.Fatalf("scrolled suggestions should not include first command: %q", lines)
+	}
+	if selected, ok := m.selectedSlashCommand(); !ok || selected != "/resume" {
+		t.Fatalf("selected slash command = %q, %v; want /resume, true", selected, ok)
+	}
+}
+
 func TestChatSlashCommandSuggestionsFilter(t *testing.T) {
 	m := chatModel{
 		input: []rune("/to"),
