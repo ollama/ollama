@@ -148,6 +148,26 @@ func TestIntegrationConfig(t *testing.T) {
 			t.Errorf("expected model-2, got %s", defaultModel2)
 		}
 	})
+
+	t.Run("save integration preserves app path", func(t *testing.T) {
+		if err := SaveIntegration("goose-desktop", []string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveIntegrationAppPath("goose-desktop", `C:\Users\me\Downloads\Goose\Goose.exe`); err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveIntegration("goose-desktop", []string{"qwen3"}); err != nil {
+			t.Fatal(err)
+		}
+
+		config, err := LoadIntegration("goose-desktop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.AppPath != `C:\Users\me\Downloads\Goose\Goose.exe` {
+			t.Fatalf("AppPath = %q, want remembered Goose.exe path", config.AppPath)
+		}
+	})
 }
 
 func TestListIntegrations(t *testing.T) {

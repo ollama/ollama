@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/envconfig"
 )
 
@@ -30,6 +31,7 @@ var (
 	gooseIsRunning   = defaultGooseIsRunning
 	gooseQuitApp     = defaultGooseQuitApp
 	gooseSleep       = time.Sleep
+	gooseSaveAppPath = config.SaveIntegrationAppPath
 )
 
 // Goose implements Runner for the Goose desktop app integration.
@@ -73,7 +75,14 @@ func (g *Goose) desktopAppAvailable() bool {
 	if gooseDesktopAppPath() != "" {
 		return true
 	}
-	return gooseGOOS == "windows" && (gooseRunPath() != "" || gooseStartID() != "")
+	if gooseGOOS != "windows" {
+		return false
+	}
+	if path := gooseRunPath(); path != "" {
+		gooseRememberDesktopAppPath(path)
+		return true
+	}
+	return gooseStartID() != ""
 }
 
 func gooseDesktopAppPath() string {
@@ -90,7 +99,7 @@ func gooseDesktopAppCandidates() []string {
 	case "darwin":
 		return gooseDarwinAppCandidates()
 	case "windows":
-		return gooseWindowsAppCandidates()
+		return gooseDedupePaths(append(gooseWindowsAppCandidates(), gooseSavedAppCandidates()...))
 	default:
 		return nil
 	}
@@ -138,6 +147,14 @@ func gooseWindowsAppCandidates() []string {
 		)
 	}
 	return gooseDedupePaths(candidates)
+}
+
+func gooseSavedAppCandidates() []string {
+	cfg, err := config.LoadIntegration("goose-desktop")
+	if err != nil || strings.TrimSpace(cfg.AppPath) == "" {
+		return nil
+	}
+	return []string{cfg.AppPath}
 }
 
 func gooseLocalAppData() (string, error) {
@@ -200,6 +217,7 @@ func (g *Goose) runDesktopApp(model string) error {
 			return gooseOpenPath(path, env)
 		}
 		if path := gooseRunPath(); path != "" {
+			gooseRememberDesktopAppPath(path)
 			shouldLaunch, err := gooseRestartIfRunning()
 			if err != nil {
 				return err
@@ -257,6 +275,13 @@ func waitForGooseDesktopExit(timeout time.Duration) error {
 		gooseSleep(200 * time.Millisecond)
 	}
 	return fmt.Errorf("Goose Desktop did not quit; quit it manually and re-run 'ollama launch goose'")
+}
+
+func gooseRememberDesktopAppPath(path string) {
+	if gooseGOOS != "windows" || strings.TrimSpace(path) == "" {
+		return
+	}
+	_ = gooseSaveAppPath("goose-desktop", path)
 }
 
 func gooseDesktopNotInstalledError() error {
@@ -329,7 +354,8 @@ func defaultGooseIsRunning() bool {
 		out, err := gooseCommand("pgrep", "-f", "Goose.app/Contents/MacOS/Goose").Output()
 		return err == nil && strings.TrimSpace(string(out)) != ""
 	case "windows":
-		return gooseRunPath() != ""
+		out, err := gooseCommand("powershell.exe", "-NoProfile", "-Command", `Get-Process Goose -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Id`).Output()
+		return err == nil && strings.TrimSpace(string(out)) != ""
 	default:
 		return false
 	}

@@ -247,6 +247,44 @@ func TestGooseDesktopAppAvailable(t *testing.T) {
 			t.Error("desktopAppAvailable should be true when Windows Start Menu app exists")
 		}
 	})
+
+	t.Run("windows remembers running app path", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
+
+		prev := gooseGOOS
+		t.Cleanup(func() { gooseGOOS = prev })
+		gooseGOOS = "windows"
+
+		prevStartID := gooseStartID
+		t.Cleanup(func() { gooseStartID = prevStartID })
+		gooseStartID = func() string { return "" }
+
+		prevStat := gooseStatFn
+		t.Cleanup(func() { gooseStatFn = prevStat })
+		gooseStatFn = os.Stat
+
+		appPath := filepath.Join(t.TempDir(), "Goose", "Goose.exe")
+		if err := os.MkdirAll(filepath.Dir(appPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(appPath, nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		runningPath := appPath
+		prevRunPath := gooseRunPath
+		t.Cleanup(func() { gooseRunPath = prevRunPath })
+		gooseRunPath = func() string { return runningPath }
+
+		if !g.desktopAppAvailable() {
+			t.Fatal("desktopAppAvailable should be true when Goose is running")
+		}
+
+		runningPath = ""
+		if !g.desktopAppAvailable() {
+			t.Fatal("desktopAppAvailable should stay true after the remembered Goose.exe path is no longer running")
+		}
+	})
 }
 
 func TestGooseRunDesktopAppDarwin(t *testing.T) {
@@ -477,6 +515,8 @@ func TestGooseRunDesktopAppWindowsStartMenu(t *testing.T) {
 }
 
 func TestGooseRunDesktopAppWindowsRunningPathRestarts(t *testing.T) {
+	setTestHome(t, t.TempDir())
+
 	prev := gooseGOOS
 	t.Cleanup(func() { gooseGOOS = prev })
 	gooseGOOS = "windows"
@@ -540,6 +580,34 @@ func TestGooseRunDesktopAppWindowsRunningPathRestarts(t *testing.T) {
 	}
 	if gotPath != runPath {
 		t.Fatalf("opened path = %q, want %q", gotPath, runPath)
+	}
+}
+
+func TestDefaultGooseIsRunningWindowsChecksProcessWithoutWindowFilter(t *testing.T) {
+	prev := gooseGOOS
+	t.Cleanup(func() { gooseGOOS = prev })
+	gooseGOOS = "windows"
+
+	prevCommand := gooseCommand
+	t.Cleanup(func() { gooseCommand = prevCommand })
+	var gotName string
+	var gotArgs []string
+	gooseCommand = func(name string, args ...string) *exec.Cmd {
+		gotName = name
+		gotArgs = append([]string(nil), args...)
+		cmd := exec.Command(os.Args[0], "-test.run=TestGooseCommandHelperProcess", "--")
+		cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1", "GOOSE_HELPER_OUTPUT=1234\n")
+		return cmd
+	}
+
+	if !defaultGooseIsRunning() {
+		t.Fatal("defaultGooseIsRunning should return true when Get-Process returns an id")
+	}
+	if gotName != "powershell.exe" {
+		t.Fatalf("command = %q, want powershell.exe", gotName)
+	}
+	if len(gotArgs) < 3 || strings.Contains(gotArgs[2], "MainWindowHandle") {
+		t.Fatalf("process-existence probe should not depend on MainWindowHandle, got args %#v", gotArgs)
 	}
 }
 
@@ -786,6 +854,9 @@ func TestGooseCLIInstalled(t *testing.T) {
 func TestGooseCommandHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
+	}
+	if output := os.Getenv("GOOSE_HELPER_OUTPUT"); output != "" {
+		_, _ = os.Stdout.Write([]byte(output))
 	}
 	os.Exit(0)
 }

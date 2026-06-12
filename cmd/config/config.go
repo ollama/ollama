@@ -17,6 +17,7 @@ type integration struct {
 	Models    []string          `json:"models"`
 	Aliases   map[string]string `json:"aliases,omitempty"`
 	Onboarded bool              `json:"onboarded,omitempty"`
+	AppPath   string            `json:"app_path,omitempty"`
 }
 
 // IntegrationConfig is the persisted config for one integration.
@@ -143,15 +144,18 @@ func SaveIntegration(appName string, models []string) error {
 	existing := cfg.Integrations[key]
 	var aliases map[string]string
 	var onboarded bool
+	var appPath string
 	if existing != nil {
 		aliases = existing.Aliases
 		onboarded = existing.Onboarded
+		appPath = existing.AppPath
 	}
 
 	cfg.Integrations[key] = &integration{
 		Models:    models,
 		Aliases:   aliases,
 		Onboarded: onboarded,
+		AppPath:   appPath,
 	}
 
 	return save(cfg)
@@ -264,6 +268,28 @@ func SaveAliases(appName string, aliases map[string]string) error {
 
 	// Replace aliases entirely (not merge) so deletions are persisted
 	existing.Aliases = aliases
+
+	cfg.Integrations[key] = existing
+	return save(cfg)
+}
+
+// SaveIntegrationAppPath saves the last known desktop app executable path for one integration.
+func SaveIntegrationAppPath(appName, appPath string) error {
+	if appName == "" {
+		return errors.New("app name cannot be empty")
+	}
+
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+
+	key := strings.ToLower(appName)
+	existing := cfg.Integrations[key]
+	if existing == nil {
+		existing = &integration{}
+	}
+	existing.AppPath = appPath
 
 	cfg.Integrations[key] = existing
 	return save(cfg)
