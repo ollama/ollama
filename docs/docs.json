@@ -115,7 +115,8 @@
                 "expanded": true,
                 "pages": [
                   "/integrations/openclaw",
-                  "/integrations/hermes"
+                  "/integrations/hermes",
+                  "/integrations/hermes-desktop"
                 ]
               },
               {
@@ -130,6 +131,7 @@
                   "/integrations/opencode",
                   "/integrations/droid",
                   "/integrations/goose",
+                  "/integrations/oh-my-pi",
                   "/integrations/pi",
                   "/integrations/pool"
                 ]

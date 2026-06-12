@@ -12,6 +12,10 @@ func ones(dtype mlx.DType, shape ...int) *mlx.Array {
 	return mlx.AddScalar(mlx.Zeros(dtype, shape...), 1)
 }
 
+// lastState returns the forward-end state — the last boundary the recurrent
+// wrappers return.
+func lastState(states []*mlx.Array) *mlx.Array { return states[len(states)-1] }
+
 // fromValues builds a tensor with sequentially-numbered float32
 // values so element-by-element parity actually exercises the kernel.
 func fromValues(seed float32, shape ...int) *mlx.Array {
@@ -67,7 +71,8 @@ func TestCausalConv1DParity(t *testing.T) {
 	prior := fromValues(-0.3, B, convTail, D)
 	weight := fromValues(0.2, D, K)
 
-	out, nextConv := CausalConv1D(&batch.Batch{}, input, nil, weight, convTail, WithRecurrentState(prior, nil))
+	out, convStates := CausalConv1D(&batch.Batch{}, input, nil, weight, convTail, WithRecurrentState(prior, nil))
+	nextConv := lastState(convStates)
 	mlx.Eval(out, nextConv)
 
 	concat := mlx.Concatenate([]*mlx.Array{prior, input}, 1)
@@ -143,19 +148,22 @@ func TestCausalConv1DPaddedRowParity(t *testing.T) {
 		SeqQueryLens: []int32{int32(L), int32(qLenShort)},
 	}
 
-	out, nextConv := CausalConv1D(b, input, nil, weight, convTail, WithRecurrentState(priorFull, nil))
+	out, convStates := CausalConv1D(b, input, nil, weight, convTail, WithRecurrentState(priorFull, nil))
+	nextConv := lastState(convStates)
 	mlx.Eval(out, nextConv)
 
 	// Reference for row 0: B=1 unpadded length-L call.
-	refOut0, refNextConv0 := CausalConv1D(&batch.Batch{},
+	refOut0, refConvStates0 := CausalConv1D(&batch.Batch{},
 		inputFull, nil, weight, convTail,
 		WithRecurrentState(mlx.SliceStartStop(priorFull,
 			[]int32{0, 0, 0},
 			[]int32{1, int32(convTail), int32(D)}), nil))
+	refNextConv0 := lastState(refConvStates0)
 	// Reference for row 1: B=1 unpadded length-qLenShort call.
-	refOut1, refNextConv1 := CausalConv1D(&batch.Batch{},
+	refOut1, refConvStates1 := CausalConv1D(&batch.Batch{},
 		inputShortReal, nil, weight, convTail,
 		WithRecurrentState(priorShort, nil))
+	refNextConv1 := lastState(refConvStates1)
 	mlx.Eval(refOut0, refNextConv0, refOut1, refNextConv1)
 
 	gotOut := out.Floats()
@@ -206,7 +214,11 @@ func TestCausalConv1DPaddedRowParity(t *testing.T) {
 	}
 }
 
-func TestGatedDeltaZeroFallback(t *testing.T) {
+// TestGatedDeltaDelegatesToKernel checks the wrapper produces the same output
+// and final state as a direct mlx.FastGatedDelta call, for both a zero prior
+// state and a non-zero one (so the wrapper is shown to thread the prior through,
+// not just handle the zero path).
+func TestGatedDeltaDelegatesToKernel(t *testing.T) {
 	skipIfNoMLX(t)
 	B, L, nK, nV, dK, dV := 1, 2, 1, 1, 4, 4
 	q := ones(mlx.DTypeFloat32, B, L, nK, dK)
@@ -215,45 +227,33 @@ func TestGatedDeltaZeroFallback(t *testing.T) {
 	gDecay := ones(mlx.DTypeFloat32, B, L, nV)
 	beta := ones(mlx.DTypeFloat32, B, L, nV)
 
-	zero := mlx.Zeros(mlx.DTypeFloat32, B, nV, dV, dK)
-	outA, stateA := GatedDelta(&batch.Batch{}, q, k, v, gDecay, beta, WithRecurrentState(nil, zero))
-	outB, stateB := mlx.FastGatedDelta(q, k, v, gDecay, beta, zero, nil)
-	mlx.Eval(outA, stateA, outB, stateB)
-
-	gotOut, wantOut := outA.Floats(), outB.Floats()
-	for i := range wantOut {
-		if gotOut[i] != wantOut[i] {
-			t.Fatalf("output[%d]: wrapper=%v direct=%v", i, gotOut[i], wantOut[i])
-		}
+	cases := []struct {
+		name  string
+		prior *mlx.Array
+	}{
+		{"zero", mlx.Zeros(mlx.DTypeFloat32, B, nV, dV, dK)},
+		{"non-zero", mlx.MulScalar(ones(mlx.DTypeFloat32, B, nV, dV, dK), 3)},
 	}
-	gotState, wantState := stateA.Floats(), stateB.Floats()
-	for i := range wantState {
-		if gotState[i] != wantState[i] {
-			t.Fatalf("state[%d]: wrapper=%v direct=%v", i, gotState[i], wantState[i])
-		}
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outA, statesA := GatedDelta(&batch.Batch{}, q, k, v, gDecay, beta, WithRecurrentState(nil, tc.prior))
+			stateA := lastState(statesA)
+			outB, stateB := mlx.FastGatedDelta(q, k, v, gDecay, beta, tc.prior, nil)
+			mlx.Eval(outA, stateA, outB, stateB)
 
-func TestGatedDeltaUsesPriorState(t *testing.T) {
-	skipIfNoMLX(t)
-	B, L, nK, nV, dK, dV := 1, 2, 1, 1, 4, 4
-	q := ones(mlx.DTypeFloat32, B, L, nK, dK)
-	k := ones(mlx.DTypeFloat32, B, L, nK, dK)
-	v := ones(mlx.DTypeFloat32, B, L, nV, dV)
-	gDecay := ones(mlx.DTypeFloat32, B, L, nV)
-	beta := ones(mlx.DTypeFloat32, B, L, nV)
-
-	priorState := mlx.MulScalar(ones(mlx.DTypeFloat32, B, nV, dV, dK), 3)
-
-	outA, _ := GatedDelta(&batch.Batch{}, q, k, v, gDecay, beta, WithRecurrentState(nil, priorState))
-	outB, _ := mlx.FastGatedDelta(q, k, v, gDecay, beta, priorState, nil)
-	mlx.Eval(outA, outB)
-
-	gotOut, wantOut := outA.Floats(), outB.Floats()
-	for i := range wantOut {
-		if gotOut[i] != wantOut[i] {
-			t.Fatalf("output[%d]: wrapper=%v direct=%v", i, gotOut[i], wantOut[i])
-		}
+			gotOut, wantOut := outA.Floats(), outB.Floats()
+			for i := range wantOut {
+				if gotOut[i] != wantOut[i] {
+					t.Fatalf("output[%d]: wrapper=%v direct=%v", i, gotOut[i], wantOut[i])
+				}
+			}
+			gotState, wantState := stateA.Floats(), stateB.Floats()
+			for i := range wantState {
+				if gotState[i] != wantState[i] {
+					t.Fatalf("state[%d]: wrapper=%v direct=%v", i, gotState[i], wantState[i])
+				}
+			}
+		})
 	}
 }
 
@@ -298,7 +298,8 @@ func TestGatedDeltaPaddedRowParity(t *testing.T) {
 		SeqOffsets:   []int32{0, 0},
 		SeqQueryLens: []int32{int32(L), int32(qLenShort)},
 	}
-	_, state := GatedDelta(b, q, k, v, gDecay, beta, WithRecurrentState(nil, priorState))
+	_, states := GatedDelta(b, q, k, v, gDecay, beta, WithRecurrentState(nil, priorState))
+	state := lastState(states)
 	mlx.Eval(state)
 
 	// Reference for row 1: B=1 length-qLenShort call against the
@@ -335,6 +336,208 @@ func TestGatedDeltaPaddedRowParity(t *testing.T) {
 		wantV := wantState[i]
 		if math.Abs(float64(gotV-wantV)) > 1e-4 {
 			t.Fatalf("row 1 final state[%d]: got %v, want %v", i, gotV, wantV)
+		}
+	}
+}
+
+// floatsClose compares two flat float slices within tolerance.
+func floatsClose(t *testing.T, label string, got, want []float32, tol float64) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s: len %d, want %d", label, len(got), len(want))
+	}
+	for i := range want {
+		if math.Abs(float64(got[i]-want[i])) > tol {
+			t.Fatalf("%s[%d]: got %v, want %v", label, i, got[i], want[i])
+		}
+	}
+}
+
+// TestGatedDeltaSegmentEquivalence checks that running the scan in segments
+// cut at WithSnapshotSplits offsets yields identical output and final state to
+// the single-shot scan, and that each boundary state equals the single-shot
+// state over the corresponding prefix.
+func TestGatedDeltaSegmentEquivalence(t *testing.T) {
+	skipIfNoMLX(t)
+	B, T, Hk, Dk, Hv, Dv := 1, 4, 1, 32, 1, 32
+
+	q := fromValues(0.1, B, T, Hk, Dk)
+	k := fromValues(-0.2, B, T, Hk, Dk)
+	v := fromValues(0.3, B, T, Hv, Dv)
+	gDecay := mlx.MulScalar(ones(mlx.DTypeFloat32, B, T, Hv), 0.9)
+	beta := mlx.MulScalar(ones(mlx.DTypeFloat32, B, T, Hv), 0.5)
+	prior := mlx.Zeros(mlx.DTypeFloat32, B, Hv, Dv, Dk)
+
+	full := &batch.Batch{SeqOffsets: []int32{0}, SeqQueryLens: []int32{int32(T)}}
+
+	refOut, refStates := GatedDelta(full, q, k, v, gDecay, beta, WithRecurrentState(nil, prior))
+	if len(refStates) != 1 {
+		t.Fatalf("unsegmented call returned %d states, want 1", len(refStates))
+	}
+
+	segOut, segStates := GatedDelta(full, q, k, v, gDecay, beta,
+		WithRecurrentState(nil, prior), WithSnapshotSplits([]int{1, 2, 3}))
+	mlx.Eval(refOut, segOut)
+
+	floatsClose(t, "out", segOut.Floats(), refOut.Floats(), 1e-4)
+	// 3 splits + end = 4 boundary states.
+	if len(segStates) != 4 {
+		t.Fatalf("got %d boundary states, want 4", len(segStates))
+	}
+	mlx.Eval(lastState(segStates), lastState(refStates))
+	floatsClose(t, "final state", lastState(segStates).Floats(), lastState(refStates).Floats(), 1e-4)
+
+	// boundary i (offset i+1) must equal a single-shot scan over prefix [0, i+1).
+	for i := range segStates {
+		n := int32(i + 1)
+		pb := &batch.Batch{SeqOffsets: []int32{0}, SeqQueryLens: []int32{n}}
+		_, want := GatedDelta(pb,
+			mlx.SliceStartStop(q, []int32{0, 0, 0, 0}, []int32{int32(B), n, int32(Hk), int32(Dk)}),
+			mlx.SliceStartStop(k, []int32{0, 0, 0, 0}, []int32{int32(B), n, int32(Hk), int32(Dk)}),
+			mlx.SliceStartStop(v, []int32{0, 0, 0, 0}, []int32{int32(B), n, int32(Hv), int32(Dv)}),
+			mlx.SliceStartStop(gDecay, []int32{0, 0, 0}, []int32{int32(B), n, int32(Hv)}),
+			mlx.SliceStartStop(beta, []int32{0, 0, 0}, []int32{int32(B), n, int32(Hv)}),
+			WithRecurrentState(nil, prior))
+		mlx.Eval(segStates[i], lastState(want))
+		floatsClose(t, "boundary delta", segStates[i].Floats(), lastState(want).Floats(), 1e-4)
+	}
+}
+
+// TestCausalConv1DSegmentEquivalence checks the conv segmented path matches the
+// single-shot conv for output, final conv tail, and each boundary conv state.
+func TestCausalConv1DSegmentEquivalence(t *testing.T) {
+	skipIfNoMLX(t)
+	B, L, D, convTail := 1, 4, 3, 2
+	K := convTail + 1
+
+	input := fromValues(0.5, B, L, D)
+	prior := fromValues(-0.3, B, convTail, D)
+	weight := fromValues(0.2, D, K)
+
+	full := &batch.Batch{SeqOffsets: []int32{0}, SeqQueryLens: []int32{int32(L)}}
+
+	refOut, refStates := CausalConv1D(full, input, nil, weight, convTail, WithRecurrentState(prior, nil))
+	if len(refStates) != 1 {
+		t.Fatalf("unsegmented call returned %d states, want 1", len(refStates))
+	}
+
+	segOut, segStates := CausalConv1D(full, input, nil, weight, convTail,
+		WithRecurrentState(prior, nil), WithSnapshotSplits([]int{1, 2, 3}))
+	mlx.Eval(refOut, segOut)
+
+	floatsClose(t, "conv out", segOut.Floats(), refOut.Floats(), 1e-4)
+	if len(segStates) != 4 {
+		t.Fatalf("got %d boundary conv states, want 4", len(segStates))
+	}
+	mlx.Eval(lastState(segStates), lastState(refStates))
+	floatsClose(t, "conv final", lastState(segStates).Floats(), lastState(refStates).Floats(), 1e-4)
+
+	for i := range segStates {
+		n := int32(i + 1)
+		pb := &batch.Batch{SeqOffsets: []int32{0}, SeqQueryLens: []int32{n}}
+		_, want := CausalConv1D(pb,
+			mlx.SliceStartStop(input, []int32{0, 0, 0}, []int32{int32(B), n, int32(D)}),
+			nil, weight, convTail, WithRecurrentState(prior, nil))
+		mlx.Eval(segStates[i], lastState(want))
+		floatsClose(t, "boundary conv", segStates[i].Floats(), lastState(want).Floats(), 1e-4)
+	}
+}
+
+// TestGatedDeltaSegmentEquivalenceBatched checks the segmented scan matches the
+// single-shot scan for B>1, including a ragged batch where rows have different
+// real lengths — segmentLens must clamp each row's per-segment query length.
+func TestGatedDeltaSegmentEquivalenceBatched(t *testing.T) {
+	skipIfNoMLX(t)
+	B, T, Hk, Dk, Hv, Dv := 2, 4, 1, 32, 1, 32
+
+	q := fromValues(0.1, B, T, Hk, Dk)
+	k := fromValues(-0.2, B, T, Hk, Dk)
+	v := fromValues(0.3, B, T, Hv, Dv)
+	gDecay := mlx.MulScalar(ones(mlx.DTypeFloat32, B, T, Hv), 0.9)
+	beta := mlx.MulScalar(ones(mlx.DTypeFloat32, B, T, Hv), 0.5)
+	prior := mlx.Zeros(mlx.DTypeFloat32, B, Hv, Dv, Dk)
+
+	// Row 0 full length T; row 1 ends at 3 (so segment [3,4) is all padding
+	// for row 1).
+	full := &batch.Batch{SeqOffsets: []int32{0, 0}, SeqQueryLens: []int32{int32(T), 3}}
+
+	refOut, refStates := GatedDelta(full, q, k, v, gDecay, beta, WithRecurrentState(nil, prior))
+	segOut, segStates := GatedDelta(full, q, k, v, gDecay, beta,
+		WithRecurrentState(nil, prior), WithSnapshotSplits([]int{1, 2, 3}))
+	mlx.Eval(refOut, segOut, lastState(refStates), lastState(segStates))
+
+	floatsClose(t, "batched out", segOut.Floats(), refOut.Floats(), 1e-4)
+	floatsClose(t, "batched final state", lastState(segStates).Floats(), lastState(refStates).Floats(), 1e-4)
+	if len(segStates) != 4 {
+		t.Fatalf("got %d boundary states, want 4", len(segStates))
+	}
+
+	// Each row's boundary i (offset i+1) must equal a B=1 single-shot scan over
+	// that row's real prefix: row 0 advances the full length, row 1 freezes once
+	// it reaches its real length 3. Per-row B=1 references avoid the ambiguity of
+	// re-declaring a ragged length over a uniform input slice.
+	rowReal := []int32{int32(T), 3}
+	for i := range segStates {
+		for r := range B {
+			n := min(int32(i+1), rowReal[r])
+			lo, hi := int32(r), int32(r)+1
+			rowPrior := mlx.SliceStartStop(prior, []int32{lo, 0, 0, 0}, []int32{hi, int32(Hv), int32(Dv), int32(Dk)})
+			_, want := GatedDelta(&batch.Batch{},
+				mlx.SliceStartStop(q, []int32{lo, 0, 0, 0}, []int32{hi, n, int32(Hk), int32(Dk)}),
+				mlx.SliceStartStop(k, []int32{lo, 0, 0, 0}, []int32{hi, n, int32(Hk), int32(Dk)}),
+				mlx.SliceStartStop(v, []int32{lo, 0, 0, 0}, []int32{hi, n, int32(Hv), int32(Dv)}),
+				mlx.SliceStartStop(gDecay, []int32{lo, 0, 0}, []int32{hi, n, int32(Hv)}),
+				mlx.SliceStartStop(beta, []int32{lo, 0, 0}, []int32{hi, n, int32(Hv)}),
+				WithRecurrentState(nil, rowPrior))
+			gotRow := mlx.SliceStartStop(segStates[i], []int32{lo, 0, 0, 0}, []int32{hi, int32(Hv), int32(Dv), int32(Dk)})
+			mlx.Eval(gotRow, lastState(want))
+			floatsClose(t, "batched boundary delta", gotRow.Floats(), lastState(want).Floats(), 1e-4)
+		}
+	}
+}
+
+// TestCausalConv1DSegmentEquivalenceBatched is the conv analog: segmented vs
+// single-shot for a ragged B>1 batch.
+func TestCausalConv1DSegmentEquivalenceBatched(t *testing.T) {
+	skipIfNoMLX(t)
+	B, L, D, convTail := 2, 4, 3, 2
+	K := convTail + 1
+
+	input := fromValues(0.5, B, L, D)
+	prior := fromValues(-0.3, B, convTail, D)
+	weight := fromValues(0.2, D, K)
+
+	full := &batch.Batch{SeqOffsets: []int32{0, 0}, SeqQueryLens: []int32{int32(L), 3}}
+
+	refOut, refStates := CausalConv1D(full, input, nil, weight, convTail, WithRecurrentState(prior, nil))
+	segOut, segStates := CausalConv1D(full, input, nil, weight, convTail,
+		WithRecurrentState(prior, nil), WithSnapshotSplits([]int{1, 2, 3}))
+	mlx.Eval(refOut, segOut, lastState(refStates), lastState(segStates))
+
+	floatsClose(t, "batched conv out", segOut.Floats(), refOut.Floats(), 1e-4)
+	floatsClose(t, "batched conv final", lastState(segStates).Floats(), lastState(refStates).Floats(), 1e-4)
+	if len(segStates) != 4 {
+		t.Fatalf("got %d boundary conv states, want 4", len(segStates))
+	}
+
+	// Each row's boundary i (offset i+1) must equal a B=1 single-shot conv over
+	// that row's real prefix: row 0 advances the full length, row 1 freezes once
+	// it reaches its real length 3. Per-row B=1 references avoid the ambiguity of
+	// re-declaring a ragged length over a uniform input slice.
+	rowReal := []int32{int32(L), 3}
+	for i := range segStates {
+		for r := range B {
+			n := min(int32(i+1), rowReal[r])
+			rowPrior := mlx.SliceStartStop(prior,
+				[]int32{int32(r), 0, 0}, []int32{int32(r) + 1, int32(convTail), int32(D)})
+			rowInput := mlx.SliceStartStop(input,
+				[]int32{int32(r), 0, 0}, []int32{int32(r) + 1, n, int32(D)})
+			_, want := CausalConv1D(&batch.Batch{}, rowInput, nil, weight, convTail,
+				WithRecurrentState(rowPrior, nil))
+			gotRow := mlx.SliceStartStop(segStates[i],
+				[]int32{int32(r), 0, 0}, []int32{int32(r) + 1, int32(convTail), int32(D)})
+			mlx.Eval(gotRow, lastState(want))
+			floatsClose(t, "batched boundary conv", gotRow.Floats(), lastState(want).Floats(), 1e-4)
 		}
 	}
 }
