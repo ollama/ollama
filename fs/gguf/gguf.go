@@ -101,7 +101,11 @@ func (f *File) readTensor() (TensorInfo, error) {
 		return TensorInfo{}, err
 	}
 
-	shape := make([]uint64, dims)
+	if err := checkLengthFitsFile(f, uint64(dims), 8, "tensor dimensions"); err != nil {
+		return TensorInfo{}, err
+	}
+
+	shape := make([]uint64, int(dims))
 	for i := range dims {
 		shape[i], err = read[uint64](f)
 		if err != nil {
@@ -191,11 +195,16 @@ func readString(f *File) (string, error) {
 		return "", err
 	}
 
-	if int(n) > len(f.bts) {
-		f.bts = make([]byte, n)
+	length, err := checkedLength(f, n, 1, "string")
+	if err != nil {
+		return "", err
 	}
 
-	bts := f.bts[:n]
+	if length > len(f.bts) {
+		f.bts = make([]byte, length)
+	}
+
+	bts := f.bts[:length]
 	if _, err := io.ReadFull(f.reader, bts); err != nil {
 		return "", err
 	}
@@ -246,8 +255,19 @@ func readArray(f *File) (any, error) {
 }
 
 func readArrayData[T any](f *File, n uint64) (s []T, err error) {
-	s = make([]T, n)
-	for i := range n {
+	var zero T
+	size := binary.Size(zero)
+	if size <= 0 {
+		return nil, fmt.Errorf("%w array element size %d", ErrUnsupported, size)
+	}
+
+	length, err := checkedLength(f, n, uint64(size), "array")
+	if err != nil {
+		return nil, err
+	}
+
+	s = make([]T, length)
+	for i := range length {
 		e, err := read[T](f)
 		if err != nil {
 			return nil, err
@@ -260,8 +280,13 @@ func readArrayData[T any](f *File, n uint64) (s []T, err error) {
 }
 
 func readArrayString(f *File, n uint64) (s []string, err error) {
-	s = make([]string, n)
-	for i := range n {
+	length, err := checkedLength(f, n, 8, "string array")
+	if err != nil {
+		return nil, err
+	}
+
+	s = make([]string, length)
+	for i := range length {
 		e, err := readString(f)
 		if err != nil {
 			return nil, err
@@ -271,6 +296,36 @@ func readArrayString(f *File, n uint64) (s []string, err error) {
 	}
 
 	return s, nil
+}
+
+func checkedLength(f *File, n, unit uint64, what string) (int, error) {
+	if uint64(int(n)) != n {
+		return 0, fmt.Errorf("%s length %d overflows platform int", what, n)
+	}
+
+	if err := checkLengthFitsFile(f, n, unit, what); err != nil {
+		return 0, err
+	}
+
+	return int(n), nil
+}
+
+func checkLengthFitsFile(f *File, n, unit uint64, what string) error {
+	if unit == 0 {
+		return fmt.Errorf("%s length has zero unit size", what)
+	}
+
+	info, err := f.file.Stat()
+	if err != nil {
+		return err
+	}
+
+	remaining := info.Size() - f.reader.offset
+	if remaining < 0 || n > uint64(remaining)/unit {
+		return io.ErrUnexpectedEOF
+	}
+
+	return nil
 }
 
 func (f *File) Close() error {
