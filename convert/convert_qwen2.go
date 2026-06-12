@@ -1,6 +1,10 @@
 package convert
 
-import "github.com/ollama/ollama/fs/ggml"
+import (
+	"log/slog"
+
+	"github.com/ollama/ollama/fs/ggml"
+)
 
 type qwen2Model struct {
 	ModelParameters
@@ -43,7 +47,11 @@ func (q *qwen2Model) KV(t *Tokenizer) KV {
 	case "mrope", "default":
 		kv["qwen2.rope.mrope_section"] = q.RopeScaling.MropeSection
 	default:
-		panic("unknown rope scaling type")
+		// RopeScaling.Type comes from attacker-controlled config.json.
+		// An unrecognized value is unknown metadata, not a security
+		// boundary, so skip it instead of panicking and crashing the
+		// (unrecovered) conversion goroutine.
+		slog.Warn("unknown rope scaling type, ignoring", "type", q.RopeScaling.Type)
 	}
 	return kv
 }
