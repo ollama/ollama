@@ -414,6 +414,7 @@ curl http://localhost:11434/api/generate -d '{
     "num_ctx": 1024,
     "num_batch": 2,
     "num_gpu": 1,
+    "num_cpu_moe": 8,
     "main_gpu": 0,
     "use_mmap": true,
     "num_thread": 8
