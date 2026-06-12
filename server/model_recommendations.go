@@ -384,10 +384,11 @@ var defaultModelRecommendations = []api.ModelRecommendation{
 		MaxOutputTokens: 32_768,
 	},
 	{
-		Model:           "minimax-m2.7:cloud",
-		Description:     "Fast, efficient coding and real-world productivity",
-		ContextLength:   204_800,
-		MaxOutputTokens: 128_000,
+		Model:           "minimax-m3:cloud",
+		Description:     "State-of-the-art coding & agent capabilities with multimodal reasoning and support for up to 1M context",
+		ContextLength:   524_288,
+		MaxOutputTokens: 131_072,
+		RequiredPlan:    "free",
 	},
 	{
 		Model:       "gemma4",

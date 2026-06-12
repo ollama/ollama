@@ -975,7 +975,7 @@ func TestLaunchIntegration_ManagedSingleIntegrationCanConfigureWithModelList(t *
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
 
-	if diff := compareStringSlices(runner.configuredModelLists, [][]string{{"gemma4", "kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "qwen3.5", "qwen3:8b"}}); diff != "" {
+	if diff := compareStringSlices(runner.configuredModelLists, [][]string{{"gemma4", "kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m3:cloud", "qwen3.5", "qwen3:8b"}}); diff != "" {
 		t.Fatalf("configured model list mismatch (-want +got):\n%s", diff)
 	}
 	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
@@ -3169,15 +3169,6 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 		return []string{"llama3.2"}, nil
 	}
 
-	var prompts []string
-	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
-		prompts = append(prompts, prompt)
-		if strings.Contains(prompt, "Launch LauncherEditor now?") {
-			return false, nil
-		}
-		return true, nil
-	}
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/experimental/model-recommendations":
@@ -3205,9 +3196,6 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 	}
 	if editor.ranModel != "" {
 		t.Fatalf("expected configure-only flow to skip launch, got %q", editor.ranModel)
-	}
-	if !slices.Contains(prompts, "Launch LauncherEditor now?") {
-		t.Fatalf("expected configure-only launch prompt, got %v", prompts)
 	}
 }
 
@@ -3447,7 +3435,7 @@ func TestLaunchIntegration_ClaudeModelOverrideSkipsSelector(t *testing.T) {
 	}
 }
 
-func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
+func TestLaunchIntegration_ConfigureOnlyDoesNotPromptOrLaunch(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -3459,12 +3447,9 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 		return "llama3.2", nil
 	}
 
-	var prompts []string
+	confirmCalled := false
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
-		prompts = append(prompts, prompt)
-		if strings.Contains(prompt, "Launch StubSingle now?") {
-			return false, nil
-		}
+		confirmCalled = true
 		return true, nil
 	}
 
@@ -3491,10 +3476,10 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
 	if runner.ranModel != "" {
-		t.Fatalf("expected configure-only flow to skip launch when prompt is declined, got %q", runner.ranModel)
+		t.Fatalf("expected configure-only flow to skip launch, got %q", runner.ranModel)
 	}
-	if !slices.Contains(prompts, "Launch StubSingle now?") {
-		t.Fatalf("expected launch confirmation prompt, got %v", prompts)
+	if confirmCalled {
+		t.Fatal("expected configure-only flow not to prompt for launch")
 	}
 }
 

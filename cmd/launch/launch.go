@@ -1391,13 +1391,7 @@ func runIntegration(runner Runner, modelName string, models []LaunchModel, args 
 
 func launchAfterConfiguration(name string, runner Runner, model string, models []LaunchModel, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
-		launch, err := ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
-		if err != nil {
-			return err
-		}
-		if !launch {
-			return nil
-		}
+		return nil
 	}
 	if err := EnsureIntegrationInstalled(name, runner); err != nil {
 		return err
