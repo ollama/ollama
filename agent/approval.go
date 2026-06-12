@@ -318,6 +318,8 @@ func denyApproval(toolName string, risk ApprovalRisk, reason string) ApprovalEva
 	}
 }
 
+// Bash approval is static analysis of model-generated commands, not a sandbox.
+// Globs, aliases, environment, and runtime shell state are intentionally out of scope.
 func classifyBashCommand(command string) (ApprovalRisk, []string) {
 	parser := syntax.NewParser(syntax.Variant(syntax.LangBash))
 	file, err := parser.Parse(strings.NewReader(command), "")
@@ -357,6 +359,9 @@ func classifyBashCommand(command string) (ApprovalRisk, []string) {
 			classifier.high = true
 		case *syntax.Subshell:
 			classifier.addReason("uses a subshell")
+			classifier.high = true
+		case *syntax.FuncDecl:
+			classifier.addReason("defines shell functions")
 			classifier.high = true
 		case *syntax.CallExpr:
 			classifier.addCall(n)
@@ -400,6 +405,10 @@ func (c *bashClassifier) addCall(call *syntax.CallExpr) {
 	if call == nil || len(call.Args) == 0 {
 		return
 	}
+	if wordHasCommandNameExpansion(call.Args[0]) {
+		c.addReason("uses dynamic command name")
+		c.high = true
+	}
 	args := literalWords(call.Args)
 	if len(args) == 0 {
 		return
@@ -408,6 +417,15 @@ func (c *bashClassifier) addCall(call *syntax.CallExpr) {
 	switch name {
 	case "cd":
 		c.addReason("changes directory")
+		c.high = true
+	case "eval":
+		c.addReason("evaluates shell code")
+		c.high = true
+	case "source", ".":
+		c.addReason("sources shell code")
+		c.high = true
+	case "exec":
+		c.addReason("replaces the shell process")
 		c.high = true
 	case "sudo":
 		c.addReason("runs with elevated privileges")
@@ -445,6 +463,21 @@ func (c *bashClassifier) addCall(call *syntax.CallExpr) {
 			c.high = true
 		}
 	}
+}
+
+func wordHasCommandNameExpansion(word *syntax.Word) bool {
+	if word == nil {
+		return false
+	}
+	for _, part := range word.Parts {
+		switch part.(type) {
+		case *syntax.Lit:
+			continue
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func literalWords(words []*syntax.Word) []string {
