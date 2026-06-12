@@ -1,12 +1,14 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -3021,4 +3023,84 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+func TestLlamaServerLoadWarnsSilentCPUFallback(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{Library: "cuda", ID: "0"}, Name: "NVIDIA RTX 3080"},
+	}
+	runner := &llamaServerRunner{
+		port:        portInt,
+		cmd:         fakeRunningCmd(),
+		gpus:        gpus,
+		totalLayers: 33,
+		// gpuLayers defaults to 0: the silent CPU-fallback scenario
+		options: api.Options{NumGPU: -1},
+	}
+
+	if _, err := runner.Load(t.Context(), ml.SystemInfo{}, gpus, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := logs.String(); !strings.Contains(got, "model loaded entirely on CPU despite GPU being available") {
+		t.Errorf("expected silent CPU fallback warning, got logs:\n%s", got)
+	}
+}
+
+func TestLlamaServerLoadNoWarnWhenGPULayersLoaded(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{Library: "cuda", ID: "0"}, Name: "NVIDIA RTX 3080"},
+	}
+	runner := &llamaServerRunner{
+		port:        portInt,
+		cmd:         fakeRunningCmd(),
+		gpus:        gpus,
+		totalLayers: 33,
+		gpuLayers:   33, // fully loaded on GPU — warning must not fire
+		options:     api.Options{NumGPU: -1},
+	}
+
+	if _, err := runner.Load(t.Context(), ml.SystemInfo{}, gpus, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := logs.String(); strings.Contains(got, "model loaded entirely on CPU") {
+		t.Errorf("unexpected CPU fallback warning when GPU layers are loaded:\n%s", got)
+	}
 }

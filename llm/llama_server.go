@@ -908,6 +908,32 @@ func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, 
 			"model", s.modelPath, "gpus", len(s.gpus))
 	}
 
+	// Warn when the user has a GPU (or requested one) but llama-server loaded
+	// the model entirely on CPU. This happens when the GPU driver is
+	// incompatible (e.g. after a driver update that leaves the old kernel
+	// module loaded until reboot — CUDA "forward compatibility" error). Without
+	// this warning the server appears healthy while running at CPU speed with
+	// high RAM usage, often causing 100 % CPU, thermal throttling, and
+	// downstream timeouts — all with no visible error.
+	s.memoryMu.RLock()
+	gpuLayers := s.gpuLayers
+	totalLayers := s.totalLayers
+	s.memoryMu.RUnlock()
+	if s.options.NumGPU != 0 && totalLayers > 0 && gpuLayers == 0 {
+		for _, g := range s.gpus {
+			if !strings.EqualFold(g.Library, "cpu") {
+				slog.Warn("model loaded entirely on CPU despite GPU being available — "+
+					"GPU initialization likely failed (check for driver or CUDA errors above). "+
+					"Inference will be much slower than expected and may cause high CPU/RAM usage.",
+					"model", s.modelPath,
+					"total_layers", totalLayers,
+					"gpu", g.Name,
+					"library", g.Library)
+				break
+			}
+		}
+	}
+
 	if s.options.MainGPU != nil && *s.options.MainGPU >= 0 && *s.options.MainGPU < len(gpus) {
 		return []ml.DeviceID{gpus[*s.options.MainGPU].DeviceID}, nil
 	}
