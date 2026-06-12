@@ -379,6 +379,15 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	}
 	// NumGPU == -1 (default): don't pass -ngl, let llama-server auto-detect
 
+	// MoE expert CPU offload — keep the MoE expert (FFN) tensors of the first
+	// N layers resident on the CPU (computed in place, no PCIe weight streaming)
+	// while the rest of each layer is offloaded to the GPU. This is the upstream
+	// llama-server --n-cpu-moe flag (llama.cpp PR ggml-org/llama.cpp#15077). Only
+	// pass when explicitly set (> 0); 0 (default) leaves placement unchanged.
+	if launch.opts.NumCPUMoE > 0 {
+		params = append(params, "--n-cpu-moe", strconv.Itoa(launch.opts.NumCPUMoE))
+	}
+
 	// Thread count — only pass if user explicitly set it.
 	// Default behavior: let llama-server auto-detect.
 	if launch.opts.NumThread > 0 {

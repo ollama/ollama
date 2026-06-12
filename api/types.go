@@ -603,6 +603,7 @@ type Runner struct {
 	NumCtx          int   `json:"num_ctx,omitempty"`
 	NumBatch        int   `json:"num_batch,omitempty"`
 	NumGPU          int   `json:"num_gpu,omitempty"`
+	NumCPUMoE       int   `json:"num_cpu_moe,omitempty"`
 	MainGPU         *int  `json:"main_gpu,omitempty"`
 	UseMMap         *bool `json:"use_mmap,omitempty"`
 	NumThread       int   `json:"num_thread,omitempty"`
@@ -1110,6 +1111,7 @@ func DefaultOptions() Options {
 			NumCtx:          int(envconfig.ContextLength()),
 			NumBatch:        512,
 			NumGPU:          -1, // -1 here indicates that NumGPU should be set dynamically
+			NumCPUMoE:       0,  // 0 = don't force any MoE expert tensors onto the CPU
 			NumThread:       0,  // let the runtime decide
 			DraftNumPredict: 4,
 			UseMMap:         nil,

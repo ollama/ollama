@@ -213,6 +213,44 @@ func TestMainGPUParsingFromJSON(t *testing.T) {
 	}
 }
 
+func TestNumCPUMoEParsingFromJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		req  string
+		want int
+	}{
+		{
+			name: "Undefined",
+			req:  `{}`,
+			want: 0, // DefaultOptions: don't force any experts onto the CPU
+		},
+		{
+			name: "Zero",
+			req:  `{ "num_cpu_moe": 0 }`,
+			want: 0,
+		},
+		{
+			name: "Nonzero",
+			req:  `{ "num_cpu_moe": 8 }`,
+			want: 8,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var oMap map[string]any
+			err := json.Unmarshal([]byte(test.req), &oMap)
+			require.NoError(t, err)
+
+			opts := DefaultOptions()
+			err = opts.FromMap(oMap)
+			require.NoError(t, err)
+
+			assert.Equal(t, test.want, opts.NumCPUMoE)
+		})
+	}
+}
+
 func TestUseMmapFormatParams(t *testing.T) {
 	tr := true
 	fa := false
