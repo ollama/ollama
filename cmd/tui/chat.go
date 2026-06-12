@@ -293,11 +293,12 @@ type chatCompactProgressMsg struct {
 type chatTickMsg struct{}
 
 type chatModel struct {
-	ctx      context.Context
-	opts     ChatOptions
-	chatID   string
-	messages []api.Message
-	entries  []chatEntry
+	ctx        context.Context
+	opts       ChatOptions
+	chatID     string
+	messages   []api.Message
+	entries    []chatEntry
+	workingDir string
 
 	input            []rune
 	queued           []string
@@ -382,6 +383,7 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 		opts:           opts,
 		chatID:         opts.ChatID,
 		messages:       slices.Clone(opts.Messages),
+		workingDir:     opts.WorkingDir,
 		reviewApproval: reviewApproval,
 		permissionMode: newChatPermissionMode(autoApproveTools),
 		promptHistory:  initialPromptHistory(ctx, opts),
@@ -446,7 +448,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.result != nil {
 			m.messages = msg.result.Messages
 			if msg.result.WorkingDir != "" {
-				m.opts.WorkingDir = msg.result.WorkingDir
+				m.workingDir = msg.result.WorkingDir
 			}
 			m.refreshContextWindowTokens(m.responseModelName(&msg.result.Latest))
 			m.contextTokens = m.estimatePromptTokens(m.messages, "")
@@ -747,8 +749,10 @@ func (m *chatModel) resetChat(status string) (tea.Model, tea.Cmd) {
 
 func (m *chatModel) resetWorkingDir() {
 	if m.opts.RootDir != "" {
-		m.opts.WorkingDir = m.opts.RootDir
+		m.workingDir = m.opts.RootDir
+		return
 	}
+	m.workingDir = m.opts.WorkingDir
 }
 
 func (m *chatModel) startManualCompaction() (tea.Model, tea.Cmd) {
@@ -858,7 +862,7 @@ func (m *chatModel) startRunWithPrompt(displayInput, userInput, extraSystemPromp
 		Events:     chatEventSink{ctx: runCtx, ch: events},
 		Tools:      m.opts.Tools,
 		Approval:   m.approvalHandlerForRun(events),
-		WorkingDir: m.opts.WorkingDir,
+		WorkingDir: m.currentWorkingDir(),
 		Compactor:  m.opts.Compactor,
 	}
 	opts := coreagent.RunOptions{
@@ -1388,7 +1392,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.thinking = false
 		m.thinkingTokens = 0
 		if event.WorkingDir != "" {
-			m.opts.WorkingDir = event.WorkingDir
+			m.workingDir = event.WorkingDir
 		}
 		startedAt := m.toolStartedAt(event.ToolCallID)
 		status := "done"
@@ -2400,7 +2404,7 @@ func (m chatModel) mentionCompletions() []chatCompletion {
 		return nil
 	}
 
-	workingDir := m.opts.WorkingDir
+	workingDir := m.currentWorkingDir()
 	if strings.TrimSpace(workingDir) == "" {
 		var err error
 		workingDir, err = os.Getwd()
@@ -3561,8 +3565,15 @@ func (m chatModel) responseModelName(response *api.ChatResponse) string {
 	return m.opts.Model
 }
 
+func (m chatModel) currentWorkingDir() string {
+	if strings.TrimSpace(m.workingDir) != "" {
+		return m.workingDir
+	}
+	return m.opts.WorkingDir
+}
+
 func (m chatModel) cwdStatus() string {
-	workingDir := strings.TrimSpace(m.opts.WorkingDir)
+	workingDir := strings.TrimSpace(m.currentWorkingDir())
 	rootDir := strings.TrimSpace(m.opts.RootDir)
 	if workingDir == "" || rootDir == "" {
 		return ""

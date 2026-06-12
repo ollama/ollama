@@ -750,6 +750,40 @@ func TestChatViewShowsSessionCWDWhenChanged(t *testing.T) {
 	}
 }
 
+func TestChatToolFinishedUpdatesLiveWorkingDirOnly(t *testing.T) {
+	root := t.TempDir()
+	subdir := filepath.Join(root, "sub")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := chatModel{
+		width:  140,
+		height: 12,
+		opts: ChatOptions{
+			RootDir:    root,
+			WorkingDir: root,
+		},
+		workingDir: root,
+	}
+
+	m.applyAgentEvent(coreagent.Event{
+		Type:       coreagent.EventToolFinished,
+		ToolCallID: "call-1",
+		ToolName:   "bash",
+		WorkingDir: subdir,
+	})
+
+	if m.workingDir != subdir {
+		t.Fatalf("workingDir = %q, want %q", m.workingDir, subdir)
+	}
+	if m.opts.WorkingDir != root {
+		t.Fatalf("opts.WorkingDir mutated to %q, want %q", m.opts.WorkingDir, root)
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "cwd ./sub") {
+		t.Fatalf("view missing cwd status: %q", view)
+	}
+}
+
 func TestChatViewPadsToTerminalHeight(t *testing.T) {
 	m := chatModel{
 		input:  []rune("hello"),
