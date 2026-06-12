@@ -31,6 +31,8 @@ type chatCompletion struct {
 	directory   bool
 }
 
+const maxInputBoxBodyLines = 6
+
 var chatSlashCommands = []chatSlashCommand{
 	{name: "/copy", description: "copy latest model output"},
 	{name: "/copy-all", description: "copy all model output"},
@@ -209,15 +211,41 @@ func (m *chatModel) resetPromptHistoryCursor() {
 }
 
 func renderInputBox(input string, width int) string {
+	return strings.Join(renderInputBoxLines(input, width, maxInputBoxBodyLines), "\n")
+}
+
+func renderInputBoxLines(input string, width, maxBodyLines int) []string {
 	if width < 1 {
 		width = 1
 	}
-	lines := []string{
-		chatInputBorderStyle.Render(strings.Repeat("─", width)),
-		renderPromptRow("> "+input+"█", width)[0],
-		chatInputBorderStyle.Render(strings.Repeat("─", width)),
+	if maxBodyLines < 1 {
+		maxBodyLines = 1
 	}
-	return strings.Join(lines, "\n")
+	body := wrapChatText("> "+input+"█", width)
+	if len(body) > maxBodyLines {
+		body = slices.Clone(body[len(body)-maxBodyLines:])
+		body[0] = truncateInputLine("> ... "+body[0], width)
+	}
+	for i, line := range body {
+		body[i] = chatUserStyle.Render(line)
+	}
+
+	lines := make([]string, 0, len(body)+2)
+	lines = append(lines, chatInputBorderStyle.Render(strings.Repeat("─", width)))
+	lines = append(lines, body...)
+	lines = append(lines, chatInputBorderStyle.Render(strings.Repeat("─", width)))
+	return lines
+}
+
+func truncateInputLine(line string, width int) string {
+	if width <= 0 {
+		return line
+	}
+	runes := []rune(line)
+	if len(runes) <= width {
+		return line
+	}
+	return string(runes[:width])
 }
 
 func renderPromptRow(text string, width int) []string {

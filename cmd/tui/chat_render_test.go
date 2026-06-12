@@ -95,6 +95,63 @@ func TestChatViewRendersInputBox(t *testing.T) {
 	}
 }
 
+func TestChatViewExpandsInputBoxForLongPrompt(t *testing.T) {
+	m := chatModel{
+		input:  []rune(strings.Repeat("long prompt ", 8)),
+		width:  32,
+		height: 14,
+	}
+
+	view := stripANSI(m.View())
+	if got := inputBoxBodyLineCount(t, view, 32); got < 2 {
+		t.Fatalf("input body lines = %d, want wrapped prompt:\n%s", got, view)
+	}
+	if !strings.Contains(view, "█") {
+		t.Fatalf("view missing cursor: %q", view)
+	}
+}
+
+func TestChatViewCapsTallInputBoxAndKeepsFooter(t *testing.T) {
+	m := chatModel{
+		input:  []rune(strings.Repeat("pasted text ", 80)),
+		width:  32,
+		height: 12,
+	}
+
+	view := stripANSI(m.View())
+	if got := len(strings.Split(view, "\n")); got != 12 {
+		t.Fatalf("view height = %d, want 12:\n%s", got, view)
+	}
+	if got := inputBoxBodyLineCount(t, view, 32); got > maxInputBoxBodyLines {
+		t.Fatalf("input body lines = %d, want <= %d:\n%s", got, maxInputBoxBodyLines, view)
+	}
+	if !strings.Contains(view, "enter send") || !strings.Contains(view, "ctrl+c clear/cancel") {
+		t.Fatalf("view should keep footer visible:\n%s", view)
+	}
+	if !strings.Contains(view, "> ... ") {
+		t.Fatalf("truncated pasted prompt should show an omission marker:\n%s", view)
+	}
+}
+
+func inputBoxBodyLineCount(t *testing.T, view string, width int) int {
+	t.Helper()
+	border := strings.Repeat("─", width)
+	lines := strings.Split(view, "\n")
+	first := -1
+	for i, line := range lines {
+		if line != border {
+			continue
+		}
+		if first < 0 {
+			first = i
+			continue
+		}
+		return i - first - 1
+	}
+	t.Fatalf("input box borders not found:\n%s", view)
+	return 0
+}
+
 func TestChatViewKeepsInputBoxWhileRunning(t *testing.T) {
 	m := chatModel{
 		input:          []rune("next"),
