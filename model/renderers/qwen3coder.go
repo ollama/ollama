@@ -141,7 +141,7 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ 
 
 	for i, message := range filteredMessages {
 		lastMessage := i == len(filteredMessages)-1
-		prefill := lastMessage && message.Role == "assistant"
+		prefill := lastMessage && message.Role == "assistant" && len(message.ToolCalls) == 0
 		switch message.Role {
 		case "assistant":
 			if len(message.ToolCalls) > 0 {
