@@ -60,6 +60,7 @@ type mockRunner struct {
 	ChatRequest   llm.ChatRequest
 	ChatResponse  llm.ChatResponse
 	ChatFn        func(context.Context, llm.ChatRequest, func(llm.ChatResponse)) error
+	EmbeddingFn   func(context.Context, string) ([]float32, int, error)
 	Template      string
 	TemplateFn    func(context.Context, llm.ChatRequest) (string, error)
 	contextLength int
@@ -91,12 +92,24 @@ func (m *mockRunner) ApplyChatTemplate(ctx context.Context, r llm.ChatRequest) (
 	return m.Template, nil
 }
 
+func (m *mockRunner) Embedding(ctx context.Context, input string) ([]float32, int, error) {
+	if m.EmbeddingFn != nil {
+		return m.EmbeddingFn(ctx, input)
+	}
+	return nil, 0, errors.New("embedding not implemented")
+}
+
 func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error) {
 	for range strings.Fields(s) {
 		tokens = append(tokens, len(tokens))
 	}
 
 	return
+}
+
+func (mockRunner) Detokenize(_ context.Context, tokens []int) (string, error) {
+	// One whitespace-separated field per token, mirroring Tokenize above.
+	return strings.TrimSpace(strings.Repeat("x ", len(tokens))), nil
 }
 
 func (mockRunner) Ping(_ context.Context) error { return nil }
