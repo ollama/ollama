@@ -1,6 +1,6 @@
 # Maintainer: Your Name <youremail@example.com>
 pkgname=ollama-turboquant-git
-pkgver=0.30.8.r2.g78b547b
+pkgver=0.30.8.r4.gd66fc63
 pkgrel=1
 pkgdesc='Create, run and share large language models (LLMs) - TurboQuant fork with CUDA'
 arch=('x86_64')
@@ -34,8 +34,8 @@ prepare() {
   # Eliminar parche y código fuente roto de laguna que no compila en turboquant
   rm -rf llama/compat/models
   
-  # Eliminar flag no soportado por el fork antiguo
-  sed -i '/--no-log-prefix/d' llm/llama_server.go
+  # Eliminar flags no soportados por el fork antiguo
+  sed -i -e '/--no-log-prefix/d' -e '/--no-log-timestamps/d' llm/llama_server.go
 
   # Añadir stubs débiles (weak symbols) para las funciones CUDA de turboquant
   # de modo que el build de CPU local pueda enlazar libllama.so correctamente.
