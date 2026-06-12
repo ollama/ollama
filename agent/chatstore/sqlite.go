@@ -487,8 +487,8 @@ func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUse
 	if chatID == "" {
 		return fmt.Errorf("chat id is required")
 	}
-	if keepUserTurns <= 0 {
-		return fmt.Errorf("keep user turns must be positive")
+	if keepUserTurns < 0 {
+		return fmt.Errorf("keep user turns must be non-negative")
 	}
 	if strings.TrimSpace(summary) == "" {
 		return fmt.Errorf("summary is required")
@@ -501,17 +501,30 @@ func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUse
 	defer tx.Rollback()
 
 	var keepStartID int64
-	if err := tx.QueryRowContext(ctx, `
-		SELECT id
-		FROM messages
-		WHERE chat_id = ? AND archived = 0 AND role = 'user'
-		ORDER BY id DESC
-		LIMIT 1 OFFSET ?
-	`, chatID, keepUserTurns-1).Scan(&keepStartID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	if keepUserTurns == 0 {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COALESCE(MAX(id) + 1, 0)
+			FROM messages
+			WHERE chat_id = ? AND archived = 0
+		`, chatID).Scan(&keepStartID); err != nil {
+			return fmt.Errorf("find compaction boundary: %w", err)
+		}
+		if keepStartID == 0 {
 			return nil
 		}
-		return fmt.Errorf("find compaction boundary: %w", err)
+	} else {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT id
+			FROM messages
+			WHERE chat_id = ? AND archived = 0 AND role = 'user'
+			ORDER BY id DESC
+			LIMIT 1 OFFSET ?
+		`, chatID, keepUserTurns-1).Scan(&keepStartID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("find compaction boundary: %w", err)
+		}
 	}
 
 	rows, err := tx.QueryContext(ctx, `

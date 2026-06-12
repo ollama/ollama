@@ -129,6 +129,82 @@ func TestSimpleCompactorTruncatesOversizedSummary(t *testing.T) {
 	}
 }
 
+func TestSimpleCompactorKeepsFewerTurnsForShortChats(t *testing.T) {
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{{
+			{Message: api.Message{Role: "assistant", Content: "short summary"}},
+		}},
+	}
+	store := &compactionStore{}
+	compactor := NewSimpleCompactor(client, store, CompactionOptions{
+		ContextWindowTokens: 100,
+		KeepUserTurns:       3,
+		Threshold:           0.5,
+	})
+
+	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
+		ChatID: "chat-1",
+		Model:  "model",
+		Messages: []api.Message{
+			{Role: "user", Content: "old request"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "latest request"},
+		},
+		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 75}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Compacted {
+		t.Fatal("expected compaction")
+	}
+	if store.keepUserTurns != 1 {
+		t.Fatalf("kept user turns = %d, want 1", store.keepUserTurns)
+	}
+	if len(result.Messages) != 2 {
+		t.Fatalf("messages = %#v, want summary plus latest request", result.Messages)
+	}
+	if result.Messages[1].Content != "latest request" {
+		t.Fatalf("latest turn was not kept: %#v", result.Messages)
+	}
+}
+
+func TestSimpleCompactorCanArchiveWholeShortChat(t *testing.T) {
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{{
+			{Message: api.Message{Role: "assistant", Content: "whole summary"}},
+		}},
+	}
+	store := &compactionStore{}
+	compactor := NewSimpleCompactor(client, store, CompactionOptions{
+		ContextWindowTokens: 100,
+		KeepUserTurns:       3,
+		Threshold:           0.5,
+	})
+
+	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
+		ChatID: "chat-1",
+		Model:  "model",
+		Messages: []api.Message{
+			{Role: "user", Content: "only request"},
+			{Role: "assistant", Content: "only answer"},
+		},
+		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 75}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Compacted {
+		t.Fatal("expected compaction")
+	}
+	if store.keepUserTurns != 0 {
+		t.Fatalf("kept user turns = %d, want 0", store.keepUserTurns)
+	}
+	if len(result.Messages) != 1 || !strings.HasPrefix(result.Messages[0].Content, compactionSummaryMessagePrefix) {
+		t.Fatalf("messages = %#v, want only summary", result.Messages)
+	}
+}
+
 func TestSimpleCompactorSkipsBelowThreshold(t *testing.T) {
 	client := &fakeClient{}
 	compactor := NewSimpleCompactor(client, nil, CompactionOptions{

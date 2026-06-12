@@ -361,6 +361,36 @@ func TestContextWindowTokensForRunUsesRunningModel(t *testing.T) {
 	}
 }
 
+func TestContextWindowTokensForRunUsesCloudShowFallback(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/ps" && r.Method == http.MethodGet:
+			if err := json.NewEncoder(w).Encode(api.ProcessResponse{}); err != nil {
+				t.Fatal(err)
+			}
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Details: api.ModelDetails{ContextLength: 262144},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Fatalf("unexpected request to %s %s", r.URL.Path, r.Method)
+		}
+	}))
+	defer mockServer.Close()
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := contextWindowTokensForRun(t.Context(), client, "qwen3.5:cloud", 4096); got != 262144 {
+		t.Fatalf("contextWindowTokensForRun cloud show = %d, want 262144", got)
+	}
+}
+
 func TestContextWindowTokensFromShowResponse(t *testing.T) {
 	if got := contextWindowTokensFromShowResponse(&api.ShowResponse{
 		Details: api.ModelDetails{ContextLength: 262144},

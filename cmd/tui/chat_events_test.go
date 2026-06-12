@@ -163,6 +163,12 @@ func TestChatFooterShowsContextAndCompactionOnlyWhenNear(t *testing.T) {
 	if !strings.Contains(view, "compact due at 75") {
 		t.Fatalf("view should show compaction due at threshold: %q", view)
 	}
+
+	m.contextTokens = 125
+	view = stripANSI(m.View())
+	if !strings.Contains(view, "ctx ~125/100 (125%)") {
+		t.Fatalf("view should show over-window usage instead of clamping: %q", view)
+	}
 }
 
 func TestChatStartRunEstimatesFullPrompt(t *testing.T) {
@@ -262,6 +268,54 @@ func TestChatRunDoneKeepsAPIPromptEvalCount(t *testing.T) {
 	}
 	if fm.contextEstimate {
 		t.Fatal("API prompt eval count should not be marked estimated")
+	}
+}
+
+func TestChatAgentEventsRefreshLiveContextEstimateForToolCalls(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("query", "Parth Sareen")
+	toolCall := api.ToolCall{
+		ID: "call-1",
+		Function: api.ToolCallFunction{
+			Name:      "web_search",
+			Arguments: args,
+		},
+	}
+
+	m := chatModel{
+		ctx:   context.Background(),
+		input: []rune("who is parth"),
+		opts: ChatOptions{
+			Model:  "test",
+			Client: chatTestClient{},
+		},
+	}
+
+	updated, _ := m.handleSubmit()
+	m = updated.(chatModel)
+	if m.cancel != nil {
+		m.cancel()
+	}
+	initial := m.contextTokens
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "I'll search."})
+	afterAssistant := m.contextTokens
+	if afterAssistant <= initial {
+		t.Fatalf("assistant delta should increase context estimate: initial=%d after=%d", initial, afterAssistant)
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolCallDetected, ToolCalls: []api.ToolCall{toolCall}})
+	afterToolCall := m.contextTokens
+	if afterToolCall <= afterAssistant {
+		t.Fatalf("tool call should increase context estimate: assistant=%d after=%d", afterAssistant, afterToolCall)
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolFinished, ToolCallID: "call-1", ToolName: "web_search", Content: strings.Repeat("result ", 20)})
+	if m.contextTokens <= afterToolCall {
+		t.Fatalf("tool output should increase context estimate: tool call=%d after=%d", afterToolCall, m.contextTokens)
+	}
+	if !m.contextEstimate {
+		t.Fatal("live context should remain marked estimated")
 	}
 }
 
@@ -640,12 +694,12 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 	}
 }
 
-func TestChatCompactCommandSuggestsNewWhenSkipped(t *testing.T) {
+func TestChatCompactCommandShowsSkippedReason(t *testing.T) {
 	compactor := &chatTestCompactor{
 		result: coreagent.CompactionResult{
 			Messages: []api.Message{{Role: "user", Content: "only request"}},
 			Due:      true,
-			Reason:   "not enough older messages to compact",
+			Reason:   "compaction is unavailable",
 		},
 	}
 	m := chatModel{
@@ -667,8 +721,8 @@ func TestChatCompactCommandSuggestsNewWhenSkipped(t *testing.T) {
 		t.Fatalf("status = %q, want compact skipped", fm.status)
 	}
 	transcript := stripANSI(fm.renderTranscript(100))
-	if !strings.Contains(transcript, "not enough older messages to compact") || !strings.Contains(transcript, "/new") {
-		t.Fatalf("skip message should explain /new: %q", transcript)
+	if !strings.Contains(transcript, "compaction is unavailable") || strings.Contains(transcript, "/new") {
+		t.Fatalf("skip message = %q", transcript)
 	}
 }
 

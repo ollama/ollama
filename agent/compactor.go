@@ -82,9 +82,9 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 	}
 
 	keepUserTurns := c.keepUserTurns()
-	prefix, previousSummary, archive, suffix, ok := splitCompactionMessages(req.Messages, keepUserTurns)
+	prefix, previousSummary, archive, suffix, keptUserTurns, ok := splitCompactionMessages(req.Messages, keepUserTurns)
 	if !ok || len(archive) == 0 {
-		result.Reason = "not enough older messages to compact"
+		result.Reason = "nothing to compact"
 		return result, nil
 	}
 
@@ -100,7 +100,7 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 	}
 
 	if c.Store != nil && req.ChatID != "" {
-		if err := c.Store.ArchiveForCompaction(ctx, req.ChatID, keepUserTurns, summary); err != nil {
+		if err := c.Store.ArchiveForCompaction(ctx, req.ChatID, keptUserTurns, summary); err != nil {
 			result.Reason = err.Error()
 			return result, err
 		}
@@ -253,7 +253,7 @@ func compactionPrompt(previousSummary string, archive []api.Message) (string, er
 	return b.String(), nil
 }
 
-func splitCompactionMessages(messages []api.Message, keepUserTurns int) (prefix []api.Message, previousSummary string, archive []api.Message, suffix []api.Message, ok bool) {
+func splitCompactionMessages(messages []api.Message, keepUserTurns int) (prefix []api.Message, previousSummary string, archive []api.Message, suffix []api.Message, keptUserTurns int, ok bool) {
 	if keepUserTurns <= 0 {
 		keepUserTurns = defaultCompactionKeepUserTurns
 	}
@@ -268,22 +268,29 @@ func splitCompactionMessages(messages []api.Message, keepUserTurns int) (prefix 
 		start++
 	}
 
-	userTurns := 0
-	suffixStart := len(messages)
+	userTurnIndexes := make([]int, 0, keepUserTurns)
 	for i := len(messages) - 1; i >= start; i-- {
 		if messages[i].Role == "user" {
-			userTurns++
-			if userTurns == keepUserTurns {
-				suffixStart = i
-				break
-			}
+			userTurnIndexes = append(userTurnIndexes, i)
 		}
 	}
-	if userTurns < keepUserTurns || suffixStart <= start {
-		return prefix, previousSummary, nil, nil, false
+	keptUserTurns = keepUserTurns
+	if len(userTurnIndexes) <= keptUserTurns {
+		keptUserTurns = len(userTurnIndexes) - 1
+	}
+	if keptUserTurns < 0 {
+		keptUserTurns = 0
 	}
 
-	return prefix, previousSummary, messages[start:suffixStart], messages[suffixStart:], true
+	suffixStart := len(messages)
+	if keptUserTurns > 0 {
+		suffixStart = userTurnIndexes[keptUserTurns-1]
+	}
+	if suffixStart <= start || len(messages[start:suffixStart]) == 0 {
+		return prefix, previousSummary, nil, nil, keptUserTurns, false
+	}
+
+	return prefix, previousSummary, messages[start:suffixStart], messages[suffixStart:], keptUserTurns, true
 }
 
 func isCompactionSummary(msg api.Message) bool {
