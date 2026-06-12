@@ -41,13 +41,13 @@ func (s *memoryStore) EnsureChat(context.Context, string, string) error {
 	return nil
 }
 
-func (s *memoryStore) AppendMessage(_ context.Context, _ string, msg api.Message) error {
+func (s *memoryStore) AppendMessage(_ context.Context, _ string, msg api.Message, _ string) error {
 	s.appendCalls++
 	s.messages = append(s.messages, msg)
 	return nil
 }
 
-func (s *memoryStore) UpdateLastMessage(_ context.Context, _ string, msg api.Message) error {
+func (s *memoryStore) UpdateLastMessage(_ context.Context, _ string, msg api.Message, _ string) error {
 	s.updateCalls++
 	if len(s.messages) == 0 {
 		s.messages = append(s.messages, msg)
