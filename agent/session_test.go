@@ -13,6 +13,7 @@ type fakeClient struct {
 	calls     int
 	responses [][]api.ChatResponse
 	requests  []*api.ChatRequest
+	err       error
 }
 
 func (c *fakeClient) Chat(ctx context.Context, req *api.ChatRequest, fn api.ChatResponseFunc) error {
@@ -27,11 +28,13 @@ func (c *fakeClient) Chat(ctx context.Context, req *api.ChatRequest, fn api.Chat
 			return err
 		}
 	}
-	return nil
+	return c.err
 }
 
 type memoryStore struct {
-	messages []api.Message
+	messages    []api.Message
+	appendCalls int
+	updateCalls int
 }
 
 func (s *memoryStore) EnsureChat(context.Context, string, string) error {
@@ -39,11 +42,13 @@ func (s *memoryStore) EnsureChat(context.Context, string, string) error {
 }
 
 func (s *memoryStore) AppendMessage(_ context.Context, _ string, msg api.Message) error {
+	s.appendCalls++
 	s.messages = append(s.messages, msg)
 	return nil
 }
 
 func (s *memoryStore) UpdateLastMessage(_ context.Context, _ string, msg api.Message) error {
+	s.updateCalls++
 	if len(s.messages) == 0 {
 		s.messages = append(s.messages, msg)
 		return nil
@@ -287,6 +292,92 @@ func TestSessionAddsSystemPromptOnlyToRequest(t *testing.T) {
 		if msg.Role == "system" && msg.Content == "available skills: go-code" {
 			t.Fatalf("system prompt was persisted: %#v", store.messages)
 		}
+	}
+}
+
+func TestSessionBatchesStreamingPersistence(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("value", "hello")
+	responses := make([]api.ChatResponse, 0, 100)
+	var wantContent, wantThinking string
+	for i := 0; i < 99; i++ {
+		wantContent += "x"
+		wantThinking += "t"
+		responses = append(responses, api.ChatResponse{
+			Message: api.Message{Role: "assistant", Content: "x", Thinking: "t"},
+		})
+	}
+	toolCall := api.ToolCall{
+		ID: "call-1",
+		Function: api.ToolCallFunction{
+			Name:      "echo_tool",
+			Arguments: args,
+		},
+	}
+	responses = append(responses, api.ChatResponse{
+		Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{toolCall}},
+	})
+
+	store := &memoryStore{}
+	session := &Session{
+		Client: &fakeClient{responses: [][]api.ChatResponse{responses}},
+		Store:  store,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		ChatID:      "chat-1",
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "stream"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeCalls := store.appendCalls + store.updateCalls
+	if maxWrites := len(responses)/streamPersistDeltaThreshold + 2; writeCalls > maxWrites {
+		t.Fatalf("store writes = %d, want <= %d", writeCalls, maxWrites)
+	}
+	if len(store.messages) != 2 {
+		t.Fatalf("stored messages = %#v", store.messages)
+	}
+	stored := store.messages[1]
+	if stored.Content != wantContent || stored.Thinking != wantThinking || len(stored.ToolCalls) != 1 {
+		t.Fatalf("stored assistant = %#v", stored)
+	}
+	if len(result.Messages) != 2 || result.Messages[1].Content != wantContent || result.Messages[1].Thinking != wantThinking || len(result.Messages[1].ToolCalls) != 1 {
+		t.Fatalf("result messages = %#v", result.Messages)
+	}
+}
+
+func TestSessionPersistsPartialStreamOnCancellation(t *testing.T) {
+	store := &memoryStore{}
+	session := &Session{
+		Client: &fakeClient{
+			responses: [][]api.ChatResponse{{
+				{Message: api.Message{Role: "assistant", Content: "partial "}},
+				{Message: api.Message{Role: "assistant", Content: "answer"}},
+			}},
+			err: context.Canceled,
+		},
+		Store: store,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		ChatID:      "chat-1",
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "cancel"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.messages) != 2 {
+		t.Fatalf("stored messages = %#v", store.messages)
+	}
+	if store.messages[1].Content != "partial answer" {
+		t.Fatalf("stored partial content = %q", store.messages[1].Content)
+	}
+	if len(result.Messages) != 2 || result.Messages[1].Content != "partial answer" {
+		t.Fatalf("result messages = %#v", result.Messages)
 	}
 }
 

@@ -62,6 +62,8 @@ type RunResult struct {
 	WorkingDir string
 }
 
+const streamPersistDeltaThreshold = 20
+
 func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
 	if s == nil {
 		return nil, errors.New("nil session")
@@ -196,21 +198,37 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 	}
 
 	assistant := api.Message{Role: "assistant"}
+	var started bool
 	var persisted bool
+	var dirty bool
+	var dirtyDeltas int
 	var pendingToolCalls []api.ToolCall
 
-	persist := func() error {
+	persist := func(persistCtx context.Context, force bool) error {
 		if opts.ChatID == "" || s.Store == nil {
 			return nil
 		}
+		if !dirty || messageEmpty(assistant) {
+			return nil
+		}
+		if !force && dirtyDeltas < streamPersistDeltaThreshold {
+			return nil
+		}
 		if !persisted {
-			if err := s.appendStoreMessage(ctx, opts.ChatID, assistant, opts.Model); err != nil {
+			if err := s.appendStoreMessage(persistCtx, opts.ChatID, assistant, opts.Model); err != nil {
 				return err
 			}
 			persisted = true
+			dirty = false
+			dirtyDeltas = 0
 			return nil
 		}
-		return s.updateStoreLastMessage(ctx, opts.ChatID, assistant, opts.Model)
+		if err := s.updateStoreLastMessage(persistCtx, opts.ChatID, assistant, opts.Model); err != nil {
+			return err
+		}
+		dirty = false
+		dirtyDeltas = 0
+		return nil
 	}
 
 	err := s.Client.Chat(ctx, req, func(response api.ChatResponse) error {
@@ -223,10 +241,11 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 			return nil
 		}
 
-		if !persisted {
+		if !started {
 			if err := emit(s.Events, Event{Type: EventMessageStarted, RunID: runID, ChatID: opts.ChatID}); err != nil {
 				return err
 			}
+			started = true
 		}
 
 		if response.Message.Thinking != "" {
@@ -251,12 +270,21 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 			}
 		}
 
-		return persist()
+		dirty = true
+		dirtyDeltas++
+		return persist(ctx, false)
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
+			if flushErr := persist(context.WithoutCancel(ctx), true); flushErr != nil {
+				return assistant, pendingToolCalls, flushErr
+			}
 			return assistant, pendingToolCalls, nil
 		}
+		return assistant, pendingToolCalls, err
+	}
+
+	if err := persist(ctx, true); err != nil {
 		return assistant, pendingToolCalls, err
 	}
 
