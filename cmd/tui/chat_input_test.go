@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 
 	"os"
 	"path/filepath"
@@ -54,6 +55,8 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 		t.Fatalf("entries = %d, want 1", len(fm.entries))
 	}
 	if !strings.Contains(fm.entries[0].content, "**Commands**") ||
+		!strings.Contains(fm.entries[0].content, "- `/copy`: copy latest model output") ||
+		!strings.Contains(fm.entries[0].content, "- `/copy-all`: copy all model output") ||
 		!strings.Contains(fm.entries[0].content, "- `/tools`: show available tools") ||
 		!strings.Contains(fm.entries[0].content, "- `/model`: switch models") ||
 		!strings.Contains(fm.entries[0].content, "- `/history`: show prompt message history") ||
@@ -166,6 +169,12 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
+	if !strings.Contains(view, "/copy") || !strings.Contains(view, "copy latest model output") {
+		t.Fatalf("view missing copy suggestion: %q", view)
+	}
+	if !strings.Contains(view, "/copy-all") || !strings.Contains(view, "copy all model output") {
+		t.Fatalf("view missing copy-all suggestion: %q", view)
+	}
 	if !strings.Contains(view, "/clear") || !strings.Contains(view, "clear this chat") {
 		t.Fatalf("view missing clear suggestion: %q", view)
 	}
@@ -175,10 +184,7 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	if !strings.Contains(view, "/model") || !strings.Contains(view, "switch models") {
 		t.Fatalf("view missing model suggestion: %q", view)
 	}
-	if !strings.Contains(view, "/history") || !strings.Contains(view, "show prompt message history") {
-		t.Fatalf("view missing history suggestion: %q", view)
-	}
-	if strings.Contains(view, "/new") || strings.Contains(view, "/resume") {
+	if strings.Contains(view, "/history") || strings.Contains(view, "/new") || strings.Contains(view, "/resume") {
 		t.Fatalf("bare slash should show only top suggestions: %q", view)
 	}
 	if got := len(m.slashCommandLines(80)); got != maxSlashCompletions {
@@ -198,7 +204,7 @@ func TestChatSlashCommandSuggestionsScroll(t *testing.T) {
 		t.Fatalf("test setup needs more than %d slash completions, got %d", maxSlashCompletions, got)
 	}
 
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 8; i++ {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = updated.(chatModel)
 	}
@@ -210,7 +216,7 @@ func TestChatSlashCommandSuggestionsScroll(t *testing.T) {
 	if !strings.Contains(lines, "/resume") {
 		t.Fatalf("scrolled suggestions missing later command: %q", lines)
 	}
-	if strings.Contains(lines, "/clear") {
+	if strings.Contains(lines, "/copy") {
 		t.Fatalf("scrolled suggestions should not include first command: %q", lines)
 	}
 	if selected, ok := m.selectedSlashCommand(); !ok || selected != "/resume" {
@@ -235,7 +241,7 @@ func TestChatSlashCommandSuggestionsFilter(t *testing.T) {
 func TestChatEnterAcceptsSelectedSlashCommand(t *testing.T) {
 	m := chatModel{
 		input:    []rune("/"),
-		complete: 1, // /tools
+		complete: 3, // /tools
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -252,6 +258,112 @@ func TestChatEnterAcceptsSelectedSlashCommand(t *testing.T) {
 	}
 	if !strings.Contains(m.entries[0].content, "No tools are available") {
 		t.Fatalf("entry content = %q, want tools command output", m.entries[0].content)
+	}
+}
+
+func TestChatCopyCommandCopiesLatestModelOutput(t *testing.T) {
+	var copied string
+	m := chatModel{
+		input: []rune("/copy"),
+		messages: []api.Message{
+			{Role: "assistant", Content: "first answer"},
+			{Role: "tool", Content: "tool output"},
+			{Role: "assistant", Content: "latest answer\n"},
+		},
+		opts: ChatOptions{
+			Clipboard: func(ctx context.Context, text string) error {
+				copied = text
+				return nil
+			},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("copy command should not return a command")
+	}
+	m = updated.(chatModel)
+	if copied != "latest answer" {
+		t.Fatalf("copied = %q, want latest answer", copied)
+	}
+	if m.status != "copied latest output" {
+		t.Fatalf("status = %q", m.status)
+	}
+	if len(m.entries) != 0 {
+		t.Fatalf("copy should not append chat entries: %#v", m.entries)
+	}
+}
+
+func TestChatCopyAllCommandCopiesAllModelOutput(t *testing.T) {
+	var copied string
+	m := chatModel{
+		input: []rune("/copy-all"),
+		messages: []api.Message{
+			{Role: "system", Content: "system"},
+			{Role: "user", Content: "prompt"},
+			{Role: "assistant", Content: "first answer"},
+			{Role: "tool", Content: "tool output"},
+			{Role: "assistant", Content: "second answer"},
+		},
+		opts: ChatOptions{
+			Clipboard: func(ctx context.Context, text string) error {
+				copied = text
+				return nil
+			},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("copy-all command should not return a command")
+	}
+	m = updated.(chatModel)
+	if copied != "first answer\n\nsecond answer" {
+		t.Fatalf("copied = %q", copied)
+	}
+	if m.status != "copied all output" {
+		t.Fatalf("status = %q", m.status)
+	}
+}
+
+func TestChatCopyCommandHandlesEmptyAndClipboardErrors(t *testing.T) {
+	m := chatModel{
+		input: []rune("/copy"),
+		opts: ChatOptions{
+			Clipboard: func(ctx context.Context, text string) error {
+				t.Fatal("clipboard should not be called for empty output")
+				return nil
+			},
+		},
+	}
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("copy command should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.status != "nothing to copy" {
+		t.Fatalf("status = %q, want nothing to copy", m.status)
+	}
+
+	m = chatModel{
+		input:    []rune("/copy"),
+		messages: []api.Message{{Role: "assistant", Content: "answer"}},
+		opts: ChatOptions{
+			Clipboard: func(ctx context.Context, text string) error {
+				return errors.New("clipboard offline")
+			},
+		},
+	}
+	updated, cmd = m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("copy command should not return a command")
+	}
+	m = updated.(chatModel)
+	if m.status != "copy failed" {
+		t.Fatalf("status = %q, want copy failed", m.status)
+	}
+	if len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "clipboard offline") {
+		t.Fatalf("copy error entry = %#v", m.entries)
 	}
 }
 

@@ -32,6 +32,8 @@ type chatCompletion struct {
 }
 
 var chatSlashCommands = []chatSlashCommand{
+	{name: "/copy", description: "copy latest model output"},
+	{name: "/copy-all", description: "copy all model output"},
 	{name: "/clear", description: "clear this chat"},
 	{name: "/tools", description: "show available tools"},
 	{name: "/model", description: "switch models"},
@@ -85,6 +87,10 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	case input == "/?" || input == "/help":
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: m.helpSummary()}))
 		return *m, nil
+	case input == "/copy":
+		return m.copyModelOutput(false)
+	case input == "/copy-all":
+		return m.copyModelOutput(true)
 	case input == "/clear":
 		return m.resetChat("cleared")
 	case input == "/tools":
@@ -489,6 +495,8 @@ func (m chatModel) helpSummary() string {
 	return strings.Join([]string{
 		"**Commands**",
 		"",
+		"- `/copy`: copy latest model output",
+		"- `/copy-all`: copy all model output",
 		"- `/tools`: show available tools",
 		"- `/model`: switch models",
 		"- `/history`: show prompt message history",
@@ -526,6 +534,71 @@ func (m chatModel) toolsSummary() string {
 		b.WriteByte('\n')
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func (m *chatModel) copyModelOutput(all bool) (tea.Model, tea.Cmd) {
+	content := m.modelOutputContent(all)
+	if strings.TrimSpace(content) == "" {
+		m.status = "nothing to copy"
+		return *m, nil
+	}
+	if m.opts.Clipboard == nil {
+		m.status = "copy unavailable"
+		return *m, nil
+	}
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := m.opts.Clipboard(ctx, content); err != nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not copy output: %v", err), err: err.Error()}))
+		m.status = "copy failed"
+		return *m, nil
+	}
+	if all {
+		m.status = "copied all output"
+	} else {
+		m.status = "copied latest output"
+	}
+	return *m, nil
+}
+
+func (m chatModel) modelOutputContent(all bool) string {
+	if all {
+		return strings.Join(m.assistantOutputs(), "\n\n")
+	}
+	outputs := m.assistantOutputs()
+	if len(outputs) == 0 {
+		return ""
+	}
+	return outputs[len(outputs)-1]
+}
+
+func (m chatModel) assistantOutputs() []string {
+	var outputs []string
+	for _, msg := range m.messages {
+		if msg.Role != "assistant" {
+			continue
+		}
+		content := strings.TrimRight(msg.Content, "\n")
+		if strings.TrimSpace(content) != "" {
+			outputs = append(outputs, content)
+		}
+	}
+	if len(outputs) > 0 {
+		return outputs
+	}
+
+	for _, entry := range m.entries {
+		if entry.role != "assistant" {
+			continue
+		}
+		content := strings.TrimRight(entry.content, "\n")
+		if strings.TrimSpace(content) != "" {
+			outputs = append(outputs, content)
+		}
+	}
+	return outputs
 }
 
 func (m chatModel) historySummary() string {

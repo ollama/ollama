@@ -144,6 +144,7 @@ type ChatOptions struct {
 	ModelOptions                func(context.Context) ([]ChatModelOption, error)
 	OnModelSelected             func(context.Context, string) error
 	SystemPromptForModel        func(context.Context, string, *coreagent.Registry) string
+	Clipboard                   func(context.Context, string) error
 	Approval                    coreagent.ApprovalHandler
 	AutoApproveTools            bool
 	WorkingDir                  string
@@ -217,6 +218,9 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 	if opts.RootDir == "" {
 		opts.RootDir = opts.WorkingDir
 	}
+	if opts.Clipboard == nil {
+		opts.Clipboard = writeClipboard
+	}
 	reviewApproval := chatReviewApprovalHandler(opts.Approval)
 	autoApproveTools := opts.AutoApproveTools || approvalHandlerAutoApproves(opts.Approval)
 	opts.Approval = reviewApproval
@@ -236,7 +240,7 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
 
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus())
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, err
