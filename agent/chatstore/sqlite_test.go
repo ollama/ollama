@@ -1,6 +1,7 @@
 package chatstore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -93,6 +94,141 @@ func TestStoreRestoresToolMessageMetadata(t *testing.T) {
 	}
 	if chat.Messages[0].ToolName != "bash" || chat.Messages[0].ToolCallID != "call-1" {
 		t.Fatalf("tool metadata = %#v", chat.Messages[0])
+	}
+}
+
+func TestStoreRoundTripsMessageImages(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	first := api.ImageData([]byte("first image"))
+	second := api.ImageData([]byte{0, 1, 2, 3})
+	if err := store.AppendMessage(ctx, "chat-1", api.Message{
+		Role:    "user",
+		Content: "look",
+		Images:  []api.ImageData{first, second},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := store.Chat(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 || len(chat.Messages[0].Images) != 2 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+	if !bytes.Equal(chat.Messages[0].Images[0], first) || !bytes.Equal(chat.Messages[0].Images[1], second) {
+		t.Fatalf("images = %#v, want %#v", chat.Messages[0].Images, []api.ImageData{first, second})
+	}
+
+	updated := api.ImageData([]byte("updated image"))
+	if err := store.UpdateLastMessage(ctx, "chat-1", api.Message{
+		Role:    "user",
+		Content: "updated",
+		Images:  []api.ImageData{updated},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chat, err = store.Chat(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 || len(chat.Messages[0].Images) != 1 || !bytes.Equal(chat.Messages[0].Images[0], updated) {
+		t.Fatalf("updated images = %#v", chat.Messages)
+	}
+}
+
+func TestStoreMigratesOldMessagesSchemaForImages(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "db.sqlite")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE chats (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			browser_state TEXT
+		);
+
+		CREATE TABLE messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL DEFAULT '',
+			thinking TEXT NOT NULL DEFAULT '',
+			stream BOOLEAN NOT NULL DEFAULT 0,
+			model_name TEXT,
+			model_cloud BOOLEAN,
+			model_ollama_host BOOLEAN,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			thinking_time_start TIMESTAMP,
+			thinking_time_end TIMESTAMP,
+			tool_result TEXT,
+			tool_name TEXT NOT NULL DEFAULT '',
+			tool_call_id TEXT NOT NULL DEFAULT '',
+			archived BOOLEAN NOT NULL DEFAULT 0,
+			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+		);
+	`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	var found bool
+	rows, err := store.db.Query(`PRAGMA table_info(messages)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name string
+		var typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatal(err)
+		}
+		if name == "images" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("images column was not added")
+	}
+
+	ctx := context.Background()
+	image := api.ImageData([]byte("after migration"))
+	if err := store.AppendMessage(ctx, "chat-1", api.Message{Role: "user", Content: "image", Images: []api.ImageData{image}}); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := store.Chat(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 || len(chat.Messages[0].Images) != 1 || !bytes.Equal(chat.Messages[0].Images[0], image) {
+		t.Fatalf("migrated images = %#v", chat.Messages)
 	}
 }
 

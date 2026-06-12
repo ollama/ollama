@@ -100,10 +100,9 @@ func (s *Store) init(ctx context.Context) error {
 			role TEXT NOT NULL,
 			content TEXT NOT NULL DEFAULT '',
 			thinking TEXT NOT NULL DEFAULT '',
+			images TEXT NOT NULL DEFAULT '[]',
 			stream BOOLEAN NOT NULL DEFAULT 0,
 			model_name TEXT,
-			model_cloud BOOLEAN,
-			model_ollama_host BOOLEAN,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			thinking_time_start TIMESTAMP,
@@ -150,6 +149,9 @@ func (s *Store) init(ctx context.Context) error {
 		return err
 	}
 	if err := ensureColumn(ctx, s.db, "messages", "tool_call_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, s.db, "messages", "images", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_chat_id_archived ON messages(chat_id, archived, id)`); err != nil {
@@ -236,11 +238,16 @@ func (s *Store) UpdateLastMessageWithModel(ctx context.Context, chatID string, m
 		modelName = sql.NullString{String: model, Valid: true}
 	}
 
+	imagesJSON, err := marshalMessageImages(msg.Images)
+	if err != nil {
+		return err
+	}
+
 	_, err = tx.ExecContext(ctx, `
 		UPDATE messages
-		SET role = ?, content = ?, thinking = ?, tool_name = ?, tool_call_id = ?, model_name = ?, updated_at = ?
+		SET role = ?, content = ?, thinking = ?, images = ?, tool_name = ?, tool_call_id = ?, model_name = ?, updated_at = ?
 		WHERE id = ?
-	`, msg.Role, msg.Content, msg.Thinking, msg.ToolName, msg.ToolCallID, modelName, now, messageID)
+	`, msg.Role, msg.Content, msg.Thinking, imagesJSON, msg.ToolName, msg.ToolCallID, modelName, now, messageID)
 	if err != nil {
 		return fmt.Errorf("update last message: %w", err)
 	}
@@ -281,7 +288,7 @@ func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, role, content, thinking, tool_name, tool_call_id FROM messages WHERE chat_id = ? AND archived = 0 ORDER BY id ASC
+		SELECT id, role, content, thinking, images, tool_name, tool_call_id FROM messages WHERE chat_id = ? AND archived = 0 ORDER BY id ASC
 	`, id)
 	if err != nil {
 		return nil, err
@@ -291,9 +298,15 @@ func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 	for rows.Next() {
 		var messageID int64
 		var msg api.Message
-		if err := rows.Scan(&messageID, &msg.Role, &msg.Content, &msg.Thinking, &msg.ToolName, &msg.ToolCallID); err != nil {
+		var imagesJSON string
+		if err := rows.Scan(&messageID, &msg.Role, &msg.Content, &msg.Thinking, &imagesJSON, &msg.ToolName, &msg.ToolCallID); err != nil {
 			return nil, err
 		}
+		images, err := unmarshalMessageImages(imagesJSON)
+		if err != nil {
+			return nil, err
+		}
+		msg.Images = images
 		toolCalls, err := getToolCalls(ctx, s.db, messageID)
 		if err != nil {
 			return nil, err
@@ -564,10 +577,14 @@ func insertMessage(ctx context.Context, tx *sql.Tx, chatID string, msg api.Messa
 	if model != "" {
 		modelName = sql.NullString{String: model, Valid: true}
 	}
+	imagesJSON, err := marshalMessageImages(msg.Images)
+	if err != nil {
+		return 0, err
+	}
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (chat_id, role, content, thinking, stream, tool_name, tool_call_id, model_name, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, chatID, msg.Role, msg.Content, msg.Thinking, false, msg.ToolName, msg.ToolCallID, modelName, now, now)
+		INSERT INTO messages (chat_id, role, content, thinking, images, stream, tool_name, tool_call_id, model_name, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, chatID, msg.Role, msg.Content, msg.Thinking, imagesJSON, false, msg.ToolName, msg.ToolCallID, modelName, now, now)
 	if err != nil {
 		return 0, fmt.Errorf("insert message: %w", err)
 	}
@@ -576,6 +593,29 @@ func insertMessage(ctx context.Context, tx *sql.Tx, chatID string, msg api.Messa
 		return 0, fmt.Errorf("get message id: %w", err)
 	}
 	return id, nil
+}
+
+func marshalMessageImages(images []api.ImageData) (string, error) {
+	if len(images) == 0 {
+		return "[]", nil
+	}
+	data, err := json.Marshal(images)
+	if err != nil {
+		return "", fmt.Errorf("marshal message images: %w", err)
+	}
+	return string(data), nil
+}
+
+func unmarshalMessageImages(value string) ([]api.ImageData, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "null" {
+		return nil, nil
+	}
+	var images []api.ImageData
+	if err := json.Unmarshal([]byte(value), &images); err != nil {
+		return nil, fmt.Errorf("unmarshal message images: %w", err)
+	}
+	return images, nil
 }
 
 func insertToolCall(ctx context.Context, tx *sql.Tx, messageID int64, call api.ToolCall) error {
