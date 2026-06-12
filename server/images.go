@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -1220,7 +1221,32 @@ func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptio
 		return nil, nil, err
 	}
 
+	if err := validateManifestDigests(&m); err != nil {
+		return nil, nil, err
+	}
+
 	return &m, data, err
+}
+
+var manifestDigestPattern = regexp.MustCompile(`^sha256[:-][0-9a-fA-F]{64}$`)
+
+// validateManifestDigests rejects manifests whose config or layer digests do
+// not match the same regex applied at filesystem-write time in
+// manifest.BlobsPath. Hoisting the check to the parse boundary means a
+// malformed digest cannot reach downstream code paths.
+func validateManifestDigests(m *manifest.Manifest) error {
+	if m.Config.Digest != "" && !manifestDigestPattern.MatchString(m.Config.Digest) {
+		return fmt.Errorf("invalid config digest format: %q", m.Config.Digest)
+	}
+	for i, layer := range m.Layers {
+		if layer.Digest == "" {
+			return fmt.Errorf("layer %d missing digest", i)
+		}
+		if !manifestDigestPattern.MatchString(layer.Digest) {
+			return fmt.Errorf("invalid layer %d digest format: %q", i, layer.Digest)
+		}
+	}
+	return nil
 }
 
 // GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer

@@ -752,3 +752,61 @@ func TestPullModelManifest(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateManifestDigests(t *testing.T) {
+	validDigest := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	cases := []struct {
+		name    string
+		m       manifest.Manifest
+		wantErr bool
+	}{
+		{
+			name: "valid config and layers",
+			m: manifest.Manifest{
+				Config: manifest.Layer{Digest: validDigest},
+				Layers: []manifest.Layer{{Digest: validDigest}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty config digest tolerated",
+			m: manifest.Manifest{
+				Config: manifest.Layer{Digest: ""},
+				Layers: []manifest.Layer{{Digest: validDigest}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing layer digest rejected",
+			m: manifest.Manifest{
+				Config: manifest.Layer{Digest: validDigest},
+				Layers: []manifest.Layer{{Digest: ""}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "malformed digest rejected",
+			m: manifest.Manifest{
+				Config: manifest.Layer{Digest: "sha256:notahex"},
+				Layers: []manifest.Layer{{Digest: validDigest}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "path-traversal attempt rejected",
+			m: manifest.Manifest{
+				Config: manifest.Layer{Digest: "sha256:../etc/passwd"},
+				Layers: []manifest.Layer{{Digest: validDigest}},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateManifestDigests(&tc.m)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateManifestDigests err = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
