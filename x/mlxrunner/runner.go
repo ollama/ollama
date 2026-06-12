@@ -7,11 +7,13 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/internal/mlxthread"
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -103,7 +105,69 @@ func (r *Runner) Load(modelName string) error {
 	r.Sampler = sample.New(r.contextLength)
 
 	mlx.EnableCompile()
+	r.warmup()
 	return nil
+}
+
+func (r *Runner) warmup() {
+	if r.contextLength <= 1 {
+		return
+	}
+
+	// Exercise the common prefill and first-token decode graphs without
+	// committing synthetic tokens to the request cache.
+	promptTokens := r.warmupTokens()
+	promptLen := min(len(promptTokens), max(1, r.contextLength-1))
+	promptTokens = promptTokens[:promptLen]
+	token := promptTokens[len(promptTokens)-1]
+
+	caches := newModelCaches(r.Model)
+	defer func() {
+		for _, c := range caches {
+			c.Free()
+		}
+		mlx.Sweep()
+		mlx.ClearCache()
+	}()
+
+	start := time.Now()
+	slog.Debug("warming up MLX model", "prompt_tokens", promptLen)
+
+	r.Model.Forward(&batch.Batch{
+		InputIDs:     mlx.FromValues(promptTokens, 1, promptLen),
+		SeqOffsets:   []int32{0},
+		SeqQueryLens: []int32{int32(promptLen)},
+	}, caches)
+	mlx.Sweep()
+	mlx.Eval(cacheStateArrays(caches)...)
+
+	hidden := r.Model.Forward(&batch.Batch{
+		InputIDs:     mlx.FromValues([]int32{token}, 1, 1),
+		SeqOffsets:   []int32{int32(promptLen)},
+		SeqQueryLens: []int32{1},
+	}, caches)
+	next := greedyTokenFromLogits(r.lastLogits(hidden))
+	state := append([]*mlx.Array{next}, cacheStateArrays(caches)...)
+	mlx.Eval(state...)
+
+	slog.Info("finished warming up MLX model", "duration", time.Since(start), "prompt_tokens", promptLen)
+}
+
+func (r *Runner) warmupTokens() []int32 {
+	if r.Tokenizer == nil {
+		return []int32{0}
+	}
+	var tokens []int32
+	if bos := r.Tokenizer.BOS(); bos >= 0 {
+		tokens = append(tokens, bos)
+	}
+	if eos := r.Tokenizer.EOS(); eos >= 0 {
+		tokens = append(tokens, eos)
+	}
+	if len(tokens) == 0 {
+		tokens = append(tokens, 0)
+	}
+	return tokens
 }
 
 // loadTensorsFromManifest loads all tensor blobs from the manifest into a
