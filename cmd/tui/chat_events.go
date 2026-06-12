@@ -2,12 +2,14 @@ package tui
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	coreagent "github.com/ollama/ollama/agent"
+	"github.com/ollama/ollama/api"
 )
 
 type chatAgentMsg struct {
@@ -36,12 +38,13 @@ type chatCompactProgressMsg struct {
 type chatTickMsg struct{}
 
 func (m *chatModel) applyAgentEvent(event coreagent.Event) {
-	m.applyResponseMetrics(event.Response)
+	contextChanged := false
 
 	switch event.Type {
 	case coreagent.EventMessageStarted:
 		m.thinking = false
 		m.thinkingTokens = 0
+		m.refreshContextWindowTokens(m.opts.Model)
 	case coreagent.EventThinkingDelta:
 		if event.Thinking != "" {
 			m.thinking = true
@@ -49,6 +52,9 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			if eventEvalCount(event) <= 0 {
 				m.thinkingTokens += estimateTokenCount(event.Thinking)
 			}
+			idx := m.ensureLiveAssistantMessage()
+			m.liveMessages[idx].Thinking += event.Thinking
+			contextChanged = true
 		}
 	case coreagent.EventMessageDelta:
 		m.thinking = false
@@ -57,12 +63,19 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		idx := m.ensureAssistantEntry()
 		m.entries[idx].content += event.Content
 		m.markEntryDirty(idx)
+		msgIdx := m.ensureLiveAssistantMessage()
+		m.liveMessages[msgIdx].Content += event.Content
+		contextChanged = true
 	case coreagent.EventToolCallDetected:
 		m.thinking = false
 		m.thinkingTokens = 0
+		idx := m.ensureLiveAssistantMessage()
+		m.liveMessages[idx].ToolCalls = append(m.liveMessages[idx].ToolCalls, event.ToolCalls...)
+		contextChanged = true
 	case coreagent.EventToolStarted:
 		m.thinking = false
 		m.thinkingTokens = 0
+		m.refreshContextWindowTokens(m.opts.Model)
 		idx := m.findActiveToolEntry(event.ToolCallID)
 		if idx < 0 {
 			m.groupCompletedToolHistory()
@@ -80,6 +93,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	case coreagent.EventToolFinished:
 		m.thinking = false
 		m.thinkingTokens = 0
+		m.refreshContextWindowTokens(m.opts.Model)
 		if event.WorkingDir != "" {
 			m.workingDir = event.WorkingDir
 		}
@@ -104,6 +118,13 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.entries[idx].finishedAt = event.FinishedAt
 		m.applyToolOutputModeTo(idx)
 		m.markEntryDirty(idx)
+		m.liveMessages = append(m.liveMessages, api.Message{
+			Role:       "tool",
+			Content:    event.Content,
+			ToolName:   event.ToolName,
+			ToolCallID: event.ToolCallID,
+		})
+		contextChanged = true
 	case coreagent.EventToolsUnavailable:
 		m.thinking = false
 		m.thinkingTokens = 0
@@ -111,6 +132,10 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	case coreagent.EventCompacted:
 		m.thinking = false
 		m.thinkingTokens = 0
+		if len(event.Messages) > 0 {
+			m.liveMessages = slices.Clone(event.Messages)
+			contextChanged = true
+		}
 		m.status = "compacted"
 	case coreagent.EventCompactionSkipped:
 		m.thinking = false
@@ -126,6 +151,28 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.thinkingTokens = 0
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: event.Error, err: event.Error}))
 	}
+
+	if contextChanged {
+		m.refreshLiveContextEstimate()
+	}
+	m.applyResponseMetrics(event.Response)
+}
+
+func (m *chatModel) ensureLiveAssistantMessage() int {
+	if len(m.liveMessages) > 0 && m.liveMessages[len(m.liveMessages)-1].Role == "assistant" {
+		return len(m.liveMessages) - 1
+	}
+	m.liveMessages = append(m.liveMessages, api.Message{Role: "assistant"})
+	return len(m.liveMessages) - 1
+}
+
+func (m *chatModel) refreshLiveContextEstimate() {
+	messages := m.liveMessages
+	if len(messages) == 0 {
+		messages = m.messages
+	}
+	m.contextTokens = m.estimatePromptTokens(messages, "")
+	m.contextEstimate = true
 }
 
 type chatEventSink struct {

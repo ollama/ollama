@@ -1765,9 +1765,17 @@ func contextWindowTokensFromShowResponse(info *api.ShowResponse) int {
 }
 
 func contextWindowTokensForRun(ctx context.Context, client *api.Client, modelName string, fallback int) int {
-	if client != nil {
-		if running, err := client.ListRunning(ctx); err == nil {
-			if contextLength := contextWindowTokensFromRunningModels(running.Models, modelName); contextLength > 0 {
+	if client == nil || strings.TrimSpace(modelName) == "" {
+		return fallback
+	}
+	if running, err := client.ListRunning(ctx); err == nil {
+		if contextLength := contextWindowTokensFromRunningModels(running.Models, modelName); contextLength > 0 {
+			return contextLength
+		}
+	}
+	if modelref.HasExplicitCloudSource(modelName) {
+		if info, err := client.Show(ctx, &api.ShowRequest{Model: modelName}); err == nil {
+			if contextLength := contextWindowTokensFromShowResponse(info); contextLength > 0 {
 				return contextLength
 			}
 		}

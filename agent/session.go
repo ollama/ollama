@@ -450,7 +450,7 @@ func (s *Session) maybeCompact(ctx context.Context, opts RunOptions, messages []
 		}
 		return messages, skipNotified
 	}
-	emit(s.Events, Event{Type: EventCompacted, ChatID: opts.ChatID, Content: result.Summary})
+	emit(s.Events, Event{Type: EventCompacted, ChatID: opts.ChatID, Content: result.Summary, Messages: result.Messages})
 	return result.Messages, skipNotified
 }
 
@@ -459,7 +459,7 @@ func CompactionSkippedMessage(reason string) string {
 	if reason == "" {
 		reason = "compaction could not run"
 	}
-	return fmt.Sprintf("%s. Start a new chat with /new if you need a fresh context.", reason)
+	return reason
 }
 
 func (s *Session) appendToolMessage(ctx context.Context, chatID string, msg api.Message) error {

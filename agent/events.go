@@ -34,6 +34,7 @@ type Event struct {
 	Content    string            `json:"content,omitempty"`
 	Thinking   string            `json:"thinking,omitempty"`
 	ToolCalls  []api.ToolCall    `json:"toolCalls,omitempty"`
+	Messages   []api.Message     `json:"messages,omitempty"`
 	Args       map[string]any    `json:"args,omitempty"`
 	Error      string            `json:"error,omitempty"`
 	StartedAt  time.Time         `json:"startedAt,omitempty"`

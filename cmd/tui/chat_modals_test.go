@@ -214,7 +214,8 @@ func TestChatModelCommandOpensPicker(t *testing.T) {
 		width:  100,
 		height: 20,
 		opts: ChatOptions{
-			Model: "llama3.2",
+			Model:               "llama3.2",
+			ContextWindowTokens: 131072,
 			ModelOptions: func(context.Context) ([]ChatModelOption, error) {
 				return []ChatModelOption{
 					{Name: "kimi-k2.6:cloud", Description: "cloud coding"},
@@ -268,6 +269,9 @@ func TestChatModelPickerFiltersAndSwitchesModel(t *testing.T) {
 			ContextWindowTokensForModel: func(ctx context.Context, model string, fallback int) int {
 				if model != "qwen3.5:cloud" {
 					t.Fatalf("context model = %q, want qwen3.5:cloud", model)
+				}
+				if fallback != 0 {
+					t.Fatalf("context fallback = %d, want 0 after model switch", fallback)
 				}
 				return 262144
 			},

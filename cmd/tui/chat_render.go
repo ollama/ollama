@@ -1315,7 +1315,7 @@ func (m chatModel) contextStatus() string {
 	if window <= 0 {
 		return ""
 	}
-	used := clamp(m.contextTokens, 0, window)
+	used := max(m.contextTokens, 0)
 	percent := 0
 	if window > 0 {
 		percent = (used*100 + window/2) / window

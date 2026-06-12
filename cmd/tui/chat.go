@@ -170,12 +170,13 @@ type ChatResult struct {
 }
 
 type chatModel struct {
-	ctx        context.Context
-	opts       ChatOptions
-	chatID     string
-	messages   []api.Message
-	entries    []chatEntry
-	workingDir string
+	ctx          context.Context
+	opts         ChatOptions
+	chatID       string
+	messages     []api.Message
+	liveMessages []api.Message
+	entries      []chatEntry
+	workingDir   string
 
 	input            []rune
 	queued           []string
@@ -299,6 +300,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.approvalPrompt = nil
 		if msg.result != nil {
 			m.messages = msg.result.Messages
+			m.liveMessages = nil
 			if msg.result.WorkingDir != "" {
 				m.workingDir = msg.result.WorkingDir
 			}
@@ -560,6 +562,7 @@ func (m chatModel) View() string {
 
 func (m *chatModel) resetChat(status string) (tea.Model, tea.Cmd) {
 	m.messages = nil
+	m.liveMessages = nil
 	m.entries = nil
 	m.queued = nil
 	m.resetPromptHistoryCursor()
@@ -659,6 +662,7 @@ func (m chatModel) finishManualCompaction(msg chatCompactDoneMsg) (tea.Model, te
 	}
 
 	m.messages = msg.result.Messages
+	m.liveMessages = nil
 	m.entries = entriesFromMessages(m.messages)
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
@@ -683,7 +687,8 @@ func (m *chatModel) startRunWithPrompt(displayInput, userInput, extraSystemPromp
 	m.thinking = false
 	m.thinkingTokens = 0
 	systemPrompt := m.systemPrompt(extraSystemPrompt)
-	m.contextTokens = m.estimatePromptTokens(append(slices.Clone(m.messages), userMsg), systemPrompt)
+	m.liveMessages = append(slices.Clone(m.messages), userMsg)
+	m.contextTokens = m.estimatePromptTokens(m.liveMessages, systemPrompt)
 	m.contextEstimate = true
 
 	runCtx, cancel := context.WithCancel(m.ctx)

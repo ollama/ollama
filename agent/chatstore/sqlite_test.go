@@ -421,3 +421,36 @@ func TestStoreArchivesCompactedMessages(t *testing.T) {
 		t.Fatalf("archived ids = %v, want 2 ids", ids)
 	}
 }
+
+func TestStoreArchivesWholeChatWhenKeepingZeroTurns(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	for _, msg := range []api.Message{
+		{Role: "user", Content: "only request"},
+		{Role: "assistant", Content: "only answer"},
+	} {
+		if err := store.AppendMessage(ctx, "chat-1", msg, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := store.ArchiveForCompaction(ctx, "chat-1", 0, "summary"); err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := store.Chat(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 {
+		t.Fatalf("active messages = %d, want summary only", len(chat.Messages))
+	}
+	if chat.Messages[0].Content != compactionSummaryMessagePrefix+"summary" {
+		t.Fatalf("summary message = %#v", chat.Messages[0])
+	}
+}
