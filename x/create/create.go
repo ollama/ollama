@@ -821,6 +821,7 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"gemma4_unified":                        newGemma4ImportTransform,
 	"gemma4_unified_text":                   newGemma4ImportTransform,
 	"LagunaForCausalLM":                     newLagunaImportTransform,
+	"Cohere2MoeForCausalLM":                 newCohere2MoeImportTransform,
 	"Gemma4AssistantForCausalLM":            newGemma4ImportTransform,
 	"Gemma4UnifiedAssistantForCausalLM":     newGemma4ImportTransform,
 	"gemma4_unified_assistant":              newGemma4ImportTransform,
