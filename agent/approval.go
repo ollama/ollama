@@ -235,6 +235,14 @@ func approvalSessionKey(req ApprovalRequest) string {
 		if path, ok := stringApprovalArg(req.Args, "path"); ok {
 			return "edit:" + path
 		}
+	case "web_search":
+		if query, ok := stringApprovalArg(req.Args, "query"); ok {
+			return "web_search:" + query
+		}
+	case "web_fetch":
+		if targetURL, ok := stringApprovalArg(req.Args, "url"); ok {
+			return "web_fetch:" + targetURL
+		}
 	}
 	return req.ToolName + ":" + stableApprovalArgs(req.Args)
 }
@@ -250,8 +258,10 @@ func (DefaultApprovalPolicy) EvaluateApproval(_ context.Context, req ApprovalReq
 			}
 		}
 		return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow, Summary: fmt.Sprintf("%s can run without approval", toolApprovalDisplayName(req.ToolName))}
-	case "web_search", "web_fetch":
-		return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow, Summary: fmt.Sprintf("%s can run without approval", toolApprovalDisplayName(req.ToolName))}
+	case "web_search":
+		return evaluateWebApproval(req, "query", "search for", "sends the search query to Ollama web search")
+	case "web_fetch":
+		return evaluateWebApproval(req, "url", "fetch", "sends the URL to Ollama web fetch")
 	case "edit":
 		return evaluateEditApproval(req)
 	case "bash":
@@ -264,6 +274,24 @@ func (DefaultApprovalPolicy) EvaluateApproval(_ context.Context, req ApprovalReq
 			Reasons:       []string{"unknown tool effects"},
 			SessionKey:    approvalSessionKey(req),
 		}
+	}
+}
+
+func evaluateWebApproval(req ApprovalRequest, argName, action, reason string) ApprovalEvaluation {
+	target, ok := stringApprovalArg(req.Args, argName)
+	if !ok {
+		target = stableApprovalArgs(req.Args)
+	}
+	summary := fmt.Sprintf("%s wants to %s", toolApprovalDisplayName(req.ToolName), action)
+	if strings.TrimSpace(target) != "" {
+		summary = fmt.Sprintf("%s %s", summary, target)
+	}
+	return ApprovalEvaluation{
+		RequirePrompt: true,
+		Risk:          ApprovalRiskLow,
+		Summary:       summary,
+		Reasons:       []string{reason},
+		SessionKey:    approvalSessionKey(req),
 	}
 }
 

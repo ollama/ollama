@@ -48,6 +48,10 @@ func (w *WebSearch) Schema() api.ToolFunction {
 	}
 }
 
+func (w *WebSearch) RequiresApproval(map[string]any) bool {
+	return true
+}
+
 func (w *WebSearch) Execute(ctx context.Context, _ agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
 	if internalcloud.Disabled() {
 		return agent.ToolResult{}, errors.New(internalcloud.DisabledError("web search is unavailable"))
@@ -120,6 +124,10 @@ func (w *WebFetch) Schema() api.ToolFunction {
 			Required:   []string{"url"},
 		},
 	}
+}
+
+func (w *WebFetch) RequiresApproval(map[string]any) bool {
+	return true
 }
 
 func (w *WebFetch) Execute(ctx context.Context, _ agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
