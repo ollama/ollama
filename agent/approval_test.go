@@ -153,3 +153,34 @@ func TestBashApprovalClassifiesHighRiskShell(t *testing.T) {
 		}
 	}
 }
+
+func TestBashApprovalClassifiesDynamicShellEvasions(t *testing.T) {
+	tests := []struct {
+		name   string
+		cmd    string
+		reason string
+	}{
+		{name: "function declaration", cmd: "f() { rm -rf /; } && f", reason: "defines shell functions"},
+		{name: "eval", cmd: `eval "$cmd"`, reason: "evaluates shell code"},
+		{name: "variable command name", cmd: "$DANGER --flag", reason: "dynamic command name"},
+		{name: "command substitution command name", cmd: "$(echo rm) -rf /", reason: "dynamic command name"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evaluation := DefaultApprovalPolicy{}.EvaluateApproval(context.Background(), ApprovalRequest{
+				ToolName: "bash",
+				Args:     map[string]any{"command": tt.cmd},
+			})
+			if !evaluation.RequirePrompt {
+				t.Fatal("bash evasion should require prompt")
+			}
+			if evaluation.Risk != ApprovalRiskHigh {
+				t.Fatalf("risk = %q, want high", evaluation.Risk)
+			}
+			if reasons := strings.Join(evaluation.Reasons, " "); !strings.Contains(reasons, tt.reason) {
+				t.Fatalf("reasons = %#v, want %q", evaluation.Reasons, tt.reason)
+			}
+		})
+	}
+}
