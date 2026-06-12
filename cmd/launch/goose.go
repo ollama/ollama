@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/ollama/ollama/envconfig"
 )
@@ -25,6 +26,10 @@ var (
 	gooseOpenStartID = defaultGooseOpenStartID
 	gooseRunPath     = defaultGooseRunningAppPath
 	gooseStartID     = defaultGooseStartAppID
+	gooseCommand     = exec.Command
+	gooseIsRunning   = defaultGooseIsRunning
+	gooseQuitApp     = defaultGooseQuitApp
+	gooseSleep       = time.Sleep
 )
 
 // Goose implements Runner for the Goose desktop app integration.
@@ -173,23 +178,85 @@ func (g *Goose) runDesktopApp(model string) error {
 	switch gooseGOOS {
 	case "darwin":
 		if path := gooseDesktopAppPath(); path != "" {
+			shouldLaunch, err := gooseRestartIfRunning()
+			if err != nil {
+				return err
+			}
+			if !shouldLaunch {
+				return nil
+			}
 			return gooseOpenPath(path, env)
 		}
 		return gooseDesktopNotInstalledError()
 	case "windows":
 		if path := gooseDesktopAppPath(); path != "" {
+			shouldLaunch, err := gooseRestartIfRunning()
+			if err != nil {
+				return err
+			}
+			if !shouldLaunch {
+				return nil
+			}
 			return gooseOpenPath(path, env)
 		}
 		if path := gooseRunPath(); path != "" {
+			shouldLaunch, err := gooseRestartIfRunning()
+			if err != nil {
+				return err
+			}
+			if !shouldLaunch {
+				return nil
+			}
 			return gooseOpenPath(path, env)
 		}
 		if appID := gooseStartID(); appID != "" {
+			shouldLaunch, err := gooseRestartIfRunning()
+			if err != nil {
+				return err
+			}
+			if !shouldLaunch {
+				return nil
+			}
 			return gooseOpenStartID(appID, env)
 		}
 		return gooseDesktopNotInstalledError()
 	default:
 		return fmt.Errorf("Goose desktop app is only supported on macOS and Windows; use 'ollama launch goose-cli' for the Goose CLI")
 	}
+}
+
+func gooseRestartIfRunning() (bool, error) {
+	if !gooseIsRunning() {
+		return true, nil
+	}
+
+	restart, err := ConfirmPrompt("Goose Desktop is already running. Restart it so Ollama can apply the selected provider and model?")
+	if err != nil {
+		return false, err
+	}
+	if !restart {
+		fmt.Fprintln(os.Stderr, "\nQuit Goose Desktop and re-run 'ollama launch goose' when you're ready for the selected provider and model to take effect.")
+		return false, nil
+	}
+
+	if err := gooseQuitApp(); err != nil {
+		return false, fmt.Errorf("quit Goose Desktop: %w", err)
+	}
+	if err := waitForGooseDesktopExit(30 * time.Second); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func waitForGooseDesktopExit(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !gooseIsRunning() {
+			return nil
+		}
+		gooseSleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("Goose Desktop did not quit; quit it manually and re-run 'ollama launch goose'")
 }
 
 func gooseDesktopNotInstalledError() error {
@@ -207,9 +274,14 @@ func defaultGooseOpenPath(path string, env []string) error {
 	var cmd *exec.Cmd
 	switch gooseGOOS {
 	case "darwin":
-		cmd = exec.Command("open", path)
+		args := make([]string, 0, 1+len(env)*2)
+		for _, e := range env {
+			args = append(args, "--env", e)
+		}
+		args = append(args, path)
+		cmd = gooseCommand("open", args...)
 	case "windows":
-		cmd = exec.Command("powershell.exe", "-NoProfile", "-Command", "Start-Process -FilePath "+quotePowerShellString(path))
+		cmd = gooseCommand("powershell.exe", "-NoProfile", "-Command", "Start-Process -FilePath "+quotePowerShellString(path))
 	default:
 		return fmt.Errorf("Goose desktop app is only supported on macOS and Windows")
 	}
@@ -220,7 +292,7 @@ func defaultGooseOpenPath(path string, env []string) error {
 }
 
 func defaultGooseOpenStartID(appID string, env []string) error {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command", "Start-Process "+quotePowerShellString(`shell:AppsFolder\`+appID))
+	cmd := gooseCommand("powershell.exe", "-NoProfile", "-Command", "Start-Process "+quotePowerShellString(`shell:AppsFolder\`+appID))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), env...)
@@ -232,7 +304,7 @@ func defaultGooseRunningAppPath() string {
 		return ""
 	}
 	script := `(Get-Process Goose -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path } | Select-Object -First 1 -ExpandProperty Path)`
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := gooseCommand("powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return ""
 	}
@@ -244,11 +316,35 @@ func defaultGooseStartAppID() string {
 		return ""
 	}
 	script := `(Get-StartApps Goose | Where-Object { $_.Name -eq 'Goose' -or $_.Name -like 'Goose*' } | Select-Object -First 1 -ExpandProperty AppID)`
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := gooseCommand("powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func defaultGooseIsRunning() bool {
+	switch gooseGOOS {
+	case "darwin":
+		out, err := gooseCommand("pgrep", "-f", "Goose.app/Contents/MacOS/Goose").Output()
+		return err == nil && strings.TrimSpace(string(out)) != ""
+	case "windows":
+		return gooseRunPath() != ""
+	default:
+		return false
+	}
+}
+
+func defaultGooseQuitApp() error {
+	switch gooseGOOS {
+	case "darwin":
+		return gooseCommand("osascript", "-e", `tell application "Goose" to quit`).Run()
+	case "windows":
+		script := `Get-Process Goose -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }`
+		return gooseCommand("powershell.exe", "-NoProfile", "-Command", script).Run()
+	default:
+		return nil
+	}
 }
 
 // runCLI launches `goose session` with the integration's env vars and
@@ -256,11 +352,11 @@ func defaultGooseStartAppID() string {
 func (g *Goose) runCLI(model string, extra []string) error {
 	bin, err := exec.LookPath("goose")
 	if err != nil {
-		return fmt.Errorf("goose is not installed, install from https://block.github.io/goose/docs/getting-started/installation/")
+		return fmt.Errorf("goose is not installed, install from %s", gooseInstallURL)
 	}
 
 	args := append([]string{"session"}, extra...)
-	cmd := exec.Command(bin, args...)
+	cmd := gooseCommand(bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

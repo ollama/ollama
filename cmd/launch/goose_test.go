@@ -4,10 +4,12 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGooseIntegration(t *testing.T) {
@@ -170,6 +172,32 @@ func TestGooseDesktopAppAvailable(t *testing.T) {
 		}
 	})
 
+	t.Run("darwin with app in user applications", func(t *testing.T) {
+		prev := gooseGOOS
+		t.Cleanup(func() { gooseGOOS = prev })
+		gooseGOOS = "darwin"
+
+		home := t.TempDir()
+		appPath := filepath.Join(home, "Applications", "Goose.app")
+
+		prevUserHome := gooseUserHome
+		t.Cleanup(func() { gooseUserHome = prevUserHome })
+		gooseUserHome = func() (string, error) { return home, nil }
+
+		prevStat := gooseStatFn
+		t.Cleanup(func() { gooseStatFn = prevStat })
+		gooseStatFn = func(path string) (os.FileInfo, error) {
+			if path == appPath {
+				return nil, nil
+			}
+			return nil, &fs.PathError{Path: path, Err: errors.New("not exist")}
+		}
+
+		if !g.desktopAppAvailable() {
+			t.Error("desktopAppAvailable should be true when Goose.app exists in ~/Applications")
+		}
+	})
+
 	t.Run("windows with app present in local app data", func(t *testing.T) {
 		prev := gooseGOOS
 		t.Cleanup(func() { gooseGOOS = prev })
@@ -242,6 +270,10 @@ func TestGooseRunDesktopAppDarwin(t *testing.T) {
 		return nil, &fs.PathError{Path: path, Err: errors.New("not exist")}
 	}
 
+	prevIsRunning := gooseIsRunning
+	t.Cleanup(func() { gooseIsRunning = prevIsRunning })
+	gooseIsRunning = func() bool { return false }
+
 	prevOpenPath := gooseOpenPath
 	t.Cleanup(func() { gooseOpenPath = prevOpenPath })
 	var gotPath string
@@ -262,6 +294,95 @@ func TestGooseRunDesktopAppDarwin(t *testing.T) {
 		if !slices.Contains(gotEnv, want) {
 			t.Errorf("runDesktopApp env missing %q, got %v", want, gotEnv)
 		}
+	}
+}
+
+func TestGooseRunDesktopAppDarwinRestartsWhenRunning(t *testing.T) {
+	prev := gooseGOOS
+	t.Cleanup(func() { gooseGOOS = prev })
+	gooseGOOS = "darwin"
+
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	t.Cleanup(restoreConfirm)
+
+	home := t.TempDir()
+	appPath := filepath.Join(home, "Applications", "Goose.app")
+
+	prevUserHome := gooseUserHome
+	t.Cleanup(func() { gooseUserHome = prevUserHome })
+	gooseUserHome = func() (string, error) { return home, nil }
+
+	prevStat := gooseStatFn
+	t.Cleanup(func() { gooseStatFn = prevStat })
+	gooseStatFn = func(path string) (os.FileInfo, error) {
+		if path == appPath {
+			return nil, nil
+		}
+		return nil, &fs.PathError{Path: path, Err: errors.New("not exist")}
+	}
+
+	running := true
+	prevIsRunning := gooseIsRunning
+	t.Cleanup(func() { gooseIsRunning = prevIsRunning })
+	gooseIsRunning = func() bool { return running }
+
+	prevQuitApp := gooseQuitApp
+	t.Cleanup(func() { gooseQuitApp = prevQuitApp })
+	var quitCalls int
+	gooseQuitApp = func() error {
+		quitCalls++
+		running = false
+		return nil
+	}
+
+	prevSleep := gooseSleep
+	t.Cleanup(func() { gooseSleep = prevSleep })
+	gooseSleep = func(time.Duration) {}
+
+	prevOpenPath := gooseOpenPath
+	t.Cleanup(func() { gooseOpenPath = prevOpenPath })
+	var gotPath string
+	gooseOpenPath = func(path string, env []string) error {
+		gotPath = path
+		return nil
+	}
+
+	if err := (&Goose{}).runDesktopApp("llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+	if quitCalls != 1 {
+		t.Fatalf("quit calls = %d, want 1", quitCalls)
+	}
+	if gotPath != appPath {
+		t.Fatalf("opened path = %q, want %q", gotPath, appPath)
+	}
+}
+
+func TestDefaultGooseOpenPathDarwinPassesEnvToOpen(t *testing.T) {
+	prev := gooseGOOS
+	t.Cleanup(func() { gooseGOOS = prev })
+	gooseGOOS = "darwin"
+
+	prevCommand := gooseCommand
+	t.Cleanup(func() { gooseCommand = prevCommand })
+	var gotName string
+	var gotArgs []string
+	gooseCommand = func(name string, args ...string) *exec.Cmd {
+		gotName = name
+		gotArgs = append([]string(nil), args...)
+		return exec.Command(os.Args[0], "-test.run=TestGooseCommandHelperProcess", "--")
+	}
+
+	err := defaultGooseOpenPath("/Applications/Goose.app", []string{"GOOSE_PROVIDER=ollama", "GOOSE_MODEL=llama3.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotName != "open" {
+		t.Fatalf("command = %q, want open", gotName)
+	}
+	wantArgs := []string{"--env", "GOOSE_PROVIDER=ollama", "--env", "GOOSE_MODEL=llama3.2", "/Applications/Goose.app"}
+	if !slices.Equal(gotArgs, wantArgs) {
+		t.Fatalf("args = %#v, want %#v", gotArgs, wantArgs)
 	}
 }
 
@@ -355,6 +476,126 @@ func TestGooseRunDesktopAppWindowsStartMenu(t *testing.T) {
 	}
 }
 
+func TestGooseRunDesktopAppWindowsRunningPathRestarts(t *testing.T) {
+	prev := gooseGOOS
+	t.Cleanup(func() { gooseGOOS = prev })
+	gooseGOOS = "windows"
+
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	t.Cleanup(restoreConfirm)
+
+	prevStat := gooseStatFn
+	t.Cleanup(func() { gooseStatFn = prevStat })
+	gooseStatFn = func(path string) (os.FileInfo, error) {
+		return nil, &fs.PathError{Path: path, Err: errors.New("not exist")}
+	}
+
+	runPath := `C:\Users\me\AppData\Local\Programs\Goose\Goose.exe`
+	prevRunPath := gooseRunPath
+	t.Cleanup(func() { gooseRunPath = prevRunPath })
+	gooseRunPath = func() string { return runPath }
+
+	prevStartID := gooseStartID
+	t.Cleanup(func() { gooseStartID = prevStartID })
+	gooseStartID = func() string { return "Block.Goose_abc123!App" }
+
+	running := true
+	prevIsRunning := gooseIsRunning
+	t.Cleanup(func() { gooseIsRunning = prevIsRunning })
+	gooseIsRunning = func() bool { return running }
+
+	prevQuitApp := gooseQuitApp
+	t.Cleanup(func() { gooseQuitApp = prevQuitApp })
+	var quitCalls int
+	gooseQuitApp = func() error {
+		quitCalls++
+		running = false
+		return nil
+	}
+
+	prevSleep := gooseSleep
+	t.Cleanup(func() { gooseSleep = prevSleep })
+	gooseSleep = func(time.Duration) {}
+
+	prevOpenPath := gooseOpenPath
+	t.Cleanup(func() { gooseOpenPath = prevOpenPath })
+	var gotPath string
+	gooseOpenPath = func(path string, env []string) error {
+		gotPath = path
+		return nil
+	}
+
+	prevOpenStartID := gooseOpenStartID
+	t.Cleanup(func() { gooseOpenStartID = prevOpenStartID })
+	gooseOpenStartID = func(string, []string) error {
+		t.Fatal("running Goose Desktop should reopen by the running process path before Start Menu fallback")
+		return nil
+	}
+
+	if err := (&Goose{}).runDesktopApp("llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+	if quitCalls != 1 {
+		t.Fatalf("quit calls = %d, want 1", quitCalls)
+	}
+	if gotPath != runPath {
+		t.Fatalf("opened path = %q, want %q", gotPath, runPath)
+	}
+}
+
+func TestGooseRunDesktopAppRestartDeclinedDoesNotLaunch(t *testing.T) {
+	prev := gooseGOOS
+	t.Cleanup(func() { gooseGOOS = prev })
+	gooseGOOS = "darwin"
+
+	prevConfirm := DefaultConfirmPrompt
+	t.Cleanup(func() { DefaultConfirmPrompt = prevConfirm })
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if !strings.Contains(prompt, "Restart it") {
+			t.Fatalf("prompt = %q, want restart prompt", prompt)
+		}
+		return false, nil
+	}
+
+	home := t.TempDir()
+	appPath := filepath.Join(home, "Applications", "Goose.app")
+
+	prevUserHome := gooseUserHome
+	t.Cleanup(func() { gooseUserHome = prevUserHome })
+	gooseUserHome = func() (string, error) { return home, nil }
+
+	prevStat := gooseStatFn
+	t.Cleanup(func() { gooseStatFn = prevStat })
+	gooseStatFn = func(path string) (os.FileInfo, error) {
+		if path == appPath {
+			return nil, nil
+		}
+		return nil, &fs.PathError{Path: path, Err: errors.New("not exist")}
+	}
+
+	prevIsRunning := gooseIsRunning
+	t.Cleanup(func() { gooseIsRunning = prevIsRunning })
+	gooseIsRunning = func() bool { return true }
+
+	prevQuitApp := gooseQuitApp
+	t.Cleanup(func() { gooseQuitApp = prevQuitApp })
+	gooseQuitApp = func() error {
+		t.Fatal("declining restart should not quit Goose Desktop")
+		return nil
+	}
+
+	prevOpenPath := gooseOpenPath
+	t.Cleanup(func() { gooseOpenPath = prevOpenPath })
+	gooseOpenPath = func(string, []string) error {
+		t.Fatal("declining restart should not launch Goose Desktop")
+		return nil
+	}
+
+	if err := (&Goose{}).runDesktopApp("llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGooseCLIRunNotInstalled(t *testing.T) {
 	// Force non-darwin so we hit runCLI path
 	prev := gooseGOOS
@@ -368,7 +609,7 @@ func TestGooseCLIRunNotInstalled(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when goose binary not installed")
 	}
-	if !strings.Contains(err.Error(), "block.github.io/goose") {
+	if !strings.Contains(err.Error(), gooseInstallURL) {
 		t.Errorf("expected install hint in error, got: %v", err)
 	}
 }
@@ -540,4 +781,11 @@ func TestGooseCLIInstalled(t *testing.T) {
 			t.Error("installed() should be true when goose binary is on PATH")
 		}
 	})
+}
+
+func TestGooseCommandHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+	os.Exit(0)
 }

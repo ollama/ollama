@@ -2,116 +2,48 @@
 title: Goose
 ---
 
-Goose is an open-source coding agent with both a desktop app and a CLI. Ollama can launch either interface with Ollama configured as the model provider.
-
-## Install
-
-Install [Goose Desktop or Goose CLI](https://goose-docs.ai/docs/getting-started/installation/).
-
-Goose Desktop is available for macOS, Linux, and Windows. Ollama Launch supports Goose Desktop on macOS and Windows.
-
-Goose CLI is available on macOS, Linux, and Windows.
-
 ## Goose Desktop
 
-Use Goose Desktop when you want the graphical app:
+Install [Goose](https://block.github.io/goose/docs/getting-started/installation/) Desktop.
 
-```shell
-ollama launch goose
-```
+### Usage with Ollama
+1. In Goose, open **Settings** → **Configure Provider**.  
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/goose-settings.png" 
+    alt="Goose settings Panel"
+    width="75%"
+  />
+</div>
+2. Find **Ollama**, click **Configure** 
+3. Confirm **API Host** is `http://localhost:11434` and click Submit
 
-`goose` is an alias for `goose-desktop`, so this command is equivalent:
 
-```shell
-ollama launch goose-desktop
-```
+### Connecting to ollama.com
 
-Ollama sets Goose to use the `ollama` provider, points it at your Ollama host, and launches the desktop app. To launch with a specific model:
+1. Create an [API key](https://ollama.com/settings/keys) on ollama.com and save it in your `.env` 
+2. In Goose, set **API Host** to `https://ollama.com`
 
-```shell
-ollama launch goose --model qwen3
-```
-
-On Windows, if you downloaded a zip or extracted Goose manually and Ollama cannot find it, open Goose once, then run `ollama launch goose` again. Ollama can detect the running app path and use it next time.
-
-<img
-  src="/images/goose-settings.png"
-  alt="Goose settings panel"
-  style={{ borderRadius: "12px" }}
-/>
 
 ## Goose CLI
 
-Use Goose CLI when you want Goose in the terminal:
+Install [Goose](https://block.github.io/goose/docs/getting-started/installation/) CLI
 
-```shell
-ollama launch goose-cli
-```
+### Usage with Ollama
+1. Run `goose configure`
+2. Select **Configure Providers** and select **Ollama**
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/goose-cli.png" 
+    alt="Goose CLI"
+    width="50%"
+  />
+</div>
+3. Enter model name (e.g `qwen3`)
 
-Ollama starts `goose session` with the `ollama` provider configured for the selected model.
+### Connecting to ollama.com
 
-To pass extra arguments to Goose CLI, put them after `--`:
-
-```shell
-ollama launch goose-cli -- --debug
-```
-
-To launch Goose CLI with a specific model:
-
-```shell
-ollama launch goose-cli --model qwen3
-```
-
-<img
-  src="/images/goose-cli.png"
-  alt="Goose CLI provider configuration"
-  style={{ borderRadius: "12px" }}
-/>
-
-## Ollama Cloud
-
-To use Ollama Cloud models with Goose, create an [Ollama API key](https://ollama.com/settings/keys), then launch Goose with `OLLAMA_HOST` and `OLLAMA_API_KEY` set in your shell:
-
-macOS or Linux:
-
-```shell
-OLLAMA_HOST=https://ollama.com OLLAMA_API_KEY=your-api-key ollama launch goose --model qwen3-coder:480b-cloud
-```
-
-For Goose CLI:
-
-```shell
-OLLAMA_HOST=https://ollama.com OLLAMA_API_KEY=your-api-key ollama launch goose-cli --model qwen3-coder:480b-cloud
-```
-
-Windows PowerShell:
-
-```powershell
-$env:OLLAMA_HOST = "https://ollama.com"
-$env:OLLAMA_API_KEY = "your-api-key"
-ollama launch goose --model qwen3-coder:480b-cloud
-```
-
-For Goose CLI:
-
-```powershell
-$env:OLLAMA_HOST = "https://ollama.com"
-$env:OLLAMA_API_KEY = "your-api-key"
-ollama launch goose-cli --model qwen3-coder:480b-cloud
-```
-
-## Manual setup
-
-If you prefer to configure Goose yourself, choose the Ollama provider in Goose and use:
-
-```text
-http://localhost:11434
-```
-
-For Goose CLI, run:
-
-```shell
-goose configure
-```
-
-Select **Configure Providers**, choose **Ollama**, and enter the model you want to use.
+1. Create an [API key](https://ollama.com/settings/keys) on ollama.com and save it in your `.env` 
+2. Run `goose configure`
+3. Select **Configure Providers** and select **Ollama**
+4. Update **OLLAMA_HOST** to `https://ollama.com`
