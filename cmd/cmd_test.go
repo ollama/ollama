@@ -402,10 +402,10 @@ func TestResumeModelFromLatestChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
-	if err := store.AppendMessageWithModel(ctx, "chat-old", api.Message{Role: "assistant", Content: "old"}, "llama3.2"); err != nil {
+	if err := store.AppendMessage(ctx, "chat-old", api.Message{Role: "assistant", Content: "old"}, "llama3.2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendMessageWithModel(ctx, "chat-new", api.Message{Role: "assistant", Content: "new"}, "qwen3:8b"); err != nil {
+	if err := store.AppendMessage(ctx, "chat-new", api.Message{Role: "assistant", Content: "new"}, "qwen3:8b"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

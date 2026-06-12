@@ -21,13 +21,8 @@ type ChatClient interface {
 
 type ChatStore interface {
 	EnsureChat(context.Context, string, string) error
-	AppendMessage(context.Context, string, api.Message) error
-	UpdateLastMessage(context.Context, string, api.Message) error
-}
-
-type ModelAwareChatStore interface {
-	AppendMessageWithModel(context.Context, string, api.Message, string) error
-	UpdateLastMessageWithModel(context.Context, string, api.Message, string) error
+	AppendMessage(context.Context, string, api.Message, string) error
+	UpdateLastMessage(context.Context, string, api.Message, string) error
 }
 
 type Session struct {
@@ -92,7 +87,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	for _, msg := range opts.NewMessages {
 		messages = append(messages, msg)
 		if opts.ChatID != "" && s.Store != nil {
-			if err := s.appendStoreMessage(ctx, opts.ChatID, msg, ""); err != nil {
+			if err := s.Store.AppendMessage(ctx, opts.ChatID, msg, ""); err != nil {
 				return nil, err
 			}
 		}
@@ -120,7 +115,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 				}
 				messages = append(messages, errorMsg)
 				if opts.ChatID != "" && s.Store != nil {
-					if appendErr := s.appendStoreMessage(ctx, opts.ChatID, errorMsg, ""); appendErr != nil {
+					if appendErr := s.Store.AppendMessage(ctx, opts.ChatID, errorMsg, ""); appendErr != nil {
 						return nil, appendErr
 					}
 				}
@@ -215,7 +210,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 			return nil
 		}
 		if !persisted {
-			if err := s.appendStoreMessage(persistCtx, opts.ChatID, assistant, opts.Model); err != nil {
+			if err := s.Store.AppendMessage(persistCtx, opts.ChatID, assistant, opts.Model); err != nil {
 				return err
 			}
 			persisted = true
@@ -223,7 +218,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 			dirtyDeltas = 0
 			return nil
 		}
-		if err := s.updateStoreLastMessage(persistCtx, opts.ChatID, assistant, opts.Model); err != nil {
+		if err := s.Store.UpdateLastMessage(persistCtx, opts.ChatID, assistant, opts.Model); err != nil {
 			return err
 		}
 		dirty = false
@@ -471,27 +466,7 @@ func (s *Session) appendToolMessage(ctx context.Context, chatID string, msg api.
 	if chatID == "" || s.Store == nil {
 		return nil
 	}
-	return s.Store.AppendMessage(ctx, chatID, msg)
-}
-
-func (s *Session) appendStoreMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
-	if chatID == "" || s.Store == nil {
-		return nil
-	}
-	if modelStore, ok := s.Store.(ModelAwareChatStore); ok {
-		return modelStore.AppendMessageWithModel(ctx, chatID, msg, model)
-	}
-	return s.Store.AppendMessage(ctx, chatID, msg)
-}
-
-func (s *Session) updateStoreLastMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
-	if chatID == "" || s.Store == nil {
-		return nil
-	}
-	if modelStore, ok := s.Store.(ModelAwareChatStore); ok {
-		return modelStore.UpdateLastMessageWithModel(ctx, chatID, msg, model)
-	}
-	return s.Store.UpdateLastMessage(ctx, chatID, msg)
+	return s.Store.AppendMessage(ctx, chatID, msg, "")
 }
 
 func messageEmpty(msg api.Message) bool {

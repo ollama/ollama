@@ -180,11 +180,7 @@ func (s *Store) EnsureChat(ctx context.Context, id string, title string) error {
 	return nil
 }
 
-func (s *Store) AppendMessage(ctx context.Context, chatID string, msg api.Message) error {
-	return s.AppendMessageWithModel(ctx, chatID, msg, "")
-}
-
-func (s *Store) AppendMessageWithModel(ctx context.Context, chatID string, msg api.Message, model string) error {
+func (s *Store) AppendMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
 	if err := s.EnsureChat(ctx, chatID, ""); err != nil {
 		return err
 	}
@@ -214,11 +210,7 @@ func (s *Store) AppendMessageWithModel(ctx context.Context, chatID string, msg a
 	return tx.Commit()
 }
 
-func (s *Store) UpdateLastMessage(ctx context.Context, chatID string, msg api.Message) error {
-	return s.UpdateLastMessageWithModel(ctx, chatID, msg, "")
-}
-
-func (s *Store) UpdateLastMessageWithModel(ctx context.Context, chatID string, msg api.Message, model string) error {
+func (s *Store) UpdateLastMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)

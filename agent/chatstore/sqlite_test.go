@@ -24,13 +24,13 @@ func TestStoreWritesAppCompatibleChat(t *testing.T) {
 	if err := store.EnsureChat(ctx, "chat-1", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendMessage(ctx, "chat-1", api.Message{Role: "user", Content: "hello from cli"}); err != nil {
+	if err := store.AppendMessage(ctx, "chat-1", api.Message{Role: "user", Content: "hello from cli"}, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	args := api.NewToolCallFunctionArguments()
 	args.Set("command", "pwd")
-	if err := store.AppendMessageWithModel(ctx, "chat-1", api.Message{
+	if err := store.AppendMessage(ctx, "chat-1", api.Message{
 		Role:    "assistant",
 		Content: "I'll check.",
 		ToolCalls: []api.ToolCall{{
@@ -81,7 +81,7 @@ func TestStoreRestoresToolMessageMetadata(t *testing.T) {
 		Content:    "tool output",
 		ToolName:   "bash",
 		ToolCallID: "call-1",
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,7 +111,7 @@ func TestStoreRoundTripsMessageImages(t *testing.T) {
 		Role:    "user",
 		Content: "look",
 		Images:  []api.ImageData{first, second},
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -131,7 +131,7 @@ func TestStoreRoundTripsMessageImages(t *testing.T) {
 		Role:    "user",
 		Content: "updated",
 		Images:  []api.ImageData{updated},
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatal(err)
 	}
 	chat, err = store.Chat(ctx, "chat-1")
@@ -220,7 +220,7 @@ func TestStoreMigratesOldMessagesSchemaForImages(t *testing.T) {
 
 	ctx := context.Background()
 	image := api.ImageData([]byte("after migration"))
-	if err := store.AppendMessage(ctx, "chat-1", api.Message{Role: "user", Content: "image", Images: []api.ImageData{image}}); err != nil {
+	if err := store.AppendMessage(ctx, "chat-1", api.Message{Role: "user", Content: "image", Images: []api.ImageData{image}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	chat, err := store.Chat(ctx, "chat-1")
@@ -240,13 +240,13 @@ func TestStoreLatestChatForModel(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
-	if err := store.AppendMessageWithModel(ctx, "chat-old", api.Message{Role: "assistant", Content: "old"}, "llama3.2"); err != nil {
+	if err := store.AppendMessage(ctx, "chat-old", api.Message{Role: "assistant", Content: "old"}, "llama3.2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendMessageWithModel(ctx, "chat-other", api.Message{Role: "assistant", Content: "other"}, "qwen3"); err != nil {
+	if err := store.AppendMessage(ctx, "chat-other", api.Message{Role: "assistant", Content: "other"}, "qwen3"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendMessageWithModel(ctx, "chat-new", api.Message{Role: "assistant", Content: "new"}, "llama3.2"); err != nil {
+	if err := store.AppendMessage(ctx, "chat-new", api.Message{Role: "assistant", Content: "new"}, "llama3.2"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -274,10 +274,10 @@ func TestStoreLatestChat(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
-	if err := store.AppendMessageWithModel(ctx, "chat-old", api.Message{Role: "assistant", Content: "old"}, "llama3.2"); err != nil {
+	if err := store.AppendMessage(ctx, "chat-old", api.Message{Role: "assistant", Content: "old"}, "llama3.2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendMessageWithModel(ctx, "chat-new", api.Message{Role: "assistant", Content: "new"}, "qwen3:8b"); err != nil {
+	if err := store.AppendMessage(ctx, "chat-new", api.Message{Role: "assistant", Content: "new"}, "qwen3:8b"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -301,16 +301,16 @@ func TestStoreListChats(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
-	if err := store.AppendMessage(ctx, "chat-old", api.Message{Role: "user", Content: "old topic"}); err != nil {
+	if err := store.AppendMessage(ctx, "chat-old", api.Message{Role: "user", Content: "old topic"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendMessageWithModel(ctx, "chat-old", api.Message{Role: "assistant", Content: "old answer"}, "llama3.2"); err != nil {
+	if err := store.AppendMessage(ctx, "chat-old", api.Message{Role: "assistant", Content: "old answer"}, "llama3.2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendMessage(ctx, "chat-new", api.Message{Role: "user", Content: "new topic"}); err != nil {
+	if err := store.AppendMessage(ctx, "chat-new", api.Message{Role: "user", Content: "new topic"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendMessageWithModel(ctx, "chat-new", api.Message{Role: "assistant", Content: "new answer"}, "qwen3"); err != nil {
+	if err := store.AppendMessage(ctx, "chat-new", api.Message{Role: "assistant", Content: "new answer"}, "qwen3"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -351,7 +351,7 @@ func TestStoreListUserMessages(t *testing.T) {
 		{Role: "user", Content: compactionSummaryMessagePrefix + "old context"},
 		{Role: "user", Content: "new prompt"},
 	} {
-		if err := store.AppendMessage(ctx, "chat-1", msg); err != nil {
+		if err := store.AppendMessage(ctx, "chat-1", msg, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -381,7 +381,7 @@ func TestStoreArchivesCompactedMessages(t *testing.T) {
 		{Role: "assistant", Content: "recent answer"},
 		{Role: "user", Content: "recent two"},
 	} {
-		if err := store.AppendMessage(ctx, "chat-1", msg); err != nil {
+		if err := store.AppendMessage(ctx, "chat-1", msg, ""); err != nil {
 			t.Fatal(err)
 		}
 	}

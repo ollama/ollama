@@ -66,11 +66,11 @@ func (s *chatResumeTestStore) EnsureChat(context.Context, string, string) error 
 	return nil
 }
 
-func (s *chatResumeTestStore) AppendMessage(context.Context, string, api.Message) error {
+func (s *chatResumeTestStore) AppendMessage(context.Context, string, api.Message, string) error {
 	return nil
 }
 
-func (s *chatResumeTestStore) UpdateLastMessage(context.Context, string, api.Message) error {
+func (s *chatResumeTestStore) UpdateLastMessage(context.Context, string, api.Message, string) error {
 	return nil
 }
 
