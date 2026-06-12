@@ -1,0 +1,408 @@
+.github-browser {
+  flex-shrink: 0;
+  width: 420px;
+  max-width: 40vw;
+  min-width: 320px;
+  height: 100vh;
+  background: white;
+  border-left: 1px solid #e5e7eb;
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.github-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.github-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.user-info img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  border-radius: 4px;
+}
+
+.close-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.disconnect-btn {
+  padding: 0.5rem 1rem;
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.disconnect-btn:hover {
+  background: #dc2626;
+}
+
+.github-loading,
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  color: #6b7280;
+}
+
+.github-connect {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.connect-info {
+  text-align: center;
+  max-width: 400px;
+}
+
+.connect-info svg {
+  color: #6b7280;
+  margin-bottom: 1rem;
+}
+
+.connect-info h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.5rem;
+}
+
+.connect-info p {
+  color: #6b7280;
+  margin-bottom: 1.5rem;
+  line-height: 1.5;
+}
+
+.connect-btn {
+  padding: 0.75rem 1.5rem;
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.connect-btn:hover {
+  background: #1d4ed8;
+}
+
+.github-error {
+  background: #fee2e2;
+  color: #dc2626;
+  padding: 1rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #fecaca;
+}
+
+.github-error button {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  color: #dc2626;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+}
+
+.github-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.repos-list h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1.125rem;
+}
+
+.repos-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.repos-hint {
+  color: #6b7280;
+  font-size: 0.875rem;
+  margin: 0 0 1rem 0;
+}
+
+.repo-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+}
+
+.repo-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.1);
+}
+
+.repo-card-main {
+  padding: 1rem;
+  cursor: pointer;
+}
+
+.chat-repo-btn {
+  padding: 0.5rem 1rem;
+  margin: 0 1rem 1rem;
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.chat-repo-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.chat-repo-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.github-success {
+  background: #d1fae5;
+  color: #065f46;
+  padding: 1rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #a7f3d0;
+}
+
+.github-success button {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  color: #065f46;
+}
+
+.repo-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.add-file-btn {
+  padding: 0.4rem 0.75rem;
+  background: #059669;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.add-file-btn:hover:not(:disabled) {
+  background: #047857;
+}
+
+.add-file-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.repo-name {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: #111827;
+}
+
+.repo-description {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin-bottom: 0.75rem;
+  line-height: 1.4;
+}
+
+.repo-meta {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+.badge {
+  background: #fef3c7;
+  color: #92400e;
+  padding: 0.125rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: #9ca3af;
+}
+
+.repo-browser {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.browser-header {
+  margin-bottom: 1rem;
+}
+
+.back-btn {
+  background: #f3f4f6;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: #374151;
+  margin-bottom: 0.5rem;
+}
+
+.back-btn:hover {
+  background: #e5e7eb;
+}
+
+.repo-title {
+  font-size: 1.125rem;
+  color: #111827;
+}
+
+.current-path {
+  color: #6b7280;
+  font-weight: normal;
+}
+
+.contents-list {
+  flex: 1;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.content-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #f3f4f6;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.content-item:last-child {
+  border-bottom: none;
+}
+
+.content-item:hover {
+  background: #f9fafb;
+}
+
+.content-item .icon {
+  font-size: 1.25rem;
+}
+
+.content-item .name {
+  flex: 1;
+  font-size: 0.875rem;
+  color: #111827;
+}
+
+.content-item .size {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+.file-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.file-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.file-header .file-path {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-path {
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+
+.file-content {
+  flex: 1;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1rem;
+  overflow: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}

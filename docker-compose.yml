@@ -1,0 +1,68 @@
+services:
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    container_name: ollama
+    restart: unless-stopped
+    expose:
+      - "11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-5m}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-1}
+
+  redis:
+    image: redis:7-alpine
+    container_name: ollama-redis
+    restart: unless-stopped
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  api:
+    build:
+      context: ./api-gateway
+    container_name: ollama-api-gateway
+    restart: unless-stopped
+    depends_on:
+      - ollama
+      - redis
+    expose:
+      - "8000"
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      REDIS_URL: redis://redis:6379
+      API_KEYS: ${API_KEYS:?Set API_KEYS in your .env file}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:?Set SUPER_ADMIN_PASSWORD in your .env file}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-http://localhost:8080/api/auth/github/callback}
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: ollama-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ollama-nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+      - frontend
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  ollama_data:
+  redis_data:
