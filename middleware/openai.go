@@ -154,9 +154,6 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 	// completion chunk
 	if w.stream {
 		c := openai.ToCompleteChunk(w.id, generateResponse)
-		if w.streamOptions != nil && w.streamOptions.IncludeUsage {
-			c.Usage = &openai.Usage{}
-		}
 		d, err := json.Marshal(c)
 		if err != nil {
 			return 0, err
