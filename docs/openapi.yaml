@@ -200,6 +200,11 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+        logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Logprob"
+          description: Log probability information for the generated tokens when logprobs are enabled
     ChatMessage:
       type: object
       required: [role, content]
@@ -401,6 +406,32 @@ components:
         done:
           type: boolean
           description: True for the final event in the stream
+        done_reason:
+          type: string
+          description: Reason the response finished (present in the final chunk)
+        total_duration:
+          type: integer
+          description: Total time spent generating in nanoseconds (present in the final chunk)
+        load_duration:
+          type: integer
+          description: Time spent loading the model in nanoseconds (present in the final chunk)
+        prompt_eval_count:
+          type: integer
+          description: Number of tokens in the prompt (present in the final chunk)
+        prompt_eval_duration:
+          type: integer
+          description: Time spent evaluating the prompt in nanoseconds (present in the final chunk)
+        eval_count:
+          type: integer
+          description: Number of tokens generated in the response (present in the final chunk)
+        eval_duration:
+          type: integer
+          description: Time spent generating tokens in nanoseconds (present in the final chunk)
+        logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Logprob"
+          description: Log probability information for the generated tokens when logprobs are enabled
     StatusEvent:
       type: object
       properties:
