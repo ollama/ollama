@@ -8,31 +8,47 @@
 
 Start building with open models.
 
-## Download
+🔥 **UNLEASHING TURBOQUANT & NATIVE PACKAGING** 🔥
 
-### macOS
+This repository has been supercharged with **TurboQuant CUDA support** for unprecedented LLM performance! We're pushing the boundaries of what local inference can do.
 
-```shell
-curl -fsSL https://ollama.com/install.sh | sh
+## ⚡ Installation & Download
+
+#### 🐧 Arch Linux (The Native Way)
+We have introduced a bespoke `PKGBUILD` for seamless Arch Linux integration. This automatically handles the complex CUDA weak stubs, removes legacy code, and configures the systemd service out-of-the-box!
+```bash
+git clone https://github.com/nomadstar/ollama.git
+cd ollama/packaging/arch
+makepkg -si
+```
+🚀 **AUR Roadmap:** Is expected that `ollama-turboquant-git` will be soon available in the Arch User Repository (AUR).
+
+#### 🍏 mac OS
+The `PKGBUILD` is Arch-exclusive, but macOS users can harness the exact same TurboQuant engine by building directly from source. Make sure you have Xcode Command Line Tools, CMake, and Go installed:
+```bash
+cmake -B build -D CMAKE_BUILD_TYPE=Release .
+cmake --build build -j$(sysctl -n hw.ncpu)
+go build .
 ```
 
-or [download manually](https://ollama.com/download/Ollama.dmg)
-
-### Windows
-
-```shell
-irm https://ollama.com/install.ps1 | iex
+#### 🪟 Windows
+Windows users can experience native TurboQuant performance by compiling with MSVC and the CUDA Toolkit. Simply clone the repository and run:
+```powershell
+cmake -B build -D CMAKE_BUILD_TYPE=Release -D GGML_CUDA=ON .
+cmake --build build --config Release -j$env:NUMBER_OF_PROCESSORS
+go build .
 ```
 
-or [download manually](https://ollama.com/download/OllamaSetup.exe)
-
-### Linux
-
-```shell
-curl -fsSL https://ollama.com/install.sh | sh
+#### 🐧 Other Linux Distributions (Ubuntu, Fedora, etc.)
+If you are not on Arch Linux, you can still compile the TurboQuant build natively. Install your distribution's equivalent of `cmake`, `go`, and `cuda-toolkit` (for NVIDIA), then run:
+```bash
+cmake -B build -D CMAKE_BUILD_TYPE=Release -D GGML_CUDA=ON .
+cmake --build build -j$(nproc)
+go build .
 ```
 
-[Manual install instructions](https://docs.ollama.com/linux#manual-install)
+> ⚠️ **Hardware Notice:** The current TurboQuant engine is heavily optimized for NVIDIA GPUs via CUDA. **Full compatibility for ROCm (AMD) and Vulkan is currently pending** and will be dropping in upcoming updates!
+
 
 ### Docker
 
