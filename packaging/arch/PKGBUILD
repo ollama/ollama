@@ -140,16 +140,27 @@ build() {
     -D CMAKE_INSTALL_PREFIX=/usr
   )
 
-  if [ "$_backend" = "rocm" ]; then
-    cmake -B build "${cmake_base_options[@]}" -D GGML_HIP=ON -D AMDGPU_TARGETS=native
-  elif [ "$_backend" = "cuda" ]; then
-    cmake -B build "${cmake_base_options[@]}" -D GGML_CUDA=ON -D CMAKE_CUDA_ARCHITECTURES=native
+  local repo_root="$startdir/../.."
+  if [ -d "$repo_root/build/llama-server-local/bin" ] && [ -x "$repo_root/ollama" ]; then
+    echo "========================================================"
+    echo "¡Binarios precompilados encontrados en la raíz del repo!"
+    echo "Usando $repo_root/build y $repo_root/ollama"
+    echo "Se omitirá la compilación desde cero..."
+    echo "========================================================"
+    cp -a "$repo_root/build" .
+    cp -a "$repo_root/ollama" .
   else
-    cmake -B build "${cmake_base_options[@]}" -D GGML_VULKAN=ON
-  fi
+    if [ "$_backend" = "rocm" ]; then
+      cmake -B build "${cmake_base_options[@]}" -D GGML_HIP=ON -D AMDGPU_TARGETS=native
+    elif [ "$_backend" = "cuda" ]; then
+      cmake -B build "${cmake_base_options[@]}" -D GGML_CUDA=ON -D CMAKE_CUDA_ARCHITECTURES=native
+    else
+      cmake -B build "${cmake_base_options[@]}" -D GGML_VULKAN=ON
+    fi
 
-  cmake --build build -j$(nproc)
-  go build .
+    cmake --build build -j$(nproc)
+    go build .
+  fi
   
   DESTDIR="$srcdir/staging-install" cmake --install build
 }
