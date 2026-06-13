@@ -141,15 +141,18 @@ build() {
   )
 
   local repo_root="$startdir/../.."
-  if [ -d "$repo_root/build/llama-server-local/bin" ] && [ -x "$repo_root/ollama" ]; then
+  local force_compile="${OLLAMA_FORCE_COMPILE:-0}"
+  
+  if [ "$force_compile" -ne 1 ] && [ -d "$repo_root/build/llama-server-local/bin" ]; then
     echo "========================================================"
-    echo "¡Binarios precompilados encontrados en la raíz del repo!"
-    echo "Usando $repo_root/build y $repo_root/ollama"
-    echo "Se omitirá la compilación desde cero..."
+    echo "¡Librerías C/C++ precompiladas encontradas en la raíz!"
+    echo "Copiando $repo_root/build para omitir compilación CMake..."
     echo "========================================================"
     cp -a "$repo_root/build" .
-    cp -a "$repo_root/ollama" .
   else
+    if [ "$force_compile" -eq 1 ]; then
+      echo "OLLAMA_FORCE_COMPILE=1 detectado. Forzando compilación limpia de CMake..."
+    fi
     if [ "$_backend" = "rocm" ]; then
       cmake -B build "${cmake_base_options[@]}" -D GGML_HIP=ON -D AMDGPU_TARGETS=native
     elif [ "$_backend" = "cuda" ]; then
@@ -157,8 +160,19 @@ build() {
     else
       cmake -B build "${cmake_base_options[@]}" -D GGML_VULKAN=ON
     fi
-
     cmake --build build -j$(nproc)
+  fi
+
+  if [ "$force_compile" -ne 1 ] && [ -x "$repo_root/ollama" ]; then
+    echo "========================================================"
+    echo "¡Binario Go de Ollama encontrado en la raíz!"
+    echo "Copiando $repo_root/ollama para omitir Go build..."
+    echo "========================================================"
+    cp -a "$repo_root/ollama" .
+  else
+    if [ "$force_compile" -eq 1 ]; then
+      echo "OLLAMA_FORCE_COMPILE=1 detectado. Forzando compilación limpia de Go..."
+    fi
     go build .
   fi
   
