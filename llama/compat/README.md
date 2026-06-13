@@ -28,6 +28,8 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
 - `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent applier
   (used by `llama/server/CMakeLists.txt`) that applies every `*.patch` under
   this directory — the hooks patch plus each `models/` architecture patch.
+- `ui/llama-*-ui.tar.gz` - prebuilt llama.cpp server UI assets from the pinned
+  release, extracted into the fetched source before upstream embeds them.
 - `models/` - the sibling **new-architecture** layer: implementations of
   architectures llama.cpp doesn't support yet, each added via a small
   registration patch. (Those files *add* archs; the files above *translate*
