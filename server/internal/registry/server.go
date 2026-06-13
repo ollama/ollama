@@ -89,17 +89,21 @@ var (
 )
 
 // CloseNotify implements the http.CloseNotifier interface, for Gin. Remove with Gin.
-//
-// It panics if the underlying ResponseWriter is not a CloseNotifier.
 func (r *statusCodeRecorder) CloseNotify() <-chan bool {
-	return r.ResponseWriter.(http.CloseNotifier).CloseNotify()
+	c, ok := r.ResponseWriter.(http.CloseNotifier)
+	if !ok {
+		// Connection close notifications are optional; if not supported,
+		// return a channel that never signals.
+		return make(chan bool)
+	}
+	return c.CloseNotify()
 }
 
 // Flush implements the http.Flusher interface, for Gin. Remove with Gin.
-//
-// It panics if the underlying ResponseWriter is not a Flusher.
 func (r *statusCodeRecorder) Flush() {
-	r.ResponseWriter.(http.Flusher).Flush()
+	if fl, ok := r.ResponseWriter.(http.Flusher); ok {
+		fl.Flush()
+	}
 }
 
 func (r *statusCodeRecorder) status() int {
