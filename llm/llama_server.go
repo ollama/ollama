@@ -110,19 +110,21 @@ func boundedNumPredict(numPredict, numCtx int) int {
 // llamaServerRunner wraps an upstream llama-server process and implements the LlamaServer interface.
 // It communicates with llama-server over HTTP.
 type llamaServerRunner struct {
-	port             int
-	cmd              *exec.Cmd
-	done             chan struct{}
-	doneErr          error
-	client           *http.Client
-	memoryMu         sync.RWMutex
-	memTotal         uint64 // actual total buffer size parsed from llama-server logs (bytes)
-	memGPU           uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
-	gpuLayers        uint64 // model layers loaded on GPU, parsed from llama-server logs
-	gpuLayerOverflow int    // number of GPU-selected layers partially overflowed to CPU
-	status           *StatusWriter
-	options          api.Options
-	modelPath        string
+	port              int
+	cmd               *exec.Cmd
+	done              chan struct{}
+	doneErr           error
+	client            *http.Client
+	memoryMu          sync.RWMutex
+	memTotal          uint64 // actual total buffer size parsed from llama-server logs (bytes)
+	memGPU            uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
+	memModelTotal     uint64 // model weight buffer size across all backends, parsed from llama-server logs (bytes)
+	memCPUMappedModel uint64 // model weight bytes in mmap-backed CPU buffers (e.g. CPU_Mapped), parsed from llama-server logs
+	gpuLayers         uint64 // model layers loaded on GPU, parsed from llama-server logs
+	gpuLayerOverflow  int    // number of GPU-selected layers partially overflowed to CPU
+	status            *StatusWriter
+	options           api.Options
+	modelPath         string
 	// mediaMarker must match the LLAMA_MEDIA_MARKER value passed to llama-server.
 	// llama.cpp randomizes this by default; Ollama renders stable [img-N] markers
 	// and rewrites them before forwarding the request.
@@ -958,6 +960,8 @@ func (s *llamaServerRunner) resetLoadAccounting() {
 
 	s.memTotal = 0
 	s.memGPU = 0
+	s.memModelTotal = 0
+	s.memCPUMappedModel = 0
 	s.gpuLayers = 0
 	s.gpuLayerOverflow = 0
 	for k := range s.vramByDevice {
@@ -2447,6 +2451,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	s.memoryMu.RLock()
 	memTotal := s.memTotal
 	memGPU := s.memGPU
+	memModelTotal := s.memModelTotal
+	memCPUMappedModel := s.memCPUMappedModel
 	totalLayers := s.totalLayers
 	gpuLayers := s.gpuLayers
 	gpuLayerOverflow := s.gpuLayerOverflow
@@ -2454,6 +2460,17 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 
 	if memTotal > 0 {
 		total, vram = memTotal, memGPU
+		// With mmap, llama-server reports each CPU_Mapped model buffer as the
+		// file-offset span of its CPU-resident tensors. During partial offload
+		// that span covers nearly the whole file (the first and last tensors
+		// stay on CPU), re-counting weights already accounted to GPU buffers.
+		// Weights cannot exceed the model file on disk, so trim the excess
+		// from the mmap-backed (reclaimable page cache) portion.
+		if memCPUMappedModel > 0 {
+			if info, err := os.Stat(s.modelPath); err == nil && memModelTotal > uint64(info.Size()) {
+				total -= min(memCPUMappedModel, memModelTotal-uint64(info.Size()))
+			}
+		}
 		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 {
 			total = vram
 		}
@@ -2612,11 +2629,17 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 }
 
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
-	var total, gpu uint64
+	var total, gpu, model, cpuMappedModel uint64
 	byDevice := make(map[string]uint64)
 
 	for key, buffer := range w.buffers {
 		total += buffer.bytes
+		if key.kind == "model" {
+			model += buffer.bytes
+			if !isGPUBuffer(key.backend) && strings.HasSuffix(key.backend, "_Mapped") {
+				cpuMappedModel += buffer.bytes
+			}
+		}
 		if isGPUBuffer(key.backend) {
 			gpu += buffer.bytes
 			byDevice[deviceName(key.backend)] += buffer.bytes
@@ -2625,6 +2648,8 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 
 	w.runner.memTotal = total
 	w.runner.memGPU = gpu
+	w.runner.memModelTotal = model
+	w.runner.memCPUMappedModel = cpuMappedModel
 	w.runner.vramByDevice = byDevice
 }
 
