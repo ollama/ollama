@@ -225,6 +225,7 @@ console.log(response.message.content);
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) - AI coding assistant for Qt Creator
 - [AI Toolkit for VS Code](https://aka.ms/ai-tooklit/ollama-docs) - Microsoft-official VS Code extension
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama) - Natural language interface for computers
+- [Atlarix](https://atlarix.dev) - Native desktop AI coding environment with Blueprint RAG and multi-provider support including Ollama
 
 ### Libraries & SDKs
 
