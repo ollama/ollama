@@ -1,15 +1,14 @@
 # Maintainer: Your Name <youremail@example.com>
-pkgname=ollama-turboquant-git
+pkgbase=ollama-turboquant-git
+pkgname=('ollama-turboquant-cuda-git' 'ollama-turboquant-vulkan-git' 'ollama-turboquant-rocm-git')
 pkgver=0.30.8.r4.gd66fc63
 pkgrel=1
-pkgdesc='Create, run and share large language models (LLMs) - TurboQuant fork with CUDA'
+pkgdesc='Create, run and share large language models (LLMs) - TurboQuant fork'
 arch=('x86_64')
 url='https://github.com/nomadstar/ollama'
 license=('MIT')
 depends=('libgcc' 'libstdc++' 'glibc')
-makedepends=('cmake' 'git' 'go' 'cuda')
-provides=('ollama')
-conflicts=('ollama')
+makedepends=('cmake' 'git' 'go' 'cuda' 'vulkan-headers' 'rocm-hip-sdk' 'rocm-opencl-sdk')
 options=('!lto')
 source=("git+https://github.com/nomadstar/ollama.git#branch=turboquant"
         "ollama.service"
@@ -74,49 +73,93 @@ build() {
   # lots of system dependencies into the target path.
   sed -i 's/PRE_INCLUDE_REGEXES.*/PRE_INCLUDE_REGEXES = ""/' CMakeLists.txt
 
-  local cmake_options=(
-    -B build
+  local cmake_base_options=(
     -W no-dev
     -D CMAKE_BUILD_TYPE=Release
     -D CMAKE_INSTALL_PREFIX=/usr
-    -D GGML_CUDA=ON
   )
 
-  cmake "${cmake_options[@]}"
-  cmake --build build -j$(nproc)
-  go build .
+  # Build CUDA (with auto native architecture)
+  cmake -B build-cuda "${cmake_base_options[@]}" -D GGML_CUDA=ON -D CMAKE_CUDA_ARCHITECTURES=native
+  cmake --build build-cuda -j$(nproc)
 
-  DESTDIR=staging-install cmake --install build
+  # Build Vulkan
+  cmake -B build-vulkan "${cmake_base_options[@]}" -D GGML_VULKAN=ON
+  cmake --build build-vulkan -j$(nproc)
+
+  # Build ROCm (HIP) (with auto native architecture)
+  # Usar un compilador alternativo si fuera necesario, comúnmente CMAKE_CXX_COMPILER=hipcc, 
+  # pero GGML_HIP=ON suele bastar.
+  cmake -B build-rocm "${cmake_base_options[@]}" -D GGML_HIP=ON -D AMDGPU_TARGETS=native
+  cmake --build build-rocm -j$(nproc)
+
+  go build .
 }
 
-package() {
-  cd ollama
-
-  # Install payloads (llama.cpp runner binaries/libs)
-  mkdir -p "$pkgdir/usr/lib/ollama"
+_package_common() {
   cd "$srcdir/ollama"
   install -Dm755 ollama "$pkgdir/usr/bin/ollama"
-  
-  # Instalar los binarios y librerías generados (llama-server, libllama.so, etc.)
-  if [ -d "staging-install/usr/lib/ollama" ]; then
-    cp -dr --no-preserve=ownership staging-install/usr/lib/ollama/* "$pkgdir/usr/lib/ollama/"
-  fi
-  # Copiar la librería CUDA que se generó de forma no estándar
-  if [ -f "build/llama-server-local/bin/libggml-cuda.so" ]; then
-    cp build/llama-server-local/bin/libggml-cuda.so "$pkgdir/usr/lib/ollama/"
-  fi
-
-  # Ensure state directory exists
   install -dm755 "$pkgdir/var/lib/ollama"
-  
-  # Install system files
   install -Dm644 "$srcdir/ollama.service" "$pkgdir/usr/lib/systemd/system/ollama.service"
   install -Dm644 "$srcdir/sysusers.conf" "$pkgdir/usr/lib/sysusers.d/ollama.conf"
   install -Dm644 "$srcdir/tmpfiles.conf" "$pkgdir/usr/lib/tmpfiles.d/ollama.conf"
-  
-  # Install license
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-
-  # Link state dir to /usr/share/ollama as expected by some setups
   ln -s /var/lib/ollama "$pkgdir/usr/share/ollama"
+}
+
+package_ollama-turboquant-cuda-git() {
+  pkgdesc="Create, run and share large language models (LLMs) - TurboQuant fork with CUDA"
+  depends+=('cuda')
+  provides=('ollama' 'ollama-turboquant-git')
+  conflicts=('ollama' 'ollama-turboquant-git' 'ollama-turboquant-vulkan-git' 'ollama-turboquant-rocm-git')
+
+  _package_common
+
+  cd "$srcdir/ollama"
+  DESTDIR="$srcdir/staging-cuda" cmake --install build-cuda
+  mkdir -p "$pkgdir/usr/lib/ollama"
+  if [ -d "$srcdir/staging-cuda/usr/lib/ollama" ]; then
+    cp -dr --no-preserve=ownership "$srcdir/staging-cuda/usr/lib/ollama/"* "$pkgdir/usr/lib/ollama/"
+  fi
+  if [ -f "build-cuda/llama-server-local/bin/libggml-cuda.so" ]; then
+    cp build-cuda/llama-server-local/bin/libggml-cuda.so "$pkgdir/usr/lib/ollama/"
+  fi
+}
+
+package_ollama-turboquant-vulkan-git() {
+  pkgdesc="Create, run and share large language models (LLMs) - TurboQuant fork with Vulkan"
+  depends+=('vulkan-driver' 'vulkan-icd-loader')
+  provides=('ollama' 'ollama-turboquant-git')
+  conflicts=('ollama' 'ollama-turboquant-git' 'ollama-turboquant-cuda-git' 'ollama-turboquant-rocm-git')
+
+  _package_common
+
+  cd "$srcdir/ollama"
+  DESTDIR="$srcdir/staging-vulkan" cmake --install build-vulkan
+  mkdir -p "$pkgdir/usr/lib/ollama"
+  if [ -d "$srcdir/staging-vulkan/usr/lib/ollama" ]; then
+    cp -dr --no-preserve=ownership "$srcdir/staging-vulkan/usr/lib/ollama/"* "$pkgdir/usr/lib/ollama/"
+  fi
+  if [ -f "build-vulkan/llama-server-local/bin/libggml-vulkan.so" ]; then
+    cp build-vulkan/llama-server-local/bin/libggml-vulkan.so "$pkgdir/usr/lib/ollama/"
+  fi
+}
+
+package_ollama-turboquant-rocm-git() {
+  pkgdesc="Create, run and share large language models (LLMs) - TurboQuant fork with ROCm"
+  depends+=('rocm-hip-runtime')
+  provides=('ollama' 'ollama-turboquant-git')
+  conflicts=('ollama' 'ollama-turboquant-git' 'ollama-turboquant-cuda-git' 'ollama-turboquant-vulkan-git')
+
+  _package_common
+
+  cd "$srcdir/ollama"
+  DESTDIR="$srcdir/staging-rocm" cmake --install build-rocm
+  mkdir -p "$pkgdir/usr/lib/ollama"
+  if [ -d "$srcdir/staging-rocm/usr/lib/ollama" ]; then
+    cp -dr --no-preserve=ownership "$srcdir/staging-rocm/usr/lib/ollama/"* "$pkgdir/usr/lib/ollama/"
+  fi
+  if [ -f "build-rocm/llama-server-local/bin/libggml-hip.so" ]; then
+    cp build-rocm/llama-server-local/bin/libggml-hip.so "$pkgdir/usr/lib/ollama/"
+  fi
 }
