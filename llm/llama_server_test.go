@@ -552,7 +552,10 @@ func TestLlamaServerCompletionTruncatesPromptAsTokens(t *testing.T) {
 	if !ok {
 		t.Fatalf("completion prompt = %T, want token array", completionReq.Prompt)
 	}
-	want := []int{0, 1, 2, 6, 7, 8, 9}
+	// num_ctx=8, num_keep=3: keep the first 3 tokens plus the most recent
+	// half of the window, leaving (num_ctx-num_keep)/2 tokens of generation
+	// headroom.
+	want := []int{0, 1, 2, 7, 8, 9}
 	if len(got) != len(want) {
 		t.Fatalf("token prompt len = %d, want %d: %#v", len(got), len(want), got)
 	}

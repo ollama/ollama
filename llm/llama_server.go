@@ -273,12 +273,8 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 		return nil, err
 	}
 
-	// llama-server rejects prompts that fill the entire slot context, while the
-	// old runner could accept exactly num_ctx prompt tokens. Keep one token of
-	// headroom so token-level truncation preserves old behavior as closely as
-	// llama-server allows.
-	limit := s.options.NumCtx - 1
-	if len(tokens) <= limit {
+	// llama-server rejects prompts that fill the entire slot context.
+	if len(tokens) < s.options.NumCtx {
 		return prompt, nil
 	}
 
@@ -286,7 +282,14 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 	if nKeep < 0 {
 		nKeep = len(tokens)
 	}
-	nKeep = min(nKeep, limit)
+	nKeep = min(nKeep, s.options.NumCtx-1)
+
+	// Truncation must also leave room to generate: llama-server ends the
+	// response with "length" once the context fills, and context shift cannot
+	// reclaim space for every model (multimodal, iSWA). Reserve the
+	// (num_ctx - num_keep)/2 tokens a context shift would free, rather than
+	// prefilling tokens a shift would immediately discard.
+	limit := s.options.NumCtx - max((s.options.NumCtx-nKeep)/2, 1)
 
 	discard := len(tokens) - limit
 	truncated := make([]int, 0, limit)
