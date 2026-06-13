@@ -15,13 +15,18 @@ This repository has been supercharged with **TurboQuant CUDA support** for unpre
 ## ⚡ Installation & Download
 
 #### 🐧 Arch Linux (The Native Way)
-We have introduced a bespoke `PKGBUILD` for seamless Arch Linux integration. This automatically handles the complex CUDA weak stubs, removes legacy code, and configures the systemd service out-of-the-box!
+We have introduced a bespoke, **Smart `PKGBUILD`** for seamless Arch Linux integration. Our installer features an **intelligent hardware detection system** that automatically configures the best backend for your system (ROCm, CUDA, or Vulkan) out-of-the-box!
+
 ```bash
 git clone https://github.com/nomadstar/ollama.git
 cd ollama/packaging/arch
 makepkg -si
 ```
-🚀 **AUR Roadmap:** Is expected that `ollama-turboquant-git` will be soon available in the Arch User Repository (AUR).
+
+The installer features an interactive menu to let you override the backend, and includes intelligent caching to instantly reuse your precompiled binaries if you previously ran `make`.
+Want to force a completely clean compile? Run `OLLAMA_FORCE_COMPILE=1 makepkg -si`.
+
+🚀 **AUR Roadmap:** `ollama-turboquant-git` is fully prepared and will be soon available in the Arch User Repository (AUR). Once uploaded, you'll be able to install it flawlessly using your favorite helper like `yay` or `paru`. The smart installer will silently detect your hardware and compile the exact packages you need in the background!
 
 #### 🍏 mac OS
 The `PKGBUILD` is Arch-exclusive, but macOS users can harness the exact same TurboQuant engine by building directly from source. Make sure you have Xcode Command Line Tools, CMake, and Go installed:
@@ -47,7 +52,7 @@ cmake --build build -j$(nproc)
 go build .
 ```
 
-> ⚠️ **Hardware Notice:** The current TurboQuant engine is heavily optimized for NVIDIA GPUs via CUDA. **Full compatibility for ROCm (AMD) and Vulkan is currently pending** and will be dropping in upcoming updates!
+> 🟢 **Hardware Notice:** The TurboQuant engine is now **fully compatible** with NVIDIA (CUDA), AMD (ROCm), and offers a universal fallback via Vulkan! Our smart PKGBUILD automatically detects your GPU and compiles the optimized payload for maximum inference speed, meaning you'll never download gigabytes of unused SDKs.
 
 
 ### Docker
