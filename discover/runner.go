@@ -29,6 +29,8 @@ var (
 )
 
 var defaultIntegratedROCmGFXTargets = map[string]struct{}{
+	// AMD RDNA 3.5 integrated GPUs (Strix Point / Strix Halo, e.g. Radeon 890M / 8060S).
+	"gfx1150": {},
 	// AMD Radeon 8060S / Ryzen AI Max+ 395.
 	"gfx1151": {},
 }
