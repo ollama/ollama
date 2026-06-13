@@ -1,6 +1,5 @@
 # Maintainer: Your Name <youremail@example.com>
-pkgbase=ollama-turboquant-git
-pkgname=('ollama-turboquant-cuda-git' 'ollama-turboquant-vulkan-git' 'ollama-turboquant-rocm-git')
+pkgname=ollama-turboquant-git
 pkgver=0.30.8.r4.gd66fc63
 pkgrel=1
 pkgdesc='Create, run and share large language models (LLMs) - TurboQuant fork'
@@ -8,7 +7,9 @@ arch=('x86_64')
 url='https://github.com/nomadstar/ollama'
 license=('MIT')
 depends=('libgcc' 'libstdc++' 'glibc')
-makedepends=('cmake' 'git' 'go' 'cuda' 'vulkan-headers' 'rocm-hip-sdk' 'rocm-opencl-sdk')
+makedepends=('cmake' 'git' 'go')
+provides=('ollama')
+conflicts=('ollama')
 options=('!lto')
 source=("git+https://github.com/nomadstar/ollama.git#branch=turboquant"
         "ollama.service"
@@ -18,6 +19,66 @@ sha256sums=('SKIP'
             'SKIP'
             'SKIP'
             'SKIP')
+
+# Detección de hardware y backend interactivo
+_has_amd=0
+_has_nvidia=0
+if lspci | grep -iE 'vga|3d|display' | grep -qiE '\b(amd|ati|advanced micro devices)\b'; then _has_amd=1; fi
+if lspci | grep -iE 'vga|3d|display' | grep -qi 'nvidia'; then _has_nvidia=1; fi
+
+if [ "$_has_amd" -eq 1 ]; then _autofallback="rocm"
+elif [ "$_has_nvidia" -eq 1 ]; then _autofallback="cuda"
+else _autofallback="vulkan"; fi
+
+_backend="${OLLAMA_BACKEND:-}"
+
+# Evitar prompts si no hay TTY o si se está evaluando via makepkg/AUR helpers silenciosamente
+if [ -z "$_backend" ] && [ -t 0 ] && [ -z "$MAKEPKG_SOURCED" ] && [[ ! "$(ps -o comm= -p $PPID)" =~ "yay|paru" ]]; then
+  # Para evitar preguntar múltiples veces cuando makepkg hace "source", usamos un archivo temporal
+  _prompt_cache="/tmp/ollama_pkgbuild_choice_$UID"
+  if [ -f "$_prompt_cache" ] && [ $(( $(date +%s) - $(stat -c %Y "$_prompt_cache") )) -lt 60 ]; then
+    _backend=$(cat "$_prompt_cache")
+  else
+    echo "==================================================" >&2
+    echo "Ollama TurboQuant - Detección de Tarjeta Gráfica" >&2
+    echo "==================================================" >&2
+    echo "Por favor, elige el backend de aceleración:" >&2
+    echo "  0) Autofallback (Recomendado: $_autofallback)" >&2
+    if [ "$_has_amd" -eq 1 ]; then echo "  1) ROCm" >&2; fi
+    if [ "$_has_nvidia" -eq 1 ]; then echo "  2) CUDA" >&2; fi
+    echo "  3) Vulkan" >&2
+    echo "==================================================" >&2
+    read -r -p "Tu elección [0]: " _choice < /dev/tty
+    
+    case "$_choice" in
+      1) _backend="rocm" ;;
+      2) _backend="cuda" ;;
+      3) _backend="vulkan" ;;
+      *) _backend="$_autofallback" ;;
+    esac
+    echo "$_backend" > "$_prompt_cache"
+  fi
+fi
+
+# Si no se pudo asignar interactivamente o el usuario ignoró, forzar fallback
+if [ -z "$_backend" ]; then
+  _backend="$_autofallback"
+fi
+
+if [ "$_backend" = "rocm" ]; then
+  pkgdesc="$pkgdesc (ROCm)"
+  makedepends+=('rocm-hip-sdk' 'rocm-opencl-sdk')
+  depends+=('rocm-hip-runtime')
+elif [ "$_backend" = "cuda" ]; then
+  pkgdesc="$pkgdesc (CUDA)"
+  makedepends+=('cuda')
+  depends+=('cuda')
+else
+  _backend="vulkan"
+  pkgdesc="$pkgdesc (Vulkan)"
+  makedepends+=('vulkan-headers')
+  depends+=('vulkan-driver' 'vulkan-icd-loader')
+fi
 
 pkgver() {
   cd "$srcdir/ollama"
@@ -79,87 +140,46 @@ build() {
     -D CMAKE_INSTALL_PREFIX=/usr
   )
 
-  # Build CUDA (with auto native architecture)
-  cmake -B build-cuda "${cmake_base_options[@]}" -D GGML_CUDA=ON -D CMAKE_CUDA_ARCHITECTURES=native
-  cmake --build build-cuda -j$(nproc)
+  if [ "$_backend" = "rocm" ]; then
+    cmake -B build "${cmake_base_options[@]}" -D GGML_HIP=ON -D AMDGPU_TARGETS=native
+  elif [ "$_backend" = "cuda" ]; then
+    cmake -B build "${cmake_base_options[@]}" -D GGML_CUDA=ON -D CMAKE_CUDA_ARCHITECTURES=native
+  else
+    cmake -B build "${cmake_base_options[@]}" -D GGML_VULKAN=ON
+  fi
 
-  # Build Vulkan
-  cmake -B build-vulkan "${cmake_base_options[@]}" -D GGML_VULKAN=ON
-  cmake --build build-vulkan -j$(nproc)
-
-  # Build ROCm (HIP) (with auto native architecture)
-  # Usar un compilador alternativo si fuera necesario, comúnmente CMAKE_CXX_COMPILER=hipcc, 
-  # pero GGML_HIP=ON suele bastar.
-  cmake -B build-rocm "${cmake_base_options[@]}" -D GGML_HIP=ON -D AMDGPU_TARGETS=native
-  cmake --build build-rocm -j$(nproc)
-
+  cmake --build build -j$(nproc)
   go build .
+  
+  DESTDIR="$srcdir/staging-install" cmake --install build
 }
 
-_package_common() {
+package() {
   cd "$srcdir/ollama"
+  
+  # Install binary and state directory
   install -Dm755 ollama "$pkgdir/usr/bin/ollama"
   install -dm755 "$pkgdir/var/lib/ollama"
+  
+  # Install generated payloads
+  mkdir -p "$pkgdir/usr/lib/ollama"
+  if [ -d "$srcdir/staging-install/usr/lib/ollama" ]; then
+    cp -dr --no-preserve=ownership "$srcdir/staging-install/usr/lib/ollama/"* "$pkgdir/usr/lib/ollama/"
+  fi
+  
+  # Copiar la librería compartida generada según el backend
+  if [ "$_backend" = "rocm" ] && [ -f "build/llama-server-local/bin/libggml-hip.so" ]; then
+    cp build/llama-server-local/bin/libggml-hip.so "$pkgdir/usr/lib/ollama/"
+  elif [ "$_backend" = "cuda" ] && [ -f "build/llama-server-local/bin/libggml-cuda.so" ]; then
+    cp build/llama-server-local/bin/libggml-cuda.so "$pkgdir/usr/lib/ollama/"
+  elif [ "$_backend" = "vulkan" ] && [ -f "build/llama-server-local/bin/libggml-vulkan.so" ]; then
+    cp build/llama-server-local/bin/libggml-vulkan.so "$pkgdir/usr/lib/ollama/"
+  fi
+
+  # Install system files
   install -Dm644 "$srcdir/ollama.service" "$pkgdir/usr/lib/systemd/system/ollama.service"
   install -Dm644 "$srcdir/sysusers.conf" "$pkgdir/usr/lib/sysusers.d/ollama.conf"
   install -Dm644 "$srcdir/tmpfiles.conf" "$pkgdir/usr/lib/tmpfiles.d/ollama.conf"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   ln -s /var/lib/ollama "$pkgdir/usr/share/ollama"
-}
-
-package_ollama-turboquant-cuda-git() {
-  pkgdesc="Create, run and share large language models (LLMs) - TurboQuant fork with CUDA"
-  depends+=('cuda')
-  provides=('ollama' 'ollama-turboquant-git')
-  conflicts=('ollama' 'ollama-turboquant-git' 'ollama-turboquant-vulkan-git' 'ollama-turboquant-rocm-git')
-
-  _package_common
-
-  cd "$srcdir/ollama"
-  DESTDIR="$srcdir/staging-cuda" cmake --install build-cuda
-  mkdir -p "$pkgdir/usr/lib/ollama"
-  if [ -d "$srcdir/staging-cuda/usr/lib/ollama" ]; then
-    cp -dr --no-preserve=ownership "$srcdir/staging-cuda/usr/lib/ollama/"* "$pkgdir/usr/lib/ollama/"
-  fi
-  if [ -f "build-cuda/llama-server-local/bin/libggml-cuda.so" ]; then
-    cp build-cuda/llama-server-local/bin/libggml-cuda.so "$pkgdir/usr/lib/ollama/"
-  fi
-}
-
-package_ollama-turboquant-vulkan-git() {
-  pkgdesc="Create, run and share large language models (LLMs) - TurboQuant fork with Vulkan"
-  depends+=('vulkan-driver' 'vulkan-icd-loader')
-  provides=('ollama' 'ollama-turboquant-git')
-  conflicts=('ollama' 'ollama-turboquant-git' 'ollama-turboquant-cuda-git' 'ollama-turboquant-rocm-git')
-
-  _package_common
-
-  cd "$srcdir/ollama"
-  DESTDIR="$srcdir/staging-vulkan" cmake --install build-vulkan
-  mkdir -p "$pkgdir/usr/lib/ollama"
-  if [ -d "$srcdir/staging-vulkan/usr/lib/ollama" ]; then
-    cp -dr --no-preserve=ownership "$srcdir/staging-vulkan/usr/lib/ollama/"* "$pkgdir/usr/lib/ollama/"
-  fi
-  if [ -f "build-vulkan/llama-server-local/bin/libggml-vulkan.so" ]; then
-    cp build-vulkan/llama-server-local/bin/libggml-vulkan.so "$pkgdir/usr/lib/ollama/"
-  fi
-}
-
-package_ollama-turboquant-rocm-git() {
-  pkgdesc="Create, run and share large language models (LLMs) - TurboQuant fork with ROCm"
-  depends+=('rocm-hip-runtime')
-  provides=('ollama' 'ollama-turboquant-git')
-  conflicts=('ollama' 'ollama-turboquant-git' 'ollama-turboquant-cuda-git' 'ollama-turboquant-vulkan-git')
-
-  _package_common
-
-  cd "$srcdir/ollama"
-  DESTDIR="$srcdir/staging-rocm" cmake --install build-rocm
-  mkdir -p "$pkgdir/usr/lib/ollama"
-  if [ -d "$srcdir/staging-rocm/usr/lib/ollama" ]; then
-    cp -dr --no-preserve=ownership "$srcdir/staging-rocm/usr/lib/ollama/"* "$pkgdir/usr/lib/ollama/"
-  fi
-  if [ -f "build-rocm/llama-server-local/bin/libggml-hip.so" ]; then
-    cp build-rocm/llama-server-local/bin/libggml-hip.so "$pkgdir/usr/lib/ollama/"
-  fi
 }
