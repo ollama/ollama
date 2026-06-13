@@ -30,7 +30,26 @@ All durations are returned in nanoseconds.
 
 ### Streaming responses
 
-Certain endpoints stream responses as JSON objects. Streaming can be disabled by providing `{"stream": false}` for these endpoints.
+Certain endpoints stream responses as JSON objects in [JSON Lines (JSONL)](https://jsonlines.org/) format, where each JSON object is separated by a newline. Streaming can be disabled by providing `{"stream": false}` for these endpoints.
+
+### Errors
+
+If a request fails, the response will include an HTTP error status code and a JSON body with an `error` field:
+
+```json
+{
+  "error": "model 'missing-model' not found"
+}
+```
+
+Common HTTP status codes:
+
+| Status Code | Description |
+| ----------- | ----------- |
+| 200 | Success |
+| 400 | Bad request (e.g., invalid parameters) |
+| 404 | Not found (e.g., model does not exist) |
+| 500 | Internal server error |
 
 ## Generate a completion
 
