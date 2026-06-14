@@ -2,11 +2,12 @@ package middleware
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -342,10 +343,11 @@ func CompletionsMiddleware() gin.HandlerFunc {
 
 		c.Request.Body = io.NopCloser(&b)
 
+		cmplID, _ := rand.Int(rand.Reader, big.NewInt(999))
 		w := &CompleteWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
-			id:            fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			id:            fmt.Sprintf("cmpl-%d", cmplID.Int64()),
 			streamOptions: req.StreamOptions,
 		}
 
@@ -434,10 +436,11 @@ func ChatMiddleware() gin.HandlerFunc {
 
 		c.Request.Body = io.NopCloser(&b)
 
+		chatID, _ := rand.Int(rand.Reader, big.NewInt(999))
 		w := &ChatWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
-			id:            fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			id:            fmt.Sprintf("chatcmpl-%d", chatID.Int64()),
 			streamOptions: req.StreamOptions,
 		}
 
@@ -545,8 +548,10 @@ func ResponsesMiddleware() gin.HandlerFunc {
 
 		c.Request.Body = io.NopCloser(&b)
 
-		responseID := fmt.Sprintf("resp_%d", rand.Intn(999999))
-		itemID := fmt.Sprintf("msg_%d", rand.Intn(999999))
+		respN, _ := rand.Int(rand.Reader, big.NewInt(999999))
+		msgN, _ := rand.Int(rand.Reader, big.NewInt(999999))
+		responseID := fmt.Sprintf("resp_%d", respN.Int64())
+		itemID := fmt.Sprintf("msg_%d", msgN.Int64())
 
 		w := &ResponsesWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
@@ -755,12 +760,18 @@ func TranscriptionMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		prompt := c.Request.FormValue("prompt")
+		if len(prompt) > 512 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "prompt must be 512 characters or fewer"))
+			return
+		}
+
 		req := openai.TranscriptionRequest{
 			Model:          model,
 			AudioData:      audioData,
 			ResponseFormat: c.Request.FormValue("response_format"),
 			Language:       c.Request.FormValue("language"),
-			Prompt:         c.Request.FormValue("prompt"),
+			Prompt:         prompt,
 		}
 
 		chatReq, err := openai.FromTranscriptionRequest(req)
