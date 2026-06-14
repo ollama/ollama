@@ -543,8 +543,6 @@ func appendLlamaServerLogArgs(params []string) []string {
 	// Keep startup memory/offload lines visible for scheduler accounting.
 	return append(params,
 		"--log-verbosity", "4",
-		"--no-log-prefix",
-		"--no-log-timestamps",
 	)
 }
 

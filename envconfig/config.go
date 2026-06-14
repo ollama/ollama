@@ -314,7 +314,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_DEBUG_LOG_REQUESTS":   {"OLLAMA_DEBUG_LOG_REQUESTS", DebugLogRequests(), "Log inference request bodies and replay curl commands to a temp directory"},
 		"OLLAMA_GO_TEMPLATE":          {"OLLAMA_GO_TEMPLATE", GoTemplate(true), "Enable Modelfile TEMPLATE based rendering when available"},
 		"OLLAMA_FLASH_ATTENTION":      {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
-		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: turbo3_0, set to f16 for original behavior)"},
+		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: turbo3, set to f16 for original behavior)"},
 		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_IGPU_ENABLE":          {"OLLAMA_IGPU_ENABLE", String("OLLAMA_IGPU_ENABLE")(), "Enable integrated GPUs"},
 		"LLAMA_ARG_FIT":               {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},

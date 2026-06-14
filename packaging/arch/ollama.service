@@ -9,7 +9,7 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="OLLAMA_HOST=0.0.0.0"
-Environment="OLLAMA_KV_CACHE_TYPE=turbo3_0"
+Environment="OLLAMA_KV_CACHE_TYPE=turbo3"
 Environment="OLLAMA_MODELS=/var/lib/ollama"
 
 [Install]
