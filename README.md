@@ -205,6 +205,7 @@ console.log(response.message.content);
 #### Mobile
 
 - [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) - One-click Ollama on Android
+- [MyLLM](https://apps.apple.com/us/app/myllm-local-ai-agent/id6760704297) - Private iOS assistant for on-device models or your own Ollama, with an installable tool marketplace
 
 > SwiftChat, Enchanted, Maid, Ollama App, Reins, and ConfiChat listed above also support mobile platforms.
 
@@ -311,6 +312,7 @@ console.log(response.message.content);
 - [Page Assist](https://github.com/n4ze3m/page-assist) - Chrome extension for AI-powered browsing
 - [NativeMind](https://github.com/NativeMindBrowser/NativeMindExtension) - Private, on-device browser AI assistant
 - [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server) - Security proxy for Ollama
+- [MyLLM Connect](https://github.com/TeamDzX/myllm-connect) - Reach your local Ollama from your iPhone over Tailscale (loopback bearer-auth proxy, QR pairing, no port forwarding)
 - [1Panel](https://github.com/1Panel-dev/1Panel/) - Web-based Linux server management
 - [Writeopia](https://github.com/Writeopia/Writeopia) - Text editor with Ollama integration
 - [QA-Pilot](https://github.com/reid41/QA-Pilot) - GitHub code repository understanding
