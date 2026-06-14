@@ -327,7 +327,7 @@ func TestParseArgs(t *testing.T) {
 func TestIsCloudModel(t *testing.T) {
 	// isCloudModel now only uses Show API, so nil client always returns false
 	t.Run("nil client returns false", func(t *testing.T) {
-		models := []string{"glm-5.1:cloud", "kimi-k2.6:cloud", "local-model"}
+		models := []string{"glm-5.1:cloud", "glm-5.2:cloud", "kimi-k2.6:cloud", "local-model"}
 		for _, model := range models {
 			if isCloudModel(context.Background(), nil, model) {
 				t.Errorf("isCloudModel(%q) with nil client should return false", model)
@@ -394,6 +394,7 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
+		{Name: "glm-5.2:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
@@ -410,6 +411,7 @@ func TestBuildModelList_PreCheckedNonRecommendedFirstInMore(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
+		{Name: "glm-5.2:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
@@ -458,13 +460,14 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "gemma4", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
+		{Name: "glm-5.2:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
 
 	for _, item := range items {
 		switch item.Name {
-		case "gemma4", "glm-5.1:cloud":
+		case "gemma4", "glm-5.1:cloud", "glm-5.2:cloud":
 			if strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("installed recommended %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
@@ -506,12 +509,13 @@ func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "gemma4", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
+		{Name: "glm-5.2:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	// gemma4 and glm-5.1:cloud are installed so they sort normally;
+	// gemma4, glm-5.1:cloud and glm-5.2:cloud are installed so they sort normally;
 	// qwen3.5:cloud and qwen3.5 are not installed so they go to the bottom
 	// All recs: cloud first in mixed case, then local, in rec order within each
 	want := recommendedNames()
@@ -589,6 +593,7 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
+		{Name: "glm-5.2:cloud", Remote: true},
 	}
 
 	_, _, existingModels, cloudModels := buildModelList(existing, nil, "")
@@ -599,12 +604,18 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	if !existingModels["glm-5.1:cloud"] {
 		t.Error("glm-5.1:cloud should be in existingModels")
 	}
+	if !existingModels["glm-5.2:cloud"] {
+		t.Error("glm-5.2:cloud should be in existingModels")
+	}
 	if existingModels["gemma4"] {
 		t.Error("gemma4 should not be in existingModels (it's a recommendation)")
 	}
 
 	if !cloudModels["glm-5.1:cloud"] {
 		t.Error("glm-5.1:cloud should be in cloudModels")
+	}
+	if !cloudModels["glm-5.2:cloud"] {
+		t.Error("glm-5.2:cloud should be in cloudModels")
 	}
 	if !cloudModels["kimi-k2.6:cloud"] {
 		t.Error("kimi-k2.6:cloud should be in cloudModels (recommended cloud)")
@@ -627,7 +638,7 @@ func TestBuildModelList_RecommendedFieldSet(t *testing.T) {
 
 	for _, item := range items {
 		switch item.Name {
-		case "gemma4", "qwen3.5", "glm-5.1:cloud", "kimi-k2.6:cloud", "qwen3.5:cloud":
+		case "gemma4", "qwen3.5", "glm-5.1:cloud", "glm-5.2:cloud", "kimi-k2.6:cloud", "qwen3.5:cloud":
 			if !item.Recommended {
 				t.Errorf("%q should have Recommended=true", item.Name)
 			}
@@ -643,6 +654,7 @@ func TestBuildModelList_MixedCase_CloudRecsFirst(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
+		{Name: "glm-5.2:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
@@ -650,8 +662,12 @@ func TestBuildModelList_MixedCase_CloudRecsFirst(t *testing.T) {
 
 	// Cloud recs should sort before local recs in mixed case
 	cloudIdx := slices.Index(got, "glm-5.1:cloud")
+	cloudIdx2 := slices.Index(got, "glm-5.2:cloud")
 	localIdx := slices.Index(got, "gemma4")
 	if cloudIdx > localIdx {
+		t.Errorf("cloud recs should be before local recs in mixed case, got %v", got)
+	}
+	if cloudIdx2 > localIdx {
 		t.Errorf("cloud recs should be before local recs in mixed case, got %v", got)
 	}
 }
@@ -667,7 +683,11 @@ func TestBuildModelList_OnlyLocal_CloudRecsStillFirst(t *testing.T) {
 	// Cloud recs sort before local recs regardless of installed inventory.
 	localIdx := slices.Index(got, "gemma4")
 	cloudIdx := slices.Index(got, "glm-5.1:cloud")
+	cloudIdx2 := slices.Index(got, "glm-5.2:cloud")
 	if cloudIdx > localIdx {
+		t.Errorf("cloud recs should be before local recs even when only local models installed, got %v", got)
+	}
+	if cloudIdx2 > localIdx {
 		t.Errorf("cloud recs should be before local recs even when only local models installed, got %v", got)
 	}
 }
@@ -685,7 +705,7 @@ func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
 	lastRecIdx := -1
 	firstNonRecIdx := len(got)
 	for i, name := range got {
-		isRec := name == "gemma4" || name == "qwen3.5" || name == "minimax-m2.7:cloud" || name == "glm-5.1:cloud" || name == "kimi-k2.6:cloud" || name == "qwen3.5:cloud"
+		isRec := name == "gemma4" || name == "qwen3.5" || name == "minimax-m2.7:cloud" || name == "glm-5.1:cloud" || name == "glm-5.2:cloud" || name == "kimi-k2.6:cloud" || name == "qwen3.5:cloud"
 		if isRec && i > lastRecIdx {
 			lastRecIdx = i
 		}
@@ -702,9 +722,10 @@ func TestBuildModelList_CheckedRecommendedDoesNotReshuffleRecommendedOrder(t *te
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "glm-5.1:cloud", Remote: true},
+		{Name: "glm-5.2:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, []string{"qwen3.5:cloud", "glm-5.1:cloud"}, "")
+	items, _, _, _ := buildModelList(existing, []string{"qwen3.5:cloud", "glm-5.1:cloud", "glm-5.2:cloud"}, "")
 	got := names(items)
 
 	want := recommendedNames("llama3.2")
@@ -718,7 +739,7 @@ func TestBuildModelList_StaleSavedKimiK25DoesNotReshuffleRecommendedOrder(t *tes
 		{Name: "kimi-k2.5:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud"}, "kimi-k2.5:cloud")
+	items, _, _, _ := buildModelList(existing, []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "glm-5.2:cloud", "minimax-m2.7:cloud"}, "kimi-k2.5:cloud")
 	got := names(items)
 
 	want := recommendedNames("kimi-k2.5:cloud")
@@ -797,7 +818,7 @@ func TestLauncherClientFilterDisabledCloudModels_ChecksStatusOncePerInvocation(t
 		apiClient: api.NewClient(u, srv.Client()),
 	}
 
-	filtered := client.filterDisabledCloudModels(context.Background(), []string{"llama3.2", "glm-5.1:cloud", "qwen3.5:cloud"})
+	filtered := client.filterDisabledCloudModels(context.Background(), []string{"llama3.2", "glm-5.1:cloud", "glm-5.2:cloud", "qwen3.5:cloud"})
 	if diff := cmp.Diff([]string{"llama3.2"}, filtered); diff != "" {
 		t.Fatalf("filtered models mismatch (-want +got):\n%s", diff)
 	}
@@ -1529,6 +1550,9 @@ func TestRecommendedModelsDoNotIncludeRequiredPlanStubs(t *testing.T) {
 		t.Fatalf("qwen fallback required plan = %#v", item)
 	}
 	if item := byName["glm-5.1:cloud"]; item.RequiredPlan != "" {
+		t.Fatalf("glm fallback required plan = %#v", item)
+	}
+	if item := byName["glm-5.2:cloud"]; item.RequiredPlan != "" {
 		t.Fatalf("glm fallback required plan = %#v", item)
 	}
 }

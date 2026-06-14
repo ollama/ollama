@@ -378,6 +378,12 @@ var defaultModelRecommendations = []api.ModelRecommendation{
 		MaxOutputTokens: 131_072,
 	},
 	{
+		Model:           "glm-5.2:cloud",
+		Description:     "Reasoning and code generation",
+		ContextLength:   1_000_000,
+		MaxOutputTokens: 131_072,
+	},
+	{
 		Model:           "qwen3.5:cloud",
 		Description:     "Reasoning, coding, and agentic tool use with vision",
 		ContextLength:   262_144,

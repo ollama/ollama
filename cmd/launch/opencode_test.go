@@ -254,6 +254,7 @@ func TestLookupCloudModelLimit(t *testing.T) {
 		{"glm-4.7:cloud", true, 202_752, 131_072},
 		{"glm-5:cloud", true, 202_752, 131_072},
 		{"glm-5.1:cloud", true, 202_752, 131_072},
+		{"glm-5.2:cloud", true, 1_000_000, 131_072},
 		{"gemma4:31b-cloud", true, 262_144, 131_072},
 		{"gpt-oss:120b-cloud", true, 131_072, 131_072},
 		{"gpt-oss:20b-cloud", true, 131_072, 131_072},
