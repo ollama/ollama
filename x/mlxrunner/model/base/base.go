@@ -1,6 +1,7 @@
 package base
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -55,6 +56,37 @@ type MTPDraftModel interface {
 // MTPEmbeddingModel exposes the target token embedding path used by MTP drafts.
 type MTPEmbeddingModel interface {
 	TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array
+}
+
+// DiffuseConfig holds the resolved runtime settings for one block-diffusion
+// generation. The runner obtains it from the model via ResolveDiffuse and passes
+// it back to Diffuse.
+type DiffuseConfig struct {
+	Canvas              int // canvas (block) width in tokens
+	Steps               int // max denoising steps per canvas
+	PredictTokens       int // requested generated tokens, capped by the runner
+	MaxCanvases         int // number of autoregressive canvases to generate
+	SelfCondK           int // self-conditioning top-k gather width
+	StabilityThreshold  int // consecutive-stable steps before early stop (0 = always stable)
+	TMin                float32
+	TMax                float32
+	EntropyBound        float32
+	ConfidenceThreshold float32
+	Seed                int64
+}
+
+// DiffusionModel is implemented by block-diffusion models (e.g. diffusion-gemma).
+// The runner routes such models to its diffusion pipeline instead of the
+// autoregressive one.
+type DiffusionModel interface {
+	Model
+	// ResolveDiffuse derives the runtime config from the model's parsed defaults,
+	// the requested predict length (which sets the number of canvases), an
+	// optional step override (<= 0 means use the model default), and a seed.
+	ResolveDiffuse(nPredict, steps int, seed int64) DiffuseConfig
+	// Diffuse runs the denoising loop over prompt, invoking emit for each
+	// generated token id in order. emit returning a non-nil error stops generation.
+	Diffuse(ctx context.Context, prompt []int32, cfg DiffuseConfig, emit func(token int32) error) error
 }
 
 var (

@@ -586,6 +586,7 @@ type Options struct {
 	NumKeep          int      `json:"num_keep,omitempty"`
 	Seed             int      `json:"seed,omitempty"`
 	NumPredict       int      `json:"num_predict,omitempty"`
+	DiffusionSteps   int      `json:"diffusion_steps,omitempty"`
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	MinP             float32  `json:"min_p,omitempty"`
