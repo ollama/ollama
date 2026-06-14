@@ -12,6 +12,102 @@ Start building with open models.
 
 This repository has been supercharged with **TurboQuant CUDA support** for unprecedented LLM performance! We're pushing the boundaries of what local inference can do.
 
+---
+
+## 🧠✨ PagedAttention — KV Cache Paginado (TurboQuant v2) ✨🧠
+### *The Puppy Edition* 🐕‍🦺
+
+> 🌟 *"If the OS can manage memory with virtual pages... why can't an LLM?"* 🌟
+
+Imagínate que tu VRAM es un parque para perritos 🐕🐕🐕. En el mundo antiguo (sin PagedAttention), cada perrito necesitaba **su propio cuadrado gigante reservado desde el principio** — aunque solo usara un rinconcito. ¡Qué desperdicio de parque! 🙈
+
+Con PagedAttention, los perritos comparten el parque en **bloques chiquitos y dinámicos**. ¿Llegó un perrito nuevo? Le asignamos bloques libres. ¿Se fue? ¡Sus bloques vuelven al pool! 🎉 El parque nunca se fragmenta, y caben MUCHOS más perritos felices. 🐾
+
+Inspirado en [vLLM's PagedAttention](https://arxiv.org/abs/2309.06180) e integrado directamente en el motor de `llama.cpp`, esta implementación divide la caché KV en **bloques de tamaño fijo** en lugar del bloque contiguo tradicional. Esto significa:
+
+- 🚫✨ **Cero fragmentación de memoria** — múltiples secuencias coexisten en VRAM sin desperdiciar ni un byte
+- 🔀💫 **Bloques compartidos entre secuencias** — system prompts, RAG prefixes, cached contexts: ¡almacenados UNA SOLA VEZ!
+- 📦🌈 **Contextos más grandes en el mismo hardware** — más tokens, mismo precio en VRAM
+- 🐕 **Más perritos en el parque** — técnicamente correcto y emocionalmente satisfactorio
+
+---
+
+### 🏗️ Arquitectura Técnica (con sparkles ✨)
+
+```
+  🐕🐕🐕  ← Tus secuencias (requests, chats, RAG queries)
+      │
+      ▼
+┌─────────────────────────────────────────────────── 💾 ───┐
+│                    llama_kv_cache                         │
+│                                                           │
+│  🔢 pa_block_size    (configurable! default=16 → usa 128) │
+│  🧮 pa_total_blocks                                       │
+│  🟢 pa_free_blocks   ← ¡Bloques libres esperando perritos!│
+│  🗺️  pa_block_tables  ← Virtual (lógico) → Físico (VRAM) │
+│  📋 pa_global_block_table ← la tabla flat que va a CUDA  │
+└──────────────────────────┬────────────────────────────────┘
+                           │ ✨ magia aquí ✨
+                           ▼
+┌──────────────────────────────────────────────── 🔧 ───────┐
+│              llm_graph_context::build_attn                │
+│                                                           │
+│  • Convierte block_table → ggml_tensor (GGML_TYPE_I32)    │
+│  • Inyecta block_table + block_size en build_attn_mha()   │
+│  • Si no hay paginación → fallback clásico (retro 📼)     │
+└──────────────────────────┬────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────── ⚡ ───────┐
+│         🚀 CUDA KERNELS — Flash Attention 🚀              │
+│          (fattn-tile.cuh / fattn-vec.cuh)                 │
+│                                                           │
+│  flash_attn_ext_f16_load_tile(                            │
+│      ..., const int32_t* block_table, int block_size)     │
+│                                                           │
+│  // La traducción virtual→físico ocurre aquí, en GPU:    │
+│  const int k_logical  = k_VKQ_0 + i;           🔢        │
+│  const int k_physical = block_table             🗺️        │
+│      ? (block_table[k_logical / block_size]               │
+│         * block_size + k_logical % block_size)            │
+│      : k_logical;  // ← modo clásico si no hay bloques   │
+│                                                           │
+│  cuda::memcpy_async(&tile,                                │
+│      kv_ptr + k_physical * stride, ...);  // 🎯 bullseye  │
+└───────────────────────────────────────────────────────────┘
+              🐾 woof! dirección física calculada al vuelo 🐾
+```
+
+---
+
+### 🎛️ Tabla de Block Size (elige tu aventura) 🗺️
+
+| `--pa-block-size` | Vibes | GPU Ideal | Notas |
+|:---:|:---:|:---:|:---|
+| `16` | 🐣 Bebé | Cualquiera | Debug / baseline, muy compatible |
+| `64` | 🐕 Perrito | <12GB VRAM | Buen balance latencia/throughput |
+| `128` | 🚀 **Recomendado** | 12-24GB | Alineado con tiles CUDA, el sweet spot |
+| `256` | 🏭 Monstruo | A100 / H100 | Máximo throughput para datacenter |
+
+> 💡 **Pro tip glittery ✨:** El kernel detecta automáticamente si hay `block_table` activa.
+> Si no la hay, funciona exactamente como llama.cpp original — **100% compatible hacia atrás** con todos tus modelos existentes. ¡No hay perritos lastimados! 🐕‍🦺✅
+
+---
+
+### 📚 Referencias & Créditos
+
+- 📄 Kwon et al. (2023): [Efficient Memory Management for LLM Serving with PagedAttention](https://arxiv.org/abs/2309.06180) — los papás intelectuales de todo esto
+- 🔧 Implementación en este fork:
+  - [`src/llama-kv-cache.h`](src/llama-kv-cache.h) — Block Allocator y tablas de paginación
+  - [`ggml/src/ggml-cuda/fattn-tile.cuh`](ggml/src/ggml-cuda/fattn-tile.cuh) — Kernel CUDA con traducción virtual→físico
+  - [`src/llama-graph.cpp`](src/llama-graph.cpp) — Inyección en el grafo de cómputo
+- 🐕 Motor base: [`llama-cpp-turboquant`](https://github.com/nomadstar/llama-cpp-turboquant/tree/feature/paged-attention) (feature/paged-attention)
+- 💜 Construido con amor, café, y mucha paciencia debuggeando compilaciones de 30 minutos de CUDA
+
+---
+
+
+
 ## ⚡ Installation & Download
 
 #### 🐧 Arch Linux (The Native Way)
