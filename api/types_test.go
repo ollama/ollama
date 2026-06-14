@@ -283,6 +283,16 @@ func TestMainGPUFormatParams(t *testing.T) {
 	assert.Equal(t, int64(0), resp["main_gpu"])
 }
 
+func TestKvCacheTypeFormatParams(t *testing.T) {
+	resp, err := FormatParams(map[string][]string{"kv_cache_type": {"q8_0"}})
+	require.NoError(t, err)
+	assert.Equal(t, "q8_0", resp["kv_cache_type"])
+
+	var opts Options
+	require.NoError(t, opts.FromMap(resp))
+	assert.Equal(t, "q8_0", opts.KvCacheType)
+}
+
 func TestMessage_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		input    string
