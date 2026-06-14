@@ -96,6 +96,7 @@ func (m *Model) Diffuse(ctx context.Context, prompt []int32, cfg base.DiffuseCon
 	caches := m.NewCaches()
 	vocab := int(m.VocabSize)
 	rng := rand.New(rand.NewSource(cfg.Seed))
+	var keyCounter uint64 // distinct MLX RNG key per denoising step
 
 	// Causal prefill of the prompt — the read-only prefix every canvas attends to.
 	m.prefillPrompt(prompt, caches)
@@ -118,8 +119,9 @@ func (m *Model) Diffuse(ctx context.Context, prompt []int32, cfg base.DiffuseCon
 			}
 
 			temp := tempAt(step, cfg.Steps, cfg.TMin, cfg.TMax)
-			logits := m.decodeCanvasHostLogits(canvas, int32(nPast), selfCond, caches)
-			s := sampleCanvas(logits, cfg.Canvas, vocab, temp, cfg.SelfCondK, rng)
+			key := mlx.RandomKey(uint64(cfg.Seed) + keyCounter)
+			keyCounter++
+			s := m.decodeCanvasSample(canvas, int32(nPast), selfCond, caches, temp, cfg.SelfCondK, key)
 			checkpoint.Rollback(caches) // discard this step's canvas K/V
 			argmaxCanvas = s.argmax
 
@@ -130,7 +132,6 @@ func (m *Model) Diffuse(ctx context.Context, prompt []int32, cfg base.DiffuseCon
 			accept := entropyBoundAccept(s.entropy, cfg.EntropyBound)
 			selfCond = &SelfCond{IDs: s.scIDs, Probs: s.scProbs, K: cfg.SelfCondK}
 			canvas = renoise(s.sampled, accept, rng, vocab)
-			logits = nil // release the [canvas*vocab] host buffer before the next step
 			mlx.Sweep()
 			mlx.ClearCache() // release MLX's per-step buffers
 		}
@@ -192,26 +193,6 @@ func (m *Model) prefillPrompt(tokens []int32, caches []cache.Cache) {
 		}, caches, nil)
 	}
 	evalCaches(caches)
-}
-
-// decodeCanvasHostLogits runs one bidirectional, self-conditioned denoising pass
-// and returns the canvas logits materialized on the host, row-major
-// [canvasLen*vocab]. (Pulling logits to host mirrors the reference host sampler;
-// moving the per-position math on-device is a future optimization.)
-func (m *Model) decodeCanvasHostLogits(canvas []int32, nPast int32, selfCond *SelfCond, caches []cache.Cache) []float32 {
-	hidden := m.forward(&batch.Batch{
-		InputIDs:     mlx.FromValues(canvas, 1, len(canvas)),
-		SeqOffsets:   []int32{nPast},
-		SeqQueryLens: []int32{int32(len(canvas))},
-	}, caches, &forwardOpts{
-		decoderPhase: true,
-		canvasStart:  nPast,
-		canvasLen:    int32(len(canvas)),
-		selfCond:     selfCond,
-	})
-	logits := m.Unembed(hidden).AsType(mlx.DTypeFloat32)
-	mlx.Eval(logits) // MLX is lazy; materialize before reading the host buffer.
-	return logits.Floats()
 }
 
 func (m *Model) commitCanvas(tokens []int32, nPast int32, caches []cache.Cache) {

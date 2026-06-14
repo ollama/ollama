@@ -117,20 +117,26 @@ func TestForwardMetal(t *testing.T) {
 	m.prefillPrompt([]int32{1, 2, 3}, caches)
 	nPast := 3
 
-	logits1 := m.decodeCanvasHostLogits([]int32{0, 0, 0, 0}, int32(nPast), nil, caches)
-	if len(logits1) != tCanvas*tVocab {
-		t.Fatalf("logits len = %d, want %d", len(logits1), tCanvas*tVocab)
-	}
-	assertFinite(t, "no-selfcond", logits1)
-
 	const k = 2
+	s1 := m.decodeCanvasSample([]int32{0, 0, 0, 0}, int32(nPast), nil, caches, 0.8, k, mlx.RandomKey(1))
+	if len(s1.argmax) != tCanvas || len(s1.entropy) != tCanvas || len(s1.scIDs) != tCanvas*k {
+		t.Fatalf("sample shapes: argmax=%d entropy=%d scIDs=%d", len(s1.argmax), len(s1.entropy), len(s1.scIDs))
+	}
+	assertFinite(t, "entropy-no-selfcond", s1.entropy)
+	assertFinite(t, "scProbs-no-selfcond", s1.scProbs)
+	for _, a := range s1.argmax {
+		if a < 0 || int(a) >= tVocab {
+			t.Fatalf("argmax out of vocab: %d", a)
+		}
+	}
+
 	sc := &SelfCond{K: k, IDs: make([]int32, tCanvas*k), Probs: make([]float32, tCanvas*k)}
 	for j := range tCanvas {
 		sc.IDs[j*k], sc.IDs[j*k+1] = int32(j%tVocab), int32((j+1)%tVocab)
 		sc.Probs[j*k], sc.Probs[j*k+1] = 0.7, 0.3
 	}
-	logits2 := m.decodeCanvasHostLogits([]int32{0, 1, 2, 3}, int32(nPast), sc, caches)
-	assertFinite(t, "selfcond", logits2)
+	s2 := m.decodeCanvasSample([]int32{0, 1, 2, 3}, int32(nPast), sc, caches, 0.8, k, mlx.RandomKey(2))
+	assertFinite(t, "entropy-selfcond", s2.entropy)
 	t.Logf("OK: prefill + 2 decoder passes (with self-cond) ran on Metal")
 }
 
