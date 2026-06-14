@@ -182,9 +182,7 @@ set(GGML_CUDA_GRAPHS ON CACHE BOOL "Enable CUDA graphs" FORCE)
 # https://github.com/nomadstar/llama-cpp-turboquant - feature/triattention branch
 FetchContent_Declare(
     llama_cpp
-    GIT_REPOSITORY "https://github.com/nomadstar/llama-cpp-turboquant.git"
-    GIT_TAG "feature/triattention"
-    GIT_SHALLOW TRUE
+    SOURCE_DIR "/home/ignatus/GitHub/llama-cpp-turboquant"
     ${_ollama_compat_patch_cmd}
 )
 FetchContent_MakeAvailable(llama_cpp)
