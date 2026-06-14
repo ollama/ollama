@@ -1030,7 +1030,7 @@ func rewriteLayerWithLlamaQuantize(layer *layerGGML, typeName string, fn func(re
 
 	f, err := ggml.Decode(temp, 1024)
 	if err != nil {
-		slog.Error(fmt.Sprintf("error decoding ggml: %s\n", err))
+		slog.Error("error decoding ggml", "error", err)
 		return nil, err
 	}
 	return &layerGGML{Layer: newLayer, GGML: f}, nil
@@ -1219,7 +1219,7 @@ func ggufLayersWithMediaType(digest, sourceName, mediaType string, fn func(resp 
 	}
 
 	if contentType != "gguf" {
-		slog.Error(fmt.Sprintf("unsupported content type: %s", contentType))
+		slog.Error("unsupported content type", "contentType", contentType)
 		return nil, errOnlyGGUFSupported
 	}
 
