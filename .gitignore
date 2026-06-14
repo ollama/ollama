@@ -20,5 +20,5 @@ integration/testdata/models/
 # Arch Linux packaging artifacts
 packaging/arch/src/
 packaging/arch/pkg/
-packaging/arch/*.pkg.tar.zst
 packaging/arch/ollama/
+packaging/arch/*.pkg.tar.zst

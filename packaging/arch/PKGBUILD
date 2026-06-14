@@ -1,6 +1,6 @@
 # Maintainer: Your Name <youremail@example.com>
 pkgname=ollama-turboquant-git
-pkgver=0.30.8.r4.gd66fc63
+pkgver=0.30.8.r6.g2efa8c6
 pkgrel=1
 pkgdesc='Create, run and share large language models (LLMs) - TurboQuant fork'
 arch=('x86_64')

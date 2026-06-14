@@ -176,6 +176,7 @@ set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_TOOLS_INSTALL OFF CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+set(GGML_CUDA_GRAPHS ON CACHE BOOL "Enable CUDA graphs" FORCE)
 
 # Use the turboquant fork of llama.cpp for TurboQuant KV cache compression
 # https://github.com/nomadstar/llama-cpp-turboquant - feature/triattention branch
