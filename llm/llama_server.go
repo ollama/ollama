@@ -761,11 +761,16 @@ func NewLlamaServerRunner(
 
 	mediaMarker := newLlamaServerMediaMarker()
 	extraEnvs := ml.GetDevicesEnv(gpus)
-	serverEnvs := make(map[string]string, len(extraEnvs)+1)
+	serverEnvs := make(map[string]string, len(extraEnvs)+1+len(opts.Env))
 	for k, v := range extraEnvs {
 		serverEnvs[k] = v
 	}
 	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
+	for _, e := range opts.Env {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			serverEnvs[k] = v
+		}
+	}
 
 	launch := llamaServerLaunchConfig{
 		modelPath:   modelPath,
