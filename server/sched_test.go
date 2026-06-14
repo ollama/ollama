@@ -907,19 +907,16 @@ func TestResolveContextShift(t *testing.T) {
 	tests := []struct {
 		name  string
 		shift *bool
-		ctx   int
 		want  bool
 	}{
-		{name: "unset small context keeps legacy shift", ctx: 128, want: true},
-		{name: "unset large context disables shift", ctx: contextShiftSmallContextLimit, want: false},
-		{name: "unset invalid context disables shift", ctx: 0, want: false},
-		{name: "explicit false wins for small context", shift: &falseValue, ctx: 128, want: false},
-		{name: "explicit true wins for large context", shift: &trueValue, ctx: 32768, want: true},
+		{name: "unset defaults to shift", want: true},
+		{name: "explicit false disables shift", shift: &falseValue, want: false},
+		{name: "explicit true enables shift", shift: &trueValue, want: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, resolveContextShift(tt.shift, tt.ctx))
+			require.Equal(t, tt.want, resolveContextShift(tt.shift))
 		})
 	}
 }
