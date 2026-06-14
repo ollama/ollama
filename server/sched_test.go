@@ -1403,6 +1403,19 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 			wantSystemLimited: true,
 		},
 		{
+			name:       "unified-memory APU trusts gpu free over lower system free",
+			systemFree: 6 * format.GigaByte,
+			gpus: []ml.DeviceInfo{{
+				DeviceID:   ml.DeviceID{Library: "ROCm"},
+				Integrated: true,
+				GFXTarget:  "gfx1151",
+				FreeMemory: 72 * format.GigaByte,
+			}},
+			wantAvailable:     72 * format.GigaByte,
+			wantGPUFree:       72 * format.GigaByte,
+			wantSystemLimited: false,
+		},
+		{
 			name:       "discrete metal ignores lower system free",
 			systemFree: 6 * format.GigaByte,
 			gpus: []ml.DeviceInfo{{
@@ -1459,6 +1472,46 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 			require.Equal(t, tt.wantAvailable, available)
 			require.Equal(t, tt.wantGPUFree, gpuFree)
 			require.Equal(t, tt.wantSystemLimited, systemLimited)
+		})
+	}
+}
+
+func TestAvailableMemoryForGPU(t *testing.T) {
+	tests := []struct {
+		name       string
+		systemFree uint64
+		gpu        ml.DeviceInfo
+		want       uint64
+	}{
+		{
+			name:       "integrated gpu clamps to lower system free",
+			systemFree: 6 * format.GigaByte,
+			gpu:        ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true, FreeMemory: 12 * format.GigaByte},
+			want:       6 * format.GigaByte,
+		},
+		{
+			name:       "unified-memory APU (ROCm) trusts gpu free",
+			systemFree: 6 * format.GigaByte,
+			gpu:        ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, GFXTarget: "gfx1151", FreeMemory: 72 * format.GigaByte},
+			want:       72 * format.GigaByte,
+		},
+		{
+			name:       "unified-memory APU (Vulkan) trusts gpu free",
+			systemFree: 6 * format.GigaByte,
+			gpu:        ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true, Description: "Radeon 8060S Graphics (RADV GFX1151)", FreeMemory: 88 * format.GigaByte},
+			want:       88 * format.GigaByte,
+		},
+		{
+			name:       "discrete gpu ignores system free",
+			systemFree: 6 * format.GigaByte,
+			gpu:        ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 12 * format.GigaByte},
+			want:       12 * format.GigaByte,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, availableMemoryForGPU(ml.SystemInfo{FreeMemory: tt.systemFree}, tt.gpu))
 		})
 	}
 }

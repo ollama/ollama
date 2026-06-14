@@ -2836,6 +2836,65 @@ func TestGetDeviceInfosSystemOptimistic(t *testing.T) {
 	}
 }
 
+func TestGetDeviceInfosUnifiedMemoryAPU(t *testing.T) {
+	// On a unified-memory APU the system-reported free memory at load time
+	// underestimates the real GPU free once the runner is loaded, so
+	// GetDeviceInfos must trust our own accounting (TotalMemory - used) rather
+	// than the min-of-two. The VRAM carveout is BIOS-configurable, so the result
+	// is a function of the device's reported TotalMemory and must hold for any
+	// size — no carveout size is assumed. In each case the min-of-two would
+	// instead yield the much smaller systemFreeAtLoad-based value (the bug).
+	const mib = 1024 * 1024
+	tests := []struct {
+		name          string
+		device        ml.DeviceInfo
+		totalMiB      uint64
+		usedMiB       uint64
+		systemFreeMiB uint64
+	}{
+		{
+			name:          "rocm small carveout",
+			device:        ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0", Integrated: true, GFXTarget: "gfx1151"},
+			totalMiB:      48000,
+			usedMiB:       20000,
+			systemFreeMiB: 8000,
+		},
+		{
+			name:          "rocm large carveout",
+			device:        ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0", Integrated: true, GFXTarget: "gfx1151"},
+			totalMiB:      96000,
+			usedMiB:       24000,
+			systemFreeMiB: 26000,
+		},
+		{
+			name:          "vulkan large carveout",
+			device:        ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "0", Library: "Vulkan"}, Name: "Vulkan0", Description: "Radeon 8060S Graphics (RADV GFX1151)", Integrated: true},
+			totalMiB:      110000,
+			usedMiB:       24000,
+			systemFreeMiB: 20000,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dev := tt.device
+			dev.TotalMemory = tt.totalMiB * mib
+			runner := &llamaServerRunner{
+				vramByDevice:     map[string]uint64{dev.Name: tt.usedMiB * mib},
+				systemFreeAtLoad: map[string]uint64{dev.Name: tt.systemFreeMiB * mib},
+				gpus:             []ml.DeviceInfo{dev},
+			}
+
+			infos := runner.GetDeviceInfos(context.Background())
+			want := (tt.totalMiB - tt.usedMiB) * mib
+			if infos[0].FreeMemory != want {
+				t.Errorf("FreeMemory = %d MiB, want %d MiB (unified-memory APU should use accounting, not system free)",
+					infos[0].FreeMemory/mib, want/mib)
+			}
+		})
+	}
+}
+
 func TestIsGPUBuffer(t *testing.T) {
 	gpu := []string{
 		"Metal", "Metal_Private", "CUDA0", "CUDA1", "ROCm0", "Vulkan0", "MUSA0",
