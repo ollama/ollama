@@ -1,0 +1,47 @@
+---
+title: Rubberduck
+---
+
+## Overview
+
+[Rubberduck](https://github.com/098tarik/rubberduck) is a self-hosted chat web app that connects to Ollama. Features include:
+
+- Chat history
+- Model switching
+- Markdown rendering
+- Syntax-highlighted code blocks
+
+## Install
+
+Clone the repository and install the Python dependencies:
+
+```bash
+git clone https://github.com/098tarik/rubberduck.git
+cd rubberduck
+pip install .
+```
+
+## Usage with Ollama
+
+1. Pull a model:
+
+```bash
+ollama pull llama3.2
+```
+
+2. Start Rubberduck:
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+3. Open `http://localhost:8000` in your browser.
+
+## Configuration
+
+Set environment variables to configure the Ollama connection:
+
+| Variable | Description | Default |
+|---|---|---|
+| `OLLAMA_URL` | URL of your Ollama server | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Default model to use | `llama3.2` |
