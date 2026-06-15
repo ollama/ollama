@@ -1011,16 +1011,25 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		if layer.Attention.QProj == nil || layer.Attention.OProj == nil {
 			return fmt.Errorf("layer %d: missing attention q/o projections", i)
 		}
-		if layer.Attention.KProj == nil {
-			return fmt.Errorf("layer %d: missing attention k projection", i)
+		if layer.Attention.QNorm == nil {
+			return fmt.Errorf("layer %d: missing attention q norm", i)
 		}
-		// VProj is nil for K=V full-attention layers (value_states = key_states).
-		useAltAttn := m.AttentionKEqV && !isSliding
-		if layer.Attention.VProj == nil && !useAltAttn {
-			return fmt.Errorf("layer %d: missing attention v projection", i)
-		}
-		if layer.Attention.QNorm == nil || layer.Attention.KNorm == nil {
-			return fmt.Errorf("layer %d: missing attention q/k norms", i)
+		// KV-shared layers reuse a donor layer's K/V, so they carry no k_proj,
+		// v_proj, or k_norm of their own (only q_proj/q_norm/o_proj). The forward
+		// pass sources K/V from the donor (see KVShareDonor), so skip the K/V
+		// validation for them.
+		if !isShared {
+			if layer.Attention.KProj == nil {
+				return fmt.Errorf("layer %d: missing attention k projection", i)
+			}
+			// VProj is nil for K=V full-attention layers (value_states = key_states).
+			useAltAttn := m.AttentionKEqV && !isSliding
+			if layer.Attention.VProj == nil && !useAltAttn {
+				return fmt.Errorf("layer %d: missing attention v projection", i)
+			}
+			if layer.Attention.KNorm == nil {
+				return fmt.Errorf("layer %d: missing attention k norm", i)
+			}
 		}
 		if layer.MLP.GateProj == nil || layer.MLP.UpProj == nil || layer.MLP.DownProj == nil {
 			return fmt.Errorf("layer %d: missing mlp projections", i)
