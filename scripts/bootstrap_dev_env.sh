@@ -4,15 +4,15 @@
 # bootstrap_dev_env.sh
 #
 # Purpose: Automate the setup of an s390x development environment for building
-#          ollama from source with various build configurations.
+#          ollama from source within the z-spyre-runtimes container.
 #
 # Usage: ./scripts/bootstrap_dev_env.sh [OPTIONS]
 #
 # Options:
 #   -h, --help              Show this help message
-#   -d, --dir DIR           Installation directory (default: $HOME/ollama-s390x)
 #   -b, --build VARIANT     Build variant to compile (default: cpu)
 #                           Options: cpu, cpu-no-vxe, cpu-debug, cpu-static, zdnn
+#   --skip-container        Skip z-spyre-runtimes container setup
 #   --skip-deps             Skip dependency installation
 #   --skip-clone            Skip repository cloning
 #   --skip-build            Skip building ollama
@@ -27,15 +27,17 @@ set -o pipefail  # Exit on pipe failure
 # Configuration Variables
 ################################################################################
 
-# Repository configuration
-REPO_URL="${OLLAMA_REPO_URL:-https://github.com/Brice12347/ollama-s390x.git}"
-REPO_BRANCH="${OLLAMA_REPO_BRANCH:-main}"
+# z-spyre-runtimes configuration
+ZSPYRE_REPO_URL="git@github.ibm.com:zosdev/z-spyre-runtimes.git"
+ZSPYRE_DIR="$HOME/z-spyre-runtimes"
 
-# Installation directory
-INSTALL_DIR="${OLLAMA_INSTALL_DIR:-$HOME/ollama-s390x}"
+# ollama-s390x configuration
+OLLAMA_REPO_URL="git@github.com:Brice12347/ollama-s390x.git"
+OLLAMA_DIR="$HOME/ollama-s390x"
 
 # Build configuration
 BUILD_VARIANT="${OLLAMA_BUILD_VARIANT:-cpu}"
+SKIP_CONTAINER=false
 SKIP_DEPS=false
 SKIP_CLONE=false
 SKIP_BUILD=false
@@ -73,13 +75,14 @@ show_help() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Automate the setup of an s390x development environment for building ollama.
+Automate the setup of an s390x development environment for building ollama
+within the z-spyre-runtimes container.
 
 Options:
   -h, --help              Show this help message
-  -d, --dir DIR           Installation directory (default: $HOME/ollama-s390x)
   -b, --build VARIANT     Build variant to compile (default: cpu)
                           Options: cpu, cpu-no-vxe, cpu-debug, cpu-static, zdnn
+  --skip-container        Skip z-spyre-runtimes container setup
   --skip-deps             Skip dependency installation
   --skip-clone            Skip repository cloning
   --skip-build            Skip building ollama
@@ -91,37 +94,20 @@ Build Variants:
   cpu-static              Static CPU build
   zdnn                    Build with IBM zDNN acceleration
 
-Environment Variables:
-  OLLAMA_REPO_URL         Repository URL (default: https://github.com/Brice12347/ollama-s390x.git)
-  OLLAMA_REPO_BRANCH      Repository branch (default: main)
-  OLLAMA_INSTALL_DIR      Installation directory (default: $HOME/ollama-s390x)
-  OLLAMA_BUILD_VARIANT    Build variant (default: cpu)
-
 Examples:
-  # Basic setup with default CPU build
+  # Full setup (container + build)
   $0
 
-  # Setup with custom directory and zDNN build
-  $0 -d /opt/ollama -b zdnn
+  # Setup with custom build variant
+  $0 -b zdnn
+
+  # Skip container setup (if already running)
+  $0 --skip-container
 
   # Only install dependencies
-  $0 --skip-clone --skip-build
+  $0 --skip-container --skip-clone --skip-build
 
 EOF
-}
-
-# Detect package manager
-detect_package_manager() {
-    if command -v apt-get &> /dev/null; then
-        echo "apt"
-    elif command -v dnf &> /dev/null; then
-        echo "dnf"
-    elif command -v yum &> /dev/null; then
-        echo "yum"
-    else
-        print_error "No supported package manager found (apt, dnf, or yum)"
-        exit 1
-    fi
 }
 
 # Check if command exists
@@ -130,87 +116,55 @@ command_exists() {
 }
 
 ################################################################################
-# Dependency Installation Functions
+# Container Setup Functions
 ################################################################################
 
-# Install dependencies on Ubuntu/Debian
-install_deps_apt() {
-    print_info "Installing dependencies using apt..."
+# Setup z-spyre-runtimes container
+setup_container() {
+    print_info "Setting up z-spyre-runtimes container environment..."
     
-    sudo apt-get update
-    
-    # Core build tools
-    sudo apt-get install -y \
-        build-essential \
-        git \
-        curl \
-        wget \
-        ca-certificates
-    
-    # CMake (check version and install from Kitware if needed)
-    if command_exists cmake; then
-        CMAKE_VERSION=$(cmake --version | head -n1 | cut -d' ' -f3)
-        print_info "Found CMake version: $CMAKE_VERSION"
+    # Clone z-spyre-runtimes repository
+    if [ -d "$ZSPYRE_DIR" ]; then
+        print_warning "Directory $ZSPYRE_DIR already exists, using existing clone"
+    else
+        print_info "Cloning z-spyre-runtimes repository..."
+        git clone "$ZSPYRE_REPO_URL" "$ZSPYRE_DIR"
+        print_success "Repository cloned to $ZSPYRE_DIR"
     fi
     
-    # Install CMake from apt (may need manual upgrade for older distros)
-    sudo apt-get install -y cmake
+    # Navigate to runtime-container directory
+    cd "$ZSPYRE_DIR/runtime-container"
     
-    # Ninja build system
-    sudo apt-get install -y ninja-build
+    # Prompt for IBM Cloud API key
+    print_info "IBM Cloud API key is required for container registry access"
+    read -p "Enter your IBM Cloud API key: " -s ICR_TOKEN
+    echo
     
-    # Compiler (GCC)
-    sudo apt-get install -y gcc g++
+    if [ -z "$ICR_TOKEN" ]; then
+        print_error "IBM Cloud API key cannot be empty"
+        exit 1
+    fi
     
-    # Python3
-    sudo apt-get install -y python3 python3-pip
+    export ICR_TOKEN
+    print_success "IBM Cloud API key set"
     
-    # OpenBLAS and LAPACK libraries
-    sudo apt-get install -y \
-        libopenblas-dev \
-        liblapack-dev \
-        liblapacke-dev
+    # Run make commands
+    print_info "Logging into IBM Container Registry..."
+    make login
     
-    # Install Go
-    install_go
+    print_info "Pulling container image..."
+    make pull
     
-    print_success "Dependencies installed successfully (apt)"
+    print_info "Starting container..."
+    make run
+    
+    print_success "Container setup complete"
+    print_warning "Note: The following steps should be run inside the container"
 }
 
-# Install dependencies on RHEL/Fedora/CentOS
-install_deps_dnf() {
-    local PKG_MGR=$1
-    print_info "Installing dependencies using $PKG_MGR..."
-    
-    # Core build tools
-    sudo $PKG_MGR install -y \
-        gcc \
-        gcc-c++ \
-        make \
-        git \
-        curl \
-        wget \
-        ca-certificates
-    
-    # CMake
-    sudo $PKG_MGR install -y cmake
-    
-    # Ninja build system
-    sudo $PKG_MGR install -y ninja-build
-    
-    # Python3
-    sudo $PKG_MGR install -y python3 python3-pip
-    
-    # OpenBLAS and LAPACK libraries
-    sudo $PKG_MGR install -y \
-        openblas-devel \
-        lapack-devel
-    
-    # Install Go
-    install_go
-    
-    print_success "Dependencies installed successfully ($PKG_MGR)"
-}
+################################################################################
+# Dependency Installation Functions
+################################################################################
 
 # Install Go programming language
 install_go() {
@@ -250,8 +204,8 @@ install_go() {
     # Download and install Go
     cd /tmp
     wget -q "$GO_URL"
-    sudo rm -rf /usr/local/go
-    sudo tar -C /usr/local -xzf "$GO_TARBALL"
+    rm -rf /usr/local/go
+    tar -C /usr/local -xzf "$GO_TARBALL"
     rm "$GO_TARBALL"
     
     # Add Go to PATH if not already present
@@ -266,25 +220,47 @@ install_go() {
     print_success "Go installed successfully: $(go version)"
 }
 
-# Main dependency installation function
+# Install dependencies using apt
 install_dependencies() {
-    print_info "Starting dependency installation..."
+    print_info "Installing dependencies using apt..."
     
-    PKG_MGR=$(detect_package_manager)
-    print_info "Detected package manager: $PKG_MGR"
+    # Update package list
+    apt update
     
-    case $PKG_MGR in
-        apt)
-            install_deps_apt
-            ;;
-        dnf|yum)
-            install_deps_dnf "$PKG_MGR"
-            ;;
-        *)
-            print_error "Unsupported package manager: $PKG_MGR"
-            exit 1
-            ;;
-    esac
+    # Core build tools
+    apt install -y \
+        build-essential \
+        git \
+        curl \
+        wget \
+        ca-certificates
+    
+    # CMake (check version and install)
+    if command_exists cmake; then
+        CMAKE_VERSION=$(cmake --version | head -n1 | cut -d' ' -f3)
+        print_info "Found CMake version: $CMAKE_VERSION"
+    fi
+    
+    # Install CMake
+    apt install -y cmake
+    
+    # Ninja build system
+    apt install -y ninja-build
+    
+    # Compiler (GCC)
+    apt install -y gcc g++
+    
+    # Python3
+    apt install -y python3 python3-pip
+    
+    # OpenBLAS and LAPACK libraries
+    apt install -y \
+        libopenblas-dev \
+        liblapack-dev \
+        liblapacke-dev
+    
+    # Install Go
+    install_go
     
     # Verify critical dependencies
     print_info "Verifying installed dependencies..."
@@ -302,7 +278,7 @@ install_dependencies() {
         exit 1
     fi
     
-    print_success "All dependencies verified"
+    print_success "All dependencies installed and verified"
 }
 
 ################################################################################
@@ -313,25 +289,19 @@ install_dependencies() {
 clone_repository() {
     print_info "Cloning ollama-s390x repository..."
     
-    if [ -d "$INSTALL_DIR" ]; then
-        print_warning "Directory $INSTALL_DIR already exists"
-        read -p "Do you want to remove it and re-clone? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            rm -rf "$INSTALL_DIR"
-        else
-            print_info "Skipping clone, using existing directory"
-            return 0
-        fi
+    if [ -d "$OLLAMA_DIR" ]; then
+        print_warning "Directory $OLLAMA_DIR already exists"
+        print_info "Removing existing directory and re-cloning..."
+        rm -rf "$OLLAMA_DIR"
     fi
     
     # Create parent directory if needed
-    mkdir -p "$(dirname "$INSTALL_DIR")"
+    mkdir -p "$(dirname "$OLLAMA_DIR")"
     
     # Clone repository
-    git clone --branch "$REPO_BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    git clone "$OLLAMA_REPO_URL" "$OLLAMA_DIR"
     
-    print_success "Repository cloned to $INSTALL_DIR"
+    print_success "Repository cloned to $OLLAMA_DIR"
 }
 
 ################################################################################
@@ -342,7 +312,7 @@ clone_repository() {
 create_env_config() {
     print_info "Creating .env.s390x configuration file..."
     
-    local ENV_FILE="$INSTALL_DIR/.env.s390x"
+    local ENV_FILE="$OLLAMA_DIR/.env.s390x"
     
     cat > "$ENV_FILE" << 'EOF'
 # s390x-specific environment configuration for ollama
@@ -403,7 +373,7 @@ build_ollama() {
     
     print_info "Building ollama with variant: $VARIANT"
     
-    cd "$INSTALL_DIR"
+    cd "$OLLAMA_DIR"
     
     # Source environment configuration
     if [ -f ".env.s390x" ]; then
@@ -462,10 +432,10 @@ build_ollama() {
     
     # Build
     print_info "Building ollama (this may take a while)..."
-    cmake --build build --parallel $(nproc)
+    cmake --build build --parallel 8
     
     print_success "Build completed successfully!"
-    print_info "Binary location: $INSTALL_DIR/build/bin/ollama"
+    print_info "Binary location: $OLLAMA_DIR/ollama"
 }
 
 # Display build matrix information
@@ -515,13 +485,13 @@ parse_arguments() {
                 show_help
                 exit 0
                 ;;
-            -d|--dir)
-                INSTALL_DIR="$2"
-                shift 2
-                ;;
             -b|--build)
                 BUILD_VARIANT="$2"
                 shift 2
+                ;;
+            --skip-container)
+                SKIP_CONTAINER=true
+                shift
                 ;;
             --skip-deps)
                 SKIP_DEPS=true
@@ -547,9 +517,19 @@ parse_arguments() {
 # Main function
 main() {
     print_info "Starting ollama s390x development environment setup..."
-    print_info "Installation directory: $INSTALL_DIR"
     print_info "Build variant: $BUILD_VARIANT"
     echo
+    
+    # Setup container
+    if [ "$SKIP_CONTAINER" = false ]; then
+        setup_container
+        echo
+        print_warning "Container is now running. Execute the following steps inside the container:"
+        print_info "Run this script again with --skip-container flag inside the container"
+        exit 0
+    else
+        print_info "Skipping container setup (assuming already in container)"
+    fi
     
     # Install dependencies
     if [ "$SKIP_DEPS" = false ]; then
@@ -587,15 +567,14 @@ main() {
     echo
     print_info "Next steps:"
     echo "  1. Source the environment configuration:"
-    echo "     source $INSTALL_DIR/.env.s390x"
+    echo "     source $OLLAMA_DIR/.env.s390x"
     echo
     echo "  2. Run ollama:"
-    echo "     $INSTALL_DIR/build/bin/ollama serve"
+    echo "     $OLLAMA_DIR/ollama serve"
     echo
     echo "  3. To rebuild with a different variant:"
-    echo "     $0 -d $INSTALL_DIR -b <variant> --skip-deps --skip-clone"
+    echo "     $0 -b <variant> --skip-container --skip-deps --skip-clone"
     echo
-    print_info "For more information, see: $INSTALL_DIR/README.md"
 }
 
 # Entry point
