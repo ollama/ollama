@@ -1,0 +1,15 @@
+diff --git a/tools/ui/embed.cpp b/tools/ui/embed.cpp
+--- a/tools/ui/embed.cpp
++++ b/tools/ui/embed.cpp
+@@ -147,9 +147,9 @@ int main(int argc, char ** argv) {
+ 
+     const std::string out_cpp   = argv[1];
+     const std::string out_h     = argv[2];
+-    const std::string asset_dir = argv[3];
++    const std::string asset_dir = argc == 4 ? argv[3] : "";
+ 
+-    const bool        use_gzip = std::filesystem::exists(asset_dir + "/_gzip");
++    const bool        use_gzip = !asset_dir.empty() && std::filesystem::exists(asset_dir + "/_gzip");
+     const std::string in_dir   = use_gzip ? (asset_dir + "/_gzip") : asset_dir;
+ 
+     std::vector<asset_entry> assets;
