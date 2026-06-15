@@ -13,12 +13,56 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
 )
+
+func planWired(free int) int {
+	return free * 4 / 5
+}
+
+func planCache(modelSize, startupFree int) int {
+	if modelSize > planWired(startupFree) {
+		return startupFree / 5
+	}
+	return 0
+}
+
+func configureMLXMemory() int {
+	mem, err := discover.GetCPUMem()
+	free := int(mem.FreeMemory)
+	if err != nil || free <= 0 {
+		return 0
+	}
+	wired := planWired(free)
+	if wired > 0 {
+		mlx.SetWiredLimit(wired)
+	}
+	slog.Info("capped MLX wired memory",
+		"free", format.HumanBytes2(uint64(free)),
+		"wired", format.HumanBytes2(uint64(wired)))
+	return free
+}
+
+func tuneMLXMemory(startupFree int) {
+	if startupFree <= 0 {
+		return
+	}
+	modelSize := mlx.ActiveMemory()
+	cache := planCache(modelSize, startupFree)
+	if cache > 0 {
+		mlx.SetCacheLimit(cache)
+		slog.Info("tightened MLX cache (model exceeds free RAM)",
+			"model", format.HumanBytes2(uint64(modelSize)),
+			"free", format.HumanBytes2(uint64(startupFree)),
+			"cache", format.HumanBytes2(uint64(cache)))
+	}
+}
 
 func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
@@ -34,6 +78,7 @@ func Execute(args []string) error {
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
 
+	var startupFree int
 	worker, err := mlxthread.Start("mlxrunner", func() error {
 		if err := mlx.CheckInit(); err != nil {
 			return fmt.Errorf("MLX not available: %w", err)
@@ -41,6 +86,7 @@ func Execute(args []string) error {
 
 		if mlx.GPUIsAvailable() {
 			mlx.SetDefaultDeviceGPU()
+			startupFree = configureMLXMemory()
 			slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "gpu")
 		} else {
 			slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "cpu")
@@ -64,7 +110,11 @@ func Execute(args []string) error {
 	}
 
 	if err := worker.Do(context.Background(), func() error {
-		return runner.Load(modelName)
+		if err := runner.Load(modelName); err != nil {
+			return err
+		}
+		tuneMLXMemory(startupFree)
+		return nil
 	}); err != nil {
 		return err
 	}
