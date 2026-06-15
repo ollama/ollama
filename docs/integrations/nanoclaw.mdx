@@ -1,0 +1,71 @@
+---
+title: NanoClaw
+---
+
+NanoClaw is a personal AI assistant that orchestrates containerized agents on your own machine. Ollama installs it into a self-managed checkout and hands off to NanoClaw's own setup, pointing it at your local Ollama endpoint.
+
+## Quick start
+
+```bash
+ollama launch nanoclaw
+```
+
+The first run walks through setup:
+
+1. **Prerequisites** — NanoClaw needs `git` and `Docker` (it builds a container image and runs each agent in a sandbox). If either is missing, Ollama lists what to install rather than installing it for you.
+2. **Consent** — Because installing clones a repository, builds a Docker image, and starts a background service — and because NanoClaw runs agent-issued actions inside sandboxed containers — Ollama asks you to confirm once before proceeding.
+3. **Install** — Ollama clones NanoClaw into `~/.ollama/launch/nanoclaw`.
+4. **Model** — Pick a model from the selector (local or cloud).
+5. **Launch** — Ollama hands off to NanoClaw's entrypoint, which configures it against your local Ollama host and starts the assistant.
+
+<Note>Installing NanoClaw must be done from an interactive terminal, not a non-interactive or piped session.</Note>
+
+## Prerequisites
+
+- **git** — to fetch NanoClaw
+- **Docker** — to build the image and run sandboxed agents (Docker Desktop on macOS and Windows, Docker Engine on Linux); make sure it is running
+- **bash** — NanoClaw's launch script is POSIX `bash`. On Windows, run it inside WSL2 (`wsl --install`).
+
+## Use a specific model
+
+```bash
+ollama launch nanoclaw --model qwen3-coder:30b
+```
+
+To pick a model without launching:
+
+```bash
+ollama launch nanoclaw --config
+```
+
+## Pass extra arguments
+
+Anything after `--` is forwarded verbatim to NanoClaw's launch script, after the model and Ollama host Ollama already injects:
+
+```bash
+ollama launch nanoclaw -- --some-flag
+```
+
+## Recommended models
+
+NanoClaw drives tools and subagents, so prefer tool-capable models with a generous context window.
+
+**Cloud models**:
+
+- `kimi-k2.5:cloud` — Multimodal reasoning with subagents
+- `qwen3.5:cloud` — Reasoning, coding, and agentic tool use with vision
+- `glm-5.1:cloud` — Reasoning and code generation
+- `minimax-m2.7:cloud` — Fast, efficient coding and real-world productivity
+
+**Local models:**
+
+- `gemma4` — Reasoning and code generation locally (~16 GB VRAM)
+- `qwen3.5` — Reasoning, coding, and visual understanding locally (~11 GB VRAM)
+
+More models at [ollama.com/search](https://ollama.com/search?c=cloud).
+
+<Note>NanoClaw orchestrates multiple agents and tools, so a larger context window helps. See [Context length](/context-length) for more information.</Note>
+
+## Where NanoClaw is installed
+
+Ollama keeps a launch-owned checkout at `~/.ollama/launch/nanoclaw`. To update it, pull the latest there (`git -C ~/.ollama/launch/nanoclaw pull`) or remove the directory and re-run `ollama launch nanoclaw`.

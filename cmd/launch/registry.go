@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen", "nanoclaw"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -273,6 +273,20 @@ var integrationSpecs = []*IntegrationSpec{
 				return err
 			},
 			URL: "https://qwen.ai/qwencode",
+		},
+	},
+	{
+		Name:        "nanoclaw",
+		Runner:      &Nanoclaw{},
+		Description: "Personal AI assistant orchestrating container agents",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return nanoclawInstalled()
+			},
+			EnsureInstalled: func() error {
+				return ensureNanoclawInstalled()
+			},
+			URL: "https://github.com/nanocoai/nanoclaw",
 		},
 	},
 }

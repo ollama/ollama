@@ -2035,6 +2035,7 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 		{"hermes-desktop", true},
 		{"cline", true},
 		{"qwen", true},
+		{"nanoclaw", true},
 		{"claude", false},
 		{"claude-desktop", false},
 		{"codex", false},

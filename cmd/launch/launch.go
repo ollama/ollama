@@ -301,6 +301,7 @@ Supported integrations:
   pool            Pool
   cline           Cline
   qwen            Qwen Code
+  nanoclaw        NanoClaw
   vscode          VS Code (aliases: code)
 
 Examples:
@@ -311,6 +312,7 @@ Examples:
   ollama launch codex-app --restore
   ollama launch hermes
   ollama launch hermes-desktop
+  ollama launch nanoclaw
   ollama launch droid --config (does not auto-launch)
   ollama launch codex --restore
   ollama launch codex -- --sandbox workspace-write`,
