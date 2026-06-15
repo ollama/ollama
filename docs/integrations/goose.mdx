@@ -2,17 +2,15 @@
 title: Goose
 ---
 
-Goose is Block's open-source coding agent. Ollama can launch Goose Desktop or Goose CLI with Ollama configured as the model provider.
-
-{/* TODO: Add Goose Desktop screenshot */}
+Goose is Block's open-source coding agent for desktop and terminal workflows. Ollama configures Goose to use Ollama as the model provider, so Goose can work with local models and Ollama Cloud models.
 
 ## Install
 
-Install [Goose](https://goose-docs.ai/docs/getting-started/installation/).
+Install [Goose Desktop or Goose CLI](https://goose-docs.ai/docs/getting-started/installation/).
 
 <Note>Ollama can launch Goose Desktop on macOS and Windows. On Linux, use Goose CLI with `ollama launch goose-cli`.</Note>
 
-## Quick setup
+## Usage with Ollama
 
 ### Goose Desktop
 
@@ -26,15 +24,21 @@ ollama launch goose
 ollama launch goose-desktop
 ```
 
-Ollama selects a model, configures Goose to use the `ollama` provider, and opens Goose Desktop.
+When launched through `ollama launch goose`, Ollama selects a model, configures Goose to use the `ollama` provider, and opens Goose Desktop.
 
-To launch Goose Desktop with a specific model:
+### Run Goose Desktop directly with a model
 
 ```shell
 ollama launch goose --model qwen3
 ```
 
 If Goose Desktop is already running, Ollama asks before restarting it so the selected model takes effect.
+
+<img
+  src="/images/goose-desktop.png"
+  alt="Goose Desktop configured with Ollama"
+  style={{ borderRadius: "12px" }}
+/>
 
 ### Goose CLI
 
@@ -44,7 +48,7 @@ ollama launch goose-cli
 
 Ollama starts `goose session` with the `ollama` provider configured for the selected model.
 
-To launch Goose CLI with a specific model:
+### Run Goose CLI directly with a model
 
 ```shell
 ollama launch goose-cli --model qwen3
@@ -56,26 +60,30 @@ To pass arguments to Goose CLI, put them after `--`:
 ollama launch goose-cli -- --debug
 ```
 
-{/* TODO: Add Goose CLI screenshot */}
+<img
+  src="/images/goose-cli-launch.png"
+  alt="Goose CLI launched with Ollama"
+  style={{ borderRadius: "12px" }}
+/>
 
 ## Ollama Cloud
 
-Use an Ollama Cloud model by passing the model name:
+To use a cloud model:
 
 ```shell
-ollama launch goose --model qwen3-coder:480b-cloud
+ollama launch goose --model kimi-k2.7-code:cloud
 ```
 
 For Goose CLI:
 
 ```shell
-ollama launch goose-cli --model qwen3-coder:480b-cloud
+ollama launch goose-cli --model kimi-k2.7-code:cloud
 ```
 
-To connect Goose directly to ollama.com, set `OLLAMA_HOST` and `OLLAMA_API_KEY` before launching:
+To connect Goose CLI directly to ollama.com, create an [API key](https://ollama.com/settings/keys), then set `OLLAMA_HOST` and `OLLAMA_API_KEY` before launching:
 
 ```shell
-OLLAMA_HOST=https://ollama.com OLLAMA_API_KEY=your-api-key ollama launch goose --model qwen3-coder:480b-cloud
+OLLAMA_HOST=https://ollama.com OLLAMA_API_KEY=your-api-key ollama launch goose-cli --model kimi-k2.7-code:cloud
 ```
 
 ## Manual setup
