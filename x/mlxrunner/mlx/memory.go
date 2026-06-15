@@ -87,3 +87,21 @@ type (
 func ClearCache() {
 	C.mlx_clear_cache()
 }
+
+// SetWiredLimit caps how much memory MLX keeps wired (resident and un-evictable).
+// Capping it below free RAM lets a model larger than free memory page from disk
+// instead of being OOM-killed. limit is in bytes; returns the previous limit.
+func SetWiredLimit(limit int) int {
+	var prev C.size_t
+	C.mlx_set_wired_limit(&prev, C.size_t(limit))
+	return int(prev)
+}
+
+// SetCacheLimit caps MLX's buffer reuse pool. A smaller pool trades reuse for a
+// lower resident footprint under memory pressure. limit is in bytes; returns the
+// previous limit.
+func SetCacheLimit(limit int) int {
+	var prev C.size_t
+	C.mlx_set_cache_limit(&prev, C.size_t(limit))
+	return int(prev)
+}
