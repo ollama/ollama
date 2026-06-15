@@ -1815,6 +1815,7 @@ func TestAppendMMProjArgs(t *testing.T) {
 		gpus        []ml.DeviceInfo
 		modelLayers uint64
 		retry       bool
+		env         string
 		want        []string
 	}{
 		{
@@ -1887,10 +1888,67 @@ func TestAppendMMProjArgs(t *testing.T) {
 			retry:       true,
 			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
+		{
+			name:        "force override keeps projector offload on integrated non-Metal gpu",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
+			modelLayers: 81,
+			env:         "force",
+			want:        []string{"base", "--mmproj", "model.gguf"},
+		},
+		{
+			name:        "force override does not override limited vram",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 8 << 30, TotalMemory: 8 << 30}},
+			modelLayers: 81,
+			env:         "Force",
+			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:        "force override does not override cpu only",
+			projectors:  []string{"model.gguf"},
+			opts:        cpuOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			modelLayers: 81,
+			env:         "force",
+			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:        "force override does not override partial text offload",
+			projectors:  []string{"model.gguf"},
+			opts:        partialOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			modelLayers: 81,
+			env:         "force",
+			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:        "unknown override preserves heuristic",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
+			modelLayers: 81,
+			env:         "true",
+			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:        "force override does not affect startup oom retry path",
+			projectors:  []string{"model.gguf"},
+			opts:        defaultOpts,
+			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			modelLayers: 81,
+			retry:       true,
+			env:         "force",
+			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MMPROJ_OFFLOAD", tt.env)
+
 			got := appendMMProjArgs([]string{"base"}, llamaServerLaunchConfig{
 				modelPath:            "model.gguf",
 				projectors:           tt.projectors,

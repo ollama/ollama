@@ -220,6 +220,8 @@ var (
 	DebugLogRequests = Bool("OLLAMA_DEBUG_LOG_REQUESTS")
 	// KvCacheType is the quantization type for the K/V cache.
 	KvCacheType = String("OLLAMA_KV_CACHE_TYPE")
+	// MmProjOffload controls multimodal projector GPU offload heuristics.
+	MmProjOffload = String("OLLAMA_MMPROJ_OFFLOAD")
 	// NoHistory disables readline history.
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
@@ -317,6 +319,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_IGPU_ENABLE":          {"OLLAMA_IGPU_ENABLE", String("OLLAMA_IGPU_ENABLE")(), "Enable integrated GPUs"},
+		"OLLAMA_MMPROJ_OFFLOAD":       {"OLLAMA_MMPROJ_OFFLOAD", MmProjOffload(), "Set to \"force\" to keep multimodal projector GPU offload enabled on integrated GPUs"},
 		"LLAMA_ARG_FIT":               {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},
 		"LLAMA_ARG_FIT_TARGET":        {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},
 		"OLLAMA_HOST":                 {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},

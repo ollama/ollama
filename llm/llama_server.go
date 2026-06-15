@@ -630,8 +630,13 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 		return true, "partial-text-offload"
 	}
 
+	forceIntegratedMMProjOffload := strings.EqualFold(envconfig.MmProjOffload(), "force")
+
 	for _, gpu := range gpus {
-		if gpu.Integrated && gpu.Library != "Metal" {
+		// Users with high-memory integrated GPUs can opt into projector GPU
+		// offload while keeping the CPU-only, partial-text-offload, and
+		// limited-VRAM safety checks active.
+		if gpu.Integrated && gpu.Library != "Metal" && !forceIntegratedMMProjOffload {
 			return true, "shared-memory-gpu"
 		}
 		memory := gpu.FreeMemory

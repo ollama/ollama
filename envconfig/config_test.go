@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -435,5 +436,20 @@ func TestNoCloud(t *testing.T) {
 				t.Errorf("NoCloudSource() = %q, want %q", got, tt.wantSource)
 			}
 		})
+	}
+}
+
+func TestAsMapIncludesMmProjOffload(t *testing.T) {
+	t.Setenv("OLLAMA_MMPROJ_OFFLOAD", "force")
+
+	envVar, ok := AsMap()["OLLAMA_MMPROJ_OFFLOAD"]
+	if !ok {
+		t.Fatal("AsMap() missing OLLAMA_MMPROJ_OFFLOAD")
+	}
+	if got := envVar.Value; got != "force" {
+		t.Fatalf("OLLAMA_MMPROJ_OFFLOAD value = %v, want force", got)
+	}
+	if !strings.Contains(envVar.Description, "integrated GPUs") {
+		t.Fatalf("OLLAMA_MMPROJ_OFFLOAD description = %q, want integrated GPU scope", envVar.Description)
 	}
 }
