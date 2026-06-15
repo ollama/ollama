@@ -2,48 +2,94 @@
 title: Goose
 ---
 
-## Goose Desktop
+Goose is Block's open-source coding agent. Ollama can launch Goose Desktop or Goose CLI with Ollama configured as the model provider.
 
-Install [Goose](https://block.github.io/goose/docs/getting-started/installation/) Desktop.
+{/* TODO: Add Goose Desktop screenshot */}
 
-### Usage with Ollama
-1. In Goose, open **Settings** → **Configure Provider**.  
-<div style={{ display: 'flex', justifyContent: 'center' }}>
-  <img 
-    src="/images/goose-settings.png" 
-    alt="Goose settings Panel"
-    width="75%"
-  />
-</div>
-2. Find **Ollama**, click **Configure** 
-3. Confirm **API Host** is `http://localhost:11434` and click Submit
+## Install
 
+Install [Goose](https://goose-docs.ai/docs/getting-started/installation/).
 
-### Connecting to ollama.com
+<Note>Ollama can launch Goose Desktop on macOS and Windows. On Linux, use Goose CLI with `ollama launch goose-cli`.</Note>
 
-1. Create an [API key](https://ollama.com/settings/keys) on ollama.com and save it in your `.env` 
-2. In Goose, set **API Host** to `https://ollama.com`
+## Quick setup
 
+### Goose Desktop
 
-## Goose CLI
+```shell
+ollama launch goose
+```
 
-Install [Goose](https://block.github.io/goose/docs/getting-started/installation/) CLI
+`goose` is an alias for `goose-desktop`, so this command is equivalent:
 
-### Usage with Ollama
-1. Run `goose configure`
-2. Select **Configure Providers** and select **Ollama**
-<div style={{ display: 'flex', justifyContent: 'center' }}>
-  <img 
-    src="/images/goose-cli.png" 
-    alt="Goose CLI"
-    width="50%"
-  />
-</div>
-3. Enter model name (e.g `qwen3`)
+```shell
+ollama launch goose-desktop
+```
 
-### Connecting to ollama.com
+Ollama selects a model, configures Goose to use the `ollama` provider, and opens Goose Desktop.
 
-1. Create an [API key](https://ollama.com/settings/keys) on ollama.com and save it in your `.env` 
-2. Run `goose configure`
-3. Select **Configure Providers** and select **Ollama**
-4. Update **OLLAMA_HOST** to `https://ollama.com`
+To launch Goose Desktop with a specific model:
+
+```shell
+ollama launch goose --model qwen3
+```
+
+If Goose Desktop is already running, Ollama asks before restarting it so the selected model takes effect.
+
+### Goose CLI
+
+```shell
+ollama launch goose-cli
+```
+
+Ollama starts `goose session` with the `ollama` provider configured for the selected model.
+
+To launch Goose CLI with a specific model:
+
+```shell
+ollama launch goose-cli --model qwen3
+```
+
+To pass arguments to Goose CLI, put them after `--`:
+
+```shell
+ollama launch goose-cli -- --debug
+```
+
+{/* TODO: Add Goose CLI screenshot */}
+
+## Ollama Cloud
+
+Use an Ollama Cloud model by passing the model name:
+
+```shell
+ollama launch goose --model qwen3-coder:480b-cloud
+```
+
+For Goose CLI:
+
+```shell
+ollama launch goose-cli --model qwen3-coder:480b-cloud
+```
+
+To connect Goose directly to ollama.com, set `OLLAMA_HOST` and `OLLAMA_API_KEY` before launching:
+
+```shell
+OLLAMA_HOST=https://ollama.com OLLAMA_API_KEY=your-api-key ollama launch goose --model qwen3-coder:480b-cloud
+```
+
+## Manual setup
+
+If you prefer to configure Goose yourself, choose the Ollama provider in Goose and use:
+
+```text
+http://localhost:11434
+```
+
+For Goose CLI, run:
+
+```shell
+goose configure
+```
+
+Select **Configure Providers**, choose **Ollama**, and enter the model you want to use.
