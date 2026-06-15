@@ -1863,6 +1863,12 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 
+	// Slot KV persistence — thin proxy over upstream llama-server's
+	// /slots/{id}?action=... API, gated on OLLAMA_SLOT_SAVE_PATH.
+	r.POST("/api/slot/save", s.SlotSaveHandler)
+	r.POST("/api/slot/restore", s.SlotRestoreHandler)
+	r.POST("/api/slot/erase", s.SlotEraseHandler)
+
 	// Inference (OpenAI compatibility)
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud
 	// parents on v1 request families while preserving this explicit :cloud passthrough.

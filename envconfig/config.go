@@ -248,6 +248,13 @@ var (
 	LLMLibrary = String("OLLAMA_LLM_LIBRARY")
 	Editor     = String("OLLAMA_EDITOR")
 
+	// SlotSavePath, when non-empty, is forwarded to llama-server as
+	// `--slot-save-path <dir>`. It enables the upstream `/slots/{id}?action=...`
+	// HTTP API for persisting and restoring per-slot KV cache state to disk.
+	// Ollama proxies those endpoints under `/api/slot/...`. The directory must
+	// exist and be writable by the ollama process.
+	SlotSavePath = String("OLLAMA_SLOT_SAVE_PATH")
+
 	CudaVisibleDevices    = String("CUDA_VISIBLE_DEVICES")
 	HipVisibleDevices     = String("HIP_VISIBLE_DEVICES")
 	RocrVisibleDevices    = String("ROCR_VISIBLE_DEVICES")
@@ -333,6 +340,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NUM_PARALLEL":         {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":              {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
 		"OLLAMA_SCHED_SPREAD":         {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
+		"OLLAMA_SLOT_SAVE_PATH":       {"OLLAMA_SLOT_SAVE_PATH", SlotSavePath(), "Directory for persisted llama-server slot KV state; enables /api/slot endpoints"},
 		"OLLAMA_CONTEXT_LENGTH":       {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},
 		"OLLAMA_EDITOR":               {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
 		"OLLAMA_REMOTES":              {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},

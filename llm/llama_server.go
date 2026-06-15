@@ -389,6 +389,18 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
 
+	// Enable upstream llama-server's persisted slot KV state when
+	// OLLAMA_SLOT_SAVE_PATH is set. This unlocks the slot save/restore HTTP
+	// API that Ollama proxies under /api/slot/...; the directory must exist
+	// and be writable. Trailing slash is required by llama-server because the
+	// path is concatenated with the filename.
+	if dir := envconfig.SlotSavePath(); dir != "" {
+		if !strings.HasSuffix(dir, string(os.PathSeparator)) {
+			dir += string(os.PathSeparator)
+		}
+		params = append(params, "--slot-save-path", dir)
+	}
+
 	// Set up library paths for GPU backend discovery
 	cmd = exec.Command(exe, params...)
 
