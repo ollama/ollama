@@ -344,7 +344,7 @@ func isCommandOutsideCwd(command string) bool {
 			// Check for absolute paths outside cwd
 			if filepath.IsAbs(arg) {
 				absPath := filepath.Clean(arg)
-				if !strings.HasPrefix(absPath, cwd) {
+				if !isPathWithin(absPath, cwd) {
 					return true
 				}
 				continue
@@ -355,7 +355,7 @@ func isCommandOutsideCwd(command string) bool {
 				// Resolve the path relative to cwd
 				absPath := filepath.Join(cwd, arg)
 				absPath = filepath.Clean(absPath)
-				if !strings.HasPrefix(absPath, cwd) {
+				if !isPathWithin(absPath, cwd) {
 					return true
 				}
 			}
@@ -363,7 +363,7 @@ func isCommandOutsideCwd(command string) bool {
 			// Check for home directory expansion
 			if strings.HasPrefix(arg, "~") {
 				home, err := os.UserHomeDir()
-				if err == nil && !strings.HasPrefix(home, cwd) {
+				if err == nil && !isPathWithin(home, cwd) {
 					return true
 				}
 			}
@@ -371,6 +371,15 @@ func isCommandOutsideCwd(command string) bool {
 	}
 
 	return false
+}
+
+func isPathWithin(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // AllowlistKey generates the key for exact allowlist lookup.
