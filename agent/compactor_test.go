@@ -241,6 +241,44 @@ func TestSimpleCompactorSkipsBelowThreshold(t *testing.T) {
 	}
 }
 
+func TestSimpleCompactorUsesEstimatedMessagesWhenPromptEvalMissing(t *testing.T) {
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{{
+			{Message: api.Message{Role: "assistant", Content: "estimated summary"}},
+		}},
+	}
+	compactor := NewSimpleCompactor(client, nil, CompactionOptions{
+		ContextWindowTokens: 100,
+		KeepUserTurns:       1,
+		Threshold:           0.8,
+	})
+
+	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
+		Model: "model",
+		Messages: []api.Message{
+			{Role: "user", Content: "old request"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "read large output"},
+			{Role: "assistant", ToolCalls: []api.ToolCall{{
+				ID: "call-1",
+				Function: api.ToolCallFunction{
+					Name: "read",
+				},
+			}}},
+			{Role: "tool", ToolName: "read", ToolCallID: "call-1", Content: strings.Repeat("x", 360)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Due || !result.Compacted {
+		t.Fatalf("expected estimate-driven compaction, got %#v", result)
+	}
+	if result.Summary != "estimated summary" {
+		t.Fatalf("summary = %q", result.Summary)
+	}
+}
+
 func TestResolveContextWindowTokensUsesSmallerKnownWindow(t *testing.T) {
 	tests := []struct {
 		name       string

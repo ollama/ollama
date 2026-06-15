@@ -290,7 +290,7 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 	if maxHeight > 0 {
 		inputBodyLines = min(inputBodyLines, max(1, maxHeight-fixedLines))
 	}
-	lines = append(lines, renderInputBoxLines(string(m.input), width, inputBodyLines)...)
+	lines = append(lines, renderInputBoxLines(string(m.input), m.normalizedInputCursor(), width, inputBodyLines)...)
 	lines = append(lines, footerLines...)
 	return lines
 }
@@ -321,8 +321,6 @@ func (m chatModel) renderEntry(entry chatEntry) (string, string) {
 		return chatErrorStyle.Render("err ") + " ", entry.content
 	case "system":
 		return "", entry.content
-	case "history":
-		return "", entry.content
 	default:
 		return "", entry.content
 	}
@@ -339,8 +337,6 @@ func (m chatModel) renderEntryLines(entry chatEntry, body string, width int) []s
 		return lines
 	case "system":
 		return splitRenderedBody(renderMarkdownForView(body, width))
-	case "history":
-		return renderHistoryLines(body, width)
 	case "user":
 		return renderUserMessageLines(body, width)
 	case "compaction_summary":
@@ -415,70 +411,101 @@ func metricsEmpty(metrics api.Metrics) bool {
 		metrics.EvalDuration <= 0
 }
 
-func renderHistoryLines(history string, width int) []string {
+func renderHistoryMessages(messages []api.Message, width int) []string {
 	if width < 20 {
 		width = 20
 	}
-	history = strings.TrimRight(history, "\n")
-	if history == "" {
-		return []string{""}
-	}
-
 	var lines []string
-	inFence := false
-	fence := ""
-	fenceIndent := ""
+	for _, msg := range messages {
+		role := strings.TrimSpace(msg.Role)
+		if role == "" {
+			role = "message"
+		}
+		lines = append(lines, renderHistoryStyledLine("", role, width, historyRoleStyle(role))...)
 
-	for _, rawLine := range strings.Split(history, "\n") {
-		line := strings.TrimRight(rawLine, "\r")
-		if inFence {
-			if fenceEnd(line, fence) {
-				inFence = false
-				fence = ""
-				fenceIndent = ""
-				continue
+		var meta []string
+		if msg.ToolName != "" {
+			meta = append(meta, "tool: `"+msg.ToolName+"`")
+		}
+		if msg.ToolCallID != "" {
+			meta = append(meta, "tool call: `"+msg.ToolCallID+"`")
+		}
+		if len(meta) > 0 {
+			lines = append(lines, "  "+renderHistoryMetaLine(strings.Join(meta, " · ")))
+		}
+
+		if strings.TrimSpace(msg.Thinking) != "" {
+			lines = append(lines, renderHistoryFieldLines("  ", "thinking", msg.Thinking, width)...)
+		}
+		if len(msg.ToolCalls) > 0 {
+			lines = append(lines, "  "+chatHistoryLabelStyle.Render("tool calls:"))
+			for _, call := range msg.ToolCalls {
+				lines = append(lines, renderHistoryToolCallLines(call, width)...)
 			}
-			code := strings.TrimPrefix(line, fenceIndent)
-			lines = append(lines, renderHistoryCodeLine(fenceIndent, code, width)...)
-			continue
 		}
-
-		if nextFence, indent, ok := historyFenceStart(line); ok {
-			inFence = true
-			fence = nextFence
-			fenceIndent = indent
-			continue
+		if strings.TrimSpace(msg.Content) != "" {
+			content := msg.Content
+			if msg.Role == "tool" {
+				content = stripInternalToolTruncationMarkers(content)
+			}
+			lines = append(lines, renderHistoryFieldLines("  ", "content", content, width)...)
 		}
-
-		lines = append(lines, renderHistoryLine(line, width)...)
+		if strings.TrimSpace(msg.Thinking) == "" && len(msg.ToolCalls) == 0 && strings.TrimSpace(msg.Content) == "" {
+			lines = append(lines, "  "+chatHistoryTextStyle.Render("_empty_"))
+		}
+		lines = append(lines, "")
 	}
-	if len(lines) == 0 {
-		return []string{""}
+	return stringsTrimTrailingEmptyLines(lines)
+}
+
+func renderHistoryFieldLines(indent, label, content string, width int) []string {
+	content = strings.TrimRight(content, "\n")
+	if content == "" {
+		return nil
+	}
+	if !strings.Contains(content, "\n") {
+		return renderHistoryLabelValue(indent, label, content, width)
+	}
+	lines := []string{indent + chatHistoryLabelStyle.Render(label+":")}
+	for _, line := range strings.Split(content, "\n") {
+		lines = append(lines, renderHistoryCodeLine(indent, line, width)...)
 	}
 	return lines
 }
 
-func renderHistoryLine(line string, width int) []string {
-	if strings.TrimSpace(line) == "" {
-		return []string{""}
+func renderHistoryToolCallLines(call api.ToolCall, width int) []string {
+	name := call.Function.Name
+	if name == "" {
+		name = "tool"
 	}
+	line := "    - "
+	if call.ID != "" {
+		line += "`" + call.ID + "` "
+	}
+	line += toolDisplayName(name)
+	lines := renderHistoryStyledLine("", line, width, chatHistoryTextStyle)
 
-	if bold, ok := historyBoldLine(line); ok {
-		if bold == "Message History" {
-			return renderHistoryStyledLine("", bold, width, chatHistoryTitleStyle)
-		}
-		return renderHistoryStyledLine("", bold, width, historyRoleStyle(bold))
+	args := call.Function.Arguments.ToMap()
+	if len(args) == 0 {
+		return lines
 	}
+	lines = append(lines, "      "+chatHistoryLabelStyle.Render("args:"))
+	data, err := json.MarshalIndent(args, "", "  ")
+	if err != nil {
+		lines = append(lines, renderHistoryCodeLine("      ", fmt.Sprint(args), width)...)
+		return lines
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		lines = append(lines, renderHistoryCodeLine("      ", line, width)...)
+	}
+	return lines
+}
 
-	indent := leadingWhitespace(line)
-	text := strings.TrimSpace(line)
-	if strings.Contains(text, " · ") {
-		return []string{indent + renderHistoryMetaLine(text)}
+func stringsTrimTrailingEmptyLines(lines []string) []string {
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
 	}
-	if label, value, ok := historyLabelValue(text); ok {
-		return renderHistoryLabelValue(indent, label, value, width)
-	}
-	return renderHistoryStyledLine(indent, text, width, chatHistoryTextStyle)
+	return lines
 }
 
 func renderHistoryLabelValue(indent, label, value string, width int) []string {
@@ -565,14 +592,6 @@ func historyRoleStyle(role string) lipgloss.Style {
 	}
 }
 
-func historyBoldLine(line string) (string, bool) {
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "**") || !strings.HasSuffix(trimmed, "**") || len(trimmed) <= 4 {
-		return "", false
-	}
-	return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "**"), "**")), true
-}
-
 func historyLabelValue(text string) (string, string, bool) {
 	label, value, ok := strings.Cut(text, ":")
 	if !ok {
@@ -592,21 +611,6 @@ func historyLabel(label string) bool {
 	default:
 		return false
 	}
-}
-
-func historyFenceStart(line string) (string, string, bool) {
-	indent := leadingWhitespace(line)
-	fence, _, ok := markdownFenceStart(line)
-	return fence, indent, ok
-}
-
-func leadingWhitespace(line string) string {
-	for i, r := range line {
-		if r != ' ' && r != '\t' {
-			return line[:i]
-		}
-	}
-	return line
 }
 
 func (m chatModel) queuedLines(width int) []string {
@@ -703,6 +707,7 @@ func boldToolInvocationName(label string) string {
 }
 
 func renderToolOutputLines(entry chatEntry, output string, width int) []string {
+	output = stripInternalToolTruncationMarkers(output)
 	if looksLikeUnifiedDiff(output) {
 		return splitRenderedBody(renderDiffForView(output, width))
 	}
@@ -710,6 +715,19 @@ func renderToolOutputLines(entry chatEntry, output string, width int) []string {
 		return splitRenderedBody(renderMarkdownForView(output, width))
 	}
 	return wrapChatText(output, width)
+}
+
+func stripInternalToolTruncationMarkers(output string) string {
+	lines := strings.Split(output, "\n")
+	filtered := lines[:0]
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[tool output truncated: omitted ") && strings.HasSuffix(trimmed, " characters]") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return strings.TrimSpace(strings.Join(filtered, "\n"))
 }
 
 func looksLikeUnifiedDiff(output string) bool {
@@ -1004,18 +1022,6 @@ func (m chatModel) footerParts() []string {
 		parts = append(parts, contextStatus)
 	}
 	return parts
-}
-
-func (m chatModel) renderFooterLine() string {
-	parts := m.footerParts()
-	for i, part := range parts {
-		if part == "full access" {
-			parts[i] = chatFullAccessStyle.Render(part)
-			continue
-		}
-		parts[i] = chatMetaStyle.Render(part)
-	}
-	return strings.Join(parts, chatMetaStyle.Render(" • "))
 }
 
 func (m chatModel) renderFooterLines(width int) []string {

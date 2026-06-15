@@ -179,6 +179,8 @@ type chatModel struct {
 	workingDir   string
 
 	input            []rune
+	inputCursor      int
+	inputCursorSet   bool
 	queued           []string
 	promptHistory    []string
 	promptCursor     int
@@ -335,170 +337,182 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForChatMsg(m.compactEvents)
 
 	case tea.MouseMsg:
-		if m.modelPicker != nil {
-			switch msg.Type {
-			case tea.MouseWheelUp:
-				m.modelPicker.move(-3)
-			case tea.MouseWheelDown:
-				m.modelPicker.move(3)
-			}
-			return m, nil
-		}
-		if m.historyPopup != nil {
-			switch msg.Type {
-			case tea.MouseWheelUp:
-				m.moveHistoryPopup(-3)
-			case tea.MouseWheelDown:
-				m.moveHistoryPopup(3)
-			}
-			return m, nil
-		}
-		switch msg.Type {
-		case tea.MouseWheelUp:
-			m.scrollBy(3)
-		case tea.MouseWheelDown:
-			m.scrollBy(-3)
-		}
-		return m, nil
+		return m.updateMouse(msg)
 
 	case tea.KeyMsg:
-		if msg.Type == tea.KeyShiftTab {
-			return m.togglePermissionMode()
-		}
-		if m.approvalPrompt != nil {
-			return m.updateApprovalPrompt(msg)
-		}
-		if m.modelPicker != nil {
-			return m.updateModelPicker(msg)
-		}
-		if m.thinkPicker != nil {
-			return m.updateThinkPicker(msg)
-		}
-		if m.resumePicker != nil {
-			return m.updateResumePicker(msg)
-		}
-		if m.historyPopup != nil {
-			return m.updateHistoryPopup(msg)
-		}
-		if msg.Type != tea.KeyCtrlC {
-			m.disarmQuit()
-		}
-
-		switch msg.Type {
-		case tea.KeyCtrlC:
-			if len(m.input) > 0 {
-				m.input = nil
-				m.complete = 0
-				m.resetPromptHistoryCursor()
-				m.disarmQuit()
-				m.status = "input cleared"
-				return m, nil
-			}
-			if (m.running || m.compacting) && m.cancel != nil {
-				m.cancel()
-				m.quitArmed = false
-				m.status = "canceling"
-				return m, nil
-			}
-			if !m.quitArmed {
-				m.quitArmed = true
-				m.status = "press ctrl+c again to quit"
-				return m, nil
-			}
-			m.quitting = true
-			return m, tea.Quit
-		case tea.KeyEsc:
-			if (m.running || m.compacting) && m.cancel != nil {
-				m.cancel()
-				m.status = "canceling"
-				return m, nil
-			}
-			return m, nil
-		case tea.KeyEnter:
-			if msg.Alt {
-				m.insertInputNewline()
-				return m, nil
-			}
-			return m.handleSubmit()
-		case tea.KeyCtrlJ:
-			m.insertInputNewline()
-			return m, nil
-		case tea.KeyUp:
-			if m.promptActive && m.movePromptHistory(-1) {
-				return m, nil
-			}
-			if m.moveCompletion(-1) {
-				return m, nil
-			}
-			if m.movePromptHistory(-1) {
-				return m, nil
-			}
-			return m, nil
-		case tea.KeyDown:
-			if m.promptActive && m.movePromptHistory(1) {
-				return m, nil
-			}
-			if m.moveCompletion(1) {
-				return m, nil
-			}
-			m.movePromptHistory(1)
-			return m, nil
-		case tea.KeyPgUp:
-			m.scrollBy(m.transcriptHeight() - 1)
-			return m, nil
-		case tea.KeyPgDown:
-			m.scrollBy(-(m.transcriptHeight() - 1))
-			return m, nil
-		case tea.KeyHome, tea.KeyCtrlHome:
-			m.scroll = m.maxScroll()
-			return m, nil
-		case tea.KeyEnd, tea.KeyCtrlEnd:
-			m.scroll = 0
-			return m, nil
-		case tea.KeyBackspace:
-			m.resetPromptHistoryCursor()
-			if msg.Alt {
-				m.input = deleteInputWord(m.input)
-				m.complete = 0
-			} else if len(m.input) > 0 {
-				m.input = m.input[:len(m.input)-1]
-				m.complete = 0
-			}
-			return m, nil
-		case tea.KeyCtrlW:
-			m.resetPromptHistoryCursor()
-			m.input = deleteInputWord(m.input)
-			m.complete = 0
-			return m, nil
-		case tea.KeyCtrlU:
-			m.resetPromptHistoryCursor()
-			m.input = nil
-			m.complete = 0
-			return m, nil
-		case tea.KeyTab:
-			if m.applyCompletion() {
-				return m, nil
-			}
-			return m, nil
-		case tea.KeyCtrlO:
-			m.toggleAllToolOutputs()
-			return m, nil
-		case tea.KeySpace:
-			m.resetPromptHistoryCursor()
-			m.input = append(m.input, ' ')
-			m.complete = 0
-			return m, nil
-		case tea.KeyRunes:
-			m.resetPromptHistoryCursor()
-			m.input = append(m.input, msg.Runes...)
-			m.complete = 0
-			return m, nil
-		}
+		return m.updateKey(msg)
 	}
-	if m.canEditInput() && isShiftEnterCSI(msg) {
-		m.insertInputNewline()
+	return m, nil
+}
+
+func (m chatModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.modelPicker != nil {
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			m.modelPicker.move(-3)
+		case tea.MouseWheelDown:
+			m.modelPicker.move(3)
+		}
 		return m, nil
 	}
+	if m.historyPopup != nil {
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			m.moveHistoryPopup(-3)
+		case tea.MouseWheelDown:
+			m.moveHistoryPopup(3)
+		}
+		return m, nil
+	}
+	switch msg.Type {
+	case tea.MouseWheelUp:
+		m.scrollBy(3)
+	case tea.MouseWheelDown:
+		m.scrollBy(-3)
+	}
+	return m, nil
+}
+
+func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyShiftTab {
+		return m.togglePermissionMode()
+	}
+	if m.approvalPrompt != nil {
+		return m.updateApprovalPrompt(msg)
+	}
+	if m.modelPicker != nil {
+		return m.updateModelPicker(msg)
+	}
+	if m.thinkPicker != nil {
+		return m.updateThinkPicker(msg)
+	}
+	if m.resumePicker != nil {
+		return m.updateResumePicker(msg)
+	}
+	if m.historyPopup != nil {
+		return m.updateHistoryPopup(msg)
+	}
+	if msg.Type != tea.KeyCtrlC {
+		m.disarmQuit()
+	}
+
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		return m.updateCtrlC()
+	case tea.KeyEsc:
+		if (m.running || m.compacting) && m.cancel != nil {
+			m.cancel()
+			m.status = "canceling"
+		}
+		return m, nil
+	case tea.KeyEnter:
+		if msg.Alt {
+			m.insertInputNewline()
+			return m, nil
+		}
+		return m.handleSubmit()
+	case tea.KeyCtrlJ:
+		m.insertInputNewline()
+		return m, nil
+	case tea.KeyUp:
+		return m.updateUpKey()
+	case tea.KeyDown:
+		return m.updateDownKey()
+	case tea.KeyLeft:
+		m.moveInputCursorHorizontal(-1)
+	case tea.KeyRight:
+		m.moveInputCursorHorizontal(1)
+	case tea.KeyPgUp:
+		m.scrollBy(m.transcriptHeight() - 1)
+	case tea.KeyPgDown:
+		m.scrollBy(-(m.transcriptHeight() - 1))
+	case tea.KeyHome, tea.KeyCtrlHome:
+		m.scroll = m.maxScroll()
+	case tea.KeyEnd, tea.KeyCtrlEnd:
+		m.scroll = 0
+	case tea.KeyBackspace:
+		m.resetPromptHistoryCursor()
+		if msg.Alt {
+			m.deleteInputWordBackward()
+		} else {
+			m.deleteInputBackward()
+		}
+	case tea.KeyCtrlW:
+		m.resetPromptHistoryCursor()
+		m.deleteInputWordBackward()
+	case tea.KeyCtrlU:
+		m.resetPromptHistoryCursor()
+		m.input = nil
+		m.inputCursor = 0
+		m.inputCursorSet = false
+		m.complete = 0
+	case tea.KeyTab:
+		m.applyCompletion()
+	case tea.KeyCtrlO:
+		m.toggleAllToolOutputs()
+	case tea.KeySpace:
+		m.insertInputRunes([]rune{' '})
+	case tea.KeyRunes:
+		m.insertInputRunes(msg.Runes)
+	default:
+		if m.canEditInput() && isShiftEnterCSI(msg) {
+			m.insertInputNewline()
+		}
+	}
+	return m, nil
+}
+
+func (m chatModel) updateCtrlC() (tea.Model, tea.Cmd) {
+	if len(m.input) > 0 {
+		m.input = nil
+		m.inputCursor = 0
+		m.inputCursorSet = false
+		m.complete = 0
+		m.resetPromptHistoryCursor()
+		m.disarmQuit()
+		m.status = "input cleared"
+		return m, nil
+	}
+	if (m.running || m.compacting) && m.cancel != nil {
+		m.cancel()
+		m.quitArmed = false
+		m.status = "canceling"
+		return m, nil
+	}
+	if !m.quitArmed {
+		m.quitArmed = true
+		m.status = "press ctrl+c again to quit"
+		return m, nil
+	}
+	m.quitting = true
+	return m, tea.Quit
+}
+
+func (m chatModel) updateUpKey() (tea.Model, tea.Cmd) {
+	if m.promptActive && m.movePromptHistory(-1) {
+		return m, nil
+	}
+	if m.moveCompletion(-1) {
+		return m, nil
+	}
+	if m.moveInputCursorVertical(-1) {
+		return m, nil
+	}
+	m.movePromptHistory(-1)
+	return m, nil
+}
+
+func (m chatModel) updateDownKey() (tea.Model, tea.Cmd) {
+	if m.promptActive && m.movePromptHistory(1) {
+		return m, nil
+	}
+	if m.moveCompletion(1) {
+		return m, nil
+	}
+	if m.moveInputCursorVertical(1) {
+		return m, nil
+	}
+	m.movePromptHistory(1)
 	return m, nil
 }
 
@@ -676,18 +690,24 @@ func (m *chatModel) startRun(input string) (tea.Model, tea.Cmd) {
 }
 
 func (m *chatModel) startRunWithPrompt(displayInput, userInput, extraSystemPrompt string) (tea.Model, tea.Cmd) {
+	return m.startRunWithMessages(displayInput, []api.Message{{Role: "user", Content: userInput}}, extraSystemPrompt)
+}
+
+func (m *chatModel) startRunWithMessages(displayInput string, newMessages []api.Message, extraSystemPrompt string) (tea.Model, tea.Cmd) {
 	m.ensurePermissionMode()
 	m.refreshContextWindowTokens(m.opts.Model)
 	m.addPromptHistory(displayInput)
-	userMsg := api.Message{Role: "user", Content: userInput}
 	m.entries = append(m.entries, newChatEntry(chatEntry{role: "user", content: displayInput}))
+	if len(newMessages) > 1 {
+		m.entries = append(m.entries, entriesFromMessages(newMessages[1:])...)
+	}
 	m.running = true
 	m.status = "running"
 	m.scroll = 0
 	m.thinking = false
 	m.thinkingTokens = 0
 	systemPrompt := m.systemPrompt(extraSystemPrompt)
-	m.liveMessages = append(slices.Clone(m.messages), userMsg)
+	m.liveMessages = append(slices.Clone(m.messages), newMessages...)
 	m.contextTokens = m.estimatePromptTokens(m.liveMessages, systemPrompt)
 	m.contextEstimate = true
 
@@ -710,7 +730,7 @@ func (m *chatModel) startRunWithPrompt(displayInput, userInput, extraSystemPromp
 		Model:        m.opts.Model,
 		SystemPrompt: systemPrompt,
 		Messages:     slices.Clone(m.messages),
-		NewMessages:  []api.Message{userMsg},
+		NewMessages:  slices.Clone(newMessages),
 		Format:       m.opts.Format,
 		Options:      m.opts.Options,
 		Think:        m.opts.Think,

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -16,8 +17,13 @@ import (
 var markdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)`)
 
 var markdownTableSeparatorPattern = regexp.MustCompile(`^:?-{3,}:?$`)
+var markdownHeadingPattern = regexp.MustCompile(`^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$`)
+var markdownHorizontalRulePattern = regexp.MustCompile(`^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$`)
 
-const maxMarkdownRendererCacheEntries = 8
+const (
+	maxMarkdownRendererCacheEntries = 8
+	useBespokeMarkdownRendering     = true
+)
 
 var chatMarkdownRenderers = newMarkdownRendererCache()
 
@@ -43,10 +49,16 @@ func renderMarkdownForView(markdown string, width int) string {
 	if width < 20 {
 		width = 20
 	}
+	if !useBespokeMarkdownRendering {
+		return renderMarkdownChunk(markdown, width)
+	}
 	return renderMarkdownBlocks(markdownBlocks(markdown), width)
 }
 
 func renderMarkdownPlain(markdown string, width int) string {
+	if !useBespokeMarkdownRendering {
+		return renderMarkdownChunk(markdown, width)
+	}
 	return renderMarkdownBlocks(markdownBlocks(markdown), width)
 }
 
@@ -148,7 +160,7 @@ func renderMarkdownBlocks(blocks []markdownBlock, width int) string {
 	for _, block := range blocks {
 		switch block.kind {
 		case markdownBlockProse:
-			chunk := renderMarkdownChunk(exposeMarkdownLinks(block.text), width)
+			chunk := renderMarkdownProseBlock(block.text, width)
 			if strings.TrimSpace(chunk) != "" {
 				rendered = append(rendered, chunk)
 			}
@@ -166,19 +178,38 @@ func renderMarkdownBlocks(blocks []markdownBlock, width int) string {
 	return trimRenderedLines(strings.Join(rendered, "\n"))
 }
 
-func renderMarkdownTables(markdown string, width int) (string, bool) {
-	blocks := markdownBlocks(markdown)
-	found := false
-	for _, block := range blocks {
-		if block.kind == markdownBlockTable {
-			found = true
-			break
+func renderMarkdownProseBlock(markdown string, width int) string {
+	var rendered []string
+	var chunk []string
+	flushChunk := func() {
+		if len(chunk) == 0 {
+			return
+		}
+		text := strings.Join(chunk, "\n")
+		chunk = nil
+		renderedChunk := renderMarkdownChunk(exposeMarkdownLinks(text), width)
+		if strings.TrimSpace(renderedChunk) != "" {
+			rendered = append(rendered, renderedChunk)
 		}
 	}
-	if !found {
-		return "", false
+
+	for _, line := range strings.Split(markdown, "\n") {
+		if heading := markdownHeadingPattern.FindStringSubmatch(line); heading != nil {
+			flushChunk()
+			for _, wrapped := range wrapChatText(strings.TrimSpace(heading[2]), width) {
+				rendered = append(rendered, chatHeaderStyle.Render(wrapped))
+			}
+			continue
+		}
+		if markdownHorizontalRulePattern.MatchString(line) {
+			flushChunk()
+			rendered = append(rendered, chatMetaStyle.Render(strings.Repeat("─", min(width, 24))))
+			continue
+		}
+		chunk = append(chunk, line)
 	}
-	return renderMarkdownBlocks(blocks, width), true
+	flushChunk()
+	return strings.Join(rendered, "\n")
 }
 
 func markdownTableAt(lines []string, start int) (markdownTable, int, bool) {
@@ -293,6 +324,9 @@ func renderMarkdownTable(table markdownTable, width int) string {
 	rows := make([][]string, 0, len(table.rows)+1)
 	rows = append(rows, table.headers)
 	rows = append(rows, table.rows...)
+	if markdownTableShouldStack(rows, width) {
+		return renderMarkdownStackedTable(table, width)
+	}
 
 	widths := markdownTableColumnWidths(rows, width)
 	var rendered []string
@@ -302,6 +336,91 @@ func renderMarkdownTable(table markdownTable, width int) string {
 		rendered = append(rendered, renderMarkdownTableRow(row, widths, false)...)
 	}
 	return strings.Join(rendered, "\n")
+}
+
+func markdownTableShouldStack(rows [][]string, width int) bool {
+	if len(rows) == 0 || len(rows[0]) < 4 {
+		return false
+	}
+	columns := len(rows[0])
+	maxWidths := make([]int, columns)
+	longCells := 0
+	for _, row := range rows {
+		for col := 0; col < columns && col < len(row); col++ {
+			cell := cleanMarkdownTableCell(row[col])
+			cellWidth := lipgloss.Width(cell)
+			maxWidths[col] = max(maxWidths[col], cellWidth)
+			if cellWidth > max(24, width/3) {
+				longCells++
+			}
+		}
+	}
+	naturalWidth := 2*(columns-1) + sumInts(maxWidths)
+	return naturalWidth > width*2 || longCells >= 2
+}
+
+func renderMarkdownStackedTable(table markdownTable, width int) string {
+	var rendered []string
+	headers := make([]string, len(table.headers))
+	for i, header := range table.headers {
+		headers[i] = cleanMarkdownTableCell(header)
+		if headers[i] == "" {
+			headers[i] = "Column " + fmt.Sprint(i+1)
+		}
+	}
+
+	for rowIndex, row := range table.rows {
+		if rowIndex > 0 {
+			rendered = append(rendered, "")
+		}
+		title := ""
+		if len(row) > 0 {
+			title = cleanMarkdownTableCell(row[0])
+		}
+		if title != "" {
+			for _, line := range wrapChatText(title, width) {
+				rendered = append(rendered, chatHeaderStyle.Render(line))
+			}
+		}
+		for col := 1; col < len(headers); col++ {
+			value := ""
+			if col < len(row) {
+				value = cleanMarkdownTableCell(row[col])
+			}
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			rendered = append(rendered, renderMarkdownStackedTableField(headers[col], value, width)...)
+		}
+		if title == "" {
+			value := ""
+			if len(row) > 0 {
+				value = cleanMarkdownTableCell(row[0])
+			}
+			if strings.TrimSpace(value) != "" {
+				rendered = append(rendered, renderMarkdownStackedTableField(headers[0], value, width)...)
+			}
+		}
+	}
+	return strings.Join(rendered, "\n")
+}
+
+func renderMarkdownStackedTableField(label, value string, width int) []string {
+	prefix := "  " + label + ": "
+	bodyWidth := max(10, width-lipgloss.Width(prefix))
+	wrapped := wrapTableCell(value, bodyWidth)
+	lines := make([]string, 0, len(wrapped))
+	for i, line := range wrapped {
+		if i == 0 {
+			lines = append(lines, chatHeaderStyle.Render("  "+label+": ")+line)
+			continue
+		}
+		lines = append(lines, strings.Repeat(" ", lipgloss.Width(prefix))+line)
+	}
+	if len(lines) == 0 {
+		return []string{chatHeaderStyle.Render("  " + label + ":")}
+	}
+	return lines
 }
 
 func markdownTableColumnWidths(rows [][]string, width int) []int {
@@ -408,7 +527,7 @@ func cleanMarkdownTableCell(cell string) string {
 	cell = exposeMarkdownLinks(cell)
 	cell = strings.ReplaceAll(cell, "**", "")
 	cell = strings.ReplaceAll(cell, "__", "")
-	cell = strings.Trim(cell, "`")
+	cell = strings.ReplaceAll(cell, "`", "")
 	return strings.ReplaceAll(cell, `\|`, "|")
 }
 
@@ -508,21 +627,6 @@ func (c *markdownRendererCache) len() int {
 	return len(c.renderers)
 }
 
-func renderMarkdownDiffFences(markdown string, width int) (string, bool) {
-	blocks := markdownBlocks(markdown)
-	found := false
-	for _, block := range blocks {
-		if block.kind == markdownBlockDiffFence {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return "", false
-	}
-	return renderMarkdownBlocks(blocks, width), true
-}
-
 func diffFenceStart(line string) (string, bool) {
 	fence, info, ok := markdownFenceStart(line)
 	if !ok || !markdownFenceIsDiff(info) {
@@ -586,19 +690,71 @@ func markdownLineIsIndentedCode(line string) bool {
 }
 
 func compactMarkdownStyle() glamouransi.StyleConfig {
+	palette := markdownPaletteForBackground(lipgloss.HasDarkBackground())
 	style := styles.ASCIIStyleConfig
 	style.Document.Margin = uintPtr(0)
 	style.Document.BlockPrefix = ""
 	style.Document.BlockSuffix = ""
+	style.BlockQuote.Color = stringPtr(palette.muted)
 	style.CodeBlock.Margin = uintPtr(0)
+	style.CodeBlock.Color = stringPtr(palette.code)
 	style.Table.Margin = uintPtr(0)
+	style.Table.Color = stringPtr(palette.table)
+	style.Heading.Color = stringPtr(palette.heading)
+	style.Heading.Bold = boolPtr(true)
+	style.H1.Prefix = ""
+	style.H2.Prefix = ""
+	style.H3.Prefix = ""
+	style.H4.Prefix = ""
+	style.H5.Prefix = ""
+	style.H6.Prefix = ""
 	style.Strong.BlockPrefix = ""
 	style.Strong.BlockSuffix = ""
 	style.Strong.Bold = boolPtr(true)
+	style.Strong.Color = stringPtr(palette.strong)
 	style.Emph.BlockPrefix = ""
 	style.Emph.BlockSuffix = ""
 	style.Emph.Italic = boolPtr(true)
+	style.Emph.Color = stringPtr(palette.muted)
+	style.Code.BlockPrefix = ""
+	style.Code.BlockSuffix = ""
+	style.Code.Color = stringPtr(palette.code)
+	style.Link.Color = stringPtr(palette.link)
+	style.LinkText.Color = stringPtr(palette.link)
+	style.LinkText.Underline = boolPtr(true)
+	style.HorizontalRule.Color = stringPtr(palette.muted)
+	style.HorizontalRule.Format = "\n" + strings.Repeat("─", 24) + "\n"
 	return style
+}
+
+type markdownTerminalPalette struct {
+	heading string
+	strong  string
+	link    string
+	code    string
+	muted   string
+	table   string
+}
+
+func markdownPaletteForBackground(dark bool) markdownTerminalPalette {
+	if dark {
+		return markdownTerminalPalette{
+			heading: "222",
+			strong:  "222",
+			link:    "117",
+			code:    "116",
+			muted:   "247",
+			table:   "250",
+		}
+	}
+	return markdownTerminalPalette{
+		heading: "136",
+		strong:  "136",
+		link:    "32",
+		code:    "30",
+		muted:   "244",
+		table:   "242",
+	}
 }
 
 func trimRenderedLines(rendered string) string {
@@ -615,6 +771,10 @@ func uintPtr(value uint) *uint {
 }
 
 func boolPtr(value bool) *bool {
+	return &value
+}
+
+func stringPtr(value string) *string {
 	return &value
 }
 

@@ -42,26 +42,6 @@ func TestLoadCatalogSkipsInvalidSkills(t *testing.T) {
 	}
 }
 
-func TestManualSystemPromptLoadsFullSkill(t *testing.T) {
-	dir := t.TempDir()
-	writeSkill(t, filepath.Join(dir, "release-notes"), "release-notes", "Write release notes.")
-	catalog, err := Load(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	skill, ok := catalog.Find("/release-notes")
-	if !ok {
-		t.Fatal("skill not found")
-	}
-	prompt, err := ManualSystemPrompt(skill)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(prompt, "The user manually triggered") || !strings.Contains(prompt, "# release-notes") {
-		t.Fatalf("manual prompt = %q", prompt)
-	}
-}
-
 func TestImportToDirCopiesCanonicalSkill(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

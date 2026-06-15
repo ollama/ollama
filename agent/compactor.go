@@ -119,12 +119,19 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 }
 
 func (c *SimpleCompactor) shouldCompact(req CompactionRequest) bool {
-	if req.Latest.PromptEvalCount <= 0 {
+	contextWindow := c.contextWindowTokens(req.Options)
+	threshold := int(float64(contextWindow) * c.threshold())
+	if threshold <= 0 {
 		return false
 	}
-
-	contextWindow := c.contextWindowTokens(req.Options)
-	return float64(req.Latest.PromptEvalCount) >= float64(contextWindow)*c.threshold()
+	if req.Latest.PromptEvalCount > 0 && req.Latest.PromptEvalCount >= threshold {
+		return true
+	}
+	// TODO(parthsareen): If the newest kept user turn contains the oversized
+	// tool output, compaction can remove older history but still leave the next
+	// prompt above the safety threshold. Pair this estimate trigger with
+	// context-aware tool-output paging/range reads so the kept suffix can shrink.
+	return estimateMessagesTokens(req.Messages) >= threshold
 }
 
 func (c *SimpleCompactor) contextWindowTokens(options map[string]any) int {
@@ -227,6 +234,22 @@ func estimateCompactionTokens(text string) int {
 		return 0
 	}
 	return max(1, (len([]rune(text))+3)/4)
+}
+
+func estimateMessagesTokens(messages []api.Message) int {
+	var total int
+	for _, msg := range messages {
+		total += estimateCompactionTokens(msg.Role)
+		total += estimateCompactionTokens(msg.Content)
+		total += estimateCompactionTokens(msg.Thinking)
+		total += estimateCompactionTokens(msg.ToolName)
+		total += estimateCompactionTokens(msg.ToolCallID)
+		for _, call := range msg.ToolCalls {
+			total += estimateCompactionTokens(call.Function.Name)
+			total += estimateCompactionTokens(call.Function.Arguments.String())
+		}
+	}
+	return total
 }
 
 func compactionPrompt(previousSummary string, archive []api.Message) (string, error) {

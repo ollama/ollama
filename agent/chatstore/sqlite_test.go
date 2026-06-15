@@ -34,6 +34,7 @@ func TestStoreWritesAppCompatibleChat(t *testing.T) {
 		Role:    "assistant",
 		Content: "I'll check.",
 		ToolCalls: []api.ToolCall{{
+			ID: "call-1",
 			Function: api.ToolCallFunction{
 				Name:      "bash",
 				Arguments: args,
@@ -55,6 +56,9 @@ func TestStoreWritesAppCompatibleChat(t *testing.T) {
 	}
 	if got := chat.Messages[1].ToolCalls[0].Function.Name; got != "bash" {
 		t.Fatalf("tool name = %q, want bash", got)
+	}
+	if got := chat.Messages[1].ToolCalls[0].ID; got != "call-1" {
+		t.Fatalf("tool call id = %q, want call-1", got)
 	}
 
 	var modelName sql.NullString

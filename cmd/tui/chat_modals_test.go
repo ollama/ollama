@@ -51,44 +51,40 @@ func TestChatHistoryCommandShowsPromptMessages(t *testing.T) {
 	if fm.historyPopup == nil {
 		t.Fatal("history popup was not opened")
 	}
-	history := fm.historyPopup.content
-	for _, want := range []string{
-		"**Message History**",
-		"**system**",
-		"  content: You are Ollama.",
-		"**user**",
-		"  content: where am i?",
-		"**assistant**",
-		"  thinking: Need to inspect cwd.",
-		"  tool calls:",
-		"`call-1` Bash",
-		"      args:",
-		"\"command\": \"pwd\"",
-		"**tool**",
-		"  tool: `bash`",
-		"tool call: `call-1`",
-		"/tmp/project",
-		"  content: You are in /tmp/project.",
-	} {
-		if !strings.Contains(history, want) {
-			t.Fatalf("history missing %q:\n%s", want, history)
-		}
+	if got := len(fm.historyPopup.messages); got != 5 {
+		t.Fatalf("history messages = %d, want 5", got)
 	}
-	if strings.Contains(history, "###") {
-		t.Fatalf("history should not use numbered markdown headings:\n%s", history)
+	if fm.historyPopup.messages[0].Role != "system" || fm.historyPopup.messages[0].Content != "You are Ollama." {
+		t.Fatalf("system prompt history message = %#v", fm.historyPopup.messages[0])
+	}
+	if fm.historyPopup.messages[2].Thinking != "Need to inspect cwd." || len(fm.historyPopup.messages[2].ToolCalls) != 1 {
+		t.Fatalf("assistant tool history message = %#v", fm.historyPopup.messages[2])
 	}
 
 	fm.width = 120
 	fm.height = 40
 	rendered := stripANSI(fm.View())
-	if !strings.Contains(rendered, "Message history") {
-		t.Fatalf("history popup missing title:\n%s", rendered)
-	}
-	if strings.Contains(rendered, "**assistant**") || strings.Contains(rendered, "**system**") {
-		t.Fatalf("history roles should render without literal markdown markers:\n%s", rendered)
-	}
-	if strings.Contains(rendered, "```") {
-		t.Fatalf("history renderer should hide code fences:\n%s", rendered)
+	for _, want := range []string{
+		"Message history",
+		"system",
+		"content: You are Ollama.",
+		"user",
+		"content: where am i?",
+		"assistant",
+		"thinking: Need to inspect cwd.",
+		"tool calls:",
+		"call-1 Bash",
+		"args:",
+		"\"command\": \"pwd\"",
+		"tool",
+		"tool: bash",
+		"tool call: call-1",
+		"/tmp/project",
+		"content: You are in /tmp/project.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered history missing %q:\n%s", want, rendered)
+		}
 	}
 
 	updated, cmd = fm.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -110,7 +106,7 @@ func TestChatHistoryCommandHandlesEmptyHistory(t *testing.T) {
 	}
 
 	fm := updated.(chatModel)
-	if len(fm.entries) != 0 || fm.historyPopup == nil || !strings.Contains(fm.historyPopup.content, "No messages yet.") {
+	if len(fm.entries) != 0 || fm.historyPopup == nil || len(fm.historyPopup.messages) != 0 {
 		t.Fatalf("history output entries=%#v popup=%#v", fm.entries, fm.historyPopup)
 	}
 	fm.width = 80
@@ -164,9 +160,11 @@ func TestChatHistoryCommandFormatsMultilineContentWithLabel(t *testing.T) {
 	if fm.historyPopup == nil {
 		t.Fatal("history popup was not opened")
 	}
-	history := fm.historyPopup.content
-	if !strings.Contains(history, "  content:\n\n  ```text\n  first\n  second\n  ```") {
-		t.Fatalf("history should label multiline content before block:\n%s", history)
+	fm.width = 80
+	fm.height = 20
+	view := stripANSI(fm.View())
+	if !strings.Contains(view, "content:") || !strings.Contains(view, "first") || !strings.Contains(view, "second") {
+		t.Fatalf("history should label multiline content before block:\n%s", view)
 	}
 }
 

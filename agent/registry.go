@@ -14,7 +14,6 @@ type ToolContext struct {
 
 type ToolResult struct {
 	Content    string
-	Data       any
 	WorkingDir string
 }
 

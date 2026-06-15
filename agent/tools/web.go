@@ -17,6 +17,8 @@ var (
 	ErrWebFetchAuthRequired  = errors.New("web fetch requires authentication")
 )
 
+const maxWebFetchContentRunes = 60_000
+
 type WebSearch struct{}
 
 func NewWebSearch() *WebSearch {
@@ -88,7 +90,7 @@ func (w *WebSearch) Execute(ctx context.Context, _ agent.ToolContext, args map[s
 		}
 		sb.WriteByte('\n')
 	}
-	return agent.ToolResult{Content: sb.String(), Data: searchResp.Results}, nil
+	return agent.ToolResult{Content: sb.String()}, nil
 }
 
 type WebFetch struct{}
@@ -154,9 +156,18 @@ func (w *WebFetch) Execute(ctx context.Context, _ agent.ToolContext, args map[st
 	}
 	if fetchResp.Content != "" {
 		sb.WriteString("Content:\n")
-		sb.WriteString(fetchResp.Content)
+		sb.WriteString(truncateWebFetchContent(fetchResp.Content))
 	} else {
 		sb.WriteString("No content could be extracted from the page.")
 	}
-	return agent.ToolResult{Content: sb.String(), Data: fetchResp}, nil
+	return agent.ToolResult{Content: sb.String()}, nil
+}
+
+func truncateWebFetchContent(content string) string {
+	runes := []rune(content)
+	if len(runes) <= maxWebFetchContentRunes {
+		return content
+	}
+	omitted := len(runes) - maxWebFetchContentRunes
+	return string(runes[:maxWebFetchContentRunes]) + fmt.Sprintf("\n\n[web_fetch content truncated: omitted %d characters]", omitted)
 }

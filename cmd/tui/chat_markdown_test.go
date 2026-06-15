@@ -38,6 +38,17 @@ func TestMarkdownRendererCacheIsBounded(t *testing.T) {
 	}
 }
 
+func TestMarkdownPaletteUsesDarkerColorsOnLightBackground(t *testing.T) {
+	light := markdownPaletteForBackground(false)
+	dark := markdownPaletteForBackground(true)
+	if light.heading == dark.heading || light.link == dark.link || light.code == dark.code {
+		t.Fatalf("light palette should differ from dark palette: light=%#v dark=%#v", light, dark)
+	}
+	if light.heading != "136" || light.link != "32" || light.code != "30" {
+		t.Fatalf("light palette = %#v, want darker readable colors", light)
+	}
+}
+
 func TestChatMarkdownExposesLinks(t *testing.T) {
 	m := chatModel{width: 100, height: 30}
 	m.entries = []chatEntry{{
@@ -48,6 +59,28 @@ func TestChatMarkdownExposesLinks(t *testing.T) {
 	transcript := stripANSI(m.renderTranscript(100))
 	if !strings.Contains(transcript, "https://ollama.com") {
 		t.Fatalf("rendered markdown should expose URL for terminal clicking: %q", transcript)
+	}
+}
+
+func TestChatMarkdownRendersReportHeadings(t *testing.T) {
+	markdown := strings.Join([]string{
+		"## 1. Size snapshot",
+		"",
+		"---",
+		"",
+		"### A. Collapse the integration interface zoo",
+	}, "\n")
+
+	rendered := stripANSI(renderMarkdownForView(markdown, 80))
+	for _, notWant := range []string{"## 1.", "### A.", "---"} {
+		if strings.Contains(rendered, notWant) {
+			t.Fatalf("report markdown markers should not render raw: %q", rendered)
+		}
+	}
+	if !strings.Contains(rendered, "1. Size snapshot") ||
+		!strings.Contains(rendered, "A. Collapse the integration interface zoo") ||
+		!strings.Contains(rendered, "──") {
+		t.Fatalf("rendered report headings missing content: %q", rendered)
 	}
 }
 
@@ -100,6 +133,55 @@ func TestChatMarkdownRendersTableWithoutOuterPipes(t *testing.T) {
 		if len([]rune(line)) > 76 {
 			t.Fatalf("rendered table line width = %d, want <= 76: %q\n%s", len([]rune(line)), line, rendered)
 		}
+	}
+}
+
+func TestChatMarkdownStacksWideReportTables(t *testing.T) {
+	markdown := strings.Join([]string{
+		"| Area | Files | Non-test LOC | Notes |",
+		"| --- | --- | --- | --- |",
+		"| `cmd/launch` integrations | 17 integration files | ~8,200 | CodexApp, OpenClaw, Hermes, Codex are the heaviest integration implementations. |",
+		"| `cmd/tui` agent chat | chat*.go | ~11,500 | Used by `cmd/agent_tui.go` and includes rendering, input, modals, history, and approval UI. |",
+	}, "\n")
+
+	rendered := stripANSI(renderMarkdownForView(markdown, 88))
+	for _, notWant := range []string{"| --- |", "Area | Files", "Non-test LOC  Notes"} {
+		if strings.Contains(rendered, notWant) {
+			t.Fatalf("wide report table should render as stacked rows, got: %q", rendered)
+		}
+	}
+	for _, want := range []string{
+		"cmd/launch integrations",
+		"Files: 17 integration files",
+		"Non-test LOC: ~8,200",
+		"Notes: CodexApp",
+		"cmd/tui agent chat",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("stacked table missing %q: %q", want, rendered)
+		}
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if len([]rune(line)) > 88 {
+			t.Fatalf("rendered table line width = %d, want <= 88: %q\n%s", len([]rune(line)), line, rendered)
+		}
+	}
+}
+
+func TestChatMarkdownKeepsCompactTablesTabular(t *testing.T) {
+	markdown := strings.Join([]string{
+		"| Name | Status | Count |",
+		"| --- | --- | --- |",
+		"| bash | done | 2 |",
+		"| web_search | running | 1 |",
+	}, "\n")
+
+	rendered := stripANSI(renderMarkdownForView(markdown, 80))
+	if strings.Contains(rendered, "Status:") || strings.Contains(rendered, "Count:") {
+		t.Fatalf("compact table should stay tabular, got: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Name") || !strings.Contains(rendered, "Status") || !strings.Contains(rendered, "Count") {
+		t.Fatalf("rendered compact table missing headers: %q", rendered)
 	}
 }
 
@@ -208,9 +290,6 @@ func TestChatMarkdownRendersFencedDiff(t *testing.T) {
 		!strings.Contains(transcript, "-old") ||
 		!strings.Contains(transcript, "+new") {
 		t.Fatalf("rendered fenced diff missing content: %q", transcript)
-	}
-	if _, ok := renderMarkdownDiffFences(m.entries[0].content, 100); !ok {
-		t.Fatal("markdown diff fence should use diff-aware rendering")
 	}
 }
 

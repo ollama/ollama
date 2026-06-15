@@ -46,8 +46,9 @@ type RunOptions struct {
 	Think        *api.ThinkValue
 	KeepAlive    *api.Duration
 	UseTools     bool
-	// MaxToolRounds is an optional guard for tests or callers that need one.
-	// Zero means unlimited.
+	// MaxToolRounds limits consecutive model/tool cycles.
+	// Zero uses the default guard; negative disables the guard for tests or
+	// special callers.
 	MaxToolRounds int
 }
 
@@ -57,7 +58,11 @@ type RunResult struct {
 	WorkingDir string
 }
 
-const streamPersistDeltaThreshold = 20
+const (
+	streamPersistDeltaThreshold = 20
+	defaultMaxToolRounds        = 100
+	maxToolResultRunes          = 60000
+)
 
 func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
 	if s == nil {
@@ -83,8 +88,11 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	}
 
 	messages := make([]api.Message, 0, len(opts.Messages)+len(opts.NewMessages))
-	messages = append(messages, opts.Messages...)
+	for _, msg := range opts.Messages {
+		messages = append(messages, sanitizeMessageForRun(msg))
+	}
 	for _, msg := range opts.NewMessages {
+		msg = sanitizeMessageForRun(msg)
 		messages = append(messages, msg)
 		if opts.ChatID != "" && s.Store != nil {
 			if err := s.Store.AppendMessage(ctx, opts.ChatID, msg, ""); err != nil {
@@ -102,9 +110,10 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	var latest api.ChatResponse
 	var consecutiveErrors int
 	toolRounds := 0
+	maxToolRounds := resolvedMaxToolRounds(opts.MaxToolRounds)
 	compactionSkipNotified := false
 	for {
-		assistant, pendingToolCalls, err := s.chatRound(ctx, runID, opts, messages, &latest)
+		assistant, pendingToolCalls, canceled, err := s.chatRound(ctx, runID, opts, messages, &latest)
 		if err != nil {
 			var statusErr api.StatusError
 			if errors.As(err, &statusErr) && statusErr.StatusCode >= 500 && consecutiveErrors < 2 {
@@ -131,6 +140,21 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 		}
 		messages, compactionSkipNotified = s.maybeCompact(ctx, opts, messages, latest, compactionSkipNotified)
 
+		if canceled {
+			if len(pendingToolCalls) > 0 {
+				skipped, skipErr := s.skipToolCalls(context.WithoutCancel(ctx), runID, opts, pendingToolCalls, "Tool execution skipped because the run was canceled.")
+				if skipErr != nil {
+					emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Error: skipErr.Error()})
+					return nil, skipErr
+				}
+				messages = append(messages, skipped...)
+			}
+			if err := emit(s.Events, Event{Type: EventRunFinished, RunID: runID, ChatID: opts.ChatID, FinishedAt: time.Now(), Response: &latest}); err != nil {
+				return nil, err
+			}
+			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, nil
+		}
+
 		if len(pendingToolCalls) == 0 || !opts.UseTools || s.Tools == nil {
 			if err := emit(s.Events, Event{Type: EventRunFinished, RunID: runID, ChatID: opts.ChatID, FinishedAt: time.Now(), Response: &latest}); err != nil {
 				return nil, err
@@ -138,8 +162,17 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, nil
 		}
 
-		if opts.MaxToolRounds > 0 && toolRounds >= opts.MaxToolRounds {
-			break
+		if maxToolRounds >= 0 && toolRounds >= maxToolRounds {
+			content := fmt.Sprintf("Tool execution skipped because the max tool-round limit of %d was reached. Send another message to continue.", maxToolRounds)
+			toolMessages, skipErr := s.skipToolCalls(ctx, runID, opts, pendingToolCalls, content)
+			if skipErr != nil {
+				emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Error: skipErr.Error()})
+				return nil, skipErr
+			}
+			messages = append(messages, toolMessages...)
+			err := fmt.Errorf("tool round limit reached after %d rounds; send another message to continue", maxToolRounds)
+			emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Error: err.Error()})
+			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, err
 		}
 
 		toolMessages, denied, err := s.executeToolCalls(ctx, runID, opts, pendingToolCalls)
@@ -157,13 +190,9 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 		}
 		toolRounds++
 	}
-
-	err := fmt.Errorf("agent stopped after %d tool rounds", opts.MaxToolRounds)
-	emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Error: err.Error()})
-	return nil, err
 }
 
-func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest *api.ChatResponse) (api.Message, []api.ToolCall, error) {
+func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest *api.ChatResponse) (api.Message, []api.ToolCall, bool, error) {
 	format := opts.Format
 	if format == "json" {
 		format = `"` + format + `"`
@@ -272,18 +301,18 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			if flushErr := persist(context.WithoutCancel(ctx), true); flushErr != nil {
-				return assistant, pendingToolCalls, flushErr
+				return assistant, pendingToolCalls, true, flushErr
 			}
-			return assistant, pendingToolCalls, nil
+			return assistant, pendingToolCalls, true, nil
 		}
-		return assistant, pendingToolCalls, err
+		return assistant, pendingToolCalls, false, err
 	}
 
 	if err := persist(ctx, true); err != nil {
-		return assistant, pendingToolCalls, err
+		return assistant, pendingToolCalls, false, err
 	}
 
-	return assistant, pendingToolCalls, nil
+	return assistant, pendingToolCalls, false, nil
 }
 
 func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOptions, calls []api.ToolCall) ([]api.Message, bool, error) {
@@ -293,17 +322,18 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 	}
 
 	toolMessages := make([]api.Message, 0, len(calls))
-	for _, call := range calls {
+	for i, call := range calls {
 		toolName := call.Function.Name
 		args := call.Function.Arguments.ToMap()
 		tool, ok := s.Tools.Get(toolName)
 		if !ok {
 			content := fmt.Sprintf("Error: unknown tool: %s", toolName)
-			msg := api.Message{Role: "tool", Content: content, ToolName: toolName, ToolCallID: call.ID}
+			msg := toolMessage(toolName, call.ID, content)
 			if err := s.appendToolMessage(ctx, opts.ChatID, msg); err != nil {
 				return nil, false, err
 			}
 			toolMessages = append(toolMessages, msg)
+			content = msg.Content
 			if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: fmt.Sprintf("unknown tool: %s", toolName), FinishedAt: time.Now()}); emitErr != nil {
 				return nil, false, emitErr
 			}
@@ -326,13 +356,28 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 				if content == "" {
 					content = "Tool execution denied."
 				}
-				msg := api.Message{Role: "tool", Content: content, ToolName: toolName, ToolCallID: call.ID}
+				msg := toolMessage(toolName, call.ID, content)
 				if err := s.appendToolMessage(ctx, opts.ChatID, msg); err != nil {
 					return nil, false, err
 				}
 				toolMessages = append(toolMessages, msg)
+				content = msg.Content
 				if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: content, FinishedAt: time.Now()}); emitErr != nil {
 					return nil, false, emitErr
+				}
+				for _, skipped := range calls[i+1:] {
+					skippedToolName := skipped.Function.Name
+					skippedArgs := skipped.Function.Arguments.ToMap()
+					skippedContent := "Tool execution skipped because a previous tool call in this assistant message was denied."
+					skippedMsg := toolMessage(skippedToolName, skipped.ID, skippedContent)
+					if err := s.appendToolMessage(ctx, opts.ChatID, skippedMsg); err != nil {
+						return nil, false, err
+					}
+					toolMessages = append(toolMessages, skippedMsg)
+					skippedContent = skippedMsg.Content
+					if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: skipped.ID, ToolName: skippedToolName, Args: skippedArgs, Content: skippedContent, Error: skippedContent, FinishedAt: time.Now()}); emitErr != nil {
+						return nil, false, emitErr
+					}
 				}
 				return toolMessages, true, nil
 			}
@@ -346,11 +391,12 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		result, err := s.Tools.Execute(ctx, s.toolContext(), call)
 		if err != nil {
 			content := fmt.Sprintf("Error: %v", err)
-			msg := api.Message{Role: "tool", Content: content, ToolName: toolName, ToolCallID: call.ID}
+			msg := toolMessage(toolName, call.ID, content)
 			if appendErr := s.appendToolMessage(ctx, opts.ChatID, msg); appendErr != nil {
 				return nil, false, appendErr
 			}
 			toolMessages = append(toolMessages, msg)
+			content = msg.Content
 			if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: err.Error(), FinishedAt: time.Now()}); emitErr != nil {
 				return nil, false, emitErr
 			}
@@ -360,17 +406,35 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		s.applyToolWorkingDir(result.WorkingDir)
 		content := result.Content
 
-		msg := api.Message{Role: "tool", Content: content, ToolName: toolName, ToolCallID: call.ID}
+		msg := toolMessage(toolName, call.ID, content)
 		if err := s.appendToolMessage(ctx, opts.ChatID, msg); err != nil {
 			return nil, false, err
 		}
 		toolMessages = append(toolMessages, msg)
+		content = msg.Content
 
 		if err := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, WorkingDir: s.WorkingDir, Args: args, Content: content, FinishedAt: time.Now()}); err != nil {
 			return nil, false, err
 		}
 	}
 	return toolMessages, false, nil
+}
+
+func (s *Session) skipToolCalls(ctx context.Context, runID string, opts RunOptions, calls []api.ToolCall, content string) ([]api.Message, error) {
+	toolMessages := make([]api.Message, 0, len(calls))
+	for _, call := range calls {
+		toolName := call.Function.Name
+		args := call.Function.Arguments.ToMap()
+		msg := toolMessage(toolName, call.ID, content)
+		if err := s.appendToolMessage(ctx, opts.ChatID, msg); err != nil {
+			return nil, err
+		}
+		toolMessages = append(toolMessages, msg)
+		if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content, FinishedAt: time.Now()}); emitErr != nil {
+			return nil, emitErr
+		}
+	}
+	return toolMessages, nil
 }
 
 func (s *Session) toolContext() ToolContext {
@@ -467,6 +531,46 @@ func (s *Session) appendToolMessage(ctx context.Context, chatID string, msg api.
 		return nil
 	}
 	return s.Store.AppendMessage(ctx, chatID, msg, "")
+}
+
+func resolvedMaxToolRounds(value int) int {
+	if value == 0 {
+		return defaultMaxToolRounds
+	}
+	return value
+}
+
+func toolMessage(toolName, toolCallID, content string) api.Message {
+	return api.Message{
+		Role:       "tool",
+		Content:    truncateToolResultContent(content),
+		ToolName:   toolName,
+		ToolCallID: toolCallID,
+	}
+}
+
+func sanitizeMessageForRun(msg api.Message) api.Message {
+	if msg.Role == "tool" {
+		msg.Content = truncateToolResultContent(msg.Content)
+	}
+	return msg
+}
+
+func truncateToolResultContent(content string) string {
+	if len(content) <= maxToolResultRunes {
+		return content
+	}
+	runes := []rune(content)
+	if len(runes) <= maxToolResultRunes {
+		return content
+	}
+	head := maxToolResultRunes * 3 / 4
+	tail := maxToolResultRunes - head
+	omitted := len(runes) - head - tail
+	// TODO(parthsareen): Allow the model to page through full tool output or
+	// request specific ranges while staying aware of the available context.
+	marker := fmt.Sprintf("\n\n[tool output truncated: omitted %d characters]\n\n", omitted)
+	return string(runes[:head]) + marker + string(runes[len(runes)-tail:])
 }
 
 func messageEmpty(msg api.Message) bool {

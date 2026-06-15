@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,6 +56,8 @@ func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 		input = selected
 	}
 	m.input = nil
+	m.inputCursor = 0
+	m.inputCursorSet = false
 	m.complete = 0
 	m.resetPromptHistoryCursor()
 	if input == "" {
@@ -133,12 +134,12 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.startManualCompaction()
 	case strings.HasPrefix(input, "/"):
 		if skill, request, ok := m.skillTrigger(input); ok {
-			manualPrompt, err := skills.ManualSystemPrompt(skill)
+			manualMessages, err := agenttools.ManualSkillMessages(skill, request, len(m.messages)+1)
 			if err != nil {
 				m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
 				return *m, nil
 			}
-			return m.startRunWithPrompt(input, skills.ManualUserPrompt(skill.Name, request), manualPrompt)
+			return m.startRunWithMessages(input, manualMessages, "")
 		}
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Unknown command %q", strings.Fields(input)[0])}))
 		return *m, nil
@@ -248,6 +249,8 @@ func (m *chatModel) movePromptHistory(delta int) bool {
 		m.promptCursor += delta
 		if m.promptCursor >= len(m.promptHistory) {
 			m.input = slices.Clone(m.promptDraft)
+			m.inputCursor = len(m.input)
+			m.inputCursorSet = true
 			m.resetPromptHistoryCursor()
 			m.complete = 0
 			return true
@@ -258,6 +261,8 @@ func (m *chatModel) movePromptHistory(delta int) bool {
 	}
 
 	m.input = []rune(m.promptHistory[m.promptCursor])
+	m.inputCursor = len(m.input)
+	m.inputCursorSet = true
 	m.complete = 0
 	return true
 }
@@ -269,14 +274,51 @@ func (m *chatModel) resetPromptHistoryCursor() {
 }
 
 func (m *chatModel) insertInputNewline() {
+	m.insertInputRunes([]rune{'\n'})
+}
+
+func (m *chatModel) insertInputRunes(runes []rune) {
+	if len(runes) == 0 {
+		return
+	}
 	m.resetPromptHistoryCursor()
 	m.disarmQuit()
-	m.input = append(m.input, '\n')
+	cursor := m.normalizedInputCursor()
+	next := make([]rune, 0, len(m.input)+len(runes))
+	next = append(next, m.input[:cursor]...)
+	next = append(next, runes...)
+	next = append(next, m.input[cursor:]...)
+	m.input = next
+	m.inputCursor = cursor + len(runes)
+	m.inputCursorSet = true
 	m.complete = 0
 }
 
-func deleteInputWord(input []rune) []rune {
-	end := len(input)
+func (m *chatModel) deleteInputBackward() {
+	cursor := m.normalizedInputCursor()
+	if cursor <= 0 {
+		return
+	}
+	m.input = append(slices.Clone(m.input[:cursor-1]), m.input[cursor:]...)
+	m.inputCursor = cursor - 1
+	m.inputCursorSet = true
+	m.complete = 0
+}
+
+func (m *chatModel) deleteInputWordBackward() {
+	cursor := m.normalizedInputCursor()
+	if cursor <= 0 {
+		return
+	}
+	start := previousInputWordStart(m.input, cursor)
+	m.input = append(slices.Clone(m.input[:start]), m.input[cursor:]...)
+	m.inputCursor = start
+	m.inputCursorSet = true
+	m.complete = 0
+}
+
+func previousInputWordStart(input []rune, cursor int) int {
+	end := clamp(cursor, 0, len(input))
 	for end > 0 && unicode.IsSpace(input[end-1]) {
 		end--
 	}
@@ -284,7 +326,80 @@ func deleteInputWord(input []rune) []rune {
 	for start > 0 && !unicode.IsSpace(input[start-1]) {
 		start--
 	}
-	return input[:start]
+	return start
+}
+
+func (m *chatModel) moveInputCursorHorizontal(delta int) bool {
+	if delta == 0 {
+		return false
+	}
+	cursor := clamp(m.normalizedInputCursor()+delta, 0, len(m.input))
+	if cursor == m.normalizedInputCursor() {
+		return false
+	}
+	m.inputCursor = cursor
+	m.inputCursorSet = true
+	m.resetPromptHistoryCursor()
+	m.complete = 0
+	return true
+}
+
+func (m *chatModel) moveInputCursorVertical(delta int) bool {
+	if delta == 0 || len(m.input) == 0 {
+		return false
+	}
+	cursor := m.normalizedInputCursor()
+	lineStart, lineEnd := inputLineBounds(m.input, cursor)
+	column := cursor - lineStart
+	var targetStart, targetEnd int
+	if delta < 0 {
+		if lineStart == 0 {
+			return false
+		}
+		targetEnd = lineStart - 1
+		targetStart, _ = inputLineBounds(m.input, targetEnd)
+	} else {
+		if lineEnd >= len(m.input) {
+			return false
+		}
+		targetStart = lineEnd + 1
+		_, targetEnd = inputLineBounds(m.input, targetStart)
+	}
+	target := min(targetStart+column, targetEnd)
+	m.inputCursor = target
+	m.inputCursorSet = true
+	m.resetPromptHistoryCursor()
+	m.complete = 0
+	return true
+}
+
+func inputLineBounds(input []rune, cursor int) (int, int) {
+	cursor = clamp(cursor, 0, len(input))
+	start := cursor
+	for start > 0 && input[start-1] != '\n' {
+		start--
+	}
+	end := cursor
+	for end < len(input) && input[end] != '\n' {
+		end++
+	}
+	return start, end
+}
+
+func (m chatModel) normalizedInputCursor() int {
+	if !m.inputCursorSet {
+		return len(m.input)
+	}
+	return clamp(m.inputCursor, 0, len(m.input))
+}
+
+func inputWithCursor(input []rune, cursor int) string {
+	cursor = clamp(cursor, 0, len(input))
+	next := make([]rune, 0, len(input)+1)
+	next = append(next, input[:cursor]...)
+	next = append(next, '█')
+	next = append(next, input[cursor:]...)
+	return string(next)
 }
 
 func isShiftEnterCSI(msg tea.Msg) bool {
@@ -298,18 +413,14 @@ func isShiftEnterCSI(msg tea.Msg) bool {
 	}
 }
 
-func renderInputBox(input string, width int) string {
-	return strings.Join(renderInputBoxLines(input, width, maxInputBoxBodyLines), "\n")
-}
-
-func renderInputBoxLines(input string, width, maxBodyLines int) []string {
+func renderInputBoxLines(input string, cursor int, width, maxBodyLines int) []string {
 	if width < 1 {
 		width = 1
 	}
 	if maxBodyLines < 1 {
 		maxBodyLines = 1
 	}
-	body := wrapChatText("> "+input+"█", width)
+	body := wrapChatText("> "+inputWithCursor([]rune(input), cursor), width)
 	if len(body) > maxBodyLines {
 		body = slices.Clone(body[len(body)-maxBodyLines:])
 		body[0] = truncateInputLine("> ... "+body[0], width)
@@ -585,6 +696,8 @@ func (m *chatModel) applyCompletion() bool {
 	input := string(m.input)
 	if strings.HasPrefix(strings.TrimSpace(input), "/") {
 		m.input = []rune(selected.value)
+		m.inputCursor = len(m.input)
+		m.inputCursorSet = true
 		m.complete = 0
 		return true
 	}
@@ -599,6 +712,8 @@ func (m *chatModel) applyCompletion() bool {
 	}
 	next := string([]rune(input)[:start]) + "@" + selected.value + suffix
 	m.input = []rune(next)
+	m.inputCursor = len(m.input)
+	m.inputCursorSet = true
 	m.complete = 0
 	return true
 }
@@ -723,131 +838,12 @@ func (m chatModel) assistantOutputs() []string {
 	return outputs
 }
 
-func (m chatModel) historySummary() string {
-	var b strings.Builder
-	b.WriteString("**Message History**\n\n")
-
-	count := 0
+func (m chatModel) historyMessages() []api.Message {
+	var messages []api.Message
 	if systemPrompt := strings.TrimSpace(m.systemPrompt("")); systemPrompt != "" {
-		appendHistoryMessage(&b, api.Message{Role: "system", Content: systemPrompt})
-		count++
+		messages = append(messages, api.Message{Role: "system", Content: systemPrompt})
 	}
-	for _, msg := range m.messages {
-		appendHistoryMessage(&b, msg)
-		count++
-	}
-	if count == 0 {
-		b.WriteString("No messages yet.")
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func appendHistoryMessage(b *strings.Builder, msg api.Message) {
-	role := msg.Role
-	if strings.TrimSpace(role) == "" {
-		role = "message"
-	}
-	b.WriteString("**")
-	b.WriteString(role)
-	b.WriteString("**\n\n")
-
-	if msg.ToolName != "" || msg.ToolCallID != "" {
-		var parts []string
-		if msg.ToolName != "" {
-			parts = append(parts, "tool: `"+msg.ToolName+"`")
-		}
-		if msg.ToolCallID != "" {
-			parts = append(parts, "tool call: `"+msg.ToolCallID+"`")
-		}
-		b.WriteString("  ")
-		b.WriteString(strings.Join(parts, " · "))
-		b.WriteString("\n\n")
-	}
-
-	if strings.TrimSpace(msg.Thinking) != "" {
-		appendHistoryField(b, "thinking", msg.Thinking)
-	}
-
-	if len(msg.ToolCalls) > 0 {
-		b.WriteString("  tool calls:\n")
-		for _, call := range msg.ToolCalls {
-			appendHistoryToolCall(b, call)
-		}
-		b.WriteString("\n")
-	}
-
-	if strings.TrimSpace(msg.Content) != "" {
-		appendHistoryField(b, "content", msg.Content)
-	}
-
-	if strings.TrimSpace(msg.Thinking) == "" && len(msg.ToolCalls) == 0 && strings.TrimSpace(msg.Content) == "" {
-		b.WriteString("  _empty_\n\n")
-	}
-}
-
-func appendHistoryField(b *strings.Builder, label string, content string) {
-	content = strings.TrimRight(content, "\n")
-	if content == "" {
-		return
-	}
-	if !strings.Contains(content, "\n") && !strings.Contains(content, "```") {
-		b.WriteString("  ")
-		b.WriteString(label)
-		b.WriteString(": ")
-		b.WriteString(content)
-		b.WriteString("\n\n")
-		return
-	}
-	b.WriteString("  ")
-	b.WriteString(label)
-	b.WriteString(":\n\n")
-	appendHistoryCodeBlock(b, "text", content, "  ")
-}
-
-func appendHistoryToolCall(b *strings.Builder, call api.ToolCall) {
-	name := call.Function.Name
-	if name == "" {
-		name = "tool"
-	}
-	if call.ID != "" {
-		b.WriteString(fmt.Sprintf("    - `%s` %s\n", call.ID, toolDisplayName(name)))
-	} else {
-		b.WriteString(fmt.Sprintf("    - %s\n", toolDisplayName(name)))
-	}
-
-	args := call.Function.Arguments.ToMap()
-	if len(args) == 0 {
-		return
-	}
-	b.WriteString("      args:\n\n")
-	data, err := json.MarshalIndent(args, "", "  ")
-	if err != nil {
-		appendHistoryCodeBlock(b, "text", fmt.Sprint(args), "      ")
-		return
-	}
-	appendHistoryCodeBlock(b, "json", string(data), "      ")
-}
-
-func appendHistoryCodeBlock(b *strings.Builder, language string, content string, indent string) {
-	content = strings.TrimRight(content, "\n")
-	fence := "```"
-	for strings.Contains(content, fence) {
-		fence += "`"
-	}
-	b.WriteString(indent)
-	b.WriteString(fence)
-	if language != "" {
-		b.WriteString(language)
-	}
-	b.WriteString("\n")
-	for _, line := range strings.Split(content, "\n") {
-		b.WriteString(indent)
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	b.WriteString(indent)
-	b.WriteString(fence)
-	b.WriteString("\n\n")
+	return append(messages, m.messages...)
 }
 
 func (m chatModel) skillsSummary() string {
@@ -890,11 +886,18 @@ func (m *chatModel) importSkills(args []string) string {
 	if err != nil {
 		return fmt.Sprintf("imported skills but could not reload catalog: %v", err)
 	}
-	m.opts.Skills = catalog
+	if m.opts.Skills != nil {
+		*m.opts.Skills = *catalog
+		catalog = m.opts.Skills
+	} else {
+		m.opts.Skills = catalog
+	}
 	if m.opts.Tools != nil && !catalog.Empty() {
 		m.opts.Tools.Register(agenttools.NewSkill(catalog))
 	}
-	m.opts.SystemPrompt = catalog.SystemPrompt(m.opts.Tools != nil && m.opts.Tools.Has("skill"))
+	if m.opts.SystemPromptForModel != nil {
+		m.opts.SystemPrompt = m.opts.SystemPromptForModel(m.ctx, m.opts.Model, m.opts.Tools)
+	}
 
 	if len(results) == 0 {
 		return fmt.Sprintf("No skills found for %s.", source)

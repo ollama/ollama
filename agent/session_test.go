@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -57,6 +58,31 @@ func (s *memoryStore) UpdateLastMessage(_ context.Context, _ string, msg api.Mes
 	return nil
 }
 
+type contextAwareStore struct {
+	memoryStore
+}
+
+func (s *contextAwareStore) EnsureChat(ctx context.Context, id string, title string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.memoryStore.EnsureChat(ctx, id, title)
+}
+
+func (s *contextAwareStore) AppendMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.memoryStore.AppendMessage(ctx, chatID, msg, model)
+}
+
+func (s *contextAwareStore) UpdateLastMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.memoryStore.UpdateLastMessage(ctx, chatID, msg, model)
+}
+
 type staticTool struct{}
 
 type approvalTestTool struct {
@@ -69,6 +95,28 @@ type policyOnlyApprovalTool struct {
 }
 
 type cwdTestTool struct{}
+
+type largeTool struct{}
+
+type cancelAfterToolCallClient struct {
+	cancel context.CancelFunc
+}
+
+func (c cancelAfterToolCallClient) Chat(ctx context.Context, req *api.ChatRequest, fn api.ChatResponseFunc) error {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("value", "skip me")
+	if err := fn(api.ChatResponse{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+		ID: "call-1",
+		Function: api.ToolCallFunction{
+			Name:      "echo_tool",
+			Arguments: args,
+		},
+	}}}}); err != nil {
+		return err
+	}
+	c.cancel()
+	return context.Canceled
+}
 
 type wrappingApprovalHandler struct {
 	inner         ApprovalHandler
@@ -99,6 +147,28 @@ func (staticTool) Schema() api.ToolFunction {
 
 func (staticTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
 	return ToolResult{Content: "tool says hello"}, nil
+}
+
+func (largeTool) Name() string {
+	return "large_tool"
+}
+
+func (largeTool) Description() string {
+	return "returns a large result"
+}
+
+func (largeTool) Schema() api.ToolFunction {
+	return api.ToolFunction{
+		Name:        "large_tool",
+		Description: "returns a large result",
+		Parameters: api.ToolFunctionParameters{
+			Type: "object",
+		},
+	}
+}
+
+func (largeTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
+	return ToolResult{Content: strings.Repeat("x", maxToolResultRunes+100)}, nil
 }
 
 func (t approvalTestTool) Name() string {
@@ -381,7 +451,44 @@ func TestSessionPersistsPartialStreamOnCancellation(t *testing.T) {
 	}
 }
 
-func TestSessionToolLoopHasNoDefaultRoundCap(t *testing.T) {
+func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &contextAwareStore{}
+	registry := NewRegistry()
+	registry.Register(staticTool{})
+	session := &Session{
+		Client: cancelAfterToolCallClient{cancel: cancel},
+		Store:  store,
+		Tools:  registry,
+	}
+
+	result, err := session.Run(ctx, RunOptions{
+		ChatID:      "chat-1",
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "cancel after tool"}},
+		UseTools:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) != 3 {
+		t.Fatalf("messages = %#v", result.Messages)
+	}
+	if len(store.messages) != len(result.Messages) {
+		t.Fatalf("stored messages = %#v, want %d messages", store.messages, len(result.Messages))
+	}
+	if len(result.Messages[1].ToolCalls) != 1 {
+		t.Fatalf("assistant tool calls = %#v", result.Messages[1])
+	}
+	if result.Messages[2].Role != "tool" || result.Messages[2].ToolCallID != "call-1" {
+		t.Fatalf("skipped tool message = %#v", result.Messages[2])
+	}
+	if !strings.Contains(result.Messages[2].Content, "run was canceled") {
+		t.Fatalf("skipped content = %q", result.Messages[2].Content)
+	}
+}
+
+func TestSessionToolLoopAllowsRoundsUnderDefaultCap(t *testing.T) {
 	responses := make([][]api.ChatResponse, 0, 26)
 	for i := 0; i < 25; i++ {
 		args := api.NewToolCallFunctionArguments()
@@ -419,6 +526,252 @@ func TestSessionToolLoopHasNoDefaultRoundCap(t *testing.T) {
 
 	if client.calls != 26 {
 		t.Fatalf("client calls = %d, want 26", client.calls)
+	}
+}
+
+func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
+	firstArgs := api.NewToolCallFunctionArguments()
+	firstArgs.Set("value", "first")
+	secondArgs := api.NewToolCallFunctionArguments()
+	secondArgs.Set("value", "second")
+	thirdArgs := api.NewToolCallFunctionArguments()
+	thirdArgs.Set("value", "third")
+
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "echo_tool",
+						Arguments: firstArgs,
+					},
+				}}},
+			}},
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{
+					{
+						ID: "call-2",
+						Function: api.ToolCallFunction{
+							Name:      "echo_tool",
+							Arguments: secondArgs,
+						},
+					},
+					{
+						ID: "call-3",
+						Function: api.ToolCallFunction{
+							Name:      "echo_tool",
+							Arguments: thirdArgs,
+						},
+					},
+				}},
+			}},
+		},
+	}
+	store := &memoryStore{}
+	registry := NewRegistry()
+	registry.Register(staticTool{})
+	session := &Session{
+		Client: client,
+		Store:  store,
+		Tools:  registry,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		ChatID:        "chat-1",
+		Model:         "model",
+		NewMessages:   []api.Message{{Role: "user", Content: "hit cap"}},
+		UseTools:      true,
+		MaxToolRounds: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "tool round limit reached after 1 rounds") {
+		t.Fatalf("error = %v, want tool-round limit", err)
+	}
+	if result == nil {
+		t.Fatal("expected partial result with skipped tool messages")
+	}
+	if len(result.Messages) != 6 {
+		t.Fatalf("messages = %#v", result.Messages)
+	}
+	if len(store.messages) != len(result.Messages) {
+		t.Fatalf("stored messages = %#v, want %d messages", store.messages, len(result.Messages))
+	}
+	for i, wantID := range []string{"call-2", "call-3"} {
+		msg := result.Messages[4+i]
+		if msg.Role != "tool" || msg.ToolCallID != wantID {
+			t.Fatalf("skipped tool %d = %#v", i, msg)
+		}
+		if !strings.Contains(msg.Content, "max tool-round limit of 1") {
+			t.Fatalf("skipped content = %q", msg.Content)
+		}
+	}
+}
+
+func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
+	responses := make([][]api.ChatResponse, 0, defaultMaxToolRounds+1)
+	for i := 0; i < defaultMaxToolRounds+1; i++ {
+		args := api.NewToolCallFunctionArguments()
+		args.Set("value", "hello")
+		responses = append(responses, []api.ChatResponse{{
+			Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+				ID: "call",
+				Function: api.ToolCallFunction{
+					Name:      "echo_tool",
+					Arguments: args,
+				},
+			}}},
+		}})
+	}
+
+	client := &fakeClient{responses: responses}
+	registry := NewRegistry()
+	registry.Register(staticTool{})
+	session := &Session{
+		Client: client,
+		Tools:  registry,
+	}
+
+	_, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "keep going"}},
+		UseTools:    true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "tool round limit reached after 100 rounds") {
+		t.Fatalf("error = %v, want default tool round limit", err)
+	}
+	if client.calls != defaultMaxToolRounds+1 {
+		t.Fatalf("client calls = %d, want %d", client.calls, defaultMaxToolRounds+1)
+	}
+}
+
+func TestSessionToolLoopNegativeLimitIsUnlimited(t *testing.T) {
+	responses := make([][]api.ChatResponse, 0, defaultMaxToolRounds+2)
+	for i := 0; i < defaultMaxToolRounds+1; i++ {
+		args := api.NewToolCallFunctionArguments()
+		args.Set("value", "hello")
+		responses = append(responses, []api.ChatResponse{{
+			Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+				ID: "call",
+				Function: api.ToolCallFunction{
+					Name:      "echo_tool",
+					Arguments: args,
+				},
+			}}},
+		}})
+	}
+	responses = append(responses, []api.ChatResponse{{
+		Message: api.Message{Role: "assistant", Content: "done"},
+	}})
+
+	client := &fakeClient{responses: responses}
+	registry := NewRegistry()
+	registry.Register(staticTool{})
+	session := &Session{
+		Client: client,
+		Tools:  registry,
+	}
+
+	if _, err := session.Run(context.Background(), RunOptions{
+		Model:         "model",
+		NewMessages:   []api.Message{{Role: "user", Content: "keep going"}},
+		UseTools:      true,
+		MaxToolRounds: -1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != defaultMaxToolRounds+2 {
+		t.Fatalf("client calls = %d, want %d", client.calls, defaultMaxToolRounds+2)
+	}
+}
+
+func TestSessionTruncatesLargeToolResultsBeforeHistory(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "large_tool",
+						Arguments: args,
+					},
+				}}},
+			}},
+			{{Message: api.Message{Role: "assistant", Content: "done"}}},
+		},
+	}
+	store := &memoryStore{}
+	registry := NewRegistry()
+	registry.Register(largeTool{})
+	session := &Session{
+		Client: client,
+		Store:  store,
+		Tools:  registry,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		ChatID:      "chat-1",
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		UseTools:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) < 3 {
+		t.Fatalf("messages = %#v", result.Messages)
+	}
+	content := result.Messages[2].Content
+	if !strings.Contains(content, "[tool output truncated: omitted 100 characters]") {
+		t.Fatalf("tool content missing truncation marker: %q", content)
+	}
+	if strings.Count(content, "x") != maxToolResultRunes {
+		t.Fatalf("truncated content x count = %d, want %d", strings.Count(content, "x"), maxToolResultRunes)
+	}
+	if store.messages[2].Content != content {
+		t.Fatalf("stored tool content not truncated consistently")
+	}
+	if client.requests[1].Messages[2].Content != content {
+		t.Fatalf("second model request did not use truncated tool content")
+	}
+}
+
+func TestSessionTruncatesSeededToolMessagesBeforeHistory(t *testing.T) {
+	largeContent := strings.Repeat("x", maxToolResultRunes+100)
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{{
+			{Message: api.Message{Role: "assistant", Content: "done"}},
+		}},
+	}
+	store := &memoryStore{}
+	session := &Session{
+		Client: client,
+		Store:  store,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		ChatID: "chat-1",
+		Model:  "model",
+		NewMessages: []api.Message{
+			{Role: "user", Content: "use seeded tool"},
+			{Role: "tool", ToolName: "skill", ToolCallID: "call-1", Content: largeContent},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) < 2 {
+		t.Fatalf("messages = %#v", result.Messages)
+	}
+	content := result.Messages[1].Content
+	if !strings.Contains(content, "[tool output truncated: omitted 100 characters]") {
+		t.Fatalf("seeded tool content missing truncation marker: %q", content)
+	}
+	if store.messages[1].Content != content {
+		t.Fatalf("stored seeded tool content not truncated consistently")
+	}
+	if client.requests[0].Messages[1].Content != content {
+		t.Fatalf("model request did not use truncated seeded tool content")
 	}
 }
 
@@ -588,13 +941,16 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(approvalTestTool{called: &called})
 	registry.Register(staticTool{})
+	store := &memoryStore{}
 	session := &Session{
 		Client:   client,
 		Tools:    registry,
+		Store:    store,
 		Approval: NewApprovalManager(ApprovalManagerOptions{}),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
+		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
 		UseTools:    true,
@@ -608,7 +964,7 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 	if client.calls != 1 {
 		t.Fatalf("client calls = %d, want 1 after denial", client.calls)
 	}
-	if len(result.Messages) != 3 {
+	if len(result.Messages) != 4 {
 		t.Fatalf("messages = %#v", result.Messages)
 	}
 	if result.Messages[2].Role != "tool" || result.Messages[2].ToolCallID != "call-1" {
@@ -616,6 +972,18 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 	}
 	if result.Messages[2].Content == "" || result.Messages[2].Content == "approved" || result.Messages[2].Content == "tool says hello" {
 		t.Fatalf("tool denial content = %q", result.Messages[2].Content)
+	}
+	if result.Messages[3].Role != "tool" || result.Messages[3].ToolCallID != "call-2" {
+		t.Fatalf("skipped tool message = %#v", result.Messages[3])
+	}
+	if !strings.Contains(result.Messages[3].Content, "skipped because a previous tool call") {
+		t.Fatalf("skipped tool content = %q", result.Messages[3].Content)
+	}
+	if len(store.messages) != len(result.Messages) {
+		t.Fatalf("persisted messages = %#v, want %d messages", store.messages, len(result.Messages))
+	}
+	if store.messages[2].ToolCallID != "call-1" || store.messages[3].ToolCallID != "call-2" {
+		t.Fatalf("persisted tool call ids = %#v", store.messages)
 	}
 }
 

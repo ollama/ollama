@@ -169,6 +169,57 @@ func TestChatInputCtrlUClearsPrompt(t *testing.T) {
 	}
 }
 
+func TestChatInputArrowKeysEditMiddle(t *testing.T) {
+	m := chatModel{input: []rune("hello world")}
+
+	for range 5 {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+		m = updated.(chatModel)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("beautiful ")})
+	m = updated.(chatModel)
+
+	if got := string(m.input); got != "hello beautiful world" {
+		t.Fatalf("input = %q, want inserted text in middle", got)
+	}
+	if m.inputCursor != len([]rune("hello beautiful ")) {
+		t.Fatalf("cursor = %d, want after inserted text", m.inputCursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "hello beautifulworld" {
+		t.Fatalf("input after backspace = %q", got)
+	}
+}
+
+func TestChatInputUpDownNavigateMultilineBeforeHistory(t *testing.T) {
+	m := chatModel{
+		input:         []rune("one\ntwo\nthree"),
+		promptHistory: []string{"old prompt"},
+	}
+	m.inputCursor = len([]rune("one\ntwo"))
+	m.inputCursorSet = true
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(chatModel)
+	if got := m.inputCursor; got != len([]rune("one")) {
+		t.Fatalf("cursor after up = %d, want end of first line", got)
+	}
+	if got := string(m.input); got != "one\ntwo\nthree" {
+		t.Fatalf("input after up = %q, want unchanged", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(chatModel)
+	if got := m.inputCursor; got != len([]rune("one\ntwo")) {
+		t.Fatalf("cursor after down = %d, want end of second line", got)
+	}
+	if m.promptActive {
+		t.Fatal("multiline cursor navigation should not enter prompt history")
+	}
+}
+
 func TestChatPromptHistoryNavigatesPreviousPrompts(t *testing.T) {
 	m := chatModel{
 		input:         []rune("draft"),
@@ -960,11 +1011,23 @@ func TestChatSkillSlashCompletionAndTrigger(t *testing.T) {
 		t.Fatalf("requests = %d, want 1", len(client.requests))
 	}
 	reqMessages := client.requests[0].Messages
-	if len(reqMessages) < 2 || reqMessages[0].Role != "system" || !strings.Contains(reqMessages[0].Content, "# Go Code") {
+	if len(reqMessages) < 3 {
 		t.Fatalf("request messages = %#v", reqMessages)
 	}
-	if got := reqMessages[1].Content; !strings.Contains(got, "Use the go-code skill") || !strings.Contains(got, "write a test") {
+	if reqMessages[0].Role == "system" {
+		if strings.Contains(reqMessages[0].Content, "# Go Code") {
+			t.Fatalf("system prompt should contain skill metadata only: %#v", reqMessages[0])
+		}
+		reqMessages = reqMessages[1:]
+	}
+	if got := reqMessages[0].Content; got != "write a test" {
 		t.Fatalf("user prompt = %q", got)
+	}
+	if reqMessages[1].Role != "assistant" || len(reqMessages[1].ToolCalls) != 1 || reqMessages[1].ToolCalls[0].Function.Name != "skill" {
+		t.Fatalf("manual skill should be a synthetic assistant tool call: %#v", reqMessages[1])
+	}
+	if reqMessages[2].Role != "tool" || reqMessages[2].ToolName != "skill" || !strings.Contains(reqMessages[2].Content, "# Go Code") {
+		t.Fatalf("manual skill should include skill tool result: %#v", reqMessages[2])
 	}
 }
 
@@ -981,10 +1044,15 @@ func TestChatSkillsImportCommand(t *testing.T) {
 	}
 
 	registry := coreagent.NewRegistry()
+	catalog := &agentskills.Catalog{}
 	m := chatModel{
 		input: []rune("/skills import claude"),
 		opts: ChatOptions{
-			Tools: registry,
+			Tools:  registry,
+			Skills: catalog,
+			SystemPromptForModel: func(context.Context, string, *coreagent.Registry) string {
+				return "default Ollama prompt\n\n" + catalog.SystemPrompt(registry.Has("skill"))
+			},
 		},
 	}
 
@@ -998,6 +1066,9 @@ func TestChatSkillsImportCommand(t *testing.T) {
 	}
 	if m.opts.Skills == nil || !m.opts.Tools.Has("skill") {
 		t.Fatalf("skills/tool registry not updated: skills=%#v tools=%v", m.opts.Skills, m.opts.Tools.Names())
+	}
+	if !strings.Contains(m.opts.SystemPrompt, "default Ollama prompt") || !strings.Contains(m.opts.SystemPrompt, "go-code: Write Go code.") {
+		t.Fatalf("system prompt not rebuilt with default prompt and skills: %q", m.opts.SystemPrompt)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".ollama", "skills", "go-code", agentskills.SkillFile)); err != nil {
 		t.Fatal(err)

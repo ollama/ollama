@@ -166,30 +166,6 @@ func (c *Catalog) SystemPrompt(toolAvailable bool) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func ManualSystemPrompt(skill Skill) (string, error) {
-	content, err := skill.Read()
-	if err != nil {
-		return "", err
-	}
-
-	var b strings.Builder
-	b.WriteString("The user manually triggered the ")
-	b.WriteString(skill.Name)
-	b.WriteString(" skill for this request. Follow this SKILL.md. Resolve relative file references from ")
-	b.WriteString(skill.Dir)
-	b.WriteString(".\n\n")
-	b.WriteString(content)
-	return b.String(), nil
-}
-
-func ManualUserPrompt(skillName, request string) string {
-	request = strings.TrimSpace(request)
-	if request == "" {
-		return fmt.Sprintf("Use the %s skill.", skillName)
-	}
-	return fmt.Sprintf("Use the %s skill for this task.\n\n%s", skillName, request)
-}
-
 func (s Skill) Read() (string, error) {
 	if s.File == "" {
 		return "", fmt.Errorf("skill %q has no %s path", s.Name, SkillFile)

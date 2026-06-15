@@ -73,10 +73,29 @@ func agentOptionsFromRunOptions(opts runOptions) AgentTUIOptions {
 	}
 }
 
-func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
+type agentRunSetup struct {
+	opts      AgentTUIOptions
+	client    *api.Client
+	cwd       string
+	store     *chatstore.Store
+	newChatID func(context.Context) (string, error)
+	chatID    string
+	messages  []api.Message
+	skills    *skills.Catalog
+	registry  *coreagent.Registry
+	approval  coreagent.ApprovalHandler
+}
+
+func (s *agentRunSetup) close() {
+	if s != nil && s.store != nil {
+		_ = s.store.Close()
+	}
+}
+
+func newAgentRunSetup(cmd *cobra.Command, opts AgentTUIOptions, resumeLatestWithoutModel bool) (*agentRunSetup, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	cwd, err := os.Getwd()
@@ -84,12 +103,11 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		cwd = ""
 	}
 
-	var persistentStore *chatstore.Store
-	if store, err := chatstore.New(""); err != nil {
+	var store *chatstore.Store
+	if openedStore, err := chatstore.New(""); err != nil {
 		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m chat persistence unavailable: %v\n", err)
 	} else {
-		persistentStore = store
-		defer persistentStore.Close()
+		store = openedStore
 	}
 
 	newChatID := func(ctx context.Context) (string, error) {
@@ -98,8 +116,8 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 			u = uuid.Must(uuid.NewRandom())
 		}
 		chatID := u.String()
-		if persistentStore != nil {
-			if err := persistentStore.EnsureChat(ctx, chatID, ""); err != nil {
+		if store != nil {
+			if err := store.EnsureChat(ctx, chatID, ""); err != nil {
 				return "", err
 			}
 		}
@@ -109,15 +127,32 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 	chatID := ""
 	var resumedMessages []api.Message
 	if opts.Resume {
-		if persistentStore == nil {
+		if store == nil {
 			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m chat resume unavailable: persistence is disabled\n")
-		} else if chat, err := persistentStore.LatestChatForModel(cmd.Context(), opts.Model); err == nil {
-			chatID = chat.ID
-			resumedMessages = chat.Messages
-		} else if errors.Is(err, sql.ErrNoRows) {
-			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m no saved chat for %s; starting a new chat\n", opts.Model)
 		} else {
-			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not resume chat: %v\n", err)
+			chat, err := resumeAgentChat(cmd.Context(), store, opts.Model, resumeLatestWithoutModel)
+			if err == nil {
+				chatID = chat.ID
+				if opts.Model == "" {
+					opts.Model = chat.Model
+				}
+				resumedMessages = chat.Messages
+			} else if errors.Is(err, sql.ErrNoRows) {
+				if resumeLatestWithoutModel && opts.Model == "" {
+					if store != nil {
+						_ = store.Close()
+					}
+					return nil, errors.New("no saved chat to resume; pass a model to start a new chat")
+				}
+				fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m no saved chat for %s; starting a new chat\n", opts.Model)
+			} else if resumeLatestWithoutModel {
+				if store != nil {
+					_ = store.Close()
+				}
+				return nil, fmt.Errorf("could not resume chat: %w", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not resume chat: %v\n", err)
+			}
 		}
 	}
 	if chatID == "" {
@@ -125,7 +160,10 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		chatID, err = newChatID(cmd.Context())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not create persistent chat: %v\n", err)
-			persistentStore = nil
+			if store != nil {
+				_ = store.Close()
+			}
+			store = nil
 			chatID, _ = newChatID(cmd.Context())
 		}
 	}
@@ -146,44 +184,74 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 	messages = append(messages, resumedMessages...)
 	messages = append(messages, opts.Messages...)
 
+	return &agentRunSetup{
+		opts:      opts,
+		client:    client,
+		cwd:       cwd,
+		store:     store,
+		newChatID: newChatID,
+		chatID:    chatID,
+		messages:  messages,
+		skills:    skillCatalog,
+		registry:  registry,
+		approval:  approval,
+	}, nil
+}
+
+func resumeAgentChat(ctx context.Context, store *chatstore.Store, modelName string, latestWithoutModel bool) (*chatstore.Chat, error) {
+	if latestWithoutModel && modelName == "" {
+		return store.LatestChat(ctx)
+	}
+	return store.LatestChatForModel(ctx, modelName)
+}
+
+func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
+	setup, err := newAgentRunSetup(cmd, opts, false)
+	if err != nil {
+		return err
+	}
+	defer setup.close()
+
+	opts = setup.opts
+
 	_, err = tui.RunAgentChat(cmd.Context(), tui.ChatOptions{
 		Model:    opts.Model,
-		ChatID:   chatID,
-		Messages: messages,
-		Client:   client,
-		Store:    persistentStore,
-		Tools:    registry,
+		ChatID:   setup.chatID,
+		Messages: setup.messages,
+		Client:   setup.client,
+		Store:    setup.store,
+		Tools:    setup.registry,
 		ToolRegistryForModel: func(ctx context.Context, model string) *coreagent.Registry {
-			return agentToolsRegistry(ctx, client, model, skillCatalog)
+			return agentToolsRegistry(ctx, setup.client, model, setup.skills)
 		},
 		ModelOptions: func(ctx context.Context) ([]tui.ChatModelOption, error) {
-			return agentModelOptions(ctx, client)
+			return agentModelOptions(ctx, setup.client)
 		},
 		OnModelSelected: func(_ context.Context, model string) error {
 			return config.SetLastModel(model)
 		},
 		SystemPromptForModel: func(_ context.Context, _ string, registry *coreagent.Registry) string {
-			return agentSystemPrompt(skillCatalog, registry != nil && registry.Has("skill"), "")
+			return agentSystemPrompt(setup.skills, registry != nil && registry.Has("skill"), "")
 		},
-		Approval:         approval,
+		Approval:         setup.approval,
 		AutoApproveTools: opts.AutoApproveTools,
-		Skills:           skillCatalog,
-		SystemPrompt:     agentSystemPrompt(skillCatalog, registry != nil && registry.Has("skill"), ""),
-		WorkingDir:       cwd,
+		Skills:           setup.skills,
+		SystemPrompt:     agentSystemPrompt(setup.skills, setup.registry != nil && setup.registry.Has("skill"), ""),
+		WorkingDir:       setup.cwd,
 		Format:           opts.Format,
 		Options:          opts.Options,
 		Think:            opts.Think,
 		KeepAlive:        opts.KeepAlive,
 		HideThinking:     opts.HideThinking,
 		Verbose:          opts.Verbose,
-		Compactor: coreagent.NewSimpleCompactor(client, persistentStore, coreagent.CompactionOptions{
+		Compactor: coreagent.NewSimpleCompactor(setup.client, setup.store, coreagent.CompactionOptions{
 			ContextWindowTokens: opts.ContextWindowTokens,
 		}),
 		ContextWindowTokens: opts.ContextWindowTokens,
 		ContextWindowTokensForModel: func(ctx context.Context, model string, fallback int) int {
-			return contextWindowTokensForRun(ctx, client, model, fallback)
+			return contextWindowTokensForRun(ctx, setup.client, model, fallback)
 		},
-		NewChat: newChatID,
+		NewChat: setup.newChatID,
 	})
 	return err
 }
@@ -193,92 +261,16 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 		return errors.New("agent headless mode requires a prompt or stdin")
 	}
 
-	client, err := api.ClientFromEnvironment()
+	setup, err := newAgentRunSetup(cmd, opts, true)
 	if err != nil {
 		return err
 	}
+	defer setup.close()
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = ""
-	}
-
-	var persistentStore *chatstore.Store
-	if store, err := chatstore.New(""); err != nil {
-		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m chat persistence unavailable: %v\n", err)
-	} else {
-		persistentStore = store
-		defer persistentStore.Close()
-	}
-
-	newChatID := func(ctx context.Context) (string, error) {
-		u, err := uuid.NewV7()
-		if err != nil {
-			u = uuid.Must(uuid.NewRandom())
-		}
-		chatID := u.String()
-		if persistentStore != nil {
-			if err := persistentStore.EnsureChat(ctx, chatID, ""); err != nil {
-				return "", err
-			}
-		}
-		return chatID, nil
-	}
-
-	chatID := ""
-	var resumedMessages []api.Message
-	if opts.Resume {
-		if persistentStore == nil {
-			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m chat resume unavailable: persistence is disabled\n")
-		} else {
-			var chat *chatstore.Chat
-			var err error
-			if opts.Model == "" {
-				chat, err = persistentStore.LatestChat(cmd.Context())
-			} else {
-				chat, err = persistentStore.LatestChatForModel(cmd.Context(), opts.Model)
-			}
-			if err == nil {
-				chatID = chat.ID
-				if opts.Model == "" {
-					opts.Model = chat.Model
-				}
-				resumedMessages = chat.Messages
-			} else if errors.Is(err, sql.ErrNoRows) && opts.Model != "" {
-				fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m no saved chat for %s; starting a new chat\n", opts.Model)
-			} else if errors.Is(err, sql.ErrNoRows) {
-				return errors.New("no saved chat to resume; pass a model to start a new chat")
-			} else {
-				return fmt.Errorf("could not resume chat: %w", err)
-			}
-		}
-	}
+	opts = setup.opts
 	if opts.Model == "" {
 		return errors.New("model is required")
 	}
-	if chatID == "" {
-		chatID, err = newChatID(cmd.Context())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not create persistent chat: %v\n", err)
-			persistentStore = nil
-			chatID, _ = newChatID(cmd.Context())
-		}
-	}
-
-	skillCatalog := opts.Skills
-	if skillCatalog == nil {
-		skillCatalog = loadAgentSkills()
-	}
-
-	registry := agentToolsRegistry(cmd.Context(), client, opts.Model, skillCatalog)
-	opts.ContextWindowTokens = contextWindowTokensForRun(cmd.Context(), client, opts.Model, opts.ContextWindowTokens)
-	approval := coreagent.ApprovalHandler(coreagent.NewApprovalManager(coreagent.ApprovalManagerOptions{}))
-	if opts.AutoApproveTools {
-		approval = coreagent.AutoAllowApproval{}
-	}
-	messages := slices.Clone(opts.LoadedMessages)
-	messages = append(messages, resumedMessages...)
-	messages = append(messages, opts.Messages...)
 
 	prompt := opts.Prompt
 	images := slices.Clone(opts.Images)
@@ -289,24 +281,25 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 			return err
 		}
 	}
-	systemPrompt := agentSystemPrompt(skillCatalog, registry != nil && registry.Has("skill"), "")
+	systemPrompt := agentSystemPrompt(setup.skills, setup.registry != nil && setup.registry.Has("skill"), "")
+	newMessages := []api.Message{{Role: "user", Content: prompt, Images: images}}
 	if strings.TrimSpace(opts.Skill) == "" {
-		if skill, request, ok := skillFromPrompt(skillCatalog, prompt); ok {
+		if skill, request, ok := skillFromPrompt(setup.skills, prompt); ok {
 			opts.Skill = skill.Name
 			prompt = request
 		}
 	}
 	if strings.TrimSpace(opts.Skill) != "" {
-		skill, ok := skillCatalog.Find(opts.Skill)
+		skill, ok := setup.skills.Find(opts.Skill)
 		if !ok {
 			return fmt.Errorf("unknown skill: %s", opts.Skill)
 		}
-		manualPrompt, err := skills.ManualSystemPrompt(skill)
+		manualMessages, err := agenttools.ManualSkillMessages(skill, prompt, len(setup.messages)+1)
 		if err != nil {
 			return err
 		}
-		systemPrompt = agentSystemPrompt(skillCatalog, registry != nil && registry.Has("skill"), manualPrompt)
-		prompt = skills.ManualUserPrompt(skill.Name, prompt)
+		manualMessages[0].Images = images
+		newMessages = manualMessages
 	}
 
 	runCtx, cancel := context.WithCancel(cmd.Context())
@@ -325,27 +318,27 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 
 	sink := &agentHeadlessEventSink{}
 	session := &coreagent.Session{
-		Client:     client,
-		Store:      persistentStore,
+		Client:     setup.client,
+		Store:      setup.store,
 		Events:     sink,
-		Tools:      registry,
-		Approval:   approval,
-		WorkingDir: cwd,
-		Compactor: coreagent.NewSimpleCompactor(client, persistentStore, coreagent.CompactionOptions{
+		Tools:      setup.registry,
+		Approval:   setup.approval,
+		WorkingDir: setup.cwd,
+		Compactor: coreagent.NewSimpleCompactor(setup.client, setup.store, coreagent.CompactionOptions{
 			ContextWindowTokens: opts.ContextWindowTokens,
 		}),
 	}
 	result, err := session.Run(runCtx, coreagent.RunOptions{
-		ChatID:       chatID,
+		ChatID:       setup.chatID,
 		Model:        opts.Model,
 		SystemPrompt: systemPrompt,
-		Messages:     messages,
-		NewMessages:  []api.Message{{Role: "user", Content: prompt, Images: images}},
+		Messages:     setup.messages,
+		NewMessages:  newMessages,
 		Format:       opts.Format,
 		Options:      opts.Options,
 		Think:        opts.Think,
 		KeepAlive:    opts.KeepAlive,
-		UseTools:     registry != nil,
+		UseTools:     setup.registry != nil,
 	})
 	if err != nil {
 		return err

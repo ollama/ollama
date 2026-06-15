@@ -831,6 +831,39 @@ func TestChatToolCallRendersPrettyInvocationAndResult(t *testing.T) {
 	}
 }
 
+func TestChatToolOutputHidesInternalTruncationMarker(t *testing.T) {
+	entry := chatEntry{
+		role:     "tool",
+		detail:   "bash",
+		status:   "done",
+		expanded: true,
+		content:  "head\n\n[tool output truncated: omitted 100 characters]\n\ntail",
+	}
+
+	rendered := stripANSI(strings.Join(renderToolResultLines(entry, 80), "\n"))
+	if strings.Contains(rendered, "tool output truncated") || strings.Contains(rendered, "omitted 100 characters") {
+		t.Fatalf("internal truncation marker should be hidden from tool output: %q", rendered)
+	}
+	if !strings.Contains(rendered, "head") || !strings.Contains(rendered, "tail") {
+		t.Fatalf("tool output should keep visible content: %q", rendered)
+	}
+}
+
+func TestChatHistoryHidesInternalToolTruncationMarker(t *testing.T) {
+	rendered := stripANSI(strings.Join(renderHistoryMessages([]api.Message{{
+		Role:       "tool",
+		ToolName:   "bash",
+		ToolCallID: "call-1",
+		Content:    "head\n\n[tool output truncated: omitted 100 characters]\n\ntail",
+	}}, 80), "\n"))
+	if strings.Contains(rendered, "tool output truncated") || strings.Contains(rendered, "omitted 100 characters") {
+		t.Fatalf("internal truncation marker should be hidden from history: %q", rendered)
+	}
+	if !strings.Contains(rendered, "head") || !strings.Contains(rendered, "tail") {
+		t.Fatalf("history should keep visible content: %q", rendered)
+	}
+}
+
 func TestChatRenderTranscriptCachesEntryLinesUntilDirty(t *testing.T) {
 	m := chatModel{
 		entries: []chatEntry{

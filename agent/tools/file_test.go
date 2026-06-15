@@ -93,3 +93,76 @@ func TestReadRejectsParentOutsideCurrentWorkingDir(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestReadDefaultsToEntireFile(t *testing.T) {
+	dir := t.TempDir()
+	content := "one\ntwo\nthree\n"
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path": "note.txt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Content != content {
+		t.Fatalf("content = %q", result.Content)
+	}
+}
+
+func TestReadLineRange(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("one\ntwo\nthree\nfour\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path":       "note.txt",
+		"line_range": "2-3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Content != "two\nthree\n" {
+		t.Fatalf("content = %q", result.Content)
+	}
+}
+
+func TestReadLineCountFromStartLine(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("one\ntwo\nthree\nfour\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path":       "note.txt",
+		"start_line": 3,
+		"line_count": 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Content != "three\nfour\n" {
+		t.Fatalf("content = %q", result.Content)
+	}
+}
+
+func TestReadRejectsInvalidLineRange(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path":       "note.txt",
+		"line_range": "4-2",
+	})
+	if err == nil {
+		t.Fatal("expected invalid range to fail")
+	}
+	if !strings.Contains(err.Error(), "line_range end") {
+		t.Fatalf("err = %v", err)
+	}
+}

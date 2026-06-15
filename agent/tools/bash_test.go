@@ -35,6 +35,24 @@ func TestBashReportsFinalWorkingDir(t *testing.T) {
 	}
 }
 
+func TestBashBoundsOutputWhileRunning(t *testing.T) {
+	result, err := NewBash().Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+		"command": "yes x | head -c 70000",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Content, "[stdout truncated: omitted ") {
+		t.Fatalf("content = %q, want stdout truncation marker", result.Content)
+	}
+	if count := strings.Count(result.Content, "x"); count != maxBashOutputBytes/2 {
+		t.Fatalf("captured x count = %d, want %d", count, maxBashOutputBytes/2)
+	}
+	if len(result.Content) > maxBashOutputBytes+200 {
+		t.Fatalf("content length = %d, want bounded output", len(result.Content))
+	}
+}
+
 func TestReadFinalWorkingDirRejectsInvalidPaths(t *testing.T) {
 	dir := t.TempDir()
 	cwdFile := filepath.Join(dir, "cwd")

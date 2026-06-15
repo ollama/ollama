@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -13,7 +12,8 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-const bashTimeout = 60 * time.Second
+const bashTimeout = 3 * time.Minute
+const maxBashOutputBytes = 60_000
 
 type Bash struct{}
 
@@ -73,7 +73,9 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		cmd.Dir = toolCtx.WorkingDir
 	}
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr boundedOutput
+	stdout.Limit = maxBashOutputBytes
+	stderr.Limit = maxBashOutputBytes
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -82,19 +84,19 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 
 	var sb strings.Builder
 	if stdout.Len() > 0 {
-		sb.WriteString(stdout.String())
+		sb.WriteString(stdout.String("stdout"))
 	}
 	if stderr.Len() > 0 {
 		if sb.Len() > 0 {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("stderr:\n")
-		sb.WriteString(stderr.String())
+		sb.WriteString(stderr.String("stderr"))
 	}
 
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return agent.ToolResult{Content: sb.String() + "\n\nError: command timed out after 60 seconds", WorkingDir: finalWorkingDir}, nil
+			return agent.ToolResult{Content: sb.String() + "\n\nError: command timed out after " + bashTimeout.String(), WorkingDir: finalWorkingDir}, nil
 		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return agent.ToolResult{Content: sb.String() + fmt.Sprintf("\n\nExit code: %d", exitErr.ExitCode()), WorkingDir: finalWorkingDir}, nil
@@ -126,4 +128,41 @@ func readFinalWorkingDir(path string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+type boundedOutput struct {
+	Limit   int
+	buf     strings.Builder
+	omitted int
+}
+
+func (b *boundedOutput) Write(p []byte) (int, error) {
+	if b.Limit <= 0 {
+		b.omitted += len(p)
+		return len(p), nil
+	}
+	remaining := b.Limit - b.buf.Len()
+	if remaining <= 0 {
+		b.omitted += len(p)
+		return len(p), nil
+	}
+	if len(p) <= remaining {
+		b.buf.Write(p)
+		return len(p), nil
+	}
+	b.buf.Write(p[:remaining])
+	b.omitted += len(p) - remaining
+	return len(p), nil
+}
+
+func (b *boundedOutput) Len() int {
+	return b.buf.Len() + b.omitted
+}
+
+func (b *boundedOutput) String(label string) string {
+	content := b.buf.String()
+	if b.omitted == 0 {
+		return content
+	}
+	return content + fmt.Sprintf("\n\n[%s truncated: omitted %d bytes]", label, b.omitted)
 }

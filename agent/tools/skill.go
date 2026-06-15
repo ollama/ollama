@@ -57,9 +57,48 @@ func (s *Skill) Execute(_ context.Context, _ agent.ToolContext, args map[string]
 	if !ok {
 		return agent.ToolResult{}, fmt.Errorf("unknown skill: %s", name)
 	}
-	content, err := skill.Read()
+	content, err := SkillResultContent(skill)
 	if err != nil {
 		return agent.ToolResult{}, err
+	}
+	return agent.ToolResult{Content: content}, nil
+}
+
+func ManualSkillMessages(skill skills.Skill, request string, ordinal int) ([]api.Message, error) {
+	content, err := SkillResultContent(skill)
+	if err != nil {
+		return nil, err
+	}
+
+	args := api.NewToolCallFunctionArguments()
+	args.Set("name", skill.Name)
+	callID := manualSkillToolCallID(skill.Name, ordinal)
+
+	userContent := strings.TrimSpace(request)
+	if userContent == "" {
+		userContent = fmt.Sprintf("Use the %s skill.", skill.Name)
+	}
+
+	return []api.Message{
+		{Role: "user", Content: userContent},
+		{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{{
+				ID: callID,
+				Function: api.ToolCallFunction{
+					Name:      "skill",
+					Arguments: args,
+				},
+			}},
+		},
+		{Role: "tool", ToolName: "skill", ToolCallID: callID, Content: content},
+	}, nil
+}
+
+func SkillResultContent(skill skills.Skill) (string, error) {
+	content, err := skill.Read()
+	if err != nil {
+		return "", err
 	}
 
 	var b strings.Builder
@@ -70,5 +109,29 @@ func (s *Skill) Execute(_ context.Context, _ agent.ToolContext, args map[string]
 	b.WriteString(skill.Dir)
 	b.WriteString("\nResolve relative file references from the skill directory.\n\n")
 	b.WriteString(content)
-	return agent.ToolResult{Content: b.String()}, nil
+	return b.String(), nil
+}
+
+func manualSkillToolCallID(skillName string, ordinal int) string {
+	name := strings.Trim(strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '-' || r == '_':
+			return r
+		default:
+			return '-'
+		}
+	}, skillName), "-")
+	if name == "" {
+		name = "skill"
+	}
+	if ordinal <= 0 {
+		return "manual-skill-" + name
+	}
+	return fmt.Sprintf("manual-skill-%d-%s", ordinal, name)
 }

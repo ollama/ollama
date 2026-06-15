@@ -121,6 +121,7 @@ func (s *Store) init(ctx context.Context) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			message_id INTEGER NOT NULL,
 			type TEXT NOT NULL,
+			tool_call_id TEXT NOT NULL DEFAULT '',
 			function_name TEXT NOT NULL,
 			function_arguments TEXT NOT NULL,
 			function_result TEXT,
@@ -153,6 +154,9 @@ func (s *Store) init(ctx context.Context) error {
 		return err
 	}
 	if err := ensureColumn(ctx, s.db, "messages", "images", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, s.db, "tool_calls", "tool_call_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_chat_id_archived ON messages(chat_id, archived, id)`); err != nil {
@@ -630,9 +634,9 @@ func insertToolCall(ctx context.Context, tx *sql.Tx, messageID int64, call api.T
 		return fmt.Errorf("marshal tool arguments: %w", err)
 	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO tool_calls (message_id, type, function_name, function_arguments)
-		VALUES (?, ?, ?, ?)
-	`, messageID, "function", call.Function.Name, string(args))
+		INSERT INTO tool_calls (message_id, type, tool_call_id, function_name, function_arguments)
+		VALUES (?, ?, ?, ?, ?)
+	`, messageID, "function", call.ID, call.Function.Name, string(args))
 	if err != nil {
 		return fmt.Errorf("insert tool call: %w", err)
 	}
@@ -641,7 +645,7 @@ func insertToolCall(ctx context.Context, tx *sql.Tx, messageID int64, call api.T
 
 func getToolCalls(ctx context.Context, db *sql.DB, messageID int64) ([]api.ToolCall, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT function_name, function_arguments FROM tool_calls WHERE message_id = ? ORDER BY id ASC
+		SELECT tool_call_id, function_name, function_arguments FROM tool_calls WHERE message_id = ? ORDER BY id ASC
 	`, messageID)
 	if err != nil {
 		return nil, err
@@ -650,8 +654,8 @@ func getToolCalls(ctx context.Context, db *sql.DB, messageID int64) ([]api.ToolC
 
 	var calls []api.ToolCall
 	for rows.Next() {
-		var name, argsJSON string
-		if err := rows.Scan(&name, &argsJSON); err != nil {
+		var id, name, argsJSON string
+		if err := rows.Scan(&id, &name, &argsJSON); err != nil {
 			return nil, err
 		}
 		var args api.ToolCallFunctionArguments
@@ -659,6 +663,7 @@ func getToolCalls(ctx context.Context, db *sql.DB, messageID int64) ([]api.ToolC
 			return nil, err
 		}
 		calls = append(calls, api.ToolCall{
+			ID: id,
 			Function: api.ToolCallFunction{
 				Name:      name,
 				Arguments: args,
