@@ -32,6 +32,11 @@ func fitDiffusionCanvases(maxCanvases, canvas, promptLen, contextLength int) (in
 // streams the emitted tokens (buffering partial UTF-8), and sends the final
 // summary response. It is selected over TextGenerationPipeline when the loaded
 // model implements base.DiffusionModel.
+//
+// Unsupported vs the autoregressive pipeline: stop strings (generation is
+// canvas-based and EOS-terminated) and logprobs (argmax is committed per canvas).
+// num_predict is a canvas budget: rounded up to whole canvases by ResolveDiffuse,
+// then capped by fitDiffusionCanvases to fit the context window.
 func (r *Runner) DiffusionGenerationPipeline(ctx context.Context, request Request) error {
 	dm, ok := r.Model.(base.DiffusionModel)
 	if !ok {

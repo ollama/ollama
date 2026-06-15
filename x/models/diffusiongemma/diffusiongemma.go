@@ -10,6 +10,13 @@
 // self-conditioning MLP, the per-layer encoder output scale, the diffusion
 // hyper-parameters, and (in later phases) the bidirectional canvas attention and
 // the denoising loop.
+//
+// This package copies the gemma4 transformer body rather than importing it, so
+// fixes to the gemma4 decoder must be mirrored here. Keep in sync: attention
+// (sliding/full heads, k==v on full layers, KV sharing), the dense/MoE FFN, the
+// RMSNorms, RoPE, PLE, and the logit softcap. Diffusion-only (no gemma4 twin):
+// computeSelfCond, the bidirectional canvas attention, and the denoising loop. A
+// shared package could replace the fork if maintainers prefer.
 package diffusiongemma
 
 import (

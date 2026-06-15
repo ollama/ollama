@@ -168,6 +168,11 @@ func (m *Model) Diffuse(ctx context.Context, prompt []int32, cfg base.DiffuseCon
 //
 //	soft = (Σ_k probs · embed[ids]) · sqrt(n_embd)
 //	sc   = sc_down( gelu(sc_gate(rms_norm(soft))) · sc_up(rms_norm(soft)) )
+//
+// soft sums only the top-k terms (k = SelfCondK) instead of the reference's full
+// softmax. The top-k probs are the normalized softmax probs, so this is the exact
+// truncation of the full sum; the error is the dropped tail mass, negligible once
+// the canvas converges. See TestSelfCondTopKApproximatesFullSoftmax.
 func (m *Model) computeSelfCond(sc *SelfCond, B, L int32) *mlx.Array {
 	k := int32(sc.K)
 	ids := mlx.FromValues(sc.IDs, int(B), int(L*k))
