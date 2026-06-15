@@ -489,7 +489,7 @@ func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
 }
 
 func TestLlamaServerCompletionRejectsPromptOverContext(t *testing.T) {
-	const wantError = "the prompt is longer than the context length currently available to the model; shorten the prompt or adjust the context length in settings"
+	const wantError = "the prompt is longer than the context length currently available to the model; shorten the prompt, adjust the context length in settings, or use a model with a longer context length"
 
 	var tokenizeReq struct {
 		Content      string `json:"content"`

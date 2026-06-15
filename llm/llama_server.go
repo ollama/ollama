@@ -278,7 +278,7 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 	if len(tokens) >= s.options.NumCtx {
 		return nil, api.StatusError{
 			StatusCode:   http.StatusBadRequest,
-			ErrorMessage: "the prompt is longer than the context length currently available to the model; shorten the prompt or adjust the context length in settings",
+			ErrorMessage: "the prompt is longer than the context length currently available to the model; shorten the prompt, adjust the context length in settings, or use a model with a longer context length",
 		}
 	}
 	return prompt, nil
