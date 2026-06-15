@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -42,8 +43,16 @@ func TestDoPropagatesPanicToCaller(t *testing.T) {
 	defer thread.Stop(context.Background(), nil)
 
 	defer func() {
-		if got := recover(); got != "boom" {
-			t.Fatalf("got panic %v, want boom", got)
+		got := recover()
+		pe, ok := got.(*panicError)
+		if !ok {
+			t.Fatalf("got panic %T (%v), want *panicError", got, got)
+		}
+		if pe.value != "boom" {
+			t.Fatalf("got panic value %v, want boom", pe.value)
+		}
+		if !strings.Contains(string(pe.stack), "TestDoPropagatesPanicToCaller") {
+			t.Fatalf("captured stack missing original frame:\n%s", pe.stack)
 		}
 	}()
 

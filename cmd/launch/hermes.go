@@ -452,12 +452,33 @@ func hermesWindowsBinaryFallbacks() []string {
 	return fallbacks
 }
 
-func hermesConfigPath() (string, error) {
+func hermesHomePath() (string, error) {
+	if hermesHome := strings.TrimSpace(os.Getenv("HERMES_HOME")); hermesHome != "" {
+		return filepath.Clean(hermesHome), nil
+	}
+	if hermesGOOS == "windows" {
+		if localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localAppData != "" {
+			return filepath.Join(localAppData, "hermes"), nil
+		}
+		home, err := hermesUserHome()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, "AppData", "Local", "hermes"), nil
+	}
 	home, err := hermesUserHome()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".hermes", "config.yaml"), nil
+	return filepath.Join(home, ".hermes"), nil
+}
+
+func hermesConfigPath() (string, error) {
+	home, err := hermesHomePath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "config.yaml"), nil
 }
 
 func hermesBaseURL() string {
@@ -465,11 +486,11 @@ func hermesBaseURL() string {
 }
 
 func hermesEnvPath() (string, error) {
-	home, err := hermesUserHome()
+	home, err := hermesHomePath()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".hermes", ".env"), nil
+	return filepath.Join(home, ".env"), nil
 }
 
 func (h *Hermes) runGatewaySetupPreflight(args []string, runSetup func() error) error {
