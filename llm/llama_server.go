@@ -599,7 +599,10 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
 }
 
-const limitedMMProjOffloadMemory = 10 << 30
+const (
+	defaultMMProjOffloadMemory = 2 << 30 // 2 GiB
+	mmprojOffloadHeadroom      = 1 << 30 // 1 GiB
+)
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
 	if len(launch.projectors) == 0 {
@@ -619,10 +622,18 @@ func (launch llamaServerLaunchConfig) mmprojOffloadDisabled() (bool, string) {
 	if launch.forceNoMMProjOffload {
 		return true, "startup-oom-retry"
 	}
-	return shouldDisableMMProjOffload(launch.opts, launch.gpus, launch.modelLayers)
+
+	var projectorSize uint64
+	if len(launch.projectors) > 0 {
+		if fi, err := os.Stat(launch.projectors[0]); err == nil && fi.Size() > 0 {
+			projectorSize = uint64(fi.Size())
+		}
+	}
+
+	return shouldDisableMMProjOffload(launch.opts, launch.gpus, launch.modelLayers, projectorSize)
 }
 
-func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLayers uint64) (bool, string) {
+func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLayers uint64, projectorSize uint64) (bool, string) {
 	if opts.NumGPU == 0 {
 		return true, "cpu-only"
 	}
@@ -638,7 +649,14 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 		if memory == 0 || (gpu.TotalMemory > 0 && gpu.TotalMemory < memory) {
 			memory = gpu.TotalMemory
 		}
-		if memory > 0 && memory <= limitedMMProjOffloadMemory {
+		// Compare against the projector size plus headroom rather than a
+		// blanket VRAM floor, so small discrete GPUs can still offload small
+		// multimodal projectors.
+		needed := uint64(defaultMMProjOffloadMemory)
+		if projectorSize > 0 {
+			needed = projectorSize + mmprojOffloadHeadroom
+		}
+		if memory > 0 && memory < needed {
 			return true, "limited-vram"
 		}
 	}

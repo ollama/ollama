@@ -1807,6 +1807,15 @@ func TestAppendMMProjArgs(t *testing.T) {
 	fullOpts.NumGPU = 81
 	cpuOpts := api.DefaultOptions()
 	cpuOpts.NumGPU = 0
+	smallProjector := filepath.Join(t.TempDir(), "small-mmproj.gguf")
+	if f, err := os.Create(smallProjector); err != nil {
+		t.Fatal(err)
+	} else if err := f.Truncate(512 << 20); err != nil {
+		f.Close()
+		t.Fatal(err)
+	} else if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name        string
@@ -1831,12 +1840,12 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want:        []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
-			name:        "small discrete gpu disables projector offload",
-			projectors:  []string{"model.gguf"},
+			name:        "small discrete gpu keeps small projector offload",
+			projectors:  []string{smallProjector},
 			opts:        defaultOpts,
 			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, TotalMemory: 8 << 30}},
 			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			want:        []string{"base", "--mmproj", smallProjector},
 		},
 		{
 			name:        "integrated rocm gpu disables projector offload",
