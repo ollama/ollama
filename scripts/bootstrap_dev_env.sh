@@ -29,13 +29,18 @@ set -o pipefail
 
 OLLAMA_REPO_URL="https://github.com/Brice12347/ollama-s390x.git"
 OLLAMA_REPO_DIR="/workspace/ollama-s390x"
-OLLAMA_CONTAINER_NAME="ollama-dev"
+OLLAMA_CONTAINER_NAME="ollama"
 OLLAMA_IMAGE_TAG="ollama-s390x-dev:latest"
 OLLAMA_DOCKERFILE_PATH="/tmp/ollama-dev.Dockerfile"
+OLLAMA_PORT="113434"
 
 JUPYTER_CONTAINER_NAME="jupyter"
 JUPYTER_IMAGE_TAG="ollama-s390x-jupyter:latest"
 JUPYTER_DOCKERFILE_PATH="/tmp/jupyter-dev.Dockerfile"
+JUPYTER_HOST_PORT="8877"
+JUPYTER_CONTAINER_PORT="8888"
+
+SHARED_NETWORK_NAME="ollama-network"
 
 BUILD_VARIANT="${OLLAMA_BUILD_VARIANT:-cpu}"
 SKIP_CONTAINER=false
@@ -200,11 +205,24 @@ cleanup_existing_artifacts() {
     "$CONTAINER_ENGINE" rm -f "$JUPYTER_CONTAINER_NAME" >/dev/null 2>&1 || true
     "$CONTAINER_ENGINE" rmi -f "$OLLAMA_IMAGE_TAG" >/dev/null 2>&1 || true
     "$CONTAINER_ENGINE" rmi -f "$JUPYTER_IMAGE_TAG" >/dev/null 2>&1 || true
+    "$CONTAINER_ENGINE" network rm "$SHARED_NETWORK_NAME" >/dev/null 2>&1 || true
 
     cleanup_file "$OLLAMA_DOCKERFILE_PATH"
     cleanup_file "$JUPYTER_DOCKERFILE_PATH"
 
     print_success "Cleanup complete"
+}
+
+create_shared_network() {
+    print_info "Creating shared network: $SHARED_NETWORK_NAME"
+    
+    if "$CONTAINER_ENGINE" network inspect "$SHARED_NETWORK_NAME" >/dev/null 2>&1; then
+        print_warning "Network $SHARED_NETWORK_NAME already exists, removing it"
+        "$CONTAINER_ENGINE" network rm "$SHARED_NETWORK_NAME"
+    fi
+    
+    "$CONTAINER_ENGINE" network create "$SHARED_NETWORK_NAME"
+    print_success "Shared network created"
 }
 
 ################################################################################
@@ -240,7 +258,9 @@ run_ollama_container() {
     print_info "Starting ollama container: $OLLAMA_CONTAINER_NAME"
     "$CONTAINER_ENGINE" run -d \
         --name "$OLLAMA_CONTAINER_NAME" \
-        --network host \
+        --network "$SHARED_NETWORK_NAME" \
+        -p "$OLLAMA_PORT:$OLLAMA_PORT" \
+        -e OLLAMA_HOST="0.0.0.0:$OLLAMA_PORT" \
         "$OLLAMA_IMAGE_TAG"
     print_success "Ollama container started"
 }
@@ -251,12 +271,26 @@ run_ollama_clone() {
         return
     fi
 
-    print_info "Cloning ollama repository inside ollama container"
-    "$CONTAINER_ENGINE" exec "$OLLAMA_CONTAINER_NAME" bash -lc "
+    print_info "Cloning ollama repository inside ollama container to $OLLAMA_REPO_DIR"
+    
+    # Clone the repository inside the container
+    if ! "$CONTAINER_ENGINE" exec "$OLLAMA_CONTAINER_NAME" bash -lc "
         rm -rf '$OLLAMA_REPO_DIR' &&
         git clone '$OLLAMA_REPO_URL' '$OLLAMA_REPO_DIR'
-    "
-    print_success "Repository cloned inside ollama container"
+    "; then
+        print_error "Failed to clone repository inside ollama container"
+        exit 1
+    fi
+    
+    # Verify the repository was cloned successfully
+    if ! "$CONTAINER_ENGINE" exec "$OLLAMA_CONTAINER_NAME" bash -lc "
+        [ -d '$OLLAMA_REPO_DIR' ] && [ -f '$OLLAMA_REPO_DIR/README.md' ]
+    "; then
+        print_error "Repository directory $OLLAMA_REPO_DIR not found or incomplete inside container"
+        exit 1
+    fi
+    
+    print_success "Repository cloned and verified inside ollama container at $OLLAMA_REPO_DIR"
 }
 
 run_ollama_dependency_step() {
@@ -279,22 +313,48 @@ run_ollama_build() {
         return
     fi
 
-    print_info "Configuring and building ollama inside container"
-    "$CONTAINER_ENGINE" exec "$OLLAMA_CONTAINER_NAME" bash -lc "
+    print_info "Configuring and building ollama inside container at $OLLAMA_REPO_DIR"
+    
+    # Verify repository exists before building
+    if ! "$CONTAINER_ENGINE" exec "$OLLAMA_CONTAINER_NAME" bash -lc "
+        [ -d '$OLLAMA_REPO_DIR' ]
+    "; then
+        print_error "Repository directory $OLLAMA_REPO_DIR not found inside container"
+        print_error "Cannot proceed with build. Please check if clone step succeeded."
+        exit 1
+    fi
+    
+    if ! "$CONTAINER_ENGINE" exec "$OLLAMA_CONTAINER_NAME" bash -lc "
         cd '$OLLAMA_REPO_DIR' &&
         cmake -B build . &&
         cmake --build build --parallel 8
-    "
+    "; then
+        print_error "Build failed inside container"
+        exit 1
+    fi
+    
     print_success "Ollama build completed inside container"
 }
 
 start_ollama_service() {
-    print_info "Starting ollama service inside container"
+    print_info "Starting ollama service inside container on port $OLLAMA_PORT"
     "$CONTAINER_ENGINE" exec -d "$OLLAMA_CONTAINER_NAME" bash -lc "
         cd '$OLLAMA_REPO_DIR' &&
-        ./ollama serve
+        OLLAMA_HOST=0.0.0.0:$OLLAMA_PORT ./ollama serve
     "
     print_success "Ollama service started inside container"
+}
+
+test_ollama_external_access() {
+    print_info "Waiting 10 seconds for Ollama service to initialize..."
+    sleep 10
+    
+    print_info "Testing external access to Ollama at http://localhost:$OLLAMA_PORT"
+    if curl -s -o /dev/null -w "%{http_code}" "http://localhost:$OLLAMA_PORT" | grep -q "200\|404"; then
+        print_success "Ollama is accessible externally at http://localhost:$OLLAMA_PORT"
+    else
+        print_warning "Ollama may not be fully initialized yet. Check logs with: $CONTAINER_ENGINE logs $OLLAMA_CONTAINER_NAME"
+    fi
 }
 
 setup_ollama_container() {
@@ -310,6 +370,7 @@ setup_ollama_container() {
     run_ollama_dependency_step
     run_ollama_build
     start_ollama_service
+    test_ollama_external_access
 }
 
 ################################################################################
@@ -319,7 +380,9 @@ setup_ollama_container() {
 prompt_for_username() {
     local prompt_message=$1
 
-    read -r -p "$prompt_message" USERNAME_INPUT
+    # Display prompt explicitly to ensure it shows in all contexts
+    echo -n "$prompt_message"
+    read -r USERNAME_INPUT
     USERNAME_INPUT=$(echo "$USERNAME_INPUT" | xargs)
 
     if [ -z "$USERNAME_INPUT" ]; then
@@ -358,15 +421,16 @@ run_jupyter_container() {
     print_info "Starting jupyter container: $JUPYTER_CONTAINER_NAME"
     "$CONTAINER_ENGINE" run -d \
         --name "$JUPYTER_CONTAINER_NAME" \
-        --network host \
+        --network "$SHARED_NETWORK_NAME" \
+        -p "$JUPYTER_HOST_PORT:$JUPYTER_CONTAINER_PORT" \
         -v "$NOTEBOOKS_DIR:/home/jovyan/work:Z" \
         -w /home/jovyan/work \
         "$JUPYTER_IMAGE_TAG" \
         sh -c "
             pip install --quiet --no-cache-dir jupyterlab requests &&
             jupyter lab \
-              --ip=127.0.0.1 \
-              --port=8888 \
+              --ip=0.0.0.0 \
+              --port=$JUPYTER_CONTAINER_PORT \
               --no-browser \
               --ServerApp.token='' \
               --ServerApp.password='' \
@@ -388,9 +452,26 @@ wait_for_jupyter() {
 }
 
 check_jupyter_endpoint() {
-    print_info "Checking JupyterLab endpoint"
-    curl -I http://127.0.0.1:8888
-    print_success "JupyterLab endpoint responded"
+    print_info "Checking JupyterLab endpoint at http://127.0.0.1:$JUPYTER_HOST_PORT"
+    if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$JUPYTER_HOST_PORT" | grep -q "200\|302"; then
+        print_success "JupyterLab endpoint responded"
+    else
+        print_warning "JupyterLab may not be fully initialized yet"
+    fi
+}
+
+test_container_communication() {
+    print_info "Testing container communication: Jupyter -> Ollama"
+    
+    if "$CONTAINER_ENGINE" exec "$JUPYTER_CONTAINER_NAME" sh -c "
+        pip install --quiet requests >/dev/null 2>&1 &&
+        python3 -c 'import requests; r = requests.get(\"http://$OLLAMA_CONTAINER_NAME:$OLLAMA_PORT\", timeout=5); print(r.status_code)' 2>/dev/null
+    " | grep -q "200\|404"; then
+        print_success "Jupyter container can reach Ollama at http://$OLLAMA_CONTAINER_NAME:$OLLAMA_PORT"
+    else
+        print_warning "Container communication test inconclusive. Ollama may still be initializing."
+        print_info "You can test manually from Jupyter with: requests.get('http://$OLLAMA_CONTAINER_NAME:$OLLAMA_PORT')"
+    fi
 }
 
 setup_jupyter_container() {
@@ -401,6 +482,7 @@ setup_jupyter_container() {
     show_jupyter_logs
     wait_for_jupyter
     check_jupyter_endpoint
+    test_container_communication
 }
 
 ################################################################################
@@ -443,30 +525,56 @@ show_final_instructions() {
 
 ${GREEN}Setup complete!${NC}
 
+${BLUE}Container Network:${NC}
+  Network name: $SHARED_NETWORK_NAME
+  Ollama accessible from Jupyter at: http://$OLLAMA_CONTAINER_NAME:$OLLAMA_PORT
+
 ${BLUE}Ollama container:${NC}
   Name: $OLLAMA_CONTAINER_NAME
   Image: $OLLAMA_IMAGE_TAG
-  Service: running inside the container via ./ollama serve
+  Repository: $OLLAMA_REPO_DIR (inside container)
+  Service: running on port $OLLAMA_PORT
+  External URL: http://localhost:$OLLAMA_PORT
 
 ${BLUE}Jupyter container:${NC}
   Name: $JUPYTER_CONTAINER_NAME
   Image: $JUPYTER_IMAGE_TAG
   Notebook mount: $NOTEBOOKS_DIR
-  URL: http://127.0.0.1:8888
+  Container port: $JUPYTER_CONTAINER_PORT
+  Host port: $JUPYTER_HOST_PORT
+
+${YELLOW}Important:${NC}
+  - The ollama repository is cloned INSIDE the container at $OLLAMA_REPO_DIR
+  - Both containers are on the shared network: $SHARED_NETWORK_NAME
+  - Jupyter can reach Ollama at: http://$OLLAMA_CONTAINER_NAME:$OLLAMA_PORT
 
 ${BLUE}Next steps:${NC}
-  1. In a separate CLI, run:
-     ssh -L 8888:127.0.0.1:8888 ${USERNAME_INPUT}@b39-triframe1.pok.stglabs.ibm.com -p 22
+  1. In a separate CLI, create SSH tunnel to access JupyterLab:
+     ${GREEN}ssh -L $JUPYTER_HOST_PORT:127.0.0.1:$JUPYTER_HOST_PORT ${USERNAME_INPUT}@b39-triframe1.pok.stglabs.ibm.com -p 22${NC}
 
-  2. Open JupyterLab in your browser:
-     http://127.0.0.1:8888
+  2. Open JupyterLab in your browser on your laptop:
+     ${GREEN}http://localhost:$JUPYTER_HOST_PORT${NC}
 
-  3. Inspect running containers if needed:
+  3. Test Ollama from JupyterLab (create a new notebook):
+     ${GREEN}import requests
+     response = requests.get('http://$OLLAMA_CONTAINER_NAME:$OLLAMA_PORT')
+     print(response.status_code)${NC}
+
+  4. Test Ollama from host machine:
+     ${GREEN}curl http://localhost:$OLLAMA_PORT${NC}
+
+  5. Inspect running containers:
      $CONTAINER_ENGINE ps
 
-  4. View service logs if needed:
+  6. View service logs:
      $CONTAINER_ENGINE logs $OLLAMA_CONTAINER_NAME
      $CONTAINER_ENGINE logs $JUPYTER_CONTAINER_NAME
+
+  7. Access the ollama container shell:
+     $CONTAINER_ENGINE exec -it $OLLAMA_CONTAINER_NAME bash
+
+  8. Inspect the shared network:
+     $CONTAINER_ENGINE network inspect $SHARED_NETWORK_NAME
 
 EOF
 }
@@ -478,11 +586,14 @@ EOF
 main() {
     print_info "Starting containerized ollama and jupyter environment setup..."
     print_info "Build variant: $BUILD_VARIANT"
+    print_info "Ollama port: $OLLAMA_PORT"
+    print_info "Jupyter host port: $JUPYTER_HOST_PORT"
     echo
 
     validate_build_variant
     detect_container_engine
     cleanup_existing_artifacts
+    create_shared_network
     echo
 
     show_build_matrix
