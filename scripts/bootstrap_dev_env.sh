@@ -320,6 +320,7 @@ prompt_for_username() {
     local prompt_message=$1
 
     read -r -p "$prompt_message" USERNAME_INPUT
+    USERNAME_INPUT=$(echo "$USERNAME_INPUT" | xargs)
 
     if [ -z "$USERNAME_INPUT" ]; then
         print_error "USERNAME cannot be empty"
