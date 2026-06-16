@@ -1,0 +1,46 @@
+# Bootstrap Script Test Log - 2026-06-15
+
+## First Run Test
+
+### Initial Execution
+- Command: `chmod +x scripts/bootstrap_dev_env.sh`
+  - Status: ✓ Worked
+
+### Script Execution
+- Command: `./scripts/bootstrap_dev_env.sh`
+  - Status: ✗ Failed
+
+### Error Encountered
+```
+[sudo] password for bricepatchou:
+bricepatchou is not in the sudoers file. This incident will be reported.
+```
+
+### Issue Analysis
+- **Problem**: Script attempted to use sudo commands
+- **Root Cause**: Package manager installation commands (dnf) were using sudo
+- **Decision**: Should never make a sudo command in the script
+
+### Actions Taken
+1. Investigated the sudo usage in the script
+2. Removed all sudo commands from:
+   - Package manager installations (apt, dnf, yum)
+   - Go installation (changed from `/usr/local/go` to `$HOME/.local/go`)
+   - All other system-level operations
+
+### Script Behavior After Fix
+- The script stops after making the container
+- **Expected workflow**: Should make the container, then clone the repo
+
+### Realization
+- Need to `cd` into the repo directory before running the bash script
+- Workflow should be:
+  1. Run script to set up container
+  2. Clone the repo
+  3. `cd` into the repo
+  4. Run the script again inside the container
+
+### Next Steps
+- Test the updated script without sudo commands
+- Verify container setup works correctly
+- Confirm repo cloning and build process inside container
