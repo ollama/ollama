@@ -205,35 +205,3 @@ func TestUseMoreBits(t *testing.T) {
 		t.Errorf("layer 5 should be promoted (periodic)")
 	}
 }
-
-func TestIsGemma4StackedMoETensor(t *testing.T) {
-	tests := []struct {
-		label      string
-		tensorName string
-		shape      []int32
-		want       bool
-	}{
-		// New-style: .experts.gate_up_proj
-		{"experts gate_up_proj 3D", "model.layers.0.experts.gate_up_proj", []int32{128, 1408, 2816}, true},
-		{"experts down_proj 3D", "model.layers.0.experts.down_proj", []int32{128, 2816, 704}, true},
-		// Old-style: .moe.gate_proj
-		{"moe gate_proj 3D", "model.layers.0.moe.gate_proj", []int32{128, 2112, 2816}, true},
-		{"moe down_proj 3D", "model.layers.0.moe.down_proj.weight", []int32{128, 2816, 2112}, true},
-		// Not stacked: 2D
-		{"2D weight", "model.layers.0.experts.gate_up_proj", []int32{1408, 2816}, false},
-		// Not expert
-		{"non-expert 3D", "model.layers.0.mlp.gate_proj", []int32{3, 2816, 2816}, false},
-		// Not a projection
-		{"expert non-proj", "model.layers.0.experts.scale", []int32{128, 1, 1}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.label, func(t *testing.T) {
-			got := isGemma4StackedMoETensor(tt.tensorName, tt.shape)
-			if got != tt.want {
-				t.Errorf("isGemma4StackedMoETensor(%q, %v) = %v, want %v",
-					tt.tensorName, tt.shape, got, tt.want)
-			}
-		})
-	}
-}

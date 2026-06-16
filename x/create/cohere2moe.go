@@ -7,8 +7,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/ollama/ollama/x/safetensors"
 )
 
 // cohere2MoeImportTransform adjusts quantization for Cohere2 MoE imports
@@ -17,7 +15,7 @@ type cohere2MoeImportTransform struct {
 	numLayers int
 }
 
-func newCohere2MoeImportTransform(modelDir string, _ sourceModelConfig) (tensorImportTransform, error) {
+func newCohere2MoeImportTransform(modelDir string, _ sourceModelConfig) (quantizePolicy, error) {
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
 		return cohere2MoeImportTransform{}, nil //nolint:nilerr // fallback to no heuristic
@@ -29,12 +27,6 @@ func newCohere2MoeImportTransform(modelDir string, _ sourceModelConfig) (tensorI
 		return cohere2MoeImportTransform{}, nil //nolint:nilerr // fallback to no heuristic
 	}
 	return cohere2MoeImportTransform{numLayers: cfg.NumHiddenLayers}, nil
-}
-
-func (cohere2MoeImportTransform) skipTensor(string) bool { return false }
-
-func (cohere2MoeImportTransform) transformTensor(td *safetensors.TensorData) ([]*safetensors.TensorData, error) {
-	return []*safetensors.TensorData{td}, nil
 }
 
 var cohere2MoeLayerIndexRe = regexp.MustCompile(`\.layers\.(\d+)\.`)
