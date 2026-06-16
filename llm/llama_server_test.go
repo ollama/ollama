@@ -489,7 +489,7 @@ func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
 }
 
 func TestLlamaServerCompletionRejectsPromptOverContext(t *testing.T) {
-	const wantError = "the prompt is longer than the context length currently available to the model; shorten the prompt or adjust the context length in settings"
+	const wantError = "the prompt is longer than the context length currently available to the model; shorten the prompt, adjust the context length in settings, or use a model with a longer context length"
 
 	var tokenizeReq struct {
 		Content      string `json:"content"`
@@ -555,6 +555,160 @@ func TestLlamaServerCompletionRejectsPromptOverContext(t *testing.T) {
 	}
 	if completionCalled {
 		t.Fatal("completion endpoint was called")
+	}
+}
+
+func TestLlamaServerCompletionContextShiftAllowsPromptWithHeadroom(t *testing.T) {
+	var capturedReq llamaServerCompletionRequest
+	var tokenizeReq struct {
+		Content      string `json:"content"`
+		AddSpecial   bool   `json:"add_special"`
+		ParseSpecial *bool  `json:"parse_special"`
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/tokenize":
+			if err := json.NewDecoder(r.Body).Decode(&tokenizeReq); err != nil {
+				t.Errorf("invalid tokenize request body: %v", err)
+				return
+			}
+			fmt.Fprint(w, `{"tokens":[0,1,2,3,4,5,6]}`)
+		case "/completion":
+			if err := json.NewDecoder(r.Body).Decode(&capturedReq); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":10,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 8}},
+		launch: llamaServerLaunchConfig{
+			config: LlamaServerConfig{ContextShift: true},
+		},
+	}
+
+	opts := api.DefaultOptions()
+	opts.NumKeep = 3
+	prompt := strings.Repeat("long prompt ", 2)
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:   prompt,
+		Options:  &opts,
+		Truncate: true,
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if tokenizeReq.Content != prompt {
+		t.Fatalf("tokenize content = %q, want %q", tokenizeReq.Content, prompt)
+	}
+	if !tokenizeReq.AddSpecial {
+		t.Fatal("expected tokenize request to add special tokens")
+	}
+	if capturedReq.Prompt != prompt {
+		t.Fatalf("prompt = %q, want %q", capturedReq.Prompt, prompt)
+	}
+	if capturedReq.NKeep != opts.NumKeep {
+		t.Fatalf("n_keep = %d, want %d", capturedReq.NKeep, opts.NumKeep)
+	}
+}
+
+func TestLlamaServerCompletionContextShiftTruncatesPromptOverContext(t *testing.T) {
+	var capturedReq llamaServerCompletionRequest
+	var tokenizeReq struct {
+		Content      string `json:"content"`
+		AddSpecial   bool   `json:"add_special"`
+		ParseSpecial *bool  `json:"parse_special"`
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/tokenize":
+			if err := json.NewDecoder(r.Body).Decode(&tokenizeReq); err != nil {
+				t.Errorf("invalid tokenize request body: %v", err)
+				return
+			}
+			fmt.Fprint(w, `{"tokens":[0,1,2,3,4,5,6,7,8,9]}`)
+		case "/completion":
+			if err := json.NewDecoder(r.Body).Decode(&capturedReq); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":7,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 8}},
+		launch: llamaServerLaunchConfig{
+			config: LlamaServerConfig{ContextShift: true},
+		},
+	}
+
+	opts := api.DefaultOptions()
+	opts.NumKeep = 3
+	prompt := strings.Repeat("long prompt ", 2)
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:   prompt,
+		Options:  &opts,
+		Truncate: true,
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if tokenizeReq.Content != prompt {
+		t.Fatalf("tokenize content = %q, want %q", tokenizeReq.Content, prompt)
+	}
+	if !tokenizeReq.AddSpecial {
+		t.Fatal("expected tokenize request to add special tokens")
+	}
+
+	got, ok := capturedReq.Prompt.([]any)
+	if !ok {
+		t.Fatalf("completion prompt = %T, want token array", capturedReq.Prompt)
+	}
+	want := []int{0, 1, 2, 6, 7, 8, 9}
+	if len(got) != len(want) {
+		t.Fatalf("token prompt len = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i, wantToken := range want {
+		gotToken, ok := got[i].(float64)
+		if !ok || int(gotToken) != wantToken {
+			t.Fatalf("token prompt[%d] = %#v, want %d", i, got[i], wantToken)
+		}
+	}
+	if capturedReq.NKeep != opts.NumKeep {
+		t.Fatalf("n_keep = %d, want %d", capturedReq.NKeep, opts.NumKeep)
 	}
 }
 

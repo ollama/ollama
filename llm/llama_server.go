@@ -273,15 +273,31 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 		return nil, err
 	}
 
-	// s.options.NumCtx is the runner's effective per-slot context length. It
-	// has already been capped by the model's training context during launch.
-	if len(tokens) >= s.options.NumCtx {
+	limit := s.options.NumCtx - 1
+	if len(tokens) <= limit {
+		return prompt, nil
+	}
+
+	if !s.launch.config.ContextShift {
 		return nil, api.StatusError{
 			StatusCode:   http.StatusBadRequest,
-			ErrorMessage: "the prompt is longer than the context length currently available to the model; shorten the prompt or adjust the context length in settings",
+			ErrorMessage: "the prompt is longer than the context length currently available to the model; shorten the prompt, adjust the context length in settings, or use a model with a longer context length",
 		}
 	}
-	return prompt, nil
+
+	nKeep := req.Options.NumKeep
+	if nKeep < 0 {
+		nKeep = len(tokens)
+	}
+	nKeep = min(nKeep, limit)
+
+	discard := len(tokens) - limit
+	truncated := make([]int, 0, limit)
+	truncated = append(truncated, tokens[:nKeep]...)
+	truncated = append(truncated, tokens[nKeep+discard:]...)
+
+	slog.Warn("truncating input prompt", "limit", limit, "prompt", len(tokens), "keep", nKeep, "new", len(truncated))
+	return truncated, nil
 }
 
 func (s *llamaServerRunner) ContextLength() int {
