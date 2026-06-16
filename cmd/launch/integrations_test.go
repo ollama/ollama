@@ -1513,6 +1513,83 @@ func TestSelectionItemsWithAccountState_UsesPrefetchedStateForRecommendedCloudIt
 	}
 }
 
+func TestSelectionItemsWithAccountState_HidesFreeCloudRecommendationsForPaidUsers(t *testing.T) {
+	items := []ModelItem{
+		{Name: "qwen3.5:cloud", Recommended: true},
+		{Name: "glm-5.1:cloud", Recommended: true, RequiredPlan: "free"},
+		{Name: "kimi-k2.6:cloud", Recommended: true, RequiredPlan: "pro"},
+		{Name: "custom-cloud:cloud"},
+		{Name: "gemma4", Recommended: true},
+	}
+
+	got := SelectionItemsWithAccountState(items, &AccountState{Status: accountStateSignedIn, Plan: "pro"})
+	if diff := cmp.Diff([]string{"kimi-k2.6:cloud", "custom-cloud:cloud", "gemma4"}, selectionNames(got)); diff != "" {
+		t.Fatalf("paid selection names (-want +got):\n%s", diff)
+	}
+
+	freeUser := SelectionItemsWithAccountState(items, &AccountState{Status: accountStateSignedIn, Plan: "free"})
+	if diff := cmp.Diff([]string{"qwen3.5:cloud", "glm-5.1:cloud", "kimi-k2.6:cloud", "custom-cloud:cloud", "gemma4"}, selectionNames(freeUser)); diff != "" {
+		t.Fatalf("free selection names (-want +got):\n%s", diff)
+	}
+
+	signedOut := SelectionItemsWithAccountState(items, &AccountState{Status: accountStateSignedOut})
+	if diff := cmp.Diff([]string{"qwen3.5:cloud", "glm-5.1:cloud", "kimi-k2.6:cloud", "custom-cloud:cloud", "gemma4"}, selectionNames(signedOut)); diff != "" {
+		t.Fatalf("signed-out selection names (-want +got):\n%s", diff)
+	}
+
+	unknown := SelectionItemsWithAccountState(items, &AccountState{Status: accountStateUnknown})
+	if diff := cmp.Diff([]string{"qwen3.5:cloud", "glm-5.1:cloud", "kimi-k2.6:cloud", "custom-cloud:cloud", "gemma4"}, selectionNames(unknown)); diff != "" {
+		t.Fatalf("unknown selection names (-want +got):\n%s", diff)
+	}
+}
+
+func selectionNames(items []SelectionItem) []string {
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.Name)
+	}
+	return names
+}
+
+func TestLoadSelectableModels_HidesFreeCloudRecommendationsForPaidUsers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"custom-local:latest"}]}`)
+		case "/api/me":
+			fmt.Fprint(w, `{"name":"parth","plan":"pro"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+	launchClient := &launcherClient{
+		apiClient:             client,
+		inventory:             newModelInventory(client),
+		recommendationsLoaded: true,
+		recommendationItems: []ModelItem{
+			{Name: "qwen3.5:cloud", Recommended: true},
+			{Name: "glm-5.1:cloud", Recommended: true, RequiredPlan: "free"},
+			{Name: "kimi-k2.6:cloud", Recommended: true, RequiredPlan: "pro"},
+			{Name: "gemma4", Recommended: true},
+		},
+	}
+
+	items, checked, err := launchClient.loadSelectableModels(context.Background(), []string{"qwen3.5:cloud", "kimi-k2.6:cloud"}, "", "no models available")
+	if err != nil {
+		t.Fatalf("loadSelectableModels error = %v", err)
+	}
+	if diff := cmp.Diff([]string{"kimi-k2.6:cloud", "gemma4", "custom-local"}, names(items)); diff != "" {
+		t.Fatalf("selectable model names (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{"kimi-k2.6:cloud"}, checked); diff != "" {
+		t.Fatalf("checked models (-want +got):\n%s", diff)
+	}
+}
+
 func TestRecommendedModelsDoNotIncludeRequiredPlanStubs(t *testing.T) {
 	byName := make(map[string]ModelItem, len(recommendedModels))
 	for _, item := range recommendedModels {

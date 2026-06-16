@@ -1140,10 +1140,42 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 		items = filterCloudItems(items)
 		orderedChecked = c.filterDisabledCloudModels(ctx, orderedChecked)
 	}
+	items = filterFreeCloudRecommendationsForAccountState(items, c.accountStateForModelFiltering(ctx, items))
+	orderedChecked = filterCheckedModelsForItems(orderedChecked, items)
 	if len(items) == 0 {
 		return nil, nil, errors.New(emptyMessage)
 	}
 	return items, orderedChecked, nil
+}
+
+func (c *launcherClient) accountStateForModelFiltering(ctx context.Context, items []ModelItem) *AccountState {
+	state := c.latestAccountState()
+	if state != nil || !selectionItemsNeedAccountState(items) {
+		return state
+	}
+	resolved := launchAccountState(ctx, c.apiClient)
+	if resolved.Status == accountStateUnknown {
+		return nil
+	}
+	c.accountState = &resolved
+	return &resolved
+}
+
+func filterCheckedModelsForItems(checked []string, items []ModelItem) []string {
+	if len(checked) == 0 {
+		return checked
+	}
+	available := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		available[item.Name] = struct{}{}
+	}
+	filtered := make([]string, 0, len(checked))
+	for _, name := range checked {
+		if _, ok := available[name]; ok {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered
 }
 
 func (c *launcherClient) recommendations(ctx context.Context) []ModelItem {

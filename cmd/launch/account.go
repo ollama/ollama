@@ -134,6 +134,7 @@ func whoamiWithTimeout(ctx context.Context, client *api.Client) (*api.UserRespon
 }
 
 func ApplyAccountStateToSelectionItems(items []ModelItem, state AccountState) []SelectionItem {
+	items = filterFreeCloudRecommendationsForAccountState(items, &state)
 	out := make([]SelectionItem, len(items))
 	for i, item := range items {
 		out[i] = SelectionItem{
@@ -160,6 +161,33 @@ func selectionItemsNeedAccountState(items []ModelItem) bool {
 		}
 	}
 	return false
+}
+
+func accountStateHasPaidPlan(state *AccountState) bool {
+	if state == nil || state.Status != accountStateSignedIn {
+		return false
+	}
+	plan := normalizePlan(state.Plan)
+	return plan != "" && plan != "free"
+}
+
+func filterFreeCloudRecommendationsForAccountState(items []ModelItem, state *AccountState) []ModelItem {
+	if !accountStateHasPaidPlan(state) {
+		return items
+	}
+
+	filtered := make([]ModelItem, 0, len(items))
+	for _, item := range items {
+		if isFreeCloudRecommendation(item) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func isFreeCloudRecommendation(item ModelItem) bool {
+	return isCloudModelName(item.Name) && itemHasRecommendationMetadata(item) && PlanSatisfies("free", item.RequiredPlan)
 }
 
 func (c *launcherClient) selectionItemUpdates(ctx context.Context, items []ModelItem, state *AccountState) <-chan []SelectionItem {
