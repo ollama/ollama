@@ -1133,6 +1133,11 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 		return nil, nil, err
 	}
 	recommendations := c.recommendations(ctx)
+	recommendations = filterFreeCloudRecommendationsForAccountState(
+		recommendations,
+		c.accountStateForModelFiltering(ctx, recommendations),
+		preservedRecommendationNames(preChecked, current),
+	)
 
 	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
 	items, orderedChecked, _, _ := buildModelListWithRecommendations(inventory, recommendations, preChecked, current)
@@ -1140,12 +1145,24 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 		items = filterCloudItems(items)
 		orderedChecked = c.filterDisabledCloudModels(ctx, orderedChecked)
 	}
-	items = filterFreeCloudRecommendationsForAccountState(items, c.accountStateForModelFiltering(ctx, items))
 	orderedChecked = filterCheckedModelsForItems(orderedChecked, items)
 	if len(items) == 0 {
 		return nil, nil, errors.New(emptyMessage)
 	}
 	return items, orderedChecked, nil
+}
+
+func preservedRecommendationNames(preChecked []string, current string) map[string]bool {
+	preserve := make(map[string]bool, len(preChecked)+1)
+	for _, name := range preChecked {
+		if name != "" {
+			preserve[name] = true
+		}
+	}
+	if current != "" {
+		preserve[current] = true
+	}
+	return preserve
 }
 
 func (c *launcherClient) accountStateForModelFiltering(ctx context.Context, items []ModelItem) *AccountState {
