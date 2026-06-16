@@ -925,7 +925,11 @@ func availableMemoryForLoad(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo) (ava
 	var discreteGPUFree uint64
 	for _, gpu := range gpus {
 		gpuFree += gpu.FreeMemory
-		if gpu.Integrated {
+		// A dedicated BIOS carveout larger than host RAM (e.g. Strix Halo) is not
+		// host-shared for budgeting; treat it like discrete VRAM so the host-free
+		// bound below does not collapse its budget.
+		dedicatedCarveout := systemInfo.TotalMemory > 0 && gpu.TotalMemory > systemInfo.TotalMemory
+		if gpu.Integrated && !dedicatedCarveout {
 			sharedGPUFree += gpu.FreeMemory
 		} else {
 			discreteGPUFree += gpu.FreeMemory
@@ -1112,7 +1116,11 @@ func hasDiscreteGPU(gpus []ml.DeviceInfo) bool {
 }
 
 func availableMemoryForGPU(systemInfo ml.SystemInfo, gpu ml.DeviceInfo) uint64 {
-	if gpu.Integrated && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < gpu.FreeMemory {
+	// The host-free bound applies only to an integrated GPU whose pool is carved live
+	// from host RAM. A dedicated BIOS carveout larger than host RAM (e.g. Strix Halo)
+	// is not bounded by host free memory, so trust the device's own free figure there.
+	dedicatedCarveout := systemInfo.TotalMemory > 0 && gpu.TotalMemory > systemInfo.TotalMemory
+	if gpu.Integrated && !dedicatedCarveout && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < gpu.FreeMemory {
 		return systemInfo.FreeMemory
 	}
 
