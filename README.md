@@ -101,7 +101,7 @@ Inspirado en [vLLM's PagedAttention](https://arxiv.org/abs/2309.06180) e integra
   - [`src/llama-kv-cache.h`](src/llama-kv-cache.h) — Block Allocator y tablas de paginación
   - [`ggml/src/ggml-cuda/fattn-tile.cuh`](ggml/src/ggml-cuda/fattn-tile.cuh) — Kernel CUDA con traducción virtual→físico
   - [`src/llama-graph.cpp`](src/llama-graph.cpp) — Inyección en el grafo de cómputo
-- 🐕 Motor base: [`llama-cpp-turboquant`](https://github.com/nomadstar/llama-cpp-turboquant/tree/feature/paged-attention) (feature/paged-attention)
+- 🐕 Motor base: [`llama-cpp-turboquant`](https://github.com/nomadstar/llama-cpp-turboquant) (main)
 - 💜 Construido con amor, café, y mucha paciencia debuggeando compilaciones de 30 minutos de CUDA
 
 ---
