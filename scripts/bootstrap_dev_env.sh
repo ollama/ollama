@@ -27,7 +27,7 @@ set -o pipefail
 # Configuration Variables
 ################################################################################
 
-OLLAMA_REPO_URL="git@github.com:Brice12347/ollama-s390x.git"
+OLLAMA_REPO_URL="https://github.com/Brice12347/ollama-s390x.git"
 OLLAMA_REPO_DIR="/workspace/ollama-s390x"
 OLLAMA_CONTAINER_NAME="ollama-dev"
 OLLAMA_IMAGE_TAG="ollama-s390x-dev:latest"
