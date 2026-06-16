@@ -3,8 +3,8 @@
 ################################################################################
 # bootstrap_dev_env.sh
 #
-# Purpose: Automate the setup of an s390x development environment for building
-#          ollama from source within the z-spyre-runtimes container.
+# Purpose: Automate the setup of containerized s390x development environments
+#          for building and serving ollama and for running JupyterLab.
 #
 # Usage: ./scripts/bootstrap_dev_env.sh [OPTIONS]
 #
@@ -12,48 +12,51 @@
 #   -h, --help              Show this help message
 #   -b, --build VARIANT     Build variant to compile (default: cpu)
 #                           Options: cpu, cpu-no-vxe, cpu-debug, cpu-static, zdnn
-#   --skip-container        Skip z-spyre-runtimes container setup
-#   --skip-deps             Skip dependency installation
-#   --skip-clone            Skip repository cloning
-#   --skip-build            Skip building ollama
+#   --skip-container        Skip ollama container setup
+#   --skip-deps             Skip dependency installation inside ollama container
+#   --skip-clone            Skip repository cloning inside ollama container
+#   --skip-build            Skip building ollama inside ollama container
 #
 ################################################################################
 
-set -e  # Exit on error
-set -u  # Exit on undefined variable
-set -o pipefail  # Exit on pipe failure
+set -e
+set -u
+set -o pipefail
 
 ################################################################################
 # Configuration Variables
 ################################################################################
 
-# z-spyre-runtimes configuration
-ZSPYRE_REPO_URL="git@github.ibm.com:zosdev/z-spyre-runtimes.git"
-ZSPYRE_DIR="$HOME/z-spyre-runtimes"
-
-# ollama-s390x configuration
 OLLAMA_REPO_URL="git@github.com:Brice12347/ollama-s390x.git"
-OLLAMA_DIR="$HOME/ollama-s390x"
+OLLAMA_REPO_DIR="/workspace/ollama-s390x"
+OLLAMA_CONTAINER_NAME="ollama-dev"
+OLLAMA_IMAGE_TAG="ollama-s390x-dev:latest"
+OLLAMA_DOCKERFILE_PATH="/tmp/ollama-dev.Dockerfile"
 
-# Build configuration
+JUPYTER_CONTAINER_NAME="jupyter"
+JUPYTER_IMAGE_TAG="ollama-s390x-jupyter:latest"
+JUPYTER_DOCKERFILE_PATH="/tmp/jupyter-dev.Dockerfile"
+
 BUILD_VARIANT="${OLLAMA_BUILD_VARIANT:-cpu}"
 SKIP_CONTAINER=false
 SKIP_DEPS=false
 SKIP_CLONE=false
 SKIP_BUILD=false
 
-# Colors for output
+CONTAINER_ENGINE=""
+USERNAME_INPUT=""
+NOTEBOOKS_DIR=""
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 ################################################################################
 # Helper Functions
 ################################################################################
 
-# Print colored messages
 print_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -70,22 +73,21 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
-# Show help message
 show_help() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Automate the setup of an s390x development environment for building ollama
-within the z-spyre-runtimes container.
+Automate the setup of containerized development environments for building and
+serving ollama and for running JupyterLab.
 
 Options:
   -h, --help              Show this help message
   -b, --build VARIANT     Build variant to compile (default: cpu)
                           Options: cpu, cpu-no-vxe, cpu-debug, cpu-static, zdnn
-  --skip-container        Skip z-spyre-runtimes container setup
-  --skip-deps             Skip dependency installation
-  --skip-clone            Skip repository cloning
-  --skip-build            Skip building ollama
+  --skip-container        Skip ollama container setup
+  --skip-deps             Skip dependency installation inside ollama container
+  --skip-clone            Skip repository cloning inside ollama container
+  --skip-build            Skip building ollama inside ollama container
 
 Build Variants:
   cpu                     Standard CPU build (default)
@@ -95,374 +97,45 @@ Build Variants:
   zdnn                    Build with IBM zDNN acceleration
 
 Examples:
-  # Full setup (container + build)
+  # Full setup for ollama and jupyter containers
   $0
 
   # Setup with custom build variant
   $0 -b zdnn
 
-  # Skip container setup (if already running)
-  $0 --skip-container
-
-  # Only install dependencies
-  $0 --skip-container --skip-clone --skip-build
+  # Recreate jupyter only while skipping ollama setup steps
+  $0 --skip-container --skip-deps --skip-clone --skip-build
 
 EOF
 }
 
-# Check if command exists
 command_exists() {
-    command -v "$1" &> /dev/null
+    command -v "$1" >/dev/null 2>&1
+}
+
+cleanup_file() {
+    local file_path=$1
+    if [ -f "$file_path" ]; then
+        rm -f "$file_path"
+    fi
 }
 
 ################################################################################
-# Container Setup Functions
+# Validation and Argument Parsing
 ################################################################################
 
-# Setup z-spyre-runtimes container
-setup_container() {
-    print_info "Setting up z-spyre-runtimes container environment..."
-    
-    # Clone z-spyre-runtimes repository
-    if [ -d "$ZSPYRE_DIR" ]; then
-        print_warning "Directory $ZSPYRE_DIR already exists, using existing clone"
-    else
-        print_info "Cloning z-spyre-runtimes repository..."
-        git clone "$ZSPYRE_REPO_URL" "$ZSPYRE_DIR"
-        print_success "Repository cloned to $ZSPYRE_DIR"
-    fi
-    
-    # Navigate to runtime-container directory
-    cd "$ZSPYRE_DIR/runtime-container"
-    
-    # Prompt for IBM Cloud API key
-    print_info "IBM Cloud API key is required for container registry access"
-    read -p "Enter your IBM Cloud API key: " -s ICR_TOKEN
-    echo
-    
-    if [ -z "$ICR_TOKEN" ]; then
-        print_error "IBM Cloud API key cannot be empty"
-        exit 1
-    fi
-    
-    export ICR_TOKEN
-    print_success "IBM Cloud API key set"
-    
-    # Run make commands
-    print_info "Logging into IBM Container Registry..."
-    make login
-    
-    print_info "Pulling container image..."
-    make pull
-    
-    print_info "Starting container..."
-    make run
-    
-    print_success "Container setup complete"
-    print_warning "Note: The following steps should be run inside the container"
-}
-
-################################################################################
-# Dependency Installation Functions
-################################################################################
-
-# Install Go programming language
-install_go() {
-    if command_exists go; then
-        GO_VERSION=$(go version | awk '{print $3}')
-        print_info "Go is already installed: $GO_VERSION"
-        return 0
-    fi
-    
-    print_info "Installing Go to user directory..."
-    
-    # Determine architecture
-    ARCH=$(uname -m)
-    case $ARCH in
-        s390x)
-            GO_ARCH="s390x"
-            ;;
-        x86_64)
-            GO_ARCH="amd64"
-            ;;
-        aarch64)
-            GO_ARCH="arm64"
+validate_build_variant() {
+    case "$BUILD_VARIANT" in
+        cpu|cpu-no-vxe|cpu-debug|cpu-static|zdnn)
             ;;
         *)
-            print_error "Unsupported architecture: $ARCH"
-            exit 1
-            ;;
-    esac
-    
-    # Get latest Go version
-    GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -n1)
-    GO_TARBALL="${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-    GO_URL="https://go.dev/dl/${GO_TARBALL}"
-    
-    print_info "Downloading Go ${GO_VERSION} for ${GO_ARCH}..."
-    
-    # Download and install Go to user's home directory
-    GO_INSTALL_DIR="$HOME/.local/go"
-    cd /tmp
-    wget -q "$GO_URL"
-    rm -rf "$GO_INSTALL_DIR"
-    mkdir -p "$HOME/.local"
-    tar -C "$HOME/.local" -xzf "$GO_TARBALL"
-    rm "$GO_TARBALL"
-    
-    # Add Go to PATH if not already present
-    if ! grep -q "$GO_INSTALL_DIR/bin" ~/.bashrc; then
-        echo "export PATH=\$PATH:$GO_INSTALL_DIR/bin" >> ~/.bashrc
-        echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
-    fi
-    
-    export PATH=$PATH:$GO_INSTALL_DIR/bin
-    export PATH=$PATH:$HOME/go/bin
-    
-    print_success "Go installed successfully: $(go version)"
-}
-
-# Install dependencies
-install_dependencies() {
-    print_info "Checking dependencies..."
-    
-    # Note: System packages must be installed by system administrator
-    print_warning "PREREQUISITE: The following system packages must be installed:"
-    print_warning "  - build-essential (or equivalent build tools)"
-    print_warning "  - git, curl, wget, ca-certificates"
-    print_warning "  - cmake (version 3.24 or higher recommended)"
-    print_warning "  - ninja-build"
-    print_warning "  - gcc, g++"
-    print_warning "  - python3, python3-pip"
-    print_warning "  - libopenblas-dev, liblapack-dev, liblapacke-dev"
-    print_warning ""
-    print_warning "On Debian/Ubuntu systems, install with:"
-    print_warning "  sudo apt update && sudo apt install -y build-essential git curl wget ca-certificates cmake ninja-build gcc g++ python3 python3-pip libopenblas-dev liblapack-dev liblapacke-dev"
-    print_warning ""
-    print_warning "On RHEL/Fedora systems, install with:"
-    print_warning "  sudo dnf install -y gcc gcc-c++ git curl wget ca-certificates cmake ninja-build python3 python3-pip openblas-devel lapack-devel"
-    print_warning ""
-    
-    # Install Go (user-local, no sudo required)
-    install_go
-    
-    # Verify critical dependencies
-    print_info "Verifying installed dependencies..."
-    
-    local MISSING_DEPS=()
-    
-    for cmd in cmake ninja git go gcc python3; do
-        if ! command_exists "$cmd"; then
-            MISSING_DEPS+=("$cmd")
-        fi
-    done
-    
-    if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
-        print_error "Missing dependencies: ${MISSING_DEPS[*]}"
-        print_error "Please install the required system packages listed above and run this script again."
-        exit 1
-    fi
-    
-    print_success "All dependencies verified"
-}
-
-################################################################################
-# Repository Management Functions
-################################################################################
-
-# Clone the ollama-s390x repository
-clone_repository() {
-    print_info "Cloning ollama-s390x repository..."
-    
-    if [ -d "$OLLAMA_DIR" ]; then
-        print_warning "Directory $OLLAMA_DIR already exists"
-        print_info "Removing existing directory and re-cloning..."
-        rm -rf "$OLLAMA_DIR"
-    fi
-    
-    # Create parent directory if needed
-    mkdir -p "$(dirname "$OLLAMA_DIR")"
-    
-    # Clone repository
-    git clone "$OLLAMA_REPO_URL" "$OLLAMA_DIR"
-    
-    print_success "Repository cloned to $OLLAMA_DIR"
-}
-
-################################################################################
-# Configuration Functions
-################################################################################
-
-# Create .env.s390x configuration file
-create_env_config() {
-    print_info "Creating .env.s390x configuration file..."
-    
-    local ENV_FILE="$OLLAMA_DIR/.env.s390x"
-    
-    cat > "$ENV_FILE" << 'EOF'
-# s390x-specific environment configuration for ollama
-# This file contains build settings optimized for IBM Z architecture
-
-# Architecture
-export GOARCH=s390x
-export CGO_ENABLED=1
-
-# Disable GPU backends (not available on s390x)
-export OLLAMA_SKIP_CUDA=1
-export OLLAMA_SKIP_ROCM=1
-export OLLAMA_SKIP_VULKAN=1
-export OLLAMA_SKIP_METAL=1
-
-# Disable MLX backend (macOS-specific)
-export OLLAMA_MLX_BACKENDS=""
-
-# CPU-only build (default for s390x)
-export OLLAMA_CPU_TARGET="s390x"
-
-# OpenBLAS configuration
-export USE_OPENBLAS=1
-
-# Build parallelism
-export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
-
-# s390x architecture flags
-export CFLAGS="-march=native -mtune=native"
-export CXXFLAGS="-march=native -mtune=native"
-
-# Optional: Enable Vector Extensions if available
-# Uncomment the following line if your system supports Vector Extensions
-# export OLLAMA_S390X_VXE=1
-
-# Optional: Enable zDNN acceleration
-# Uncomment and configure if using IBM zDNN
-# export OLLAMA_ZDNN=1
-# export ZDNN_INSTALL_DIR=/path/to/zdnn
-
-# Debug settings (uncomment for debug builds)
-# export CMAKE_BUILD_TYPE=Debug
-# export OLLAMA_DEBUG=1
-
-EOF
-    
-    print_success "Configuration file created: $ENV_FILE"
-    print_info "To use this configuration, run: source $ENV_FILE"
-}
-
-################################################################################
-# Build Functions
-################################################################################
-
-# Build ollama with specified variant
-build_ollama() {
-    local VARIANT=$1
-    
-    print_info "Building ollama with variant: $VARIANT"
-    
-    cd "$OLLAMA_DIR"
-    
-    # Source environment configuration
-    if [ -f ".env.s390x" ]; then
-        source .env.s390x
-    fi
-    
-    # Clean previous build
-    if [ -d "build" ]; then
-        print_info "Cleaning previous build..."
-        rm -rf build
-    fi
-    
-    # Set build-specific flags
-    local CMAKE_FLAGS=""
-    
-    case $VARIANT in
-        cpu)
-            print_info "Building standard CPU variant..."
-            CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release"
-            ;;
-        cpu-no-vxe)
-            print_info "Building CPU variant without Vector Extensions..."
-            CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release -DOLLAMA_S390X_VXE=OFF"
-            export OLLAMA_S390X_VXE=0
-            ;;
-        cpu-debug)
-            print_info "Building CPU variant with debug symbols..."
-            CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug"
-            export OLLAMA_DEBUG=1
-            ;;
-        cpu-static)
-            print_info "Building static CPU variant..."
-            CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF"
-            ;;
-        zdnn)
-            print_info "Building with IBM zDNN acceleration..."
-            CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release -DOLLAMA_ZDNN=ON"
-            export OLLAMA_ZDNN=1
-            
-            if [ -z "${ZDNN_INSTALL_DIR:-}" ]; then
-                print_warning "ZDNN_INSTALL_DIR not set, using default /usr/local"
-                export ZDNN_INSTALL_DIR=/usr/local
-            fi
-            CMAKE_FLAGS="$CMAKE_FLAGS -DZDNN_INSTALL_DIR=$ZDNN_INSTALL_DIR"
-            ;;
-        *)
-            print_error "Unknown build variant: $VARIANT"
+            print_error "Unknown build variant: $BUILD_VARIANT"
             print_info "Valid variants: cpu, cpu-no-vxe, cpu-debug, cpu-static, zdnn"
             exit 1
             ;;
     esac
-    
-    # Configure with CMake
-    print_info "Configuring build with CMake..."
-    cmake -B build $CMAKE_FLAGS .
-    
-    # Build
-    print_info "Building ollama (this may take a while)..."
-    cmake --build build --parallel 8
-    
-    print_success "Build completed successfully!"
-    print_info "Binary location: $OLLAMA_DIR/ollama"
 }
 
-# Display build matrix information
-show_build_matrix() {
-    cat << EOF
-
-${BLUE}═══════════════════════════════════════════════════════════════${NC}
-${GREEN}Available Build Variants for s390x${NC}
-${BLUE}═══════════════════════════════════════════════════════════════${NC}
-
-${YELLOW}cpu${NC}           Standard CPU build (default)
-                - Optimized for s390x architecture
-                - Uses OpenBLAS for linear algebra
-                - Release build with optimizations
-
-${YELLOW}cpu-no-vxe${NC}    CPU build without Vector Extensions
-                - For older s390x systems without VXE support
-                - Portable across all s390x generations
-
-${YELLOW}cpu-debug${NC}     CPU build with debug symbols
-                - Includes debugging information
-                - Useful for development and troubleshooting
-
-${YELLOW}cpu-static${NC}    Static CPU build
-                - Statically linked binary
-                - Portable across different Linux distributions
-
-${YELLOW}zdnn${NC}          Build with IBM zDNN acceleration
-                - Requires IBM zDNN library installed
-                - Hardware-accelerated neural network operations
-                - Set ZDNN_INSTALL_DIR environment variable
-
-${BLUE}═══════════════════════════════════════════════════════════════${NC}
-
-EOF
-}
-
-################################################################################
-# Main Script Logic
-################################################################################
-
-# Parse command line arguments
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -471,6 +144,10 @@ parse_arguments() {
                 exit 0
                 ;;
             -b|--build)
+                if [[ $# -lt 2 ]]; then
+                    print_error "Missing value for $1"
+                    exit 1
+                fi
                 BUILD_VARIANT="$2"
                 shift 2
                 ;;
@@ -499,70 +176,325 @@ parse_arguments() {
     done
 }
 
-# Main function
-main() {
-    print_info "Starting ollama s390x development environment setup..."
-    print_info "Build variant: $BUILD_VARIANT"
-    echo
-    
-    # Setup container
-    if [ "$SKIP_CONTAINER" = false ]; then
-        setup_container
-        echo
-        print_warning "Container is now running. Execute the following steps inside the container:"
-        print_info "Run this script again with --skip-container flag inside the container"
-        exit 0
+################################################################################
+# Container Engine Functions
+################################################################################
+
+detect_container_engine() {
+    if command_exists podman; then
+        CONTAINER_ENGINE="podman"
+    elif command_exists docker; then
+        CONTAINER_ENGINE="docker"
     else
-        print_info "Skipping container setup (assuming already in container)"
+        print_error "Neither podman nor docker is installed"
+        exit 1
     fi
-    
-    # Install dependencies
-    if [ "$SKIP_DEPS" = false ]; then
-        install_dependencies
-        echo
-    else
-        print_warning "Skipping dependency installation"
-    fi
-    
-    # Clone repository
-    if [ "$SKIP_CLONE" = false ]; then
-        clone_repository
-        echo
-    else
-        print_warning "Skipping repository clone"
-    fi
-    
-    # Create environment configuration
-    create_env_config
-    echo
-    
-    # Show build matrix
-    show_build_matrix
-    
-    # Build ollama
-    if [ "$SKIP_BUILD" = false ]; then
-        build_ollama "$BUILD_VARIANT"
-        echo
-    else
-        print_warning "Skipping build"
-    fi
-    
-    # Final instructions
-    print_success "Setup complete!"
-    echo
-    print_info "Next steps:"
-    echo "  1. Source the environment configuration:"
-    echo "     source $OLLAMA_DIR/.env.s390x"
-    echo
-    echo "  2. Run ollama:"
-    echo "     $OLLAMA_DIR/ollama serve"
-    echo
-    echo "  3. To rebuild with a different variant:"
-    echo "     $0 -b <variant> --skip-container --skip-deps --skip-clone"
-    echo
+
+    print_success "Using container engine: $CONTAINER_ENGINE"
 }
 
-# Entry point
+cleanup_existing_artifacts() {
+    print_info "Cleaning up existing containers and temporary Dockerfiles..."
+
+    "$CONTAINER_ENGINE" rm -f "$OLLAMA_CONTAINER_NAME" >/dev/null 2>&1 || true
+    "$CONTAINER_ENGINE" rm -f "$JUPYTER_CONTAINER_NAME" >/dev/null 2>&1 || true
+    "$CONTAINER_ENGINE" rmi -f "$OLLAMA_IMAGE_TAG" >/dev/null 2>&1 || true
+    "$CONTAINER_ENGINE" rmi -f "$JUPYTER_IMAGE_TAG" >/dev/null 2>&1 || true
+
+    cleanup_file "$OLLAMA_DOCKERFILE_PATH"
+    cleanup_file "$JUPYTER_DOCKERFILE_PATH"
+
+    print_success "Cleanup complete"
+}
+
+################################################################################
+# Ollama Container Functions
+################################################################################
+
+create_ollama_dockerfile() {
+    print_info "Creating ollama Dockerfile at $OLLAMA_DOCKERFILE_PATH"
+
+    cat > "$OLLAMA_DOCKERFILE_PATH" << EOF
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /workspace
+
+RUN apt-get update && \
+    apt-get install -y git openssh-client ca-certificates curl golang-go cmake ninja-build && \
+    rm -rf /var/lib/apt/lists/*
+
+CMD ["bash", "-lc", "sleep infinity"]
+EOF
+
+    print_success "Ollama Dockerfile created"
+}
+
+build_ollama_image() {
+    print_info "Building ollama image: $OLLAMA_IMAGE_TAG"
+    "$CONTAINER_ENGINE" build -t "$OLLAMA_IMAGE_TAG" -f "$OLLAMA_DOCKERFILE_PATH" .
+    print_success "Ollama image built"
+}
+
+run_ollama_container() {
+    print_info "Starting ollama container: $OLLAMA_CONTAINER_NAME"
+    "$CONTAINER_ENGINE" run -d \
+        --name "$OLLAMA_CONTAINER_NAME" \
+        --network host \
+        "$OLLAMA_IMAGE_TAG"
+    print_success "Ollama container started"
+}
+
+run_ollama_clone() {
+    if [ "$SKIP_CLONE" = true ]; then
+        print_warning "Skipping repository clone inside ollama container"
+        return
+    fi
+
+    print_info "Cloning ollama repository inside ollama container"
+    "$CONTAINER_ENGINE" exec "$OLLAMA_CONTAINER_NAME" bash -lc "
+        rm -rf '$OLLAMA_REPO_DIR' &&
+        git clone '$OLLAMA_REPO_URL' '$OLLAMA_REPO_DIR'
+    "
+    print_success "Repository cloned inside ollama container"
+}
+
+run_ollama_dependency_step() {
+    if [ "$SKIP_DEPS" = true ]; then
+        print_warning "Skipping dependency installation inside ollama container"
+        return
+    fi
+
+    print_info "Installing ollama dependencies inside container"
+    "$CONTAINER_ENGINE" exec "$OLLAMA_CONTAINER_NAME" bash -lc "
+        apt-get update &&
+        apt-get install -y golang-go cmake ninja-build
+    "
+    print_success "Dependency installation completed inside ollama container"
+}
+
+run_ollama_build() {
+    if [ "$SKIP_BUILD" = true ]; then
+        print_warning "Skipping ollama build inside container"
+        return
+    fi
+
+    print_info "Configuring and building ollama inside container"
+    "$CONTAINER_ENGINE" exec "$OLLAMA_CONTAINER_NAME" bash -lc "
+        cd '$OLLAMA_REPO_DIR' &&
+        cmake -B build . &&
+        cmake --build build --parallel 8
+    "
+    print_success "Ollama build completed inside container"
+}
+
+start_ollama_service() {
+    print_info "Starting ollama service inside container"
+    "$CONTAINER_ENGINE" exec -d "$OLLAMA_CONTAINER_NAME" bash -lc "
+        cd '$OLLAMA_REPO_DIR' &&
+        ./ollama serve
+    "
+    print_success "Ollama service started inside container"
+}
+
+setup_ollama_container() {
+    if [ "$SKIP_CONTAINER" = true ]; then
+        print_warning "Skipping ollama container setup"
+        return
+    fi
+
+    create_ollama_dockerfile
+    build_ollama_image
+    run_ollama_container
+    run_ollama_clone
+    run_ollama_dependency_step
+    run_ollama_build
+    start_ollama_service
+}
+
+################################################################################
+# Jupyter Container Functions
+################################################################################
+
+prompt_for_username() {
+    local prompt_message=$1
+
+    read -r -p "$prompt_message" USERNAME_INPUT
+
+    if [ -z "$USERNAME_INPUT" ]; then
+        print_error "USERNAME cannot be empty"
+        exit 1
+    fi
+
+    NOTEBOOKS_DIR="/Wonder/$USERNAME_INPUT/notebooks"
+}
+
+create_jupyter_dockerfile() {
+    print_info "Creating jupyter Dockerfile at $JUPYTER_DOCKERFILE_PATH"
+
+    cat > "$JUPYTER_DOCKERFILE_PATH" << EOF
+FROM docker.io/library/python:3.12-slim
+
+WORKDIR /home/jovyan/work
+
+RUN apt-get update -qq && \
+    apt-get install -y -qq build-essential python3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+CMD ["sh", "-c", "sleep infinity"]
+EOF
+
+    print_success "Jupyter Dockerfile created"
+}
+
+build_jupyter_image() {
+    print_info "Building jupyter image: $JUPYTER_IMAGE_TAG"
+    "$CONTAINER_ENGINE" build -t "$JUPYTER_IMAGE_TAG" -f "$JUPYTER_DOCKERFILE_PATH" .
+    print_success "Jupyter image built"
+}
+
+run_jupyter_container() {
+    print_info "Starting jupyter container: $JUPYTER_CONTAINER_NAME"
+    "$CONTAINER_ENGINE" run -d \
+        --name "$JUPYTER_CONTAINER_NAME" \
+        --network host \
+        -v "$NOTEBOOKS_DIR:/home/jovyan/work:Z" \
+        -w /home/jovyan/work \
+        "$JUPYTER_IMAGE_TAG" \
+        sh -c "
+            pip install --quiet --no-cache-dir jupyterlab requests &&
+            jupyter lab \
+              --ip=127.0.0.1 \
+              --port=8888 \
+              --no-browser \
+              --ServerApp.token='' \
+              --ServerApp.password='' \
+              --ServerApp.allow_root=True
+        "
+    print_success "Jupyter container started"
+}
+
+show_jupyter_logs() {
+    print_info "Showing recent jupyter logs"
+    "$CONTAINER_ENGINE" logs "$JUPYTER_CONTAINER_NAME" --tail 10
+    print_success "Displayed jupyter logs"
+}
+
+wait_for_jupyter() {
+    print_info "Waiting 3 minutes for JupyterLab to initialize"
+    sleep 180
+    print_success "Wait period completed"
+}
+
+check_jupyter_endpoint() {
+    print_info "Checking JupyterLab endpoint"
+    curl -I http://127.0.0.1:8888
+    print_success "JupyterLab endpoint responded"
+}
+
+setup_jupyter_container() {
+    prompt_for_username "Enter USERNAME for Jupyter notebook mount path: "
+    create_jupyter_dockerfile
+    build_jupyter_image
+    run_jupyter_container
+    show_jupyter_logs
+    wait_for_jupyter
+    check_jupyter_endpoint
+}
+
+################################################################################
+# Output Functions
+################################################################################
+
+show_build_matrix() {
+    cat << EOF
+
+${BLUE}═══════════════════════════════════════════════════════════════${NC}
+${GREEN}Available Build Variants for s390x${NC}
+${BLUE}═══════════════════════════════════════════════════════════════${NC}
+
+${YELLOW}cpu${NC}           Standard CPU build (default)
+                - Release build inside the ollama container
+
+${YELLOW}cpu-no-vxe${NC}    Reserved compatibility variant
+                - Accepted for CLI compatibility
+                - Current workflow still runs: cmake -B build .
+
+${YELLOW}cpu-debug${NC}     Reserved debug variant
+                - Accepted for CLI compatibility
+                - Current workflow still runs: cmake -B build .
+
+${YELLOW}cpu-static${NC}    Reserved static variant
+                - Accepted for CLI compatibility
+                - Current workflow still runs: cmake -B build .
+
+${YELLOW}zdnn${NC}          Reserved zDNN variant
+                - Accepted for CLI compatibility
+                - Current workflow still runs: cmake -B build .
+
+${BLUE}═══════════════════════════════════════════════════════════════${NC}
+
+EOF
+}
+
+show_final_instructions() {
+    cat << EOF
+
+${GREEN}Setup complete!${NC}
+
+${BLUE}Ollama container:${NC}
+  Name: $OLLAMA_CONTAINER_NAME
+  Image: $OLLAMA_IMAGE_TAG
+  Service: running inside the container via ./ollama serve
+
+${BLUE}Jupyter container:${NC}
+  Name: $JUPYTER_CONTAINER_NAME
+  Image: $JUPYTER_IMAGE_TAG
+  Notebook mount: $NOTEBOOKS_DIR
+  URL: http://127.0.0.1:8888
+
+${BLUE}Next steps:${NC}
+  1. In a separate CLI, run:
+     ssh -L 8888:127.0.0.1:8888 ${USERNAME_INPUT}@b39-triframe1.pok.stglabs.ibm.com -p 22
+
+  2. Open JupyterLab in your browser:
+     http://127.0.0.1:8888
+
+  3. Inspect running containers if needed:
+     $CONTAINER_ENGINE ps
+
+  4. View service logs if needed:
+     $CONTAINER_ENGINE logs $OLLAMA_CONTAINER_NAME
+     $CONTAINER_ENGINE logs $JUPYTER_CONTAINER_NAME
+
+EOF
+}
+
+################################################################################
+# Main Script Logic
+################################################################################
+
+main() {
+    print_info "Starting containerized ollama and jupyter environment setup..."
+    print_info "Build variant: $BUILD_VARIANT"
+    echo
+
+    validate_build_variant
+    detect_container_engine
+    cleanup_existing_artifacts
+    echo
+
+    show_build_matrix
+
+    setup_ollama_container
+    echo
+
+    setup_jupyter_container
+    echo
+
+    show_final_instructions
+}
+
 parse_arguments "$@"
 main
 
