@@ -32,7 +32,7 @@ OLLAMA_REPO_DIR="/workspace/ollama-s390x"
 OLLAMA_CONTAINER_NAME="ollama"
 OLLAMA_IMAGE_TAG="ollama-s390x-dev:latest"
 OLLAMA_DOCKERFILE_PATH="/tmp/ollama-dev.Dockerfile"
-OLLAMA_PORT="113434"
+OLLAMA_PORT="11434"
 
 JUPYTER_CONTAINER_NAME="jupyter"
 JUPYTER_IMAGE_TAG="ollama-s390x-jupyter:latest"
