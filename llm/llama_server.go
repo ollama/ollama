@@ -273,28 +273,15 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 		return nil, err
 	}
 
-	// llama-server rejects prompts that fill the entire slot context, while the
-	// old runner could accept exactly num_ctx prompt tokens. Keep one token of
-	// headroom so token-level truncation preserves old behavior as closely as
-	// llama-server allows.
-	limit := s.options.NumCtx - 1
-	if len(tokens) <= limit {
-		return prompt, nil
+	// s.options.NumCtx is the runner's effective per-slot context length. It
+	// has already been capped by the model's training context during launch.
+	if len(tokens) >= s.options.NumCtx {
+		return nil, api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: "the prompt is longer than the context length currently available to the model; shorten the prompt or adjust the context length in settings",
+		}
 	}
-
-	nKeep := req.Options.NumKeep
-	if nKeep < 0 {
-		nKeep = len(tokens)
-	}
-	nKeep = min(nKeep, limit)
-
-	discard := len(tokens) - limit
-	truncated := make([]int, 0, limit)
-	truncated = append(truncated, tokens[:nKeep]...)
-	truncated = append(truncated, tokens[nKeep+discard:]...)
-
-	slog.Warn("truncating input prompt", "limit", s.options.NumCtx, "prompt", len(tokens), "keep", nKeep, "new", len(truncated))
-	return truncated, nil
+	return prompt, nil
 }
 
 func (s *llamaServerRunner) ContextLength() int {
@@ -1395,7 +1382,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	lsReq := llamaServerCompletionRequest{
 		Prompt:          prompt,
 		Stream:          true,
-		CachePrompt:     req.Shift,
+		CachePrompt:     true,
 		NPredict:        req.Options.NumPredict,
 		NKeep:           req.Options.NumKeep,
 		Temperature:     req.Options.Temperature,
@@ -1984,7 +1971,7 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 	body := map[string]any{
 		"messages":          messages,
 		"stream":            stream,
-		"cache_prompt":      req.Shift,
+		"cache_prompt":      true,
 		"n_predict":         req.Options.NumPredict,
 		"n_keep":            req.Options.NumKeep,
 		"temperature":       req.Options.Temperature,
