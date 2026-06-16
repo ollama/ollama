@@ -907,16 +907,21 @@ func TestResolveContextShift(t *testing.T) {
 	tests := []struct {
 		name  string
 		shift *bool
+		model *Model
 		want  bool
 	}{
 		{name: "unset defaults to shift", want: true},
+		{name: "unset deepseek2 disables shift", model: &Model{Config: model.ConfigV2{ModelFamily: "deepseek2"}}, want: false},
+		{name: "unset deepseek2 family disables shift", model: &Model{Config: model.ConfigV2{ModelFamilies: []string{"llama", "deepseek2"}}}, want: false},
 		{name: "explicit false disables shift", shift: &falseValue, want: false},
+		{name: "explicit false disables shift for deepseek2", shift: &falseValue, model: &Model{Config: model.ConfigV2{ModelFamily: "deepseek2"}}, want: false},
 		{name: "explicit true enables shift", shift: &trueValue, want: true},
+		{name: "explicit true enables shift for deepseek2", shift: &trueValue, model: &Model{Config: model.ConfigV2{ModelFamily: "deepseek2"}}, want: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, resolveContextShift(tt.shift))
+			require.Equal(t, tt.want, resolveContextShift(tt.shift, tt.model))
 		})
 	}
 }

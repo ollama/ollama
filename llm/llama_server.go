@@ -285,8 +285,8 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 		}
 	}
 
-	// llama.cpp can only context-shift after the initial prompt is admitted to
-	// a slot, so trim oversized prompts to the admissible prompt budget.
+	// Restore the v0.30 token-level truncation path for context-shifting
+	// runners. Only non-shifting runners now error instead of truncating.
 	nKeep := req.Options.NumKeep
 	if nKeep < 0 {
 		nKeep = len(tokens)
