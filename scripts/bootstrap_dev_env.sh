@@ -174,7 +174,7 @@ install_go() {
         return 0
     fi
     
-    print_info "Installing Go..."
+    print_info "Installing Go to user directory..."
     
     # Determine architecture
     ARCH=$(uname -m)
@@ -201,65 +201,49 @@ install_go() {
     
     print_info "Downloading Go ${GO_VERSION} for ${GO_ARCH}..."
     
-    # Download and install Go
+    # Download and install Go to user's home directory
+    GO_INSTALL_DIR="$HOME/.local/go"
     cd /tmp
     wget -q "$GO_URL"
-    rm -rf /usr/local/go
-    tar -C /usr/local -xzf "$GO_TARBALL"
+    rm -rf "$GO_INSTALL_DIR"
+    mkdir -p "$HOME/.local"
+    tar -C "$HOME/.local" -xzf "$GO_TARBALL"
     rm "$GO_TARBALL"
     
     # Add Go to PATH if not already present
-    if ! grep -q "/usr/local/go/bin" ~/.bashrc; then
-        echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+    if ! grep -q "$GO_INSTALL_DIR/bin" ~/.bashrc; then
+        echo "export PATH=\$PATH:$GO_INSTALL_DIR/bin" >> ~/.bashrc
         echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
     fi
     
-    export PATH=$PATH:/usr/local/go/bin
+    export PATH=$PATH:$GO_INSTALL_DIR/bin
     export PATH=$PATH:$HOME/go/bin
     
     print_success "Go installed successfully: $(go version)"
 }
 
-# Install dependencies using apt
+# Install dependencies
 install_dependencies() {
-    print_info "Installing dependencies using apt..."
+    print_info "Checking dependencies..."
     
-    # Update package list
-    apt update
+    # Note: System packages must be installed by system administrator
+    print_warning "PREREQUISITE: The following system packages must be installed:"
+    print_warning "  - build-essential (or equivalent build tools)"
+    print_warning "  - git, curl, wget, ca-certificates"
+    print_warning "  - cmake (version 3.24 or higher recommended)"
+    print_warning "  - ninja-build"
+    print_warning "  - gcc, g++"
+    print_warning "  - python3, python3-pip"
+    print_warning "  - libopenblas-dev, liblapack-dev, liblapacke-dev"
+    print_warning ""
+    print_warning "On Debian/Ubuntu systems, install with:"
+    print_warning "  sudo apt update && sudo apt install -y build-essential git curl wget ca-certificates cmake ninja-build gcc g++ python3 python3-pip libopenblas-dev liblapack-dev liblapacke-dev"
+    print_warning ""
+    print_warning "On RHEL/Fedora systems, install with:"
+    print_warning "  sudo dnf install -y gcc gcc-c++ git curl wget ca-certificates cmake ninja-build python3 python3-pip openblas-devel lapack-devel"
+    print_warning ""
     
-    # Core build tools
-    apt install -y \
-        build-essential \
-        git \
-        curl \
-        wget \
-        ca-certificates
-    
-    # CMake (check version and install)
-    if command_exists cmake; then
-        CMAKE_VERSION=$(cmake --version | head -n1 | cut -d' ' -f3)
-        print_info "Found CMake version: $CMAKE_VERSION"
-    fi
-    
-    # Install CMake
-    apt install -y cmake
-    
-    # Ninja build system
-    apt install -y ninja-build
-    
-    # Compiler (GCC)
-    apt install -y gcc g++
-    
-    # Python3
-    apt install -y python3 python3-pip
-    
-    # OpenBLAS and LAPACK libraries
-    apt install -y \
-        libopenblas-dev \
-        liblapack-dev \
-        liblapacke-dev
-    
-    # Install Go
+    # Install Go (user-local, no sudo required)
     install_go
     
     # Verify critical dependencies
@@ -275,10 +259,11 @@ install_dependencies() {
     
     if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
         print_error "Missing dependencies: ${MISSING_DEPS[*]}"
+        print_error "Please install the required system packages listed above and run this script again."
         exit 1
     fi
     
-    print_success "All dependencies installed and verified"
+    print_success "All dependencies verified"
 }
 
 ################################################################################
