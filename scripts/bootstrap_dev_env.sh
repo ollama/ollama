@@ -62,8 +62,27 @@ main() {
     
     # Install dependencies
     print_info "Installing dependencies..."
-    apt update
-    apt install -y golang-go cmake ninja-build
+    
+    # Detect package manager and install dependencies
+    if command -v apt >/dev/null 2>&1; then
+        print_info "Using apt package manager..."
+        apt update
+        apt install -y golang-go cmake ninja-build
+    elif command -v dnf >/dev/null 2>&1; then
+        print_info "Using dnf package manager..."
+        dnf install -y golang cmake ninja-build
+    elif command -v yum >/dev/null 2>&1; then
+        print_info "Using yum package manager..."
+        yum install -y golang cmake ninja-build
+    elif command -v brew >/dev/null 2>&1; then
+        print_info "Using brew package manager..."
+        brew install go cmake ninja
+    else
+        print_error "No supported package manager found (apt, dnf, yum, or brew)"
+        print_info "Please install golang, cmake, and ninja-build manually"
+        exit 1
+    fi
+    
     print_success "Dependencies installed"
     
     # Change to repo directory
