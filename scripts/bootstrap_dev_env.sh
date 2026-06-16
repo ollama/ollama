@@ -43,6 +43,7 @@ JUPYTER_CONTAINER_PORT="8888"
 SHARED_NETWORK_NAME="ollama-network"
 
 BUILD_VARIANT="${OLLAMA_BUILD_VARIANT:-cpu}"
+JUPYTER_USERNAME=""
 SKIP_CONTAINER=false
 SKIP_DEPS=false
 SKIP_CLONE=false
@@ -87,6 +88,7 @@ serving ollama and for running JupyterLab.
 
 Options:
   -h, --help              Show this help message
+  -u, --username USER     Username for Jupyter notebook mount path (default: prompt)
   -b, --build VARIANT     Build variant to compile (default: cpu)
                           Options: cpu, cpu-no-vxe, cpu-debug, cpu-static, zdnn
   --skip-container        Skip ollama container setup
@@ -147,6 +149,14 @@ parse_arguments() {
             -h|--help)
                 show_help
                 exit 0
+                ;;
+            -u|--username)
+                if [[ $# -lt 2 ]]; then
+                    print_error "Missing value for $1"
+                    exit 1
+                fi
+                JUPYTER_USERNAME="$2"
+                shift 2
                 ;;
             -b|--build)
                 if [[ $# -lt 2 ]]; then
@@ -380,10 +390,10 @@ setup_ollama_container() {
 prompt_for_username() {
     local prompt_message=$1
 
-    # Check if USERNAME is already set as environment variable
-    if [ -n "${USERNAME:-}" ]; then
-        USERNAME_INPUT="$USERNAME"
-        print_info "Using USERNAME from environment: $USERNAME_INPUT"
+    # Check if USERNAME is already set via command-line argument
+    if [ -n "$JUPYTER_USERNAME" ]; then
+        USERNAME_INPUT="$JUPYTER_USERNAME"
+        print_info "Using USERNAME from command-line: $USERNAME_INPUT"
     else
         # Display prompt explicitly to ensure it shows in all contexts
         echo -n "$prompt_message"
