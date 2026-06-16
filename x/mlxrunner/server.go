@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
@@ -127,6 +128,11 @@ func Execute(args []string) error {
 		}
 
 		request.Pipeline = runner.TextGenerationPipeline
+		if _, ok := runner.Model.(base.DiffusionModel); ok {
+			// Block-diffusion models use a denoising pipeline, not the
+			// autoregressive one.
+			request.Pipeline = runner.DiffusionGenerationPipeline
+		}
 		request.SamplerOpts = sample.Options{
 			Temperature:      request.Options.Temperature,
 			TopP:             request.Options.TopP,

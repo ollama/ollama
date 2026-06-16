@@ -751,6 +751,9 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "deepseek") {
 			return "deepseek3"
 		}
+		if strings.Contains(archLower, "diffusion") && strings.Contains(archLower, "gemma") {
+			return "gemma4"
+		}
 		if strings.Contains(archLower, "gemma4") {
 			return "gemma4"
 		}
@@ -770,6 +773,9 @@ func getParserName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "deepseek") {
 			return "deepseek3"
+		}
+		if strings.Contains(typeLower, "diffusion") && strings.Contains(typeLower, "gemma") {
+			return "gemma4"
 		}
 		if strings.Contains(typeLower, "gemma4") {
 			return "gemma4"
@@ -805,6 +811,9 @@ func getRendererName(modelDir string) string {
 		if strings.Contains(archLower, "laguna") {
 			return "laguna"
 		}
+		if strings.Contains(archLower, "diffusion") && strings.Contains(archLower, "gemma") {
+			return "gemma4"
+		}
 		if strings.Contains(archLower, "gemma4") {
 			return "gemma4"
 		}
@@ -824,6 +833,9 @@ func getRendererName(modelDir string) string {
 		typeLower := strings.ToLower(cfg.ModelType)
 		if strings.Contains(typeLower, "laguna") {
 			return "laguna"
+		}
+		if strings.Contains(typeLower, "diffusion") && strings.Contains(typeLower, "gemma") {
+			return "gemma4"
 		}
 		if strings.Contains(typeLower, "gemma4") {
 			return "gemma4"
