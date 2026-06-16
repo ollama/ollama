@@ -380,14 +380,20 @@ setup_ollama_container() {
 prompt_for_username() {
     local prompt_message=$1
 
-    # Display prompt explicitly to ensure it shows in all contexts
-    echo -n "$prompt_message"
-    read -r USERNAME_INPUT
-    USERNAME_INPUT=$(echo "$USERNAME_INPUT" | xargs)
+    # Check if USERNAME is already set as environment variable
+    if [ -n "${USERNAME:-}" ]; then
+        USERNAME_INPUT="$USERNAME"
+        print_info "Using USERNAME from environment: $USERNAME_INPUT"
+    else
+        # Display prompt explicitly to ensure it shows in all contexts
+        echo -n "$prompt_message"
+        read -r USERNAME_INPUT
+        USERNAME_INPUT=$(echo "$USERNAME_INPUT" | xargs)
 
-    if [ -z "$USERNAME_INPUT" ]; then
-        print_error "USERNAME cannot be empty"
-        exit 1
+        if [ -z "$USERNAME_INPUT" ]; then
+            print_error "USERNAME cannot be empty"
+            exit 1
+        fi
     fi
 
     NOTEBOOKS_DIR="/Wonder/$USERNAME_INPUT/notebooks"
