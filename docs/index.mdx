@@ -11,32 +11,15 @@ Download Ollama, run a model, then use it from an app or the API.
 
 Install Ollama and run your first model.
 
-<CardGroup cols={2}>
-  <Card title="Download Ollama" icon="download" href="https://ollama.com/download">
-    Install Ollama on macOS, Windows, or Linux.
-  </Card>
-
+<CardGroup cols={1}>
   <Card title="Read the quickstart" icon="rocket" href="/quickstart">
     Go from install to your first response.
   </Card>
 </CardGroup>
 
-Run a local model from your terminal:
+## Models
 
-```shell
-ollama run gemma4
-```
-
-Or sign in and run a cloud model:
-
-```shell
-ollama signin
-ollama run kimi-k2.7-code:cloud
-```
-
-## Choose a model
-
-Use a local model when you want it on your machine. Use a cloud model when you want a larger model without downloading it.
+Run models locally or use larger models in Ollama's cloud.
 
 <CardGroup cols={2}>
   <Card title="Browse models" icon="star" href="https://ollama.com/search">
@@ -44,65 +27,19 @@ Use a local model when you want it on your machine. Use a cloud model when you w
   </Card>
 
   <Card title="Cloud models" icon="cloud" href="/cloud">
-    Run larger models through Ollama's cloud.
+    Run larger models without downloading them.
   </Card>
 </CardGroup>
 
-## Choose a path
+## Use Ollama
 
-After the quickstart, choose how you want to use Ollama.
+Connect Ollama to an app, or build with the API.
 
 <CardGroup cols={2}>
-  <Card title="Integrate with apps" icon="plug" href="/integrations">
+  <Card title="Integrations" icon="plug" href="/integrations">
     Use Ollama from a coding agent, assistant, or editor.
   </Card>
 
-  <Card title="Build with the API" icon="terminal" href="/api/introduction">
-    Add Ollama to your own app or script with the local API or OpenAI-compatible clients.
-  </Card>
-</CardGroup>
-
-## Recommended integrations
-
-Start here if you want an app or agent to use Ollama.
-
-#### Coding agents
-
-<CardGroup cols={2}>
-  <Card title="Claude Code" icon="/images/launch-icons/claude-code.svg" href="/integrations/claude-code">
-    Terminal coding agent with tools, vision, web search, and long context.
-  </Card>
-
-  <Card title="OpenCode" icon="/images/launch-icons/opencode.svg" href="/integrations/opencode">
-    Open-source coding agent that edits, runs, and iterates on code.
-  </Card>
-</CardGroup>
-
-#### Assistants
-
-<CardGroup cols={2}>
-  <Card title="OpenClaw" icon="/images/launch-icons/openclaw.svg" href="/integrations/openclaw">
-    Personal assistant for messaging apps and everyday tasks.
-  </Card>
-
-  <Card title="Hermes Agent" icon="/images/launch-icons/hermes-agent.svg" href="/integrations/hermes">
-    Agent with memory, skills, and optional messaging gateways.
-  </Card>
-</CardGroup>
-
-#### Editors
-
-<CardGroup cols={2}>
-  <Card title="VS Code" icon="/images/launch-icons/vscode.png" href="/integrations/vscode">
-    Ollama models in Copilot Chat through the model picker.
-  </Card>
-</CardGroup>
-
-## Build with the API
-
-Start with a first request, then use the API directly or through a library.
-
-<CardGroup cols={2}>
   <Card title="First API request" icon="book-open" href="/api/introduction">
     Learn the local and cloud base URLs, then send a request with `curl`.
   </Card>
