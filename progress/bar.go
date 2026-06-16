@@ -156,6 +156,10 @@ func (b *Bar) String() string {
 	return pre.String() + mid.String() + suf.String()
 }
 
+func (b *Bar) PlainString() string {
+	return fmt.Sprintf("%s %.0f%%", strings.TrimSpace(b.message), b.percent())
+}
+
 func (b *Bar) Set(value int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
