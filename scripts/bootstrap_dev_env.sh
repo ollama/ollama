@@ -64,10 +64,10 @@ main() {
     git clone https://github.com/Brice12347/ollama-s390x.git "$REPO_DIR"
     print_success "Repository cloned to $REPO_DIR"
     
-    # Install dependencies
-    print_info "Installing dependencies..."
-    dnf install -y golang cmake ninja-build
-    print_success "Dependencies installed"
+    # # Install dependencies
+    # print_info "Installing dependencies..."
+    # dnf install -y golang cmake ninja-build
+    # print_success "Dependencies installed"
     
     # Change to repo directory using absolute path
     cd "$REPO_DIR"
