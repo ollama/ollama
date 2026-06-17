@@ -645,8 +645,11 @@ func TestChatSystemCommandTogglesPrompt(t *testing.T) {
 	if m.status != "cache will break by turning system prompt off" {
 		t.Fatalf("status = %q", m.status)
 	}
-	if footer := m.footerLine(); !strings.Contains(footer, "cache will break by turning system prompt off") {
-		t.Fatalf("footer missing cache warning: %q", footer)
+	if footer := m.footerLine(); strings.Contains(footer, "cache will break") {
+		t.Fatalf("footer should not include cache warning: %q", footer)
+	}
+	if notice := m.notificationLine(); notice != "cache will break by turning system prompt off" {
+		t.Fatalf("notificationLine = %q", notice)
 	}
 
 	m.input = []rune("/system")

@@ -32,7 +32,6 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "Ollama") ||
 		!strings.Contains(view, "Bash wants to run a command") ||
-		!strings.Contains(view, "risk: medium") ||
 		!strings.Contains(view, "Approve once (o)") ||
 		!strings.Contains(view, "Approve session (s) - same command in this chat") ||
 		!strings.Contains(view, "Deny (d)") ||
@@ -42,6 +41,14 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 	}
 	if strings.Contains(view, "Approve once (o) -") || strings.Contains(view, "Deny (d) -") {
 		t.Fatalf("approval once/deny choices should not include scope: %q", view)
+	}
+	if strings.Contains(view, "risk:") {
+		t.Fatalf("approval view should not render risk level: %q", view)
+	}
+	approvalIdx := strings.LastIndex(view, "Approve once (o)")
+	inputIdx := strings.LastIndex(view, "> █")
+	if approvalIdx < 0 || inputIdx < 0 || approvalIdx > inputIdx {
+		t.Fatalf("approval picker should render above the input box:\n%s", view)
 	}
 	if len(m.entries) != 1 || m.entries[0].status != "approval" {
 		t.Fatalf("approval tool entry = %#v", m.entries)
@@ -61,6 +68,39 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 	}
 	if m.entries[0].status != "queued" {
 		t.Fatalf("tool status = %q, want queued", m.entries[0].status)
+	}
+}
+
+func TestChatApprovalPromptCtrlOExpandsToolCallDetails(t *testing.T) {
+	reply := make(chan coreagent.ApprovalResult, 1)
+	m := chatModel{
+		width:  100,
+		height: 24,
+		events: make(chan tea.Msg),
+	}
+	m.openApprovalPrompt(chatApprovalPromptMsg{
+		request: coreagent.ApprovalRequest{
+			ToolCallID: "call-1",
+			ToolName:   "bash",
+			Args:       map[string]any{"command": "git status --short --branch --untracked-files=all"},
+			Summary:    "Bash wants to run a command",
+		},
+		reply: reply,
+	})
+
+	transcript := stripANSI(m.renderTranscript(100))
+	if strings.Contains(transcript, "$ git status") {
+		t.Fatalf("tool details should start collapsed: %q", transcript)
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	if cmd != nil {
+		t.Fatal("ctrl+o should only toggle tool details")
+	}
+	m = updated.(chatModel)
+	transcript = stripANSI(m.renderTranscript(100))
+	if !strings.Contains(transcript, "▾ Bash") || !strings.Contains(transcript, "$ git status --short --branch --untracked-files=all") {
+		t.Fatalf("expanded approval tool should show full command: %q", transcript)
 	}
 }
 
@@ -138,6 +178,9 @@ func TestChatShiftTabTogglesPermissionMode(t *testing.T) {
 	if !m.autoApproveTools() {
 		t.Fatal("shift+tab should enable auto-approve mode")
 	}
+	if m.status != "full access enabled" || m.notificationLine() != "full access enabled" {
+		t.Fatalf("status = %q notification = %q, want full access enabled", m.status, m.notificationLine())
+	}
 	if footer := m.footerLine(); !strings.Contains(footer, "full access") || !strings.Contains(footer, "shift+tab") || strings.Contains(footer, "perm") {
 		t.Fatalf("footer missing auto-approve permission mode: %q", footer)
 	}
@@ -146,6 +189,9 @@ func TestChatShiftTabTogglesPermissionMode(t *testing.T) {
 	m = updated.(chatModel)
 	if m.autoApproveTools() {
 		t.Fatal("second shift+tab should return to review mode")
+	}
+	if m.status != "review mode enabled" || m.notificationLine() != "review mode enabled" {
+		t.Fatalf("status = %q notification = %q, want review mode enabled", m.status, m.notificationLine())
 	}
 	if footer := m.footerLine(); !strings.Contains(footer, "review") || strings.Contains(footer, "perm") {
 		t.Fatalf("footer missing review permission mode: %q", footer)

@@ -1,113 +1,44 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/filedata"
 )
 
 func normalizeFilePath(fp string) string {
-	return strings.NewReplacer(
-		"\\ ", " ",
-		"\\(", "(",
-		"\\)", ")",
-		"\\[", "[",
-		"\\]", "]",
-		"\\{", "{",
-		"\\}", "}",
-		"\\$", "$",
-		"\\&", "&",
-		"\\;", ";",
-		"\\'", "'",
-		"\\\\", "\\",
-		"\\*", "*",
-		"\\?", "?",
-		"\\~", "~",
-	).Replace(fp)
+	return filedata.NormalizePath(fp)
 }
 
 func extractFileNames(input string) []string {
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
-	re := regexp.MustCompile(regexPattern)
-
-	return re.FindAllString(input, -1)
+	return filedata.ExtractNames(input)
 }
 
 func extractFileData(input string) (string, []api.ImageData, error) {
-	filePaths := extractFileNames(input)
-	var imgs []api.ImageData
+	cleaned, files, err := filedata.ExtractWithFiles(input)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Couldn't process file: %q\n", err)
+		return "", nil, err
+	}
 
-	for _, fp := range filePaths {
-		nfp := normalizeFilePath(fp)
-		data, err := getImageData(nfp)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Couldn't process file: %q\n", err)
-			return "", imgs, err
-		}
-		ext := strings.ToLower(filepath.Ext(nfp))
+	imgs := make([]api.ImageData, 0, len(files))
+	for _, file := range files {
+		ext := strings.ToLower(filepath.Ext(file.Path))
 		switch ext {
 		case ".wav":
-			fmt.Fprintf(os.Stderr, "Added audio '%s'\n", nfp)
+			fmt.Fprintf(os.Stderr, "Added audio '%s'\n", file.Path)
 		default:
-			fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+			fmt.Fprintf(os.Stderr, "Added image '%s'\n", file.Path)
 		}
-		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
-		input = strings.ReplaceAll(input, "'"+fp+"'", "")
-		input = strings.ReplaceAll(input, fp, "")
-		imgs = append(imgs, data)
+		imgs = append(imgs, file.Data)
 	}
-	return strings.TrimSpace(input), imgs, nil
+	return cleaned, imgs, nil
 }
 
 func getImageData(filePath string) ([]byte, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	buf := make([]byte, 512)
-	_, err = file.Read(buf)
-	if err != nil {
-		return nil, err
-	}
-
-	contentType := http.DetectContentType(buf)
-	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp", "audio/wave"}
-	if !slices.Contains(allowedTypes, contentType) {
-		return nil, fmt.Errorf("invalid file type: %s", contentType)
-	}
-
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-
-	var maxSize int64 = 100 * 1024 * 1024
-	if info.Size() > maxSize {
-		return nil, errors.New("file size exceeds maximum limit (100MB)")
-	}
-
-	buf = make([]byte, info.Size())
-	_, err = file.Seek(0, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = io.ReadFull(file, buf)
-	if err != nil {
-		return nil, err
-	}
-
-	return buf, nil
+	return filedata.GetData(filePath)
 }

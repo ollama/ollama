@@ -9,18 +9,20 @@ import (
 type EventType string
 
 const (
-	EventRunStarted        EventType = "run_started"
-	EventMessageStarted    EventType = "message_started"
-	EventMessageDelta      EventType = "message_delta"
-	EventThinkingDelta     EventType = "thinking_delta"
-	EventToolCallDetected  EventType = "tool_call_detected"
-	EventToolStarted       EventType = "tool_started"
-	EventToolFinished      EventType = "tool_finished"
-	EventToolsUnavailable  EventType = "tools_unavailable"
-	EventCompacted         EventType = "compacted"
-	EventCompactionSkipped EventType = "compaction_skipped"
-	EventRunFinished       EventType = "run_finished"
-	EventError             EventType = "error"
+	EventRunStarted         EventType = "run_started"
+	EventMessageStarted     EventType = "message_started"
+	EventMessageDelta       EventType = "message_delta"
+	EventThinkingDelta      EventType = "thinking_delta"
+	EventToolCallDetected   EventType = "tool_call_detected"
+	EventToolStarted        EventType = "tool_started"
+	EventToolFinished       EventType = "tool_finished"
+	EventToolsUnavailable   EventType = "tools_unavailable"
+	EventCompactionStarted  EventType = "compaction_started"
+	EventCompactionProgress EventType = "compaction_progress"
+	EventCompacted          EventType = "compacted"
+	EventCompactionSkipped  EventType = "compaction_skipped"
+	EventRunFinished        EventType = "run_finished"
+	EventError              EventType = "error"
 )
 
 type Event struct {
@@ -36,6 +38,7 @@ type Event struct {
 	ToolCalls  []api.ToolCall    `json:"toolCalls,omitempty"`
 	Messages   []api.Message     `json:"messages,omitempty"`
 	Args       map[string]any    `json:"args,omitempty"`
+	Tokens     int               `json:"tokens,omitempty"`
 	Error      string            `json:"error,omitempty"`
 	StartedAt  time.Time         `json:"startedAt,omitempty"`
 	FinishedAt time.Time         `json:"finishedAt,omitempty"`

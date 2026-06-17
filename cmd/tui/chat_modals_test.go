@@ -2,7 +2,9 @@ package tui
 
 import (
 	"context"
+	"errors"
 
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -145,6 +147,86 @@ func TestChatHistoryCommandStartsAtBottom(t *testing.T) {
 	}
 }
 
+func TestChatHistoryMouseWheelScrollsPopup(t *testing.T) {
+	messages := make([]api.Message, 0, 18)
+	for i := 0; i < 18; i++ {
+		messages = append(messages, api.Message{Role: "user", Content: "prompt " + strconv.Itoa(i)})
+	}
+	m := chatModel{
+		historyPopup: &chatHistoryPopup{messages: messages, stickToBottom: true},
+		width:        80,
+		height:       10,
+	}
+	maxScroll := m.historyPopupMaxScroll()
+	if maxScroll == 0 {
+		t.Fatal("test setup should produce scrollable history")
+	}
+
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseWheelUp})
+	m = updated.(chatModel)
+	if m.historyPopup.stickToBottom {
+		t.Fatal("mouse wheel should detach history popup from bottom")
+	}
+	if m.historyPopup.scroll >= maxScroll {
+		t.Fatalf("mouse wheel up should scroll toward older history, got %d max %d", m.historyPopup.scroll, maxScroll)
+	}
+
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
+	m = updated.(chatModel)
+	if m.historyPopup.scroll != maxScroll {
+		t.Fatalf("mouse wheel down should scroll back toward latest history, got %d want %d", m.historyPopup.scroll, maxScroll)
+	}
+}
+
+func TestChatHistoryMouseDragSelectsAndCopiesText(t *testing.T) {
+	var copied string
+	m := chatModel{
+		ctx: context.Background(),
+		opts: ChatOptions{
+			Clipboard: func(_ context.Context, text string) error {
+				copied = text
+				return nil
+			},
+		},
+		historyPopup: &chatHistoryPopup{
+			messages:      []api.Message{{Role: "user", Content: "alpha beta"}},
+			stickToBottom: true,
+		},
+		width:  80,
+		height: 10,
+	}
+	top, _ := m.historyPopupLayout()
+	contentY := top + 1
+	contentX := len("  content: ")
+
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: contentX, Y: contentY})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: contentX + len("alpha"), Y: contentY})
+	m = updated.(chatModel)
+	if got := m.selectedHistoryPopupText(); got != "alpha" {
+		t.Fatalf("selected history text = %q, want alpha", got)
+	}
+	if !m.historyPopup.selection.active {
+		t.Fatal("history selection should stay active during drag")
+	}
+
+	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: contentX + len("alpha"), Y: contentY})
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("mouse release should return clipboard command")
+	}
+	if msg := cmd(); msg != nil {
+		updated, _ = m.Update(msg)
+		m = updated.(chatModel)
+	}
+	if copied != "alpha" {
+		t.Fatalf("copied = %q, want alpha", copied)
+	}
+	if m.status != "selection copied" {
+		t.Fatalf("status = %q, want selection copied", m.status)
+	}
+}
+
 func TestChatHistoryCommandFormatsMultilineContentWithLabel(t *testing.T) {
 	m := chatModel{
 		input:    []rune("/history"),
@@ -241,15 +323,37 @@ func TestChatModelCommandOpensPicker(t *testing.T) {
 	}
 }
 
+func TestChatModelPickerShowsRecommendedModelsFirst(t *testing.T) {
+	models := normalizeModelOptions([]ChatModelOption{
+		{Name: "llama3.2", Description: "local"},
+		{Name: "kimi-k2.6:cloud", Description: "cloud coding", Recommended: true},
+		{Name: "qwen3.5:cloud", Description: "cloud reasoning", Recommended: true},
+		{Name: "gemma4", Description: "local"},
+	})
+	got := make([]string, 0, len(models))
+	for _, model := range models {
+		got = append(got, model.Name)
+	}
+	want := []string{"kimi-k2.6:cloud", "qwen3.5:cloud", "llama3.2", "gemma4"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("model order = %#v, want %#v", got, want)
+	}
+}
+
 func TestChatModelPickerFiltersAndSwitchesModel(t *testing.T) {
 	var savedModel string
+	store := &chatResumeTestStore{}
+	originalMessages := []api.Message{{Role: "user", Content: "keep me"}}
 	m := chatModel{
-		ctx:    context.Background(),
-		input:  []rune("/model qwen"),
-		width:  100,
-		height: 20,
+		ctx:      context.Background(),
+		chatID:   "chat-1",
+		input:    []rune("/model qwen"),
+		width:    100,
+		height:   20,
+		messages: slices.Clone(originalMessages),
 		opts: ChatOptions{
 			Model: "llama3.2",
+			Store: store,
 			ModelOptions: func(context.Context) ([]ChatModelOption, error) {
 				return []ChatModelOption{
 					{Name: "llama3.2", Description: "local"},
@@ -312,6 +416,18 @@ func TestChatModelPickerFiltersAndSwitchesModel(t *testing.T) {
 	if m.opts.Model != "qwen3.5:cloud" {
 		t.Fatalf("model = %q, want qwen3.5:cloud", m.opts.Model)
 	}
+	if m.chatID != "chat-1" {
+		t.Fatalf("chatID = %q, want chat-1", m.chatID)
+	}
+	if len(m.messages) != len(originalMessages) || m.messages[0].Content != originalMessages[0].Content {
+		t.Fatalf("messages changed on model switch: %#v", m.messages)
+	}
+	if len(m.entries) != 0 {
+		t.Fatalf("model switch should not append transcript entries: %#v", m.entries)
+	}
+	if got := store.setModels["chat-1"]; got != "qwen3.5:cloud" {
+		t.Fatalf("persisted chat model = %q, want qwen3.5:cloud", got)
+	}
 	if savedModel != "qwen3.5:cloud" {
 		t.Fatalf("saved model = %q, want qwen3.5:cloud", savedModel)
 	}
@@ -323,6 +439,113 @@ func TestChatModelPickerFiltersAndSwitchesModel(t *testing.T) {
 	}
 	if m.opts.SystemPrompt != "system for qwen3.5:cloud" {
 		t.Fatalf("system prompt = %q", m.opts.SystemPrompt)
+	}
+}
+
+func TestChatModelSelectionPersistsBeforeSwitching(t *testing.T) {
+	originalTools := coreagent.NewRegistry()
+	errStore := errors.New("write failed")
+	m := chatModel{
+		ctx:    context.Background(),
+		chatID: "chat-1",
+		opts: ChatOptions{
+			Model:               "llama3.2",
+			Store:               &chatResumeTestStore{setModelErr: errStore},
+			Tools:               originalTools,
+			SystemPrompt:        "system for llama3.2",
+			ContextWindowTokens: 8192,
+			ToolRegistryForModel: func(context.Context, string) *coreagent.Registry {
+				t.Fatal("tool registry should not rebuild when model persistence fails")
+				return nil
+			},
+			SystemPromptForModel: func(context.Context, string, *coreagent.Registry) string {
+				t.Fatal("system prompt should not rebuild when model persistence fails")
+				return ""
+			},
+		},
+		messages: []api.Message{{Role: "user", Content: "history"}},
+	}
+
+	err := m.applyModelSelection("qwen3", true)
+	if !errors.Is(err, errStore) {
+		t.Fatalf("error = %v, want %v", err, errStore)
+	}
+	if m.opts.Model != "llama3.2" {
+		t.Fatalf("model = %q, want llama3.2", m.opts.Model)
+	}
+	if m.opts.Tools != originalTools {
+		t.Fatal("tools changed after failed model persistence")
+	}
+	if m.opts.SystemPrompt != "system for llama3.2" {
+		t.Fatalf("system prompt = %q, want original", m.opts.SystemPrompt)
+	}
+	if m.opts.ContextWindowTokens != 8192 {
+		t.Fatalf("context window = %d, want 8192", m.opts.ContextWindowTokens)
+	}
+	if len(m.messages) != 1 || m.messages[0].Content != "history" {
+		t.Fatalf("messages changed after failed model persistence: %#v", m.messages)
+	}
+}
+
+func TestChatModelSwitchNextRunKeepsHistory(t *testing.T) {
+	client := &chatCaptureClient{}
+	store := &chatResumeTestStore{}
+	history := []api.Message{
+		{Role: "user", Content: "old question"},
+		{Role: "assistant", Content: "old answer"},
+	}
+	m := chatModel{
+		ctx:      context.Background(),
+		chatID:   "chat-1",
+		messages: slices.Clone(history),
+		input:    []rune("continue"),
+		opts: ChatOptions{
+			Model:  "llama3.2",
+			Store:  store,
+			Client: client,
+			SystemPromptForModel: func(_ context.Context, model string, _ *coreagent.Registry) string {
+				return "system for " + model
+			},
+		},
+	}
+	if err := m.applyModelSelection("qwen3", true); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, cmd := m.handleSubmit()
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("next prompt should start a model run")
+	}
+	done := waitForRunDone(t, m.events)
+	if done.err != nil {
+		t.Fatal(done.err)
+	}
+
+	if len(client.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(client.requests))
+	}
+	req := client.requests[0]
+	if req.Model != "qwen3" {
+		t.Fatalf("request model = %q, want qwen3", req.Model)
+	}
+	if len(req.Messages) != 4 {
+		t.Fatalf("request messages = %#v, want system + 2 history + new user", req.Messages)
+	}
+	if req.Messages[0].Role != "system" || req.Messages[0].Content != "system for qwen3" {
+		t.Fatalf("system message = %#v", req.Messages[0])
+	}
+	for i, want := range history {
+		got := req.Messages[i+1]
+		if got.Role != want.Role || got.Content != want.Content {
+			t.Fatalf("history message %d = %#v, want %#v", i, got, want)
+		}
+	}
+	if req.Messages[3].Role != "user" || req.Messages[3].Content != "continue" {
+		t.Fatalf("new user message = %#v", req.Messages[3])
+	}
+	if got := store.setModels["chat-1"]; got != "qwen3" {
+		t.Fatalf("persisted chat model = %q, want qwen3", got)
 	}
 }
 

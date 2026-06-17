@@ -15,8 +15,12 @@ const (
 	defaultCompactionThreshold           = 0.8
 
 	compactionSummaryMessagePrefix = "Conversation summary:\n"
+	compactionToolName             = "compact_conversation"
+	compactionToolCallID           = "ollama_compaction"
 	maxCompactionSummaryBytes      = 16 * 1024
 	compactionSummaryTruncated     = "\n\n[summary truncated]"
+
+	compactionSystemPrompt = "Summarize the archived part of an Ollama CLI agent conversation. Preserve user goals, decisions, files, commands, tool results, and unresolved tasks needed to continue. Omit private reasoning and return only the summary."
 )
 
 type Compactor interface {
@@ -34,14 +38,17 @@ type CompactionOptions struct {
 }
 
 type CompactionRequest struct {
-	ChatID    string
-	Model     string
-	Messages  []api.Message
-	Latest    api.ChatResponse
-	Options   map[string]any
-	KeepAlive *api.Duration
-	Force     bool
-	Progress  func(CompactionProgress)
+	ChatID       string
+	Model        string
+	SystemPrompt string
+	Messages     []api.Message
+	Tools        api.Tools
+	Format       string
+	Latest       api.ChatResponse
+	Options      map[string]any
+	KeepAlive    *api.Duration
+	Force        bool
+	Progress     func(CompactionProgress)
 }
 
 type CompactionProgress struct {
@@ -106,12 +113,10 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 		}
 	}
 
-	compacted := make([]api.Message, 0, len(prefix)+1+len(suffix))
+	compacted := make([]api.Message, 0, len(prefix)+len(suffix)+2)
 	compacted = append(compacted, prefix...)
-	// Keep the rolling summary as a user message so the stable system prompt prefix
-	// remains cache-friendly across compactions.
-	compacted = append(compacted, api.Message{Role: "user", Content: compactionSummaryMessagePrefix + summary})
 	compacted = append(compacted, suffix...)
+	compacted = append(compacted, compactionSummaryMessages(summary)...)
 	result.Messages = compacted
 	result.Compacted = true
 	result.Summary = summary
@@ -131,7 +136,7 @@ func (c *SimpleCompactor) shouldCompact(req CompactionRequest) bool {
 	// tool output, compaction can remove older history but still leave the next
 	// prompt above the safety threshold. Pair this estimate trigger with
 	// context-aware tool-output paging/range reads so the kept suffix can shrink.
-	return estimateMessagesTokens(req.Messages) >= threshold
+	return estimateCompactionRequestTokens(req) >= threshold
 }
 
 func (c *SimpleCompactor) contextWindowTokens(options map[string]any) int {
@@ -170,7 +175,7 @@ func ResolveCompactionThreshold(configured float64) float64 {
 }
 
 func (c *SimpleCompactor) summarize(ctx context.Context, req CompactionRequest, previousSummary string, archive []api.Message) (string, error) {
-	body, err := compactionPrompt(previousSummary, archive)
+	body, err := compactionPrompt(previousSummary, archive, c.compactionPromptBodyBudgetTokens(req.Options))
 	if err != nil {
 		return "", err
 	}
@@ -180,7 +185,7 @@ func (c *SimpleCompactor) summarize(ctx context.Context, req CompactionRequest, 
 		Messages: []api.Message{
 			{
 				Role:    "system",
-				Content: "Summarize the archived part of an Ollama CLI agent conversation. Preserve user goals, decisions, files, commands, tool results, and unresolved tasks needed to continue. Omit private reasoning and return only the summary.",
+				Content: compactionSystemPrompt,
 			},
 			{
 				Role:    "user",
@@ -208,6 +213,48 @@ func (c *SimpleCompactor) summarize(ctx context.Context, req CompactionRequest, 
 		return "", err
 	}
 	return summary.String(), nil
+}
+
+func compactionSummaryMessage(summary string) string {
+	return compactionSummaryMessagePrefix + strings.TrimSpace(summary)
+}
+
+func compactionSummaryMessages(summary string) []api.Message {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("reason", "context compaction")
+	return []api.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{{
+				ID: compactionToolCallID,
+				Function: api.ToolCallFunction{
+					Name:      compactionToolName,
+					Arguments: args,
+				},
+			}},
+		},
+		{
+			Role:       "tool",
+			ToolName:   compactionToolName,
+			ToolCallID: compactionToolCallID,
+			Content:    compactionSummaryMessage(summary),
+		},
+	}
+}
+
+func (c *SimpleCompactor) compactionPromptBodyBudgetTokens(options map[string]any) int {
+	contextWindow := c.contextWindowTokens(options)
+	threshold := int(float64(contextWindow) * c.threshold())
+	if threshold <= 0 {
+		return 0
+	}
+	systemTokens := estimateCompactionTokens("system") + estimateCompactionTokens(compactionSystemPrompt)
+	userRoleTokens := estimateCompactionTokens("user")
+	budget := threshold - systemTokens - userRoleTokens
+	if budget <= 0 {
+		return 0
+	}
+	return budget
 }
 
 func truncateCompactionSummary(summary string) string {
@@ -252,14 +299,60 @@ func estimateMessagesTokens(messages []api.Message) int {
 	return total
 }
 
-func compactionPrompt(previousSummary string, archive []api.Message) (string, error) {
+func estimateCompactionRequestTokens(req CompactionRequest) int {
+	requestMessages := sanitizeMessagesForRequest(req.Messages)
+	if strings.TrimSpace(req.SystemPrompt) != "" {
+		requestMessages = make([]api.Message, 0, len(req.Messages)+1)
+		requestMessages = append(requestMessages, api.Message{Role: "system", Content: strings.TrimSpace(req.SystemPrompt)})
+		requestMessages = append(requestMessages, sanitizeMessagesForRequest(req.Messages)...)
+	}
+
+	payload := struct {
+		Messages []api.Message   `json:"messages,omitempty"`
+		Tools    api.Tools       `json:"tools,omitempty"`
+		Format   json.RawMessage `json:"format,omitempty"`
+	}{
+		Messages: requestMessages,
+		Tools:    req.Tools,
+	}
+	if rawFormat, ok := compactionFormatForEstimate(req.Format); ok {
+		payload.Format = rawFormat
+	}
+	if data, err := json.Marshal(payload); err == nil {
+		return estimateCompactionTokens(string(data))
+	}
+
+	total := estimateMessagesTokens(requestMessages)
+	total += estimateCompactionTokens(req.Tools.String())
+	total += estimateCompactionTokens(req.Format)
+	return total
+}
+
+func compactionFormatForEstimate(format string) (json.RawMessage, bool) {
+	format = strings.TrimSpace(format)
+	if format == "" {
+		return nil, false
+	}
+	if format == "json" {
+		return json.RawMessage(`"json"`), true
+	}
+	if !json.Valid([]byte(format)) {
+		return nil, false
+	}
+	return json.RawMessage(format), true
+}
+
+func compactionPrompt(previousSummary string, archive []api.Message, maxTokens int) (string, error) {
 	messages := make([]api.Message, 0, len(archive))
 	for _, msg := range archive {
 		msg.Thinking = ""
 		msg.Images = nil
 		messages = append(messages, msg)
 	}
+	return renderCompactionPrompt(previousSummary, fitCompactionMessagesToBudget(previousSummary, messages, maxTokens))
+}
 
+func renderCompactionPrompt(previousSummary string, messages []api.Message) (string, error) {
 	payload, err := json.MarshalIndent(messages, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal compaction messages: %w", err)
@@ -276,6 +369,45 @@ func compactionPrompt(previousSummary string, archive []api.Message) (string, er
 	return b.String(), nil
 }
 
+func fitCompactionMessagesToBudget(previousSummary string, messages []api.Message, maxTokens int) []api.Message {
+	if maxTokens <= 0 {
+		return messages
+	}
+	fitted := append([]api.Message(nil), messages...)
+	for range 16 {
+		body, err := renderCompactionPrompt(previousSummary, fitted)
+		if err != nil || estimateCompactionTokens(body) <= maxTokens {
+			return fitted
+		}
+
+		idx := largestCompactionContentMessage(fitted)
+		if idx < 0 {
+			return fitted
+		}
+		overageTokens := estimateCompactionTokens(body) - maxTokens
+		currentRunes := len([]rune(fitted[idx].Content))
+		nextRunes := currentRunes - overageTokens*4 - 256
+		if nextRunes >= currentRunes {
+			nextRunes = currentRunes / 2
+		}
+		fitted[idx].Content = truncateToolResultContentTo(fitted[idx].Content, nextRunes)
+	}
+	return fitted
+}
+
+func largestCompactionContentMessage(messages []api.Message) int {
+	idx := -1
+	size := 0
+	for i, msg := range messages {
+		n := len([]rune(msg.Content))
+		if n > size {
+			idx = i
+			size = n
+		}
+	}
+	return idx
+}
+
 func splitCompactionMessages(messages []api.Message, keepUserTurns int) (prefix []api.Message, previousSummary string, archive []api.Message, suffix []api.Message, keptUserTurns int, ok bool) {
 	if keepUserTurns <= 0 {
 		keepUserTurns = defaultCompactionKeepUserTurns
@@ -286,14 +418,27 @@ func splitCompactionMessages(messages []api.Message, keepUserTurns int) (prefix 
 		prefix = append(prefix, messages[start])
 		start++
 	}
-	if start < len(messages) && isCompactionSummary(messages[start]) {
-		previousSummary = strings.TrimSpace(strings.TrimPrefix(messages[start].Content, compactionSummaryMessagePrefix))
-		start++
+
+	candidates := make([]api.Message, 0, len(messages)-start)
+	for i := start; i < len(messages); i++ {
+		msg := messages[i]
+		if isCompactionSummary(msg) {
+			previousSummary = compactionSummaryText(msg.Content)
+			continue
+		}
+		if isCompactionToolCall(msg) {
+			if i+1 < len(messages) && isCompactionSummary(messages[i+1]) {
+				previousSummary = compactionSummaryText(messages[i+1].Content)
+				i++
+			}
+			continue
+		}
+		candidates = append(candidates, msg)
 	}
 
 	userTurnIndexes := make([]int, 0, keepUserTurns)
-	for i := len(messages) - 1; i >= start; i-- {
-		if messages[i].Role == "user" {
+	for i := len(candidates) - 1; i >= 0; i-- {
+		if candidates[i].Role == "user" {
 			userTurnIndexes = append(userTurnIndexes, i)
 		}
 	}
@@ -305,19 +450,36 @@ func splitCompactionMessages(messages []api.Message, keepUserTurns int) (prefix 
 		keptUserTurns = 0
 	}
 
-	suffixStart := len(messages)
+	suffixStart := len(candidates)
 	if keptUserTurns > 0 {
 		suffixStart = userTurnIndexes[keptUserTurns-1]
 	}
-	if suffixStart <= start || len(messages[start:suffixStart]) == 0 {
+	if suffixStart <= 0 || len(candidates[:suffixStart]) == 0 {
 		return prefix, previousSummary, nil, nil, keptUserTurns, false
 	}
 
-	return prefix, previousSummary, messages[start:suffixStart], messages[suffixStart:], keptUserTurns, true
+	return prefix, previousSummary, candidates[:suffixStart], candidates[suffixStart:], keptUserTurns, true
 }
 
 func isCompactionSummary(msg api.Message) bool {
-	return (msg.Role == "user" || msg.Role == "system") && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix)
+	return (msg.Role == "user" || msg.Role == "system" || (msg.Role == "tool" && msg.ToolName == compactionToolName)) &&
+		strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix)
+}
+
+func isCompactionToolCall(msg api.Message) bool {
+	if msg.Role != "assistant" {
+		return false
+	}
+	for _, call := range msg.ToolCalls {
+		if call.Function.Name == compactionToolName {
+			return true
+		}
+	}
+	return false
+}
+
+func compactionSummaryText(content string) string {
+	return strings.TrimSpace(strings.TrimPrefix(content, compactionSummaryMessagePrefix))
 }
 
 func intOption(options map[string]any, key string) int {

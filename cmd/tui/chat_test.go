@@ -32,9 +32,11 @@ type chatShowTestClient struct {
 }
 
 type chatResumeTestStore struct {
-	chats   []chatstore.ChatSummary
-	byID    map[string]*chatstore.Chat
-	prompts []string
+	chats       []chatstore.ChatSummary
+	byID        map[string]*chatstore.Chat
+	prompts     []string
+	setModels   map[string]string
+	setModelErr error
 }
 
 type chatTestCompactor struct {
@@ -85,6 +87,17 @@ func (s *chatResumeTestStore) AppendMessage(context.Context, string, api.Message
 }
 
 func (s *chatResumeTestStore) UpdateLastMessage(context.Context, string, api.Message, string) error {
+	return nil
+}
+
+func (s *chatResumeTestStore) SetChatModel(_ context.Context, chatID string, model string) error {
+	if s.setModelErr != nil {
+		return s.setModelErr
+	}
+	if s.setModels == nil {
+		s.setModels = map[string]string{}
+	}
+	s.setModels[chatID] = model
 	return nil
 }
 

@@ -69,7 +69,6 @@ func agentOptionsFromRunOptions(opts runOptions) AgentTUIOptions {
 		AutoApproveTools:    opts.AutoApproveTools,
 		Verbose:             opts.Verbose,
 		MultiModal:          opts.MultiModal,
-		Skill:               opts.Skill,
 	}
 }
 
@@ -155,6 +154,12 @@ func newAgentRunSetup(cmd *cobra.Command, opts AgentTUIOptions, resumeLatestWith
 			}
 		}
 	}
+	if strings.TrimSpace(opts.Model) == "" {
+		if store != nil {
+			_ = store.Close()
+		}
+		return nil, errors.New("model is required")
+	}
 	if chatID == "" {
 		var err error
 		chatID, err = newChatID(cmd.Context())
@@ -165,6 +170,12 @@ func newAgentRunSetup(cmd *cobra.Command, opts AgentTUIOptions, resumeLatestWith
 			}
 			store = nil
 			chatID, _ = newChatID(cmd.Context())
+		}
+	}
+	if store != nil {
+		if err := store.SetChatModel(cmd.Context(), chatID, opts.Model); err != nil {
+			_ = store.Close()
+			return nil, err
 		}
 	}
 
@@ -230,18 +241,20 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		OnModelSelected: func(_ context.Context, model string) error {
 			return config.SetLastModel(model)
 		},
-		SystemPromptForModel: func(_ context.Context, _ string, registry *coreagent.Registry) string {
-			return agentSystemPrompt(setup.skills, registry != nil && registry.Has("skill"), "")
+		SystemPromptForModel: func(_ context.Context, model string, registry *coreagent.Registry) string {
+			return agentSystemPrompt(model, setup.skills, registry != nil && registry.Has("skill"), "")
 		},
 		Approval:         setup.approval,
 		AutoApproveTools: opts.AutoApproveTools,
 		Skills:           setup.skills,
-		SystemPrompt:     agentSystemPrompt(setup.skills, setup.registry != nil && setup.registry.Has("skill"), ""),
+		SystemPrompt:     agentSystemPrompt(opts.Model, setup.skills, setup.registry != nil && setup.registry.Has("skill"), ""),
 		WorkingDir:       setup.cwd,
 		Format:           opts.Format,
 		Options:          opts.Options,
 		Think:            opts.Think,
 		KeepAlive:        opts.KeepAlive,
+		Images:           slices.Clone(opts.Images),
+		MultiModal:       opts.MultiModal,
 		HideThinking:     opts.HideThinking,
 		Verbose:          opts.Verbose,
 		Compactor: coreagent.NewSimpleCompactor(setup.client, setup.store, coreagent.CompactionOptions{
@@ -281,7 +294,7 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 			return err
 		}
 	}
-	systemPrompt := agentSystemPrompt(setup.skills, setup.registry != nil && setup.registry.Has("skill"), "")
+	systemPrompt := agentSystemPrompt(opts.Model, setup.skills, setup.registry != nil && setup.registry.Has("skill"), "")
 	newMessages := []api.Message{{Role: "user", Content: prompt, Images: images}}
 	if strings.TrimSpace(opts.Skill) == "" {
 		if skill, request, ok := skillFromPrompt(setup.skills, prompt); ok {
@@ -316,11 +329,11 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 		}
 	}()
 
-	sink := &agentHeadlessEventSink{}
+	headlessSink := &agentHeadlessEventSink{}
 	session := &coreagent.Session{
 		Client:     setup.client,
 		Store:      setup.store,
-		Events:     sink,
+		Events:     headlessSink,
 		Tools:      setup.registry,
 		Approval:   setup.approval,
 		WorkingDir: setup.cwd,
@@ -343,7 +356,7 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 	if err != nil {
 		return err
 	}
-	if sink.wroteContent {
+	if headlessSink.wroteContent {
 		fmt.Fprintln(os.Stdout)
 	}
 
@@ -442,13 +455,13 @@ func loadAgentSkills() *skills.Catalog {
 	return catalog
 }
 
-func agentSystemPrompt(catalog *skills.Catalog, skillToolAvailable bool, extra string) string {
-	return agentSystemPromptAt(time.Now(), catalog, skillToolAvailable, extra)
+func agentSystemPrompt(modelName string, catalog *skills.Catalog, skillToolAvailable bool, extra string) string {
+	return agentSystemPromptAt(time.Now(), modelName, catalog, skillToolAvailable, extra)
 }
 
-func agentSystemPromptAt(now time.Time, catalog *skills.Catalog, skillToolAvailable bool, extra string) string {
+func agentSystemPromptAt(now time.Time, modelName string, catalog *skills.Catalog, skillToolAvailable bool, extra string) string {
 	var parts []string
-	parts = append(parts, agentDefaultSystemPrompt(now))
+	parts = append(parts, agentDefaultSystemPrompt(now, modelName))
 	if catalogPrompt := catalog.SystemPrompt(skillToolAvailable); strings.TrimSpace(catalogPrompt) != "" {
 		parts = append(parts, catalogPrompt)
 	}
@@ -458,10 +471,10 @@ func agentSystemPromptAt(now time.Time, catalog *skills.Catalog, skillToolAvaila
 	return strings.Join(parts, "\n\n")
 }
 
-func agentDefaultSystemPrompt(now time.Time) string {
+func agentDefaultSystemPrompt(now time.Time, modelName string) string {
 	date := now.Format("Monday, January 2, 2006")
 	return strings.Join([]string{
-		"You are Ollama, a helpful local AI assistant.",
+		"You are running in Ollama as part of the Ollama agent, and the model is " + modelName + ".",
 		"",
 		"Current date: " + date + ".",
 		"",
@@ -485,7 +498,7 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]tui.ChatModel
 
 	seen := make(map[string]struct{})
 	var options []tui.ChatModelOption
-	add := func(name, description string) {
+	add := func(name, description string, recommended bool) {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return
@@ -495,7 +508,7 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]tui.ChatModel
 			return
 		}
 		seen[key] = struct{}{}
-		options = append(options, tui.ChatModelOption{Name: name, Description: strings.TrimSpace(description)})
+		options = append(options, tui.ChatModelOption{Name: name, Description: strings.TrimSpace(description), Recommended: recommended})
 	}
 
 	if disabled, known := agentCloudStatusDisabled(ctx, client); !known || !disabled {
@@ -505,7 +518,7 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]tui.ChatModel
 				if !modelref.HasExplicitCloudSource(name) {
 					continue
 				}
-				add(name, agentRecommendationDescription(rec))
+				add(name, agentRecommendationDescription(rec), true)
 			}
 		}
 	}
@@ -520,7 +533,7 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]tui.ChatModel
 			name = strings.TrimSpace(model.Model)
 		}
 		name = strings.TrimSuffix(name, ":latest")
-		add(name, agentLocalModelDescription(model))
+		add(name, agentLocalModelDescription(model), false)
 	}
 
 	return options, nil
@@ -535,9 +548,6 @@ func agentRecommendationDescription(rec api.ModelRecommendation) string {
 	}
 	if rec.ContextLength > 0 {
 		parts = append(parts, format.HumanNumber(uint64(rec.ContextLength))+" ctx")
-	}
-	if rec.RequiredPlan != "" {
-		parts = append(parts, rec.RequiredPlan+" plan")
 	}
 	return strings.Join(parts, " · ")
 }

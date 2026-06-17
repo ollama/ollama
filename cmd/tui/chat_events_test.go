@@ -39,6 +39,18 @@ func TestChatEnterQueuesWhileRunning(t *testing.T) {
 	}
 }
 
+func compactionToolCallMessage() api.Message {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("reason", "context compaction")
+	return api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+		ID: "ollama_compaction",
+		Function: api.ToolCallFunction{
+			Name:      "compact_conversation",
+			Arguments: args,
+		},
+	}}}
+}
+
 func TestChatRunDoneStartsQueuedMessage(t *testing.T) {
 	m := chatModel{
 		ctx:     context.Background(),
@@ -105,6 +117,34 @@ func TestChatActivityLabelOmitsResponding(t *testing.T) {
 
 	if got := m.activityLabel(); got != "" {
 		t.Fatalf("activityLabel = %q, want empty", got)
+	}
+}
+
+func TestChatActivityLabelShowsWaitingForModel(t *testing.T) {
+	m := chatModel{running: true}
+
+	if got := m.activityLabel(); got != "waiting for model" {
+		t.Fatalf("activityLabel = %q, want waiting for model", got)
+	}
+
+	line := stripANSI(m.activityLine())
+	if !strings.Contains(line, "waiting for model") {
+		t.Fatalf("activityLine = %q, want waiting label", line)
+	}
+}
+
+func TestChatActivityLabelShowsWaitingForModelOnFollowUp(t *testing.T) {
+	m := chatModel{
+		running: true,
+		entries: []chatEntry{
+			{role: "user", content: "first"},
+			{role: "assistant", content: "done"},
+			{role: "user", content: "follow up"},
+		},
+	}
+
+	if got := m.activityLabel(); got != "waiting for model" {
+		t.Fatalf("activityLabel = %q, want waiting for model", got)
 	}
 }
 
@@ -271,6 +311,56 @@ func TestChatRunDoneKeepsAPIPromptEvalCount(t *testing.T) {
 	}
 }
 
+func TestChatRunDoneIncludesGeneratedTokenCount(t *testing.T) {
+	m := chatModel{}
+
+	updated, _ := m.Update(chatRunDoneMsg{
+		result: &coreagent.RunResult{
+			Messages: []api.Message{{Role: "assistant", Content: "done"}},
+			Latest: api.ChatResponse{
+				Metrics: api.Metrics{PromptEvalCount: 123, EvalCount: 7},
+			},
+		},
+	})
+
+	fm := updated.(chatModel)
+	if fm.contextTokens != 130 {
+		t.Fatalf("contextTokens = %d, want prompt + generated token count", fm.contextTokens)
+	}
+	if fm.contextEstimate {
+		t.Fatal("API token counts should not be marked estimated after run completion")
+	}
+}
+
+func TestChatStreamingMetricsDoNotDropLiveContextEstimate(t *testing.T) {
+	m := chatModel{
+		running: true,
+		liveMessages: []api.Message{
+			{Role: "user", Content: strings.Repeat("large prompt ", 400)},
+		},
+		contextTokens:   900,
+		contextEstimate: true,
+	}
+
+	m.applyAgentEvent(coreagent.Event{
+		Type:    coreagent.EventMessageDelta,
+		Content: "partial response",
+		Response: &api.ChatResponse{
+			Metrics: api.Metrics{PromptEvalCount: 12},
+		},
+	})
+
+	if m.contextTokens == 12 {
+		t.Fatal("streaming prompt metrics should not replace the live context estimate")
+	}
+	if m.contextTokens < 900 {
+		t.Fatalf("contextTokens dropped during streaming: got %d, want at least 900", m.contextTokens)
+	}
+	if !m.contextEstimate {
+		t.Fatal("live context should remain marked estimated while the model is running")
+	}
+}
+
 func TestChatAgentEventsRefreshLiveContextEstimateForToolCalls(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("query", "Parth Sareen")
@@ -412,6 +502,34 @@ func TestChatViewShowsCompactingActivity(t *testing.T) {
 	}
 }
 
+func TestChatAutoCompactionEventsShowActivity(t *testing.T) {
+	m := chatModel{running: true}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventCompactionStarted})
+	if !m.compacting {
+		t.Fatal("compaction start should mark the chat as compacting")
+	}
+	if got := m.activityLabel(); got != "compacting" {
+		t.Fatalf("activityLabel = %q, want compacting", got)
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventCompactionProgress, Tokens: 12})
+	if got := m.activityLabel(); got != "compacting 12 tokens" {
+		t.Fatalf("activityLabel = %q, want compacting 12 tokens", got)
+	}
+
+	m.applyAgentEvent(coreagent.Event{
+		Type: coreagent.EventCompacted,
+		Messages: []api.Message{
+			compactionToolCallMessage(),
+			{Role: "tool", ToolName: "compact_conversation", ToolCallID: "ollama_compaction", Content: chatCompactionSummaryPrefix + "summary"},
+		},
+	})
+	if m.compacting {
+		t.Fatal("compacted event should clear compacting state")
+	}
+}
+
 func TestChatCtrlCCancelsQuietly(t *testing.T) {
 	canceled := false
 	m := chatModel{
@@ -506,6 +624,112 @@ func TestChatCtrlCClearsDraftWhileRunningBeforeCanceling(t *testing.T) {
 	}
 }
 
+func TestChatDoubleEscClearsDraft(t *testing.T) {
+	m := chatModel{
+		input:    []rune("draft"),
+		complete: 2,
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("first esc should not quit")
+	}
+	if got := string(m.input); got != "draft" {
+		t.Fatalf("first esc input = %q, want unchanged", got)
+	}
+	if !m.escArmed {
+		t.Fatal("first esc should arm clear")
+	}
+	if !strings.Contains(m.status, "press esc again") {
+		t.Fatalf("status = %q, want esc hint", m.status)
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("second esc should not quit")
+	}
+	if got := string(m.input); got != "" {
+		t.Fatalf("input = %q, want cleared", got)
+	}
+	if m.complete != 0 {
+		t.Fatalf("complete = %d, want reset", m.complete)
+	}
+	if m.escArmed {
+		t.Fatal("second esc should disarm clear")
+	}
+	if m.status != "input cleared" {
+		t.Fatalf("status = %q, want input cleared", m.status)
+	}
+}
+
+func TestChatDoubleEscClearsDraftAndCancelsRun(t *testing.T) {
+	canceled := false
+	m := chatModel{
+		input:   []rune("queued prompt"),
+		running: true,
+		cancel: func() {
+			canceled = true
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("first esc should not quit")
+	}
+	if canceled {
+		t.Fatal("first esc should not cancel")
+	}
+	if got := string(m.input); got != "queued prompt" {
+		t.Fatalf("first esc input = %q, want unchanged", got)
+	}
+	if !m.escArmed {
+		t.Fatal("first esc should arm clear/cancel")
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("second esc should not quit")
+	}
+	if !canceled {
+		t.Fatal("second esc should cancel active run")
+	}
+	if got := string(m.input); got != "" {
+		t.Fatalf("input = %q, want cleared", got)
+	}
+	if m.escArmed {
+		t.Fatal("second esc should disarm")
+	}
+	if m.status != "canceling" {
+		t.Fatalf("status = %q, want canceling", m.status)
+	}
+}
+
+func TestChatEscClearHintDisarmsOnOtherKey(t *testing.T) {
+	m := chatModel{input: []rune("draft")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(chatModel)
+	if !m.escArmed {
+		t.Fatal("first esc should arm clear")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m = updated.(chatModel)
+	if m.escArmed {
+		t.Fatal("typing should disarm esc confirmation")
+	}
+	if m.status != "ready" {
+		t.Fatalf("status = %q, want ready", m.status)
+	}
+	if got := string(m.input); got != "draftx" {
+		t.Fatalf("input = %q, want draftx", got)
+	}
+}
+
 func TestChatCtrlCRequiresSecondPressToQuit(t *testing.T) {
 	m := chatModel{}
 
@@ -547,6 +771,57 @@ func TestChatCtrlCQuitWarningDisarmsOnOtherKey(t *testing.T) {
 	}
 	if got := string(m.input); got != "x" {
 		t.Fatalf("input = %q, want x", got)
+	}
+}
+
+func TestChatCtrlDExitsWithEmptyInput(t *testing.T) {
+	m := chatModel{}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("ctrl+d with empty input should quit")
+	}
+	if !m.quitting {
+		t.Fatal("model should be marked quitting")
+	}
+}
+
+func TestChatCtrlDDoesNotExitWithDraftInput(t *testing.T) {
+	m := chatModel{input: []rune("draft")}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("ctrl+d with draft input should not quit")
+	}
+	if m.quitting {
+		t.Fatal("model should not be marked quitting")
+	}
+	if got := string(m.input); got != "draft" {
+		t.Fatalf("input = %q, want unchanged", got)
+	}
+}
+
+func TestChatCtrlDCancelsActiveRunWhenExiting(t *testing.T) {
+	canceled := false
+	m := chatModel{
+		running: true,
+		cancel: func() {
+			canceled = true
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("ctrl+d with empty input should quit")
+	}
+	if !canceled {
+		t.Fatal("ctrl+d should cancel active run before quitting")
+	}
+	if !m.quitting {
+		t.Fatal("model should be marked quitting")
 	}
 }
 
@@ -623,8 +898,9 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 		progress: []int{12},
 		result: coreagent.CompactionResult{
 			Messages: []api.Message{
-				{Role: "user", Content: "Conversation summary:\nold work summary"},
 				{Role: "user", Content: "recent request"},
+				compactionToolCallMessage(),
+				{Role: "tool", ToolName: "compact_conversation", ToolCallID: "ollama_compaction", Content: "Conversation summary:\nold work summary"},
 			},
 			Compacted: true,
 			Due:       true,
@@ -675,7 +951,7 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 	if fm.status != "compacted" {
 		t.Fatalf("status = %q, want compacted", fm.status)
 	}
-	if len(fm.messages) != 2 || fm.messages[0].Role != "user" || !strings.Contains(fm.messages[0].Content, "old work summary") {
+	if len(fm.messages) != 3 || fm.messages[0].Role != "user" || fm.messages[2].Role != "tool" || !strings.Contains(fm.messages[2].Content, "old work summary") {
 		t.Fatalf("compacted messages = %#v", fm.messages)
 	}
 	transcript := stripANSI(fm.renderTranscript(100))

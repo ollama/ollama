@@ -102,6 +102,37 @@ type cancelAfterToolCallClient struct {
 	cancel context.CancelFunc
 }
 
+type recordingCompactor struct {
+	requests []CompactionRequest
+}
+
+type recordingEventSink struct {
+	events []Event
+}
+
+func (s *recordingEventSink) Emit(event Event) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+func hasEventType(events []Event, eventType EventType) bool {
+	for _, event := range events {
+		if event.Type == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEventWithTokens(events []Event, eventType EventType, tokens int) bool {
+	for _, event := range events {
+		if event.Type == eventType && event.Tokens == tokens {
+			return true
+		}
+	}
+	return false
+}
+
 func (c cancelAfterToolCallClient) Chat(ctx context.Context, req *api.ChatRequest, fn api.ChatResponseFunc) error {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("value", "skip me")
@@ -116,6 +147,17 @@ func (c cancelAfterToolCallClient) Chat(ctx context.Context, req *api.ChatReques
 	}
 	c.cancel()
 	return context.Canceled
+}
+
+func (c *recordingCompactor) MaybeCompact(_ context.Context, req CompactionRequest) (CompactionResult, error) {
+	c.requests = append(c.requests, req)
+	result := CompactionResult{Messages: req.Messages, Due: true}
+	if len(req.Messages) > 0 && req.Messages[len(req.Messages)-1].Role == "tool" {
+		result.Messages = compactionSummaryMessages("tool result summarized")
+		result.Compacted = true
+		result.Summary = "tool result summarized"
+	}
+	return result, nil
 }
 
 type wrappingApprovalHandler struct {
@@ -416,6 +458,76 @@ func TestSessionBatchesStreamingPersistence(t *testing.T) {
 	}
 	if len(result.Messages) != 2 || result.Messages[1].Content != wantContent || result.Messages[1].Thinking != wantThinking || len(result.Messages[1].ToolCalls) != 1 {
 		t.Fatalf("result messages = %#v", result.Messages)
+	}
+}
+
+func TestSessionRequestHistoryKeepsThinkingAndServerToolCallIDs(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("value", "hello")
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{
+				{Message: api.Message{Role: "assistant", Thinking: "private chain"}},
+				{Message: api.Message{Role: "assistant", Content: "I'll check."}},
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "volatile-random-id",
+					Function: api.ToolCallFunction{
+						Name:      "echo_tool",
+						Arguments: args,
+					},
+				}}}},
+			},
+			{{Message: api.Message{Role: "assistant", Content: "done"}}},
+		},
+	}
+	store := &memoryStore{}
+	registry := NewRegistry()
+	registry.Register(staticTool{})
+	session := &Session{
+		Client: client,
+		Store:  store,
+		Tools:  registry,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		ChatID:      "chat-1",
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		UseTools:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(client.requests))
+	}
+
+	secondRequestMessages := client.requests[1].Messages
+	if len(secondRequestMessages) != 3 {
+		t.Fatalf("second request messages = %#v", secondRequestMessages)
+	}
+	assistant := secondRequestMessages[1]
+	if assistant.Role != "assistant" {
+		t.Fatalf("second request assistant = %#v", assistant)
+	}
+	if assistant.Thinking != "private chain" {
+		t.Fatalf("assistant thinking = %q, want preserved", assistant.Thinking)
+	}
+	if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "volatile-random-id" {
+		t.Fatalf("assistant tool calls = %#v", assistant.ToolCalls)
+	}
+	tool := secondRequestMessages[2]
+	if tool.Role != "tool" || tool.ToolCallID != "volatile-random-id" {
+		t.Fatalf("tool result message = %#v", tool)
+	}
+	if len(result.Messages) < 3 || result.Messages[1].Thinking != "private chain" {
+		t.Fatalf("visible result messages lost thinking: %#v", result.Messages)
+	}
+	if len(store.messages) < 3 || store.messages[1].Thinking != "private chain" {
+		t.Fatalf("stored messages lost thinking: %#v", store.messages)
+	}
+	if store.messages[1].ToolCalls[0].ID != "volatile-random-id" || store.messages[2].ToolCallID != "volatile-random-id" {
+		t.Fatalf("stored tool call IDs are not preserved/matched: %#v", store.messages)
 	}
 }
 
@@ -733,6 +845,155 @@ func TestSessionTruncatesLargeToolResultsBeforeHistory(t *testing.T) {
 	}
 	if client.requests[1].Messages[2].Content != content {
 		t.Fatalf("second model request did not use truncated tool content")
+	}
+}
+
+func TestSessionCompactsAfterToolResultsBeforeContinuing(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("value", "hello")
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "echo_tool",
+						Arguments: args,
+					},
+				}}},
+			}},
+			{{Message: api.Message{Role: "assistant", Content: "done after compact"}}},
+		},
+	}
+	registry := NewRegistry()
+	registry.Register(staticTool{})
+	compactor := &recordingCompactor{}
+	session := &Session{
+		Client:    client,
+		Tools:     registry,
+		Compactor: compactor,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		UseTools:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != 2 {
+		t.Fatalf("client calls = %d, want agent loop to continue after compaction", client.calls)
+	}
+	if len(compactor.requests) == 0 {
+		t.Fatal("compactor was not called")
+	}
+	firstCompaction := compactor.requests[0]
+	if len(firstCompaction.Messages) == 0 || firstCompaction.Messages[len(firstCompaction.Messages)-1].Role != "tool" {
+		t.Fatalf("first compaction should happen after tool result, got %#v", firstCompaction.Messages)
+	}
+	secondRequestMessages := client.requests[1].Messages
+	if len(secondRequestMessages) == 0 || !strings.Contains(secondRequestMessages[len(secondRequestMessages)-1].Content, "tool result summarized") {
+		t.Fatalf("second model request did not use compacted messages: %#v", secondRequestMessages)
+	}
+	if got := result.Messages[len(result.Messages)-1].Content; got != "done after compact" {
+		t.Fatalf("final response = %q", got)
+	}
+}
+
+func TestSessionContextCapsToolResultBeforeCompaction(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "large_tool",
+						Arguments: args,
+					},
+				}}},
+			}},
+			{{Message: api.Message{Role: "assistant", Content: "done"}}},
+		},
+	}
+	registry := NewRegistry()
+	registry.Register(largeTool{})
+	session := &Session{
+		Client: client,
+		Tools:  registry,
+		Compactor: NewSimpleCompactor(nil, nil, CompactionOptions{
+			ContextWindowTokens: 100,
+			Threshold:           0.8,
+		}),
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		UseTools:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := result.Messages[2].Content
+	if !strings.Contains(content, "[tool output truncated: omitted ") {
+		t.Fatalf("tool content missing truncation marker: %q", content)
+	}
+	if xCount := strings.Count(content, "x"); xCount >= maxToolResultRunes {
+		t.Fatalf("context-capped content x count = %d, want less than hard cap", xCount)
+	}
+	if client.requests[1].Messages[2].Content != content {
+		t.Fatalf("second model request did not use context-capped tool content")
+	}
+}
+
+func TestSessionEmitsAutoCompactionActivityEvents(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "large_tool",
+						Arguments: args,
+					},
+				}}},
+			}},
+			{{Message: api.Message{Role: "assistant", Content: "summary"}, Metrics: api.Metrics{EvalCount: 7}}},
+			{{Message: api.Message{Role: "assistant", Content: "done"}}},
+		},
+	}
+	registry := NewRegistry()
+	registry.Register(largeTool{})
+	events := &recordingEventSink{}
+	session := &Session{
+		Client: client,
+		Events: events,
+		Tools:  registry,
+		Compactor: NewSimpleCompactor(client, nil, CompactionOptions{
+			ContextWindowTokens: 100,
+			Threshold:           0.8,
+		}),
+	}
+
+	if _, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		UseTools:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasEventType(events.events, EventCompactionStarted) {
+		t.Fatalf("events missing compaction start: %#v", events.events)
+	}
+	if !hasEventWithTokens(events.events, EventCompactionProgress, 7) {
+		t.Fatalf("events missing compaction progress tokens: %#v", events.events)
+	}
+	if !hasEventType(events.events, EventCompacted) {
+		t.Fatalf("events missing compacted event: %#v", events.events)
 	}
 }
 

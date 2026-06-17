@@ -168,7 +168,7 @@ func (m *ApprovalManager) Approve(ctx context.Context, req ApprovalRequest) (App
 	if m.prompter == nil {
 		return ApprovalResult{
 			Decision: ApprovalDeny,
-			Reason:   "Tool execution requires approval, but no approval prompter is available. Re-run with --auto-approve-tools to allow tool execution.",
+			Reason:   "Tool execution requires approval, but no approval prompter is available. Re-run with --auto-approve-tools or --yolo to allow tool execution.",
 		}, nil
 	}
 

@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/agent/chatstore"
 	"github.com/ollama/ollama/api"
 )
@@ -20,6 +21,10 @@ type chatResumeStore interface {
 
 type chatPromptHistoryStore interface {
 	ListUserMessages(context.Context, int) ([]string, error)
+}
+
+type chatCurrentModelStore interface {
+	SetChatModel(context.Context, string, string) error
 }
 
 type chatResumePicker = chatPicker[chatstore.ChatSummary]
@@ -37,6 +42,7 @@ type chatHistoryPopup struct {
 	messages      []api.Message
 	scroll        int
 	stickToBottom bool
+	selection     chatSelection
 }
 
 func (m *chatModel) openHistoryPopup() (tea.Model, tea.Cmd) {
@@ -84,8 +90,114 @@ func (m *chatModel) moveHistoryPopup(delta int) {
 	m.historyPopup.scroll = clamp(m.historyPopup.scroll+delta, 0, m.historyPopupMaxScroll())
 }
 
+func (m chatModel) updateHistoryPopupMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.MouseWheelUp:
+		m.moveHistoryPopup(-3)
+	case tea.MouseWheelDown:
+		m.moveHistoryPopup(3)
+	case tea.MouseLeft:
+		switch msg.Action {
+		case tea.MouseActionPress:
+			m.startHistoryPopupSelection(msg)
+		case tea.MouseActionMotion:
+			m.dragHistoryPopupSelection(msg)
+		default:
+			if msg.Action == 0 {
+				m.startHistoryPopupSelection(msg)
+			}
+		}
+	case tea.MouseMotion:
+		m.dragHistoryPopupSelection(msg)
+	case tea.MouseRelease:
+		return m.finishHistoryPopupSelection(msg)
+	}
+	return m, nil
+}
+
+func (m chatModel) historyPopupLayout() (top, height int) {
+	return 2, m.historyPopupVisibleHeight()
+}
+
+func (m chatModel) mouseInHistoryPopupBody(msg tea.MouseMsg) bool {
+	top, height := m.historyPopupLayout()
+	if msg.X < 0 || msg.X >= m.viewWidth() {
+		return false
+	}
+	return msg.Y >= top && msg.Y < top+height
+}
+
+func (m chatModel) mouseHistoryPopupPoint(msg tea.MouseMsg) chatSelectionPoint {
+	top, height := m.historyPopupLayout()
+	visibleY := clamp(msg.Y-top, 0, max(0, height-1))
+	line := m.historyPopupVisibleStartLine() + visibleY
+	col := max(0, msg.X)
+	return chatSelectionPoint{line: line, col: col}
+}
+
+func (m *chatModel) startHistoryPopupSelection(msg tea.MouseMsg) {
+	if m.historyPopup == nil {
+		return
+	}
+	if !m.mouseInHistoryPopupBody(msg) {
+		m.historyPopup.selection = chatSelection{}
+		return
+	}
+	point := m.mouseHistoryPopupPoint(msg)
+	m.historyPopup.selection = chatSelection{active: true, anchor: point, cursor: point}
+}
+
+func (m *chatModel) dragHistoryPopupSelection(msg tea.MouseMsg) {
+	if m.historyPopup == nil || !m.historyPopup.selection.active {
+		return
+	}
+	m.historyPopup.selection.cursor = m.mouseHistoryPopupPoint(msg)
+	top, height := m.historyPopupLayout()
+	if msg.Y <= top {
+		m.moveHistoryPopup(-1)
+	} else if msg.Y >= top+height-1 {
+		m.moveHistoryPopup(1)
+	}
+}
+
+func (m chatModel) finishHistoryPopupSelection(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.historyPopup == nil || !m.historyPopup.selection.active {
+		return m, nil
+	}
+	m.historyPopup.selection.cursor = m.mouseHistoryPopupPoint(msg)
+	selected := m.selectedHistoryPopupText()
+	if strings.TrimSpace(selected) == "" {
+		m.historyPopup.selection = chatSelection{}
+		return m, nil
+	}
+	m.status = "selection copied"
+	return m, func() tea.Msg {
+		if m.opts.Clipboard == nil {
+			return nil
+		}
+		if err := m.opts.Clipboard(m.ctx, selected); err != nil {
+			return chatAgentMsg{event: coreagent.Event{Type: coreagent.EventError, Error: err.Error()}}
+		}
+		return nil
+	}
+}
+
 func (m chatModel) historyPopupMaxScroll() int {
 	return max(0, len(m.historyPopupBodyLines())-m.historyPopupVisibleHeight())
+}
+
+func (m chatModel) historyPopupVisibleStartLine() int {
+	if m.historyPopup == nil {
+		return 0
+	}
+	bodyLines := m.historyPopupBodyLines()
+	visibleHeight := m.historyPopupVisibleHeight()
+	maxScroll := max(0, len(bodyLines)-visibleHeight)
+	scroll := clamp(m.historyPopup.scroll, 0, maxScroll)
+	if m.historyPopup.stickToBottom {
+		return maxScroll
+	}
+	return scroll
 }
 
 func (m chatModel) historyPopupVisibleHeight() int {
@@ -159,6 +271,15 @@ func normalizeModelOptions(models []ChatModelOption) []ChatModelOption {
 		seen[key] = struct{}{}
 		out = append(out, model)
 	}
+	slices.SortStableFunc(out, func(a, b ChatModelOption) int {
+		if a.Recommended == b.Recommended {
+			return 0
+		}
+		if a.Recommended {
+			return -1
+		}
+		return 1
+	})
 	return out
 }
 
@@ -240,6 +361,17 @@ func (m *chatModel) applyModelSelection(modelName string, persist bool) error {
 	modelName = strings.TrimSpace(modelName)
 	if modelName == "" {
 		return nil
+	}
+	if persist && m.chatID != "" {
+		if store, ok := m.opts.Store.(chatCurrentModelStore); ok && store != nil {
+			ctx := m.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			if err := store.SetChatModel(ctx, m.chatID, modelName); err != nil {
+				return err
+			}
+		}
 	}
 	m.opts.Model = modelName
 	m.opts.ContextWindowTokens = 0
@@ -370,7 +502,10 @@ func (m *chatModel) resumeSelectedChat() (tea.Model, tea.Cmd) {
 	m.messages = slices.Clone(chat.Messages)
 	m.entries = entriesFromMessages(m.messages)
 	m.input = nil
+	m.inputAttachments = nil
 	m.queued = nil
+	m.queuedAttachments = nil
+	m.nextImageID, m.nextAudioID = nextInputAttachmentIDsFromMessages(m.messages)
 	m.resetWorkingDir()
 	m.complete = 0
 	m.thinking = false
@@ -502,6 +637,7 @@ func (m chatModel) renderHistoryPopup(width, height int) string {
 		scroll = maxScroll
 	}
 	end := min(len(bodyLines), scroll+visibleHeight)
+	visibleLines := m.applyHistoryPopupSelection(bodyLines[scroll:end], scroll)
 
 	var b strings.Builder
 	b.WriteString(chatResumeTitleStyle.Render("Message history"))
@@ -510,7 +646,7 @@ func (m chatModel) renderHistoryPopup(width, height int) string {
 		b.WriteString(chatResumeMetaStyle.Render("No messages yet."))
 		b.WriteByte('\n')
 	} else {
-		for _, line := range bodyLines[scroll:end] {
+		for _, line := range visibleLines {
 			b.WriteString(line)
 			b.WriteByte('\n')
 		}
@@ -519,6 +655,69 @@ func (m chatModel) renderHistoryPopup(width, height int) string {
 	help := "↑/↓ scroll • pgup/pgdn page • home/end jump • esc close"
 	b.WriteString(chatResumeMetaStyle.Render(truncateRenderedLine(help, width)))
 	return b.String()
+}
+
+func (m chatModel) applyHistoryPopupSelection(lines []string, offset int) []string {
+	if m.historyPopup == nil || len(lines) == 0 {
+		return lines
+	}
+	start, end, ok := normalizedSelectionRangeFor(m.historyPopup.selection)
+	if !ok {
+		return lines
+	}
+	out := slices.Clone(lines)
+	for i, line := range out {
+		lineIndex := offset + i
+		if lineIndex < start.line || lineIndex > end.line {
+			continue
+		}
+		text := stripChatANSI(line)
+		startCol, endCol := 0, len([]rune(text))
+		if lineIndex == start.line {
+			startCol = clamp(start.col, 0, len([]rune(text)))
+		}
+		if lineIndex == end.line {
+			endCol = clamp(end.col, 0, len([]rune(text)))
+		}
+		if startCol > endCol {
+			startCol, endCol = endCol, startCol
+		}
+		out[i] = renderSelectedTranscriptLine(text, startCol, endCol)
+	}
+	return out
+}
+
+func (m chatModel) selectedHistoryPopupText() string {
+	if m.historyPopup == nil {
+		return ""
+	}
+	start, end, ok := normalizedSelectionRangeFor(m.historyPopup.selection)
+	if !ok {
+		return ""
+	}
+	lines := m.historyPopupBodyLines()
+	if len(lines) == 0 {
+		return ""
+	}
+	start.line = clamp(start.line, 0, len(lines)-1)
+	end.line = clamp(end.line, 0, len(lines)-1)
+	var selected []string
+	for lineIndex := start.line; lineIndex <= end.line; lineIndex++ {
+		text := stripChatANSI(lines[lineIndex])
+		runes := []rune(text)
+		startCol, endCol := 0, len(runes)
+		if lineIndex == start.line {
+			startCol = clamp(start.col, 0, len(runes))
+		}
+		if lineIndex == end.line {
+			endCol = clamp(end.col, 0, len(runes))
+		}
+		if startCol > endCol {
+			startCol, endCol = endCol, startCol
+		}
+		selected = append(selected, string(runes[startCol:endCol]))
+	}
+	return strings.TrimRight(strings.Join(selected, "\n"), "\n")
 }
 
 func renderResumeSearchBox(filter string, width int) string {

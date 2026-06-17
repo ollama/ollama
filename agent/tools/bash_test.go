@@ -42,7 +42,7 @@ func TestBashBoundsOutputWhileRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Content, "[stdout truncated: omitted ") {
+	if !strings.Contains(result.Content, "[stdout truncated: omitted ~") || !strings.Contains(result.Content, " tokens]") {
 		t.Fatalf("content = %q, want stdout truncation marker", result.Content)
 	}
 	if count := strings.Count(result.Content, "x"); count != maxBashOutputBytes/2 {

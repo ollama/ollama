@@ -752,34 +752,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 		opts.Resume = resume
 	}
-	if cmd.Flags().Lookup("headless") != nil {
-		headless, err := cmd.Flags().GetBool("headless")
-		if err != nil {
-			return err
-		}
-		opts.Headless = headless
+	autoApproveTools, err := autoApproveToolsFromFlags(cmd)
+	if err != nil {
+		return err
 	}
-	if cmd.Flags().Lookup("auto-approve-tools") != nil {
-		autoApproveTools, err := cmd.Flags().GetBool("auto-approve-tools")
-		if err != nil {
-			return err
-		}
-		opts.AutoApproveTools = autoApproveTools
-	}
-	if cmd.Flags().Lookup("experimental-yolo") != nil {
-		experimentalYolo, err := cmd.Flags().GetBool("experimental-yolo")
-		if err != nil {
-			return err
-		}
-		opts.AutoApproveTools = opts.AutoApproveTools || experimentalYolo
-	}
-	if cmd.Flags().Lookup("skill") != nil {
-		skill, err := cmd.Flags().GetString("skill")
-		if err != nil {
-			return err
-		}
-		opts.Skill = skill
-	}
+	opts.AutoApproveTools = autoApproveTools
 	if cmd.Flags().Lookup("verbose") != nil {
 		verbose, err := cmd.Flags().GetBool("verbose")
 		if err != nil {
@@ -835,7 +812,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		interactive = false
 	}
-	if opts.Resume && !interactive && !opts.Headless {
+	if opts.Resume && !interactive {
 		return errors.New("--resume requires an interactive terminal and cannot be used with a prompt or redirected input/output")
 	}
 	if opts.Resume && opts.Model == "" {
@@ -940,10 +917,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
 	}
 
-	if opts.Headless {
-		return runAgentHeadless(cmd, opts)
-	}
-
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
 			var sErr api.AuthorizationError
@@ -966,6 +939,22 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	return runAgentHeadless(cmd, opts)
+}
+
+func autoApproveToolsFromFlags(cmd *cobra.Command) (bool, error) {
+	for _, name := range []string{"auto-approve-tools", "yolo", "experimental-yolo"} {
+		if cmd.Flags().Lookup(name) == nil {
+			continue
+		}
+		enabled, err := cmd.Flags().GetBool(name)
+		if err != nil {
+			return false, err
+		}
+		if enabled {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func runAgentHeadless(cmd *cobra.Command, opts runOptions) error {
@@ -1666,10 +1655,8 @@ type runOptions struct {
 	ShowConnect         bool
 	ContextWindowTokens int
 	Resume              bool
-	Headless            bool
 	AutoApproveTools    bool
 	Verbose             bool
-	Skill               string
 }
 
 func (r runOptions) Copy() runOptions {
@@ -1723,10 +1710,8 @@ func (r runOptions) Copy() runOptions {
 		ShowConnect:         r.ShowConnect,
 		ContextWindowTokens: r.ContextWindowTokens,
 		Resume:              r.Resume,
-		Headless:            r.Headless,
 		AutoApproveTools:    r.AutoApproveTools,
 		Verbose:             r.Verbose,
-		Skill:               r.Skill,
 	}
 }
 
@@ -1827,6 +1812,71 @@ func runCommandArgs(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return cobra.MinimumNArgs(1)(cmd, args)
+}
+
+func prepareRootResumeRunCommand(rootCmd, runCmd *cobra.Command) error {
+	return prepareRootRunCommand(rootCmd, runCmd, true)
+}
+
+func prepareRootModelRunCommand(rootCmd, runCmd *cobra.Command) error {
+	return prepareRootRunCommand(rootCmd, runCmd, false)
+}
+
+func prepareRootRunCommand(rootCmd, runCmd *cobra.Command, resume bool) error {
+	if runCmd == nil {
+		return errors.New("run command unavailable")
+	}
+
+	runCmd.SetContext(rootCmd.Context())
+	if resume {
+		if err := runCmd.Flags().Set("resume", "true"); err != nil {
+			return err
+		}
+	}
+
+	for _, name := range []string{"verbose", "nowordwrap"} {
+		rootFlag := rootCmd.Flags().Lookup(name)
+		runFlag := runCmd.Flags().Lookup(name)
+		if rootFlag == nil || runFlag == nil || !rootFlag.Changed {
+			continue
+		}
+		if err := runCmd.Flags().Set(name, rootFlag.Value.String()); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+var runHandler = RunHandler
+
+func runRootResume(rootCmd, runCmd *cobra.Command, args []string) error {
+	if err := prepareRootResumeRunCommand(rootCmd, runCmd); err != nil {
+		return err
+	}
+	if runCmd.PreRunE != nil {
+		if err := runCmd.PreRunE(runCmd, args); err != nil {
+			return err
+		}
+	}
+	return runHandler(runCmd, args)
+}
+
+func runRootModel(rootCmd, runCmd *cobra.Command, modelName string, args []string) error {
+	if modelName == "" {
+		return errors.New("model is required")
+	}
+	if err := prepareRootModelRunCommand(rootCmd, runCmd); err != nil {
+		return err
+	}
+
+	runArgs := append([]string{modelName}, args...)
+	if runCmd.PreRunE != nil {
+		if err := runCmd.PreRunE(runCmd, runArgs); err != nil {
+			return err
+		}
+	}
+	return runHandler(runCmd, runArgs)
 }
 
 func RunServer(_ *cobra.Command, _ []string) error {
@@ -2181,6 +2231,7 @@ func NewCLI() *cobra.Command {
 		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
 	}
 
+	var runCmd *cobra.Command
 	rootCmd := &cobra.Command{
 		Use:           "ollama",
 		Short:         "Large language model runner",
@@ -2189,17 +2240,32 @@ func NewCLI() *cobra.Command {
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if version, _ := cmd.Flags().GetBool("version"); version {
 				versionHandler(cmd, args)
-				return
+				return nil
+			}
+
+			if resume, _ := cmd.Flags().GetBool("resume"); resume {
+				modelName, _ := cmd.Flags().GetString("model")
+				if modelName != "" {
+					args = append([]string{modelName}, args...)
+				}
+				return runRootResume(cmd, runCmd, args)
+			}
+
+			if modelName, _ := cmd.Flags().GetString("model"); modelName != "" {
+				return runRootModel(cmd, runCmd, modelName, args)
 			}
 
 			runInteractiveTUI(cmd)
+			return nil
 		},
 	}
 
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
+	rootCmd.Flags().String("model", "", "Run a model")
+	rootCmd.Flags().Bool("resume", false, "Resume the latest persisted chat")
 	rootCmd.Flags().Bool("verbose", false, "Show timings for response")
 	rootCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 
@@ -2237,7 +2303,7 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
 	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
 
-	runCmd := &cobra.Command{
+	runCmd = &cobra.Command{
 		Use:     "run [MODEL] [PROMPT]",
 		Short:   "Run a model",
 		Args:    runCommandArgs,
@@ -2254,10 +2320,9 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 	runCmd.Flags().Bool("resume", false, "Resume the latest persisted chat")
-	runCmd.Flags().Bool("headless", false, "Run without the agent TUI")
 	runCmd.Flags().Bool("auto-approve-tools", false, "Allow agent tools to run without prompting")
+	runCmd.Flags().Bool("yolo", false, "Alias for --auto-approve-tools")
 	runCmd.Flags().Bool("experimental-yolo", false, "Deprecated: use --auto-approve-tools")
-	runCmd.Flags().String("skill", "", "Run the prompt with an installed agent skill")
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
 	runCmd.Flags().Bool("experimental", false, "Deprecated: agent chat is enabled by default")

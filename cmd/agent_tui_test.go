@@ -17,13 +17,14 @@ import (
 	modelpkg "github.com/ollama/ollama/types/model"
 )
 
-func TestAgentSystemPromptFormatsCurrentDate(t *testing.T) {
-	prompt := agentSystemPromptAt(time.Date(2026, time.June, 12, 9, 30, 0, 0, time.UTC), nil, false, "")
+func TestAgentSystemPromptIncludesModel(t *testing.T) {
+	prompt := agentSystemPromptAt(time.Date(2026, time.June, 12, 9, 30, 0, 0, time.UTC), "llama3.2", nil, false, "")
 	for _, want := range []string{
-		"You are Ollama, a helpful local AI assistant.",
+		"You are running in Ollama as part of the Ollama agent, and the model is llama3.2.",
 		"Current date: Friday, June 12, 2026.",
 		"Be concise, practical, and action-oriented.",
 		"Use bash carefully.",
+		"Tell the user about meaningful changes",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
@@ -123,7 +124,7 @@ func TestAgentModelOptionsIncludesCloudRecommendationsAndLocalModels(t *testing.
 			recommendationsCalled = true
 			_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{
 				Recommendations: []api.ModelRecommendation{
-					{Model: "qwen3.5:cloud", Description: "cloud reasoning", ContextLength: 262144},
+					{Model: "qwen3.5:cloud", Description: "cloud reasoning", ContextLength: 262144, RequiredPlan: "pro"},
 					{Model: "gemma4", Description: "local recommendation should be ignored"},
 				},
 			})
@@ -149,6 +150,12 @@ func TestAgentModelOptionsIncludesCloudRecommendationsAndLocalModels(t *testing.
 	}
 	if options[0].Description == "" || options[1].Description == "" {
 		t.Fatalf("expected descriptions for model options: %#v", options)
+	}
+	if !options[0].Recommended || options[1].Recommended {
+		t.Fatalf("recommended flags = %#v, want only cloud recommendation marked", options)
+	}
+	if strings.Contains(options[0].Description, "plan") || strings.Contains(options[0].Description, "pro") {
+		t.Fatalf("recommendation description should not include plan type: %q", options[0].Description)
 	}
 }
 

@@ -423,6 +423,151 @@ func TestRunCommandArgsAllowsResumeWithoutModel(t *testing.T) {
 	}
 }
 
+func TestRunCommandFlags(t *testing.T) {
+	root := NewCLI()
+	runCmd, _, err := root.Find([]string{"run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runCmd == nil || runCmd.Name() != "run" {
+		t.Fatalf("run command = %v, want run", runCmd)
+	}
+
+	if runCmd.Flags().Lookup("headless") != nil {
+		t.Fatal("run command should not expose --headless")
+	}
+	if runCmd.Flags().Lookup("skill") != nil {
+		t.Fatal("run command should not expose --skill")
+	}
+	if runCmd.Flags().Lookup("yolo") == nil {
+		t.Fatal("run command should expose --yolo")
+	}
+	if runCmd.Flags().Lookup("auto-approve-tools") == nil {
+		t.Fatal("run command should expose --auto-approve-tools")
+	}
+	if root.Flags().Lookup("model") == nil {
+		t.Fatal("root command should expose --model")
+	}
+}
+
+func TestPrepareRootResumeRunCommand(t *testing.T) {
+	rootCmd := &cobra.Command{}
+	rootCmd.SetContext(t.Context())
+	rootCmd.Flags().Bool("resume", true, "")
+	rootCmd.Flags().Bool("verbose", false, "")
+	rootCmd.Flags().Bool("nowordwrap", false, "")
+	if err := rootCmd.Flags().Set("verbose", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	runCmd := &cobra.Command{}
+	runCmd.Flags().Bool("resume", false, "")
+	runCmd.Flags().Bool("verbose", false, "")
+	runCmd.Flags().Bool("nowordwrap", false, "")
+
+	if err := prepareRootResumeRunCommand(rootCmd, runCmd); err != nil {
+		t.Fatal(err)
+	}
+
+	resume, err := runCmd.Flags().GetBool("resume")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resume {
+		t.Fatal("run resume flag = false, want true")
+	}
+
+	verbose, err := runCmd.Flags().GetBool("verbose")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verbose {
+		t.Fatal("run verbose flag = false, want true")
+	}
+
+	nowrap, err := runCmd.Flags().GetBool("nowordwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nowrap {
+		t.Fatal("run nowordwrap flag = true, want unchanged false")
+	}
+}
+
+func TestRootModelRunsRunHandler(t *testing.T) {
+	oldRunHandler := runHandler
+	t.Cleanup(func() {
+		runHandler = oldRunHandler
+	})
+
+	var gotArgs []string
+	var gotVerbose bool
+	runHandler = func(cmd *cobra.Command, args []string) error {
+		gotArgs = append([]string(nil), args...)
+		var err error
+		gotVerbose, err = cmd.Flags().GetBool("verbose")
+		return err
+	}
+
+	root := NewCLI()
+	root.SetContext(t.Context())
+	runCmd, _, err := root.Find([]string{"run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runCmd == nil {
+		t.Fatal("run command not found")
+	}
+	runCmd.PreRunE = nil
+
+	root.SetArgs([]string{"--model", "llama3.2", "--verbose"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(gotArgs, []string{"llama3.2"}) {
+		t.Fatalf("run handler args = %#v, want %#v", gotArgs, []string{"llama3.2"})
+	}
+	if !gotVerbose {
+		t.Fatal("run handler verbose = false, want true")
+	}
+}
+
+func TestAutoApproveToolsFromFlags(t *testing.T) {
+	t.Run("yolo", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().Bool("auto-approve-tools", false, "")
+		cmd.Flags().Bool("yolo", false, "")
+		if err := cmd.Flags().Set("yolo", "true"); err != nil {
+			t.Fatal(err)
+		}
+
+		enabled, err := autoApproveToolsFromFlags(cmd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !enabled {
+			t.Fatal("autoApproveToolsFromFlags yolo = false, want true")
+		}
+	})
+
+	t.Run("legacy experimental yolo", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().Bool("experimental-yolo", false, "")
+		if err := cmd.Flags().Set("experimental-yolo", "true"); err != nil {
+			t.Fatal(err)
+		}
+
+		enabled, err := autoApproveToolsFromFlags(cmd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !enabled {
+			t.Fatal("autoApproveToolsFromFlags experimental-yolo = false, want true")
+		}
+	})
+}
+
 func TestResumeModelFromLatestChat(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("LOCALAPPDATA", t.TempDir())
@@ -623,7 +768,7 @@ func TestRunHandlerResumeRequiresInteractive(t *testing.T) {
 	}
 }
 
-func TestRunHandlerHeadlessAgent(t *testing.T) {
+func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 	var chatReq api.ChatRequest
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -669,7 +814,6 @@ func TestRunHandlerHeadlessAgent(t *testing.T) {
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", false, "")
-	cmd.Flags().Bool("headless", true, "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().Bool("verbose", false, "")
@@ -697,7 +841,7 @@ func TestRunHandlerHeadlessAgent(t *testing.T) {
 	}
 	if len(chatReq.Messages) != 2 ||
 		chatReq.Messages[0].Role != "system" ||
-		!strings.Contains(chatReq.Messages[0].Content, "You are Ollama, a helpful local AI assistant.") ||
+		!strings.Contains(chatReq.Messages[0].Content, "You are running in Ollama as part of the Ollama agent, and the model is test-model.") ||
 		chatReq.Messages[1].Role != "user" ||
 		chatReq.Messages[1].Content != "hello" {
 		t.Fatalf("chat messages = %#v", chatReq.Messages)
@@ -745,7 +889,6 @@ func TestRunHandlerPromptUsesAgentLoopByDefault(t *testing.T) {
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", false, "")
-	cmd.Flags().Bool("headless", false, "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().Bool("verbose", false, "")
@@ -772,7 +915,7 @@ func TestRunHandlerPromptUsesAgentLoopByDefault(t *testing.T) {
 	}
 	if len(chatReq.Messages) != 2 ||
 		chatReq.Messages[0].Role != "system" ||
-		!strings.Contains(chatReq.Messages[0].Content, "You are Ollama, a helpful local AI assistant.") ||
+		!strings.Contains(chatReq.Messages[0].Content, "You are running in Ollama as part of the Ollama agent, and the model is test-model.") ||
 		chatReq.Messages[1].Role != "user" ||
 		chatReq.Messages[1].Content != "hello" {
 		t.Fatalf("chat messages = %#v", chatReq.Messages)

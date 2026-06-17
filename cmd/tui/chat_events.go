@@ -42,6 +42,8 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 
 	switch event.Type {
 	case coreagent.EventMessageStarted:
+		m.compacting = false
+		m.compactingTokens = 0
 		m.thinking = false
 		m.thinkingTokens = 0
 		m.refreshContextWindowTokens(m.opts.Model)
@@ -130,6 +132,8 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.thinkingTokens = 0
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: "Tools are unavailable for this model."}))
 	case coreagent.EventCompacted:
+		m.compacting = false
+		m.compactingTokens = 0
 		m.thinking = false
 		m.thinkingTokens = 0
 		if len(event.Messages) > 0 {
@@ -137,7 +141,22 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			contextChanged = true
 		}
 		m.status = "compacted"
+	case coreagent.EventCompactionStarted:
+		m.compacting = true
+		m.compactingTokens = 0
+		m.thinking = false
+		m.thinkingTokens = 0
+		m.status = "compacting"
+	case coreagent.EventCompactionProgress:
+		m.compacting = true
+		m.thinking = false
+		m.thinkingTokens = 0
+		if event.Tokens > m.compactingTokens {
+			m.compactingTokens = event.Tokens
+		}
 	case coreagent.EventCompactionSkipped:
+		m.compacting = false
+		m.compactingTokens = 0
 		m.thinking = false
 		m.thinkingTokens = 0
 		message := event.Content
@@ -147,6 +166,8 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: message}))
 		m.status = "compact skipped"
 	case coreagent.EventError:
+		m.compacting = false
+		m.compactingTokens = 0
 		m.thinking = false
 		m.thinkingTokens = 0
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: event.Error, err: event.Error}))

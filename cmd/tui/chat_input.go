@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/ollama/ollama/agent/skills"
 	agenttools "github.com/ollama/ollama/agent/tools"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/filedata"
 )
 
 type chatSlashCommand struct {
@@ -51,13 +54,16 @@ var chatSlashCommands = []chatSlashCommand{
 }
 
 func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
+	m.syncInputAttachments()
 	input := strings.TrimSpace(string(m.input))
 	if selected, ok := m.selectedSlashCommand(); ok {
 		input = selected
 	}
+	attachments := cloneInputAttachments(m.inputAttachments)
 	m.input = nil
 	m.inputCursor = 0
 	m.inputCursorSet = false
+	m.inputAttachments = nil
 	m.complete = 0
 	m.resetPromptHistoryCursor()
 	if input == "" {
@@ -66,10 +72,12 @@ func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 
 	if m.running || m.compacting {
 		m.queued = append(m.queued, input)
+		m.queuedAttachments = append(m.queuedAttachments, attachments)
 		m.status = "queued"
 		return *m, nil
 	}
 
+	m.inputAttachments = attachments
 	return m.submitInput(input)
 }
 
@@ -132,20 +140,47 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.handleVerboseCommand(input)
 	case input == "/compact":
 		return m.startManualCompaction()
+	case strings.HasPrefix(input, "/") && m.slashInputIsMultimodalFile(input):
+		return m.startRun(input)
 	case strings.HasPrefix(input, "/"):
 		if skill, request, ok := m.skillTrigger(input); ok {
+			displayInput, userMessage, err := m.userMessageFromInput(input, request)
+			if err != nil {
+				m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
+				return *m, nil
+			}
 			manualMessages, err := agenttools.ManualSkillMessages(skill, request, len(m.messages)+1)
 			if err != nil {
 				m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
 				return *m, nil
 			}
-			return m.startRunWithMessages(input, manualMessages, "")
+			if strings.TrimSpace(userMessage.Content) != "" {
+				manualMessages[0].Content = userMessage.Content
+			}
+			manualMessages[0].Images = userMessage.Images
+			return m.startRunWithMessages(displayInput, manualMessages, "")
 		}
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Unknown command %q", strings.Fields(input)[0])}))
 		return *m, nil
 	}
 
 	return m.startRun(input)
+}
+
+func (m chatModel) slashInputIsMultimodalFile(input string) bool {
+	if !m.opts.MultiModal {
+		return false
+	}
+	fields := strings.Fields(input)
+	if len(fields) == 0 {
+		return false
+	}
+	for _, file := range filedata.ExtractNames(input) {
+		if strings.HasPrefix(file, fields[0]) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *chatModel) handleSystemCommand(input string) (tea.Model, tea.Cmd) {
@@ -251,6 +286,7 @@ func (m *chatModel) movePromptHistory(delta int) bool {
 			m.input = slices.Clone(m.promptDraft)
 			m.inputCursor = len(m.input)
 			m.inputCursorSet = true
+			m.inputAttachments = nil
 			m.resetPromptHistoryCursor()
 			m.complete = 0
 			return true
@@ -263,6 +299,7 @@ func (m *chatModel) movePromptHistory(delta int) bool {
 	m.input = []rune(m.promptHistory[m.promptCursor])
 	m.inputCursor = len(m.input)
 	m.inputCursorSet = true
+	m.inputAttachments = nil
 	m.complete = 0
 	return true
 }
@@ -275,6 +312,46 @@ func (m *chatModel) resetPromptHistoryCursor() {
 
 func (m *chatModel) insertInputNewline() {
 	m.insertInputRunes([]rune{'\n'})
+}
+
+func (m *chatModel) insertInputRunesFromKey(runes []rune, pasted bool) {
+	if len(runes) == 0 {
+		return
+	}
+	if m.opts.MultiModal && (pasted || len(runes) > 1) && m.insertInputFilePlaceholders(string(runes)) {
+		return
+	}
+	m.insertInputRunes(runes)
+}
+
+func (m *chatModel) insertInputFilePlaceholders(input string) bool {
+	cleaned, files, err := filedata.ExtractWithFiles(input)
+	if err != nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
+		m.status = "attachment failed"
+		return true
+	}
+	if len(files) == 0 {
+		return false
+	}
+
+	var parts []string
+	if strings.TrimSpace(cleaned) != "" {
+		parts = append(parts, cleaned)
+	}
+	for _, file := range files {
+		kind := filedata.Kind(file.Path)
+		placeholder := m.nextInputAttachmentPlaceholder(kind)
+		m.inputAttachments = append(m.inputAttachments, chatInputAttachment{
+			placeholder: placeholder,
+			kind:        kind,
+			data:        file.Data,
+		})
+		parts = append(parts, placeholder)
+	}
+	m.insertInputRunes([]rune(strings.Join(parts, " ")))
+	m.status = inputAttachmentStatus(files)
+	return true
 }
 
 func (m *chatModel) insertInputRunes(runes []rune) {
@@ -303,6 +380,7 @@ func (m *chatModel) deleteInputBackward() {
 	m.inputCursor = cursor - 1
 	m.inputCursorSet = true
 	m.complete = 0
+	m.syncInputAttachments()
 }
 
 func (m *chatModel) deleteInputWordBackward() {
@@ -315,6 +393,7 @@ func (m *chatModel) deleteInputWordBackward() {
 	m.inputCursor = start
 	m.inputCursorSet = true
 	m.complete = 0
+	m.syncInputAttachments()
 }
 
 func previousInputWordStart(input []rune, cursor int) int {
@@ -327,6 +406,96 @@ func previousInputWordStart(input []rune, cursor int) int {
 		start--
 	}
 	return start
+}
+
+func (m *chatModel) syncInputAttachments() {
+	m.inputAttachments = m.activeInputAttachmentsFor(string(m.input))
+}
+
+func (m chatModel) activeInputAttachmentsFor(input string) []chatInputAttachment {
+	if len(m.inputAttachments) == 0 {
+		return nil
+	}
+	active := make([]chatInputAttachment, 0, len(m.inputAttachments))
+	for _, attachment := range m.inputAttachments {
+		if strings.Contains(input, attachment.placeholder) {
+			active = append(active, attachment)
+		}
+	}
+	return active
+}
+
+func cloneInputAttachments(in []chatInputAttachment) []chatInputAttachment {
+	return slices.Clone(in)
+}
+
+func (m *chatModel) nextInputAttachmentPlaceholder(kind string) string {
+	label := inputAttachmentLabel(kind)
+	switch kind {
+	case "audio":
+		id := m.nextAudioID
+		m.nextAudioID++
+		return fmt.Sprintf("[%s #%d]", label, id)
+	default:
+		id := m.nextImageID
+		m.nextImageID++
+		return fmt.Sprintf("[%s #%d]", label, id)
+	}
+}
+
+func inputAttachmentLabel(kind string) string {
+	switch kind {
+	case "audio":
+		return "Audio"
+	default:
+		return "Image"
+	}
+}
+
+func inputAttachmentStatus(files []filedata.File) string {
+	if len(files) == 0 {
+		return ""
+	}
+	imageCount, audioCount := 0, 0
+	for _, file := range files {
+		switch filedata.Kind(file.Path) {
+		case "audio":
+			audioCount++
+		default:
+			imageCount++
+		}
+	}
+	switch {
+	case imageCount > 0 && audioCount == 0:
+		return "attached image"
+	case audioCount > 0 && imageCount == 0:
+		return "attached audio"
+	default:
+		return "attached file"
+	}
+}
+
+var inputAttachmentPlaceholderPattern = regexp.MustCompile(`\[(Image|Audio) #([0-9]+)\]`)
+
+func nextInputAttachmentIDsFromMessages(messages []api.Message) (imageID int, audioID int) {
+	for _, msg := range messages {
+		for _, match := range inputAttachmentPlaceholderPattern.FindAllStringSubmatch(msg.Content, -1) {
+			if len(match) != 3 {
+				continue
+			}
+			id, err := strconv.Atoi(match[2])
+			if err != nil {
+				continue
+			}
+			switch match[1] {
+			case "Image":
+				imageID = max(imageID, id+1)
+			case "Audio":
+				audioID = max(audioID, id+1)
+			}
+		}
+	}
+	return imageID, audioID
 }
 
 func (m *chatModel) moveInputCursorHorizontal(delta int) bool {
@@ -749,7 +918,7 @@ func (m chatModel) helpSummary() string {
 		"- `shift+tab`: toggle permission mode",
 		"- `↑/↓`: previous or next prompt",
 		"- `mouse wheel`, `pgup/pgdn`, `home/end`: scroll transcript",
-		"- `shift+drag`: select text to copy (`option+drag` in iTerm2)",
+		"- `drag`: select transcript text and copy on release",
 	}, "\n")
 }
 

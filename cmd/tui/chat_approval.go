@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	coreagent "github.com/ollama/ollama/agent"
 )
@@ -111,13 +110,13 @@ func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
 	m.permissionMode.SetAutoApprove(autoApprove)
 	m.opts.AutoApproveTools = autoApprove
 	if autoApprove {
-		m.status = "ready"
+		m.status = "full access enabled"
 		if m.approvalPrompt != nil {
 			return m.resolveApprovalPrompt(coreagent.ApprovalAllowOnce, "")
 		}
 		return *m, nil
 	}
-	m.status = "ready"
+	m.status = "review mode enabled"
 	return *m, nil
 }
 
@@ -160,6 +159,8 @@ func (m chatModel) updateApprovalPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveApprovalChoice(-1)
 	case tea.KeyRight, tea.KeyDown, tea.KeyTab:
 		m.moveApprovalChoice(1)
+	case tea.KeyCtrlO:
+		m.toggleAllToolOutputs()
 	case tea.KeyRunes:
 		switch strings.ToLower(string(msg.Runes)) {
 		case "o":
@@ -224,10 +225,10 @@ func (m chatModel) resolveApprovalPrompt(decision coreagent.ApprovalDecision, re
 	return m, waitForChatMsg(m.events)
 }
 
-func (m chatModel) renderApprovalEntryLines(entry chatEntry, body string, width int) []string {
+func (m chatModel) renderApprovalPromptLines(width int) []string {
 	prompt := m.approvalPrompt
-	if prompt == nil || prompt.request.ToolCallID != entry.toolID {
-		return wrapChatText(body, width)
+	if prompt == nil {
+		return nil
 	}
 	if width <= 0 {
 		width = 80
@@ -236,22 +237,17 @@ func (m chatModel) renderApprovalEntryLines(entry chatEntry, body string, width 
 
 	request := prompt.request
 	var lines []string
-	lines = append(lines, wrapChatText(body, width)...)
 	if request.Summary != "" {
-		lines = append(lines, indentLines(wrapChatText(request.Summary, bodyWidth), "  ")...)
+		lines = append(lines, wrapChatText(request.Summary, width)...)
 	} else {
-		lines = append(lines, indentLines(wrapChatText(fmt.Sprintf("%s wants to run", toolDisplayName(request.ToolName)), bodyWidth), "  ")...)
+		lines = append(lines, wrapChatText(fmt.Sprintf("%s wants to run", toolDisplayName(request.ToolName)), width)...)
 	}
 	if detail := approvalRequestDetail(request, bodyWidth); detail != "" {
 		lines = append(lines, indentLines(splitRenderedBody(detail), "  ")...)
 	}
 
-	risk := request.Risk
-	if risk == "" {
-		risk = coreagent.ApprovalRiskMedium
-	}
-	if meta := approvalRiskLine(risk, request.Reasons); meta != "" {
-		lines = append(lines, "  "+meta)
+	if len(request.Reasons) > 0 {
+		lines = append(lines, "  "+chatMetaStyle.Render(strings.Join(request.Reasons, " • ")))
 	}
 	if strings.TrimSpace(request.WorkingDir) != "" {
 		lines = append(lines, "  "+chatMetaStyle.Render("cwd: "+request.WorkingDir))
@@ -261,14 +257,6 @@ func (m chatModel) renderApprovalEntryLines(entry chatEntry, body string, width 
 	lines = append(lines, indentLines(renderApprovalChoices(prompt.cursor, request, bodyWidth), "  ")...)
 	lines = append(lines, "  "+chatMetaStyle.Render("enter select • o once • s session • d deny • esc deny"))
 	return lines
-}
-
-func approvalRiskLine(risk coreagent.ApprovalRisk, reasons []string) string {
-	label := approvalRiskStyle(risk).Render("risk: " + string(risk))
-	if len(reasons) == 0 {
-		return label
-	}
-	return label + chatMetaStyle.Render(" • "+strings.Join(reasons, " • "))
 }
 
 func approvalSessionScope(request coreagent.ApprovalRequest) string {
@@ -356,17 +344,6 @@ func renderApprovalChoices(cursor int, request coreagent.ApprovalRequest, width 
 		}
 	}
 	return lines
-}
-
-func approvalRiskStyle(risk coreagent.ApprovalRisk) lipgloss.Style {
-	switch risk {
-	case coreagent.ApprovalRiskHigh:
-		return chatErrorStyle
-	case coreagent.ApprovalRiskMedium:
-		return chatToolRunningStyle
-	default:
-		return chatMetaStyle
-	}
 }
 
 type chatApprovalPrompter struct {

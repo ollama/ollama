@@ -1,9 +1,10 @@
 package tui
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
-
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,28 @@ func TestChatSystemEntryHasNoLabel(t *testing.T) {
 	}
 }
 
+func TestChatMixedToolGroupUsesSuccessPrefix(t *testing.T) {
+	m := chatModel{}
+	entry := newChatEntry(chatEntry{
+		role:   "tool_group",
+		label:  "Tool calls (2)",
+		status: "error",
+		tools: []chatEntry{
+			newChatEntry(chatEntry{role: "tool", status: "done"}),
+			newChatEntry(chatEntry{role: "tool", status: "error", err: "failed"}),
+		},
+	})
+
+	prefix, body := m.renderEntry(entry)
+
+	if prefix != chatToolDoneStyle.Render("●")+" " {
+		t.Fatalf("prefix = %q, want success-styled bullet", prefix)
+	}
+	if !strings.Contains(stripANSI(body), "1 succeeded, 1 failed") {
+		t.Fatalf("body = %q, want mixed result counts", stripANSI(body))
+	}
+}
+
 func TestChatViewRendersInputBox(t *testing.T) {
 	m := chatModel{
 		input:  []rune("hello"),
@@ -133,7 +156,7 @@ func TestChatViewCapsTallInputBoxAndKeepsFooter(t *testing.T) {
 	}
 }
 
-func TestChatViewWrapsFooterWhenNarrow(t *testing.T) {
+func TestChatViewWrapsFooterAndNotificationWhenNarrow(t *testing.T) {
 	m := chatModel{
 		input:          []rune("hello"),
 		width:          28,
@@ -165,10 +188,54 @@ func TestChatViewWrapsFooterWhenNarrow(t *testing.T) {
 			t.Fatalf("wrapped footer missing %q:\n%s", want, view)
 		}
 	}
+	if strings.Contains(m.footerLine(), "cache will break") {
+		t.Fatalf("footer should not include transient notification: %q", m.footerLine())
+	}
 	for _, line := range strings.Split(view, "\n") {
 		if len([]rune(line)) > 28 {
 			t.Fatalf("line width = %d, want <= 28: %q\n%s", len([]rune(line)), line, view)
 		}
+	}
+}
+
+func TestChatViewRendersNotificationAboveInput(t *testing.T) {
+	m := chatModel{
+		input:  []rune("hello"),
+		width:  40,
+		height: 12,
+		status: "copied latest output",
+	}
+
+	view := stripANSI(m.View())
+	if strings.Contains(m.footerLine(), "copied latest output") {
+		t.Fatalf("footer should not include notification: %q", m.footerLine())
+	}
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		if strings.Contains(line, "> hello█") {
+			if i < 2 || !strings.Contains(lines[i-2], "copied latest output") || !strings.Contains(lines[i-1], strings.Repeat("─", 40)) {
+				t.Fatalf("notification should sit directly above input border:\n%s", view)
+			}
+			return
+		}
+	}
+	t.Fatalf("view missing input row:\n%s", view)
+}
+
+func TestChatViewDoesNotRenderQueueStatusAsNotification(t *testing.T) {
+	m := chatModel{
+		input:  []rune("next"),
+		queued: []string{"next"},
+		width:  40,
+		height: 12,
+		status: "queued",
+	}
+
+	if got := m.notificationLine(); got != "" {
+		t.Fatalf("notificationLine = %q, want empty", got)
+	}
+	if footer := m.footerLine(); !strings.Contains(footer, "queued 1") {
+		t.Fatalf("queued count should still render in footer: %q", footer)
 	}
 }
 
@@ -367,6 +434,92 @@ func TestChatMouseWheelScrollsTranscriptWhileRunning(t *testing.T) {
 	}
 }
 
+func TestChatMouseDragSelectsAndCopiesTranscriptText(t *testing.T) {
+	var copied string
+	m := chatModel{
+		ctx: context.Background(),
+		opts: ChatOptions{
+			Clipboard: func(_ context.Context, text string) error {
+				copied = text
+				return nil
+			},
+		},
+		width:  80,
+		height: 10,
+		entries: []chatEntry{
+			{role: "user", content: "alpha beta"},
+		},
+	}
+	top, _ := m.transcriptLayout()
+
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 2, Y: top})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: 7, Y: top})
+	m = updated.(chatModel)
+	if got := m.selectedTranscriptText(80); got != "alpha" {
+		t.Fatalf("selected text = %q, want alpha", got)
+	}
+	if !m.selection.active {
+		t.Fatal("selection should stay active during drag")
+	}
+
+	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 7, Y: top})
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("mouse release should return clipboard command")
+	}
+	if msg := cmd(); msg != nil {
+		updated, _ = m.Update(msg)
+		m = updated.(chatModel)
+	}
+	if copied != "alpha" {
+		t.Fatalf("copied = %q, want alpha", copied)
+	}
+	if m.status != "selection copied" {
+		t.Fatalf("status = %q, want selection copied", m.status)
+	}
+}
+
+func TestChatMouseDragSelectionUsesScrolledTranscriptCoordinates(t *testing.T) {
+	var copied string
+	m := chatModel{
+		ctx: context.Background(),
+		opts: ChatOptions{
+			Clipboard: func(_ context.Context, text string) error {
+				copied = text
+				return nil
+			},
+		},
+		width:  80,
+		height: 8,
+	}
+	for i := 0; i < 10; i++ {
+		m.entries = append(m.entries, chatEntry{role: "user", content: fmt.Sprintf("line-%02d", i)})
+	}
+	m.scroll = m.maxScroll()
+	top, _ := m.transcriptLayout()
+
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 2, Y: top})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseMotion, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: 9, Y: top})
+	m = updated.(chatModel)
+	if got := m.selectedTranscriptText(80); got != "line-00" {
+		t.Fatalf("selected text = %q, want line-00", got)
+	}
+	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 9, Y: top})
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("mouse release should return clipboard command")
+	}
+	if msg := cmd(); msg != nil {
+		updated, _ = m.Update(msg)
+		m = updated.(chatModel)
+	}
+	if copied != "line-00" {
+		t.Fatalf("copied = %q, want line-00", copied)
+	}
+}
+
 func TestChatArrowKeysNavigatePromptHistoryWhenTranscriptScrollable(t *testing.T) {
 	m := chatModel{
 		input:         []rune("queued draft"),
@@ -435,8 +588,17 @@ func TestEntriesFromMessagesSkipsToolCallOnlyAssistant(t *testing.T) {
 }
 
 func TestEntriesFromMessagesRendersCompactionSummaryCollapsed(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("reason", "context compaction")
 	entries := entriesFromMessages([]api.Message{
-		{Role: "user", Content: "Conversation summary:\n- old work\n- decisions"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{{
+			ID: "ollama_compaction",
+			Function: api.ToolCallFunction{
+				Name:      "compact_conversation",
+				Arguments: args,
+			},
+		}}},
+		{Role: "tool", ToolName: "compact_conversation", ToolCallID: "ollama_compaction", Content: "Conversation summary:\n- old work\n- decisions"},
 		{Role: "user", Content: "recent request"},
 	})
 	if len(entries) != 2 {
@@ -732,6 +894,44 @@ func TestChatExpandedToolGroupRendersIndentedToolBlocks(t *testing.T) {
 	}, "\n")
 	if !strings.Contains(transcript, expected) {
 		t.Fatalf("expanded tool group did not render expected block spacing:\n%s", transcript)
+	}
+}
+
+func TestChatToolGroupStatusShowsResultCounts(t *testing.T) {
+	startedAt := time.Date(2026, 6, 15, 17, 0, 0, 0, time.UTC)
+	entry := newChatEntry(chatEntry{
+		role:       "tool_group",
+		label:      "Tool calls (3)",
+		status:     "error",
+		startedAt:  startedAt,
+		finishedAt: startedAt.Add(3 * time.Second),
+		tools: []chatEntry{
+			newChatEntry(chatEntry{role: "tool", status: "done"}),
+			newChatEntry(chatEntry{role: "tool", status: "done"}),
+			newChatEntry(chatEntry{role: "tool", status: "error", err: "failed"}),
+		},
+	})
+
+	line := stripANSI(toolGroupStatusLine(entry))
+	if !strings.Contains(line, "2 succeeded, 1 failed in 3s") {
+		t.Fatalf("group status = %q, want result counts", line)
+	}
+}
+
+func TestChatToolGroupStatusShowsAllSuccessCount(t *testing.T) {
+	entry := newChatEntry(chatEntry{
+		role:   "tool_group",
+		label:  "Tool calls (2)",
+		status: "done",
+		tools: []chatEntry{
+			newChatEntry(chatEntry{role: "tool", status: "done"}),
+			newChatEntry(chatEntry{role: "tool", status: "done"}),
+		},
+	})
+
+	line := stripANSI(toolGroupStatusLine(entry))
+	if !strings.Contains(line, "2 succeeded") {
+		t.Fatalf("group status = %q, want success count", line)
 	}
 }
 

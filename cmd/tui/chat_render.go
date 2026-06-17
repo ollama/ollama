@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -130,7 +131,7 @@ func (m chatModel) toolOutputIndexes() []int {
 }
 
 func entryHasExpandableOutput(entry chatEntry) bool {
-	return (entry.role == "tool" && isToolResultStatus(entry.status) && entry.content != "") ||
+	return (entry.role == "tool" && (len(entry.args) > 0 || strings.TrimSpace(entry.content) != "")) ||
 		(entry.role == "tool_group" && len(entry.tools) > 0) ||
 		(entry.role == "compaction_summary" && strings.TrimSpace(entry.content) != "")
 }
@@ -241,12 +242,31 @@ func (m chatModel) visibleTranscriptLines(width, available int) []string {
 	}
 	lines := m.transcriptLines(width)
 	if len(lines) > available {
-		maxScroll := len(lines) - available
-		scroll := clamp(m.scroll, 0, maxScroll)
-		start := maxScroll - scroll
+		start := m.visibleTranscriptStartLineForLines(len(lines), available)
 		lines = lines[start : start+available]
 	}
+	lines = m.applyTranscriptSelection(lines, width, available)
 	return lines
+}
+
+func (m chatModel) visibleTranscriptStartLine(width, available int) int {
+	return m.visibleTranscriptStartLineForLines(len(m.transcriptLines(width)), available)
+}
+
+func (m chatModel) visibleTranscriptStartLineForLines(total, available int) int {
+	if total <= available || available <= 0 {
+		return 0
+	}
+	maxScroll := total - available
+	scroll := clamp(m.scroll, 0, maxScroll)
+	return maxScroll - scroll
+}
+
+func (m chatModel) viewWidth() int {
+	if m.width > 0 {
+		return m.width
+	}
+	return 80
 }
 
 func (m chatModel) transcriptHeight() int {
@@ -258,7 +278,27 @@ func (m chatModel) transcriptHeight() int {
 	if height <= 0 {
 		height = 24
 	}
-	return max(0, height-2-len(m.bottomLines(width, height-2)))
+	baseHeaderHeight := 2
+	baseHeight := max(0, height-baseHeaderHeight-len(m.bottomLines(width, height-baseHeaderHeight)))
+	if len(m.transcriptLines(width)) <= baseHeight {
+		return baseHeight
+	}
+	statusHeaderHeight := 3
+	return max(0, height-statusHeaderHeight-len(m.bottomLines(width, height-statusHeaderHeight)))
+}
+
+func (m chatModel) transcriptLayout() (top, height int) {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	viewHeight := m.height
+	if viewHeight <= 0 {
+		viewHeight = 24
+	}
+	headerHeight := len(m.headerLines())
+	bottomLines := m.bottomLines(width, viewHeight-headerHeight)
+	return headerHeight, max(0, viewHeight-headerHeight-len(bottomLines))
 }
 
 func (m chatModel) maxScroll() int {
@@ -277,14 +317,33 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 		lines = append(lines, chatMetaStyle.Render(activity))
 	}
 
+	approvalLines := m.renderApprovalPromptLines(width)
+	notificationLines := m.renderNotificationLines(width)
+	notificationGap := 0
+	if len(notificationLines) > 0 {
+		notificationGap = 1
+	}
 	footerLines := m.renderFooterLines(width)
 	if maxHeight > 0 {
-		maxFooterLines := max(1, maxHeight-len(lines)-3)
+		maxFooterLines := max(1, maxHeight-len(lines)-len(approvalLines)-len(notificationLines)-notificationGap-3)
 		if len(footerLines) > maxFooterLines {
 			footerLines = footerLines[:maxFooterLines]
 		}
+		maxApprovalLines := max(0, maxHeight-len(lines)-len(notificationLines)-notificationGap-len(footerLines)-3)
+		if len(approvalLines) > maxApprovalLines {
+			approvalLines = approvalLines[:maxApprovalLines]
+		}
+		maxNotificationLines := max(0, maxHeight-len(lines)-len(approvalLines)-notificationGap-len(footerLines)-3)
+		if len(notificationLines) > maxNotificationLines {
+			notificationLines = notificationLines[:maxNotificationLines]
+		}
 	}
 
+	lines = append(lines, approvalLines...)
+	if len(notificationLines) > 0 && (maxHeight <= 0 || len(lines)+len(notificationLines)+len(footerLines)+3 < maxHeight) {
+		lines = append(lines, "")
+	}
+	lines = append(lines, notificationLines...)
 	fixedLines := len(lines) + len(footerLines) + 2
 	inputBodyLines := maxInputBoxBodyLines
 	if maxHeight > 0 {
@@ -302,6 +361,98 @@ func (m *chatModel) scrollBy(lines int) {
 	m.scroll = clamp(m.scroll+lines, 0, m.maxScroll())
 }
 
+var chatANSISequencePattern = regexp.MustCompile(`\x1b\[[0-9;:]*[A-Za-z]`)
+
+func stripChatANSI(s string) string {
+	return chatANSISequencePattern.ReplaceAllString(s, "")
+}
+
+func (m chatModel) normalizedSelectionRange() (chatSelectionPoint, chatSelectionPoint, bool) {
+	return normalizedSelectionRangeFor(m.selection)
+}
+
+func normalizedSelectionRangeFor(selection chatSelection) (chatSelectionPoint, chatSelectionPoint, bool) {
+	if !selection.active {
+		return chatSelectionPoint{}, chatSelectionPoint{}, false
+	}
+	start, end := selection.anchor, selection.cursor
+	if start.line > end.line || (start.line == end.line && start.col > end.col) {
+		start, end = end, start
+	}
+	if start.line == end.line && start.col == end.col {
+		return chatSelectionPoint{}, chatSelectionPoint{}, false
+	}
+	return start, end, true
+}
+
+func (m chatModel) applyTranscriptSelection(lines []string, width, available int) []string {
+	start, end, ok := m.normalizedSelectionRange()
+	if !ok || len(lines) == 0 {
+		return lines
+	}
+	offset := m.visibleTranscriptStartLine(width, available)
+	out := slices.Clone(lines)
+	for i, line := range out {
+		lineIndex := offset + i
+		if lineIndex < start.line || lineIndex > end.line {
+			continue
+		}
+		text := stripChatANSI(line)
+		startCol, endCol := 0, len([]rune(text))
+		if lineIndex == start.line {
+			startCol = clamp(start.col, 0, len([]rune(text)))
+		}
+		if lineIndex == end.line {
+			endCol = clamp(end.col, 0, len([]rune(text)))
+		}
+		if startCol > endCol {
+			startCol, endCol = endCol, startCol
+		}
+		out[i] = renderSelectedTranscriptLine(text, startCol, endCol)
+	}
+	return out
+}
+
+func renderSelectedTranscriptLine(line string, startCol, endCol int) string {
+	runes := []rune(line)
+	startCol = clamp(startCol, 0, len(runes))
+	endCol = clamp(endCol, 0, len(runes))
+	if startCol == endCol {
+		return line
+	}
+	return string(runes[:startCol]) + chatSelectionStyle.Render(string(runes[startCol:endCol])) + string(runes[endCol:])
+}
+
+func (m chatModel) selectedTranscriptText(width int) string {
+	start, end, ok := m.normalizedSelectionRange()
+	if !ok {
+		return ""
+	}
+	lines := m.transcriptLines(width)
+	if len(lines) == 0 {
+		return ""
+	}
+	start.line = clamp(start.line, 0, len(lines)-1)
+	end.line = clamp(end.line, 0, len(lines)-1)
+	var selected []string
+	for lineIndex := start.line; lineIndex <= end.line; lineIndex++ {
+		text := stripChatANSI(lines[lineIndex])
+		runes := []rune(text)
+		startCol, endCol := 0, len(runes)
+		if lineIndex == start.line {
+			startCol = clamp(start.col, 0, len(runes))
+		}
+		if lineIndex == end.line {
+			endCol = clamp(end.col, 0, len(runes))
+		}
+		if startCol > endCol {
+			startCol, endCol = endCol, startCol
+		}
+		selected = append(selected, string(runes[startCol:endCol]))
+	}
+	return strings.TrimRight(strings.Join(selected, "\n"), "\n")
+}
+
 func (m chatModel) renderEntry(entry chatEntry) (string, string) {
 	switch entry.role {
 	case "user":
@@ -315,7 +466,7 @@ func (m chatModel) renderEntry(entry chatEntry) (string, string) {
 		prefix := toolStatusStyle(entry.status).Render("⏺") + " "
 		return prefix, toolStatusLine(entry)
 	case "tool_group":
-		prefix := toolStatusStyle(entry.status).Render("●") + " "
+		prefix := toolGroupPrefixStyle(entry).Render("●") + " "
 		return prefix, toolGroupStatusLine(entry)
 	case "error":
 		return chatErrorStyle.Render("err ") + " ", entry.content
@@ -342,8 +493,8 @@ func (m chatModel) renderEntryLines(entry chatEntry, body string, width int) []s
 	case "compaction_summary":
 		return renderCompactionSummaryLines(entry, width)
 	case "tool":
-		if entry.status == "approval" {
-			return m.renderApprovalEntryLines(entry, body, width)
+		if entryHasExpandableOutput(entry) {
+			return renderToolResultLines(entry, width)
 		}
 		if isToolResultStatus(entry.status) {
 			return renderToolResultLines(entry, width)
@@ -639,11 +790,15 @@ func renderToolResultLines(entry chatEntry, width int) []string {
 		return lines
 	}
 
-	if strings.TrimSpace(entry.content) == "" {
-		return lines
+	detailLines := renderToolCallDetailLines(entry, width)
+	if len(detailLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, detailLines...)
 	}
-	lines = append(lines, "")
-	lines = append(lines, renderToolOutputLines(entry, entry.content, width)...)
+	if strings.TrimSpace(entry.content) != "" {
+		lines = append(lines, "")
+		lines = append(lines, renderToolOutputLines(entry, entry.content, width)...)
+	}
 	return lines
 }
 
@@ -658,6 +813,9 @@ func renderToolGroupLines(entry chatEntry, width int) []string {
 			lines = append(lines, "")
 		}
 		lines = append(lines, "  "+toolGroupChildStatusLine(tool))
+		if detailLines := renderToolCallDetailLines(tool, width-4); len(detailLines) > 0 {
+			lines = append(lines, indentLines(detailLines, "    ")...)
+		}
 		if strings.TrimSpace(tool.content) == "" {
 			continue
 		}
@@ -813,7 +971,7 @@ func toolStatusLineWithArrow(entry chatEntry, arrow bool) string {
 		status += suffix
 	}
 
-	if arrow && isToolResultStatus(entry.status) && entry.content != "" {
+	if arrow && entryHasExpandableOutput(entry) {
 		if entry.expanded {
 			return fmt.Sprintf("▾ %s %s", label, toolStatusStyle(entry.status).Render(status))
 		}
@@ -828,7 +986,7 @@ func toolGroupStatusLine(entry chatEntry) string {
 		label = fmt.Sprintf("Tool calls (%d)", len(entry.tools))
 	}
 
-	status := toolStatusLabel(entry)
+	status := toolGroupStatusLabel(entry)
 	if suffix := toolElapsedSuffix(entry.startedAt, entry.finishedAt); suffix != "" {
 		status += suffix
 	}
@@ -837,6 +995,47 @@ func toolGroupStatusLine(entry chatEntry) string {
 		return fmt.Sprintf("▾ %s %s", label, toolStatusStyle(entry.status).Render(status))
 	}
 	return fmt.Sprintf("▸ %s %s", label, toolStatusStyle(entry.status).Render(status))
+}
+
+func toolGroupPrefixStyle(entry chatEntry) lipgloss.Style {
+	succeeded, _ := toolGroupResultCounts(entry.tools)
+	if succeeded > 0 {
+		return chatToolDoneStyle
+	}
+	return toolStatusStyle(entry.status)
+}
+
+func toolGroupStatusLabel(entry chatEntry) string {
+	if len(entry.tools) == 0 {
+		return toolStatusLabel(entry)
+	}
+
+	succeeded, failed := toolGroupResultCounts(entry.tools)
+	switch {
+	case failed > 0 && succeeded > 0:
+		return fmt.Sprintf("%d succeeded, %d failed", succeeded, failed)
+	case failed > 0:
+		return fmt.Sprintf("%d failed", failed)
+	case succeeded > 1:
+		return fmt.Sprintf("%d succeeded", succeeded)
+	case succeeded == 1:
+		return "done"
+	default:
+		return toolStatusLabel(entry)
+	}
+}
+
+func toolGroupResultCounts(tools []chatEntry) (succeeded int, failed int) {
+	for _, tool := range tools {
+		if tool.err != "" || tool.status == "error" {
+			failed++
+			continue
+		}
+		if tool.status == "done" {
+			succeeded++
+		}
+	}
+	return succeeded, failed
 }
 
 func toolStatusLabel(entry chatEntry) string {
@@ -949,6 +1148,69 @@ func formatToolArgs(args map[string]any) string {
 	return strings.Join(parts, ", ")
 }
 
+func renderToolCallDetailLines(entry chatEntry, width int) []string {
+	if len(entry.args) == 0 {
+		return nil
+	}
+	switch entry.detail {
+	case "bash":
+		if command, ok := rawStringArg(entry.args, "command"); ok {
+			return renderToolCallArgLine("$ "+command, width)
+		}
+	case "web_search":
+		if query, ok := rawStringArg(entry.args, "query"); ok {
+			return renderToolCallArgLine("query: "+query, width)
+		}
+	case "web_fetch":
+		if targetURL, ok := rawStringArg(entry.args, "url"); ok {
+			return renderToolCallArgLine("url: "+targetURL, width)
+		}
+	}
+	return renderToolCallArgs(entry.args, width)
+}
+
+func renderToolCallArgs(args map[string]any, width int) []string {
+	keys := make([]string, 0, len(args))
+	for key := range args {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var lines []string
+	for _, key := range keys {
+		value := toolArgDisplayValue(args[key])
+		if strings.Contains(value, "\n") {
+			lines = append(lines, chatMetaStyle.Render(key+":"))
+			lines = append(lines, indentLines(renderToolCallArgLine(value, max(20, width-2)), "  ")...)
+			continue
+		}
+		lines = append(lines, renderToolCallArgLine(key+": "+value, width)...)
+	}
+	return lines
+}
+
+func renderToolCallArgLine(line string, width int) []string {
+	wrapped := wrapChatText(line, width)
+	for i := range wrapped {
+		wrapped[i] = chatMetaStyle.Render(wrapped[i])
+	}
+	return wrapped
+}
+
+func toolArgDisplayValue(value any) string {
+	if value == nil {
+		return "null"
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err == nil {
+		return string(data)
+	}
+	return fmt.Sprint(value)
+}
+
 func quoteToolArg(value any) string {
 	switch v := value.(type) {
 	case string:
@@ -964,6 +1226,14 @@ func stringArg(args map[string]any, key string) (string, bool) {
 		return "", false
 	}
 	return truncateRunes(value, 120), true
+}
+
+func rawStringArg(args map[string]any, key string) (string, bool) {
+	value, ok := args[key].(string)
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", false
+	}
+	return value, true
 }
 
 func truncateRunes(value string, limit int) string {
@@ -988,10 +1258,6 @@ func (m chatModel) footerLine() string {
 
 func (m chatModel) footerParts() []string {
 	var parts []string
-	if !m.running && !m.compacting && m.approvalPrompt == nil && m.status != "" && m.status != "ready" {
-		parts = append(parts, m.status)
-	}
-
 	if len(m.queued) > 0 {
 		parts = append(parts, fmt.Sprintf("queued %d", len(m.queued)))
 	}
@@ -1022,6 +1288,34 @@ func (m chatModel) footerParts() []string {
 		parts = append(parts, contextStatus)
 	}
 	return parts
+}
+
+func (m chatModel) notificationLine() string {
+	status := strings.TrimSpace(m.status)
+	if status == "" || status == "ready" {
+		return ""
+	}
+	if m.running || m.compacting || m.approvalPrompt != nil {
+		return ""
+	}
+	switch status {
+	case "queued", "running", "compacting", "approval required":
+		return ""
+	default:
+		return status
+	}
+}
+
+func (m chatModel) renderNotificationLines(width int) []string {
+	line := m.notificationLine()
+	if line == "" {
+		return nil
+	}
+	lines := wrapChatText(line, width)
+	for i, wrapped := range lines {
+		lines[i] = chatNotificationStyle.Render(wrapped)
+	}
+	return lines
 }
 
 func (m chatModel) renderFooterLines(width int) []string {
@@ -1151,7 +1445,8 @@ func (m chatModel) activityLabel() string {
 		}
 		return "thinking"
 	}
-	for i := len(m.entries) - 1; i >= 0; i-- {
+	start := m.currentTurnEntryStart()
+	for i := len(m.entries) - 1; i >= start; i-- {
 		entry := m.entries[i]
 		switch entry.role {
 		case "tool":
@@ -1171,7 +1466,16 @@ func (m chatModel) activityLabel() string {
 			}
 		}
 	}
-	return "thinking"
+	return "waiting for model"
+}
+
+func (m chatModel) currentTurnEntryStart() int {
+	for i := len(m.entries) - 1; i >= 0; i-- {
+		if m.entries[i].role == "user" {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 func (m chatModel) activeToolLabels() []string {
@@ -1193,8 +1497,24 @@ func (m *chatModel) applyResponseMetrics(response *api.ChatResponse) {
 	if response == nil {
 		return
 	}
+	tokens := 0
 	if response.PromptEvalCount > 0 {
-		m.contextTokens = response.PromptEvalCount
+		tokens = response.PromptEvalCount
+	}
+	if response.EvalCount > 0 {
+		tokens += response.EvalCount
+	}
+	if tokens <= 0 {
+		return
+	}
+	if m.running {
+		if tokens > m.contextTokens {
+			m.contextTokens = tokens
+		}
+		return
+	}
+	if tokens > 0 {
+		m.contextTokens = tokens
 		m.contextEstimate = false
 	}
 }
@@ -1516,6 +1836,14 @@ func entriesFromMessages(messages []api.Message) []chatEntry {
 				entries = append(entries, newChatEntry(chatEntry{role: "assistant", content: msg.Content}))
 			}
 		case "tool":
+			if summary, ok := compactionSummaryContent(msg); ok {
+				entries = append(entries, newChatEntry(chatEntry{
+					role:    "compaction_summary",
+					content: summary,
+					status:  "done",
+				}))
+				continue
+			}
 			toolName := msg.ToolName
 			var args map[string]any
 			if call, ok := toolCalls[msg.ToolCallID]; ok {
@@ -1539,7 +1867,7 @@ func entriesFromMessages(messages []api.Message) []chatEntry {
 }
 
 func compactionSummaryContent(msg api.Message) (string, bool) {
-	if msg.Role != "user" && msg.Role != "system" {
+	if msg.Role != "user" && msg.Role != "system" && !(msg.Role == "tool" && msg.ToolName == "compact_conversation") {
 		return "", false
 	}
 	if !strings.HasPrefix(msg.Content, chatCompactionSummaryPrefix) {

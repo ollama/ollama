@@ -12,8 +12,10 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-const bashTimeout = 3 * time.Minute
-const maxBashOutputBytes = 60_000
+const (
+	bashTimeout        = 3 * time.Minute
+	maxBashOutputBytes = 60_000
+)
 
 type Bash struct{}
 
@@ -164,5 +166,12 @@ func (b *boundedOutput) String(label string) string {
 	if b.omitted == 0 {
 		return content
 	}
-	return content + fmt.Sprintf("\n\n[%s truncated: omitted %d bytes]", label, b.omitted)
+	return content + fmt.Sprintf("\n\n[%s truncated: omitted ~%d tokens]", label, approximateTokensFromBytes(b.omitted))
+}
+
+func approximateTokensFromBytes(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return max(1, (n+3)/4)
 }

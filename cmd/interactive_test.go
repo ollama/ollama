@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,6 +65,20 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestExtractFilenamesDragDropPaths(t *testing.T) {
+	input := `file:///Users/jdoe/Pictures/one.png file://localhost/C:/Users/jdoe/Pictures/two.webp file:///C:/Users/jdoe/Pictures/three.jpg .\relative\four.png`
+	res := extractFileNames(input)
+	assert.Len(t, res, 4)
+	assert.Contains(t, res[0], "file:///Users/jdoe/Pictures/one.png")
+	assert.Contains(t, res[1], "file://localhost/C:/Users/jdoe/Pictures/two.webp")
+	assert.Contains(t, res[2], "file:///C:/Users/jdoe/Pictures/three.jpg")
+	assert.Contains(t, res[3], `.\relative\four.png`)
+}
+
+func TestNormalizeFilePathFileURL(t *testing.T) {
+	assert.Equal(t, filepath.FromSlash("C:/Users/jdoe/Pictures/img.png"), normalizeFilePath("file:///C:/Users/jdoe/Pictures/img.png"))
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
@@ -83,6 +98,22 @@ func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, cleaned, "before  after")
+}
+
+func TestExtractFileDataFileURL(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "img.png")
+	data := make([]byte, 600)
+	copy(data, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	fileURL := (&url.URL{Scheme: "file", Path: fp}).String()
+	cleaned, imgs, err := extractFileData("before " + fileURL + " after")
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Equal(t, "before  after", cleaned)
 }
 
 func TestExtractFileDataWAV(t *testing.T) {

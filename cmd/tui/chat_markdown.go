@@ -20,10 +20,7 @@ var markdownTableSeparatorPattern = regexp.MustCompile(`^:?-{3,}:?$`)
 var markdownHeadingPattern = regexp.MustCompile(`^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$`)
 var markdownHorizontalRulePattern = regexp.MustCompile(`^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$`)
 
-const (
-	maxMarkdownRendererCacheEntries = 8
-	useBespokeMarkdownRendering     = true
-)
+const maxMarkdownRendererCacheEntries = 8
 
 var chatMarkdownRenderers = newMarkdownRendererCache()
 
@@ -48,16 +45,6 @@ func renderMarkdownForView(markdown string, width int) string {
 	}
 	if width < 20 {
 		width = 20
-	}
-	if !useBespokeMarkdownRendering {
-		return renderMarkdownChunk(markdown, width)
-	}
-	return renderMarkdownBlocks(markdownBlocks(markdown), width)
-}
-
-func renderMarkdownPlain(markdown string, width int) string {
-	if !useBespokeMarkdownRendering {
-		return renderMarkdownChunk(markdown, width)
 	}
 	return renderMarkdownBlocks(markdownBlocks(markdown), width)
 }
@@ -627,14 +614,6 @@ func (c *markdownRendererCache) len() int {
 	return len(c.renderers)
 }
 
-func diffFenceStart(line string) (string, bool) {
-	fence, info, ok := markdownFenceStart(line)
-	if !ok || !markdownFenceIsDiff(info) {
-		return "", false
-	}
-	return fence, true
-}
-
 func markdownFenceStart(line string) (string, string, bool) {
 	trimmed := strings.TrimSpace(line)
 	if strings.HasPrefix(trimmed, "```") {
@@ -690,17 +669,17 @@ func markdownLineIsIndentedCode(line string) bool {
 }
 
 func compactMarkdownStyle() glamouransi.StyleConfig {
-	palette := markdownPaletteForBackground(lipgloss.HasDarkBackground())
+	palette := markdownANSIPalette()
 	style := styles.ASCIIStyleConfig
 	style.Document.Margin = uintPtr(0)
 	style.Document.BlockPrefix = ""
 	style.Document.BlockSuffix = ""
-	style.BlockQuote.Color = stringPtr(palette.muted)
+	style.BlockQuote.Color = optionalStringPtr(palette.muted)
 	style.CodeBlock.Margin = uintPtr(0)
-	style.CodeBlock.Color = stringPtr(palette.code)
+	style.CodeBlock.Color = optionalStringPtr(palette.code)
 	style.Table.Margin = uintPtr(0)
-	style.Table.Color = stringPtr(palette.table)
-	style.Heading.Color = stringPtr(palette.heading)
+	style.Table.Color = optionalStringPtr(palette.table)
+	style.Heading.Color = optionalStringPtr(palette.heading)
 	style.Heading.Bold = boolPtr(true)
 	style.H1.Prefix = ""
 	style.H2.Prefix = ""
@@ -711,18 +690,18 @@ func compactMarkdownStyle() glamouransi.StyleConfig {
 	style.Strong.BlockPrefix = ""
 	style.Strong.BlockSuffix = ""
 	style.Strong.Bold = boolPtr(true)
-	style.Strong.Color = stringPtr(palette.strong)
+	style.Strong.Color = optionalStringPtr(palette.strong)
 	style.Emph.BlockPrefix = ""
 	style.Emph.BlockSuffix = ""
 	style.Emph.Italic = boolPtr(true)
-	style.Emph.Color = stringPtr(palette.muted)
+	style.Emph.Color = optionalStringPtr(palette.muted)
 	style.Code.BlockPrefix = ""
 	style.Code.BlockSuffix = ""
-	style.Code.Color = stringPtr(palette.code)
-	style.Link.Color = stringPtr(palette.link)
-	style.LinkText.Color = stringPtr(palette.link)
+	style.Code.Color = optionalStringPtr(palette.code)
+	style.Link.Color = optionalStringPtr(palette.link)
+	style.LinkText.Color = optionalStringPtr(palette.link)
 	style.LinkText.Underline = boolPtr(true)
-	style.HorizontalRule.Color = stringPtr(palette.muted)
+	style.HorizontalRule.Color = optionalStringPtr(palette.muted)
 	style.HorizontalRule.Format = "\n" + strings.Repeat("─", 24) + "\n"
 	return style
 }
@@ -737,23 +716,14 @@ type markdownTerminalPalette struct {
 }
 
 func markdownPaletteForBackground(dark bool) markdownTerminalPalette {
-	if dark {
-		return markdownTerminalPalette{
-			heading: "222",
-			strong:  "222",
-			link:    "117",
-			code:    "116",
-			muted:   "247",
-			table:   "250",
-		}
-	}
+	return markdownANSIPalette()
+}
+
+func markdownANSIPalette() markdownTerminalPalette {
 	return markdownTerminalPalette{
-		heading: "136",
-		strong:  "136",
-		link:    "32",
-		code:    "30",
-		muted:   "244",
-		table:   "242",
+		link:  chatAnsiBlue,
+		code:  chatAnsiCyan,
+		muted: chatAnsiMuted,
 	}
 }
 
@@ -774,7 +744,10 @@ func boolPtr(value bool) *bool {
 	return &value
 }
 
-func stringPtr(value string) *string {
+func optionalStringPtr(value string) *string {
+	if value == "" {
+		return nil
+	}
 	return &value
 }
 

@@ -3,120 +3,16 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/agent/skills"
 	"github.com/ollama/ollama/api"
-)
-
-var (
-	chatHeaderStyle = lipgloss.NewStyle().
-			Bold(true)
-
-	chatMetaStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
-
-	chatUserStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "236", Dark: "252"})
-
-	chatAssistantStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "236", Dark: "252"})
-
-	chatThinkingStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "244"}).
-				Italic(true)
-
-	chatToolStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "240", Dark: "250"})
-
-	chatToolRunningStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "178", Dark: "222"})
-
-	chatToolDoneStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "114"})
-
-	chatDiffMetaStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
-
-	chatDiffFileStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.AdaptiveColor{Light: "31", Dark: "117"})
-
-	chatDiffHunkStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "25", Dark: "111"})
-
-	chatDiffAddStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "114"})
-
-	chatDiffDeleteStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "160", Dark: "203"})
-
-	chatErrorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "160", Dark: "203"})
-
-	chatFullAccessStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.AdaptiveColor{Light: "160", Dark: "203"})
-
-	chatInputStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "236", Dark: "252"})
-
-	chatInputBorderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "248", Dark: "244"})
-
-	chatCommandNameStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "0", Dark: "15"})
-
-	chatResumeTextStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "0", Dark: "15"})
-
-	chatResumeTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.AdaptiveColor{Light: "0", Dark: "15"})
-
-	chatResumeSelectedStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.AdaptiveColor{Light: "0", Dark: "15"})
-
-	chatResumeMetaStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "8", Dark: "7"})
-
-	chatResumeBorderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "8", Dark: "7"})
-
-	chatHistoryTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.AdaptiveColor{Light: "0", Dark: "15"})
-
-	chatHistorySystemRoleStyle = lipgloss.NewStyle().
-					Bold(true).
-					Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "248"})
-
-	chatHistoryUserRoleStyle = lipgloss.NewStyle().
-					Bold(true).
-					Foreground(lipgloss.AdaptiveColor{Light: "25", Dark: "117"})
-
-	chatHistoryAssistantRoleStyle = lipgloss.NewStyle().
-					Bold(true).
-					Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "222"})
-
-	chatHistoryToolRoleStyle = lipgloss.NewStyle().
-					Bold(true).
-					Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "114"})
-
-	chatHistoryLabelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "244"})
-
-	chatHistoryTextStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "236", Dark: "252"})
-
-	chatHistoryCodeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "31", Dark: "117"})
+	"github.com/ollama/ollama/cmd/internal/filedata"
 )
 
 var chatSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -131,6 +27,7 @@ const chatCompactionSummaryPrefix = "Conversation summary:\n"
 type ChatModelOption struct {
 	Name        string
 	Description string
+	Recommended bool
 }
 
 type ChatOptions struct {
@@ -153,6 +50,8 @@ type ChatOptions struct {
 	Options                     map[string]any
 	Think                       *api.ThinkValue
 	KeepAlive                   *api.Duration
+	Images                      []api.ImageData
+	MultiModal                  bool
 	HideThinking                bool
 	Verbose                     bool
 	Compactor                   coreagent.Compactor
@@ -178,34 +77,39 @@ type chatModel struct {
 	entries      []chatEntry
 	workingDir   string
 
-	input            []rune
-	inputCursor      int
-	inputCursorSet   bool
-	queued           []string
-	promptHistory    []string
-	promptCursor     int
-	promptDraft      []rune
-	promptActive     bool
-	running          bool
-	compacting       bool
-	cancel           context.CancelFunc
-	events           <-chan tea.Msg
-	compactEvents    <-chan tea.Msg
-	scroll           int
-	toolOutputMode   bool
-	toolOutputOpen   bool
-	thinking         bool
-	thinkingTokens   int
-	compactingTokens int
-	contextTokens    int
-	contextEstimate  bool
-	resumePicker     *chatResumePicker
-	modelPicker      *chatModelPicker
-	thinkPicker      *chatThinkPicker
-	historyPopup     *chatHistoryPopup
-	approvalPrompt   *chatApprovalPrompt
-	reviewApproval   coreagent.ApprovalHandler
-	permissionMode   *chatPermissionMode
+	input             []rune
+	inputCursor       int
+	inputCursorSet    bool
+	inputAttachments  []chatInputAttachment
+	nextImageID       int
+	nextAudioID       int
+	queued            []string
+	queuedAttachments [][]chatInputAttachment
+	promptHistory     []string
+	promptCursor      int
+	promptDraft       []rune
+	promptActive      bool
+	running           bool
+	compacting        bool
+	cancel            context.CancelFunc
+	events            <-chan tea.Msg
+	compactEvents     <-chan tea.Msg
+	scroll            int
+	toolOutputMode    bool
+	toolOutputOpen    bool
+	thinking          bool
+	thinkingTokens    int
+	compactingTokens  int
+	contextTokens     int
+	contextEstimate   bool
+	resumePicker      *chatResumePicker
+	modelPicker       *chatModelPicker
+	thinkPicker       *chatThinkPicker
+	historyPopup      *chatHistoryPopup
+	approvalPrompt    *chatApprovalPrompt
+	reviewApproval    coreagent.ApprovalHandler
+	permissionMode    *chatPermissionMode
+	selection         chatSelection
 
 	width                int
 	height               int
@@ -215,7 +119,25 @@ type chatModel struct {
 	systemPromptDisabled bool
 	quitting             bool
 	quitArmed            bool
+	escArmed             bool
 	err                  error
+}
+
+type chatSelectionPoint struct {
+	line int
+	col  int
+}
+
+type chatSelection struct {
+	active bool
+	anchor chatSelectionPoint
+	cursor chatSelectionPoint
+}
+
+type chatInputAttachment struct {
+	placeholder string
+	kind        string
+	data        api.ImageData
 }
 
 func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
@@ -243,6 +165,7 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 		promptHistory:  initialPromptHistory(ctx, opts),
 		status:         "ready",
 	}
+	m.nextImageID, m.nextAudioID = nextInputAttachmentIDsFromMessages(m.messages)
 	m.entries = entriesFromMessages(m.messages)
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
@@ -295,6 +218,8 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatRunDoneMsg:
 		wasCanceling := m.status == "canceling"
 		m.running = false
+		m.compacting = false
+		m.compactingTokens = 0
 		m.cancel = nil
 		m.events = nil
 		m.thinking = false
@@ -356,11 +281,14 @@ func (m chatModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.historyPopup != nil {
+		return m.updateHistoryPopupMouse(msg)
+	}
+	if !m.mouseInTranscript(msg) && !m.selection.active {
 		switch msg.Type {
 		case tea.MouseWheelUp:
-			m.moveHistoryPopup(-3)
+			m.scrollBy(3)
 		case tea.MouseWheelDown:
-			m.moveHistoryPopup(3)
+			m.scrollBy(-3)
 		}
 		return m, nil
 	}
@@ -369,8 +297,85 @@ func (m chatModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.scrollBy(3)
 	case tea.MouseWheelDown:
 		m.scrollBy(-3)
+	case tea.MouseLeft:
+		switch msg.Action {
+		case tea.MouseActionPress:
+			m.startTranscriptSelection(msg)
+		case tea.MouseActionMotion:
+			m.dragTranscriptSelection(msg)
+		default:
+			if msg.Action == 0 {
+				m.startTranscriptSelection(msg)
+			}
+		}
+	case tea.MouseMotion:
+		m.dragTranscriptSelection(msg)
+	case tea.MouseRelease:
+		return m.finishTranscriptSelection(msg)
 	}
 	return m, nil
+}
+
+func (m chatModel) mouseInTranscript(msg tea.MouseMsg) bool {
+	top, height := m.transcriptLayout()
+	if msg.X < 0 || msg.X >= m.viewWidth() {
+		return false
+	}
+	return msg.Y >= top && msg.Y < top+height
+}
+
+func (m chatModel) mouseTranscriptPoint(msg tea.MouseMsg) chatSelectionPoint {
+	top, height := m.transcriptLayout()
+	visibleY := clamp(msg.Y-top, 0, max(0, height-1))
+	line := m.visibleTranscriptStartLine(m.viewWidth(), height) + visibleY
+	col := max(0, msg.X)
+	return chatSelectionPoint{line: line, col: col}
+}
+
+func (m *chatModel) startTranscriptSelection(msg tea.MouseMsg) {
+	if !m.mouseInTranscript(msg) {
+		m.selection = chatSelection{}
+		return
+	}
+	point := m.mouseTranscriptPoint(msg)
+	m.selection = chatSelection{active: true, anchor: point, cursor: point}
+}
+
+func (m *chatModel) dragTranscriptSelection(msg tea.MouseMsg) {
+	if !m.selection.active {
+		return
+	}
+	point := m.mouseTranscriptPoint(msg)
+	m.selection.cursor = point
+	top, height := m.transcriptLayout()
+	if msg.Y <= top {
+		m.scrollBy(1)
+	} else if msg.Y >= top+height-1 {
+		m.scrollBy(-1)
+	}
+}
+
+func (m chatModel) finishTranscriptSelection(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if !m.selection.active {
+		return m, nil
+	}
+	point := m.mouseTranscriptPoint(msg)
+	m.selection.cursor = point
+	selected := m.selectedTranscriptText(m.viewWidth())
+	if strings.TrimSpace(selected) == "" {
+		m.selection = chatSelection{}
+		return m, nil
+	}
+	m.status = "selection copied"
+	return m, func() tea.Msg {
+		if m.opts.Clipboard == nil {
+			return nil
+		}
+		if err := m.opts.Clipboard(m.ctx, selected); err != nil {
+			return chatAgentMsg{event: coreagent.Event{Type: coreagent.EventError, Error: err.Error()}}
+		}
+		return nil
+	}
 }
 
 func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -395,16 +400,17 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type != tea.KeyCtrlC {
 		m.disarmQuit()
 	}
+	if msg.Type != tea.KeyEsc {
+		m.disarmEsc()
+	}
 
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		return m.updateCtrlC()
+	case tea.KeyCtrlD:
+		return m.updateCtrlD()
 	case tea.KeyEsc:
-		if (m.running || m.compacting) && m.cancel != nil {
-			m.cancel()
-			m.status = "canceling"
-		}
-		return m, nil
+		return m.updateEsc()
 	case tea.KeyEnter:
 		if msg.Alt {
 			m.insertInputNewline()
@@ -445,6 +451,7 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input = nil
 		m.inputCursor = 0
 		m.inputCursorSet = false
+		m.inputAttachments = nil
 		m.complete = 0
 	case tea.KeyTab:
 		m.applyCompletion()
@@ -453,7 +460,7 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeySpace:
 		m.insertInputRunes([]rune{' '})
 	case tea.KeyRunes:
-		m.insertInputRunes(msg.Runes)
+		m.insertInputRunesFromKey(msg.Runes, msg.Paste)
 	default:
 		if m.canEditInput() && isShiftEnterCSI(msg) {
 			m.insertInputNewline()
@@ -464,10 +471,7 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m chatModel) updateCtrlC() (tea.Model, tea.Cmd) {
 	if len(m.input) > 0 {
-		m.input = nil
-		m.inputCursor = 0
-		m.inputCursorSet = false
-		m.complete = 0
+		m.clearInput()
 		m.resetPromptHistoryCursor()
 		m.disarmQuit()
 		m.status = "input cleared"
@@ -486,6 +490,62 @@ func (m chatModel) updateCtrlC() (tea.Model, tea.Cmd) {
 	}
 	m.quitting = true
 	return m, tea.Quit
+}
+
+func (m chatModel) updateCtrlD() (tea.Model, tea.Cmd) {
+	if len(m.input) > 0 {
+		return m, nil
+	}
+	m.quitting = true
+	if (m.running || m.compacting) && m.cancel != nil {
+		m.cancel()
+	}
+	return m, tea.Quit
+}
+
+func (m chatModel) updateEsc() (tea.Model, tea.Cmd) {
+	if !m.escArmed {
+		m.escArmed = true
+		switch {
+		case len(m.input) > 0 && (m.running || m.compacting):
+			m.status = "press esc again to clear input and cancel"
+		case len(m.input) > 0:
+			m.status = "press esc again to clear input"
+		case (m.running || m.compacting) && m.cancel != nil:
+			m.status = "press esc again to cancel"
+		default:
+			m.status = "ready"
+		}
+		return m, nil
+	}
+
+	m.escArmed = false
+	cleared := false
+	if len(m.input) > 0 {
+		m.clearInput()
+		m.resetPromptHistoryCursor()
+		cleared = true
+	}
+	if (m.running || m.compacting) && m.cancel != nil {
+		m.cancel()
+		m.quitArmed = false
+		m.status = "canceling"
+		return m, nil
+	}
+	if cleared {
+		m.status = "input cleared"
+	} else {
+		m.status = "ready"
+	}
+	return m, nil
+}
+
+func (m *chatModel) clearInput() {
+	m.input = nil
+	m.inputCursor = 0
+	m.inputCursorSet = false
+	m.inputAttachments = nil
+	m.complete = 0
 }
 
 func (m chatModel) updateUpKey() (tea.Model, tea.Cmd) {
@@ -543,15 +603,7 @@ func (m chatModel) View() string {
 		return renderFullFrame(m.renderHistoryPopup(width, height), width, height)
 	}
 
-	header := chatHeaderStyle.Render("Ollama")
-	if m.opts.Model != "" {
-		header += chatMetaStyle.Render("  " + m.opts.Model)
-	}
-	headerLines := []string{header}
-	if status := m.statusLine(); status != "" {
-		headerLines = append(headerLines, chatMetaStyle.Render(status))
-	}
-	headerLines = append(headerLines, "")
+	headerLines := m.headerLines()
 
 	bottomLines := m.bottomLines(width, height-len(headerLines))
 	available := height - len(headerLines) - len(bottomLines)
@@ -574,11 +626,27 @@ func (m chatModel) View() string {
 	return renderFullFrame(strings.Join(lines, "\n"), width, height)
 }
 
+func (m chatModel) headerLines() []string {
+	header := chatHeaderStyle.Render("Ollama")
+	if m.opts.Model != "" {
+		header += chatMetaStyle.Render("  " + m.opts.Model)
+	}
+	lines := []string{header}
+	if status := m.statusLine(); status != "" {
+		lines = append(lines, chatMetaStyle.Render(status))
+	}
+	return append(lines, "")
+}
+
 func (m *chatModel) resetChat(status string) (tea.Model, tea.Cmd) {
 	m.messages = nil
 	m.liveMessages = nil
 	m.entries = nil
 	m.queued = nil
+	m.queuedAttachments = nil
+	m.inputAttachments = nil
+	m.nextImageID = 0
+	m.nextAudioID = 0
 	m.resetPromptHistoryCursor()
 	m.resetWorkingDir()
 	m.thinking = false
@@ -632,13 +700,20 @@ func (m *chatModel) startManualCompaction() (tea.Model, tea.Cmd) {
 	m.compactEvents = events
 	m.status = "compacting"
 	messages := slices.Clone(m.messages)
+	var tools api.Tools
+	if m.opts.Tools != nil {
+		tools = m.opts.Tools.Tools()
+	}
 	req := coreagent.CompactionRequest{
-		ChatID:    m.chatID,
-		Model:     m.opts.Model,
-		Messages:  messages,
-		Options:   m.opts.Options,
-		KeepAlive: m.opts.KeepAlive,
-		Force:     true,
+		ChatID:       m.chatID,
+		Model:        m.opts.Model,
+		SystemPrompt: m.systemPrompt(""),
+		Messages:     messages,
+		Tools:        tools,
+		Format:       m.opts.Format,
+		Options:      m.opts.Options,
+		KeepAlive:    m.opts.KeepAlive,
+		Force:        true,
 		Progress: func(progress coreagent.CompactionProgress) {
 			select {
 			case events <- chatCompactProgressMsg{tokens: progress.Tokens}:
@@ -686,11 +761,78 @@ func (m chatModel) finishManualCompaction(msg chatCompactDoneMsg) (tea.Model, te
 }
 
 func (m *chatModel) startRun(input string) (tea.Model, tea.Cmd) {
-	return m.startRunWithPrompt(input, input, "")
+	displayInput, message, err := m.userMessageFromInput(input, input)
+	if err != nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
+		m.status = "error"
+		return *m, nil
+	}
+	return m.startRunWithMessages(displayInput, []api.Message{message}, "")
 }
 
 func (m *chatModel) startRunWithPrompt(displayInput, userInput, extraSystemPrompt string) (tea.Model, tea.Cmd) {
-	return m.startRunWithMessages(displayInput, []api.Message{{Role: "user", Content: userInput}}, extraSystemPrompt)
+	displayInput, message, err := m.userMessageFromInput(displayInput, userInput)
+	if err != nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
+		m.status = "error"
+		return *m, nil
+	}
+	return m.startRunWithMessages(displayInput, []api.Message{message}, extraSystemPrompt)
+}
+
+func (m *chatModel) userMessageFromInput(displayInput, userInput string) (string, api.Message, error) {
+	content := userInput
+	images := slices.Clone(m.opts.Images)
+	preloaded := len(images)
+	placeholderAttachments := m.activeInputAttachmentsFor(userInput)
+	for _, attachment := range placeholderAttachments {
+		images = append(images, attachment.data)
+	}
+	extracted := 0
+
+	if m.opts.MultiModal {
+		cleaned, files, err := filedata.ExtractWithFiles(userInput)
+		if err != nil {
+			return "", api.Message{}, err
+		}
+		content = cleaned
+		extracted = len(files)
+		for _, file := range files {
+			images = append(images, file.Data)
+		}
+	}
+	m.opts.Images = nil
+	m.inputAttachments = nil
+
+	if len(images) > 0 {
+		base := displayInput
+		if extracted > 0 {
+			base = content
+		}
+		if len(placeholderAttachments) > 0 && extracted == 0 && preloaded == 0 {
+			displayInput = strings.TrimSpace(content)
+		} else {
+			displayInput = chatDisplayInputWithAttachments(base, len(images))
+		}
+	}
+
+	return displayInput, api.Message{Role: "user", Content: content, Images: images}, nil
+}
+
+func chatDisplayInputWithAttachments(input string, count int) string {
+	note := fmt.Sprintf("[attached %d file%s]", count, pluralSuffix(count))
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return note
+	}
+	return input + "\n\n" + note
+}
+
+func pluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func (m *chatModel) startRunWithMessages(displayInput string, newMessages []api.Message, extraSystemPrompt string) (tea.Model, tea.Cmd) {
@@ -751,6 +893,12 @@ func (m *chatModel) startNextQueued() tea.Cmd {
 	for len(m.queued) > 0 && !m.running && !m.compacting && !m.quitting && m.resumePicker == nil && m.modelPicker == nil && m.thinkPicker == nil && m.historyPopup == nil {
 		input := m.queued[0]
 		m.queued = m.queued[1:]
+		if len(m.queuedAttachments) > 0 {
+			m.inputAttachments = cloneInputAttachments(m.queuedAttachments[0])
+			m.queuedAttachments = m.queuedAttachments[1:]
+		} else {
+			m.inputAttachments = nil
+		}
 		_, cmd := m.submitInput(input)
 		if cmd != nil || m.running || m.compacting || m.quitting {
 			return cmd
@@ -765,6 +913,16 @@ func (m *chatModel) disarmQuit() {
 	}
 	m.quitArmed = false
 	if m.status == "press ctrl+c again to quit" {
+		m.status = "ready"
+	}
+}
+
+func (m *chatModel) disarmEsc() {
+	if !m.escArmed {
+		return
+	}
+	m.escArmed = false
+	if strings.HasPrefix(m.status, "press esc again") {
 		m.status = "ready"
 	}
 }

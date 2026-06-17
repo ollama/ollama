@@ -38,14 +38,17 @@ func TestMarkdownRendererCacheIsBounded(t *testing.T) {
 	}
 }
 
-func TestMarkdownPaletteUsesDarkerColorsOnLightBackground(t *testing.T) {
+func TestMarkdownPaletteUsesTerminalANSIPalette(t *testing.T) {
 	light := markdownPaletteForBackground(false)
 	dark := markdownPaletteForBackground(true)
-	if light.heading == dark.heading || light.link == dark.link || light.code == dark.code {
-		t.Fatalf("light palette should differ from dark palette: light=%#v dark=%#v", light, dark)
+	if light != dark {
+		t.Fatalf("markdown palette should not hardcode light/dark colors: light=%#v dark=%#v", light, dark)
 	}
-	if light.heading != "136" || light.link != "32" || light.code != "30" {
-		t.Fatalf("light palette = %#v, want darker readable colors", light)
+	if light.link != chatAnsiBlue || light.code != chatAnsiCyan || light.muted != chatAnsiMuted {
+		t.Fatalf("markdown palette = %#v, want terminal ANSI palette", light)
+	}
+	if light.heading != "" || light.strong != "" || light.table != "" {
+		t.Fatalf("markdown palette should use default terminal foreground for structural text: %#v", light)
 	}
 }
 

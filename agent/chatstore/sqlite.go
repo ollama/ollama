@@ -21,7 +21,11 @@ type Store struct {
 	db *sql.DB
 }
 
-const compactionSummaryMessagePrefix = "Conversation summary:\n"
+const (
+	compactionSummaryMessagePrefix = "Conversation summary:\n"
+	compactionToolName             = "compact_conversation"
+	compactionToolCallID           = "ollama_compaction"
+)
 
 type Chat struct {
 	ID        string
@@ -90,6 +94,7 @@ func (s *Store) init(ctx context.Context) error {
 		CREATE TABLE IF NOT EXISTS chats (
 			id TEXT PRIMARY KEY,
 			title TEXT NOT NULL DEFAULT '',
+			model_name TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			browser_state TEXT
 		);
@@ -147,6 +152,9 @@ func (s *Store) init(ctx context.Context) error {
 	if err := ensureColumn(ctx, s.db, "messages", "archived", "BOOLEAN NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	if err := ensureColumn(ctx, s.db, "chats", "model_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := ensureColumn(ctx, s.db, "messages", "tool_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -180,6 +188,24 @@ func (s *Store) EnsureChat(ctx context.Context, id string, title string) error {
 	`, id, title, time.Now())
 	if err != nil {
 		return fmt.Errorf("ensure chat: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) SetChatModel(ctx context.Context, chatID string, model string) error {
+	chatID = strings.TrimSpace(chatID)
+	model = strings.TrimSpace(model)
+	if chatID == "" {
+		return fmt.Errorf("chat id is required")
+	}
+	if model == "" {
+		return fmt.Errorf("model is required")
+	}
+	if err := s.EnsureChat(ctx, chatID, ""); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE chats SET model_name = ? WHERE id = ?`, model, chatID); err != nil {
+		return fmt.Errorf("set chat model: %w", err)
 	}
 	return nil
 }
@@ -263,25 +289,20 @@ func (s *Store) UpdateLastMessage(ctx context.Context, chatID string, msg api.Me
 
 func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 	var chat Chat
+	var chatModel string
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT id, title, created_at FROM chats WHERE id = ?
-	`, id).Scan(&chat.ID, &chat.Title, &chat.CreatedAt); err != nil {
+		SELECT id, title, model_name, created_at FROM chats WHERE id = ?
+	`, id).Scan(&chat.ID, &chat.Title, &chatModel, &chat.CreatedAt); err != nil {
 		return nil, err
 	}
-	model, err := latestModelForChat(ctx, s.db, id)
-	if err != nil {
-		return nil, err
-	}
-	chat.Model = model
-
-	summary, err := latestCompactionSummary(ctx, s.db, id)
-	if err != nil {
-		return nil, err
-	}
-	if summary != "" {
-		// Keep the rolling summary as a user message so the stable system prompt prefix
-		// remains cache-friendly across resumed compacted chats.
-		chat.Messages = append(chat.Messages, api.Message{Role: "user", Content: compactionSummaryMessagePrefix + summary})
+	if strings.TrimSpace(chatModel) != "" {
+		chat.Model = chatModel
+	} else {
+		model, err := latestModelForChat(ctx, s.db, id)
+		if err != nil {
+			return nil, err
+		}
+		chat.Model = model
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
@@ -315,6 +336,14 @@ func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 		return nil, err
 	}
 
+	summary, err := latestCompactionSummary(ctx, s.db, id)
+	if err != nil {
+		return nil, err
+	}
+	if summary != "" && !messagesContainCompactionSummary(chat.Messages) {
+		chat.Messages = append(chat.Messages, compactionSummaryMessages(summary)...)
+	}
+
 	return &chat, nil
 }
 
@@ -324,8 +353,17 @@ func (s *Store) LatestChat(ctx context.Context) (*Chat, error) {
 		SELECT c.id
 		FROM chats c
 		JOIN messages m ON m.chat_id = c.id
-		WHERE m.model_name IS NOT NULL AND m.model_name != ''
 		GROUP BY c.id
+		HAVING COALESCE(
+			NULLIF(c.model_name, ''),
+			(
+				SELECT lm.model_name
+				FROM messages lm
+				WHERE lm.chat_id = c.id AND lm.model_name IS NOT NULL AND lm.model_name != ''
+				ORDER BY lm.updated_at DESC, lm.id DESC
+				LIMIT 1
+			)
+		) IS NOT NULL
 		ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
 		LIMIT 1
 	`).Scan(&chatID); err != nil {
@@ -344,8 +382,17 @@ func (s *Store) LatestChatForModel(ctx context.Context, model string) (*Chat, er
 		SELECT c.id
 		FROM chats c
 		JOIN messages m ON m.chat_id = c.id
-		WHERE m.model_name = ?
 		GROUP BY c.id
+		HAVING COALESCE(
+			NULLIF(c.model_name, ''),
+			(
+				SELECT lm.model_name
+				FROM messages lm
+				WHERE lm.chat_id = c.id AND lm.model_name IS NOT NULL AND lm.model_name != ''
+				ORDER BY lm.updated_at DESC, lm.id DESC
+				LIMIT 1
+			)
+		) = ?
 		ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
 		LIMIT 1
 	`, model).Scan(&chatID); err != nil {
@@ -402,7 +449,7 @@ func (s *Store) ListChats(ctx context.Context, limit int) ([]ChatSummary, error)
 	}
 
 	for i := range summaries {
-		model, err := latestModelForChat(ctx, s.db, summaries[i].ID)
+		model, err := currentModelForChat(ctx, s.db, summaries[i].ID)
 		if err != nil {
 			return nil, err
 		}
@@ -487,6 +534,17 @@ func latestModelForChat(ctx context.Context, db *sql.DB, chatID string) (string,
 	return modelName, nil
 }
 
+func currentModelForChat(ctx context.Context, db *sql.DB, chatID string) (string, error) {
+	var modelName string
+	if err := db.QueryRowContext(ctx, `SELECT model_name FROM chats WHERE id = ?`, chatID).Scan(&modelName); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(modelName) != "" {
+		return modelName, nil
+	}
+	return latestModelForChat(ctx, db, chatID)
+}
+
 func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUserTurns int, summary string) error {
 	if chatID == "" {
 		return fmt.Errorf("chat id is required")
@@ -532,11 +590,18 @@ func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUse
 	}
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id
-		FROM messages
-		WHERE chat_id = ? AND archived = 0 AND id < ?
+		SELECT m.id
+		FROM messages m
+		WHERE m.chat_id = ? AND m.archived = 0 AND (
+			m.id < ?
+			OR m.tool_name = ?
+			OR EXISTS (
+				SELECT 1 FROM tool_calls tc
+				WHERE tc.message_id = m.id AND tc.function_name = ?
+			)
+		)
 		ORDER BY id ASC
-	`, chatID, keepStartID)
+	`, chatID, keepStartID, compactionToolName, compactionToolName)
 	if err != nil {
 		return fmt.Errorf("list archived messages: %w", err)
 	}
@@ -573,12 +638,66 @@ func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUse
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE messages
 		SET archived = 1
-		WHERE chat_id = ? AND archived = 0 AND id < ?
-	`, chatID, keepStartID); err != nil {
+		WHERE chat_id = ? AND archived = 0 AND (
+			id < ?
+			OR tool_name = ?
+			OR EXISTS (
+				SELECT 1 FROM tool_calls
+				WHERE tool_calls.message_id = messages.id AND tool_calls.function_name = ?
+			)
+		)
+	`, chatID, keepStartID, compactionToolName, compactionToolName); err != nil {
 		return fmt.Errorf("archive messages: %w", err)
 	}
 
+	for _, msg := range compactionSummaryMessages(summary) {
+		messageID, err := insertMessage(ctx, tx, chatID, msg, "")
+		if err != nil {
+			return err
+		}
+		for _, toolCall := range msg.ToolCalls {
+			if err := insertToolCall(ctx, tx, messageID, toolCall); err != nil {
+				return err
+			}
+		}
+	}
+
 	return tx.Commit()
+}
+
+func compactionSummaryMessages(summary string) []api.Message {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("reason", "context compaction")
+	return []api.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{{
+				ID: compactionToolCallID,
+				Function: api.ToolCallFunction{
+					Name:      compactionToolName,
+					Arguments: args,
+				},
+			}},
+		},
+		{
+			Role:       "tool",
+			ToolName:   compactionToolName,
+			ToolCallID: compactionToolCallID,
+			Content:    compactionSummaryMessagePrefix + strings.TrimSpace(summary),
+		},
+	}
+}
+
+func messagesContainCompactionSummary(messages []api.Message) bool {
+	for _, msg := range messages {
+		if msg.Role == "tool" && msg.ToolName == compactionToolName && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix) {
+			return true
+		}
+		if (msg.Role == "user" || msg.Role == "system") && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func insertMessage(ctx context.Context, tx *sql.Tx, chatID string, msg api.Message, model string) (int64, error) {

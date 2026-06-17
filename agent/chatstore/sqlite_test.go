@@ -8,6 +8,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -221,6 +222,32 @@ func TestStoreMigratesOldMessagesSchemaForImages(t *testing.T) {
 	if !found {
 		t.Fatal("images column was not added")
 	}
+	found = false
+	rows, err = store.db.Query(`PRAGMA table_info(chats)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name string
+		var typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatal(err)
+		}
+		if name == "model_name" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("chat model_name column was not added")
+	}
 
 	ctx := context.Background()
 	image := api.ImageData([]byte("after migration"))
@@ -294,6 +321,97 @@ func TestStoreLatestChat(t *testing.T) {
 	}
 	if chat.Model != "qwen3:8b" {
 		t.Fatalf("chat model = %q, want qwen3:8b", chat.Model)
+	}
+}
+
+func TestStoreLatestChatSkipsChatsWithoutModel(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.AppendMessage(ctx, "chat-1", api.Message{Role: "user", Content: "orphaned user turn"}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.LatestChat(ctx); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("latest chat err = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestStoreSetChatModel(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.EnsureChat(ctx, "empty", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetChatModel(ctx, "empty", "qwen3"); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := store.ListChats(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 0 {
+		t.Fatalf("empty chat summaries = %#v, want none", summaries)
+	}
+	if _, err := store.LatestChat(ctx); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("empty latest chat err = %v, want sql.ErrNoRows", err)
+	}
+
+	if err := store.AppendMessage(ctx, "chat-1", api.Message{Role: "user", Content: "hello"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendMessage(ctx, "chat-1", api.Message{Role: "assistant", Content: "hi"}, "llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetChatModel(ctx, "chat-1", "qwen3"); err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := store.Chat(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.Model != "qwen3" {
+		t.Fatalf("chat model = %q, want qwen3", chat.Model)
+	}
+	if len(chat.Messages) != 2 || chat.Messages[0].Content != "hello" || chat.Messages[1].Content != "hi" {
+		t.Fatalf("chat messages changed: %#v", chat.Messages)
+	}
+
+	chat, err = store.LatestChat(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.ID != "chat-1" || chat.Model != "qwen3" {
+		t.Fatalf("latest chat = %#v, want chat-1 with qwen3", chat)
+	}
+
+	chat, err = store.LatestChatForModel(ctx, "qwen3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.ID != "chat-1" {
+		t.Fatalf("latest qwen chat = %q, want chat-1", chat.ID)
+	}
+	if _, err := store.LatestChatForModel(ctx, "llama3.2"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("old message model err = %v, want sql.ErrNoRows", err)
+	}
+
+	summaries, err = store.ListChats(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].ID != "chat-1" || summaries[0].Model != "qwen3" {
+		t.Fatalf("summaries = %#v, want chat-1 with qwen3", summaries)
 	}
 }
 
@@ -398,17 +516,17 @@ func TestStoreArchivesCompactedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chat.Messages) != 4 {
-		t.Fatalf("active messages = %d, want 4", len(chat.Messages))
+	if len(chat.Messages) != 5 {
+		t.Fatalf("active messages = %d, want 5", len(chat.Messages))
 	}
-	if chat.Messages[0].Role != "user" {
-		t.Fatalf("summary role = %q, want user", chat.Messages[0].Role)
+	if chat.Messages[0].Content != "recent one" {
+		t.Fatalf("first active message = %#v", chat.Messages[0])
 	}
-	if chat.Messages[0].Content != compactionSummaryMessagePrefix+"summary" {
-		t.Fatalf("summary message = %#v", chat.Messages[0])
+	if chat.Messages[3].Role != "assistant" || len(chat.Messages[3].ToolCalls) != 1 || chat.Messages[3].ToolCalls[0].Function.Name != compactionToolName {
+		t.Fatalf("summary tool call = %#v", chat.Messages[3])
 	}
-	if chat.Messages[1].Content != "recent one" {
-		t.Fatalf("first active message = %#v", chat.Messages[1])
+	if chat.Messages[4].Role != "tool" || chat.Messages[4].ToolName != compactionToolName || chat.Messages[4].Content != compactionSummaryMessagePrefix+"summary" {
+		t.Fatalf("summary tool result = %#v", chat.Messages[4])
 	}
 
 	var idsJSON string
@@ -451,10 +569,60 @@ func TestStoreArchivesWholeChatWhenKeepingZeroTurns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chat.Messages) != 1 {
-		t.Fatalf("active messages = %d, want summary only", len(chat.Messages))
+	if len(chat.Messages) != 2 {
+		t.Fatalf("active messages = %d, want compaction tool pair only", len(chat.Messages))
 	}
-	if chat.Messages[0].Content != compactionSummaryMessagePrefix+"summary" {
-		t.Fatalf("summary message = %#v", chat.Messages[0])
+	if chat.Messages[0].Role != "assistant" || len(chat.Messages[0].ToolCalls) != 1 || chat.Messages[0].ToolCalls[0].Function.Name != compactionToolName {
+		t.Fatalf("summary tool call = %#v", chat.Messages[0])
+	}
+	if chat.Messages[1].Role != "tool" || chat.Messages[1].Content != compactionSummaryMessagePrefix+"summary" {
+		t.Fatalf("summary tool result = %#v", chat.Messages[1])
+	}
+}
+
+func TestStoreReplacesPreviousCompactionMessages(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	for _, msg := range []api.Message{
+		{Role: "user", Content: "old"},
+		{Role: "assistant", Content: "old answer"},
+		{Role: "user", Content: "recent"},
+	} {
+		if err := store.AppendMessage(ctx, "chat-1", msg, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.ArchiveForCompaction(ctx, "chat-1", 1, "first summary"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendMessage(ctx, "chat-1", api.Message{Role: "user", Content: "next"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ArchiveForCompaction(ctx, "chat-1", 1, "second summary"); err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := store.Chat(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 3 {
+		t.Fatalf("active messages = %#v, want latest user plus compaction pair", chat.Messages)
+	}
+	if chat.Messages[0].Content != "next" {
+		t.Fatalf("first active message = %#v, want next user prompt", chat.Messages[0])
+	}
+	if chat.Messages[2].Content != compactionSummaryMessagePrefix+"second summary" {
+		t.Fatalf("latest summary = %#v", chat.Messages[2])
+	}
+	for _, msg := range chat.Messages {
+		if strings.Contains(msg.Content, "first summary") {
+			t.Fatalf("old summary should have been archived: %#v", chat.Messages)
+		}
 	}
 }
