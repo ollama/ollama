@@ -1,0 +1,98 @@
+name: test-darwin-xcode-pin
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/darwin-xcode-pin
+  pull_request:
+    paths:
+      - '.github/workflows/test-darwin-xcode-pin.yaml'
+      - 'scripts/build_darwin.sh'
+      - 'MLX_VERSION'
+      - 'MLX_C_VERSION'
+      - 'cmake/**'
+      - 'x/mlxrunner/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CGO_CFLAGS: '-O3'
+  CGO_CXXFLAGS: '-O3'
+  PINNED_DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
+
+jobs:
+  darwin-build:
+    runs-on: macos-26-xlarge
+    env:
+      CGO_CFLAGS: '-mmacosx-version-min=14.0 -O3'
+      CGO_CXXFLAGS: '-mmacosx-version-min=14.0 -O3'
+      CGO_LDFLAGS: '-mmacosx-version-min=14.0 -O3'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="0.0.0-xcode-pin-${GITHUB_SHA::7}"
+          {
+            echo "VERSION=${VERSION}"
+            echo "GOFLAGS='-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${VERSION}\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
+          } >>"${GITHUB_ENV}"
+
+      - name: Select Xcode 26.4.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d "${PINNED_DEVELOPER_DIR}" ]; then
+            echo "Missing ${PINNED_DEVELOPER_DIR}"
+            ls -1 /Applications | grep '^Xcode' || true
+            exit 1
+          fi
+
+          sudo xcode-select -s "${PINNED_DEVELOPER_DIR}"
+          echo "DEVELOPER_DIR=${PINNED_DEVELOPER_DIR}" >>"${GITHUB_ENV}"
+
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          xcrun --find metal
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            LLAMA_CPP_VERSION
+            MLX_VERSION
+            MLX_C_VERSION
+
+      - name: Build unsigned Darwin runtime
+        run: ./scripts/build_darwin.sh build package
+
+      - name: Verify MLX payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/darwin/lib/ollama/mlx_metal_v3/libmlxc.dylib
+          test -f dist/darwin/lib/ollama/mlx_metal_v3/mlx.metallib
+          test -f dist/darwin/lib/ollama/mlx_metal_v4/libmlxc.dylib
+          test -f dist/darwin/lib/ollama/mlx_metal_v4/mlx.metallib
+          find dist/darwin/lib/ollama -maxdepth 3 -type f \( -name 'libmlx*.dylib' -o -name '*.metallib' \) -print
+          lipo -archs dist/darwin/lib/ollama/mlx_metal_v3/libmlxc.dylib
+          lipo -archs dist/darwin/lib/ollama/mlx_metal_v4/libmlxc.dylib
+
+      - name: Log build results
+        run: ls -l dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ollama-darwin-xcode-pin
+          path: dist/ollama-darwin.tgz
+          compression-level: 0
