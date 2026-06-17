@@ -84,7 +84,7 @@ prompt_username() {
     fi
     
     log_success "Username captured: $USERNAME"
-    log_info "Notebooks will be available in: ./notebooks"
+    log_info "Notebooks will be mounted at: /Wonder/$USERNAME/notebooks"
 }
 
 ################################################################################
@@ -174,55 +174,44 @@ EOF
 }
 
 create_docker_compose() {
-    log_info "Creating compose.yml..."
+    log_info "Creating docker-compose.yml..."
     
-    cat > compose.yml << EOF
-version: "3.8"
+    cat > docker-compose.yml << EOF
+version: '3.8'
 
 services:
-  jupyter:
-    container_name: jupyter
-    image: python:3.12-slim
-    ports:
-      - "8888:8888"
-    volumes:
-      - ./notebooks:/home/jovyan/work:Z
-    working_dir: /home/jovyan/work
-    networks:
-      - ai-net
-    command:
-      - sh
-      - -c
-      - |
-        apt-get update -qq &&
-        apt-get install -y -qq build-essential python3-dev curl &&
-        pip install --quiet --no-cache-dir jupyterlab requests &&
-        jupyter lab \
-          --ip=0.0.0.0 \
-          --port=8888 \
-          --no-browser \
-          --ServerApp.token='' \
-          --ServerApp.password='' \
-          --ServerApp.allow_root=True
-    restart: unless-stopped
-
   ollama:
     container_name: ollama
-    image: debian:bookworm
+    build:
+      context: .
+      dockerfile: Dockerfile.ollama
+    ports:
+      - "11434:11434"
     networks:
-      - ai-net
-    volumes:
-      - ./ollama-build:/build
-    working_dir: /build
-    command: ["sleep", "infinity"]
+      - ollama-network
     restart: unless-stopped
 
+  jupyter:
+    container_name: jupyter
+    build:
+      context: .
+      dockerfile: Dockerfile.jupyter
+    ports:
+      - "8877:8888"
+    volumes:
+      - /Wonder/$USERNAME/notebooks:/home/jovyan/work:Z
+    networks:
+      - ollama-network
+    restart: unless-stopped
+    depends_on:
+      - ollama
+
 networks:
-  ai-net:
+  ollama-network:
     driver: bridge
 EOF
 
-    log_success "compose.yml created"
+    log_success "docker-compose.yml created"
 }
 
 ################################################################################
@@ -230,25 +219,21 @@ EOF
 ################################################################################
 
 build_and_start_containers() {
-    log_info "Building and starting containers with podman compose..."
+    log_info "Building and starting containers with podman-compose..."
     
-    # Check if podman is available
-    if ! command -v podman &> /dev/null; then
-        log_error "podman not found. Please install it first."
+    # Check if podman-compose is available
+    if ! command -v podman-compose &> /dev/null; then
+        log_error "podman-compose not found. Please install it first."
         exit 1
     fi
     
     # Build containers
     log_info "Building container images (this may take several minutes)..."
-    podman compose build
+    podman-compose build --no-cache
     
     # Start containers
     log_info "Starting containers..."
-    podman compose up -d
-    
-    # Show container status
-    log_info "Container status:"
-    podman compose ps
+    podman-compose up -d
     
     log_success "Containers started successfully"
 }
@@ -277,9 +262,9 @@ wait_for_containers() {
 verify_containers() {
     log_info "Verifying container status..."
     
-    # Show Jupyter logs (follow for a few seconds then stop)
-    log_info "Jupyter container logs (showing startup):"
-    timeout 10 podman logs -f jupyter || true
+    # Show Jupyter logs
+    log_info "Jupyter container logs (last 10 lines):"
+    podman logs jupyter --tail 10
     
     # Test Jupyter endpoint
     log_info "Testing Jupyter endpoint..."
@@ -319,10 +304,9 @@ ${GREEN}*****************************************************************
 * Then open: http://localhost:8877                              *
 *                                                               *
 * Container Management:                                         *
-* - View logs: podman logs -f <container-name>                  *
-* - Stop all: podman compose down                               *
-* - Restart: podman compose restart                             *
-* - Status: podman compose ps                                   *
+* - View logs: podman logs <container-name>                     *
+* - Stop all: podman-compose down                               *
+* - Restart: podman-compose restart                             *
 *                                                               *
 * Log file: ${LOG_FILE}
 * Results: ${RESULTS_DIR}
@@ -339,12 +323,12 @@ cleanup_on_error() {
     log_error "Setup failed. Cleaning up..."
     
     # Stop and remove containers
-    if command -v podman &> /dev/null; then
-        podman compose down 2>/dev/null || true
+    if command -v podman-compose &> /dev/null; then
+        podman-compose down 2>/dev/null || true
     fi
     
     # Remove generated files
-    rm -f Dockerfile.ollama Dockerfile.jupyter compose.yml
+    rm -f Dockerfile.ollama Dockerfile.jupyter docker-compose.yml
     
     log_info "Cleanup complete"
 }
@@ -367,11 +351,10 @@ main() {
     # Get username
     prompt_username
     
-    # Create working directories
-    log_info "Creating working directories..."
-    mkdir -p "./notebooks"
-    mkdir -p "./ollama-build"
-    log_success "Working directories created: ./notebooks, ./ollama-build"
+    # Create notebooks directory
+    log_info "Creating notebooks directory..."
+    mkdir -p "/Wonder/$USERNAME/notebooks"
+    log_success "Notebooks directory created: /Wonder/$USERNAME/notebooks"
     
     # Create Docker configuration files
     create_ollama_dockerfile
