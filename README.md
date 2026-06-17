@@ -262,7 +262,7 @@ console.log(response.message.content);
 
 - [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) - Autonomous AI agent platform
 - [crewAI](https://github.com/crewAIInc/crewAI) - Multi-agent orchestration framework
-- [Strands Agents](https://github.com/strands-agents/sdk-python) - Model-driven agent building by AWS
+- [Strands Agents](https://github.com/strands-agents/harness-sdk) - Model-driven agent building by AWS
 - [Cheshire Cat](https://github.com/cheshire-cat-ai/core) - AI assistant framework
 - [any-agent](https://github.com/mozilla-ai/any-agent) - Unified agent framework interface by Mozilla
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
@@ -310,7 +310,7 @@ console.log(response.message.content);
 - [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meetings
 - [Page Assist](https://github.com/n4ze3m/page-assist) - Chrome extension for AI-powered browsing
 - [NativeMind](https://github.com/NativeMindBrowser/NativeMindExtension) - Private, on-device browser AI assistant
-- [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server) - Security proxy for Ollama
+- [LoLLMs Hub](https://github.com/ParisNeo/lollms_hub) - Security proxy for Ollama
 - [1Panel](https://github.com/1Panel-dev/1Panel/) - Web-based Linux server management
 - [Writeopia](https://github.com/Writeopia/Writeopia) - Text editor with Ollama integration
 - [QA-Pilot](https://github.com/reid41/QA-Pilot) - GitHub code repository understanding
