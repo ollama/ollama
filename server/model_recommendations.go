@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/internal/modelrecommendations"
 )
 
 const modelRecommendationsURL = "https://ollama.com/api/experimental/model-recommendations"
@@ -43,12 +45,18 @@ type modelRecommendationsCache struct {
 	nextReadRefreshAfter time.Time
 	once                 sync.Once
 	client               *http.Client
+	goos                 string
 }
 
 func newModelRecommendationsCache() *modelRecommendationsCache {
+	return newModelRecommendationsCacheForGOOS(runtime.GOOS)
+}
+
+func newModelRecommendationsCacheForGOOS(goos string) *modelRecommendationsCache {
 	return &modelRecommendationsCache{
-		recommendations: cloneModelRecommendations(defaultModelRecommendations),
+		recommendations: defaultModelRecommendationsForGOOS(goos),
 		client:          http.DefaultClient,
+		goos:            goos,
 	}
 }
 
@@ -220,6 +228,7 @@ func (c *modelRecommendationsCache) refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	recs = modelrecommendations.ApplyPlatformTagsForGOOS(recs, c.goos)
 
 	c.set(recs)
 	slog.Debug("model recommendations refreshed", "count", len(recs))
@@ -257,6 +266,7 @@ func (c *modelRecommendationsCache) loadSnapshot() {
 		slog.Warn("ignoring invalid model recommendations snapshot", "path", path, "error", err)
 		return
 	}
+	recs = modelrecommendations.ApplyPlatformTagsForGOOS(recs, c.goos)
 
 	c.set(recs)
 	slog.Debug("loaded model recommendations snapshot", "path", path, "count", len(recs))
@@ -362,6 +372,10 @@ func cloneModelRecommendations(in []api.ModelRecommendation) []api.ModelRecommen
 	out := make([]api.ModelRecommendation, len(in))
 	copy(out, in)
 	return out
+}
+
+func defaultModelRecommendationsForGOOS(goos string) []api.ModelRecommendation {
+	return modelrecommendations.ApplyPlatformTagsForGOOS(defaultModelRecommendations, goos)
 }
 
 var defaultModelRecommendations = []api.ModelRecommendation{

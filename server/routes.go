@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -1897,7 +1898,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 }
 
 func (s *Server) ModelRecommendationsExperimentalHandler(c *gin.Context) {
-	recs := defaultModelRecommendations
+	recs := defaultModelRecommendationsForGOOS(runtime.GOOS)
 	source := "default"
 	if s.modelCaches != nil && s.modelCaches.recommendations != nil {
 		ctx := context.Background()

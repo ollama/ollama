@@ -37,6 +37,21 @@ func TestModelRecommendationsDefaultOrder(t *testing.T) {
 	}
 }
 
+func TestModelRecommendationsDefaultOrderDarwinUsesMLXTags(t *testing.T) {
+	want := []string{
+		"kimi-k2.6:cloud",
+		"glm-5.1:cloud",
+		"qwen3.5:cloud",
+		"minimax-m2.7:cloud",
+		"gemma4:e4b-mlx",
+		"qwen3.5:9b-mlx",
+	}
+
+	if got := modelRecommendationNames(defaultModelRecommendationsForGOOS("darwin")); !slices.Equal(got, want) {
+		t.Fatalf("darwin recommendations = %v, want %v", got, want)
+	}
+}
+
 func TestModelRecommendationsCacheRefreshAppliesServerSideChanges(t *testing.T) {
 	setupModelRecommendationsTestEnv(t, "")
 
@@ -103,6 +118,24 @@ func TestModelRecommendationsCacheRefreshAppliesServerSideChanges(t *testing.T) 
 	}
 	if !slices.Equal(snapshot.Recommendations, second) {
 		t.Fatalf("snapshot recommendations = %#v, want %#v", snapshot.Recommendations, second)
+	}
+}
+
+func TestModelRecommendationsCacheRefreshAppliesDarwinMLXTags(t *testing.T) {
+	setupModelRecommendationsTestEnv(t, "")
+
+	cache := newModelRecommendationsCacheForGOOS("darwin")
+	cache.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonHTTPResponse(http.StatusOK, `{"recommendations":[{"model":"gemma4","description":"local","vram_bytes":12884901888},{"model":"qwen3.5:9b","description":"local","vram_bytes":15032385536},{"model":"qwen3.6","description":"local","vram_bytes":25769803776}]}`), nil
+	})}
+
+	if err := cache.refresh(context.Background()); err != nil {
+		t.Fatalf("refresh failed: %v", err)
+	}
+
+	want := []string{"gemma4:e4b-mlx", "qwen3.5:9b-mlx", "qwen3.6:35b-mlx"}
+	if got := modelRecommendationNames(cache.Get()); !slices.Equal(got, want) {
+		t.Fatalf("recommendations = %v, want %v", got, want)
 	}
 }
 
