@@ -2,15 +2,154 @@
 title: Claude Code
 ---
 
-Claude Code is Anthropic's agentic coding tool that can read, modify, and execute code in your working directory. 
+[Claude Code](https://code.claude.com/docs/en/overview) is an agentic coding tool that reads your codebase, edits files, runs commands, and works with your development tools.
 
-Open models can be used with Claude Code through Ollama's Anthropic-compatible API, enabling you to use models such as `qwen3.5`, `glm-5:cloud`, `kimi-k2.5:cloud`.
+Ollama connects Claude Code to local and cloud models through its Anthropic-compatible API, so you can use open models from the same terminal workflow.
 
-![Claude Code with Ollama](https://files.ollama.com/claude-code.png)
+## Get started
 
-## Install
+Launch Claude Code with Ollama:
 
-Install [Claude Code](https://code.claude.com/docs/en/overview):
+```shell
+ollama launch claude
+```
+
+## Capabilities
+
+<div className="capability-list capability-list-full">
+  <div className="capability-list-grid">
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="comment" /></div>
+      <div>
+        <div className="capability-list-heading">Chat</div>
+        <div className="capability-list-copy">Ask questions about a repository or task</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="terminal" /></div>
+      <div>
+        <div className="capability-list-heading">Command line</div>
+        <div className="capability-list-copy">Run commands with Claude Code's permission flow</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="code" /></div>
+      <div>
+        <div className="capability-list-heading">Tool calling</div>
+        <div className="capability-list-copy">Commands, file edits, code execution</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="users" /></div>
+      <div>
+        <div className="capability-list-heading">Subagents</div>
+        <div className="capability-list-copy">Split work across tasks</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="globe" /></div>
+      <div>
+        <div className="capability-list-heading">Web search</div>
+        <div className="capability-list-copy">Search the web through Ollama</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="file-text" /></div>
+      <div>
+        <div className="capability-list-heading">Web fetch</div>
+        <div className="capability-list-copy">Fetch and summarize web pages</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="image" /></div>
+      <div>
+        <div className="capability-list-heading">Vision</div>
+        <div className="capability-list-copy">Image input and screenshots</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="brain" /></div>
+      <div>
+        <div className="capability-list-heading">Thinking</div>
+        <div className="capability-list-copy">Thinking controls with compatible models</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+## Models
+
+Choose a model with enough context for your repository.
+
+<CardGroup cols={2}>
+  <Card title="Cloud models" icon="cloud" href="https://ollama.com/search?c=cloud">
+    Use larger models without downloading them.
+  </Card>
+
+  <Card title="Local models" icon="hard-drive" href="https://ollama.com/search?c=tools">
+    Choose a model and set a 64k+ context window.
+  </Card>
+</CardGroup>
+
+<Note>For larger repositories, set the [context length](/context-length) to 64k or higher.</Note>
+
+## More features
+
+### Run without interaction
+
+Use `--yes` for scripts, Docker, or CI:
+
+```shell
+ollama launch claude --model kimi-k2.7-code:cloud --yes -- -p "how does this repository work?"
+```
+
+The `--yes` flag skips selectors, pulls the model when needed, and requires `--model`. Arguments after `--` are passed directly to Claude Code.
+
+### Web search
+
+Use Ollama's web search API from Claude Code.
+
+See [Web search](/capabilities/web-search) for setup and usage.
+
+### Scheduled tasks with `/loop`
+
+Use `/loop` inside Claude Code to run a prompt or slash command on a schedule:
+
+```text
+/loop <interval> <prompt or /command>
+```
+
+Examples:
+
+```text
+/loop 30m Check my open PRs and summarize their status
+/loop 1h Research the latest AI news and summarize key developments
+/loop 15m Check for new GitHub issues and triage by priority
+```
+
+### Telegram
+
+Connect a Telegram bot to your Claude Code session. Install the [Telegram plugin](https://github.com/anthropics/claude-plugins-official), create a bot with [@BotFather](https://t.me/BotFather), then launch Claude Code:
+
+```shell
+ollama launch claude -- --channels plugin:telegram@claude-plugins-official
+```
+
+Claude Code prompts for permission on most actions. To allow the bot to work autonomously, configure [permission rules](https://code.claude.com/docs/en/permissions) or pass `--dangerously-skip-permissions` in an isolated environment.
+
+See the [plugin README](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) for setup instructions.
+
+## Manual setup
+
+<p className="manual-step-title">1. Install Claude Code</p>
 
 <CodeGroup>
 
@@ -24,95 +163,7 @@ irm https://claude.ai/install.ps1 | iex
 
 </CodeGroup>
 
-## Usage with Ollama
-
-### Quick setup
-
-```shell
-ollama launch claude
-```
-
-### Run directly with a model
-```shell
-ollama launch claude --model kimi-k2.5:cloud
-```
-
-## Recommended Models
-
-- `kimi-k2.5:cloud`
-- `glm-5:cloud`
-- `minimax-m2.7:cloud`
-- `qwen3.5:cloud`
-- `glm-4.7-flash`
-- `qwen3.5`
-
-Cloud models are also available at [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud).
-
-## Non-interactive (headless) mode
-
-Run Claude Code without interaction for use in Docker, CI/CD, or scripts:
-
-```shell
-ollama launch claude --model kimi-k2.5:cloud --yes -- -p "how does this repository work?"
-```
-
-The `--yes` flag auto-pulls the model, skips selectors, and requires `--model` to be specified. Arguments after `--` are passed directly to Claude Code.
-
-## Web search
-
-Claude Code can search the web through Ollama's web search API. See the [web search documentation](/capabilities/web-search) for setup and usage.
-
-## Scheduled Tasks with `/loop`
-
-The `/loop` command runs a prompt or slash command on a recurring schedule inside Claude Code. This is useful for automating repetitive tasks like checking PRs, running research, or setting reminders.
-
-```
-/loop <interval> <prompt or /command>
-```
-
-### Examples
-
-**Check in on your PRs**
-
-```
-/loop 30m Check my open PRs and summarize their status
-```
-
-**Automate research tasks**
-
-```
-/loop 1h Research the latest AI news and summarize key developments
-```
-
-**Automate bug reporting and triaging**
-
-```
-/loop 15m Check for new GitHub issues and triage by priority
-```
-
-**Set reminders**
-
-```
-/loop 1h Remind me to review the deploy status
-```
-
-## Telegram
-
-Chat with Claude Code from Telegram by connecting a bot to your session. Install the [Telegram plugin](https://github.com/anthropics/claude-plugins-official), create a bot via [@BotFather](https://t.me/BotFather), then launch with the channel flag:
-
-```shell
-ollama launch claude -- --channels plugin:telegram@claude-plugins-official
-```
-
-Claude Code will prompt for permission on most actions. To allow the bot to work autonomously, configure [permission rules](https://code.claude.com/docs/en/permissions) or pass `--dangerously-skip-permissions` in isolated environments.
-
-See the [plugin README](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) for full setup instructions including pairing and access control.
-
-## Manual setup
-
-Claude Code connects to Ollama using the Anthropic-compatible API.
-
-1. Set the environment variables:
+<p className="manual-step-title">2. Set the environment variables</p>
 
 ```shell
 export ANTHROPIC_AUTH_TOKEN=ollama
@@ -120,7 +171,7 @@ export ANTHROPIC_API_KEY=""
 export ANTHROPIC_BASE_URL=http://localhost:11434
 ```
 
-2. Run Claude Code with an Ollama model:
+<p className="manual-step-title">3. Run Claude Code</p>
 
 ```shell
 claude --model qwen3.5
@@ -129,8 +180,5 @@ claude --model qwen3.5
 Or run with environment variables inline:
 
 ```shell
-ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY="" claude --model glm-5:cloud
+ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY="" claude --model kimi-k2.7-code:cloud
 ```
-
-**Note:** Claude Code requires a large context window. We recommend at least 64k tokens. See the [context length documentation](/context-length) for how to adjust context length in Ollama.
-
