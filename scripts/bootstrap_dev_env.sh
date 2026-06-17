@@ -240,11 +240,11 @@ build_and_start_containers() {
     
     # Build containers
     log_info "Building container images (this may take several minutes)..."
-    podman-compose build --no-cache
+    podman compose build --no-cache
     
     # Start containers
     log_info "Starting containers..."
-    podman-compose up -d
+    podman compose up -d
     
     log_success "Containers started successfully"
 }
