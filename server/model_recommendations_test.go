@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -375,7 +376,7 @@ func TestModelRecommendationsHandlerReturnsDefaults(t *testing.T) {
 	}
 
 	got := decodeRecommendationNames(t, w)
-	want := modelRecommendationNames(defaultModelRecommendations)
+	want := modelRecommendationNames(defaultModelRecommendationsForGOOS(runtime.GOOS))
 	if !slices.Equal(got, want) {
 		t.Fatalf("models = %v, want %v", got, want)
 	}
