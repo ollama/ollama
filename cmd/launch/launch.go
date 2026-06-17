@@ -292,7 +292,9 @@ Supported integrations:
   openclaw        OpenClaw (aliases: clawdbot, moltbot)
   opencode        OpenCode
   codex           Codex
+  hermes-desktop  Hermes Desktop
   copilot         Copilot CLI (aliases: copilot-cli)
+  omp             OMP
   droid           Droid
   kimi            Kimi Code CLI
   pi              Pi
@@ -308,6 +310,7 @@ Examples:
   ollama launch codex-app
   ollama launch codex-app --restore
   ollama launch hermes
+  ollama launch hermes-desktop
   ollama launch droid --config (does not auto-launch)
   ollama launch codex --restore
   ollama launch codex -- --sandbox workspace-write`,
@@ -761,7 +764,8 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	}
 
 	var launchModels []LaunchModel
-	if (needsConfigure || req.ModelOverride != "") && !savedMatchesModels(saved, models) {
+	liveConfigMatches := slices.Equal(editor.Models(), models)
+	if needsConfigure || req.ModelOverride != "" || !savedMatchesModels(saved, models) || !liveConfigMatches {
 		launchModels = c.modelInventory().Resolve(ctx, models)
 		if err := prepareEditorIntegration(name, editor, launchModels); err != nil {
 			return err

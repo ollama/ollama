@@ -1,10 +1,28 @@
 package gemma4
 
 import (
+	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
+
+func TestParseSuppressTokens(t *testing.T) {
+	got := parseSuppressTokens([]byte(`{"suppress_tokens":[258883,258882]}`))
+	want := []int32{258883, 258882}
+	if !slices.Equal(got, want) {
+		t.Fatalf("parseSuppressTokens() = %v, want %v", got, want)
+	}
+
+	if got := parseSuppressTokens([]byte(`{"eos_token_id":[1,106,50]}`)); got != nil {
+		t.Fatalf("parseSuppressTokens() without suppress_tokens = %v, want nil", got)
+	}
+
+	if got := parseSuppressTokens([]byte(`{`)); got != nil {
+		t.Fatalf("parseSuppressTokens() with invalid JSON = %v, want nil", got)
+	}
+}
 
 func TestParseTextConfigE2B(t *testing.T) {
 	skipIfNoMLX(t)
@@ -297,6 +315,115 @@ func TestParseTextConfig31B(t *testing.T) {
 	}
 	if isLayerSliding(59, &cfg) {
 		t.Error("layer 59 should be full attention")
+	}
+}
+
+func TestParseTextConfig12BUnified(t *testing.T) {
+	skipIfNoMLX(t)
+
+	layerTypes := make([]string, 0, 48)
+	for i := range 48 {
+		if i%6 == 5 {
+			layerTypes = append(layerTypes, "full_attention")
+		} else {
+			layerTypes = append(layerTypes, "sliding_attention")
+		}
+	}
+
+	data, err := json.Marshal(map[string]any{
+		"architectures": []string{"Gemma4UnifiedForConditionalGeneration"},
+		"model_type":    "gemma4_unified",
+		"text_config": map[string]any{
+			"hidden_size":                 3840,
+			"num_hidden_layers":           48,
+			"intermediate_size":           15360,
+			"num_attention_heads":         16,
+			"num_key_value_heads":         8,
+			"num_global_key_value_heads":  1,
+			"head_dim":                    256,
+			"global_head_dim":             512,
+			"vocab_size":                  262144,
+			"rms_norm_eps":                1e-6,
+			"max_position_embeddings":     131072,
+			"sliding_window":              1024,
+			"final_logit_softcapping":     30.0,
+			"use_double_wide_mlp":         false,
+			"num_kv_shared_layers":        0,
+			"hidden_size_per_layer_input": 0,
+			"vocab_size_per_layer_input":  262144,
+			"attention_k_eq_v":            true,
+			"enable_moe_block":            false,
+			"tie_word_embeddings":         true,
+			"layer_types":                 layerTypes,
+			"rope_parameters": map[string]any{
+				"full_attention": map[string]any{
+					"partial_rotary_factor": 0.25,
+					"rope_theta":            1000000.0,
+					"rope_type":             "proportional",
+				},
+				"sliding_attention": map[string]any{
+					"rope_theta": 10000.0,
+					"rope_type":  "default",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	cfg, err := parseTextConfig(data)
+	if err != nil {
+		t.Fatalf("parseTextConfig failed: %v", err)
+	}
+
+	if cfg.HiddenSize != 3840 {
+		t.Errorf("HiddenSize = %d, want 3840", cfg.HiddenSize)
+	}
+	if cfg.NumHiddenLayers != 48 {
+		t.Errorf("NumHiddenLayers = %d, want 48", cfg.NumHiddenLayers)
+	}
+	if cfg.IntermediateSize != 15360 {
+		t.Errorf("IntermediateSize = %d, want 15360", cfg.IntermediateSize)
+	}
+	if cfg.NumAttentionHeads != 16 {
+		t.Errorf("NumAttentionHeads = %d, want 16", cfg.NumAttentionHeads)
+	}
+	if cfg.NumKeyValueHeads != 8 {
+		t.Errorf("NumKeyValueHeads = %d, want 8", cfg.NumKeyValueHeads)
+	}
+	if cfg.NumGlobalKeyValueHeads != 1 {
+		t.Errorf("NumGlobalKeyValueHeads = %d, want 1", cfg.NumGlobalKeyValueHeads)
+	}
+	if !cfg.AttentionKEqV {
+		t.Error("AttentionKEqV should be true")
+	}
+	if cfg.EnableMoeBlock {
+		t.Error("EnableMoeBlock should be false")
+	}
+	if cfg.HiddenSizePerLayer != 0 {
+		t.Errorf("HiddenSizePerLayer = %d, want 0", cfg.HiddenSizePerLayer)
+	}
+	if cfg.NumKVSharedLayers != 0 {
+		t.Errorf("NumKVSharedLayers = %d, want 0", cfg.NumKVSharedLayers)
+	}
+	if len(cfg.KVShareMap) != 0 {
+		t.Errorf("KVShareMap should be empty, got %d entries", len(cfg.KVShareMap))
+	}
+	if cfg.FullRopeDims != 512 {
+		t.Errorf("FullRopeDims = %d, want 512", cfg.FullRopeDims)
+	}
+	if cfg.FullRopeFreqs == nil {
+		t.Error("FullRopeFreqs should be precomputed for proportional RoPE")
+	}
+	if isLayerSliding(5, &cfg) {
+		t.Error("layer 5 should be full attention")
+	}
+	if !isLayerSliding(6, &cfg) {
+		t.Error("layer 6 should be sliding")
+	}
+	if isLayerSliding(47, &cfg) {
+		t.Error("layer 47 should be full attention")
 	}
 }
 

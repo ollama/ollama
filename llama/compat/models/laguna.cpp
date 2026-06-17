@@ -14,7 +14,7 @@ void llama_model_laguna::load_arch_hparams(llama_model_loader & ml) {
 
     ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW, hparams.n_swa, false);
     hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
-    ml.get_key_or_arr("laguna.attention.layer_types", hparams.swa_layers, hparams.n_layer, false);
+    ml.get_key_or_arr("laguna.attention.layer_types", hparams.is_swa_impl, hparams.n_layer(), false);
 
     ml.get_key("laguna.rope.swa.dimension_count", hparams.n_rot_swa,                false);
     ml.get_key("laguna.rope.swa.freq_base",       hparams.rope_freq_base_train_swa, false);

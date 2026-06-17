@@ -17,9 +17,10 @@ import (
 func TestLongInputContext(t *testing.T) {
 	// Setting NUM_PARALLEL to 1 ensures the allocated context is exactly what
 	// we asked for and there is nothing extra that we could spill over into.
-	// Older runners silently truncate oversized prompts, while llama-server
-	// rejects them with a client error. Accept both behaviors so this test can
-	// run against main and the llama-server branch.
+	// Context shift happens after a prompt has been admitted to a slot. Initial
+	// prompts that fill or exceed the slot are still rejected by llama-server.
+	// Accept a context-limit error here because older runners may truncate this
+	// prompt while llama-server reports it as too large to admit.
 	t.Setenv("OLLAMA_NUM_PARALLEL", "1")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -74,6 +75,7 @@ func isContextLimitError(err string) bool {
 	return strings.Contains(err, "context") &&
 		(strings.Contains(err, "exceed") ||
 			strings.Contains(err, "too large") ||
+			strings.Contains(err, "longer") ||
 			strings.Contains(err, "too long"))
 }
 

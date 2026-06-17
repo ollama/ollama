@@ -46,6 +46,7 @@ func TestConfigFromModelfile(t *testing.T) {
 FROM ./model
 DRAFT ./assistant
 TEMPLATE {{ .Prompt }}
+REQUIRES 0.20.0
 PARAMETER temperature 0.7
 PARAMETER stop USER:
 PARAMETER stop ASSISTANT:
@@ -71,12 +72,52 @@ PARAMETER stop ASSISTANT:
 		t.Fatalf("Draft = %q, want %q", mfConfig.Draft, "./assistant")
 	}
 
+	if mfConfig.Requires != "0.20.0" {
+		t.Fatalf("Requires = %q, want %q", mfConfig.Requires, "0.20.0")
+	}
+
 	if got := mfConfig.Parameters["temperature"]; got != float32(0.7) {
 		t.Fatalf("temperature = %#v, want %v", got, float32(0.7))
 	}
 
 	if got := mfConfig.Parameters["stop"]; got == nil || len(got.([]string)) != 2 {
 		t.Fatalf("unexpected stop params: %#v", got)
+	}
+}
+
+func TestConfigFromModelfile_RequiresBelowMinimum(t *testing.T) {
+	modelfile, err := parser.ParseFile(strings.NewReader(`
+FROM ./model
+REQUIRES 0.14.0
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = ConfigFromModelfile(modelfile)
+	if err == nil {
+		t.Fatal("expected error for REQUIRES below minimum, got nil")
+	}
+	if !strings.Contains(err.Error(), "minimum supported version") {
+		t.Fatalf("error = %v, want error mentioning minimum supported version", err)
+	}
+}
+
+func TestConfigFromModelfile_RequiresInvalidSemver(t *testing.T) {
+	modelfile, err := parser.ParseFile(strings.NewReader(`
+FROM ./model
+REQUIRES not-a-version
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = ConfigFromModelfile(modelfile)
+	if err == nil {
+		t.Fatal("expected error for invalid semver, got nil")
+	}
+	if !strings.Contains(err.Error(), "valid semver") {
+		t.Fatalf("error = %v, want semver error", err)
 	}
 }
 
