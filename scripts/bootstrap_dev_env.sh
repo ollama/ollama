@@ -52,8 +52,8 @@ main() {
     
     # Prompt for username to test input handling
     print_info "Testing username prompt..."
-    echo -n "Enter your username: "
-    read -r USERNAME
+    echo -n "Enter your username: " > /dev/tty
+    read -r USERNAME < /dev/tty
     
     if [ -z "$USERNAME" ]; then
         print_error "USERNAME cannot be empty"
