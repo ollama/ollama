@@ -50,6 +50,19 @@ print_error() {
 main() {
     print_info "Starting ollama setup..."
     
+    # Prompt for username to test input handling
+    print_info "Testing username prompt..."
+    echo -n "Enter your username: "
+    read -r USERNAME
+    
+    if [ -z "$USERNAME" ]; then
+        print_error "USERNAME cannot be empty"
+        exit 1
+    fi
+    
+    print_success "Username captured: $USERNAME"
+    print_info "This will be used for: /Wonder/$USERNAME/notebooks"
+    
     # Get current working directory and set absolute path for repo
     WORK_DIR=$(pwd)
     REPO_DIR="$WORK_DIR/ollama-s390x"
