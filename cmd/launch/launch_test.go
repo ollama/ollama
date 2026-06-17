@@ -211,8 +211,6 @@ func withLauncherHooks(t *testing.T) {
 	oldConfirm := DefaultConfirmPrompt
 	oldSignIn := DefaultSignIn
 	oldUpgrade := DefaultUpgrade
-	oldRecommendationsGOOS := launchRecommendationsGOOS
-	launchRecommendationsGOOS = "linux"
 	t.Cleanup(func() {
 		DefaultSingleSelector = oldSingle
 		DefaultSingleSelectorWithUpdates = oldSingleWithUpdates
@@ -221,7 +219,6 @@ func withLauncherHooks(t *testing.T) {
 		DefaultConfirmPrompt = oldConfirm
 		DefaultSignIn = oldSignIn
 		DefaultUpgrade = oldUpgrade
-		launchRecommendationsGOOS = oldRecommendationsGOOS
 	})
 }
 

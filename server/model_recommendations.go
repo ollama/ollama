@@ -19,7 +19,6 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/internal/modelrecommendations"
 )
 
 const modelRecommendationsURL = "https://ollama.com/api/experimental/model-recommendations"
@@ -46,17 +45,19 @@ type modelRecommendationsCache struct {
 	once                 sync.Once
 	client               *http.Client
 	goos                 string
+	goarch               string
 }
 
 func newModelRecommendationsCache() *modelRecommendationsCache {
-	return newModelRecommendationsCacheForGOOS(runtime.GOOS)
+	return newModelRecommendationsCacheForPlatform(runtime.GOOS, runtime.GOARCH)
 }
 
-func newModelRecommendationsCacheForGOOS(goos string) *modelRecommendationsCache {
+func newModelRecommendationsCacheForPlatform(goos, goarch string) *modelRecommendationsCache {
 	return &modelRecommendationsCache{
-		recommendations: defaultModelRecommendationsForGOOS(goos),
+		recommendations: cloneModelRecommendations(defaultModelRecommendations),
 		client:          http.DefaultClient,
 		goos:            goos,
+		goarch:          goarch,
 	}
 }
 
@@ -73,8 +74,12 @@ func (c *modelRecommendationsCache) Start(ctx context.Context) {
 
 func (c *modelRecommendationsCache) Get() []api.ModelRecommendation {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return cloneModelRecommendations(c.recommendations)
+	recs := cloneModelRecommendations(c.recommendations)
+	goos := c.goos
+	goarch := c.goarch
+	c.mu.RUnlock()
+
+	return applyPlatformTagsForPlatform(recs, goos, goarch)
 }
 
 func (c *modelRecommendationsCache) GetSWR(ctx context.Context) []api.ModelRecommendation {
@@ -228,7 +233,6 @@ func (c *modelRecommendationsCache) refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	recs = modelrecommendations.ApplyPlatformTagsForGOOS(recs, c.goos)
 
 	c.set(recs)
 	slog.Debug("model recommendations refreshed", "count", len(recs))
@@ -266,7 +270,6 @@ func (c *modelRecommendationsCache) loadSnapshot() {
 		slog.Warn("ignoring invalid model recommendations snapshot", "path", path, "error", err)
 		return
 	}
-	recs = modelrecommendations.ApplyPlatformTagsForGOOS(recs, c.goos)
 
 	c.set(recs)
 	slog.Debug("loaded model recommendations snapshot", "path", path, "count", len(recs))
@@ -374,8 +377,67 @@ func cloneModelRecommendations(in []api.ModelRecommendation) []api.ModelRecommen
 	return out
 }
 
-func defaultModelRecommendationsForGOOS(goos string) []api.ModelRecommendation {
-	return modelrecommendations.ApplyPlatformTagsForGOOS(defaultModelRecommendations, goos)
+func defaultModelRecommendationsForPlatform(goos, goarch string) []api.ModelRecommendation {
+	return applyPlatformTagsForPlatform(defaultModelRecommendations, goos, goarch)
+}
+
+type platformTagReplacement struct {
+	model       string
+	description string
+	vramBytes   int64
+}
+
+var darwinArm64MLXTagReplacements = map[string]platformTagReplacement{
+	"gemma4":        {model: "gemma4:e4b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 96 * format.GigaByte / 10},
+	"gemma4:latest": {model: "gemma4:e4b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 96 * format.GigaByte / 10},
+	"gemma4:e4b":    {model: "gemma4:e4b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 96 * format.GigaByte / 10},
+	"gemma4:e2b":    {model: "gemma4:e2b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 71 * format.GigaByte / 10},
+	"gemma4:12b":    {model: "gemma4:12b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 68 * format.GigaByte / 10},
+	"gemma4:26b":    {model: "gemma4:26b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 17 * format.GigaByte},
+	"gemma4:31b":    {model: "gemma4:31b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 20 * format.GigaByte},
+
+	"qwen3.5":        {model: "qwen3.5:9b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 89 * format.GigaByte / 10},
+	"qwen3.5:latest": {model: "qwen3.5:9b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 89 * format.GigaByte / 10},
+	"qwen3.5:0.8b":   {model: "qwen3.5:0.8b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 12 * format.GigaByte / 10},
+	"qwen3.5:2b":     {model: "qwen3.5:2b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 31 * format.GigaByte / 10},
+	"qwen3.5:4b":     {model: "qwen3.5:4b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 4 * format.GigaByte},
+	"qwen3.5:9b":     {model: "qwen3.5:9b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 89 * format.GigaByte / 10},
+	"qwen3.5:27b":    {model: "qwen3.5:27b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 20 * format.GigaByte},
+	"qwen3.5:35b":    {model: "qwen3.5:35b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 22 * format.GigaByte},
+
+	"qwen3.6":        {model: "qwen3.6:35b-mlx", description: "MLX-optimized coding and reasoning locally", vramBytes: 22 * format.GigaByte},
+	"qwen3.6:latest": {model: "qwen3.6:35b-mlx", description: "MLX-optimized coding and reasoning locally", vramBytes: 22 * format.GigaByte},
+	"qwen3.6:27b":    {model: "qwen3.6:27b-mlx", description: "MLX-optimized coding and reasoning locally", vramBytes: 20 * format.GigaByte},
+	"qwen3.6:35b":    {model: "qwen3.6:35b-mlx", description: "MLX-optimized coding and reasoning locally", vramBytes: 22 * format.GigaByte},
+}
+
+func applyPlatformTagsForPlatform(recs []api.ModelRecommendation, goos, goarch string) []api.ModelRecommendation {
+	out := make([]api.ModelRecommendation, 0, len(recs))
+	seen := make(map[string]struct{}, len(recs))
+	for _, rec := range recs {
+		rec = applyPlatformTagForPlatform(rec, goos, goarch)
+		if _, ok := seen[rec.Model]; ok {
+			continue
+		}
+		seen[rec.Model] = struct{}{}
+		out = append(out, rec)
+	}
+	return out
+}
+
+func applyPlatformTagForPlatform(rec api.ModelRecommendation, goos, goarch string) api.ModelRecommendation {
+	if goos != "darwin" || goarch != "arm64" {
+		return rec
+	}
+	replacement, ok := darwinArm64MLXTagReplacements[rec.Model]
+	if !ok {
+		return rec
+	}
+
+	rec.Model = replacement.model
+	rec.Description = replacement.description
+	rec.VRAMBytes = replacement.vramBytes
+	return rec
 }
 
 var defaultModelRecommendations = []api.ModelRecommendation{

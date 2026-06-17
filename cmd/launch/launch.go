@@ -1154,7 +1154,7 @@ func (c *launcherClient) recommendations(ctx context.Context) []ModelItem {
 	if err != nil || len(recommendations) == 0 {
 		// Fail open: recommendation issues should not block launch flows.
 		// Fall back to built-in recommendations until server data is available.
-		fallback := recommendedModelsForGOOS(launchRecommendationsGOOS)
+		fallback := append([]ModelItem(nil), recommendedModels...)
 		setDynamicCloudModelLimits(cloudModelLimitsFromRecommendations(fallback))
 		c.recommendationItems = fallback
 		c.recommendationsLoaded = true
@@ -1207,7 +1207,7 @@ func (c *launcherClient) requestRecommendations(ctx context.Context) ([]ModelIte
 		})
 	}
 
-	return applyPlatformTagsToModelItems(items, launchRecommendationsGOOS), nil
+	return items, nil
 }
 
 func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string) error {

@@ -38,23 +38,8 @@ func TestModelRecommendationsDefaultOrder(t *testing.T) {
 	}
 }
 
-func TestModelRecommendationsDefaultOrderDarwinUsesMLXTags(t *testing.T) {
-	want := []string{
-		"kimi-k2.6:cloud",
-		"glm-5.1:cloud",
-		"qwen3.5:cloud",
-		"minimax-m2.7:cloud",
-		"gemma4:e4b-mlx",
-		"qwen3.5:9b-mlx",
-	}
-
-	if got := modelRecommendationNames(defaultModelRecommendationsForGOOS("darwin")); !slices.Equal(got, want) {
-		t.Fatalf("darwin recommendations = %v, want %v", got, want)
-	}
-}
-
-func TestModelRecommendationsDefaultOrderNonDarwinDoesNotUseMLXTags(t *testing.T) {
-	want := []string{
+func TestModelRecommendationsDefaultOrderByPlatform(t *testing.T) {
+	neutral := []string{
 		"kimi-k2.6:cloud",
 		"glm-5.1:cloud",
 		"qwen3.5:cloud",
@@ -63,14 +48,36 @@ func TestModelRecommendationsDefaultOrderNonDarwinDoesNotUseMLXTags(t *testing.T
 		"qwen3.5",
 	}
 
-	got := modelRecommendationNames(defaultModelRecommendationsForGOOS("linux"))
-	if !slices.Equal(got, want) {
-		t.Fatalf("linux recommendations = %v, want %v", got, want)
+	cases := []struct {
+		name   string
+		goos   string
+		goarch string
+		want   []string
+	}{
+		{
+			name:   "darwin arm64",
+			goos:   "darwin",
+			goarch: "arm64",
+			want: []string{
+				"kimi-k2.6:cloud",
+				"glm-5.1:cloud",
+				"qwen3.5:cloud",
+				"minimax-m2.7:cloud",
+				"gemma4:e4b-mlx",
+				"qwen3.5:9b-mlx",
+			},
+		},
+		{name: "darwin amd64", goos: "darwin", goarch: "amd64", want: neutral},
+		{name: "linux arm64", goos: "linux", goarch: "arm64", want: neutral},
 	}
-	for _, name := range got {
-		if strings.Contains(name, "-mlx") {
-			t.Fatalf("non-darwin recommendation should not use MLX tag: %q", name)
-		}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := modelRecommendationNames(defaultModelRecommendationsForPlatform(tc.goos, tc.goarch))
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("recommendations = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -143,12 +150,21 @@ func TestModelRecommendationsCacheRefreshAppliesServerSideChanges(t *testing.T) 
 	}
 }
 
-func TestModelRecommendationsCacheRefreshAppliesDarwinMLXTags(t *testing.T) {
+func TestModelRecommendationsCacheRefreshAppliesDarwinArm64MLXTags(t *testing.T) {
 	setupModelRecommendationsTestEnv(t, "")
 
-	cache := newModelRecommendationsCacheForGOOS("darwin")
+	raw := []api.ModelRecommendation{
+		{Model: "gemma4", Description: "local", VRAMBytes: 12884901888},
+		{Model: "qwen3.5:9b", Description: "local", VRAMBytes: 15032385536},
+		{Model: "qwen3.6", Description: "local", VRAMBytes: 25769803776},
+	}
+	cache := newModelRecommendationsCacheForPlatform("darwin", "arm64")
 	cache.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return jsonHTTPResponse(http.StatusOK, `{"recommendations":[{"model":"gemma4","description":"local","vram_bytes":12884901888},{"model":"qwen3.5:9b","description":"local","vram_bytes":15032385536},{"model":"qwen3.6","description":"local","vram_bytes":25769803776}]}`), nil
+		data, err := json.Marshal(api.ModelRecommendationsResponse{Recommendations: raw})
+		if err != nil {
+			t.Fatalf("marshal payload failed: %v", err)
+		}
+		return jsonHTTPResponse(http.StatusOK, string(data)), nil
 	})}
 
 	if err := cache.refresh(context.Background()); err != nil {
@@ -158,6 +174,47 @@ func TestModelRecommendationsCacheRefreshAppliesDarwinMLXTags(t *testing.T) {
 	want := []string{"gemma4:e4b-mlx", "qwen3.5:9b-mlx", "qwen3.6:35b-mlx"}
 	if got := modelRecommendationNames(cache.Get()); !slices.Equal(got, want) {
 		t.Fatalf("recommendations = %v, want %v", got, want)
+	}
+
+	path, err := modelRecommendationsSnapshotPath()
+	if err != nil {
+		t.Fatalf("snapshot path failed: %v", err)
+	}
+	snapshotData, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read snapshot failed: %v", err)
+	}
+	var snapshot api.ModelRecommendationsResponse
+	if err := json.Unmarshal(snapshotData, &snapshot); err != nil {
+		t.Fatalf("unmarshal snapshot failed: %v", err)
+	}
+	if !slices.Equal(snapshot.Recommendations, raw) {
+		t.Fatalf("snapshot recommendations = %#v, want raw %#v", snapshot.Recommendations, raw)
+	}
+}
+
+func TestModelRecommendationsPlatformTagsDedupesAfterReplacement(t *testing.T) {
+	input := []api.ModelRecommendation{
+		{Model: "gemma4", Description: "base"},
+		{Model: "gemma4:e4b-mlx", Description: "explicit"},
+	}
+
+	got := applyPlatformTagsForPlatform(input, "darwin", "arm64")
+	wantNames := []string{"gemma4:e4b-mlx"}
+	if !slices.Equal(modelRecommendationNames(got), wantNames) {
+		t.Fatalf("models = %v, want %v", modelRecommendationNames(got), wantNames)
+	}
+}
+
+func TestModelRecommendationsPlatformTagsDoesNotSynthesizeMLXTags(t *testing.T) {
+	input := []api.ModelRecommendation{
+		{Model: "llama3.2", Description: "local"},
+		{Model: "qwen3.6:14b", Description: "not published"},
+	}
+
+	got := applyPlatformTagsForPlatform(input, "darwin", "arm64")
+	if !slices.Equal(got, input) {
+		t.Fatalf("recommendations = %#v, want %#v", got, input)
 	}
 }
 
@@ -284,6 +341,34 @@ func TestModelRecommendationsSnapshotPersistAndLoad(t *testing.T) {
 	}
 }
 
+func TestModelRecommendationsSnapshotLoadAppliesReaderPlatform(t *testing.T) {
+	setupModelRecommendationsTestEnv(t, "")
+
+	raw := []api.ModelRecommendation{
+		{Model: "gemma4", Description: "local", VRAMBytes: 12884901888},
+		{Model: "qwen3.5", Description: "local", VRAMBytes: 15032385536},
+	}
+
+	writer := newModelRecommendationsCacheForPlatform("darwin", "arm64")
+	if err := writer.persistSnapshot(raw); err != nil {
+		t.Fatalf("persistSnapshot failed: %v", err)
+	}
+
+	darwinLoader := newModelRecommendationsCacheForPlatform("darwin", "arm64")
+	darwinLoader.set([]api.ModelRecommendation{{Model: "old", Description: "old"}})
+	darwinLoader.loadSnapshot()
+	if got, want := modelRecommendationNames(darwinLoader.Get()), []string{"gemma4:e4b-mlx", "qwen3.5:9b-mlx"}; !slices.Equal(got, want) {
+		t.Fatalf("darwin loaded recommendations = %v, want %v", got, want)
+	}
+
+	linuxLoader := newModelRecommendationsCacheForPlatform("linux", "arm64")
+	linuxLoader.set([]api.ModelRecommendation{{Model: "old", Description: "old"}})
+	linuxLoader.loadSnapshot()
+	if got, want := modelRecommendationNames(linuxLoader.Get()), []string{"gemma4", "qwen3.5"}; !slices.Equal(got, want) {
+		t.Fatalf("linux loaded recommendations = %v, want %v", got, want)
+	}
+}
+
 func TestModelRecommendationsLoadSnapshotInvalidDoesNotOverwrite(t *testing.T) {
 	setupModelRecommendationsTestEnv(t, "")
 
@@ -376,7 +461,7 @@ func TestModelRecommendationsHandlerReturnsDefaults(t *testing.T) {
 	}
 
 	got := decodeRecommendationNames(t, w)
-	want := modelRecommendationNames(defaultModelRecommendationsForGOOS(runtime.GOOS))
+	want := modelRecommendationNames(defaultModelRecommendationsForPlatform(runtime.GOOS, runtime.GOARCH))
 	if !slices.Equal(got, want) {
 		t.Fatalf("models = %v, want %v", got, want)
 	}

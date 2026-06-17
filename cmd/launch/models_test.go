@@ -89,23 +89,7 @@ func TestBuildModelList_InstalledRecommendedPreservesRecommendationAndMetadata(t
 	}
 }
 
-func TestRecommendedModelsForGOOSDarwinUsesMLXTags(t *testing.T) {
-	got := recommendedModelsForGOOS("darwin")
-	want := []string{
-		"kimi-k2.6:cloud",
-		"qwen3.5:cloud",
-		"glm-5.1:cloud",
-		"minimax-m2.7:cloud",
-		"gemma4:e4b-mlx",
-		"qwen3.5:9b-mlx",
-	}
-	if !slices.Equal(modelItemNames(got), want) {
-		t.Fatalf("models = %v, want %v", modelItemNames(got), want)
-	}
-}
-
-func TestRecommendedModelsForGOOSNonDarwinDoesNotUseMLXTags(t *testing.T) {
-	got := recommendedModelsForGOOS("linux")
+func TestRecommendedModelsFallbackIsNeutral(t *testing.T) {
 	want := []string{
 		"kimi-k2.6:cloud",
 		"qwen3.5:cloud",
@@ -114,19 +98,17 @@ func TestRecommendedModelsForGOOSNonDarwinDoesNotUseMLXTags(t *testing.T) {
 		"gemma4",
 		"qwen3.5",
 	}
-	if !slices.Equal(modelItemNames(got), want) {
-		t.Fatalf("models = %v, want %v", modelItemNames(got), want)
+	if !slices.Equal(modelItemNames(recommendedModels), want) {
+		t.Fatalf("models = %v, want %v", modelItemNames(recommendedModels), want)
 	}
-	for _, name := range modelItemNames(got) {
+	for _, name := range modelItemNames(recommendedModels) {
 		if strings.Contains(name, "-mlx") {
-			t.Fatalf("non-darwin recommendation should not use MLX tag: %q", name)
+			t.Fatalf("fallback recommendation should not use MLX tag: %q", name)
 		}
 	}
 }
 
-func TestLauncherRequestRecommendationsAppliesDarwinMLXTags(t *testing.T) {
-	withLaunchRecommendationsGOOS(t, "darwin")
-
+func TestLauncherRequestRecommendationsTrustsServerModelNames(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/experimental/model-recommendations" {
 			http.NotFound(w, r)
@@ -143,19 +125,10 @@ func TestLauncherRequestRecommendationsAppliesDarwinMLXTags(t *testing.T) {
 		t.Fatalf("requestRecommendations failed: %v", err)
 	}
 
-	want := []string{"gemma4:e4b-mlx", "qwen3.5:9b-mlx", "qwen3.6:35b-mlx"}
+	want := []string{"gemma4", "qwen3.5:9b", "qwen3.6"}
 	if !slices.Equal(modelItemNames(got), want) {
 		t.Fatalf("models = %v, want %v", modelItemNames(got), want)
 	}
-}
-
-func withLaunchRecommendationsGOOS(t *testing.T, goos string) {
-	t.Helper()
-	old := launchRecommendationsGOOS
-	launchRecommendationsGOOS = goos
-	t.Cleanup(func() {
-		launchRecommendationsGOOS = old
-	})
 }
 
 func modelItemNames(items []ModelItem) []string {

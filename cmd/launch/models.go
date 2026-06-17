@@ -18,12 +18,9 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/format"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
-	"github.com/ollama/ollama/internal/modelrecommendations"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
 )
-
-var launchRecommendationsGOOS = runtime.GOOS
 
 var recommendedModels = []ModelItem{
 	{Name: "kimi-k2.6:cloud", Description: "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 262_144},
@@ -140,37 +137,6 @@ func mergeCloudModelLimits(base map[string]cloudModelLimit, overlay map[string]c
 	}
 	for name, limit := range overlay {
 		out[name] = limit
-	}
-	return out
-}
-
-func recommendedModelsForGOOS(goos string) []ModelItem {
-	return applyPlatformTagsToModelItems(recommendedModels, goos)
-}
-
-func applyPlatformTagsToModelItems(items []ModelItem, goos string) []ModelItem {
-	out := make([]ModelItem, 0, len(items))
-	seen := make(map[string]struct{}, len(items))
-	for _, item := range items {
-		rec := modelrecommendations.ApplyPlatformTagForGOOS(api.ModelRecommendation{
-			Model:           item.Name,
-			Description:     item.Description,
-			ContextLength:   item.Details.ContextLength,
-			MaxOutputTokens: item.MaxOutputTokens,
-			VRAMBytes:       item.VRAMBytes,
-			RequiredPlan:    item.RequiredPlan,
-		}, goos)
-		item.Name = rec.Model
-		item.Description = rec.Description
-		item.Details.ContextLength = rec.ContextLength
-		item.MaxOutputTokens = rec.MaxOutputTokens
-		item.VRAMBytes = rec.VRAMBytes
-		item.RequiredPlan = rec.RequiredPlan
-		if _, ok := seen[item.Name]; ok {
-			continue
-		}
-		seen[item.Name] = struct{}{}
-		out = append(out, item)
 	}
 	return out
 }
