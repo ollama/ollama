@@ -23,11 +23,14 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
 - `llama-ollama-compat-util.h`, `llama-ollama-compat-util.cpp` - helpers for
   KV edits, tensor renames, skip-prefix tracking, tensor load operations, and
   small tensor repacking primitives.
-- `llama-cpp-hooks.patch` - small additive call-site edits in llama.cpp files.
+- `001-llama-cpp-hooks.patch` - small additive call-site edits in llama.cpp files.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/clip.cpp`.
+- `002-llama-cpp-ui-empty-assets.patch` - lets the llama.cpp UI embed helper
+  generate an empty asset table when no UI assets are present.
 - `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent applier
   (used by `llama/server/CMakeLists.txt`) that applies every `*.patch` under
-  this directory — the hooks patch plus each `models/` architecture patch.
+  this directory by numeric filename order — the hooks patch plus each
+  `models/` architecture patch.
 - `models/` - the sibling **new-architecture** layer: implementations of
   architectures llama.cpp doesn't support yet, each added via a small
   registration patch. (Those files *add* archs; the files above *translate*
@@ -116,7 +119,7 @@ cd /path/to/llama.cpp
 git diff -- \
     src/llama-model-loader.cpp \
     tools/mtmd/clip.cpp \
-    > /path/to/ollama/llama/compat/llama-cpp-hooks.patch
+    > /path/to/ollama/llama/compat/001-llama-cpp-hooks.patch
 ```
 
 ## Implementation Notes

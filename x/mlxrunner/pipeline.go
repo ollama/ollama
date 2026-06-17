@@ -84,13 +84,14 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	// prompt so that long prompts can be partially restored and
 	// thinking/generation can be retried without full reprocessing.
 	const snapshotInterval = 8192
+	var snapshotOffsets []int
 	for offset := snapshotInterval; offset < len(inputs); offset += snapshotInterval {
-		session.requestSnapshot(offset)
+		snapshotOffsets = append(snapshotOffsets, offset)
 	}
 
 	const preThinking = 4
 	if end := len(inputs) - preThinking; end > 0 {
-		session.requestSnapshot(end)
+		snapshotOffsets = append(snapshotOffsets, end)
 	}
 
 	materializeCaches := func() {
@@ -104,6 +105,8 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		mlx.Eval(state...)
 	}
 
+	session.schedulePrefillSnapshots(snapshotOffsets)
+
 	now := time.Now()
 	total, processed := len(tokens), 0
 	position := len(inputs) - len(tokens)
@@ -113,15 +116,6 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		}
 
 		n := min(prefillChunk, total-processed-1)
-
-		// If there's a pending snapshot, split the batch so we can
-		// capture it at the exact offset.
-		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
-			tokensUntilSnapshot := snapOffset - position
-			if tokensUntilSnapshot > 0 && tokensUntilSnapshot < n {
-				n = tokensUntilSnapshot
-			}
-		}
 
 		r.Model.Forward(&batch.Batch{
 			InputIDs:     mlx.FromValues(tokens[processed:processed+n], 1, n),
@@ -135,15 +129,11 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
 		logutil.TraceContext(ctx, "mlx prompt forward", "processed", processed, "total", total, "tokens", n, "memory", mlx.Memory{})
 
-		// Create snapshot if we've reached a pending offset.
-		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
-			if position >= snapOffset {
-				session.snapshot()
-			}
-		}
-
 		mlx.ClearCache()
 	}
+
+	// Attach the snapshots captured during prefill to the trie.
+	session.attachPrefillSnapshots()
 
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)

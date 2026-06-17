@@ -16,8 +16,8 @@ diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
 diff --git a/src/llama-arch.h b/src/llama-arch.h
 --- a/src/llama-arch.h
 +++ b/src/llama-arch.h
-@@ -140,2 +140,3 @@ enum llm_arch {
-     LLM_ARCH_MELLUM,
+@@ -145,2 +145,3 @@ enum llm_arch {
+     LLM_ARCH_EAGLE3,
 +    LLM_ARCH_LAGUNA,
      LLM_ARCH_UNKNOWN,
 @@ -382,2 +383,3 @@ enum llm_tensor {

@@ -293,10 +293,10 @@ func (m *AssistantModel) sharedHistories(b *batch.Batch, caches []cache.Cache) (
 	if len(caches) < 2 {
 		return nil, nil
 	}
-	if v, ok := caches[len(caches)-2].(cache.Viewer); ok {
+	if v, ok := caches[len(caches)-2].(cache.Attention); ok {
 		sliding = v.View(b)
 	}
-	if v, ok := caches[len(caches)-1].(cache.Viewer); ok {
+	if v, ok := caches[len(caches)-1].(cache.Attention); ok {
 		full = v.View(b)
 	}
 	return sliding, full
@@ -376,12 +376,7 @@ func (a *AssistantAttention) Forward(x *mlx.Array, b *batch.Batch, positions *ml
 	}
 	q = mlx.RoPEWithFreqs(q, ropeDims, false, ropeBase, 1.0, positions, ropeFreqs)
 
-	mask := nn.CausalMask()
-	if isSliding && cfg.SlidingWindow > 0 {
-		mask = mask.Intersect(nn.SlidingWindowMask(b, history.K().Dim(2), int(cfg.SlidingWindow), q.DType()))
-	}
-
-	out := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(history), nn.WithMask(mask))
+	out := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(history), nn.WithMask(nn.CausalMask()))
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*headDim)
 	if !mlx.MetalIsAvailable() {
 		out = mlx.Contiguous(out, false)
