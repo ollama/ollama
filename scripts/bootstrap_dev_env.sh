@@ -177,38 +177,49 @@ create_docker_compose() {
     log_info "Creating docker-compose.yml..."
     
     cat > docker-compose.yml << EOF
-version: '3.8'
+version: "3.8"
 
 services:
   ollama:
+    image: taronaeo/ollama:z15
     container_name: ollama
-    build:
-      context: .
-      dockerfile: Dockerfile.ollama
     ports:
       - "11434:11434"
-    networks:
-      - ollama-network
+    volumes:
+      - ollama-data:/root/.ollama:Z          # :Z for SELinux on RHEL
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_PARALLEL=1                # tune based on your RAM/cores
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 40s
 
   jupyter:
-    container_name: jupyter
     build:
       context: .
       dockerfile: Dockerfile.jupyter
+    container_name: jupyter
     ports:
-      - "8877:8888"
+      - "8888:8888"
     volumes:
-      - /Wonder/$USERNAME/notebooks:/home/jovyan/work:Z
-    networks:
-      - ollama-network
-    restart: unless-stopped
+      - jupyter-data:/home/jovyan/work:Z
+      # Optional: bind-mount your host notebooks
+      # - ./notebooks:/home/jovyan/work:Z
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - JUPYTER_ENABLE_LAB=yes
     depends_on:
-      - ollama
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
 
-networks:
-  ollama-network:
-    driver: bridge
+volumes:
+  ollama-data:
+  jupyter-data:
 EOF
 
     log_success "docker-compose.yml created"
