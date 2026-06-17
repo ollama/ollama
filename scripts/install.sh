@@ -36,6 +36,7 @@ ARCH=$(uname -m)
 case "$ARCH" in
     x86_64) ARCH="amd64" ;;
     aarch64|arm64) ARCH="arm64" ;;
+    s390x) ARCH="s390x" ;;
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
@@ -257,6 +258,12 @@ if [ "$IS_WSL2" = true ]; then
     if available nvidia-smi && [ -n "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
         status "Nvidia GPU detected."
     fi
+    install_success
+    exit 0
+fi
+# s390x systems don't use consumer GPUs - skip GPU detection
+if [ "$ARCH" = "s390x" ]; then
+    status "IBM Z (s390x) architecture detected - running in CPU-only mode"
     install_success
     exit 0
 fi
