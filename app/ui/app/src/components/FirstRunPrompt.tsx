@@ -3,7 +3,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { runOllamaInTerminal, skipFirstRun } from "@/api";
 import type { SettingsResponse } from "@/api";
 import CopyButton from "@/components/CopyButton";
-import { Button } from "@/components/ui/button";
 
 interface FirstRunPromptProps {
   open: boolean;
@@ -45,7 +44,7 @@ export function FirstRunPrompt({ open }: FirstRunPromptProps) {
         aria-modal="true"
         aria-label="Run Ollama in terminal"
         aria-describedby="first-run-description"
-        className="w-full max-w-[620px] text-neutral-950 dark:text-white"
+        className="flex min-h-[620px] w-full max-w-[500px] flex-col justify-center text-neutral-950 dark:text-white"
       >
         <div>
           <div className="flex items-center justify-center gap-4">
@@ -91,25 +90,23 @@ export function FirstRunPrompt({ open }: FirstRunPromptProps) {
           ) : null}
         </div>
 
-        <div className="mt-8 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button
-            plain
+        <div className="mt-8 flex flex-col-reverse items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+          <button
             type="button"
             onClick={() => skipMutation.mutate()}
             disabled={pending}
-            className="w-full sm:w-auto"
+            className="inline-flex h-12 items-center justify-center rounded-full bg-neutral-100 px-8 text-lg font-normal text-neutral-950 transition hover:bg-neutral-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 disabled:pointer-events-none disabled:opacity-50 dark:bg-neutral-800 dark:text-neutral-50 dark:hover:bg-neutral-700 dark:focus-visible:ring-neutral-600"
           >
             Skip
-          </Button>
-          <Button
+          </button>
+          <button
             type="button"
             onClick={() => runMutation.mutate()}
             disabled={pending}
-            className="w-full sm:w-auto"
+            className="inline-flex h-12 items-center justify-center gap-3 rounded-full bg-black px-8 text-lg font-normal text-white shadow-sm transition hover:bg-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:pointer-events-none disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-neutral-200 dark:focus-visible:ring-neutral-500"
           >
-            <CommandLineIcon data-slot="icon" aria-hidden="true" />
-            Run Ollama in terminal
-          </Button>
+            Open in terminal
+          </button>
         </div>
       </div>
     </div>
