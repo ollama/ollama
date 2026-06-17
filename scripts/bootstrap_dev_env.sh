@@ -66,7 +66,7 @@ main() {
     print_success "Dependencies installed"
     
     # Change to repo directory
-    cd ollama-s390x
+    cd ollama-s390x/
     print_info "Changed to ollama-s390x directory"
     
     # # Configure with CMake
