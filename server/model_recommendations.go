@@ -49,15 +49,11 @@ type modelRecommendationsCache struct {
 }
 
 func newModelRecommendationsCache() *modelRecommendationsCache {
-	return newModelRecommendationsCacheForPlatform(runtime.GOOS, runtime.GOARCH)
-}
-
-func newModelRecommendationsCacheForPlatform(goos, goarch string) *modelRecommendationsCache {
 	return &modelRecommendationsCache{
 		recommendations: cloneModelRecommendations(defaultModelRecommendations),
 		client:          http.DefaultClient,
-		goos:            goos,
-		goarch:          goarch,
+		goos:            runtime.GOOS,
+		goarch:          runtime.GOARCH,
 	}
 }
 
@@ -79,7 +75,7 @@ func (c *modelRecommendationsCache) Get() []api.ModelRecommendation {
 	goarch := c.goarch
 	c.mu.RUnlock()
 
-	return applyPlatformTagsForPlatform(recs, goos, goarch)
+	return applyPlatformTags(recs, goos, goarch)
 }
 
 func (c *modelRecommendationsCache) GetSWR(ctx context.Context) []api.ModelRecommendation {
@@ -377,45 +373,29 @@ func cloneModelRecommendations(in []api.ModelRecommendation) []api.ModelRecommen
 	return out
 }
 
-func defaultModelRecommendationsForPlatform(goos, goarch string) []api.ModelRecommendation {
-	return applyPlatformTagsForPlatform(defaultModelRecommendations, goos, goarch)
+var darwinArm64RecommendationReplacements = map[string]api.ModelRecommendation{
+	"gemma4": {
+		Model:       "gemma4:e4b-mlx",
+		Description: "MLX-optimized reasoning and code generation locally",
+		VRAMBytes:   96 * format.GigaByte / 10,
+	},
+	"qwen3.5": {
+		Model:       "qwen3.5:9b-mlx",
+		Description: "MLX-optimized reasoning and coding locally",
+		VRAMBytes:   89 * format.GigaByte / 10,
+	},
+	"qwen3.6": {
+		Model:       "qwen3.6:35b-mlx",
+		Description: "MLX-optimized coding and reasoning locally",
+		VRAMBytes:   22 * format.GigaByte,
+	},
 }
 
-type platformTagReplacement struct {
-	model       string
-	description string
-	vramBytes   int64
-}
-
-var darwinArm64MLXTagReplacements = map[string]platformTagReplacement{
-	"gemma4":        {model: "gemma4:e4b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 96 * format.GigaByte / 10},
-	"gemma4:latest": {model: "gemma4:e4b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 96 * format.GigaByte / 10},
-	"gemma4:e4b":    {model: "gemma4:e4b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 96 * format.GigaByte / 10},
-	"gemma4:e2b":    {model: "gemma4:e2b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 71 * format.GigaByte / 10},
-	"gemma4:12b":    {model: "gemma4:12b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 68 * format.GigaByte / 10},
-	"gemma4:26b":    {model: "gemma4:26b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 17 * format.GigaByte},
-	"gemma4:31b":    {model: "gemma4:31b-mlx", description: "MLX-optimized reasoning and code generation locally", vramBytes: 20 * format.GigaByte},
-
-	"qwen3.5":        {model: "qwen3.5:9b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 89 * format.GigaByte / 10},
-	"qwen3.5:latest": {model: "qwen3.5:9b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 89 * format.GigaByte / 10},
-	"qwen3.5:0.8b":   {model: "qwen3.5:0.8b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 12 * format.GigaByte / 10},
-	"qwen3.5:2b":     {model: "qwen3.5:2b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 31 * format.GigaByte / 10},
-	"qwen3.5:4b":     {model: "qwen3.5:4b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 4 * format.GigaByte},
-	"qwen3.5:9b":     {model: "qwen3.5:9b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 89 * format.GigaByte / 10},
-	"qwen3.5:27b":    {model: "qwen3.5:27b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 20 * format.GigaByte},
-	"qwen3.5:35b":    {model: "qwen3.5:35b-mlx", description: "MLX-optimized reasoning and coding locally", vramBytes: 22 * format.GigaByte},
-
-	"qwen3.6":        {model: "qwen3.6:35b-mlx", description: "MLX-optimized coding and reasoning locally", vramBytes: 22 * format.GigaByte},
-	"qwen3.6:latest": {model: "qwen3.6:35b-mlx", description: "MLX-optimized coding and reasoning locally", vramBytes: 22 * format.GigaByte},
-	"qwen3.6:27b":    {model: "qwen3.6:27b-mlx", description: "MLX-optimized coding and reasoning locally", vramBytes: 20 * format.GigaByte},
-	"qwen3.6:35b":    {model: "qwen3.6:35b-mlx", description: "MLX-optimized coding and reasoning locally", vramBytes: 22 * format.GigaByte},
-}
-
-func applyPlatformTagsForPlatform(recs []api.ModelRecommendation, goos, goarch string) []api.ModelRecommendation {
+func applyPlatformTags(recs []api.ModelRecommendation, goos, goarch string) []api.ModelRecommendation {
 	out := make([]api.ModelRecommendation, 0, len(recs))
 	seen := make(map[string]struct{}, len(recs))
 	for _, rec := range recs {
-		rec = applyPlatformTagForPlatform(rec, goos, goarch)
+		rec = applyPlatformTag(rec, goos, goarch)
 		if _, ok := seen[rec.Model]; ok {
 			continue
 		}
@@ -425,19 +405,17 @@ func applyPlatformTagsForPlatform(recs []api.ModelRecommendation, goos, goarch s
 	return out
 }
 
-func applyPlatformTagForPlatform(rec api.ModelRecommendation, goos, goarch string) api.ModelRecommendation {
+func applyPlatformTag(rec api.ModelRecommendation, goos, goarch string) api.ModelRecommendation {
 	if goos != "darwin" || goarch != "arm64" {
 		return rec
 	}
-	replacement, ok := darwinArm64MLXTagReplacements[rec.Model]
+
+	replacement, ok := darwinArm64RecommendationReplacements[rec.Model]
 	if !ok {
 		return rec
 	}
 
-	rec.Model = replacement.model
-	rec.Description = replacement.description
-	rec.VRAMBytes = replacement.vramBytes
-	return rec
+	return replacement
 }
 
 var defaultModelRecommendations = []api.ModelRecommendation{

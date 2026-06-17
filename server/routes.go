@@ -1898,7 +1898,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 }
 
 func (s *Server) ModelRecommendationsExperimentalHandler(c *gin.Context) {
-	recs := defaultModelRecommendationsForPlatform(runtime.GOOS, runtime.GOARCH)
+	recs := applyPlatformTags(defaultModelRecommendations, runtime.GOOS, runtime.GOARCH)
 	source := "default"
 	if s.modelCaches != nil && s.modelCaches.recommendations != nil {
 		ctx := context.Background()
