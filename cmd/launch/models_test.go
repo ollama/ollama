@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -100,6 +101,26 @@ func TestRecommendedModelsForGOOSDarwinUsesMLXTags(t *testing.T) {
 	}
 	if !slices.Equal(modelItemNames(got), want) {
 		t.Fatalf("models = %v, want %v", modelItemNames(got), want)
+	}
+}
+
+func TestRecommendedModelsForGOOSNonDarwinDoesNotUseMLXTags(t *testing.T) {
+	got := recommendedModelsForGOOS("linux")
+	want := []string{
+		"kimi-k2.6:cloud",
+		"qwen3.5:cloud",
+		"glm-5.1:cloud",
+		"minimax-m2.7:cloud",
+		"gemma4",
+		"qwen3.5",
+	}
+	if !slices.Equal(modelItemNames(got), want) {
+		t.Fatalf("models = %v, want %v", modelItemNames(got), want)
+	}
+	for _, name := range modelItemNames(got) {
+		if strings.Contains(name, "-mlx") {
+			t.Fatalf("non-darwin recommendation should not use MLX tag: %q", name)
+		}
 	}
 }
 

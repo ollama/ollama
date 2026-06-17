@@ -52,6 +52,27 @@ func TestModelRecommendationsDefaultOrderDarwinUsesMLXTags(t *testing.T) {
 	}
 }
 
+func TestModelRecommendationsDefaultOrderNonDarwinDoesNotUseMLXTags(t *testing.T) {
+	want := []string{
+		"kimi-k2.6:cloud",
+		"glm-5.1:cloud",
+		"qwen3.5:cloud",
+		"minimax-m2.7:cloud",
+		"gemma4",
+		"qwen3.5",
+	}
+
+	got := modelRecommendationNames(defaultModelRecommendationsForGOOS("linux"))
+	if !slices.Equal(got, want) {
+		t.Fatalf("linux recommendations = %v, want %v", got, want)
+	}
+	for _, name := range got {
+		if strings.Contains(name, "-mlx") {
+			t.Fatalf("non-darwin recommendation should not use MLX tag: %q", name)
+		}
+	}
+}
+
 func TestModelRecommendationsCacheRefreshAppliesServerSideChanges(t *testing.T) {
 	setupModelRecommendationsTestEnv(t, "")
 
