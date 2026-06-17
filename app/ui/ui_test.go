@@ -18,7 +18,15 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/updater"
+	ollamaConfig "github.com/ollama/ollama/cmd/config"
 )
+
+func setUITestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("TMPDIR", home)
+	t.Setenv("USERPROFILE", home)
+}
 
 func TestHandlePostApiSettings(t *testing.T) {
 	tests := []struct {
@@ -217,6 +225,197 @@ func TestHandleGetApiCloudSetting(t *testing.T) {
 	}
 	if got["source"] != "config" {
 		t.Fatalf("response source = %v, want config", got["source"])
+	}
+}
+
+func TestHandleGetApiSettingsIncludesFirstRunStatus(t *testing.T) {
+	tmpHome := t.TempDir()
+	setUITestHome(t, tmpHome)
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(tmpHome, "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	server := &Server{
+		Store: testStore,
+	}
+
+	if err := testStore.SetHasCompletedFirstRun(false); err != nil {
+		t.Fatalf("SetHasCompletedFirstRun(false) error = %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/settings", nil)
+	rr := httptest.NewRecorder()
+	if err := server.getSettings(rr, req); err != nil {
+		t.Fatalf("getSettings() error = %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("getSettings() invalid response JSON: %v", err)
+	}
+	if got["hasCompletedFirstRun"] != false {
+		t.Fatalf("hasCompletedFirstRun = %v, want false", got["hasCompletedFirstRun"])
+	}
+
+	if err := ollamaConfig.MarkOnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt); err != nil {
+		t.Fatalf("MarkOnboardingCompleted() error = %v", err)
+	}
+
+	rr = httptest.NewRecorder()
+	if err := server.getSettings(rr, req); err != nil {
+		t.Fatalf("getSettings() after completion error = %v", err)
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("getSettings() after completion invalid response JSON: %v", err)
+	}
+	if got["hasCompletedFirstRun"] != true {
+		t.Fatalf("hasCompletedFirstRun = %v, want true", got["hasCompletedFirstRun"])
+	}
+}
+
+func TestHandleGetApiSettingsMigratesLegacyFirstRunStatus(t *testing.T) {
+	tmpHome := t.TempDir()
+	setUITestHome(t, tmpHome)
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(tmpHome, "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	if err := testStore.SetHasCompletedFirstRun(true); err != nil {
+		t.Fatalf("SetHasCompletedFirstRun(true) error = %v", err)
+	}
+
+	server := &Server{
+		Store: testStore,
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/settings", nil)
+	rr := httptest.NewRecorder()
+	if err := server.getSettings(rr, req); err != nil {
+		t.Fatalf("getSettings() error = %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("getSettings() invalid response JSON: %v", err)
+	}
+	if got["hasCompletedFirstRun"] != true {
+		t.Fatalf("hasCompletedFirstRun = %v, want true", got["hasCompletedFirstRun"])
+	}
+	if !ollamaConfig.OnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt) {
+		t.Fatal("expected legacy first-run status to migrate into onboarding config")
+	}
+}
+
+func TestHandleGetApiSettingsRespectsExplicitOnboardingFalse(t *testing.T) {
+	tmpHome := t.TempDir()
+	setUITestHome(t, tmpHome)
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(tmpHome, "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	if err := testStore.SetHasCompletedFirstRun(true); err != nil {
+		t.Fatalf("SetHasCompletedFirstRun(true) error = %v", err)
+	}
+	if err := ollamaConfig.SetOnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt, false); err != nil {
+		t.Fatalf("SetOnboardingCompleted(false) error = %v", err)
+	}
+
+	server := &Server{
+		Store: testStore,
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/settings", nil)
+	rr := httptest.NewRecorder()
+	if err := server.getSettings(rr, req); err != nil {
+		t.Fatalf("getSettings() error = %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("getSettings() invalid response JSON: %v", err)
+	}
+	if got["hasCompletedFirstRun"] != false {
+		t.Fatalf("hasCompletedFirstRun = %v, want false", got["hasCompletedFirstRun"])
+	}
+	completed, ok, err := ollamaConfig.LookupOnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt)
+	if err != nil {
+		t.Fatalf("LookupOnboardingCompleted() error = %v", err)
+	}
+	if !ok || completed {
+		t.Fatalf("onboarding lookup = %v, %v, want false, true", completed, ok)
+	}
+}
+
+func TestHandleFirstRunSkipMarksCompleted(t *testing.T) {
+	tmpHome := t.TempDir()
+	setUITestHome(t, tmpHome)
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(tmpHome, "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	server := &Server{
+		Store: testStore,
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/first-run/skip", nil)
+	rr := httptest.NewRecorder()
+	if err := server.skipFirstRun(rr, req); err != nil {
+		t.Fatalf("skipFirstRun() error = %v", err)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("skipFirstRun() status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	if !ollamaConfig.OnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt) {
+		t.Fatal("OnboardingCompleted(app terminal prompt) = false, want true")
+	}
+}
+
+func TestHandleFirstRunTerminalMarksCompletedAndOpensTerminal(t *testing.T) {
+	tmpHome := t.TempDir()
+	setUITestHome(t, tmpHome)
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(tmpHome, "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	called := false
+	originalOpenTerminal := openTerminalWithOllama
+	openTerminalWithOllama = func() error {
+		called = true
+		return nil
+	}
+	defer func() {
+		openTerminalWithOllama = originalOpenTerminal
+	}()
+
+	server := &Server{
+		Store: testStore,
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/first-run/terminal", nil)
+	rr := httptest.NewRecorder()
+	if err := server.runOllamaInTerminal(rr, req); err != nil {
+		t.Fatalf("runOllamaInTerminal() error = %v", err)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("runOllamaInTerminal() status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !called {
+		t.Fatal("openTerminalWithOllama was not called")
+	}
+
+	if !ollamaConfig.OnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt) {
+		t.Fatal("OnboardingCompleted(app terminal prompt) = false, want true")
 	}
 }
 

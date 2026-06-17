@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -222,6 +223,123 @@ func TestSaveIntegration_EmptyAppName(t *testing.T) {
 	}
 	if err != nil && !strings.Contains(err.Error(), "app name cannot be empty") {
 		t.Errorf("expected 'app name cannot be empty' error, got: %v", err)
+	}
+}
+
+func TestOnboardingConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	completed, err := GetOnboardingCompleted(OnboardingSectionApp, OnboardingKeyTerminalPrompt)
+	if err != nil {
+		t.Fatalf("GetOnboardingCompleted() error = %v", err)
+	}
+	if completed {
+		t.Fatal("GetOnboardingCompleted() = true, want false for missing item")
+	}
+	if OnboardingCompleted(OnboardingSectionApp, OnboardingKeyTerminalPrompt) {
+		t.Fatal("OnboardingCompleted() = true, want false for missing item")
+	}
+	if completed, ok, err := LookupOnboardingCompleted(OnboardingSectionApp, OnboardingKeyTerminalPrompt); err != nil {
+		t.Fatalf("LookupOnboardingCompleted() error = %v", err)
+	} else if completed || ok {
+		t.Fatalf("LookupOnboardingCompleted() = %v, %v, want false, false", completed, ok)
+	}
+
+	if err := MarkOnboardingCompleted("App", "Terminal_Prompt"); err != nil {
+		t.Fatalf("MarkOnboardingCompleted() error = %v", err)
+	}
+	if !OnboardingCompleted(OnboardingSectionApp, OnboardingKeyTerminalPrompt) {
+		t.Fatal("OnboardingCompleted() = false, want true")
+	}
+	if completed, ok, err := LookupOnboardingCompleted(OnboardingSectionApp, OnboardingKeyTerminalPrompt); err != nil {
+		t.Fatalf("LookupOnboardingCompleted() after mark error = %v", err)
+	} else if !completed || !ok {
+		t.Fatalf("LookupOnboardingCompleted() = %v, %v, want true, true", completed, ok)
+	}
+
+	loaded, err := load()
+	if err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	if !loaded.Onboarding["app"]["terminal_prompt"] {
+		t.Fatalf("stored onboarding = %v, want true", loaded.Onboarding)
+	}
+
+	path, err := configPath()
+	if err != nil {
+		t.Fatalf("configPath() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	onboarding, ok := raw["onboarding"].(map[string]any)
+	if !ok {
+		t.Fatalf("onboarding = %#v, want object", raw["onboarding"])
+	}
+	app, ok := onboarding["app"].(map[string]any)
+	if !ok {
+		t.Fatalf("onboarding.app = %#v, want object", onboarding["app"])
+	}
+	if app["terminal_prompt"] != true {
+		t.Fatalf("onboarding.app.terminal_prompt = %#v, want true", app["terminal_prompt"])
+	}
+}
+
+func TestSetOnboardingCompletedPreservesIntegrations(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if err := SaveIntegration("claude", []string{"llama3.2"}); err != nil {
+		t.Fatalf("SaveIntegration() error = %v", err)
+	}
+	if err := SetOnboardingCompleted("cli", "launcher", true); err != nil {
+		t.Fatalf("SetOnboardingCompleted() error = %v", err)
+	}
+
+	integrationConfig, err := LoadIntegration("claude")
+	if err != nil {
+		t.Fatalf("LoadIntegration() error = %v", err)
+	}
+	if len(integrationConfig.Models) != 1 || integrationConfig.Models[0] != "llama3.2" {
+		t.Fatalf("models = %v, want [llama3.2]", integrationConfig.Models)
+	}
+	if !OnboardingCompleted("cli", "launcher") {
+		t.Fatal("OnboardingCompleted(cli launcher) = false, want true")
+	}
+}
+
+func TestOnboardingConfigEmptyPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if err := MarkOnboardingCompleted(" ", "terminal_prompt"); err == nil {
+		t.Fatal("MarkOnboardingCompleted(empty section) error = nil, want error")
+	}
+	if err := MarkOnboardingCompleted("app", " "); err == nil {
+		t.Fatal("MarkOnboardingCompleted(empty key) error = nil, want error")
+	}
+}
+
+func TestOnboardingConfigMigratesFlatScope(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configPath := filepath.Join(tmpDir, ".ollama", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"integrations":{},"onboarding":{"app_terminal_prompt":true}}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if !OnboardingCompleted(OnboardingSectionApp, OnboardingKeyTerminalPrompt) {
+		t.Fatal("OnboardingCompleted(app terminal_prompt) = false, want true")
 	}
 }
 

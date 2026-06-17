@@ -30,6 +30,7 @@ import (
 	"github.com/ollama/ollama/app/ui"
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
+	ollamaConfig "github.com/ollama/ollama/cmd/config"
 )
 
 var (
@@ -303,17 +304,7 @@ func main() {
 		}
 	}
 
-	hasCompletedFirstRun, err := st.HasCompletedFirstRun()
-	if err != nil {
-		slog.Error("failed to load has completed first run", "error", err)
-	}
-
-	if !hasCompletedFirstRun {
-		err = st.SetHasCompletedFirstRun(true)
-		if err != nil {
-			slog.Error("failed to set has completed first run", "error", err)
-		}
-	}
+	hasCompletedFirstRun := hasCompletedAppTerminalPrompt(st)
 
 	// capture SIGINT and SIGTERM signals and gracefully shutdown the app
 	signals := make(chan os.Signal, 1)
@@ -353,6 +344,33 @@ func main() {
 	slog.Info("shutting down ollama server")
 	cancel()
 	<-done
+}
+
+func hasCompletedAppTerminalPrompt(st *store.Store) bool {
+	completed, ok, err := ollamaConfig.LookupOnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt)
+	if err != nil {
+		slog.Error("failed to load onboarding status", "error", err)
+		return false
+	}
+	if ok {
+		return completed
+	}
+
+	// Bridge the legacy SQLite first-run flag into the shared JSON config so
+	// existing app users do not see onboarding again after this migration.
+	hasCompletedLegacyFirstRun, err := st.HasCompletedFirstRun()
+	if err != nil {
+		slog.Error("failed to load legacy first run status", "error", err)
+		return false
+	}
+	if !hasCompletedLegacyFirstRun {
+		return false
+	}
+
+	if err := ollamaConfig.MarkOnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt); err != nil {
+		slog.Warn("failed to migrate first run status to config", "error", err)
+	}
+	return true
 }
 
 func startHiddenTasks() {
