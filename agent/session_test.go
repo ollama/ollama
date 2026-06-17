@@ -412,7 +412,7 @@ func TestSessionBatchesStreamingPersistence(t *testing.T) {
 	args.Set("value", "hello")
 	responses := make([]api.ChatResponse, 0, 100)
 	var wantContent, wantThinking string
-	for i := 0; i < 99; i++ {
+	for range 99 {
 		wantContent += "x"
 		wantThinking += "t"
 		responses = append(responses, api.ChatResponse{
@@ -602,7 +602,7 @@ func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T)
 
 func TestSessionToolLoopAllowsRoundsUnderDefaultCap(t *testing.T) {
 	responses := make([][]api.ChatResponse, 0, 26)
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		args := api.NewToolCallFunctionArguments()
 		args.Set("value", "hello")
 		responses = append(responses, []api.ChatResponse{{
@@ -721,7 +721,7 @@ func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 
 func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	responses := make([][]api.ChatResponse, 0, defaultMaxToolRounds+1)
-	for i := 0; i < defaultMaxToolRounds+1; i++ {
+	for range defaultMaxToolRounds + 1 {
 		args := api.NewToolCallFunctionArguments()
 		args.Set("value", "hello")
 		responses = append(responses, []api.ChatResponse{{
@@ -758,7 +758,7 @@ func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 
 func TestSessionToolLoopNegativeLimitIsUnlimited(t *testing.T) {
 	responses := make([][]api.ChatResponse, 0, defaultMaxToolRounds+2)
-	for i := 0; i < defaultMaxToolRounds+1; i++ {
+	for range defaultMaxToolRounds + 1 {
 		args := api.NewToolCallFunctionArguments()
 		args.Set("value", "hello")
 		responses = append(responses, []api.ChatResponse{{

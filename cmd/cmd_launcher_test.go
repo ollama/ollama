@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -39,6 +40,112 @@ func unexpectedModelLaunch(t *testing.T) func(*cobra.Command, string) error {
 		t.Fatalf("did not expect chat launch: %s", model)
 		return nil
 	}
+}
+
+func TestRunAgentModelPickerForcesModelSelection(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+	if err := config.SetAgentSignInPromptSeen(true); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotReq launch.RunModelRequest
+	var launched string
+	prefetchedAccount := &launch.AccountState{}
+	accountUpdates := func(context.Context) <-chan *launch.AccountState { return nil }
+	deps := agentModelPickerDeps{
+		resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
+			gotReq = req
+			return "qwen3:8b", nil
+		},
+		runModel: func(cmd *cobra.Command, model string) error {
+			launched = model
+			return nil
+		},
+		accountState: func() *launch.AccountState {
+			return prefetchedAccount
+		},
+		accountStateUpdates: accountUpdates,
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	if err := runAgentModelPickerWithDeps(cmd, deps); err != nil {
+		t.Fatalf("runAgentModelPickerWithDeps error: %v", err)
+	}
+
+	if !gotReq.ForcePicker {
+		t.Fatal("expected root agent flow to force the model picker")
+	}
+	if gotReq.AccountState != prefetchedAccount {
+		t.Fatal("expected prefetched account state to be passed to model picker")
+	}
+	if gotReq.AccountStateProvider == nil || gotReq.AccountStateUpdates == nil {
+		t.Fatal("expected account state callbacks to be passed to model picker")
+	}
+	if launched != "qwen3:8b" {
+		t.Fatalf("launched model = %q, want qwen3:8b", launched)
+	}
+}
+
+func TestMaybeRunAgentOnboarding(t *testing.T) {
+	t.Run("prompts once and saves seen state", func(t *testing.T) {
+		setCmdTestHome(t, t.TempDir())
+		oldPrompt := agentOnboardingPrompt
+		t.Cleanup(func() {
+			agentOnboardingPrompt = oldPrompt
+		})
+
+		var prompts int
+		agentOnboardingPrompt = func() (bool, error) {
+			prompts++
+			return false, nil
+		}
+
+		signIn, err := maybeRunAgentOnboarding()
+		if err != nil {
+			t.Fatalf("maybeRunAgentOnboarding error: %v", err)
+		}
+		if signIn {
+			t.Fatal("signIn = true, want false")
+		}
+		if prompts != 1 {
+			t.Fatalf("prompts = %d, want 1", prompts)
+		}
+		if !config.AgentSignInPromptSeen() {
+			t.Fatal("expected onboarding state to be saved")
+		}
+
+		signIn, err = maybeRunAgentOnboarding()
+		if err != nil {
+			t.Fatalf("second maybeRunAgentOnboarding error: %v", err)
+		}
+		if signIn {
+			t.Fatal("second signIn = true, want false")
+		}
+		if prompts != 1 {
+			t.Fatalf("prompt should not run again, prompts = %d", prompts)
+		}
+	})
+
+	t.Run("cancel does not save seen state", func(t *testing.T) {
+		setCmdTestHome(t, t.TempDir())
+		oldPrompt := agentOnboardingPrompt
+		t.Cleanup(func() {
+			agentOnboardingPrompt = oldPrompt
+		})
+
+		agentOnboardingPrompt = func() (bool, error) {
+			return false, tui.ErrCancelled
+		}
+
+		_, err := maybeRunAgentOnboarding()
+		if !errors.Is(err, launch.ErrCancelled) {
+			t.Fatalf("error = %v, want launch.ErrCancelled", err)
+		}
+		if config.AgentSignInPromptSeen() {
+			t.Fatal("cancel should not save onboarding state")
+		}
+	})
 }
 
 func TestRunInteractiveTUI_RunModelActionsUseResolveRunModel(t *testing.T) {

@@ -1848,7 +1848,12 @@ func prepareRootRunCommand(rootCmd, runCmd *cobra.Command, resume bool) error {
 	return nil
 }
 
-var runHandler = RunHandler
+var (
+	runHandler            = RunHandler
+	rootAgentHandler      = runAgentModelPicker
+	agentOnboardingPrompt = tui.RunAgentSignInOnboarding
+	agentOnboardingSignIn = runAgentOnboardingSignIn
+)
 
 func runRootResume(rootCmd, runCmd *cobra.Command, args []string) error {
 	if err := prepareRootResumeRunCommand(rootCmd, runCmd); err != nil {
@@ -2105,6 +2110,104 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 	return nil
 }
 
+func runAgentModelPicker(cmd *cobra.Command) {
+	if err := ensureServerRunning(cmd.Context()); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
+		return
+	}
+
+	signIn, err := maybeRunAgentOnboarding()
+	if errors.Is(err, launch.ErrCancelled) {
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return
+	}
+	if signIn {
+		if err := agentOnboardingSignIn(cmd.Context()); err != nil && !errors.Is(err, launch.ErrCancelled) {
+			fmt.Fprintf(os.Stderr, "Warning: unable to sign in: %v\n\n", err)
+		}
+	}
+
+	accountPrefetch := launch.StartAccountStatePrefetch(cmd.Context())
+	deps := agentModelPickerDeps{
+		resolveRunModel:     launch.ResolveRunModel,
+		runModel:            launchInteractiveModel,
+		accountState:        accountPrefetch.StateIfReady,
+		accountStateUpdates: accountPrefetch.StateUpdates,
+	}
+	if err := runAgentModelPickerWithDeps(cmd, deps); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	}
+}
+
+func maybeRunAgentOnboarding() (bool, error) {
+	if envconfig.NoCloud() || config.AgentSignInPromptSeen() {
+		return false, nil
+	}
+
+	signIn, err := agentOnboardingPrompt()
+	if errors.Is(err, tui.ErrCancelled) {
+		return false, launch.ErrCancelled
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := config.SetAgentSignInPromptSeen(true); err != nil {
+		return false, err
+	}
+	return signIn, nil
+}
+
+func runAgentOnboardingSignIn(ctx context.Context) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	user, err := client.Whoami(ctx)
+	if err == nil && user != nil && user.Name != "" {
+		return nil
+	}
+
+	var authErr api.AuthorizationError
+	if !errors.As(err, &authErr) || authErr.SigninURL == "" {
+		return err
+	}
+
+	_, err = tui.RunSignIn("Ollama", authErr.SigninURL)
+	if errors.Is(err, tui.ErrCancelled) {
+		return launch.ErrCancelled
+	}
+	return err
+}
+
+type agentModelPickerDeps struct {
+	resolveRunModel     func(context.Context, launch.RunModelRequest) (string, error)
+	runModel            func(*cobra.Command, string) error
+	accountState        func() *launch.AccountState
+	accountStateUpdates func(context.Context) <-chan *launch.AccountState
+}
+
+func runAgentModelPickerWithDeps(cmd *cobra.Command, deps agentModelPickerDeps) error {
+	req := launch.RunModelRequest{ForcePicker: true}
+	if deps.accountState != nil {
+		req.AccountState = deps.accountState()
+		req.AccountStateProvider = deps.accountState
+	}
+	req.AccountStateUpdates = deps.accountStateUpdates
+
+	modelName, err := deps.resolveRunModel(cmd.Context(), req)
+	if errors.Is(err, launch.ErrCancelled) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("selecting model: %w", err)
+	}
+	return deps.runModel(cmd, modelName)
+}
+
 // runInteractiveTUI runs the main interactive TUI menu.
 func runInteractiveTUI(cmd *cobra.Command) {
 	// Ensure the server is running before showing the TUI
@@ -2258,7 +2361,7 @@ func NewCLI() *cobra.Command {
 				return runRootModel(cmd, runCmd, modelName, args)
 			}
 
-			runInteractiveTUI(cmd)
+			rootAgentHandler(cmd)
 			return nil
 		},
 	}

@@ -38,7 +38,3 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 	}
 	return cleaned, imgs, nil
 }
-
-func getImageData(filePath string) ([]byte, error) {
-	return filedata.GetData(filePath)
-}

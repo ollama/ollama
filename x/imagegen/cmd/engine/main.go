@@ -164,6 +164,7 @@ func main() {
 	default:
 		// llm path
 		m, err := load(*modelPath)
+		//lint:ignore SA4023 load is intentionally unsupported until model cases are added.
 		if err != nil {
 			log.Fatal(err)
 		}

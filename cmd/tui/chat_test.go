@@ -3,10 +3,8 @@ package tui
 import (
 	"context"
 	"database/sql"
-
 	"regexp"
 	"slices"
-
 	"testing"
 	"time"
 

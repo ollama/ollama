@@ -41,6 +41,7 @@ var chatSlashCommands = []chatSlashCommand{
 	{name: "/clear", description: "clear this chat"},
 	{name: "/tools", description: "show available tools"},
 	{name: "/model", description: "switch models"},
+	{name: "/launch", description: "open launch flow"},
 	{name: "/history", description: "show prompt message history"},
 	{name: "/skills", description: "show or import installed skills"},
 	{name: "/new", description: "start a new chat"},
@@ -115,6 +116,10 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	case input == "/model" || strings.HasPrefix(input, "/model "):
 		filter := strings.TrimSpace(strings.TrimPrefix(input, "/model"))
 		return m.openModelPicker(filter)
+	case input == "/launch":
+		m.launchRequested = true
+		m.quitting = true
+		return *m, tea.Quit
 	case input == "/load" || strings.HasPrefix(input, "/load "):
 		return m.handleLegacyLoadCommand(input)
 	case input == "/think":
@@ -899,6 +904,7 @@ func (m chatModel) helpSummary() string {
 		"- `/copy-all`: copy all model output",
 		"- `/tools`: show available tools",
 		"- `/model`: switch models",
+		"- `/launch`: open launch flow",
 		"- `/think`: set thinking mode",
 		"- `/history`: show prompt message history",
 		"- `/skills`: show or import skills",

@@ -25,10 +25,6 @@ var (
 
 	chatAssistantStyle = lipgloss.NewStyle()
 
-	chatThinkingStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiMuted)).
-				Italic(true)
-
 	chatToolStyle = lipgloss.NewStyle()
 
 	chatToolRunningStyle = lipgloss.NewStyle().
@@ -59,8 +55,6 @@ var (
 	chatFullAccessStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color(chatAnsiRed))
-
-	chatInputStyle = lipgloss.NewStyle()
 
 	chatInputBorderStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color(chatAnsiMuted))

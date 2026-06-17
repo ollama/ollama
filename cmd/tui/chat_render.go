@@ -103,16 +103,6 @@ func (m chatModel) lastExpandableToolEntry() int {
 	return -1
 }
 
-func (m chatModel) expandableToolIndexes() []int {
-	var indexes []int
-	for i := range m.entries {
-		if m.isExpandableTool(i) {
-			indexes = append(indexes, i)
-		}
-	}
-	return indexes
-}
-
 func (m chatModel) isExpandableTool(index int) bool {
 	if index < 0 || index >= len(m.entries) {
 		return false

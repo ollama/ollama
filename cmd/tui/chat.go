@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strings"
 
@@ -23,6 +24,15 @@ const (
 	maxPromptHistory     = 50
 )
 const chatCompactionSummaryPrefix = "Conversation summary:\n"
+
+var chatEmptyPrompts = []string{
+	`read this repo and tell me where to start`,
+	`what changed on this branch?`,
+	`run the tests and summarize failures`,
+	`find the riskiest code path in this folder`,
+	`search the web and compare the latest docs with this implementation`,
+	`summarize this file and suggest edits`,
+}
 
 type ChatModelOption struct {
 	Name        string
@@ -64,10 +74,12 @@ type ChatOptions struct {
 }
 
 type ChatResult struct {
-	ChatID   string
-	Messages []api.Message
+	ChatID          string
+	Messages        []api.Message
+	LaunchRequested bool
 }
 
+//nolint:containedctx // chatModel is a Bubble Tea session model; the context is the run-scoped cancellation root.
 type chatModel struct {
 	ctx          context.Context
 	opts         ChatOptions
@@ -118,6 +130,7 @@ type chatModel struct {
 	complete             int
 	systemPromptDisabled bool
 	quitting             bool
+	launchRequested      bool
 	quitArmed            bool
 	escArmed             bool
 	err                  error
@@ -180,7 +193,7 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 	if fm.err != nil {
 		return nil, fm.err
 	}
-	return &ChatResult{ChatID: fm.chatID, Messages: fm.messages}, nil
+	return &ChatResult{ChatID: fm.chatID, Messages: fm.messages, LaunchRequested: fm.launchRequested}, nil
 }
 
 func (m chatModel) Init() tea.Cmd {
@@ -614,7 +627,7 @@ func (m chatModel) View() string {
 	transcriptLines := m.visibleTranscriptLines(width, available)
 	if len(transcriptLines) == 0 {
 		if available > 0 {
-			transcriptLines = []string{chatMetaStyle.Render("Start a conversation. Use /help for commands.")}
+			transcriptLines = []string{chatMetaStyle.Render(m.emptyChatHint())}
 		}
 	}
 	for len(transcriptLines) < available {
@@ -624,6 +637,16 @@ func (m chatModel) View() string {
 	lines := append(headerLines, transcriptLines...)
 	lines = append(lines, bottomLines...)
 	return renderFullFrame(strings.Join(lines, "\n"), width, height)
+}
+
+func (m chatModel) emptyChatHint() string {
+	if len(chatEmptyPrompts) == 0 {
+		return "Try asking the agent to inspect files, run tools, or explain a repo."
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(m.chatID))
+	prompt := chatEmptyPrompts[int(h.Sum32())%len(chatEmptyPrompts)]
+	return `Try: "` + prompt + `"`
 }
 
 func (m chatModel) headerLines() []string {
@@ -768,16 +791,6 @@ func (m *chatModel) startRun(input string) (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 	return m.startRunWithMessages(displayInput, []api.Message{message}, "")
-}
-
-func (m *chatModel) startRunWithPrompt(displayInput, userInput, extraSystemPrompt string) (tea.Model, tea.Cmd) {
-	displayInput, message, err := m.userMessageFromInput(displayInput, userInput)
-	if err != nil {
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
-		m.status = "error"
-		return *m, nil
-	}
-	return m.startRunWithMessages(displayInput, []api.Message{message}, extraSystemPrompt)
 }
 
 func (m *chatModel) userMessageFromInput(displayInput, userInput string) (string, api.Message, error) {

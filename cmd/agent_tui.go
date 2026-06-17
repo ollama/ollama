@@ -88,6 +88,7 @@ type agentRunSetup struct {
 func (s *agentRunSetup) close() {
 	if s != nil && s.store != nil {
 		_ = s.store.Close()
+		s.store = nil
 	}
 }
 
@@ -225,7 +226,7 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 
 	opts = setup.opts
 
-	_, err = tui.RunAgentChat(cmd.Context(), tui.ChatOptions{
+	result, err := tui.RunAgentChat(cmd.Context(), tui.ChatOptions{
 		Model:    opts.Model,
 		ChatID:   setup.chatID,
 		Messages: setup.messages,
@@ -266,7 +267,14 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		},
 		NewChat: setup.newChatID,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if result != nil && result.LaunchRequested {
+		setup.close()
+		runInteractiveTUI(cmd)
+	}
+	return nil
 }
 
 func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {

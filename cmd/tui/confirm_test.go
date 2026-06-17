@@ -22,6 +22,15 @@ func TestConfirmModel_View_ContainsPrompt(t *testing.T) {
 	}
 }
 
+func TestConfirmModel_View_PlainPromptDoesNotStylePrompt(t *testing.T) {
+	m := confirmModel{prompt: "Sign in?", yes: true, plain: true}
+	got := m.View()
+	promptBlock := strings.SplitN(got, "\n\n", 2)[0]
+	if strings.Contains(promptBlock, "\x1b[") {
+		t.Fatalf("plain prompt should not include ANSI styling: %q", promptBlock)
+	}
+}
+
 func TestConfirmModel_View_ContainsButtons(t *testing.T) {
 	m := confirmModel{prompt: "Download?", yes: true}
 	got := m.View()

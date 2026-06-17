@@ -3,12 +3,9 @@ package tui
 import (
 	"context"
 	"errors"
-
 	"os"
 	"path/filepath"
-
 	"slices"
-
 	"strings"
 	"testing"
 
@@ -59,6 +56,7 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 		!strings.Contains(fm.entries[0].content, "- `/copy-all`: copy all model output") ||
 		!strings.Contains(fm.entries[0].content, "- `/tools`: show available tools") ||
 		!strings.Contains(fm.entries[0].content, "- `/model`: switch models") ||
+		!strings.Contains(fm.entries[0].content, "- `/launch`: open launch flow") ||
 		!strings.Contains(fm.entries[0].content, "- `/think`: set thinking mode") ||
 		!strings.Contains(fm.entries[0].content, "- `/history`: show prompt message history") ||
 		!strings.Contains(fm.entries[0].content, "- `/verbose`: toggle model metrics") ||
@@ -72,6 +70,26 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 	}
 	if strings.Contains(fm.entries[0].content, "/set think") || strings.Contains(fm.entries[0].content, "/set nothink") {
 		t.Fatalf("legacy think commands should stay hidden from help: %q", fm.entries[0].content)
+	}
+}
+
+func TestChatLaunchCommandRequestsLaunch(t *testing.T) {
+	m := chatModel{input: []rune("/launch")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd == nil {
+		t.Fatal("launch command should quit the chat TUI")
+	}
+
+	fm := updated.(chatModel)
+	if !fm.launchRequested {
+		t.Fatal("launch command should request the launch flow")
+	}
+	if !fm.quitting {
+		t.Fatal("launch command should mark the chat as quitting")
+	}
+	if len(fm.entries) != 0 {
+		t.Fatalf("launch command should not add chat history entries, got %d", len(fm.entries))
 	}
 }
 
@@ -326,7 +344,7 @@ func TestChatSlashCommandSuggestionsScroll(t *testing.T) {
 		t.Fatalf("test setup needs more than %d slash completions, got %d", maxSlashCompletions, got)
 	}
 
-	for i := 0; i < 8; i++ {
+	for range 9 {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = updated.(chatModel)
 	}
@@ -463,7 +481,7 @@ func TestChatThinkPickerSelectsMode(t *testing.T) {
 	updated, _ := m.openThinkPicker()
 	m = updated.(chatModel)
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = updated.(chatModel)
 	}

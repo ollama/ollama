@@ -27,8 +27,10 @@ type chatCurrentModelStore interface {
 	SetChatModel(context.Context, string, string) error
 }
 
-type chatResumePicker = chatPicker[chatstore.ChatSummary]
-type chatModelPicker = chatPicker[ChatModelOption]
+type (
+	chatResumePicker = chatPicker[chatstore.ChatSummary]
+	chatModelPicker  = chatPicker[ChatModelOption]
+)
 
 type chatPicker[T any] struct {
 	items  []T

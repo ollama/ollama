@@ -25,6 +25,7 @@ type confirmModel struct {
 	confirmed bool
 	cancelled bool
 	width     int
+	plain     bool
 }
 
 type ConfirmOptions = launch.ConfirmOptions
@@ -83,7 +84,11 @@ func (m confirmModel) View() string {
 		noBtn = confirmActiveStyle.Render(" " + noLabel + " ")
 	}
 
-	s := selectorTitleStyle.Render(m.prompt) + "\n\n"
+	prompt := m.prompt
+	if !m.plain {
+		prompt = selectorTitleStyle.Render(prompt)
+	}
+	s := prompt + "\n\n"
 	s += "  " + yesBtn + "  " + noBtn + "\n\n"
 	s += selectorHelpStyle.Render("←/→ navigate • enter confirm • esc cancel")
 
@@ -116,6 +121,7 @@ func RunConfirmWithOptions(prompt string, options ConfirmOptions) (bool, error) 
 		yesLabel: yesLabel,
 		noLabel:  noLabel,
 		yes:      true, // default to yes
+		plain:    options.PlainPrompt,
 	}
 
 	p := tea.NewProgram(m)

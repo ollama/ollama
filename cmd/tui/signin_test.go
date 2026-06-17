@@ -18,6 +18,14 @@ func TestRenderSignIn_ContainsModelName(t *testing.T) {
 	}
 }
 
+func TestRenderSignIn_FirstLineIsPlain(t *testing.T) {
+	got := renderSignIn("glm-4.7:cloud", "https://example.com/signin", 0, 80)
+	firstLine := strings.SplitN(got, "\n", 2)[0]
+	if strings.Contains(firstLine, "\x1b[") {
+		t.Fatalf("sign-in heading should not include ANSI styling: %q", firstLine)
+	}
+}
+
 func TestRenderSignIn_ContainsURL(t *testing.T) {
 	url := "https://ollama.com/connect?key=abc123"
 	got := renderSignIn("test:cloud", url, 0, 120)

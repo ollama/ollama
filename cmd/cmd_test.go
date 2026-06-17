@@ -533,6 +533,29 @@ func TestRootModelRunsRunHandler(t *testing.T) {
 	}
 }
 
+func TestRootDefaultRunsAgentModelPicker(t *testing.T) {
+	oldRootAgentHandler := rootAgentHandler
+	t.Cleanup(func() {
+		rootAgentHandler = oldRootAgentHandler
+	})
+
+	var called bool
+	rootAgentHandler = func(cmd *cobra.Command) {
+		called = true
+	}
+
+	root := NewCLI()
+	root.SetContext(t.Context())
+	root.SetArgs(nil)
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !called {
+		t.Fatal("root command should open the agent model picker by default")
+	}
+}
+
 func TestAutoApproveToolsFromFlags(t *testing.T) {
 	t.Run("yolo", func(t *testing.T) {
 		cmd := &cobra.Command{}

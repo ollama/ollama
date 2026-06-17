@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-
 	"strings"
 	"testing"
 	"time"

@@ -46,6 +46,22 @@ func TestChatAssistantEntryUsesBullet(t *testing.T) {
 	}
 }
 
+func TestChatViewRendersEmptyPromptHint(t *testing.T) {
+	m := chatModel{
+		chatID: "chat-a",
+		width:  80,
+		height: 12,
+	}
+
+	view := stripANSI(m.View())
+	if !strings.Contains(view, `Try: "`) {
+		t.Fatalf("empty chat view missing prompt hint: %q", view)
+	}
+	if strings.Contains(view, "Start a conversation. Use /help for commands.") {
+		t.Fatalf("empty chat view should use rotating prompt hint: %q", view)
+	}
+}
+
 func TestChatUserEntryHasNoLabel(t *testing.T) {
 	m := chatModel{entries: []chatEntry{{role: "user", content: "hello"}}}
 
@@ -366,7 +382,7 @@ func TestChatScrollsTranscript(t *testing.T) {
 		width:  80,
 		height: 10,
 	}
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		m.entries = append(m.entries, chatEntry{role: "user", content: "line"})
 	}
 
@@ -414,7 +430,7 @@ func TestChatMouseWheelScrollsTranscriptWhileRunning(t *testing.T) {
 		height:  10,
 		running: true,
 	}
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		m.entries = append(m.entries, chatEntry{role: "user", content: "line"})
 	}
 	if m.maxScroll() == 0 {
@@ -469,8 +485,7 @@ func TestChatMouseDragSelectsAndCopiesTranscriptText(t *testing.T) {
 		t.Fatal("mouse release should return clipboard command")
 	}
 	if msg := cmd(); msg != nil {
-		updated, _ = m.Update(msg)
-		m = updated.(chatModel)
+		_, _ = m.Update(msg)
 	}
 	if copied != "alpha" {
 		t.Fatalf("copied = %q, want alpha", copied)
@@ -493,7 +508,7 @@ func TestChatMouseDragSelectionUsesScrolledTranscriptCoordinates(t *testing.T) {
 		width:  80,
 		height: 8,
 	}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		m.entries = append(m.entries, chatEntry{role: "user", content: fmt.Sprintf("line-%02d", i)})
 	}
 	m.scroll = m.maxScroll()
@@ -507,13 +522,12 @@ func TestChatMouseDragSelectionUsesScrolledTranscriptCoordinates(t *testing.T) {
 		t.Fatalf("selected text = %q, want line-00", got)
 	}
 	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 9, Y: top})
-	m = updated.(chatModel)
+	fm := updated.(chatModel)
 	if cmd == nil {
 		t.Fatal("mouse release should return clipboard command")
 	}
 	if msg := cmd(); msg != nil {
-		updated, _ = m.Update(msg)
-		m = updated.(chatModel)
+		_, _ = fm.Update(msg)
 	}
 	if copied != "line-00" {
 		t.Fatalf("copied = %q, want line-00", copied)
@@ -528,7 +542,7 @@ func TestChatArrowKeysNavigatePromptHistoryWhenTranscriptScrollable(t *testing.T
 		height:        10,
 		running:       true,
 	}
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		m.entries = append(m.entries, chatEntry{role: "user", content: "line"})
 	}
 	if m.maxScroll() == 0 {

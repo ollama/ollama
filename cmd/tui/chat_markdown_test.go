@@ -28,7 +28,7 @@ func TestMarkdownRendererCacheIsBounded(t *testing.T) {
 		chatMarkdownRenderers = previous
 	}()
 
-	for i := 0; i < maxMarkdownRendererCacheEntries+4; i++ {
+	for i := range maxMarkdownRendererCacheEntries + 4 {
 		if _, err := markdownRendererForWidth(40 + i); err != nil {
 			t.Fatal(err)
 		}

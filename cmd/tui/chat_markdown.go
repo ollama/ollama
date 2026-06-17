@@ -16,9 +16,11 @@ import (
 
 var markdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)\s]+)\)`)
 
-var markdownTableSeparatorPattern = regexp.MustCompile(`^:?-{3,}:?$`)
-var markdownHeadingPattern = regexp.MustCompile(`^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$`)
-var markdownHorizontalRulePattern = regexp.MustCompile(`^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$`)
+var (
+	markdownTableSeparatorPattern = regexp.MustCompile(`^:?-{3,}:?$`)
+	markdownHeadingPattern        = regexp.MustCompile(`^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$`)
+	markdownHorizontalRulePattern = regexp.MustCompile(`^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$`)
+)
 
 const maxMarkdownRendererCacheEntries = 8
 
@@ -243,12 +245,8 @@ func parseMarkdownTableRow(line string) ([]string, bool) {
 	if !strings.Contains(trimmed, "|") {
 		return nil, false
 	}
-	if strings.HasPrefix(trimmed, "|") {
-		trimmed = strings.TrimPrefix(trimmed, "|")
-	}
-	if strings.HasSuffix(trimmed, "|") {
-		trimmed = strings.TrimSuffix(trimmed, "|")
-	}
+	trimmed = strings.TrimPrefix(trimmed, "|")
+	trimmed = strings.TrimSuffix(trimmed, "|")
 
 	var cells []string
 	var b strings.Builder
@@ -427,7 +425,7 @@ func markdownTableColumnWidths(rows [][]string, width int) []int {
 
 	maxWidths := make([]int, columns)
 	for _, row := range rows {
-		for col := 0; col < columns; col++ {
+		for col := range columns {
 			cell := ""
 			if col < len(row) {
 				cell = cleanMarkdownTableCell(row[col])
@@ -483,7 +481,7 @@ func renderMarkdownTableRow(row []string, widths []int, header bool) []string {
 	}
 
 	lines := make([]string, 0, height)
-	for lineIndex := 0; lineIndex < height; lineIndex++ {
+	for lineIndex := range height {
 		var b strings.Builder
 		for col := range widths {
 			if col > 0 {

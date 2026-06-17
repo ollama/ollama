@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"errors"
-
 	"slices"
 	"strconv"
 	"strings"
@@ -120,7 +119,7 @@ func TestChatHistoryCommandHandlesEmptyHistory(t *testing.T) {
 
 func TestChatHistoryCommandStartsAtBottom(t *testing.T) {
 	messages := make([]api.Message, 0, 18)
-	for i := 0; i < 18; i++ {
+	for i := range 18 {
 		messages = append(messages, api.Message{Role: "user", Content: "prompt " + strconv.Itoa(i)})
 	}
 	m := chatModel{
@@ -149,7 +148,7 @@ func TestChatHistoryCommandStartsAtBottom(t *testing.T) {
 
 func TestChatHistoryMouseWheelScrollsPopup(t *testing.T) {
 	messages := make([]api.Message, 0, 18)
-	for i := 0; i < 18; i++ {
+	for i := range 18 {
 		messages = append(messages, api.Message{Role: "user", Content: "prompt " + strconv.Itoa(i)})
 	}
 	m := chatModel{

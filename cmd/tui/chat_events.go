@@ -196,6 +196,7 @@ func (m *chatModel) refreshLiveContextEstimate() {
 	m.contextEstimate = true
 }
 
+//nolint:containedctx // event sinks need the session context to unblock sends on cancellation.
 type chatEventSink struct {
 	ctx context.Context
 	ch  chan<- tea.Msg

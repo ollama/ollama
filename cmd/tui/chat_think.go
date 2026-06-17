@@ -148,9 +148,6 @@ func (m chatModel) renderThinkPicker(width int) string {
 	if picker == nil {
 		return ""
 	}
-	if width <= 0 {
-		width = 80
-	}
 
 	var b strings.Builder
 	b.WriteString(chatResumeTitleStyle.Render("Thinking mode"))

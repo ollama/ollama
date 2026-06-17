@@ -140,12 +140,12 @@ func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
 	}
 
 	view := menu.View()
-	for _, want := range []string{"Ollama Agent", "Launch Claude Code", "Launch Hermes Agent", "Launch OpenClaw", "More..."} {
+	for _, want := range []string{"Agent", "Launch Claude Code", "Launch Hermes Agent", "Launch OpenClaw", "More..."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected menu view to contain %q\n%s", want, view)
 		}
 	}
-	if !strings.Contains(view, "read files, run tools, and resume sessions") {
+	if !strings.Contains(view, "Ollama's built-in agent to chat, code, and do work") {
 		t.Fatalf("expected menu view to contain agent description\n%s", view)
 	}
 	if findMenuCursorByIntegration(menu.items, "codex-app") != -1 && !strings.Contains(view, "Launch Codex App") {
