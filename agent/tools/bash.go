@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -121,11 +123,23 @@ func readFinalWorkingDir(path string) string {
 	if workingDir == "" {
 		return ""
 	}
+	workingDir = normalizeBashWorkingDir(workingDir)
 	info, err := os.Stat(workingDir)
 	if err != nil || !info.IsDir() {
 		return ""
 	}
 	return workingDir
+}
+
+func normalizeBashWorkingDir(workingDir string) string {
+	if runtime.GOOS == "windows" && len(workingDir) >= 3 && workingDir[0] == '/' && workingDir[2] == '/' && isASCIIAlpha(workingDir[1]) {
+		workingDir = string(workingDir[1]) + ":" + workingDir[2:]
+	}
+	return filepath.Clean(filepath.FromSlash(workingDir))
+}
+
+func isASCIIAlpha(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 func shellQuote(value string) string {

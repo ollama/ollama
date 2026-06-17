@@ -1055,6 +1055,7 @@ func TestChatSkillSlashCompletionAndTrigger(t *testing.T) {
 func TestChatSkillsImportCommand(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	src := filepath.Join(home, ".claude", "skills", "go-code")
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)

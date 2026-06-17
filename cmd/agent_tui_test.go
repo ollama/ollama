@@ -14,8 +14,18 @@ import (
 	"github.com/ollama/ollama/agent/skills"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/tui"
+	"github.com/ollama/ollama/envconfig"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
+
+func setAgentTUITestCloudEnabled(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("OLLAMA_NO_CLOUD", "")
+	envconfig.ReloadServerConfig()
+}
 
 func TestAgentSystemPromptIncludesModel(t *testing.T) {
 	prompt := agentSystemPromptAt(time.Date(2026, time.June, 12, 9, 30, 0, 0, time.UTC), "llama3.2", nil, false, "")
@@ -102,6 +112,8 @@ func TestAgentToolsRegistryRegistersSkillTool(t *testing.T) {
 }
 
 func TestAgentModelOptionsIncludesCloudRecommendationsAndLocalModels(t *testing.T) {
+	setAgentTUITestCloudEnabled(t)
+
 	var recommendationsCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

@@ -45,6 +45,7 @@ func TestLoadCatalogSkipsInvalidSkills(t *testing.T) {
 func TestImportToDirCopiesCanonicalSkill(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	src := filepath.Join(home, ".claude", "skills", "go-code")
 	writeSkill(t, src, "go-code", "Write idiomatic Go code.")
 	if err := os.WriteFile(filepath.Join(src, "notes.md"), []byte("notes"), 0o644); err != nil {
