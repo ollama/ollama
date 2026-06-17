@@ -2,30 +2,144 @@
 title: OpenCode
 ---
 
-OpenCode is an open-source AI coding assistant that runs in your terminal.
+[OpenCode](https://opencode.ai) is an open-source coding agent that runs in your terminal, reads your project, edits files, and runs commands.
 
-## Install
+Ollama configures OpenCode to use local and cloud models, so you can work with open models from the same coding workflow.
 
-Install the [OpenCode CLI](https://opencode.ai):
+## Get started
 
-```bash
-curl -fsSL https://opencode.ai/install | bash
-```
+Launch OpenCode with Ollama:
 
-<Note>OpenCode requires a larger context window. It is recommended to use a context window of at least 64k tokens. See [Context length](/context-length) for more information.</Note>
-
-## Usage with Ollama
-
-### Quick setup
-
-```bash
+```shell
 ollama launch opencode
 ```
 
-To configure without launching:
+## Capabilities
+
+<div className="capability-list capability-list-full">
+  <div className="capability-list-grid">
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="comment" /></div>
+      <div>
+        <div className="capability-list-heading">Chat</div>
+        <div className="capability-list-copy">Ask questions about a repository or task</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="terminal" /></div>
+      <div>
+        <div className="capability-list-heading">Command line</div>
+        <div className="capability-list-copy">Run commands from your working directory</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="code" /></div>
+      <div>
+        <div className="capability-list-heading">File edits</div>
+        <div className="capability-list-copy">Read and edit files in your project</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="users" /></div>
+      <div>
+        <div className="capability-list-heading">Subagents</div>
+        <div className="capability-list-copy">Split work across tasks</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="file-text" /></div>
+      <div>
+        <div className="capability-list-heading">Web fetch</div>
+        <div className="capability-list-copy">Fetch and summarize web pages</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="image" /></div>
+      <div>
+        <div className="capability-list-heading">Vision</div>
+        <div className="capability-list-copy">Image input and screenshots</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+## Models
+
+Choose a model with enough context for your repository.
+
+<CardGroup cols={2}>
+  <Card title="Cloud models" icon="cloud" href="https://ollama.com/search?c=cloud">
+    Use larger models without downloading them.
+  </Card>
+
+  <Card title="Local models" icon="hard-drive" href="https://ollama.com/search?c=tools">
+    Choose a model and set a 64k+ context window.
+  </Card>
+</CardGroup>
+
+<Note>OpenCode requires a context length of 64k or higher. See [Context length](/context-length) for more information.</Note>
+
+## Manual setup
+
+<p className="manual-step-title">1. Install OpenCode</p>
+
+<CodeGroup>
+
+```shell macOS / Linux
+curl -fsSL https://opencode.ai/install | bash
+```
+
+```powershell Windows
+npm install -g opencode-ai
+```
+
+</CodeGroup>
+
+<p className="manual-step-title">2. Configure Ollama as a provider</p>
+
+Add an Ollama provider to `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "qwen3.5": {
+          "name": "qwen3.5"
+        }
+      }
+    }
+  }
+}
+```
+
+<p className="manual-step-title">Configuration precedence</p>
+
+`ollama launch opencode` starts OpenCode with an inline config for the selected Ollama model. It does not overwrite `~/.config/opencode/opencode.json`; existing OpenCode settings still apply.
+
+Models defined only in `opencode.json` do not appear in the `ollama launch` model picker.
+
+See OpenCode's [config precedence](https://opencode.ai/docs/config/#precedence-order).
+
+<p className="manual-step-title">3. Run OpenCode</p>
+
+```shell
+opencode
+```
+
+To configure OpenCode with Ollama without starting an interactive session:
 
 ```shell
 ollama launch opencode --config
 ```
-
-<Note>`ollama launch opencode` passes its configuration to OpenCode inline via the `OPENCODE_CONFIG_CONTENT` environment variable. OpenCode deep-merges its config sources on startup, so anything you declare in `~/.config/opencode/opencode.json` is still respected and available inside OpenCode. Models declared only in `opencode.json` won't appear in `ollama launch`'s model-selection menu.</Note>
