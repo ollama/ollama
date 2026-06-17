@@ -61,31 +61,37 @@ main() {
         rm -rf "$REPO_DIR"
     fi
     
-    git clone https://github.com/Brice12347/ollama-s390x.git "$REPO_DIR"
+    git clone https://github.com/Brice12347/ollama-s390x.git "$REPO_DIR" || { print_error "Git clone failed"; exit 1; }
     print_success "Repository cloned to $REPO_DIR"
+
+    # Verify clone succeeded
+    if [ ! -f "$REPO_DIR/CMakeLists.txt" ]; then
+        print_error "Repository clone incomplete - CMakeLists.txt not found"
+        exit 1
+    fi
     
-    # # Install dependencies
-    # print_info "Installing dependencies..."
-    # dnf install -y golang cmake ninja-build
-    # print_success "Dependencies installed"
+    # Install dependencies
+    print_info "Installing dependencies..."
+    dnf install -y golang cmake ninja-build
+    print_success "Dependencies installed"
     
     # Change to repo directory using absolute path
-    cd "$REPO_DIR"
+    cd "$REPO_DIR" || { print_error "Failed to change directory to $REPO_DIR"; exit 1; }
     print_info "Changed to $REPO_DIR"
     
-    # # Configure with CMake
-    # print_info "Configuring build with CMake..."
-    # cmake -B build .
-    # print_success "CMake configuration complete"
+    # Configure with CMake
+    print_info "Configuring build with CMake..."
+    cmake -B build .
+    print_success "CMake configuration complete"
     
-    # # Build
-    # print_info "Building ollama (this may take a while)..."
-    # cmake --build build --parallel 8
-    # print_success "Build complete"
+    # Build
+    print_info "Building ollama (this may take a while)..."
+    cmake --build build --parallel 8
+    print_success "Build complete"
     
-    # # Start ollama server
-    # print_info "Starting ollama server..."
-    # ./ollama serve
+    # Start ollama server
+    print_info "Starting ollama server..."
+    ./ollama serve
 }
 
 # Run main function
