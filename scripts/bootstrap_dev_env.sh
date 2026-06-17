@@ -69,19 +69,19 @@ main() {
     cd ollama-s390x
     print_info "Changed to ollama-s390x directory"
     
-    # Configure with CMake
-    print_info "Configuring build with CMake..."
-    cmake -B build .
-    print_success "CMake configuration complete"
+    # # Configure with CMake
+    # print_info "Configuring build with CMake..."
+    # cmake -B build .
+    # print_success "CMake configuration complete"
     
-    # Build
-    print_info "Building ollama (this may take a while)..."
-    cmake --build build --parallel 8
-    print_success "Build complete"
+    # # Build
+    # print_info "Building ollama (this may take a while)..."
+    # cmake --build build --parallel 8
+    # print_success "Build complete"
     
-    # Start ollama server
-    print_info "Starting ollama server..."
-    ./ollama serve
+    # # Start ollama server
+    # print_info "Starting ollama server..."
+    # ./ollama serve
 }
 
 # Run main function
