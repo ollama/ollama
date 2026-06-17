@@ -133,9 +133,13 @@ func readFinalWorkingDir(path string) string {
 
 func normalizeBashWorkingDir(workingDir string) string {
 	if runtime.GOOS == "windows" && len(workingDir) >= 3 && workingDir[0] == '/' && workingDir[2] == '/' && isASCIIAlpha(workingDir[1]) {
-		workingDir = string(workingDir[1]) + ":" + workingDir[2:]
+		workingDir = strings.ToUpper(string(workingDir[1])) + ":" + workingDir[2:]
 	}
-	return filepath.Clean(filepath.FromSlash(workingDir))
+	workingDir = filepath.Clean(filepath.FromSlash(workingDir))
+	if runtime.GOOS == "windows" && len(workingDir) >= 2 && workingDir[1] == ':' && isASCIIAlpha(workingDir[0]) {
+		workingDir = strings.ToUpper(string(workingDir[0])) + workingDir[1:]
+	}
+	return workingDir
 }
 
 func isASCIIAlpha(b byte) bool {

@@ -42,6 +42,8 @@ func NormalizePath(fp string) string {
 
 	if u, err := url.Parse(fp); err == nil && strings.EqualFold(u.Scheme, "file") {
 		return normalizeFileURL(u)
+	} else if normalized, ok := normalizeMalformedFileURL(fp); ok {
+		return normalized
 	}
 
 	return fp
@@ -159,6 +161,26 @@ func normalizeFileURL(u *url.URL) string {
 		return `\\` + u.Host + filepath.FromSlash(path)
 	}
 	return filepath.FromSlash(path)
+}
+
+func normalizeMalformedFileURL(raw string) (string, bool) {
+	const prefix = "file://"
+	if !strings.HasPrefix(strings.ToLower(raw), prefix) {
+		return "", false
+	}
+
+	path := raw[len(prefix):]
+	if unescaped, err := url.PathUnescape(path); err == nil {
+		path = unescaped
+	}
+	path = strings.TrimPrefix(path, "localhost")
+	if len(path) >= 3 && path[0] == '/' && path[2] == ':' && isASCIIAlpha(path[1]) {
+		path = path[1:]
+	}
+	if len(path) >= 2 && path[1] == ':' && isASCIIAlpha(path[0]) {
+		return filepath.Clean(filepath.FromSlash(path)), true
+	}
+	return "", false
 }
 
 func isASCIIAlpha(b byte) bool {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -80,5 +81,16 @@ func TestReadFinalWorkingDirRejectsInvalidPaths(t *testing.T) {
 	}
 	if got := readFinalWorkingDir(cwdFile); got != dir {
 		t.Fatalf("directory cwd = %q, want %q", got, dir)
+	}
+}
+
+func TestNormalizeBashWorkingDirWindowsDriveLetter(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows path normalization")
+	}
+	got := normalizeBashWorkingDir("/c/Users/jdoe/project")
+	want := filepath.Clean(`C:\Users\jdoe\project`)
+	if got != want {
+		t.Fatalf("working dir = %q, want %q", got, want)
 	}
 }
