@@ -46,6 +46,8 @@ func TestConfigFromModelfile(t *testing.T) {
 FROM ./model
 DRAFT ./assistant
 TEMPLATE {{ .Prompt }}
+RENDERER qwen3.5
+PARSER qwen3.5
 REQUIRES 0.20.0
 PARAMETER temperature 0.7
 PARAMETER stop USER:
@@ -70,6 +72,14 @@ PARAMETER stop ASSISTANT:
 
 	if mfConfig.Draft != "./assistant" {
 		t.Fatalf("Draft = %q, want %q", mfConfig.Draft, "./assistant")
+	}
+
+	if mfConfig.Renderer != "qwen3.5" {
+		t.Fatalf("Renderer = %q, want %q", mfConfig.Renderer, "qwen3.5")
+	}
+
+	if mfConfig.Parser != "qwen3.5" {
+		t.Fatalf("Parser = %q, want %q", mfConfig.Parser, "qwen3.5")
 	}
 
 	if mfConfig.Requires != "0.20.0" {
@@ -632,6 +642,85 @@ func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
 	}
 }
 
+func TestNewManifestWriter_StoresModelfileRendererParser(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	opts := CreateOptions{
+		ModelName: "test-renderer-parser",
+		ModelDir:  t.TempDir(),
+		Modelfile: &ModelfileConfig{
+			Parser:   "qwen3.5",
+			Renderer: "qwen3.5",
+			Parameters: map[string]any{
+				"temperature": float32(0.8),
+			},
+		},
+	}
+
+	writer := newManifestWriter(opts, []string{"completion", "tools"}, "", "")
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil); err != nil {
+		t.Fatalf("newManifestWriter() error = %v", err)
+	}
+
+	name := model.ParseName(opts.ModelName)
+	mf, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatalf("ParseNamedManifest() error = %v", err)
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("BlobsPath() error = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	if cfg.Parser != "qwen3.5" {
+		t.Errorf("Parser = %q, want %q", cfg.Parser, "qwen3.5")
+	}
+	if cfg.Renderer != "qwen3.5" {
+		t.Errorf("Renderer = %q, want %q", cfg.Renderer, "qwen3.5")
+	}
+
+	var paramsDigest string
+	for _, layer := range mf.Layers {
+		if layer.MediaType == "application/vnd.ollama.image.params" {
+			paramsDigest = layer.Digest
+			break
+		}
+	}
+	if paramsDigest == "" {
+		t.Fatal("no params layer in manifest")
+	}
+
+	paramsPath, err := manifest.BlobsPath(paramsDigest)
+	if err != nil {
+		t.Fatalf("BlobsPath() error = %v", err)
+	}
+
+	paramsData, err := os.ReadFile(paramsPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var params map[string]any
+	if err := json.Unmarshal(paramsData, &params); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	if params["temperature"] != float64(0.8) {
+		t.Errorf("temperature = %v, want %v", params["temperature"], float64(0.8))
+	}
+}
+
 func TestSupportsThinking(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -718,6 +807,11 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 			name:       "functiongemma tools only",
 			parserName: "functiongemma",
 			want:       []string{"completion", "tools"},
+		},
+		{
+			name:       "qwen3.5 tools and thinking",
+			parserName: "qwen3.5",
+			want:       []string{"completion", "tools", "thinking"},
 		},
 	}
 
