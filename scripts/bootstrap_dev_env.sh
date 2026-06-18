@@ -10,7 +10,6 @@
 #
 # Requirements:
 #   - podman installed
-#   - Root or sudo access for logging directory creation
 #   - Network connectivity for pulling base images
 #
 ################################################################################
@@ -22,8 +21,9 @@ shopt -s nullglob
 # Configuration
 ################################################################################
 
-LOG_FILE="/var/log/ollama-bootstrap/run-$(date +%Y%m%d-%H%M%S).log"
-RESULTS_DIR="/var/log/ollama-bootstrap/results"
+LOG_DIR="$HOME/.ollama-bootstrap/logs"
+RESULTS_DIR="$HOME/.ollama-bootstrap/results"
+LOG_FILE="$LOG_DIR/run-$(date +%Y%m%d-%H%M%S).log"
 CONTAINER_NAME="ollama"
 IMAGE_NAME="ollama:local"
 
