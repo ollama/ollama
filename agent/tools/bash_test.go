@@ -54,6 +54,24 @@ func TestBashBoundsOutputWhileRunning(t *testing.T) {
 	}
 }
 
+func TestBashReportsCanceledCommand(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := NewBash().Execute(ctx, agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+		"command": "sleep 10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Content, "Error: command was canceled") {
+		t.Fatalf("content = %q, want canceled message", result.Content)
+	}
+	if strings.Contains(result.Content, "Exit code: -1") {
+		t.Fatalf("content = %q, should not mask cancellation as exit code", result.Content)
+	}
+}
+
 func TestReadFinalWorkingDirRejectsInvalidPaths(t *testing.T) {
 	dir := t.TempDir()
 	cwdFile := filepath.Join(dir, "cwd")

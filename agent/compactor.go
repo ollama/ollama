@@ -424,7 +424,11 @@ func fitCompactionMessagesToBudget(previousSummary string, messages []api.Messag
 		if nextRunes >= currentRunes {
 			nextRunes = currentRunes / 2
 		}
-		fitted[idx].Content = truncateToolResultContentTo(fitted[idx].Content, nextRunes)
+		nextContent := truncateToolResultContentTo(fitted[idx].Content, nextRunes)
+		if nextContent == fitted[idx].Content && len([]rune(nextContent)) > max(0, nextRunes) {
+			nextContent = forceTruncateToolResultContentTo(fitted[idx].Content, nextRunes)
+		}
+		fitted[idx].Content = nextContent
 	}
 	return fitted
 }

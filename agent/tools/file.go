@@ -71,18 +71,11 @@ func (r *Read) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		return agent.ToolResult{}, fmt.Errorf("path parameter is required")
 	}
 
-	resolved, err := resolvePath(toolCtx.WorkingDir, path)
+	file, info, err := openRegularFile(toolCtx.WorkingDir, path)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return agent.ToolResult{}, err
-	}
-	if info.IsDir() {
-		return agent.ToolResult{}, fmt.Errorf("%s is a directory", path)
-	}
+	defer file.Close()
 
 	selection, err := readSelectionFromArgs(args)
 	if err != nil {
@@ -100,10 +93,10 @@ func (r *Read) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 
 	var content string
 	if selection.enabled {
-		content, err = readLineSelection(resolved, selection)
+		content, err = readLineSelection(file, selection)
 	} else {
 		var contentBytes []byte
-		contentBytes, err = os.ReadFile(resolved)
+		contentBytes, err = io.ReadAll(file)
 		content = string(contentBytes)
 	}
 	if err != nil {
@@ -177,29 +170,26 @@ func (e *Edit) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 
 	replaceAll, _ := args["replace_all"].(bool)
 
-	resolved, err := resolvePath(toolCtx.WorkingDir, path)
+	file, info, err := openRegularFile(toolCtx.WorkingDir, path)
 	if err != nil {
 		return agent.ToolResult{}, err
-	}
-
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return agent.ToolResult{}, err
-	}
-	if info.IsDir() {
-		return agent.ToolResult{}, fmt.Errorf("%s is a directory", path)
 	}
 	if info.Size() > maxReadBytes {
+		file.Close()
 		return agent.ToolResult{}, fmt.Errorf("%s is too large to edit (%d bytes)", path, info.Size())
 	}
 
 	select {
 	case <-ctx.Done():
+		file.Close()
 		return agent.ToolResult{}, ctx.Err()
 	default:
 	}
 
-	contentBytes, err := os.ReadFile(resolved)
+	contentBytes, err := io.ReadAll(file)
+	if closeErr := file.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -222,14 +212,121 @@ func (e *Edit) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		return agent.ToolResult{}, fmt.Errorf("edited content is too large (%d bytes)", len(updated))
 	}
 
-	if err := os.WriteFile(resolved, []byte(updated), info.Mode().Perm()); err != nil {
+	if err := writeFileAtomic(toolCtx.WorkingDir, path, []byte(updated), info.Mode().Perm()); err != nil {
 		return agent.ToolResult{}, err
 	}
 
 	return agent.ToolResult{Content: fmt.Sprintf("Updated %s (%d replacement%s).", path, matches, plural(matches))}, nil
 }
 
-func resolvePath(workingDir, path string) (string, error) {
+func cleanRelativePath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("path parameter is required")
+	}
+	if filepath.IsAbs(path) {
+		return "", fmt.Errorf("absolute paths are not allowed")
+	}
+	cleaned := filepath.Clean(path)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path escapes working directory")
+	}
+	return cleaned, nil
+}
+
+func openRegularFile(workingDir, path string) (*os.File, os.FileInfo, error) {
+	rel, err := cleanRelativePath(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	root, err := openWorkingRoot(workingDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer root.Close()
+
+	file, err := root.Open(rel)
+	if err != nil {
+		return nil, nil, rootPathError(err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, nil, err
+	}
+	if info.IsDir() {
+		file.Close()
+		return nil, nil, fmt.Errorf("%s is a directory", path)
+	}
+	return file, info, nil
+}
+
+func writeFileAtomic(workingDir, path string, data []byte, perm os.FileMode) error {
+	rel, err := cleanRelativePath(path)
+	if err != nil {
+		return err
+	}
+	root, err := openWorkingRoot(workingDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	parent, name := filepath.Split(rel)
+	tmpBase := fmt.Sprintf(".%s.ollama-tmp-%d", name, os.Getpid())
+	for i := 0; ; i++ {
+		candidateName := tmpBase
+		if i > 0 {
+			candidateName = fmt.Sprintf("%s-%d", tmpBase, i)
+		}
+		candidate := filepath.Join(parent, candidateName)
+		file, err := root.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return rootPathError(err)
+		}
+		writeErr := writeAllAndSync(file, data)
+		closeErr := file.Close()
+		if writeErr != nil || closeErr != nil {
+			_ = root.Remove(candidate)
+			if writeErr != nil {
+				return writeErr
+			}
+			return closeErr
+		}
+		if err := root.Rename(candidate, rel); err != nil {
+			_ = root.Remove(candidate)
+			return rootPathError(err)
+		}
+		return nil
+	}
+}
+
+func rootPathError(err error) error {
+	if err != nil && strings.Contains(err.Error(), "path escapes") {
+		return fmt.Errorf("path escapes working directory")
+	}
+	return err
+}
+
+func openWorkingRoot(workingDir string) (*os.Root, error) {
+	base, err := workingDirAbs(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	return os.OpenRoot(base)
+}
+
+func writeAllAndSync(file *os.File, data []byte) error {
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+func workingDirAbs(workingDir string) (string, error) {
 	base := workingDir
 	if base == "" {
 		var err error
@@ -238,29 +335,7 @@ func resolvePath(workingDir, path string) (string, error) {
 			return "", err
 		}
 	}
-
-	if filepath.IsAbs(path) {
-		return "", fmt.Errorf("absolute paths are not allowed")
-	}
-
-	baseAbs, err := canonicalPath(base)
-	if err != nil {
-		return "", err
-	}
-	resolved := filepath.Clean(filepath.Join(baseAbs, path))
-	resolvedForCheck := resolved
-	if canonical, err := canonicalPath(resolved); err == nil {
-		resolvedForCheck = canonical
-	}
-	rel, err := filepath.Rel(baseAbs, resolvedForCheck)
-	if err != nil {
-		return "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("path escapes working directory")
-	}
-
-	return resolved, nil
+	return canonicalPath(base)
 }
 
 func canonicalPath(path string) (string, error) {
@@ -346,7 +421,7 @@ func readSelectionFromArgs(args map[string]any) (readSelection, error) {
 }
 
 func readLineCountArg(args map[string]any) (int, bool, error) {
-	for _, key := range []string{"line_count", "num_lines", "lines"} {
+	for _, key := range []string{"line_count", "num_lines"} {
 		value, ok, err := intReadArg(args, key)
 		if err != nil || ok {
 			if ok && value < 1 {
@@ -404,13 +479,7 @@ func parseLineRange(value string) (int, int, error) {
 	return start, end, nil
 }
 
-func readLineSelection(path string, selection readSelection) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
+func readLineSelection(file *os.File, selection readSelection) (string, error) {
 	reader := bufio.NewReader(file)
 	var b strings.Builder
 	for lineNo := 1; ; lineNo++ {

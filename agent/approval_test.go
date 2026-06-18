@@ -185,6 +185,60 @@ func TestBashApprovalClassifiesDynamicShellEvasions(t *testing.T) {
 	}
 }
 
+func TestBashApprovalClassifiesDestructiveGitWithGlobalOptions(t *testing.T) {
+	tests := []struct {
+		name   string
+		cmd    string
+		reason string
+	}{
+		{name: "git reset hard after cwd", cmd: "git -C /tmp reset --hard", reason: "runs destructive git reset"},
+		{name: "git reset hard after config", cmd: "git -c core.autocrlf=false reset --hard", reason: "runs destructive git reset"},
+		{name: "git clean after work tree", cmd: "git --work-tree=/tmp clean -fdx", reason: "runs destructive git clean"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evaluation := DefaultApprovalPolicy{}.EvaluateApproval(context.Background(), ApprovalRequest{
+				ToolName: "bash",
+				Args:     map[string]any{"command": tt.cmd},
+			})
+			if evaluation.Risk != ApprovalRiskHigh {
+				t.Fatalf("risk = %q, want high", evaluation.Risk)
+			}
+			if reasons := strings.Join(evaluation.Reasons, " "); !strings.Contains(reasons, tt.reason) {
+				t.Fatalf("reasons = %#v, want %q", evaluation.Reasons, tt.reason)
+			}
+		})
+	}
+}
+
+func TestBashApprovalClassifiesFindMutations(t *testing.T) {
+	tests := []struct {
+		name   string
+		cmd    string
+		reason string
+	}{
+		{name: "delete", cmd: "find . -name '*.tmp' -delete", reason: "deletes files via find"},
+		{name: "exec", cmd: `find . -name '*.tmp' -exec rm -rf {} \;`, reason: "executes commands via find"},
+		{name: "exec nested destructive command", cmd: `find . -name '*.tmp' -exec rm -rf {} \;`, reason: "removes files destructively"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evaluation := DefaultApprovalPolicy{}.EvaluateApproval(context.Background(), ApprovalRequest{
+				ToolName: "bash",
+				Args:     map[string]any{"command": tt.cmd},
+			})
+			if evaluation.Risk != ApprovalRiskHigh {
+				t.Fatalf("risk = %q, want high", evaluation.Risk)
+			}
+			if reasons := strings.Join(evaluation.Reasons, " "); !strings.Contains(reasons, tt.reason) {
+				t.Fatalf("reasons = %#v, want %q", evaluation.Reasons, tt.reason)
+			}
+		})
+	}
+}
+
 func TestWebApprovalAllowsWithoutPrompt(t *testing.T) {
 	tests := []struct {
 		name    string

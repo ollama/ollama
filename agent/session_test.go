@@ -99,6 +99,10 @@ type cwdTestTool struct{}
 
 type largeTool struct{}
 
+type cancelingTool struct {
+	cancel context.CancelFunc
+}
+
 type cancelAfterToolCallClient struct {
 	cancel context.CancelFunc
 }
@@ -227,6 +231,30 @@ func (largeTool) Schema() api.ToolFunction {
 
 func (largeTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
 	return ToolResult{Content: strings.Repeat("x", maxToolResultRunes+100)}, nil
+}
+
+func (t cancelingTool) Name() string {
+	return "cancel_tool"
+}
+
+func (t cancelingTool) Description() string {
+	return "cancels while running"
+}
+
+func (t cancelingTool) Schema() api.ToolFunction {
+	return api.ToolFunction{
+		Name:        t.Name(),
+		Description: t.Description(),
+		Parameters: api.ToolFunctionParameters{
+			Type: "object",
+		},
+	}
+}
+
+func (t cancelingTool) Execute(ctx context.Context, _ ToolContext, _ map[string]any) (ToolResult, error) {
+	t.cancel()
+	<-ctx.Done()
+	return ToolResult{}, ctx.Err()
 }
 
 func (t approvalTestTool) Name() string {
@@ -634,6 +662,48 @@ func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T)
 	}
 	if !strings.Contains(result.Messages[2].Content, "run was canceled") {
 		t.Fatalf("skipped content = %q", result.Messages[2].Content)
+	}
+}
+
+func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &contextAwareStore{}
+	registry := NewRegistry()
+	registry.Register(cancelingTool{cancel: cancel})
+	client := &fakeClient{responses: [][]api.ChatResponse{{
+		{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+			ID: "call-1",
+			Function: api.ToolCallFunction{
+				Name: "cancel_tool",
+			},
+		}}}},
+	}}}
+	session := &Session{
+		Client: client,
+		Store:  store,
+		Tools:  registry,
+	}
+
+	result, err := session.Run(ctx, RunOptions{
+		ChatID:      "chat-1",
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "cancel during tool"}},
+		UseTools:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) != 3 {
+		t.Fatalf("messages = %#v", result.Messages)
+	}
+	if len(store.messages) != len(result.Messages) {
+		t.Fatalf("stored messages = %#v, want %d messages", store.messages, len(result.Messages))
+	}
+	if result.Messages[2].Role != "tool" || result.Messages[2].ToolCallID != "call-1" {
+		t.Fatalf("tool message = %#v", result.Messages[2])
+	}
+	if !strings.Contains(result.Messages[2].Content, "context canceled") {
+		t.Fatalf("tool content = %q", result.Messages[2].Content)
 	}
 }
 

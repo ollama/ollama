@@ -107,7 +107,6 @@ func (s *Store) init(ctx context.Context) error {
 			content TEXT NOT NULL DEFAULT '',
 			thinking TEXT NOT NULL DEFAULT '',
 			images TEXT NOT NULL DEFAULT '[]',
-			stream BOOLEAN NOT NULL DEFAULT 0,
 			model_name TEXT,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -779,9 +778,9 @@ func insertMessage(ctx context.Context, tx *sql.Tx, chatID string, msg api.Messa
 		return 0, err
 	}
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO messages (chat_id, role, content, thinking, images, stream, tool_name, tool_call_id, model_name, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, chatID, msg.Role, msg.Content, msg.Thinking, imagesJSON, false, msg.ToolName, msg.ToolCallID, modelName, now, now)
+		INSERT INTO messages (chat_id, role, content, thinking, images, tool_name, tool_call_id, model_name, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, chatID, msg.Role, msg.Content, msg.Thinking, imagesJSON, msg.ToolName, msg.ToolCallID, modelName, now, now)
 	if err != nil {
 		return 0, fmt.Errorf("insert message: %w", err)
 	}

@@ -169,7 +169,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 
 		if canceled {
 			if len(pendingToolCalls) > 0 {
-				skipped, skipErr := s.skipToolCalls(context.WithoutCancel(ctx), runID, opts, pendingToolCalls, "Tool execution skipped because the run was canceled.")
+				skipped, skipErr := s.skipToolCalls(ctx, runID, opts, pendingToolCalls, "Tool execution skipped because the run was canceled.")
 				if skipErr != nil {
 					emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Error: skipErr.Error()})
 					return nil, skipErr
@@ -354,14 +354,23 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 
 	toolMessages := make([]api.Message, 0, len(calls))
 	projectedMessages := append([]api.Message(nil), messages...)
+	persistCtx := context.WithoutCancel(ctx)
 	for i, call := range calls {
 		toolName := call.Function.Name
 		args := call.Function.Arguments.ToMap()
+		if ctx.Err() != nil {
+			skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls[i:], "Tool execution skipped because the run was canceled.")
+			if skipErr != nil {
+				return nil, false, skipErr
+			}
+			toolMessages = append(toolMessages, skipped...)
+			return toolMessages, true, nil
+		}
 		tool, ok := s.Tools.Get(toolName)
 		if !ok {
 			content := fmt.Sprintf("Error: unknown tool: %s", toolName)
 			msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
-			if err := s.appendToolMessage(ctx, opts.ChatID, msg); err != nil {
+			if err := s.appendToolMessage(persistCtx, opts.ChatID, msg); err != nil {
 				return nil, false, err
 			}
 			toolMessages = append(toolMessages, msg)
@@ -382,6 +391,14 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		if toolNeedsApproval(ctx, approval, tool, approvalRequest) {
 			result, err := approval.Approve(ctx, approvalRequest)
 			if err != nil {
+				if ctx.Err() != nil {
+					skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls[i:], "Tool execution skipped because the run was canceled.")
+					if skipErr != nil {
+						return nil, false, skipErr
+					}
+					toolMessages = append(toolMessages, skipped...)
+					return toolMessages, true, nil
+				}
 				return nil, false, err
 			}
 			if result.Decision == ApprovalDeny {
@@ -390,7 +407,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 					content = "Tool execution denied."
 				}
 				msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
-				if err := s.appendToolMessage(ctx, opts.ChatID, msg); err != nil {
+				if err := s.appendToolMessage(persistCtx, opts.ChatID, msg); err != nil {
 					return nil, false, err
 				}
 				toolMessages = append(toolMessages, msg)
@@ -404,7 +421,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 					skippedArgs := skipped.Function.Arguments.ToMap()
 					skippedContent := "Tool execution skipped because a previous tool call in this assistant message was denied."
 					skippedMsg := s.toolMessageForContext(skippedToolName, skipped.ID, skippedContent, opts, projectedMessages)
-					if err := s.appendToolMessage(ctx, opts.ChatID, skippedMsg); err != nil {
+					if err := s.appendToolMessage(persistCtx, opts.ChatID, skippedMsg); err != nil {
 						return nil, false, err
 					}
 					toolMessages = append(toolMessages, skippedMsg)
@@ -427,14 +444,22 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		if err != nil {
 			content := fmt.Sprintf("Error: %v", err)
 			msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
-			if appendErr := s.appendToolMessage(ctx, opts.ChatID, msg); appendErr != nil {
+			if appendErr := s.appendToolMessage(persistCtx, opts.ChatID, msg); appendErr != nil {
 				return nil, false, appendErr
 			}
 			toolMessages = append(toolMessages, msg)
 			projectedMessages = append(projectedMessages, msg)
 			content = msg.Content
-			if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: err.Error(), FinishedAt: time.Now()}); emitErr != nil {
+			if emitErr := emitIgnoringCanceled(ctx, s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: err.Error(), FinishedAt: time.Now()}); emitErr != nil {
 				return nil, false, emitErr
+			}
+			if ctx.Err() != nil {
+				skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls[i+1:], "Tool execution skipped because the run was canceled.")
+				if skipErr != nil {
+					return nil, false, skipErr
+				}
+				toolMessages = append(toolMessages, skipped...)
+				return toolMessages, true, nil
 			}
 			continue
 		}
@@ -443,15 +468,23 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		content := result.Content
 
 		msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
-		if err := s.appendToolMessage(ctx, opts.ChatID, msg); err != nil {
+		if err := s.appendToolMessage(persistCtx, opts.ChatID, msg); err != nil {
 			return nil, false, err
 		}
 		toolMessages = append(toolMessages, msg)
 		projectedMessages = append(projectedMessages, msg)
 		content = msg.Content
 
-		if err := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, WorkingDir: s.WorkingDir, Args: args, Content: content, FinishedAt: time.Now()}); err != nil {
+		if err := emitIgnoringCanceled(ctx, s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, WorkingDir: s.WorkingDir, Args: args, Content: content, FinishedAt: time.Now()}); err != nil {
 			return nil, false, err
+		}
+		if ctx.Err() != nil {
+			skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls[i+1:], "Tool execution skipped because the run was canceled.")
+			if skipErr != nil {
+				return nil, false, skipErr
+			}
+			toolMessages = append(toolMessages, skipped...)
+			return toolMessages, true, nil
 		}
 	}
 	return toolMessages, false, nil
@@ -459,15 +492,19 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 
 func (s *Session) skipToolCalls(ctx context.Context, runID string, opts RunOptions, calls []api.ToolCall, content string) ([]api.Message, error) {
 	toolMessages := make([]api.Message, 0, len(calls))
+	appendCtx := ctx
+	if ctx != nil && ctx.Err() != nil {
+		appendCtx = context.WithoutCancel(ctx)
+	}
 	for _, call := range calls {
 		toolName := call.Function.Name
 		args := call.Function.Arguments.ToMap()
 		msg := toolMessage(toolName, call.ID, content)
-		if err := s.appendToolMessage(ctx, opts.ChatID, msg); err != nil {
+		if err := s.appendToolMessage(appendCtx, opts.ChatID, msg); err != nil {
 			return nil, err
 		}
 		toolMessages = append(toolMessages, msg)
-		if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content, FinishedAt: time.Now()}); emitErr != nil {
+		if emitErr := emitIgnoringCanceled(ctx, s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content, FinishedAt: time.Now()}); emitErr != nil {
 			return nil, emitErr
 		}
 	}
@@ -744,6 +781,14 @@ func truncateToolResultContentTo(content string, maxRunes int) string {
 	if strings.Contains(content, "[tool output truncated: omitted ") {
 		return content
 	}
+	return truncateToolResultContentToLimit(content, maxRunes)
+}
+
+func forceTruncateToolResultContentTo(content string, maxRunes int) string {
+	return truncateToolResultContentToLimit(content, maxRunes)
+}
+
+func truncateToolResultContentToLimit(content string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return fmt.Sprintf("[tool output truncated: omitted %d characters]", len([]rune(content)))
 	}

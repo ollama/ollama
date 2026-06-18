@@ -377,6 +377,49 @@ func TestChatViewPadsToTerminalHeight(t *testing.T) {
 	}
 }
 
+func TestChatInputFloatsUntilTranscriptOverflows(t *testing.T) {
+	short := chatModel{
+		input:  []rune("next"),
+		width:  60,
+		height: 14,
+		entries: []chatEntry{
+			{role: "assistant", content: "hello"},
+		},
+	}
+	shortInputLine := renderedInputLine(short.View())
+	if shortInputLine < 0 {
+		t.Fatalf("short view missing input:\n%s", stripANSI(short.View()))
+	}
+
+	long := chatModel{
+		input:  []rune("next"),
+		width:  short.width,
+		height: short.height,
+	}
+	for i := range 20 {
+		long.entries = append(long.entries, chatEntry{role: "assistant", content: fmt.Sprintf("line %02d", i)})
+	}
+	longInputLine := renderedInputLine(long.View())
+	if longInputLine < 0 {
+		t.Fatalf("long view missing input:\n%s", stripANSI(long.View()))
+	}
+	if shortInputLine >= longInputLine {
+		t.Fatalf("input line did not move down as transcript grew: short=%d long=%d\nshort:\n%s\nlong:\n%s", shortInputLine, longInputLine, stripANSI(short.View()), stripANSI(long.View()))
+	}
+	if longInputLine < long.height-4 {
+		t.Fatalf("overflowing transcript should pin input near bottom, input line=%d height=%d\n%s", longInputLine, long.height, stripANSI(long.View()))
+	}
+}
+
+func renderedInputLine(view string) int {
+	for i, line := range strings.Split(stripANSI(view), "\n") {
+		if strings.Contains(line, "> next") {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestChatScrollsTranscript(t *testing.T) {
 	m := chatModel{
 		width:  80,

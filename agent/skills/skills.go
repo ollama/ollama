@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	SkillFile = "SKILL.md"
+	SkillFile         = "SKILL.md"
+	maxSkillFileBytes = 1 << 20
 )
 
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
@@ -92,7 +93,7 @@ func Load(dir string) (*Catalog, error) {
 }
 
 func ReadMetadata(path string) (Skill, error) {
-	data, err := os.ReadFile(path)
+	data, err := readSkillFile(path)
 	if err != nil {
 		return Skill{}, err
 	}
@@ -170,11 +171,28 @@ func (s Skill) Read() (string, error) {
 	if s.File == "" {
 		return "", fmt.Errorf("skill %q has no %s path", s.Name, SkillFile)
 	}
-	data, err := os.ReadFile(s.File)
+	data, err := readSkillFile(s.File)
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func readSkillFile(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s must not be a symlink", SkillFile)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s must be a regular file", SkillFile)
+	}
+	if info.Size() > maxSkillFileBytes {
+		return nil, fmt.Errorf("%s exceeds %d bytes", SkillFile, maxSkillFileBytes)
+	}
+	return os.ReadFile(path)
 }
 
 func NormalizeName(name string) string {
@@ -218,19 +236,34 @@ func validateMetadata(meta frontmatter) error {
 	return nil
 }
 
-func copyDir(src, dst string, force bool) error {
-	if force {
-		if err := os.RemoveAll(dst); err != nil {
-			return err
-		}
-	}
-	if _, err := os.Stat(dst); err == nil {
-		return fs.ErrExist
+type copyDirResult struct {
+	Skipped []string
+}
+
+func copyDir(src, dst string, force bool) (copyDirResult, error) {
+	if _, err := os.Stat(dst); err == nil && !force {
+		return copyDirResult{}, fs.ErrExist
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return copyDirResult{}, err
 	}
 
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+	parent := filepath.Dir(dst)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return copyDirResult{}, err
+	}
+	tmp, err := os.MkdirTemp(parent, "."+filepath.Base(dst)+".tmp-*")
+	if err != nil {
+		return copyDirResult{}, err
+	}
+	moved := false
+	defer func() {
+		if !moved {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
+
+	var result copyDirResult
+	if err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -238,13 +271,21 @@ func copyDir(src, dst string, force bool) error {
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dst, rel)
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(tmp, rel)
 
 		if d.Type()&os.ModeSymlink != 0 {
+			result.Skipped = append(result.Skipped, rel)
 			return nil
 		}
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			return os.MkdirAll(target, info.Mode().Perm())
 		}
 
 		info, err := d.Info()
@@ -256,5 +297,23 @@ func copyDir(src, dst string, force bool) error {
 			return err
 		}
 		return os.WriteFile(target, data, info.Mode().Perm())
-	})
+	}); err != nil {
+		return result, err
+	}
+
+	if force {
+		if err := os.RemoveAll(dst); err != nil {
+			return result, err
+		}
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return result, fs.ErrExist
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return result, err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return result, err
+	}
+	moved = true
+	return result, nil
 }

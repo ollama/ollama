@@ -439,6 +439,32 @@ func TestCompactionPromptFitsBudgetByTruncatingLargeToolOutput(t *testing.T) {
 	}
 }
 
+func TestCompactionPromptRetruncatesAlreadyTruncatedToolOutput(t *testing.T) {
+	alreadyTruncated := strings.Repeat("x", 7000) + "\n\n[tool output truncated: omitted 99999 characters]\n\n" + strings.Repeat("y", 7000)
+	body, err := compactionPrompt("", []api.Message{
+		{Role: "user", Content: "what changed?"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{{
+			ID: "call-1",
+			Function: api.ToolCallFunction{
+				Name: "bash",
+			},
+		}}},
+		{Role: "tool", ToolName: "bash", ToolCallID: "call-1", Content: alreadyTruncated},
+	}, 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if estimateCompactionTokens(body) > 300 {
+		t.Fatalf("compaction prompt tokens = %d, want <= 300", estimateCompactionTokens(body))
+	}
+	if strings.Count(body, "x")+strings.Count(body, "y") >= 14_000 {
+		t.Fatal("already-truncated tool output was not truncated again")
+	}
+	if !strings.Contains(body, "[tool output truncated: omitted ") {
+		t.Fatalf("truncation marker missing from compaction prompt: %q", body)
+	}
+}
+
 func TestCompactionSummaryTextStripsPrefix(t *testing.T) {
 	content := compactionSummaryMessage("worked on branch changes")
 	if got := compactionSummaryText(content); got != "worked on branch changes" {

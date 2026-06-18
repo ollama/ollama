@@ -87,7 +87,7 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err = cmd.Run()
+	err = runBashCommand(cmd)
 	finalWorkingDir := readFinalWorkingDir(cwdPath)
 
 	var sb strings.Builder
@@ -105,6 +105,9 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return agent.ToolResult{Content: sb.String() + "\n\nError: command timed out after " + bashTimeout.String(), WorkingDir: finalWorkingDir}, nil
+		}
+		if ctx.Err() == context.Canceled {
+			return agent.ToolResult{Content: sb.String() + "\n\nError: command was canceled", WorkingDir: finalWorkingDir}, nil
 		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return agent.ToolResult{Content: sb.String() + fmt.Sprintf("\n\nExit code: %d", exitErr.ExitCode()), WorkingDir: finalWorkingDir}, nil

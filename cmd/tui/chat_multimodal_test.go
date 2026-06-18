@@ -221,6 +221,32 @@ func TestChatDeletingImagePlaceholderRemovesAttachment(t *testing.T) {
 	}
 }
 
+func TestChatWordDeletingImagePlaceholderRemovesAttachment(t *testing.T) {
+	fp := writeTestPNG(t)
+	m := chatModel{
+		ctx: context.Background(),
+		opts: ChatOptions{
+			Model:      "test",
+			Client:     chatTestClient{},
+			MultiModal: true,
+		},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("describe " + fp), Paste: true})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace, Alt: true})
+	m = updated.(chatModel)
+
+	if got := string(m.input); got != "describe " {
+		t.Fatalf("input after word backspace = %q, want image placeholder removed", got)
+	}
+	if got := len(m.inputAttachments); got != 0 {
+		t.Fatalf("input attachments after word backspace = %d, want 0", got)
+	}
+}
+
 func writeTestPNG(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

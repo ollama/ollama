@@ -1948,6 +1948,7 @@ var (
 	agentOnboardingPrompt         = tui.RunAgentSignInOnboarding
 	agentOnboardingSignIn         = runAgentOnboardingSignIn
 	agentOnboardingSignedInStatus = runAgentOnboardingSignedInStatus
+	errAgentOnboardingNotSignedIn = errors.New("not signed in")
 )
 
 func runRootResume(rootCmd, runCmd *cobra.Command, args []string) error {
@@ -2293,6 +2294,9 @@ func runAgentOnboardingSignIn(ctx context.Context) error {
 	user, err := client.Whoami(ctx)
 	if err == nil && user != nil && user.Name != "" {
 		return nil
+	}
+	if err == nil {
+		return errAgentOnboardingNotSignedIn
 	}
 
 	var authErr api.AuthorizationError

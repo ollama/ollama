@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -62,6 +63,85 @@ func TestImportToDirCopiesCanonicalSkill(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dest, "go-code", "notes.md")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReadMetadataRejectsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink permissions vary on Windows")
+	}
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.md")
+	if err := os.WriteFile(real, []byte("---\nname: go-code\ndescription: Write idiomatic Go code.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, SkillFile)
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadMetadata(link); err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("ReadMetadata error = %v, want symlink rejection", err)
+	}
+}
+
+func TestImportToDirReportsSymlinkedSkillDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink permissions vary on Windows")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	srcRoot := filepath.Join(home, ".claude", "skills")
+	real := filepath.Join(home, "elsewhere", "go-code")
+	writeSkill(t, real, "go-code", "Write idiomatic Go code.")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(srcRoot, "go-code")); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := ImportToDir("claude", filepath.Join(home, ".ollama", "skills"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || !results[0].Skipped {
+		t.Fatalf("results = %#v, want one skipped symlink directory", results)
+	}
+	if !strings.Contains(results[0].Error, "symlinked skill directories") {
+		t.Fatalf("error = %q, want symlink directory warning", results[0].Error)
+	}
+}
+
+func TestImportToDirReportsSkippedSymlinkEntries(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink permissions vary on Windows")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	src := filepath.Join(home, ".claude", "skills", "go-code")
+	writeSkill(t, src, "go-code", "Write idiomatic Go code.")
+	target := filepath.Join(home, "outside.md")
+	if err := os.WriteFile(target, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(src, "outside.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := ImportToDir("claude", filepath.Join(home, ".ollama", "skills"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Skipped {
+		t.Fatalf("results = %#v, want one imported skill", results)
+	}
+	if !strings.Contains(results[0].Error, "skipped symlinks: outside.md") {
+		t.Fatalf("error = %q, want skipped symlink warning", results[0].Error)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".ollama", "skills", "go-code", "outside.md")); !os.IsNotExist(err) {
+		t.Fatalf("copied symlink err = %v, want missing symlink", err)
 	}
 }
 

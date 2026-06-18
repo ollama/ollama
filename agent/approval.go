@@ -438,6 +438,8 @@ func (c *bashClassifier) addCall(args []string) {
 			c.addReason("runs destructive git clean")
 			c.high = true
 		}
+	case "find":
+		c.addFindReasons(args)
 	case "chmod", "chown":
 		if hasAnyFlag(args[1:], "R", "recursive") {
 			c.addReason("changes permissions or ownership recursively")
@@ -455,6 +457,27 @@ func (c *bashClassifier) addCall(args []string) {
 		if len(args) > 1 {
 			c.addReason("runs a shell interpreter")
 			c.high = true
+		}
+	}
+}
+
+func (c *bashClassifier) addFindReasons(args []string) {
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "-delete":
+			c.addReason("deletes files via find")
+			c.high = true
+		case "-exec", "-execdir":
+			c.addReason("executes commands via find")
+			c.high = true
+			end := i + 1
+			for end < len(args) && args[end] != ";" && args[end] != `\;` && args[end] != "+" {
+				end++
+			}
+			if end > i+1 {
+				c.addCall(args[i+1 : end])
+			}
+			i = end
 		}
 	}
 }
@@ -481,14 +504,39 @@ func hasAnyFlag(args []string, flags ...string) bool {
 }
 
 func isGitResetHard(args []string) bool {
-	return len(args) >= 3 && args[1] == "reset" && slices.Contains(args[2:], "--hard")
+	subcommand := gitSubcommandArgs(args)
+	return len(subcommand) >= 2 && subcommand[0] == "reset" && slices.Contains(subcommand[1:], "--hard")
 }
 
 func isGitCleanDestructive(args []string) bool {
-	if len(args) < 2 || args[1] != "clean" {
+	subcommand := gitSubcommandArgs(args)
+	if len(subcommand) < 1 || subcommand[0] != "clean" {
 		return false
 	}
-	return hasAnyFlag(args[2:], "f", "force") && (hasAnyFlag(args[2:], "d") || hasAnyFlag(args[2:], "x", "X"))
+	return hasAnyFlag(subcommand[1:], "f", "force") && (hasAnyFlag(subcommand[1:], "d") || hasAnyFlag(subcommand[1:], "x", "X"))
+}
+
+func gitSubcommandArgs(args []string) []string {
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return args[i+1:]
+		}
+		switch {
+		case arg == "-C", arg == "-c", arg == "--git-dir", arg == "--work-tree":
+			i++
+			continue
+		case strings.HasPrefix(arg, "-C"), strings.HasPrefix(arg, "-c"):
+			continue
+		case strings.HasPrefix(arg, "--git-dir="), strings.HasPrefix(arg, "--work-tree="):
+			continue
+		case strings.HasPrefix(arg, "-"):
+			continue
+		default:
+			return args[i:]
+		}
+	}
+	return nil
 }
 
 type bashTokenKind int

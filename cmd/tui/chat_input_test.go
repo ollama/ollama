@@ -161,6 +161,27 @@ func TestChatBackspaceDeletesWholePastedTextPlaceholder(t *testing.T) {
 	}
 }
 
+func TestChatWordBackspaceDeletesWholePastedTextPlaceholder(t *testing.T) {
+	pasted := strings.Repeat("long paste line\n", pastedTextPlaceholderMinLines)
+	m := chatModel{input: []rune("use ")}
+	m.inputCursor = len(m.input)
+	m.inputCursorSet = true
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(pasted), Paste: true})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace, Alt: true})
+	m = updated.(chatModel)
+
+	if got := string(m.input); got != "use " {
+		t.Fatalf("input after word backspace = %q, want pasted text placeholder removed", got)
+	}
+	if got := len(m.inputPastedTexts); got != 0 {
+		t.Fatalf("pasted texts after word backspace = %d, want 0", got)
+	}
+}
+
 func TestChatEditorResultReplacesInput(t *testing.T) {
 	m := chatModel{
 		input:            []rune("old"),

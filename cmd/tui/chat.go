@@ -130,6 +130,7 @@ type chatModel struct {
 	height               int
 	status               string
 	spinner              int
+	tickActive           bool
 	complete             int
 	systemPromptDisabled bool
 	quitting             bool
@@ -216,11 +217,13 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.ClearScreen
 
 	case chatTickMsg:
+		m.tickActive = false
 		if !m.running && !m.compacting {
 			return m, nil
 		}
 		m.spinner++
-		return m, chatTickCmd()
+		cmd := m.scheduleTick()
+		return m, cmd
 
 	case chatAgentMsg:
 		m.applyAgentEvent(msg.event)
@@ -634,14 +637,17 @@ func (m chatModel) View() string {
 		available = 0
 	}
 
-	transcriptLines := m.visibleTranscriptLines(width, available)
-	if len(transcriptLines) == 0 {
+	allTranscriptLines := m.transcriptLines(width)
+	transcriptLines := m.visibleTranscriptLinesForLines(allTranscriptLines, available)
+	if len(allTranscriptLines) == 0 {
 		if available > 0 {
 			transcriptLines = []string{chatMetaStyle.Render(m.emptyChatHint())}
 		}
 	}
-	for len(transcriptLines) < available {
-		transcriptLines = append(transcriptLines, "")
+	if len(allTranscriptLines) > available {
+		for len(transcriptLines) < available {
+			transcriptLines = append(transcriptLines, "")
+		}
 	}
 
 	lines := append(headerLines, transcriptLines...)
@@ -760,9 +766,13 @@ func (m *chatModel) startManualCompaction() (tea.Model, tea.Cmd) {
 	go func() {
 		defer close(events)
 		result, err := compactor.MaybeCompact(runCtx, req)
-		events <- chatCompactDoneMsg{result: result, err: err}
+		select {
+		case events <- chatCompactDoneMsg{result: result, err: err}:
+		case <-runCtx.Done():
+		}
 	}()
-	return *m, tea.Batch(waitForChatMsg(events), chatTickCmd())
+	tickCmd := m.scheduleTick()
+	return *m, tea.Batch(waitForChatMsg(events), tickCmd)
 }
 
 func (m chatModel) finishManualCompaction(msg chatCompactDoneMsg) (tea.Model, tea.Cmd) {
@@ -911,10 +921,14 @@ func (m *chatModel) startRunWithMessages(displayInput string, newMessages []api.
 	go func() {
 		defer close(events)
 		result, err := session.Run(runCtx, opts)
-		events <- chatRunDoneMsg{result: result, err: err}
+		select {
+		case events <- chatRunDoneMsg{result: result, err: err}:
+		case <-runCtx.Done():
+		}
 	}()
 
-	return *m, tea.Batch(waitForChatMsg(events), chatTickCmd())
+	tickCmd := m.scheduleTick()
+	return *m, tea.Batch(waitForChatMsg(events), tickCmd)
 }
 
 func (m *chatModel) startNextQueued() tea.Cmd {

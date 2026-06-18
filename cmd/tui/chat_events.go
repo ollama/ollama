@@ -226,6 +226,14 @@ func waitForChatMsg(ch <-chan tea.Msg) tea.Cmd {
 	}
 }
 
+func (m *chatModel) scheduleTick() tea.Cmd {
+	if m.tickActive {
+		return nil
+	}
+	m.tickActive = true
+	return chatTickCmd()
+}
+
 func chatTickCmd() tea.Cmd {
 	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
 		return chatTickMsg{}

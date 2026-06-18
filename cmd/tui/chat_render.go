@@ -227,15 +227,19 @@ func (m chatModel) transcriptLines(width int) []string {
 }
 
 func (m chatModel) visibleTranscriptLines(width, available int) []string {
+	return m.visibleTranscriptLinesForLines(m.transcriptLines(width), available)
+}
+
+func (m chatModel) visibleTranscriptLinesForLines(lines []string, available int) []string {
 	if available <= 0 {
 		return nil
 	}
-	lines := m.transcriptLines(width)
+	start := 0
 	if len(lines) > available {
-		start := m.visibleTranscriptStartLineForLines(len(lines), available)
+		start = m.visibleTranscriptStartLineForLines(len(lines), available)
 		lines = lines[start : start+available]
 	}
-	lines = m.applyTranscriptSelection(lines, width, available)
+	lines = m.applyTranscriptSelection(lines, start)
 	return lines
 }
 
@@ -268,10 +272,11 @@ func (m chatModel) transcriptHeight() int {
 	if height <= 0 {
 		height = 24
 	}
+	lineCount := len(m.transcriptLines(width))
 	baseHeaderHeight := 2
 	baseHeight := max(0, height-baseHeaderHeight-len(m.bottomLines(width, height-baseHeaderHeight)))
-	if len(m.transcriptLines(width)) <= baseHeight {
-		return baseHeight
+	if lineCount <= baseHeight {
+		return lineCount
 	}
 	statusHeaderHeight := 3
 	return max(0, height-statusHeaderHeight-len(m.bottomLines(width, height-statusHeaderHeight)))
@@ -375,12 +380,11 @@ func normalizedSelectionRangeFor(selection chatSelection) (chatSelectionPoint, c
 	return start, end, true
 }
 
-func (m chatModel) applyTranscriptSelection(lines []string, width, available int) []string {
+func (m chatModel) applyTranscriptSelection(lines []string, offset int) []string {
 	start, end, ok := m.normalizedSelectionRange()
 	if !ok || len(lines) == 0 {
 		return lines
 	}
-	offset := m.visibleTranscriptStartLine(width, available)
 	out := slices.Clone(lines)
 	for i, line := range out {
 		lineIndex := offset + i

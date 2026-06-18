@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -63,4 +64,12 @@ func emit(sink EventSink, event Event) error {
 		return nil
 	}
 	return sink.Emit(event)
+}
+
+func emitIgnoringCanceled(ctx context.Context, sink EventSink, event Event) error {
+	err := emit(sink, event)
+	if err != nil && ctx != nil && ctx.Err() != nil {
+		return nil
+	}
+	return err
 }

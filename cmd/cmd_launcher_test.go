@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -224,6 +226,24 @@ func TestMaybeRunAgentOnboarding(t *testing.T) {
 			t.Fatal("cancel should not save onboarding state")
 		}
 	})
+}
+
+func TestRunAgentOnboardingSignInEmptyWhoamiDoesNotSilentlySucceed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/me" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	err := runAgentOnboardingSignIn(context.Background())
+	if !errors.Is(err, errAgentOnboardingNotSignedIn) {
+		t.Fatalf("error = %v, want errAgentOnboardingNotSignedIn", err)
+	}
 }
 
 func TestRunInteractiveTUI_RunModelActionsUseResolveRunModel(t *testing.T) {

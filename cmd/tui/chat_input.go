@@ -445,7 +445,7 @@ func (m *chatModel) deleteInputWordBackward() {
 	if cursor <= 0 {
 		return
 	}
-	start, end, ok := m.placeholderRangeForBackspace(cursor)
+	start, end, ok := m.placeholderRangeForWordDelete(cursor)
 	if !ok {
 		start, end = previousInputWordStart(m.input, cursor), cursor
 	}
@@ -472,6 +472,25 @@ func (m chatModel) placeholderRangeForBackspace(cursor int) (int, int, bool) {
 		start, end, ok := inputPlaceholderRuneRange(input, placeholder)
 		if ok && cursor > start && cursor <= end {
 			return start, end, true
+		}
+	}
+	return 0, 0, false
+}
+
+func (m chatModel) placeholderRangeForWordDelete(cursor int) (int, int, bool) {
+	cursor = clamp(cursor, 0, len(m.input))
+	end := cursor
+	for end > 0 && unicode.IsSpace(m.input[end-1]) {
+		end--
+	}
+	input := string(m.input)
+	for _, placeholder := range m.inputPlaceholders() {
+		if placeholder == "" {
+			continue
+		}
+		start, placeholderEnd, ok := inputPlaceholderRuneRange(input, placeholder)
+		if ok && end > start && end <= placeholderEnd {
+			return start, cursor, true
 		}
 	}
 	return 0, 0, false
@@ -1253,7 +1272,11 @@ func (m *chatModel) importSkills(args []string) string {
 			continue
 		}
 		imported++
-		lines = append(lines, "imported "+name)
+		line := "imported " + name
+		if result.Error != "" {
+			line += " (" + result.Error + ")"
+		}
+		lines = append(lines, line)
 	}
 	lines = append(lines, "", fmt.Sprintf("%d imported, %d skipped", imported, skipped))
 	return strings.Join(lines, "\n")

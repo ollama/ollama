@@ -28,6 +28,7 @@ type Progress struct {
 	pos int
 
 	done     chan struct{}
+	exited   chan struct{}
 	stopOnce sync.Once
 	ticker   *time.Ticker
 	states   []State
@@ -38,6 +39,7 @@ func NewProgress(w io.Writer) *Progress {
 	p := &Progress{
 		w:      bufio.NewWriter(w),
 		done:   make(chan struct{}),
+		exited: make(chan struct{}),
 		ticker: ticker,
 	}
 	go p.start(ticker)
@@ -64,6 +66,7 @@ func (p *Progress) stop() bool {
 
 	if ticker != nil {
 		ticker.Stop()
+		<-p.exited
 		p.render()
 		return true
 	}
@@ -74,6 +77,8 @@ func (p *Progress) stop() bool {
 func (p *Progress) Stop() bool {
 	stopped := p.stop()
 	if stopped {
+		p.mu.Lock()
+		defer p.mu.Unlock()
 		fmt.Fprint(p.w, "\n")
 		p.w.Flush()
 	}
@@ -81,17 +86,17 @@ func (p *Progress) Stop() bool {
 }
 
 func (p *Progress) StopAndClear() bool {
-	defer p.w.Flush()
-
-	fmt.Fprint(p.w, "\033[?25l")
-	defer fmt.Fprint(p.w, "\033[?25h")
-
 	stopped := p.stop()
 	if stopped {
-		// clear all progress lines
 		p.mu.Lock()
+		defer p.mu.Unlock()
+		defer p.w.Flush()
+
+		fmt.Fprint(p.w, "\033[?25l")
+		defer fmt.Fprint(p.w, "\033[?25h")
+
+		// clear all progress lines
 		pos := p.pos
-		p.mu.Unlock()
 		for i := range pos {
 			if i > 0 {
 				fmt.Fprint(p.w, "\033[A")
@@ -147,6 +152,7 @@ func (p *Progress) render() {
 }
 
 func (p *Progress) start(ticker *time.Ticker) {
+	defer close(p.exited)
 	for {
 		select {
 		case <-p.done:

@@ -73,6 +73,37 @@ func TestEditRejectsEscapingPath(t *testing.T) {
 	}
 }
 
+func TestEditRejectsSymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "note.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, err := NewEdit().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path":     filepath.Join("link", "note.txt"),
+		"old_text": "old",
+		"new_text": "new",
+	})
+	if err == nil {
+		t.Fatal("expected symlink escape to fail")
+	}
+	if !strings.Contains(err.Error(), "path escapes working directory") {
+		t.Fatalf("err = %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(outside, "note.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "old\n" {
+		t.Fatalf("outside content changed to %q", content)
+	}
+}
+
 func TestReadRejectsParentOutsideCurrentWorkingDir(t *testing.T) {
 	root := t.TempDir()
 	subdir := filepath.Join(root, "sub")
@@ -121,6 +152,24 @@ func TestReadLineRange(t *testing.T) {
 	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path":       "note.txt",
 		"line_range": "2-3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Content != "two\nthree\n" {
+		t.Fatalf("content = %q", result.Content)
+	}
+}
+
+func TestReadLinesAliasAsRange(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("one\ntwo\nthree\nfour\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path":  "note.txt",
+		"lines": "2-3",
 	})
 	if err != nil {
 		t.Fatal(err)

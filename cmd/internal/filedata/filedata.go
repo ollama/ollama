@@ -145,14 +145,12 @@ func normalizeFileURL(u *url.URL) string {
 	if unescaped, err := url.PathUnescape(path); err == nil {
 		path = unescaped
 	}
-	if path == "" && u.Host != "" {
-		host := u.Host
-		if unescaped, err := url.PathUnescape(host); err == nil {
-			host = unescaped
-		}
-		if len(host) >= 2 && host[1] == ':' && isASCIIAlpha(host[0]) {
-			return filepath.Clean(host)
-		}
+	host := u.Host
+	if unescaped, err := url.PathUnescape(host); err == nil {
+		host = unescaped
+	}
+	if len(host) >= 2 && host[1] == ':' && isASCIIAlpha(host[0]) {
+		return filepath.Clean(filepath.FromSlash(host + path))
 	}
 	if len(path) >= 4 && path[0] == '/' && path[2] == ':' && isASCIIAlpha(path[1]) {
 		path = path[1:]

@@ -18,6 +18,12 @@ type ImportResult struct {
 	Error   string
 }
 
+type skillDirCandidate struct {
+	Dir     string
+	Skipped bool
+	Error   string
+}
+
 func Import(source string, force bool) ([]ImportResult, error) {
 	dest, err := DefaultDir()
 	if err != nil {
@@ -45,9 +51,16 @@ func ImportToDir(source, dest string, force bool) ([]ImportResult, error) {
 			results = append(results, ImportResult{Source: source, From: root, Skipped: true, Error: err.Error()})
 			continue
 		}
-		for _, dir := range candidates {
-			skill, err := ReadMetadata(filepath.Join(dir, SkillFile))
-			result := ImportResult{Source: source, From: dir}
+		for _, candidate := range candidates {
+			result := ImportResult{Source: source, From: candidate.Dir}
+			if candidate.Skipped {
+				result.Skipped = true
+				result.Error = candidate.Error
+				results = append(results, result)
+				continue
+			}
+
+			skill, err := ReadMetadata(filepath.Join(candidate.Dir, SkillFile))
 			if err != nil {
 				result.Skipped = true
 				result.Error = err.Error()
@@ -57,13 +70,15 @@ func ImportToDir(source, dest string, force bool) ([]ImportResult, error) {
 
 			result.Skill = skill
 			result.To = filepath.Join(dest, skill.Name)
-			err = copyDir(dir, result.To, force)
+			copyResult, err := copyDir(candidate.Dir, result.To, force)
 			if errors.Is(err, os.ErrExist) {
 				result.Skipped = true
 				result.Error = "already exists"
 			} else if err != nil {
 				result.Skipped = true
 				result.Error = err.Error()
+			} else if len(copyResult.Skipped) > 0 {
+				result.Error = "skipped symlinks: " + strings.Join(copyResult.Skipped, ", ")
 			}
 			results = append(results, result)
 		}
@@ -104,22 +119,35 @@ func SourceDirs(source string) ([]string, error) {
 	return nil, fmt.Errorf("unknown skill source %q (use claude, codex, pi, agents, or all)", source)
 }
 
-func skillDirs(root string) ([]string, error) {
+func skillDirs(root string) ([]skillDirCandidate, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
-	var dirs []string
+	var dirs []skillDirCandidate
 	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+		if strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		dir := filepath.Join(root, entry.Name())
+		if entry.Type()&os.ModeSymlink != 0 {
+			dirs = append(dirs, skillDirCandidate{
+				Dir:     dir,
+				Skipped: true,
+				Error:   "symlinked skill directories are not supported",
+			})
+			continue
+		}
+		if !entry.IsDir() {
+			continue
+		}
 		if _, err := os.Stat(filepath.Join(dir, SkillFile)); err == nil {
-			dirs = append(dirs, dir)
+			dirs = append(dirs, skillDirCandidate{Dir: dir})
 		}
 	}
-	slices.Sort(dirs)
+	slices.SortFunc(dirs, func(a, b skillDirCandidate) int {
+		return strings.Compare(a.Dir, b.Dir)
+	})
 	return dirs, nil
 }
 
