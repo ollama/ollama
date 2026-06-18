@@ -1266,6 +1266,7 @@ func (m chatModel) footerParts() []string {
 	if m.lastExpandableToolEntry() >= 0 {
 		controls += " • ctrl+o details"
 	}
+	controls += " • ctrl+g editor"
 	parts = append(parts, controls)
 	if m.opts.Verbose {
 		parts = append(parts, "verbose")

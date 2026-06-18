@@ -198,6 +198,9 @@ func TestChatDeletingImagePlaceholderRemovesAttachment(t *testing.T) {
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = updated.(chatModel)
+	if got := string(m.input); got != "describe " {
+		t.Fatalf("input after backspace = %q, want image placeholder removed", got)
+	}
 	if got := len(m.inputAttachments); got != 0 {
 		t.Fatalf("input attachments after editing placeholder = %d, want 0", got)
 	}

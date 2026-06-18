@@ -64,6 +64,7 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 		!strings.Contains(fm.entries[0].content, "- `/<skill>`: run the next message with a skill") ||
 		!strings.Contains(fm.entries[0].content, "**Shortcuts**") ||
 		!strings.Contains(fm.entries[0].content, "- `ctrl+o`: toggle tool output and details") ||
+		!strings.Contains(fm.entries[0].content, "- `ctrl+g`: open your editor to compose a prompt") ||
 		!strings.Contains(fm.entries[0].content, "- `shift+enter`: insert a newline") ||
 		!strings.Contains(fm.entries[0].content, "- `shift+tab`: toggle permission mode") {
 		t.Fatalf("help output = %q", fm.entries[0].content)
@@ -105,6 +106,78 @@ func TestChatInputAcceptsSpace(t *testing.T) {
 
 	if got := string(m.input); got != "hello world" {
 		t.Fatalf("input = %q, want hello world", got)
+	}
+}
+
+func TestChatLargePasteUsesPlaceholderAndExpandsOnSubmit(t *testing.T) {
+	pasted := strings.Repeat("line\n", pastedTextPlaceholderMinLines-1) + "line"
+	m := chatModel{
+		ctx: context.Background(),
+		opts: ChatOptions{
+			Model:  "test",
+			Client: chatTestClient{},
+		},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(pasted), Paste: true})
+	m = updated.(chatModel)
+	if got, want := string(m.input), "[Pasted text #1 +8 lines]"; got != want {
+		t.Fatalf("input = %q, want %q", got, want)
+	}
+	if got := len(m.inputPastedTexts); got != 1 {
+		t.Fatalf("pasted texts = %d, want 1", got)
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("submit should start a run")
+	}
+	if got := m.entries[0].content; got != "[Pasted text #1 +8 lines]" {
+		t.Fatalf("display content = %q, want placeholder", got)
+	}
+	if got := m.liveMessages[0].Content; got != pasted {
+		t.Fatalf("model content = %q, want pasted text", got)
+	}
+}
+
+func TestChatBackspaceDeletesWholePastedTextPlaceholder(t *testing.T) {
+	pasted := strings.Repeat("long paste line\n", pastedTextPlaceholderMinLines)
+	m := chatModel{}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(pasted), Paste: true})
+	m = updated.(chatModel)
+	if got := len(m.inputPastedTexts); got != 1 {
+		t.Fatalf("pasted texts = %d, want 1", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "" {
+		t.Fatalf("input after backspace = %q, want empty", got)
+	}
+	if got := len(m.inputPastedTexts); got != 0 {
+		t.Fatalf("pasted texts after backspace = %d, want 0", got)
+	}
+}
+
+func TestChatEditorResultReplacesInput(t *testing.T) {
+	m := chatModel{
+		input:            []rune("old"),
+		inputCursor:      3,
+		inputCursorSet:   true,
+		inputPastedTexts: []chatInputPastedText{{placeholder: "[Pasted text #1 +8 lines]", content: "hidden"}},
+	}
+
+	m.applyEditorResult(chatEditorDoneMsg{content: "new prompt"})
+	if got := string(m.input); got != "new prompt" {
+		t.Fatalf("input = %q, want new prompt", got)
+	}
+	if got := m.inputCursor; got != len("new prompt") {
+		t.Fatalf("cursor = %d, want %d", got, len("new prompt"))
+	}
+	if got := len(m.inputPastedTexts); got != 0 {
+		t.Fatalf("pasted texts = %d, want 0 after editor removed placeholder", got)
 	}
 }
 

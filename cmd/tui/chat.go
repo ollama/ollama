@@ -93,10 +93,13 @@ type chatModel struct {
 	inputCursor       int
 	inputCursorSet    bool
 	inputAttachments  []chatInputAttachment
+	inputPastedTexts  []chatInputPastedText
 	nextImageID       int
 	nextAudioID       int
+	nextPastedTextID  int
 	queued            []string
 	queuedAttachments [][]chatInputAttachment
+	queuedPastedTexts [][]chatInputPastedText
 	promptHistory     []string
 	promptCursor      int
 	promptDraft       []rune
@@ -180,6 +183,7 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 		status:         "ready",
 	}
 	m.nextImageID, m.nextAudioID = nextInputAttachmentIDsFromMessages(m.messages)
+	m.nextPastedTextID = nextInputPastedTextIDFromMessages(m.messages)
 	m.entries = entriesFromMessages(m.messages)
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
@@ -276,6 +280,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.compactingTokens = msg.tokens
 		}
 		return m, waitForChatMsg(m.compactEvents)
+
+	case chatEditorDoneMsg:
+		m.applyEditorResult(msg)
+		return m, nil
 
 	case tea.MouseMsg:
 		return m.updateMouse(msg)
@@ -436,6 +444,8 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlJ:
 		m.insertInputNewline()
 		return m, nil
+	case tea.KeyCtrlG:
+		return m.openInputEditor()
 	case tea.KeyUp:
 		return m.updateUpKey()
 	case tea.KeyDown:
@@ -464,11 +474,7 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.deleteInputWordBackward()
 	case tea.KeyCtrlU:
 		m.resetPromptHistoryCursor()
-		m.input = nil
-		m.inputCursor = 0
-		m.inputCursorSet = false
-		m.inputAttachments = nil
-		m.complete = 0
+		m.clearInput()
 	case tea.KeyTab:
 		m.applyCompletion()
 	case tea.KeyCtrlO:
@@ -561,6 +567,7 @@ func (m *chatModel) clearInput() {
 	m.inputCursor = 0
 	m.inputCursorSet = false
 	m.inputAttachments = nil
+	m.inputPastedTexts = nil
 	m.complete = 0
 }
 
@@ -670,9 +677,12 @@ func (m *chatModel) resetChat(status string) (tea.Model, tea.Cmd) {
 	m.entries = nil
 	m.queued = nil
 	m.queuedAttachments = nil
+	m.queuedPastedTexts = nil
 	m.inputAttachments = nil
+	m.inputPastedTexts = nil
 	m.nextImageID = 0
 	m.nextAudioID = 0
+	m.nextPastedTextID = 1
 	m.resetPromptHistoryCursor()
 	m.resetWorkingDir()
 	m.thinking = false
@@ -797,7 +807,7 @@ func (m *chatModel) startRun(input string) (tea.Model, tea.Cmd) {
 }
 
 func (m *chatModel) userMessageFromInput(displayInput, userInput string) (string, api.Message, error) {
-	content := userInput
+	content := m.expandPastedTextPlaceholders(userInput)
 	images := slices.Clone(m.opts.Images)
 	preloaded := len(images)
 	placeholderAttachments := m.activeInputAttachmentsFor(userInput)
@@ -807,7 +817,7 @@ func (m *chatModel) userMessageFromInput(displayInput, userInput string) (string
 	extracted := 0
 
 	if m.opts.MultiModal {
-		cleaned, files, err := filedata.ExtractWithFiles(userInput)
+		cleaned, files, err := filedata.ExtractWithFiles(content)
 		if err != nil {
 			return "", api.Message{}, err
 		}
@@ -819,6 +829,7 @@ func (m *chatModel) userMessageFromInput(displayInput, userInput string) (string
 	}
 	m.opts.Images = nil
 	m.inputAttachments = nil
+	m.inputPastedTexts = nil
 
 	if len(images) > 0 {
 		base := displayInput
@@ -915,6 +926,12 @@ func (m *chatModel) startNextQueued() tea.Cmd {
 			m.queuedAttachments = m.queuedAttachments[1:]
 		} else {
 			m.inputAttachments = nil
+		}
+		if len(m.queuedPastedTexts) > 0 {
+			m.inputPastedTexts = cloneInputPastedTexts(m.queuedPastedTexts[0])
+			m.queuedPastedTexts = m.queuedPastedTexts[1:]
+		} else {
+			m.inputPastedTexts = nil
 		}
 		_, cmd := m.submitInput(input)
 		if cmd != nil || m.running || m.compacting || m.quitting {

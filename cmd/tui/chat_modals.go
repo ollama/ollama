@@ -505,9 +505,12 @@ func (m *chatModel) resumeSelectedChat() (tea.Model, tea.Cmd) {
 	m.entries = entriesFromMessages(m.messages)
 	m.input = nil
 	m.inputAttachments = nil
+	m.inputPastedTexts = nil
 	m.queued = nil
 	m.queuedAttachments = nil
+	m.queuedPastedTexts = nil
 	m.nextImageID, m.nextAudioID = nextInputAttachmentIDsFromMessages(m.messages)
+	m.nextPastedTextID = nextInputPastedTextIDFromMessages(m.messages)
 	m.resetWorkingDir()
 	m.complete = 0
 	m.thinking = false

@@ -34,6 +34,10 @@ type chatCompletion struct {
 }
 
 const maxInputBoxBodyLines = 6
+const (
+	pastedTextPlaceholderMinRunes = 1000
+	pastedTextPlaceholderMinLines = 8
+)
 
 var chatSlashCommands = []chatSlashCommand{
 	{name: "/copy", description: "copy latest model output"},
@@ -55,16 +59,18 @@ var chatSlashCommands = []chatSlashCommand{
 }
 
 func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
-	m.syncInputAttachments()
+	m.syncInputPlaceholders()
 	input := strings.TrimSpace(string(m.input))
 	if selected, ok := m.selectedSlashCommand(); ok {
 		input = selected
 	}
 	attachments := cloneInputAttachments(m.inputAttachments)
+	pastedTexts := cloneInputPastedTexts(m.inputPastedTexts)
 	m.input = nil
 	m.inputCursor = 0
 	m.inputCursorSet = false
 	m.inputAttachments = nil
+	m.inputPastedTexts = nil
 	m.complete = 0
 	m.resetPromptHistoryCursor()
 	if input == "" {
@@ -74,11 +80,13 @@ func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 	if m.running || m.compacting {
 		m.queued = append(m.queued, input)
 		m.queuedAttachments = append(m.queuedAttachments, attachments)
+		m.queuedPastedTexts = append(m.queuedPastedTexts, pastedTexts)
 		m.status = "queued"
 		return *m, nil
 	}
 
 	m.inputAttachments = attachments
+	m.inputPastedTexts = pastedTexts
 	return m.submitInput(input)
 }
 
@@ -326,6 +334,9 @@ func (m *chatModel) insertInputRunesFromKey(runes []rune, pasted bool) {
 	if m.opts.MultiModal && (pasted || len(runes) > 1) && m.insertInputFilePlaceholders(string(runes)) {
 		return
 	}
+	if pasted && m.insertPastedTextPlaceholder(string(runes)) {
+		return
+	}
 	m.insertInputRunes(runes)
 }
 
@@ -342,7 +353,11 @@ func (m *chatModel) insertInputFilePlaceholders(input string) bool {
 
 	var parts []string
 	if strings.TrimSpace(cleaned) != "" {
-		parts = append(parts, cleaned)
+		if placeholder, ok := m.pastedTextPlaceholder(cleaned); ok {
+			parts = append(parts, placeholder)
+		} else {
+			parts = append(parts, cleaned)
+		}
 	}
 	for _, file := range files {
 		kind := filedata.Kind(file.Path)
@@ -357,6 +372,43 @@ func (m *chatModel) insertInputFilePlaceholders(input string) bool {
 	m.insertInputRunes([]rune(strings.Join(parts, " ")))
 	m.status = inputAttachmentStatus(files)
 	return true
+}
+
+func (m *chatModel) insertPastedTextPlaceholder(input string) bool {
+	placeholder, ok := m.pastedTextPlaceholder(input)
+	if !ok {
+		return false
+	}
+	m.insertInputRunes([]rune(placeholder))
+	m.status = "pasted text"
+	return true
+}
+
+func (m *chatModel) pastedTextPlaceholder(input string) (string, bool) {
+	if !shouldCollapsePastedText(input) {
+		return "", false
+	}
+	placeholder := m.nextInputPastedTextPlaceholder(input)
+	m.inputPastedTexts = append(m.inputPastedTexts, chatInputPastedText{
+		placeholder: placeholder,
+		content:     input,
+	})
+	return placeholder, true
+}
+
+func shouldCollapsePastedText(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return false
+	}
+	return len([]rune(trimmed)) >= pastedTextPlaceholderMinRunes || pastedTextLineCount(trimmed) >= pastedTextPlaceholderMinLines
+}
+
+func pastedTextLineCount(input string) int {
+	if input == "" {
+		return 0
+	}
+	return strings.Count(input, "\n") + 1
 }
 
 func (m *chatModel) insertInputRunes(runes []rune) {
@@ -381,11 +433,11 @@ func (m *chatModel) deleteInputBackward() {
 	if cursor <= 0 {
 		return
 	}
-	m.input = append(slices.Clone(m.input[:cursor-1]), m.input[cursor:]...)
-	m.inputCursor = cursor - 1
-	m.inputCursorSet = true
-	m.complete = 0
-	m.syncInputAttachments()
+	start, end, ok := m.placeholderRangeForBackspace(cursor)
+	if !ok {
+		start, end = cursor-1, cursor
+	}
+	m.deleteInputRange(start, end)
 }
 
 func (m *chatModel) deleteInputWordBackward() {
@@ -393,12 +445,57 @@ func (m *chatModel) deleteInputWordBackward() {
 	if cursor <= 0 {
 		return
 	}
-	start := previousInputWordStart(m.input, cursor)
-	m.input = append(slices.Clone(m.input[:start]), m.input[cursor:]...)
+	start, end, ok := m.placeholderRangeForBackspace(cursor)
+	if !ok {
+		start, end = previousInputWordStart(m.input, cursor), cursor
+	}
+	m.deleteInputRange(start, end)
+}
+
+func (m *chatModel) deleteInputRange(start, end int) {
+	start = clamp(start, 0, len(m.input))
+	end = clamp(end, start, len(m.input))
+	m.input = append(slices.Clone(m.input[:start]), m.input[end:]...)
 	m.inputCursor = start
 	m.inputCursorSet = true
 	m.complete = 0
-	m.syncInputAttachments()
+	m.syncInputPlaceholders()
+}
+
+func (m chatModel) placeholderRangeForBackspace(cursor int) (int, int, bool) {
+	cursor = clamp(cursor, 0, len(m.input))
+	input := string(m.input)
+	for _, placeholder := range m.inputPlaceholders() {
+		if placeholder == "" {
+			continue
+		}
+		start, end, ok := inputPlaceholderRuneRange(input, placeholder)
+		if ok && cursor > start && cursor <= end {
+			return start, end, true
+		}
+	}
+	return 0, 0, false
+}
+
+func (m chatModel) inputPlaceholders() []string {
+	placeholders := make([]string, 0, len(m.inputAttachments)+len(m.inputPastedTexts))
+	for _, attachment := range m.inputAttachments {
+		placeholders = append(placeholders, attachment.placeholder)
+	}
+	for _, pastedText := range m.inputPastedTexts {
+		placeholders = append(placeholders, pastedText.placeholder)
+	}
+	return placeholders
+}
+
+func inputPlaceholderRuneRange(input, placeholder string) (int, int, bool) {
+	byteStart := strings.Index(input, placeholder)
+	if byteStart < 0 {
+		return 0, 0, false
+	}
+	start := len([]rune(input[:byteStart]))
+	end := start + len([]rune(placeholder))
+	return start, end, true
 }
 
 func previousInputWordStart(input []rune, cursor int) int {
@@ -413,8 +510,13 @@ func previousInputWordStart(input []rune, cursor int) int {
 	return start
 }
 
-func (m *chatModel) syncInputAttachments() {
+func (m *chatModel) syncInputPlaceholders() {
 	m.inputAttachments = m.activeInputAttachmentsFor(string(m.input))
+	m.inputPastedTexts = m.activeInputPastedTextsFor(string(m.input))
+}
+
+func (m *chatModel) syncInputAttachments() {
+	m.syncInputPlaceholders()
 }
 
 func (m chatModel) activeInputAttachmentsFor(input string) []chatInputAttachment {
@@ -432,6 +534,44 @@ func (m chatModel) activeInputAttachmentsFor(input string) []chatInputAttachment
 
 func cloneInputAttachments(in []chatInputAttachment) []chatInputAttachment {
 	return slices.Clone(in)
+}
+
+type chatInputPastedText struct {
+	placeholder string
+	content     string
+}
+
+func (m chatModel) activeInputPastedTextsFor(input string) []chatInputPastedText {
+	if len(m.inputPastedTexts) == 0 {
+		return nil
+	}
+	active := make([]chatInputPastedText, 0, len(m.inputPastedTexts))
+	for _, pastedText := range m.inputPastedTexts {
+		if strings.Contains(input, pastedText.placeholder) {
+			active = append(active, pastedText)
+		}
+	}
+	return active
+}
+
+func cloneInputPastedTexts(in []chatInputPastedText) []chatInputPastedText {
+	return slices.Clone(in)
+}
+
+func (m chatModel) expandPastedTextPlaceholders(input string) string {
+	for _, pastedText := range m.activeInputPastedTextsFor(input) {
+		input = strings.ReplaceAll(input, pastedText.placeholder, pastedText.content)
+	}
+	return input
+}
+
+func (m *chatModel) nextInputPastedTextPlaceholder(content string) string {
+	if m.nextPastedTextID <= 0 {
+		m.nextPastedTextID = 1
+	}
+	id := m.nextPastedTextID
+	m.nextPastedTextID++
+	return fmt.Sprintf("[Pasted text #%d +%d lines]", id, pastedTextLineCount(strings.TrimSpace(content)))
 }
 
 func (m *chatModel) nextInputAttachmentPlaceholder(kind string) string {
@@ -481,6 +621,7 @@ func inputAttachmentStatus(files []filedata.File) string {
 }
 
 var inputAttachmentPlaceholderPattern = regexp.MustCompile(`\[(Image|Audio) #([0-9]+)\]`)
+var inputPastedTextPlaceholderPattern = regexp.MustCompile(`\[Pasted text #([0-9]+) \+[0-9]+ lines?\]`)
 
 func nextInputAttachmentIDsFromMessages(messages []api.Message) (imageID int, audioID int) {
 	for _, msg := range messages {
@@ -501,6 +642,23 @@ func nextInputAttachmentIDsFromMessages(messages []api.Message) (imageID int, au
 		}
 	}
 	return imageID, audioID
+}
+
+func nextInputPastedTextIDFromMessages(messages []api.Message) int {
+	nextID := 1
+	for _, msg := range messages {
+		for _, match := range inputPastedTextPlaceholderPattern.FindAllStringSubmatch(msg.Content, -1) {
+			if len(match) != 2 {
+				continue
+			}
+			id, err := strconv.Atoi(match[1])
+			if err != nil {
+				continue
+			}
+			nextID = max(nextID, id+1)
+		}
+	}
+	return nextID
 }
 
 func (m *chatModel) moveInputCursorHorizontal(delta int) bool {
@@ -920,6 +1078,7 @@ func (m chatModel) helpSummary() string {
 		"**Shortcuts**",
 		"",
 		"- `ctrl+o`: toggle tool output and details",
+		"- `ctrl+g`: open your editor to compose a prompt",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
 		"- `↑/↓`: previous or next prompt",
