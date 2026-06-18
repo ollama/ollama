@@ -45,6 +45,10 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := (&Claude{}).findPath()
 				return err == nil
 			},
+			EnsureInstalled: func() error {
+				_, err := ensureClaudeInstalled()
+				return err
+			},
 			URL: "https://code.claude.com/docs/en/quickstart",
 		},
 	},

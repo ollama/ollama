@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/ollama/ollama/envconfig"
 )
@@ -45,9 +46,9 @@ func (c *Claude) findPath() (string, error) {
 }
 
 func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
-	claudePath, err := c.findPath()
+	claudePath, err := ensureClaudeInstalled()
 	if err != nil {
-		return fmt.Errorf("claude is not installed, install from https://code.claude.com/docs/en/quickstart")
+		return err
 	}
 
 	cmd := exec.Command(claudePath, c.args(model, args)...)
@@ -66,6 +67,87 @@ func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
 
 	cmd.Env = env
 	return cmd.Run()
+}
+
+func ensureClaudeInstalled() (string, error) {
+	if path, err := (&Claude{}).findPath(); err == nil {
+		return path, nil
+	}
+
+	if err := checkClaudeInstallerDependencies(); err != nil {
+		return "", err
+	}
+
+	ok, err := ConfirmPrompt("Claude Code is not installed. Install now?")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("claude installation cancelled")
+	}
+
+	bin, args, err := claudeInstallerCommand(runtime.GOOS)
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Fprintf(os.Stderr, "\nInstalling Claude Code...\n")
+	cmd := exec.Command(bin, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to install claude: %w", err)
+	}
+
+	path, err := (&Claude{}).findPath()
+	if err != nil {
+		return "", fmt.Errorf("claude was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+	}
+
+	fmt.Fprintf(os.Stderr, "%sClaude Code installed successfully%s\n\n", ansiGreen, ansiReset)
+	return path, nil
+}
+
+func checkClaudeInstallerDependencies() error {
+	switch runtime.GOOS {
+	case "windows":
+		if _, err := exec.LookPath("powershell"); err != nil {
+			return fmt.Errorf("claude is not installed and required dependencies are missing\n\nInstall the following first:\n  PowerShell: https://learn.microsoft.com/powershell/\n\nThen re-run:\n  ollama launch claude")
+		}
+	default:
+		var missing []string
+		if _, err := exec.LookPath("curl"); err != nil {
+			missing = append(missing, "curl: https://curl.se/")
+		}
+		if _, err := exec.LookPath("bash"); err != nil {
+			missing = append(missing, "bash: https://www.gnu.org/software/bash/")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("claude is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch claude", strings.Join(missing, "\n  "))
+		}
+	}
+	return nil
+}
+
+func claudeInstallerCommand(goos string) (string, []string, error) {
+	switch goos {
+	case "windows":
+		return "powershell", []string{
+			"-NoProfile",
+			"-ExecutionPolicy",
+			"Bypass",
+			"-Command",
+			"irm https://claude.ai/install.ps1 | iex",
+		}, nil
+	case "darwin", "linux":
+		return "bash", []string{
+			"-c",
+			"curl -fsSL https://claude.ai/install.sh | bash",
+		}, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported platform for claude install: %s", goos)
+	}
 }
 
 // modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
