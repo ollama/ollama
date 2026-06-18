@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
@@ -278,6 +279,25 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 				"output": []string{"text"},
 			}
 		}
+		if model.HasCapability("thinking") {
+			entry["reasoning"] = true
+			if openCodeModelSupportsThinkingLevels(model) {
+				entry["options"] = map[string]any{"reasoningEffort": "medium"}
+				entry["variants"] = map[string]any{
+					"low":    map[string]any{"reasoningEffort": "low"},
+					"medium": map[string]any{"reasoningEffort": "medium"},
+					"high":   map[string]any{"reasoningEffort": "high"},
+					"max":    map[string]any{"reasoningEffort": "max"},
+				}
+			} else {
+				entry["variants"] = map[string]any{
+					"none":   map[string]any{"reasoningEffort": "none"},
+					"low":    map[string]any{"disabled": true},
+					"medium": map[string]any{"disabled": true},
+					"high":   map[string]any{"disabled": true},
+				}
+			}
+		}
 		if model.MaxOutputTokens > 0 {
 			limit := make(map[string]any)
 			if model.ContextLength > 0 {
@@ -289,4 +309,21 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 		models[model.Name] = entry
 	}
 	return models
+}
+
+func openCodeModelSupportsThinkingLevels(model LaunchModel) bool {
+	for _, family := range append([]string{model.Details.Family}, model.Details.Families...) {
+		if normalizeOpenCodeModelFamily(family) == "gptoss" {
+			return true
+		}
+	}
+
+	return strings.Contains(normalizeOpenCodeModelFamily(model.Name), "gptoss")
+}
+
+func normalizeOpenCodeModelFamily(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "-", "")
+	s = strings.ReplaceAll(s, "_", "")
+	return s
 }

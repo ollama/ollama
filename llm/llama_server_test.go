@@ -986,15 +986,35 @@ func TestLlamaServerWaitUntilRunningTimesOutWhenLoadStalls(t *testing.T) {
 }
 
 func TestLlamaServerWaitUntilRunningExtendsTimeoutOnOutputActivity(t *testing.T) {
-	t.Setenv("OLLAMA_LOAD_TIMEOUT", "20ms")
+	t.Setenv("OLLAMA_LOAD_TIMEOUT", "100ms")
 
 	var activityCount atomic.Int32
+	var activityStarted atomic.Bool
+	var runner *llamaServerRunner
+	done := make(chan struct{})
+	defer close(done)
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			return
 		}
-		if activityCount.Load() < 5 {
+		if !activityStarted.Swap(true) {
+			go func() {
+				ticker := time.NewTicker(10 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-done:
+						return
+					case <-ticker.C:
+						activityCount.Add(1)
+						_, _ = runner.output.Write([]byte("."))
+					}
+				}
+			}()
+		}
+		if activityCount.Load() < 3 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, `{"error":{"message":"Loading model","type":"unavailable_error","code":503}}`)
 			return
@@ -1007,27 +1027,11 @@ func TestLlamaServerWaitUntilRunningExtendsTimeoutOnOutputActivity(t *testing.T)
 	var portInt int
 	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
 
-	runner := &llamaServerRunner{
+	runner = &llamaServerRunner{
 		port: portInt,
 		cmd:  fakeRunningCmd(),
 	}
 	runner.output = &memoryParsingWriter{inner: io.Discard, runner: runner}
-
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		ticker := time.NewTicker(5 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				activityCount.Add(1)
-				_, _ = runner.output.Write([]byte("."))
-			}
-		}
-	}()
 
 	if err := runner.WaitUntilRunning(t.Context()); err != nil {
 		t.Fatalf("WaitUntilRunning error: %v", err)

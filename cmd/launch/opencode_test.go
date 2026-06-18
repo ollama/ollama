@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -172,6 +173,54 @@ func TestOpenCodeEdit(t *testing.T) {
 		}
 		if len(output) != 1 || output[0] != "text" {
 			t.Fatalf("modalities.output = %v, want [text]", output)
+		}
+	})
+
+	t.Run("thinking model gets on off reasoning variants", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{Name: "thinking-model", Capabilities: []model.Capability{model.CapabilityThinking}}})
+		entry, _ := models["thinking-model"].(map[string]any)
+
+		if entry["reasoning"] != true {
+			t.Fatalf("reasoning = %v, want true", entry["reasoning"])
+		}
+		variants, _ := entry["variants"].(map[string]any)
+		none, _ := variants["none"].(map[string]any)
+		if none["reasoningEffort"] != "none" {
+			t.Fatalf("variants.none.reasoningEffort = %v, want none", none["reasoningEffort"])
+		}
+		for _, level := range []string{"low", "medium", "high"} {
+			variant, _ := variants[level].(map[string]any)
+			if variant["disabled"] != true {
+				t.Fatalf("variants.%s.disabled = %v, want true", level, variant["disabled"])
+			}
+		}
+	})
+
+	t.Run("gpt oss gets reasoning level variants", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{Name: "gpt-oss:120b-cloud", Capabilities: []model.Capability{model.CapabilityThinking}}})
+		entry, _ := models["gpt-oss:120b-cloud"].(map[string]any)
+		options, _ := entry["options"].(map[string]any)
+
+		if options["reasoningEffort"] != "medium" {
+			t.Fatalf("options.reasoningEffort = %v, want medium", options["reasoningEffort"])
+		}
+		variants, _ := entry["variants"].(map[string]any)
+		for _, level := range []string{"low", "medium", "high", "max"} {
+			variant, _ := variants[level].(map[string]any)
+			if variant["reasoningEffort"] != level {
+				t.Fatalf("variants.%s.reasoningEffort = %v, want %s", level, variant["reasoningEffort"], level)
+			}
+		}
+	})
+
+	t.Run("gpt oss family gets reasoning level variants", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{Name: "reasoning-model", Capabilities: []model.Capability{model.CapabilityThinking}, Details: api.ModelDetails{Families: []string{"gptoss"}}}})
+		entry, _ := models["reasoning-model"].(map[string]any)
+		variants, _ := entry["variants"].(map[string]any)
+		max, _ := variants["max"].(map[string]any)
+
+		if max["reasoningEffort"] != "max" {
+			t.Fatalf("variants.max.reasoningEffort = %v, want max", max["reasoningEffort"])
 		}
 	})
 }
