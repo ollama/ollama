@@ -68,6 +68,28 @@ func TestClaudeFindPath(t *testing.T) {
 		}
 	})
 
+	t.Run("falls back to ~/.local/bin/claude", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", t.TempDir()) // empty dir, no claude binary
+
+		name := "claude"
+		if runtime.GOOS == "windows" {
+			name = "claude.exe"
+		}
+		fallback := filepath.Join(tmpDir, ".local", "bin", name)
+		os.MkdirAll(filepath.Dir(fallback), 0o755)
+		os.WriteFile(fallback, []byte("#!/bin/sh\n"), 0o755)
+
+		got, err := c.findPath()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != fallback {
+			t.Errorf("findPath() = %q, want %q", got, fallback)
+		}
+	})
+
 	t.Run("returns error when neither PATH nor fallback exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
@@ -157,7 +179,7 @@ func TestEnsureClaudeInstalled(t *testing.T) {
 		writeFakeBinary(t, tmpDir, "curl")
 
 		installLog := filepath.Join(tmpDir, "bash.log")
-		installedClaude := filepath.Join(homeDir, ".claude", "local", "claude")
+		installedClaude := filepath.Join(homeDir, ".local", "bin", "claude")
 		bashScript := fmt.Sprintf(`#!/bin/sh
 echo "$@" >> %q
 if [ "$1" = "-c" ]; then

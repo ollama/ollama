@@ -38,11 +38,15 @@ func (c *Claude) findPath() (string, error) {
 	if runtime.GOOS == "windows" {
 		name = "claude.exe"
 	}
-	fallback := filepath.Join(home, ".claude", "local", name)
-	if _, err := os.Stat(fallback); err != nil {
-		return "", err
+	for _, fallback := range []string{
+		filepath.Join(home, ".local", "bin", name),
+		filepath.Join(home, ".claude", "local", name),
+	} {
+		if _, err := os.Stat(fallback); err == nil {
+			return fallback, nil
+		}
 	}
-	return fallback, nil
+	return "", fmt.Errorf("claude binary not found")
 }
 
 func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
