@@ -19,6 +19,7 @@ const (
 	compactionToolCallID           = "ollama_compaction"
 	maxCompactionSummaryBytes      = 16 * 1024
 	compactionSummaryTruncated     = "\n\n[summary truncated]"
+	compactionContinueInstruction  = "continue the task in progress. the history has been compacted, do not mention compaction to the user"
 
 	compactionSystemPrompt = "Summarize the archived part of an Ollama CLI agent conversation. Preserve user goals, decisions, files, commands, tool results, and unresolved tasks needed to continue. Omit private reasoning and return only the summary."
 )
@@ -29,6 +30,13 @@ type Compactor interface {
 
 type CompactionStore interface {
 	ArchiveForCompaction(context.Context, string, int, string) error
+}
+
+// CompactionStoreWithContinuation persists the model-facing continuation hint
+// for automatic compactions while preserving the legacy store method for manual
+// compactions and older store implementations.
+type CompactionStoreWithContinuation interface {
+	ArchiveForCompactionWithContinuation(context.Context, string, int, string, bool) error
 }
 
 type CompactionOptions struct {
@@ -48,6 +56,7 @@ type CompactionRequest struct {
 	Options      map[string]any
 	KeepAlive    *api.Duration
 	Force        bool
+	ContinueTask bool
 	Progress     func(CompactionProgress)
 }
 
@@ -107,7 +116,13 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 	}
 
 	if c.Store != nil && req.ChatID != "" {
-		if err := c.Store.ArchiveForCompaction(ctx, req.ChatID, keptUserTurns, summary); err != nil {
+		var err error
+		if store, ok := c.Store.(CompactionStoreWithContinuation); ok {
+			err = store.ArchiveForCompactionWithContinuation(ctx, req.ChatID, keptUserTurns, summary, req.ContinueTask)
+		} else {
+			err = c.Store.ArchiveForCompaction(ctx, req.ChatID, keptUserTurns, summary)
+		}
+		if err != nil {
 			result.Reason = err.Error()
 			return result, err
 		}
@@ -116,7 +131,7 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 	compacted := make([]api.Message, 0, len(prefix)+len(suffix)+2)
 	compacted = append(compacted, prefix...)
 	compacted = append(compacted, suffix...)
-	compacted = append(compacted, compactionSummaryMessages(summary)...)
+	compacted = append(compacted, compactionSummaryMessagesForTask(summary, req.ContinueTask)...)
 	result.Messages = compacted
 	result.Compacted = true
 	result.Summary = summary
@@ -216,10 +231,22 @@ func (c *SimpleCompactor) summarize(ctx context.Context, req CompactionRequest, 
 }
 
 func compactionSummaryMessage(summary string) string {
-	return compactionSummaryMessagePrefix + strings.TrimSpace(summary)
+	return compactionSummaryMessageForTask(summary, false)
+}
+
+func compactionSummaryMessageForTask(summary string, continueTask bool) string {
+	content := compactionSummaryMessagePrefix + strings.TrimSpace(summary)
+	if continueTask {
+		content = strings.TrimSpace(content) + "\n\n" + compactionContinueInstruction
+	}
+	return content
 }
 
 func compactionSummaryMessages(summary string) []api.Message {
+	return compactionSummaryMessagesForTask(summary, false)
+}
+
+func compactionSummaryMessagesForTask(summary string, continueTask bool) []api.Message {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("reason", "context compaction")
 	return []api.Message{
@@ -237,7 +264,7 @@ func compactionSummaryMessages(summary string) []api.Message {
 			Role:       "tool",
 			ToolName:   compactionToolName,
 			ToolCallID: compactionToolCallID,
-			Content:    compactionSummaryMessage(summary),
+			Content:    compactionSummaryMessageForTask(summary, continueTask),
 		},
 	}
 }
@@ -479,7 +506,16 @@ func isCompactionToolCall(msg api.Message) bool {
 }
 
 func compactionSummaryText(content string) string {
-	return strings.TrimSpace(strings.TrimPrefix(content, compactionSummaryMessagePrefix))
+	return strings.TrimSpace(strings.TrimSuffix(
+		strings.TrimSpace(strings.TrimPrefix(content, compactionSummaryMessagePrefix)),
+		compactionContinueInstruction,
+	))
+}
+
+// CompactionSummaryText returns the user-visible summary text from a compaction
+// tool result.
+func CompactionSummaryText(content string) string {
+	return compactionSummaryText(content)
 }
 
 func intOption(options map[string]any, key string) int {

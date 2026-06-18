@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
-
-	"mvdan.cc/sh/v3/syntax"
 )
 
 type ApprovalDecision string
@@ -329,53 +328,56 @@ func denyApproval(toolName string, risk ApprovalRisk, reason string) ApprovalEva
 // Bash approval is static analysis of model-generated commands, not a sandbox.
 // Globs, aliases, environment, and runtime shell state are intentionally out of scope.
 func classifyBashCommand(command string) (ApprovalRisk, []string) {
-	parser := syntax.NewParser(syntax.Variant(syntax.LangBash))
-	file, err := parser.Parse(strings.NewReader(command), "")
-	if err != nil {
-		return ApprovalRiskHigh, []string{"could not parse shell command"}
-	}
-
 	classifier := bashClassifier{risk: ApprovalRiskMedium}
-	if len(file.Stmts) > 1 {
-		classifier.addReason("runs multiple shell statements")
+
+	tokens, scannerReasons, scannerHigh := scanBashTokens(command)
+	for _, reason := range scannerReasons {
+		classifier.addReason(reason)
+	}
+	if scannerHigh {
+		classifier.high = true
 	}
 
-	syntax.Walk(file, func(node syntax.Node) bool {
-		switch n := node.(type) {
-		case *syntax.BinaryCmd:
-			classifier.addReason("uses shell control operator " + n.Op.String())
+	if bashFunctionDeclPattern.MatchString(command) {
+		classifier.addReason("defines shell functions")
+		classifier.high = true
+	}
+	if bashSubshellPattern.MatchString(command) {
+		classifier.addReason("uses a subshell")
+		classifier.high = true
+	}
+
+	for _, token := range tokens {
+		if token.kind != bashTokenOperator {
+			continue
+		}
+		switch token.value {
+		case "&&", "||", "|":
+			classifier.addReason("uses shell control operator " + token.value)
 			classifier.high = true
-		case *syntax.Stmt:
-			if n.Semicolon.IsValid() {
-				classifier.addReason("uses shell statement separator")
-				classifier.high = true
-			}
-			if n.Background {
-				classifier.addReason("runs a command in the background")
-				classifier.high = true
-			}
-			if len(n.Redirs) > 0 {
-				for _, redir := range n.Redirs {
-					classifier.addRedirect(redir)
-				}
-			}
-		case *syntax.CmdSubst:
+		case ";", "\n":
+			classifier.addReason("uses shell statement separator")
+			classifier.high = true
+		case "&":
+			classifier.addReason("runs a command in the background")
+			classifier.high = true
+		case "$(", "`":
 			classifier.addReason("uses command substitution")
 			classifier.high = true
-		case *syntax.ProcSubst:
+		case "<(", ">(":
 			classifier.addReason("uses process substitution")
 			classifier.high = true
-		case *syntax.Subshell:
-			classifier.addReason("uses a subshell")
+		case ">", ">>", ">|", ">&", "&>":
+			classifier.addReason("writes or redirects files")
 			classifier.high = true
-		case *syntax.FuncDecl:
-			classifier.addReason("defines shell functions")
-			classifier.high = true
-		case *syntax.CallExpr:
-			classifier.addCall(n)
+		case "<", "<<", "<&":
+			classifier.addReason("uses shell redirection")
 		}
-		return true
-	})
+	}
+
+	for _, args := range bashCommandCalls(tokens) {
+		classifier.addCall(args)
+	}
 
 	if classifier.high {
 		classifier.risk = ApprovalRiskHigh
@@ -396,32 +398,16 @@ func (c *bashClassifier) addReason(reason string) {
 	c.reasons = append(c.reasons, reason)
 }
 
-func (c *bashClassifier) addRedirect(redir *syntax.Redirect) {
-	if redir == nil {
-		return
-	}
-	op := redir.Op.String()
-	if strings.Contains(op, ">") {
-		c.addReason("writes or redirects files")
-		c.high = true
-		return
-	}
-	c.addReason("uses shell redirection")
-}
-
-func (c *bashClassifier) addCall(call *syntax.CallExpr) {
-	if call == nil || len(call.Args) == 0 {
-		return
-	}
-	if wordHasCommandNameExpansion(call.Args[0]) {
-		c.addReason("uses dynamic command name")
-		c.high = true
-	}
-	args := literalWords(call.Args)
+func (c *bashClassifier) addCall(args []string) {
+	args = shellCommandArgs(args)
 	if len(args) == 0 {
 		return
 	}
-	name := args[0]
+	if isDynamicCommandName(args[0]) {
+		c.addReason("uses dynamic command name")
+		c.high = true
+	}
+	name := shellCommandBase(args[0])
 	switch name {
 	case "cd":
 		c.addReason("changes directory")
@@ -473,32 +459,6 @@ func (c *bashClassifier) addCall(call *syntax.CallExpr) {
 	}
 }
 
-func wordHasCommandNameExpansion(word *syntax.Word) bool {
-	if word == nil {
-		return false
-	}
-	for _, part := range word.Parts {
-		switch part.(type) {
-		case *syntax.Lit:
-			continue
-		default:
-			return true
-		}
-	}
-	return false
-}
-
-func literalWords(words []*syntax.Word) []string {
-	args := make([]string, 0, len(words))
-	for _, word := range words {
-		if word == nil {
-			continue
-		}
-		args = append(args, word.Lit())
-	}
-	return args
-}
-
 func hasAnyFlag(args []string, flags ...string) bool {
 	for _, arg := range args {
 		if arg == "--" {
@@ -529,6 +489,242 @@ func isGitCleanDestructive(args []string) bool {
 		return false
 	}
 	return hasAnyFlag(args[2:], "f", "force") && (hasAnyFlag(args[2:], "d") || hasAnyFlag(args[2:], "x", "X"))
+}
+
+type bashTokenKind int
+
+const (
+	bashTokenWord bashTokenKind = iota
+	bashTokenOperator
+)
+
+type bashToken struct {
+	kind  bashTokenKind
+	value string
+}
+
+var (
+	bashFunctionDeclPattern = regexp.MustCompile(`(?m)(^|[;&|[:space:]])(?:function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(?:\(\)[[:space:]]*)?\{`)
+	bashSubshellPattern     = regexp.MustCompile(`(?m)(^|[;&|[:space:]])\(`)
+)
+
+func scanBashTokens(command string) ([]bashToken, []string, bool) {
+	var tokens []bashToken
+	var reasons []string
+	var word strings.Builder
+	var quote byte
+	escaped := false
+	high := false
+
+	flushWord := func() {
+		if word.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, bashToken{kind: bashTokenWord, value: word.String()})
+		word.Reset()
+	}
+	addOperator := func(op string) {
+		tokens = append(tokens, bashToken{kind: bashTokenOperator, value: op})
+	}
+
+	for i := 0; i < len(command); i++ {
+		ch := command[i]
+		if escaped {
+			word.WriteByte(ch)
+			escaped = false
+			continue
+		}
+		if ch == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+
+		if quote == '\'' {
+			if ch == '\'' {
+				quote = 0
+			} else {
+				word.WriteByte(ch)
+			}
+			continue
+		}
+		if quote == '"' {
+			switch {
+			case ch == '"':
+				quote = 0
+			case ch == '`':
+				addOperator("`")
+				word.WriteByte(ch)
+			case ch == '$' && i+1 < len(command) && command[i+1] == '(':
+				addOperator("$(")
+				word.WriteString("$(")
+				i++
+			default:
+				word.WriteByte(ch)
+			}
+			continue
+		}
+
+		if ch == '\'' || ch == '"' {
+			quote = ch
+			continue
+		}
+		if ch == '`' {
+			addOperator("`")
+			word.WriteByte(ch)
+			continue
+		}
+		if ch == '$' && i+1 < len(command) && command[i+1] == '(' {
+			addOperator("$(")
+			word.WriteString("$(")
+			i++
+			continue
+		}
+		if (ch == '<' || ch == '>') && i+1 < len(command) && command[i+1] == '(' {
+			flushWord()
+			addOperator(string([]byte{ch, '('}))
+			i++
+			continue
+		}
+		if ch == '\n' {
+			flushWord()
+			addOperator("\n")
+			continue
+		}
+		if ch == ' ' || ch == '\t' || ch == '\r' {
+			flushWord()
+			continue
+		}
+
+		switch ch {
+		case '&':
+			flushWord()
+			switch {
+			case i+1 < len(command) && command[i+1] == '&':
+				addOperator("&&")
+				i++
+			case i+1 < len(command) && command[i+1] == '>':
+				addOperator("&>")
+				i++
+			default:
+				addOperator("&")
+			}
+		case '|':
+			flushWord()
+			if i+1 < len(command) && command[i+1] == '|' {
+				addOperator("||")
+				i++
+			} else {
+				addOperator("|")
+			}
+		case ';':
+			flushWord()
+			addOperator(";")
+		case '<':
+			flushWord()
+			if i+1 < len(command) && command[i+1] == '<' {
+				addOperator("<<")
+				i++
+			} else if i+1 < len(command) && command[i+1] == '&' {
+				addOperator("<&")
+				i++
+			} else {
+				addOperator("<")
+			}
+		case '>':
+			flushWord()
+			if i+1 < len(command) && command[i+1] == '>' {
+				addOperator(">>")
+				i++
+			} else if i+1 < len(command) && command[i+1] == '|' {
+				addOperator(">|")
+				i++
+			} else if i+1 < len(command) && command[i+1] == '&' {
+				addOperator(">&")
+				i++
+			} else {
+				addOperator(">")
+			}
+		default:
+			word.WriteByte(ch)
+		}
+	}
+	if escaped || quote != 0 {
+		reasons = append(reasons, "could not parse shell command")
+		high = true
+	}
+	flushWord()
+	return tokens, reasons, high
+}
+
+func bashCommandCalls(tokens []bashToken) [][]string {
+	var calls [][]string
+	var current []string
+	flush := func() {
+		if len(current) == 0 {
+			return
+		}
+		calls = append(calls, current)
+		current = nil
+	}
+	for _, token := range tokens {
+		if token.kind == bashTokenWord {
+			current = append(current, token.value)
+			continue
+		}
+		if isBashCommandBoundary(token.value) {
+			flush()
+		}
+	}
+	flush()
+	return calls
+}
+
+func isBashCommandBoundary(op string) bool {
+	switch op {
+	case "&&", "||", "|", ";", "&", "\n":
+		return true
+	default:
+		return false
+	}
+}
+
+func shellCommandArgs(args []string) []string {
+	for len(args) > 0 && isShellAssignment(args[0]) {
+		args = args[1:]
+	}
+	return args
+}
+
+func isShellAssignment(word string) bool {
+	name, _, ok := strings.Cut(word, "=")
+	if !ok || name == "" {
+		return false
+	}
+	for i := range len(name) {
+		ch := name[i]
+		if i == 0 {
+			if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_') {
+				return false
+			}
+			continue
+		}
+		if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func isDynamicCommandName(name string) bool {
+	return strings.HasPrefix(name, "$") || strings.HasPrefix(name, "`") || strings.Contains(name, "$(") || strings.Contains(name, "`")
+}
+
+func shellCommandBase(name string) string {
+	name = strings.TrimSpace(name)
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 && i+1 < len(name) {
+		name = name[i+1:]
+	}
+	return name
 }
 
 func approvalPathEscapeReason(workingDir, path string) string {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -565,6 +566,24 @@ func TestChatCtrlCCancelsQuietly(t *testing.T) {
 	}
 }
 
+func TestChatRunDoneTreatsHTTPContextCanceledStringAsCancellation(t *testing.T) {
+	m := chatModel{running: true}
+
+	updated, _ := m.Update(chatRunDoneMsg{err: errors.New(`Post "http://127.0.0.1:11434/api/chat": context canceled`)})
+	m = updated.(chatModel)
+	if m.running {
+		t.Fatal("run should no longer be active after cancellation completes")
+	}
+	if m.status != "Tell the model what to do instead." {
+		t.Fatalf("status = %q, want friendly cancellation hint", m.status)
+	}
+	for _, entry := range m.entries {
+		if entry.role == "error" {
+			t.Fatalf("cancellation should not append an error entry: %#v", entry)
+		}
+	}
+}
+
 func TestChatCtrlCClearsDraftInsteadOfQuitting(t *testing.T) {
 	m := chatModel{
 		input:     []rune("draft"),
@@ -943,6 +962,9 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 
 	if !compactor.request.Force {
 		t.Fatal("manual compaction should be forced")
+	}
+	if compactor.request.ContinueTask {
+		t.Fatal("manual compaction should not add the automatic continue-task instruction")
 	}
 	if fm.compacting {
 		t.Fatal("compacting should be cleared after completion")

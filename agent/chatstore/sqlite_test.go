@@ -580,6 +580,51 @@ func TestStoreArchivesWholeChatWhenKeepingZeroTurns(t *testing.T) {
 	}
 }
 
+func TestStoreArchivesCompactionWithContinuation(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	for _, msg := range []api.Message{
+		{Role: "user", Content: "old request"},
+		{Role: "assistant", Content: "old answer"},
+		{Role: "user", Content: "recent request"},
+	} {
+		if err := store.AppendMessage(ctx, "chat-1", msg, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := store.ArchiveForCompactionWithContinuation(ctx, "chat-1", 1, "summary", true); err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := store.Chat(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 3 {
+		t.Fatalf("active messages = %#v, want latest request plus compaction pair", chat.Messages)
+	}
+	content := chat.Messages[2].Content
+	if !strings.Contains(content, compactionContinueInstruction) {
+		t.Fatalf("summary tool result missing continuation instruction: %q", content)
+	}
+
+	var storedSummary string
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT summary FROM compactions WHERE chat_id = ?
+	`, "chat-1").Scan(&storedSummary); err != nil {
+		t.Fatal(err)
+	}
+	if storedSummary != "summary" {
+		t.Fatalf("stored summary = %q, want raw summary", storedSummary)
+	}
+}
+
 func TestStoreReplacesPreviousCompactionMessages(t *testing.T) {
 	store, err := New(filepath.Join(t.TempDir(), "db.sqlite"))
 	if err != nil {

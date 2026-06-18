@@ -93,8 +93,10 @@ func TestMaybeRunAgentOnboarding(t *testing.T) {
 	t.Run("prompts once and saves seen state", func(t *testing.T) {
 		setCmdTestHome(t, t.TempDir())
 		oldPrompt := agentOnboardingPrompt
+		oldSignedIn := agentOnboardingSignedInStatus
 		t.Cleanup(func() {
 			agentOnboardingPrompt = oldPrompt
+			agentOnboardingSignedInStatus = oldSignedIn
 		})
 
 		var prompts int
@@ -102,8 +104,11 @@ func TestMaybeRunAgentOnboarding(t *testing.T) {
 			prompts++
 			return false, nil
 		}
+		agentOnboardingSignedInStatus = func(context.Context) (bool, bool) {
+			return false, true
+		}
 
-		signIn, err := maybeRunAgentOnboarding()
+		signIn, err := maybeRunAgentOnboarding(context.Background())
 		if err != nil {
 			t.Fatalf("maybeRunAgentOnboarding error: %v", err)
 		}
@@ -117,7 +122,7 @@ func TestMaybeRunAgentOnboarding(t *testing.T) {
 			t.Fatal("expected onboarding state to be saved")
 		}
 
-		signIn, err = maybeRunAgentOnboarding()
+		signIn, err = maybeRunAgentOnboarding(context.Background())
 		if err != nil {
 			t.Fatalf("second maybeRunAgentOnboarding error: %v", err)
 		}
@@ -129,18 +134,89 @@ func TestMaybeRunAgentOnboarding(t *testing.T) {
 		}
 	})
 
+	t.Run("skips prompt when already signed in", func(t *testing.T) {
+		setCmdTestHome(t, t.TempDir())
+		oldPrompt := agentOnboardingPrompt
+		oldSignedIn := agentOnboardingSignedInStatus
+		t.Cleanup(func() {
+			agentOnboardingPrompt = oldPrompt
+			agentOnboardingSignedInStatus = oldSignedIn
+		})
+
+		var prompts int
+		agentOnboardingPrompt = func() (bool, error) {
+			prompts++
+			return false, nil
+		}
+		agentOnboardingSignedInStatus = func(context.Context) (bool, bool) {
+			return true, true
+		}
+
+		signIn, err := maybeRunAgentOnboarding(context.Background())
+		if err != nil {
+			t.Fatalf("maybeRunAgentOnboarding error: %v", err)
+		}
+		if signIn {
+			t.Fatal("signIn = true, want false")
+		}
+		if prompts != 0 {
+			t.Fatalf("prompts = %d, want 0", prompts)
+		}
+		if !config.AgentSignInPromptSeen() {
+			t.Fatal("expected onboarding state to be saved")
+		}
+	})
+
+	t.Run("skips prompt when signed-in check is unknown", func(t *testing.T) {
+		setCmdTestHome(t, t.TempDir())
+		oldPrompt := agentOnboardingPrompt
+		oldSignedIn := agentOnboardingSignedInStatus
+		t.Cleanup(func() {
+			agentOnboardingPrompt = oldPrompt
+			agentOnboardingSignedInStatus = oldSignedIn
+		})
+
+		var prompts int
+		agentOnboardingPrompt = func() (bool, error) {
+			prompts++
+			return false, nil
+		}
+		agentOnboardingSignedInStatus = func(context.Context) (bool, bool) {
+			return false, false
+		}
+
+		signIn, err := maybeRunAgentOnboarding(context.Background())
+		if err != nil {
+			t.Fatalf("maybeRunAgentOnboarding error: %v", err)
+		}
+		if signIn {
+			t.Fatal("signIn = true, want false")
+		}
+		if prompts != 0 {
+			t.Fatalf("prompts = %d, want 0", prompts)
+		}
+		if config.AgentSignInPromptSeen() {
+			t.Fatal("unknown auth state should not save onboarding state")
+		}
+	})
+
 	t.Run("cancel does not save seen state", func(t *testing.T) {
 		setCmdTestHome(t, t.TempDir())
 		oldPrompt := agentOnboardingPrompt
+		oldSignedIn := agentOnboardingSignedInStatus
 		t.Cleanup(func() {
 			agentOnboardingPrompt = oldPrompt
+			agentOnboardingSignedInStatus = oldSignedIn
 		})
 
 		agentOnboardingPrompt = func() (bool, error) {
 			return false, tui.ErrCancelled
 		}
+		agentOnboardingSignedInStatus = func(context.Context) (bool, bool) {
+			return false, true
+		}
 
-		_, err := maybeRunAgentOnboarding()
+		_, err := maybeRunAgentOnboarding(context.Background())
 		if !errors.Is(err, launch.ErrCancelled) {
 			t.Fatalf("error = %v, want launch.ErrCancelled", err)
 		}

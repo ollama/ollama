@@ -1863,7 +1863,7 @@ func compactionSummaryContent(msg api.Message) (string, bool) {
 	if !strings.HasPrefix(msg.Content, chatCompactionSummaryPrefix) {
 		return "", false
 	}
-	return strings.TrimSpace(strings.TrimPrefix(msg.Content, chatCompactionSummaryPrefix)), true
+	return coreagent.CompactionSummaryText(msg.Content), true
 }
 
 func groupCompletedToolEntries(entries []chatEntry) []chatEntry {

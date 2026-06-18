@@ -448,22 +448,37 @@ func TestRunCommandFlags(t *testing.T) {
 	if root.Flags().Lookup("model") == nil {
 		t.Fatal("root command should expose --model")
 	}
+	if root.Flags().Lookup("format") != nil {
+		t.Fatal("root command should not expose --format")
+	}
+	if root.Flags().Lookup("verbose") != nil {
+		t.Fatal("root command should not expose --verbose")
+	}
+	for _, name := range []string{"think", "auto-approve-tools", "yolo", "keepalive"} {
+		if root.Flags().Lookup(name) == nil {
+			t.Fatalf("root command should expose --%s", name)
+		}
+	}
+	for _, name := range []string{"format", "verbose"} {
+		if runCmd.Flags().Lookup(name) == nil {
+			t.Fatalf("run command should expose --%s", name)
+		}
+	}
 }
 
 func TestPrepareRootResumeRunCommand(t *testing.T) {
 	rootCmd := &cobra.Command{}
 	rootCmd.SetContext(t.Context())
-	rootCmd.Flags().Bool("resume", true, "")
-	rootCmd.Flags().Bool("verbose", false, "")
-	rootCmd.Flags().Bool("nowordwrap", false, "")
-	if err := rootCmd.Flags().Set("verbose", "true"); err != nil {
+	registerRootRunFlags(rootCmd)
+	if err := rootCmd.Flags().Set("think", "high"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rootCmd.Flags().Set("yolo", "true"); err != nil {
 		t.Fatal(err)
 	}
 
 	runCmd := &cobra.Command{}
-	runCmd.Flags().Bool("resume", false, "")
-	runCmd.Flags().Bool("verbose", false, "")
-	runCmd.Flags().Bool("nowordwrap", false, "")
+	registerRunFlags(runCmd, true)
 
 	if err := prepareRootResumeRunCommand(rootCmd, runCmd); err != nil {
 		t.Fatal(err)
@@ -481,8 +496,8 @@ func TestPrepareRootResumeRunCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !verbose {
-		t.Fatal("run verbose flag = false, want true")
+	if verbose {
+		t.Fatal("run verbose flag = true, want unchanged false")
 	}
 
 	nowrap, err := runCmd.Flags().GetBool("nowordwrap")
@@ -491,6 +506,69 @@ func TestPrepareRootResumeRunCommand(t *testing.T) {
 	}
 	if nowrap {
 		t.Fatal("run nowordwrap flag = true, want unchanged false")
+	}
+	format, err := runCmd.Flags().GetString("format")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format != "" {
+		t.Fatalf("run format flag = %q, want unchanged empty", format)
+	}
+	think, err := runCmd.Flags().GetString("think")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if think != "high" {
+		t.Fatalf("run think flag = %q, want high", think)
+	}
+	autoApprove, err := autoApproveToolsFromFlags(runCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !autoApprove {
+		t.Fatal("run yolo flag did not enable auto approval")
+	}
+}
+
+func TestApplyRunFlagsToOptions(t *testing.T) {
+	cmd := &cobra.Command{}
+	registerRunFlags(cmd, true)
+	for name, value := range map[string]string{
+		"format":             "json",
+		"think":              "high",
+		"keepalive":          "5m",
+		"verbose":            "true",
+		"hidethinking":       "true",
+		"nowordwrap":         "true",
+		"auto-approve-tools": "true",
+	} {
+		if err := cmd.Flags().Set(name, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	opts := runOptions{WordWrap: true}
+	thinkExplicit, err := applyRunFlagsToOptions(cmd, &opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !thinkExplicit {
+		t.Fatal("thinkExplicit = false, want true")
+	}
+	if opts.Format != "json" {
+		t.Fatalf("format = %q, want json", opts.Format)
+	}
+	if opts.Think == nil || opts.Think.Value != "high" {
+		t.Fatalf("think = %#v, want high", opts.Think)
+	}
+	if !opts.AutoApproveTools || !opts.Verbose || !opts.HideThinking {
+		t.Fatalf("flags not applied: %#v", opts)
+	}
+	if opts.WordWrap {
+		t.Fatal("word wrap = true, want false")
+	}
+	if opts.KeepAlive == nil || opts.KeepAlive.Duration != 5*time.Minute {
+		t.Fatalf("keepalive = %#v, want 5m", opts.KeepAlive)
 	}
 }
 
@@ -502,10 +580,25 @@ func TestRootModelRunsRunHandler(t *testing.T) {
 
 	var gotArgs []string
 	var gotVerbose bool
+	var gotFormat string
+	var gotThink string
+	var gotAutoApprove bool
 	runHandler = func(cmd *cobra.Command, args []string) error {
 		gotArgs = append([]string(nil), args...)
 		var err error
 		gotVerbose, err = cmd.Flags().GetBool("verbose")
+		if err != nil {
+			return err
+		}
+		gotFormat, err = cmd.Flags().GetString("format")
+		if err != nil {
+			return err
+		}
+		gotThink, err = cmd.Flags().GetString("think")
+		if err != nil {
+			return err
+		}
+		gotAutoApprove, err = autoApproveToolsFromFlags(cmd)
 		return err
 	}
 
@@ -520,7 +613,7 @@ func TestRootModelRunsRunHandler(t *testing.T) {
 	}
 	runCmd.PreRunE = nil
 
-	root.SetArgs([]string{"--model", "llama3.2", "--verbose"})
+	root.SetArgs([]string{"--model", "llama3.2", "--think=high", "--yolo"})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -528,8 +621,17 @@ func TestRootModelRunsRunHandler(t *testing.T) {
 	if !reflect.DeepEqual(gotArgs, []string{"llama3.2"}) {
 		t.Fatalf("run handler args = %#v, want %#v", gotArgs, []string{"llama3.2"})
 	}
-	if !gotVerbose {
-		t.Fatal("run handler verbose = false, want true")
+	if gotVerbose {
+		t.Fatal("run handler verbose = true, want false")
+	}
+	if gotFormat != "" {
+		t.Fatalf("run handler format = %q, want empty", gotFormat)
+	}
+	if gotThink != "high" {
+		t.Fatalf("run handler think = %q, want high", gotThink)
+	}
+	if !gotAutoApprove {
+		t.Fatal("run handler auto approve = false, want true")
 	}
 }
 

@@ -33,6 +33,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
@@ -712,57 +713,9 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		ShowConnect: true,
 	}
 
-	format, err := cmd.Flags().GetString("format")
+	thinkExplicit, err := applyRunFlagsToOptions(cmd, &opts)
 	if err != nil {
 		return err
-	}
-	opts.Format = format
-
-	thinkFlag := cmd.Flags().Lookup("think")
-	if thinkFlag.Changed {
-		thinkStr, err := cmd.Flags().GetString("think")
-		if err != nil {
-			return err
-		}
-
-		// Handle different values for --think
-		switch thinkStr {
-		case "", "true":
-			// --think or --think=true
-			opts.Think = &api.ThinkValue{Value: true}
-		case "false":
-			opts.Think = &api.ThinkValue{Value: false}
-		case "high", "medium", "low", "max":
-			opts.Think = &api.ThinkValue{Value: thinkStr}
-		default:
-			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
-		}
-	} else {
-		opts.Think = nil
-	}
-	hidethinking, err := cmd.Flags().GetBool("hidethinking")
-	if err != nil {
-		return err
-	}
-	opts.HideThinking = hidethinking
-	if cmd.Flags().Lookup("resume") != nil {
-		resume, err := cmd.Flags().GetBool("resume")
-		if err != nil {
-			return err
-		}
-		opts.Resume = resume
-	}
-	autoApproveTools, err := autoApproveToolsFromFlags(cmd)
-	if err != nil {
-		return err
-	}
-	opts.AutoApproveTools = autoApproveTools
-	if cmd.Flags().Lookup("verbose") != nil {
-		verbose, err := cmd.Flags().GetBool("verbose")
-		if err != nil {
-			return err
-		}
-		opts.Verbose = verbose
 	}
 	if len(args) == 0 {
 		if !opts.Resume {
@@ -770,18 +723,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		opts.Model = args[0]
-	}
-
-	keepAlive, err := cmd.Flags().GetString("keepalive")
-	if err != nil {
-		return err
-	}
-	if keepAlive != "" {
-		d, err := time.ParseDuration(keepAlive)
-		if err != nil {
-			return err
-		}
-		opts.KeepAlive = &api.Duration{Duration: d}
 	}
 
 	var prompts []string
@@ -823,12 +764,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		opts.Model = modelName
 	}
 
-	nowrap, err := cmd.Flags().GetBool("nowordwrap")
-	if err != nil {
-		return err
-	}
-	opts.WordWrap = !nowrap
-
 	// Fill out the rest of the options based on information about the
 	// model.
 	client, err := api.ClientFromEnvironment()
@@ -863,7 +798,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	ensureCloudStub(cmd.Context(), client, name)
 
-	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkFlag.Changed)
+	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkExplicit)
 	if err != nil {
 		return err
 	}
@@ -955,6 +890,89 @@ func autoApproveToolsFromFlags(cmd *cobra.Command) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func applyRunFlagsToOptions(cmd *cobra.Command, opts *runOptions) (bool, error) {
+	if cmd == nil || opts == nil {
+		return false, nil
+	}
+	if cmd.Flags().Lookup("format") != nil {
+		format, err := cmd.Flags().GetString("format")
+		if err != nil {
+			return false, err
+		}
+		opts.Format = format
+	}
+
+	thinkExplicit := false
+	if thinkFlag := cmd.Flags().Lookup("think"); thinkFlag != nil && thinkFlag.Changed {
+		thinkStr, err := cmd.Flags().GetString("think")
+		if err != nil {
+			return false, err
+		}
+		thinkExplicit = true
+
+		switch thinkStr {
+		case "", "true":
+			opts.Think = &api.ThinkValue{Value: true}
+		case "false":
+			opts.Think = &api.ThinkValue{Value: false}
+		case "high", "medium", "low", "max":
+			opts.Think = &api.ThinkValue{Value: thinkStr}
+		default:
+			return false, fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
+		}
+	} else {
+		opts.Think = nil
+	}
+
+	if cmd.Flags().Lookup("hidethinking") != nil {
+		hidethinking, err := cmd.Flags().GetBool("hidethinking")
+		if err != nil {
+			return false, err
+		}
+		opts.HideThinking = hidethinking
+	}
+	if cmd.Flags().Lookup("resume") != nil {
+		resume, err := cmd.Flags().GetBool("resume")
+		if err != nil {
+			return false, err
+		}
+		opts.Resume = resume
+	}
+	autoApproveTools, err := autoApproveToolsFromFlags(cmd)
+	if err != nil {
+		return false, err
+	}
+	opts.AutoApproveTools = autoApproveTools
+	if cmd.Flags().Lookup("verbose") != nil {
+		verbose, err := cmd.Flags().GetBool("verbose")
+		if err != nil {
+			return false, err
+		}
+		opts.Verbose = verbose
+	}
+	if cmd.Flags().Lookup("keepalive") != nil {
+		keepAlive, err := cmd.Flags().GetString("keepalive")
+		if err != nil {
+			return false, err
+		}
+		if keepAlive != "" {
+			d, err := time.ParseDuration(keepAlive)
+			if err != nil {
+				return false, err
+			}
+			opts.KeepAlive = &api.Duration{Duration: d}
+		}
+	}
+	if cmd.Flags().Lookup("nowordwrap") != nil {
+		nowrap, err := cmd.Flags().GetBool("nowordwrap")
+		if err != nil {
+			return false, err
+		}
+		opts.WordWrap = !nowrap
+	}
+	return thinkExplicit, nil
 }
 
 func runAgentHeadless(cmd *cobra.Command, opts runOptions) error {
@@ -1834,25 +1852,89 @@ func prepareRootRunCommand(rootCmd, runCmd *cobra.Command, resume bool) error {
 		}
 	}
 
-	for _, name := range []string{"verbose", "nowordwrap"} {
-		rootFlag := rootCmd.Flags().Lookup(name)
-		runFlag := runCmd.Flags().Lookup(name)
-		if rootFlag == nil || runFlag == nil || !rootFlag.Changed {
-			continue
+	var setErr error
+	rootCmd.Flags().Visit(func(rootFlag *pflag.Flag) {
+		if setErr != nil {
+			return
 		}
-		if err := runCmd.Flags().Set(name, rootFlag.Value.String()); err != nil {
-			return err
+		switch rootFlag.Name {
+		case "model", "resume", "version":
+			return
 		}
+		runFlag := runCmd.Flags().Lookup(rootFlag.Name)
+		if runFlag == nil {
+			return
+		}
+		if err := runCmd.Flags().Set(rootFlag.Name, rootFlag.Value.String()); err != nil {
+			setErr = err
+		}
+	})
+	if setErr != nil {
+		return setErr
 	}
 
 	return nil
 }
 
+type runFlagOptions struct {
+	includeResume  bool
+	includeVerbose bool
+	includeFormat  bool
+}
+
+func registerRunFlags(cmd *cobra.Command, includeResume bool) {
+	registerRunFlagsWithOptions(cmd, runFlagOptions{
+		includeResume:  includeResume,
+		includeVerbose: true,
+		includeFormat:  true,
+	})
+}
+
+func registerRootRunFlags(cmd *cobra.Command) {
+	registerRunFlagsWithOptions(cmd, runFlagOptions{
+		includeResume: true,
+	})
+}
+
+func registerRunFlagsWithOptions(cmd *cobra.Command, opts runFlagOptions) {
+	cmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
+	if opts.includeVerbose {
+		cmd.Flags().Bool("verbose", false, "Show timings for response")
+	}
+	cmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	cmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
+	if opts.includeFormat {
+		cmd.Flags().String("format", "", "Response format (e.g. json)")
+	}
+	cmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
+	cmd.Flags().Lookup("think").NoOptDefVal = "true"
+	cmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
+	if opts.includeResume {
+		cmd.Flags().Bool("resume", false, "Resume the latest persisted chat")
+	}
+	cmd.Flags().Bool("auto-approve-tools", false, "Allow agent tools to run without prompting")
+	cmd.Flags().Bool("yolo", false, "Alias for --auto-approve-tools")
+	cmd.Flags().Bool("experimental-yolo", false, "Deprecated: use --auto-approve-tools")
+	cmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
+	cmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
+	cmd.Flags().Bool("experimental", false, "Deprecated: agent chat is enabled by default")
+	cmd.Flags().Bool("experimental-websearch", false, "Deprecated: web tools are enabled by default when available")
+	_ = cmd.Flags().MarkHidden("experimental-yolo")
+	_ = cmd.Flags().MarkHidden("experimental")
+	_ = cmd.Flags().MarkHidden("experimental-websearch")
+
+	imagegen.RegisterFlags(cmd)
+
+	cmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
+	_ = cmd.Flags().MarkHidden("imagegen")
+}
+
 var (
-	runHandler            = RunHandler
-	rootAgentHandler      = runAgentModelPicker
-	agentOnboardingPrompt = tui.RunAgentSignInOnboarding
-	agentOnboardingSignIn = runAgentOnboardingSignIn
+	runHandler                    = RunHandler
+	rootAgentHandler              = runAgentModelPicker
+	agentOnboardingPrompt         = tui.RunAgentSignInOnboarding
+	agentOnboardingSignIn         = runAgentOnboardingSignIn
+	agentOnboardingSignedInStatus = runAgentOnboardingSignedInStatus
 )
 
 func runRootResume(rootCmd, runCmd *cobra.Command, args []string) error {
@@ -2041,6 +2123,11 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 		ShowConnect: true,
 	}
 
+	thinkExplicit, err := applyRunFlagsToOptions(cmd, &opts)
+	if err != nil {
+		return err
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -2072,7 +2159,7 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 
 	ensureCloudStub(cmd.Context(), client, modelName)
 
-	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, false)
+	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkExplicit)
 	if err != nil {
 		return err
 	}
@@ -2116,7 +2203,7 @@ func runAgentModelPicker(cmd *cobra.Command) {
 		return
 	}
 
-	signIn, err := maybeRunAgentOnboarding()
+	signIn, err := maybeRunAgentOnboarding(cmd.Context())
 	if errors.Is(err, launch.ErrCancelled) {
 		return
 	}
@@ -2142,8 +2229,16 @@ func runAgentModelPicker(cmd *cobra.Command) {
 	}
 }
 
-func maybeRunAgentOnboarding() (bool, error) {
+func maybeRunAgentOnboarding(ctx context.Context) (bool, error) {
 	if envconfig.NoCloud() || config.AgentSignInPromptSeen() {
+		return false, nil
+	}
+
+	signedIn, known := agentOnboardingSignedInStatus(ctx)
+	if signedIn {
+		return false, config.SetAgentSignInPromptSeen(true)
+	}
+	if !known {
 		return false, nil
 	}
 
@@ -2158,6 +2253,22 @@ func maybeRunAgentOnboarding() (bool, error) {
 		return false, err
 	}
 	return signIn, nil
+}
+
+func runAgentOnboardingSignedInStatus(ctx context.Context) (signedIn bool, known bool) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return false, false
+	}
+	user, err := client.Whoami(ctx)
+	if err == nil {
+		return user != nil && user.Name != "", true
+	}
+	var authErr api.AuthorizationError
+	if errors.As(err, &authErr) {
+		return false, true
+	}
+	return false, false
 }
 
 func runAgentOnboardingSignIn(ctx context.Context) error {
@@ -2368,9 +2479,7 @@ func NewCLI() *cobra.Command {
 
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
 	rootCmd.Flags().String("model", "", "Run a model")
-	rootCmd.Flags().Bool("resume", false, "Resume the latest persisted chat")
-	rootCmd.Flags().Bool("verbose", false, "Show timings for response")
-	rootCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
+	registerRootRunFlags(rootCmd)
 
 	createCmd := &cobra.Command{
 		Use:   "create MODEL",
@@ -2414,31 +2523,7 @@ func NewCLI() *cobra.Command {
 		RunE:    RunHandler,
 	}
 
-	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
-	runCmd.Flags().Bool("verbose", false, "Show timings for response")
-	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
-	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
-	runCmd.Flags().String("format", "", "Response format (e.g. json)")
-	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
-	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
-	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
-	runCmd.Flags().Bool("resume", false, "Resume the latest persisted chat")
-	runCmd.Flags().Bool("auto-approve-tools", false, "Allow agent tools to run without prompting")
-	runCmd.Flags().Bool("yolo", false, "Alias for --auto-approve-tools")
-	runCmd.Flags().Bool("experimental-yolo", false, "Deprecated: use --auto-approve-tools")
-	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
-	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
-	runCmd.Flags().Bool("experimental", false, "Deprecated: agent chat is enabled by default")
-	runCmd.Flags().Bool("experimental-websearch", false, "Deprecated: web tools are enabled by default when available")
-	runCmd.Flags().MarkHidden("experimental-yolo")
-	runCmd.Flags().MarkHidden("experimental")
-	runCmd.Flags().MarkHidden("experimental-websearch")
-
-	// Image generation flags (width, height, steps, seed, etc.)
-	imagegen.RegisterFlags(runCmd)
-
-	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
-	runCmd.Flags().MarkHidden("imagegen")
+	registerRunFlags(runCmd, true)
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",

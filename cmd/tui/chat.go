@@ -250,7 +250,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyResponseMetrics(&msg.result.Latest)
 		}
 		m.groupCompletedToolHistory()
-		if wasCanceling || errors.Is(msg.err, context.Canceled) {
+		if wasCanceling || isChatContextCanceledError(msg.err) {
 			m.status = "Tell the model what to do instead."
 			return m, m.startNextQueued()
 		}
@@ -758,7 +758,7 @@ func (m chatModel) finishManualCompaction(msg chatCompactDoneMsg) (tea.Model, te
 	m.compactEvents = nil
 	m.cancel = nil
 	m.compactingTokens = 0
-	if wasCanceling || errors.Is(msg.err, context.Canceled) {
+	if wasCanceling || isChatContextCanceledError(msg.err) {
 		m.status = "compact canceled"
 		return m, m.startNextQueued()
 	}
@@ -942,6 +942,10 @@ func (m *chatModel) disarmEsc() {
 
 func (m chatModel) canEditInput() bool {
 	return m.approvalPrompt == nil && m.modelPicker == nil && m.thinkPicker == nil && m.resumePicker == nil && m.historyPopup == nil
+}
+
+func isChatContextCanceledError(err error) bool {
+	return err != nil && (errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled"))
 }
 
 const (

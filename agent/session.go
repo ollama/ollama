@@ -309,7 +309,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 		return persist(ctx, false)
 	})
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		if isContextCanceledError(ctx, err) {
 			if flushErr := persist(context.WithoutCancel(ctx), true); flushErr != nil {
 				return assistant, pendingToolCalls, true, flushErr
 			}
@@ -500,6 +500,16 @@ func canonicalSessionPath(path string) (string, error) {
 	return abs, nil
 }
 
+func isContextCanceledError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	return ctx != nil && errors.Is(ctx.Err(), context.Canceled) && strings.Contains(err.Error(), "context canceled")
+}
+
 func toolNeedsApproval(ctx context.Context, approval ApprovalHandler, tool Tool, req ApprovalRequest) bool {
 	return approval.RequiresApproval(ctx, tool, req)
 }
@@ -518,6 +528,7 @@ func (s *Session) maybeCompact(ctx context.Context, opts RunOptions, messages []
 		Latest:       latest,
 		Options:      opts.Options,
 		KeepAlive:    opts.KeepAlive,
+		ContinueTask: true,
 		Progress: func(progress CompactionProgress) {
 			_ = emit(s.Events, Event{Type: EventCompactionProgress, ChatID: opts.ChatID, Tokens: progress.Tokens})
 		},

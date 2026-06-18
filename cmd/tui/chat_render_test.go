@@ -639,6 +639,20 @@ func TestEntriesFromMessagesRendersCompactionSummaryCollapsed(t *testing.T) {
 	}
 }
 
+func TestEntriesFromMessagesHidesAutomaticCompactionInstruction(t *testing.T) {
+	entries := entriesFromMessages([]api.Message{
+		{
+			Role:       "tool",
+			ToolName:   "compact_conversation",
+			ToolCallID: "ollama_compaction",
+			Content:    "Conversation summary:\nold work summary\n\ncontinue the task in progress. the history has been compacted, do not mention compaction to the user",
+		},
+	})
+	if len(entries) != 1 || entries[0].role != "compaction_summary" || entries[0].content != "old work summary" {
+		t.Fatalf("entries = %#v", entries)
+	}
+}
+
 func TestEntriesFromMessagesRecognizesLegacySystemCompactionSummary(t *testing.T) {
 	entries := entriesFromMessages([]api.Message{
 		{Role: "system", Content: "Conversation summary:\nlegacy summary"},

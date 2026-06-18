@@ -25,6 +25,7 @@ const (
 	compactionSummaryMessagePrefix = "Conversation summary:\n"
 	compactionToolName             = "compact_conversation"
 	compactionToolCallID           = "ollama_compaction"
+	compactionContinueInstruction  = "continue the task in progress. the history has been compacted, do not mention compaction to the user"
 )
 
 type Chat struct {
@@ -341,7 +342,7 @@ func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 		return nil, err
 	}
 	if summary != "" && !messagesContainCompactionSummary(chat.Messages) {
-		chat.Messages = append(chat.Messages, compactionSummaryMessages(summary)...)
+		chat.Messages = append(chat.Messages, compactionSummaryMessages(summary, false)...)
 	}
 
 	return &chat, nil
@@ -546,6 +547,16 @@ func currentModelForChat(ctx context.Context, db *sql.DB, chatID string) (string
 }
 
 func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUserTurns int, summary string) error {
+	return s.archiveForCompaction(ctx, chatID, keepUserTurns, summary, false)
+}
+
+// ArchiveForCompactionWithContinuation stores a compaction tool result that
+// tells the model to continue the in-progress task after automatic compaction.
+func (s *Store) ArchiveForCompactionWithContinuation(ctx context.Context, chatID string, keepUserTurns int, summary string, continueTask bool) error {
+	return s.archiveForCompaction(ctx, chatID, keepUserTurns, summary, continueTask)
+}
+
+func (s *Store) archiveForCompaction(ctx context.Context, chatID string, keepUserTurns int, summary string, continueTask bool) error {
 	if chatID == "" {
 		return fmt.Errorf("chat id is required")
 	}
@@ -650,7 +661,7 @@ func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUse
 		return fmt.Errorf("archive messages: %w", err)
 	}
 
-	for _, msg := range compactionSummaryMessages(summary) {
+	for _, msg := range compactionSummaryMessages(summary, continueTask) {
 		messageID, err := insertMessage(ctx, tx, chatID, msg, "")
 		if err != nil {
 			return err
@@ -665,9 +676,13 @@ func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUse
 	return tx.Commit()
 }
 
-func compactionSummaryMessages(summary string) []api.Message {
+func compactionSummaryMessages(summary string, continueTask bool) []api.Message {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("reason", "context compaction")
+	content := compactionSummaryMessagePrefix + strings.TrimSpace(summary)
+	if continueTask {
+		content = strings.TrimSpace(content) + "\n\n" + compactionContinueInstruction
+	}
 	return []api.Message{
 		{
 			Role: "assistant",
@@ -683,7 +698,7 @@ func compactionSummaryMessages(summary string) []api.Message {
 			Role:       "tool",
 			ToolName:   compactionToolName,
 			ToolCallID: compactionToolCallID,
-			Content:    compactionSummaryMessagePrefix + strings.TrimSpace(summary),
+			Content:    content,
 		},
 	}
 }

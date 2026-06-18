@@ -12,12 +12,18 @@ type compactionStore struct {
 	chatID        string
 	keepUserTurns int
 	summary       string
+	continueTask  bool
 }
 
-func (s *compactionStore) ArchiveForCompaction(_ context.Context, chatID string, keepUserTurns int, summary string) error {
+func (s *compactionStore) ArchiveForCompaction(ctx context.Context, chatID string, keepUserTurns int, summary string) error {
+	return s.ArchiveForCompactionWithContinuation(ctx, chatID, keepUserTurns, summary, false)
+}
+
+func (s *compactionStore) ArchiveForCompactionWithContinuation(_ context.Context, chatID string, keepUserTurns int, summary string, continueTask bool) error {
 	s.chatID = chatID
 	s.keepUserTurns = keepUserTurns
 	s.summary = summary
+	s.continueTask = continueTask
 	return nil
 }
 
@@ -85,7 +91,7 @@ func TestSimpleCompactorSummarizesOldMessages(t *testing.T) {
 		t.Fatalf("recent turns were not kept: %#v", compacted)
 	}
 	assertCompactionSummaryPair(t, compacted[4:])
-	if store.chatID != "chat-1" || store.keepUserTurns != 2 || store.summary != "summary" {
+	if store.chatID != "chat-1" || store.keepUserTurns != 2 || store.summary != "summary" || store.continueTask {
 		t.Fatalf("archive call = %#v", store)
 	}
 	if len(client.requests) != 1 {
@@ -93,6 +99,48 @@ func TestSimpleCompactorSummarizesOldMessages(t *testing.T) {
 	}
 	if strings.Contains(client.requests[0].Messages[1].Content, "hidden") {
 		t.Fatal("compaction prompt should omit thinking")
+	}
+}
+
+func TestSimpleCompactorAddsContinueTaskInstructionOnlyToToolResult(t *testing.T) {
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{{
+			{Message: api.Message{Role: "assistant", Content: "summary"}},
+		}},
+	}
+	store := &compactionStore{}
+	compactor := NewSimpleCompactor(client, store, CompactionOptions{
+		ContextWindowTokens: 100,
+		KeepUserTurns:       1,
+		Threshold:           0.5,
+	})
+
+	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
+		ChatID:       "chat-1",
+		Model:        "model",
+		ContinueTask: true,
+		Messages: []api.Message{
+			{Role: "user", Content: "old request"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "recent request"},
+		},
+		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 75}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary != "summary" {
+		t.Fatalf("result summary = %q", result.Summary)
+	}
+	content := result.Messages[len(result.Messages)-1].Content
+	if !strings.Contains(content, compactionContinueInstruction) {
+		t.Fatalf("tool result missing continue instruction: %q", content)
+	}
+	if got := compactionSummaryText(content); got != "summary" {
+		t.Fatalf("visible summary text = %q", got)
+	}
+	if !store.continueTask || store.summary != "summary" {
+		t.Fatalf("archive call = %#v", store)
 	}
 }
 
@@ -347,6 +395,16 @@ func TestCompactionPromptFitsBudgetByTruncatingLargeToolOutput(t *testing.T) {
 
 func TestCompactionSummaryTextStripsPrefix(t *testing.T) {
 	content := compactionSummaryMessage("worked on branch changes")
+	if got := compactionSummaryText(content); got != "worked on branch changes" {
+		t.Fatalf("summary text = %q", got)
+	}
+}
+
+func TestCompactionSummaryCanTellModelToContinueTask(t *testing.T) {
+	content := compactionSummaryMessageForTask("worked on branch changes", true)
+	if !strings.Contains(content, compactionContinueInstruction) {
+		t.Fatalf("summary message missing continue instruction: %q", content)
+	}
 	if got := compactionSummaryText(content); got != "worked on branch changes" {
 		t.Fatalf("summary text = %q", got)
 	}

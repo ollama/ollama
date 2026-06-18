@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -84,18 +85,38 @@ func (m confirmModel) View() string {
 		noBtn = confirmActiveStyle.Render(" " + noLabel + " ")
 	}
 
-	prompt := m.prompt
-	if !m.plain {
-		prompt = selectorTitleStyle.Render(prompt)
-	}
+	prompt := renderConfirmPrompt(m.prompt, m.width, m.plain)
 	s := prompt + "\n\n"
 	s += "  " + yesBtn + "  " + noBtn + "\n\n"
-	s += selectorHelpStyle.Render("←/→ navigate • enter confirm • esc cancel")
+	s += renderConfirmHelp(m.width)
 
-	if m.width > 0 {
-		return lipgloss.NewStyle().MaxWidth(m.width).Render(s)
-	}
 	return s
+}
+
+func renderConfirmPrompt(prompt string, width int, plain bool) string {
+	lines := []string{prompt}
+	if width > 0 {
+		lines = wrapChatText(prompt, width)
+	}
+	if plain {
+		return strings.Join(lines, "\n")
+	}
+	for i, line := range lines {
+		lines[i] = selectorTitleStyle.Render(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderConfirmHelp(width int) string {
+	help := "←/→ navigate • enter confirm • esc cancel"
+	lines := []string{help}
+	if width > 0 {
+		lines = wrapChatText(help, width)
+	}
+	for i, line := range lines {
+		lines[i] = selectorHelpStyle.Render(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // RunConfirm shows a bubbletea yes/no confirmation prompt.

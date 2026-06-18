@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -563,6 +564,27 @@ func TestSessionPersistsPartialStreamOnCancellation(t *testing.T) {
 	}
 }
 
+func TestSessionTreatsHTTPContextCanceledStringAsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	client := &fakeClient{err: errors.New(`Post "http://127.0.0.1:11434/api/chat": context canceled`)}
+	session := &Session{Client: client}
+
+	result, err := session.Run(ctx, RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Run returned error for canceled HTTP request: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Run returned nil result")
+	}
+	if len(result.Messages) != 1 || result.Messages[0].Content != "hello" {
+		t.Fatalf("messages = %#v, want original user message only", result.Messages)
+	}
+}
+
 func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &contextAwareStore{}
@@ -891,6 +913,12 @@ func TestSessionCompactsAfterToolResultsBeforeContinuing(t *testing.T) {
 	firstCompaction := compactor.requests[0]
 	if len(firstCompaction.Messages) == 0 || firstCompaction.Messages[len(firstCompaction.Messages)-1].Role != "tool" {
 		t.Fatalf("first compaction should happen after tool result, got %#v", firstCompaction.Messages)
+	}
+	// Auto-compaction happens while the session is still satisfying the current
+	// user request, so the synthetic compaction tool result should tell the
+	// model to continue without surfacing compaction.
+	if !firstCompaction.ContinueTask {
+		t.Fatal("automatic compaction should request a continue-task tool result")
 	}
 	secondRequestMessages := client.requests[1].Messages
 	if len(secondRequestMessages) == 0 || !strings.Contains(secondRequestMessages[len(secondRequestMessages)-1].Content, "tool result summarized") {
