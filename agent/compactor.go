@@ -111,6 +111,8 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 	}
 	summary = truncateCompactionSummary(strings.TrimSpace(summary))
 	if summary == "" {
+		// TODO(parthsareen): Investigate models that stream compaction output
+		// without final content, such as thinking-only summaries.
 		result.Reason = "summary was empty"
 		return result, nil
 	}
