@@ -423,16 +423,33 @@ func TestHermesConfigureMigratesLegacyManagedAliases(t *testing.T) {
 func TestHermesPathsUsesLocalConfigPathForNativeWindowsHermes(t *testing.T) {
 	tmpDir := t.TempDir()
 	winHome := filepath.Join(tmpDir, "winhome")
+	localAppData := filepath.Join(tmpDir, "LocalAppData")
 	setTestHome(t, winHome)
 	withHermesPlatform(t, "windows")
 	withHermesUserHome(t, winHome)
 	t.Setenv("PATH", tmpDir)
+	t.Setenv("LOCALAPPDATA", localAppData)
 	writeFakeBinary(t, tmpDir, "hermes")
 
 	got := (&Hermes{}).Paths()
-	want := filepath.Join(winHome, ".hermes", "config.yaml")
+	want := filepath.Join(localAppData, "hermes", "config.yaml")
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("expected local config path %q, got %v", want, got)
+	}
+}
+
+func TestHermesPathsUsesHermesHomeOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	hermesHome := filepath.Join(tmpDir, "custom-hermes-home")
+	setTestHome(t, filepath.Join(tmpDir, "home"))
+	withHermesPlatform(t, "windows")
+	t.Setenv("HERMES_HOME", hermesHome)
+	t.Setenv("LOCALAPPDATA", filepath.Join(tmpDir, "LocalAppData"))
+
+	got := (&Hermes{}).Paths()
+	want := filepath.Join(hermesHome, "config.yaml")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("expected HERMES_HOME config path %q, got %v", want, got)
 	}
 }
 

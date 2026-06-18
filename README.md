@@ -147,10 +147,10 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 
 ## API usage (curl / PowerShell)
 
-All requests require:
+Run and chat with [Gemma 4](https://ollama.com/library/gemma4):
 
 ```
-Authorization: Bearer <your-api-key>
+ollama run gemma4
 ```
 
 ### List models
@@ -168,13 +168,15 @@ $headers = @{
   "Content-Type" = "application/json"
 }
 
-$body = @{ title = "My chat"; model = "llama3.2:1b" } | ConvertTo-Json
-
-Invoke-RestMethod `
-  -Uri "http://localhost:8080/api/sessions" `
-  -Method Post `
-  -Headers $headers `
-  -Body $body
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "gemma4",
+  "messages": [{
+    "role": "user",
+    "content": "Why is the sky blue?"
+  }],
+  "stream": false
+}'
 ```
 
 ### Send a message (server keeps context)
@@ -224,6 +226,13 @@ The API container may not be running:
 ```powershell
 docker compose ps
 docker compose logs api --tail 50
+response = chat(model='gemma4', messages=[
+  {
+    'role': 'user',
+    'content': 'Why is the sky blue?',
+  },
+])
+print(response.message.content)
 ```
 
 Restart the API:
@@ -248,12 +257,11 @@ docker exec -it ollama ollama pull llama3.2:1b
 
 ### Slow responses on CPU
 
-Use a smaller model and keep defaults in `.env`:
-
-```dotenv
-OLLAMA_KEEP_ALIVE=5m
-OLLAMA_NUM_PARALLEL=1
-OLLAMA_MAX_LOADED_MODELS=1
+const response = await ollama.chat({
+  model: "gemma4",
+  messages: [{ role: "user", content: "Why is the sky blue?" }],
+});
+console.log(response.message.content);
 ```
 
 ---

@@ -29,27 +29,24 @@ const (
 )
 
 type mtpStats struct {
-	iterations            int
-	drafted               int
-	accepted              int
-	mismatches            int
-	allAccepted           int
-	batched               int
-	serial                int
-	compared              int
-	batchSerialMismatches int
-	maxDraft              int
-	targetDuration        time.Duration
-	draftDuration         time.Duration
-	validateDuration      time.Duration
+	iterations       int
+	drafted          int
+	accepted         int
+	mismatches       int
+	allAccepted      int
+	batched          int
+	serial           int
+	maxDraft         int
+	targetDuration   time.Duration
+	draftDuration    time.Duration
+	validateDuration time.Duration
 }
 
 type mtpOptions struct {
-	initialDraftTokens    int
-	maxDraftTokens        int
-	draftSchedule         mtpDraftSchedule
-	serialValidate        bool
-	compareSerialValidate bool
+	initialDraftTokens int
+	maxDraftTokens     int
+	draftSchedule      mtpDraftSchedule
+	serialValidate     bool
 }
 
 func (r *Runner) mtpDefaults(sample bool) base.MTPDefaults {
@@ -89,9 +86,6 @@ func (r *Runner) loadMTPOptions(sample bool) mtpOptions {
 	}
 	if b, err := strconv.ParseBool(os.Getenv("OLLAMA_MLX_MTP_SERIAL_VALIDATE")); err == nil {
 		opts.serialValidate = b
-	}
-	if b, err := strconv.ParseBool(os.Getenv("OLLAMA_MLX_MTP_COMPARE_SERIAL_VALIDATE")); err == nil {
-		opts.compareSerialValidate = b
 	}
 	switch schedule := strings.ToLower(strings.TrimSpace(os.Getenv("OLLAMA_MLX_MTP_DRAFT_SCHEDULE"))); schedule {
 	case "", string(mtpDraftScheduleConstant):
@@ -146,9 +140,6 @@ func (r *Runner) useSampleMTP(opts sampler.Options) bool {
 	if serial, err := strconv.ParseBool(os.Getenv("OLLAMA_MLX_MTP_SERIAL_VALIDATE")); err == nil && serial {
 		return false
 	}
-	if compare, err := strconv.ParseBool(os.Getenv("OLLAMA_MLX_MTP_COMPARE_SERIAL_VALIDATE")); err == nil && compare {
-		return false
-	}
 	if r.Draft == nil {
 		return false
 	}
@@ -173,7 +164,7 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 	mtpOpts := r.loadMTPOptions(false)
 	stats := mtpStats{maxDraft: mtpOpts.initialDraftTokens}
 	draftLimit := mtpOpts.initialDraftTokens
-	slog.Info("MTP greedy decode enabled", "initial_draft_tokens", mtpOpts.initialDraftTokens, "max_draft_tokens", mtpOpts.maxDraftTokens, "draft_schedule", mtpOpts.draftSchedule, "serial_validate", mtpOpts.serialValidate, "compare_serial_validate", mtpOpts.compareSerialValidate)
+	slog.Info("MTP greedy decode enabled", "initial_draft_tokens", mtpOpts.initialDraftTokens, "max_draft_tokens", mtpOpts.maxDraftTokens, "draft_schedule", mtpOpts.draftSchedule, "serial_validate", mtpOpts.serialValidate)
 
 	targetForward := func(token *mlx.Array) *mlx.Array {
 		fwd := r.Model.Forward(&batch.Batch{
@@ -215,14 +206,11 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 			now = time.Now()
 		}
 
-		done, err := r.emitMTPToken(ctx, request, session, &dec, current, &final)
+		done, err := r.emitTokens(ctx, request, session, &dec, []sampler.Result{current}, &final, &generated)
 		if err != nil {
 			return err
 		}
-		if !done {
-			generated++
-		}
-		if done || generated >= request.Options.NumPredict {
+		if done {
 			break
 		}
 
@@ -301,7 +289,7 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 		avgDraft = float64(stats.drafted) / float64(stats.iterations)
 		avgAccepted = float64(stats.accepted) / float64(stats.iterations)
 	}
-	slog.Info("MTP decode stats", "generated", generated, "drafted", stats.drafted, "accepted", stats.accepted, "acceptance", acceptance, "iterations", stats.iterations, "avg_draft", avgDraft, "avg_accepted", avgAccepted, "batched", stats.batched, "serial", stats.serial, "compared", stats.compared, "batch_serial_mismatches", stats.batchSerialMismatches, "mismatches", stats.mismatches, "all_accepted", stats.allAccepted, "max_draft", stats.maxDraft, "draft_schedule", mtpOpts.draftSchedule, "target_duration", stats.targetDuration, "draft_duration", stats.draftDuration, "validate_duration", stats.validateDuration)
+	slog.Info("MTP decode stats", "generated", generated, "drafted", stats.drafted, "accepted", stats.accepted, "acceptance", acceptance, "iterations", stats.iterations, "avg_draft", avgDraft, "avg_accepted", avgAccepted, "batched", stats.batched, "serial", stats.serial, "mismatches", stats.mismatches, "all_accepted", stats.allAccepted, "max_draft", stats.maxDraft, "draft_schedule", mtpOpts.draftSchedule, "target_duration", stats.targetDuration, "draft_duration", stats.draftDuration, "validate_duration", stats.validateDuration)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -358,14 +346,11 @@ func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, sessio
 			now = time.Now()
 		}
 
-		done, err := r.emitMTPToken(ctx, request, session, &dec, current, &final)
+		done, err := r.emitTokens(ctx, request, session, &dec, []sampler.Result{current}, &final, &generated)
 		if err != nil {
 			return err
 		}
-		if !done {
-			generated++
-		}
-		if done || generated >= request.Options.NumPredict {
+		if done {
 			break
 		}
 
@@ -544,19 +529,68 @@ func (r *Runner) acceptMTPDrafts(ctx context.Context, request Request, session *
 		return r.acceptMTPDraftsSerial(ctx, request, session, dec, caches, position, baseLogits, draftTokens, final, generated)
 	}
 
-	specCaches, spec, ok := cache.BeginSpeculation(caches)
-	if ok {
-		stats.batched++
-		return r.acceptMTPDraftsBatched(ctx, request, session, dec, caches, specCaches, spec, position, baseLogits, draftTokens, final, generated, stats, opts)
-	}
-
-	stats.serial++
-	return r.acceptMTPDraftsSerial(ctx, request, session, dec, caches, position, baseLogits, draftTokens, final, generated)
+	stats.batched++
+	return r.acceptMTPDraftsBatched(ctx, request, session, dec, caches, position, baseLogits, draftTokens, final, generated)
 }
 
-func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, session *cacheSession, dec *decoder, liveCaches []cache.Cache, caches []cache.Cache, spec *cache.Speculation, position *int, baseLogits *mlx.Array, draftTokens *mlx.Array, final *CompletionResponse, generated *int, stats *mtpStats, opts mtpOptions) (sampler.Result, int, bool, error) {
+// scheduleSpeculation schedules per-token snapshots at offsets
+// [before, before+draftCount) on every cache, so the speculative forward
+// captures a rollback point before each draft token's write.
+func scheduleSpeculation(caches []cache.Cache, before, draftCount int) {
+	offsets := make([]int, draftCount)
+	for i := range offsets {
+		offsets[i] = before + i
+	}
+	for _, c := range caches {
+		if c != nil {
+			c.PrepareSnapshots(offsets)
+		}
+	}
+}
+
+// commitSpeculation collects the captured snapshots and rolls every cache
+// back to before+accepted, keeping only the accepted prefix of the
+// speculative forward. The bonus token (at before+draftCount) is never
+// committed. On full acceptance no restore is needed.
+//
+// Rollback tries a live rewind first (Restore(nil)) and falls back to the
+// captured snapshot when the live state can't be rewound in place.
+func commitSpeculation(caches []cache.Cache, accepted, draftCount, before int) {
+	target := before + accepted
+	for _, c := range caches {
+		if c == nil {
+			continue
+		}
+		snaps := c.TakeSnapshots()
+		if accepted < draftCount {
+			// Close the snapshots we won't restore from before restoring: a
+			// snapshot restore on a wrapped RotatingKVCache copies out every
+			// outstanding lazy snapshot before it rebuilds the buffer, so
+			// dropping the unused ones first stops that copy-out from
+			// materializing snapshots we are about to discard anyway.
+			for i, s := range snaps {
+				if s != nil && i != accepted {
+					s.Close()
+					snaps[i] = nil
+				}
+			}
+			if !c.Restore(nil, target) && !c.Restore(snaps[accepted], target) {
+				panic(fmt.Sprintf("mtp: cache restore to %d failed", target))
+			}
+		}
+		for _, s := range snaps {
+			if s != nil {
+				s.Close()
+			}
+		}
+	}
+}
+
+func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits *mlx.Array, draftTokens *mlx.Array, final *CompletionResponse, generated *int) (sampler.Result, int, bool, error) {
 	before := *position
 	draftCount := draftTokens.Dim(1)
+
+	scheduleSpeculation(caches, before, draftCount)
 	hiddenSeq := r.Model.Forward(&batch.Batch{
 		InputIDs:     draftTokens,
 		SeqOffsets:   []int32{int32(before)},
@@ -572,6 +606,10 @@ func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, se
 	draftIDs := draftTokens.Ints()
 	selectedIDs := selectedTokens.Ints()
 	if len(selectedIDs) < draftCount+1 {
+		// Drain the scheduled snapshots and roll the speculative forward back
+		// out of the live caches before bailing, so the abandoned drafts don't
+		// reach the trie via session.close().
+		commitSpeculation(caches, 0, draftCount, before)
 		return sampler.Result{}, accepted, false, fmt.Errorf("mtp validation produced %d tokens for %d draft tokens", len(selectedIDs), draftCount)
 	}
 
@@ -587,33 +625,14 @@ func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, se
 		}
 	}
 
-	if opts.compareSerialValidate {
-		spec.Commit(0)
-		r.compareMTPBatchedWithSerial(ctx, liveCaches, before, baseLogits, hiddenSeq, draftIDs, selectedIDs, accepted, draftCount, stats)
-	}
-	spec.Commit(accepted)
+	commitSpeculation(caches, accepted, draftCount, before)
 	*position = before + accepted
 
-	for _, id := range draftIDs[:accepted] {
-		if *generated >= request.Options.NumPredict {
-			done = true
-			break
-		}
-		res := sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
-		var err error
-		done, err = r.emitMTPToken(ctx, request, session, dec, res, final)
-		if err != nil {
-			return sampler.Result{}, accepted, done, err
-		}
-		if !done {
-			(*generated)++
-		}
-		if done {
-			break
-		}
+	emitted, err := r.emitTokens(ctx, request, session, dec, draftResults(draftIDs[:accepted]), final, generated)
+	if err != nil {
+		return sampler.Result{}, accepted, emitted || done, err
 	}
-
-	if done || *generated >= request.Options.NumPredict {
+	if emitted || done {
 		return sampler.Result{}, accepted, true, nil
 	}
 	if next.Token == nil {
@@ -623,20 +642,16 @@ func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, se
 }
 
 func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits *mlx.Array, candidates *mtpDraftCandidates, final *CompletionResponse, generated *int, stats *mtpStats) (sampler.Result, int, bool, error) {
-	specCaches, spec, ok := cache.BeginSpeculation(caches)
-	if !ok {
-		stats.serial++
-		return r.Sampler.Sample([]int{pipelineSlot}, baseLogits), 0, false, nil
-	}
 	stats.batched++
 
 	before := *position
 	draftCount := candidates.tokens.Dim(1)
+	scheduleSpeculation(caches, before, draftCount)
 	hiddenSeq := r.Model.Forward(&batch.Batch{
 		InputIDs:     candidates.tokens,
 		SeqOffsets:   []int32{int32(before)},
 		SeqQueryLens: []int32{int32(draftCount)},
-	}, specCaches)
+	}, caches)
 
 	targetDist := r.Sampler.Distribution(pipelineSlot, r.mtpValidationLogits(baseLogits, hiddenSeq), candidates.tokens)
 	draftDist := candidates.dist
@@ -653,6 +668,10 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 		accepted++
 	}
 	if accepted > draftCount {
+		// Drain the scheduled snapshots and roll the speculative forward back
+		// out of the live caches before bailing, so the abandoned drafts don't
+		// reach the trie via session.close().
+		commitSpeculation(caches, 0, draftCount, before)
 		return sampler.Result{}, 0, false, fmt.Errorf("mtp sample validation accepted %d tokens for %d draft tokens", accepted, draftCount)
 	}
 
@@ -668,29 +687,14 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 		}
 	}
 
-	spec.Commit(accepted)
+	commitSpeculation(caches, accepted, draftCount, before)
 	*position = before + accepted
 
-	for _, id := range draftIDs[:accepted] {
-		if *generated >= request.Options.NumPredict {
-			done = true
-			break
-		}
-		res := sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
-		var err error
-		done, err = r.emitMTPToken(ctx, request, session, dec, res, final)
-		if err != nil {
-			return sampler.Result{}, accepted, done, err
-		}
-		if !done {
-			(*generated)++
-		}
-		if done {
-			break
-		}
+	emitted, err := r.emitTokens(ctx, request, session, dec, draftResults(draftIDs[:accepted]), final, generated)
+	if err != nil {
+		return sampler.Result{}, accepted, emitted || done, err
 	}
-
-	if done || *generated >= request.Options.NumPredict {
+	if emitted || done {
 		r.Sampler.Commit(pipelineSlot, commitIDs)
 		return sampler.Result{}, accepted, true, nil
 	}
@@ -749,106 +753,6 @@ func mtpTokenVector(token *mlx.Array) *mlx.Array {
 	}
 }
 
-func (r *Runner) compareMTPBatchedWithSerial(ctx context.Context, caches []cache.Cache, before int, baseLogits, hiddenSeq *mlx.Array, draftIDs, selectedIDs []int, accepted, draftCount int, stats *mtpStats) {
-	serialCaches, ok := cache.BeginIsolatedSpeculation(caches)
-	if !ok {
-		return
-	}
-
-	compareCount := accepted + 1
-	if accepted == draftCount {
-		// Include the target bonus token when every draft was accepted.
-		compareCount = draftCount + 1
-	}
-
-	serialLogits := baseLogits
-	for i := range compareCount {
-		if err := ctx.Err(); err != nil {
-			return
-		}
-		if i >= len(selectedIDs) {
-			return
-		}
-
-		batchedLogits := baseLogits
-		if i > 0 {
-			batchedLogits = r.targetLogitsAt(hiddenSeq, i-1)
-		}
-
-		batchedToken := greedyTokenFromLogits(batchedLogits)
-		serialToken := greedyTokenFromLogits(serialLogits)
-		mlx.Eval(batchedToken, serialToken)
-
-		batchedID := tokenID(batchedToken)
-		vectorizedID := selectedIDs[i]
-		serialID := tokenID(serialToken)
-		stats.compared++
-		if vectorizedID != serialID {
-			firstMismatch := stats.batchSerialMismatches == 0
-			stats.batchSerialMismatches++
-			if !firstMismatch {
-				return
-			}
-
-			draftID := -1
-			if i < draftCount {
-				draftID = draftIDs[i]
-			}
-			batchedTop := top2FromLogits(batchedLogits)
-			serialTop := top2FromLogits(serialLogits)
-			slog.Warn("MTP batched validation differs from serial validation",
-				"position", before+i,
-				"draft", draftID,
-				"batched", vectorizedID,
-				"batched_slice", batchedID,
-				"serial", serialID,
-				"batched_slice_top1", batchedTop.firstToken,
-				"batched_slice_top2", batchedTop.secondToken,
-				"batched_slice_margin", batchedTop.margin,
-				"serial_top1", serialTop.firstToken,
-				"serial_top2", serialTop.secondToken,
-				"serial_margin", serialTop.margin,
-			)
-			return
-		}
-
-		if i >= draftCount || i >= accepted {
-			return
-		}
-
-		hidden := r.Model.Forward(&batch.Batch{
-			InputIDs:     mlx.FromValues([]int32{int32(draftIDs[i])}, 1, 1),
-			SeqOffsets:   []int32{int32(before + i)},
-			SeqQueryLens: []int32{1},
-		}, serialCaches)
-		serialLogits = r.lastLogits(hidden)
-	}
-}
-
-type mtpTop2 struct {
-	firstToken  int
-	secondToken int
-	margin      float64
-}
-
-func top2FromLogits(logits *mlx.Array) mtpTop2 {
-	indices := logits.Negative().ArgsortAxis(-1).Slice(mlx.Slice(), mlx.Slice(0, 2))
-	indices32 := indices.AsType(mlx.DTypeInt32)
-	values := logits.TakeAlongAxis(indices, -1).AsType(mlx.DTypeFloat32)
-	mlx.Eval(indices32, values)
-
-	tokenIDs := indices32.Ints()
-	logitValues := values.Floats()
-	if len(tokenIDs) < 2 || len(logitValues) < 2 {
-		return mtpTop2{}
-	}
-	return mtpTop2{
-		firstToken:  tokenIDs[0],
-		secondToken: tokenIDs[1],
-		margin:      float64(logitValues[0] - logitValues[1]),
-	}
-}
-
 func (r *Runner) acceptMTPDraftsSerial(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits *mlx.Array, draftTokens *mlx.Array, final *CompletionResponse, generated *int) (sampler.Result, int, bool, error) {
 	logits := baseLogits
 	accepted := 0
@@ -871,14 +775,11 @@ func (r *Runner) acceptMTPDraftsSerial(ctx context.Context, request Request, ses
 		accepted++
 
 		res := sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
-		done, err := r.emitMTPToken(ctx, request, session, dec, res, final)
+		done, err := r.emitTokens(ctx, request, session, dec, []sampler.Result{res}, final, generated)
 		if err != nil {
 			return sampler.Result{}, accepted, done, err
 		}
-		if !done {
-			(*generated)++
-		}
-		if done || *generated >= request.Options.NumPredict {
+		if done {
 			return sampler.Result{}, accepted, true, nil
 		}
 
@@ -888,33 +789,56 @@ func (r *Runner) acceptMTPDraftsSerial(ctx context.Context, request Request, ses
 	return sampler.Result{Token: greedyTokenFromLogits(logits)}, accepted, false, nil
 }
 
-func (r *Runner) emitMTPToken(ctx context.Context, request Request, session *cacheSession, dec *decoder, res sampler.Result, final *CompletionResponse) (bool, error) {
-	output := int32(tokenID(res.Token))
-	session.outputs = append(session.outputs, output)
-
-	if r.Tokenizer.IsEOS(output) {
-		final.DoneReason = 0
-		return true, nil
+// emitTokens records a run of generated tokens to session.outputs, then streams
+// them. A trailing EOS stops generation and is recorded but not streamed.
+// Returns whether to stop and any cancellation error.
+func (r *Runner) emitTokens(ctx context.Context, request Request, session *cacheSession, dec *decoder, results []sampler.Result, final *CompletionResponse, generated *int) (done bool, err error) {
+	stream := len(results)
+	for i, res := range results {
+		id := int32(tokenID(res.Token))
+		session.outputs = append(session.outputs, id)
+		if r.Tokenizer.IsEOS(id) {
+			final.DoneReason = 0
+			done = true
+			stream = i
+			break
+		}
+		(*generated)++
+	}
+	if *generated >= request.Options.NumPredict {
+		done = true
 	}
 
-	if resp, ok := dec.decode(res); ok {
+	// Record the whole run before streaming any of it: streaming returns early on
+	// a cancelled context, and a partial stream must not leave the cache ahead of
+	// session.outputs.
+	for _, res := range results[:stream] {
+		resp, ok := dec.decode(res)
+		if !ok {
+			continue
+		}
 		select {
 		case <-ctx.Done():
-			return false, ctx.Err()
+			return done, ctx.Err()
 		case request.Responses <- resp:
 		}
 	}
-	return false, nil
+	return done, nil
+}
+
+// draftResults wraps accepted draft token ids as sampler results for emitTokens.
+// Accepted drafts carry no logprobs, so only the token id is set.
+func draftResults(ids []int) []sampler.Result {
+	results := make([]sampler.Result, len(ids))
+	for i, id := range ids {
+		results[i] = sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
+	}
+	return results
 }
 
 func (r *Runner) lastLogits(hidden *mlx.Array) *mlx.Array {
 	logits := r.Model.Unembed(hidden)
 	return r.lastLogitsFromLogits(logits)
-}
-
-func (r *Runner) targetLogitsAt(hiddenSeq *mlx.Array, index int) *mlx.Array {
-	hidden := hiddenSeq.Slice(mlx.Slice(), mlx.Slice(index), mlx.Slice())
-	return r.lastLogits(hidden)
 }
 
 func (r *Runner) mtpValidationTokens(baseLogits, hiddenSeq *mlx.Array) *mlx.Array {
