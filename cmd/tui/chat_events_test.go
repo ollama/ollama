@@ -333,9 +333,10 @@ func TestChatRunDoneIncludesGeneratedTokenCount(t *testing.T) {
 }
 
 func TestChatRunDoneSuppressesDuplicateEventError(t *testing.T) {
-	err := errors.New("tool round limit reached; send another message to continue")
+	eventErr := errors.New("tool round limit reached; send another message to continue")
+	err := errors.New("agent stopped: tool round limit reached; send another message to continue")
 	m := chatModel{running: true}
-	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventError, Error: err.Error()})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventError, Error: eventErr.Error()})
 
 	updated, _ := m.Update(chatRunDoneMsg{err: err})
 	fm := updated.(chatModel)

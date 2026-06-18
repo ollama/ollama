@@ -73,6 +73,10 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 
 	script := command + "\n__ollama_status=$?\npwd -P > " + shellQuote(cwdPath) + "\nexit $__ollama_status"
 	cmd := exec.CommandContext(ctx, "bash", "-c", script)
+	configureBashCommand(cmd)
+	cmd.Cancel = func() error {
+		return killBashCommand(cmd)
+	}
 	if toolCtx.WorkingDir != "" {
 		cmd.Dir = toolCtx.WorkingDir
 	}

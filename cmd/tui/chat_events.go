@@ -42,7 +42,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 
 	switch event.Type {
 	case coreagent.EventMessageStarted:
-		m.lastEventError = ""
+		m.eventErrorRendered = false
 		m.compacting = false
 		m.compactingTokens = 0
 		m.thinking = false
@@ -171,7 +171,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.compactingTokens = 0
 		m.thinking = false
 		m.thinkingTokens = 0
-		m.lastEventError = event.Error
+		m.eventErrorRendered = true
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: event.Error, err: event.Error}))
 	}
 

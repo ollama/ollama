@@ -159,7 +159,12 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 			messages = append(messages, assistant)
 		}
 		if len(pendingToolCalls) == 0 {
-			messages, compactionSkipNotified = s.maybeCompact(ctx, opts, messages, latest, compactionSkipNotified)
+			var compactErr error
+			messages, compactionSkipNotified, compactErr = s.maybeCompact(ctx, opts, messages, latest, compactionSkipNotified)
+			if compactErr != nil {
+				emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Error: compactErr.Error()})
+				return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, compactErr
+			}
 		}
 
 		if canceled {
@@ -203,7 +208,12 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 			return nil, err
 		}
 		messages = append(messages, toolMessages...)
-		messages, compactionSkipNotified = s.maybeCompact(ctx, opts, messages, latest, compactionSkipNotified)
+		var compactErr error
+		messages, compactionSkipNotified, compactErr = s.maybeCompact(ctx, opts, messages, latest, compactionSkipNotified)
+		if compactErr != nil {
+			emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Error: compactErr.Error()})
+			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, compactErr
+		}
 		if denied {
 			if err := emit(s.Events, Event{Type: EventRunFinished, RunID: runID, ChatID: opts.ChatID, FinishedAt: time.Now(), Response: &latest}); err != nil {
 				return nil, err
@@ -525,9 +535,9 @@ func toolNeedsApproval(ctx context.Context, approval ApprovalHandler, tool Tool,
 	return approval.RequiresApproval(ctx, tool, req)
 }
 
-func (s *Session) maybeCompact(ctx context.Context, opts RunOptions, messages []api.Message, latest api.ChatResponse, skipNotified bool) ([]api.Message, bool) {
+func (s *Session) maybeCompact(ctx context.Context, opts RunOptions, messages []api.Message, latest api.ChatResponse, skipNotified bool) ([]api.Message, bool, error) {
 	if s.Compactor == nil {
-		return messages, skipNotified
+		return messages, skipNotified, nil
 	}
 	req := CompactionRequest{
 		ChatID:       opts.ChatID,
@@ -553,17 +563,20 @@ func (s *Session) maybeCompact(ctx context.Context, opts RunOptions, messages []
 			emit(s.Events, Event{Type: EventCompactionSkipped, ChatID: opts.ChatID, Content: CompactionSkippedMessage(result.Reason)})
 			skipNotified = true
 		}
-		return messages, skipNotified
+		return messages, skipNotified, nil
 	}
 	if !result.Compacted {
 		if result.Due && !skipNotified {
 			emit(s.Events, Event{Type: EventCompactionSkipped, ChatID: opts.ChatID, Content: CompactionSkippedMessage(result.Reason)})
 			skipNotified = true
 		}
-		return messages, skipNotified
+		return messages, skipNotified, nil
 	}
 	emit(s.Events, Event{Type: EventCompacted, ChatID: opts.ChatID, Content: result.Summary, Messages: result.Messages})
-	return result.Messages, skipNotified
+	if err := s.checkPostCompactionPromptBudget(opts, result.Messages); err != nil {
+		return result.Messages, skipNotified, err
+	}
+	return result.Messages, skipNotified, nil
 }
 
 func (s *Session) autoCompactionDue(req CompactionRequest) bool {
@@ -647,6 +660,18 @@ func (s *Session) checkPreflightPromptBudget(opts RunOptions, messages []api.Mes
 		return nil
 	}
 	return fmt.Errorf("prompt is too large for the current context (~%d/%d tokens). Turn off the system prompt with /system off, remove installed skills, compact or start a new chat, or use a model with a larger context", estimated, contextWindow)
+}
+
+func (s *Session) checkPostCompactionPromptBudget(opts RunOptions, messages []api.Message) error {
+	contextWindow := s.contextWindowTokens(opts)
+	if contextWindow <= 0 {
+		return nil
+	}
+	estimated := s.estimateRunPromptTokens(opts, messages)
+	if estimated < contextWindow {
+		return nil
+	}
+	return fmt.Errorf("history is still too large after compaction (~%d/%d tokens). Start a new chat with /new or a fresh request, turn off the system prompt with /system off, remove installed skills, or use a model with a larger context", estimated, contextWindow)
 }
 
 func (s *Session) compactionThresholdTokens(opts RunOptions) int {

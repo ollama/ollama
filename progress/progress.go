@@ -27,26 +27,43 @@ type Progress struct {
 
 	pos int
 
-	ticker *time.Ticker
-	states []State
+	done     chan struct{}
+	stopOnce sync.Once
+	ticker   *time.Ticker
+	states   []State
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{w: bufio.NewWriter(w)}
-	go p.start()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	p := &Progress{
+		w:      bufio.NewWriter(w),
+		done:   make(chan struct{}),
+		ticker: ticker,
+	}
+	go p.start(ticker)
 	return p
 }
 
 func (p *Progress) stop() bool {
-	for _, state := range p.states {
+	p.mu.Lock()
+	states := append([]State(nil), p.states...)
+	ticker := p.ticker
+	if ticker != nil {
+		p.ticker = nil
+		p.stopOnce.Do(func() {
+			close(p.done)
+		})
+	}
+	p.mu.Unlock()
+
+	for _, state := range states {
 		if spinner, ok := state.(*Spinner); ok {
 			spinner.Stop()
 		}
 	}
 
-	if p.ticker != nil {
-		p.ticker.Stop()
-		p.ticker = nil
+	if ticker != nil {
+		ticker.Stop()
 		p.render()
 		return true
 	}
@@ -72,7 +89,10 @@ func (p *Progress) StopAndClear() bool {
 	stopped := p.stop()
 	if stopped {
 		// clear all progress lines
-		for i := range p.pos {
+		p.mu.Lock()
+		pos := p.pos
+		p.mu.Unlock()
+		for i := range pos {
 			if i > 0 {
 				fmt.Fprint(p.w, "\033[A")
 			}
@@ -126,9 +146,18 @@ func (p *Progress) render() {
 	p.pos = len(p.states)
 }
 
-func (p *Progress) start() {
-	p.ticker = time.NewTicker(100 * time.Millisecond)
-	for range p.ticker.C {
-		p.render()
+func (p *Progress) start(ticker *time.Ticker) {
+	for {
+		select {
+		case <-p.done:
+			return
+		case <-ticker.C:
+			select {
+			case <-p.done:
+				return
+			default:
+			}
+			p.render()
+		}
 	}
 }

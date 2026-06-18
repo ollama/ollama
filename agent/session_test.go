@@ -107,6 +107,10 @@ type recordingCompactor struct {
 	requests []CompactionRequest
 }
 
+type oversizedCompactor struct {
+	requests []CompactionRequest
+}
+
 type recordingEventSink struct {
 	events []Event
 }
@@ -159,6 +163,17 @@ func (c *recordingCompactor) MaybeCompact(_ context.Context, req CompactionReque
 		result.Summary = "tool result summarized"
 	}
 	return result, nil
+}
+
+func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionRequest) (CompactionResult, error) {
+	c.requests = append(c.requests, req)
+	summary := strings.Repeat("oversized summary ", 300)
+	return CompactionResult{
+		Messages:  compactionSummaryMessagesForTask(summary, req.ContinueTask),
+		Compacted: true,
+		Due:       true,
+		Summary:   summary,
+	}, nil
 }
 
 type wrappingApprovalHandler struct {
@@ -929,6 +944,66 @@ func TestSessionCompactsAfterToolResultsBeforeContinuing(t *testing.T) {
 	}
 }
 
+func TestSessionStopsWhenCompactedHistoryStillExceedsContext(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("value", "hello")
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "echo_tool",
+						Arguments: args,
+					},
+				}}},
+			}},
+			{{Message: api.Message{Role: "assistant", Content: "should not run"}}},
+		},
+	}
+	registry := NewRegistry()
+	registry.Register(staticTool{})
+	events := &recordingEventSink{}
+	compactor := &oversizedCompactor{}
+	session := &Session{
+		Client:    client,
+		Events:    events,
+		Tools:     registry,
+		Compactor: compactor,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		UseTools:    true,
+		Options:     map[string]any{"num_ctx": 512},
+	})
+	if err == nil {
+		t.Fatal("expected post-compaction context error")
+	}
+	if !strings.Contains(err.Error(), "still too large after compaction") || !strings.Contains(err.Error(), "fresh request") {
+		t.Fatalf("error = %q, want actionable post-compaction guidance", err.Error())
+	}
+	if result == nil {
+		t.Fatal("expected partial result with compacted messages")
+	}
+	if client.calls != 1 || len(client.requests) != 1 {
+		t.Fatalf("client calls = %d requests = %d, want no request after oversized compaction", client.calls, len(client.requests))
+	}
+	if len(compactor.requests) != 1 {
+		t.Fatalf("compactor requests = %d, want 1", len(compactor.requests))
+	}
+	if !hasEventType(events.events, EventCompacted) {
+		t.Fatalf("events missing compacted event: %#v", events.events)
+	}
+	if !hasEventType(events.events, EventError) {
+		t.Fatalf("events missing post-compaction error: %#v", events.events)
+	}
+	if len(result.Messages) == 0 || !strings.Contains(result.Messages[len(result.Messages)-1].Content, "Conversation summary:") {
+		t.Fatalf("result should retain compacted summary messages: %#v", result.Messages)
+	}
+}
+
 func TestSessionContextCapsToolResultBeforeCompaction(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	client := &fakeClient{
@@ -1001,8 +1076,8 @@ func TestSessionEmitsAutoCompactionActivityEvents(t *testing.T) {
 		Events: events,
 		Tools:  registry,
 		Compactor: NewSimpleCompactor(client, nil, CompactionOptions{
-			ContextWindowTokens: 100,
-			Threshold:           0.8,
+			ContextWindowTokens: 300,
+			Threshold:           0.3,
 		}),
 	}
 
