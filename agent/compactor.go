@@ -13,6 +13,7 @@ const (
 	defaultCompactionContextWindowTokens = 32768
 	defaultCompactionKeepUserTurns       = 3
 	defaultCompactionThreshold           = 0.8
+	compactOnlySummaryContextTokens      = 16000
 
 	compactionSummaryMessagePrefix = "Conversation summary:\n"
 	compactionToolName             = "compact_conversation"
@@ -97,7 +98,7 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 		return result, nil
 	}
 
-	keepUserTurns := c.keepUserTurns()
+	keepUserTurns := c.keepUserTurns(req.Options)
 	prefix, previousSummary, archive, suffix, keptUserTurns, ok := splitCompactionMessages(req.Messages, keepUserTurns)
 	if !ok || len(archive) == 0 {
 		result.Reason = "nothing to compact"
@@ -160,7 +161,11 @@ func (c *SimpleCompactor) contextWindowTokens(options map[string]any) int {
 	return ResolveContextWindowTokens(options, c.Options.ContextWindowTokens)
 }
 
-func (c *SimpleCompactor) keepUserTurns() int {
+func (c *SimpleCompactor) keepUserTurns(options map[string]any) int {
+	contextWindow := c.contextWindowTokens(options)
+	if contextWindow > 0 && contextWindow < compactOnlySummaryContextTokens {
+		return 0
+	}
 	if c.Options.KeepUserTurns > 0 {
 		return c.Options.KeepUserTurns
 	}
@@ -438,7 +443,7 @@ func largestCompactionContentMessage(messages []api.Message) int {
 }
 
 func splitCompactionMessages(messages []api.Message, keepUserTurns int) (prefix []api.Message, previousSummary string, archive []api.Message, suffix []api.Message, keptUserTurns int, ok bool) {
-	if keepUserTurns <= 0 {
+	if keepUserTurns < 0 {
 		keepUserTurns = defaultCompactionKeepUserTurns
 	}
 

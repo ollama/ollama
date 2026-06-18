@@ -51,7 +51,7 @@ func TestSimpleCompactorSummarizesOldMessages(t *testing.T) {
 	}
 	store := &compactionStore{}
 	compactor := NewSimpleCompactor(client, store, CompactionOptions{
-		ContextWindowTokens: 100,
+		ContextWindowTokens: 16000,
 		KeepUserTurns:       2,
 		Threshold:           0.5,
 	})
@@ -69,7 +69,7 @@ func TestSimpleCompactorSummarizesOldMessages(t *testing.T) {
 		ChatID:   "chat-1",
 		Model:    "model",
 		Messages: messages,
-		Latest:   api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 75}},
+		Latest:   api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 12000}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -99,6 +99,52 @@ func TestSimpleCompactorSummarizesOldMessages(t *testing.T) {
 	}
 	if strings.Contains(client.requests[0].Messages[1].Content, "hidden") {
 		t.Fatal("compaction prompt should omit thinking")
+	}
+}
+
+func TestSimpleCompactorKeepsOnlySummaryForSmallContext(t *testing.T) {
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{{
+			{Message: api.Message{Role: "assistant", Content: "small context summary"}},
+		}},
+	}
+	store := &compactionStore{}
+	compactor := NewSimpleCompactor(client, store, CompactionOptions{
+		ContextWindowTokens: compactOnlySummaryContextTokens - 1,
+		KeepUserTurns:       3,
+		Threshold:           0.5,
+	})
+
+	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
+		ChatID:       "chat-1",
+		Model:        "model",
+		ContinueTask: true,
+		Messages: []api.Message{
+			{Role: "system", Content: "pinned"},
+			{Role: "user", Content: "old request"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "latest request"},
+		},
+		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 12000}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Compacted {
+		t.Fatal("expected compaction")
+	}
+	if store.keepUserTurns != 0 {
+		t.Fatalf("keepUserTurns = %d, want 0 for small context", store.keepUserTurns)
+	}
+	if len(result.Messages) != 3 {
+		t.Fatalf("messages = %#v, want system plus compaction summary pair", result.Messages)
+	}
+	if result.Messages[0].Content != "pinned" {
+		t.Fatalf("leading system message not kept: %#v", result.Messages)
+	}
+	assertCompactionSummaryPair(t, result.Messages[1:])
+	if !strings.Contains(result.Messages[2].Content, compactionContinueInstruction) {
+		t.Fatalf("tool result missing continue instruction: %q", result.Messages[2].Content)
 	}
 }
 
@@ -196,7 +242,7 @@ func TestSimpleCompactorKeepsFewerTurnsForShortChats(t *testing.T) {
 	}
 	store := &compactionStore{}
 	compactor := NewSimpleCompactor(client, store, CompactionOptions{
-		ContextWindowTokens: 100,
+		ContextWindowTokens: 16000,
 		KeepUserTurns:       3,
 		Threshold:           0.5,
 	})
@@ -209,7 +255,7 @@ func TestSimpleCompactorKeepsFewerTurnsForShortChats(t *testing.T) {
 			{Role: "assistant", Content: "old answer"},
 			{Role: "user", Content: "latest request"},
 		},
-		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 75}},
+		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 12000}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -485,7 +531,7 @@ func TestSimpleCompactorDefaultsToKeepingThreeUserTurns(t *testing.T) {
 	}
 	store := &compactionStore{}
 	compactor := NewSimpleCompactor(client, store, CompactionOptions{
-		ContextWindowTokens: 100,
+		ContextWindowTokens: 16000,
 		Threshold:           0.5,
 	})
 
@@ -501,7 +547,7 @@ func TestSimpleCompactorDefaultsToKeepingThreeUserTurns(t *testing.T) {
 			{Role: "assistant", Content: "two answer"},
 			{Role: "user", Content: "three"},
 		},
-		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 75}},
+		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 12000}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -525,7 +571,7 @@ func TestSimpleCompactorCarriesPreviousSummary(t *testing.T) {
 		}},
 	}
 	compactor := NewSimpleCompactor(client, nil, CompactionOptions{
-		ContextWindowTokens: 10,
+		ContextWindowTokens: 16000,
 		KeepUserTurns:       1,
 		Threshold:           0.5,
 	})
@@ -538,7 +584,7 @@ func TestSimpleCompactorCarriesPreviousSummary(t *testing.T) {
 			{Role: "assistant", Content: "old answer"},
 			{Role: "user", Content: "recent"},
 		},
-		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 9}},
+		Latest: api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 12000}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -558,7 +604,7 @@ func TestSimpleCompactorCarriesPreviousToolSummaryAndPlacesNewSummaryBeforeKeptS
 		}},
 	}
 	compactor := NewSimpleCompactor(client, nil, CompactionOptions{
-		ContextWindowTokens: 10,
+		ContextWindowTokens: 16000,
 		KeepUserTurns:       1,
 		Threshold:           0.5,
 	})
@@ -572,7 +618,7 @@ func TestSimpleCompactorCarriesPreviousToolSummaryAndPlacesNewSummaryBeforeKeptS
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		Model:    "model",
 		Messages: messages,
-		Latest:   api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 9}},
+		Latest:   api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 12000}},
 	})
 	if err != nil {
 		t.Fatal(err)
