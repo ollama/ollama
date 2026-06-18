@@ -132,8 +132,8 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 
 	compacted := make([]api.Message, 0, len(prefix)+len(suffix)+2)
 	compacted = append(compacted, prefix...)
-	compacted = append(compacted, suffix...)
 	compacted = append(compacted, compactionSummaryMessagesForTask(summary, req.ContinueTask)...)
+	compacted = append(compacted, suffix...)
 	result.Messages = compacted
 	result.Compacted = true
 	result.Summary = summary

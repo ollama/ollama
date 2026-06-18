@@ -878,7 +878,55 @@ func TestRunEmbeddingModel(t *testing.T) {
 	}
 }
 
-func TestRunHandlerResumeRequiresInteractive(t *testing.T) {
+func TestRunHandlerResumeUsesLatestChatInHeadlessMode(t *testing.T) {
+	var chatReq api.ChatRequest
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/chat":
+			if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			enc := json.NewEncoder(w)
+			if err := enc.Encode(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "resumed"}}); err != nil {
+				t.Fatal(err)
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			if err := enc.Encode(api.ChatResponse{Done: true, DoneReason: "stop"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/generate":
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(mockServer.Close)
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+
+	store, err := chatstore.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendMessage(t.Context(), "chat-1", api.Message{Role: "user", Content: "old prompt"}, "test-model"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
 	cmd.Flags().String("format", "", "")
@@ -886,10 +934,47 @@ func TestRunHandlerResumeRequiresInteractive(t *testing.T) {
 	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", true, "")
 	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().Bool("verbose", false, "")
 
-	err := RunHandler(cmd, []string{"llama3.2", "hello"})
-	if err == nil || !strings.Contains(err.Error(), "--resume requires an interactive terminal") {
-		t.Fatalf("RunHandler error = %v, want interactive resume error", err)
+	oldStdin := os.Stdin
+	stdinR, stdinW, _ := os.Pipe()
+	os.Stdin = stdinR
+	if _, err := stdinW.Write([]byte("follow up")); err != nil {
+		t.Fatal(err)
+	}
+	stdinW.Close()
+
+	oldStdout := os.Stdout
+	stdoutR, stdoutW, _ := os.Pipe()
+	os.Stdout = stdoutW
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunHandler(cmd, nil)
+	}()
+	err = <-errCh
+	stdoutW.Close()
+	os.Stdout = oldStdout
+	os.Stdin = oldStdin
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	var out bytes.Buffer
+	if _, err := io.Copy(&out, stdoutR); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "resumed\n" {
+		t.Fatalf("stdout = %q, want resumed newline", out.String())
+	}
+	if chatReq.Model != "test-model" {
+		t.Fatalf("chat model = %q, want test-model", chatReq.Model)
+	}
+	if len(chatReq.Messages) != 3 ||
+		chatReq.Messages[1].Content != "old prompt" ||
+		chatReq.Messages[2].Content != "follow up" {
+		t.Fatalf("chat messages = %#v", chatReq.Messages)
 	}
 }
 
@@ -922,6 +1007,13 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 				flusher.Flush()
 			}
 			if err := enc.Encode(api.ChatResponse{Done: true, DoneReason: "stop"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/generate":
+			if r.Method != http.MethodPost {
+				t.Errorf("generate method = %s, want POST", r.Method)
+			}
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
 				t.Fatal(err)
 			}
 		default:
@@ -973,9 +1065,73 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 	}
 }
 
+func TestRunHandlerHeadlessBudgetsAgainstLoadedContext(t *testing.T) {
+	var chatCalled bool
+	var generateCalled bool
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Details: api.ModelDetails{ContextLength: 131072},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/generate":
+			generateCalled = true
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/ps":
+			if err := json.NewEncoder(w).Encode(api.ProcessResponse{
+				Models: []api.ProcessModelResponse{{
+					Name:          "test-model:latest",
+					Model:         "test-model:latest",
+					ContextLength: 1024,
+				}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/chat":
+			chatCalled = true
+			http.Error(w, "chat should not be called after preflight fails", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(mockServer.Close)
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("resume", false, "")
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().Bool("verbose", false, "")
+
+	err := RunHandler(cmd, []string{"test-model", strings.Repeat("word ", 4000)})
+	if err == nil {
+		t.Fatal("expected preflight context error")
+	}
+	if !strings.Contains(err.Error(), "current context") {
+		t.Fatalf("error = %q, want context preflight error", err.Error())
+	}
+	if !generateCalled {
+		t.Fatal("expected model preload before context budget resolution")
+	}
+	if chatCalled {
+		t.Fatal("chat should not be called when loaded context preflight fails")
+	}
+}
+
 func TestRunHandlerPromptUsesAgentLoopByDefault(t *testing.T) {
 	var chatReq api.ChatRequest
-	var generateCalled bool
+	var preloadCalled bool
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/show":
@@ -997,8 +1153,10 @@ func TestRunHandlerPromptUsesAgentLoopByDefault(t *testing.T) {
 				t.Fatal(err)
 			}
 		case "/api/generate":
-			generateCalled = true
-			http.Error(w, "legacy generate path should not be used", http.StatusInternalServerError)
+			preloadCalled = true
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				t.Fatal(err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -1032,8 +1190,8 @@ func TestRunHandlerPromptUsesAgentLoopByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if generateCalled {
-		t.Fatal("expected default prompt path to use agent chat, not /api/generate")
+	if !preloadCalled {
+		t.Fatal("expected default prompt path to preload the model")
 	}
 	if chatReq.Model != "test-model" {
 		t.Fatalf("chat model = %q, want test-model", chatReq.Model)

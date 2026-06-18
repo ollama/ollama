@@ -342,7 +342,9 @@ func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 		return nil, err
 	}
 	if summary != "" && !messagesContainCompactionSummary(chat.Messages) {
-		chat.Messages = append(chat.Messages, compactionSummaryMessages(summary, false)...)
+		chat.Messages = insertCompactionSummaryAfterLeadingSystemMessages(chat.Messages, compactionSummaryMessages(summary, false))
+	} else {
+		chat.Messages = moveCompactionSummaryBeforeKeptMessages(chat.Messages)
 	}
 
 	return &chat, nil
@@ -713,6 +715,57 @@ func messagesContainCompactionSummary(messages []api.Message) bool {
 		}
 	}
 	return false
+}
+
+func moveCompactionSummaryBeforeKeptMessages(messages []api.Message) []api.Message {
+	start := -1
+	end := -1
+	for i, msg := range messages {
+		if msg.Role == "assistant" {
+			for _, call := range msg.ToolCalls {
+				if call.Function.Name == compactionToolName {
+					start = i
+					end = i + 1
+					if end < len(messages) && messages[end].Role == "tool" && messages[end].ToolName == compactionToolName {
+						end++
+					}
+					break
+				}
+			}
+		}
+		if start >= 0 {
+			break
+		}
+	}
+	if start <= 0 || end <= start {
+		return messages
+	}
+
+	insertAt := leadingSystemMessageCount(messages[:start])
+	reordered := make([]api.Message, 0, len(messages))
+	reordered = append(reordered, messages[:insertAt]...)
+	reordered = append(reordered, messages[start:end]...)
+	reordered = append(reordered, messages[insertAt:start]...)
+	reordered = append(reordered, messages[end:]...)
+	return reordered
+}
+
+func insertCompactionSummaryAfterLeadingSystemMessages(messages, summary []api.Message) []api.Message {
+	insertAt := leadingSystemMessageCount(messages)
+	reordered := make([]api.Message, 0, len(messages)+len(summary))
+	reordered = append(reordered, messages[:insertAt]...)
+	reordered = append(reordered, summary...)
+	reordered = append(reordered, messages[insertAt:]...)
+	return reordered
+}
+
+func leadingSystemMessageCount(messages []api.Message) int {
+	for i, msg := range messages {
+		if msg.Role != "system" {
+			return i
+		}
+	}
+	return len(messages)
 }
 
 func insertMessage(ctx context.Context, tx *sql.Tx, chatID string, msg api.Message, model string) (int64, error) {

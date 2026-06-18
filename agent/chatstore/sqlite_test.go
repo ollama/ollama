@@ -519,14 +519,14 @@ func TestStoreArchivesCompactedMessages(t *testing.T) {
 	if len(chat.Messages) != 5 {
 		t.Fatalf("active messages = %d, want 5", len(chat.Messages))
 	}
-	if chat.Messages[0].Content != "recent one" {
-		t.Fatalf("first active message = %#v", chat.Messages[0])
+	if chat.Messages[0].Role != "assistant" || len(chat.Messages[0].ToolCalls) != 1 || chat.Messages[0].ToolCalls[0].Function.Name != compactionToolName {
+		t.Fatalf("summary tool call = %#v", chat.Messages[0])
 	}
-	if chat.Messages[3].Role != "assistant" || len(chat.Messages[3].ToolCalls) != 1 || chat.Messages[3].ToolCalls[0].Function.Name != compactionToolName {
-		t.Fatalf("summary tool call = %#v", chat.Messages[3])
+	if chat.Messages[1].Role != "tool" || chat.Messages[1].ToolName != compactionToolName || chat.Messages[1].Content != compactionSummaryMessagePrefix+"summary" {
+		t.Fatalf("summary tool result = %#v", chat.Messages[1])
 	}
-	if chat.Messages[4].Role != "tool" || chat.Messages[4].ToolName != compactionToolName || chat.Messages[4].Content != compactionSummaryMessagePrefix+"summary" {
-		t.Fatalf("summary tool result = %#v", chat.Messages[4])
+	if chat.Messages[2].Content != "recent one" {
+		t.Fatalf("first kept message = %#v", chat.Messages[2])
 	}
 
 	var idsJSON string
@@ -607,11 +607,14 @@ func TestStoreArchivesCompactionWithContinuation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(chat.Messages) != 3 {
-		t.Fatalf("active messages = %#v, want latest request plus compaction pair", chat.Messages)
+		t.Fatalf("active messages = %#v, want compaction pair plus latest request", chat.Messages)
 	}
-	content := chat.Messages[2].Content
+	content := chat.Messages[1].Content
 	if !strings.Contains(content, compactionContinueInstruction) {
 		t.Fatalf("summary tool result missing continuation instruction: %q", content)
+	}
+	if chat.Messages[2].Content != "recent request" {
+		t.Fatalf("kept message = %#v, want recent request", chat.Messages[2])
 	}
 
 	var storedSummary string
@@ -657,13 +660,13 @@ func TestStoreReplacesPreviousCompactionMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(chat.Messages) != 3 {
-		t.Fatalf("active messages = %#v, want latest user plus compaction pair", chat.Messages)
+		t.Fatalf("active messages = %#v, want compaction pair plus latest user", chat.Messages)
 	}
-	if chat.Messages[0].Content != "next" {
-		t.Fatalf("first active message = %#v, want next user prompt", chat.Messages[0])
+	if chat.Messages[2].Content != "next" {
+		t.Fatalf("kept message = %#v, want next user prompt", chat.Messages[2])
 	}
-	if chat.Messages[2].Content != compactionSummaryMessagePrefix+"second summary" {
-		t.Fatalf("latest summary = %#v", chat.Messages[2])
+	if chat.Messages[1].Content != compactionSummaryMessagePrefix+"second summary" {
+		t.Fatalf("summary = %#v", chat.Messages[1])
 	}
 	for _, msg := range chat.Messages {
 		if strings.Contains(msg.Content, "first summary") {

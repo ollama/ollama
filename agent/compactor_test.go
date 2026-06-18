@@ -87,10 +87,10 @@ func TestSimpleCompactorSummarizesOldMessages(t *testing.T) {
 	if result.Summary != "summary" {
 		t.Fatalf("result summary = %q", result.Summary)
 	}
-	if compacted[1].Content != "recent one" || compacted[3].Content != "recent two" {
+	assertCompactionSummaryPair(t, compacted[1:3])
+	if compacted[3].Content != "recent one" || compacted[5].Content != "recent two" {
 		t.Fatalf("recent turns were not kept: %#v", compacted)
 	}
-	assertCompactionSummaryPair(t, compacted[4:])
 	if store.chatID != "chat-1" || store.keepUserTurns != 2 || store.summary != "summary" || store.continueTask {
 		t.Fatalf("archive call = %#v", store)
 	}
@@ -132,7 +132,7 @@ func TestSimpleCompactorAddsContinueTaskInstructionOnlyToToolResult(t *testing.T
 	if result.Summary != "summary" {
 		t.Fatalf("result summary = %q", result.Summary)
 	}
-	content := result.Messages[len(result.Messages)-1].Content
+	content := result.Messages[1].Content
 	if !strings.Contains(content, compactionContinueInstruction) {
 		t.Fatalf("tool result missing continue instruction: %q", content)
 	}
@@ -183,7 +183,7 @@ func TestSimpleCompactorTruncatesOversizedSummary(t *testing.T) {
 	if store.summary != result.Summary {
 		t.Fatalf("stored summary mismatch")
 	}
-	if !strings.Contains(result.Messages[len(result.Messages)-1].Content, compactionSummaryTruncated) {
+	if !strings.Contains(result.Messages[1].Content, compactionSummaryTruncated) {
 		t.Fatalf("compacted message missing truncation marker: %#v", result.Messages)
 	}
 }
@@ -221,12 +221,12 @@ func TestSimpleCompactorKeepsFewerTurnsForShortChats(t *testing.T) {
 		t.Fatalf("kept user turns = %d, want 1", store.keepUserTurns)
 	}
 	if len(result.Messages) != 3 {
-		t.Fatalf("messages = %#v, want latest request plus compaction tool pair", result.Messages)
+		t.Fatalf("messages = %#v, want compaction tool pair plus latest request", result.Messages)
 	}
-	if result.Messages[0].Content != "latest request" {
+	assertCompactionSummaryPair(t, result.Messages[:2])
+	if result.Messages[2].Content != "latest request" {
 		t.Fatalf("latest turn was not kept: %#v", result.Messages)
 	}
-	assertCompactionSummaryPair(t, result.Messages[1:])
 }
 
 func TestSimpleCompactorCanArchiveWholeShortChat(t *testing.T) {
@@ -512,10 +512,10 @@ func TestSimpleCompactorDefaultsToKeepingThreeUserTurns(t *testing.T) {
 	if store.keepUserTurns != 3 {
 		t.Fatalf("keepUserTurns = %d, want 3", store.keepUserTurns)
 	}
-	if got := result.Messages[0].Content; got != "one" {
+	assertCompactionSummaryPair(t, result.Messages[:2])
+	if got := result.Messages[2].Content; got != "one" {
 		t.Fatalf("first kept turn = %q, want one", got)
 	}
-	assertCompactionSummaryPair(t, result.Messages[len(result.Messages)-2:])
 }
 
 func TestSimpleCompactorCarriesPreviousSummary(t *testing.T) {
@@ -551,7 +551,7 @@ func TestSimpleCompactorCarriesPreviousSummary(t *testing.T) {
 	}
 }
 
-func TestSimpleCompactorCarriesPreviousToolSummaryAndKeepsNewSummaryLatest(t *testing.T) {
+func TestSimpleCompactorCarriesPreviousToolSummaryAndPlacesNewSummaryBeforeKeptSuffix(t *testing.T) {
 	client := &fakeClient{
 		responses: [][]api.ChatResponse{{
 			{Message: api.Message{Role: "assistant", Content: "new summary"}},
@@ -584,10 +584,10 @@ func TestSimpleCompactorCarriesPreviousToolSummaryAndKeepsNewSummaryLatest(t *te
 		t.Fatalf("previous summary missing from request: %q", client.requests[0].Messages[1].Content)
 	}
 	if len(result.Messages) != 3 {
-		t.Fatalf("messages = %#v, want latest request plus compaction pair", result.Messages)
+		t.Fatalf("messages = %#v, want compaction pair plus latest request", result.Messages)
 	}
-	if result.Messages[0].Content != "latest request" {
+	assertCompactionSummaryPair(t, result.Messages[:2])
+	if result.Messages[2].Content != "latest request" {
 		t.Fatalf("kept suffix = %#v", result.Messages)
 	}
-	assertCompactionSummaryPair(t, result.Messages[1:])
 }

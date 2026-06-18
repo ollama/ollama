@@ -332,6 +332,28 @@ func TestChatRunDoneIncludesGeneratedTokenCount(t *testing.T) {
 	}
 }
 
+func TestChatRunDoneSuppressesDuplicateEventError(t *testing.T) {
+	err := errors.New("tool round limit reached; send another message to continue")
+	m := chatModel{running: true}
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventError, Error: err.Error()})
+
+	updated, _ := m.Update(chatRunDoneMsg{err: err})
+	fm := updated.(chatModel)
+
+	var errorEntries int
+	for _, entry := range fm.entries {
+		if entry.role == "error" {
+			errorEntries++
+		}
+	}
+	if errorEntries != 1 {
+		t.Fatalf("error entries = %d, want one streamed error", errorEntries)
+	}
+	if fm.status != "error" {
+		t.Fatalf("status = %q, want error", fm.status)
+	}
+}
+
 func TestChatStreamingMetricsDoNotDropLiveContextEstimate(t *testing.T) {
 	m := chatModel{
 		running: true,

@@ -1064,6 +1064,46 @@ func TestSessionTruncatesSeededToolMessagesBeforeHistory(t *testing.T) {
 	}
 }
 
+func TestSessionPreflightRejectsOversizedFirstRequest(t *testing.T) {
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{{
+			{Message: api.Message{Role: "assistant", Content: "should not run"}},
+		}},
+	}
+	store := &memoryStore{}
+	events := &recordingEventSink{}
+	session := &Session{
+		Client: client,
+		Store:  store,
+		Events: events,
+		Compactor: NewSimpleCompactor(nil, nil, CompactionOptions{
+			ContextWindowTokens: 128,
+		}),
+	}
+
+	_, err := session.Run(context.Background(), RunOptions{
+		ChatID:       "chat-1",
+		Model:        "model",
+		SystemPrompt: strings.Repeat("system skill description ", 200),
+		NewMessages:  []api.Message{{Role: "user", Content: "hello"}},
+	})
+	if err == nil {
+		t.Fatal("expected preflight context error")
+	}
+	if !strings.Contains(err.Error(), "/system off") || !strings.Contains(err.Error(), "remove installed skills") {
+		t.Fatalf("error = %q, want actionable prompt guidance", err.Error())
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("chat requests = %d, want none before preflight passes", len(client.requests))
+	}
+	if store.appendCalls != 0 {
+		t.Fatalf("append calls = %d, want no persisted new messages", store.appendCalls)
+	}
+	if !hasEventType(events.events, EventError) {
+		t.Fatalf("events missing error: %#v", events.events)
+	}
+}
+
 func TestSessionPersistsToolWorkingDirWithinRun(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {

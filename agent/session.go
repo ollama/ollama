@@ -100,13 +100,24 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	for _, msg := range opts.Messages {
 		messages = append(messages, sanitizeMessageForRun(msg))
 	}
+	newMessages := make([]api.Message, 0, len(opts.NewMessages))
 	for _, msg := range opts.NewMessages {
 		msg = sanitizeMessageForRun(msg)
+		newMessages = append(newMessages, msg)
 		messages = append(messages, msg)
-		if opts.ChatID != "" && s.Store != nil {
-			if err := s.Store.AppendMessage(ctx, opts.ChatID, msg, ""); err != nil {
-				return nil, err
-			}
+	}
+
+	if err := s.checkPreflightPromptBudget(opts, messages); err != nil {
+		emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Error: err.Error()})
+		return nil, err
+	}
+
+	for _, msg := range newMessages {
+		if opts.ChatID == "" || s.Store == nil {
+			continue
+		}
+		if err := s.Store.AppendMessage(ctx, opts.ChatID, msg, ""); err != nil {
+			return nil, err
 		}
 	}
 
@@ -626,24 +637,47 @@ func (s *Session) estimateRunPromptTokens(opts RunOptions, messages []api.Messag
 	})
 }
 
+func (s *Session) checkPreflightPromptBudget(opts RunOptions, messages []api.Message) error {
+	contextWindow := s.contextWindowTokens(opts)
+	if contextWindow <= 0 {
+		return nil
+	}
+	estimated := s.estimateRunPromptTokens(opts, messages)
+	if estimated < contextWindow {
+		return nil
+	}
+	return fmt.Errorf("prompt is too large for the current context (~%d/%d tokens). Turn off the system prompt with /system off, remove installed skills, compact or start a new chat, or use a model with a larger context", estimated, contextWindow)
+}
+
 func (s *Session) compactionThresholdTokens(opts RunOptions) int {
-	if s.Compactor == nil {
+	contextWindow := s.contextWindowTokens(opts)
+	if contextWindow <= 0 {
 		return 0
 	}
 
-	configuredWindow := 0
 	configuredThreshold := 0.0
 	if compactor, ok := s.Compactor.(*SimpleCompactor); ok && compactor != nil {
-		configuredWindow = compactor.Options.ContextWindowTokens
 		configuredThreshold = compactor.Options.Threshold
 	}
 
-	contextWindow := ResolveContextWindowTokens(opts.Options, configuredWindow)
 	threshold := int(float64(contextWindow) * ResolveCompactionThreshold(configuredThreshold))
 	if threshold <= 0 {
 		return 0
 	}
 	return threshold
+}
+
+func (s *Session) contextWindowTokens(opts RunOptions) int {
+	if s.Compactor == nil {
+		return 0
+	}
+
+	configuredWindow := 0
+	if compactor, ok := s.Compactor.(*SimpleCompactor); ok && compactor != nil {
+		configuredWindow = compactor.Options.ContextWindowTokens
+	}
+
+	return ResolveContextWindowTokens(opts.Options, configuredWindow)
 }
 
 func toolMessage(toolName, toolCallID, content string) api.Message {

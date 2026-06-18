@@ -753,9 +753,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		interactive = false
 	}
-	if opts.Resume && !interactive {
-		return errors.New("--resume requires an interactive terminal and cannot be used with a prompt or redirected input/output")
-	}
 	if opts.Resume && opts.Model == "" {
 		modelName, err := resumeModelFromLatestChat(cmd.Context())
 		if err != nil {
@@ -872,6 +869,22 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		agentOpts.ContextWindowTokens = contextWindowTokens
 		return GenerateAgentTUI(cmd, agentOpts)
 	}
+
+	if info.RemoteHost == "" && !requestedCloud {
+		if err := loadOrUnloadModel(cmd, &opts); err != nil {
+			var sErr api.AuthorizationError
+			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+				fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
+
+				if sErr.SigninURL != "" {
+					fmt.Printf(ConnectInstructions, sErr.SigninURL)
+				}
+				return nil
+			}
+			return err
+		}
+	}
+	opts.ContextWindowTokens = contextWindowTokensForRun(cmd.Context(), client, opts.Model, opts.ContextWindowTokens)
 
 	return runAgentHeadless(cmd, opts)
 }

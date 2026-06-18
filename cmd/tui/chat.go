@@ -133,6 +133,7 @@ type chatModel struct {
 	launchRequested      bool
 	quitArmed            bool
 	escArmed             bool
+	lastEventError       string
 	err                  error
 }
 
@@ -255,7 +256,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startNextQueued()
 		}
 		if msg.err != nil {
-			m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: msg.err.Error(), err: msg.err.Error()}))
+			if msg.err.Error() != m.lastEventError {
+				m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: msg.err.Error(), err: msg.err.Error()}))
+			}
 			m.status = "error"
 			return m, nil
 		}
@@ -861,6 +864,7 @@ func (m *chatModel) startRunWithMessages(displayInput string, newMessages []api.
 	m.scroll = 0
 	m.thinking = false
 	m.thinkingTokens = 0
+	m.lastEventError = ""
 	systemPrompt := m.systemPrompt(extraSystemPrompt)
 	m.liveMessages = append(slices.Clone(m.messages), newMessages...)
 	m.contextTokens = m.estimatePromptTokens(m.liveMessages, systemPrompt)
