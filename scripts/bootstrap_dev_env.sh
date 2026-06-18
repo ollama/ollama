@@ -4,12 +4,12 @@
 # bootstrap_dev_env.sh
 #
 # Purpose: Bootstrap Ollama development environment with containerized setup
-#          using Podman/Docker Compose for s390x architecture
+#          using Podman for s390x architecture
 #
 # Usage: ./scripts/bootstrap_dev_env.sh
 #
 # Requirements:
-#   - podman and podman-compose installed
+#   - podman installed
 #   - Root or sudo access for logging directory creation
 #   - Network connectivity for pulling base images
 #
@@ -24,7 +24,8 @@ shopt -s nullglob
 
 LOG_FILE="/var/log/ollama-bootstrap/run-$(date +%Y%m%d-%H%M%S).log"
 RESULTS_DIR="/var/log/ollama-bootstrap/results"
-TIMEOUT_SECONDS=180
+CONTAINER_NAME="ollama"
+IMAGE_NAME="ollama:local"
 
 ################################################################################
 # Colors for output
@@ -70,227 +71,115 @@ log_error() {
 }
 
 ################################################################################
-# User Input
+# Container Management
 ################################################################################
 
-prompt_username() {
-    log_info "Prompting for username..."
-    echo -n "Enter your username: " > /dev/tty
-    read -r USERNAME < /dev/tty
+stop_existing_container() {
+    log_info "Checking for existing ollama container..."
     
-    if [ -z "$USERNAME" ]; then
-        log_error "USERNAME cannot be empty"
-        exit 1
+    if podman ps -a --format "{{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
+        log_warning "Found existing ollama container, stopping and removing..."
+        podman stop "$CONTAINER_NAME" 2>/dev/null || true
+        podman rm "$CONTAINER_NAME" 2>/dev/null || true
+        log_success "Existing container removed"
+    else
+        log_info "No existing container found"
     fi
-    
-    log_success "Username captured: $USERNAME"
-    log_info "Notebooks will be mounted at: /Wonder/$USERNAME/notebooks"
 }
 
-################################################################################
-# Docker Configuration Files
-################################################################################
-
-create_ollama_dockerfile() {
-    log_info "Creating Ollama Dockerfile..."
+create_dockerfile() {
+    log_info "Creating Dockerfile inline..."
     
-    cat > Dockerfile.ollama << 'EOF'
-# Ollama Development Container - Debian-based
-FROM debian:bookworm-slim
+    cat << 'EOF' > ollama.Dockerfile
+# Ollama Development Container
+FROM quay.io/podman/stable
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y \
+RUN dnf install -y \
     git \
     golang \
     cmake \
     ninja-build \
-    build-essential \
+    gcc \
+    gcc-c++ \
+    make \
     curl \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && dnf clean all
 
 # Set Go environment
 ENV GOPATH=/go
 ENV PATH=$PATH:/usr/local/go/bin:$GOPATH/bin
 
-# Create workspace
-WORKDIR /workspace
+# Clone ollama-s390x repository
+RUN git clone https://github.com/Brice12347/ollama-s390x.git /workspace/ollama-s390x
 
-# Clone ollama repository
-RUN git clone https://github.com/Brice12347/ollama-s390x.git /workspace/ollama
-
-# Build ollama
-WORKDIR /workspace/ollama
-RUN cmake -B build . && \
-    cmake --build build --parallel 8
+# Set working directory
+WORKDIR /workspace/ollama-s390x
 
 # Expose ollama port
 EXPOSE 11434
 
-# Start ollama server
-CMD ["./ollama", "serve"]
+# Default command
+CMD ["/bin/bash"]
 EOF
 
-    log_success "Ollama Dockerfile created"
+    log_success "Dockerfile created: ollama.Dockerfile"
 }
 
-create_jupyter_dockerfile() {
-    log_info "Creating Jupyter Dockerfile..."
+build_container_image() {
+    log_info "Building container image (this may take several minutes)..."
     
-    cat > Dockerfile.jupyter << 'EOF'
-# Jupyter Development Container - Python 3.12
-FROM python:3.12-slim
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install JupyterLab and requests
-RUN pip install --no-cache-dir \
-    jupyterlab \
-    requests
-
-# Create jovyan user for Jupyter
-RUN useradd -m -s /bin/bash jovyan
-
-# Create work directory
-RUN mkdir -p /home/jovyan/work && \
-    chown -R jovyan:jovyan /home/jovyan
-
-# Switch to jovyan user
-USER jovyan
-WORKDIR /home/jovyan
-
-# Expose Jupyter port
-EXPOSE 8888
-
-# Start JupyterLab
-CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root"]
-EOF
-
-    log_success "Jupyter Dockerfile created"
-}
-
-create_docker_compose() {
-    log_info "Creating docker-compose.yml..."
-    
-    cat > docker-compose.yml << EOF
-version: "3.8"
-
-services:
-  ollama:
-    image: taronaeo/ollama:z15
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama:Z          # :Z for SELinux on RHEL
-    environment:
-      - OLLAMA_HOST=0.0.0.0:11434
-      - OLLAMA_NUM_PARALLEL=1                # tune based on your RAM/cores
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 40s
-
-  jupyter:
-    build:
-      context: .
-      dockerfile: Dockerfile.jupyter
-    container_name: jupyter
-    ports:
-      - "8888:8888"
-    volumes:
-      - jupyter-data:/home/jovyan/work:Z
-      # Optional: bind-mount your host notebooks
-      # - ./notebooks:/home/jovyan/work:Z
-    environment:
-      - OLLAMA_HOST=http://ollama:11434
-      - JUPYTER_ENABLE_LAB=yes
-    depends_on:
-      ollama:
-        condition: service_healthy
-    restart: unless-stopped
-
-volumes:
-  ollama-data:
-  jupyter-data:
-EOF
-
-    log_success "docker-compose.yml created"
-}
-
-################################################################################
-# Container Management
-################################################################################
-
-build_and_start_containers() {
-    log_info "Building and starting containers with podman-compose..."
-    
-    # Check if podman-compose is available
-    if ! command -v podman-compose &> /dev/null; then
-        log_error "podman-compose not found. Please install it first."
-        exit 1
+    if podman build -t "$IMAGE_NAME" -f ollama.Dockerfile .; then
+        log_success "Container image built successfully: $IMAGE_NAME"
+    else
+        log_error "Failed to build container image"
+        return 1
     fi
-    
-    # Build containers
-    log_info "Building container images (this may take several minutes)..."
-    podman compose build --no-cache
-    
-    # Start containers
-    log_info "Starting containers..."
-    podman compose up -d
-    
-    log_success "Containers started successfully"
 }
 
-wait_for_containers() {
-    log_info "Waiting for containers to be ready (timeout: ${TIMEOUT_SECONDS}s)..."
+run_container() {
+    log_info "Starting ollama container..."
     
-    local elapsed=0
-    local interval=5
+    podman run -d -it \
+        --name "$CONTAINER_NAME" \
+        --cap-add=sys_admin \
+        --cap-add mknod \
+        --security-opt seccomp=unconfined \
+        --security-opt label=disable \
+        -p 11434:11434 \
+        "$IMAGE_NAME" \
+        bash
     
-    while [ $elapsed -lt $TIMEOUT_SECONDS ]; do
-        if podman ps | grep -q "ollama" && podman ps | grep -q "jupyter"; then
-            log_success "Containers are running"
-            return 0
-        fi
-        
-        sleep $interval
-        elapsed=$((elapsed + interval))
-        log_info "Waiting... (${elapsed}s/${TIMEOUT_SECONDS}s)"
-    done
-    
-    log_error "Timeout waiting for containers to start"
-    return 1
+    if [ $? -eq 0 ]; then
+        log_success "Container started successfully: $CONTAINER_NAME"
+    else
+        log_error "Failed to start container"
+        return 1
+    fi
 }
 
-verify_containers() {
+cleanup_dockerfile() {
+    log_info "Cleaning up temporary Dockerfile..."
+    
+    if [ -f ollama.Dockerfile ]; then
+        rm -f ollama.Dockerfile
+        log_success "Temporary Dockerfile removed"
+    fi
+}
+
+verify_container() {
     log_info "Verifying container status..."
     
-    # Show Jupyter logs
-    log_info "Jupyter container logs (last 10 lines):"
-    podman logs jupyter --tail 10
-    
-    # Test Jupyter endpoint
-    log_info "Testing Jupyter endpoint..."
-    if curl -I http://127.0.0.1:8888 2>/dev/null | head -n 1; then
-        log_success "Jupyter is responding"
+    if podman ps --format "{{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
+        log_success "Container is running"
+        
+        # Show container info
+        log_info "Container details:"
+        podman ps --filter "name=${CONTAINER_NAME}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
     else
-        log_warning "Jupyter endpoint test failed (may need more time to start)"
-    fi
-    
-    # Test Ollama endpoint
-    log_info "Testing Ollama endpoint..."
-    if curl -I http://127.0.0.1:11434 2>/dev/null | head -n 1; then
-        log_success "Ollama is responding"
-    else
-        log_warning "Ollama endpoint test failed (may need more time to start)"
+        log_error "Container is not running"
+        return 1
     fi
 }
 
@@ -299,25 +188,24 @@ verify_containers() {
 ################################################################################
 
 print_final_instructions() {
-    local hostname=$(hostname -f 2>/dev/null || hostname)
-    
     cat << EOF
 
 ${GREEN}*****************************************************************
 * Ollama Development Environment Ready!                         *
 *                                                               *
-* Access Ollama container:                                      *
+* Access the container:                                         *
 * $ podman exec -it ollama bash                                 *
 *                                                               *
-* Access Jupyter from your laptop:                              *
-* $ ssh -L 8877:127.0.0.1:8877 ${USERNAME}@${hostname} -p 22
-*                                                               *
-* Then open: http://localhost:8877                              *
+* Inside the container, you can:                                *
+* - Navigate to: /workspace/ollama-s390x                        *
+* - Build ollama: cmake -B build . && cmake --build build       *
+* - Run ollama: ./ollama serve                                  *
 *                                                               *
 * Container Management:                                         *
-* - View logs: podman logs <container-name>                     *
-* - Stop all: podman-compose down                               *
-* - Restart: podman-compose restart                             *
+* - View logs: podman logs ollama                               *
+* - Stop: podman stop ollama                                    *
+* - Start: podman start ollama                                  *
+* - Remove: podman rm ollama                                    *
 *                                                               *
 * Log file: ${LOG_FILE}
 * Results: ${RESULTS_DIR}
@@ -333,13 +221,12 @@ EOF
 cleanup_on_error() {
     log_error "Setup failed. Cleaning up..."
     
-    # Stop and remove containers
-    if command -v podman-compose &> /dev/null; then
-        podman-compose down 2>/dev/null || true
-    fi
+    # Stop and remove container
+    podman stop "$CONTAINER_NAME" 2>/dev/null || true
+    podman rm "$CONTAINER_NAME" 2>/dev/null || true
     
-    # Remove generated files
-    rm -f Dockerfile.ollama Dockerfile.jupyter docker-compose.yml
+    # Remove temporary Dockerfile
+    rm -f ollama.Dockerfile
     
     log_info "Cleanup complete"
 }
@@ -359,36 +246,32 @@ main() {
     # Initialize logging
     setup_logging
     
-    # Get username
-    prompt_username
+    # Stop and remove any existing container
+    stop_existing_container
     
-    # Create notebooks directory
-    log_info "Creating notebooks directory..."
-    mkdir -p "/Wonder/$USERNAME/notebooks"
-    log_success "Notebooks directory created: /Wonder/$USERNAME/notebooks"
+    # Create Dockerfile inline
+    create_dockerfile
     
-    # Create Docker configuration files
-    create_ollama_dockerfile
-    create_jupyter_dockerfile
-    create_docker_compose
+    # Build container image
+    build_container_image
     
-    # Build and start containers
-    build_and_start_containers
+    # Run container
+    run_container
     
-    # Wait for containers to be ready
-    wait_for_containers
+    # Clean up temporary Dockerfile
+    cleanup_dockerfile
     
-    # Verify containers are working
-    verify_containers
+    # Verify container is running
+    verify_container
     
     # Save results
     log_info "Saving results..."
     cat > "$RESULTS_DIR/bootstrap-$(date +%Y%m%d-%H%M%S).txt" << EOF
 Bootstrap completed successfully
-Username: $USERNAME
 Timestamp: $(date)
 Log file: $LOG_FILE
-Containers: ollama, jupyter
+Container: $CONTAINER_NAME
+Image: $IMAGE_NAME
 EOF
     
     # Print final instructions
