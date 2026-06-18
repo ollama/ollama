@@ -100,7 +100,36 @@ The UI stores your API key in the browser and loads session history from the gat
 
 ---
 
-## 5. Optional — NVIDIA GPU
+## 5. Optional — Library Documentation Context
+
+The gateway can fetch up-to-date library documentation via Context7 to improve response accuracy for API/SDK questions.
+
+**To enable:**
+
+1. Edit `.env` and set:
+   ```dotenv
+   DOCS_CONTEXT_ENABLED=true
+   ```
+
+2. (Optional) Get a free API key from https://context7.com for higher rate limits:
+   ```dotenv
+   CONTEXT7_API_KEY=your-key-here
+   ```
+
+3. Restart the gateway:
+   ```powershell
+   docker compose restart api
+   ```
+
+**How it works:**
+- Automatically fetches docs when questions mention external libraries (FastAPI, React, Next.js, Ollama, etc.)
+- Uses Redis caching to minimize API calls
+- Fails gracefully - chat still works if Context7 is unavailable
+- See `CONTEXT_MCP_INTEGRATION.md` for full documentation
+
+---
+
+## 6. Optional — NVIDIA GPU
 
 Verify Docker sees the GPU:
 

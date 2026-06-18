@@ -1,6 +1,8 @@
 import base64
+import hashlib
 import json
 import os
+import re
 import secrets
 import uuid
 from collections.abc import AsyncIterator
@@ -91,6 +93,13 @@ GITHUB_TOKEN_PREFIX = "github:token:"
 GITHUB_CONTEXT_CACHE_PREFIX = "github:context:"
 GITHUB_CONTEXT_CACHE_TTL = int(os.getenv("GITHUB_CONTEXT_CACHE_TTL", "3600"))  # 1 hour
 API_KEY_USER_MAP_KEY = "gateway:api_key_user_map"
+
+# Library docs context configuration
+DOCS_CONTEXT_ENABLED = os.getenv("DOCS_CONTEXT_ENABLED", "false").lower() == "true"
+DOCS_CONTEXT_MAX_CHARS = int(os.getenv("DOCS_CONTEXT_MAX_CHARS", "4000"))
+DOCS_CONTEXT_CACHE_TTL = int(os.getenv("DOCS_CONTEXT_CACHE_TTL", "86400"))  # 24 hours
+CONTEXT7_API_KEY = os.getenv("CONTEXT7_API_KEY", "")
+DOCS_CONTEXT_CACHE_PREFIX = "docs:context:"
 
 
 # ============================================================================
@@ -796,6 +805,143 @@ async def build_github_context_for_chat(user_id: str, session: dict[str, Any]) -
 
 
 # ============================================================================
+# Library Documentation Context (Context7 Integration)
+# ============================================================================
+
+def _guess_library_from_message(message: str) -> str:
+    """Extract likely library name from user message for Context7 search."""
+    # Common library patterns
+    patterns = [
+        r'\b(fastapi|flask|django|express|next\.?js|react|vue|angular|spring boot|ollama)\b',
+        r'\b(pytorch|tensorflow|numpy|pandas|scikit-learn|keras)\b',
+        r'\b(langchain|openai|anthropic|huggingface)\b',
+        r'\b(redis|mongodb|postgres|mysql|sqlite)\b',
+        r'\b(docker|kubernetes|terraform|ansible)\b',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    
+    return ""
+
+
+def should_fetch_library_docs(message: str, session: dict[str, Any]) -> bool:
+    """
+    Determine if library documentation should be fetched for this message.
+    Uses heuristics to avoid unnecessary API calls and context bloat.
+    """
+    if not DOCS_CONTEXT_ENABLED:
+        return False
+    
+    # Explicit opt-in per session
+    if session.get("docs_mode") is True:
+        return True
+    
+    # Skip if GitHub context is active (repo questions take priority)
+    if session_has_github_context(session):
+        return False
+    
+    # Skip very short messages (likely not questions)
+    if len(message.strip()) < 10:
+        return False
+    
+    # Explicit user intent
+    if re.search(r'\b(use docs|check docs|official docs|context7|fetch docs|library docs)\b', message, re.IGNORECASE):
+        return True
+    
+    # Library/API-related questions
+    library_keywords = r'\b(how (do|to|does)|api|sdk|migrate|deprecated|version \d|fastapi|react|next\.?js|ollama|import|install|configure|setup)\b'
+    if re.search(library_keywords, message, re.IGNORECASE):
+        return True
+    
+    return False
+
+
+async def build_library_docs_context(message: str) -> str:
+    """
+    Fetch relevant library documentation via Context7 REST API.
+    Uses Redis caching to minimize external API calls.
+    """
+    if not redis_client:
+        return ""
+    
+    # Create cache key from message hash
+    message_hash = hashlib.sha256(message.lower().encode()).hexdigest()[:16]
+    cache_key = f"{DOCS_CONTEXT_CACHE_PREFIX}{message_hash}"
+    
+    # Check cache first
+    cached = await redis_client.get(cache_key)
+    if cached:
+        return cached
+    
+    try:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0))
+        headers = {}
+        
+        if CONTEXT7_API_KEY:
+            headers["Authorization"] = f"Bearer {CONTEXT7_API_KEY}"
+        
+        # Step 1: Resolve library ID
+        library_name = _guess_library_from_message(message)
+        search_params = {"query": message}
+        if library_name:
+            search_params["libraryName"] = library_name
+        
+        search_response = await client.get(
+            "https://context7.com/api/v2/libs/search",
+            params=search_params,
+            headers=headers,
+        )
+        
+        if search_response.status_code != 200:
+            await client.aclose()
+            return ""
+        
+        search_data = search_response.json()
+        if not search_data or not isinstance(search_data, list) or len(search_data) == 0:
+            await client.aclose()
+            return ""
+        
+        # Pick top result
+        library_id = search_data[0].get("id", "")
+        if not library_id:
+            await client.aclose()
+            return ""
+        
+        # Step 2: Fetch documentation
+        docs_response = await client.get(
+            "https://context7.com/api/v2/context",
+            params={
+                "query": message,
+                "libraryId": library_id,
+            },
+            headers=headers,
+        )
+        
+        await client.aclose()
+        
+        if docs_response.status_code != 200:
+            return ""
+        
+        # Truncate to max chars
+        docs_text = docs_response.text[:DOCS_CONTEXT_MAX_CHARS]
+        
+        if not docs_text or len(docs_text.strip()) < 50:
+            return ""
+        
+        # Cache the result
+        await redis_client.setex(cache_key, DOCS_CONTEXT_CACHE_TTL, docs_text)
+        
+        return docs_text
+        
+    except Exception as e:
+        # Fail open - don't break chat if docs fetch fails
+        return ""
+
+
+# ============================================================================
 # Session management endpoints
 # ============================================================================
 
@@ -1154,6 +1300,16 @@ async def session_chat(
         github_ctx = await build_github_context_for_chat(user_id, session)
         if github_ctx:
             system_content = f"{FORMAT_SYSTEM_PROMPT}\n\n--- GitHub Repository Context ---\n{github_ctx}"
+    
+    # Add library documentation context if relevant
+    if should_fetch_library_docs(body.message, session):
+        try:
+            docs_ctx = await build_library_docs_context(body.message)
+            if docs_ctx:
+                system_content += f"\n\n--- Library Documentation ---\n{docs_ctx}"
+        except Exception:
+            # Fail open - don't break chat if docs fetch fails
+            pass
 
     ollama_messages = list(messages)
     if ollama_messages and ollama_messages[0].get("role") == "system":
