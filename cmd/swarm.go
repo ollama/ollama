@@ -145,12 +145,15 @@ func generateText(ctx context.Context, client *api.Client, modelName, prompt str
 		Stream: new(bool),
 		Options: map[string]interface{}{
 			"temperature":    0.1,
-			"repeat_penalty": 1.15,
+			"repeat_penalty": 1.05,
 			"top_k":          40,
 			"top_p":          0.9,
 		},
 	}
 	*req.Stream = true
+	if strings.Contains(strings.ToLower(prompt), "json") {
+		req.Format = json.RawMessage([]byte(`"json"`))
+	}
 
 	var fullResp string
 	var mu sync.Mutex
