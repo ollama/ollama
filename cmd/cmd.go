@@ -2523,6 +2523,13 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	discoverCmd := &cobra.Command{
+		Use:     "discover",
+		Short:   "Discover and recommend models based on your hardware capabilities",
+		PreRunE: checkServerHeartbeat,
+		RunE:    DiscoverHandler,
+	}
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -2560,6 +2567,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		discoverCmd,
 		serveCmd,
 	} {
 		switch cmd {
@@ -2611,6 +2619,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		discoverCmd,
 		runnerCmd,
 		gpuDiscoverCmd,
 		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
