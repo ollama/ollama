@@ -8,9 +8,12 @@
 
 Start building with open models.
 
-🔥 **UNLEASHING TURBOQUANT & NATIVE PACKAGING** 🔥
+🔥 **UNLEASHING TURBOQUANT, NATIVE PACKAGING & SWARM MODE** 🔥
 
 This repository has been supercharged with **TurboQuant CUDA support** for unprecedented LLM performance! We're pushing the boundaries of what local inference can do.
+
+🎊🎉🐶🐶🐶 **¡NUEVO MODO SWARM NATIVO!** 🐶🐶🐶🎉🎊
+¡Ahora Ollama incluye orquestación multi-agente nativa con `ollama swarm`! Los perritos están de fiesta 🐕🥳. Delega tareas a todo un escuadrón de IAs locales trabajando en equipo.
 
 ---
 
