@@ -4,15 +4,21 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/ollama/ollama/cmd/tui"
 	"github.com/ollama/ollama/api"
 )
+
+var ErrAbortHallucination = errors.New("abort_hallucination")
 
 var swarmModels string
 
@@ -96,6 +102,12 @@ func SwarmHandler(cmd *cobra.Command, args []string) error {
 			parts := strings.SplitN(line, "|", 2)
 			if len(parts) == 2 {
 				path := strings.TrimSpace(strings.ReplaceAll(parts[0], "[FILE]", ""))
+				absPath, _ := filepath.Abs(path)
+				cwd, _ := os.Getwd()
+				if !strings.HasPrefix(absPath, cwd) {
+					fmt.Printf("> ❌ Path fuera del proyecto: %s\n", path)
+					continue
+				}
 				purpose := strings.TrimSpace(parts[1])
 				files = append(files, path)
 				filePurposes[path] = purpose
@@ -109,13 +121,16 @@ func SwarmHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	// 2. Ejecutar por chunks
+	reader := bufio.NewReader(os.Stdin)
 	for i, file := range files {
 		fmt.Printf("\n> 📦 **Procesando archivo (%d/%d):** `%s`\n", i+1, len(files), file)
 		purpose := filePurposes[file]
 
-		err := processFileSwarm(ctx, client, file, purpose, userPrompt, activeModels)
+		newModels, err := processFileSwarm(ctx, client, file, purpose, userPrompt, activeModels, reader)
 		if err != nil {
 			fmt.Printf("\n> ❌ Error procesando %s: %v\n", file, err)
+		} else {
+			activeModels = newModels
 		}
 	}
 
@@ -138,33 +153,42 @@ func generateText(ctx context.Context, client *api.Client, modelName, prompt str
 	*req.Stream = true
 
 	var fullResp string
+	var mu sync.Mutex
 	fn := func(resp api.GenerateResponse) error {
+		mu.Lock()
 		fullResp += resp.Response
-		if isReviewer && len(fullResp) > 400 {
-			hasCode := strings.Contains(fullResp, "```")
-			hasPatch := strings.Contains(fullResp, "<<<<")
-			hasNoChanges := strings.Contains(fullResp, "NO_CHANGES_NEEDED")
+		currResp := fullResp
+		mu.Unlock()
+		if isReviewer && len(currResp) > 400 {
+			hasCode := strings.Contains(currResp, "```")
+			hasPatch := strings.Contains(currResp, "<<<<")
+			hasNoChanges := strings.Contains(currResp, "NO_CHANGES_NEEDED")
 			if !hasCode && !hasPatch && !hasNoChanges {
 				fmt.Printf("\n> ⚠️ **[Sistema]** Abortando revisión temprana por posible alucinación...\n")
-				return fmt.Errorf("abort_hallucination")
+				return ErrAbortHallucination
 			}
-		} else if !isReviewer && len(fullResp) > 2000 {
-			if !strings.Contains(fullResp, "```") {
+		} else if !isReviewer && len(currResp) > 2000 {
+			if !strings.Contains(currResp, "```") {
 				fmt.Printf("\n> ⚠️ **[Sistema]** Abortando borrador inicial (no usó bloque de código tras 2000 chars)...\n")
-				return fmt.Errorf("abort_hallucination")
+				return ErrAbortHallucination
 			}
 		}
 		return nil
 	}
 
-	err := client.Generate(ctx, req, fn)
-	if err != nil && err.Error() == "abort_hallucination" {
+	genCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	err := client.Generate(genCtx, req, fn)
+	
+	mu.Lock()
+	defer mu.Unlock()
+	if err != nil && errors.Is(err, ErrAbortHallucination) {
 		return fullResp, err
 	}
 	return fullResp, err
 }
 
-func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, overallGoal string, localModels []string) error {
+func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, overallGoal string, localModels []string, reader *bufio.Reader) ([]string, error) {
 	basePrompt := fmt.Sprintf("You are an Expert Developer implementing exactly ONE file.\n"+
 		"FILE: %s\nPURPOSE: %s\n\nOverall Project Goal: %s\n\n"+
 		"CRITICAL INSTRUCTIONS:\n- Do NOT use placeholders. Write the full file.", file, purpose, overallGoal)
@@ -175,6 +199,13 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 	iterCount := 1
 
 	for iterCount <= maxIter {
+		select {
+		case <-ctx.Done():
+			return localModels, ctx.Err()
+		default:
+		}
+		currentCode = "" // reset para forzar reescritura en caso de loop
+		
 		turnCount := 0
 		noChangeCount := 0
 		modelIdx := 0
@@ -207,12 +238,12 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 			}
 
 			codeResp, err := generateText(ctx, client, currentModel, prompt, !isFirstDraft)
-			if err != nil && err.Error() != "abort_hallucination" {
+			if err != nil && !errors.Is(err, ErrAbortHallucination) {
 				fmt.Printf("> ⚠️ Error con modelo %s: %v. Saltando...\n", currentModel, err)
 				noChangeCount++
 			} else {
 				if isFirstDraft {
-					if strings.Contains(codeResp, "NO_CHANGES_NEEDED") || (err != nil && err.Error() == "abort_hallucination") {
+					if strings.Contains(codeResp, "NO_CHANGES_NEEDED") || (err != nil && errors.Is(err, ErrAbortHallucination)) {
 						fmt.Printf("> ⚠️ **[Sistema]** El modelo abortó o falló la generación del borrador. Saltando...\n")
 						noChangeCount++
 					} else {
@@ -229,9 +260,9 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 						}
 					}
 				} else {
-					if strings.Contains(codeResp, "NO_CHANGES_NEEDED") || (err != nil && err.Error() == "abort_hallucination") {
+					if strings.Contains(codeResp, "NO_CHANGES_NEEDED") || (err != nil && errors.Is(err, ErrAbortHallucination)) {
 						noChangeCount++
-						if err != nil && err.Error() == "abort_hallucination" {
+						if err != nil && errors.Is(err, ErrAbortHallucination) {
 							fmt.Printf("> 🤷 **[%s]** Falló al proponer cambios o alucinó. (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
 						} else {
 							fmt.Printf("> 🤷 **[%s]** Evaluó como perfecto (NO_CHANGES_NEEDED). (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
@@ -282,7 +313,7 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 		}
 
 		if rev.Score == 0 {
-			rev.Score = 100 // fallback
+			rev.Score = 70 // fallback para forzar revisión
 		}
 
 		fmt.Printf("> **[Puntuación]** %d/100\n", rev.Score)
@@ -327,9 +358,12 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 
 		if feedback == "" || strings.EqualFold(feedback, "/approve") || strings.EqualFold(feedback, "/ok") {
 			// Aprobado, guardar
+			if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+				return localModels, fmt.Errorf("error creando directorio: %w", err)
+			}
 			err := os.WriteFile(file, []byte(currentCode), 0644)
 			if err != nil {
-				return fmt.Errorf("error guardando archivo %s: %w", file, err)
+				return localModels, fmt.Errorf("error guardando archivo %s: %w", file, err)
 			}
 			fmt.Printf("### 💾 Guardado en disco: `%s`\n", file)
 			break
@@ -342,19 +376,25 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 
 	if iterCount > maxIter {
 		fmt.Printf("\n### ⚠️ [Sistema] Máximo de iteraciones alcanzado para %s. Guardando tal como está.\n", file)
-		_ = os.WriteFile(file, []byte(currentCode), 0644)
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err == nil {
+			_ = os.WriteFile(file, []byte(currentCode), 0644)
+		}
 	}
 
-	return nil
+	return localModels, nil
 }
 
 func extractMarkdownCode(text string) string {
-	re := regexp.MustCompile("(?s)```[a-zA-Z0-9]*\n(.*?)\n```")
-	matches := re.FindStringSubmatch(text)
-	if len(matches) > 1 {
-		return strings.TrimSpace(matches[1])
+	start := strings.Index(text, "```")
+	if start == -1 {
+		return strings.TrimSpace(text)
 	}
-	return strings.TrimSpace(text)
+	start = strings.Index(text[start:], "\n") + start + 1
+	end := strings.LastIndex(text, "\n```")
+	if end <= start {
+		return strings.TrimSpace(text)
+	}
+	return strings.TrimSpace(text[start:end])
 }
 
 func applyPatches(currentCode *string, response string) bool {
