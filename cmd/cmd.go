@@ -2395,6 +2395,28 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
 	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
 
+func RegisterRunFlags(cmd *cobra.Command) {
+	cmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
+	cmd.Flags().Bool("verbose", false, "Show timings for response")
+	cmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	cmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
+	cmd.Flags().String("format", "", "Response format (e.g. json)")
+	cmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
+	cmd.Flags().Lookup("think").NoOptDefVal = "true"
+	cmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
+	cmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
+	cmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
+	cmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
+	cmd.Flags().Bool("experimental-yolo", false, "Skip all tool approval prompts (use with caution)")
+	cmd.Flags().Bool("experimental-websearch", false, "Enable web search tool in experimental mode")
+
+	// Image generation flags (width, height, steps, seed, etc.)
+	imagegen.RegisterFlags(cmd)
+
+	cmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
+	cmd.Flags().MarkHidden("imagegen")
+}
+
 	runCmd := &cobra.Command{
 		Use:     "run MODEL [PROMPT]",
 		Short:   "Run a model",
@@ -2402,26 +2424,7 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    RunHandler,
 	}
-
-	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
-	runCmd.Flags().Bool("verbose", false, "Show timings for response")
-	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
-	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
-	runCmd.Flags().String("format", "", "Response format (e.g. json)")
-	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
-	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
-	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
-	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
-	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
-	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
-	runCmd.Flags().Bool("experimental-yolo", false, "Skip all tool approval prompts (use with caution)")
-	runCmd.Flags().Bool("experimental-websearch", false, "Enable web search tool in experimental mode")
-
-	// Image generation flags (width, height, steps, seed, etc.)
-	imagegen.RegisterFlags(runCmd)
-
-	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
-	runCmd.Flags().MarkHidden("imagegen")
+	RegisterRunFlags(runCmd)
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -2529,6 +2532,7 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    DiscoverHandler,
 	}
+	RegisterRunFlags(discoverCmd)
 
 	swarmCmd := &cobra.Command{
 		Use:     "swarm",
@@ -2536,6 +2540,7 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    SwarmHandler,
 	}
+	RegisterRunFlags(swarmCmd)
 	swarmCmd.Flags().StringVar(&swarmModels, "models", "", "Lista de modelos separados por coma para usar en el escuadrón")
 
 	runnerCmd := &cobra.Command{

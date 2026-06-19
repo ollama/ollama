@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +77,19 @@ func getHardwareProfile(ctx context.Context) HardwareProfile {
 	var totalVRAM uint64
 	for _, gpu := range gpus {
 		totalVRAM += gpu.TotalMemory
+	}
+
+	// Fallback for Nvidia Optimus laptops where D3hot sleep state reports 0 VRAM
+	if totalVRAM == 0 {
+		out, err := exec.Command("nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits").Output()
+		if err == nil {
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			for _, line := range lines {
+				if mem, err := strconv.ParseUint(strings.TrimSpace(line), 10, 64); err == nil {
+					totalVRAM += mem * 1024 * 1024 // Convert MiB to Bytes
+				}
+			}
+		}
 	}
 
 	return HardwareProfile{
