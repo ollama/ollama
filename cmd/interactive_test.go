@@ -64,6 +64,59 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestExtractFilenamesTilde(t *testing.T) {
+	// ~/path style (typed by user or inserted by some terminals)
+	input := `~/Pictures/photo.jpg some text ~/Downloads/image.png`
+	res := extractFileNames(input)
+	assert.Len(t, res, 2)
+	assert.Contains(t, res[0], "photo.jpg")
+	assert.Contains(t, res[0], "~/")
+	assert.Contains(t, res[1], "image.png")
+
+	// Escaped spaces and tildes — macOS iCloud path (issue #10333)
+	input = `/Users/ollama/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshots/CleanShot\ 2025-04-17\ at\ 21.26.40@2x.png`
+	res = extractFileNames(input)
+	assert.Len(t, res, 1)
+	assert.Contains(t, res[0], "CleanShot")
+	assert.Contains(t, res[0], "@2x.png")
+}
+
+func TestNormalizeFilePath(t *testing.T) {
+	tests := []struct {
+		name, input, want string
+	}{
+		{"escaped space", `Mobile\ Documents`, "Mobile Documents"},
+		{"escaped tilde", `com\~apple\~CloudDocs`, "com~apple~CloudDocs"},
+		{"escaped exclamation", `my\!photo.png`, "my!photo.png"},
+		{"escaped pipe", `a\|b\|c.png`, "a|b|c.png"},
+		{"escaped percent", `100\%done.png`, "100%done.png"},
+		{"escaped hash", `file\#1.png`, "file#1.png"},
+		{"escaped backtick", "pre\\`text.png", "pre`text.png"},
+		{"escaped double quote", `say\"hi.png`, `say"hi.png`},
+		{"escaped less than", `a\<b.png`, "a<b.png"},
+		{"escaped greater than", `a\>b.png`, "a>b.png"},
+		{"escaped caret", `x\^y.png`, "x^y.png"},
+		{"double backslash", `C:\\path\\file.png`, `C:\path\file.png`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeFilePath(tt.input))
+		})
+	}
+}
+
+func TestExpandTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home directory")
+	}
+
+	assert.Equal(t, home, expandTilde("~"))
+	assert.Equal(t, filepath.Join(home, "Pictures", "photo.jpg"), expandTilde("~/Pictures/photo.jpg"))
+	assert.Equal(t, "/absolute/path/image.png", expandTilde("/absolute/path/image.png"))
+	assert.Equal(t, "relative/path/image.png", expandTilde("relative/path/image.png"))
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
