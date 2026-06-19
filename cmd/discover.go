@@ -284,14 +284,126 @@ func DiscoverHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+func measureDownloadSpeed(url string) time.Duration {
+	if url == "" {
+		return 999 * time.Hour
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 999 * time.Hour
+	}
+	req.Header.Set("Range", "bytes=0-1048575")
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode >= 400 {
+		return 999 * time.Hour
+	}
+	defer resp.Body.Close()
+
+	_, _ = io.CopyN(io.Discard, resp.Body, 1024*1024)
+	return time.Since(start)
+}
+
+func getOllamaBlobURL(model string, tag string) string {
+	manifestURL := fmt.Sprintf("https://registry.ollama.ai/v2/library/%s/manifests/%s", model, tag)
+	
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", manifestURL, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.ollama.image.model")
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+	
+	var manifest struct {
+		Layers []struct {
+			Digest string `json:"digest"`
+		} `json:"layers"`
+	}
+	if err := json.Unmarshal(body, &manifest); err != nil || len(manifest.Layers) == 0 {
+		return ""
+	}
+	
+	return fmt.Sprintf("https://registry.ollama.ai/v2/library/%s/blobs/%s", model, manifest.Layers[0].Digest)
+}
+
+func constructHFFileURL(repo, tag string) string {
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 {
+		return ""
+	}
+	base := parts[1]
+	base = strings.TrimSuffix(base, "-GGUF")
+	base = strings.TrimSuffix(base, "-gguf")
+	return fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s-%s.gguf", repo, base, tag)
+}
+
 	// We need to retrieve the target run string
 	var targetRun string
 	for _, dyn := range dynamicResults {
 		if dyn.Name == modelChoice {
+			hfTarget := fmt.Sprintf("hf.co/%s:%s", dyn.HFRepo, dyn.BestTag)
+			
 			if dyn.OllamaPrefix != "" {
-				targetRun = fmt.Sprintf("%s%s", dyn.OllamaPrefix, strings.ToLower(dyn.BestTag))
+				ollamaFull := fmt.Sprintf("%s%s", dyn.OllamaPrefix, strings.ToLower(dyn.BestTag))
+				parts := strings.Split(ollamaFull, ":")
+				
+				if len(parts) == 2 {
+					fmt.Printf("\n🏁 ¡Iniciando la Carrera de 1MB entre Hugging Face y Ollama Registry para '%s'!\n", dyn.Name)
+					
+					hfURL := constructHFFileURL(dyn.HFRepo, dyn.BestTag)
+					ollamaBlobURL := getOllamaBlobURL(parts[0], parts[1])
+					
+					var hfTime, ollamaTime time.Duration
+					var wgRace sync.WaitGroup
+					wgRace.Add(2)
+					
+					go func() {
+						defer wgRace.Done()
+						hfTime = measureDownloadSpeed(hfURL)
+					}()
+					go func() {
+						defer wgRace.Done()
+						ollamaTime = measureDownloadSpeed(ollamaBlobURL)
+					}()
+					
+					wgRace.Wait()
+					
+					if hfTime == 999*time.Hour {
+						fmt.Printf("   - Hugging Face: [ERROR]\n")
+					} else {
+						fmt.Printf("   - Hugging Face: %v\n", hfTime)
+					}
+					
+					if ollamaTime == 999*time.Hour {
+						fmt.Printf("   - Ollama Reg:   [ERROR o no disponible]\n")
+					} else {
+						fmt.Printf("   - Ollama Reg:   %v\n", ollamaTime)
+					}
+					
+					if ollamaTime < hfTime {
+						fmt.Println("   🏆 Ganador: Ollama Registry")
+						targetRun = ollamaFull
+					} else {
+						fmt.Println("   🏆 Ganador: Hugging Face CDN")
+						targetRun = hfTarget
+					}
+				} else {
+					targetRun = hfTarget
+				}
 			} else {
-				targetRun = fmt.Sprintf("hf.co/%s:%s", dyn.HFRepo, dyn.BestTag)
+				targetRun = hfTarget
 			}
 			break
 		}
