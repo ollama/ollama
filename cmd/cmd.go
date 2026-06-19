@@ -2395,7 +2395,7 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
 	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
 
-func RegisterRunFlags(cmd *cobra.Command) {
+	registerRunFlags := func(cmd *cobra.Command) {
 	cmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
 	cmd.Flags().Bool("verbose", false, "Show timings for response")
 	cmd.Flags().Bool("insecure", false, "Use an insecure registry")
@@ -2424,7 +2424,7 @@ func RegisterRunFlags(cmd *cobra.Command) {
 		PreRunE: checkServerHeartbeat,
 		RunE:    RunHandler,
 	}
-	RegisterRunFlags(runCmd)
+	registerRunFlags(runCmd)
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -2532,7 +2532,7 @@ func RegisterRunFlags(cmd *cobra.Command) {
 		PreRunE: checkServerHeartbeat,
 		RunE:    DiscoverHandler,
 	}
-	RegisterRunFlags(discoverCmd)
+	registerRunFlags(discoverCmd)
 
 	swarmCmd := &cobra.Command{
 		Use:     "swarm",
@@ -2540,7 +2540,7 @@ func RegisterRunFlags(cmd *cobra.Command) {
 		PreRunE: checkServerHeartbeat,
 		RunE:    SwarmHandler,
 	}
-	RegisterRunFlags(swarmCmd)
+	registerRunFlags(swarmCmd)
 	swarmCmd.Flags().StringVar(&swarmModels, "models", "", "Lista de modelos separados por coma para usar en el escuadrón")
 
 	runnerCmd := &cobra.Command{
