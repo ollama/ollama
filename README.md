@@ -15,6 +15,11 @@ This repository has been supercharged with **TurboQuant CUDA support** for unpre
 🎊🎉🐶🐶🐶 **¡NUEVO MODO SWARM NATIVO!** 🐶🐶🐶🎉🎊
 ¡Ahora Ollama incluye orquestación multi-agente nativa con `ollama swarm`! Los perritos están de fiesta 🐕🥳. Delega tareas a todo un escuadrón de IAs locales trabajando en equipo.
 
+### Características Especiales del Swarm:
+- **Autoevaluación JSON:** Los modelos evalúan sus propios parches y se otorgan puntajes mutuamente (Score 0-100).
+- **Short-Circuit (Anti-Alucinaciones):** Si un modelo enloquece, omite los bloques de código o alucina de forma repetitiva, el motor detiene su stream de forma temprana (Short-Circuit) y transfiere el turno limpiamente sin arrojar falsos positivos de error de red.
+- **Sistema de Mentoría (Maestro y Aprendiz):** Si un archivo falla la revisión, el modelo que sacó peor puntaje es empujado al frente para redimirse asumiendo el primer turno, inyectando un consejo de mejora (`mentorship_advice`) en su System Prompt. El mejor modelo de la ronda anterior asume el rol de Maestro (Turno 2) para corregir el código del aprendiz, evitando que todo el flujo de trabajo colapse monopolizado por un único modelo dominante.
+
 ---
 
 ## 🧠✨ PagedAttention — KV Cache Paginado (TurboQuant v2) ✨🧠
