@@ -2530,6 +2530,14 @@ func NewCLI() *cobra.Command {
 		RunE:    DiscoverHandler,
 	}
 
+	swarmCmd := &cobra.Command{
+		Use:     "swarm",
+		Short:   "Orquestar múltiples modelos en modo enjambre",
+		PreRunE: checkServerHeartbeat,
+		RunE:    SwarmHandler,
+	}
+	swarmCmd.Flags().StringVar(&swarmModels, "models", "", "Lista de modelos separados por coma para usar en el escuadrón")
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -2568,6 +2576,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		discoverCmd,
+		swarmCmd,
 		serveCmd,
 	} {
 		switch cmd {
@@ -2620,6 +2629,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		discoverCmd,
+		swarmCmd,
 		runnerCmd,
 		gpuDiscoverCmd,
 		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
