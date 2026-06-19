@@ -183,7 +183,7 @@ set(GGML_CUDA_GRAPHS ON CACHE BOOL "Enable CUDA graphs" FORCE)
 FetchContent_Declare(
     llama_cpp
     GIT_REPOSITORY "https://github.com/nomadstar/llama-cpp-turboquant.git"
-    GIT_TAG "feature/paged-attention"
+    GIT_TAG "feature/triattention"
     GIT_SHALLOW TRUE
     ${_ollama_compat_patch_cmd}
 )
