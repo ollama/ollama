@@ -190,6 +190,8 @@ package() {
   mkdir -p "$pkgdir/usr/lib/ollama"
   if [ -d "$srcdir/staging-install/usr/lib/ollama" ]; then
     cp -dr --no-preserve=ownership "$srcdir/staging-install/usr/lib/ollama/"* "$pkgdir/usr/lib/ollama/"
+  elif [ -d "$srcdir/staging-install/usr/local/lib/ollama" ]; then
+    cp -dr --no-preserve=ownership "$srcdir/staging-install/usr/local/lib/ollama/"* "$pkgdir/usr/lib/ollama/"
   fi
   
   # Copiar la librería compartida generada según el backend
