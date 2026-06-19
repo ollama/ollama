@@ -4288,6 +4288,7 @@ struct ggml_backend_sycl_device_context {
     int device;
     std::string name;
     std::string description;
+    std::string id;
 };
 
 static const char * ggml_backend_sycl_device_get_name(ggml_backend_dev_t dev) {
@@ -4315,8 +4316,11 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
 static void ggml_backend_sycl_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
     props->name        = ggml_backend_sycl_device_get_name(dev);
     props->description = ggml_backend_sycl_device_get_description(dev);
+    ggml_backend_sycl_device_context * ctx = (ggml_backend_sycl_device_context *)dev->context;
+    props->id          = ctx->id.c_str();
     props->type        = ggml_backend_sycl_device_get_type(dev);
     ggml_backend_sycl_device_get_memory(dev, &props->memory_free, &props->memory_total);
+    props->library     = GGML_SYCL_NAME;
 
     bool host_buffer = getenv("GGML_SYCL_NO_PINNED") == nullptr;
 #ifdef GGML_SYCL_NO_PEER_COPY
@@ -4806,6 +4810,7 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
                 ggml_backend_sycl_device_context * dev_ctx = new ggml_backend_sycl_device_context;
                 dev_ctx->device = i;
                 dev_ctx->name = GGML_SYCL_NAME + std::to_string(i);
+                dev_ctx->id = std::to_string(i);
 
                 ggml_sycl_set_device(i);
 

@@ -164,7 +164,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	blocks := int(meta.KV().BlockCount())
-	externalLibraryPath := envconfig.AllowExternalLibraryPath()
 
 	// create list of buffer types for the cpu
 	cpuDeviceBufferType := deviceBufferType{d: C.ggml_backend_dev_by_type(C.GGML_BACKEND_DEVICE_TYPE_CPU)}
@@ -198,16 +197,16 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		})
 
 		btDeviceMemory[bt] = &requiredMemory.GPUs[i]
-		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
-		if externalLibraryPath {
-			requiredMemory.GPUs[i].ID = strconv.Itoa(i)
-			requiredMemory.GPUs[i].Library = "SYCL"
-		} else {
-			var props C.struct_ggml_backend_dev_props
-			C.ggml_backend_dev_get_props(d, &props)
-			requiredMemory.GPUs[i].ID = C.GoString(props.id)
-			requiredMemory.GPUs[i].Library = C.GoString(props.library)
-		}
+		var props C.struct_ggml_backend_dev_props
+		C.ggml_backend_dev_get_props(d, &props)
+		identity := ggmlDeviceIdentity(ggmlDeviceProps{
+			name:    cString(props.name),
+			id:      cString(props.id),
+			library: cString(props.library),
+		}, C.GoString(C.ggml_backend_dev_name(d)), C.GoString(C.ggml_backend_dev_description(d)))
+		requiredMemory.GPUs[i].Name = identity.name
+		requiredMemory.GPUs[i].ID = identity.id
+		requiredMemory.GPUs[i].Library = identity.library
 		requiredMemory.GPUs[i].Weights = make([]uint64, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]uint64, blocks+1)
 	}
@@ -371,6 +370,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	// create backends and buffer types used for the compute graph scheduler
 	var schedBackends []C.ggml_backend_t
 	var schedBufts []C.ggml_backend_buffer_type_t
+	externalLibraryPath := envconfig.AllowExternalLibraryPath()
 	for _, d := range append(gpus, append(accels, cpus...)...) {
 		b := backends[d]
 		var bt C.ggml_backend_buffer_type_t
@@ -713,8 +713,7 @@ func (b *Backend) CacheConfig() ml.CacheConfig {
 
 func (b *Backend) BackendDevices() []ml.DeviceInfo {
 	deviceInfos := []ml.DeviceInfo{}
-	externalLibraryPath := envconfig.AllowExternalLibraryPath()
-	for i, dev := range gpus {
+	for _, dev := range gpus {
 		// If we have a model loaded, and it's only loaded on a subset of the devices
 		// skip idle/unused devices to avoid initializing them and causing VRAM allocations
 		if b.allocMemory {
@@ -731,33 +730,31 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 			}
 		}
 
+		props := C.struct_ggml_backend_dev_props{}
+		C.ggml_backend_dev_get_props(dev, &props)
+		identity := ggmlDeviceIdentity(ggmlDeviceProps{
+			name:         cString(props.name),
+			description:  cString(props.description),
+			id:           cString(props.id),
+			library:      cString(props.library),
+			computeMajor: int(props.compute_major),
+			computeMinor: int(props.compute_minor),
+			driverMajor:  int(props.driver_major),
+			driverMinor:  int(props.driver_minor),
+			integrated:   props.integrated != 0,
+			pciID:        cString(props.device_id),
+		}, C.GoString(C.ggml_backend_dev_name(dev)), C.GoString(C.ggml_backend_dev_description(dev)))
 		info := ml.DeviceInfo{}
-		if externalLibraryPath {
-			info.Name = C.GoString(C.ggml_backend_dev_name(dev))
-			info.Description = C.GoString(C.ggml_backend_dev_description(dev))
-			info.ID = strconv.Itoa(i)
-			info.Library = "SYCL"
-			info.ComputeMajor = -1
-			info.ComputeMinor = -1
-		} else {
-			props := C.struct_ggml_backend_dev_props{}
-			C.ggml_backend_dev_get_props(dev, &props)
-			info.Name = C.GoString(props.name)
-			info.Description = C.GoString(props.description)
-			info.ID = C.GoString(props.id)
-			info.Library = C.GoString(props.library)
-			info.ComputeMajor = (int)(props.compute_major)
-			info.ComputeMinor = (int)(props.compute_minor)
-			info.DriverMajor = (int)(props.driver_major)
-			info.DriverMinor = (int)(props.driver_minor)
-			info.Integrated = props.integrated != 0
-			if props.library != nil {
-				info.Library = C.GoString(props.library)
-			}
-			if props.device_id != nil {
-				info.PCIID = C.GoString(props.device_id)
-			}
-		}
+		info.Name = identity.name
+		info.Description = identity.description
+		info.ID = identity.id
+		info.Library = identity.library
+		info.ComputeMajor = identity.computeMajor
+		info.ComputeMinor = identity.computeMinor
+		info.DriverMajor = identity.driverMajor
+		info.DriverMinor = identity.driverMinor
+		info.Integrated = identity.integrated
+		info.PCIID = identity.pciID
 		info.LibraryPath = ggml.LibPaths()
 		var free, total C.size_t
 		C.ggml_backend_dev_memory(dev, &free, &total)
@@ -767,6 +764,13 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		deviceInfos = append(deviceInfos, info)
 	}
 	return deviceInfos
+}
+
+func cString(s *C.char) string {
+	if s == nil {
+		return ""
+	}
+	return C.GoString(s)
 }
 
 type Context struct {
