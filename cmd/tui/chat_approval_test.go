@@ -30,21 +30,28 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "Ollama") ||
-		!strings.Contains(view, "Bash wants to run a command") ||
-		!strings.Contains(view, "Approve once (o)") ||
-		!strings.Contains(view, "Approve session (s) - same command in this chat") ||
-		!strings.Contains(view, "Deny (d)") ||
+		!strings.Contains(view, "$ git status") ||
+		!strings.Contains(view, "1. Approve once") ||
+		!strings.Contains(view, "2. Approve session") ||
+		!strings.Contains(view, "3. Deny") ||
+		!strings.Contains(view, "1/2/3 choose • enter select • esc deny") ||
 		!strings.Contains(view, "> █") ||
-		!strings.Contains(view, "waiting for approval") {
+		!strings.Contains(view, "review") {
 		t.Fatalf("approval view missing content: %q", view)
 	}
-	if strings.Contains(view, "Approve once (o) -") || strings.Contains(view, "Deny (d) -") {
-		t.Fatalf("approval once/deny choices should not include scope: %q", view)
+	if strings.Contains(view, "Bash wants to run a command") {
+		t.Fatalf("approval view should not repeat tool summary when command detail is shown: %q", view)
+	}
+	if strings.Contains(view, "waiting for approval") {
+		t.Fatalf("approval view should not render waiting spinner: %q", view)
+	}
+	if strings.Contains(view, "Approve once (o)") || strings.Contains(view, "same command in this chat") {
+		t.Fatalf("approval choices should be minimal: %q", view)
 	}
 	if strings.Contains(view, "risk:") {
 		t.Fatalf("approval view should not render risk level: %q", view)
 	}
-	approvalIdx := strings.LastIndex(view, "Approve once (o)")
+	approvalIdx := strings.LastIndex(view, "1. Approve once")
 	inputIdx := strings.LastIndex(view, "> █")
 	if approvalIdx < 0 || inputIdx < 0 || approvalIdx > inputIdx {
 		t.Fatalf("approval picker should render above the input box:\n%s", view)
@@ -135,17 +142,20 @@ func TestChatApprovalPromptClosesHistoryPopup(t *testing.T) {
 	if strings.Contains(view, "Message history") {
 		t.Fatalf("history popup should not render over approval prompt:\n%s", view)
 	}
-	for _, want := range []string{"Bash wants to run a command", "Approve once (o)", "Approve session (s) - same command in this chat", "Deny (d)"} {
+	for _, want := range []string{"$ git status", "1. Approve once", "2. Approve session", "3. Deny", "1/2/3 choose • enter select • esc deny"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("approval view missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "Approve once (o) -") || strings.Contains(view, "Deny (d) -") {
-		t.Fatalf("approval once/deny choices should not include scope:\n%s", view)
+	if strings.Contains(view, "Bash wants to run a command") {
+		t.Fatalf("approval view should not repeat tool summary when command detail is shown:\n%s", view)
+	}
+	if strings.Contains(view, "Approve once (o)") || strings.Contains(view, "same command in this chat") {
+		t.Fatalf("approval choices should be minimal:\n%s", view)
 	}
 }
 
-func TestChatApprovalPromptDenyShortcut(t *testing.T) {
+func TestChatApprovalPromptDenyNumberShortcut(t *testing.T) {
 	reply := make(chan coreagent.ApprovalResult, 1)
 	m := chatModel{
 		events: make(chan tea.Msg),
@@ -155,7 +165,7 @@ func TestChatApprovalPromptDenyShortcut(t *testing.T) {
 		reply:   reply,
 	})
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
 	m = updated.(chatModel)
 	result := <-reply
 	if result.Decision != coreagent.ApprovalDeny {

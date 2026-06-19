@@ -196,13 +196,19 @@ func TestChatViewWrapsFooterAndNotificationWhenNarrow(t *testing.T) {
 		"system prompt off",
 		"enter",
 		"send",
-		"full access",
-		"ctx",
-		"~12,345/262,144",
+		"/model",
+		"full",
+		"access",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wrapped footer missing %q:\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "ctx") {
+		t.Fatalf("footer should hide distant context pressure:\n%s", view)
+	}
+	if strings.Contains(view, "ctrl+g") {
+		t.Fatalf("footer should not include ctrl+g hint:\n%s", view)
 	}
 	if strings.Contains(m.footerLine(), "cache will break") {
 		t.Fatalf("footer should not include transient notification: %q", m.footerLine())
@@ -297,7 +303,7 @@ func TestChatViewKeepsInputBoxWhileRunning(t *testing.T) {
 	lines := strings.Split(view, "\n")
 	for i, line := range lines {
 		if strings.Contains(line, "> next█") {
-			if i < 2 || !strings.Contains(lines[i-2], "thinking 42 tokens") || !strings.Contains(lines[i-1], strings.Repeat("─", 40)) {
+			if i < 2 || !strings.Contains(lines[i-2], "Thinking 42 tokens") || !strings.Contains(lines[i-1], strings.Repeat("─", 40)) {
 				t.Fatalf("thinking line should sit directly above input border:\n%s", view)
 			}
 			return
@@ -411,9 +417,81 @@ func TestChatInputFloatsUntilTranscriptOverflows(t *testing.T) {
 	}
 }
 
+func TestChatViewSeparatesActionStatusFromTranscript(t *testing.T) {
+	m := chatModel{
+		input:    []rune("next"),
+		width:    72,
+		height:   14,
+		running:  true,
+		thinking: true,
+		entries: []chatEntry{
+			{role: "assistant", content: "Working through it."},
+		},
+	}
+
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	assistantLine := lineIndexContaining(lines, "Working through it.")
+	activityLine := lineIndexContaining(lines, "Thinking")
+	if assistantLine < 0 || activityLine < 0 {
+		t.Fatalf("view missing assistant/activity lines:\n%s", strings.Join(lines, "\n"))
+	}
+	if gap := activityLine - assistantLine - 1; gap < 2 {
+		t.Fatalf("gap between transcript and action status = %d, want at least 2:\n%s", gap, strings.Join(lines, "\n"))
+	}
+}
+
+func TestChatViewDoesNotReserveIdleActionSpacerAfterResponse(t *testing.T) {
+	m := chatModel{
+		input:  []rune("next"),
+		width:  72,
+		height: 12,
+		entries: []chatEntry{
+			{role: "user", content: "hi"},
+			{role: "assistant", content: "Hello."},
+		},
+	}
+
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	assistantLine := lineIndexContaining(lines, "Hello.")
+	inputLine := lineIndexContaining(lines, "> next")
+	if assistantLine < 0 || inputLine < 0 {
+		t.Fatalf("view missing assistant/input lines:\n%s", strings.Join(lines, "\n"))
+	}
+	if gap := inputLine - assistantLine - 1; gap != 3 {
+		t.Fatalf("gap between finished response and input body = %d, want 3 including input border:\n%s", gap, strings.Join(lines, "\n"))
+	}
+}
+
+func TestChatViewSeparatesEmptyHintFromInput(t *testing.T) {
+	m := chatModel{
+		input:  []rune("next"),
+		width:  72,
+		height: 12,
+	}
+
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	hintLine := lineIndexContaining(lines, "Try:")
+	inputLine := lineIndexContaining(lines, "> next")
+	if hintLine < 0 || inputLine < 0 {
+		t.Fatalf("view missing hint/input lines:\n%s", strings.Join(lines, "\n"))
+	}
+	if gap := inputLine - hintLine - 1; gap < 2 {
+		t.Fatalf("gap between empty hint and input = %d, want at least 2:\n%s", gap, strings.Join(lines, "\n"))
+	}
+}
+
 func renderedInputLine(view string) int {
 	for i, line := range strings.Split(stripANSI(view), "\n") {
 		if strings.Contains(line, "> next") {
+			return i
+		}
+	}
+	return -1
+}
+
+func lineIndexContaining(lines []string, needle string) int {
+	for i, line := range lines {
+		if strings.Contains(line, needle) {
 			return i
 		}
 	}

@@ -22,6 +22,7 @@ const (
 	maxResumePickerItems = 8
 	maxSlashCompletions  = 5
 	maxPromptHistory     = 50
+	waitingSpinnerTicks  = 4
 )
 const chatCompactionSummaryPrefix = "Conversation summary:\n"
 
@@ -67,6 +68,7 @@ type ChatOptions struct {
 	Compactor                   coreagent.Compactor
 	ContextWindowTokens         int
 	ContextWindowTokensForModel func(context.Context, string, int) int
+	PreloadModel                func(context.Context, string) error
 	CompactionThreshold         float64
 	NewChat                     func(context.Context) (string, error)
 	Skills                      *skills.Catalog
@@ -131,6 +133,7 @@ type chatModel struct {
 	status               string
 	spinner              int
 	tickActive           bool
+	preloadingModel      string
 	complete             int
 	systemPromptDisabled bool
 	quitting             bool
@@ -188,6 +191,9 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 	m.entries = entriesFromMessages(m.messages)
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
+	if opts.PreloadModel != nil && strings.TrimSpace(opts.Model) != "" {
+		m.preloadingModel = strings.TrimSpace(opts.Model)
+	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
@@ -203,6 +209,9 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 }
 
 func (m chatModel) Init() tea.Cmd {
+	if m.preloadingModel != "" && m.opts.PreloadModel != nil {
+		return tea.Batch(preloadModelCmd(m.ctx, m.opts.PreloadModel, m.preloadingModel), chatTickCmd())
+	}
 	return nil
 }
 
@@ -218,12 +227,27 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatTickMsg:
 		m.tickActive = false
-		if !m.running && !m.compacting {
+		if !m.running && !m.compacting && m.preloadingModel == "" {
 			return m, nil
 		}
 		m.spinner++
 		cmd := m.scheduleTick()
 		return m, cmd
+
+	case chatModelPreloadDoneMsg:
+		if msg.model != "" && msg.model != m.preloadingModel {
+			return m, nil
+		}
+		m.preloadingModel = ""
+		if msg.err != nil {
+			if !errors.Is(msg.err, context.Canceled) {
+				m.status = "error"
+				m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not load model: %v", msg.err), err: msg.err.Error()}))
+			}
+			return m, nil
+		}
+		m.refreshContextWindowTokens(msg.model)
+		return m, nil
 
 	case chatAgentMsg:
 		m.applyAgentEvent(msg.event)
@@ -458,9 +482,9 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyRight:
 		m.moveInputCursorHorizontal(1)
 	case tea.KeyPgUp:
-		m.scrollBy(m.transcriptHeight() - 1)
+		m.scrollBy(max(1, m.transcriptHeight()-1))
 	case tea.KeyPgDown:
-		m.scrollBy(-(m.transcriptHeight() - 1))
+		m.scrollBy(-max(1, m.transcriptHeight()-1))
 	case tea.KeyHome, tea.KeyCtrlHome:
 		m.scroll = m.maxScroll()
 	case tea.KeyEnd, tea.KeyCtrlEnd:
@@ -630,14 +654,19 @@ func (m chatModel) View() string {
 	}
 
 	headerLines := m.headerLines()
+	allTranscriptLines := m.transcriptLines(width)
+	contentLineCount := len(allTranscriptLines)
+	if contentLineCount == 0 {
+		contentLineCount = 1
+	}
 
 	bottomLines := m.bottomLines(width, height-len(headerLines))
-	available := height - len(headerLines) - len(bottomLines)
+	bottomGap := transcriptInputGap(height-len(headerLines), len(bottomLines), contentLineCount)
+	available := height - len(headerLines) - len(bottomLines) - bottomGap
 	if available < 0 {
 		available = 0
 	}
 
-	allTranscriptLines := m.transcriptLines(width)
 	transcriptLines := m.visibleTranscriptLinesForLines(allTranscriptLines, available)
 	if len(allTranscriptLines) == 0 {
 		if available > 0 {
@@ -651,6 +680,9 @@ func (m chatModel) View() string {
 	}
 
 	lines := append(headerLines, transcriptLines...)
+	for range bottomGap {
+		lines = append(lines, "")
+	}
 	lines = append(lines, bottomLines...)
 	return renderFullFrame(strings.Join(lines, "\n"), width, height)
 }
@@ -882,6 +914,7 @@ func (m *chatModel) startRunWithMessages(displayInput string, newMessages []api.
 	}
 	m.running = true
 	m.status = "running"
+	m.spinner = 0
 	m.scroll = 0
 	m.thinking = false
 	m.thinkingTokens = 0

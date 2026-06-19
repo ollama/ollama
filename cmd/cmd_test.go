@@ -20,6 +20,7 @@ import (
 
 	"github.com/ollama/ollama/agent/chatstore"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -1024,6 +1025,9 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", mockServer.URL)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("LOCALAPPDATA", t.TempDir())
+	if err := config.SetLastModel("previous-model"); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
@@ -1058,10 +1062,13 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 	}
 	if len(chatReq.Messages) != 2 ||
 		chatReq.Messages[0].Role != "system" ||
-		!strings.Contains(chatReq.Messages[0].Content, "You are running in Ollama as part of the Ollama agent, and the model is test-model.") ||
+		!strings.Contains(chatReq.Messages[0].Content, "You are running in Ollama, in a harness to help the user accomplish tasks, and the model is test-model.") ||
 		chatReq.Messages[1].Role != "user" ||
 		chatReq.Messages[1].Content != "hello" {
 		t.Fatalf("chat messages = %#v", chatReq.Messages)
+	}
+	if got := config.LastModel(); got != "previous-model" {
+		t.Fatalf("headless run updated last model to %q, want previous-model", got)
 	}
 }
 
@@ -1198,7 +1205,7 @@ func TestRunHandlerPromptUsesAgentLoopByDefault(t *testing.T) {
 	}
 	if len(chatReq.Messages) != 2 ||
 		chatReq.Messages[0].Role != "system" ||
-		!strings.Contains(chatReq.Messages[0].Content, "You are running in Ollama as part of the Ollama agent, and the model is test-model.") ||
+		!strings.Contains(chatReq.Messages[0].Content, "You are running in Ollama, in a harness to help the user accomplish tasks, and the model is test-model.") ||
 		chatReq.Messages[1].Role != "user" ||
 		chatReq.Messages[1].Content != "hello" {
 		t.Fatalf("chat messages = %#v", chatReq.Messages)

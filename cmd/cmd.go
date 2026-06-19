@@ -581,17 +581,21 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 		return nil
 	}
 
+	return preloadLocalModel(cmd.Context(), client, *opts)
+}
+
+func preloadLocalModel(ctx context.Context, client *api.Client, opts runOptions) error {
+	if client == nil {
+		return errors.New("client is required")
+	}
 	req := &api.GenerateRequest{
 		Model:     opts.Model,
 		KeepAlive: opts.KeepAlive,
 
-		// pass Think here so we fail before getting to the chat prompt if the model doesn't support it
+		// Pass Think here so unsupported thinking modes fail before the first chat request.
 		Think: opts.Think,
 	}
-
-	return client.Generate(cmd.Context(), req, func(r api.GenerateResponse) error {
-		return nil
-	})
+	return client.Generate(ctx, req, func(api.GenerateResponse) error { return nil })
 }
 
 func StopHandler(cmd *cobra.Command, args []string) error {
@@ -850,23 +854,28 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if interactive {
-		if err := loadOrUnloadModel(cmd, &opts); err != nil {
-			var sErr api.AuthorizationError
-			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
+		if info.RemoteHost != "" || requestedCloud {
+			if err := loadOrUnloadModel(cmd, &opts); err != nil {
+				var sErr api.AuthorizationError
+				if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+					fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
 
-				if sErr.SigninURL != "" {
-					fmt.Printf(ConnectInstructions, sErr.SigninURL)
+					if sErr.SigninURL != "" {
+						fmt.Printf(ConnectInstructions, sErr.SigninURL)
+					}
+					return nil
 				}
-				return nil
+				return err
 			}
-			return err
 		}
 
 		contextWindowTokens := contextWindowTokensForRun(cmd.Context(), client, opts.Model, opts.ContextWindowTokens)
 
 		agentOpts := agentOptionsFromRunOptions(opts)
 		agentOpts.ContextWindowTokens = contextWindowTokens
+		if err := config.SetLastModel(opts.Model); err != nil {
+			return err
+		}
 		return GenerateAgentTUI(cmd, agentOpts)
 	}
 
@@ -2196,12 +2205,17 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 
 	applyShowResponseToRunOptions(&opts, info)
 
-	if err := loadOrUnloadModel(cmd, &opts); err != nil {
-		return fmt.Errorf("error loading model: %w", err)
+	if info.RemoteHost != "" || requestedCloud {
+		if err := loadOrUnloadModel(cmd, &opts); err != nil {
+			return fmt.Errorf("error loading model: %w", err)
+		}
 	}
 
 	agentOpts := agentOptionsFromRunOptions(opts)
 	agentOpts.ContextWindowTokens = contextWindowTokensForRun(cmd.Context(), client, opts.Model, opts.ContextWindowTokens)
+	if err := config.SetLastModel(opts.Model); err != nil {
+		return err
+	}
 	if err := GenerateAgentTUI(cmd, agentOpts); err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
@@ -2319,7 +2333,7 @@ type agentModelPickerDeps struct {
 }
 
 func runAgentModelPickerWithDeps(cmd *cobra.Command, deps agentModelPickerDeps) error {
-	req := launch.RunModelRequest{ForcePicker: true}
+	req := launch.RunModelRequest{}
 	if deps.accountState != nil {
 		req.AccountState = deps.accountState()
 		req.AccountStateProvider = deps.accountState

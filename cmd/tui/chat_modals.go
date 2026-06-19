@@ -356,7 +356,7 @@ func (m chatModel) selectModel() (tea.Model, tea.Cmd) {
 	} else {
 		m.status = "model " + selected.Name
 	}
-	return m, nil
+	return m, m.startModelPreload(selected.Name)
 }
 
 func (m *chatModel) applyModelSelection(modelName string, persist bool) error {
@@ -394,6 +394,16 @@ func (m *chatModel) applyModelSelection(modelName string, persist bool) error {
 		return m.opts.OnModelSelected(ctx, modelName)
 	}
 	return nil
+}
+
+func (m *chatModel) startModelPreload(modelName string) tea.Cmd {
+	modelName = strings.TrimSpace(modelName)
+	if m == nil || modelName == "" || m.opts.PreloadModel == nil {
+		return nil
+	}
+	m.preloadingModel = modelName
+	m.spinner = 0
+	return tea.Batch(preloadModelCmd(m.ctx, m.opts.PreloadModel, modelName), m.scheduleTick())
 }
 
 func (m *chatModel) openResumePicker() (tea.Model, tea.Cmd) {

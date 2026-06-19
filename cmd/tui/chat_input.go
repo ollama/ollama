@@ -534,10 +534,6 @@ func (m *chatModel) syncInputPlaceholders() {
 	m.inputPastedTexts = m.activeInputPastedTextsFor(string(m.input))
 }
 
-func (m *chatModel) syncInputAttachments() {
-	m.syncInputPlaceholders()
-}
-
 func (m chatModel) activeInputAttachmentsFor(input string) []chatInputAttachment {
 	if len(m.inputAttachments) == 0 {
 		return nil
@@ -639,8 +635,10 @@ func inputAttachmentStatus(files []filedata.File) string {
 	}
 }
 
-var inputAttachmentPlaceholderPattern = regexp.MustCompile(`\[(Image|Audio) #([0-9]+)\]`)
-var inputPastedTextPlaceholderPattern = regexp.MustCompile(`\[Pasted text #([0-9]+) \+[0-9]+ lines?\]`)
+var (
+	inputAttachmentPlaceholderPattern = regexp.MustCompile(`\[(Image|Audio) #([0-9]+)\]`)
+	inputPastedTextPlaceholderPattern = regexp.MustCompile(`\[Pasted text #([0-9]+) \+[0-9]+ lines?\]`)
+)
 
 func nextInputAttachmentIDsFromMessages(messages []api.Message) (imageID int, audioID int) {
 	for _, msg := range messages {

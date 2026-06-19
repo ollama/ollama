@@ -713,7 +713,7 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 		}
 	}
 
-	model, err := c.selectSingleModelWithSelector(ctx, "Select model to run:", current, DefaultSingleSelector)
+	model, err := c.selectSingleModelWithSelector(ctx, "Select model to chat and code with:", current, DefaultSingleSelector)
 	if err != nil {
 		return "", err
 	}

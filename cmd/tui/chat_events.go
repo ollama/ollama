@@ -35,6 +35,11 @@ type chatCompactProgressMsg struct {
 	tokens int
 }
 
+type chatModelPreloadDoneMsg struct {
+	model string
+	err   error
+}
+
 type chatTickMsg struct{}
 
 func (m *chatModel) applyAgentEvent(event coreagent.Event) {
@@ -238,4 +243,16 @@ func chatTickCmd() tea.Cmd {
 	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
 		return chatTickMsg{}
 	})
+}
+
+func preloadModelCmd(ctx context.Context, preload func(context.Context, string) error, model string) tea.Cmd {
+	if preload == nil || strings.TrimSpace(model) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return chatModelPreloadDoneMsg{model: model, err: preload(ctx, model)}
+	}
 }

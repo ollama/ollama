@@ -94,22 +94,6 @@ func (m *chatModel) toggleAllToolOutputs() {
 	m.setToolOutputMode(expand)
 }
 
-func (m chatModel) lastExpandableToolEntry() int {
-	for i := len(m.entries) - 1; i >= 0; i-- {
-		if m.isExpandableTool(i) {
-			return i
-		}
-	}
-	return -1
-}
-
-func (m chatModel) isExpandableTool(index int) bool {
-	if index < 0 || index >= len(m.entries) {
-		return false
-	}
-	return entryHasExpandableOutput(m.entries[index])
-}
-
 func (m chatModel) toolOutputIndexes() []int {
 	var indexes []int
 	for i := range m.entries {
@@ -226,10 +210,6 @@ func (m chatModel) transcriptLines(width int) []string {
 	return strings.Split(transcript, "\n")
 }
 
-func (m chatModel) visibleTranscriptLines(width, available int) []string {
-	return m.visibleTranscriptLinesForLines(m.transcriptLines(width), available)
-}
-
 func (m chatModel) visibleTranscriptLinesForLines(lines []string, available int) []string {
 	if available <= 0 {
 		return nil
@@ -274,12 +254,16 @@ func (m chatModel) transcriptHeight() int {
 	}
 	lineCount := len(m.transcriptLines(width))
 	baseHeaderHeight := 2
-	baseHeight := max(0, height-baseHeaderHeight-len(m.bottomLines(width, height-baseHeaderHeight)))
+	baseMaxHeight := height - baseHeaderHeight
+	baseBottomLines := m.bottomLines(width, baseMaxHeight)
+	baseHeight := max(0, baseMaxHeight-len(baseBottomLines)-transcriptInputGap(baseMaxHeight, len(baseBottomLines), lineCount))
 	if lineCount <= baseHeight {
 		return lineCount
 	}
 	statusHeaderHeight := 3
-	return max(0, height-statusHeaderHeight-len(m.bottomLines(width, height-statusHeaderHeight)))
+	statusMaxHeight := height - statusHeaderHeight
+	statusBottomLines := m.bottomLines(width, statusMaxHeight)
+	return max(0, statusMaxHeight-len(statusBottomLines)-transcriptInputGap(statusMaxHeight, len(statusBottomLines), lineCount))
 }
 
 func (m chatModel) transcriptLayout() (top, height int) {
@@ -293,7 +277,8 @@ func (m chatModel) transcriptLayout() (top, height int) {
 	}
 	headerHeight := len(m.headerLines())
 	bottomLines := m.bottomLines(width, viewHeight-headerHeight)
-	return headerHeight, max(0, viewHeight-headerHeight-len(bottomLines))
+	transcriptLineCount := len(m.transcriptLines(width))
+	return headerHeight, max(0, viewHeight-headerHeight-len(bottomLines)-transcriptInputGap(viewHeight-headerHeight, len(bottomLines), transcriptLineCount))
 }
 
 func (m chatModel) maxScroll() int {
@@ -308,37 +293,30 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 	var lines []string
 	lines = append(lines, m.completionLines(width)...)
 	lines = append(lines, m.queuedLines(width)...)
-	if activity := m.activityLine(); activity != "" {
-		lines = append(lines, chatMetaStyle.Render(activity))
-	}
 
+	actionStatusLines := m.renderActionStatusLines(width)
 	approvalLines := m.renderApprovalPromptLines(width)
-	notificationLines := m.renderNotificationLines(width)
-	notificationGap := 0
-	if len(notificationLines) > 0 {
-		notificationGap = 1
-	}
 	footerLines := m.renderFooterLines(width)
+	if maxHeight > 0 && !actionStatusLinesActive(actionStatusLines) && maxHeight-len(lines)-len(approvalLines)-len(footerLines)-3 <= 1 {
+		actionStatusLines = nil
+	}
 	if maxHeight > 0 {
-		maxFooterLines := max(1, maxHeight-len(lines)-len(approvalLines)-len(notificationLines)-notificationGap-3)
+		maxFooterLines := max(1, maxHeight-len(lines)-len(actionStatusLines)-len(approvalLines)-3)
 		if len(footerLines) > maxFooterLines {
 			footerLines = footerLines[:maxFooterLines]
 		}
-		maxApprovalLines := max(0, maxHeight-len(lines)-len(notificationLines)-notificationGap-len(footerLines)-3)
+		maxApprovalLines := max(0, maxHeight-len(lines)-len(actionStatusLines)-len(footerLines)-3)
 		if len(approvalLines) > maxApprovalLines {
 			approvalLines = approvalLines[:maxApprovalLines]
 		}
-		maxNotificationLines := max(0, maxHeight-len(lines)-len(approvalLines)-notificationGap-len(footerLines)-3)
-		if len(notificationLines) > maxNotificationLines {
-			notificationLines = notificationLines[:maxNotificationLines]
+		maxActionStatusLines := max(1, maxHeight-len(lines)-len(approvalLines)-len(footerLines)-3)
+		if len(actionStatusLines) > maxActionStatusLines {
+			actionStatusLines = actionStatusLines[:maxActionStatusLines]
 		}
 	}
 
+	lines = append(lines, actionStatusLines...)
 	lines = append(lines, approvalLines...)
-	if len(notificationLines) > 0 && (maxHeight <= 0 || len(lines)+len(notificationLines)+len(footerLines)+3 < maxHeight) {
-		lines = append(lines, "")
-	}
-	lines = append(lines, notificationLines...)
 	fixedLines := len(lines) + len(footerLines) + 2
 	inputBodyLines := maxInputBoxBodyLines
 	if maxHeight > 0 {
@@ -347,6 +325,40 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 	lines = append(lines, renderInputBoxLines(string(m.input), m.normalizedInputCursor(), width, inputBodyLines)...)
 	lines = append(lines, footerLines...)
 	return lines
+}
+
+func (m chatModel) renderActionStatusLines(width int) []string {
+	if activity := m.activityLine(); activity != "" {
+		return []string{chatMetaStyle.Render(activity)}
+	}
+	if notificationLines := m.renderNotificationLines(width); len(notificationLines) > 0 {
+		return notificationLines
+	}
+	return nil
+}
+
+func actionStatusLinesActive(lines []string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(stripChatANSI(line)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func transcriptInputGap(maxHeight, bottomLineCount, transcriptLineCount int) int {
+	if transcriptLineCount == 0 {
+		return 0
+	}
+	const desiredGap = 2
+	if maxHeight <= 0 {
+		return desiredGap
+	}
+	available := maxHeight - bottomLineCount
+	if available <= 1 {
+		return 0
+	}
+	return min(desiredGap, available-1)
 }
 
 func (m *chatModel) scrollBy(lines int) {
@@ -1264,14 +1276,14 @@ func (m chatModel) footerParts() []string {
 	}
 	controls := action
 	if m.approvalPrompt != nil {
-		controls += " • ←/→ choose • o once • s session • d deny • esc deny"
+		controls = ""
+	} else {
+		controls += " • shift+tab"
+		controls += " • /model"
 	}
-	controls += " • shift+tab"
-	if m.lastExpandableToolEntry() >= 0 {
-		controls += " • ctrl+o details"
+	if controls != "" {
+		parts = append(parts, controls)
 	}
-	controls += " • ctrl+g editor"
-	parts = append(parts, controls)
 	if m.opts.Verbose {
 		parts = append(parts, "verbose")
 	}
@@ -1411,34 +1423,40 @@ func (m chatModel) cwdStatus() string {
 }
 
 func (m chatModel) activityLine() string {
-	if !m.running && !m.compacting && m.approvalPrompt == nil {
+	if m.approvalPrompt != nil {
 		return ""
 	}
-	status := m.spinnerFrame()
-	if label := m.activityLabel(); label != "" {
-		status += " " + label
+	if !m.running && !m.compacting && m.preloadingModel == "" && m.approvalPrompt == nil {
+		return ""
 	}
-	return status
+	label := m.activityLabel()
+	if label == "" {
+		if !m.waitingForModel() || m.spinner < waitingSpinnerTicks {
+			return ""
+		}
+		if m.preloadingModel != "" {
+			return m.spinnerFrame() + " Loading model..."
+		}
+		return m.spinnerFrame() + " Ollamaing..."
+	}
+	return m.spinnerFrame() + " " + label
 }
 
 func (m chatModel) activityLabel() string {
 	if m.status == "canceling" {
 		return "canceling"
 	}
-	if m.approvalPrompt != nil {
-		return "waiting for approval"
-	}
 	if m.compacting {
 		if m.compactingTokens > 0 {
-			return "compacting " + formatTokenCount(m.compactingTokens)
+			return "Compacting " + formatTokenCount(m.compactingTokens)
 		}
-		return "compacting"
+		return "Compacting"
 	}
 	if m.thinking {
 		if m.thinkingTokens > 0 {
-			return "thinking " + formatTokenCount(m.thinkingTokens)
+			return "Thinking " + formatTokenCount(m.thinkingTokens)
 		}
-		return "thinking"
+		return "Thinking"
 	}
 	start := m.currentTurnEntryStart()
 	for i := len(m.entries) - 1; i >= start; i-- {
@@ -1461,7 +1479,29 @@ func (m chatModel) activityLabel() string {
 			}
 		}
 	}
-	return "waiting for model"
+	return ""
+}
+
+func (m chatModel) waitingForModel() bool {
+	if m.preloadingModel != "" && !m.compacting && m.approvalPrompt == nil && m.status != "canceling" {
+		return true
+	}
+	if !m.running || m.compacting || m.approvalPrompt != nil || m.thinking || m.status == "canceling" {
+		return false
+	}
+	start := m.currentTurnEntryStart()
+	for i := len(m.entries) - 1; i >= start; i-- {
+		entry := m.entries[i]
+		switch entry.role {
+		case "tool":
+			if isToolActiveStatus(entry.status) {
+				return false
+			}
+		case "assistant":
+			return entry.content == ""
+		}
+	}
+	return true
 }
 
 func (m chatModel) currentTurnEntryStart() int {
@@ -1654,7 +1694,7 @@ func (m chatModel) contextStatus() string {
 	}
 
 	if used >= compactAt {
-		return fmt.Sprintf("ctx %s%s/%s (%d%%) • compact due at %s", prefix, formatInteger(used), formatInteger(window), percent, formatInteger(compactAt))
+		return fmt.Sprintf("ctx %s%s/%s (%d%%) • compact due at %s", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent, formatContextTokenCount(compactAt))
 	}
 
 	noticeDistance := int(float64(window)*0.1 + 0.999999)
@@ -1662,10 +1702,25 @@ func (m chatModel) contextStatus() string {
 		noticeDistance = 1
 	}
 	if compactAt-used <= noticeDistance {
-		return fmt.Sprintf("ctx %s%s/%s (%d%%) • compact at %s", prefix, formatInteger(used), formatInteger(window), percent, formatInteger(compactAt))
+		return fmt.Sprintf("ctx %s%s/%s (%d%%) • compact at %s", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent, formatContextTokenCount(compactAt))
 	}
 
-	return fmt.Sprintf("ctx %s%s/%s (%d%%)", prefix, formatInteger(used), formatInteger(window), percent)
+	return ""
+}
+
+func formatContextTokenCount(value int) string {
+	sign := ""
+	if value < 0 {
+		sign = "-"
+		value = -value
+	}
+	if value >= 950_000 {
+		return fmt.Sprintf("%s%dM", sign, int(float64(value)/1_000_000+0.5))
+	}
+	if value >= 10_240 {
+		return fmt.Sprintf("%s%dk", sign, int(float64(value)/1024+0.5))
+	}
+	return sign + formatInteger(value)
 }
 
 func formatInteger(value int) string {

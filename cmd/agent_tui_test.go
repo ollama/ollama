@@ -30,7 +30,7 @@ func setAgentTUITestCloudEnabled(t *testing.T) {
 func TestAgentSystemPromptIncludesModel(t *testing.T) {
 	prompt := agentSystemPromptAt(time.Date(2026, time.June, 12, 9, 30, 0, 0, time.UTC), "llama3.2", nil, false, "")
 	for _, want := range []string{
-		"You are running in Ollama as part of the Ollama agent, and the model is llama3.2.",
+		"You are running in Ollama, in a harness to help the user accomplish tasks, and the model is llama3.2.",
 		"Current date: Friday, June 12, 2026.",
 		"Be concise, practical, and action-oriented.",
 		"Use bash carefully.",
@@ -212,6 +212,74 @@ func TestAgentModelOptionsNoCloudSkipsCloudRecommendations(t *testing.T) {
 	}
 	if got, want := modelOptionNames(options), []string{"llama3.2"}; !slices.Equal(got, want) {
 		t.Fatalf("model options = %#v, want %#v", got, want)
+	}
+}
+
+func TestPreloadAgentModelIfLocalLoadsLocalModel(t *testing.T) {
+	var generateReq api.GenerateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(api.ShowResponse{})
+		case "/api/generate":
+			if err := json.NewDecoder(r.Body).Decode(&generateReq); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(api.GenerateResponse{Done: true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	baseURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keepAlive := api.Duration{Duration: 5 * time.Minute}
+	think := &api.ThinkValue{Value: "low"}
+	err = preloadAgentModelIfLocal(context.Background(), api.NewClient(baseURL, srv.Client()), AgentTUIOptions{
+		KeepAlive: &keepAlive,
+		Think:     think,
+	}, "llama3.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generateReq.Model != "llama3.2" {
+		t.Fatalf("generate model = %q, want llama3.2", generateReq.Model)
+	}
+	if generateReq.KeepAlive == nil || generateReq.KeepAlive.Duration != 5*time.Minute {
+		t.Fatalf("generate keepalive = %#v, want 5m", generateReq.KeepAlive)
+	}
+	if generateReq.Think == nil || generateReq.Think.String() != "low" {
+		t.Fatalf("generate think = %#v, want low", generateReq.Think)
+	}
+}
+
+func TestPreloadAgentModelIfLocalSkipsCloudModel(t *testing.T) {
+	generateCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(api.ShowResponse{RemoteHost: "https://ollama.com"})
+		case "/api/generate":
+			generateCalled = true
+			t.Fatal("cloud model should not be preloaded with generate")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	baseURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := preloadAgentModelIfLocal(context.Background(), api.NewClient(baseURL, srv.Client()), AgentTUIOptions{}, "kimi-k2:cloud"); err != nil {
+		t.Fatal(err)
+	}
+	if generateCalled {
+		t.Fatal("generate was called for cloud model")
 	}
 }
 

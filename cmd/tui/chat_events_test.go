@@ -120,22 +120,29 @@ func TestChatActivityLabelOmitsResponding(t *testing.T) {
 	}
 }
 
-func TestChatActivityLabelShowsWaitingForModel(t *testing.T) {
+func TestChatActivityLineDelaysWaitingForModelSpinner(t *testing.T) {
 	m := chatModel{running: true}
 
-	if got := m.activityLabel(); got != "waiting for model" {
-		t.Fatalf("activityLabel = %q, want waiting for model", got)
+	if got := m.activityLabel(); got != "" {
+		t.Fatalf("activityLabel = %q, want empty", got)
 	}
-
-	line := stripANSI(m.activityLine())
-	if !strings.Contains(line, "waiting for model") {
-		t.Fatalf("activityLine = %q, want waiting label", line)
+	if got := stripANSI(m.activityLine()); got != "" {
+		t.Fatalf("activityLine = %q, want delayed empty line", got)
+	}
+	m.spinner = waitingSpinnerTicks
+	line := strings.TrimSpace(stripANSI(m.activityLine()))
+	if !strings.Contains(line, "Ollamaing...") {
+		t.Fatalf("activityLine = %q, want Ollamaing label", line)
+	}
+	if strings.Contains(line, "waiting for model") {
+		t.Fatalf("activityLine = %q, want Ollamaing label without old waiting label", line)
 	}
 }
 
-func TestChatActivityLabelShowsWaitingForModelOnFollowUp(t *testing.T) {
+func TestChatActivityLineShowsDelayedWaitingSpinnerOnFollowUp(t *testing.T) {
 	m := chatModel{
 		running: true,
+		spinner: waitingSpinnerTicks,
 		entries: []chatEntry{
 			{role: "user", content: "first"},
 			{role: "assistant", content: "done"},
@@ -143,8 +150,62 @@ func TestChatActivityLabelShowsWaitingForModelOnFollowUp(t *testing.T) {
 		},
 	}
 
-	if got := m.activityLabel(); got != "waiting for model" {
-		t.Fatalf("activityLabel = %q, want waiting for model", got)
+	if got := m.activityLabel(); got != "" {
+		t.Fatalf("activityLabel = %q, want empty", got)
+	}
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Ollamaing...") || strings.Contains(got, "waiting for model") {
+		t.Fatalf("activityLine = %q, want delayed Ollamaing label without old waiting label", got)
+	}
+}
+
+func TestChatModelPreloadShowsLoadingModelAndRefreshesContext(t *testing.T) {
+	compactor := coreagent.NewSimpleCompactor(nil, nil, coreagent.CompactionOptions{
+		ContextWindowTokens: 262144,
+	})
+	m := chatModel{
+		ctx:             context.Background(),
+		preloadingModel: "llama3.2",
+		spinner:         waitingSpinnerTicks,
+		opts: ChatOptions{
+			Model:               "llama3.2",
+			Compactor:           compactor,
+			ContextWindowTokens: 262144,
+			ContextWindowTokensForModel: func(_ context.Context, model string, fallback int) int {
+				if model != "llama3.2" || fallback != 262144 {
+					t.Fatalf("resolver called with model=%q fallback=%d", model, fallback)
+				}
+				return 8192
+			},
+		},
+	}
+
+	if line := stripANSI(m.activityLine()); !strings.Contains(line, "Loading model...") {
+		t.Fatalf("activityLine = %q, want Loading model", line)
+	}
+
+	updated, cmd := m.Update(chatModelPreloadDoneMsg{model: "llama3.2"})
+	if cmd != nil {
+		t.Fatal("preload completion should not schedule a command")
+	}
+	fm := updated.(chatModel)
+	if fm.preloadingModel != "" {
+		t.Fatalf("preloadingModel = %q, want empty", fm.preloadingModel)
+	}
+	if fm.opts.ContextWindowTokens != 8192 {
+		t.Fatalf("ContextWindowTokens = %d, want effective runner window 8192", fm.opts.ContextWindowTokens)
+	}
+	if compactor.Options.ContextWindowTokens != 8192 {
+		t.Fatalf("compactor ContextWindowTokens = %d, want 8192", compactor.Options.ContextWindowTokens)
+	}
+}
+
+func TestChatModelPreloadIgnoresStaleCompletion(t *testing.T) {
+	m := chatModel{preloadingModel: "qwen3"}
+
+	updated, _ := m.Update(chatModelPreloadDoneMsg{model: "llama3.2"})
+	fm := updated.(chatModel)
+	if fm.preloadingModel != "qwen3" {
+		t.Fatalf("preloadingModel = %q, want qwen3", fm.preloadingModel)
 	}
 }
 
@@ -153,8 +214,8 @@ func TestChatThinkingShowsTokenCount(t *testing.T) {
 
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "abcdefgh"})
 
-	if got := m.activityLabel(); got != "thinking 2 tokens" {
-		t.Fatalf("activityLabel = %q, want thinking 2 tokens", got)
+	if got := m.activityLabel(); got != "Thinking 2 tokens" {
+		t.Fatalf("activityLabel = %q, want Thinking 2 tokens", got)
 	}
 	if strings.Contains(stripANSI(m.renderTranscript(80)), "abcdefgh") {
 		t.Fatalf("thinking text should not render in transcript: %q", stripANSI(m.renderTranscript(80)))
@@ -162,8 +223,8 @@ func TestChatThinkingShowsTokenCount(t *testing.T) {
 
 	response := api.ChatResponse{Metrics: api.Metrics{EvalCount: 12}}
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "more", Response: &response})
-	if got := m.activityLabel(); got != "thinking 12 tokens" {
-		t.Fatalf("activityLabel = %q, want thinking 12 tokens", got)
+	if got := m.activityLabel(); got != "Thinking 12 tokens" {
+		t.Fatalf("activityLabel = %q, want Thinking 12 tokens", got)
 	}
 
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "done"})
@@ -185,8 +246,8 @@ func TestChatFooterShowsContextAndCompactionOnlyWhenNear(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "ctx ~50/100 (50%)") {
-		t.Fatalf("view missing context pressure: %q", view)
+	if strings.Contains(view, "ctx ") {
+		t.Fatalf("view should hide distant context pressure: %q", view)
 	}
 	if strings.Contains(view, "compact at") || strings.Contains(view, "compact due") {
 		t.Fatalf("view should hide distant compaction point: %q", view)
@@ -503,7 +564,7 @@ func TestChatViewShowsRunningActivityOnce(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if got := strings.Count(view, "thinking 7 tokens"); got != 1 {
+	if got := strings.Count(view, "Thinking 7 tokens"); got != 1 {
 		t.Fatalf("thinking activity rendered %d times, want 1:\n%s", got, view)
 	}
 	if strings.Contains(view, "sent ") || strings.Contains(view, "received ") {
@@ -520,7 +581,7 @@ func TestChatViewShowsCompactingActivity(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if got := strings.Count(view, "compacting 42 tokens"); got != 1 {
+	if got := strings.Count(view, "Compacting 42 tokens"); got != 1 {
 		t.Fatalf("compacting activity rendered %d times, want 1:\n%s", got, view)
 	}
 }
@@ -532,13 +593,13 @@ func TestChatAutoCompactionEventsShowActivity(t *testing.T) {
 	if !m.compacting {
 		t.Fatal("compaction start should mark the chat as compacting")
 	}
-	if got := m.activityLabel(); got != "compacting" {
-		t.Fatalf("activityLabel = %q, want compacting", got)
+	if got := m.activityLabel(); got != "Compacting" {
+		t.Fatalf("activityLabel = %q, want Compacting", got)
 	}
 
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventCompactionProgress, Tokens: 12})
-	if got := m.activityLabel(); got != "compacting 12 tokens" {
-		t.Fatalf("activityLabel = %q, want compacting 12 tokens", got)
+	if got := m.activityLabel(); got != "Compacting 12 tokens" {
+		t.Fatalf("activityLabel = %q, want Compacting 12 tokens", got)
 	}
 
 	m.applyAgentEvent(coreagent.Event{
@@ -970,14 +1031,14 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 	if !fm.compacting {
 		t.Fatal("compact command should mark model as compacting")
 	}
-	if got := fm.activityLabel(); got != "compacting" {
-		t.Fatalf("activityLabel = %q, want compacting", got)
+	if got := fm.activityLabel(); got != "Compacting" {
+		t.Fatalf("activityLabel = %q, want Compacting", got)
 	}
 
 	updated, _ = fm.Update(nextChatMsg(t, fm.compactEvents))
 	fm = updated.(chatModel)
-	if got := fm.activityLabel(); got != "compacting 12 tokens" {
-		t.Fatalf("activityLabel = %q, want compacting 12 tokens", got)
+	if got := fm.activityLabel(); got != "Compacting 12 tokens" {
+		t.Fatalf("activityLabel = %q, want Compacting 12 tokens", got)
 	}
 
 	updated, _ = fm.Update(nextChatMsg(t, fm.compactEvents))

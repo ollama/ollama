@@ -46,7 +46,7 @@ func unexpectedModelLaunch(t *testing.T) func(*cobra.Command, string) error {
 	}
 }
 
-func TestRunAgentModelPickerForcesModelSelection(t *testing.T) {
+func TestRunAgentModelPickerUsesSavedModelWhenAvailable(t *testing.T) {
 	setCmdTestHome(t, t.TempDir())
 	if err := config.SetAgentSignInPromptSeen(true); err != nil {
 		t.Fatal(err)
@@ -77,8 +77,8 @@ func TestRunAgentModelPickerForcesModelSelection(t *testing.T) {
 		t.Fatalf("runAgentModelPickerWithDeps error: %v", err)
 	}
 
-	if !gotReq.ForcePicker {
-		t.Fatal("expected root agent flow to force the model picker")
+	if gotReq.ForcePicker {
+		t.Fatal("expected root agent flow to reuse a saved model when available")
 	}
 	if gotReq.AccountState != prefetchedAccount {
 		t.Fatal("expected prefetched account state to be passed to model picker")

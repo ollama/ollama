@@ -486,6 +486,29 @@ func TestChatModelSelectionPersistsBeforeSwitching(t *testing.T) {
 	}
 }
 
+func TestChatModelSelectionStartsBackgroundPreload(t *testing.T) {
+	m := chatModel{
+		ctx: context.Background(),
+		opts: ChatOptions{
+			Model: "llama3.2",
+			PreloadModel: func(context.Context, string) error {
+				return nil
+			},
+		},
+	}
+
+	if err := m.applyModelSelection("qwen3", false); err != nil {
+		t.Fatal(err)
+	}
+	cmd := m.startModelPreload("qwen3")
+	if cmd == nil {
+		t.Fatal("model switch should start background preload when configured")
+	}
+	if m.preloadingModel != "qwen3" {
+		t.Fatalf("preloadingModel = %q, want qwen3", m.preloadingModel)
+	}
+}
+
 func TestChatModelSwitchNextRunKeepsHistory(t *testing.T) {
 	client := &chatCaptureClient{}
 	store := &chatResumeTestStore{}

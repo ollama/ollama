@@ -20,9 +20,9 @@ type chatApprovalChoice struct {
 }
 
 var chatApprovalChoices = []chatApprovalChoice{
-	{label: "Approve once", key: "o", decision: coreagent.ApprovalAllowOnce},
-	{label: "Approve session", key: "s", decision: coreagent.ApprovalAllowSession},
-	{label: "Deny", key: "d", decision: coreagent.ApprovalDeny, reason: "Tool execution denied."},
+	{label: "Approve once", key: "1", decision: coreagent.ApprovalAllowOnce},
+	{label: "Approve session", key: "2", decision: coreagent.ApprovalAllowSession},
+	{label: "Deny", key: "3", decision: coreagent.ApprovalDeny, reason: "Tool execution denied."},
 }
 
 type chatApprovalPrompt struct {
@@ -162,13 +162,10 @@ func (m chatModel) updateApprovalPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlO:
 		m.toggleAllToolOutputs()
 	case tea.KeyRunes:
-		switch strings.ToLower(string(msg.Runes)) {
-		case "o":
-			return m.resolveApprovalPrompt(coreagent.ApprovalAllowOnce, "")
-		case "s":
-			return m.resolveApprovalPrompt(coreagent.ApprovalAllowSession, "")
-		case "d":
-			return m.resolveApprovalPrompt(coreagent.ApprovalDeny, "Tool execution denied.")
+		switch string(msg.Runes) {
+		case "1", "2", "3":
+			choice := chatApprovalChoices[int(msg.Runes[0]-'1')]
+			return m.resolveApprovalPrompt(choice.decision, choice.reason)
 		}
 	case tea.KeyEnter:
 		choice := chatApprovalChoices[clamp(m.approvalPrompt.cursor, 0, len(chatApprovalChoices)-1)]
@@ -237,51 +234,20 @@ func (m chatModel) renderApprovalPromptLines(width int) []string {
 
 	request := prompt.request
 	var lines []string
-	if request.Summary != "" {
+	detail := approvalRequestDetail(request, bodyWidth)
+	if detail == "" && request.Summary != "" {
 		lines = append(lines, wrapChatText(request.Summary, width)...)
-	} else {
+	} else if detail == "" {
 		lines = append(lines, wrapChatText(fmt.Sprintf("%s wants to run", toolDisplayName(request.ToolName)), width)...)
 	}
-	if detail := approvalRequestDetail(request, bodyWidth); detail != "" {
+	if detail != "" {
 		lines = append(lines, indentLines(splitRenderedBody(detail), "  ")...)
 	}
 
-	if len(request.Reasons) > 0 {
-		lines = append(lines, "  "+chatMetaStyle.Render(strings.Join(request.Reasons, " • ")))
-	}
-	if strings.TrimSpace(request.WorkingDir) != "" {
-		lines = append(lines, "  "+chatMetaStyle.Render("cwd: "+request.WorkingDir))
-	}
-
 	lines = append(lines, "")
-	lines = append(lines, indentLines(renderApprovalChoices(prompt.cursor, request, bodyWidth), "  ")...)
-	lines = append(lines, "  "+chatMetaStyle.Render("enter select • o once • s session • d deny • esc deny"))
+	lines = append(lines, indentLines(renderApprovalChoices(prompt.cursor, bodyWidth), "  ")...)
+	lines = append(lines, "  "+chatMetaStyle.Render("1/2/3 choose • enter select • esc deny"))
 	return lines
-}
-
-func approvalSessionScope(request coreagent.ApprovalRequest) string {
-	switch request.ToolName {
-	case "bash":
-		return "same command in this chat"
-	case "edit":
-		if path, ok := stringArg(request.Args, "path"); ok {
-			return "edits to " + path + " in this chat"
-		}
-		return "matching edit calls in this chat"
-	case "web_search":
-		return "same search in this chat"
-	case "web_fetch":
-		return "same URL in this chat"
-	default:
-		return "matching tool arguments in this chat"
-	}
-}
-
-func approvalChoiceScope(request coreagent.ApprovalRequest, decision coreagent.ApprovalDecision) string {
-	if decision == coreagent.ApprovalAllowSession {
-		return approvalSessionScope(request)
-	}
-	return ""
 }
 
 func approvalRequestDetail(request coreagent.ApprovalRequest, width int) string {
@@ -314,16 +280,10 @@ func approvalRequestDetail(request coreagent.ApprovalRequest, width int) string 
 	}
 }
 
-func renderApprovalChoices(cursor int, request coreagent.ApprovalRequest, width int) []string {
+func renderApprovalChoices(cursor int, width int) []string {
 	var lines []string
 	for i, choice := range chatApprovalChoices {
-		label := choice.label
-		if choice.key != "" {
-			label = choice.label + " (" + choice.key + ")"
-		}
-		if scope := approvalChoiceScope(request, choice.decision); scope != "" {
-			label += " - " + scope
-		}
+		label := choice.key + ". " + choice.label
 		wrapped := wrapChatText(label, max(20, width-2))
 		if i == clamp(cursor, 0, len(chatApprovalChoices)-1) {
 			for j, line := range wrapped {

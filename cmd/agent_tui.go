@@ -265,6 +265,9 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		ContextWindowTokensForModel: func(ctx context.Context, model string, fallback int) int {
 			return contextWindowTokensForRun(ctx, setup.client, model, fallback)
 		},
+		PreloadModel: func(ctx context.Context, model string) error {
+			return preloadAgentModelIfLocal(ctx, setup.client, opts, model)
+		},
 		NewChat: setup.newChatID,
 	})
 	if err != nil {
@@ -482,7 +485,7 @@ func agentSystemPromptAt(now time.Time, modelName string, catalog *skills.Catalo
 func agentDefaultSystemPrompt(now time.Time, modelName string) string {
 	date := now.Format("Monday, January 2, 2006")
 	return strings.Join([]string{
-		"You are running in Ollama as part of the Ollama agent, and the model is " + modelName + ".",
+		"You are running in Ollama, in a harness to help the user accomplish tasks, and the model is " + modelName + ".",
 		"",
 		"Current date: " + date + ".",
 		"",
@@ -608,6 +611,25 @@ func agentToolsRegistry(ctx context.Context, client *api.Client, modelName strin
 		}
 	}
 	return registry
+}
+
+func preloadAgentModelIfLocal(ctx context.Context, client *api.Client, opts AgentTUIOptions, modelName string) error {
+	modelName = strings.TrimSpace(modelName)
+	if client == nil || modelName == "" {
+		return nil
+	}
+	info, err := client.Show(ctx, &api.ShowRequest{Model: modelName})
+	if err != nil {
+		return err
+	}
+	if info.RemoteHost != "" || modelref.HasExplicitCloudSource(modelName) {
+		return nil
+	}
+	return preloadLocalModel(ctx, client, runOptions{
+		Model:     modelName,
+		KeepAlive: opts.KeepAlive,
+		Think:     opts.Think,
+	})
 }
 
 func agentModelSupportsTools(ctx context.Context, client *api.Client, modelName string) (bool, error) {

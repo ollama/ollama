@@ -69,6 +69,7 @@ func emit(sink EventSink, event Event) error {
 func emitIgnoringCanceled(ctx context.Context, sink EventSink, event Event) error {
 	err := emit(sink, event)
 	if err != nil && ctx != nil && ctx.Err() != nil {
+		//nolint:nilerr // Event sinks may close during cancellation; cancellation is not a user-facing emit failure.
 		return nil
 	}
 	return err
