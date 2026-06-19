@@ -80,7 +80,7 @@ func SwarmHandler(cmd *cobra.Command, args []string) error {
 		"[FILE] path/to/file2.ext | {one-line purpose}\n" +
 		"Failure to format as [FILE] path | purpose will BREAK the downstream parser."
 
-	archResp, err := generateText(ctx, client, architectModel, archPrompt)
+	archResp, err := generateText(ctx, client, architectModel, archPrompt, false)
 	if err != nil {
 		return fmt.Errorf("error del arquitecto: %w", err)
 	}
@@ -123,21 +123,39 @@ func SwarmHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func generateText(ctx context.Context, client *api.Client, modelName, prompt string) (string, error) {
+func generateText(ctx context.Context, client *api.Client, modelName, prompt string, isReviewer bool) (string, error) {
 	req := &api.GenerateRequest{
 		Model:  modelName,
 		Prompt: prompt,
-		Stream: new(bool), // false
+		Stream: new(bool),
+		Options: map[string]interface{}{
+			"temperature":    0.1,
+			"repeat_penalty": 1.15,
+			"top_k":          40,
+			"top_p":          0.9,
+		},
 	}
-	*req.Stream = false
+	*req.Stream = true
 
 	var fullResp string
 	fn := func(resp api.GenerateResponse) error {
 		fullResp += resp.Response
+		if isReviewer && len(fullResp) > 400 {
+			hasCode := strings.Contains(fullResp, "```")
+			hasPatch := strings.Contains(fullResp, "<<<<")
+			hasNoChanges := strings.Contains(fullResp, "NO_CHANGES_NEEDED")
+			if !hasCode && !hasPatch && !hasNoChanges {
+				fmt.Printf("\n> ⚠️ **[Sistema]** Abortando generación temprana por posible alucinación...\n")
+				return fmt.Errorf("abort_hallucination")
+			}
+		}
 		return nil
 	}
 
 	err := client.Generate(ctx, req, fn)
+	if err != nil && err.Error() == "abort_hallucination" {
+		return fullResp, err
+	}
 	return fullResp, err
 }
 
@@ -147,6 +165,7 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 		"CRITICAL INSTRUCTIONS:\n- Do NOT use placeholders. Write the full file.", file, purpose, overallGoal)
 
 	var currentCode string
+	var lastMentorshipAdvice string
 	maxIter := 3
 	iterCount := 1
 
@@ -167,18 +186,21 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 			var prompt string
 			if turnCount == 0 && currentCode == "" {
 				prompt = basePrompt + "\n\nCRITICAL INSTRUCTION: You are the FIRST developer. Write the COMPLETE implementation. Output ONLY the raw content inside standard markdown blocks (```). Do NOT use search/replace blocks."
+				if lastMentorshipAdvice != "" {
+					prompt += "\n\nMENTORSHIP ADVICE FROM ARCHITECT:\n" + lastMentorshipAdvice + "\nPlease learn from this advice and apply it to your new implementation."
+				}
 			} else {
 				prompt = basePrompt + "\n\n=================================\n\n" +
 					"You are a reviewer in the swarm consensus loop. Please review the CURRENT DRAFT and improve it, expand it, or fix issues.\n" +
 					"CURRENT DRAFT:\n```\n" + currentCode + "\n```\n\n" +
 					"CRITICAL INSTRUCTION: You MUST ONLY output SEARCH/REPLACE blocks. Do NOT output the full document.\n" +
-					"If you think the draft is perfect and needs no changes, output ABSOLUTELY NOTHING. Just return an empty response.\n" +
+					"If the draft is perfect and needs no changes, output exactly: NO_CHANGES_NEEDED\n" +
 					"Format for patches:\n" +
 					"<<<<\n[exact original lines to replace]\n====\n[new improved lines]\n>>>>\n"
 			}
 
-			codeResp, err := generateText(ctx, client, currentModel, prompt)
-			if err != nil {
+			codeResp, err := generateText(ctx, client, currentModel, prompt, turnCount > 0)
+			if err != nil && err.Error() != "abort_hallucination" {
 				fmt.Printf("> ⚠️ Error con modelo %s: %v. Saltando...\n", currentModel, err)
 				noChangeCount++
 			} else {
@@ -186,13 +208,22 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 					currentCode = extractMarkdownCode(codeResp)
 					noChangeCount = 0
 				} else {
-					changed := applyPatches(&currentCode, codeResp)
-					if changed {
-						noChangeCount = 0
-						fmt.Printf("> 🛠️ **[%s]** Aplicó parches al documento.\n", currentModel)
-					} else {
+					if strings.Contains(codeResp, "NO_CHANGES_NEEDED") || (err != nil && err.Error() == "abort_hallucination") {
 						noChangeCount++
-						fmt.Printf("> 🤷 **[%s]** No propuso cambios. (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
+						if err != nil && err.Error() == "abort_hallucination" {
+							fmt.Printf("> 🤷 **[%s]** Falló al proponer cambios o alucinó. (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
+						} else {
+							fmt.Printf("> 🤷 **[%s]** Evaluó como perfecto (NO_CHANGES_NEEDED). (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
+						}
+					} else {
+						changed := applyPatches(&currentCode, codeResp)
+						if changed {
+							noChangeCount = 0
+							fmt.Printf("> 🛠️ **[%s]** Aplicó parches al documento.\n", currentModel)
+						} else {
+							noChangeCount++
+							fmt.Printf("> 🤷 **[%s]** Falló al proponer cambios. (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
+						}
 					}
 				}
 			}
@@ -205,13 +236,17 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 		lastModel := localModels[len(localModels)-1]
 		fmt.Printf("> **[Auto-Review]** Evaluando con %s...\n", lastModel)
 		reviewPrompt := "Review the code you generated for " + file + ".\nCODE:\n" + currentCode +
-			"\nReply with a JSON object: {\"score\": 100, \"fixes\": \"\"}. Score <90 if issues exist. Output ONLY JSON."
+			"\nReply with a JSON object: {\"score\": 100, \"fixes\": \"\", \"best_model\": \"model name\", \"praise\": \"\", \"worst_model\": \"worst model name\", \"mentorship_advice\": \"advice for worst model\"}. Score <90 if issues exist. Output ONLY JSON."
 		
-		revResp, _ := generateText(ctx, client, lastModel, reviewPrompt)
+		revResp, _ := generateText(ctx, client, lastModel, reviewPrompt, false)
 		
 		type Review struct {
-			Score int    `json:"score"`
-			Fixes string `json:"fixes"`
+			Score            int    `json:"score"`
+			Fixes            string `json:"fixes"`
+			BestModel        string `json:"best_model"`
+			Praise           string `json:"praise"`
+			WorstModel       string `json:"worst_model"`
+			MentorshipAdvice string `json:"mentorship_advice"`
 		}
 		var rev Review
 		
@@ -228,6 +263,36 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 		}
 
 		fmt.Printf("> **[Puntuación]** %d/100\n", rev.Score)
+		if rev.BestModel != "" && rev.Praise != "" {
+			fmt.Printf("\n> 🌟 **[Arquitecto]** Elogio para %s: %s\n", rev.BestModel, rev.Praise)
+		}
+		if rev.WorstModel != "" && rev.MentorshipAdvice != "" {
+			fmt.Printf("> 👨‍🏫 **[Arquitecto]** Consejo de Mentoría para %s: %s\n", rev.WorstModel, rev.MentorshipAdvice)
+		}
+
+		if rev.WorstModel != "" && rev.BestModel != "" && rev.WorstModel != rev.BestModel {
+			fmt.Printf("> 🧑‍🎓 El modelo **%s** intentará redimirse escribiendo el próximo borrador.\n", rev.WorstModel)
+			fmt.Printf("> 👨‍🏫 El modelo **%s** (Mejor puntaje) asumirá como su Maestro en el turno 2.\n", rev.BestModel)
+			
+			var newModels []string
+			newModels = append(newModels, rev.WorstModel, rev.BestModel)
+			for _, m := range localModels {
+				if m != rev.WorstModel && m != rev.BestModel {
+					newModels = append(newModels, m)
+				}
+			}
+			localModels = newModels
+		} else if rev.BestModel != "" {
+			fmt.Printf("> 👑 El modelo **%s** liderará el parcheo.\n", rev.BestModel)
+			for i, m := range localModels {
+				if m == rev.BestModel {
+					localModels = append([]string{m}, append(localModels[:i], localModels[i+1:]...)...)
+					break
+				}
+			}
+		}
+		
+		lastMentorshipAdvice = rev.MentorshipAdvice
 
 		// Aprobación Humana interactiva
 		fmt.Printf("\n### 📝 Contenido Propuesto para `%s`:\n```\n%s\n```\n", file, currentCode)
