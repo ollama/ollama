@@ -145,7 +145,12 @@ func generateText(ctx context.Context, client *api.Client, modelName, prompt str
 			hasPatch := strings.Contains(fullResp, "<<<<")
 			hasNoChanges := strings.Contains(fullResp, "NO_CHANGES_NEEDED")
 			if !hasCode && !hasPatch && !hasNoChanges {
-				fmt.Printf("\n> ⚠️ **[Sistema]** Abortando generación temprana por posible alucinación...\n")
+				fmt.Printf("\n> ⚠️ **[Sistema]** Abortando revisión temprana por posible alucinación...\n")
+				return fmt.Errorf("abort_hallucination")
+			}
+		} else if !isReviewer && len(fullResp) > 2000 {
+			if !strings.Contains(fullResp, "```") {
+				fmt.Printf("\n> ⚠️ **[Sistema]** Abortando borrador inicial (no usó bloque de código tras 2000 chars)...\n")
 				return fmt.Errorf("abort_hallucination")
 			}
 		}
@@ -183,8 +188,10 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 			currentModel := localModels[modelIdx%len(localModels)]
 			fmt.Printf("> **[Ollama Local (%s)]** Turno %d. Paso %d/%d...\n", currentModel, turnCount+1, (modelIdx%len(localModels))+1, len(localModels))
 
+			isFirstDraft := (currentCode == "")
+
 			var prompt string
-			if turnCount == 0 && currentCode == "" {
+			if isFirstDraft {
 				prompt = basePrompt + "\n\nCRITICAL INSTRUCTION: You are the FIRST developer. Write the COMPLETE implementation. Output ONLY the raw content inside standard markdown blocks (```). Do NOT use search/replace blocks."
 				if lastMentorshipAdvice != "" {
 					prompt += "\n\nMENTORSHIP ADVICE FROM ARCHITECT:\n" + lastMentorshipAdvice + "\nPlease learn from this advice and apply it to your new implementation."
@@ -199,14 +206,28 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 					"<<<<\n[exact original lines to replace]\n====\n[new improved lines]\n>>>>\n"
 			}
 
-			codeResp, err := generateText(ctx, client, currentModel, prompt, turnCount > 0)
+			codeResp, err := generateText(ctx, client, currentModel, prompt, !isFirstDraft)
 			if err != nil && err.Error() != "abort_hallucination" {
 				fmt.Printf("> ⚠️ Error con modelo %s: %v. Saltando...\n", currentModel, err)
 				noChangeCount++
 			} else {
-				if turnCount == 0 && currentCode == "" {
-					currentCode = extractMarkdownCode(codeResp)
-					noChangeCount = 0
+				if isFirstDraft {
+					if strings.Contains(codeResp, "NO_CHANGES_NEEDED") || (err != nil && err.Error() == "abort_hallucination") {
+						fmt.Printf("> ⚠️ **[Sistema]** El modelo abortó o falló la generación del borrador. Saltando...\n")
+						noChangeCount++
+					} else {
+						extracted := extractMarkdownCode(codeResp)
+						if extracted != "" && strings.TrimSpace(extracted) != "" {
+							currentCode = extracted
+							noChangeCount = 0
+						} else if strings.Contains(codeResp, "#") || len(strings.TrimSpace(codeResp)) > 10 {
+							currentCode = codeResp
+							noChangeCount = 0
+						} else {
+							fmt.Printf("> ⚠️ **[Sistema]** El modelo no generó texto útil. Saltando...\n")
+							noChangeCount++
+						}
+					}
 				} else {
 					if strings.Contains(codeResp, "NO_CHANGES_NEEDED") || (err != nil && err.Error() == "abort_hallucination") {
 						noChangeCount++
@@ -228,7 +249,9 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 				}
 			}
 
-			turnCount++
+			if currentCode != "" {
+				turnCount++
+			}
 			modelIdx++
 		}
 
