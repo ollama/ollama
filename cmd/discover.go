@@ -28,9 +28,10 @@ type HardwareProfile struct {
 }
 
 type ModelSuggestion struct {
-	Name        string
-	Description string
-	HFRepo      string // e.g. "bartowski/Llama-3.2-1B-Instruct-GGUF"
+	Name         string
+	Description  string
+	HFRepo       string // e.g. "bartowski/Llama-3.2-1B-Instruct-GGUF"
+	OllamaPrefix string // e.g. "llama3.1:8b-instruct-"
 }
 
 type DynamicSuggestion struct {
@@ -48,27 +49,27 @@ type HFTreeNode struct {
 
 // Baseline Models
 var categoryCodigo = []ModelSuggestion{
-	{Name: "Qwen 2.5 Coder 1.5B", Description: "Ultraligero, ideal para autocompletado en CPUs o poca VRAM", HFRepo: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF"},
-	{Name: "Qwen 2.5 Coder 7B", Description: "Gran balance entre velocidad y precisión para código", HFRepo: "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF"},
-	{Name: "Llama 3.1 8B Instruct", Description: "Modelo base general pero excelente para código", HFRepo: "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"},
-	{Name: "DeepSeek Coder V2 Lite", Description: "Avanzado, requiere hardware decente", HFRepo: "bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF"},
-	{Name: "Phind CodeLlama 34B", Description: "Para tareas pesadas de arquitectura", HFRepo: "bartowski/Phind-CodeLlama-34B-v2-GGUF"},
+	{Name: "Qwen 2.5 Coder 1.5B", Description: "Ultraligero, ideal para autocompletado en CPUs o poca VRAM", HFRepo: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", OllamaPrefix: "qwen2.5-coder:1.5b-instruct-"},
+	{Name: "Qwen 2.5 Coder 7B", Description: "Gran balance entre velocidad y precisión para código", HFRepo: "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF", OllamaPrefix: "qwen2.5-coder:7b-instruct-"},
+	{Name: "Llama 3.1 8B Instruct", Description: "Modelo base general pero excelente para código", HFRepo: "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF", OllamaPrefix: "llama3.1:8b-instruct-"},
+	{Name: "DeepSeek Coder V2 Lite", Description: "Avanzado, requiere hardware decente", HFRepo: "bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF", OllamaPrefix: "deepseek-coder-v2:16b-lite-instruct-"},
+	{Name: "Phind CodeLlama 34B", Description: "Para tareas pesadas de arquitectura", HFRepo: "bartowski/Phind-CodeLlama-34B-v2-GGUF", OllamaPrefix: "phind-codellama:34b-v2-"},
 }
 
 var categoryRedaccion = []ModelSuggestion{
-	{Name: "Llama 3.2 1B", Description: "Rápido y eficiente para tareas ligeras", HFRepo: "bartowski/Llama-3.2-1B-Instruct-GGUF"},
-	{Name: "Llama 3.2 3B", Description: "Versión ligera del poderoso LLaMA 3", HFRepo: "bartowski/Llama-3.2-3B-Instruct-GGUF"},
-	{Name: "Phi 3.5 Mini", Description: "Modelo de Microsoft muy competente", HFRepo: "bartowski/Phi-3.5-mini-instruct-GGUF"},
-	{Name: "Llama 3.1 8B", Description: "El estándar dorado de la redacción open source", HFRepo: "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"},
-	{Name: "Gemma 2 9B", Description: "Excelentes resultados en tareas generales (Google)", HFRepo: "bartowski/gemma-2-9b-it-GGUF"},
+	{Name: "Llama 3.2 1B", Description: "Rápido y eficiente para tareas ligeras", HFRepo: "bartowski/Llama-3.2-1B-Instruct-GGUF", OllamaPrefix: "llama3.2:1b-instruct-"},
+	{Name: "Llama 3.2 3B", Description: "Versión ligera del poderoso LLaMA 3", HFRepo: "bartowski/Llama-3.2-3B-Instruct-GGUF", OllamaPrefix: "llama3.2:3b-instruct-"},
+	{Name: "Phi 3.5 Mini", Description: "Modelo de Microsoft muy competente", HFRepo: "bartowski/Phi-3.5-mini-instruct-GGUF", OllamaPrefix: "phi3.5:3.8b-mini-instruct-"},
+	{Name: "Llama 3.1 8B", Description: "El estándar dorado de la redacción open source", HFRepo: "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF", OllamaPrefix: "llama3.1:8b-instruct-"},
+	{Name: "Gemma 2 9B", Description: "Excelentes resultados en tareas generales (Google)", HFRepo: "bartowski/gemma-2-9b-it-GGUF", OllamaPrefix: "gemma2:9b-instruct-"},
 }
 
 var categoryVision = []ModelSuggestion{
-	{Name: "Llama 3.2 11B Vision", Description: "LLaMA 3 con capacidades multimodales nativas", HFRepo: "bartowski/Llama-3.2-11B-Vision-Instruct-GGUF"},
-	{Name: "LLaVA 1.5 7B", Description: "Modelo multimodal clásico basado en LLaMA", HFRepo: "bartowski/llava-1.5-7b-hf-GGUF"},
-	{Name: "LLaVA 1.5 13B", Description: "Visión de alta precisión", HFRepo: "bartowski/llava-1.5-13b-hf-GGUF"},
-	{Name: "BakLLaVA 1", Description: "Alternativa a LLaVA con base Mistral", HFRepo: "bartowski/bakllava-1-GGUF"},
-	{Name: "LLaVA Phi-3 Mini", Description: "Visión ligera usando Phi-3", HFRepo: "xtuner/llava-phi-3-mini-gguf"},
+	{Name: "Llama 3.2 11B Vision", Description: "LLaMA 3 con capacidades multimodales nativas", HFRepo: "bartowski/Llama-3.2-11B-Vision-Instruct-GGUF", OllamaPrefix: "llama3.2-vision:11b-instruct-"},
+	{Name: "LLaVA 1.5 7B", Description: "Modelo multimodal clásico basado en LLaMA", HFRepo: "bartowski/llava-1.5-7b-hf-GGUF", OllamaPrefix: "llava:7b-v1.5-"},
+	{Name: "LLaVA 1.5 13B", Description: "Visión de alta precisión", HFRepo: "bartowski/llava-1.5-13b-hf-GGUF", OllamaPrefix: "llava:13b-v1.5-"},
+	{Name: "BakLLaVA 1", Description: "Alternativa a LLaVA con base Mistral", HFRepo: "bartowski/bakllava-1-GGUF", OllamaPrefix: "bakllava:7b-v1-"},
+	{Name: "LLaVA Phi-3 Mini", Description: "Visión ligera usando Phi-3", HFRepo: "xtuner/llava-phi-3-mini-gguf", OllamaPrefix: "llava-phi3:3.8b-mini-"},
 }
 
 func getHardwareProfile(ctx context.Context) HardwareProfile {
@@ -283,11 +284,15 @@ func DiscoverHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// We need to retrieve the hf.co path from the selected item
+	// We need to retrieve the target run string
 	var targetRun string
 	for _, dyn := range dynamicResults {
 		if dyn.Name == modelChoice {
-			targetRun = fmt.Sprintf("hf.co/%s:%s", dyn.HFRepo, dyn.BestTag)
+			if dyn.OllamaPrefix != "" {
+				targetRun = fmt.Sprintf("%s%s", dyn.OllamaPrefix, strings.ToLower(dyn.BestTag))
+			} else {
+				targetRun = fmt.Sprintf("hf.co/%s:%s", dyn.HFRepo, dyn.BestTag)
+			}
 			break
 		}
 	}
