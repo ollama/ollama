@@ -1046,6 +1046,102 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+func (s *Server) TokenizeHandler(c *gin.Context) {
+	var req api.TokenizeRequest
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	modelRef, err := parseAndValidateModelRef(req.Model)
+	if err != nil {
+		writeModelRefParseError(c, err, http.StatusBadRequest, "model is required")
+		return
+	}
+
+	if modelRef.Source == modelSourceCloud {
+		req.Model = modelRef.Base
+		proxyCloudJSONRequest(c, req, cloudErrRemoteInferenceUnavailable)
+		return
+	}
+
+	name := modelRef.Name
+
+	r, m, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	if req.Input == "" {
+		c.JSON(http.StatusOK, api.TokenizeResponse{Model: req.Model, Tokens: []int{}})
+		return
+	}
+
+	tokens, err := r.Tokenize(c.Request.Context(), req.Input)
+	if err != nil {
+		s.sched.expireRunnersForRuntimeOOM(m, err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, api.TokenizeResponse{
+		Model:  req.Model,
+		Tokens: tokens,
+	})
+}
+
+func (s *Server) DetokenizeHandler(c *gin.Context) {
+	var req api.DetokenizeRequest
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	modelRef, err := parseAndValidateModelRef(req.Model)
+	if err != nil {
+		writeModelRefParseError(c, err, http.StatusBadRequest, "model is required")
+		return
+	}
+
+	if modelRef.Source == modelSourceCloud {
+		req.Model = modelRef.Base
+		proxyCloudJSONRequest(c, req, cloudErrRemoteInferenceUnavailable)
+		return
+	}
+
+	name := modelRef.Name
+
+	r, m, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	if len(req.Tokens) == 0 {
+		c.JSON(http.StatusOK, api.DetokenizeResponse{Model: req.Model, Text: ""})
+		return
+	}
+
+	text, err := r.Detokenize(c.Request.Context(), req.Tokens)
+	if err != nil {
+		s.sched.expireRunnersForRuntimeOOM(m, err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, api.DetokenizeResponse{
+		Model: req.Model,
+		Text:  text,
+	})
+}
+
 func (s *Server) PullHandler(c *gin.Context) {
 	var req api.PullRequest
 	err := c.ShouldBindJSON(&req)
@@ -1862,6 +1958,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/chat", s.withInferenceRequestLogging("/api/chat", s.ChatHandler)...)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.POST("/api/tokenize", s.TokenizeHandler)
+	r.POST("/api/detokenize", s.DetokenizeHandler)
 
 	// Inference (OpenAI compatibility)
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud
