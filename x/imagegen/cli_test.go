@@ -11,6 +11,14 @@ func TestExtractFileNames(t *testing.T) {
 	res := extractFileNames(input)
 	assert.Equal(t, []string{"./directory.png/image.png", "/tmp/photo.png", "/tmp/wrapped.jpg", "/tmp/a.png", "/tmp/b.png", "/tmp/quoted.webp", "/tmp/single.jpeg", "/tmp/backtick.png"}, res)
 
+	input = `compare /tmp/a.png&/tmp/b.png | /tmp/c.webp</tmp/d.jpg`
+	res = extractFileNames(input)
+	assert.Equal(t, []string{"/tmp/a.png", "/tmp/b.png", "/tmp/c.webp", "/tmp/d.jpg"}, res)
+
+	input = `compare C:\tmp\a.png&D:\tmp\b.jpg`
+	res = extractFileNames(input)
+	assert.Equal(t, []string{`C:\tmp\a.png`, `D:\tmp\b.jpg`}, res)
+
 	input = `C:\images\dir.png\nested.jpg`
 	res = extractFileNames(input)
 	assert.Equal(t, []string{`C:\images\dir.png\nested.jpg`}, res)

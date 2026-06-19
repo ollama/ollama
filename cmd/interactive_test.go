@@ -71,6 +71,14 @@ d:\path with\spaces\thirteen.WEBP some ending
 	res = extractFileNames(input)
 	assert.Equal(t, []string{"/tmp/photo.png", "/tmp/wrapped.jpg", "/tmp/a.png", "/tmp/b.png", "/tmp/quoted.webp", "/tmp/single.jpeg", "/tmp/backtick.wav"}, res)
 
+	input = `compare /tmp/a.png&/tmp/b.png | /tmp/c.webp</tmp/d.jpg`
+	res = extractFileNames(input)
+	assert.Equal(t, []string{"/tmp/a.png", "/tmp/b.png", "/tmp/c.webp", "/tmp/d.jpg"}, res)
+
+	input = `compare C:\tmp\a.png&D:\tmp\b.jpg`
+	res = extractFileNames(input)
+	assert.Equal(t, []string{`C:\tmp\a.png`, `D:\tmp\b.jpg`}, res)
+
 	input = `C:\images\dir.png\nested.jpg`
 	res = extractFileNames(input)
 	assert.Equal(t, []string{`C:\images\dir.png\nested.jpg`}, res)
