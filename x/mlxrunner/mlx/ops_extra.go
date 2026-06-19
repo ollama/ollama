@@ -326,7 +326,7 @@ func TakeAlongAxis(a, indices *Array, axis int) *Array {
 	return a.TakeAlongAxis(indices, axis)
 }
 
-// Function-style wrappers matching imagegen API
+// Function-style wrappers for model code.
 
 func Add(a, b *Array) *Array {
 	return a.Add(b)

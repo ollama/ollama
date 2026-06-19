@@ -128,24 +128,13 @@ func IsSafetensorsModel(modelName string) bool {
 	return config.ModelFormat == "safetensors"
 }
 
-// IsSafetensorsLLMModel checks if a model is a safetensors LLM model
-// (has completion capability, not image generation).
+// IsSafetensorsLLMModel checks if a model is a safetensors LLM model.
 func IsSafetensorsLLMModel(modelName string) bool {
 	config, err := loadModelConfig(modelName)
 	if err != nil {
 		return false
 	}
 	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "completion")
-}
-
-// IsImageGenModel checks if a model is an image generation model
-// (has image capability).
-func IsImageGenModel(modelName string) bool {
-	config, err := loadModelConfig(modelName)
-	if err != nil {
-		return false
-	}
-	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "image")
 }
 
 // GetModelArchitecture returns the architecture from the model's config.json layer.
@@ -185,13 +174,6 @@ func GetModelArchitecture(modelName string) (string, error) {
 	}
 
 	return "", fmt.Errorf("architecture not found in model config")
-}
-
-// IsTensorModelDir checks if the directory contains a diffusers-style tensor model
-// by looking for model_index.json, which is the standard diffusers pipeline config.
-func IsTensorModelDir(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "model_index.json"))
-	return err == nil
 }
 
 // IsSafetensorsModelDir checks if the directory contains a standard safetensors model
@@ -241,14 +223,8 @@ type QuantizingTensorLayerCreator func(r io.Reader, name, dtype string, shape []
 type ManifestWriter func(modelName string, config LayerInfo, layers []LayerInfo) error
 
 // ShouldQuantize returns true if a tensor should be quantized.
-// For image gen models (component non-empty): quantizes linear weights, skipping VAE, embeddings, norms.
-// For LLM models (component empty): quantizes linear weights, skipping embeddings, norms, and small tensors.
+// Quantizes linear weights while skipping embeddings, norms, biases, and other sensitive tensors.
 func ShouldQuantize(name, component string) bool {
-	// Image gen specific: skip VAE entirely
-	if component == "vae" {
-		return false
-	}
-
 	// Skip audio encoder tensors (highly sensitive to quantization)
 	if strings.Contains(name, "audio_tower") || strings.Contains(name, "embed_audio") {
 		return false
