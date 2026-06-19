@@ -157,6 +157,10 @@ var integrationSpecs = []*IntegrationSpec{
 				_, ok := findOpenCode()
 				return ok
 			},
+			EnsureInstalled: func() error {
+				_, err := ensureOpenCodeInstalled()
+				return err
+			},
 			URL: "https://opencode.ai",
 		},
 	},

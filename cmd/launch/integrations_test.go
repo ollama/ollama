@@ -2038,7 +2038,7 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 		{"claude", true},
 		{"claude-desktop", false},
 		{"codex", false},
-		{"opencode", false},
+		{"opencode", true},
 		{"omp", false},
 	}
 	for _, tt := range tests {
