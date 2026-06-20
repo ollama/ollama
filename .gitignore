@@ -22,3 +22,6 @@ packaging/arch/src/
 packaging/arch/pkg/
 packaging/arch/ollama/
 packaging/arch/*.pkg.tar.zst
+
+# Secret README
+.SECRET_README.md
