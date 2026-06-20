@@ -55,6 +55,47 @@ func TestFromChatRequest_Basic(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_Truncate(t *testing.T) {
+	tests := []struct {
+		name     string
+		truncate *bool
+	}{
+		{name: "unset", truncate: nil},
+		{name: "true", truncate: func() *bool { v := true; return &v }()},
+		{name: "false", truncate: func() *bool { v := false; return &v }()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ChatCompletionRequest{
+				Model: "test-model",
+				Messages: []Message{
+					{Role: "user", Content: "Hello"},
+				},
+				Truncate: tt.truncate,
+			}
+
+			result, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.truncate == nil {
+				if result.Truncate != nil {
+					t.Fatalf("expected truncate to stay unset, got %v", *result.Truncate)
+				}
+				return
+			}
+			if result.Truncate == nil {
+				t.Fatalf("expected truncate to be set")
+			}
+			if *result.Truncate != *tt.truncate {
+				t.Fatalf("expected truncate %v, got %v", *tt.truncate, *result.Truncate)
+			}
+		})
+	}
+}
+
 func TestFromChatRequest_ReasoningEffort(t *testing.T) {
 	effort := func(s string) *string { return &s }
 

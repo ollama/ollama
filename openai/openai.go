@@ -113,6 +113,7 @@ type ChatCompletionRequest struct {
 	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
 	Logprobs         *bool           `json:"logprobs"`
 	TopLogprobs      int             `json:"top_logprobs"`
+	Truncate         *bool           `json:"truncate,omitempty"`
 	DebugRenderOnly  bool            `json:"_debug_render_only"`
 }
 
@@ -658,6 +659,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Think:           think,
 		Logprobs:        r.Logprobs != nil && *r.Logprobs,
 		TopLogprobs:     r.TopLogprobs,
+		Truncate:        r.Truncate,
 		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
 }
