@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agnivade/levenshtein"
 	"github.com/spf13/cobra"
 	"github.com/ollama/ollama/cmd/tui"
 	"github.com/ollama/ollama/api"
@@ -162,10 +163,10 @@ func generateText(ctx context.Context, client *api.Client, modelName, prompt str
 		fullResp += resp.Response
 		currResp := fullResp
 		mu.Unlock()
-		if isReviewer && len(currResp) > 400 {
+		if isReviewer && len(currResp) > 1000 {
 			hasCode := strings.Contains(currResp, "```")
 			hasPatch := strings.Contains(currResp, "<<<<")
-			hasNoChanges := strings.Contains(currResp, "NO_CHANGES_NEEDED")
+			hasNoChanges := strings.Contains(strings.ToUpper(currResp), "NO_CHANGES_NEEDED")
 			if !hasCode && !hasPatch && !hasNoChanges {
 				fmt.Printf("\n> ⚠️ **[Sistema]** Abortando revisión temprana por posible alucinación...\n")
 				return ErrAbortHallucination
@@ -194,7 +195,10 @@ func generateText(ctx context.Context, client *api.Client, modelName, prompt str
 func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, overallGoal string, localModels []string, reader *bufio.Reader) ([]string, error) {
 	basePrompt := fmt.Sprintf("You are an Expert Developer implementing exactly ONE file.\n"+
 		"FILE: %s\nPURPOSE: %s\n\nOverall Project Goal: %s\n\n"+
-		"CRITICAL INSTRUCTIONS:\n- Do NOT use placeholders. Write the full file.", file, purpose, overallGoal)
+		"CRITICAL INSTRUCTIONS:\n"+
+		"- Do NOT use placeholders. Write the full file.\n"+
+		"- Maintain the language of the source documents/context (e.g., Spanish if the overall goal or plan is in Spanish).\n"+
+		"- Start your response directly with the implementation. Do NOT write conversational introductions, preambles, or explanations.", file, purpose, overallGoal)
 
 	var currentCode string
 	var lastMentorshipAdvice string
@@ -226,29 +230,35 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 
 			var prompt string
 			if isFirstDraft {
-				prompt = basePrompt + "\n\nCRITICAL INSTRUCTION: You are the FIRST developer. Write the COMPLETE implementation. Output ONLY the raw content inside standard markdown blocks (```). Do NOT use search/replace blocks."
+				prompt = basePrompt + "\n\nCRITICAL INSTRUCTION: You are the FIRST developer. Write the COMPLETE implementation. Output ONLY the raw content inside standard markdown blocks (```). Do NOT use search/replace blocks. Start the code block directly without any introduction/preamble."
 				if lastMentorshipAdvice != "" {
 					prompt += "\n\nMENTORSHIP ADVICE FROM ARCHITECT:\n" + lastMentorshipAdvice + "\nPlease learn from this advice and apply it to your new implementation."
 				}
 			} else {
 				prompt = basePrompt + "\n\n=================================\n\n" +
 					"You are a reviewer in the swarm consensus loop. Please review the CURRENT DRAFT and improve it, expand it, or fix issues.\n" +
-					"CURRENT DRAFT:\n```\n" + currentCode + "\n```\n\n" +
-					"CRITICAL INSTRUCTION: You MUST ONLY output SEARCH/REPLACE blocks. Do NOT output the full document.\n" +
+					"CURRENT DRAFT:\n<draft>\n" + currentCode + "\n</draft>\n\n" +
+					"CRITICAL INSTRUCTION: You MUST ONLY output SEARCH/REPLACE blocks or NO_CHANGES_NEEDED. Do NOT output the full document. Do NOT include any preamble or explanation outside the blocks.\n" +
 					"If the draft is perfect and needs no changes, output exactly: NO_CHANGES_NEEDED\n" +
-					"Format for patches:\n" +
-					"<<<<\n[exact original lines to replace]\n====\n[new improved lines]\n>>>>\n"
+					"Format for patches (You must match the original lines EXACTLY, including whitespace, punctuation, and casing):\n" +
+					"Example:\n" +
+					"<<<<\n" +
+					"  * C++98\n" +
+					"  * C++03\n" +
+					"====\n" +
+					"  * C++98 (Legacy standards)\n" +
+					"  * C++03 (Minor revision)\n" +
+					">>>>\n\n" +
+					"You may output multiple search/replace blocks if you need to modify different parts of the draft."
 			}
 
 			codeResp, err := generateText(ctx, client, currentModel, prompt, !isFirstDraft)
 			if err != nil && !errors.Is(err, ErrAbortHallucination) {
 				fmt.Printf("> ⚠️ Error con modelo %s: %v. Saltando...\n", currentModel, err)
-				noChangeCount++
 			} else {
 				if isFirstDraft {
-					if strings.Contains(codeResp, "NO_CHANGES_NEEDED") || (err != nil && errors.Is(err, ErrAbortHallucination)) {
+					if strings.Contains(strings.ToUpper(codeResp), "NO_CHANGES_NEEDED") || (err != nil && errors.Is(err, ErrAbortHallucination)) {
 						fmt.Printf("> ⚠️ **[Sistema]** El modelo abortó o falló la generación del borrador. Saltando...\n")
-						noChangeCount++
 					} else {
 						extracted := extractMarkdownCode(codeResp)
 						if extracted != "" && strings.TrimSpace(extracted) != "" {
@@ -259,25 +269,21 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 							noChangeCount = 0
 						} else {
 							fmt.Printf("> ⚠️ **[Sistema]** El modelo no generó texto útil. Saltando...\n")
-							noChangeCount++
 						}
 					}
 				} else {
-					if strings.Contains(codeResp, "NO_CHANGES_NEEDED") || (err != nil && errors.Is(err, ErrAbortHallucination)) {
+					if strings.Contains(strings.ToUpper(codeResp), "NO_CHANGES_NEEDED") {
 						noChangeCount++
-						if err != nil && errors.Is(err, ErrAbortHallucination) {
-							fmt.Printf("> 🤷 **[%s]** Falló al proponer cambios o alucinó. (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
-						} else {
-							fmt.Printf("> 🤷 **[%s]** Evaluó como perfecto (NO_CHANGES_NEEDED). (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
-						}
+						fmt.Printf("> 🤷 **[%s]** Evaluó como perfecto (NO_CHANGES_NEEDED). (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
+					} else if err != nil && errors.Is(err, ErrAbortHallucination) {
+						fmt.Printf("> 🤷 **[%s]** Falló al proponer cambios o alucinó. (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
 					} else {
 						changed := applyPatches(&currentCode, codeResp)
 						if changed {
 							noChangeCount = 0
 							fmt.Printf("> 🛠️ **[%s]** Aplicó parches al documento.\n", currentModel)
 						} else {
-							noChangeCount++
-							fmt.Printf("> 🤷 **[%s]** Falló al proponer cambios. (Consenso: %d/%d)\n", currentModel, noChangeCount, len(localModels))
+							fmt.Printf("> 🤷 **[%s]** Propuso cambios pero el parche no pudo ser aplicado.\n", currentModel)
 						}
 					}
 				}
@@ -293,17 +299,18 @@ func processFileSwarm(ctx context.Context, client *api.Client, file, purpose, ov
 		lastModel := localModels[len(localModels)-1]
 		fmt.Printf("> **[Auto-Review]** Evaluando con %s...\n", lastModel)
 		reviewPrompt := "Review the code you generated for " + file + ".\nCODE:\n" + currentCode +
+			"\nParticipating models in this swarm: " + strings.Join(localModels, ", ") +
 			"\nReply with a JSON object: {\"score\": 100, \"fixes\": \"\", \"best_model\": \"model name\", \"praise\": \"\", \"worst_model\": \"worst model name\", \"mentorship_advice\": \"advice for worst model\"}. Score <90 if issues exist. Output ONLY JSON."
 		
 		revResp, _ := generateText(ctx, client, lastModel, reviewPrompt, false)
 		
 		type Review struct {
-			Score            int    `json:"score"`
-			Fixes            string `json:"fixes"`
-			BestModel        string `json:"best_model"`
-			Praise           string `json:"praise"`
-			WorstModel       string `json:"worst_model"`
-			MentorshipAdvice string `json:"mentorship_advice"`
+			Score            int         `json:"score"`
+			Fixes            interface{} `json:"fixes"`
+			BestModel        string      `json:"best_model"`
+			Praise           string      `json:"praise"`
+			WorstModel       string      `json:"worst_model"`
+			MentorshipAdvice string      `json:"mentorship_advice"`
 		}
 		var rev Review
 		
@@ -400,6 +407,54 @@ func extractMarkdownCode(text string) string {
 	return strings.TrimSpace(text[start:end])
 }
 
+func normalizeLine(s string) string {
+	s = strings.ToLower(s)
+	var sb strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
+}
+
+func findBestMatchingWindow(draftLines []string, searchLines []string) (int, float64) {
+	K := len(searchLines)
+	if K == 0 || len(draftLines) < K {
+		return -1, 0.0
+	}
+
+	bestIdx := -1
+	bestScore := 0.0
+
+	for i := 0; i <= len(draftLines)-K; i++ {
+		var totalSim float64
+		for j := 0; j < K; j++ {
+			dNorm := normalizeLine(draftLines[i+j])
+			sNorm := normalizeLine(searchLines[j])
+			
+			if dNorm == "" && sNorm == "" {
+				totalSim += 1.0
+			} else {
+				dist := levenshtein.ComputeDistance(dNorm, sNorm)
+				maxLen := len(dNorm)
+				if len(sNorm) > maxLen {
+					maxLen = len(sNorm)
+				}
+				sim := 1.0 - float64(dist)/float64(maxLen)
+				totalSim += sim
+			}
+		}
+		avgSim := totalSim / float64(K)
+		if avgSim > bestScore {
+			bestScore = avgSim
+			bestIdx = i
+		}
+	}
+
+	return bestIdx, bestScore
+}
+
 func applyPatches(currentCode *string, response string) bool {
 	changed := false
 	re := regexp.MustCompile("(?s)<<<<(.*?)====(.*?)>>>>")
@@ -410,9 +465,35 @@ func applyPatches(currentCode *string, response string) bool {
 			search := strings.TrimSpace(m[1])
 			replace := strings.TrimSpace(m[2])
 			if search != "" {
+				// 1. Try exact match first
 				if strings.Contains(*currentCode, search) {
 					*currentCode = strings.Replace(*currentCode, search, replace, 1)
 					changed = true
+					continue
+				}
+
+				// 2. Try exact match with normalized line endings
+				normalizedCode := strings.ReplaceAll(*currentCode, "\r\n", "\n")
+				normalizedSearch := strings.ReplaceAll(search, "\r\n", "\n")
+				if strings.Contains(normalizedCode, normalizedSearch) {
+					normalizedCode = strings.Replace(normalizedCode, normalizedSearch, strings.ReplaceAll(replace, "\r\n", "\n"), 1)
+					*currentCode = normalizedCode
+					changed = true
+					continue
+				}
+
+				// 3. Try fuzzy line-by-line match
+				draftLines := strings.Split(normalizedCode, "\n")
+				searchLines := strings.Split(normalizedSearch, "\n")
+				
+				bestIdx, bestScore := findBestMatchingWindow(draftLines, searchLines)
+				if bestIdx != -1 && bestScore >= 0.75 {
+					replaceLines := strings.Split(strings.ReplaceAll(replace, "\r\n", "\n"), "\n")
+					
+					newLines := append(draftLines[:bestIdx], append(replaceLines, draftLines[bestIdx+len(searchLines):]...)...)
+					*currentCode = strings.Join(newLines, "\n")
+					changed = true
+					fmt.Printf("> [Fuzzy Match] matched window at line %d with score %.2f\n", bestIdx+1, bestScore)
 				}
 			}
 		}
