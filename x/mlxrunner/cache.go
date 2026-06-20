@@ -65,14 +65,28 @@ func (c *kvCache) ensureCaches(m base.Model) {
 	if len(c.caches) != 0 {
 		return
 	}
+	c.caches = newModelCaches(m)
+}
+
+func newModelCaches(m base.Model) []cache.Cache {
 	if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
-		c.caches = cacheFactory.NewCaches()
-		return
+		return cacheFactory.NewCaches()
 	}
-	c.caches = make([]cache.Cache, m.NumLayers())
-	for i := range c.caches {
-		c.caches[i] = cache.NewKVCache()
+	caches := make([]cache.Cache, m.NumLayers())
+	for i := range caches {
+		caches[i] = cache.NewKVCache()
 	}
+	return caches
+}
+
+func cacheStateArrays(caches []cache.Cache) []*mlx.Array {
+	state := make([]*mlx.Array, 0, 2*len(caches))
+	for _, c := range caches {
+		if c != nil {
+			state = append(state, c.State()...)
+		}
+	}
+	return state
 }
 
 func (c *kvCache) ensureRoot() {
