@@ -125,6 +125,11 @@ else()
             "$ENV{OLLAMA_LLAMA_CPP_SOURCE}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using local llama.cpp source: ${OLLAMA_LLAMA_CPP_SOURCE_DIR}")
         add_custom_target(ollama-llama-cpp-source)
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/../llama-cpp-turboquant")
+        get_filename_component(OLLAMA_LLAMA_CPP_SOURCE_DIR
+            "${CMAKE_SOURCE_DIR}/../llama-cpp-turboquant" ABSOLUTE)
+        message(STATUS "Using local llama-cpp-turboquant source (fallback): ${OLLAMA_LLAMA_CPP_SOURCE_DIR}")
+        add_custom_target(ollama-llama-cpp-source)
     else()
         set(OLLAMA_LLAMA_CPP_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/llama_cpp-src")
         ExternalProject_Add(ollama-llama-cpp-source
