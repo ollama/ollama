@@ -34,13 +34,14 @@ const (
 )
 
 const (
-	KeyDel    = 51
-	KeyUp     = 65
-	KeyDown   = 66
-	KeyRight  = 67
-	KeyLeft   = 68
-	MetaEnd   = 70
-	MetaStart = 72
+	KeyModifier = 49 // '1' introduces a CSI 1;<modifier><final> sequence (e.g. Ctrl+Left = ESC [ 1 ; 5 D)
+	KeyDel      = 51
+	KeyUp       = 65
+	KeyDown     = 66
+	KeyRight    = 67
+	KeyLeft     = 68
+	MetaEnd     = 70
+	MetaStart   = 72
 )
 
 const (
