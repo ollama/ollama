@@ -247,6 +247,12 @@ func String(s string) func() string {
 var (
 	LLMLibrary = String("OLLAMA_LLM_LIBRARY")
 	Editor     = String("OLLAMA_EDITOR")
+	// SlotSavePath, when set, is passed to llama-server as --slot-save-path so
+	// that per-slot KV state can be saved to / restored from disk. This unlocks
+	// the prefill-cache persistence the upstream llama.cpp server supports but
+	// Ollama otherwise hides; it is consumed by the /api/kv/{save,restore}
+	// passthrough routes. Opt-in: empty means the feature stays disabled.
+	SlotSavePath = String("OLLAMA_SLOT_SAVE_PATH")
 
 	CudaVisibleDevices    = String("CUDA_VISIBLE_DEVICES")
 	HipVisibleDevices     = String("HIP_VISIBLE_DEVICES")
@@ -331,6 +337,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NOHISTORY":            {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":              {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":         {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
+		"OLLAMA_SLOT_SAVE_PATH":       {"OLLAMA_SLOT_SAVE_PATH", SlotSavePath(), "Directory for llama-server slot KV save/restore; enables /api/kv/{save,restore} (experimental)"},
 		"OLLAMA_ORIGINS":              {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
 		"OLLAMA_SCHED_SPREAD":         {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_CONTEXT_LENGTH":       {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},

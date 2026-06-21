@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -251,6 +252,84 @@ func signinURL() (string, error) {
 	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
 	h, _ := os.Hostname()
 	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
+}
+
+// KVSlotRequest is the body for /api/kv/save and /api/kv/restore.
+type KVSlotRequest struct {
+	Model     string         `json:"model"`
+	Slot      int            `json:"slot"`
+	Filename  string         `json:"filename"`
+	KeepAlive *api.Duration  `json:"keep_alive,omitempty"`
+	Options   map[string]any `json:"options,omitempty"`
+}
+
+// KVSlotHandler proxies llama-server's per-slot KV save/restore to the
+// currently loaded runner. This is the Ollama-side surface of the fork's
+// prefill-cache persistence: persist the KV of a fixed system prompt once,
+// then restore it before each request to collapse TTFT. Requires
+// OLLAMA_SLOT_SAVE_PATH (which makes the runner launch llama-server with
+// --slot-save-path). action is "save" or "restore".
+func (s *Server) KVSlotHandler(action string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if envconfig.SlotSavePath() == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "KV slot persistence disabled; set OLLAMA_SLOT_SAVE_PATH and restart ollama"})
+			return
+		}
+
+		var req KVSlotRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if req.Model == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+			return
+		}
+		if req.Filename == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "filename is required"})
+			return
+		}
+		// Restrict to a basename so the path cannot escape OLLAMA_SLOT_SAVE_PATH
+		// (the directory llama-server resolves the filename against). Rejects
+		// path separators, "..", and absolute paths.
+		if name := filepath.Base(req.Filename); name != req.Filename || name == "." || name == ".." {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "filename must be a basename (no path separators)"})
+			return
+		}
+
+		// Ensure the model is loaded and obtain its runner (and subprocess port).
+		runner, _, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []model.Capability{model.CapabilityCompletion}, req.Options, req.KeepAlive, nil)
+		if err != nil {
+			handleScheduleError(c, req.Model, err)
+			return
+		}
+		port := runner.GetPort()
+		if port == 0 {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "runner has no local port (KV slots require a local llama-server)"})
+			return
+		}
+
+		body, err := json.Marshal(map[string]string{"filename": req.Filename})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		endpoint := fmt.Sprintf("http://127.0.0.1:%d/slots/%d?action=%s", port, req.Slot, action)
+		preq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		preq.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(preq)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("slot %s failed: %v", action, err)})
+			return
+		}
+		defer resp.Body.Close()
+		out, _ := io.ReadAll(resp.Body)
+		c.Data(resp.StatusCode, "application/json", out)
+	}
 }
 
 func (s *Server) GenerateHandler(c *gin.Context) {
@@ -1862,6 +1941,11 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/chat", s.withInferenceRequestLogging("/api/chat", s.ChatHandler)...)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+
+	// KV slot persistence (fork): save/restore a model's prefill cache to disk.
+	// No-op unless OLLAMA_SLOT_SAVE_PATH is set.
+	r.POST("/api/kv/save", s.KVSlotHandler("save"))
+	r.POST("/api/kv/restore", s.KVSlotHandler("restore"))
 
 	// Inference (OpenAI compatibility)
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud

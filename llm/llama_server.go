@@ -392,6 +392,13 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
 
+	// Opt-in KV slot persistence (fork): when OLLAMA_SLOT_SAVE_PATH is set,
+	// expose llama-server's slot save/restore so the same system prompt's
+	// prefill KV can be reused across requests (see /api/kv/{save,restore}).
+	if dir := envconfig.SlotSavePath(); dir != "" {
+		params = append(params, "--slot-save-path", dir)
+	}
+
 	// Set up library paths for GPU backend discovery
 	cmd = exec.Command(exe, params...)
 
@@ -606,6 +613,16 @@ const limitedMMProjOffloadMemory = 10 << 30
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
 	if len(launch.projectors) == 0 {
+		return params
+	}
+
+	// KV slot persistence (fork) is mutually exclusive with multimodal: llama-server
+	// returns 501 on /slots save/restore when an mmproj context is loaded. When the
+	// user opts into OLLAMA_SLOT_SAVE_PATH, run the text-only path so the prefill
+	// cache can be persisted (these qwen3.5 GGUFs embed a projector but the cache
+	// optimization targets the text prompt).
+	if envconfig.SlotSavePath() != "" {
+		slog.Info("OLLAMA_SLOT_SAVE_PATH set: skipping multimodal projector to enable slot save/restore", "model", launch.modelPath)
 		return params
 	}
 
