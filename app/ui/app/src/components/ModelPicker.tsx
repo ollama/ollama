@@ -30,9 +30,11 @@ export const ModelPicker = forwardRef<
 ): JSX.Element {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [localOnly, setLocalOnly] = useState(false);
   const { selectedModel, setSettings, models, loading } = useSelectedModel(
     chatId,
     searchQuery,
+    localOnly,
   );
   const { cloudDisabled } = useCloudStatus();
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -162,6 +164,16 @@ export const ModelPicker = forwardRef<
         onDoubleClick={(e) => e.stopPropagation()}
         className="flex items-center select-none gap-1.5 rounded-full px-3.5 py-1.5 bg-white dark:bg-neutral-700 text-neutral-800 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-neutral-100 cursor-pointer"
       >
+      <div className="px-3 py-2 border-b border-neutral-100 dark:border-neutral-700">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={localOnly}
+            onChange={(e) => setLocalOnly(e.target.checked)}
+          />
+          <span>Local models only</span>
+        </label>
+      </div>
         <div className="flex items-center gap-2">
           <span>
             {isDisabled
