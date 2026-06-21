@@ -103,6 +103,11 @@ export const ModelPicker = forwardRef<
       modelListRef.current?.scrollToSelectedModel();
     } else {
       setSearchQuery("");
+
+      // Reset localOnly when closed
+      // confusing if user opens, checks localOnly, then
+      // closes and opens again and sees only local models
+      setLocalOnly(false);
     }
   }, [isOpen]);
 
@@ -164,16 +169,6 @@ export const ModelPicker = forwardRef<
         onDoubleClick={(e) => e.stopPropagation()}
         className="flex items-center select-none gap-1.5 rounded-full px-3.5 py-1.5 bg-white dark:bg-neutral-700 text-neutral-800 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-neutral-100 cursor-pointer"
       >
-      <div className="px-3 py-2 border-b border-neutral-100 dark:border-neutral-700">
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={localOnly}
-            onChange={(e) => setLocalOnly(e.target.checked)}
-          />
-          <span>Local models only</span>
-        </label>
-      </div>
         <div className="flex items-center gap-2">
           <span>
             {isDisabled
@@ -207,6 +202,17 @@ export const ModelPicker = forwardRef<
               autoCorrect="off"
               className="w-full px-2 py-0.5 bg-transparent border-none border-neutral-200 rounded-md outline-none focus:border-neutral-400 dark:border-neutral-600 dark:focus:border-neutral-400"
             />
+          </div>
+
+          <div className="px-3 py-2 border-b border-neutral-100 dark:border-neutral-700">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={localOnly}
+                onChange={(e) => setLocalOnly(e.target.checked)}
+              />
+              <span>Local models only</span>
+            </label>
           </div>
 
           <ModelList
