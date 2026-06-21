@@ -40,6 +40,8 @@ type chatModelPreloadDoneMsg struct {
 	err   error
 }
 
+type chatEventsClosedMsg struct{}
+
 type chatTickMsg struct{}
 
 func (m *chatModel) applyAgentEvent(event coreagent.Event) {
@@ -225,7 +227,7 @@ func waitForChatMsg(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		msg, ok := <-ch
 		if !ok {
-			return nil
+			return chatEventsClosedMsg{}
 		}
 		return msg
 	}

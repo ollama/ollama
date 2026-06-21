@@ -292,7 +292,7 @@ func legacyShortcutUsage() string {
 	return strings.Join([]string{
 		"**Shortcuts**",
 		"",
-		"- `ctrl+o`: toggle tool output and details",
+		"- `ctrl+o`: open tool details",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
 		"- `cmd+backspace`, `option+backspace`, `ctrl+w`: delete previous word",

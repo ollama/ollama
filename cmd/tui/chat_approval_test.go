@@ -29,14 +29,12 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 	m.openApprovalPrompt(chatApprovalPromptMsg{request: request, reply: reply})
 
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "Ollama") ||
-		!strings.Contains(view, "$ git status") ||
+	if !strings.Contains(view, "$ git status") ||
 		!strings.Contains(view, "1. Approve once") ||
 		!strings.Contains(view, "2. Approve session") ||
 		!strings.Contains(view, "3. Deny") ||
 		!strings.Contains(view, "1/2/3 choose • enter select • esc deny") ||
-		!strings.Contains(view, "> █") ||
-		!strings.Contains(view, "review") {
+		!strings.Contains(view, "> █") {
 		t.Fatalf("approval view missing content: %q", view)
 	}
 	if strings.Contains(view, "Bash wants to run a command") {
@@ -77,7 +75,7 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 	}
 }
 
-func TestChatApprovalPromptCtrlOExpandsToolCallDetails(t *testing.T) {
+func TestChatApprovalPromptCtrlOOpensToolDetails(t *testing.T) {
 	reply := make(chan coreagent.ApprovalResult, 1)
 	m := chatModel{
 		width:  100,
@@ -101,12 +99,19 @@ func TestChatApprovalPromptCtrlOExpandsToolCallDetails(t *testing.T) {
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	if cmd != nil {
-		t.Fatal("ctrl+o should only toggle tool details")
+		t.Fatal("ctrl+o should open tool details without starting a command")
 	}
 	m = updated.(chatModel)
+	if !m.toolDetailsOpen {
+		t.Fatal("ctrl+o should open tool details")
+	}
 	transcript = stripANSI(m.renderTranscript(100))
-	if !strings.Contains(transcript, "▾ Bash") || !strings.Contains(transcript, "$ git status --short --branch --untracked-files=all") {
-		t.Fatalf("expanded approval tool should show full command: %q", transcript)
+	if strings.Contains(transcript, "$ git status --short --branch --untracked-files=all") {
+		t.Fatalf("main transcript should stay collapsed: %q", transcript)
+	}
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "▾ Bash") || !strings.Contains(view, "$ git status --short --branch --untracked-files=all") {
+		t.Fatalf("approval tool details view should show full command: %q", view)
 	}
 }
 

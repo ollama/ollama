@@ -79,6 +79,28 @@ func TestChatRunDoneStartsQueuedMessage(t *testing.T) {
 	}
 }
 
+func TestChatResizeEnablesBoundedFrame(t *testing.T) {
+	m := chatModel{}
+
+	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("initial window size should not clear the screen")
+	}
+	if m.boundedFrame {
+		t.Fatal("initial window size should keep terminal-flow rendering")
+	}
+
+	updated, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("resize should return a clear-screen command")
+	}
+	if !m.boundedFrame {
+		t.Fatal("resize should enable bounded frame rendering")
+	}
+}
+
 func TestChatTickAdvancesSpinnerWhileRunning(t *testing.T) {
 	m := chatModel{running: true}
 
@@ -650,6 +672,62 @@ func TestChatCtrlCCancelsQuietly(t *testing.T) {
 	}
 }
 
+func TestChatClosedEventChannelCompletesCanceledRun(t *testing.T) {
+	m := chatModel{
+		running:        true,
+		status:         "canceling",
+		thinking:       true,
+		thinkingTokens: 42,
+		cancel:         func() {},
+		events:         make(chan tea.Msg),
+		liveMessages: []api.Message{
+			{Role: "user", Content: "write a summary"},
+			{Role: "assistant", Content: "partial answer"},
+		},
+		entries: []chatEntry{
+			{role: "user", content: "write a summary"},
+			{role: "assistant", content: "partial answer"},
+		},
+	}
+
+	updated, cmd := m.Update(chatEventsClosedMsg{})
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("closed event channel should flush the preserved partial transcript")
+	}
+	if m.running {
+		t.Fatal("run should be cleared when event channel closes during cancel")
+	}
+	if m.thinking || m.thinkingTokens != 0 {
+		t.Fatalf("thinking state should be cleared: thinking=%v tokens=%d", m.thinking, m.thinkingTokens)
+	}
+	if m.cancel != nil || m.events != nil {
+		t.Fatalf("cancel/events should be cleared: cancel=%v events=%v", m.cancel, m.events)
+	}
+	if len(m.messages) != 2 || m.messages[1].Content != "partial answer" {
+		t.Fatalf("messages = %#v, want promoted partial live messages", m.messages)
+	}
+	if m.liveMessages != nil {
+		t.Fatalf("liveMessages = %#v, want cleared after promotion", m.liveMessages)
+	}
+	if transcript := stripANSI(m.renderTranscript(80)); !strings.Contains(transcript, "partial answer") {
+		t.Fatalf("transcript lost partial response: %q", transcript)
+	}
+	if m.status != "Tell the model what to do instead." {
+		t.Fatalf("status = %q, want friendly cancellation hint", m.status)
+	}
+}
+
+func TestWaitForChatMsgReportsClosedChannel(t *testing.T) {
+	ch := make(chan tea.Msg)
+	close(ch)
+
+	msg := waitForChatMsg(ch)()
+	if _, ok := msg.(chatEventsClosedMsg); !ok {
+		t.Fatalf("waitForChatMsg closed channel = %#v, want chatEventsClosedMsg", msg)
+	}
+}
+
 func TestChatRunDoneTreatsHTTPContextCanceledStringAsCancellation(t *testing.T) {
 	m := chatModel{running: true}
 
@@ -688,8 +766,8 @@ func TestChatCtrlCClearsDraftInsteadOfQuitting(t *testing.T) {
 	if m.complete != 0 {
 		t.Fatalf("complete = %d, want reset", m.complete)
 	}
-	if m.quitArmed || m.quitting {
-		t.Fatalf("quit state = armed %v quitting %v, want false", m.quitArmed, m.quitting)
+	if m.quitArmed || m.quitArmedKey != "" || m.quitting {
+		t.Fatalf("quit state = armed %v key %q quitting %v, want false", m.quitArmed, m.quitArmedKey, m.quitting)
 	}
 	if m.status != "input cleared" {
 		t.Fatalf("status = %q, want input cleared", m.status)
@@ -840,8 +918,8 @@ func TestChatCtrlCRequiresSecondPressToQuit(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("first idle ctrl+c should only arm quit")
 	}
-	if !m.quitArmed || m.quitting {
-		t.Fatalf("quit state = armed %v quitting %v, want armed only", m.quitArmed, m.quitting)
+	if !m.quitArmed || m.quitArmedKey != "ctrl+c" || m.quitting {
+		t.Fatalf("quit state = armed %v key %q quitting %v, want armed ctrl+c only", m.quitArmed, m.quitArmedKey, m.quitting)
 	}
 	if m.status != "press ctrl+c again to quit" {
 		t.Fatalf("status = %q, want quit confirmation", m.status)
@@ -868,6 +946,9 @@ func TestChatCtrlCQuitWarningDisarmsOnOtherKey(t *testing.T) {
 	if m.quitArmed {
 		t.Fatal("typing should disarm quit confirmation")
 	}
+	if m.quitArmedKey != "" {
+		t.Fatalf("quitArmedKey = %q, want empty", m.quitArmedKey)
+	}
 	if m.status != "ready" {
 		t.Fatalf("status = %q, want ready", m.status)
 	}
@@ -876,13 +957,43 @@ func TestChatCtrlCQuitWarningDisarmsOnOtherKey(t *testing.T) {
 	}
 }
 
+func TestChatQuitConfirmationRequiresMatchingKey(t *testing.T) {
+	m := chatModel{}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(chatModel)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(chatModel)
+	if cmd != nil || m.quitting {
+		t.Fatal("ctrl+d should not quit after a ctrl+c confirmation")
+	}
+	if !m.quitArmed || m.quitArmedKey != "ctrl+d" {
+		t.Fatalf("quit state = armed %v key %q, want ctrl+d armed", m.quitArmed, m.quitArmedKey)
+	}
+	if m.status != "press ctrl+d again to quit" {
+		t.Fatalf("status = %q, want ctrl+d confirmation", m.status)
+	}
+}
+
 func TestChatCtrlDExitsWithEmptyInput(t *testing.T) {
 	m := chatModel{}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("first ctrl+d with empty input should only arm quit")
+	}
+	if !m.quitArmed || m.quitArmedKey != "ctrl+d" || m.quitting {
+		t.Fatalf("quit state = armed %v key %q quitting %v, want armed ctrl+d only", m.quitArmed, m.quitArmedKey, m.quitting)
+	}
+	if m.status != "press ctrl+d again to quit" {
+		t.Fatalf("status = %q, want ctrl+d confirmation", m.status)
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(chatModel)
 	if cmd == nil {
-		t.Fatal("ctrl+d with empty input should quit")
+		t.Fatal("second ctrl+d with empty input should quit")
 	}
 	if !m.quitting {
 		t.Fatal("model should be marked quitting")
@@ -916,11 +1027,20 @@ func TestChatCtrlDCancelsActiveRunWhenExiting(t *testing.T) {
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("first ctrl+d should only arm quit")
+	}
+	if canceled {
+		t.Fatal("first ctrl+d should not cancel active run")
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(chatModel)
 	if cmd == nil {
-		t.Fatal("ctrl+d with empty input should quit")
+		t.Fatal("second ctrl+d with empty input should quit")
 	}
 	if !canceled {
-		t.Fatal("ctrl+d should cancel active run before quitting")
+		t.Fatal("second ctrl+d should cancel active run before quitting")
 	}
 	if !m.quitting {
 		t.Fatal("model should be marked quitting")
@@ -1069,9 +1189,9 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 
 	updated, _ = fm.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	fm = updated.(chatModel)
-	transcript = stripANSI(fm.renderTranscript(100))
-	if !strings.Contains(transcript, "old work summary") {
-		t.Fatalf("expanded summary should show body: %q", transcript)
+	view := stripANSI(fm.renderToolDetailsFullscreen(100, 24))
+	if !strings.Contains(view, "old work summary") {
+		t.Fatalf("details view should show compacted summary body: %q", view)
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 type chatSlashCommand struct {
 	name        string
 	description string
+	hidden      bool
 }
 
 type chatCompletion struct {
@@ -40,17 +41,12 @@ const (
 )
 
 var chatSlashCommands = []chatSlashCommand{
-	{name: "/copy", description: "copy latest model output"},
-	{name: "/copy-all", description: "copy all model output"},
 	{name: "/clear", description: "clear this chat"},
-	{name: "/tools", description: "show available tools"},
 	{name: "/model", description: "switch models"},
-	{name: "/launch", description: "open launch flow"},
-	{name: "/history", description: "show prompt message history"},
+	{name: "/history", description: "show prompt message history", hidden: true},
 	{name: "/skills", description: "show or import installed skills"},
 	{name: "/new", description: "start a new chat"},
 	{name: "/resume", description: "resume a saved chat"},
-	{name: "/system", description: "toggle or set system prompt"},
 	{name: "/think", description: "set thinking mode"},
 	{name: "/verbose", description: "toggle model metrics"},
 	{name: "/compact", description: "summarize older context"},
@@ -112,22 +108,11 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return *m, nil
 	case strings.HasPrefix(input, "/? ") || strings.HasPrefix(input, "/help "):
 		return m.handleLegacyHelpCommand(input)
-	case input == "/copy":
-		return m.copyModelOutput(false)
-	case input == "/copy-all":
-		return m.copyModelOutput(true)
 	case input == "/clear":
 		return m.resetChat("cleared")
-	case input == "/tools":
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: m.toolsSummary()}))
-		return *m, nil
 	case input == "/model" || strings.HasPrefix(input, "/model "):
 		filter := strings.TrimSpace(strings.TrimPrefix(input, "/model"))
 		return m.openModelPicker(filter)
-	case input == "/launch":
-		m.launchRequested = true
-		m.quitting = true
-		return *m, tea.Quit
 	case input == "/load" || strings.HasPrefix(input, "/load "):
 		return m.handleLegacyLoadCommand(input)
 	case input == "/think":
@@ -147,8 +132,6 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.resetChat("new chat")
 	case input == "/resume":
 		return m.openResumePicker()
-	case input == "/system" || strings.HasPrefix(input, "/system "):
-		return m.handleSystemCommand(input)
 	case input == "/verbose" || strings.HasPrefix(input, "/verbose "):
 		return m.handleVerboseCommand(input)
 	case input == "/compact":
@@ -194,23 +177,6 @@ func (m chatModel) slashInputIsMultimodalFile(input string) bool {
 		}
 	}
 	return false
-}
-
-func (m *chatModel) handleSystemCommand(input string) (tea.Model, tea.Cmd) {
-	arg := strings.TrimSpace(strings.TrimPrefix(input, "/system"))
-	if arg == "" {
-		m.systemPromptDisabled = !m.systemPromptDisabled
-		state := "on"
-		if m.systemPromptDisabled {
-			state = "off"
-		}
-		m.status = "cache will break by turning system prompt " + state
-		return *m, nil
-	}
-	m.opts.SystemPrompt = arg
-	m.systemPromptDisabled = false
-	m.status = "system prompt set; cache will break"
-	return *m, nil
 }
 
 func (m *chatModel) handleVerboseCommand(input string) (tea.Model, tea.Cmd) {
@@ -452,6 +418,18 @@ func (m *chatModel) deleteInputWordBackward() {
 	m.deleteInputRange(start, end)
 }
 
+func (m *chatModel) deleteInputForward() {
+	cursor := m.normalizedInputCursor()
+	if cursor >= len(m.input) {
+		return
+	}
+	start, end, ok := m.placeholderRangeForForwardDelete(cursor)
+	if !ok {
+		start, end = cursor, cursor+1
+	}
+	m.deleteInputRange(start, end)
+}
+
 func (m *chatModel) deleteInputRange(start, end int) {
 	start = clamp(start, 0, len(m.input))
 	end = clamp(end, start, len(m.input))
@@ -471,6 +449,21 @@ func (m chatModel) placeholderRangeForBackspace(cursor int) (int, int, bool) {
 		}
 		start, end, ok := inputPlaceholderRuneRange(input, placeholder)
 		if ok && cursor > start && cursor <= end {
+			return start, end, true
+		}
+	}
+	return 0, 0, false
+}
+
+func (m chatModel) placeholderRangeForForwardDelete(cursor int) (int, int, bool) {
+	cursor = clamp(cursor, 0, len(m.input))
+	input := string(m.input)
+	for _, placeholder := range m.inputPlaceholders() {
+		if placeholder == "" {
+			continue
+		}
+		start, end, ok := inputPlaceholderRuneRange(input, placeholder)
+		if ok && cursor >= start && cursor < end {
 			return start, end, true
 		}
 	}
@@ -693,6 +686,63 @@ func (m *chatModel) moveInputCursorHorizontal(delta int) bool {
 	return true
 }
 
+func (m *chatModel) moveInputCursorToLineStart() bool {
+	cursor := m.normalizedInputCursor()
+	start, _ := inputLineBounds(m.input, cursor)
+	if start == cursor {
+		return false
+	}
+	m.inputCursor = start
+	m.inputCursorSet = true
+	m.resetPromptHistoryCursor()
+	m.complete = 0
+	return true
+}
+
+func (m *chatModel) moveInputCursorToLineEnd() bool {
+	cursor := m.normalizedInputCursor()
+	_, end := inputLineBounds(m.input, cursor)
+	if end == cursor {
+		return false
+	}
+	m.inputCursor = end
+	m.inputCursorSet = true
+	m.resetPromptHistoryCursor()
+	m.complete = 0
+	return true
+}
+
+func (m *chatModel) moveInputCursorWord(delta int) bool {
+	if delta == 0 || len(m.input) == 0 {
+		return false
+	}
+	cursor := m.normalizedInputCursor()
+	target := cursor
+	if delta < 0 {
+		for target > 0 && unicode.IsSpace(m.input[target-1]) {
+			target--
+		}
+		for target > 0 && !unicode.IsSpace(m.input[target-1]) {
+			target--
+		}
+	} else {
+		for target < len(m.input) && !unicode.IsSpace(m.input[target]) {
+			target++
+		}
+		for target < len(m.input) && unicode.IsSpace(m.input[target]) {
+			target++
+		}
+	}
+	if target == cursor {
+		return false
+	}
+	m.inputCursor = target
+	m.inputCursorSet = true
+	m.resetPromptHistoryCursor()
+	m.complete = 0
+	return true
+}
+
 func (m *chatModel) moveInputCursorVertical(delta int) bool {
 	if delta == 0 || len(m.input) == 0 {
 		return false
@@ -762,27 +812,84 @@ func isShiftEnterCSI(msg tea.Msg) bool {
 	}
 }
 
-func renderInputBoxLines(input string, cursor int, width, maxBodyLines int) []string {
-	if width < 1 {
-		width = 1
+func (m chatModel) emptyInputPlaceholder() string {
+	if m.modelPicker != nil || m.resumePicker != nil || m.thinkPicker != nil || m.historyPopup != nil || m.approvalPrompt != nil {
+		return ""
+	}
+	if len(m.entries) > 0 || len(m.messages) > 0 || len(m.input) > 0 || len(m.inputAttachments) > 0 || len(m.inputPastedTexts) > 0 || len(m.queued) > 0 {
+		return ""
+	}
+	return m.emptyChatHint()
+}
+
+func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, placeholder string) []string {
+	if width < 4 {
+		width = 4
 	}
 	if maxBodyLines < 1 {
 		maxBodyLines = 1
 	}
-	body := wrapChatText("> "+inputWithCursor([]rune(input), cursor), width)
+	innerWidth := max(1, width-2)
+	var body []string
+	if input == "" && strings.TrimSpace(placeholder) != "" {
+		body = renderInputPlaceholderLines(placeholder, innerWidth)
+	} else {
+		body = wrapChatText("> "+inputWithCursor([]rune(input), cursor), innerWidth)
+	}
 	if len(body) > maxBodyLines {
 		body = slices.Clone(body[len(body)-maxBodyLines:])
-		body[0] = truncateInputLine("> ... "+body[0], width)
+		body[0] = truncateInputLine("> ... "+body[0], innerWidth)
 	}
-	for i, line := range body {
-		body[i] = chatUserStyle.Render(line)
+	if input != "" || strings.TrimSpace(placeholder) == "" {
+		for i, line := range body {
+			body[i] = chatUserStyle.Render(line)
+		}
 	}
 
 	lines := make([]string, 0, len(body)+2)
-	lines = append(lines, chatInputBorderStyle.Render(strings.Repeat("─", width)))
-	lines = append(lines, body...)
-	lines = append(lines, chatInputBorderStyle.Render(strings.Repeat("─", width)))
+	lines = append(lines, chatInputBorderStyle.Render(inputBoxTopBorderLine(width)))
+	for _, line := range body {
+		lines = append(lines, chatInputBorderStyle.Render("│")+padRenderedLine(line, innerWidth)+chatInputBorderStyle.Render("│"))
+	}
+	lines = append(lines, chatInputBorderStyle.Render(inputBoxBottomBorderLine(width)))
 	return lines
+}
+
+func inputBoxTopBorderLine(width int) string {
+	return inputBoxBorderLine(width, "╭", "╮")
+}
+
+func inputBoxBottomBorderLine(width int) string {
+	return inputBoxBorderLine(width, "╰", "╯")
+}
+
+func inputBoxBorderLine(width int, left, right string) string {
+	if width < 4 {
+		width = 4
+	}
+	return left + strings.Repeat("─", max(0, width-2)) + right
+}
+
+func padRenderedLine(line string, width int) string {
+	if width <= 0 {
+		return line
+	}
+	if renderedWidth := lipgloss.Width(line); renderedWidth < width {
+		return line + strings.Repeat(" ", width-renderedWidth)
+	}
+	return line
+}
+
+func renderInputPlaceholderLines(placeholder string, width int) []string {
+	body := wrapChatText("> "+placeholder, width)
+	for i, line := range body {
+		if i == 0 && strings.HasPrefix(line, "> ") {
+			body[i] = chatUserStyle.Render("> ") + chatMetaStyle.Render(strings.TrimPrefix(line, "> "))
+			continue
+		}
+		body[i] = chatMetaStyle.Render(line)
+	}
+	return body
 }
 
 func truncateInputLine(line string, width int) string {
@@ -905,6 +1012,9 @@ func matchingSlashCommands(input string) []chatSlashCommand {
 
 	var commands []chatSlashCommand
 	for _, command := range chatSlashCommands {
+		if command.hidden {
+			continue
+		}
 		if strings.HasPrefix(command.name, prefix) {
 			commands = append(commands, command)
 		}
@@ -1075,118 +1185,26 @@ func (m chatModel) helpSummary() string {
 	return strings.Join([]string{
 		"**Commands**",
 		"",
-		"- `/copy`: copy latest model output",
-		"- `/copy-all`: copy all model output",
-		"- `/tools`: show available tools",
 		"- `/model`: switch models",
-		"- `/launch`: open launch flow",
 		"- `/think`: set thinking mode",
-		"- `/history`: show prompt message history",
 		"- `/skills`: show or import skills",
 		"- `/<skill>`: run the next message with a skill",
 		"- `/new`: start a new chat",
 		"- `/resume`: resume a saved chat",
-		"- `/system`: toggle or set system prompt",
 		"- `/verbose`: toggle model metrics",
 		"- `/compact`: summarize older context",
 		"- `/clear`: clear this chat",
+		"- `/help`: show commands",
 		"- `/bye`: exit",
 		"",
 		"**Shortcuts**",
 		"",
-		"- `ctrl+o`: toggle tool output and details",
-		"- `ctrl+g`: open your editor to compose a prompt",
+		"- `ctrl+o`: open tool details",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
 		"- `↑/↓`: previous or next prompt",
-		"- `mouse wheel`, `pgup/pgdn`, `home/end`: scroll transcript",
-		"- `drag`: select transcript text and copy on release",
+		"- `ctrl+a/e`: move to line start or end",
 	}, "\n")
-}
-
-func (m chatModel) toolsSummary() string {
-	if m.opts.Tools == nil || len(m.opts.Tools.Names()) == 0 {
-		return "No tools are available for this model."
-	}
-	var b strings.Builder
-	b.WriteString("Available tools:\n\n")
-	for _, name := range m.opts.Tools.Names() {
-		tool, _ := m.opts.Tools.Get(name)
-		b.WriteString("- **")
-		b.WriteString(name)
-		b.WriteString("**")
-		if tool != nil && tool.Description() != "" {
-			b.WriteString(": ")
-			b.WriteString(tool.Description())
-		}
-		b.WriteByte('\n')
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func (m *chatModel) copyModelOutput(all bool) (tea.Model, tea.Cmd) {
-	content := m.modelOutputContent(all)
-	if strings.TrimSpace(content) == "" {
-		m.status = "nothing to copy"
-		return *m, nil
-	}
-	if m.opts.Clipboard == nil {
-		m.status = "copy unavailable"
-		return *m, nil
-	}
-	ctx := m.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := m.opts.Clipboard(ctx, content); err != nil {
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not copy output: %v", err), err: err.Error()}))
-		m.status = "copy failed"
-		return *m, nil
-	}
-	if all {
-		m.status = "copied all output"
-	} else {
-		m.status = "copied latest output"
-	}
-	return *m, nil
-}
-
-func (m chatModel) modelOutputContent(all bool) string {
-	if all {
-		return strings.Join(m.assistantOutputs(), "\n\n")
-	}
-	outputs := m.assistantOutputs()
-	if len(outputs) == 0 {
-		return ""
-	}
-	return outputs[len(outputs)-1]
-}
-
-func (m chatModel) assistantOutputs() []string {
-	var outputs []string
-	for _, msg := range m.messages {
-		if msg.Role != "assistant" {
-			continue
-		}
-		content := strings.TrimRight(msg.Content, "\n")
-		if strings.TrimSpace(content) != "" {
-			outputs = append(outputs, content)
-		}
-	}
-	if len(outputs) > 0 {
-		return outputs
-	}
-
-	for _, entry := range m.entries {
-		if entry.role != "assistant" {
-			continue
-		}
-		content := strings.TrimRight(entry.content, "\n")
-		if strings.TrimSpace(content) != "" {
-			outputs = append(outputs, content)
-		}
-	}
-	return outputs
 }
 
 func (m chatModel) historyMessages() []api.Message {
@@ -1282,7 +1300,7 @@ func (m *chatModel) importSkills(args []string) string {
 
 func (m chatModel) systemPrompt(extra string) string {
 	var parts []string
-	if !m.systemPromptDisabled && strings.TrimSpace(m.opts.SystemPrompt) != "" {
+	if strings.TrimSpace(m.opts.SystemPrompt) != "" {
 		parts = append(parts, strings.TrimSpace(m.opts.SystemPrompt))
 	}
 	if strings.TrimSpace(extra) != "" {

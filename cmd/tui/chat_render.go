@@ -248,6 +248,9 @@ func (m chatModel) transcriptHeight() int {
 	if width <= 0 {
 		width = 80
 	}
+	if !m.boundedFrame {
+		return len(m.transcriptLines(width))
+	}
 	height := m.height
 	if height <= 0 {
 		height = 24
@@ -271,6 +274,9 @@ func (m chatModel) transcriptLayout() (top, height int) {
 	if width <= 0 {
 		width = 80
 	}
+	if !m.boundedFrame {
+		return 0, len(m.transcriptLines(width))
+	}
 	viewHeight := m.height
 	if viewHeight <= 0 {
 		viewHeight = 24
@@ -282,6 +288,9 @@ func (m chatModel) transcriptLayout() (top, height int) {
 }
 
 func (m chatModel) maxScroll() int {
+	if !m.boundedFrame {
+		return 0
+	}
 	width := m.width
 	if width <= 0 {
 		width = 80
@@ -291,25 +300,27 @@ func (m chatModel) maxScroll() int {
 
 func (m chatModel) bottomLines(width, maxHeight int) []string {
 	var lines []string
-	lines = append(lines, m.completionLines(width)...)
+	if m.modelPicker != nil {
+		lines = append(lines, m.renderInlineModelPicker(width)...)
+	} else {
+		lines = append(lines, m.completionLines(width)...)
+	}
 	lines = append(lines, m.queuedLines(width)...)
 
 	actionStatusLines := m.renderActionStatusLines(width)
 	approvalLines := m.renderApprovalPromptLines(width)
-	footerLines := m.renderFooterLines(width)
-	if maxHeight > 0 && !actionStatusLinesActive(actionStatusLines) && maxHeight-len(lines)-len(approvalLines)-len(footerLines)-3 <= 1 {
+	if len(actionStatusLines) == 0 {
+		actionStatusLines = []string{""}
+	}
+	if maxHeight > 0 && !actionStatusLinesActive(actionStatusLines) && maxHeight-len(lines)-len(approvalLines)-3 <= 1 {
 		actionStatusLines = nil
 	}
 	if maxHeight > 0 {
-		maxFooterLines := max(1, maxHeight-len(lines)-len(actionStatusLines)-len(approvalLines)-3)
-		if len(footerLines) > maxFooterLines {
-			footerLines = footerLines[:maxFooterLines]
-		}
-		maxApprovalLines := max(0, maxHeight-len(lines)-len(actionStatusLines)-len(footerLines)-3)
+		maxApprovalLines := max(0, maxHeight-len(lines)-len(actionStatusLines)-3)
 		if len(approvalLines) > maxApprovalLines {
 			approvalLines = approvalLines[:maxApprovalLines]
 		}
-		maxActionStatusLines := max(1, maxHeight-len(lines)-len(approvalLines)-len(footerLines)-3)
+		maxActionStatusLines := max(1, maxHeight-len(lines)-len(approvalLines)-3)
 		if len(actionStatusLines) > maxActionStatusLines {
 			actionStatusLines = actionStatusLines[:maxActionStatusLines]
 		}
@@ -317,13 +328,29 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 
 	lines = append(lines, actionStatusLines...)
 	lines = append(lines, approvalLines...)
-	fixedLines := len(lines) + len(footerLines) + 2
+	modelLines := m.renderModelStatusLines(width)
+	fixedLines := len(lines) + len(modelLines) + 2
 	inputBodyLines := maxInputBoxBodyLines
 	if maxHeight > 0 {
 		inputBodyLines = min(inputBodyLines, max(1, maxHeight-fixedLines))
 	}
-	lines = append(lines, renderInputBoxLines(string(m.input), m.normalizedInputCursor(), width, inputBodyLines)...)
-	lines = append(lines, footerLines...)
+	lines = append(lines, renderInputBoxLines(string(m.input), m.normalizedInputCursor(), width, inputBodyLines, m.emptyInputPlaceholder())...)
+	lines = append(lines, modelLines...)
+	return lines
+}
+
+func (m chatModel) renderModelStatusLines(width int) []string {
+	if m.modelPicker != nil {
+		return nil
+	}
+	model := strings.TrimSpace(m.opts.Model)
+	if model == "" {
+		return nil
+	}
+	lines := wrapChatText(model, width)
+	for i := range lines {
+		lines[i] = chatMetaStyle.Render(lines[i])
+	}
 	return lines
 }
 
@@ -333,6 +360,9 @@ func (m chatModel) renderActionStatusLines(width int) []string {
 	}
 	if notificationLines := m.renderNotificationLines(width); len(notificationLines) > 0 {
 		return notificationLines
+	}
+	if contextStatus := m.contextStatus(); contextStatus != "" {
+		return []string{chatMetaStyle.Render(contextStatus)}
 	}
 	return nil
 }
@@ -366,6 +396,118 @@ func (m *chatModel) scrollBy(lines int) {
 		return
 	}
 	m.scroll = clamp(m.scroll+lines, 0, m.maxScroll())
+}
+
+func (m *chatModel) scrollToolDetailsBy(lines int) {
+	if lines == 0 {
+		return
+	}
+	m.toolDetailsScroll = clamp(m.toolDetailsScroll+lines, 0, m.maxToolDetailsScroll())
+}
+
+func (m chatModel) maxToolDetailsScroll() int {
+	return max(0, len(m.toolDetailsLines(m.viewWidth()))-m.toolDetailsAvailableHeight())
+}
+
+func (m chatModel) toolDetailsAvailableHeight() int {
+	height := m.height
+	if height <= 0 {
+		height = 24
+	}
+	return max(0, height-3)
+}
+
+func (m chatModel) renderToolDetailsFullscreen(width, height int) string {
+	if width <= 0 {
+		width = 80
+	}
+	if height <= 0 {
+		height = 24
+	}
+
+	bodyLines := m.toolDetailsLines(width)
+	if len(bodyLines) == 0 {
+		bodyLines = []string{chatMetaStyle.Render("No tool output yet.")}
+	}
+
+	available := max(0, height-3)
+	maxScroll := max(0, len(bodyLines)-available)
+	scroll := clamp(m.toolDetailsScroll, 0, maxScroll)
+	start := 0
+	if len(bodyLines) > available && available > 0 {
+		start = maxScroll - scroll
+		bodyLines = bodyLines[start : start+available]
+	} else if available <= 0 {
+		bodyLines = nil
+	}
+
+	title := chatHeaderStyle.Render("Tool details")
+	if status := toolDetailsScrollStatus(scroll, maxScroll); status != "" {
+		title += "  " + chatMetaStyle.Render(status)
+	}
+
+	lines := []string{title, ""}
+	lines = append(lines, bodyLines...)
+	footer := chatMetaStyle.Render("ctrl+o/esc back • ↑/↓ scroll")
+	for len(lines) < height-1 {
+		lines = append(lines, "")
+	}
+	if height > 0 {
+		lines = append(lines, footer)
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i := range lines {
+		lines[i] = truncateRenderedLine(lines[i], width)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m chatModel) toolDetailsLines(width int) []string {
+	entries := m.toolDetailsEntries()
+	if len(entries) == 0 {
+		return nil
+	}
+	clone := m
+	clone.entries = entries
+	clone.selection = chatSelection{}
+	return clone.transcriptLines(width)
+}
+
+func (m chatModel) toolDetailsEntries() []chatEntry {
+	entries := make([]chatEntry, 0, len(m.entries))
+	for _, entry := range m.entries {
+		if !entryHasToolOutputMode(entry) {
+			continue
+		}
+		entry.expanded = true
+		entry.renderKey = chatEntryRenderKey{}
+		entry.renderLines = nil
+		if len(entry.tools) > 0 {
+			entry.tools = slices.Clone(entry.tools)
+			for i := range entry.tools {
+				entry.tools[i].expanded = true
+				entry.tools[i].renderKey = chatEntryRenderKey{}
+				entry.tools[i].renderLines = nil
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func toolDetailsScrollStatus(scroll, maxScroll int) string {
+	if maxScroll <= 0 {
+		return ""
+	}
+	if scroll == 0 {
+		return "↑ more"
+	}
+	if scroll == maxScroll {
+		return "↓ more"
+	}
+	return "↑/↓ more"
 }
 
 var chatANSISequencePattern = regexp.MustCompile(`\x1b\[[0-9;:]*[A-Za-z]`)
@@ -1326,11 +1468,7 @@ func (m chatModel) renderNotificationLines(width int) []string {
 }
 
 func (m chatModel) renderFooterLines(width int) []string {
-	lines := wrapChatText(m.footerLine(), width)
-	for i, line := range lines {
-		lines[i] = renderFooterPlainLine(line)
-	}
-	return lines
+	return nil
 }
 
 func renderFooterPlainLine(line string) string {
@@ -1435,11 +1573,11 @@ func (m chatModel) activityLine() string {
 			return ""
 		}
 		if m.preloadingModel != "" {
-			return m.spinnerFrame() + " Loading model..."
+			return statusWithSpinner(m.spinnerFrame(), "Loading model")
 		}
-		return m.spinnerFrame() + " Ollamaing..."
+		return statusWithSpinner(m.spinnerFrame(), "Ollamaing")
 	}
-	return m.spinnerFrame() + " " + label
+	return statusWithSpinner(m.spinnerFrame(), label)
 }
 
 func (m chatModel) activityLabel() string {
@@ -1464,14 +1602,7 @@ func (m chatModel) activityLabel() string {
 		switch entry.role {
 		case "tool":
 			if isToolActiveStatus(entry.status) {
-				active := m.activeToolLabels()
-				if len(active) == 1 {
-					return "using " + active[0]
-				}
-				if len(active) > 1 {
-					return fmt.Sprintf("using %d tools", len(active))
-				}
-				return "using tools"
+				return ""
 			}
 		case "assistant":
 			if entry.content != "" {
@@ -1511,21 +1642,6 @@ func (m chatModel) currentTurnEntryStart() int {
 		}
 	}
 	return 0
-}
-
-func (m chatModel) activeToolLabels() []string {
-	var labels []string
-	for _, entry := range m.entries {
-		if entry.role != "tool" || !isToolActiveStatus(entry.status) {
-			continue
-		}
-		label := entry.label
-		if label == "" {
-			label = toolDisplayName(entry.detail)
-		}
-		labels = append(labels, label)
-	}
-	return labels
 }
 
 func (m *chatModel) applyResponseMetrics(response *api.ChatResponse) {
@@ -1752,6 +1868,14 @@ func (m chatModel) spinnerFrame() string {
 		return ""
 	}
 	return chatSpinnerFrames[m.spinner%len(chatSpinnerFrames)]
+}
+
+func statusWithSpinner(frame, label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return strings.TrimSpace(frame)
+	}
+	return label + frame
 }
 
 func (m chatModel) scrollStatus() string {

@@ -159,8 +159,6 @@ func (m chatModel) updateApprovalPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveApprovalChoice(-1)
 	case tea.KeyRight, tea.KeyDown, tea.KeyTab:
 		m.moveApprovalChoice(1)
-	case tea.KeyCtrlO:
-		m.toggleAllToolOutputs()
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
 		case "1", "2", "3":

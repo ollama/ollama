@@ -225,8 +225,15 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 	defer setup.close()
 
 	opts = setup.opts
+	traceSink, err := coreagent.NewJSONLTraceSinkFromEnv()
+	if err != nil {
+		return err
+	}
+	if traceSink != nil {
+		defer traceSink.Close()
+	}
 
-	result, err := tui.RunAgentChat(cmd.Context(), tui.ChatOptions{
+	_, err = tui.RunAgentChat(cmd.Context(), tui.ChatOptions{
 		Model:    opts.Model,
 		ChatID:   setup.chatID,
 		Messages: setup.messages,
@@ -246,6 +253,7 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 			return agentSystemPrompt(model, setup.skills, registry != nil && registry.Has("skill"), "")
 		},
 		Approval:         setup.approval,
+		EventSink:        traceSink,
 		AutoApproveTools: opts.AutoApproveTools,
 		Skills:           setup.skills,
 		SystemPrompt:     agentSystemPrompt(opts.Model, setup.skills, setup.registry != nil && setup.registry.Has("skill"), ""),
@@ -272,10 +280,6 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 	})
 	if err != nil {
 		return err
-	}
-	if result != nil && result.LaunchRequested {
-		setup.close()
-		runInteractiveTUI(cmd)
 	}
 	return nil
 }
@@ -341,10 +345,19 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 	}()
 
 	headlessSink := &agentHeadlessEventSink{}
+	eventSink := coreagent.EventSink(headlessSink)
+	traceSink, err := coreagent.NewJSONLTraceSinkFromEnv()
+	if err != nil {
+		return err
+	}
+	if traceSink != nil {
+		defer traceSink.Close()
+		eventSink = coreagent.MultiEventSink{eventSink, traceSink}
+	}
 	session := &coreagent.Session{
 		Client:     setup.client,
 		Store:      setup.store,
-		Events:     headlessSink,
+		Events:     eventSink,
 		Tools:      setup.registry,
 		Approval:   setup.approval,
 		WorkingDir: setup.cwd,

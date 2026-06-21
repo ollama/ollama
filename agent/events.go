@@ -22,28 +22,46 @@ const (
 	EventCompactionProgress EventType = "compaction_progress"
 	EventCompacted          EventType = "compacted"
 	EventCompactionSkipped  EventType = "compaction_skipped"
+	EventLoopStep           EventType = "loop_step"
+	EventRequestBuilt       EventType = "request_built"
+	EventModelStreamDone    EventType = "model_stream_done"
 	EventRunFinished        EventType = "run_finished"
 	EventError              EventType = "error"
 )
 
 type Event struct {
-	Type       EventType         `json:"type"`
-	RunID      string            `json:"runId,omitempty"`
-	ChatID     string            `json:"chatId,omitempty"`
-	MessageID  string            `json:"messageId,omitempty"`
-	ToolCallID string            `json:"toolCallId,omitempty"`
-	ToolName   string            `json:"toolName,omitempty"`
-	WorkingDir string            `json:"workingDir,omitempty"`
-	Content    string            `json:"content,omitempty"`
-	Thinking   string            `json:"thinking,omitempty"`
-	ToolCalls  []api.ToolCall    `json:"toolCalls,omitempty"`
-	Messages   []api.Message     `json:"messages,omitempty"`
-	Args       map[string]any    `json:"args,omitempty"`
-	Tokens     int               `json:"tokens,omitempty"`
-	Error      string            `json:"error,omitempty"`
-	StartedAt  time.Time         `json:"startedAt,omitempty"`
-	FinishedAt time.Time         `json:"finishedAt,omitempty"`
-	Response   *api.ChatResponse `json:"-"`
+	Type                      EventType         `json:"type"`
+	RunID                     string            `json:"runId,omitempty"`
+	ChatID                    string            `json:"chatId,omitempty"`
+	MessageID                 string            `json:"messageId,omitempty"`
+	Model                     string            `json:"model,omitempty"`
+	Status                    string            `json:"status,omitempty"`
+	ToolCallID                string            `json:"toolCallId,omitempty"`
+	ToolName                  string            `json:"toolName,omitempty"`
+	WorkingDir                string            `json:"workingDir,omitempty"`
+	Content                   string            `json:"content,omitempty"`
+	Thinking                  string            `json:"thinking,omitempty"`
+	ToolCalls                 []api.ToolCall    `json:"toolCalls,omitempty"`
+	Messages                  []api.Message     `json:"messages,omitempty"`
+	Args                      map[string]any    `json:"args,omitempty"`
+	Tokens                    int               `json:"tokens,omitempty"`
+	PromptTokens              int               `json:"promptTokens,omitempty"`
+	ContextWindowTokens       int               `json:"contextWindowTokens,omitempty"`
+	CompactionThresholdTokens int               `json:"compactionThresholdTokens,omitempty"`
+	MessageCount              int               `json:"messageCount,omitempty"`
+	UserMessageCount          int               `json:"userMessageCount,omitempty"`
+	AssistantMessageCount     int               `json:"assistantMessageCount,omitempty"`
+	ToolMessageCount          int               `json:"toolMessageCount,omitempty"`
+	SystemMessageCount        int               `json:"systemMessageCount,omitempty"`
+	ToolCallCount             int               `json:"toolCallCount,omitempty"`
+	ToolCount                 int               `json:"toolCount,omitempty"`
+	ToolNames                 []string          `json:"toolNames,omitempty"`
+	ToolRound                 int               `json:"toolRound,omitempty"`
+	ToolRoundLimit            int               `json:"toolRoundLimit,omitempty"`
+	Error                     string            `json:"error,omitempty"`
+	StartedAt                 time.Time         `json:"startedAt,omitempty"`
+	FinishedAt                time.Time         `json:"finishedAt,omitempty"`
+	Response                  *api.ChatResponse `json:"-"`
 }
 
 type EventSink interface {

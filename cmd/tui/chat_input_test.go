@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,28 +16,6 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestChatToolsCommandListsTools(t *testing.T) {
-	registry := coreagent.NewRegistry()
-	registry.Register(chatTestTool{})
-
-	m := chatModel{
-		opts:  ChatOptions{Tools: registry},
-		input: []rune("/tools"),
-	}
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("tools command should not return a command")
-	}
-
-	fm := updated.(chatModel)
-	if len(fm.entries) != 1 {
-		t.Fatalf("entries = %d, want 1", len(fm.entries))
-	}
-	if !strings.Contains(fm.entries[0].content, "- **fake_tool**: does test work") {
-		t.Fatalf("tools output = %q", fm.entries[0].content)
-	}
-}
-
 func TestChatHelpCommandShowsCommands(t *testing.T) {
 	m := chatModel{input: []rune("/help")}
 
@@ -52,45 +29,23 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 		t.Fatalf("entries = %d, want 1", len(fm.entries))
 	}
 	if !strings.Contains(fm.entries[0].content, "**Commands**") ||
-		!strings.Contains(fm.entries[0].content, "- `/copy`: copy latest model output") ||
-		!strings.Contains(fm.entries[0].content, "- `/copy-all`: copy all model output") ||
-		!strings.Contains(fm.entries[0].content, "- `/tools`: show available tools") ||
 		!strings.Contains(fm.entries[0].content, "- `/model`: switch models") ||
-		!strings.Contains(fm.entries[0].content, "- `/launch`: open launch flow") ||
 		!strings.Contains(fm.entries[0].content, "- `/think`: set thinking mode") ||
-		!strings.Contains(fm.entries[0].content, "- `/history`: show prompt message history") ||
 		!strings.Contains(fm.entries[0].content, "- `/verbose`: toggle model metrics") ||
-		!strings.Contains(fm.entries[0].content, "- `/system`: toggle or set system prompt") ||
 		!strings.Contains(fm.entries[0].content, "- `/<skill>`: run the next message with a skill") ||
+		!strings.Contains(fm.entries[0].content, "- `/help`: show commands") ||
+		!strings.Contains(fm.entries[0].content, "- `/bye`: exit") ||
 		!strings.Contains(fm.entries[0].content, "**Shortcuts**") ||
-		!strings.Contains(fm.entries[0].content, "- `ctrl+o`: toggle tool output and details") ||
-		!strings.Contains(fm.entries[0].content, "- `ctrl+g`: open your editor to compose a prompt") ||
+		!strings.Contains(fm.entries[0].content, "- `ctrl+o`: open tool details") ||
 		!strings.Contains(fm.entries[0].content, "- `shift+enter`: insert a newline") ||
-		!strings.Contains(fm.entries[0].content, "- `shift+tab`: toggle permission mode") {
+		!strings.Contains(fm.entries[0].content, "- `shift+tab`: toggle permission mode") ||
+		!strings.Contains(fm.entries[0].content, "- `ctrl+a/e`: move to line start or end") {
 		t.Fatalf("help output = %q", fm.entries[0].content)
 	}
-	if strings.Contains(fm.entries[0].content, "/set think") || strings.Contains(fm.entries[0].content, "/set nothink") {
-		t.Fatalf("legacy think commands should stay hidden from help: %q", fm.entries[0].content)
-	}
-}
-
-func TestChatLaunchCommandRequestsLaunch(t *testing.T) {
-	m := chatModel{input: []rune("/launch")}
-
-	updated, cmd := m.handleSubmit()
-	if cmd == nil {
-		t.Fatal("launch command should quit the chat TUI")
-	}
-
-	fm := updated.(chatModel)
-	if !fm.launchRequested {
-		t.Fatal("launch command should request the launch flow")
-	}
-	if !fm.quitting {
-		t.Fatal("launch command should mark the chat as quitting")
-	}
-	if len(fm.entries) != 0 {
-		t.Fatalf("launch command should not add chat history entries, got %d", len(fm.entries))
+	for _, hidden := range []string{"/history", "/set think", "/set nothink"} {
+		if strings.Contains(fm.entries[0].content, hidden) {
+			t.Fatalf("hidden command %q should stay hidden from help: %q", hidden, fm.entries[0].content)
+		}
 	}
 }
 
@@ -395,6 +350,23 @@ func TestInitialPromptHistoryLoadsFromStore(t *testing.T) {
 	}
 }
 
+func TestChatDeletedSlashCommandsAreUnknown(t *testing.T) {
+	for _, command := range []string{"/copy", "/copy-all", "/tools", "/launch", "/system"} {
+		t.Run(command, func(t *testing.T) {
+			m := chatModel{input: []rune(command)}
+
+			updated, cmd := m.handleSubmit()
+			if cmd != nil {
+				t.Fatal("deleted slash command should not return a command")
+			}
+			m = updated.(chatModel)
+			if len(m.entries) != 1 || m.entries[0].role != "error" || !strings.Contains(m.entries[0].content, "Unknown command") {
+				t.Fatalf("entries = %#v, want unknown command error", m.entries)
+			}
+		})
+	}
+}
+
 func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	m := chatModel{
 		input:  []rune("/"),
@@ -403,23 +375,14 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "/copy") || !strings.Contains(view, "copy latest model output") {
-		t.Fatalf("view missing copy suggestion: %q", view)
-	}
-	if !strings.Contains(view, "/copy-all") || !strings.Contains(view, "copy all model output") {
-		t.Fatalf("view missing copy-all suggestion: %q", view)
-	}
 	if !strings.Contains(view, "/clear") || !strings.Contains(view, "clear this chat") {
 		t.Fatalf("view missing clear suggestion: %q", view)
-	}
-	if !strings.Contains(view, "/tools") || !strings.Contains(view, "show available tools") {
-		t.Fatalf("view missing tools suggestion: %q", view)
 	}
 	if !strings.Contains(view, "/model") || !strings.Contains(view, "switch models") {
 		t.Fatalf("view missing model suggestion: %q", view)
 	}
-	if strings.Contains(view, "/history") || strings.Contains(view, "/new") || strings.Contains(view, "/resume") {
-		t.Fatalf("bare slash should show only top suggestions: %q", view)
+	if strings.Contains(view, "/copy") || strings.Contains(view, "/copy-all") || strings.Contains(view, "/tools") || strings.Contains(view, "/history") {
+		t.Fatalf("bare slash should hide utility commands: %q", view)
 	}
 	if got := len(m.slashCommandLines(80)); got != maxSlashCompletions {
 		t.Fatalf("slash suggestions = %d, want %d", got, maxSlashCompletions)
@@ -438,7 +401,7 @@ func TestChatSlashCommandSuggestionsScroll(t *testing.T) {
 		t.Fatalf("test setup needs more than %d slash completions, got %d", maxSlashCompletions, got)
 	}
 
-	for range 9 {
+	for range 4 {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = updated.(chatModel)
 	}
@@ -458,17 +421,14 @@ func TestChatSlashCommandSuggestionsScroll(t *testing.T) {
 	}
 }
 
-func TestChatSlashCommandSuggestionsFilter(t *testing.T) {
+func TestChatSlashCommandSuggestionsOmitDeletedToolsCommand(t *testing.T) {
 	m := chatModel{
 		input: []rune("/to"),
 	}
 
 	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
-	if !strings.Contains(lines, "/tools") {
-		t.Fatalf("suggestions missing /tools: %q", lines)
-	}
-	if strings.Contains(lines, "/clear") {
-		t.Fatalf("suggestions should filter out /clear: %q", lines)
+	if strings.Contains(lines, "/tools") || !strings.Contains(lines, "No matching commands") {
+		t.Fatalf("deleted /tools command should not be suggested: %q", lines)
 	}
 }
 
@@ -494,14 +454,14 @@ func TestChatSlashCommandSuggestionsIncludeThink(t *testing.T) {
 	}
 }
 
-func TestChatSlashCommandSuggestionsIncludeSystem(t *testing.T) {
+func TestChatSlashCommandSuggestionsOmitDeletedSystemCommand(t *testing.T) {
 	m := chatModel{
 		input: []rune("/sys"),
 	}
 
 	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
-	if !strings.Contains(lines, "/system") || !strings.Contains(lines, "toggle or set system prompt") {
-		t.Fatalf("suggestions missing /system: %q", lines)
+	if strings.Contains(lines, "/system") || !strings.Contains(lines, "No matching commands") {
+		t.Fatalf("deleted /system command should not be suggested: %q", lines)
 	}
 }
 
@@ -534,7 +494,7 @@ func TestChatSlashCommandSuggestionsHideLegacyRunCommands(t *testing.T) {
 func TestChatEnterAcceptsSelectedSlashCommand(t *testing.T) {
 	m := chatModel{
 		input:    []rune("/"),
-		complete: 3, // /tools
+		complete: 3, // /new
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -543,14 +503,8 @@ func TestChatEnterAcceptsSelectedSlashCommand(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("slash command should not return a command")
 	}
-	if len(m.entries) != 1 {
-		t.Fatalf("entries = %d, want 1", len(m.entries))
-	}
-	if m.entries[0].role == "error" || strings.Contains(m.entries[0].content, "Unknown command") {
-		t.Fatalf("selected slash command should run instead of submitting slash: %#v", m.entries[0])
-	}
-	if !strings.Contains(m.entries[0].content, "No tools are available") {
-		t.Fatalf("entry content = %q, want tools command output", m.entries[0].content)
+	if len(m.entries) != 0 || len(m.messages) != 0 {
+		t.Fatalf("new chat command should reset chat, entries=%d messages=%d", len(m.entries), len(m.messages))
 	}
 }
 
@@ -737,75 +691,6 @@ func TestChatVerboseCommandRejectsInvalidState(t *testing.T) {
 	}
 }
 
-func TestChatSystemCommandTogglesPrompt(t *testing.T) {
-	m := chatModel{
-		input: []rune("/system"),
-		opts:  ChatOptions{SystemPrompt: "base prompt"},
-	}
-
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("system command should not return a command")
-	}
-	m = updated.(chatModel)
-	if !m.systemPromptDisabled {
-		t.Fatal("system prompt should be disabled")
-	}
-	if got := m.systemPrompt(""); got != "" {
-		t.Fatalf("system prompt = %q, want empty", got)
-	}
-	if m.status != "cache will break by turning system prompt off" {
-		t.Fatalf("status = %q", m.status)
-	}
-	if footer := m.footerLine(); strings.Contains(footer, "cache will break") {
-		t.Fatalf("footer should not include cache warning: %q", footer)
-	}
-	if notice := m.notificationLine(); notice != "cache will break by turning system prompt off" {
-		t.Fatalf("notificationLine = %q", notice)
-	}
-
-	m.input = []rune("/system")
-	updated, cmd = m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("system command should not return a command")
-	}
-	m = updated.(chatModel)
-	if m.systemPromptDisabled {
-		t.Fatal("system prompt should be enabled")
-	}
-	if got := m.systemPrompt(""); got != "base prompt" {
-		t.Fatalf("system prompt = %q, want base prompt", got)
-	}
-	if m.status != "cache will break by turning system prompt on" {
-		t.Fatalf("status = %q", m.status)
-	}
-}
-
-func TestChatSystemCommandSetsPrompt(t *testing.T) {
-	m := chatModel{
-		input:                []rune("/system You are concise."),
-		systemPromptDisabled: true,
-	}
-
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("system command should not return a command")
-	}
-	m = updated.(chatModel)
-	if m.systemPromptDisabled {
-		t.Fatal("setting system prompt should enable it")
-	}
-	if got := m.opts.SystemPrompt; got != "You are concise." {
-		t.Fatalf("stored system prompt = %q", got)
-	}
-	if got := m.systemPrompt(""); got != "You are concise." {
-		t.Fatalf("system prompt = %q", got)
-	}
-	if m.status != "system prompt set; cache will break" {
-		t.Fatalf("status = %q", m.status)
-	}
-}
-
 func TestChatLegacySetVerboseQuietCommandsStaySupported(t *testing.T) {
 	m := chatModel{input: []rune("/set verbose")}
 
@@ -971,112 +856,6 @@ func TestChatLegacyHelpCommandsStaySupported(t *testing.T) {
 	m = updated.(chatModel)
 	if !strings.Contains(m.entries[len(m.entries)-1].content, "Legacy show commands") {
 		t.Fatalf("help show entry = %#v", m.entries[len(m.entries)-1])
-	}
-}
-
-func TestChatCopyCommandCopiesLatestModelOutput(t *testing.T) {
-	var copied string
-	m := chatModel{
-		input: []rune("/copy"),
-		messages: []api.Message{
-			{Role: "assistant", Content: "first answer"},
-			{Role: "tool", Content: "tool output"},
-			{Role: "assistant", Content: "latest answer\n"},
-		},
-		opts: ChatOptions{
-			Clipboard: func(ctx context.Context, text string) error {
-				copied = text
-				return nil
-			},
-		},
-	}
-
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("copy command should not return a command")
-	}
-	m = updated.(chatModel)
-	if copied != "latest answer" {
-		t.Fatalf("copied = %q, want latest answer", copied)
-	}
-	if m.status != "copied latest output" {
-		t.Fatalf("status = %q", m.status)
-	}
-	if len(m.entries) != 0 {
-		t.Fatalf("copy should not append chat entries: %#v", m.entries)
-	}
-}
-
-func TestChatCopyAllCommandCopiesAllModelOutput(t *testing.T) {
-	var copied string
-	m := chatModel{
-		input: []rune("/copy-all"),
-		messages: []api.Message{
-			{Role: "system", Content: "system"},
-			{Role: "user", Content: "prompt"},
-			{Role: "assistant", Content: "first answer"},
-			{Role: "tool", Content: "tool output"},
-			{Role: "assistant", Content: "second answer"},
-		},
-		opts: ChatOptions{
-			Clipboard: func(ctx context.Context, text string) error {
-				copied = text
-				return nil
-			},
-		},
-	}
-
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("copy-all command should not return a command")
-	}
-	m = updated.(chatModel)
-	if copied != "first answer\n\nsecond answer" {
-		t.Fatalf("copied = %q", copied)
-	}
-	if m.status != "copied all output" {
-		t.Fatalf("status = %q", m.status)
-	}
-}
-
-func TestChatCopyCommandHandlesEmptyAndClipboardErrors(t *testing.T) {
-	m := chatModel{
-		input: []rune("/copy"),
-		opts: ChatOptions{
-			Clipboard: func(ctx context.Context, text string) error {
-				t.Fatal("clipboard should not be called for empty output")
-				return nil
-			},
-		},
-	}
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("copy command should not return a command")
-	}
-	m = updated.(chatModel)
-	if m.status != "nothing to copy" {
-		t.Fatalf("status = %q, want nothing to copy", m.status)
-	}
-
-	m = chatModel{
-		input:    []rune("/copy"),
-		messages: []api.Message{{Role: "assistant", Content: "answer"}},
-		opts: ChatOptions{
-			Clipboard: func(ctx context.Context, text string) error {
-				return errors.New("clipboard offline")
-			},
-		},
-	}
-	updated, cmd = m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("copy command should not return a command")
-	}
-	m = updated.(chatModel)
-	if m.status != "copy failed" {
-		t.Fatalf("status = %q, want copy failed", m.status)
-	}
-	if len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "clipboard offline") {
-		t.Fatalf("copy error entry = %#v", m.entries)
 	}
 }
 

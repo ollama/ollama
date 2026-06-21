@@ -41,8 +41,8 @@ func TestChatHistoryCommandShowsPromptMessages(t *testing.T) {
 	}
 
 	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("history command should not return a command")
+	if cmd == nil {
+		t.Fatal("history command should enter the history screen")
 	}
 
 	fm := updated.(chatModel)
@@ -90,8 +90,8 @@ func TestChatHistoryCommandShowsPromptMessages(t *testing.T) {
 
 	updated, cmd = fm.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	fm = updated.(chatModel)
-	if cmd != nil {
-		t.Fatal("closing history should not return a command")
+	if cmd == nil {
+		t.Fatal("closing history should exit the history screen")
 	}
 	if fm.historyPopup != nil {
 		t.Fatal("history popup should close on escape")
@@ -102,8 +102,8 @@ func TestChatHistoryCommandHandlesEmptyHistory(t *testing.T) {
 	m := chatModel{input: []rune("/history")}
 
 	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("history command should not return a command")
+	if cmd == nil {
+		t.Fatal("history command should enter the history screen")
 	}
 
 	fm := updated.(chatModel)
@@ -130,8 +130,8 @@ func TestChatHistoryCommandStartsAtBottom(t *testing.T) {
 	}
 
 	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("history command should not return a command")
+	if cmd == nil {
+		t.Fatal("history command should enter the history screen")
 	}
 	fm := updated.(chatModel)
 	view := stripANSI(fm.View())
@@ -233,8 +233,8 @@ func TestChatHistoryCommandFormatsMultilineContentWithLabel(t *testing.T) {
 	}
 
 	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("history command should not return a command")
+	if cmd == nil {
+		t.Fatal("history command should enter the history screen")
 	}
 
 	fm := updated.(chatModel)
@@ -313,12 +313,45 @@ func TestChatModelCommandOpensPicker(t *testing.T) {
 		t.Fatal("model picker was not opened")
 	}
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "Switch model") ||
-		!strings.Contains(view, "Search...") ||
+	if !strings.Contains(view, "Select model: type to filter") ||
 		!strings.Contains(view, "kimi-k2.6:cloud") ||
 		!strings.Contains(view, "llama3.2") ||
 		!strings.Contains(view, "current") {
 		t.Fatalf("model picker view missing content: %q", view)
+	}
+	if strings.Contains(view, "Search...") {
+		t.Fatalf("model picker should render inline without full search box: %q", view)
+	}
+	if !strings.Contains(view, "> █") {
+		t.Fatalf("inline model picker should keep input box visible: %q", view)
+	}
+}
+
+func TestChatModelPickerFallsBackToFullFrameWhenSmall(t *testing.T) {
+	m := chatModel{
+		ctx:    context.Background(),
+		input:  []rune("/model"),
+		width:  44,
+		height: 10,
+		opts: ChatOptions{
+			Model: "llama3.2",
+			ModelOptions: func(context.Context) ([]ChatModelOption, error) {
+				return []ChatModelOption{
+					{Name: "kimi-k2.6:cloud", Description: "cloud coding"},
+					{Name: "llama3.2", Description: "local"},
+				}, nil
+			},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("model command should not return a command")
+	}
+	m = updated.(chatModel)
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Switch model") || !strings.Contains(view, "Search...") {
+		t.Fatalf("small model picker should use full-frame fallback: %q", view)
 	}
 }
 
@@ -621,8 +654,8 @@ func TestChatResumePickerFiltersAndLoadsSelection(t *testing.T) {
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(chatModel)
-	if cmd != nil {
-		t.Fatal("loading a saved chat should not start a command")
+	if cmd == nil {
+		t.Fatal("loading a saved chat should flush the resumed transcript")
 	}
 	if m.resumePicker != nil {
 		t.Fatal("resume picker should close after selection")

@@ -142,6 +142,21 @@ func hasEventWithTokens(events []Event, eventType EventType, tokens int) bool {
 	return false
 }
 
+func TestMultiEventSinkEmitsToAllSinksAfterError(t *testing.T) {
+	errSink := EventSinkFunc(func(Event) error {
+		return errors.New("sink failed")
+	})
+	events := &recordingEventSink{}
+
+	err := MultiEventSink{errSink, events}.Emit(Event{Type: EventRunFinished})
+	if err == nil {
+		t.Fatal("MultiEventSink should return the first sink error")
+	}
+	if !hasEventType(events.events, EventRunFinished) {
+		t.Fatalf("later sink did not receive event after earlier error: %#v", events.events)
+	}
+}
+
 func (c cancelAfterToolCallClient) Chat(ctx context.Context, req *api.ChatRequest, fn api.ChatResponseFunc) error {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("value", "skip me")
@@ -604,6 +619,45 @@ func TestSessionPersistsPartialStreamOnCancellation(t *testing.T) {
 	}
 	if len(result.Messages) != 2 || result.Messages[1].Content != "partial answer" {
 		t.Fatalf("result messages = %#v", result.Messages)
+	}
+}
+
+func TestSessionCancellationKeepsPartialResultWhenUISinkCancels(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	trace := &recordingEventSink{}
+	session := &Session{
+		Client: &fakeClient{
+			responses: [][]api.ChatResponse{{
+				{Message: api.Message{Role: "assistant", Content: "partial"}},
+			}},
+			err: context.Canceled,
+		},
+		Store: &memoryStore{},
+		Events: MultiEventSink{
+			EventSinkFunc(func(event Event) error {
+				if event.Type == EventRunFinished {
+					return context.Canceled
+				}
+				return nil
+			}),
+			trace,
+		},
+	}
+
+	result, err := session.Run(ctx, RunOptions{
+		ChatID:      "chat-1",
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "cancel"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || len(result.Messages) != 2 || result.Messages[1].Content != "partial" {
+		t.Fatalf("result messages = %#v, want partial assistant result", result)
+	}
+	if !hasEventType(trace.events, EventRunFinished) {
+		t.Fatalf("trace sink did not receive run finished event: %#v", trace.events)
 	}
 }
 

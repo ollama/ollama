@@ -50,7 +50,7 @@ type chatHistoryPopup struct {
 func (m *chatModel) openHistoryPopup() (tea.Model, tea.Cmd) {
 	m.historyPopup = &chatHistoryPopup{messages: m.historyMessages(), stickToBottom: true}
 	m.status = "history"
-	return *m, nil
+	return *m, tea.EnterAltScreen
 }
 
 func (m chatModel) updateHistoryPopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -58,7 +58,7 @@ func (m chatModel) updateHistoryPopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlC, tea.KeyEsc:
 		m.historyPopup = nil
 		m.status = "ready"
-		return m, nil
+		return m, tea.ExitAltScreen
 	case tea.KeyUp:
 		m.moveHistoryPopup(-1)
 	case tea.KeyDown:
@@ -528,8 +528,9 @@ func (m *chatModel) resumeSelectedChat() (tea.Model, tea.Cmd) {
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
 	m.scroll = 0
+	m.flowPrintedLines = 0
 	m.status = "resumed"
-	return *m, nil
+	return m.withFlowTranscriptFlush(nil)
 }
 
 func (m chatModel) renderResumePicker(width int) string {
@@ -630,6 +631,53 @@ func (m chatModel) renderModelPicker(width int) string {
 	b.WriteString("\n")
 	b.WriteString(chatResumeMetaStyle.Render("↑/↓ move • enter switch • type search • esc cancel"))
 	return b.String()
+}
+
+func (m chatModel) shouldRenderModelPickerFullFrame(width, height int) bool {
+	return width < 48 || height < 12
+}
+
+func (m chatModel) renderInlineModelPicker(width int) []string {
+	picker := m.modelPicker
+	if picker == nil {
+		return nil
+	}
+	if width <= 0 {
+		width = 80
+	}
+
+	filter := strings.TrimSpace(picker.filter)
+	title := "Select model"
+	if filter != "" {
+		title += ": " + filter
+	} else {
+		title += ": type to filter"
+	}
+
+	lines := []string{truncateRenderedLine(chatResumeTitleStyle.Render(title), width)}
+	filtered := picker.filtered()
+	if len(filtered) == 0 {
+		lines = append(lines, chatResumeMetaStyle.Render("  No matching models"))
+	} else {
+		start, end := completionWindow(len(filtered), picker.cursor, maxInlineModelPickerItems)
+		for i := start; i < end; i++ {
+			model := filtered[i]
+			marker := "  "
+			if i == picker.cursor {
+				marker = "› "
+			}
+			line := marker + chatResumeTextStyle.Render(model.Name)
+			if meta := modelOptionMeta(model, m.opts.Model); meta != "" {
+				line += "  " + chatResumeMetaStyle.Render(meta)
+			}
+			lines = append(lines, truncateRenderedLine(line, width))
+		}
+		if end < len(filtered) {
+			lines = append(lines, chatResumeMetaStyle.Render(fmt.Sprintf("  +%d more", len(filtered)-end)))
+		}
+	}
+	lines = append(lines, chatResumeMetaStyle.Render("↑/↓ move • enter switch • type filter • esc cancel"))
+	return lines
 }
 
 func (m chatModel) renderHistoryPopup(width, height int) string {
