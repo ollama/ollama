@@ -253,10 +253,15 @@ func signinURL() (string, error) {
 	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
 }
 
-// KVSlotRequest is the body for /api/kv/save and /api/kv/restore.
+// KVSlotRequest is the body for /api/experimental/kv/save and .../restore.
+//
+// The runner's slot index is intentionally not exposed: this feature targets
+// single-slot (OLLAMA_NUM_PARALLEL=1) runners and the runner picks the slot
+// internally. Options, if set, must match the options used for inference on
+// this model — otherwise scheduling may load a different runner and the saved
+// KV would not correspond to it.
 type KVSlotRequest struct {
 	Model     string         `json:"model"`
-	Slot      int            `json:"slot"`
 	Filename  string         `json:"filename"`
 	KeepAlive *api.Duration  `json:"keep_alive,omitempty"`
 	Options   map[string]any `json:"options,omitempty"`
@@ -288,52 +293,50 @@ func (s *Server) KVSlotHandler(action string) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "filename is required"})
 			return
 		}
-		// Restrict to a basename so the path cannot escape OLLAMA_SLOT_SAVE_PATH
-		// (the directory llama-server resolves the filename against). Reject path
-		// separators for both Unix and Windows ("/" and "\"), plus "." and ".."
-		// — checked explicitly rather than via filepath.Base, which is OS-dependent
-		// and would let "sub\\x" through on a Unix host.
-		if strings.ContainsAny(req.Filename, `/\`) || req.Filename == "." || req.Filename == ".." {
+		// Constrain the filename to a basename so it cannot escape the
+		// OLLAMA_SLOT_SAVE_PATH directory llama-server resolves it against.
+		// Reject, explicitly (not via filepath.Base, which is OS-dependent and
+		// would let "sub\\x" through on a Unix host): both separators ("/", "\"),
+		// the Windows drive-relative ":", a NUL byte, and the "."/".." refs. This
+		// is the first line of defense — llama-server independently re-validates
+		// the name (fs_validate_filename) and would also reject an escape.
+		if strings.ContainsAny(req.Filename, "/\\:\x00") || req.Filename == "." || req.Filename == ".." {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "filename must be a basename (no path separators)"})
 			return
 		}
-		if req.Slot < 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "slot must be non-negative"})
-			return
-		}
-
-		// Ensure the model is loaded and obtain its runner (and subprocess port).
+		// Ensure the model is loaded and obtain its runner.
 		runner, _, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []model.Capability{model.CapabilityCompletion}, req.Options, req.KeepAlive, nil)
 		if err != nil {
 			handleScheduleError(c, req.Model, err)
 			return
 		}
-		port := runner.GetPort()
-		if port == 0 {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "runner has no local port (KV slots require a local llama-server)"})
+
+		// Slot save/restore is an optional runner capability (only llama-server
+		// runners launched with --slot-save-path implement it). Go through the
+		// runner so the call is serialized against inference via the same
+		// semaphore, rather than reaching past the interface to the subprocess.
+		saver, ok := runner.(llm.SlotKVSaver)
+		if !ok {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "the active runner does not support slot KV save/restore"})
 			return
 		}
 
-		body, err := json.Marshal(map[string]string{"filename": req.Filename})
+		var res *llm.SlotKVResult
+		if action == "save" {
+			res, err = saver.SaveSlot(c.Request.Context(), req.Filename)
+		} else {
+			res, err = saver.RestoreSlot(c.Request.Context(), req.Filename)
+		}
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		endpoint := fmt.Sprintf("http://127.0.0.1:%d/slots/%d?action=%s", port, req.Slot, action)
-		preq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+
+		contentType := res.ContentType
+		if contentType == "" {
+			contentType = "application/json"
 		}
-		preq.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(preq)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("slot %s failed: %v", action, err)})
-			return
-		}
-		defer resp.Body.Close()
-		out, _ := io.ReadAll(resp.Body)
-		c.Data(resp.StatusCode, "application/json", out)
+		c.Data(res.Status, contentType, res.Body)
 	}
 }
 
@@ -1948,9 +1951,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 
 	// KV slot persistence (fork): save/restore a model's prefill cache to disk.
-	// No-op unless OLLAMA_SLOT_SAVE_PATH is set.
-	r.POST("/api/kv/save", s.KVSlotHandler("save"))
-	r.POST("/api/kv/restore", s.KVSlotHandler("restore"))
+	// Experimental and disabled unless OLLAMA_SLOT_SAVE_PATH is set.
+	r.POST("/api/experimental/kv/save", s.KVSlotHandler("save"))
+	r.POST("/api/experimental/kv/restore", s.KVSlotHandler("restore"))
 
 	// Inference (OpenAI compatibility)
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud

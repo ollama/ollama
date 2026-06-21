@@ -210,6 +210,61 @@ func (s *llamaServerRunner) HasExited() bool {
 	return s.cmd != nil && s.cmd.ProcessState != nil && s.cmd.ProcessState.ExitCode() >= 0
 }
 
+// SaveSlot persists the runner's KV cache to <slot-save-path>/<filename>.
+func (s *llamaServerRunner) SaveSlot(ctx context.Context, filename string) (*SlotKVResult, error) {
+	return s.slotAction(ctx, "save", filename)
+}
+
+// RestoreSlot restores the runner's KV cache from <slot-save-path>/<filename>.
+func (s *llamaServerRunner) RestoreSlot(ctx context.Context, filename string) (*SlotKVResult, error) {
+	return s.slotAction(ctx, "restore", filename)
+}
+
+// slotAction proxies a slot KV save/restore to the llama-server subprocess. It
+// acquires the same semaphore inference uses, so a save/restore never races a
+// generation in flight on the slot. Restricted to single-slot runners: with
+// more than one parallel slot the scheduler — not the caller — owns slot
+// assignment, so a fixed slot index would be unsafe.
+func (s *llamaServerRunner) slotAction(ctx context.Context, action, filename string) (*SlotKVResult, error) {
+	if s.launch.numParallel != 1 {
+		return nil, fmt.Errorf("slot KV %s requires OLLAMA_NUM_PARALLEL=1 (runner has %d parallel slots)", action, s.launch.numParallel)
+	}
+
+	if err := s.sem.Acquire(ctx, 1); err != nil {
+		return nil, err
+	}
+	defer s.sem.Release(1)
+
+	body, err := json.Marshal(map[string]string{"filename": filename})
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/slots/0?action=%s", s.port, action)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.httpClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("slot %s request failed: %w", action, err)
+	}
+	defer resp.Body.Close()
+
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading slot %s response: %w", action, err)
+	}
+
+	return &SlotKVResult{
+		Status:      resp.StatusCode,
+		ContentType: resp.Header.Get("Content-Type"),
+		Body:        out,
+	}, nil
+}
+
 func (s *llamaServerRunner) llamaServerMediaMarker() string {
 	if s.mediaMarker != "" {
 		return s.mediaMarker
@@ -394,7 +449,8 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	// Opt-in KV slot persistence (fork): when OLLAMA_SLOT_SAVE_PATH is set,
 	// expose llama-server's slot save/restore so the same system prompt's
-	// prefill KV can be reused across requests (see /api/kv/{save,restore}).
+	// prefill KV can be reused across requests (see
+	// /api/experimental/kv/{save,restore}).
 	if dir := envconfig.SlotSavePath(); dir != "" {
 		params = append(params, "--slot-save-path", dir)
 	}
@@ -613,16 +669,6 @@ const limitedMMProjOffloadMemory = 10 << 30
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
 	if len(launch.projectors) == 0 {
-		return params
-	}
-
-	// KV slot persistence (fork) is mutually exclusive with multimodal: llama-server
-	// returns 501 on /slots save/restore when an mmproj context is loaded. When the
-	// user opts into OLLAMA_SLOT_SAVE_PATH, run the text-only path so the prefill
-	// cache can be persisted (these qwen3.5 GGUFs embed a projector but the cache
-	// optimization targets the text prompt).
-	if envconfig.SlotSavePath() != "" {
-		slog.Info("OLLAMA_SLOT_SAVE_PATH set: skipping multimodal projector to enable slot save/restore", "model", launch.modelPath)
 		return params
 	}
 

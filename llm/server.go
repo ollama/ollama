@@ -77,6 +77,27 @@ type LlamaServer interface {
 	ContextLength() int
 }
 
+// SlotKVResult is the outcome of a slot KV save/restore proxied to the runner's
+// subprocess. Status/ContentType/Body mirror the underlying llama-server HTTP
+// response so the caller can relay it verbatim (including a 501 on multimodal
+// runners). A non-nil error means the proxy itself failed (transport,
+// precondition), not that the runner returned a non-2xx status.
+type SlotKVResult struct {
+	Status      int
+	ContentType string
+	Body        []byte
+}
+
+// SlotKVSaver is an optional capability: runners that launch with
+// --slot-save-path (i.e. OLLAMA_SLOT_SAVE_PATH is set) implement it to persist
+// and restore slot KV state. The save/restore is serialized against inference
+// on the same runner. Callers type-assert and return a clear error when the
+// active runner does not implement it (e.g. mlx / imagegen runners).
+type SlotKVSaver interface {
+	SaveSlot(ctx context.Context, filename string) (*SlotKVResult, error)
+	RestoreSlot(ctx context.Context, filename string) (*SlotKVResult, error)
+}
+
 type LlamaServerConfig struct {
 	DisableJinja   bool
 	ContextShift   bool

@@ -16,8 +16,8 @@ func kvEngine() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	s := &Server{}
 	r := gin.New()
-	r.POST("/api/kv/save", s.KVSlotHandler("save"))
-	r.POST("/api/kv/restore", s.KVSlotHandler("restore"))
+	r.POST("/api/experimental/kv/save", s.KVSlotHandler("save"))
+	r.POST("/api/experimental/kv/restore", s.KVSlotHandler("restore"))
 	return r
 }
 
@@ -65,15 +65,15 @@ func TestKVSlotHandlerRejects(t *testing.T) {
 			wantStatus:  http.StatusBadRequest,
 		},
 		{
-			name:        "negative slot",
+			name:        "filename with leading slash",
 			slotSaveEnv: t.TempDir(),
-			body:        `{"model":"m","filename":"sys.bin","slot":-1}`,
+			body:        `{"model":"m","filename":"/etc/passwd"}`,
 			wantStatus:  http.StatusBadRequest,
 		},
 		{
-			name:        "absolute filename",
+			name:        "filename with windows drive colon",
 			slotSaveEnv: t.TempDir(),
-			body:        `{"model":"m","filename":"/etc/passwd"}`,
+			body:        `{"model":"m","filename":"C:sys.bin"}`,
 			wantStatus:  http.StatusBadRequest,
 		},
 		{
@@ -91,7 +91,7 @@ func TestKVSlotHandlerRejects(t *testing.T) {
 				r := kvEngine()
 
 				w := httptest.NewRecorder()
-				req := httptest.NewRequest(http.MethodPost, "/api/kv/"+action, strings.NewReader(tt.body))
+				req := httptest.NewRequest(http.MethodPost, "/api/experimental/kv/"+action, strings.NewReader(tt.body))
 				req.Header.Set("Content-Type", "application/json")
 				r.ServeHTTP(w, req)
 
