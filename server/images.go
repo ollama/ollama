@@ -1109,9 +1109,14 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	err = os.WriteFile(fp, manifestData, 0o644)
+	tmpFp := fp + ".tmp"
+	err = os.WriteFile(tmpFp, manifestData, 0o644)
 	if err != nil {
 		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
+		return err
+	}
+	if err := os.Rename(tmpFp, fp); err != nil {
+		os.Remove(tmpFp)
 		return err
 	}
 
@@ -1208,7 +1213,12 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		return err
 	}
 
-	if err := os.WriteFile(fp, manifestData, 0o644); err != nil {
+	tmpFp := fp + ".tmp"
+	if err := os.WriteFile(tmpFp, manifestData, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpFp, fp); err != nil {
+		os.Remove(tmpFp)
 		return err
 	}
 
