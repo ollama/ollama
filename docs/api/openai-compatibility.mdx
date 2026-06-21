@@ -405,6 +405,10 @@ curl http://localhost:11434/v1/chat/completions \
     }'
 ```
 
+### Ollama-native request fields
+
+OpenAI-compatible endpoints accept OpenAI request fields only. Ollama-native fields such as `keep_alive` and `options` are not supported by `/v1/chat/completions` or `/v1/completions`. Use the native `/api/chat` or `/api/generate` endpoints when those fields are required.
+
 ### Setting the context size
 
 The OpenAI API does not have a way of setting the context size for a model. If you need to change the context size, create a `Modelfile` which looks like:
