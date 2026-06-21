@@ -89,6 +89,14 @@ func shouldUseHarmony(model *Model) bool {
 	return false
 }
 
+func defaultThinkValue(model *Model) *api.ThinkValue {
+	if model != nil && model.Config.Parser == "gemma4" {
+		return &api.ThinkValue{Value: false}
+	}
+
+	return &api.ThinkValue{Value: true}
+}
+
 func experimentEnabled(name string) bool {
 	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
 }
@@ -466,7 +474,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
 		if req.Think == nil {
-			req.Think = &api.ThinkValue{Value: true}
+			req.Think = defaultThinkValue(m)
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {
@@ -2598,7 +2606,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
 		if req.Think == nil {
-			req.Think = &api.ThinkValue{Value: true}
+			req.Think = defaultThinkValue(m)
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {
