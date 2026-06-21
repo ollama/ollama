@@ -1,7 +1,9 @@
 package parsers
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -764,6 +766,101 @@ func TestQwenParserEmptyEnvelopeMixedWithRealCalls(t *testing.T) {
 	}
 	if calls[0].Function.Name != "get_weather" {
 		t.Errorf("got call name %q, want %q", calls[0].Function.Name, "get_weather")
+	}
+}
+
+// TestQwenParserBareFunctionNoOpenTag covers
+// https://github.com/ollama/ollama/issues/16686: qwen3-coder / qwen3.6
+// sometimes emit a <function=…> block with no opening <tool_call> tag
+// (frequently leaving a stray </tool_call> behind). The parser must recognize
+// the call instead of leaking the whole block into content.
+func TestQwenParserBareFunctionNoOpenTag(t *testing.T) {
+	cases := []struct {
+		name        string
+		input       string
+		wantContent string
+		wantName    string
+		wantArg     string // expected value of the "pattern" argument
+	}{
+		{
+			name:        "bare function with stray closing tag (the #16686 case)",
+			input:       "<function=Glob>\n<parameter=pattern>\n*.md\n</parameter>\n</function>\n</tool_call>",
+			wantContent: "",
+			wantName:    "Glob",
+			wantArg:     "*.md",
+		},
+		{
+			name:        "bare function with no closing tool tag at all",
+			input:       "<function=Glob><parameter=pattern>*.md</parameter></function>",
+			wantContent: "",
+			wantName:    "Glob",
+			wantArg:     "*.md",
+		},
+		{
+			name:        "narration before a bare function block",
+			input:       "I'll list the markdown files.\n\n<function=Glob><parameter=pattern>*.md</parameter></function></tool_call>",
+			wantContent: "I'll list the markdown files.",
+			wantName:    "Glob",
+			wantArg:     "*.md",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			content, _, calls, err := p.Add(tc.input, true)
+			if err != nil {
+				t.Fatalf("Add returned error: %v", err)
+			}
+			if content != tc.wantContent {
+				t.Errorf("content = %q, want %q", content, tc.wantContent)
+			}
+			if len(calls) != 1 {
+				t.Fatalf("expected 1 tool call, got %d", len(calls))
+			}
+			if calls[0].Function.Name != tc.wantName {
+				t.Errorf("call name = %q, want %q", calls[0].Function.Name, tc.wantName)
+			}
+			got, ok := calls[0].Function.Arguments.Get("pattern")
+			if !ok {
+				t.Fatalf("missing 'pattern' argument")
+			}
+			if fmt.Sprint(got) != tc.wantArg {
+				t.Errorf("pattern arg = %v, want %q", got, tc.wantArg)
+			}
+		})
+	}
+}
+
+// TestQwenParserBareFunctionStreaming feeds the #16686 malformation one rune at
+// a time, exercising the partial-tag withholding for the <function= trigger so
+// the block is never streamed out as content before it's recognized.
+func TestQwenParserBareFunctionStreaming(t *testing.T) {
+	input := "Here you go.\n\n<function=Glob><parameter=pattern>*.md</parameter></function></tool_call>"
+	p := Qwen3CoderParser{}
+	p.Init(nil, nil, nil)
+
+	var content strings.Builder
+	var calls []api.ToolCall
+	runes := []rune(input)
+	for i, r := range runes {
+		c, _, cl, err := p.Add(string(r), i == len(runes)-1)
+		if err != nil {
+			t.Fatalf("Add returned error at rune %d: %v", i, err)
+		}
+		content.WriteString(c)
+		calls = append(calls, cl...)
+	}
+
+	if got := content.String(); got != "Here you go." {
+		t.Errorf("content = %q, want %q", got, "Here you go.")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "Glob" {
+		t.Errorf("call name = %q, want %q", calls[0].Function.Name, "Glob")
 	}
 }
 
