@@ -59,6 +59,18 @@ func TestKVSlotHandlerRejects(t *testing.T) {
 			wantStatus:  http.StatusBadRequest,
 		},
 		{
+			name:        "filename with backslash subdir",
+			slotSaveEnv: t.TempDir(),
+			body:        `{"model":"m","filename":"sub\\sys.bin"}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "negative slot",
+			slotSaveEnv: t.TempDir(),
+			body:        `{"model":"m","filename":"sys.bin","slot":-1}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
 			name:        "absolute filename",
 			slotSaveEnv: t.TempDir(),
 			body:        `{"model":"m","filename":"/etc/passwd"}`,

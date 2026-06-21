@@ -20,7 +20,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -290,10 +289,16 @@ func (s *Server) KVSlotHandler(action string) gin.HandlerFunc {
 			return
 		}
 		// Restrict to a basename so the path cannot escape OLLAMA_SLOT_SAVE_PATH
-		// (the directory llama-server resolves the filename against). Rejects
-		// path separators, "..", and absolute paths.
-		if name := filepath.Base(req.Filename); name != req.Filename || name == "." || name == ".." {
+		// (the directory llama-server resolves the filename against). Reject path
+		// separators for both Unix and Windows ("/" and "\"), plus "." and ".."
+		// — checked explicitly rather than via filepath.Base, which is OS-dependent
+		// and would let "sub\\x" through on a Unix host.
+		if strings.ContainsAny(req.Filename, `/\`) || req.Filename == "." || req.Filename == ".." {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "filename must be a basename (no path separators)"})
+			return
+		}
+		if req.Slot < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "slot must be non-negative"})
 			return
 		}
 
