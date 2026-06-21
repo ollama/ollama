@@ -78,7 +78,11 @@ cmake --build build -j$(nproc)
 
 ## Known Issues & TODO
 
-- **Qwen2.5 / Newer Architectures Support**:
-  - **Issue:** Models like `Qwen2.5-Coder-1.5B-Instruct` fail (producing gibberish or repetitive outputs) even under standard `f16` cache mode. This is due to the older upstream `llama.cpp` base version used in this fork (which lacks support for Qwen2.5 RoPE scaling, metadata, and architecture details).
-  - **TODO:** Upgrade the base `llama.cpp` code in the `llama-cpp-turboquant` repository to a newer upstream release, and adjust the custom TurboQuant/TriAttention patches accordingly.
+- **[COMPLETED] Qwen2.5 / Newer Architectures Support**:
+  - **Status:** The base `llama.cpp` code in `llama-cpp-turboquant` has been upgraded to a newer version that supports Qwen2.5 and newer architectures. TurboQuant types (`turbo2_0`, `turbo3_0`, `turbo4_0`) and the TriAttention API (`ggml_compute_forward_turbo_wht`, `llama_triattention_init`) have been fully migrated and integrated into the new codebase.
+- **[IN PROGRESS] CUDA Kernel Signature Updates for Flash Attention**:
+  - **Status:** The newer `llama.cpp` introduced `block_table` and `block_size` parameters to the `ggml_flash_attn_ext` function. All related CUDA kernels (`fattn-wmma-f16.cu`, `fattn-mma-f16.cuh`, `fattn-vec.cuh`, `fattn-tile.cuh`) in the TurboQuant fork have been patched to include these new parameters.
+  - **Next Steps:** 
+    1. Re-run the Ollama build (`cmake --build build -j$(nproc)`).
+    2. Test if `Qwen2.5-Coder-1.5B-Instruct` works correctly using the new upgraded fork.
 
