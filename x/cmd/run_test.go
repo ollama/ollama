@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -184,6 +185,53 @@ func TestTruncateToolOutput(t *testing.T) {
 				if result != tt.output {
 					t.Error("expected output to not be truncated")
 				}
+			}
+		})
+	}
+}
+
+// Regression for https://github.com/ollama/ollama/issues/16648: the tool-call
+// display must show the full command/query so the user can see exactly what is
+// about to run. This is the only place a call is surfaced in yolo mode, where
+// there is no approval prompt to inspect it first, so it must not be truncated.
+func TestFormatToolCall(t *testing.T) {
+	longCmd := "curl -sS -X POST https://api.example.com/v1/very/long/endpoint?token=abcdef0123456789 -H 'Content-Type: application/json' -d '{\"hello\":\"world\"}'"
+	longQuery := strings.Repeat("how to write a very long search query that exceeds fifty characters ", 3)
+
+	tests := []struct {
+		name     string
+		toolName string
+		args     map[string]any
+		want     string
+	}{
+		{
+			name:     "bash command shown in full",
+			toolName: "bash",
+			args:     map[string]any{"command": longCmd},
+			want:     longCmd,
+		},
+		{
+			name:     "web_search query shown in full",
+			toolName: "web_search",
+			args:     map[string]any{"query": longQuery},
+			want:     longQuery,
+		},
+		{
+			name:     "unknown tool falls back to display name",
+			toolName: "some_tool",
+			args:     map[string]any{},
+			want:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatToolCall(tt.toolName, tt.args)
+			if tt.want != "" && !strings.Contains(got, tt.want) {
+				t.Errorf("formatToolCall(%q) = %q, want it to contain the full value %q", tt.toolName, got, tt.want)
+			}
+			if strings.Contains(got, "...") {
+				t.Errorf("formatToolCall(%q) = %q, want no truncation ellipsis", tt.toolName, got)
 			}
 		})
 	}
