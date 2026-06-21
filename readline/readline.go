@@ -195,7 +195,30 @@ func (i *Instance) Readline() (string, error) {
 			case MetaEnd:
 				buf.MoveToEnd()
 			default:
-				// skip any keys we don't know about
+				// Handle parameterized CSI sequences (e.g. \x1b[1;5D for Ctrl+Left)
+				// CSI = ESC [ params final_byte where params are digits and semicolons,
+				// and final_byte is in range 0x40-0x7E.
+				if r >= '0' && r <= '9' {
+					var param strings.Builder
+					param.WriteRune(r)
+					for {
+						pr, err := i.Terminal.Read()
+						if err != nil {
+							return "", io.EOF
+						}
+						// final byte of CSI sequence: 0x40-0x7E
+						if pr >= 0x40 && pr <= 0x7E {
+							switch param.String() + string(pr) {
+							case KeyCtrlLeftSeq, "5D":
+								buf.MoveLeftWord()
+							case KeyCtrlRightSeq, "5C":
+								buf.MoveRightWord()
+							}
+							break
+						}
+						param.WriteRune(pr)
+					}
+				}
 				continue
 			}
 			continue

@@ -96,3 +96,10 @@ const (
 	CharBracketedPasteStart = "00~"
 	CharBracketedPasteEnd   = "01~"
 )
+
+// CSI parameter suffixes for Ctrl+modifier arrow key sequences
+// Terminals send either ESC [ 1 ; 5 D (xterm) or ESC [ 5 D (some terminals) for Ctrl+Left, etc.
+const (
+	KeyCtrlLeftSeq  = "1;5D"
+	KeyCtrlRightSeq = "1;5C"
+)
