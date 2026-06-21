@@ -75,3 +75,10 @@ cmake --build build -j$(nproc)
 - Ollama fetches it via CMake at build time — no submodule needed
 - The patch in `llama/compat/llama-cpp-hooks.patch` applies on top of
   the turboquant fork, adding Ollama's monolithic-GGUF loading support
+
+## Known Issues & TODO
+
+- **Qwen2.5 / Newer Architectures Support**:
+  - **Issue:** Models like `Qwen2.5-Coder-1.5B-Instruct` fail (producing gibberish or repetitive outputs) even under standard `f16` cache mode. This is due to the older upstream `llama.cpp` base version used in this fork (which lacks support for Qwen2.5 RoPE scaling, metadata, and architecture details).
+  - **TODO:** Upgrade the base `llama.cpp` code in the `llama-cpp-turboquant` repository to a newer upstream release, and adjust the custom TurboQuant/TriAttention patches accordingly.
+
