@@ -2390,3 +2390,83 @@ func TestIsLocalhost(t *testing.T) {
 		})
 	}
 }
+
+// Regression test for https://github.com/ollama/ollama/issues/16785:
+// displayResponse must not emit ANSI escape sequences when plainText is true
+// (i.e. stdout is not a terminal, such as when piping to a file).
+func TestDisplayResponseNoEscapesWhenPlainText(t *testing.T) {
+	content := strings.Repeat("the quick brown fox jumps over the lazy dog ", 5)
+
+	t.Run("plain_text_no_escapes", func(t *testing.T) {
+		var buf bytes.Buffer
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		state := &displayResponseState{}
+		displayResponse(content, true, true, state) // plainText=true
+
+		w.Close()
+		os.Stdout = oldStdout
+		io.Copy(&buf, r)
+
+		out := buf.String()
+		if strings.ContainsRune(out, '\x1b') {
+			t.Errorf("plain text output contains ANSI escape sequence:\n%q", out)
+		}
+		if out != content {
+			t.Errorf("plain text output = %q, want %q", out, content)
+		}
+	})
+
+	t.Run("interactive_with_escapes", func(t *testing.T) {
+		// When plainText=false, word-wrap can emit escape sequences for
+		// cursor movement. We verify that plainText=false does NOT strip
+		// those sequences (i.e. the function still works normally when
+		// running in a terminal).
+		var buf bytes.Buffer
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		state := &displayResponseState{}
+		// plainText=false should trigger the word-wrap path when termWidth
+		// is available. In a test pipe, term.GetSize returns 0 so we fall
+		// through to the else branch which prints content without escapes,
+		// but with wordBuffer tracking. The key point is that the
+		// plainText=false path is exercised without panicking.
+		displayResponse(content, true, false, state)
+
+		w.Close()
+		os.Stdout = oldStdout
+		io.Copy(&buf, r)
+
+		// We don't assert on escape codes here because the test pipe
+		// doesn't have a real terminal width. The important thing is that
+		// plainText=false doesn't crash and produces output.
+		if buf.Len() == 0 {
+			t.Error("expected some output from interactive mode")
+		}
+	})
+
+	t.Run("plain_text_short_content", func(t *testing.T) {
+		shortContent := "Hello, world"
+
+		var buf bytes.Buffer
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		state := &displayResponseState{}
+		displayResponse(shortContent, true, true, state)
+
+		w.Close()
+		os.Stdout = oldStdout
+		io.Copy(&buf, r)
+
+		out := buf.String()
+		if out != shortContent {
+			t.Errorf("plain text short content = %q, want %q", out, shortContent)
+		}
+	})
+}

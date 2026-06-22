@@ -910,7 +910,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 				fmt.Printf(">>> %s\n", msg.Content)
 			case "assistant":
 				state := &displayResponseState{}
-				displayResponse(msg.Content, opts.WordWrap, state)
+				displayResponse(msg.Content, opts.WordWrap, false, state)
 				fmt.Println()
 				fmt.Println()
 			}
@@ -1664,12 +1664,12 @@ type displayResponseState struct {
 	wordBuffer string
 }
 
-func displayResponse(content string, wordWrap bool, state *displayResponseState) {
+func displayResponse(content string, wordWrap bool, plainText bool, state *displayResponseState) {
 	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
 	if termWidth == 0 {
 		termWidth = 80
 	}
-	if wordWrap && termWidth >= 10 {
+	if wordWrap && !plainText && termWidth >= 10 {
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
 				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
@@ -1783,7 +1783,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 				thinkTagClosed = false
 			}
 			thinkingContent.WriteString(response.Message.Thinking)
-			displayResponse(response.Message.Thinking, opts.WordWrap, state)
+			displayResponse(response.Message.Thinking, opts.WordWrap, false, state)
 		}
 
 		content := response.Message.Content
@@ -1809,7 +1809,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 			}
 		}
 
-		displayResponse(content, opts.WordWrap, state)
+		displayResponse(content, opts.WordWrap, false, state)
 
 		return nil
 	}
@@ -1914,7 +1914,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 				thinkTagClosed = false
 			}
 			thinkingContent.WriteString(response.Thinking)
-			displayResponse(response.Thinking, opts.WordWrap, state)
+			displayResponse(response.Thinking, opts.WordWrap, plainText, state)
 		}
 
 		if thinkTagOpened && !thinkTagClosed && (content != "" || len(response.ToolCalls) > 0) {
@@ -1927,7 +1927,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 			state = &displayResponseState{}
 		}
 
-		displayResponse(content, opts.WordWrap, state)
+		displayResponse(content, opts.WordWrap, plainText, state)
 
 		if response.ToolCalls != nil {
 			toolCalls := response.ToolCalls
