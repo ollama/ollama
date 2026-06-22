@@ -40,13 +40,10 @@ func TestChatEnterQueuesWhileRunning(t *testing.T) {
 }
 
 func compactionToolCallMessage() api.Message {
-	args := api.NewToolCallFunctionArguments()
-	args.Set("reason", "context compaction")
 	return api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
-		ID: "ollama_compaction",
+		ID: chatCompactionToolCallID,
 		Function: api.ToolCallFunction{
-			Name:      "compact_conversation",
-			Arguments: args,
+			Name: chatCompactionToolName,
 		},
 	}}}
 }
@@ -177,6 +174,32 @@ func TestChatActivityLineShowsDelayedWaitingSpinnerOnFollowUp(t *testing.T) {
 	}
 	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Ollamaing...") || strings.Contains(got, "waiting for model") {
 		t.Fatalf("activityLine = %q, want delayed Ollamaing label without old waiting label", got)
+	}
+}
+
+func TestChatActivityLineShowsWaitingAfterToolResultBeforeFollowUpStream(t *testing.T) {
+	m := chatModel{
+		running: true,
+		spinner: waitingSpinnerTicks,
+		entries: []chatEntry{
+			{role: "user", content: "look it up"},
+			{role: "assistant", content: "I'll search."},
+			{role: "tool", label: "Web Search(\"query\")", status: "done", content: "result"},
+		},
+	}
+
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); strings.Contains(got, "Ollamaing") {
+		t.Fatalf("activityLine = %q, want no waiting label before next request", got)
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventRequestBuilt})
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Ollamaing...") {
+		t.Fatalf("activityLine = %q, want Ollamaing label while follow-up request waits", got)
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageStarted})
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); strings.Contains(got, "Ollamaing") {
+		t.Fatalf("activityLine = %q, want waiting label cleared when stream starts", got)
 	}
 }
 
@@ -765,7 +788,7 @@ func TestChatAutoCompactionEventsShowActivity(t *testing.T) {
 		Type: coreagent.EventCompacted,
 		Messages: []api.Message{
 			compactionToolCallMessage(),
-			{Role: "tool", ToolName: "compact_conversation", ToolCallID: "ollama_compaction", Content: chatCompactionSummaryPrefix + "summary"},
+			{Role: "tool", ToolName: chatCompactionToolName, ToolCallID: chatCompactionToolCallID, Content: chatCompactionSummaryPrefix + "summary"},
 		},
 	})
 	if m.compacting {
@@ -1259,7 +1282,7 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 			Messages: []api.Message{
 				{Role: "user", Content: "recent request"},
 				compactionToolCallMessage(),
-				{Role: "tool", ToolName: "compact_conversation", ToolCallID: "ollama_compaction", Content: "Conversation summary:\nold work summary"},
+				{Role: "tool", ToolName: chatCompactionToolName, ToolCallID: chatCompactionToolCallID, Content: "Conversation summary:\nold work summary"},
 			},
 			Compacted: true,
 			Due:       true,

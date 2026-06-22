@@ -26,7 +26,7 @@ const (
 	waitingSpinnerTicks       = 4
 )
 const (
-	chatCompactionToolName      = "compact_conversation"
+	chatCompactionToolName      = "summary"
 	chatCompactionToolCallID    = "ollama_compaction"
 	chatCompactionSummaryPrefix = "Conversation summary:\n"
 )
@@ -112,6 +112,7 @@ type chatModel struct {
 	promptDraft       []rune
 	promptActive      bool
 	running           bool
+	awaitingModel     bool
 	compacting        bool
 	cancel            context.CancelFunc
 	events            <-chan tea.Msg
@@ -286,6 +287,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatRunDoneMsg:
 		wasCanceling := m.status == "canceling"
 		m.running = false
+		m.awaitingModel = false
 		m.compacting = false
 		m.compactingTokens = 0
 		m.cancel = nil
@@ -1102,6 +1104,7 @@ func (m *chatModel) startRunWithMessages(displayInput string, newMessages []api.
 		m.entries = append(m.entries, entriesFromMessages(newMessages[1:])...)
 	}
 	m.running = true
+	m.awaitingModel = false
 	m.status = "running"
 	m.spinner = 0
 	m.scroll = 0

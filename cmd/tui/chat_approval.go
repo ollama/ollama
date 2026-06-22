@@ -244,7 +244,6 @@ func (m chatModel) renderApprovalPromptLines(width int) []string {
 
 	lines = append(lines, "")
 	lines = append(lines, indentLines(renderApprovalChoices(prompt.cursor, bodyWidth), "  ")...)
-	lines = append(lines, "  "+chatMetaStyle.Render("1/2/3 choose • enter select • esc deny"))
 	return lines
 }
 

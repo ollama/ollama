@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -27,6 +28,28 @@ func (s *compactionStore) ArchiveForCompactionWithContinuation(_ context.Context
 	return nil
 }
 
+type scriptedCompactionClient struct {
+	responses [][]api.ChatResponse
+	errs      []error
+	requests  []*api.ChatRequest
+}
+
+func (c *scriptedCompactionClient) Chat(_ context.Context, req *api.ChatRequest, fn api.ChatResponseFunc) error {
+	c.requests = append(c.requests, req)
+	i := len(c.requests) - 1
+	if i < len(c.responses) {
+		for _, response := range c.responses[i] {
+			if err := fn(response); err != nil {
+				return err
+			}
+		}
+	}
+	if i < len(c.errs) {
+		return c.errs[i]
+	}
+	return nil
+}
+
 func assertCompactionSummaryPair(t *testing.T, messages []api.Message) {
 	t.Helper()
 	if len(messages) != 2 {
@@ -34,6 +57,9 @@ func assertCompactionSummaryPair(t *testing.T, messages []api.Message) {
 	}
 	if messages[0].Role != "assistant" || len(messages[0].ToolCalls) != 1 || messages[0].ToolCalls[0].Function.Name != compactionToolName {
 		t.Fatalf("compaction assistant message = %#v", messages[0])
+	}
+	if messages[0].ToolCalls[0].Function.Arguments.Len() != 0 {
+		t.Fatalf("compaction summary tool call should not have arguments: %#v", messages[0].ToolCalls[0].Function.Arguments.ToMap())
 	}
 	if messages[1].Role != "tool" || messages[1].ToolName != compactionToolName || messages[1].ToolCallID != messages[0].ToolCalls[0].ID {
 		t.Fatalf("compaction tool result = %#v", messages[1])
@@ -231,6 +257,135 @@ func TestSimpleCompactorTruncatesOversizedSummary(t *testing.T) {
 	}
 	if !strings.Contains(result.Messages[1].Content, compactionSummaryTruncated) {
 		t.Fatalf("compacted message missing truncation marker: %#v", result.Messages)
+	}
+}
+
+func TestSimpleCompactorRetriesEmptySummaryWithThinkFalse(t *testing.T) {
+	client := &scriptedCompactionClient{
+		responses: [][]api.ChatResponse{
+			{{Message: api.Message{Role: "assistant", Thinking: "internal summary plan"}}},
+			{{Message: api.Message{Role: "assistant", Content: "fallback summary"}}},
+		},
+	}
+	compactor := NewSimpleCompactor(client, nil, CompactionOptions{
+		ContextWindowTokens: 100,
+		KeepUserTurns:       1,
+		Threshold:           0.5,
+	})
+
+	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
+		Model: "model",
+		Messages: []api.Message{
+			{Role: "user", Content: "old request"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "recent request"},
+		},
+		Force: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Compacted || result.Summary != "fallback summary" {
+		t.Fatalf("compaction result = %#v", result)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("summary requests = %d, want 2", len(client.requests))
+	}
+	if client.requests[0].Think != nil {
+		t.Fatalf("first summary request think = %#v, want nil", client.requests[0].Think)
+	}
+	if client.requests[1].Think == nil || client.requests[1].Think.Value != false {
+		t.Fatalf("fallback summary request think = %#v, want false", client.requests[1].Think)
+	}
+}
+
+func TestSimpleCompactorIgnoresUnsupportedThinkFalseFallback(t *testing.T) {
+	client := &scriptedCompactionClient{
+		responses: [][]api.ChatResponse{
+			{{Message: api.Message{Role: "assistant", Thinking: "internal summary plan"}}},
+			nil,
+		},
+		errs: []error{
+			nil,
+			api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: "model does not support thinking"},
+		},
+	}
+	compactor := NewSimpleCompactor(client, nil, CompactionOptions{
+		ContextWindowTokens: 100,
+		KeepUserTurns:       1,
+		Threshold:           0.5,
+	})
+
+	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
+		Model: "model",
+		Messages: []api.Message{
+			{Role: "user", Content: "old request"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "recent request"},
+		},
+		Force: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Compacted || result.Reason != "summary was empty" {
+		t.Fatalf("compaction result = %#v", result)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("summary requests = %d, want 2", len(client.requests))
+	}
+	if client.requests[1].Think == nil || client.requests[1].Think.Value != false {
+		t.Fatalf("fallback summary request think = %#v, want false", client.requests[1].Think)
+	}
+}
+
+func TestSimpleCompactorFallsBackToUnsetThinkWhenThinkFalseUnsupported(t *testing.T) {
+	client := &scriptedCompactionClient{
+		responses: [][]api.ChatResponse{
+			{{Message: api.Message{Role: "assistant", Thinking: "internal summary plan"}}},
+			nil,
+			{{Message: api.Message{Role: "assistant", Content: "unset think summary"}}},
+		},
+		errs: []error{
+			nil,
+			api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: "think level is not supported"},
+			nil,
+		},
+	}
+	compactor := NewSimpleCompactor(client, nil, CompactionOptions{
+		ContextWindowTokens: 100,
+		KeepUserTurns:       1,
+		Threshold:           0.5,
+	})
+	thinkHigh := &api.ThinkValue{Value: "high"}
+
+	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
+		Model: "model",
+		Messages: []api.Message{
+			{Role: "user", Content: "old request"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "recent request"},
+		},
+		Think: thinkHigh,
+		Force: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Compacted || result.Summary != "unset think summary" {
+		t.Fatalf("compaction result = %#v", result)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("summary requests = %d, want 3", len(client.requests))
+	}
+	if client.requests[0].Think != thinkHigh {
+		t.Fatalf("first summary request think = %#v, want original", client.requests[0].Think)
+	}
+	if client.requests[1].Think == nil || client.requests[1].Think.Value != false {
+		t.Fatalf("fallback summary request think = %#v, want false", client.requests[1].Think)
+	}
+	if client.requests[2].Think != nil {
+		t.Fatalf("unsupported fallback retry think = %#v, want nil", client.requests[2].Think)
 	}
 }
 

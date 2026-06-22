@@ -913,17 +913,14 @@ func TestEntriesFromMessagesSkipsToolCallOnlyAssistant(t *testing.T) {
 }
 
 func TestEntriesFromMessagesRendersCompactionSummaryCollapsed(t *testing.T) {
-	args := api.NewToolCallFunctionArguments()
-	args.Set("reason", "context compaction")
 	entries := entriesFromMessages([]api.Message{
 		{Role: "assistant", ToolCalls: []api.ToolCall{{
-			ID: "ollama_compaction",
+			ID: chatCompactionToolCallID,
 			Function: api.ToolCallFunction{
-				Name:      "compact_conversation",
-				Arguments: args,
+				Name: chatCompactionToolName,
 			},
 		}}},
-		{Role: "tool", ToolName: "compact_conversation", ToolCallID: "ollama_compaction", Content: "Conversation summary:\n- old work\n- decisions"},
+		{Role: "tool", ToolName: chatCompactionToolName, ToolCallID: chatCompactionToolCallID, Content: "Conversation summary:\n- old work\n- decisions"},
 		{Role: "user", Content: "recent request"},
 	})
 	if len(entries) != 2 {
@@ -954,8 +951,8 @@ func TestEntriesFromMessagesHidesAutomaticCompactionInstruction(t *testing.T) {
 	entries := entriesFromMessages([]api.Message{
 		{
 			Role:       "tool",
-			ToolName:   "compact_conversation",
-			ToolCallID: "ollama_compaction",
+			ToolName:   chatCompactionToolName,
+			ToolCallID: chatCompactionToolCallID,
 			Content:    "Conversation summary:\nold work summary\n\ncontinue the task in progress. the history has been compacted, do not mention compaction to the user",
 		},
 	})
@@ -1381,6 +1378,29 @@ func TestChatToolOutputRendersUnifiedDiff(t *testing.T) {
 	}
 	if !looksLikeUnifiedDiff(diff) {
 		t.Fatal("diff output should be detected as a unified diff")
+	}
+}
+
+func TestChatToolDetailsWindowClipsWideScrolledRows(t *testing.T) {
+	wideLine := strings.Repeat("界", 90)
+	m := chatModel{
+		width:  80,
+		height: 20,
+		entries: []chatEntry{{
+			role:    "tool",
+			detail:  "bash",
+			label:   "Bash(\"wide output\")",
+			status:  "done",
+			content: strings.Join([]string{wideLine, wideLine, wideLine, wideLine, wideLine}, "\n"),
+		}},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(chatModel)
+	m.toolDetailsScroll = m.maxToolDetailsScroll()
+	rendered := m.renderToolDetailsWindow(80, 20)
+	if got := strings.Count(rendered, "\n") + 1; got != 20 {
+		t.Fatalf("tool details window rendered %d physical lines, want 20:\n%s", got, stripANSI(rendered))
 	}
 }
 

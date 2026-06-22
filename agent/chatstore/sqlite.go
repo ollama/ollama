@@ -23,7 +23,7 @@ type Store struct {
 
 const (
 	compactionSummaryMessagePrefix = "Conversation summary:\n"
-	compactionToolName             = "compact_conversation"
+	compactionToolName             = "summary"
 	compactionToolCallID           = "ollama_compaction"
 	compactionContinueInstruction  = "continue the task in progress. the history has been compacted, do not mention compaction to the user"
 )
@@ -650,15 +650,15 @@ func (s *Store) archiveForCompaction(ctx context.Context, chatID string, keepUse
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE messages
 		SET archived = 1
-		WHERE chat_id = ? AND archived = 0 AND (
-			id < ?
-			OR tool_name = ?
-			OR EXISTS (
-				SELECT 1 FROM tool_calls
-				WHERE tool_calls.message_id = messages.id AND tool_calls.function_name = ?
+			WHERE chat_id = ? AND archived = 0 AND (
+				id < ?
+				OR tool_name = ?
+				OR EXISTS (
+					SELECT 1 FROM tool_calls
+					WHERE tool_calls.message_id = messages.id AND tool_calls.function_name = ?
+				)
 			)
-		)
-	`, chatID, keepStartID, compactionToolName, compactionToolName); err != nil {
+		`, chatID, keepStartID, compactionToolName, compactionToolName); err != nil {
 		return fmt.Errorf("archive messages: %w", err)
 	}
 
@@ -678,8 +678,6 @@ func (s *Store) archiveForCompaction(ctx context.Context, chatID string, keepUse
 }
 
 func compactionSummaryMessages(summary string, continueTask bool) []api.Message {
-	args := api.NewToolCallFunctionArguments()
-	args.Set("reason", "context compaction")
 	content := compactionSummaryMessagePrefix + strings.TrimSpace(summary)
 	if continueTask {
 		content = strings.TrimSpace(content) + "\n\n" + compactionContinueInstruction
@@ -690,8 +688,7 @@ func compactionSummaryMessages(summary string, continueTask bool) []api.Message 
 			ToolCalls: []api.ToolCall{{
 				ID: compactionToolCallID,
 				Function: api.ToolCallFunction{
-					Name:      compactionToolName,
-					Arguments: args,
+					Name: compactionToolName,
 				},
 			}},
 		},
@@ -704,9 +701,13 @@ func compactionSummaryMessages(summary string, continueTask bool) []api.Message 
 	}
 }
 
+func isCompactionToolName(name string) bool {
+	return name == compactionToolName
+}
+
 func messagesContainCompactionSummary(messages []api.Message) bool {
 	for _, msg := range messages {
-		if msg.Role == "tool" && msg.ToolName == compactionToolName && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix) {
+		if msg.Role == "tool" && isCompactionToolName(msg.ToolName) && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix) {
 			return true
 		}
 		if (msg.Role == "user" || msg.Role == "system") && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix) {
@@ -722,10 +723,10 @@ func moveCompactionSummaryBeforeKeptMessages(messages []api.Message) []api.Messa
 	for i, msg := range messages {
 		if msg.Role == "assistant" {
 			for _, call := range msg.ToolCalls {
-				if call.Function.Name == compactionToolName {
+				if isCompactionToolName(call.Function.Name) {
 					start = i
 					end = i + 1
-					if end < len(messages) && messages[end].Role == "tool" && messages[end].ToolName == compactionToolName {
+					if end < len(messages) && messages[end].Role == "tool" && isCompactionToolName(messages[end].ToolName) {
 						end++
 					}
 					break

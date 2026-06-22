@@ -49,7 +49,10 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	skipResponseMetrics := false
 
 	switch event.Type {
+	case coreagent.EventRequestBuilt:
+		m.awaitingModel = true
 	case coreagent.EventMessageStarted:
+		m.awaitingModel = false
 		m.eventErrorRendered = false
 		m.compacting = false
 		m.compactingTokens = 0
@@ -57,6 +60,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.thinkingTokens = 0
 		m.refreshContextWindowTokens(m.opts.Model)
 	case coreagent.EventThinkingDelta:
+		m.awaitingModel = false
 		if event.Thinking != "" {
 			m.thinking = true
 			m.thinkingTokens = max(m.thinkingTokens, eventEvalCount(event))
@@ -68,6 +72,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			contextChanged = true
 		}
 	case coreagent.EventMessageDelta:
+		m.awaitingModel = false
 		m.thinking = false
 		m.thinkingTokens = 0
 		m.groupCompletedToolHistory()
@@ -78,12 +83,14 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.liveMessages[msgIdx].Content += event.Content
 		contextChanged = true
 	case coreagent.EventToolCallDetected:
+		m.awaitingModel = false
 		m.thinking = false
 		m.thinkingTokens = 0
 		idx := m.ensureLiveAssistantMessage()
 		m.liveMessages[idx].ToolCalls = append(m.liveMessages[idx].ToolCalls, event.ToolCalls...)
 		contextChanged = true
 	case coreagent.EventToolStarted:
+		m.awaitingModel = false
 		m.thinking = false
 		m.thinkingTokens = 0
 		m.refreshContextWindowTokens(m.opts.Model)
@@ -102,6 +109,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.applyToolOutputModeTo(idx)
 		m.markEntryDirty(idx)
 	case coreagent.EventToolFinished:
+		m.awaitingModel = false
 		m.thinking = false
 		m.thinkingTokens = 0
 		m.refreshContextWindowTokens(m.opts.Model)
@@ -137,10 +145,12 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		})
 		contextChanged = true
 	case coreagent.EventToolsUnavailable:
+		m.awaitingModel = false
 		m.thinking = false
 		m.thinkingTokens = 0
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: "Tools are unavailable for this model."}))
 	case coreagent.EventCompacted:
+		m.awaitingModel = false
 		m.compacting = false
 		m.compactingTokens = 0
 		m.thinking = false
@@ -153,12 +163,14 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		}
 		m.status = "compacted"
 	case coreagent.EventCompactionStarted:
+		m.awaitingModel = false
 		m.compacting = true
 		m.compactingTokens = 0
 		m.thinking = false
 		m.thinkingTokens = 0
 		m.status = "compacting"
 	case coreagent.EventCompactionProgress:
+		m.awaitingModel = false
 		m.compacting = true
 		m.thinking = false
 		m.thinkingTokens = 0
@@ -166,6 +178,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			m.compactingTokens = event.Tokens
 		}
 	case coreagent.EventCompactionSkipped:
+		m.awaitingModel = false
 		m.compacting = false
 		m.compactingTokens = 0
 		m.thinking = false
@@ -176,7 +189,10 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		}
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: message}))
 		m.status = "compact skipped"
+	case coreagent.EventModelStreamDone:
+		m.awaitingModel = false
 	case coreagent.EventError:
+		m.awaitingModel = false
 		m.compacting = false
 		m.compactingTokens = 0
 		m.thinking = false
@@ -205,7 +221,11 @@ func messagesEndWithCompactionResult(messages []api.Message) bool {
 		return false
 	}
 	msg := messages[len(messages)-1]
-	return msg.Role == "tool" && (msg.ToolName == chatCompactionToolName || msg.ToolCallID == chatCompactionToolCallID)
+	return msg.Role == "tool" && (isChatCompactionToolName(msg.ToolName) || msg.ToolCallID == chatCompactionToolCallID)
+}
+
+func isChatCompactionToolName(name string) bool {
+	return name == chatCompactionToolName
 }
 
 func (m *chatModel) ensureLiveAssistantMessage() int {

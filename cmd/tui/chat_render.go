@@ -349,16 +349,22 @@ func (m chatModel) renderModelStatusLines(width int) []string {
 	if m.modelPicker != nil {
 		return nil
 	}
-	model := strings.TrimSpace(m.opts.Model)
-	if model == "" {
-		return nil
+	var parts []string
+	if model := strings.TrimSpace(m.opts.Model); model != "" {
+		parts = append(parts, model)
 	}
 	if contextStatus := m.contextStatus(); contextStatus != "" {
-		model += "  " + contextStatus
+		parts = append(parts, contextStatus)
 	}
-	lines := wrapChatText(model, width)
+	if notice := m.permissionModeNotice(); notice != "" {
+		parts = append(parts, notice)
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	lines := wrapChatText(strings.Join(parts, "  "), width)
 	for i := range lines {
-		lines[i] = chatMetaStyle.Render(lines[i])
+		lines[i] = renderFooterPlainLine(lines[i])
 	}
 	return lines
 }
@@ -446,7 +452,7 @@ func (m chatModel) renderToolDetailsWindow(width, height int) string {
 		lines = lines[:height]
 	}
 	for i := range lines {
-		lines[i] = truncateRenderedLine(lines[i], width)
+		lines[i] = clipRenderedLine(lines[i], width)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -497,9 +503,9 @@ func (m chatModel) renderToolDetailsWindowLines(width, height int) []string {
 	}
 
 	lines := []string{chatInputBorderStyle.Render(inputBoxTopBorderLine(width))}
-	lines = append(lines, chatInputBorderStyle.Render("│")+padRenderedLine(truncateRenderedLine(title, innerWidth), innerWidth)+chatInputBorderStyle.Render("│"))
+	lines = append(lines, chatInputBorderStyle.Render("│")+padRenderedLine(clipRenderedLine(title, innerWidth), innerWidth)+chatInputBorderStyle.Render("│"))
 	for _, line := range bodyLines {
-		line = truncateRenderedLine(line, innerWidth)
+		line = clipRenderedLine(line, innerWidth)
 		lines = append(lines, chatInputBorderStyle.Render("│")+padRenderedLine(line, innerWidth)+chatInputBorderStyle.Render("│"))
 	}
 	for len(lines) < height-1 {
@@ -1458,7 +1464,11 @@ func (m chatModel) footerParts() []string {
 	if m.opts.Verbose {
 		parts = append(parts, "verbose")
 	}
-	parts = append(parts, m.permissionModeStatus())
+	if notice := m.permissionModeNotice(); notice != "" {
+		parts = append(parts, notice)
+	} else {
+		parts = append(parts, m.permissionModeStatus())
+	}
 	if cwd := m.cwdStatus(); cwd != "" {
 		parts = append(parts, cwd)
 	}
@@ -1474,7 +1484,7 @@ func (m chatModel) notificationLine() string {
 		return ""
 	}
 	switch status {
-	case "queued", "running", "compacting", "approval required":
+	case "queued", "running", "compacting", "approval required", "full access enabled", "review mode enabled":
 		return ""
 	default:
 		return status
@@ -1523,6 +1533,15 @@ func (m chatModel) permissionModeStatus() string {
 		return "full access"
 	}
 	return "review"
+}
+
+func (m chatModel) permissionModeNotice() string {
+	switch strings.TrimSpace(m.status) {
+	case "full access enabled", "review mode enabled":
+		return strings.TrimSpace(m.status)
+	default:
+		return ""
+	}
 }
 
 func (m *chatModel) refreshContextWindowTokens(modelName string) {
@@ -1645,6 +1664,9 @@ func (m chatModel) waitingForModel() bool {
 	}
 	if !m.running || m.compacting || m.approvalPrompt != nil || m.thinking || m.status == "canceling" {
 		return false
+	}
+	if m.awaitingModel {
+		return true
 	}
 	start := m.currentTurnEntryStart()
 	for i := len(m.entries) - 1; i >= start; i-- {
@@ -1948,6 +1970,19 @@ func truncateRenderedLine(line string, width int) string {
 	return lipgloss.NewStyle().MaxWidth(width).Render(line)
 }
 
+func clipRenderedLine(line string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	line, _, _ = strings.Cut(line, "\n")
+	if lipgloss.Width(line) <= width {
+		return line
+	}
+	clipped := lipgloss.NewStyle().MaxWidth(width).Render(line)
+	clipped, _, _ = strings.Cut(clipped, "\n")
+	return clipped
+}
+
 func clamp(value, minValue, maxValue int) int {
 	if value < minValue {
 		return minValue
@@ -2071,7 +2106,7 @@ func entriesFromMessages(messages []api.Message) []chatEntry {
 }
 
 func compactionSummaryContent(msg api.Message) (string, bool) {
-	if msg.Role != "user" && msg.Role != "system" && !(msg.Role == "tool" && msg.ToolName == "compact_conversation") {
+	if msg.Role != "user" && msg.Role != "system" && !(msg.Role == "tool" && isChatCompactionToolName(msg.ToolName)) {
 		return "", false
 	}
 	if !strings.HasPrefix(msg.Content, chatCompactionSummaryPrefix) {
