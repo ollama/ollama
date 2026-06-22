@@ -99,6 +99,8 @@ type cwdTestTool struct{}
 
 type largeTool struct{}
 
+type preTruncatedTool struct{}
+
 type cancelingTool struct {
 	cancel context.CancelFunc
 }
@@ -246,6 +248,31 @@ func (largeTool) Schema() api.ToolFunction {
 
 func (largeTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
 	return ToolResult{Content: strings.Repeat("x", maxToolResultRunes+100)}, nil
+}
+
+func (preTruncatedTool) Name() string {
+	return "pre_truncated_tool"
+}
+
+func (preTruncatedTool) Description() string {
+	return "returns a large result that is already marked as truncated"
+}
+
+func (preTruncatedTool) Schema() api.ToolFunction {
+	return api.ToolFunction{
+		Name:        "pre_truncated_tool",
+		Description: "returns a large result that is already marked as truncated",
+		Parameters: api.ToolFunctionParameters{
+			Type: "object",
+		},
+	}
+}
+
+func (preTruncatedTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
+	content := strings.Repeat("x", smallContextToolResultRunes) +
+		"\n\n[tool output truncated: showing first ~1500 tokens; omitted ~999 tokens. Use a narrower command, line range, or search query if more detail is needed.]\n\n" +
+		strings.Repeat("y", smallContextToolResultRunes)
+	return ToolResult{Content: content}, nil
 }
 
 func (t cancelingTool) Name() string {
@@ -995,7 +1022,9 @@ func TestSessionTruncatesLargeToolResultsBeforeHistory(t *testing.T) {
 		t.Fatalf("messages = %#v", result.Messages)
 	}
 	content := result.Messages[2].Content
-	if !strings.Contains(content, "[tool output truncated: omitted 100 characters]") {
+	if !strings.Contains(content, "[tool output truncated: showing first ~") ||
+		!strings.Contains(content, "omitted ~25 tokens") ||
+		!strings.Contains(content, "Use a narrower command, line range, or search query") {
 		t.Fatalf("tool content missing truncation marker: %q", content)
 	}
 	if strings.Count(content, "x") != maxToolResultRunes {
@@ -1006,6 +1035,104 @@ func TestSessionTruncatesLargeToolResultsBeforeHistory(t *testing.T) {
 	}
 	if client.requests[1].Messages[2].Content != content {
 		t.Fatalf("second model request did not use truncated tool content")
+	}
+}
+
+func TestSessionSmallContextUsesLowerToolResultPreviewCap(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "large_tool",
+						Arguments: args,
+					},
+				}}},
+			}},
+			{{Message: api.Message{Role: "assistant", Content: "done"}}},
+		},
+	}
+	registry := NewRegistry()
+	registry.Register(largeTool{})
+	session := &Session{
+		Client: client,
+		Tools:  registry,
+		Compactor: NewSimpleCompactor(nil, nil, CompactionOptions{
+			ContextWindowTokens: smallContextToolResultTokenWindow,
+		}),
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		UseTools:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := result.Messages[2].Content
+	if !strings.Contains(content, "[tool output truncated: showing first ~") ||
+		!strings.Contains(content, "Use a narrower command, line range, or search query") {
+		t.Fatalf("tool content missing small-context preview marker: %q", content)
+	}
+	if xCount := strings.Count(content, "x"); xCount != smallContextToolResultRunes {
+		t.Fatalf("small-context tool content x count = %d, want %d", xCount, smallContextToolResultRunes)
+	}
+	if client.requests[1].Messages[2].Content != content {
+		t.Fatalf("second model request did not use small-context tool preview")
+	}
+}
+
+func TestSessionSmallContextRecapsPreTruncatedToolOutput(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "pre_truncated_tool",
+						Arguments: args,
+					},
+				}}},
+			}},
+			{{Message: api.Message{Role: "assistant", Content: "done"}}},
+		},
+	}
+	registry := NewRegistry()
+	registry.Register(preTruncatedTool{})
+	session := &Session{
+		Client: client,
+		Tools:  registry,
+		Compactor: NewSimpleCompactor(nil, nil, CompactionOptions{
+			ContextWindowTokens: smallContextToolResultTokenWindow,
+		}),
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		UseTools:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := result.Messages[2].Content
+	if strings.Count(content, "[tool output truncated: ") != 1 {
+		t.Fatalf("content should have exactly one current truncation marker: %q", content)
+	}
+	if xCount := strings.Count(content, "x"); xCount >= smallContextToolResultRunes {
+		t.Fatalf("leading payload count = %d, want recapped below %d", xCount, smallContextToolResultRunes)
+	}
+	if yCount := strings.Count(content, "y"); yCount >= smallContextToolResultRunes {
+		t.Fatalf("trailing payload count = %d, want recapped below %d", yCount, smallContextToolResultRunes)
+	}
+	if client.requests[1].Messages[2].Content != content {
+		t.Fatalf("second model request did not use re-capped tool content")
 	}
 }
 
@@ -1164,7 +1291,8 @@ func TestSessionContextCapsToolResultBeforeCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := result.Messages[2].Content
-	if !strings.Contains(content, "[tool output truncated: omitted ") {
+	if !strings.Contains(content, "[tool output truncated: ") ||
+		!strings.Contains(content, "Use a narrower command, line range, or search query") {
 		t.Fatalf("tool content missing truncation marker: %q", content)
 	}
 	if xCount := strings.Count(content, "x"); xCount >= maxToolResultRunes {
@@ -1252,7 +1380,8 @@ func TestSessionTruncatesSeededToolMessagesBeforeHistory(t *testing.T) {
 		t.Fatalf("messages = %#v", result.Messages)
 	}
 	content := result.Messages[1].Content
-	if !strings.Contains(content, "[tool output truncated: omitted 100 characters]") {
+	if !strings.Contains(content, "[tool output truncated: showing first ~") ||
+		!strings.Contains(content, "omitted ~25 tokens") {
 		t.Fatalf("seeded tool content missing truncation marker: %q", content)
 	}
 	if store.messages[1].Content != content {

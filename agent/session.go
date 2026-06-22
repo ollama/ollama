@@ -63,9 +63,14 @@ type RunResult struct {
 }
 
 const (
-	streamPersistDeltaThreshold = 20
-	defaultMaxToolRounds        = 100
-	maxToolResultRunes          = 60000
+	streamPersistDeltaThreshold       = 20
+	defaultMaxToolRounds              = 100
+	maxToolResultRunes                = 60000
+	smallContextToolResultRunes       = 6000
+	tinyContextToolResultRunes        = 3200
+	smallContextToolResultTokenWindow = 8192
+	tinyContextToolResultTokenWindow  = 4096
+	toolTruncationMarkerReserveTokens = 64
 )
 
 func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
@@ -734,7 +739,12 @@ func resolvedMaxToolRounds(value int) int {
 }
 
 func (s *Session) toolMessageForContext(toolName, toolCallID, content string, opts RunOptions, messages []api.Message) api.Message {
-	msg := toolMessage(toolName, toolCallID, content)
+	maxRunes := maxToolResultRunes
+	if limit := smallContextToolResultLimitRunes(s.contextWindowTokens(opts)); limit > 0 {
+		maxRunes = min(maxRunes, limit)
+	}
+
+	msg := toolMessageWithLimit(toolName, toolCallID, content, maxRunes)
 	threshold := s.compactionThresholdTokens(opts)
 	if threshold <= 0 {
 		return msg
@@ -752,10 +762,34 @@ func (s *Session) toolMessageForContext(toolName, toolCallID, content string, op
 		ToolName:   toolName,
 		ToolCallID: toolCallID,
 	}})
-	availableRunes := (threshold - baseTokens - overheadTokens) * 4
-	maxRunes := min(maxToolResultRunes, max(0, availableRunes))
-	msg.Content = truncateToolResultContentTo(content, maxRunes)
+	// Keep oversized tool output below the compaction threshold before it is
+	// appended to history. This is especially important for <=8k contexts: the
+	// next step must still have enough room to compact and continue the same
+	// user request instead of asking the user to prompt again.
+	availableRunes := (threshold - baseTokens - overheadTokens - toolTruncationMarkerReserveTokens) * 4
+	maxRunes = min(maxRunes, max(0, availableRunes))
+	msg.Content = forceTruncateToolResultContentTo(content, maxRunes)
 	return msg
+}
+
+func toolMessageWithLimit(toolName, toolCallID, content string, maxRunes int) api.Message {
+	return api.Message{
+		Role:       "tool",
+		Content:    forceTruncateToolResultContentTo(content, maxRunes),
+		ToolName:   toolName,
+		ToolCallID: toolCallID,
+	}
+}
+
+func smallContextToolResultLimitRunes(contextWindow int) int {
+	switch {
+	case contextWindow > 0 && contextWindow <= tinyContextToolResultTokenWindow:
+		return tinyContextToolResultRunes
+	case contextWindow > 0 && contextWindow <= smallContextToolResultTokenWindow:
+		return smallContextToolResultRunes
+	default:
+		return 0
+	}
 }
 
 func (s *Session) runTools(opts RunOptions) api.Tools {
@@ -831,12 +865,7 @@ func (s *Session) contextWindowTokens(opts RunOptions) int {
 }
 
 func toolMessage(toolName, toolCallID, content string) api.Message {
-	return api.Message{
-		Role:       "tool",
-		Content:    truncateToolResultContent(content),
-		ToolName:   toolName,
-		ToolCallID: toolCallID,
-	}
+	return toolMessageWithLimit(toolName, toolCallID, content, maxToolResultRunes)
 }
 
 func sanitizeMessageForRun(msg api.Message) api.Message {
@@ -866,7 +895,7 @@ func truncateToolResultContent(content string) string {
 }
 
 func truncateToolResultContentTo(content string, maxRunes int) string {
-	if strings.Contains(content, "[tool output truncated: omitted ") {
+	if strings.Contains(content, "[tool output truncated: ") {
 		return content
 	}
 	return truncateToolResultContentToLimit(content, maxRunes)
@@ -878,7 +907,7 @@ func forceTruncateToolResultContentTo(content string, maxRunes int) string {
 
 func truncateToolResultContentToLimit(content string, maxRunes int) string {
 	if maxRunes <= 0 {
-		return fmt.Sprintf("[tool output truncated: omitted %d characters]", len([]rune(content)))
+		return fmt.Sprintf("[tool output truncated: output omitted because the context is full; omitted ~%d tokens. Use a narrower command, line range, or search query if more detail is needed.]", approximateTokensFromRunes(len([]rune(content))))
 	}
 	if len(content) <= maxRunes {
 		return content
@@ -892,8 +921,20 @@ func truncateToolResultContentToLimit(content string, maxRunes int) string {
 	omitted := len(runes) - head - tail
 	// TODO(parthsareen): Allow the model to page through full tool output or
 	// request specific ranges while staying aware of the available context.
-	marker := fmt.Sprintf("\n\n[tool output truncated: omitted %d characters]\n\n", omitted)
+	marker := fmt.Sprintf(
+		"\n\n[tool output truncated: showing first ~%d tokens and last ~%d tokens; omitted ~%d tokens. Use a narrower command, line range, or search query if more detail is needed.]\n\n",
+		approximateTokensFromRunes(head),
+		approximateTokensFromRunes(tail),
+		approximateTokensFromRunes(omitted),
+	)
 	return string(runes[:head]) + marker + string(runes[len(runes)-tail:])
+}
+
+func approximateTokensFromRunes(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return max(1, (n+3)/4)
 }
 
 func messageEmpty(msg api.Message) bool {

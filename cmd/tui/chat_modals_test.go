@@ -278,11 +278,44 @@ func TestChatResumeCommandOpensPicker(t *testing.T) {
 		t.Fatal("resume picker was not opened")
 	}
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "Resume session") ||
-		!strings.Contains(view, "Search...") ||
+	if !strings.Contains(view, "Resume chat: type to filter") ||
 		!strings.Contains(view, "Research Parth Sareen online") ||
 		!strings.Contains(view, "llama3.2") {
 		t.Fatalf("resume picker view missing content: %q", view)
+	}
+	if strings.Contains(view, "Search...") {
+		t.Fatalf("resume picker should render inline without full search box: %q", view)
+	}
+	if !strings.Contains(view, "› █") {
+		t.Fatalf("inline resume picker should keep input box visible: %q", view)
+	}
+}
+
+func TestChatResumePickerFallsBackToFullFrameWhenSmall(t *testing.T) {
+	store := &chatResumeTestStore{
+		chats: []chatstore.ChatSummary{{
+			ID:    "chat-1",
+			Title: "Research Parth Sareen online",
+			Model: "llama3.2",
+		}},
+		byID: map[string]*chatstore.Chat{},
+	}
+	m := chatModel{
+		ctx:    context.Background(),
+		input:  []rune("/resume"),
+		width:  44,
+		height: 10,
+		opts:   ChatOptions{Store: store},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("resume command should not return a command")
+	}
+	m = updated.(chatModel)
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Resume session") || !strings.Contains(view, "Search...") {
+		t.Fatalf("small resume picker should use full-frame fallback: %q", view)
 	}
 }
 
@@ -322,7 +355,7 @@ func TestChatModelCommandOpensPicker(t *testing.T) {
 	if strings.Contains(view, "Search...") {
 		t.Fatalf("model picker should render inline without full search box: %q", view)
 	}
-	if !strings.Contains(view, "> █") {
+	if !strings.Contains(view, "› █") {
 		t.Fatalf("inline model picker should keep input box visible: %q", view)
 	}
 }
@@ -524,7 +557,7 @@ func TestChatModelSelectionStartsBackgroundPreload(t *testing.T) {
 		ctx: context.Background(),
 		opts: ChatOptions{
 			Model: "llama3.2",
-			PreloadModel: func(context.Context, string) error {
+			PreloadModel: func(context.Context, string, *api.ThinkValue) error {
 				return nil
 			},
 		},

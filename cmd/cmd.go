@@ -2344,6 +2344,15 @@ func runAgentModelPickerWithDeps(cmd *cobra.Command, deps agentModelPickerDeps) 
 	if errors.Is(err, launch.ErrCancelled) {
 		return nil
 	}
+	if errors.Is(err, launch.ErrPlanVerificationUnavailable) && !req.ForcePicker {
+		req.ForcePicker = true
+		req.AccountState = &launch.AccountState{}
+		req.AccountStateProvider = nil
+		modelName, err = deps.resolveRunModel(cmd.Context(), req)
+		if errors.Is(err, launch.ErrCancelled) {
+			return nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("selecting model: %w", err)
 	}

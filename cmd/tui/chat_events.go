@@ -46,6 +46,7 @@ type chatTickMsg struct{}
 
 func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	contextChanged := false
+	skipResponseMetrics := false
 
 	switch event.Type {
 	case coreagent.EventMessageStarted:
@@ -144,8 +145,10 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.compactingTokens = 0
 		m.thinking = false
 		m.thinkingTokens = 0
+		skipResponseMetrics = true
 		if len(event.Messages) > 0 {
 			m.liveMessages = slices.Clone(event.Messages)
+			m.messages = slices.Clone(event.Messages)
 			contextChanged = true
 		}
 		m.status = "compacted"
@@ -185,7 +188,24 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	if contextChanged {
 		m.refreshLiveContextEstimate()
 	}
-	m.applyResponseMetrics(event.Response)
+	if event.Type == coreagent.EventCompacted && event.PromptTokens > 0 {
+		m.contextTokens = event.PromptTokens
+		m.contextEstimate = true
+	}
+	if messagesEndWithCompactionResult(m.liveMessages) || (len(m.liveMessages) == 0 && messagesEndWithCompactionResult(m.messages)) {
+		skipResponseMetrics = true
+	}
+	if !skipResponseMetrics {
+		m.applyResponseMetrics(event.Response)
+	}
+}
+
+func messagesEndWithCompactionResult(messages []api.Message) bool {
+	if len(messages) == 0 {
+		return false
+	}
+	msg := messages[len(messages)-1]
+	return msg.Role == "tool" && (msg.ToolName == chatCompactionToolName || msg.ToolCallID == chatCompactionToolCallID)
 }
 
 func (m *chatModel) ensureLiveAssistantMessage() int {
@@ -247,14 +267,33 @@ func chatTickCmd() tea.Cmd {
 	})
 }
 
-func preloadModelCmd(ctx context.Context, preload func(context.Context, string) error, model string) tea.Cmd {
+func preloadModelCmd(ctx context.Context, preload func(context.Context, string, *api.ThinkValue) error, model string, think *api.ThinkValue) tea.Cmd {
 	if preload == nil || strings.TrimSpace(model) == "" {
 		return nil
+	}
+	if think != nil {
+		copied := *think
+		think = &copied
 	}
 	return func() tea.Msg {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		return chatModelPreloadDoneMsg{model: model, err: preload(ctx, model)}
+		return chatModelPreloadDoneMsg{model: model, err: preload(ctx, model, think)}
 	}
+}
+
+func isUnsupportedThinkingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "does not support thinking")
+}
+
+func thinkRequestsThinking(think *api.ThinkValue) bool {
+	if think == nil {
+		return false
+	}
+	return think.Bool()
 }

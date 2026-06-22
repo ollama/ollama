@@ -25,7 +25,11 @@ const (
 	maxPromptHistory          = 50
 	waitingSpinnerTicks       = 4
 )
-const chatCompactionSummaryPrefix = "Conversation summary:\n"
+const (
+	chatCompactionToolName      = "compact_conversation"
+	chatCompactionToolCallID    = "ollama_compaction"
+	chatCompactionSummaryPrefix = "Conversation summary:\n"
+)
 
 var chatEmptyPrompts = []string{
 	`read this repo and tell me where to start`,
@@ -70,7 +74,7 @@ type ChatOptions struct {
 	Compactor                   coreagent.Compactor
 	ContextWindowTokens         int
 	ContextWindowTokensForModel func(context.Context, string, int) int
-	PreloadModel                func(context.Context, string) error
+	PreloadModel                func(context.Context, string, *api.ThinkValue) error
 	CompactionThreshold         float64
 	NewChat                     func(context.Context) (string, error)
 	Skills                      *skills.Catalog
@@ -214,7 +218,7 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 
 func (m chatModel) Init() tea.Cmd {
 	if m.preloadingModel != "" && m.opts.PreloadModel != nil {
-		return tea.Batch(preloadModelCmd(m.ctx, m.opts.PreloadModel, m.preloadingModel), chatTickCmd())
+		return tea.Batch(preloadModelCmd(m.ctx, m.opts.PreloadModel, m.preloadingModel, m.opts.Think), chatTickCmd())
 	}
 	return nil
 }
@@ -227,6 +231,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		if wasSet {
 			m.boundedFrame = true
+			m.scroll = m.maxScroll()
 			return m, tea.ClearScreen
 		}
 		return m.withFlowTranscriptFlush(nil)
@@ -249,6 +254,15 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.preloadingModel = ""
 		if msg.err != nil {
+			if isUnsupportedThinkingError(msg.err) && thinkRequestsThinking(m.opts.Think) {
+				m.opts.Think = &api.ThinkValue{Value: false}
+				m.status = fmt.Sprintf("Thinking disabled for %s", msg.model)
+				if msg.model != "" && m.opts.PreloadModel != nil {
+					m.preloadingModel = msg.model
+					return m, tea.Batch(preloadModelCmd(m.ctx, m.opts.PreloadModel, msg.model, m.opts.Think), m.scheduleTick())
+				}
+				return m, nil
+			}
 			if !errors.Is(msg.err, context.Canceled) {
 				m.status = "error"
 				m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not load model: %v", msg.err), err: msg.err.Error()}))
@@ -288,7 +302,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshContextWindowTokens(m.responseModelName(&msg.result.Latest))
 			m.contextTokens = m.estimatePromptTokens(m.messages, "")
 			m.contextEstimate = true
-			m.applyResponseMetrics(&msg.result.Latest)
+			if !messagesEndWithCompactionResult(m.messages) {
+				m.applyResponseMetrics(&msg.result.Latest)
+			}
 		}
 		m.groupCompletedToolHistory()
 		if wasCanceling || isChatContextCanceledError(msg.err) {
@@ -578,8 +594,7 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m chatModel) updateToolDetailsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlO, tea.KeyEsc:
-		m.toolDetailsOpen = false
-		m.toolDetailsScroll = 0
+		return m.closeToolDetailsWindow()
 	case tea.KeyUp:
 		m.scrollToolDetailsBy(1)
 	case tea.KeyDown:
@@ -594,6 +609,20 @@ func (m chatModel) updateToolDetailsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toolDetailsScroll = 0
 	}
 	return m, nil
+}
+
+func (m chatModel) closeToolDetailsWindow() (tea.Model, tea.Cmd) {
+	wasFlowMode := !m.boundedFrame
+	m.toolDetailsOpen = false
+	m.toolDetailsScroll = 0
+	if !wasFlowMode {
+		return m, nil
+	}
+
+	m.boundedFrame = true
+	m.scroll = m.maxScroll()
+	m.flowPrintedLines = 0
+	return m, tea.ClearScreen
 }
 
 func (m chatModel) updateCtrlC() (tea.Model, tea.Cmd) {
@@ -727,7 +756,7 @@ func (m chatModel) View() string {
 		height = 24
 	}
 
-	if m.resumePicker != nil {
+	if m.resumePicker != nil && m.shouldRenderResumePickerFullFrame(width, height) {
 		return renderFullFrame(m.renderResumePicker(width), width, height)
 	}
 	if m.modelPicker != nil && m.shouldRenderModelPickerFullFrame(width, height) {
@@ -740,7 +769,7 @@ func (m chatModel) View() string {
 		return renderFullFrame(m.renderHistoryPopup(width, height), width, height)
 	}
 	if m.toolDetailsOpen {
-		return m.renderToolDetailsFullscreen(width, height)
+		return m.renderToolDetailsWindow(width, height)
 	}
 	if !m.boundedFrame {
 		return m.flowView(width)
@@ -802,16 +831,46 @@ func (m chatModel) flowTranscriptFlushCmd() (chatModel, tea.Cmd) {
 		return m, nil
 	}
 	m.flowPrintedLines = clamp(m.flowPrintedLines, 0, len(lines))
-	flushCount := len(lines)
-	if m.running || m.compacting {
-		flushCount = max(0, flushCount-1)
-	}
+	flushCount := m.flowTranscriptFlushCount(lines, width)
 	if flushCount <= m.flowPrintedLines {
 		return m, nil
 	}
 	pending := strings.Join(lines[m.flowPrintedLines:flushCount], "\n")
 	m.flowPrintedLines = flushCount
 	return m, tea.Println(pending)
+}
+
+func (m chatModel) flowTranscriptFlushCount(lines []string, width int) int {
+	holdFrom := m.flowTranscriptHoldEntryIndex()
+	if holdFrom < 0 {
+		return len(lines)
+	}
+	clone := m
+	clone.entries = slices.Clone(m.entries[:holdFrom])
+	clone.selection = chatSelection{}
+	return len(clone.transcriptLines(width))
+}
+
+func (m chatModel) flowTranscriptHoldEntryIndex() int {
+	if !m.running && !m.compacting {
+		return -1
+	}
+	if len(m.entries) == 0 {
+		return -1
+	}
+	index := len(m.entries) - 1
+	entry := m.entries[index]
+	switch entry.role {
+	case "assistant":
+		if entry.content != "" {
+			return index
+		}
+	case "tool":
+		if isToolActiveStatus(entry.status) {
+			return index
+		}
+	}
+	return -1
 }
 
 func (m chatModel) emptyChatHint() string {

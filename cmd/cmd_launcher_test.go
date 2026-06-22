@@ -91,6 +91,77 @@ func TestRunAgentModelPickerUsesSavedModelWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestRunAgentModelPickerFallsBackToPickerWhenPlanVerificationFails(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+
+	var requests []launch.RunModelRequest
+	var launched string
+	deps := agentModelPickerDeps{
+		resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
+			requests = append(requests, req)
+			if len(requests) == 1 {
+				return "", launch.ErrPlanVerificationUnavailable
+			}
+			return "llama3.2", nil
+		},
+		runModel: func(cmd *cobra.Command, model string) error {
+			launched = model
+			return nil
+		},
+		accountState: func() *launch.AccountState {
+			return &launch.AccountState{}
+		},
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	if err := runAgentModelPickerWithDeps(cmd, deps); err != nil {
+		t.Fatalf("runAgentModelPickerWithDeps error: %v", err)
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("resolve calls = %d, want 2", len(requests))
+	}
+	if requests[0].ForcePicker {
+		t.Fatal("first request should try the saved model path")
+	}
+	if !requests[1].ForcePicker {
+		t.Fatal("second request should force the model picker")
+	}
+	if requests[1].AccountStateProvider != nil {
+		t.Fatal("retry should not keep using the stale account-state provider")
+	}
+	if requests[1].AccountState == nil {
+		t.Fatal("retry should pass an explicit unknown account state")
+	}
+	if launched != "llama3.2" {
+		t.Fatalf("launched model = %q, want llama3.2", launched)
+	}
+}
+
+func TestRunAgentModelPickerReturnsPlanVerificationErrorWhenPickerRetryFails(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+
+	var calls int
+	deps := agentModelPickerDeps{
+		resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
+			calls++
+			return "", launch.ErrPlanVerificationUnavailable
+		},
+		runModel: unexpectedModelLaunch(t),
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	err := runAgentModelPickerWithDeps(cmd, deps)
+	if !errors.Is(err, launch.ErrPlanVerificationUnavailable) {
+		t.Fatalf("error = %v, want ErrPlanVerificationUnavailable", err)
+	}
+	if calls != 2 {
+		t.Fatalf("resolve calls = %d, want 2", calls)
+	}
+}
+
 func TestMaybeRunAgentOnboarding(t *testing.T) {
 	t.Run("prompts once and saves seen state", func(t *testing.T) {
 		setCmdTestHome(t, t.TempDir())
