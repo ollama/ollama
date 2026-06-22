@@ -403,7 +403,7 @@ func (m *chatModel) startModelPreload(modelName string) tea.Cmd {
 	}
 	m.preloadingModel = modelName
 	m.spinner = 0
-	return tea.Batch(preloadModelCmd(m.ctx, m.opts.PreloadModel, modelName), m.scheduleTick())
+	return tea.Batch(preloadModelCmd(m.ctx, m.opts.PreloadModel, modelName, m.opts.Think), m.scheduleTick())
 }
 
 func (m *chatModel) openResumePicker() (tea.Model, tea.Cmd) {
@@ -528,9 +528,10 @@ func (m *chatModel) resumeSelectedChat() (tea.Model, tea.Cmd) {
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
 	m.scroll = 0
+	m.boundedFrame = true
 	m.flowPrintedLines = 0
 	m.status = "resumed"
-	return m.withFlowTranscriptFlush(nil)
+	return *m, tea.ClearScreen
 }
 
 func (m chatModel) renderResumePicker(width int) string {
@@ -635,6 +636,53 @@ func (m chatModel) renderModelPicker(width int) string {
 
 func (m chatModel) shouldRenderModelPickerFullFrame(width, height int) bool {
 	return width < 48 || height < 12
+}
+
+func (m chatModel) shouldRenderResumePickerFullFrame(width, height int) bool {
+	return width < 48 || height < 12
+}
+
+func (m chatModel) renderInlineResumePicker(width int) []string {
+	picker := m.resumePicker
+	if picker == nil {
+		return nil
+	}
+	if width <= 0 {
+		width = 80
+	}
+
+	filter := strings.TrimSpace(picker.filter)
+	title := "Resume chat"
+	if filter != "" {
+		title += ": " + filter
+	} else {
+		title += ": type to filter"
+	}
+
+	lines := []string{truncateRenderedLine(chatResumeTitleStyle.Render(title), width)}
+	filtered := picker.filtered()
+	if len(filtered) == 0 {
+		lines = append(lines, chatResumeMetaStyle.Render("  No matching chats"))
+	} else {
+		start, end := completionWindow(len(filtered), picker.cursor, maxInlineModelPickerItems)
+		for i := start; i < end; i++ {
+			chat := filtered[i]
+			marker := "  "
+			if i == picker.cursor {
+				marker = "› "
+			}
+			line := marker + chatResumeTextStyle.Render(resumeChatTitle(chat))
+			if meta := resumeChatMeta(chat); meta != "" {
+				line += "  " + chatResumeMetaStyle.Render(meta)
+			}
+			lines = append(lines, truncateRenderedLine(line, width))
+		}
+		if end < len(filtered) {
+			lines = append(lines, chatResumeMetaStyle.Render(fmt.Sprintf("  +%d more", len(filtered)-end)))
+		}
+	}
+	lines = append(lines, chatResumeMetaStyle.Render("↑/↓ move • enter resume • type filter • esc cancel"))
+	return lines
 }
 
 func (m chatModel) renderInlineModelPicker(width int) []string {

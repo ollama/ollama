@@ -34,7 +34,7 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 		!strings.Contains(view, "2. Approve session") ||
 		!strings.Contains(view, "3. Deny") ||
 		!strings.Contains(view, "1/2/3 choose • enter select • esc deny") ||
-		!strings.Contains(view, "> █") {
+		!strings.Contains(view, "› █") {
 		t.Fatalf("approval view missing content: %q", view)
 	}
 	if strings.Contains(view, "Bash wants to run a command") {
@@ -50,7 +50,7 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 		t.Fatalf("approval view should not render risk level: %q", view)
 	}
 	approvalIdx := strings.LastIndex(view, "1. Approve once")
-	inputIdx := strings.LastIndex(view, "> █")
+	inputIdx := strings.LastIndex(view, "› █")
 	if approvalIdx < 0 || inputIdx < 0 || approvalIdx > inputIdx {
 		t.Fatalf("approval picker should render above the input box:\n%s", view)
 	}
@@ -110,7 +110,7 @@ func TestChatApprovalPromptCtrlOOpensToolDetails(t *testing.T) {
 		t.Fatalf("main transcript should stay collapsed: %q", transcript)
 	}
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "▾ Bash") || !strings.Contains(view, "$ git status --short --branch --untracked-files=all") {
+	if !strings.Contains(view, "Bash") || !strings.Contains(view, "$ git status --short --branch --untracked-files=all") {
 		t.Fatalf("approval tool details view should show full command: %q", view)
 	}
 }

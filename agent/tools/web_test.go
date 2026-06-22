@@ -48,7 +48,9 @@ func TestWebFetchBoundsContentBeforeReturning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Content, "[web_fetch content truncated: omitted 25 characters]") {
+	if !strings.Contains(result.Content, "[tool output truncated: showing first ~") ||
+		!strings.Contains(result.Content, "omitted ~7 tokens") ||
+		!strings.Contains(result.Content, "Use a narrower request or search query") {
 		t.Fatalf("content missing truncation marker: %q", result.Content)
 	}
 	if count := strings.Count(result.Content, "x"); count != maxWebFetchContentRunes {

@@ -387,7 +387,7 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	if got := len(m.slashCommandLines(80)); got != maxSlashCompletions {
 		t.Fatalf("slash suggestions = %d, want %d", got, maxSlashCompletions)
 	}
-	if !strings.Contains(view, "> /█") {
+	if !strings.Contains(view, "› /█") {
 		t.Fatalf("view missing slash input row: %q", view)
 	}
 }

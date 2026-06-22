@@ -434,13 +434,13 @@ func TestCompactionPromptFitsBudgetByTruncatingLargeToolOutput(t *testing.T) {
 	if strings.Count(body, "x") >= len(largeToolOutput) {
 		t.Fatal("large tool output was not truncated")
 	}
-	if !strings.Contains(body, "[tool output truncated: omitted ") {
+	if !strings.Contains(body, "[tool output truncated: showing first ~") {
 		t.Fatalf("truncation marker missing from compaction prompt: %q", body)
 	}
 }
 
 func TestCompactionPromptRetruncatesAlreadyTruncatedToolOutput(t *testing.T) {
-	alreadyTruncated := strings.Repeat("x", 7000) + "\n\n[tool output truncated: omitted 99999 characters]\n\n" + strings.Repeat("y", 7000)
+	alreadyTruncated := strings.Repeat("x", 7000) + "\n\n[tool output truncated: showing first ~100 tokens and last ~100 tokens; omitted ~99999 tokens. Use a narrower command, line range, or search query if more detail is needed.]\n\n" + strings.Repeat("y", 7000)
 	body, err := compactionPrompt("", []api.Message{
 		{Role: "user", Content: "what changed?"},
 		{Role: "assistant", ToolCalls: []api.ToolCall{{
@@ -460,7 +460,7 @@ func TestCompactionPromptRetruncatesAlreadyTruncatedToolOutput(t *testing.T) {
 	if strings.Count(body, "x")+strings.Count(body, "y") >= 14_000 {
 		t.Fatal("already-truncated tool output was not truncated again")
 	}
-	if !strings.Contains(body, "[tool output truncated: omitted ") {
+	if !strings.Contains(body, "[tool output truncated: showing first ~") {
 		t.Fatalf("truncation marker missing from compaction prompt: %q", body)
 	}
 }

@@ -55,12 +55,9 @@ func TestChatViewRendersEmptyPromptHint(t *testing.T) {
 
 	view := stripANSI(m.View())
 	lines := strings.Split(view, "\n")
-	hintLine := lineIndexContaining(lines, `> Try: "`)
+	hintLine := lineIndexContaining(lines, `› Try: "`)
 	if hintLine < 0 {
 		t.Fatalf("empty chat view missing prompt hint: %q", view)
-	}
-	if hintLine == 0 || hintLine == len(lines)-1 || lines[hintLine-1] != inputBoxTopBorderLine(80) || lines[hintLine+1] != inputBoxBottomBorderLine(80) {
-		t.Fatalf("empty prompt hint should render inside input box:\n%s", view)
 	}
 	if strings.Contains(view, "Start a conversation. Use /help for commands.") {
 		t.Fatalf("empty chat view should use rotating prompt hint: %q", view)
@@ -80,7 +77,7 @@ func TestChatUserEntryHasNoLabel(t *testing.T) {
 	}
 
 	transcript := stripANSI(m.renderTranscript(80))
-	if !strings.Contains(transcript, "> hello") {
+	if !strings.Contains(transcript, "› hello") {
 		t.Fatalf("user transcript should render as prompt row: %q", transcript)
 	}
 }
@@ -123,6 +120,26 @@ func TestChatMixedToolGroupUsesSuccessPrefix(t *testing.T) {
 	}
 }
 
+func TestChatToolStatusLineDoesNotUseDisclosureGlyph(t *testing.T) {
+	startedAt := time.Date(2026, 6, 22, 13, 0, 0, 0, time.UTC)
+	entry := newChatEntry(chatEntry{
+		role:       "tool",
+		label:      `Web Search("who is parth sareen")`,
+		status:     "done",
+		content:    "hidden result",
+		startedAt:  startedAt,
+		finishedAt: startedAt.Add(812 * time.Millisecond),
+	})
+
+	line := stripANSI(toolStatusLine(entry))
+	if strings.Contains(line, "▸") || strings.Contains(line, "▾") {
+		t.Fatalf("tool status line should not include disclosure glyph: %q", line)
+	}
+	if !strings.Contains(line, `Web Search("who is parth sareen") done in 812ms`) {
+		t.Fatalf("tool status line = %q", line)
+	}
+}
+
 func TestChatViewRendersInputBox(t *testing.T) {
 	m := chatModel{
 		input:  []rune("hello"),
@@ -131,10 +148,10 @@ func TestChatViewRendersInputBox(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if !strings.Contains(view, inputBoxTopBorderLine(40)) || !strings.Contains(view, inputBoxBottomBorderLine(40)) {
-		t.Fatalf("view missing input border: %q", view)
+	if strings.Contains(view, inputBoxTopBorderLine(40)) || strings.Contains(view, inputBoxBottomBorderLine(40)) {
+		t.Fatalf("prompt input should not render box borders: %q", view)
 	}
-	if !strings.Contains(view, "> hello█") {
+	if !strings.Contains(view, "› hello█") {
 		t.Fatalf("view missing prompt input row: %q", view)
 	}
 }
@@ -150,13 +167,13 @@ func TestChatViewRendersModelUnderInputBox(t *testing.T) {
 	}
 
 	lines := strings.Split(stripANSI(m.View()), "\n")
-	bottomBorder := lineIndexContaining(lines, inputBoxBottomBorderLine(48))
+	inputLine := lineIndexContaining(lines, "› hello█")
 	modelLine := lineIndexContaining(lines, "kimi-k2.7-code:cloud")
-	if bottomBorder < 0 || modelLine < 0 {
-		t.Fatalf("view missing input bottom border or model line:\n%s", strings.Join(lines, "\n"))
+	if inputLine < 0 || modelLine < 0 {
+		t.Fatalf("view missing input or model line:\n%s", strings.Join(lines, "\n"))
 	}
-	if modelLine != bottomBorder+1 {
-		t.Fatalf("model line should sit directly under input box: bottom=%d model=%d\n%s", bottomBorder, modelLine, strings.Join(lines, "\n"))
+	if modelLine != inputLine+1 {
+		t.Fatalf("model line should sit directly under input: input=%d model=%d\n%s", inputLine, modelLine, strings.Join(lines, "\n"))
 	}
 	if strings.Contains(lines[modelLine], "model ") {
 		t.Fatalf("model line should not include a label:\n%s", strings.Join(lines, "\n"))
@@ -171,7 +188,7 @@ func TestChatViewExpandsInputBoxForLongPrompt(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if got := inputBoxBodyLineCount(t, view, 32); got < 2 {
+	if got := inputPromptLineCount(t, view); got < 2 {
 		t.Fatalf("input body lines = %d, want wrapped prompt:\n%s", got, view)
 	}
 	if !strings.Contains(view, "█") {
@@ -187,10 +204,10 @@ func TestChatViewCapsTallInputBox(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if got := inputBoxBodyLineCount(t, view, 32); got > maxInputBoxBodyLines {
+	if got := inputPromptLineCount(t, view); got > maxInputBoxBodyLines {
 		t.Fatalf("input body lines = %d, want <= %d:\n%s", got, maxInputBoxBodyLines, view)
 	}
-	if !strings.Contains(view, "> ... ") {
+	if !strings.Contains(view, "... ... ") {
 		t.Fatalf("truncated pasted prompt should show an omission marker:\n%s", view)
 	}
 }
@@ -254,9 +271,9 @@ func TestChatViewRendersNotificationAboveInput(t *testing.T) {
 	}
 	lines := strings.Split(view, "\n")
 	for i, line := range lines {
-		if strings.Contains(line, "> hello█") {
-			if i < 2 || !strings.Contains(lines[i-2], "copied latest output") || lines[i-1] != inputBoxTopBorderLine(40) {
-				t.Fatalf("notification should sit directly above input border:\n%s", view)
+		if strings.Contains(line, "› hello█") {
+			if i < 1 || !strings.Contains(lines[i-1], "copied latest output") {
+				t.Fatalf("notification should sit directly above input:\n%s", view)
 			}
 			return
 		}
@@ -281,24 +298,18 @@ func TestChatViewDoesNotRenderQueueStatusAsNotification(t *testing.T) {
 	}
 }
 
-func inputBoxBodyLineCount(t *testing.T, view string, width int) int {
+func inputPromptLineCount(t *testing.T, view string) int {
 	t.Helper()
-	topBorder := inputBoxTopBorderLine(width)
-	bottomBorder := inputBoxBottomBorderLine(width)
-	lines := strings.Split(view, "\n")
-	first := -1
-	for i, line := range lines {
-		switch line {
-		case topBorder:
-			first = i
-		case bottomBorder:
-			if first >= 0 {
-				return i - first - 1
-			}
+	count := 0
+	for _, line := range strings.Split(view, "\n") {
+		if strings.HasPrefix(line, "› ") || strings.HasPrefix(line, "... ") {
+			count++
 		}
 	}
-	t.Fatalf("input box borders not found:\n%s", view)
-	return 0
+	if count == 0 {
+		t.Fatalf("input prompt lines not found:\n%s", view)
+	}
+	return count
 }
 
 func TestChatViewKeepsInputBoxWhileRunning(t *testing.T) {
@@ -312,7 +323,7 @@ func TestChatViewKeepsInputBoxWhileRunning(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "> next█") {
+	if !strings.Contains(view, "› next█") {
 		t.Fatalf("running view should keep input row: %q", view)
 	}
 	if strings.Contains(view, "↑/↓ scroll") || strings.Contains(view, "/new chat") || strings.Contains(view, "/clear reset") {
@@ -320,9 +331,9 @@ func TestChatViewKeepsInputBoxWhileRunning(t *testing.T) {
 	}
 	lines := strings.Split(view, "\n")
 	for i, line := range lines {
-		if strings.Contains(line, "> next█") {
-			if i < 2 || !strings.Contains(lines[i-2], "Thinking 42 tokens") || lines[i-1] != inputBoxTopBorderLine(40) {
-				t.Fatalf("thinking line should sit directly above input border:\n%s", view)
+		if strings.Contains(line, "› next█") {
+			if i < 1 || !strings.Contains(lines[i-1], "Thinking 42 tokens") {
+				t.Fatalf("thinking line should sit directly above input:\n%s", view)
 			}
 			return
 		}
@@ -395,7 +406,7 @@ func TestChatViewDoesNotPadToTerminalHeight(t *testing.T) {
 	if got := len(strings.Split(view, "\n")); got >= 12 {
 		t.Fatalf("view height = %d, want less than terminal height:\n%s", got, stripANSI(view))
 	}
-	if !strings.Contains(stripANSI(view), "> hello█") {
+	if !strings.Contains(stripANSI(view), "› hello█") {
 		t.Fatalf("view missing input row: %q", stripANSI(view))
 	}
 }
@@ -431,6 +442,57 @@ func TestChatInputFlowsDownAsTranscriptGrows(t *testing.T) {
 	}
 	if longInputLine <= long.height {
 		t.Fatalf("normal terminal flow should grow past terminal height, input line=%d height=%d\n%s", longInputLine, long.height, stripANSI(long.View()))
+	}
+}
+
+func TestChatFlowFlushKeepsFirstRunLayoutStable(t *testing.T) {
+	empty := chatModel{
+		input:  []rune("next"),
+		width:  80,
+		height: 16,
+	}
+	emptyInputLine := renderedInputLine(empty.View())
+	if emptyInputLine < 0 {
+		t.Fatalf("empty view missing input:\n%s", stripANSI(empty.View()))
+	}
+
+	m := chatModel{
+		input:   []rune("next"),
+		width:   80,
+		height:  16,
+		running: true,
+		entries: []chatEntry{
+			{role: "user", content: "first prompt"},
+		},
+	}
+
+	updated, cmd := m.flowTranscriptFlushCmd()
+	if cmd == nil {
+		t.Fatal("submitted user prompt should flush into terminal scrollback")
+	}
+	if updated.flowPrintedLines == 0 {
+		t.Fatal("submitted user prompt should not stay in the managed input frame")
+	}
+	if strings.Contains(stripANSI(updated.View()), "first prompt") {
+		t.Fatalf("managed frame should not keep flushed user prompt:\n%s", stripANSI(updated.View()))
+	}
+	if inputLine := renderedInputLine(updated.View()); inputLine != emptyInputLine {
+		t.Fatalf("input line moved after first prompt flush: empty=%d flushed=%d\nempty:\n%s\nflushed:\n%s", emptyInputLine, inputLine, stripANSI(empty.View()), stripANSI(updated.View()))
+	}
+
+	updated.entries = append(updated.entries, chatEntry{role: "tool", label: "Bash(\"pwd\")", status: "running"})
+	withTool, _ := updated.flowTranscriptFlushCmd()
+	if !strings.Contains(stripANSI(withTool.View()), `Bash("pwd")`) {
+		t.Fatalf("active tool row should remain visible:\n%s", stripANSI(withTool.View()))
+	}
+
+	withTool.entries[len(withTool.entries)-1].status = "done"
+	doneTool, cmd := withTool.flowTranscriptFlushCmd()
+	if cmd == nil {
+		t.Fatal("finished tool row should flush once it no longer needs live updates")
+	}
+	if strings.Contains(stripANSI(doneTool.View()), `Bash("pwd")`) {
+		t.Fatalf("managed frame should not keep finished tool row:\n%s", stripANSI(doneTool.View()))
 	}
 }
 
@@ -486,12 +548,12 @@ func TestChatViewDoesNotReserveIdleActionSpacerAfterResponse(t *testing.T) {
 
 	lines := strings.Split(stripANSI(m.View()), "\n")
 	assistantLine := lineIndexContaining(lines, "Hello.")
-	inputLine := lineIndexContaining(lines, "> next")
+	inputLine := lineIndexContaining(lines, "› next")
 	if assistantLine < 0 || inputLine < 0 {
 		t.Fatalf("view missing assistant/input lines:\n%s", strings.Join(lines, "\n"))
 	}
-	if gap := inputLine - assistantLine - 1; gap != 4 {
-		t.Fatalf("gap between finished response and input body = %d, want 4 including stable action slot and input border:\n%s", gap, strings.Join(lines, "\n"))
+	if gap := inputLine - assistantLine - 1; gap != 3 {
+		t.Fatalf("gap between finished response and input body = %d, want 3 including stable action slot:\n%s", gap, strings.Join(lines, "\n"))
 	}
 }
 
@@ -504,7 +566,7 @@ func TestChatViewHidesEmptyHintWhileTyping(t *testing.T) {
 
 	lines := strings.Split(stripANSI(m.View()), "\n")
 	hintLine := lineIndexContaining(lines, "Try:")
-	inputLine := lineIndexContaining(lines, "> next")
+	inputLine := lineIndexContaining(lines, "› next")
 	if hintLine >= 0 {
 		t.Fatalf("view should not show empty hint while typing:\n%s", strings.Join(lines, "\n"))
 	}
@@ -515,7 +577,7 @@ func TestChatViewHidesEmptyHintWhileTyping(t *testing.T) {
 
 func renderedInputLine(view string) int {
 	for i, line := range strings.Split(stripANSI(view), "\n") {
-		if strings.Contains(line, "> next") {
+		if strings.Contains(line, "› next") {
 			return i
 		}
 	}
@@ -607,13 +669,13 @@ func TestChatResizeAndScrollsLongAssistantOutput(t *testing.T) {
 	updated, cmd = m.Update(tea.WindowSizeMsg{Width: 72, Height: 10})
 	m = updated.(chatModel)
 	if cmd == nil || !m.boundedFrame {
-		t.Fatal("terminal resize should switch to bounded rendering")
+		t.Fatal("terminal resize should switch to bounded rendering and clear the stale flow view")
 	}
 	if m.maxScroll() == 0 {
 		t.Fatal("long assistant output should be scrollable after resize")
 	}
-	if !strings.Contains(stripANSI(m.View()), "generated line 79") {
-		t.Fatalf("bounded view should start at latest generated content:\n%s", stripANSI(m.View()))
+	if !strings.Contains(stripANSI(m.View()), "generated line 00") {
+		t.Fatalf("bounded view should reset to earliest generated content after resize:\n%s", stripANSI(m.View()))
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlHome})
@@ -629,7 +691,7 @@ func TestChatResizeAndScrollsLongAssistantOutput(t *testing.T) {
 	}
 }
 
-func TestChatStreamingAssistantOutputPrintsOlderLines(t *testing.T) {
+func TestChatStreamingAssistantOutputHoldsLiveMarkdown(t *testing.T) {
 	m := chatModel{
 		width:   80,
 		height:  12,
@@ -648,15 +710,25 @@ func TestChatStreamingAssistantOutputPrintsOlderLines(t *testing.T) {
 
 	updated, _ = m.Update(chatAgentMsg{event: coreagent.Event{Type: coreagent.EventMessageDelta, Content: "\n\ngenerated line 01"}})
 	m = updated.(chatModel)
-	if m.flowPrintedLines == 0 {
-		t.Fatal("older generated lines should print into terminal scrollback")
+	if m.flowPrintedLines != 0 {
+		t.Fatalf("live assistant markdown should stay managed until the message is complete, printed=%d", m.flowPrintedLines)
 	}
 	view := stripANSI(m.View())
-	if strings.Contains(view, "generated line 00") {
-		t.Fatalf("printed older line should leave managed frame:\n%s", view)
+	if !strings.Contains(view, "generated line 00") {
+		t.Fatalf("live assistant output should not be frozen into scrollback while streaming:\n%s", view)
 	}
 	if !strings.Contains(view, "generated line 01") {
 		t.Fatalf("latest generated line should remain visible:\n%s", view)
+	}
+
+	m.running = false
+	updated, cmd := m.flowTranscriptFlushCmd()
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("completed assistant output should flush into terminal scrollback")
+	}
+	if m.flowPrintedLines == 0 {
+		t.Fatal("completed assistant output should be marked as flushed")
 	}
 }
 
@@ -872,7 +944,7 @@ func TestEntriesFromMessagesRendersCompactionSummaryCollapsed(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	view := stripANSI(m.renderToolDetailsFullscreen(100, 24))
+	view := stripANSI(m.renderToolDetailsWindow(100, 24))
 	if !strings.Contains(view, "old work") || !strings.Contains(view, "decisions") {
 		t.Fatalf("details view summary body missing: %q", view)
 	}
@@ -982,7 +1054,11 @@ func TestChatToolCallDetectedDoesNotRenderQueuedRows(t *testing.T) {
 }
 
 func TestChatToolOutputIsHiddenUntilExpanded(t *testing.T) {
-	fullOutput := strings.Repeat("line\n", 25)
+	var outputLines []string
+	for i := range 25 {
+		outputLines = append(outputLines, fmt.Sprintf("line %02d", i))
+	}
+	fullOutput := strings.Join(outputLines, "\n")
 	m := chatModel{}
 	m.applyAgentEvent(coreagent.Event{
 		Type:     coreagent.EventToolFinished,
@@ -1006,9 +1082,15 @@ func TestChatToolOutputIsHiddenUntilExpanded(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
 
-	body = stripANSI(m.renderToolDetailsFullscreen(100, 40))
-	if got := strings.Count(body, "line"); got != 25 {
-		t.Fatalf("details view rendered %d output lines, want 25: %q", got, body)
+	body = stripANSI(m.renderToolDetailsWindow(100, 40))
+	if !strings.Contains(body, "line 24") || !strings.Contains(body, "↑ more") {
+		t.Fatalf("details window should show latest output with scroll affordance: %q", body)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlHome})
+	m = updated.(chatModel)
+	body = stripANSI(m.renderToolDetailsWindow(100, 40))
+	if !strings.Contains(body, "line 00") {
+		t.Fatalf("details window should scroll to earlier output: %q", body)
 	}
 }
 
@@ -1035,7 +1117,7 @@ func TestChatCompletedToolsGroupWhenNextStepStarts(t *testing.T) {
 	}
 }
 
-func TestChatCtrlOOpensToolDetailsFullscreen(t *testing.T) {
+func TestChatCtrlOOpensToolDetailsWindow(t *testing.T) {
 	m := chatModel{
 		width:  100,
 		height: 20,
@@ -1060,6 +1142,9 @@ func TestChatCtrlOOpensToolDetailsFullscreen(t *testing.T) {
 	if !strings.Contains(view, "Tool details") || !strings.Contains(view, "one") || !strings.Contains(view, "two") {
 		t.Fatalf("details view missing expanded tool output: %q", view)
 	}
+	if !strings.Contains(view, "between") {
+		t.Fatalf("details window should keep surrounding chat visible: %q", view)
+	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
@@ -1073,7 +1158,47 @@ func TestChatCtrlOOpensToolDetailsFullscreen(t *testing.T) {
 	}
 }
 
-func TestChatCtrlOShowsRunningToolOutputInFullscreen(t *testing.T) {
+func TestChatCtrlOReturnsToManagedRedrawWithoutReprinting(t *testing.T) {
+	m := chatModel{
+		width:            100,
+		height:           24,
+		flowPrintedLines: 4,
+		entries: []chatEntry{
+			{role: "user", content: "who is parth sareen"},
+			{role: "tool", detail: "web_search", label: "Web Search(\"who is Parth Sareen\")", status: "done", content: "Search results"},
+			{role: "assistant", content: "Based on public search results, Parth Sareen works on AI tooling."},
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("opening tool details should not force a redraw command")
+	}
+	if !m.toolDetailsOpen {
+		t.Fatal("ctrl+o should open tool details")
+	}
+	if m.boundedFrame {
+		t.Fatal("opening tool details from terminal-flow mode should not permanently enter bounded mode")
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(chatModel)
+	if m.toolDetailsOpen {
+		t.Fatal("second ctrl+o should close tool details")
+	}
+	if !m.boundedFrame {
+		t.Fatal("closing tool details should enter managed redraw mode")
+	}
+	if cmd == nil {
+		t.Fatal("closing tool details from terminal-flow mode should clear stale output")
+	}
+	if m.flowPrintedLines != 0 {
+		t.Fatalf("closing tool details should not reprint transcript into scrollback, printed=%d", m.flowPrintedLines)
+	}
+}
+
+func TestChatCtrlOShowsRunningToolOutputInWindow(t *testing.T) {
 	args := map[string]any{"command": "pwd"}
 	m := chatModel{width: 100, height: 20, running: true}
 	m.applyAgentEvent(coreagent.Event{
@@ -1102,7 +1227,7 @@ func TestChatCtrlOShowsRunningToolOutputInFullscreen(t *testing.T) {
 
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "/tmp/project") {
-		t.Fatalf("finished tool output should be visible in details fullscreen: %q", view)
+		t.Fatalf("finished tool output should be visible in details window: %q", view)
 	}
 	transcript := stripANSI(m.renderTranscript(100))
 	if strings.Contains(transcript, "/tmp/project") {
@@ -1135,7 +1260,7 @@ func TestChatCtrlODetailsSurvivesToolGrouping(t *testing.T) {
 
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "one") || !strings.Contains(view, "two") {
-		t.Fatalf("grouped tool output should be visible in details fullscreen: %q", view)
+		t.Fatalf("grouped tool output should be visible in details window: %q", view)
 	}
 }
 
@@ -1246,7 +1371,8 @@ func TestChatToolOutputRendersUnifiedDiff(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	rendered := m.renderToolDetailsFullscreen(100, 24)
+	m.toolDetailsScroll = m.maxToolDetailsScroll()
+	rendered := m.renderToolDetailsWindow(100, 24)
 	body := stripANSI(rendered)
 	if !strings.Contains(body, "diff --git a/file.go b/file.go") ||
 		!strings.Contains(body, "-var old = true") ||
@@ -1310,7 +1436,7 @@ func TestChatToolCallRendersPrettyInvocationAndResult(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	view := stripANSI(m.renderToolDetailsFullscreen(100, 24))
+	view := stripANSI(m.renderToolDetailsWindow(100, 24))
 	if strings.Contains(view, "**Search results for:**") {
 		t.Fatalf("details web output should render markdown: %q", view)
 	}
@@ -1325,11 +1451,11 @@ func TestChatToolOutputHidesInternalTruncationMarker(t *testing.T) {
 		detail:   "bash",
 		status:   "done",
 		expanded: true,
-		content:  "head\n\n[tool output truncated: omitted 100 characters]\n\ntail",
+		content:  "head\n\n[tool output truncated: showing first ~10 tokens and last ~10 tokens; omitted ~25 tokens. Use a narrower command, line range, or search query if more detail is needed.]\n\ntail",
 	}
 
 	rendered := stripANSI(strings.Join(renderToolResultLines(entry, 80), "\n"))
-	if strings.Contains(rendered, "tool output truncated") || strings.Contains(rendered, "omitted 100 characters") {
+	if strings.Contains(rendered, "tool output truncated") || strings.Contains(rendered, "omitted ~25 tokens") {
 		t.Fatalf("internal truncation marker should be hidden from tool output: %q", rendered)
 	}
 	if !strings.Contains(rendered, "head") || !strings.Contains(rendered, "tail") {
@@ -1342,9 +1468,9 @@ func TestChatHistoryHidesInternalToolTruncationMarker(t *testing.T) {
 		Role:       "tool",
 		ToolName:   "bash",
 		ToolCallID: "call-1",
-		Content:    "head\n\n[tool output truncated: omitted 100 characters]\n\ntail",
+		Content:    "head\n\n[tool output truncated: showing first ~10 tokens and last ~10 tokens; omitted ~25 tokens. Use a narrower command, line range, or search query if more detail is needed.]\n\ntail",
 	}}, 80), "\n"))
-	if strings.Contains(rendered, "tool output truncated") || strings.Contains(rendered, "omitted 100 characters") {
+	if strings.Contains(rendered, "tool output truncated") || strings.Contains(rendered, "omitted ~25 tokens") {
 		t.Fatalf("internal truncation marker should be hidden from history: %q", rendered)
 	}
 	if !strings.Contains(rendered, "head") || !strings.Contains(rendered, "tail") {

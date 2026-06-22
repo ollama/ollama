@@ -94,7 +94,7 @@ func TestChatResizeEnablesBoundedFrame(t *testing.T) {
 	updated, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = updated.(chatModel)
 	if cmd == nil {
-		t.Fatal("resize should return a clear-screen command")
+		t.Fatal("resize should clear stale terminal-flow rendering")
 	}
 	if !m.boundedFrame {
 		t.Fatal("resize should enable bounded frame rendering")
@@ -221,6 +221,56 @@ func TestChatModelPreloadShowsLoadingModelAndRefreshesContext(t *testing.T) {
 	}
 }
 
+func TestChatModelPreloadUnsupportedThinkingDisablesThinkingAndRetries(t *testing.T) {
+	think := &api.ThinkValue{Value: "high"}
+	var retryThink *api.ThinkValue
+	m := chatModel{
+		ctx:             context.Background(),
+		preloadingModel: "llama3.2",
+		opts: ChatOptions{
+			Think: think,
+			PreloadModel: func(ctx context.Context, model string, think *api.ThinkValue) error {
+				if think != nil {
+					copied := *think
+					retryThink = &copied
+				}
+				return nil
+			},
+		},
+	}
+
+	updated, cmd := m.Update(chatModelPreloadDoneMsg{
+		model: "llama3.2",
+		err:   errors.New(`400 Bad Request: "llama3.2" does not support thinking`),
+	})
+	fm := updated.(chatModel)
+
+	if cmd == nil {
+		t.Fatal("unsupported thinking should retry preload with thinking disabled")
+	}
+	if fm.opts.Think == nil || fm.opts.Think.Bool() {
+		t.Fatalf("think = %#v, want disabled", fm.opts.Think)
+	}
+	if fm.preloadingModel != "llama3.2" {
+		t.Fatalf("preloadingModel = %q, want llama3.2", fm.preloadingModel)
+	}
+	if len(fm.entries) != 0 {
+		t.Fatalf("unsupported thinking should not render a preload error: %#v", fm.entries)
+	}
+
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok || len(batch) == 0 {
+		t.Fatalf("retry command = %#v, want tea.BatchMsg", msg)
+	}
+	if got := batch[0](); got == nil {
+		t.Fatal("preload retry command returned nil message")
+	}
+	if retryThink == nil || retryThink.Bool() {
+		t.Fatalf("retry think = %#v, want disabled", retryThink)
+	}
+}
+
 func TestChatModelPreloadIgnoresStaleCompletion(t *testing.T) {
 	m := chatModel{preloadingModel: "qwen3"}
 
@@ -255,13 +305,14 @@ func TestChatThinkingShowsTokenCount(t *testing.T) {
 	}
 }
 
-func TestChatFooterShowsContextAndCompactionOnlyWhenNear(t *testing.T) {
+func TestChatModelLineShowsContextOnlyWhenUseful(t *testing.T) {
 	m := chatModel{
 		width:           120,
 		height:          24,
 		contextTokens:   50,
 		contextEstimate: true,
 		opts: ChatOptions{
+			Model:               "llama3.2",
 			Options:             map[string]any{"num_ctx": 100},
 			CompactionThreshold: 0.75,
 		},
@@ -272,21 +323,41 @@ func TestChatFooterShowsContextAndCompactionOnlyWhenNear(t *testing.T) {
 		t.Fatalf("view should hide distant context pressure: %q", view)
 	}
 	if strings.Contains(view, "compact at") || strings.Contains(view, "compact due") {
-		t.Fatalf("view should hide distant compaction point: %q", view)
+		t.Fatalf("view should not use old compaction copy: %q", view)
+	}
+
+	m.contextTokens = 61
+	view = stripANSI(m.View())
+	if !strings.Contains(view, "llama3.2  ctx ~61/100 (61%)") || strings.Contains(view, "compaction soon") {
+		t.Fatalf("view should show context count beside model after 60%% without compaction copy: %q", view)
+	}
+	if count := strings.Count(view, "ctx "); count != 1 {
+		t.Fatalf("context should render only in the footer/model line, got %d occurrences: %q", count, view)
 	}
 
 	m.contextTokens = 65
 	view = stripANSI(m.View())
-	if !strings.Contains(view, "ctx ~65/100 (65%)") || !strings.Contains(view, "compact at 75") {
-		t.Fatalf("view should show compaction point near threshold: %q", view)
+	if !strings.Contains(view, "llama3.2  ctx ~65/100 (65%)") || strings.Contains(view, "compaction soon") {
+		t.Fatalf("view should show context count near threshold without compaction copy: %q", view)
+	}
+	if count := strings.Count(view, "ctx "); count != 1 {
+		t.Fatalf("context should render only in the footer/model line, got %d occurrences: %q", count, view)
 	}
 
 	m.contextTokens = 75
 	view = stripANSI(m.View())
-	if !strings.Contains(view, "compact due at 75") {
-		t.Fatalf("view should show compaction due at threshold: %q", view)
+	if !strings.Contains(view, "llama3.2  ctx ~75/100 (75%)") || strings.Contains(view, "compaction soon") {
+		t.Fatalf("view should show context count at threshold without compaction copy: %q", view)
 	}
 
+	m.contextTokens = 20
+	m.status = "compacted"
+	view = stripANSI(m.View())
+	if strings.Contains(view, "after compaction") || strings.Contains(view, "ctx ") {
+		t.Fatalf("view should not show after-compaction copy or distant context pressure: %q", view)
+	}
+
+	m.status = ""
 	m.contextTokens = 125
 	view = stripANSI(m.View())
 	if !strings.Contains(view, "ctx ~125/100 (125%)") {
@@ -464,6 +535,72 @@ func TestChatStreamingMetricsDoNotDropLiveContextEstimate(t *testing.T) {
 	}
 	if !m.contextEstimate {
 		t.Fatal("live context should remain marked estimated while the model is running")
+	}
+}
+
+func TestChatCompactedEventUsesCompactedPromptEstimate(t *testing.T) {
+	messages := []api.Message{
+		compactionToolCallMessage(),
+		{Role: "tool", ToolName: chatCompactionToolName, ToolCallID: chatCompactionToolCallID, Content: chatCompactionSummaryPrefix + "summary"},
+	}
+	m := chatModel{
+		running:       true,
+		contextTokens: 3900,
+	}
+
+	m.applyAgentEvent(coreagent.Event{
+		Type:         coreagent.EventCompacted,
+		Messages:     messages,
+		PromptTokens: 420,
+		Response: &api.ChatResponse{
+			Metrics: api.Metrics{PromptEvalCount: 3900, EvalCount: 100},
+		},
+	})
+
+	if m.contextTokens != 420 {
+		t.Fatalf("contextTokens = %d, want compacted prompt estimate", m.contextTokens)
+	}
+	if !m.contextEstimate {
+		t.Fatal("compacted prompt count should remain marked estimated")
+	}
+	if len(m.messages) != len(messages) || len(m.liveMessages) != len(messages) {
+		t.Fatalf("compacted messages were not promoted: messages=%#v live=%#v", m.messages, m.liveMessages)
+	}
+
+	m.applyAgentEvent(coreagent.Event{
+		Type: coreagent.EventRunFinished,
+		Response: &api.ChatResponse{
+			Metrics: api.Metrics{PromptEvalCount: 3900, EvalCount: 100},
+		},
+	})
+	if m.contextTokens != 420 {
+		t.Fatalf("run-finished metrics reset contextTokens to %d, want compacted prompt estimate", m.contextTokens)
+	}
+}
+
+func TestChatRunDoneKeepsCompactedEstimateWhenCompactionEndsTurn(t *testing.T) {
+	messages := []api.Message{
+		compactionToolCallMessage(),
+		{Role: "tool", ToolName: chatCompactionToolName, ToolCallID: chatCompactionToolCallID, Content: chatCompactionSummaryPrefix + "summary"},
+	}
+	m := chatModel{}
+	want := m.estimatePromptTokens(messages, "")
+
+	updated, _ := m.Update(chatRunDoneMsg{
+		result: &coreagent.RunResult{
+			Messages: messages,
+			Latest: api.ChatResponse{
+				Metrics: api.Metrics{PromptEvalCount: 3900, EvalCount: 100},
+			},
+		},
+	})
+
+	fm := updated.(chatModel)
+	if fm.contextTokens != want {
+		t.Fatalf("contextTokens = %d, want compacted estimate %d", fm.contextTokens, want)
+	}
+	if !fm.contextEstimate {
+		t.Fatal("compacted end-of-turn count should remain marked estimated")
 	}
 }
 
@@ -1189,7 +1326,7 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 
 	updated, _ = fm.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	fm = updated.(chatModel)
-	view := stripANSI(fm.renderToolDetailsFullscreen(100, 24))
+	view := stripANSI(fm.renderToolDetailsWindow(100, 24))
 	if !strings.Contains(view, "old work summary") {
 		t.Fatalf("details view should show compacted summary body: %q", view)
 	}

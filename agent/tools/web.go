@@ -169,5 +169,16 @@ func truncateWebFetchContent(content string) string {
 		return content
 	}
 	omitted := len(runes) - maxWebFetchContentRunes
-	return string(runes[:maxWebFetchContentRunes]) + fmt.Sprintf("\n\n[web_fetch content truncated: omitted %d characters]", omitted)
+	return string(runes[:maxWebFetchContentRunes]) + fmt.Sprintf(
+		"\n\n[tool output truncated: showing first ~%d tokens; omitted ~%d tokens. Use a narrower request or search query if more detail is needed.]",
+		approximateToolTokensFromRunes(maxWebFetchContentRunes),
+		approximateToolTokensFromRunes(omitted),
+	)
+}
+
+func approximateToolTokensFromRunes(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return max(1, (n+3)/4)
 }

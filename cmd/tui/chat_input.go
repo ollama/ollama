@@ -34,7 +34,10 @@ type chatCompletion struct {
 	directory   bool
 }
 
-const maxInputBoxBodyLines = 6
+const (
+	chatPromptPrefix     = "› "
+	maxInputBoxBodyLines = 6
+)
 const (
 	pastedTextPlaceholderMinRunes = 1000
 	pastedTextPlaceholderMinLines = 8
@@ -823,36 +826,86 @@ func (m chatModel) emptyInputPlaceholder() string {
 }
 
 func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, placeholder string) []string {
-	if width < 4 {
-		width = 4
+	if width < 8 {
+		width = 8
 	}
 	if maxBodyLines < 1 {
 		maxBodyLines = 1
 	}
-	innerWidth := max(1, width-2)
-	var body []string
+
+	prefix := chatPromptPrefix
+	continuationPrefix := "... "
+	prefixWidth := lipgloss.Width(prefix)
+	bodyWidth := max(1, width-prefixWidth)
+
+	var raw []string
+	placeholderMode := input == "" && strings.TrimSpace(placeholder) != ""
 	if input == "" && strings.TrimSpace(placeholder) != "" {
-		body = renderInputPlaceholderLines(placeholder, innerWidth)
+		raw = renderInputPromptRawLines(placeholder, prefix, continuationPrefix, bodyWidth)
 	} else {
-		body = wrapChatText("> "+inputWithCursor([]rune(input), cursor), innerWidth)
+		raw = renderInputPromptRawLines(inputWithCursor([]rune(input), cursor), prefix, continuationPrefix, bodyWidth)
 	}
-	if len(body) > maxBodyLines {
-		body = slices.Clone(body[len(body)-maxBodyLines:])
-		body[0] = truncateInputLine("> ... "+body[0], innerWidth)
-	}
-	if input != "" || strings.TrimSpace(placeholder) == "" {
-		for i, line := range body {
-			body[i] = chatUserStyle.Render(line)
-		}
+	if len(raw) > maxBodyLines {
+		raw = slices.Clone(raw[len(raw)-maxBodyLines:])
+		raw[0] = truncateInputLine(continuationPrefix+"... "+trimInputPromptPrefix(raw[0]), width)
 	}
 
-	lines := make([]string, 0, len(body)+2)
-	lines = append(lines, chatInputBorderStyle.Render(inputBoxTopBorderLine(width)))
-	for _, line := range body {
-		lines = append(lines, chatInputBorderStyle.Render("│")+padRenderedLine(line, innerWidth)+chatInputBorderStyle.Render("│"))
+	lines := make([]string, 0, len(raw))
+	for i, line := range raw {
+		if placeholderMode {
+			if i == 0 && strings.HasPrefix(line, prefix) {
+				lines = append(lines, chatUserStyle.Render(prefix)+chatMetaStyle.Render(strings.TrimPrefix(line, prefix)))
+				continue
+			}
+			if strings.HasPrefix(line, continuationPrefix) {
+				lines = append(lines, chatMetaStyle.Render(continuationPrefix+strings.TrimPrefix(line, continuationPrefix)))
+				continue
+			}
+			lines = append(lines, chatMetaStyle.Render(line))
+			continue
+		}
+		lines = append(lines, chatUserStyle.Render(line))
 	}
-	lines = append(lines, chatInputBorderStyle.Render(inputBoxBottomBorderLine(width)))
 	return lines
+}
+
+func renderInputPromptRawLines(text, prefix, continuationPrefix string, width int) []string {
+	if width <= 0 {
+		width = 1
+	}
+	body := wrapChatText(text, width)
+	for i, line := range body {
+		if i == 0 {
+			body[i] = prefix + line
+			continue
+		}
+		body[i] = continuationPrefix + line
+	}
+	if len(body) == 0 {
+		return []string{prefix}
+	}
+	return body
+}
+
+func trimInputPromptPrefix(line string) string {
+	for _, prefix := range []string{chatPromptPrefix, "... "} {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimPrefix(line, prefix)
+		}
+	}
+	return strings.TrimSpace(line)
+}
+
+func renderInputPlaceholderLines(placeholder string, width int) []string {
+	body := renderInputPromptRawLines(placeholder, chatPromptPrefix, "... ", width)
+	for i, line := range body {
+		if i == 0 && strings.HasPrefix(line, chatPromptPrefix) {
+			body[i] = chatUserStyle.Render(chatPromptPrefix) + chatMetaStyle.Render(strings.TrimPrefix(line, chatPromptPrefix))
+			continue
+		}
+		body[i] = chatMetaStyle.Render(line)
+	}
+	return body
 }
 
 func inputBoxTopBorderLine(width int) string {
@@ -878,18 +931,6 @@ func padRenderedLine(line string, width int) string {
 		return line + strings.Repeat(" ", width-renderedWidth)
 	}
 	return line
-}
-
-func renderInputPlaceholderLines(placeholder string, width int) []string {
-	body := wrapChatText("> "+placeholder, width)
-	for i, line := range body {
-		if i == 0 && strings.HasPrefix(line, "> ") {
-			body[i] = chatUserStyle.Render("> ") + chatMetaStyle.Render(strings.TrimPrefix(line, "> "))
-			continue
-		}
-		body[i] = chatMetaStyle.Render(line)
-	}
-	return body
 }
 
 func truncateInputLine(line string, width int) string {

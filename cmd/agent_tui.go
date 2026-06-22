@@ -273,8 +273,10 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		ContextWindowTokensForModel: func(ctx context.Context, model string, fallback int) int {
 			return contextWindowTokensForRun(ctx, setup.client, model, fallback)
 		},
-		PreloadModel: func(ctx context.Context, model string) error {
-			return preloadAgentModelIfLocal(ctx, setup.client, opts, model)
+		PreloadModel: func(ctx context.Context, model string, think *api.ThinkValue) error {
+			preloadOpts := opts
+			preloadOpts.Think = think
+			return preloadAgentModelIfLocal(ctx, setup.client, preloadOpts, model)
 		},
 		NewChat: setup.newChatID,
 	})

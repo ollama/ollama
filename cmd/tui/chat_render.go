@@ -243,6 +243,13 @@ func (m chatModel) viewWidth() int {
 	return 80
 }
 
+func (m chatModel) viewHeight() int {
+	if m.height > 0 {
+		return m.height
+	}
+	return 24
+}
+
 func (m chatModel) transcriptHeight() int {
 	width := m.width
 	if width <= 0 {
@@ -300,7 +307,9 @@ func (m chatModel) maxScroll() int {
 
 func (m chatModel) bottomLines(width, maxHeight int) []string {
 	var lines []string
-	if m.modelPicker != nil {
+	if m.resumePicker != nil {
+		lines = append(lines, m.renderInlineResumePicker(width)...)
+	} else if m.modelPicker != nil {
 		lines = append(lines, m.renderInlineModelPicker(width)...)
 	} else {
 		lines = append(lines, m.completionLines(width)...)
@@ -311,9 +320,6 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 	approvalLines := m.renderApprovalPromptLines(width)
 	if len(actionStatusLines) == 0 {
 		actionStatusLines = []string{""}
-	}
-	if maxHeight > 0 && !actionStatusLinesActive(actionStatusLines) && maxHeight-len(lines)-len(approvalLines)-3 <= 1 {
-		actionStatusLines = nil
 	}
 	if maxHeight > 0 {
 		maxApprovalLines := max(0, maxHeight-len(lines)-len(actionStatusLines)-3)
@@ -347,6 +353,9 @@ func (m chatModel) renderModelStatusLines(width int) []string {
 	if model == "" {
 		return nil
 	}
+	if contextStatus := m.contextStatus(); contextStatus != "" {
+		model += "  " + contextStatus
+	}
 	lines := wrapChatText(model, width)
 	for i := range lines {
 		lines[i] = chatMetaStyle.Render(lines[i])
@@ -361,25 +370,10 @@ func (m chatModel) renderActionStatusLines(width int) []string {
 	if notificationLines := m.renderNotificationLines(width); len(notificationLines) > 0 {
 		return notificationLines
 	}
-	if contextStatus := m.contextStatus(); contextStatus != "" {
-		return []string{chatMetaStyle.Render(contextStatus)}
-	}
 	return nil
 }
 
-func actionStatusLinesActive(lines []string) bool {
-	for _, line := range lines {
-		if strings.TrimSpace(stripChatANSI(line)) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func transcriptInputGap(maxHeight, bottomLineCount, transcriptLineCount int) int {
-	if transcriptLineCount == 0 {
-		return 0
-	}
+func transcriptInputGap(maxHeight, bottomLineCount, _ int) int {
 	const desiredGap = 2
 	if maxHeight <= 0 {
 		return desiredGap
@@ -406,18 +400,15 @@ func (m *chatModel) scrollToolDetailsBy(lines int) {
 }
 
 func (m chatModel) maxToolDetailsScroll() int {
-	return max(0, len(m.toolDetailsLines(m.viewWidth()))-m.toolDetailsAvailableHeight())
+	width := max(1, m.viewWidth()-2)
+	return max(0, len(m.toolDetailsLines(width))-m.toolDetailsAvailableHeight())
 }
 
 func (m chatModel) toolDetailsAvailableHeight() int {
-	height := m.height
-	if height <= 0 {
-		height = 24
-	}
-	return max(0, height-3)
+	return max(0, m.toolDetailsWindowHeight(m.viewWidth(), m.viewHeight())-3)
 }
 
-func (m chatModel) renderToolDetailsFullscreen(width, height int) string {
+func (m chatModel) renderToolDetailsWindow(width, height int) string {
 	if width <= 0 {
 		width = 80
 	}
@@ -425,7 +416,67 @@ func (m chatModel) renderToolDetailsFullscreen(width, height int) string {
 		height = 24
 	}
 
-	bodyLines := m.toolDetailsLines(width)
+	bottomLines := m.bottomLines(width, height)
+	panelHeight := m.toolDetailsWindowHeight(width, height)
+	panelLines := m.renderToolDetailsWindowLines(width, panelHeight)
+	panelGap := 0
+	if len(panelLines) > 0 {
+		panelGap = 1
+	}
+
+	allTranscriptLines := m.transcriptLines(width)
+	availableTranscript := max(0, height-len(bottomLines)-len(panelLines)-panelGap)
+	transcriptLines := m.visibleTranscriptLinesForLines(allTranscriptLines, availableTranscript)
+	if len(allTranscriptLines) > availableTranscript {
+		for len(transcriptLines) < availableTranscript {
+			transcriptLines = append(transcriptLines, "")
+		}
+	}
+
+	lines := append([]string{}, transcriptLines...)
+	if panelGap > 0 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, panelLines...)
+	lines = append(lines, bottomLines...)
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i := range lines {
+		lines[i] = truncateRenderedLine(lines[i], width)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m chatModel) toolDetailsWindowHeight(width, height int) int {
+	if width <= 0 {
+		width = 80
+	}
+	if height <= 0 {
+		height = 24
+	}
+	bottomLines := m.bottomLines(width, height)
+	available := max(0, height-len(bottomLines)-1)
+	if available <= 0 {
+		return 0
+	}
+	preferred := min(18, max(8, height/2+2))
+	return min(preferred, available)
+}
+
+func (m chatModel) renderToolDetailsWindowLines(width, height int) []string {
+	if width <= 0 {
+		width = 80
+	}
+	if height < 3 {
+		return nil
+	}
+
+	innerWidth := max(1, width-2)
+	bodyLines := m.toolDetailsLines(innerWidth)
 	if len(bodyLines) == 0 {
 		bodyLines = []string{chatMetaStyle.Render("No tool output yet.")}
 	}
@@ -433,9 +484,8 @@ func (m chatModel) renderToolDetailsFullscreen(width, height int) string {
 	available := max(0, height-3)
 	maxScroll := max(0, len(bodyLines)-available)
 	scroll := clamp(m.toolDetailsScroll, 0, maxScroll)
-	start := 0
 	if len(bodyLines) > available && available > 0 {
-		start = maxScroll - scroll
+		start := maxScroll - scroll
 		bodyLines = bodyLines[start : start+available]
 	} else if available <= 0 {
 		bodyLines = nil
@@ -446,22 +496,17 @@ func (m chatModel) renderToolDetailsFullscreen(width, height int) string {
 		title += "  " + chatMetaStyle.Render(status)
 	}
 
-	lines := []string{title, ""}
-	lines = append(lines, bodyLines...)
-	footer := chatMetaStyle.Render("ctrl+o/esc back • ↑/↓ scroll")
+	lines := []string{chatInputBorderStyle.Render(inputBoxTopBorderLine(width))}
+	lines = append(lines, chatInputBorderStyle.Render("│")+padRenderedLine(truncateRenderedLine(title, innerWidth), innerWidth)+chatInputBorderStyle.Render("│"))
+	for _, line := range bodyLines {
+		line = truncateRenderedLine(line, innerWidth)
+		lines = append(lines, chatInputBorderStyle.Render("│")+padRenderedLine(line, innerWidth)+chatInputBorderStyle.Render("│"))
+	}
 	for len(lines) < height-1 {
-		lines = append(lines, "")
+		lines = append(lines, chatInputBorderStyle.Render("│")+strings.Repeat(" ", innerWidth)+chatInputBorderStyle.Render("│"))
 	}
-	if height > 0 {
-		lines = append(lines, footer)
-	}
-	if len(lines) > height {
-		lines = lines[:height]
-	}
-	for i := range lines {
-		lines[i] = truncateRenderedLine(lines[i], width)
-	}
-	return strings.Join(lines, "\n")
+	lines = append(lines, chatInputBorderStyle.Render(inputBoxBottomBorderLine(width)))
+	return lines
 }
 
 func (m chatModel) toolDetailsLines(width int) []string {
@@ -656,7 +701,7 @@ func (m chatModel) renderEntryLines(entry chatEntry, body string, width int) []s
 }
 
 func renderUserMessageLines(content string, width int) []string {
-	return renderPromptRow("> "+content, width)
+	return renderPromptRow(chatPromptPrefix+content, width)
 }
 
 func renderMetricsLines(metrics *api.Metrics, width int) []string {
@@ -984,10 +1029,7 @@ func renderCompactionSummaryLines(entry chatEntry, width int) []string {
 
 func compactionSummaryStatusLine(entry chatEntry) string {
 	status := toolStatusStyle(entry.status).Render(toolStatusLabel(entry))
-	if entry.expanded {
-		return fmt.Sprintf("▾ Compacted summary %s", status)
-	}
-	return fmt.Sprintf("▸ Compacted summary %s", status)
+	return fmt.Sprintf("Compacted summary %s", status)
 }
 
 func toolGroupChildStatusLine(entry chatEntry) string {
@@ -1028,7 +1070,7 @@ func stripInternalToolTruncationMarkers(output string) string {
 	filtered := lines[:0]
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[tool output truncated: omitted ") && strings.HasSuffix(trimmed, " characters]") {
+		if strings.HasPrefix(trimmed, "[tool output truncated: ") && strings.HasSuffix(trimmed, "]") {
 			continue
 		}
 		filtered = append(filtered, line)
@@ -1105,10 +1147,6 @@ func isToolResultStatus(status string) bool {
 }
 
 func toolStatusLine(entry chatEntry) string {
-	return toolStatusLineWithArrow(entry, true)
-}
-
-func toolStatusLineWithArrow(entry chatEntry, arrow bool) string {
 	label := entry.label
 	if label == "" {
 		label = toolDisplayName(entry.detail)
@@ -1119,12 +1157,6 @@ func toolStatusLineWithArrow(entry chatEntry, arrow bool) string {
 		status += suffix
 	}
 
-	if arrow && entryHasExpandableOutput(entry) {
-		if entry.expanded {
-			return fmt.Sprintf("▾ %s %s", label, toolStatusStyle(entry.status).Render(status))
-		}
-		return fmt.Sprintf("▸ %s %s", label, toolStatusStyle(entry.status).Render(status))
-	}
 	return fmt.Sprintf("%s %s", label, toolStatusStyle(entry.status).Render(status))
 }
 
@@ -1139,10 +1171,7 @@ func toolGroupStatusLine(entry chatEntry) string {
 		status += suffix
 	}
 
-	if entry.expanded {
-		return fmt.Sprintf("▾ %s %s", label, toolStatusStyle(entry.status).Render(status))
-	}
-	return fmt.Sprintf("▸ %s %s", label, toolStatusStyle(entry.status).Render(status))
+	return fmt.Sprintf("%s %s", label, toolStatusStyle(entry.status).Render(status))
 }
 
 func toolGroupPrefixStyle(entry chatEntry) lipgloss.Style {
@@ -1432,9 +1461,6 @@ func (m chatModel) footerParts() []string {
 	parts = append(parts, m.permissionModeStatus())
 	if cwd := m.cwdStatus(); cwd != "" {
 		parts = append(parts, cwd)
-	}
-	if contextStatus := m.contextStatus(); contextStatus != "" {
-		parts = append(parts, contextStatus)
 	}
 	return parts
 }
@@ -1810,7 +1836,7 @@ func (m chatModel) contextStatus() string {
 	}
 
 	if used >= compactAt {
-		return fmt.Sprintf("ctx %s%s/%s (%d%%) • compact due at %s", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent, formatContextTokenCount(compactAt))
+		return fmt.Sprintf("ctx %s%s/%s (%d%%)", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent)
 	}
 
 	noticeDistance := int(float64(window)*0.1 + 0.999999)
@@ -1818,7 +1844,11 @@ func (m chatModel) contextStatus() string {
 		noticeDistance = 1
 	}
 	if compactAt-used <= noticeDistance {
-		return fmt.Sprintf("ctx %s%s/%s (%d%%) • compact at %s", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent, formatContextTokenCount(compactAt))
+		return fmt.Sprintf("ctx %s%s/%s (%d%%)", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent)
+	}
+
+	if percent > 60 {
+		return fmt.Sprintf("ctx %s%s/%s (%d%%)", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent)
 	}
 
 	return ""
