@@ -177,6 +177,7 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 	}
 
 	hidden := targetForward(mlx.FromValues(seed, 1, len(seed)))
+	session.capturePromptBoundary()
 	current := sampler.Result{Token: greedyTokenFromLogits(r.lastLogits(hidden))}
 	mlx.Pin(current.Arrays()...)
 	mlx.Sweep()
@@ -317,6 +318,7 @@ func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, sessio
 	}
 
 	hidden := targetForward(mlx.FromValues(seed, 1, len(seed)))
+	session.capturePromptBoundary()
 	current := r.Sampler.Sample([]int{pipelineSlot}, r.lastLogits(hidden))
 	mlx.Pin(current.Arrays()...)
 	mlx.Sweep()

@@ -19,6 +19,7 @@ type trieNode struct {
 	lastUsed  time.Time        // for LRU eviction
 	snapshots []cache.Snapshot // per-layer paged-out snapshot data (nil if not paged out)
 	user      bool             // true = explicit restore point (resist auto-merge)
+	generated bool             // true when this edge contains generated output tokens
 }
 
 // startOffset returns the cumulative token offset at the start of this node's edge.
@@ -89,6 +90,10 @@ func (n *trieNode) hasAllSnapshots() bool {
 // findBestMatch walks the trie matching input tokens, returning the path of
 // nodes traversed and the total number of tokens matched.
 func findBestMatch(root *trieNode, tokens []int32) (path []*trieNode, matched int) {
+	return findBestMatchKind(root, tokens, false)
+}
+
+func findBestMatchKind(root *trieNode, tokens []int32, generated bool) (path []*trieNode, matched int) {
 	if root == nil {
 		return nil, 0
 	}
@@ -107,7 +112,7 @@ func findBestMatch(root *trieNode, tokens []int32) (path []*trieNode, matched in
 		bestFull := false
 		for _, child := range node.children {
 			edge := child.tokens
-			if len(edge) == 0 {
+			if child.generated != generated || len(edge) == 0 {
 				continue
 			}
 			if edge[0] != tokens[pos] {
@@ -145,13 +150,28 @@ func findBestMatch(root *trieNode, tokens []int32) (path []*trieNode, matched in
 
 // appendTokens either creates a new child node or extends the leaf in place,
 // returning the node that now holds the tokens.
-func (n *trieNode) appendTokens(root *trieNode, tokens []int32, endOffset int) *trieNode {
-	if n == root || len(n.children) > 0 || n.hasSnapshots() {
+func (n *trieNode) appendTokens(root *trieNode, tokens []int32, endOffset int, generated bool, caches []cache.Cache, counter *int64) *trieNode {
+	matchPath, matched := findBestMatchKind(n, tokens, generated)
+	if len(matchPath) > 1 {
+		lastNode := matchPath[len(matchPath)-1]
+		matchedInEdge := n.endOffset + matched - lastNode.startOffset()
+		if matchedInEdge > 0 && matchedInEdge < len(lastNode.tokens) {
+			lastNode = splitNode(lastNode, matchedInEdge, caches, counter)
+		}
+		if matched == len(tokens) {
+			return lastNode
+		}
+		n = lastNode
+		tokens = tokens[matched:]
+	}
+
+	if n == root || n.generated != generated || len(n.children) > 0 || n.hasSnapshots() {
 		child := &trieNode{
 			tokens:    make([]int32, len(tokens)),
 			endOffset: endOffset,
 			parent:    n,
 			lastUsed:  n.lastUsed,
+			generated: generated,
 		}
 		copy(child.tokens, tokens)
 		n.children = append(n.children, child)
@@ -198,6 +218,7 @@ func splitNode(node *trieNode, at int, caches []cache.Cache, counter *int64) *tr
 		parent:    node.parent,
 		children:  []*trieNode{node},
 		lastUsed:  node.lastUsed,
+		generated: node.generated,
 	}
 	copy(newParent.tokens, node.tokens[:at])
 
@@ -243,6 +264,9 @@ func mergeWithChild(node *trieNode, caches []cache.Cache, counter *int64) {
 	}
 
 	child := node.children[0]
+	if node.generated != child.generated {
+		panic("mergeWithChild called across prompt/generated boundary")
+	}
 
 	// Concatenate tokens.
 	node.tokens = append(node.tokens, child.tokens...)

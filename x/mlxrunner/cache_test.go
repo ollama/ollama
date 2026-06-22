@@ -505,6 +505,7 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 		feedAll(kvc.caches, remaining)
 	}
 	session.attachPrefillSnapshots()
+	session.capturePromptBoundary()
 
 	assertCacheOffsetAlignment(t, kvc, "after prefill")
 
@@ -585,16 +586,21 @@ func checkTrieInvariants(t *testing.T, root *trieNode) {
 				t.Errorf("child [%d,%d) parent mismatch", c.startOffset(), c.endOffset)
 			}
 		}
-		// No two siblings should start with the same token.
-		seen := make(map[int32]bool)
+		// No two siblings of the same branch kind should start with the same
+		// token. Prompt matching ignores generated branches.
+		type siblingKey struct {
+			token     int32
+			generated bool
+		}
+		seen := make(map[siblingKey]bool)
 		for _, c := range n.children {
 			if len(c.tokens) > 0 {
-				first := c.tokens[0]
-				if seen[first] {
-					t.Errorf("node [%d,%d): duplicate sibling first token %d",
-						n.startOffset(), n.endOffset, first)
+				key := siblingKey{token: c.tokens[0], generated: c.generated}
+				if seen[key] {
+					t.Errorf("node [%d,%d): duplicate sibling first token %d generated=%t",
+						n.startOffset(), n.endOffset, key.token, key.generated)
 				}
-				seen[first] = true
+				seen[key] = true
 			}
 		}
 		return true
@@ -658,64 +664,54 @@ func forEachEnv(t *testing.T, fn func(t *testing.T, env *testEnv)) {
 	t.Run("Recurrent", func(t *testing.T) { run(t, newRecurrentEnv()) })
 }
 
-// TestBranchCreationAndReuse exercises the core multi-conversation lifecycle:
+// TestBranchCreationWithoutPromptRestore exercises the core multi-conversation lifecycle:
 // two conversations share a prefix and diverge, creating a branch point.
-// A third conversation extends the first. Verifies trie structure, cache
-// hit lengths, and that semantic caches contain the correct token sequences.
-func TestBranchCreationAndReuse(t *testing.T) {
+// Divergent prompts are re-evaluated from the beginning so output does not
+// depend on partial-prefix cache reuse.
+func TestBranchCreationWithoutPromptRestore(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
 		kvc := env.kvc
 
-		// Request A: [1,2,3,4,5,6,7,8] + generate [20,21] — full miss.
+		// Request A: [1,2,3,4,5,6,7,8] + generate [20,21] - full miss.
 		resA := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 6, 7, 8}, []int32{20, 21})
 		if len(resA.remaining) != 8 {
 			t.Fatalf("A: remaining = %d, want 8 (full miss)", len(resA.remaining))
 		}
 		env.assertAllTokens(t, "after A", []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
 
-		// Verify trie was populated by close().
+		// Verify only prompt tokens are matchable as future prompt input.
 		_, mA := findBestMatch(kvc.root, []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
-		if mA != 10 {
-			t.Fatalf("A findable: expected 10 matched, got %d", mA)
+		if mA != 8 {
+			t.Fatalf("A findable: expected 8 matched, got %d", mA)
 		}
 
-		// Request B: [1,2,3,4,5,10,11,12] — shares 5-token prefix with A.
-		// For rewindable caches, switchToPath rewinds to the match point
-		// so only the non-matching suffix needs evaluation. For non-rewindable
-		// caches (RecurrentCache), the rewind fails and freeAll fires.
+		// Request B: [1,2,3,4,5,10,11,12] shares a 5-token prefix with A,
+		// but partial prompt matches are not reused.
 		resB := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 10, 11, 12}, []int32{30, 31})
-		if env.rewindable {
-			if resB.pendingSnapshots != 0 {
-				t.Fatalf("B: pendingSnapshots = %d, want 0 (rewind succeeded)", resB.pendingSnapshots)
-			}
-			if len(resB.remaining) != 3 {
-				t.Fatalf("B: remaining = %d, want 3 (rewind to match point)", len(resB.remaining))
-			}
-		} else {
-			if resB.pendingSnapshots != 1 {
-				t.Fatalf("B: pendingSnapshots = %d, want 1", resB.pendingSnapshots)
-			}
-			if len(resB.remaining) != 8 {
-				t.Fatalf("B: remaining = %d, want 8 (freeAll fallback)", len(resB.remaining))
-			}
+		if resB.pendingSnapshots != 0 {
+			t.Fatalf("B: pendingSnapshots = %d, want 0", resB.pendingSnapshots)
+		}
+		if len(resB.remaining) != 8 {
+			t.Fatalf("B: remaining = %d, want 8 (partial prompt match disabled)", len(resB.remaining))
 		}
 		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31})
 
-		// Both A and B should be findable in the trie.
+		// Both prompt branches should be fully matchable in the trie, but
+		// generated suffixes are not matchable as prompt input.
 		_, mA2 := findBestMatch(kvc.root, []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
-		if mA2 < 5 {
-			t.Fatalf("A still findable: expected >= 5 matched, got %d", mA2)
+		if mA2 != 8 {
+			t.Fatalf("A still findable: expected 8 matched, got %d", mA2)
 		}
 		_, mB := findBestMatch(kvc.root, []int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31})
-		if mB < 5 {
-			t.Fatalf("B findable: expected >= 5 matched, got %d", mB)
+		if mB != 8 {
+			t.Fatalf("B findable: expected 8 matched, got %d", mB)
 		}
 
-		// Request C: [1,2,3,4,5,6,7,8,40,41] — extends A's prefix.
-		// Should get a cache hit for the shared prefix.
+		// Request C: [1,2,3,4,5,6,7,8,40,41] extends A's prefix, but is
+		// not an exact prompt match and must be fully re-evaluated.
 		resC := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 6, 7, 8, 40, 41}, nil)
-		if len(resC.remaining) >= 10 {
-			t.Fatalf("C: remaining = %d, want < 10 (should get cache hit)", len(resC.remaining))
+		if len(resC.remaining) != 10 {
+			t.Fatalf("C: remaining = %d, want 10 (partial prompt match disabled)", len(resC.remaining))
 		}
 		env.assertAllTokens(t, "after C", []int32{1, 2, 3, 4, 5, 6, 7, 8, 40, 41})
 
@@ -723,9 +719,10 @@ func TestBranchCreationAndReuse(t *testing.T) {
 	})
 }
 
-// TestExactMatchSeedBehavior verifies the holdback mechanism: when the exact
-// same prompt is requested twice, the cache does not overclaim cached work.
-// The last token must be re-evaluated to seed generation.
+// TestExactMatchSeedBehavior verifies the deterministic-safe cache policy:
+// even exact repeated prompts are re-evaluated instead of restored from MLX
+// cache state, because supported MLX models can otherwise produce
+// order-dependent outputs.
 func TestExactMatchSeedBehavior(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
 		kvc := env.kvc
@@ -733,25 +730,14 @@ func TestExactMatchSeedBehavior(t *testing.T) {
 		// Request A: first time.
 		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5}, []int32{10, 11})
 
-		// Request B: identical prompt. Holdback means matched=4, partial in
-		// the 5-token edge. For rewindable caches, switchToPath rewinds to
-		// offset 4, so only the held-back token needs re-evaluation. For
-		// non-rewindable caches, the rewind fails and freeAll fires.
+		// Request B: identical prompt. Matching cache state exists, but the
+		// deterministic-safe policy disables restoring it.
 		resB := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5}, []int32{20, 21})
-		if env.rewindable {
-			if len(resB.remaining) != 1 {
-				t.Fatalf("B: remaining = %d, want 1 (rewind to holdback point)", len(resB.remaining))
-			}
-			if resB.pendingSnapshots != 0 {
-				t.Fatalf("B: pendingSnapshots = %d, want 0 (rewind succeeded)", resB.pendingSnapshots)
-			}
-		} else {
-			if len(resB.remaining) != 5 {
-				t.Fatalf("B: remaining = %d, want 5 (freeAll fallback)", len(resB.remaining))
-			}
-			if resB.pendingSnapshots != 1 {
-				t.Fatalf("B: pendingSnapshots = %d, want 1", resB.pendingSnapshots)
-			}
+		if len(resB.remaining) != 5 {
+			t.Fatalf("B: remaining = %d, want 5 (prompt cache restore disabled)", len(resB.remaining))
+		}
+		if resB.pendingSnapshots != 0 {
+			t.Fatalf("B: pendingSnapshots = %d, want 0", resB.pendingSnapshots)
 		}
 		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 20, 21})
 
@@ -759,9 +745,84 @@ func TestExactMatchSeedBehavior(t *testing.T) {
 	})
 }
 
+func TestGeneratedBranchIsNotMatchedAsPromptInput(t *testing.T) {
+	forEachEnv(t, func(t *testing.T, env *testEnv) {
+		kvc := env.kvc
+
+		simulateRequest(t, kvc, []int32{1, 2, 3}, []int32{4, 5})
+
+		res := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 9}, nil)
+		if len(res.remaining) != 5 {
+			t.Fatalf("remaining = %d, want 5; generated or partial prompt branch was reused", len(res.remaining))
+		}
+
+		checkTrieInvariants(t, kvc.root)
+	})
+}
+
+func TestRepeatedGeneratedBranchesDoNotDuplicateSiblings(t *testing.T) {
+	forEachEnv(t, func(t *testing.T, env *testEnv) {
+		kvc := env.kvc
+
+		simulateRequest(t, kvc, []int32{1, 2, 3}, []int32{4, 5})
+		simulateRequest(t, kvc, []int32{1, 2, 3}, []int32{4, 5})
+		simulateRequest(t, kvc, []int32{1, 2, 3}, []int32{4, 6})
+
+		_, promptMatched := findBestMatch(kvc.root, []int32{1, 2, 3, 4, 5})
+		if promptMatched != 3 {
+			t.Fatalf("prompt match = %d, want 3; generated output became prompt-matchable", promptMatched)
+		}
+
+		promptPath, matched := findBestMatch(kvc.root, []int32{1, 2, 3})
+		if matched != 3 {
+			t.Fatalf("prompt matched = %d, want 3", matched)
+		}
+		promptNode := promptPath[len(promptPath)-1]
+		if _, generatedMatched := findBestMatchKind(promptNode, []int32{4, 5}, true); generatedMatched != 2 {
+			t.Fatalf("generated [4,5] matched = %d, want 2", generatedMatched)
+		}
+		if _, generatedMatched := findBestMatchKind(promptNode, []int32{4, 6}, true); generatedMatched != 2 {
+			t.Fatalf("generated [4,6] matched = %d, want 2", generatedMatched)
+		}
+
+		checkTrieInvariants(t, kvc.root)
+	})
+}
+
+func TestEvictionDoesNotMergeGeneratedBranchIntoPromptBranch(t *testing.T) {
+	forEachEnv(t, func(t *testing.T, env *testEnv) {
+		kvc := env.kvc
+
+		simulateRequest(t, kvc, []int32{1, 2, 3}, []int32{4, 5})
+		kvc.activePath = []*trieNode{kvc.root}
+
+		walkNodes(kvc.root, func(n *trieNode) bool {
+			if !n.hasSnapshots() {
+				return true
+			}
+			snaps := make([]cache.Snapshot, len(n.snapshots))
+			for i, s := range n.snapshots {
+				if s != nil {
+					snaps[i] = &fakeSnapshot{byteSize: 5 * 1024 * 1024 * 1024}
+				}
+			}
+			n.setSnapshots(snaps, &kvc.pagedOutBytes)
+			return true
+		})
+		kvc.enforceEvictionPolicy()
+
+		_, matched := findBestMatch(kvc.root, []int32{1, 2, 3, 4, 5})
+		if matched > 3 {
+			t.Fatalf("matched = %d, want at most 3; eviction merged generated tokens into prompt path", matched)
+		}
+
+		checkTrieInvariants(t, kvc.root)
+	})
+}
+
 // TestConversationResumption tests the most common pattern: user sends a message,
-// gets a response, then sends a follow-up. The follow-up should reuse the cached
-// prefix (system prompt + first turn + assistant response).
+// gets a response, then sends a follow-up. Generated output branches and partial
+// prompt prefixes are not reused as prompt input, so follow-ups are re-evaluated.
 func TestConversationResumption(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
 		kvc := env.kvc
@@ -770,18 +831,18 @@ func TestConversationResumption(t *testing.T) {
 		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5}, []int32{10, 11, 12})
 		env.assertAllTokens(t, "turn 1", []int32{1, 2, 3, 4, 5, 10, 11, 12})
 
-		// Turn 2: full history + new user message. Should get a cache hit on
-		// the prefix [1,2,3,4,5,10,11,12] and only need to evaluate [20,21].
+		// Turn 2: full history + new user message is not an exact prompt
+		// match and must not reuse cached partial-prefix state.
 		resB := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21}, []int32{30})
-		if len(resB.remaining) > 5 {
-			t.Fatalf("turn 2: remaining = %d, want <= 5 (should reuse most of history)", len(resB.remaining))
+		if len(resB.remaining) != 10 {
+			t.Fatalf("turn 2: remaining = %d, want 10 (partial prompt match disabled)", len(resB.remaining))
 		}
 		env.assertAllTokens(t, "turn 2", []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30})
 
 		// Turn 3: even longer history.
 		resC := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30, 40, 41}, nil)
-		if len(resC.remaining) > 5 {
-			t.Fatalf("turn 3: remaining = %d, want <= 5", len(resC.remaining))
+		if len(resC.remaining) != 13 {
+			t.Fatalf("turn 3: remaining = %d, want 13 (partial prompt match disabled)", len(resC.remaining))
 		}
 		env.assertAllTokens(t, "turn 3", []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30, 40, 41})
 
@@ -1080,9 +1141,16 @@ func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 				frontier.lastUsed, beforeRequest)
 		}
 
-		// Every non-frontier node on the active path (including root)
-		// should retain its old lastUsed — only the frontier gets refreshed.
+		// Every node before the prompt-boundary match should retain its old
+		// lastUsed. The prompt boundary may be refreshed because generated
+		// output is re-evaluated as prompt input from there.
 		for i, node := range kvc.activePath[:len(kvc.activePath)-1] {
+			if node == kvc.root {
+				continue
+			}
+			if node.endOffset == 5 {
+				continue
+			}
 			if !node.lastUsed.Before(beforeRequest) {
 				t.Errorf("activePath[%d] (endOffset=%d) lastUsed was refreshed: got %v, want < %v",
 					i, node.endOffset, node.lastUsed, beforeRequest)

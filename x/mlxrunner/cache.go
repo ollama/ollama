@@ -92,6 +92,13 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 
 	matchPath, matched := findBestMatch(c.root, inputs)
 	originalMatched := matched
+	// MLX cache restore currently changes deterministic outputs for supported
+	// models, even on exact prompt reuse. Keep trie bookkeeping for diagnostics
+	// and future fixes, but re-evaluate prompt input instead of restoring it.
+	if matched > 0 {
+		matchPath = []*trieNode{c.root}
+		matched = 0
+	}
 
 	// Always keep at least one token to re-evaluate so the
 	// pipeline can seed token generation from it.
@@ -113,8 +120,8 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 		remaining: remaining,
 	}
 
-	// Schedule a snapshot at the branch point during prefill so future
-	// requests diverging here can restore instead of re-evaluating.
+	// Keep the branch-point snapshot path intact for a future safe restore
+	// policy. With restore disabled above, this is intentionally inactive.
 	if prefix < matched {
 		session.pendingSnapshots = append(session.pendingSnapshots, pendingSnapshot{offset: matched, user: false})
 	}
@@ -123,7 +130,7 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 	if prefix == 0 {
 		msg = "cache miss"
 	}
-	slog.Info(msg, "total", len(inputs), "matched", originalMatched, "cached", prefix, "left", len(remaining))
+	slog.Info(msg, "total", len(inputs), "matchable", originalMatched, "restored", prefix, "left", len(remaining), "restore_disabled", originalMatched > matched)
 
 	return session
 }
@@ -428,13 +435,42 @@ func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int)
 		if len(dest.children) == 0 && !dest.user {
 			dest.setSnapshots(nil, &c.pagedOutBytes)
 		}
-		newDest := dest.appendTokens(c.root, remaining, endOffset)
+		newDest := dest.appendTokens(c.root, remaining, endOffset, false, c.caches, &c.pagedOutBytes)
 		if newDest != dest {
 			c.activePath = append(c.activePath, newDest)
 		}
 		dest = newDest
 	}
 	return dest
+}
+
+// capturePromptBoundary stores a restorable trie boundary at the end of the
+// input prompt before the first generated token mutates the live cache.
+func (s *cacheSession) capturePromptBoundary() {
+	c := s.cache
+	offset := c.minCacheOffset()
+	if offset != len(s.inputs) || len(c.activePath) == 0 {
+		return
+	}
+
+	frontier := c.activePath[len(c.activePath)-1]
+	if offset > frontier.endOffset {
+		frontier = c.advancePath(frontier, s.inputs[frontier.endOffset:offset], offset)
+	}
+	if frontier.hasAllSnapshots() {
+		return
+	}
+
+	snaps := make([]cache.Snapshot, len(c.caches))
+	for j, kv := range c.caches {
+		if kv == nil {
+			continue
+		}
+		snaps[j] = kv.Snapshot(frontier.startOffset())
+	}
+	frontier.setSnapshots(snaps, &c.pagedOutBytes)
+	frontier.lastUsed = time.Now()
+	c.enforceEvictionPolicy()
 }
 
 // freeAll releases all cache layers.
@@ -488,15 +524,26 @@ func (s *cacheSession) close() {
 	// that we also actually have the data.
 	mlx.AsyncEval(arrays...)
 
-	// Advance the trie frontier with any newly generated tokens.
+	// Advance the trie frontier with prompt tokens first, then keep generated
+	// output on a separate branch. Future prompt matching deliberately ignores
+	// generated branches; multi-turn prompts can still re-evaluate assistant
+	// output as input instead of restoring from post-generation state.
 	c := s.cache
 	if len(c.activePath) > 0 {
 		frontier := c.activePath[len(c.activePath)-1]
 		stored := append(s.inputs, s.outputs...)
 
-		if offset > frontier.endOffset {
+		promptEnd := min(offset, len(s.inputs))
+		if promptEnd > frontier.endOffset {
+			c.advancePath(frontier, s.inputs[frontier.endOffset:promptEnd], promptEnd)
+		}
+		if offset > promptEnd {
+			frontier = c.activePath[len(c.activePath)-1]
 			newTokens := stored[frontier.endOffset:offset]
-			c.advancePath(frontier, newTokens, offset)
+			newDest := frontier.appendTokens(c.root, newTokens, offset, true, c.caches, &c.pagedOutBytes)
+			if newDest != frontier {
+				c.activePath = append(c.activePath, newDest)
+			}
 		}
 		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
 	}
@@ -517,6 +564,9 @@ func (c *kvCache) enforceEvictionPolicy() {
 		var best *trieNode
 		walkNodes(c.root, func(n *trieNode) bool {
 			if n == c.root || activeSet[n] || len(n.children) > 1 {
+				return true
+			}
+			if len(n.children) == 1 && n.generated != n.children[0].generated {
 				return true
 			}
 			// Evict: oldest, then deepest, then largest.
@@ -543,6 +593,10 @@ func (c *kvCache) evictNode(node *trieNode) {
 		slog.Debug("evicting leaf", "offset", node.startOffset(), "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
 		removeNode(node, &c.pagedOutBytes)
 	} else if len(node.children) == 1 {
+		if node.generated != node.children[0].generated {
+			slog.Debug("skipping cross-boundary eviction merge", "offset", node.startOffset(), "tokens", len(node.tokens))
+			return
+		}
 		// Interior node with one child: merge with child.
 		before := c.pagedOutBytes
 		tokens := len(node.tokens)
@@ -611,6 +665,9 @@ func (c *kvCache) dumpTree() {
 		if n.hasAllSnapshots() {
 			snapshotCount++
 			flags = append(flags, "snap")
+		}
+		if n.generated {
+			flags = append(flags, "generated")
 		}
 		if active[n] {
 			flags = append(flags, "active")

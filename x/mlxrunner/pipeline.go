@@ -80,9 +80,9 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	tokens := session.remaining
 	prefillChunk := prefillChunkSize()
 
-	// Request periodic snapshots during prefill and near the end of the
-	// prompt so that long prompts can be partially restored and
-	// thinking/generation can be retried without full reprocessing.
+	// Request periodic snapshots during prefill and near the end of the prompt.
+	// Prompt restore is currently disabled for deterministic correctness, but
+	// these snapshots keep the path available for a future safe restore policy.
 	const snapshotInterval = 8192
 	var snapshotOffsets []int
 	for offset := snapshotInterval; offset < len(inputs); offset += snapshotInterval {
@@ -162,6 +162,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	}
 
 	sample = step(mlx.FromValues(tokens[processed:], 1, total-processed))
+	session.capturePromptBoundary()
 	logutil.TraceContext(ctx, "mlx decode seed", "tokens", total-processed, "memory", mlx.Memory{})
 
 	dec := decoder{

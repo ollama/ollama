@@ -170,7 +170,7 @@ func TestFindSplitAppendSequence(t *testing.T) {
 	matchedInEdge := matched - lastNode.startOffset()
 	split := splitNode(lastNode, matchedInEdge, nil, nil)
 
-	split.appendTokens(root, []int32{6, 7}, 5)
+	split.appendTokens(root, []int32{6, 7}, 5, false, nil, nil)
 
 	if len(root.children) != 1 {
 		t.Fatalf("root should have 1 child, got %d", len(root.children))
@@ -200,7 +200,7 @@ func TestFindSplitAppendSequence(t *testing.T) {
 func TestRepeatedBranching(t *testing.T) {
 	root := &trieNode{lastUsed: time.Now()}
 
-	root.appendTokens(root, []int32{1, 2, 3, 4, 5}, 5)
+	root.appendTokens(root, []int32{1, 2, 3, 4, 5}, 5, false, nil, nil)
 
 	_, matchedB := findBestMatch(root, []int32{1, 2, 3, 6, 7})
 	if matchedB != 3 {
@@ -208,14 +208,14 @@ func TestRepeatedBranching(t *testing.T) {
 	}
 	nodeA := root.children[0]
 	split1 := splitNode(nodeA, 3, nil, nil)
-	split1.appendTokens(root, []int32{6, 7}, 5)
+	split1.appendTokens(root, []int32{6, 7}, 5, false, nil, nil)
 
 	_, matchedC := findBestMatch(root, []int32{1, 2, 8, 9})
 	if matchedC != 2 {
 		t.Fatalf("C: expected 2 matched, got %d", matchedC)
 	}
 	split2 := splitNode(split1, 2, nil, nil)
-	split2.appendTokens(root, []int32{8, 9}, 4)
+	split2.appendTokens(root, []int32{8, 9}, 4, false, nil, nil)
 
 	_, mA := findBestMatch(root, []int32{1, 2, 3, 4, 5})
 	if mA != 5 {
