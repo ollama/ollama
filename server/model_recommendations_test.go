@@ -25,7 +25,7 @@ import (
 func TestModelRecommendationsDefaultOrder(t *testing.T) {
 	want := []string{
 		"kimi-k2.6:cloud",
-		"glm-5.1:cloud",
+		"glm-5.2:cloud",
 		"qwen3.5:cloud",
 		"minimax-m2.7:cloud",
 		"gemma4",
