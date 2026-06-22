@@ -179,11 +179,11 @@ set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
 set(GGML_CUDA_GRAPHS ON CACHE BOOL "Enable CUDA graphs" FORCE)
 
 # Use the turboquant fork of llama.cpp for TurboQuant KV cache compression
-# https://github.com/nomadstar/llama-cpp-turboquant - feature/triattention branch
+# https://github.com/nomadstar/llama-cpp-turboquant - main branch (PagedAttention + TriAttention)
 FetchContent_Declare(
     llama_cpp
     GIT_REPOSITORY "https://github.com/nomadstar/llama-cpp-turboquant.git"
-    GIT_TAG "feature/triattention"
+    GIT_TAG "main"
     GIT_SHALLOW TRUE
     ${_ollama_compat_patch_cmd}
 )
