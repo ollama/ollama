@@ -68,6 +68,21 @@ type EventSink interface {
 	Emit(Event) error
 }
 
+type MultiEventSink []EventSink
+
+func (s MultiEventSink) Emit(event Event) error {
+	var firstErr error
+	for _, sink := range s {
+		if sink == nil {
+			continue
+		}
+		if err := sink.Emit(event); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 type EventSinkFunc func(Event) error
 
 func (fn EventSinkFunc) Emit(event Event) error {
