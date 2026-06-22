@@ -522,6 +522,9 @@ func TestStoreArchivesCompactedMessages(t *testing.T) {
 	if chat.Messages[0].Role != "assistant" || len(chat.Messages[0].ToolCalls) != 1 || chat.Messages[0].ToolCalls[0].Function.Name != compactionToolName {
 		t.Fatalf("summary tool call = %#v", chat.Messages[0])
 	}
+	if chat.Messages[0].ToolCalls[0].Function.Arguments.Len() != 0 {
+		t.Fatalf("summary tool call should not have arguments: %#v", chat.Messages[0].ToolCalls[0].Function.Arguments.ToMap())
+	}
 	if chat.Messages[1].Role != "tool" || chat.Messages[1].ToolName != compactionToolName || chat.Messages[1].Content != compactionSummaryMessagePrefix+"summary" {
 		t.Fatalf("summary tool result = %#v", chat.Messages[1])
 	}
@@ -574,6 +577,9 @@ func TestStoreArchivesWholeChatWhenKeepingZeroTurns(t *testing.T) {
 	}
 	if chat.Messages[0].Role != "assistant" || len(chat.Messages[0].ToolCalls) != 1 || chat.Messages[0].ToolCalls[0].Function.Name != compactionToolName {
 		t.Fatalf("summary tool call = %#v", chat.Messages[0])
+	}
+	if chat.Messages[0].ToolCalls[0].Function.Arguments.Len() != 0 {
+		t.Fatalf("summary tool call should not have arguments: %#v", chat.Messages[0].ToolCalls[0].Function.Arguments.ToMap())
 	}
 	if chat.Messages[1].Role != "tool" || chat.Messages[1].Content != compactionSummaryMessagePrefix+"summary" {
 		t.Fatalf("summary tool result = %#v", chat.Messages[1])

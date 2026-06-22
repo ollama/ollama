@@ -1303,6 +1303,81 @@ func TestSessionContextCapsToolResultBeforeCompaction(t *testing.T) {
 	}
 }
 
+func TestSessionCompactsThenReattachesFullyOmittedToolResult(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "large_tool",
+						Arguments: args,
+					},
+				}}},
+			}},
+			{{Message: api.Message{Role: "assistant", Content: "older history summarized"}}},
+			{{Message: api.Message{Role: "assistant", Content: "done with result"}}},
+		},
+	}
+	registry := NewRegistry()
+	registry.Register(largeTool{})
+	session := &Session{
+		Client: client,
+		Tools:  registry,
+		Compactor: NewSimpleCompactor(client, nil, CompactionOptions{
+			ContextWindowTokens: smallContextToolResultTokenWindow,
+			Threshold:           0.45,
+		}),
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		Messages:    []api.Message{{Role: "user", Content: strings.Repeat("history ", 2000)}},
+		NewMessages: []api.Message{{Role: "user", Content: "use a large tool"}},
+		UseTools:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != 3 {
+		t.Fatalf("client calls = %d, want model, compaction, model", client.calls)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("requests = %d, want 3", len(client.requests))
+	}
+
+	nextRequestMessages := client.requests[2].Messages
+	if len(nextRequestMessages) != 4 {
+		t.Fatalf("next model request messages = %#v, want summary pair plus tool call/result", nextRequestMessages)
+	}
+	if nextRequestMessages[0].Role != "assistant" || len(nextRequestMessages[0].ToolCalls) != 1 || nextRequestMessages[0].ToolCalls[0].Function.Name != compactionToolName {
+		t.Fatalf("first message should be compaction summary tool call: %#v", nextRequestMessages[0])
+	}
+	if nextRequestMessages[1].Role != "tool" || nextRequestMessages[1].ToolName != compactionToolName || !strings.Contains(nextRequestMessages[1].Content, "older history summarized") {
+		t.Fatalf("second message should be compaction summary result: %#v", nextRequestMessages[1])
+	}
+	if nextRequestMessages[2].Role != "assistant" || len(nextRequestMessages[2].ToolCalls) != 1 || nextRequestMessages[2].ToolCalls[0].ID != "call-1" {
+		t.Fatalf("third message should be original assistant tool call: %#v", nextRequestMessages[2])
+	}
+	toolResult := nextRequestMessages[3]
+	if toolResult.Role != "tool" || toolResult.ToolName != "large_tool" || toolResult.ToolCallID != "call-1" {
+		t.Fatalf("fourth message should be reattached large tool result: %#v", toolResult)
+	}
+	if toolOutputFullyOmitted(toolResult.Content) {
+		t.Fatalf("tool result should be re-fitted after compaction, got full omission marker: %q", toolResult.Content)
+	}
+	if !strings.Contains(toolResult.Content, "[tool output truncated: showing first ~") {
+		t.Fatalf("tool result should still be bounded after compaction: %q", toolResult.Content)
+	}
+	if strings.Count(toolResult.Content, "x") != smallContextToolResultRunes {
+		t.Fatalf("tool result x count = %d, want %d", strings.Count(toolResult.Content, "x"), smallContextToolResultRunes)
+	}
+	if got := result.Messages[len(result.Messages)-1].Content; got != "done with result" {
+		t.Fatalf("final response = %q", got)
+	}
+}
+
 func TestSessionEmitsAutoCompactionActivityEvents(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	client := &fakeClient{

@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -16,7 +18,7 @@ const (
 	compactOnlySummaryContextTokens      = 16000
 
 	compactionSummaryMessagePrefix = "Conversation summary:\n"
-	compactionToolName             = "compact_conversation"
+	compactionToolName             = "summary"
 	compactionToolCallID           = "ollama_compaction"
 	maxCompactionSummaryBytes      = 16 * 1024
 	compactionSummaryTruncated     = "\n\n[summary truncated]"
@@ -47,18 +49,20 @@ type CompactionOptions struct {
 }
 
 type CompactionRequest struct {
-	ChatID       string
-	Model        string
-	SystemPrompt string
-	Messages     []api.Message
-	Tools        api.Tools
-	Format       string
-	Latest       api.ChatResponse
-	Options      map[string]any
-	KeepAlive    *api.Duration
-	Force        bool
-	ContinueTask bool
-	Progress     func(CompactionProgress)
+	ChatID        string
+	Model         string
+	SystemPrompt  string
+	Messages      []api.Message
+	Tools         api.Tools
+	Format        string
+	Latest        api.ChatResponse
+	Options       map[string]any
+	KeepAlive     *api.Duration
+	Think         *api.ThinkValue
+	Force         bool
+	ContinueTask  bool
+	KeepUserTurns *int
+	Progress      func(CompactionProgress)
 }
 
 type CompactionProgress struct {
@@ -99,6 +103,9 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 	}
 
 	keepUserTurns := c.keepUserTurns(req.Options)
+	if req.KeepUserTurns != nil {
+		keepUserTurns = *req.KeepUserTurns
+	}
 	prefix, previousSummary, archive, suffix, keptUserTurns, ok := splitCompactionMessages(req.Messages, keepUserTurns)
 	if !ok || len(archive) == 0 {
 		result.Reason = "nothing to compact"
@@ -111,6 +118,14 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 		return result, err
 	}
 	summary = truncateCompactionSummary(strings.TrimSpace(summary))
+	if summary == "" {
+		summary, err = c.summarizeEmptyFallback(ctx, req, previousSummary, archive)
+		if err != nil {
+			result.Reason = err.Error()
+			return result, err
+		}
+		summary = truncateCompactionSummary(strings.TrimSpace(summary))
+	}
 	if summary == "" {
 		// TODO(parthsareen): Investigate models that stream compaction output
 		// without final content, such as thinking-only summaries.
@@ -215,6 +230,7 @@ func (c *SimpleCompactor) summarize(ctx context.Context, req CompactionRequest, 
 			},
 		},
 		Options: req.Options,
+		Think:   req.Think,
 	}
 	if req.KeepAlive != nil {
 		chatReq.KeepAlive = req.KeepAlive
@@ -237,6 +253,38 @@ func (c *SimpleCompactor) summarize(ctx context.Context, req CompactionRequest, 
 	return summary.String(), nil
 }
 
+func (c *SimpleCompactor) summarizeEmptyFallback(ctx context.Context, req CompactionRequest, previousSummary string, archive []api.Message) (string, error) {
+	retry := req
+	retry.Think = &api.ThinkValue{Value: false}
+	summary, err := c.summarize(ctx, retry, previousSummary, archive)
+	if err == nil {
+		return summary, nil
+	}
+	if !isUnsupportedCompactionThinkError(err) {
+		return "", err
+	}
+	if req.Think == nil {
+		return "", nil
+	}
+	retry.Think = nil
+	return c.summarize(ctx, retry, previousSummary, archive)
+}
+
+func isUnsupportedCompactionThinkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	if !strings.Contains(text, "think") {
+		return false
+	}
+	var statusErr api.StatusError
+	if errors.As(err, &statusErr) && statusErr.StatusCode != 0 {
+		return statusErr.StatusCode == http.StatusBadRequest
+	}
+	return strings.Contains(text, "does not support") || strings.Contains(text, "not supported") || strings.Contains(text, "unsupported")
+}
+
 func compactionSummaryMessage(summary string) string {
 	return compactionSummaryMessageForTask(summary, false)
 }
@@ -254,16 +302,13 @@ func compactionSummaryMessages(summary string) []api.Message {
 }
 
 func compactionSummaryMessagesForTask(summary string, continueTask bool) []api.Message {
-	args := api.NewToolCallFunctionArguments()
-	args.Set("reason", "context compaction")
 	return []api.Message{
 		{
 			Role: "assistant",
 			ToolCalls: []api.ToolCall{{
 				ID: compactionToolCallID,
 				Function: api.ToolCallFunction{
-					Name:      compactionToolName,
-					Arguments: args,
+					Name: compactionToolName,
 				},
 			}},
 		},
@@ -499,8 +544,12 @@ func splitCompactionMessages(messages []api.Message, keepUserTurns int) (prefix 
 	return prefix, previousSummary, candidates[:suffixStart], candidates[suffixStart:], keptUserTurns, true
 }
 
+func isCompactionToolName(name string) bool {
+	return name == compactionToolName
+}
+
 func isCompactionSummary(msg api.Message) bool {
-	return (msg.Role == "user" || msg.Role == "system" || (msg.Role == "tool" && msg.ToolName == compactionToolName)) &&
+	return (msg.Role == "user" || msg.Role == "system" || (msg.Role == "tool" && isCompactionToolName(msg.ToolName))) &&
 		strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix)
 }
 
@@ -509,7 +558,7 @@ func isCompactionToolCall(msg api.Message) bool {
 		return false
 	}
 	for _, call := range msg.ToolCalls {
-		if call.Function.Name == compactionToolName {
+		if isCompactionToolName(call.Function.Name) {
 			return true
 		}
 	}

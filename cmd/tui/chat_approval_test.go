@@ -33,9 +33,11 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 		!strings.Contains(view, "1. Approve once") ||
 		!strings.Contains(view, "2. Approve session") ||
 		!strings.Contains(view, "3. Deny") ||
-		!strings.Contains(view, "1/2/3 choose • enter select • esc deny") ||
 		!strings.Contains(view, "› █") {
 		t.Fatalf("approval view missing content: %q", view)
+	}
+	if strings.Contains(view, "1/2/3 choose • enter select • esc deny") {
+		t.Fatalf("approval view should not render shortcut helper: %q", view)
 	}
 	if strings.Contains(view, "Bash wants to run a command") {
 		t.Fatalf("approval view should not repeat tool summary when command detail is shown: %q", view)
@@ -147,10 +149,13 @@ func TestChatApprovalPromptClosesHistoryPopup(t *testing.T) {
 	if strings.Contains(view, "Message history") {
 		t.Fatalf("history popup should not render over approval prompt:\n%s", view)
 	}
-	for _, want := range []string{"$ git status", "1. Approve once", "2. Approve session", "3. Deny", "1/2/3 choose • enter select • esc deny"} {
+	for _, want := range []string{"$ git status", "1. Approve once", "2. Approve session", "3. Deny"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("approval view missing %q:\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "1/2/3 choose • enter select • esc deny") {
+		t.Fatalf("approval view should not render shortcut helper:\n%s", view)
 	}
 	if strings.Contains(view, "Bash wants to run a command") {
 		t.Fatalf("approval view should not repeat tool summary when command detail is shown:\n%s", view)
@@ -192,11 +197,14 @@ func TestChatShiftTabTogglesPermissionMode(t *testing.T) {
 	if !m.autoApproveTools() {
 		t.Fatal("shift+tab should enable auto-approve mode")
 	}
-	if m.status != "full access enabled" || m.notificationLine() != "full access enabled" {
-		t.Fatalf("status = %q notification = %q, want full access enabled", m.status, m.notificationLine())
+	if m.status != "full access enabled" || m.notificationLine() != "" {
+		t.Fatalf("status = %q notification = %q, want footer-only full access notice", m.status, m.notificationLine())
 	}
-	if footer := m.footerLine(); !strings.Contains(footer, "full access") || !strings.Contains(footer, "shift+tab") || strings.Contains(footer, "perm") {
+	if footer := m.footerLine(); !strings.Contains(footer, "full access enabled") || !strings.Contains(footer, "shift+tab") || strings.Contains(footer, "perm") {
 		t.Fatalf("footer missing auto-approve permission mode: %q", footer)
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "full access enabled") {
+		t.Fatalf("visible footer missing full access notice:\n%s", view)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
@@ -204,11 +212,14 @@ func TestChatShiftTabTogglesPermissionMode(t *testing.T) {
 	if m.autoApproveTools() {
 		t.Fatal("second shift+tab should return to review mode")
 	}
-	if m.status != "review mode enabled" || m.notificationLine() != "review mode enabled" {
-		t.Fatalf("status = %q notification = %q, want review mode enabled", m.status, m.notificationLine())
+	if m.status != "review mode enabled" || m.notificationLine() != "" {
+		t.Fatalf("status = %q notification = %q, want footer-only review notice", m.status, m.notificationLine())
 	}
-	if footer := m.footerLine(); !strings.Contains(footer, "review") || strings.Contains(footer, "perm") {
+	if footer := m.footerLine(); !strings.Contains(footer, "review mode enabled") || strings.Contains(footer, "perm") {
 		t.Fatalf("footer missing review permission mode: %q", footer)
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "review mode enabled") {
+		t.Fatalf("visible footer missing review notice:\n%s", view)
 	}
 }
 
