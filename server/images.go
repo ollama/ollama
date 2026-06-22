@@ -91,35 +91,16 @@ func (m *Model) isGGUF() bool {
 }
 
 func generationDefaultsFromGGUF(f *gguf.File) model.GenerationDefaults {
-	defaults := model.GenerationDefaults{}
-
-	addInt := func(ggufKey, option string) {
-		if kv := f.KeyValue(ggufKey); kv.Valid() {
-			if value, ok := kv.IntOK(); ok {
-				defaults[option] = value
-			}
-		}
-	}
-	addFloat := func(ggufKey, option string) {
-		if kv := f.KeyValue(ggufKey); kv.Valid() {
-			if value, ok := kv.FloatOK(); ok {
-				defaults[option] = value
-			}
-		}
-	}
-
-	addInt("general.sampling.top_k", "top_k")
-	addFloat("general.sampling.top_p", "top_p")
-	addFloat("general.sampling.min_p", "min_p")
-	addFloat("general.sampling.temp", "temperature")
-	addInt("general.sampling.penalty_last_n", "repeat_last_n")
-	addFloat("general.sampling.penalty_repeat", "repeat_penalty")
-
-	if len(defaults) == 0 {
-		return nil
-	}
-
-	return defaults
+	return model.ParseGGUFGenerationDefaults(
+		func(key string) (int64, bool) {
+			kv := f.KeyValue(key)
+			return kv.IntOK()
+		},
+		func(key string) (float64, bool) {
+			kv := f.KeyValue(key)
+			return kv.FloatOK()
+		},
+	)
 }
 
 func appendCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
