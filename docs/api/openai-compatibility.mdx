@@ -216,6 +216,33 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 - [ ] `user`
 - [ ] `n`
 
+#### Disabling reasoning output
+
+Thinking models can include reasoning content in chat completion responses. For clients that require strict OpenAI-compatible response objects without reasoning output, disable thinking by setting either `reasoning_effort` to `"none"` or `reasoning.effort` to `"none"`:
+
+```json
+{
+  "model": "gemma4",
+  "messages": [
+    {
+      "role": "user",
+      "content": "why is the sky blue?"
+    }
+  ],
+  "reasoning_effort": "none"
+}
+```
+
+The equivalent nested form is:
+
+```json
+{
+  "reasoning": {
+    "effort": "none"
+  }
+}
+```
+
 ### `/v1/completions`
 
 #### Supported features
