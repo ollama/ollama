@@ -2255,7 +2255,7 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 		},
 		{
 			name:            "explicit :cloud model without local stub returns not found by default",
-			model:           "minimax-m2.7:cloud",
+			model:           "minimax-m3:cloud",
 			showStatus:      http.StatusNotFound,
 			whoamiStatus:    http.StatusOK,
 			whoamiResp:      api.UserResponse{Name: "testuser"},

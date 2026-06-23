@@ -4,7 +4,7 @@ title: Claude Code
 
 Claude Code is Anthropic's agentic coding tool that can read, modify, and execute code in your working directory. 
 
-Open models can be used with Claude Code through Ollama's Anthropic-compatible API, enabling you to use models such as `qwen3.5`, `glm-5:cloud`, `kimi-k2.5:cloud`.
+Open models can be used with Claude Code through Ollama's Anthropic-compatible API, enabling you to use models such as `qwen3.5`, `glm-5.1:cloud`, `kimi-k2.6:cloud`, `minimax-m3:cloud`.
 
 ![Claude Code with Ollama](https://files.ollama.com/claude-code.png)
 
@@ -34,14 +34,14 @@ ollama launch claude
 
 ### Run directly with a model
 ```shell
-ollama launch claude --model kimi-k2.5:cloud
+ollama launch claude --model minimax-m3:cloud
 ```
 
 ## Recommended Models
 
-- `kimi-k2.5:cloud`
-- `glm-5:cloud`
-- `minimax-m2.7:cloud`
+- `kimi-k2.6:cloud`
+- `glm-5.1:cloud`
+- `minimax-m3:cloud`
 - `qwen3.5:cloud`
 - `glm-4.7-flash`
 - `qwen3.5`
@@ -133,4 +133,3 @@ ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_
 ```
 
 **Note:** Claude Code requires a large context window. We recommend at least 64k tokens. See the [context length documentation](/context-length) for how to adjust context length in Ollama.
-
