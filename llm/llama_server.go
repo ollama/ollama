@@ -274,8 +274,8 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 		return nil, err
 	}
 
-	limit := s.options.NumCtx - 1
-	if len(tokens) <= limit {
+	fullPromptLimit := s.options.NumCtx - 1
+	if len(tokens) <= fullPromptLimit {
 		return prompt, nil
 	}
 
@@ -290,8 +290,12 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 	if nKeep < 0 {
 		nKeep = len(tokens)
 	}
-	nKeep = min(nKeep, limit)
+	if s.tokenizerAddsBOS() {
+		nKeep++
+	}
+	nKeep = min(nKeep, fullPromptLimit)
 
+	limit := contextShiftPromptLimit(s.options.NumCtx, nKeep)
 	discard := len(tokens) - limit
 	truncated := make([]int, 0, limit)
 	truncated = append(truncated, tokens[:nKeep]...)
@@ -299,6 +303,18 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 
 	slog.Warn("truncating input prompt", "limit", limit, "prompt", len(tokens), "keep", nKeep, "new", len(truncated))
 	return truncated, nil
+}
+
+func contextShiftPromptLimit(numCtx, numKeep int) int {
+	if numCtx <= 1 {
+		return 0
+	}
+
+	numKeep = max(0, min(numKeep, numCtx-1))
+
+	// Match the old runners' first context shift: preserve num_keep, then free
+	// roughly half of the remaining context before generation needs the slot.
+	return numCtx - max((numCtx-numKeep)/2, 1)
 }
 
 func (s *llamaServerRunner) ContextLength() int {
