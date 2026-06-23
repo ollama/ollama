@@ -2756,7 +2756,7 @@ func TestMemoryParsingWriterMemorySizeMmapPartialOffload(t *testing.T) {
 			// 368.50 MiB GGUF, -ngl 20 of 33, mmap on): CPU_Mapped and
 			// MTL0_Mapped each span nearly the whole file.
 			name:          "Metal partial offload with mmap",
-			fileSizeBytes: 386404992, // 368.50 MiB
+			fileSizeBytes: 386400256, // 368.50 MiB
 			lines: []string{
 				"load_tensors: offloaded 20/33 layers to GPU\n",
 				"load_tensors:   CPU_Mapped model buffer size =   364.31 MiB\n",
@@ -2768,10 +2768,30 @@ func TestMemoryParsingWriterMemorySizeMmapPartialOffload(t *testing.T) {
 				"sched_reserve:       MTL0 compute buffer size =    20.76 MiB\n",
 				"sched_reserve:        CPU compute buffer size =    24.51 MiB\n",
 			},
-			// 986.62 MiB parsed minus the 364.31 MiB CPU_Mapped excess:
-			// the file once + REPACK + output + KV + compute.
-			wantTotalMiB: 986.62 - 364.31,
+			// CPU_Mapped (364.31) and MTL0_Mapped (366.80) both span the file, so
+			// the file-backed overlap is 364.31+366.80-368.50 = 362.61; only that
+			// is trimmed from the reclaimable CPU_Mapped page cache. CPU_REPACK is
+			// a real copy and is kept. Result: file once + REPACK + output + KV +
+			// compute.
+			wantTotalMiB: 368.50 + 129.49 + 0.75 + 32.50 + 47.50 + 20.76 + 24.51,
 			wantVRAMMiB:  366.80 + 47.50 + 20.76,
+		},
+		{
+			// dhiltgen's llama3.2 CPU-only case (PR #16709 review): mmap on,
+			// nothing offloaded. CPU_Mapped equals the file and CPU_REPACK is a
+			// real repacked copy. With no device buffer to overlap, the repack
+			// must not be trimmed: report file + repack, not just the file.
+			name:          "CPU-only mmap with repack is not trimmed",
+			fileSizeBytes: 1919 * 1024 * 1024, // ~1918.35 MiB file, CPU_Mapped span fits within
+			lines: []string{
+				"load_tensors: offloaded 0/29 layers to GPU\n",
+				"load_tensors:   CPU_Mapped model buffer size =  1918.35 MiB\n",
+				"load_tensors:   CPU_REPACK model buffer size =  1299.38 MiB\n",
+				"llama_kv_cache:        CPU KV buffer size =   112.00 MiB\n",
+				"sched_reserve:        CPU compute buffer size =    72.00 MiB\n",
+			},
+			wantTotalMiB: 1918.35 + 1299.38 + 112.00 + 72.00,
+			wantVRAMMiB:  0,
 		},
 		{
 			// use_mmap=false: weights are copied into plain CPU buffers and
