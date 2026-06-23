@@ -73,37 +73,6 @@ func (m chatModel) toolStartedAt(toolID string) time.Time {
 	return m.entries[idx].startedAt
 }
 
-func (m *chatModel) toggleAllToolOutputs() {
-	toolIndexes := m.toolOutputIndexes()
-	if len(toolIndexes) == 0 {
-		if !m.running {
-			return
-		}
-		m.setToolOutputMode(!m.toolOutputOpen || !m.toolOutputMode)
-		return
-	}
-
-	expand := false
-	for _, index := range toolIndexes {
-		if !m.entries[index].expanded {
-			expand = true
-			break
-		}
-	}
-
-	m.setToolOutputMode(expand)
-}
-
-func (m chatModel) toolOutputIndexes() []int {
-	var indexes []int
-	for i := range m.entries {
-		if entryHasToolOutputMode(m.entries[i]) {
-			indexes = append(indexes, i)
-		}
-	}
-	return indexes
-}
-
 func entryHasExpandableOutput(entry chatEntry) bool {
 	return (entry.role == "tool" && (len(entry.args) > 0 || strings.TrimSpace(entry.content) != "")) ||
 		(entry.role == "tool_group" && len(entry.tools) > 0) ||
@@ -114,12 +83,6 @@ func entryHasToolOutputMode(entry chatEntry) bool {
 	return (entry.role == "tool" && (isToolActiveStatus(entry.status) || isToolResultStatus(entry.status) || entry.content != "")) ||
 		(entry.role == "tool_group" && len(entry.tools) > 0) ||
 		(entry.role == "compaction_summary" && strings.TrimSpace(entry.content) != "")
-}
-
-func (m *chatModel) setToolOutputMode(open bool) {
-	m.toolOutputMode = true
-	m.toolOutputOpen = open
-	m.applyToolOutputMode()
 }
 
 func (m *chatModel) applyToolOutputMode() {
@@ -1501,10 +1464,6 @@ func (m chatModel) renderNotificationLines(width int) []string {
 		lines[i] = chatNotificationStyle.Render(wrapped)
 	}
 	return lines
-}
-
-func (m chatModel) renderFooterLines(width int) []string {
-	return nil
 }
 
 func renderFooterPlainLine(line string) string {

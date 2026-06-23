@@ -38,6 +38,7 @@ const (
 	chatPromptPrefix     = "› "
 	maxInputBoxBodyLines = 6
 )
+
 const (
 	pastedTextPlaceholderMinRunes = 1000
 	pastedTextPlaceholderMinLines = 8
@@ -894,18 +895,6 @@ func trimInputPromptPrefix(line string) string {
 		}
 	}
 	return strings.TrimSpace(line)
-}
-
-func renderInputPlaceholderLines(placeholder string, width int) []string {
-	body := renderInputPromptRawLines(placeholder, chatPromptPrefix, "... ", width)
-	for i, line := range body {
-		if i == 0 && strings.HasPrefix(line, chatPromptPrefix) {
-			body[i] = chatUserStyle.Render(chatPromptPrefix) + chatMetaStyle.Render(strings.TrimPrefix(line, chatPromptPrefix))
-			continue
-		}
-		body[i] = chatMetaStyle.Render(line)
-	}
-	return body
 }
 
 func inputBoxTopBorderLine(width int) string {

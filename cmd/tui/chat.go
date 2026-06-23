@@ -25,6 +25,7 @@ const (
 	maxPromptHistory          = 50
 	waitingSpinnerTicks       = 4
 )
+
 const (
 	chatCompactionToolName      = "summary"
 	chatCompactionToolCallID    = "ollama_compaction"

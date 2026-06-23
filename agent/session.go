@@ -615,7 +615,6 @@ func (s *Session) maybeCompact(ctx context.Context, runID string, opts RunOption
 	if s.Compactor == nil {
 		return messages, skipNotified, nil
 	}
-	trigger := ""
 	req := CompactionRequest{
 		ChatID:       opts.ChatID,
 		Model:        opts.Model,
@@ -632,7 +631,8 @@ func (s *Session) maybeCompact(ctx context.Context, runID string, opts RunOption
 			_ = emit(s.Events, Event{Type: EventCompactionProgress, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Tokens: progress.Tokens})
 		},
 	}
-	if trigger = s.autoCompactionTrigger(req); trigger != "" {
+	trigger := s.autoCompactionTrigger(req)
+	if trigger != "" {
 		_ = emit(s.Events, Event{Type: EventCompactionStarted, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: trigger, PromptTokens: s.estimateRunPromptTokens(opts, messages), ContextWindowTokens: s.contextWindowTokens(opts), CompactionThresholdTokens: s.compactionThresholdTokens(opts), StartedAt: time.Now(), Response: &latest})
 	}
 	result, err := s.Compactor.MaybeCompact(ctx, req)
