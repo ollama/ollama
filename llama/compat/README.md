@@ -27,6 +27,10 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/clip.cpp`.
 - `002-llama-cpp-ui-empty-assets.patch` - lets the llama.cpp UI embed helper
   generate an empty asset table when no UI assets are present.
+- `004-windows-utf8-paths.patch` - Windows-only UTF-8 path handling so models
+  under non-ASCII home directories load. It rebuilds `argv` from the wide
+  command line in `tools/server/main.cpp` and opens the CLIP/mmproj file
+  through a wide `std::filesystem::path` in `tools/mtmd/clip.cpp`.
 - `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent applier
   (used by `llama/server/CMakeLists.txt`) that applies every `*.patch` under
   this directory by numeric filename order — the hooks patch plus each
@@ -109,7 +113,7 @@ dispatching them from `translate_metadata` / `translate_clip_metadata`. For
 monolithic vision models, also update the `compatClipArches` allowlist in
 `llm/llama_server.go` so Ollama passes the main GGUF as `--mmproj`.
 
-## Regenerating the Patch File
+## Regenerating the Patch Files
 
 After a llama.cpp bump moves the insertion points, re-apply the edits to a
 fresh checkout and run:
@@ -120,6 +124,16 @@ git diff -- \
     src/llama-model-loader.cpp \
     tools/mtmd/clip.cpp \
     > /path/to/ollama/llama/compat/001-llama-cpp-hooks.patch
+```
+
+The Windows UTF-8 path edits live in their own patch. Regenerate it on top of
+`001-llama-cpp-hooks.patch` (which also touches `clip.cpp`) with:
+
+```sh
+git diff -- \
+    tools/mtmd/clip.cpp \
+    tools/server/main.cpp \
+    > /path/to/ollama/llama/compat/004-windows-utf8-paths.patch
 ```
 
 ## Implementation Notes

@@ -2058,6 +2058,42 @@ func TestAppendMMProjArgs(t *testing.T) {
 	}
 }
 
+func TestLlamaServerParamsPreserveNonASCIIPaths(t *testing.T) {
+	opts := api.DefaultOptions()
+	opts.NumGPU = 0
+	opts.NumCtx = 4096
+
+	// A non-ASCII Windows home directory, e.g. a user named "Maëlys".
+	modelPath := `C:\Users\Maëlys\.ollama\models\blobs\sha256-0000000000000000000000000000000000000000000000000000000000000000`
+
+	got := llamaServerParams(49152, llamaServerLaunchConfig{
+		modelPath:   modelPath,
+		projectors:  []string{modelPath},
+		opts:        opts,
+		numParallel: 1,
+		config:      LlamaServerConfig{},
+	})
+
+	argValue := func(flag string) (string, bool) {
+		for i := 0; i+1 < len(got); i++ {
+			if got[i] == flag {
+				return got[i+1], true
+			}
+		}
+		return "", false
+	}
+
+	for _, flag := range []string{"--model", "--mmproj"} {
+		v, ok := argValue(flag)
+		if !ok {
+			t.Fatalf("missing %s in args %v", flag, got)
+		}
+		if v != modelPath {
+			t.Errorf("%s = %q, want %q", flag, v, modelPath)
+		}
+	}
+}
+
 func TestAppendJinjaArgs(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -1,0 +1,124 @@
+diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
+index 28be9b4..a12f4a3 100644
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -18,6 +18,13 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <fstream>
++#if defined(_WIN32)
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <filesystem>
++#include <windows.h>
++#endif
+ #include <map>
+ #include <stdexcept>
+ #include <unordered_set>
+@@ -30,6 +37,25 @@
+ 
+ struct clip_logger_state g_logger_state = {clip_log_callback_default, NULL};
+ 
++static std::ifstream clip_open_ifstream(const std::string & fname) {
++#if defined(_WIN32)
++    // std::ifstream interprets a narrow path with the active code page,
++    // so non-ASCII UTF-8 paths fail to open on Windows. Build a wide
++    // std::filesystem::path from the UTF-8 name instead.
++    if (!fname.empty()) {
++        const int wide_len = MultiByteToWideChar(CP_UTF8, 0, fname.c_str(), -1, nullptr, 0);
++        if (wide_len > 0) {
++            std::wstring wide(static_cast<size_t>(wide_len), wchar_t{});
++            if (MultiByteToWideChar(CP_UTF8, 0, fname.c_str(), -1, wide.data(), wide_len) > 0) {
++                wide.resize(static_cast<size_t>(wide_len - 1));
++                return std::ifstream(std::filesystem::path(wide), std::ios::binary);
++            }
++        }
++    }
++#endif
++    return std::ifstream(fname, std::ios::binary);
++}
++
+ //#define CLIP_DEBUG_FUNCTIONS
+ 
+ #ifdef CLIP_DEBUG_FUNCTIONS
+@@ -1743,7 +1769,7 @@ struct clip_model_loader {
+         std::map<std::string, size_t> tensor_offset;
+         std::vector<ggml_tensor *> tensors_to_load;
+ 
+-        auto fin = std::ifstream(fname, std::ios::binary);
++        auto fin = clip_open_ifstream(fname);
+         if (!fin) {
+             throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
+         }
+diff --git a/tools/server/main.cpp b/tools/server/main.cpp
+index 7f17c56..bf3a69b 100644
+--- a/tools/server/main.cpp
++++ b/tools/server/main.cpp
+@@ -1,5 +1,66 @@
++#if defined(_WIN32)
++#include <windows.h>
++#include <shellapi.h>
++
++#include <string>
++#include <vector>
++#endif
++
+ int llama_server(int argc, char ** argv);
+ 
++#if defined(_WIN32)
++// On Windows the C runtime hands main() its arguments in the active (ANSI)
++// code page, which mangles non-ASCII model paths such as
++// C:\Users\Maëlys\.ollama\models\... before llama-server can open
++// them. Rebuild argv from the wide command line and re-encode it as UTF-8 so
++// the path survives down to the UTF-8 aware file opens (ggml_fopen and the
++// std::filesystem based clip loader).
++static std::string wide_to_utf8(const wchar_t * value) {
++    if (value == nullptr) {
++        return {};
++    }
++
++    const int size = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
++    if (size <= 0) {
++        return {};
++    }
++
++    std::string out(static_cast<size_t>(size), char{});
++    if (WideCharToMultiByte(CP_UTF8, 0, value, -1, out.data(), size, nullptr, nullptr) <= 0) {
++        return {};
++    }
++    out.resize(static_cast<size_t>(size - 1));
++    return out;
++}
++
++int main(int argc, char ** argv) {
++    int wide_argc = 0;
++    LPWSTR * wide_argv = CommandLineToArgvW(GetCommandLineW(), &wide_argc);
++    if (wide_argv == nullptr || wide_argc <= 0) {
++        if (wide_argv != nullptr) {
++            LocalFree(wide_argv);
++        }
++        return llama_server(argc, argv);
++    }
++
++    std::vector<std::string> utf8_args;
++    utf8_args.reserve(static_cast<size_t>(wide_argc));
++    for (int i = 0; i < wide_argc; ++i) {
++        utf8_args.emplace_back(wide_to_utf8(wide_argv[i]));
++    }
++    LocalFree(wide_argv);
++
++    std::vector<char *> utf8_argv;
++    utf8_argv.reserve(utf8_args.size() + 1);
++    for (auto & arg : utf8_args) {
++        utf8_argv.push_back(arg.data());
++    }
++    utf8_argv.push_back(nullptr);
++
++    return llama_server(wide_argc, utf8_argv.data());
++}
++#else
+ int main(int argc, char ** argv) {
+     return llama_server(argc, argv);
+ }
++#endif

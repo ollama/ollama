@@ -186,6 +186,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama_cpp)
 
+# The Windows UTF-8 argv shim in tools/server/main.cpp (applied via
+# llama/compat/004-windows-utf8-paths.patch) calls CommandLineToArgvW, which
+# lives in shell32.
+if(WIN32 AND TARGET llama-server)
+    target_link_libraries(llama-server PRIVATE shell32)
+endif()
+
 # Link the Ollama-compat source files into the fetched llama target.
 # Kept separate from the hook patch so our .cpp/.h stay
 # on-disk in llama/compat/ rather than being copied into _deps/.
