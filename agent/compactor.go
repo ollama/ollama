@@ -379,11 +379,11 @@ func estimateMessagesTokens(messages []api.Message) int {
 }
 
 func estimateCompactionRequestTokens(req CompactionRequest) int {
-	requestMessages := sanitizeMessagesForRequest(req.Messages)
+	requestMessages := sanitizeMessagesForEstimate(req.Messages)
 	if strings.TrimSpace(req.SystemPrompt) != "" {
 		requestMessages = make([]api.Message, 0, len(req.Messages)+1)
 		requestMessages = append(requestMessages, api.Message{Role: "system", Content: strings.TrimSpace(req.SystemPrompt)})
-		requestMessages = append(requestMessages, sanitizeMessagesForRequest(req.Messages)...)
+		requestMessages = append(requestMessages, sanitizeMessagesForEstimate(req.Messages)...)
 	}
 
 	payload := struct {
@@ -405,6 +405,17 @@ func estimateCompactionRequestTokens(req CompactionRequest) int {
 	total += estimateCompactionTokens(req.Tools.String())
 	total += estimateCompactionTokens(req.Format)
 	return total
+}
+
+func sanitizeMessagesForEstimate(messages []api.Message) []api.Message {
+	requestMessages := sanitizeMessagesForRequest(messages)
+	for i := range requestMessages {
+		// Image token accounting is model-specific. Without the active model's
+		// tokenizer and vision accounting, raw image bytes/base64 make the
+		// estimate look much larger than the prompt the model actually sees.
+		requestMessages[i].Images = nil
+	}
+	return requestMessages
 }
 
 func compactionFormatForEstimate(format string) (json.RawMessage, bool) {

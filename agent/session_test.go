@@ -1507,6 +1507,45 @@ func TestSessionPreflightRejectsOversizedFirstRequest(t *testing.T) {
 	}
 }
 
+func TestSessionPreflightIgnoresRawImageBytes(t *testing.T) {
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{{
+			{Message: api.Message{Role: "assistant", Content: "image received"}},
+		}},
+	}
+	store := &memoryStore{}
+	session := &Session{
+		Client: client,
+		Store:  store,
+		Compactor: NewSimpleCompactor(nil, nil, CompactionOptions{
+			ContextWindowTokens: 128,
+		}),
+	}
+
+	image := make(api.ImageData, 64*1024)
+	result, err := session.Run(context.Background(), RunOptions{
+		ChatID: "chat-1",
+		Model:  "model",
+		NewMessages: []api.Message{{
+			Role:    "user",
+			Content: "describe this image",
+			Images:  []api.ImageData{image},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("chat requests = %d, want 1", len(client.requests))
+	}
+	if got := client.requests[0].Messages[0].Images; len(got) != 1 || len(got[0]) != len(image) {
+		t.Fatalf("request images = %#v, want original image payload", got)
+	}
+	if len(result.Messages) == 0 || result.Messages[len(result.Messages)-1].Content != "image received" {
+		t.Fatalf("result messages = %#v", result.Messages)
+	}
+}
+
 func TestSessionPersistsToolWorkingDirWithinRun(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
