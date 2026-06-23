@@ -63,4 +63,33 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/llama/server/CMakeLists.txt")
 else()
     set(OLLAMA_HAVE_LLAMA_SERVER FALSE)
 endif()
+
+# Install Python dependencies required by calibrate-triattention.py.
+# Skipped when cross-compiling or when Python/pip are unavailable.
+if(NOT CMAKE_CROSSCOMPILING)
+    set(_tria_reqs "${CMAKE_CURRENT_SOURCE_DIR}/scripts/requirements-triattention.txt")
+    find_program(_python3 python3 python DOC "Python interpreter")
+    if(_python3 AND EXISTS "${_tria_reqs}")
+        message(STATUS "Installing TriAttention Python deps via pip (${_python3}) …")
+        execute_process(
+            COMMAND "${_python3}" -m pip install --quiet --upgrade -r "${_tria_reqs}"
+            RESULT_VARIABLE _pip_result
+            OUTPUT_VARIABLE _pip_out
+            ERROR_VARIABLE  _pip_err
+        )
+        if(NOT _pip_result EQUAL 0)
+            message(WARNING
+                "pip install for TriAttention deps failed (exit ${_pip_result}).\n"
+                "Run manually: ${_python3} -m pip install -r scripts/requirements-triattention.txt\n"
+                "${_pip_err}")
+        else()
+            message(STATUS "TriAttention Python deps installed.")
+        endif()
+    else()
+        message(WARNING
+            "python3/python not found — skipping TriAttention calibration deps.\n"
+            "Install manually: pip install -r scripts/requirements-triattention.txt")
+    endif()
+endif()
+
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/local.cmake)
