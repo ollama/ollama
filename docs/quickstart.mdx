@@ -2,11 +2,11 @@
 title: Quickstart
 ---
 
-Follow this path to install Ollama, run a model, and use it from an app, API request, or integration.
+Install Ollama and get your first response.
 
-## 1. Install Ollama
+## 1. Download Ollama
 
-Ollama is available for macOS, Windows, and Linux.
+Ollama runs on macOS, Windows, and Linux.
 
 <a
   href="https://ollama.com/download"
@@ -16,92 +16,45 @@ Ollama is available for macOS, Windows, and Linux.
   Download Ollama
 </a>
 
-After installing, open a terminal and check that Ollama is available:
+## 2. Open the menu
+
+Run `ollama` in your terminal to open the interactive menu:
 
 ```shell
-ollama --version
+ollama
 ```
 
-## 2. Run a model
+From the menu you can:
 
-Start with `gemma4` for a local first run:
+- **Run a model** - Start an interactive chat
+- **Launch tools** - [Claude Code](/integrations/claude-code), [OpenClaw](/integrations/openclaw), [VS Code](/integrations/vscode), and more
+
+## 3. Start a chat
+
+Run a model to start your first chat.
 
 ```shell
 ollama run gemma4
 ```
 
-Ask a question in the prompt that opens:
+Cloud models work the same way:
+
+```shell
+ollama run gemma4:31b-cloud
+```
+
+Send your first message:
 
 ```text
-Write a short haiku about local AI.
+Explain why the sky is blue in one paragraph.
 ```
 
-To leave the chat, type `/bye`.
-
-<Note>
-If you want a larger model or do not want to wait for a local download, sign in and use a cloud model such as `kimi-k2.5:cloud` or `qwen3.5:cloud`.
-</Note>
-
-## 3. Use Ollama
-
-Once a model is running, choose the path that matches what you want to do next.
-
-<CardGroup cols={3}>
-  <Card title="Use the terminal app" icon="terminal" href="/cli">
-    Run `ollama`, choose a model, and chat directly from the interactive menu.
-  </Card>
-
-  <Card title="Call the API" icon="code" href="/api/introduction">
-    Send requests to `http://localhost:11434/api` from your app or script.
-  </Card>
-
-  <Card title="Launch an integration" icon="plug" href="/integrations">
-    Connect Ollama to coding agents, desktop apps, assistants, and automation tools.
-  </Card>
-</CardGroup>
-
-### API example
-
-Use `/api/chat` to send a message to the model:
+To leave the chat, type:
 
 ```shell
-curl http://localhost:11434/api/chat -d '{
-  "model": "gemma4",
-  "messages": [
-    {
-      "role": "user",
-      "content": "Why is the sky blue?"
-    }
-  ]
-}'
+/bye
 ```
-
-### Integration examples
-
-Use `ollama launch` when you want Ollama to configure a supported tool for you:
-
-```shell
-ollama launch claude
-```
-
-```shell
-ollama launch openclaw
-```
-
-```shell
-ollama launch codex-app
-```
-
-Claude Code is a good first choice for terminal-based coding, OpenClaw is a good first choice for a personal assistant, and Codex App is a good first choice for desktop coding and review workflows.
 
 ## Next steps
 
-<CardGroup cols={2}>
-  <Card title="Browse models" icon="star" href="https://ollama.com/search">
-    Find local and cloud models for chat, coding, vision, embeddings, and reasoning.
-  </Card>
-
-  <Card title="Explore integrations" icon="plug" href="/integrations">
-    Choose a recommended integration for coding, assistants, editors, or automation.
-  </Card>
-</CardGroup>
+Use a model with an [integration](/integrations), make an [API request](/api/introduction), or browse more [models](https://ollama.com/search).
