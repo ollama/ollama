@@ -362,6 +362,22 @@ func estimateCompactionTokens(text string) int {
 	return max(1, (len([]rune(text))+3)/4)
 }
 
+// EstimateTokens returns the agent's lightweight token estimate for UI hints.
+func EstimateTokens(text string) int {
+	return estimateCompactionTokens(text)
+}
+
+// EstimatePromptTokens returns the agent's lightweight estimate for the prompt
+// payload sent to /api/chat.
+func EstimatePromptTokens(systemPrompt string, messages []api.Message, tools api.Tools, format string) int {
+	return estimateCompactionRequestTokens(CompactionRequest{
+		SystemPrompt: systemPrompt,
+		Messages:     messages,
+		Tools:        tools,
+		Format:       format,
+	})
+}
+
 func estimateMessagesTokens(messages []api.Message) int {
 	var total int
 	for _, msg := range messages {

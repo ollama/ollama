@@ -749,6 +749,7 @@ func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T)
 func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &contextAwareStore{}
+	events := &recordingEventSink{}
 	registry := NewRegistry()
 	registry.Register(cancelingTool{cancel: cancel})
 	client := &fakeClient{responses: [][]api.ChatResponse{{
@@ -763,6 +764,7 @@ func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) 
 		Client: client,
 		Store:  store,
 		Tools:  registry,
+		Events: events,
 	}
 
 	result, err := session.Run(ctx, RunOptions{
@@ -785,6 +787,18 @@ func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) 
 	}
 	if !strings.Contains(result.Messages[2].Content, "context canceled") {
 		t.Fatalf("tool content = %q", result.Messages[2].Content)
+	}
+	var finished *Event
+	for i := range events.events {
+		if events.events[i].Type == EventRunFinished {
+			finished = &events.events[i]
+		}
+	}
+	if finished == nil {
+		t.Fatalf("run finished event missing: %#v", events.events)
+	}
+	if finished.Status != "canceled" {
+		t.Fatalf("run status = %q, want canceled", finished.Status)
 	}
 }
 

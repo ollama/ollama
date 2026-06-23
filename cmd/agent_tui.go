@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -346,7 +345,7 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 		}
 	}()
 
-	headlessSink := &agentHeadlessEventSink{}
+	headlessSink := &agentHeadlessEventSink{hideThinking: opts.HideThinking}
 	eventSink := coreagent.EventSink(headlessSink)
 	traceSink, err := coreagent.NewJSONLTraceSinkFromEnv()
 	if err != nil {
@@ -385,6 +384,9 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 	if headlessSink.wroteContent {
 		fmt.Fprintln(os.Stdout)
 	}
+	if headlessSink.denied {
+		return errors.New("tool execution denied")
+	}
 
 	verbose := opts.Verbose
 	if cmd != nil && cmd.Flags().Lookup("verbose") != nil {
@@ -414,26 +416,45 @@ func skillFromPrompt(catalog *skills.Catalog, prompt string) (skills.Skill, stri
 }
 
 type agentHeadlessEventSink struct {
-	wroteContent bool
+	hideThinking             bool
+	wroteContent             bool
+	wroteThinking            bool
+	thinkingEndedWithNewline bool
+	denied                   bool
 }
 
 func (s *agentHeadlessEventSink) Emit(event coreagent.Event) error {
 	switch event.Type {
+	case coreagent.EventThinkingDelta:
+		if event.Thinking != "" && !s.hideThinking {
+			fmt.Fprint(os.Stdout, event.Thinking)
+			s.wroteContent = true
+			s.wroteThinking = true
+			s.thinkingEndedWithNewline = strings.HasSuffix(event.Thinking, "\n")
+		}
 	case coreagent.EventMessageDelta:
 		if event.Content != "" {
+			if s.wroteThinking {
+				if !s.thinkingEndedWithNewline {
+					fmt.Fprintln(os.Stdout)
+				}
+				s.wroteThinking = false
+			}
 			fmt.Fprint(os.Stdout, event.Content)
 			s.wroteContent = true
 		}
-	case coreagent.EventToolStarted:
-		fmt.Fprintf(os.Stderr, "• %s in progress\n", agentHeadlessToolLabel(event.ToolName, event.Args))
 	case coreagent.EventToolFinished:
 		status := "done"
-		if event.Error != "" {
+		if event.Status != "done" || event.Error != "" {
 			status = "failed"
 		}
-		fmt.Fprintf(os.Stderr, "• %s %s\n", agentHeadlessToolLabel(event.ToolName, event.Args), status)
+		fmt.Fprintf(os.Stderr, "• %s %s\n", coreagent.ToolInvocationLabel(event.ToolName, event.Args), status)
 	case coreagent.EventToolsUnavailable:
 		fmt.Fprintln(os.Stderr, "Tools are unavailable for this model.")
+	case coreagent.EventRunFinished:
+		if event.Status == "denied" {
+			s.denied = true
+		}
 	case coreagent.EventCompactionSkipped:
 		if event.Content != "" {
 			fmt.Fprintf(os.Stderr, "%s\n", event.Content)
@@ -444,29 +465,6 @@ func (s *agentHeadlessEventSink) Emit(event coreagent.Event) error {
 		}
 	}
 	return nil
-}
-
-func agentHeadlessToolLabel(name string, args map[string]any) string {
-	displayName := name
-	switch name {
-	case "web_search":
-		displayName = "Web Search"
-	case "web_fetch":
-		displayName = "Web Fetch"
-	case "bash":
-		displayName = "Bash"
-	case "read":
-		displayName = "Read"
-	case "edit":
-		displayName = "Edit"
-	}
-
-	for _, key := range []string{"query", "url", "command", "path"} {
-		if value, ok := args[key].(string); ok && strings.TrimSpace(value) != "" {
-			return fmt.Sprintf("%s(%s)", displayName, strconv.Quote(value))
-		}
-	}
-	return displayName
 }
 
 func loadAgentSkills() *skills.Catalog {

@@ -250,22 +250,22 @@ func (m chatModel) renderApprovalPromptLines(width int) []string {
 func approvalRequestDetail(request coreagent.ApprovalRequest, width int) string {
 	switch request.ToolName {
 	case "bash":
-		command, ok := stringArg(request.Args, "command")
+		command, ok := rawStringArg(request.Args, "command")
 		if !ok {
 			return ""
 		}
 		return strings.Join(wrapChatText("$ "+command, width), "\n")
 	case "edit":
-		path, ok := stringArg(request.Args, "path")
+		path, ok := rawStringArg(request.Args, "path")
 		if !ok {
 			return ""
 		}
 		var lines []string
 		lines = append(lines, "path: "+path)
-		if oldText, ok := stringArg(request.Args, "old_text"); ok {
+		if oldText, ok := rawStringArg(request.Args, "old_text"); ok {
 			lines = append(lines, fmt.Sprintf("old_text: %d chars", len([]rune(oldText))))
 		}
-		if newText, ok := stringArg(request.Args, "new_text"); ok {
+		if newText, ok := rawStringArg(request.Args, "new_text"); ok {
 			lines = append(lines, fmt.Sprintf("new_text: %d chars", len([]rune(newText))))
 		}
 		return chatMetaStyle.Render(strings.Join(lines, "\n"))
@@ -273,7 +273,7 @@ func approvalRequestDetail(request coreagent.ApprovalRequest, width int) string 
 		if len(request.Args) == 0 {
 			return ""
 		}
-		return chatMetaStyle.Render(formatToolArgs(request.Args))
+		return strings.Join(renderToolCallArgs(request.Args, width), "\n")
 	}
 }
 
@@ -319,7 +319,7 @@ func (h chatPermissionApprovalHandler) RequiresApproval(ctx context.Context, too
 	if h.review != nil {
 		return h.review.RequiresApproval(ctx, tool, req)
 	}
-	return coreagent.ToolRequiresApproval(tool, req.Args)
+	return req.ToolApprovalRequired || coreagent.ToolRequiresApproval(tool, req.Args)
 }
 
 func (h chatPermissionApprovalHandler) Approve(ctx context.Context, req coreagent.ApprovalRequest) (coreagent.ApprovalResult, error) {

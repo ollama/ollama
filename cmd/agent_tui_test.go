@@ -3,14 +3,17 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/agent/skills"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/tui"
@@ -40,6 +43,146 @@ func TestAgentSystemPromptIncludesModel(t *testing.T) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
 	}
+}
+
+func TestAgentHeadlessEventSinkPrintsThinkingUnlessHidden(t *testing.T) {
+	t.Run("visible", func(t *testing.T) {
+		output := captureStdout(t, func() {
+			sink := &agentHeadlessEventSink{}
+			if err := sink.Emit(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "thinking"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := sink.Emit(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "answer"}); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if output != "thinking\nanswer" {
+			t.Fatalf("output = %q, want thinking followed by answer", output)
+		}
+	})
+
+	t.Run("hidden", func(t *testing.T) {
+		output := captureStdout(t, func() {
+			sink := &agentHeadlessEventSink{hideThinking: true}
+			if err := sink.Emit(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "thinking"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := sink.Emit(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "answer"}); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if output != "answer" {
+			t.Fatalf("output = %q, want answer only", output)
+		}
+	})
+}
+
+func TestAgentHeadlessEventSinkPrintsOnlyFinishedToolEvents(t *testing.T) {
+	output := captureStderr(t, func() {
+		sink := &agentHeadlessEventSink{}
+		if err := sink.Emit(coreagent.Event{
+			Type:     coreagent.EventToolStarted,
+			ToolName: "bash",
+			Args:     map[string]any{"command": "pwd"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := sink.Emit(coreagent.Event{
+			Type:     coreagent.EventToolFinished,
+			Status:   "done",
+			ToolName: "bash",
+			Args:     map[string]any{"command": "pwd"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := sink.Emit(coreagent.Event{
+			Type:     coreagent.EventToolFinished,
+			Status:   "denied",
+			ToolName: "edit",
+			Args:     map[string]any{"path": "main.go"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := sink.Emit(coreagent.Event{
+			Type:     coreagent.EventToolFinished,
+			Status:   "done",
+			ToolName: "web_fetch",
+			Args:     map[string]any{"url": "https://example.com"},
+			Error:    "timeout",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.Contains(output, "in progress") {
+		t.Fatalf("headless output should not include in-progress tool events:\n%s", output)
+	}
+	for _, want := range []string{
+		`• Bash("pwd") done`,
+		`• Edit("main.go") failed`,
+		`• Web Fetch("https://example.com") failed`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("headless output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = oldStdout
+	})
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = oldStdout
+	return string(out)
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+	})
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = oldStderr
+	return string(out)
 }
 
 func TestAgentToolsRegistryNoCloudDisablesWebTools(t *testing.T) {

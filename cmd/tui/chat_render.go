@@ -12,8 +12,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
@@ -1209,55 +1211,11 @@ func toolStatusStyle(status string) lipgloss.Style {
 }
 
 func toolInvocationLabel(name string, args map[string]any) string {
-	displayName := toolDisplayName(name)
-	switch name {
-	case "web_search":
-		if query, ok := stringArg(args, "query"); ok {
-			return fmt.Sprintf("%s(%s)", displayName, strconv.Quote(query))
-		}
-	case "web_fetch":
-		if targetURL, ok := stringArg(args, "url"); ok {
-			return fmt.Sprintf("%s(%s)", displayName, strconv.Quote(targetURL))
-		}
-	case "bash":
-		if command, ok := stringArg(args, "command"); ok {
-			return fmt.Sprintf("%s(%s)", displayName, strconv.Quote(command))
-		}
-	case "read", "list":
-		if path, ok := stringArg(args, "path"); ok {
-			return fmt.Sprintf("%s(%s)", displayName, strconv.Quote(path))
-		}
-	case "edit":
-		if path, ok := stringArg(args, "path"); ok {
-			return fmt.Sprintf("%s(%s)", displayName, strconv.Quote(path))
-		}
-	}
-	if len(args) == 0 {
-		return displayName
-	}
-	return fmt.Sprintf("%s(%s)", displayName, formatToolArgs(args))
+	return coreagent.ToolInvocationLabel(name, args)
 }
 
 func toolDisplayName(name string) string {
-	switch name {
-	case "web_search":
-		return "Web Search"
-	case "web_fetch":
-		return "Web Fetch"
-	case "bash":
-		return "Bash"
-	case "read":
-		return "Read"
-	case "list":
-		return "List"
-	case "edit":
-		return "Edit"
-	default:
-		if name == "" {
-			return "Tool"
-		}
-		return name
-	}
+	return coreagent.ToolDisplayName(name)
 }
 
 func toolElapsedSuffix(startedAt, finishedAt time.Time) string {
@@ -1278,20 +1236,6 @@ func toolOutputUsesMarkdown(name string) bool {
 	default:
 		return false
 	}
-}
-
-func formatToolArgs(args map[string]any) string {
-	keys := make([]string, 0, len(args))
-	for key := range args {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%s", key, quoteToolArg(args[key])))
-	}
-	return strings.Join(parts, ", ")
 }
 
 func renderToolCallDetailLines(entry chatEntry, width int) []string {
@@ -1355,23 +1299,6 @@ func toolArgDisplayValue(value any) string {
 		return string(data)
 	}
 	return fmt.Sprint(value)
-}
-
-func quoteToolArg(value any) string {
-	switch v := value.(type) {
-	case string:
-		return strconv.Quote(truncateRunes(v, 100))
-	default:
-		return fmt.Sprint(v)
-	}
-}
-
-func stringArg(args map[string]any, key string) (string, bool) {
-	value, ok := args[key].(string)
-	if !ok || strings.TrimSpace(value) == "" {
-		return "", false
-	}
-	return truncateRunes(value, 120), true
 }
 
 func rawStringArg(args map[string]any, key string) (string, bool) {
@@ -1709,82 +1636,7 @@ func (m chatModel) estimatePromptTokens(messages []api.Message, systemPrompt str
 }
 
 func estimatePromptTokenCount(systemPrompt string, messages []api.Message, tools api.Tools, format string) int {
-	requestMessages := slices.Clone(messages)
-	if strings.TrimSpace(systemPrompt) != "" {
-		requestMessages = make([]api.Message, 0, len(messages)+1)
-		requestMessages = append(requestMessages, api.Message{Role: "system", Content: strings.TrimSpace(systemPrompt)})
-		requestMessages = append(requestMessages, messages...)
-	}
-	if len(requestMessages) == 0 && len(tools) == 0 && strings.TrimSpace(format) == "" {
-		return 0
-	}
-
-	payload := struct {
-		Messages []api.Message   `json:"messages,omitempty"`
-		Tools    api.Tools       `json:"tools,omitempty"`
-		Format   json.RawMessage `json:"format,omitempty"`
-	}{
-		Messages: requestMessages,
-		Tools:    tools,
-	}
-	if rawFormat, ok := promptFormatForEstimate(format); ok {
-		payload.Format = rawFormat
-	}
-
-	if b, err := json.Marshal(payload); err == nil {
-		return estimateTokenCount(string(b))
-	}
-
-	var runes int
-	for _, msg := range requestMessages {
-		runes += estimateMessageRunes(msg)
-	}
-	runes += len([]rune(tools.String()))
-	runes += len([]rune(strings.TrimSpace(format)))
-	if runes == 0 {
-		return 0
-	}
-	return max(1, (runes+3)/4)
-}
-
-func promptFormatForEstimate(format string) (json.RawMessage, bool) {
-	format = strings.TrimSpace(format)
-	if format == "" {
-		return nil, false
-	}
-	if format == "json" {
-		format = `"` + format + `"`
-	}
-	if !json.Valid([]byte(format)) {
-		return nil, false
-	}
-	return json.RawMessage(format), true
-}
-
-func estimateMessageRunes(msg api.Message) int {
-	var runes int
-	runes += len([]rune(msg.Role))
-	runes += len([]rune(msg.Content))
-	runes += len([]rune(msg.Thinking))
-	runes += len([]rune(msg.ToolName))
-	runes += len([]rune(msg.ToolCallID))
-	for _, image := range msg.Images {
-		runes += len(image)
-	}
-	for _, call := range msg.ToolCalls {
-		runes += len([]rune(call.ID))
-		runes += len([]rune(call.Function.Name))
-		runes += len([]rune(fmt.Sprint(call.Function.Arguments.ToMap())))
-	}
-	return runes
-}
-
-func estimateTokenCount(text string) int {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return 0
-	}
-	return max(1, (len([]rune(text))+3)/4)
+	return coreagent.EstimatePromptTokens(systemPrompt, messages, tools, format)
 }
 
 func formatTokenCount(count int) string {
@@ -1920,6 +1772,26 @@ func renderFullFrame(content string, width, height int) string {
 		lines = append(lines, "")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderFrameLines(lines []string, width, height int) string {
+	if width <= 0 {
+		width = 80
+	}
+	if height <= 0 {
+		height = 24
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	out := make([]string, 0, height)
+	for _, line := range lines {
+		out = append(out, padRenderedLine(clipRenderedLine(line, width), width))
+	}
+	for len(out) < height {
+		out = append(out, strings.Repeat(" ", width))
+	}
+	return strings.Join(out, "\n")
 }
 
 func truncateRenderedLine(line string, width int) string {
@@ -2187,17 +2059,10 @@ func wrapChatText(text string, width int) []string {
 	var out []string
 	for _, rawLine := range strings.Split(text, "\n") {
 		line := strings.TrimRight(rawLine, "\r")
-		for len([]rune(line)) > width {
-			runes := []rune(line)
-			cut := width
-			for i := width; i > width/2; i-- {
-				if runes[i-1] == ' ' || runes[i-1] == '\t' {
-					cut = i
-					break
-				}
-			}
-			out = append(out, strings.TrimSpace(string(runes[:cut])))
-			line = strings.TrimSpace(string(runes[cut:]))
+		for runewidth.StringWidth(line) > width {
+			cut := chatDisplayWidthCut(line, width)
+			out = append(out, strings.TrimSpace(line[:cut]))
+			line = strings.TrimSpace(line[cut:])
 		}
 		out = append(out, line)
 	}
@@ -2205,4 +2070,33 @@ func wrapChatText(text string, width int) []string {
 		return []string{""}
 	}
 	return out
+}
+
+func chatDisplayWidthCut(line string, width int) int {
+	hardCut := 0
+	currentWidth := 0
+	spaceCut := 0
+	spaceWidth := 0
+	for i := 0; i < len(line); {
+		r, size := utf8.DecodeRuneInString(line[i:])
+		nextWidth := currentWidth + runewidth.RuneWidth(r)
+		if nextWidth > width {
+			break
+		}
+		currentWidth = nextWidth
+		hardCut = i + size
+		if (r == ' ' || r == '\t') && currentWidth > width/2 {
+			spaceCut = i
+			spaceWidth = currentWidth
+		}
+		i += size
+	}
+	if spaceCut > 0 && spaceWidth > 0 {
+		return spaceCut
+	}
+	if hardCut > 0 {
+		return hardCut
+	}
+	_, size := utf8.DecodeRuneInString(line)
+	return size
 }

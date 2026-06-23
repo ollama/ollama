@@ -351,24 +351,16 @@ func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 
 func (s *Store) LatestChat(ctx context.Context) (*Chat, error) {
 	var chatID string
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT c.id
-		FROM chats c
-		JOIN messages m ON m.chat_id = c.id
-		GROUP BY c.id
-		HAVING COALESCE(
-			NULLIF(c.model_name, ''),
-			(
-				SELECT lm.model_name
-				FROM messages lm
-				WHERE lm.chat_id = c.id AND lm.model_name IS NOT NULL AND lm.model_name != ''
-				ORDER BY lm.updated_at DESC, lm.id DESC
-				LIMIT 1
-			)
-		) IS NOT NULL
-		ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
-		LIMIT 1
-	`).Scan(&chatID); err != nil {
+	query := fmt.Sprintf(`
+			SELECT c.id
+			FROM chats c
+			JOIN messages m ON m.chat_id = c.id
+			GROUP BY c.id
+			HAVING %[1]s IS NOT NULL
+			ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
+			LIMIT 1
+		`, currentModelSelectExpr("c"))
+	if err := s.db.QueryRowContext(ctx, query).Scan(&chatID); err != nil {
 		return nil, err
 	}
 	return s.Chat(ctx, chatID)
@@ -380,24 +372,16 @@ func (s *Store) LatestChatForModel(ctx context.Context, model string) (*Chat, er
 	}
 
 	var chatID string
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT c.id
-		FROM chats c
-		JOIN messages m ON m.chat_id = c.id
-		GROUP BY c.id
-		HAVING COALESCE(
-			NULLIF(c.model_name, ''),
-			(
-				SELECT lm.model_name
-				FROM messages lm
-				WHERE lm.chat_id = c.id AND lm.model_name IS NOT NULL AND lm.model_name != ''
-				ORDER BY lm.updated_at DESC, lm.id DESC
-				LIMIT 1
-			)
-		) = ?
-		ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
-		LIMIT 1
-	`, model).Scan(&chatID); err != nil {
+	query := fmt.Sprintf(`
+			SELECT c.id
+			FROM chats c
+			JOIN messages m ON m.chat_id = c.id
+			GROUP BY c.id
+			HAVING %[1]s = ?
+			ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
+			LIMIT 1
+		`, currentModelSelectExpr("c"))
+	if err := s.db.QueryRowContext(ctx, query, model).Scan(&chatID); err != nil {
 		return nil, err
 	}
 	return s.Chat(ctx, chatID)
@@ -408,26 +392,28 @@ func (s *Store) ListChats(ctx context.Context, limit int) ([]ChatSummary, error)
 		limit = 50
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT
-			c.id,
-			c.title,
-			c.created_at,
-			MAX(m.updated_at) AS updated_at,
-			COUNT(m.id) AS message_count,
-			COALESCE(SUM(
-				LENGTH(m.role) +
-				LENGTH(m.content) +
-				LENGTH(m.thinking) +
-				LENGTH(m.tool_name) +
-				LENGTH(m.tool_call_id)
-			), 0) AS approx_bytes
-		FROM chats c
-		JOIN messages m ON m.chat_id = c.id AND m.archived = 0
-		GROUP BY c.id
-		ORDER BY updated_at DESC, MAX(m.id) DESC
-		LIMIT ?
-	`, limit)
+	query := fmt.Sprintf(`
+			SELECT
+				c.id,
+				c.title,
+				c.created_at,
+				MAX(m.updated_at) AS updated_at,
+				COUNT(m.id) AS message_count,
+				COALESCE(SUM(
+					LENGTH(m.role) +
+					LENGTH(m.content) +
+					LENGTH(m.thinking) +
+					LENGTH(m.tool_name) +
+					LENGTH(m.tool_call_id)
+				), 0) AS approx_bytes,
+				%[1]s AS current_model
+			FROM chats c
+			JOIN messages m ON m.chat_id = c.id AND m.archived = 0
+			GROUP BY c.id
+			ORDER BY updated_at DESC, MAX(m.id) DESC
+			LIMIT ?
+		`, currentModelSelectExpr("c"))
+	rows, err := s.db.QueryContext(ctx, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list chats: %w", err)
 	}
@@ -437,8 +423,12 @@ func (s *Store) ListChats(ctx context.Context, limit int) ([]ChatSummary, error)
 	for rows.Next() {
 		var summary ChatSummary
 		var updatedAt string
-		if err := rows.Scan(&summary.ID, &summary.Title, &summary.CreatedAt, &updatedAt, &summary.MessageCount, &summary.ApproxBytes); err != nil {
+		var modelName sql.NullString
+		if err := rows.Scan(&summary.ID, &summary.Title, &summary.CreatedAt, &updatedAt, &summary.MessageCount, &summary.ApproxBytes, &modelName); err != nil {
 			return nil, fmt.Errorf("scan chat summary: %w", err)
+		}
+		if modelName.Valid {
+			summary.Model = modelName.String
 		}
 		summary.UpdatedAt, err = parseSQLiteTime(updatedAt)
 		if err != nil {
@@ -450,13 +440,6 @@ func (s *Store) ListChats(ctx context.Context, limit int) ([]ChatSummary, error)
 		return nil, fmt.Errorf("read chat summaries: %w", err)
 	}
 
-	for i := range summaries {
-		model, err := currentModelForChat(ctx, s.db, summaries[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		summaries[i].Model = model
-	}
 	return summaries, nil
 }
 
@@ -536,15 +519,17 @@ func latestModelForChat(ctx context.Context, db *sql.DB, chatID string) (string,
 	return modelName, nil
 }
 
-func currentModelForChat(ctx context.Context, db *sql.DB, chatID string) (string, error) {
-	var modelName string
-	if err := db.QueryRowContext(ctx, `SELECT model_name FROM chats WHERE id = ?`, chatID).Scan(&modelName); err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(modelName) != "" {
-		return modelName, nil
-	}
-	return latestModelForChat(ctx, db, chatID)
+func currentModelSelectExpr(chatAlias string) string {
+	return fmt.Sprintf(`COALESCE(
+				NULLIF(%[1]s.model_name, ''),
+				(
+					SELECT lm.model_name
+					FROM messages lm
+					WHERE lm.chat_id = %[1]s.id AND lm.model_name IS NOT NULL AND lm.model_name != ''
+					ORDER BY lm.updated_at DESC, lm.id DESC
+					LIMIT 1
+				)
+			)`, chatAlias)
 }
 
 func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUserTurns int, summary string) error {

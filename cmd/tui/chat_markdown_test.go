@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestChatMarkdownRendersAssistantAndSystemOutput(t *testing.T) {
@@ -106,6 +108,15 @@ func TestChatMarkdownRendersTableWithinWidth(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "bash") || !strings.Contains(rendered, "web_search") {
 		t.Fatalf("rendered table missing content: %q", rendered)
+	}
+}
+
+func TestWrapTableCellUsesDisplayWidth(t *testing.T) {
+	lines := wrapTableCell(strings.Repeat("界", 6), 4)
+	for _, line := range lines {
+		if width := lipgloss.Width(line); width > 4 {
+			t.Fatalf("line %q width = %d, want <= 4", line, width)
+		}
 	}
 }
 

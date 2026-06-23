@@ -525,13 +525,7 @@ func wrapTableCell(text string, width int) []string {
 		line := strings.TrimRight(rawLine, "\r")
 		for lipgloss.Width(line) > width {
 			runes := []rune(line)
-			cut := min(width, len(runes))
-			for i := cut; i > max(1, cut/2); i-- {
-				if unicode.IsSpace(runes[i-1]) {
-					cut = i
-					break
-				}
-			}
+			cut := tableCellWrapCut(runes, width)
 			out = append(out, strings.TrimSpace(string(runes[:cut])))
 			line = strings.TrimSpace(string(runes[cut:]))
 		}
@@ -541,6 +535,34 @@ func wrapTableCell(text string, width int) []string {
 		return []string{""}
 	}
 	return out
+}
+
+func tableCellWrapCut(runes []rune, width int) int {
+	if len(runes) == 0 {
+		return 0
+	}
+	cut := 0
+	lineWidth := 0
+	for i, r := range runes {
+		nextWidth := lipgloss.Width(string(r))
+		if cut > 0 && lineWidth+nextWidth > width {
+			break
+		}
+		lineWidth += nextWidth
+		cut = i + 1
+	}
+	if cut <= 0 {
+		return 1
+	}
+	preferred := cut
+	spaceWidth := 0
+	for i := 0; i < cut; i++ {
+		spaceWidth += lipgloss.Width(string(runes[i]))
+		if unicode.IsSpace(runes[i]) && spaceWidth >= max(1, width/2) {
+			preferred = i + 1
+		}
+	}
+	return preferred
 }
 
 func markdownTableRenderedWidth(widths []int) int {

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 type ApprovalDecision string
@@ -29,13 +30,14 @@ const (
 )
 
 type ApprovalRequest struct {
-	ToolCallID string
-	ToolName   string
-	Args       map[string]any
-	WorkingDir string
-	Summary    string
-	Risk       ApprovalRisk
-	Reasons    []string
+	ToolCallID           string
+	ToolName             string
+	Args                 map[string]any
+	WorkingDir           string
+	ToolApprovalRequired bool
+	Summary              string
+	Risk                 ApprovalRisk
+	Reasons              []string
 }
 
 type ApprovalResult struct {
@@ -125,16 +127,8 @@ func (m *ApprovalManager) RequiresApproval(ctx context.Context, tool Tool, req A
 	if m == nil || m.autoApprove {
 		return false
 	}
-	evaluation := m.evaluate(ctx, req)
-	if ToolRequiresApproval(tool, req.Args) && evaluation.Decision != ApprovalDeny {
-		evaluation.RequirePrompt = true
-		if evaluation.Summary == "" {
-			evaluation.Summary = fmt.Sprintf("%s wants to run", toolApprovalDisplayName(req.ToolName))
-		}
-		if len(evaluation.Reasons) == 0 {
-			evaluation.Reasons = []string{"tool requires approval"}
-		}
-	}
+	req.ToolApprovalRequired = req.ToolApprovalRequired || ToolRequiresApproval(tool, req.Args)
+	evaluation := applyToolApprovalRequirement(req, m.evaluate(ctx, req))
 	if evaluation.Decision == ApprovalDeny {
 		return true
 	}
@@ -149,7 +143,7 @@ func (m *ApprovalManager) Approve(ctx context.Context, req ApprovalRequest) (App
 		return ApprovalResult{Decision: ApprovalAllowOnce}, nil
 	}
 
-	evaluation := m.evaluate(ctx, req)
+	evaluation := applyToolApprovalRequirement(req, m.evaluate(ctx, req))
 	req = approvalRequestWithEvaluation(req, evaluation)
 
 	if evaluation.Decision == ApprovalDeny {
@@ -194,6 +188,20 @@ func (m *ApprovalManager) evaluate(ctx context.Context, req ApprovalRequest) App
 	}
 	if evaluation.SessionKey == "" {
 		evaluation.SessionKey = approvalSessionKey(req)
+	}
+	return evaluation
+}
+
+func applyToolApprovalRequirement(req ApprovalRequest, evaluation ApprovalEvaluation) ApprovalEvaluation {
+	if !req.ToolApprovalRequired || evaluation.Decision == ApprovalDeny {
+		return evaluation
+	}
+	evaluation.RequirePrompt = true
+	if evaluation.Summary == "" {
+		evaluation.Summary = fmt.Sprintf("%s wants to run", ToolDisplayName(req.ToolName))
+	}
+	if len(evaluation.Reasons) == 0 {
+		evaluation.Reasons = []string{"tool requires approval"}
 	}
 	return evaluation
 }
@@ -256,9 +264,9 @@ func (DefaultApprovalPolicy) EvaluateApproval(_ context.Context, req ApprovalReq
 				return denyApproval(req.ToolName, ApprovalRiskHigh, reason)
 			}
 		}
-		return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow, Summary: fmt.Sprintf("%s can run without approval", toolApprovalDisplayName(req.ToolName))}
+		return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow, Summary: fmt.Sprintf("%s can run without approval", ToolDisplayName(req.ToolName))}
 	case "web_search", "web_fetch":
-		return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow, Summary: fmt.Sprintf("%s can run without approval", toolApprovalDisplayName(req.ToolName))}
+		return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow, Summary: fmt.Sprintf("%s can run without approval", ToolDisplayName(req.ToolName))}
 	case "edit":
 		return evaluateEditApproval(req)
 	case "bash":
@@ -267,7 +275,7 @@ func (DefaultApprovalPolicy) EvaluateApproval(_ context.Context, req ApprovalReq
 		return ApprovalEvaluation{
 			RequirePrompt: true,
 			Risk:          ApprovalRiskMedium,
-			Summary:       fmt.Sprintf("%s wants to run", toolApprovalDisplayName(req.ToolName)),
+			Summary:       fmt.Sprintf("%s wants to run", ToolDisplayName(req.ToolName)),
 			Reasons:       []string{"unknown tool effects"},
 			SessionKey:    approvalSessionKey(req),
 		}
@@ -290,10 +298,29 @@ func evaluateEditApproval(req ApprovalRequest) ApprovalEvaluation {
 	return ApprovalEvaluation{
 		RequirePrompt: true,
 		Risk:          ApprovalRiskMedium,
-		Summary:       fmt.Sprintf("Edit wants to modify %s", path),
+		Summary:       fmt.Sprintf("Edit wants to modify %s", sanitizeApprovalDisplay(path)),
 		Reasons:       reasons,
 		SessionKey:    "edit:" + path,
 	}
+}
+
+func sanitizeApprovalDisplay(value string) string {
+	value = approvalANSIEscapePattern.ReplaceAllString(value, "")
+	value = strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t':
+			return ' '
+		}
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	if value == "" {
+		return "(empty)"
+	}
+	return value
 }
 
 func evaluateBashApproval(req ApprovalRequest) ApprovalEvaluation {
@@ -319,7 +346,7 @@ func denyApproval(toolName string, risk ApprovalRisk, reason string) ApprovalEva
 	return ApprovalEvaluation{
 		Decision:   ApprovalDeny,
 		Risk:       risk,
-		Summary:    fmt.Sprintf("%s cannot run", toolApprovalDisplayName(toolName)),
+		Summary:    fmt.Sprintf("%s cannot run", ToolDisplayName(toolName)),
 		Reasons:    []string{reason},
 		SessionKey: approvalSessionKey(ApprovalRequest{ToolName: toolName}),
 	}
@@ -552,8 +579,9 @@ type bashToken struct {
 }
 
 var (
-	bashFunctionDeclPattern = regexp.MustCompile(`(?m)(^|[;&|[:space:]])(?:function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(?:\(\)[[:space:]]*)?\{`)
-	bashSubshellPattern     = regexp.MustCompile(`(?m)(^|[;&|[:space:]])\(`)
+	approvalANSIEscapePattern = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))`)
+	bashFunctionDeclPattern   = regexp.MustCompile(`(?m)(^|[;&|[:space:]])(?:function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(?:\(\)[[:space:]]*)?\{`)
+	bashSubshellPattern       = regexp.MustCompile(`(?m)(^|[;&|[:space:]])\(`)
 )
 
 func scanBashTokens(command string) ([]bashToken, []string, bool) {
@@ -845,24 +873,4 @@ func stableApprovalArgs(args map[string]any) string {
 		fmt.Fprintf(&b, "%s=%v", key, args[key])
 	}
 	return b.String()
-}
-
-func toolApprovalDisplayName(name string) string {
-	switch name {
-	case "web_search":
-		return "Web Search"
-	case "web_fetch":
-		return "Web Fetch"
-	case "bash":
-		return "Bash"
-	case "read":
-		return "Read"
-	case "edit":
-		return "Edit"
-	default:
-		if name == "" {
-			return "Tool"
-		}
-		return name
-	}
 }

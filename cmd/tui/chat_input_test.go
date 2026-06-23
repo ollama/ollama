@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	coreagent "github.com/ollama/ollama/agent"
 
@@ -36,7 +37,7 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 		!strings.Contains(fm.entries[0].content, "- `/help`: show commands") ||
 		!strings.Contains(fm.entries[0].content, "- `/bye`: exit") ||
 		!strings.Contains(fm.entries[0].content, "**Shortcuts**") ||
-		!strings.Contains(fm.entries[0].content, "- `ctrl+o`: open tool details") ||
+		!strings.Contains(fm.entries[0].content, "- `ctrl+o`: toggle tool output") ||
 		!strings.Contains(fm.entries[0].content, "- `shift+enter`: insert a newline") ||
 		!strings.Contains(fm.entries[0].content, "- `shift+tab`: toggle permission mode") ||
 		!strings.Contains(fm.entries[0].content, "- `ctrl+a/e`: move to line start or end") {
@@ -46,6 +47,40 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 		if strings.Contains(fm.entries[0].content, hidden) {
 			t.Fatalf("hidden command %q should stay hidden from help: %q", hidden, fm.entries[0].content)
 		}
+	}
+}
+
+func TestTruncateInputLineUsesDisplayWidth(t *testing.T) {
+	line := truncateInputLine(strings.Repeat("界", 10), 10)
+	if got := lipgloss.Width(line); got > 10 {
+		t.Fatalf("line %q width = %d, want <= 10", line, got)
+	}
+}
+
+func TestRenderInputBoxTruncationUsesSingleContinuationMarker(t *testing.T) {
+	lines := renderInputBoxLines("one two three four five six seven", len("one two three four five six seven"), 16, 1, "")
+	rendered := strings.Join(lines, "\n")
+	if strings.Contains(rendered, "... ...") {
+		t.Fatalf("input rendered duplicate continuation marker: %q", rendered)
+	}
+	if !strings.Contains(rendered, "...") {
+		t.Fatalf("input should include continuation marker: %q", rendered)
+	}
+}
+
+type shiftEnterCSITestMsg string
+
+func (m shiftEnterCSITestMsg) String() string {
+	return string(m)
+}
+
+func TestChatInputHandlesShiftEnterCSIMessage(t *testing.T) {
+	m := chatModel{input: []rune("line one")}
+
+	updated, _ := m.Update(shiftEnterCSITestMsg("?CSI[49 51 59 50 117]?"))
+	m = updated.(chatModel)
+	if got := string(m.input); got != "line one\n" {
+		t.Fatalf("input = %q, want newline inserted", got)
 	}
 }
 
@@ -93,6 +128,21 @@ func TestChatLargePasteUsesPlaceholderAndExpandsOnSubmit(t *testing.T) {
 	}
 	if got := m.liveMessages[0].Content; got != pasted {
 		t.Fatalf("model content = %q, want pasted text", got)
+	}
+	if len(m.promptHistory) != 1 || m.promptHistory[0] != pasted {
+		t.Fatalf("prompt history = %#v, want expanded pasted text", m.promptHistory)
+	}
+
+	m.running = false
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "[Pasted text #2 +8 lines]" {
+		t.Fatalf("recalled input = %q, want pasted text placeholder", got)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(chatModel)
+	if got := m.liveMessages[0].Content; got != pasted {
+		t.Fatalf("recalled model content = %q, want pasted text", got)
 	}
 }
 
@@ -895,6 +945,9 @@ func TestChatSkillSlashCompletionAndTrigger(t *testing.T) {
 	}
 	if len(m.entries) == 0 || m.entries[0].content != "/go-code write a test" {
 		t.Fatalf("displayed entries = %#v", m.entries)
+	}
+	if len(m.promptHistory) != 1 || m.promptHistory[0] != "/go-code write a test" {
+		t.Fatalf("prompt history = %#v, want slash skill command preserved", m.promptHistory)
 	}
 	runDone := waitForRunDone(t, m.events)
 	if runDone.err != nil {

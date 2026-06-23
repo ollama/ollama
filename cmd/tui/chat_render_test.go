@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
@@ -207,7 +209,7 @@ func TestChatViewCapsTallInputBox(t *testing.T) {
 	if got := inputPromptLineCount(t, view); got > maxInputBoxBodyLines {
 		t.Fatalf("input body lines = %d, want <= %d:\n%s", got, maxInputBoxBodyLines, view)
 	}
-	if !strings.Contains(view, "... ... ") {
+	if !strings.Contains(view, "... ") || strings.Contains(view, "... ... ") {
 		t.Fatalf("truncated pasted prompt should show an omission marker:\n%s", view)
 	}
 }
@@ -671,12 +673,19 @@ func TestChatResizeAndScrollsLongAssistantOutput(t *testing.T) {
 	if cmd == nil || !m.boundedFrame {
 		t.Fatal("terminal resize should switch to bounded rendering and clear the stale flow view")
 	}
+	if !m.fullScreen {
+		t.Fatal("terminal resize should enter fullscreen managed rendering")
+	}
+	if m.flowPrintedLines != 0 {
+		t.Fatalf("resize should clear flow state, printed=%d", m.flowPrintedLines)
+	}
 	if m.maxScroll() == 0 {
 		t.Fatal("long assistant output should be scrollable after resize")
 	}
 	if !strings.Contains(stripANSI(m.View()), "generated line 00") {
 		t.Fatalf("bounded view should reset to earliest generated content after resize:\n%s", stripANSI(m.View()))
 	}
+	assertChatFrameSize(t, m.View(), 72, 10)
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlHome})
 	m = updated.(chatModel)
@@ -688,6 +697,20 @@ func TestChatResizeAndScrollsLongAssistantOutput(t *testing.T) {
 	m = updated.(chatModel)
 	if !strings.Contains(stripANSI(m.View()), "generated line 79") {
 		t.Fatalf("scrolling back to bottom should restore latest generated content:\n%s", stripANSI(m.View()))
+	}
+	assertChatFrameSize(t, m.View(), 72, 10)
+}
+
+func assertChatFrameSize(t *testing.T, view string, width, height int) {
+	t.Helper()
+	lines := strings.Split(view, "\n")
+	if len(lines) != height {
+		t.Fatalf("frame rendered %d lines, want %d:\n%s", len(lines), height, stripANSI(view))
+	}
+	for i, line := range lines {
+		if got := lipgloss.Width(line); got > width {
+			t.Fatalf("frame line %d width = %d, want <= %d: %q", i, got, width, stripANSI(line))
+		}
 	}
 }
 
@@ -734,10 +757,12 @@ func TestChatStreamingAssistantOutputHoldsLiveMarkdown(t *testing.T) {
 
 func TestChatMouseWheelScrollsTranscriptWhileRunning(t *testing.T) {
 	m := chatModel{
-		width:        80,
-		height:       10,
-		boundedFrame: true,
-		running:      true,
+		width:         80,
+		height:        10,
+		boundedFrame:  true,
+		running:       true,
+		input:         []rune("current draft"),
+		promptHistory: []string{"previous one", "previous two"},
 	}
 	for range 12 {
 		m.entries = append(m.entries, chatEntry{role: "user", content: "line"})
@@ -751,11 +776,17 @@ func TestChatMouseWheelScrollsTranscriptWhileRunning(t *testing.T) {
 	if m.scroll == 0 {
 		t.Fatal("mouse wheel up should scroll transcript while running")
 	}
+	if got := string(m.input); got != "current draft" {
+		t.Fatalf("mouse wheel should not navigate prompt history, input = %q", got)
+	}
 
 	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
 	m = updated.(chatModel)
 	if m.scroll != 0 {
 		t.Fatalf("mouse wheel down should return to bottom, got scroll %d", m.scroll)
+	}
+	if got := string(m.input); got != "current draft" {
+		t.Fatalf("mouse wheel should leave draft alone, input = %q", got)
 	}
 }
 
@@ -799,8 +830,68 @@ func TestChatMouseDragSelectsAndCopiesTranscriptText(t *testing.T) {
 	if copied != "alpha" {
 		t.Fatalf("copied = %q, want alpha", copied)
 	}
-	if m.status != "selection copied" {
-		t.Fatalf("status = %q, want selection copied", m.status)
+	if m.status == "selection copied" {
+		t.Fatalf("selection should not surface a copied status")
+	}
+}
+
+func TestChatBoundedViewHeaderMatchesTranscriptLayout(t *testing.T) {
+	m := chatModel{
+		width:        80,
+		height:       6,
+		boundedFrame: true,
+	}
+	for i := range 12 {
+		m.entries = append(m.entries, chatEntry{role: "user", content: fmt.Sprintf("line-%02d", i)})
+	}
+	m.scroll = m.maxScroll()
+	top, _ := m.transcriptLayout()
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	if top <= 0 {
+		t.Fatalf("transcript top = %d, want header offset", top)
+	}
+	if !strings.Contains(lines[0], "↓ more") {
+		t.Fatalf("view should render status header at top: %q", lines[0])
+	}
+	if strings.TrimSpace(lines[top]) == "" {
+		t.Fatalf("transcript should start at layout top %d, line=%q view=%q", top, lines[top], strings.Join(lines, "\n"))
+	}
+}
+
+func TestChatMouseCopyFailureDoesNotClearRunningState(t *testing.T) {
+	m := chatModel{
+		ctx: context.Background(),
+		opts: ChatOptions{
+			Clipboard: func(context.Context, string) error {
+				return errors.New("copy failed")
+			},
+		},
+		width:   80,
+		height:  10,
+		running: true,
+		entries: []chatEntry{
+			{role: "user", content: "alpha beta"},
+		},
+	}
+	top, _ := m.transcriptLayout()
+
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 2, Y: top})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: 7, Y: top})
+	m = updated.(chatModel)
+	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 7, Y: top})
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("mouse release should return clipboard command")
+	}
+	msg := cmd()
+	updated, _ = m.Update(msg)
+	m = updated.(chatModel)
+	if !m.running {
+		t.Fatal("clipboard failure should not clear running state")
+	}
+	if m.status != "clipboard error: copy failed" {
+		t.Fatalf("status = %q, want clipboard error", m.status)
 	}
 }
 
@@ -1079,15 +1170,19 @@ func TestChatToolOutputIsHiddenUntilExpanded(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
 
-	body = stripANSI(m.renderToolDetailsWindow(100, 40))
-	if !strings.Contains(body, "line 24") || !strings.Contains(body, "↑ more") {
-		t.Fatalf("details window should show latest output with scroll affordance: %q", body)
+	if !m.toolOutputMode || !m.toolOutputOpen || !m.entries[0].expanded {
+		t.Fatalf("ctrl+o should expand tool output inline: %#v", m.entries[0])
 	}
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlHome})
+	body = stripANSI(m.renderTranscript(100))
+	if !strings.Contains(body, "line 00") || !strings.Contains(body, "line 24") {
+		t.Fatalf("expanded transcript should show full tool output: %q", body)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	body = stripANSI(m.renderToolDetailsWindow(100, 40))
-	if !strings.Contains(body, "line 00") {
-		t.Fatalf("details window should scroll to earlier output: %q", body)
+	body = stripANSI(m.renderTranscript(100))
+	if m.toolOutputOpen || m.entries[0].expanded || strings.Contains(body, "line 00") {
+		t.Fatalf("second ctrl+o should collapse tool output: %q", body)
 	}
 }
 
@@ -1114,7 +1209,7 @@ func TestChatCompletedToolsGroupWhenNextStepStarts(t *testing.T) {
 	}
 }
 
-func TestChatCtrlOOpensToolDetailsWindow(t *testing.T) {
+func TestChatCtrlOTogglesInlineToolOutput(t *testing.T) {
 	m := chatModel{
 		width:  100,
 		height: 20,
@@ -1127,26 +1222,29 @@ func TestChatCtrlOOpensToolDetailsWindow(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	if !m.toolDetailsOpen {
-		t.Fatal("ctrl+o should open tool details")
+	if m.toolDetailsOpen {
+		t.Fatal("ctrl+o should not open a separate tool details view")
 	}
 	for _, index := range []int{0, 2} {
-		if m.entries[index].expanded {
-			t.Fatalf("tool entry %d should not be mutated by ctrl+o", index)
+		if !m.entries[index].expanded {
+			t.Fatalf("tool entry %d should be expanded inline", index)
 		}
 	}
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "Tool details") || !strings.Contains(view, "one") || !strings.Contains(view, "two") {
-		t.Fatalf("details view missing expanded tool output: %q", view)
+	if strings.Contains(view, "Tool details") {
+		t.Fatalf("ctrl+o should keep tool output inline: %q", view)
+	}
+	if !strings.Contains(view, "one") || !strings.Contains(view, "two") {
+		t.Fatalf("view missing inline expanded tool output: %q", view)
 	}
 	if !strings.Contains(view, "between") {
-		t.Fatalf("details window should keep surrounding chat visible: %q", view)
+		t.Fatalf("inline tool output should keep surrounding chat visible: %q", view)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
 	if m.toolDetailsOpen {
-		t.Fatal("second ctrl+o should close tool details")
+		t.Fatal("second ctrl+o should not open tool details")
 	}
 	for _, index := range []int{0, 2} {
 		if m.entries[index].expanded {
@@ -1155,10 +1253,12 @@ func TestChatCtrlOOpensToolDetailsWindow(t *testing.T) {
 	}
 }
 
-func TestChatCtrlOReturnsToManagedRedrawWithoutReprinting(t *testing.T) {
+func TestChatCtrlOTogglesInlineOutputWithoutLeavingFullscreen(t *testing.T) {
 	m := chatModel{
 		width:            100,
 		height:           24,
+		boundedFrame:     true,
+		fullScreen:       true,
 		flowPrintedLines: 4,
 		entries: []chatEntry{
 			{role: "user", content: "who is parth sareen"},
@@ -1170,32 +1270,38 @@ func TestChatCtrlOReturnsToManagedRedrawWithoutReprinting(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
 	if cmd != nil {
-		t.Fatal("opening tool details should not force a redraw command")
+		t.Fatal("inline tool toggle should not switch screens")
 	}
-	if !m.toolDetailsOpen {
-		t.Fatal("ctrl+o should open tool details")
+	if m.toolDetailsOpen {
+		t.Fatal("ctrl+o should not open tool details")
 	}
-	if m.boundedFrame {
-		t.Fatal("opening tool details from terminal-flow mode should not permanently enter bounded mode")
+	if !m.fullScreen || !m.boundedFrame {
+		t.Fatal("inline tool toggle should keep managed fullscreen mode")
+	}
+	if !m.toolOutputOpen || !m.entries[1].expanded {
+		t.Fatalf("tool output should be expanded inline: %#v", m.entries[1])
 	}
 
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
 	if m.toolDetailsOpen {
-		t.Fatal("second ctrl+o should close tool details")
+		t.Fatal("second ctrl+o should not open tool details")
 	}
 	if !m.boundedFrame {
-		t.Fatal("closing tool details should enter managed redraw mode")
+		t.Fatal("closing tool details should keep managed redraw mode")
 	}
-	if cmd == nil {
-		t.Fatal("closing tool details from terminal-flow mode should clear stale output")
+	if !m.fullScreen {
+		t.Fatal("closing tool details should stay fullscreen")
 	}
-	if m.flowPrintedLines != 0 {
-		t.Fatalf("closing tool details should not reprint transcript into scrollback, printed=%d", m.flowPrintedLines)
+	if cmd != nil {
+		t.Fatal("inline tool toggle should not switch screens")
+	}
+	if m.toolOutputOpen || m.entries[1].expanded {
+		t.Fatalf("tool output should be collapsed inline: %#v", m.entries[1])
 	}
 }
 
-func TestChatCtrlOShowsRunningToolOutputInWindow(t *testing.T) {
+func TestChatCtrlOShowsRunningToolOutputInline(t *testing.T) {
 	args := map[string]any{"command": "pwd"}
 	m := chatModel{width: 100, height: 20, running: true}
 	m.applyAgentEvent(coreagent.Event{
@@ -1207,11 +1313,11 @@ func TestChatCtrlOShowsRunningToolOutputInWindow(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	if !m.toolDetailsOpen {
-		t.Fatalf("ctrl+o should open tool details while tool is running")
+	if m.toolDetailsOpen {
+		t.Fatalf("ctrl+o should not open a tool details screen")
 	}
-	if m.entries[0].expanded {
-		t.Fatalf("ctrl+o should not record expanded state on the running tool")
+	if !m.entries[0].expanded {
+		t.Fatalf("ctrl+o should expand the running tool inline")
 	}
 
 	m.applyAgentEvent(coreagent.Event{
@@ -1222,17 +1328,13 @@ func TestChatCtrlOShowsRunningToolOutputInWindow(t *testing.T) {
 		Content:    "/tmp/project\n",
 	})
 
-	view := stripANSI(m.View())
+	view := stripANSI(m.renderTranscript(100))
 	if !strings.Contains(view, "/tmp/project") {
-		t.Fatalf("finished tool output should be visible in details window: %q", view)
-	}
-	transcript := stripANSI(m.renderTranscript(100))
-	if strings.Contains(transcript, "/tmp/project") {
-		t.Fatalf("main transcript should stay collapsed after ctrl+o: %q", transcript)
+		t.Fatalf("finished tool output should be visible inline: %q", view)
 	}
 }
 
-func TestChatCtrlODetailsSurvivesToolGrouping(t *testing.T) {
+func TestChatCtrlOInlineOutputSurvivesToolGrouping(t *testing.T) {
 	firstArgs := map[string]any{"command": "pwd"}
 	secondArgs := map[string]any{"command": "ls"}
 	m := chatModel{
@@ -1251,13 +1353,13 @@ func TestChatCtrlODetailsSurvivesToolGrouping(t *testing.T) {
 	if len(m.entries) != 2 {
 		t.Fatalf("entries = %d, want tool group plus assistant: %#v", len(m.entries), m.entries)
 	}
-	if m.entries[0].role != "tool_group" || m.entries[0].expanded {
-		t.Fatalf("grouped tool history should stay collapsed in main transcript: %#v", m.entries[0])
+	if m.entries[0].role != "tool_group" || !m.entries[0].expanded {
+		t.Fatalf("grouped tool history should stay expanded inline: %#v", m.entries[0])
 	}
 
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "one") || !strings.Contains(view, "two") {
-		t.Fatalf("grouped tool output should be visible in details window: %q", view)
+		t.Fatalf("grouped tool output should be visible inline: %q", view)
 	}
 }
 
@@ -1529,5 +1631,17 @@ func TestWrapChatTextSplitsLongLines(t *testing.T) {
 	}
 	if strings.Contains(lines[0], "delta") {
 		t.Fatalf("first line was not wrapped: %#v", lines)
+	}
+}
+
+func TestWrapChatTextUsesDisplayWidth(t *testing.T) {
+	lines := wrapChatText(strings.Repeat("界", 20), 20)
+	if len(lines) < 2 {
+		t.Fatalf("lines = %#v, want full-width text split", lines)
+	}
+	for _, line := range lines {
+		if got := lipgloss.Width(line); got > 20 {
+			t.Fatalf("line %q width = %d, want <= 20", line, got)
+		}
 	}
 }

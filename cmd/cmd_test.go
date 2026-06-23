@@ -1072,6 +1072,96 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 	}
 }
 
+func TestRunHandlerHeadlessDeniedApprovalReturnsError(t *testing.T) {
+	var chatCalls int
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityTools},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/generate":
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/ps":
+			if err := json.NewEncoder(w).Encode(api.ProcessResponse{
+				Models: []api.ProcessModelResponse{{
+					Name:          "test-model:latest",
+					Model:         "test-model:latest",
+					ContextLength: 8192,
+				}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/chat":
+			chatCalls++
+			if chatCalls > 1 {
+				t.Fatalf("chat calls = %d, want denied tool run to stop after first call", chatCalls)
+			}
+			args := api.NewToolCallFunctionArguments()
+			args.Set("command", "pwd")
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			enc := json.NewEncoder(w)
+			if err := enc.Encode(api.ChatResponse{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+				ID: "call-1",
+				Function: api.ToolCallFunction{
+					Name:      "bash",
+					Arguments: args,
+				},
+			}}}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := enc.Encode(api.ChatResponse{Done: true, DoneReason: "stop"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/status":
+			if err := json.NewEncoder(w).Encode(api.StatusResponse{}); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(mockServer.Close)
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+	cmd.Flags().Bool("resume", false, "")
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().Bool("verbose", false, "")
+
+	oldStdout := os.Stdout
+	stdoutR, stdoutW, _ := os.Pipe()
+	os.Stdout = stdoutW
+	oldStderr := os.Stderr
+	stderrR, stderrW, _ := os.Pipe()
+	os.Stderr = stderrW
+
+	err := RunHandler(cmd, []string{"test-model", "run pwd"})
+	stdoutW.Close()
+	stderrW.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	_, _ = io.Copy(io.Discard, stdoutR)
+	_, _ = io.Copy(io.Discard, stderrR)
+	if err == nil || !strings.Contains(err.Error(), "tool execution denied") {
+		t.Fatalf("RunHandler error = %v, want tool execution denied", err)
+	}
+	if chatCalls != 1 {
+		t.Fatalf("chat calls = %d, want 1", chatCalls)
+	}
+}
+
 func TestRunHandlerHeadlessBudgetsAgainstLoadedContext(t *testing.T) {
 	var chatCalled bool
 	var generateCalled bool

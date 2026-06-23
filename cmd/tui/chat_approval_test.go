@@ -77,12 +77,14 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 	}
 }
 
-func TestChatApprovalPromptCtrlOOpensToolDetails(t *testing.T) {
+func TestChatApprovalPromptCtrlOExpandsToolDetailsInline(t *testing.T) {
 	reply := make(chan coreagent.ApprovalResult, 1)
 	m := chatModel{
-		width:  100,
-		height: 24,
-		events: make(chan tea.Msg),
+		width:        100,
+		height:       24,
+		boundedFrame: true,
+		fullScreen:   true,
+		events:       make(chan tea.Msg),
 	}
 	m.openApprovalPrompt(chatApprovalPromptMsg{
 		request: coreagent.ApprovalRequest{
@@ -100,20 +102,19 @@ func TestChatApprovalPromptCtrlOOpensToolDetails(t *testing.T) {
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
-	if cmd != nil {
-		t.Fatal("ctrl+o should open tool details without starting a command")
-	}
 	m = updated.(chatModel)
-	if !m.toolDetailsOpen {
-		t.Fatal("ctrl+o should open tool details")
+	if cmd != nil {
+		t.Fatal("ctrl+o should not switch screens")
+	}
+	if m.toolDetailsOpen {
+		t.Fatal("ctrl+o should not open a separate tool details view")
+	}
+	if !m.fullScreen || !m.boundedFrame {
+		t.Fatal("ctrl+o should keep managed fullscreen rendering")
 	}
 	transcript = stripANSI(m.renderTranscript(100))
-	if strings.Contains(transcript, "$ git status --short --branch --untracked-files=all") {
-		t.Fatalf("main transcript should stay collapsed: %q", transcript)
-	}
-	view := stripANSI(m.View())
-	if !strings.Contains(view, "Bash") || !strings.Contains(view, "$ git status --short --branch --untracked-files=all") {
-		t.Fatalf("approval tool details view should show full command: %q", view)
+	if !strings.Contains(transcript, "Bash") || !strings.Contains(transcript, "$ git status --short --branch --untracked-files=all") {
+		t.Fatalf("approval tool details should show inline: %q", transcript)
 	}
 }
 

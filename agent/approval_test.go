@@ -4,12 +4,18 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/api"
 )
 
 type recordingApprovalPrompter struct {
 	requests []ApprovalRequest
 	results  []ApprovalResult
 }
+
+type allowWithoutPromptPolicy struct{}
+
+type approvalRequiredTestTool struct{}
 
 func (p *recordingApprovalPrompter) PromptApproval(_ context.Context, request ApprovalRequest) (ApprovalResult, error) {
 	p.requests = append(p.requests, request)
@@ -19,6 +25,30 @@ func (p *recordingApprovalPrompter) PromptApproval(_ context.Context, request Ap
 	result := p.results[0]
 	p.results = p.results[1:]
 	return result, nil
+}
+
+func (allowWithoutPromptPolicy) EvaluateApproval(context.Context, ApprovalRequest) ApprovalEvaluation {
+	return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow}
+}
+
+func (approvalRequiredTestTool) Name() string {
+	return "approval_required"
+}
+
+func (approvalRequiredTestTool) Description() string {
+	return "requires approval"
+}
+
+func (approvalRequiredTestTool) Schema() api.ToolFunction {
+	return api.ToolFunction{Name: "approval_required"}
+}
+
+func (approvalRequiredTestTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
+	return ToolResult{Content: "ok"}, nil
+}
+
+func (approvalRequiredTestTool) RequiresApproval(map[string]any) bool {
+	return true
 }
 
 func TestApprovalManagerAllowsSafeToolsWithoutPrompt(t *testing.T) {
@@ -41,6 +71,31 @@ func TestApprovalManagerAllowsSafeToolsWithoutPrompt(t *testing.T) {
 	}
 }
 
+func TestApprovalManagerToolRequiredOverridePromptsInApprove(t *testing.T) {
+	prompter := &recordingApprovalPrompter{}
+	manager := NewApprovalManager(ApprovalManagerOptions{Policy: allowWithoutPromptPolicy{}, Prompter: prompter})
+	tool := approvalRequiredTestTool{}
+	request := ApprovalRequest{
+		ToolName:             tool.Name(),
+		Args:                 map[string]any{},
+		ToolApprovalRequired: ToolRequiresApproval(tool, nil),
+	}
+
+	if !manager.RequiresApproval(context.Background(), tool, request) {
+		t.Fatal("tool-required approval should require a prompt")
+	}
+	result, err := manager.Approve(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != ApprovalAllowOnce {
+		t.Fatalf("decision = %q, want allow_once", result.Decision)
+	}
+	if len(prompter.requests) != 1 {
+		t.Fatalf("prompts = %d, want 1", len(prompter.requests))
+	}
+}
+
 func TestApprovalManagerDeniesEscapingPath(t *testing.T) {
 	manager := NewApprovalManager(ApprovalManagerOptions{})
 
@@ -57,6 +112,20 @@ func TestApprovalManagerDeniesEscapingPath(t *testing.T) {
 	}
 	if !strings.Contains(result.Reason, "path escapes working directory") {
 		t.Fatalf("reason = %q", result.Reason)
+	}
+}
+
+func TestApprovalManagerSanitizesEditSummary(t *testing.T) {
+	evaluation := evaluateEditApproval(ApprovalRequest{
+		ToolName:   "edit",
+		Args:       map[string]any{"path": "notes/\x1b[31mred\nfile.txt"},
+		WorkingDir: t.TempDir(),
+	})
+	if strings.ContainsAny(evaluation.Summary, "\n\r\x1b") {
+		t.Fatalf("summary contains control characters: %q", evaluation.Summary)
+	}
+	if !strings.Contains(evaluation.Summary, "notes/red file.txt") {
+		t.Fatalf("summary = %q, want sanitized path", evaluation.Summary)
 	}
 }
 

@@ -9,7 +9,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/agent/chatstore"
 	"github.com/ollama/ollama/api"
 )
@@ -58,6 +57,9 @@ func (m chatModel) updateHistoryPopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlC, tea.KeyEsc:
 		m.historyPopup = nil
 		m.status = "ready"
+		if m.fullScreen {
+			return m, nil
+		}
 		return m, tea.ExitAltScreen
 	case tea.KeyUp:
 		m.moveHistoryPopup(-1)
@@ -141,47 +143,28 @@ func (m *chatModel) startHistoryPopupSelection(msg tea.MouseMsg) {
 	if m.historyPopup == nil {
 		return
 	}
-	if !m.mouseInHistoryPopupBody(msg) {
-		m.historyPopup.selection = chatSelection{}
-		return
-	}
-	point := m.mouseHistoryPopupPoint(msg)
-	m.historyPopup.selection = chatSelection{active: true, anchor: point, cursor: point}
+	startChatSelection(&m.historyPopup.selection, msg, m.mouseInHistoryPopupBody, m.mouseHistoryPopupPoint)
 }
 
 func (m *chatModel) dragHistoryPopupSelection(msg tea.MouseMsg) {
-	if m.historyPopup == nil || !m.historyPopup.selection.active {
+	if m.historyPopup == nil {
 		return
 	}
-	m.historyPopup.selection.cursor = m.mouseHistoryPopupPoint(msg)
-	top, height := m.historyPopupLayout()
-	if msg.Y <= top {
-		m.moveHistoryPopup(-1)
-	} else if msg.Y >= top+height-1 {
-		m.moveHistoryPopup(1)
-	}
+	dragChatSelection(&m.historyPopup.selection, msg, m.mouseHistoryPopupPoint, func(msg tea.MouseMsg) {
+		top, height := m.historyPopupLayout()
+		if msg.Y <= top {
+			m.moveHistoryPopup(-1)
+		} else if msg.Y >= top+height-1 {
+			m.moveHistoryPopup(1)
+		}
+	})
 }
 
 func (m chatModel) finishHistoryPopupSelection(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.historyPopup == nil || !m.historyPopup.selection.active {
+	if m.historyPopup == nil {
 		return m, nil
 	}
-	m.historyPopup.selection.cursor = m.mouseHistoryPopupPoint(msg)
-	selected := m.selectedHistoryPopupText()
-	if strings.TrimSpace(selected) == "" {
-		m.historyPopup.selection = chatSelection{}
-		return m, nil
-	}
-	m.status = "selection copied"
-	return m, func() tea.Msg {
-		if m.opts.Clipboard == nil {
-			return nil
-		}
-		if err := m.opts.Clipboard(m.ctx, selected); err != nil {
-			return chatAgentMsg{event: coreagent.Event{Type: coreagent.EventError, Error: err.Error()}}
-		}
-		return nil
-	}
+	return finishChatSelection(m, &m.historyPopup.selection, msg, m.mouseHistoryPopupPoint, m.selectedHistoryPopupText)
 }
 
 func (m chatModel) historyPopupMaxScroll() int {

@@ -16,14 +16,20 @@ type chatAgentMsg struct {
 	event coreagent.Event
 }
 
+type chatClipboardErrorMsg struct {
+	err error
+}
+
 type chatApprovalPromptMsg struct {
 	request coreagent.ApprovalRequest
 	reply   chan<- coreagent.ApprovalResult
 }
 
 type chatRunDoneMsg struct {
-	result *coreagent.RunResult
-	err    error
+	result               *coreagent.RunResult
+	err                  error
+	newMessagesPersisted bool
+	persistedMessages    []api.Message
 }
 
 type chatCompactDoneMsg struct {
@@ -65,7 +71,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			m.thinking = true
 			m.thinkingTokens = max(m.thinkingTokens, eventEvalCount(event))
 			if eventEvalCount(event) <= 0 {
-				m.thinkingTokens += estimateTokenCount(event.Thinking)
+				m.thinkingTokens += coreagent.EstimateTokens(event.Thinking)
 			}
 			idx := m.ensureLiveAssistantMessage()
 			m.liveMessages[idx].Thinking += event.Thinking
@@ -247,11 +253,15 @@ func (m *chatModel) refreshLiveContextEstimate() {
 
 //nolint:containedctx // event sinks need the session context to unblock sends on cancellation.
 type chatEventSink struct {
-	ctx context.Context
-	ch  chan<- tea.Msg
+	ctx                  context.Context
+	ch                   chan<- tea.Msg
+	newMessagesPersisted *bool
 }
 
 func (s chatEventSink) Emit(event coreagent.Event) error {
+	if event.Type == coreagent.EventLoopStep && s.newMessagesPersisted != nil {
+		*s.newMessagesPersisted = true
+	}
 	select {
 	case s.ch <- chatAgentMsg{event: event}:
 		return nil

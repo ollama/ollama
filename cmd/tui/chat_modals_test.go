@@ -221,8 +221,8 @@ func TestChatHistoryMouseDragSelectsAndCopiesText(t *testing.T) {
 	if copied != "alpha" {
 		t.Fatalf("copied = %q, want alpha", copied)
 	}
-	if m.status != "selection copied" {
-		t.Fatalf("status = %q, want selection copied", m.status)
+	if m.status == "selection copied" {
+		t.Fatalf("selection should not surface a copied status")
 	}
 }
 

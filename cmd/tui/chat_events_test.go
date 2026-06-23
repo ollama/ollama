@@ -515,7 +515,7 @@ func TestChatRunDoneSuppressesDuplicateEventError(t *testing.T) {
 	m := chatModel{running: true}
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventError, Error: eventErr.Error()})
 
-	updated, _ := m.Update(chatRunDoneMsg{err: err})
+	updated, _ := m.Update(chatRunDoneMsg{err: err, newMessagesPersisted: true})
 	fm := updated.(chatModel)
 
 	var errorEntries int
@@ -526,6 +526,75 @@ func TestChatRunDoneSuppressesDuplicateEventError(t *testing.T) {
 	}
 	if errorEntries != 1 {
 		t.Fatalf("error entries = %d, want one streamed error", errorEntries)
+	}
+	if fm.status != "error" {
+		t.Fatalf("status = %q, want error", fm.status)
+	}
+}
+
+func TestChatRunDoneKeepsOnlyPersistedMessagesAfterRunError(t *testing.T) {
+	err := errors.New("model connection failed")
+	persisted := []api.Message{
+		{Role: "user", Content: "old prompt"},
+		{Role: "assistant", Content: "old answer"},
+		{Role: "user", Content: "new prompt"},
+	}
+	m := chatModel{
+		running: true,
+		messages: []api.Message{
+			{Role: "user", Content: "old prompt"},
+			{Role: "assistant", Content: "old answer"},
+		},
+		liveMessages: []api.Message{
+			{Role: "user", Content: "old prompt"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "new prompt"},
+			{Role: "assistant", Content: "partial assistant not persisted"},
+		},
+	}
+
+	updated, _ := m.Update(chatRunDoneMsg{err: err, newMessagesPersisted: true, persistedMessages: persisted})
+	fm := updated.(chatModel)
+
+	if len(fm.messages) != 3 || fm.messages[2].Content != "new prompt" {
+		t.Fatalf("messages = %#v, want persisted submitted messages after error", fm.messages)
+	}
+	for _, msg := range fm.messages {
+		if strings.Contains(msg.Content, "partial assistant") {
+			t.Fatalf("messages = %#v, should not include unpersisted assistant text", fm.messages)
+		}
+	}
+	if fm.liveMessages != nil {
+		t.Fatalf("liveMessages = %#v, want cleared after error", fm.liveMessages)
+	}
+	if fm.status != "error" {
+		t.Fatalf("status = %q, want error", fm.status)
+	}
+}
+
+func TestChatRunDoneDoesNotPromoteLiveMessagesBeforePersistence(t *testing.T) {
+	err := errors.New("prompt is too large for the current context")
+	m := chatModel{
+		running: true,
+		messages: []api.Message{
+			{Role: "user", Content: "old prompt"},
+			{Role: "assistant", Content: "old answer"},
+		},
+		liveMessages: []api.Message{
+			{Role: "user", Content: "old prompt"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "oversized prompt"},
+		},
+	}
+
+	updated, _ := m.Update(chatRunDoneMsg{err: err})
+	fm := updated.(chatModel)
+
+	if len(fm.messages) != 2 || fm.messages[1].Content != "old answer" {
+		t.Fatalf("messages = %#v, want previous persisted messages only", fm.messages)
+	}
+	if fm.liveMessages != nil {
+		t.Fatalf("liveMessages = %#v, want cleared after failed preflight", fm.liveMessages)
 	}
 	if fm.status != "error" {
 		t.Fatalf("status = %q, want error", fm.status)
@@ -1349,9 +1418,9 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 
 	updated, _ = fm.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	fm = updated.(chatModel)
-	view := stripANSI(fm.renderToolDetailsWindow(100, 24))
+	view := stripANSI(fm.renderTranscript(100))
 	if !strings.Contains(view, "old work summary") {
-		t.Fatalf("details view should show compacted summary body: %q", view)
+		t.Fatalf("expanded transcript should show compacted summary body: %q", view)
 	}
 }
 

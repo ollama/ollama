@@ -141,6 +141,7 @@ type chatModel struct {
 	width              int
 	height             int
 	boundedFrame       bool
+	fullScreen         bool
 	status             string
 	spinner            int
 	tickActive         bool
@@ -163,6 +164,44 @@ type chatSelection struct {
 	active bool
 	anchor chatSelectionPoint
 	cursor chatSelectionPoint
+}
+
+func startChatSelection(selection *chatSelection, msg tea.MouseMsg, contains func(tea.MouseMsg) bool, point func(tea.MouseMsg) chatSelectionPoint) {
+	if !contains(msg) {
+		*selection = chatSelection{}
+		return
+	}
+	p := point(msg)
+	*selection = chatSelection{active: true, anchor: p, cursor: p}
+}
+
+func dragChatSelection(selection *chatSelection, msg tea.MouseMsg, point func(tea.MouseMsg) chatSelectionPoint, scrollEdge func(tea.MouseMsg)) {
+	if !selection.active {
+		return
+	}
+	selection.cursor = point(msg)
+	scrollEdge(msg)
+}
+
+func finishChatSelection(m chatModel, selection *chatSelection, msg tea.MouseMsg, point func(tea.MouseMsg) chatSelectionPoint, selectedText func() string) (tea.Model, tea.Cmd) {
+	if !selection.active {
+		return m, nil
+	}
+	selection.cursor = point(msg)
+	selected := selectedText()
+	if strings.TrimSpace(selected) == "" {
+		*selection = chatSelection{}
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		if m.opts.Clipboard == nil {
+			return nil
+		}
+		if err := m.opts.Clipboard(m.ctx, selected); err != nil {
+			return chatClipboardErrorMsg{err: err}
+		}
+		return nil
+	}
 }
 
 type chatInputAttachment struct {
@@ -194,6 +233,8 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 		reviewApproval: reviewApproval,
 		permissionMode: newChatPermissionMode(autoApproveTools),
 		promptHistory:  initialPromptHistory(ctx, opts),
+		boundedFrame:   true,
+		fullScreen:     true,
 		status:         "ready",
 	}
 	m.nextImageID, m.nextAudioID = nextInputAttachmentIDsFromMessages(m.messages)
@@ -205,7 +246,7 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 		m.preloadingModel = strings.TrimSpace(opts.Model)
 	}
 
-	p := tea.NewProgram(m, tea.WithReportFocus())
+	p := tea.NewProgram(m, tea.WithReportFocus(), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, err
@@ -219,22 +260,28 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 }
 
 func (m chatModel) Init() tea.Cmd {
+	cmds := []tea.Cmd{tea.EnterAltScreen}
 	if m.preloadingModel != "" && m.opts.PreloadModel != nil {
-		return tea.Batch(preloadModelCmd(m.ctx, m.opts.PreloadModel, m.preloadingModel, m.opts.Think), chatTickCmd())
+		cmds = append(cmds, preloadModelCmd(m.ctx, m.opts.PreloadModel, m.preloadingModel, m.opts.Think), chatTickCmd())
 	}
-	return nil
+	return tea.Batch(cmds...)
 }
 
 func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.canEditInput() && isShiftEnterCSI(msg) {
+		m.insertInputNewline()
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		wasSet := m.width > 0 || m.height > 0
+		resized := m.width != msg.Width || m.height != msg.Height
 		m.width = msg.Width
 		m.height = msg.Height
-		if wasSet {
-			m.boundedFrame = true
-			m.scroll = m.maxScroll()
-			return m, tea.ClearScreen
+		if wasSet && resized {
+			m.resetRenderAfterResize()
+			return m, tea.Batch(tea.EnterAltScreen, tea.ClearScreen)
 		}
 		return m.withFlowTranscriptFlush(nil)
 
@@ -278,6 +325,12 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyAgentEvent(msg.event)
 		return m.withFlowTranscriptFlush(waitForChatMsg(m.events))
 
+	case chatClipboardErrorMsg:
+		if msg.err != nil {
+			m.status = "clipboard error: " + msg.err.Error()
+		}
+		return m, nil
+
 	case chatApprovalPromptMsg:
 		m.resumePicker = nil
 		m.modelPicker = nil
@@ -310,10 +363,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.groupCompletedToolHistory()
+		if msg.result == nil {
+			m.finishLiveMessagesForStoppedRun(msg.newMessagesPersisted, msg.persistedMessages)
+		}
 		if wasCanceling || isChatContextCanceledError(msg.err) {
-			if msg.result == nil {
-				m.promoteLiveMessagesForCanceledRun()
-			}
 			m.status = "Tell the model what to do instead."
 			return m.withFlowTranscriptFlush(m.startNextQueued())
 		}
@@ -344,7 +397,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.Update(chatCompactDoneMsg{err: context.Canceled})
 		}
 		if m.running {
-			return m.Update(chatRunDoneMsg{err: context.Canceled})
+			return m.Update(chatRunDoneMsg{err: context.Canceled, newMessagesPersisted: true})
 		}
 		return m, nil
 
@@ -359,6 +412,19 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateKey(msg)
 	}
 	return m, nil
+}
+
+func (m *chatModel) resetRenderAfterResize() {
+	m.enterFullScreen()
+	m.scroll = m.maxScroll()
+	m.toolDetailsScroll = clamp(m.toolDetailsScroll, 0, m.maxToolDetailsScroll())
+}
+
+func (m *chatModel) enterFullScreen() {
+	m.boundedFrame = true
+	m.fullScreen = true
+	m.flowPrintedLines = 0
+	m.selection = chatSelection{}
 }
 
 func (m chatModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
@@ -433,49 +499,24 @@ func (m chatModel) mouseTranscriptPoint(msg tea.MouseMsg) chatSelectionPoint {
 }
 
 func (m *chatModel) startTranscriptSelection(msg tea.MouseMsg) {
-	if !m.mouseInTranscript(msg) {
-		m.selection = chatSelection{}
-		return
-	}
-	point := m.mouseTranscriptPoint(msg)
-	m.selection = chatSelection{active: true, anchor: point, cursor: point}
+	startChatSelection(&m.selection, msg, m.mouseInTranscript, m.mouseTranscriptPoint)
 }
 
 func (m *chatModel) dragTranscriptSelection(msg tea.MouseMsg) {
-	if !m.selection.active {
-		return
-	}
-	point := m.mouseTranscriptPoint(msg)
-	m.selection.cursor = point
-	top, height := m.transcriptLayout()
-	if msg.Y <= top {
-		m.scrollBy(1)
-	} else if msg.Y >= top+height-1 {
-		m.scrollBy(-1)
-	}
+	dragChatSelection(&m.selection, msg, m.mouseTranscriptPoint, func(msg tea.MouseMsg) {
+		top, height := m.transcriptLayout()
+		if msg.Y <= top {
+			m.scrollBy(1)
+		} else if msg.Y >= top+height-1 {
+			m.scrollBy(-1)
+		}
+	})
 }
 
 func (m chatModel) finishTranscriptSelection(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if !m.selection.active {
-		return m, nil
-	}
-	point := m.mouseTranscriptPoint(msg)
-	m.selection.cursor = point
-	selected := m.selectedTranscriptText(m.viewWidth())
-	if strings.TrimSpace(selected) == "" {
-		m.selection = chatSelection{}
-		return m, nil
-	}
-	m.status = "selection copied"
-	return m, func() tea.Msg {
-		if m.opts.Clipboard == nil {
-			return nil
-		}
-		if err := m.opts.Clipboard(m.ctx, selected); err != nil {
-			return chatAgentMsg{event: coreagent.Event{Type: coreagent.EventError, Error: err.Error()}}
-		}
-		return nil
-	}
+	return finishChatSelection(m, &m.selection, msg, m.mouseTranscriptPoint, func() string {
+		return m.selectedTranscriptText(m.viewWidth())
+	})
 }
 
 func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -483,8 +524,7 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateToolDetailsKey(msg)
 	}
 	if msg.Type == tea.KeyCtrlO {
-		m.toolDetailsOpen = true
-		m.toolDetailsScroll = 0
+		m.toggleInlineToolOutput()
 		m.disarmQuit()
 		m.disarmEsc()
 		return m, nil
@@ -594,6 +634,19 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *chatModel) toggleInlineToolOutput() {
+	m.toolOutputMode = true
+	m.toolOutputOpen = !m.toolOutputOpen
+	m.applyToolOutputMode()
+	m.selection = chatSelection{}
+	m.scroll = clamp(m.scroll, 0, m.maxScroll())
+	if m.toolOutputOpen {
+		m.status = "tool output shown"
+		return
+	}
+	m.status = "tool output hidden"
+}
+
 func (m chatModel) updateToolDetailsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlO, tea.KeyEsc:
@@ -615,16 +668,10 @@ func (m chatModel) updateToolDetailsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m chatModel) closeToolDetailsWindow() (tea.Model, tea.Cmd) {
-	wasFlowMode := !m.boundedFrame
 	m.toolDetailsOpen = false
 	m.toolDetailsScroll = 0
-	if !wasFlowMode {
-		return m, nil
-	}
-
-	m.boundedFrame = true
 	m.scroll = m.maxScroll()
-	m.flowPrintedLines = 0
+	m.enterFullScreen()
 	return m, tea.ClearScreen
 }
 
@@ -647,7 +694,7 @@ func (m chatModel) updateCtrlC() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.quitting = true
-	return m, tea.Quit
+	return m, m.quitCmd()
 }
 
 func (m chatModel) updateCtrlD() (tea.Model, tea.Cmd) {
@@ -662,7 +709,14 @@ func (m chatModel) updateCtrlD() (tea.Model, tea.Cmd) {
 	if (m.running || m.compacting) && m.cancel != nil {
 		m.cancel()
 	}
-	return m, tea.Quit
+	return m, m.quitCmd()
+}
+
+func (m chatModel) quitCmd() tea.Cmd {
+	if m.fullScreen {
+		return tea.Batch(tea.ExitAltScreen, tea.Quit)
+	}
+	return tea.Quit
 }
 
 func (m *chatModel) armQuit(key, status string) {
@@ -778,7 +832,7 @@ func (m chatModel) View() string {
 		return m.flowView(width)
 	}
 
-	headerLines := []string{}
+	headerLines := m.headerLines()
 	allTranscriptLines := m.transcriptLines(width)
 	contentLineCount := len(allTranscriptLines)
 
@@ -801,7 +855,7 @@ func (m chatModel) View() string {
 		lines = append(lines, "")
 	}
 	lines = append(lines, bottomLines...)
-	return strings.Join(lines, "\n")
+	return renderFrameLines(lines, width, height)
 }
 
 func (m chatModel) flowView(width int) string {
@@ -1037,7 +1091,7 @@ func (m *chatModel) startRun(input string) (tea.Model, tea.Cmd) {
 		m.status = "error"
 		return *m, nil
 	}
-	return m.startRunWithMessages(displayInput, []api.Message{message}, "")
+	return m.startRunWithMessages(displayInput, message.Content, []api.Message{message}, "")
 }
 
 func (m *chatModel) userMessageFromInput(displayInput, userInput string) (string, api.Message, error) {
@@ -1096,10 +1150,10 @@ func pluralSuffix(count int) string {
 	return "s"
 }
 
-func (m *chatModel) startRunWithMessages(displayInput string, newMessages []api.Message, extraSystemPrompt string) (tea.Model, tea.Cmd) {
+func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newMessages []api.Message, extraSystemPrompt string) (tea.Model, tea.Cmd) {
 	m.ensurePermissionMode()
 	m.refreshContextWindowTokens(m.opts.Model)
-	m.addPromptHistory(displayInput)
+	m.addPromptHistory(historyInput)
 	m.entries = append(m.entries, newChatEntry(chatEntry{role: "user", content: displayInput}))
 	if len(newMessages) > 1 {
 		m.entries = append(m.entries, entriesFromMessages(newMessages[1:])...)
@@ -1122,7 +1176,8 @@ func (m *chatModel) startRunWithMessages(displayInput string, newMessages []api.
 	events := make(chan tea.Msg, 128)
 	m.events = events
 
-	eventSink := coreagent.EventSink(chatEventSink{ctx: runCtx, ch: events})
+	var newMessagesPersisted bool
+	eventSink := coreagent.EventSink(chatEventSink{ctx: runCtx, ch: events, newMessagesPersisted: &newMessagesPersisted})
 	if m.opts.EventSink != nil {
 		eventSink = coreagent.MultiEventSink{eventSink, m.opts.EventSink}
 	}
@@ -1149,10 +1204,13 @@ func (m *chatModel) startRunWithMessages(displayInput string, newMessages []api.
 		UseTools:     m.opts.Tools != nil,
 	}
 
+	persistedMessages := make([]api.Message, 0, len(m.messages)+len(newMessages))
+	persistedMessages = append(persistedMessages, slices.Clone(m.messages)...)
+	persistedMessages = append(persistedMessages, slices.Clone(newMessages)...)
 	go func() {
 		defer close(events)
 		result, err := session.Run(runCtx, opts)
-		events <- chatRunDoneMsg{result: result, err: err}
+		events <- chatRunDoneMsg{result: result, err: err, newMessagesPersisted: newMessagesPersisted, persistedMessages: persistedMessages}
 	}()
 
 	tickCmd := m.scheduleTick()
@@ -1185,11 +1243,17 @@ func (m *chatModel) startNextQueued() tea.Cmd {
 	return nil
 }
 
-func (m *chatModel) promoteLiveMessagesForCanceledRun() {
-	if len(m.liveMessages) == 0 || messagesHavePendingToolCalls(m.liveMessages) {
+func (m *chatModel) finishLiveMessagesForStoppedRun(promote bool, persistedMessages []api.Message) {
+	if len(m.liveMessages) == 0 {
 		return
 	}
-	m.messages = slices.Clone(m.liveMessages)
+	if promote {
+		if len(persistedMessages) > 0 {
+			m.messages = slices.Clone(persistedMessages)
+		} else if !messagesHavePendingToolCalls(m.liveMessages) {
+			m.messages = slices.Clone(m.liveMessages)
+		}
+	}
 	m.liveMessages = nil
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
