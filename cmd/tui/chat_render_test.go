@@ -1032,9 +1032,9 @@ func TestEntriesFromMessagesRendersCompactionSummaryCollapsed(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	view := stripANSI(m.renderToolDetailsWindow(100, 24))
+	view := stripANSI(m.View())
 	if !strings.Contains(view, "old work") || !strings.Contains(view, "decisions") {
-		t.Fatalf("details view summary body missing: %q", view)
+		t.Fatalf("inline summary body missing: %q", view)
 	}
 }
 
@@ -1222,9 +1222,6 @@ func TestChatCtrlOTogglesInlineToolOutput(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	if m.toolDetailsOpen {
-		t.Fatal("ctrl+o should not open a separate tool details view")
-	}
 	for _, index := range []int{0, 2} {
 		if !m.entries[index].expanded {
 			t.Fatalf("tool entry %d should be expanded inline", index)
@@ -1243,9 +1240,6 @@ func TestChatCtrlOTogglesInlineToolOutput(t *testing.T) {
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	if m.toolDetailsOpen {
-		t.Fatal("second ctrl+o should not open tool details")
-	}
 	for _, index := range []int{0, 2} {
 		if m.entries[index].expanded {
 			t.Fatalf("tool entry %d should remain collapsed", index)
@@ -1272,9 +1266,6 @@ func TestChatCtrlOTogglesInlineOutputWithoutLeavingFullscreen(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("inline tool toggle should not switch screens")
 	}
-	if m.toolDetailsOpen {
-		t.Fatal("ctrl+o should not open tool details")
-	}
 	if !m.fullScreen || !m.boundedFrame {
 		t.Fatal("inline tool toggle should keep managed fullscreen mode")
 	}
@@ -1284,14 +1275,11 @@ func TestChatCtrlOTogglesInlineOutputWithoutLeavingFullscreen(t *testing.T) {
 
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	if m.toolDetailsOpen {
-		t.Fatal("second ctrl+o should not open tool details")
-	}
 	if !m.boundedFrame {
-		t.Fatal("closing tool details should keep managed redraw mode")
+		t.Fatal("inline tool toggle should keep managed redraw mode")
 	}
 	if !m.fullScreen {
-		t.Fatal("closing tool details should stay fullscreen")
+		t.Fatal("inline tool toggle should stay fullscreen")
 	}
 	if cmd != nil {
 		t.Fatal("inline tool toggle should not switch screens")
@@ -1313,9 +1301,6 @@ func TestChatCtrlOShowsRunningToolOutputInline(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	if m.toolDetailsOpen {
-		t.Fatalf("ctrl+o should not open a tool details screen")
-	}
 	if !m.entries[0].expanded {
 		t.Fatalf("ctrl+o should expand the running tool inline")
 	}
@@ -1470,8 +1455,7 @@ func TestChatToolOutputRendersUnifiedDiff(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	m.toolDetailsScroll = m.maxToolDetailsScroll()
-	rendered := m.renderToolDetailsWindow(100, 24)
+	rendered := m.renderTranscript(100)
 	body := stripANSI(rendered)
 	if !strings.Contains(body, "diff --git a/file.go b/file.go") ||
 		!strings.Contains(body, "-var old = true") ||
@@ -1480,29 +1464,6 @@ func TestChatToolOutputRendersUnifiedDiff(t *testing.T) {
 	}
 	if !looksLikeUnifiedDiff(diff) {
 		t.Fatal("diff output should be detected as a unified diff")
-	}
-}
-
-func TestChatToolDetailsWindowClipsWideScrolledRows(t *testing.T) {
-	wideLine := strings.Repeat("界", 90)
-	m := chatModel{
-		width:  80,
-		height: 20,
-		entries: []chatEntry{{
-			role:    "tool",
-			detail:  "bash",
-			label:   "Bash(\"wide output\")",
-			status:  "done",
-			content: strings.Join([]string{wideLine, wideLine, wideLine, wideLine, wideLine}, "\n"),
-		}},
-	}
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
-	m = updated.(chatModel)
-	m.toolDetailsScroll = m.maxToolDetailsScroll()
-	rendered := m.renderToolDetailsWindow(80, 20)
-	if got := strings.Count(rendered, "\n") + 1; got != 20 {
-		t.Fatalf("tool details window rendered %d physical lines, want 20:\n%s", got, stripANSI(rendered))
 	}
 }
 
@@ -1558,12 +1519,12 @@ func TestChatToolCallRendersPrettyInvocationAndResult(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	view := stripANSI(m.renderToolDetailsWindow(100, 24))
+	view := stripANSI(m.renderTranscript(100))
 	if strings.Contains(view, "**Search results for:**") {
-		t.Fatalf("details web output should render markdown: %q", view)
+		t.Fatalf("inline web output should render markdown: %q", view)
 	}
 	if !strings.Contains(view, "Search results for:") || !strings.Contains(view, "https://parthsareen.com") {
-		t.Fatalf("details web output missing content: %q", view)
+		t.Fatalf("inline web output missing content: %q", view)
 	}
 }
 

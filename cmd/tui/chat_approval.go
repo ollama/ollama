@@ -112,7 +112,12 @@ func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
 	if autoApprove {
 		m.status = "full access enabled"
 		if m.approvalPrompt != nil {
-			return m.resolveApprovalPrompt(coreagent.ApprovalAllowOnce, "")
+			updated, cmd := m.resolveApprovalPrompt(coreagent.ApprovalAllowOnce, "")
+			if model, ok := updated.(chatModel); ok {
+				model.status = "full access enabled"
+				return model, cmd
+			}
+			return updated, cmd
 		}
 		return *m, nil
 	}

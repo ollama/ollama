@@ -18,8 +18,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/cobra"
 
-	"github.com/ollama/ollama/agent/chatstore"
 	"github.com/ollama/ollama/api"
+	appstore "github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/types/model"
 )
@@ -698,15 +698,15 @@ func TestResumeModelFromLatestChat(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 
-	store, err := chatstore.New("")
+	store, err := appstore.New("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
-	if err := store.AppendMessage(ctx, "chat-old", api.Message{Role: "assistant", Content: "old"}, "llama3.2"); err != nil {
+	if err := store.AppendAgentMessage(ctx, "chat-old", api.Message{Role: "assistant", Content: "old"}, "llama3.2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendMessage(ctx, "chat-new", api.Message{Role: "assistant", Content: "new"}, "qwen3:8b"); err != nil {
+	if err := store.AppendAgentMessage(ctx, "chat-new", api.Message{Role: "assistant", Content: "new"}, "qwen3:8b"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -917,11 +917,11 @@ func TestRunHandlerResumeUsesLatestChatInHeadlessMode(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 
-	store, err := chatstore.New("")
+	store, err := appstore.New("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendMessage(t.Context(), "chat-1", api.Message{Role: "user", Content: "old prompt"}, "test-model"); err != nil {
+	if err := store.AppendAgentMessage(t.Context(), "chat-1", api.Message{Role: "user", Content: "old prompt"}, "test-model"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

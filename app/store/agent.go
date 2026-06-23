@@ -1,4 +1,4 @@
-package chatstore
+package store
 
 import (
 	"context"
@@ -6,20 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
-
 	"github.com/ollama/ollama/api"
 )
-
-type Store struct {
-	db *sql.DB
-}
 
 const (
 	compactionSummaryMessagePrefix = "Conversation summary:\n"
@@ -28,7 +19,7 @@ const (
 	compactionContinueInstruction  = "continue the task in progress. the history has been compacted, do not mention compaction to the user"
 )
 
-type Chat struct {
+type AgentChat struct {
 	ID        string
 	Title     string
 	Model     string
@@ -46,138 +37,22 @@ type ChatSummary struct {
 	ApproxBytes  int64
 }
 
-func DefaultPath() string {
-	switch runtime.GOOS {
-	case "windows":
-		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "db.sqlite")
-	case "darwin":
-		return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Ollama", "db.sqlite")
-	default:
-		return filepath.Join(os.Getenv("HOME"), ".ollama", "db.sqlite")
-	}
-}
-
 func New(path string) (*Store, error) {
-	if path == "" {
-		path = DefaultPath()
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("create db directory: %w", err)
-	}
-
-	db, err := sql.Open("sqlite3", path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
-	}
-
-	store := &Store{db: db}
-	if err := store.init(context.Background()); err != nil {
-		db.Close()
+	store := &Store{DBPath: path}
+	if err := store.ensureDB(); err != nil {
 		return nil, err
 	}
 	return store, nil
-}
-
-func (s *Store) Close() error {
-	if s == nil || s.db == nil {
-		return nil
-	}
-	_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
-	return s.db.Close()
-}
-
-func (s *Store) init(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS chats (
-			id TEXT PRIMARY KEY,
-			title TEXT NOT NULL DEFAULT '',
-			model_name TEXT NOT NULL DEFAULT '',
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			browser_state TEXT
-		);
-
-		CREATE TABLE IF NOT EXISTS messages (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			chat_id TEXT NOT NULL,
-			role TEXT NOT NULL,
-			content TEXT NOT NULL DEFAULT '',
-			thinking TEXT NOT NULL DEFAULT '',
-			images TEXT NOT NULL DEFAULT '[]',
-			model_name TEXT,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			thinking_time_start TIMESTAMP,
-			thinking_time_end TIMESTAMP,
-			tool_result TEXT,
-			tool_name TEXT NOT NULL DEFAULT '',
-			tool_call_id TEXT NOT NULL DEFAULT '',
-			archived BOOLEAN NOT NULL DEFAULT 0,
-			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);
-		CREATE INDEX IF NOT EXISTS idx_messages_chat_id_id ON messages(chat_id, id);
-
-		CREATE TABLE IF NOT EXISTS tool_calls (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			message_id INTEGER NOT NULL,
-			type TEXT NOT NULL,
-			tool_call_id TEXT NOT NULL DEFAULT '',
-			function_name TEXT NOT NULL,
-			function_arguments TEXT NOT NULL,
-			function_result TEXT,
-			FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_tool_calls_message_id ON tool_calls(message_id);
-
-		CREATE TABLE IF NOT EXISTS compactions (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			chat_id TEXT NOT NULL,
-			summary TEXT NOT NULL,
-			archived_message_ids TEXT NOT NULL DEFAULT '[]',
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_compactions_chat_id ON compactions(chat_id, id);
-	`)
-	if err != nil {
-		return fmt.Errorf("initialize chat store schema: %w", err)
-	}
-	if err := ensureColumn(ctx, s.db, "messages", "archived", "BOOLEAN NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-	if err := ensureColumn(ctx, s.db, "chats", "model_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := ensureColumn(ctx, s.db, "messages", "tool_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := ensureColumn(ctx, s.db, "messages", "tool_call_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := ensureColumn(ctx, s.db, "messages", "images", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
-		return err
-	}
-	if err := ensureColumn(ctx, s.db, "tool_calls", "tool_call_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_chat_id_archived ON messages(chat_id, archived, id)`); err != nil {
-		return fmt.Errorf("create archived messages index: %w", err)
-	}
-	return nil
 }
 
 func (s *Store) EnsureChat(ctx context.Context, id string, title string) error {
 	if id == "" {
 		return fmt.Errorf("chat id is required")
 	}
-	_, err := s.db.ExecContext(ctx, `
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+	_, err := s.db.conn.ExecContext(ctx, `
 		INSERT INTO chats (id, title, created_at)
 		VALUES (?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -204,35 +79,35 @@ func (s *Store) SetChatModel(ctx context.Context, chatID string, model string) e
 	if err := s.EnsureChat(ctx, chatID, ""); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE chats SET model_name = ? WHERE id = ?`, model, chatID); err != nil {
+	if _, err := s.db.conn.ExecContext(ctx, `UPDATE chats SET model_name = ? WHERE id = ?`, model, chatID); err != nil {
 		return fmt.Errorf("set chat model: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) AppendMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
+func (s *Store) AppendAgentMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
 	if err := s.EnsureChat(ctx, chatID, ""); err != nil {
 		return err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	messageID, err := insertMessage(ctx, tx, chatID, msg, model)
+	messageID, err := insertAgentMessage(ctx, tx, chatID, msg, model)
 	if err != nil {
 		return err
 	}
 	for _, toolCall := range msg.ToolCalls {
-		if err := insertToolCall(ctx, tx, messageID, toolCall); err != nil {
+		if err := insertAgentToolCall(ctx, tx, messageID, toolCall); err != nil {
 			return err
 		}
 	}
 
 	if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
-		if err := maybeSetTitle(ctx, tx, chatID, msg.Content); err != nil {
+		if err := maybeSetAgentTitle(ctx, tx, chatID, msg.Content); err != nil {
 			return err
 		}
 	}
@@ -240,8 +115,11 @@ func (s *Store) AppendMessage(ctx context.Context, chatID string, msg api.Messag
 	return tx.Commit()
 }
 
-func (s *Store) UpdateLastMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *Store) UpdateLastAgentMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+	tx, err := s.db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -256,12 +134,12 @@ func (s *Store) UpdateLastMessage(ctx context.Context, chatID string, msg api.Me
 	}
 
 	now := time.Now()
-	var modelName sql.NullString
+	modelName := sql.NullString{}
 	if model != "" {
 		modelName = sql.NullString{String: model, Valid: true}
 	}
 
-	imagesJSON, err := marshalMessageImages(msg.Images)
+	imagesJSON, err := marshalAgentMessageImages(msg.Images)
 	if err != nil {
 		return err
 	}
@@ -279,7 +157,7 @@ func (s *Store) UpdateLastMessage(ctx context.Context, chatID string, msg api.Me
 		return fmt.Errorf("delete old tool calls: %w", err)
 	}
 	for _, toolCall := range msg.ToolCalls {
-		if err := insertToolCall(ctx, tx, messageID, toolCall); err != nil {
+		if err := insertAgentToolCall(ctx, tx, messageID, toolCall); err != nil {
 			return err
 		}
 	}
@@ -287,10 +165,13 @@ func (s *Store) UpdateLastMessage(ctx context.Context, chatID string, msg api.Me
 	return tx.Commit()
 }
 
-func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
-	var chat Chat
+func (s *Store) AgentChat(ctx context.Context, id string) (*AgentChat, error) {
+	if err := s.ensureDB(); err != nil {
+		return nil, err
+	}
+	var chat AgentChat
 	var chatModel string
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.conn.QueryRowContext(ctx, `
 		SELECT id, title, model_name, created_at FROM chats WHERE id = ?
 	`, id).Scan(&chat.ID, &chat.Title, &chatModel, &chat.CreatedAt); err != nil {
 		return nil, err
@@ -298,14 +179,14 @@ func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 	if strings.TrimSpace(chatModel) != "" {
 		chat.Model = chatModel
 	} else {
-		model, err := latestModelForChat(ctx, s.db, id)
+		model, err := latestAgentModelForChat(ctx, s.db.conn, id)
 		if err != nil {
 			return nil, err
 		}
 		chat.Model = model
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.conn.QueryContext(ctx, `
 		SELECT id, role, content, thinking, images, tool_name, tool_call_id FROM messages WHERE chat_id = ? AND archived = 0 ORDER BY id ASC
 	`, id)
 	if err != nil {
@@ -320,12 +201,12 @@ func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 		if err := rows.Scan(&messageID, &msg.Role, &msg.Content, &msg.Thinking, &imagesJSON, &msg.ToolName, &msg.ToolCallID); err != nil {
 			return nil, err
 		}
-		images, err := unmarshalMessageImages(imagesJSON)
+		images, err := unmarshalAgentMessageImages(imagesJSON)
 		if err != nil {
 			return nil, err
 		}
 		msg.Images = images
-		toolCalls, err := getToolCalls(ctx, s.db, messageID)
+		toolCalls, err := getAgentToolCalls(ctx, s.db.conn, messageID)
 		if err != nil {
 			return nil, err
 		}
@@ -336,7 +217,7 @@ func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 		return nil, err
 	}
 
-	summary, err := latestCompactionSummary(ctx, s.db, id)
+	summary, err := latestCompactionSummary(ctx, s.db.conn, id)
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +230,10 @@ func (s *Store) Chat(ctx context.Context, id string) (*Chat, error) {
 	return &chat, nil
 }
 
-func (s *Store) LatestChat(ctx context.Context) (*Chat, error) {
+func (s *Store) LatestChat(ctx context.Context) (*AgentChat, error) {
+	if err := s.ensureDB(); err != nil {
+		return nil, err
+	}
 	var chatID string
 	query := fmt.Sprintf(`
 			SELECT c.id
@@ -359,16 +243,19 @@ func (s *Store) LatestChat(ctx context.Context) (*Chat, error) {
 			HAVING %[1]s IS NOT NULL
 			ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
 			LIMIT 1
-		`, currentModelSelectExpr("c"))
-	if err := s.db.QueryRowContext(ctx, query).Scan(&chatID); err != nil {
+		`, currentAgentModelSelectExpr("c"))
+	if err := s.db.conn.QueryRowContext(ctx, query).Scan(&chatID); err != nil {
 		return nil, err
 	}
-	return s.Chat(ctx, chatID)
+	return s.AgentChat(ctx, chatID)
 }
 
-func (s *Store) LatestChatForModel(ctx context.Context, model string) (*Chat, error) {
+func (s *Store) LatestChatForModel(ctx context.Context, model string) (*AgentChat, error) {
 	if strings.TrimSpace(model) == "" {
 		return nil, fmt.Errorf("model is required")
+	}
+	if err := s.ensureDB(); err != nil {
+		return nil, err
 	}
 
 	var chatID string
@@ -380,14 +267,17 @@ func (s *Store) LatestChatForModel(ctx context.Context, model string) (*Chat, er
 			HAVING %[1]s = ?
 			ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
 			LIMIT 1
-		`, currentModelSelectExpr("c"))
-	if err := s.db.QueryRowContext(ctx, query, model).Scan(&chatID); err != nil {
+		`, currentAgentModelSelectExpr("c"))
+	if err := s.db.conn.QueryRowContext(ctx, query, model).Scan(&chatID); err != nil {
 		return nil, err
 	}
-	return s.Chat(ctx, chatID)
+	return s.AgentChat(ctx, chatID)
 }
 
 func (s *Store) ListChats(ctx context.Context, limit int) ([]ChatSummary, error) {
+	if err := s.ensureDB(); err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 50
 	}
@@ -412,8 +302,8 @@ func (s *Store) ListChats(ctx context.Context, limit int) ([]ChatSummary, error)
 			GROUP BY c.id
 			ORDER BY updated_at DESC, MAX(m.id) DESC
 			LIMIT ?
-		`, currentModelSelectExpr("c"))
-	rows, err := s.db.QueryContext(ctx, query, limit)
+		`, currentAgentModelSelectExpr("c"))
+	rows, err := s.db.conn.QueryContext(ctx, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list chats: %w", err)
 	}
@@ -430,7 +320,7 @@ func (s *Store) ListChats(ctx context.Context, limit int) ([]ChatSummary, error)
 		if modelName.Valid {
 			summary.Model = modelName.String
 		}
-		summary.UpdatedAt, err = parseSQLiteTime(updatedAt)
+		summary.UpdatedAt, err = parseAgentSQLiteTime(updatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse chat updated_at: %w", err)
 		}
@@ -444,11 +334,14 @@ func (s *Store) ListChats(ctx context.Context, limit int) ([]ChatSummary, error)
 }
 
 func (s *Store) ListUserMessages(ctx context.Context, limit int) ([]string, error) {
+	if err := s.ensureDB(); err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 50
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.conn.QueryContext(ctx, `
 		SELECT content
 		FROM (
 			SELECT id, content
@@ -480,69 +373,18 @@ func (s *Store) ListUserMessages(ctx context.Context, limit int) ([]string, erro
 	return messages, nil
 }
 
-func parseSQLiteTime(value string) (time.Time, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return time.Time{}, nil
-	}
-	for _, layout := range []string{
-		time.RFC3339Nano,
-		"2006-01-02 15:04:05.999999999-07:00",
-		"2006-01-02 15:04:05.999999999Z07:00",
-		"2006-01-02 15:04:05.999999999",
-		"2006-01-02 15:04:05-07:00",
-		"2006-01-02 15:04:05Z07:00",
-		"2006-01-02 15:04:05",
-	} {
-		t, err := time.Parse(layout, value)
-		if err == nil {
-			return t, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("unsupported time format %q", value)
-}
-
-func latestModelForChat(ctx context.Context, db *sql.DB, chatID string) (string, error) {
-	var modelName string
-	if err := db.QueryRowContext(ctx, `
-		SELECT model_name
-		FROM messages
-		WHERE chat_id = ? AND model_name IS NOT NULL AND model_name != ''
-		ORDER BY updated_at DESC, id DESC
-		LIMIT 1
-	`, chatID).Scan(&modelName); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil
-		}
-		return "", err
-	}
-	return modelName, nil
-}
-
-func currentModelSelectExpr(chatAlias string) string {
-	return fmt.Sprintf(`COALESCE(
-				NULLIF(%[1]s.model_name, ''),
-				(
-					SELECT lm.model_name
-					FROM messages lm
-					WHERE lm.chat_id = %[1]s.id AND lm.model_name IS NOT NULL AND lm.model_name != ''
-					ORDER BY lm.updated_at DESC, lm.id DESC
-					LIMIT 1
-				)
-			)`, chatAlias)
-}
-
 func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUserTurns int, summary string) error {
 	return s.archiveForCompaction(ctx, chatID, keepUserTurns, summary, false)
 }
 
-// ArchiveForCompactionWithContinuation stores a compaction tool result that
-// tells the model to continue the in-progress task after automatic compaction.
 func (s *Store) ArchiveForCompactionWithContinuation(ctx context.Context, chatID string, keepUserTurns int, summary string, continueTask bool) error {
 	return s.archiveForCompaction(ctx, chatID, keepUserTurns, summary, continueTask)
 }
 
 func (s *Store) archiveForCompaction(ctx context.Context, chatID string, keepUserTurns int, summary string, continueTask bool) error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
 	if chatID == "" {
 		return fmt.Errorf("chat id is required")
 	}
@@ -553,7 +395,7 @@ func (s *Store) archiveForCompaction(ctx context.Context, chatID string, keepUse
 		return fmt.Errorf("summary is required")
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -648,18 +490,70 @@ func (s *Store) archiveForCompaction(ctx context.Context, chatID string, keepUse
 	}
 
 	for _, msg := range compactionSummaryMessages(summary, continueTask) {
-		messageID, err := insertMessage(ctx, tx, chatID, msg, "")
+		messageID, err := insertAgentMessage(ctx, tx, chatID, msg, "")
 		if err != nil {
 			return err
 		}
 		for _, toolCall := range msg.ToolCalls {
-			if err := insertToolCall(ctx, tx, messageID, toolCall); err != nil {
+			if err := insertAgentToolCall(ctx, tx, messageID, toolCall); err != nil {
 				return err
 			}
 		}
 	}
 
 	return tx.Commit()
+}
+
+func parseAgentSQLiteTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05Z07:00",
+		"2006-01-02 15:04:05",
+	} {
+		t, err := time.Parse(layout, value)
+		if err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unsupported time format %q", value)
+}
+
+func latestAgentModelForChat(ctx context.Context, db *sql.DB, chatID string) (string, error) {
+	var modelName string
+	if err := db.QueryRowContext(ctx, `
+		SELECT model_name
+		FROM messages
+		WHERE chat_id = ? AND model_name IS NOT NULL AND model_name != ''
+		ORDER BY updated_at DESC, id DESC
+		LIMIT 1
+	`, chatID).Scan(&modelName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return modelName, nil
+}
+
+func currentAgentModelSelectExpr(chatAlias string) string {
+	return fmt.Sprintf(`COALESCE(
+				NULLIF(%[1]s.model_name, ''),
+				(
+					SELECT lm.model_name
+					FROM messages lm
+					WHERE lm.chat_id = %[1]s.id AND lm.model_name IS NOT NULL AND lm.model_name != ''
+					ORDER BY lm.updated_at DESC, lm.id DESC
+					LIMIT 1
+				)
+			)`, chatAlias)
 }
 
 func compactionSummaryMessages(summary string, continueTask bool) []api.Message {
@@ -686,13 +580,9 @@ func compactionSummaryMessages(summary string, continueTask bool) []api.Message 
 	}
 }
 
-func isCompactionToolName(name string) bool {
-	return name == compactionToolName
-}
-
 func messagesContainCompactionSummary(messages []api.Message) bool {
 	for _, msg := range messages {
-		if msg.Role == "tool" && isCompactionToolName(msg.ToolName) && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix) {
+		if msg.Role == "tool" && msg.ToolName == compactionToolName && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix) {
 			return true
 		}
 		if (msg.Role == "user" || msg.Role == "system") && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix) {
@@ -708,10 +598,10 @@ func moveCompactionSummaryBeforeKeptMessages(messages []api.Message) []api.Messa
 	for i, msg := range messages {
 		if msg.Role == "assistant" {
 			for _, call := range msg.ToolCalls {
-				if isCompactionToolName(call.Function.Name) {
+				if call.Function.Name == compactionToolName {
 					start = i
 					end = i + 1
-					if end < len(messages) && messages[end].Role == "tool" && isCompactionToolName(messages[end].ToolName) {
+					if end < len(messages) && messages[end].Role == "tool" && messages[end].ToolName == compactionToolName {
 						end++
 					}
 					break
@@ -753,13 +643,13 @@ func leadingSystemMessageCount(messages []api.Message) int {
 	return len(messages)
 }
 
-func insertMessage(ctx context.Context, tx *sql.Tx, chatID string, msg api.Message, model string) (int64, error) {
+func insertAgentMessage(ctx context.Context, tx *sql.Tx, chatID string, msg api.Message, model string) (int64, error) {
 	now := time.Now()
-	var modelName sql.NullString
+	modelName := sql.NullString{}
 	if model != "" {
 		modelName = sql.NullString{String: model, Valid: true}
 	}
-	imagesJSON, err := marshalMessageImages(msg.Images)
+	imagesJSON, err := marshalAgentMessageImages(msg.Images)
 	if err != nil {
 		return 0, err
 	}
@@ -777,7 +667,7 @@ func insertMessage(ctx context.Context, tx *sql.Tx, chatID string, msg api.Messa
 	return id, nil
 }
 
-func marshalMessageImages(images []api.ImageData) (string, error) {
+func marshalAgentMessageImages(images []api.ImageData) (string, error) {
 	if len(images) == 0 {
 		return "[]", nil
 	}
@@ -788,7 +678,7 @@ func marshalMessageImages(images []api.ImageData) (string, error) {
 	return string(data), nil
 }
 
-func unmarshalMessageImages(value string) ([]api.ImageData, error) {
+func unmarshalAgentMessageImages(value string) ([]api.ImageData, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "null" {
 		return nil, nil
@@ -800,7 +690,7 @@ func unmarshalMessageImages(value string) ([]api.ImageData, error) {
 	return images, nil
 }
 
-func insertToolCall(ctx context.Context, tx *sql.Tx, messageID int64, call api.ToolCall) error {
+func insertAgentToolCall(ctx context.Context, tx *sql.Tx, messageID int64, call api.ToolCall) error {
 	args, err := json.Marshal(call.Function.Arguments)
 	if err != nil {
 		return fmt.Errorf("marshal tool arguments: %w", err)
@@ -815,7 +705,7 @@ func insertToolCall(ctx context.Context, tx *sql.Tx, messageID int64, call api.T
 	return nil
 }
 
-func getToolCalls(ctx context.Context, db *sql.DB, messageID int64) ([]api.ToolCall, error) {
+func getAgentToolCalls(ctx context.Context, db *sql.DB, messageID int64) ([]api.ToolCall, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT tool_call_id, function_name, function_arguments FROM tool_calls WHERE message_id = ? ORDER BY id ASC
 	`, messageID)
@@ -862,38 +752,7 @@ func latestCompactionSummary(ctx context.Context, db *sql.DB, chatID string) (st
 	return summary, nil
 }
 
-func ensureColumn(ctx context.Context, db *sql.DB, table, column, definition string) error {
-	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
-	if err != nil {
-		return fmt.Errorf("inspect %s schema: %w", table, err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var cid int
-		var name string
-		var typ string
-		var notNull int
-		var defaultValue any
-		var pk int
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
-			return fmt.Errorf("scan %s schema: %w", table, err)
-		}
-		if name == column {
-			return nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("read %s schema: %w", table, err)
-	}
-
-	if _, err := db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)); err != nil {
-		return fmt.Errorf("add %s.%s column: %w", table, column, err)
-	}
-	return nil
-}
-
-func maybeSetTitle(ctx context.Context, tx *sql.Tx, chatID string, content string) error {
+func maybeSetAgentTitle(ctx context.Context, tx *sql.Tx, chatID string, content string) error {
 	title := strings.TrimSpace(content)
 	if len([]rune(title)) > 64 {
 		title = string([]rune(title)[:64])

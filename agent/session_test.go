@@ -43,13 +43,13 @@ func (s *memoryStore) EnsureChat(context.Context, string, string) error {
 	return nil
 }
 
-func (s *memoryStore) AppendMessage(_ context.Context, _ string, msg api.Message, _ string) error {
+func (s *memoryStore) AppendAgentMessage(_ context.Context, _ string, msg api.Message, _ string) error {
 	s.appendCalls++
 	s.messages = append(s.messages, msg)
 	return nil
 }
 
-func (s *memoryStore) UpdateLastMessage(_ context.Context, _ string, msg api.Message, _ string) error {
+func (s *memoryStore) UpdateLastAgentMessage(_ context.Context, _ string, msg api.Message, _ string) error {
 	s.updateCalls++
 	if len(s.messages) == 0 {
 		s.messages = append(s.messages, msg)
@@ -70,18 +70,18 @@ func (s *contextAwareStore) EnsureChat(ctx context.Context, id string, title str
 	return s.memoryStore.EnsureChat(ctx, id, title)
 }
 
-func (s *contextAwareStore) AppendMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
+func (s *contextAwareStore) AppendAgentMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return s.memoryStore.AppendMessage(ctx, chatID, msg, model)
+	return s.memoryStore.AppendAgentMessage(ctx, chatID, msg, model)
 }
 
-func (s *contextAwareStore) UpdateLastMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
+func (s *contextAwareStore) UpdateLastAgentMessage(ctx context.Context, chatID string, msg api.Message, model string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return s.memoryStore.UpdateLastMessage(ctx, chatID, msg, model)
+	return s.memoryStore.UpdateLastAgentMessage(ctx, chatID, msg, model)
 }
 
 type staticTool struct{}

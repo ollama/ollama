@@ -121,8 +121,6 @@ type chatModel struct {
 	scroll            int
 	toolOutputMode    bool
 	toolOutputOpen    bool
-	toolDetailsOpen   bool
-	toolDetailsScroll int
 	flowPrintedLines  int
 	thinking          bool
 	thinkingTokens    int
@@ -417,7 +415,6 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *chatModel) resetRenderAfterResize() {
 	m.enterFullScreen()
 	m.scroll = m.maxScroll()
-	m.toolDetailsScroll = clamp(m.toolDetailsScroll, 0, m.maxToolDetailsScroll())
 }
 
 func (m *chatModel) enterFullScreen() {
@@ -428,15 +425,6 @@ func (m *chatModel) enterFullScreen() {
 }
 
 func (m chatModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.toolDetailsOpen {
-		switch msg.Type {
-		case tea.MouseWheelUp:
-			m.scrollToolDetailsBy(3)
-		case tea.MouseWheelDown:
-			m.scrollToolDetailsBy(-3)
-		}
-		return m, nil
-	}
 	if m.modelPicker != nil {
 		switch msg.Type {
 		case tea.MouseWheelUp:
@@ -520,9 +508,6 @@ func (m chatModel) finishTranscriptSelection(msg tea.MouseMsg) (tea.Model, tea.C
 }
 
 func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.toolDetailsOpen {
-		return m.updateToolDetailsKey(msg)
-	}
 	if msg.Type == tea.KeyCtrlO {
 		m.toggleInlineToolOutput()
 		m.disarmQuit()
@@ -645,34 +630,6 @@ func (m *chatModel) toggleInlineToolOutput() {
 		return
 	}
 	m.status = "tool output hidden"
-}
-
-func (m chatModel) updateToolDetailsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlO, tea.KeyEsc:
-		return m.closeToolDetailsWindow()
-	case tea.KeyUp:
-		m.scrollToolDetailsBy(1)
-	case tea.KeyDown:
-		m.scrollToolDetailsBy(-1)
-	case tea.KeyPgUp:
-		m.scrollToolDetailsBy(max(1, m.toolDetailsAvailableHeight()-1))
-	case tea.KeyPgDown:
-		m.scrollToolDetailsBy(-max(1, m.toolDetailsAvailableHeight()-1))
-	case tea.KeyHome, tea.KeyCtrlHome:
-		m.toolDetailsScroll = m.maxToolDetailsScroll()
-	case tea.KeyEnd, tea.KeyCtrlEnd:
-		m.toolDetailsScroll = 0
-	}
-	return m, nil
-}
-
-func (m chatModel) closeToolDetailsWindow() (tea.Model, tea.Cmd) {
-	m.toolDetailsOpen = false
-	m.toolDetailsScroll = 0
-	m.scroll = m.maxScroll()
-	m.enterFullScreen()
-	return m, tea.ClearScreen
 }
 
 func (m chatModel) updateCtrlC() (tea.Model, tea.Cmd) {
@@ -825,9 +782,6 @@ func (m chatModel) View() string {
 	if m.historyPopup != nil {
 		return renderFullFrame(m.renderHistoryPopup(width, height), width, height)
 	}
-	if m.toolDetailsOpen {
-		return m.renderToolDetailsWindow(width, height)
-	}
 	if !m.boundedFrame {
 		return m.flowView(width)
 	}
@@ -878,7 +832,7 @@ func (m chatModel) withFlowTranscriptFlush(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 }
 
 func (m chatModel) flowTranscriptFlushCmd() (chatModel, tea.Cmd) {
-	if m.boundedFrame || m.resumePicker != nil || m.modelPicker != nil || m.thinkPicker != nil || m.historyPopup != nil || m.toolDetailsOpen {
+	if m.boundedFrame || m.resumePicker != nil || m.modelPicker != nil || m.thinkPicker != nil || m.historyPopup != nil {
 		return m, nil
 	}
 	width := m.viewWidth()
@@ -970,8 +924,6 @@ func (m *chatModel) resetChat(status string) (tea.Model, tea.Cmd) {
 	m.contextTokens = 0
 	m.contextEstimate = true
 	m.scroll = 0
-	m.toolDetailsOpen = false
-	m.toolDetailsScroll = 0
 	m.flowPrintedLines = 0
 	if m.opts.NewChat != nil {
 		chatID, err := m.opts.NewChat(m.ctx)

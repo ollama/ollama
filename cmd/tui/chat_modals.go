@@ -9,13 +9,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/ollama/ollama/agent/chatstore"
 	"github.com/ollama/ollama/api"
+	appstore "github.com/ollama/ollama/app/store"
 )
 
 type chatResumeStore interface {
-	ListChats(context.Context, int) ([]chatstore.ChatSummary, error)
-	Chat(context.Context, string) (*chatstore.Chat, error)
+	ListChats(context.Context, int) ([]appstore.ChatSummary, error)
+	AgentChat(context.Context, string) (*appstore.AgentChat, error)
 }
 
 type chatPromptHistoryStore interface {
@@ -27,7 +27,7 @@ type chatCurrentModelStore interface {
 }
 
 type (
-	chatResumePicker = chatPicker[chatstore.ChatSummary]
+	chatResumePicker = chatPicker[appstore.ChatSummary]
 	chatModelPicker  = chatPicker[ChatModelOption]
 )
 
@@ -414,10 +414,10 @@ func (m *chatModel) openResumePicker() (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
-func newChatResumePicker(chats []chatstore.ChatSummary, currentChatID string) *chatResumePicker {
-	return newChatPicker(chats, "", func(chat chatstore.ChatSummary) bool {
+func newChatResumePicker(chats []appstore.ChatSummary, currentChatID string) *chatResumePicker {
+	return newChatPicker(chats, "", func(chat appstore.ChatSummary) bool {
 		return chat.ID == currentChatID
-	}, func(chat chatstore.ChatSummary, filter string) bool {
+	}, func(chat appstore.ChatSummary, filter string) bool {
 		return strings.Contains(strings.ToLower(strings.Join([]string{
 			chat.Title,
 			chat.Model,
@@ -481,7 +481,7 @@ func (m *chatModel) resumeSelectedChat() (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 
-	chat, err := store.Chat(m.ctx, selected.ID)
+	chat, err := store.AgentChat(m.ctx, selected.ID)
 	if err != nil {
 		m.resumePicker = nil
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not resume chat: %v", err)}))
@@ -920,7 +920,7 @@ func modelOptionMeta(model ChatModelOption, current string) string {
 	return strings.Join(parts, " · ")
 }
 
-func resumeChatTitle(chat chatstore.ChatSummary) string {
+func resumeChatTitle(chat appstore.ChatSummary) string {
 	title := strings.TrimSpace(chat.Title)
 	if title == "" {
 		title = shortChatID(chat.ID)
@@ -928,7 +928,7 @@ func resumeChatTitle(chat chatstore.ChatSummary) string {
 	return truncateRunes(title, 96)
 }
 
-func resumeChatMeta(chat chatstore.ChatSummary) string {
+func resumeChatMeta(chat appstore.ChatSummary) string {
 	var parts []string
 	if !chat.UpdatedAt.IsZero() {
 		parts = append(parts, relativeTime(chat.UpdatedAt))

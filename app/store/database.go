@@ -1,5 +1,3 @@
-//go:build windows || darwin
-
 package store
 
 import (
@@ -14,7 +12,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 16
+const currentSchemaVersion = 17
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -97,6 +95,7 @@ func (db *database) init() error {
 	CREATE TABLE IF NOT EXISTS chats (
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL DEFAULT '',
+		model_name TEXT NOT NULL DEFAULT '',
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		browser_state TEXT
 	);
@@ -107,6 +106,7 @@ func (db *database) init() error {
 		role TEXT NOT NULL,
 		content TEXT NOT NULL DEFAULT '',
 		thinking TEXT NOT NULL DEFAULT '',
+		images TEXT NOT NULL DEFAULT '[]',
 		stream BOOLEAN NOT NULL DEFAULT 0,
 		model_name TEXT,
 		model_cloud BOOLEAN, -- deprecated
@@ -116,15 +116,21 @@ func (db *database) init() error {
 		thinking_time_start TIMESTAMP,
 		thinking_time_end TIMESTAMP,
 		tool_result TEXT,
+		tool_name TEXT NOT NULL DEFAULT '',
+		tool_call_id TEXT NOT NULL DEFAULT '',
+		archived BOOLEAN NOT NULL DEFAULT 0,
 		FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);
+	CREATE INDEX IF NOT EXISTS idx_messages_chat_id_id ON messages(chat_id, id);
+	CREATE INDEX IF NOT EXISTS idx_messages_chat_id_archived ON messages(chat_id, archived, id);
 
 	CREATE TABLE IF NOT EXISTS tool_calls (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		message_id INTEGER NOT NULL,
 		type TEXT NOT NULL,
+		tool_call_id TEXT NOT NULL DEFAULT '',
 		function_name TEXT NOT NULL,
 		function_arguments TEXT NOT NULL,
 		function_result TEXT,
@@ -132,6 +138,17 @@ func (db *database) init() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_tool_calls_message_id ON tool_calls(message_id);
+
+	CREATE TABLE IF NOT EXISTS compactions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		chat_id TEXT NOT NULL,
+		summary TEXT NOT NULL,
+		archived_message_ids TEXT NOT NULL DEFAULT '[]',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_compactions_chat_id ON compactions(chat_id, id);
 
 	CREATE TABLE IF NOT EXISTS attachments (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -271,6 +288,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v15 to v16: %w", err)
 			}
 			version = 16
+		case 16:
+			// add agent chat metadata, message archiving, and compaction tables
+			if err := db.migrateV16ToV17(); err != nil {
+				return fmt.Errorf("migrate v16 to v17: %w", err)
+			}
+			version = 17
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -540,6 +563,46 @@ func (db *database) migrateV15ToV16() error {
 	return nil
 }
 
+// migrateV16ToV17 adds the agent chat persistence fields to the app database.
+func (db *database) migrateV16ToV17() error {
+	for _, stmt := range []struct {
+		sql string
+		msg string
+	}{
+		{`ALTER TABLE chats ADD COLUMN model_name TEXT NOT NULL DEFAULT ''`, "add chats.model_name"},
+		{`ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'`, "add messages.images"},
+		{`ALTER TABLE messages ADD COLUMN tool_name TEXT NOT NULL DEFAULT ''`, "add messages.tool_name"},
+		{`ALTER TABLE messages ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''`, "add messages.tool_call_id"},
+		{`ALTER TABLE messages ADD COLUMN archived BOOLEAN NOT NULL DEFAULT 0`, "add messages.archived"},
+		{`ALTER TABLE tool_calls ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''`, "add tool_calls.tool_call_id"},
+	} {
+		_, err := db.conn.Exec(stmt.sql)
+		if err != nil && !duplicateColumnError(err) {
+			return fmt.Errorf("%s: %w", stmt.msg, err)
+		}
+	}
+
+	_, err := db.conn.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_messages_chat_id_id ON messages(chat_id, id);
+		CREATE INDEX IF NOT EXISTS idx_messages_chat_id_archived ON messages(chat_id, archived, id);
+		CREATE TABLE IF NOT EXISTS compactions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_id TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			archived_message_ids TEXT NOT NULL DEFAULT '[]',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_compactions_chat_id ON compactions(chat_id, id);
+		UPDATE settings SET schema_version = 17;
+	`)
+	if err != nil {
+		return fmt.Errorf("create agent chat persistence tables: %w", err)
+	}
+
+	return nil
+}
+
 // cleanupOrphanedData removes orphaned records that may exist due to the foreign key bug
 func (db *database) cleanupOrphanedData() error {
 	_, err := db.conn.Exec(`
@@ -590,10 +653,10 @@ func (db *database) getAllChats() ([]Chat, error) {
 		LEFT JOIN (
 			SELECT chat_id, content, MIN(id) as min_id
 			FROM messages
-			WHERE role = 'user'
+			WHERE role = 'user' AND archived = 0
 			GROUP BY chat_id
 		) first_msg ON c.id = first_msg.chat_id
-		LEFT JOIN messages m ON c.id = m.chat_id
+		LEFT JOIN messages m ON c.id = m.chat_id AND m.archived = 0
 		GROUP BY c.id, c.title, c.created_at, first_msg.content
 		ORDER BY last_updated DESC
 	`
@@ -780,6 +843,7 @@ func (db *database) updateLastMessage(chatID string, msg Message) error {
 	var messageID int64
 	err = tx.QueryRow(`
 		SELECT MAX(id) FROM messages WHERE chat_id = ?
+			AND archived = 0
 	`, chatID).Scan(&messageID)
 	if err != nil {
 		return fmt.Errorf("get last message id: %w", err)
@@ -887,7 +951,7 @@ func (db *database) getMessages(chatID string, loadAttachmentData bool) ([]Messa
 	query := `
 		SELECT id, role, content, thinking, stream, model_name, created_at, updated_at, thinking_time_start, thinking_time_end, tool_result
 		FROM messages
-		WHERE chat_id = ?
+		WHERE chat_id = ? AND archived = 0
 		ORDER BY id ASC
 	`
 

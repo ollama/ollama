@@ -1,5 +1,3 @@
-//go:build windows || darwin
-
 // Package store provides a simple JSON file store for the desktop application
 // to save and load data such as ollama server configuration, messages,
 // login information and more.
@@ -107,6 +105,7 @@ type Chat struct {
 	ID           string          `json:"id"`
 	Messages     []Message       `json:"messages"`
 	Title        string          `json:"title"`
+	Model        string          `json:"model,omitempty"`
 	CreatedAt    time.Time       `json:"created_at"`
 	BrowserState json.RawMessage `json:"browser_state,omitempty" ts_type:"BrowserStateData"`
 }

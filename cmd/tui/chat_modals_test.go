@@ -12,8 +12,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	coreagent "github.com/ollama/ollama/agent"
-	"github.com/ollama/ollama/agent/chatstore"
 	"github.com/ollama/ollama/api"
+	appstore "github.com/ollama/ollama/app/store"
 )
 
 func TestChatHistoryCommandShowsPromptMessages(t *testing.T) {
@@ -251,7 +251,7 @@ func TestChatHistoryCommandFormatsMultilineContentWithLabel(t *testing.T) {
 
 func TestChatResumeCommandOpensPicker(t *testing.T) {
 	store := &chatResumeTestStore{
-		chats: []chatstore.ChatSummary{{
+		chats: []appstore.ChatSummary{{
 			ID:           "chat-1",
 			Title:        "Research Parth Sareen online",
 			Model:        "llama3.2",
@@ -259,7 +259,7 @@ func TestChatResumeCommandOpensPicker(t *testing.T) {
 			MessageCount: 2,
 			ApproxBytes:  18 * 1024,
 		}},
-		byID: map[string]*chatstore.Chat{},
+		byID: map[string]*appstore.AgentChat{},
 	}
 	m := chatModel{
 		ctx:    context.Background(),
@@ -293,12 +293,12 @@ func TestChatResumeCommandOpensPicker(t *testing.T) {
 
 func TestChatResumePickerFallsBackToFullFrameWhenSmall(t *testing.T) {
 	store := &chatResumeTestStore{
-		chats: []chatstore.ChatSummary{{
+		chats: []appstore.ChatSummary{{
 			ID:    "chat-1",
 			Title: "Research Parth Sareen online",
 			Model: "llama3.2",
 		}},
-		byID: map[string]*chatstore.Chat{},
+		byID: map[string]*appstore.AgentChat{},
 	}
 	m := chatModel{
 		ctx:    context.Background(),
@@ -639,11 +639,11 @@ func TestChatModelSwitchNextRunKeepsHistory(t *testing.T) {
 
 func TestChatResumePickerFiltersAndLoadsSelection(t *testing.T) {
 	store := &chatResumeTestStore{
-		chats: []chatstore.ChatSummary{
+		chats: []appstore.ChatSummary{
 			{ID: "chat-1", Title: "First chat", Model: "llama3.2", UpdatedAt: time.Now().Add(-2 * time.Hour), MessageCount: 2, ApproxBytes: 2048},
 			{ID: "chat-2", Title: "Second chat", Model: "qwen3", UpdatedAt: time.Now().Add(-time.Hour), MessageCount: 2, ApproxBytes: 4096},
 		},
-		byID: map[string]*chatstore.Chat{
+		byID: map[string]*appstore.AgentChat{
 			"chat-2": {
 				ID:    "chat-2",
 				Title: "Second chat",

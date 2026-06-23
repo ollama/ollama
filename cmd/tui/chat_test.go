@@ -11,8 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	coreagent "github.com/ollama/ollama/agent"
-	"github.com/ollama/ollama/agent/chatstore"
 	"github.com/ollama/ollama/api"
+	appstore "github.com/ollama/ollama/app/store"
 )
 
 type chatTestTool struct{}
@@ -30,8 +30,8 @@ type chatShowTestClient struct {
 }
 
 type chatResumeTestStore struct {
-	chats       []chatstore.ChatSummary
-	byID        map[string]*chatstore.Chat
+	chats       []appstore.ChatSummary
+	byID        map[string]*appstore.AgentChat
 	prompts     []string
 	setModels   map[string]string
 	setModelErr error
@@ -80,11 +80,11 @@ func (s *chatResumeTestStore) EnsureChat(context.Context, string, string) error 
 	return nil
 }
 
-func (s *chatResumeTestStore) AppendMessage(context.Context, string, api.Message, string) error {
+func (s *chatResumeTestStore) AppendAgentMessage(context.Context, string, api.Message, string) error {
 	return nil
 }
 
-func (s *chatResumeTestStore) UpdateLastMessage(context.Context, string, api.Message, string) error {
+func (s *chatResumeTestStore) UpdateLastAgentMessage(context.Context, string, api.Message, string) error {
 	return nil
 }
 
@@ -99,11 +99,11 @@ func (s *chatResumeTestStore) SetChatModel(_ context.Context, chatID string, mod
 	return nil
 }
 
-func (s *chatResumeTestStore) ListChats(context.Context, int) ([]chatstore.ChatSummary, error) {
+func (s *chatResumeTestStore) ListChats(context.Context, int) ([]appstore.ChatSummary, error) {
 	return slices.Clone(s.chats), nil
 }
 
-func (s *chatResumeTestStore) Chat(_ context.Context, id string) (*chatstore.Chat, error) {
+func (s *chatResumeTestStore) AgentChat(_ context.Context, id string) (*appstore.AgentChat, error) {
 	chat, ok := s.byID[id]
 	if !ok {
 		return nil, sql.ErrNoRows

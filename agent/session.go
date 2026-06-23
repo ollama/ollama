@@ -21,8 +21,8 @@ type ChatClient interface {
 
 type ChatStore interface {
 	EnsureChat(context.Context, string, string) error
-	AppendMessage(context.Context, string, api.Message, string) error
-	UpdateLastMessage(context.Context, string, api.Message, string) error
+	AppendAgentMessage(context.Context, string, api.Message, string) error
+	UpdateLastAgentMessage(context.Context, string, api.Message, string) error
 }
 
 type ChatModelStore interface {
@@ -136,7 +136,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 		if opts.ChatID == "" || s.Store == nil {
 			continue
 		}
-		if err := s.Store.AppendMessage(ctx, opts.ChatID, msg, ""); err != nil {
+		if err := s.Store.AppendAgentMessage(ctx, opts.ChatID, msg, ""); err != nil {
 			return nil, err
 		}
 	}
@@ -167,7 +167,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 				}
 				messages = append(messages, errorMsg)
 				if opts.ChatID != "" && s.Store != nil {
-					if appendErr := s.Store.AppendMessage(ctx, opts.ChatID, errorMsg, ""); appendErr != nil {
+					if appendErr := s.Store.AppendAgentMessage(ctx, opts.ChatID, errorMsg, ""); appendErr != nil {
 						return nil, appendErr
 					}
 				}
@@ -305,7 +305,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 			return nil
 		}
 		if !persisted {
-			if err := s.Store.AppendMessage(persistCtx, opts.ChatID, assistant, opts.Model); err != nil {
+			if err := s.Store.AppendAgentMessage(persistCtx, opts.ChatID, assistant, opts.Model); err != nil {
 				return err
 			}
 			persisted = true
@@ -313,7 +313,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 			dirtyDeltas = 0
 			return nil
 		}
-		if err := s.Store.UpdateLastMessage(persistCtx, opts.ChatID, assistant, opts.Model); err != nil {
+		if err := s.Store.UpdateLastAgentMessage(persistCtx, opts.ChatID, assistant, opts.Model); err != nil {
 			return err
 		}
 		dirty = false
@@ -698,7 +698,7 @@ func (s *Session) compactForToolOutputOverflow(ctx context.Context, runID string
 	compacted := append([]api.Message(nil), result.Messages...)
 	if !messageEmpty(assistant) {
 		if opts.ChatID != "" && s.Store != nil {
-			if err := s.Store.AppendMessage(context.WithoutCancel(ctx), opts.ChatID, assistant, opts.Model); err != nil {
+			if err := s.Store.AppendAgentMessage(context.WithoutCancel(ctx), opts.ChatID, assistant, opts.Model); err != nil {
 				return compacted, skipNotified, err
 			}
 		}
@@ -883,7 +883,7 @@ func (s *Session) appendToolMessage(ctx context.Context, chatID string, msg api.
 	if chatID == "" || s.Store == nil {
 		return nil
 	}
-	return s.Store.AppendMessage(ctx, chatID, msg, "")
+	return s.Store.AppendAgentMessage(ctx, chatID, msg, "")
 }
 
 func resolvedMaxToolRounds(value int) int {

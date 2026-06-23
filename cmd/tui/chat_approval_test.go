@@ -106,9 +106,6 @@ func TestChatApprovalPromptCtrlOExpandsToolDetailsInline(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("ctrl+o should not switch screens")
 	}
-	if m.toolDetailsOpen {
-		t.Fatal("ctrl+o should not open a separate tool details view")
-	}
 	if !m.fullScreen || !m.boundedFrame {
 		t.Fatal("ctrl+o should keep managed fullscreen rendering")
 	}
@@ -248,6 +245,9 @@ func TestChatShiftTabApprovesPendingPrompt(t *testing.T) {
 	}
 	if m.approvalPrompt != nil {
 		t.Fatal("approval prompt should close")
+	}
+	if footer := m.footerLine(); !strings.Contains(footer, "full access enabled") {
+		t.Fatalf("footer missing permission mode notice after shift+tab approval: %q", footer)
 	}
 	if m.entries[0].status != "queued" {
 		t.Fatalf("tool status = %q, want queued", m.entries[0].status)
