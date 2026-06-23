@@ -16,11 +16,7 @@ type compactionStore struct {
 	continueTask  bool
 }
 
-func (s *compactionStore) ArchiveForCompaction(ctx context.Context, chatID string, keepUserTurns int, summary string) error {
-	return s.ArchiveForCompactionWithContinuation(ctx, chatID, keepUserTurns, summary, false)
-}
-
-func (s *compactionStore) ArchiveForCompactionWithContinuation(_ context.Context, chatID string, keepUserTurns int, summary string, continueTask bool) error {
+func (s *compactionStore) ArchiveForCompaction(_ context.Context, chatID string, keepUserTurns int, summary string, continueTask bool) error {
 	s.chatID = chatID
 	s.keepUserTurns = keepUserTurns
 	s.summary = summary
@@ -55,16 +51,16 @@ func assertCompactionSummaryPair(t *testing.T, messages []api.Message) {
 	if len(messages) != 2 {
 		t.Fatalf("compaction summary pair len = %d, want 2: %#v", len(messages), messages)
 	}
-	if messages[0].Role != "assistant" || len(messages[0].ToolCalls) != 1 || messages[0].ToolCalls[0].Function.Name != compactionToolName {
+	if messages[0].Role != "assistant" || len(messages[0].ToolCalls) != 1 || messages[0].ToolCalls[0].Function.Name != CompactionToolName {
 		t.Fatalf("compaction assistant message = %#v", messages[0])
 	}
 	if messages[0].ToolCalls[0].Function.Arguments.Len() != 0 {
 		t.Fatalf("compaction summary tool call should not have arguments: %#v", messages[0].ToolCalls[0].Function.Arguments.ToMap())
 	}
-	if messages[1].Role != "tool" || messages[1].ToolName != compactionToolName || messages[1].ToolCallID != messages[0].ToolCalls[0].ID {
+	if messages[1].Role != "tool" || messages[1].ToolName != CompactionToolName || messages[1].ToolCallID != messages[0].ToolCalls[0].ID {
 		t.Fatalf("compaction tool result = %#v", messages[1])
 	}
-	if !strings.HasPrefix(messages[1].Content, compactionSummaryMessagePrefix) {
+	if !strings.HasPrefix(messages[1].Content, CompactionSummaryMessagePrefix) {
 		t.Fatalf("compaction tool result missing summary prefix: %#v", messages[1])
 	}
 }
@@ -169,7 +165,7 @@ func TestSimpleCompactorKeepsOnlySummaryForSmallContext(t *testing.T) {
 		t.Fatalf("leading system message not kept: %#v", result.Messages)
 	}
 	assertCompactionSummaryPair(t, result.Messages[1:])
-	if !strings.Contains(result.Messages[2].Content, compactionContinueInstruction) {
+	if !strings.Contains(result.Messages[2].Content, CompactionContinueInstruction) {
 		t.Fatalf("tool result missing continue instruction: %q", result.Messages[2].Content)
 	}
 }
@@ -205,10 +201,10 @@ func TestSimpleCompactorAddsContinueTaskInstructionOnlyToToolResult(t *testing.T
 		t.Fatalf("result summary = %q", result.Summary)
 	}
 	content := result.Messages[1].Content
-	if !strings.Contains(content, compactionContinueInstruction) {
+	if !strings.Contains(content, CompactionContinueInstruction) {
 		t.Fatalf("tool result missing continue instruction: %q", content)
 	}
-	if got := compactionSummaryText(content); got != "summary" {
+	if got := CompactionSummaryText(content); got != "summary" {
 		t.Fatalf("visible summary text = %q", got)
 	}
 	if !store.continueTask || store.summary != "summary" {
@@ -621,18 +617,18 @@ func TestCompactionPromptRetruncatesAlreadyTruncatedToolOutput(t *testing.T) {
 }
 
 func TestCompactionSummaryTextStripsPrefix(t *testing.T) {
-	content := compactionSummaryMessage("worked on branch changes")
-	if got := compactionSummaryText(content); got != "worked on branch changes" {
+	content := compactionSummaryMessageForTask("worked on branch changes", false)
+	if got := CompactionSummaryText(content); got != "worked on branch changes" {
 		t.Fatalf("summary text = %q", got)
 	}
 }
 
 func TestCompactionSummaryCanTellModelToContinueTask(t *testing.T) {
 	content := compactionSummaryMessageForTask("worked on branch changes", true)
-	if !strings.Contains(content, compactionContinueInstruction) {
+	if !strings.Contains(content, CompactionContinueInstruction) {
 		t.Fatalf("summary message missing continue instruction: %q", content)
 	}
-	if got := compactionSummaryText(content); got != "worked on branch changes" {
+	if got := CompactionSummaryText(content); got != "worked on branch changes" {
 		t.Fatalf("summary text = %q", got)
 	}
 }
@@ -760,7 +756,7 @@ func TestSimpleCompactorCarriesPreviousSummary(t *testing.T) {
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		Model: "model",
 		Messages: []api.Message{
-			{Role: "system", Content: compactionSummaryMessagePrefix + "old summary"},
+			{Role: "system", Content: CompactionSummaryMessagePrefix + "old summary"},
 			{Role: "user", Content: "old"},
 			{Role: "assistant", Content: "old answer"},
 			{Role: "user", Content: "recent"},
@@ -792,8 +788,8 @@ func TestSimpleCompactorCarriesPreviousToolSummaryAndPlacesNewSummaryBeforeKeptS
 
 	messages := []api.Message{
 		{Role: "user", Content: "kept before old summary"},
-		compactionSummaryMessages("old summary")[0],
-		compactionSummaryMessages("old summary")[1],
+		CompactionSummaryMessages("old summary", false)[0],
+		CompactionSummaryMessages("old summary", false)[1],
 		{Role: "user", Content: "latest request"},
 	}
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{

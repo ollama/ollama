@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
 )
 
@@ -190,7 +191,7 @@ func TestAgentStoreListUserMessages(t *testing.T) {
 		{Role: "assistant", Content: "not user"},
 		{Role: "user", Content: "middle prompt"},
 		{Role: "user", Content: "   "},
-		{Role: "user", Content: compactionSummaryMessagePrefix + "old context"},
+		{Role: "user", Content: agent.CompactionSummaryMessagePrefix + "old context"},
 		{Role: "user", Content: "new prompt"},
 	} {
 		if err := store.AppendAgentMessage(ctx, "chat-1", msg, ""); err != nil {
@@ -222,7 +223,7 @@ func TestAgentStoreArchivesCompactedMessages(t *testing.T) {
 		}
 	}
 
-	if err := store.ArchiveForCompactionWithContinuation(ctx, "chat-1", 1, "summary", true); err != nil {
+	if err := store.ArchiveForCompaction(ctx, "chat-1", 1, "summary", true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -233,11 +234,11 @@ func TestAgentStoreArchivesCompactedMessages(t *testing.T) {
 	if len(agentChat.Messages) != 3 {
 		t.Fatalf("active messages = %#v, want compaction pair plus latest request", agentChat.Messages)
 	}
-	if agentChat.Messages[0].Role != "assistant" || len(agentChat.Messages[0].ToolCalls) != 1 || agentChat.Messages[0].ToolCalls[0].Function.Name != compactionToolName {
+	if agentChat.Messages[0].Role != "assistant" || len(agentChat.Messages[0].ToolCalls) != 1 || agentChat.Messages[0].ToolCalls[0].Function.Name != agent.CompactionToolName {
 		t.Fatalf("summary tool call = %#v", agentChat.Messages[0])
 	}
 	content := agentChat.Messages[1].Content
-	if !strings.Contains(content, compactionContinueInstruction) {
+	if !strings.Contains(content, agent.CompactionContinueInstruction) {
 		t.Fatalf("summary tool result missing continuation instruction: %q", content)
 	}
 	if agentChat.Messages[2].Content != "recent request" {

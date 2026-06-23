@@ -179,7 +179,7 @@ func (c *recordingCompactor) MaybeCompact(_ context.Context, req CompactionReque
 	c.requests = append(c.requests, req)
 	result := CompactionResult{Messages: req.Messages, Due: true}
 	if len(req.Messages) > 0 && req.Messages[len(req.Messages)-1].Role == "tool" {
-		result.Messages = compactionSummaryMessages("tool result summarized")
+		result.Messages = CompactionSummaryMessages("tool result summarized", false)
 		result.Compacted = true
 		result.Summary = "tool result summarized"
 	}
@@ -190,7 +190,7 @@ func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionReque
 	c.requests = append(c.requests, req)
 	summary := strings.Repeat("oversized summary ", 300)
 	return CompactionResult{
-		Messages:  compactionSummaryMessagesForTask(summary, req.ContinueTask),
+		Messages:  CompactionSummaryMessages(summary, req.ContinueTask),
 		Compacted: true,
 		Due:       true,
 		Summary:   summary,
@@ -1365,10 +1365,10 @@ func TestSessionCompactsThenReattachesFullyOmittedToolResult(t *testing.T) {
 	if len(nextRequestMessages) != 4 {
 		t.Fatalf("next model request messages = %#v, want summary pair plus tool call/result", nextRequestMessages)
 	}
-	if nextRequestMessages[0].Role != "assistant" || len(nextRequestMessages[0].ToolCalls) != 1 || nextRequestMessages[0].ToolCalls[0].Function.Name != compactionToolName {
+	if nextRequestMessages[0].Role != "assistant" || len(nextRequestMessages[0].ToolCalls) != 1 || nextRequestMessages[0].ToolCalls[0].Function.Name != CompactionToolName {
 		t.Fatalf("first message should be compaction summary tool call: %#v", nextRequestMessages[0])
 	}
-	if nextRequestMessages[1].Role != "tool" || nextRequestMessages[1].ToolName != compactionToolName || !strings.Contains(nextRequestMessages[1].Content, "older history summarized") {
+	if nextRequestMessages[1].Role != "tool" || nextRequestMessages[1].ToolName != CompactionToolName || !strings.Contains(nextRequestMessages[1].Content, "older history summarized") {
 		t.Fatalf("second message should be compaction summary result: %#v", nextRequestMessages[1])
 	}
 	if nextRequestMessages[2].Role != "assistant" || len(nextRequestMessages[2].ToolCalls) != 1 || nextRequestMessages[2].ToolCalls[0].ID != "call-1" {

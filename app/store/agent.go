@@ -9,14 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
-)
-
-const (
-	compactionSummaryMessagePrefix = "Conversation summary:\n"
-	compactionToolName             = "summary"
-	compactionToolCallID           = "ollama_compaction"
-	compactionContinueInstruction  = "continue the task in progress. the history has been compacted, do not mention compaction to the user"
 )
 
 type AgentChat struct {
@@ -222,7 +216,7 @@ func (s *Store) AgentChat(ctx context.Context, id string) (*AgentChat, error) {
 		return nil, err
 	}
 	if summary != "" && !messagesContainCompactionSummary(chat.Messages) {
-		chat.Messages = insertCompactionSummaryAfterLeadingSystemMessages(chat.Messages, compactionSummaryMessages(summary, false))
+		chat.Messages = insertCompactionSummaryAfterLeadingSystemMessages(chat.Messages, agent.CompactionSummaryMessages(summary, false))
 	} else {
 		chat.Messages = moveCompactionSummaryBeforeKeptMessages(chat.Messages)
 	}
@@ -353,7 +347,7 @@ func (s *Store) ListUserMessages(ctx context.Context, limit int) ([]string, erro
 			LIMIT ?
 		)
 		ORDER BY id ASC
-	`, compactionSummaryMessagePrefix+"%", limit)
+	`, agent.CompactionSummaryMessagePrefix+"%", limit)
 	if err != nil {
 		return nil, fmt.Errorf("list user messages: %w", err)
 	}
@@ -373,11 +367,7 @@ func (s *Store) ListUserMessages(ctx context.Context, limit int) ([]string, erro
 	return messages, nil
 }
 
-func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUserTurns int, summary string) error {
-	return s.archiveForCompaction(ctx, chatID, keepUserTurns, summary, false)
-}
-
-func (s *Store) ArchiveForCompactionWithContinuation(ctx context.Context, chatID string, keepUserTurns int, summary string, continueTask bool) error {
+func (s *Store) ArchiveForCompaction(ctx context.Context, chatID string, keepUserTurns int, summary string, continueTask bool) error {
 	return s.archiveForCompaction(ctx, chatID, keepUserTurns, summary, continueTask)
 }
 
@@ -440,7 +430,7 @@ func (s *Store) archiveForCompaction(ctx context.Context, chatID string, keepUse
 			)
 		)
 		ORDER BY id ASC
-	`, chatID, keepStartID, compactionToolName, compactionToolName)
+	`, chatID, keepStartID, agent.CompactionToolName, agent.CompactionToolName)
 	if err != nil {
 		return fmt.Errorf("list archived messages: %w", err)
 	}
@@ -485,11 +475,11 @@ func (s *Store) archiveForCompaction(ctx context.Context, chatID string, keepUse
 					WHERE tool_calls.message_id = messages.id AND tool_calls.function_name = ?
 				)
 			)
-		`, chatID, keepStartID, compactionToolName, compactionToolName); err != nil {
+		`, chatID, keepStartID, agent.CompactionToolName, agent.CompactionToolName); err != nil {
 		return fmt.Errorf("archive messages: %w", err)
 	}
 
-	for _, msg := range compactionSummaryMessages(summary, continueTask) {
+	for _, msg := range agent.CompactionSummaryMessages(summary, continueTask) {
 		messageID, err := insertAgentMessage(ctx, tx, chatID, msg, "")
 		if err != nil {
 			return err
@@ -556,36 +546,12 @@ func currentAgentModelSelectExpr(chatAlias string) string {
 			)`, chatAlias)
 }
 
-func compactionSummaryMessages(summary string, continueTask bool) []api.Message {
-	content := compactionSummaryMessagePrefix + strings.TrimSpace(summary)
-	if continueTask {
-		content = strings.TrimSpace(content) + "\n\n" + compactionContinueInstruction
-	}
-	return []api.Message{
-		{
-			Role: "assistant",
-			ToolCalls: []api.ToolCall{{
-				ID: compactionToolCallID,
-				Function: api.ToolCallFunction{
-					Name: compactionToolName,
-				},
-			}},
-		},
-		{
-			Role:       "tool",
-			ToolName:   compactionToolName,
-			ToolCallID: compactionToolCallID,
-			Content:    content,
-		},
-	}
-}
-
 func messagesContainCompactionSummary(messages []api.Message) bool {
 	for _, msg := range messages {
-		if msg.Role == "tool" && msg.ToolName == compactionToolName && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix) {
+		if msg.Role == "tool" && msg.ToolName == agent.CompactionToolName && strings.HasPrefix(msg.Content, agent.CompactionSummaryMessagePrefix) {
 			return true
 		}
-		if (msg.Role == "user" || msg.Role == "system") && strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix) {
+		if (msg.Role == "user" || msg.Role == "system") && strings.HasPrefix(msg.Content, agent.CompactionSummaryMessagePrefix) {
 			return true
 		}
 	}
@@ -598,10 +564,10 @@ func moveCompactionSummaryBeforeKeptMessages(messages []api.Message) []api.Messa
 	for i, msg := range messages {
 		if msg.Role == "assistant" {
 			for _, call := range msg.ToolCalls {
-				if call.Function.Name == compactionToolName {
+				if call.Function.Name == agent.CompactionToolName {
 					start = i
 					end = i + 1
-					if end < len(messages) && messages[end].Role == "tool" && messages[end].ToolName == compactionToolName {
+					if end < len(messages) && messages[end].Role == "tool" && messages[end].ToolName == agent.CompactionToolName {
 						end++
 					}
 					break

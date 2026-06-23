@@ -11,18 +11,25 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// Compaction wire-format. These constants and helpers are the single canonical
+// definition of how a compacted turn is represented in message history; both
+// the in-memory compactor (this package) and the on-disk chat store
+// (package store) build and detect summaries through them.
+const (
+	CompactionSummaryMessagePrefix = "Conversation summary:\n"
+	CompactionToolName             = "summary"
+	CompactionToolCallID           = "ollama_compaction"
+	CompactionContinueInstruction  = "continue the task in progress. the history has been compacted, do not mention compaction to the user"
+)
+
 const (
 	defaultCompactionContextWindowTokens = 32768
 	defaultCompactionKeepUserTurns       = 3
 	defaultCompactionThreshold           = 0.8
 	compactOnlySummaryContextTokens      = 16000
 
-	compactionSummaryMessagePrefix = "Conversation summary:\n"
-	compactionToolName             = "summary"
-	compactionToolCallID           = "ollama_compaction"
-	maxCompactionSummaryBytes      = 16 * 1024
-	compactionSummaryTruncated     = "\n\n[summary truncated]"
-	compactionContinueInstruction  = "continue the task in progress. the history has been compacted, do not mention compaction to the user"
+	maxCompactionSummaryBytes  = 16 * 1024
+	compactionSummaryTruncated = "\n\n[summary truncated]"
 
 	compactionSystemPrompt = "Summarize the archived part of an Ollama CLI agent conversation. Preserve user goals, decisions, files, commands, tool results, and unresolved tasks needed to continue. Omit private reasoning and return only the summary."
 )
@@ -32,14 +39,7 @@ type Compactor interface {
 }
 
 type CompactionStore interface {
-	ArchiveForCompaction(context.Context, string, int, string) error
-}
-
-// CompactionStoreWithContinuation persists the model-facing continuation hint
-// for automatic compactions while preserving the legacy store method for manual
-// compactions and older store implementations.
-type CompactionStoreWithContinuation interface {
-	ArchiveForCompactionWithContinuation(context.Context, string, int, string, bool) error
+	ArchiveForCompaction(context.Context, string, int, string, bool) error
 }
 
 type CompactionOptions struct {
@@ -134,13 +134,7 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 	}
 
 	if c.Store != nil && req.ChatID != "" {
-		var err error
-		if store, ok := c.Store.(CompactionStoreWithContinuation); ok {
-			err = store.ArchiveForCompactionWithContinuation(ctx, req.ChatID, keptUserTurns, summary, req.ContinueTask)
-		} else {
-			err = c.Store.ArchiveForCompaction(ctx, req.ChatID, keptUserTurns, summary)
-		}
-		if err != nil {
+		if err := c.Store.ArchiveForCompaction(ctx, req.ChatID, keptUserTurns, summary, req.ContinueTask); err != nil {
 			result.Reason = err.Error()
 			return result, err
 		}
@@ -148,7 +142,7 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 
 	compacted := make([]api.Message, 0, len(prefix)+len(suffix)+2)
 	compacted = append(compacted, prefix...)
-	compacted = append(compacted, compactionSummaryMessagesForTask(summary, req.ContinueTask)...)
+	compacted = append(compacted, CompactionSummaryMessages(summary, req.ContinueTask)...)
 	compacted = append(compacted, suffix...)
 	result.Messages = compacted
 	result.Compacted = true
@@ -285,37 +279,35 @@ func isUnsupportedCompactionThinkError(err error) bool {
 	return strings.Contains(text, "does not support") || strings.Contains(text, "not supported") || strings.Contains(text, "unsupported")
 }
 
-func compactionSummaryMessage(summary string) string {
-	return compactionSummaryMessageForTask(summary, false)
-}
-
+// compactionSummaryMessageForTask renders a compaction summary as the content
+// string stored on the synthetic tool-result message.
 func compactionSummaryMessageForTask(summary string, continueTask bool) string {
-	content := compactionSummaryMessagePrefix + strings.TrimSpace(summary)
+	content := CompactionSummaryMessagePrefix + strings.TrimSpace(summary)
 	if continueTask {
-		content = strings.TrimSpace(content) + "\n\n" + compactionContinueInstruction
+		content = strings.TrimSpace(content) + "\n\n" + CompactionContinueInstruction
 	}
 	return content
 }
 
-func compactionSummaryMessages(summary string) []api.Message {
-	return compactionSummaryMessagesForTask(summary, false)
-}
-
-func compactionSummaryMessagesForTask(summary string, continueTask bool) []api.Message {
+// CompactionSummaryMessages renders a compaction summary as the assistant
+// tool-call plus tool-result pair that represents a compacted turn in the
+// message history. This is the canonical builder used by both the compactor
+// and the chat store.
+func CompactionSummaryMessages(summary string, continueTask bool) []api.Message {
 	return []api.Message{
 		{
 			Role: "assistant",
 			ToolCalls: []api.ToolCall{{
-				ID: compactionToolCallID,
+				ID: CompactionToolCallID,
 				Function: api.ToolCallFunction{
-					Name: compactionToolName,
+					Name: CompactionToolName,
 				},
 			}},
 		},
 		{
 			Role:       "tool",
-			ToolName:   compactionToolName,
-			ToolCallID: compactionToolCallID,
+			ToolName:   CompactionToolName,
+			ToolCallID: CompactionToolCallID,
 			Content:    compactionSummaryMessageForTask(summary, continueTask),
 		},
 	}
@@ -533,12 +525,12 @@ func splitCompactionMessages(messages []api.Message, keepUserTurns int) (prefix 
 	for i := start; i < len(messages); i++ {
 		msg := messages[i]
 		if isCompactionSummary(msg) {
-			previousSummary = compactionSummaryText(msg.Content)
+			previousSummary = CompactionSummaryText(msg.Content)
 			continue
 		}
 		if isCompactionToolCall(msg) {
 			if i+1 < len(messages) && isCompactionSummary(messages[i+1]) {
-				previousSummary = compactionSummaryText(messages[i+1].Content)
+				previousSummary = CompactionSummaryText(messages[i+1].Content)
 				i++
 			}
 			continue
@@ -572,12 +564,12 @@ func splitCompactionMessages(messages []api.Message, keepUserTurns int) (prefix 
 }
 
 func isCompactionToolName(name string) bool {
-	return name == compactionToolName
+	return name == CompactionToolName
 }
 
 func isCompactionSummary(msg api.Message) bool {
 	return (msg.Role == "user" || msg.Role == "system" || (msg.Role == "tool" && isCompactionToolName(msg.ToolName))) &&
-		strings.HasPrefix(msg.Content, compactionSummaryMessagePrefix)
+		strings.HasPrefix(msg.Content, CompactionSummaryMessagePrefix)
 }
 
 func isCompactionToolCall(msg api.Message) bool {
@@ -592,17 +584,14 @@ func isCompactionToolCall(msg api.Message) bool {
 	return false
 }
 
-func compactionSummaryText(content string) string {
-	return strings.TrimSpace(strings.TrimSuffix(
-		strings.TrimSpace(strings.TrimPrefix(content, compactionSummaryMessagePrefix)),
-		compactionContinueInstruction,
-	))
-}
-
-// CompactionSummaryText returns the user-visible summary text from a compaction
-// tool result.
+// CompactionSummaryText reverses CompactionSummaryMessages, returning the
+// user-visible summary text with the prefix and any continuation instruction
+// removed.
 func CompactionSummaryText(content string) string {
-	return compactionSummaryText(content)
+	return strings.TrimSpace(strings.TrimSuffix(
+		strings.TrimSpace(strings.TrimPrefix(content, CompactionSummaryMessagePrefix)),
+		CompactionContinueInstruction,
+	))
 }
 
 func intOption(options map[string]any, key string) int {
