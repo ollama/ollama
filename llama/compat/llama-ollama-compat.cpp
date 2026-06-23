@@ -2555,8 +2555,10 @@ void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
         inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
         gguf_set_val_str(meta, "clip.vision.projector_type", "gemma4v");
 
-        // Metal IM2COL needs F32 patch_embd weights (same as other arches).
+#if defined(__APPLE__)
+        // Metal IM2COL needs F32 patch_embd weights.
         promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
+#endif
     }
 
     if (has_audio) {
