@@ -160,6 +160,7 @@ type llamaServerLaunchConfig struct {
 	modelPath            string
 	modelArch            string
 	projectors           []string
+	mmprojMemory         uint64
 	modelLayers          uint64
 	adapters             []string
 	opts                 api.Options
@@ -602,7 +603,10 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
 }
 
-const limitedMMProjOffloadMemory = 10 << 30
+const (
+	// mmprojOffloadHeadroom leaves 1 GiB for backend buffers beyond projector weights.
+	mmprojOffloadHeadroom = 1 << 30
+)
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
 	if len(launch.projectors) == 0 {
@@ -622,16 +626,18 @@ func (launch llamaServerLaunchConfig) mmprojOffloadDisabled() (bool, string) {
 	if launch.forceNoMMProjOffload {
 		return true, "startup-oom-retry"
 	}
-	return shouldDisableMMProjOffload(launch.opts, launch.gpus, launch.modelLayers)
+	return shouldDisableMMProjOffload(launch.opts, launch.gpus, launch.modelLayers, launch.mmprojMemory)
 }
 
-func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLayers uint64) (bool, string) {
+func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLayers, mmprojMemory uint64) (bool, string) {
 	if opts.NumGPU == 0 {
 		return true, "cpu-only"
 	}
 	if opts.NumGPU > 0 && modelLayers > 0 && uint64(opts.NumGPU) < modelLayers {
 		return true, "partial-text-offload"
 	}
+
+	requiredMemory := mmprojMemory + mmprojOffloadHeadroom
 
 	for _, gpu := range gpus {
 		if gpu.Integrated && gpu.Library != "Metal" {
@@ -641,12 +647,54 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 		if memory == 0 || (gpu.TotalMemory > 0 && gpu.TotalMemory < memory) {
 			memory = gpu.TotalMemory
 		}
-		if memory > 0 && memory <= limitedMMProjOffloadMemory {
+		if memory > 0 && memory < requiredMemory {
 			return true, "limited-vram"
 		}
 	}
 
 	return false, ""
+}
+
+// mmprojMemoryRequirement is a stopgap until fit accounts for mmproj memory directly.
+func mmprojMemoryRequirement(modelPath string, f *ggml.GGML, projectors []string) (uint64, error) {
+	if len(projectors) == 0 {
+		return 0, nil
+	}
+
+	if projectors[0] == modelPath {
+		if f == nil {
+			return 0, errors.New("read inline mmproj metadata: missing model metadata")
+		}
+		var size uint64
+		for _, prefix := range []string{"v.", "mm.", "a."} {
+			for _, tensor := range f.Tensors().Items(prefix) {
+				size += tensor.Size()
+			}
+		}
+		if size == 0 {
+			return 0, errors.New("read inline mmproj metadata: no projector tensors found")
+		}
+		return size, nil
+	}
+
+	file, err := os.Open(projectors[0])
+	if err != nil {
+		return 0, fmt.Errorf("read mmproj metadata %q: %w", projectors[0], err)
+	}
+	defer file.Close()
+
+	projector, err := ggml.Decode(file, 1024)
+	if err != nil {
+		return 0, fmt.Errorf("read mmproj metadata %q: %w", projectors[0], err)
+	}
+	var size uint64
+	for _, tensor := range projector.Tensors().Items() {
+		size += tensor.Size()
+	}
+	if size == 0 {
+		return 0, fmt.Errorf("read mmproj metadata %q: no projector tensors found", projectors[0])
+	}
+	return size, nil
 }
 
 func appendJinjaArgs(params []string, config LlamaServerConfig) []string {
@@ -752,6 +800,10 @@ func NewLlamaServerRunner(
 		compatClipArches[arch] {
 		projectors = []string{modelPath}
 	}
+	mmprojMemory, err := mmprojMemoryRequirement(modelPath, f, projectors)
+	if err != nil {
+		return nil, err
+	}
 	if config.DraftModelPath == "" && hasMTPDraft(f) {
 		config.EnableMTP = true
 	}
@@ -771,19 +823,20 @@ func NewLlamaServerRunner(
 	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
 
 	launch := llamaServerLaunchConfig{
-		modelPath:   modelPath,
-		modelArch:   arch,
-		projectors:  slices.Clone(projectors),
-		modelLayers: f.KV().BlockCount() + 1,
-		adapters:    slices.Clone(adapters),
-		opts:        opts,
-		numParallel: numParallel,
-		kvCacheType: kvCacheType,
-		embedding:   isEmbedding,
-		config:      config,
-		gpus:        slices.Clone(gpus),
-		gpuLibs:     slices.Clone(gpuLibs),
-		extraEnvs:   cloneStringMap(serverEnvs),
+		modelPath:    modelPath,
+		modelArch:    arch,
+		projectors:   slices.Clone(projectors),
+		mmprojMemory: mmprojMemory,
+		modelLayers:  f.KV().BlockCount() + 1,
+		adapters:     slices.Clone(adapters),
+		opts:         opts,
+		numParallel:  numParallel,
+		kvCacheType:  kvCacheType,
+		embedding:    isEmbedding,
+		config:       config,
+		gpus:         slices.Clone(gpus),
+		gpuLibs:      slices.Clone(gpuLibs),
+		extraEnvs:    cloneStringMap(serverEnvs),
 	}
 
 	s := &llamaServerRunner{
