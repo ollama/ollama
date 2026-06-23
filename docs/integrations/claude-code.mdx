@@ -4,7 +4,7 @@ title: Claude Code
 
 Claude Code is Anthropic's agentic coding tool that can read, modify, and execute code in your working directory. 
 
-Open models can be used with Claude Code through Ollama's Anthropic-compatible API, enabling you to use models such as `qwen3.5`, `glm-5:cloud`, `kimi-k2.5:cloud`.
+You can use open models with Claude Code through Ollama's Anthropic-compatible API, including `qwen3.5`, `glm-5:cloud`, and `kimi-k2.5:cloud`.
 
 ![Claude Code with Ollama](https://files.ollama.com/claude-code.png)
 
@@ -56,7 +56,7 @@ Run Claude Code without interaction for use in Docker, CI/CD, or scripts:
 ollama launch claude --model kimi-k2.5:cloud --yes -- -p "how does this repository work?"
 ```
 
-The `--yes` flag auto-pulls the model, skips selectors, and requires `--model` to be specified. Arguments after `--` are passed directly to Claude Code.
+The `--yes` flag auto-pulls the model, skips selectors, and requires `--model`. Arguments after `--` are passed directly to Claude Code.
 
 ## Web search
 
@@ -64,7 +64,7 @@ Claude Code can search the web through Ollama's web search API. See the [web sea
 
 ## Scheduled Tasks with `/loop`
 
-The `/loop` command runs a prompt or slash command on a recurring schedule inside Claude Code. This is useful for automating repetitive tasks like checking PRs, running research, or setting reminders.
+The `/loop` command runs a prompt or slash command on a recurring schedule inside Claude Code. Use it for repetitive tasks like checking PRs, running research, or setting reminders.
 
 ```
 /loop <interval> <prompt or /command>
@@ -104,7 +104,7 @@ Chat with Claude Code from Telegram by connecting a bot to your session. Install
 ollama launch claude -- --channels plugin:telegram@claude-plugins-official
 ```
 
-Claude Code will prompt for permission on most actions. To allow the bot to work autonomously, configure [permission rules](https://code.claude.com/docs/en/permissions) or pass `--dangerously-skip-permissions` in isolated environments.
+Claude Code prompts for permission on most actions. To allow the bot to work autonomously, configure [permission rules](https://code.claude.com/docs/en/permissions) or pass `--dangerously-skip-permissions` in isolated environments.
 
 See the [plugin README](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) for full setup instructions including pairing and access control.
 
