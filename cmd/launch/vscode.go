@@ -126,11 +126,11 @@ const (
 	minCopilotChatVersion = "0.41.0"
 	minVSCodeVersion      = "1.113"
 
-	vscodeOllamaVendor       = "ollama-vscode"
+	vscodeOllamaVendor       = "ollama"
 	vscodeOllamaName         = "Ollama"
-	legacyVSCodeOllamaVendor = "ollama"
+	legacyVSCodeOllamaVendor = "ollama-vscode"
 
-	vscodeOllamaExtensionID = "Ollama.ollama-vscode"
+	vscodeOllamaExtensionID = "Ollama.ollama"
 )
 
 func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
@@ -258,27 +258,35 @@ func (v *VSCode) Paths() []string {
 
 func (v *VSCode) writeProviderConfig() error {
 	clmPath := v.chatLanguageModelsPath()
-	if fileExists(clmPath) {
-		var entries []map[string]any
-		if data, err := os.ReadFile(clmPath); err == nil {
-			_ = json.Unmarshal(data, &entries)
-		}
+	if err := os.MkdirAll(filepath.Dir(clmPath), 0o755); err != nil {
+		return err
+	}
 
-		filtered := make([]map[string]any, 0, len(entries))
-		for _, entry := range entries {
-			if isManagedOllamaProviderEntry(entry) {
-				continue
-			}
-			filtered = append(filtered, entry)
-		}
+	var entries []map[string]any
+	if data, err := os.ReadFile(clmPath); err == nil {
+		_ = json.Unmarshal(data, &entries)
+	}
 
-		data, err := json.MarshalIndent(filtered, "", "  ")
-		if err != nil {
-			return err
+	filtered := make([]map[string]any, 0, len(entries)+1)
+	for _, entry := range entries {
+		if isManagedOllamaProviderEntry(entry) {
+			continue
 		}
-		if err := fileutil.WriteWithBackup(clmPath, data, "vscode"); err != nil {
-			return err
-		}
+		filtered = append(filtered, entry)
+	}
+
+	filtered = append(filtered, map[string]any{
+		"vendor": vscodeOllamaVendor,
+		"name":   vscodeOllamaName,
+		"url":    envconfig.Host().String(),
+	})
+
+	data, err := json.MarshalIndent(filtered, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := fileutil.WriteWithBackup(clmPath, data, "vscode"); err != nil {
+		return err
 	}
 
 	return v.updateSettings()
@@ -340,6 +348,15 @@ func isManagedOllamaProviderEntry(entry map[string]any) bool {
 	}
 	name, _ := entry["name"].(string)
 	return strings.EqualFold(strings.TrimSpace(name), vscodeOllamaName)
+}
+
+func isManagedOllamaModelID(id string) bool {
+	for _, vendor := range []string{vscodeOllamaVendor, legacyVSCodeOllamaVendor} {
+		if strings.HasPrefix(id, vendor+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *VSCode) statePath() string {
@@ -421,7 +438,7 @@ func (v *VSCode) ShowInModelPicker(model string) error {
 	// The extension owns model discovery and picker visibility. Clear launch's
 	// old per-model overrides so previously hidden models can show up again.
 	for id := range prefs {
-		if strings.HasPrefix(id, vscodeOllamaVendor+"/") {
+		if isManagedOllamaModelID(id) {
 			delete(prefs, id)
 		}
 	}
@@ -449,11 +466,14 @@ func (v *VSCode) modelVSCodeIDs(model string, nameToID map[string]string) []stri
 			ids = append(ids, id)
 		}
 	}
-	ids = append(ids, vscodeOllamaVendor+"/"+model)
-	ids = append(ids, vscodeOllamaVendor+"/"+vscodeOllamaName+"/"+model)
 	if !strings.Contains(model, ":") {
-		ids = append(ids, vscodeOllamaVendor+"/"+model+":latest")
 		ids = append(ids, vscodeOllamaVendor+"/"+vscodeOllamaName+"/"+model+":latest")
+		ids = append(ids, vscodeOllamaVendor+"/"+vscodeOllamaName+"/"+model)
+		ids = append(ids, vscodeOllamaVendor+"/"+model+":latest")
+		ids = append(ids, vscodeOllamaVendor+"/"+model)
+	} else {
+		ids = append(ids, vscodeOllamaVendor+"/"+vscodeOllamaName+"/"+model)
+		ids = append(ids, vscodeOllamaVendor+"/"+model)
 	}
 	return ids
 }
@@ -464,7 +484,7 @@ func (v *VSCode) primaryModelVSCodeID(model string, nameToID map[string]string) 
 
 func isStaleCachedOllamaModelEntry(entry map[string]any) bool {
 	identifier, _ := entry["identifier"].(string)
-	return strings.HasPrefix(identifier, vscodeOllamaVendor+"/"+vscodeOllamaName+"/")
+	return strings.HasPrefix(identifier, legacyVSCodeOllamaVendor+"/"+vscodeOllamaName+"/")
 }
 
 func (v *VSCode) selectChatModel(db *sql.DB, modelID string) error {
