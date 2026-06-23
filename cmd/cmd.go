@@ -1579,7 +1579,122 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	return client.Pull(cmd.Context(), &request, fn)
+	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
+		return err
+	}
+
+	p.Stop()
+	offerTriAttention(cmd.Context(), client, args[0])
+	return nil
+}
+
+// offerTriAttention asks the user whether they want to calibrate TriAttention
+// for the model that was just pulled, printing memory and speed estimates first.
+func offerTriAttention(ctx context.Context, client *api.Client, modelName string) {
+	info, err := client.Show(ctx, &api.ShowRequest{Model: modelName})
+	if err != nil {
+		return
+	}
+
+	vramSavedGB, speedupPct := triAttentionEstimates(info.Details)
+
+	fmt.Fprintf(os.Stderr, "\n╭─ TriAttention disponible ─────────────────────────────────╮\n")
+	fmt.Fprintf(os.Stderr, "│  Modelo : %-49s│\n", info.Details.ParameterSize+" "+info.Details.QuantizationLevel)
+	fmt.Fprintf(os.Stderr, "│  VRAM estimada ahorrada : ~%.1f GB                          │\n", vramSavedGB)
+	fmt.Fprintf(os.Stderr, "│  Velocidad esperada     : +%d%% tokens/s en contextos largos │\n", speedupPct)
+	fmt.Fprintf(os.Stderr, "╰────────────────────────────────────────────────────────────╯\n")
+	fmt.Fprintf(os.Stderr, "¿Calibrar TriAttention ahora? [y/N]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer != "y" && answer != "yes" && answer != "s" && answer != "si" && answer != "sí" {
+		fmt.Fprintln(os.Stderr, "Puedes calibrar después con: ollama triattention calibrate "+modelName)
+		return
+	}
+
+	if err := runTriAttentionCalibration(modelName); err != nil {
+		fmt.Fprintf(os.Stderr, "Error en calibración: %v\n", err)
+	}
+}
+
+// triAttentionEstimates returns (vramSavedGB, speedupPercent) based on model size.
+func triAttentionEstimates(d api.ModelDetails) (float64, int) {
+	// Parse parameter count from strings like "7B", "13B", "70B", "3.8B"
+	params := strings.ToUpper(strings.TrimSpace(d.ParameterSize))
+	var billions float64
+	if strings.HasSuffix(params, "B") {
+		val := strings.TrimSuffix(params, "B")
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			billions = f
+		}
+	}
+
+	// KV cache is ~2 * context * hidden * layers * dtype_bytes.
+	// TriAttention compresses KV to ~turbo3 (3-bit effective), saving ~75% VRAM vs fp16.
+	// Rough heuristic: ~0.5 GB per billion params at 4k context, scales with size.
+	vramSaved := billions * 0.5
+	if vramSaved < 0.5 {
+		vramSaved = 0.5
+	}
+
+	// Speed improvement is higher for larger models (memory bandwidth bound).
+	speedup := 15
+	switch {
+	case billions >= 65:
+		speedup = 35
+	case billions >= 30:
+		speedup = 28
+	case billions >= 13:
+		speedup = 22
+	case billions >= 7:
+		speedup = 18
+	}
+
+	return vramSaved, speedup
+}
+
+// runTriAttentionCalibration launches the Python calibration script bundled
+// with ollama (scripts/calibrate-triattention.py).
+func runTriAttentionCalibration(modelName string) error {
+	// Locate the script relative to the ollama executable.
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath = "."
+	}
+	scriptDir := filepath.Join(filepath.Dir(exePath), "..", "scripts")
+	script := filepath.Join(scriptDir, "calibrate-triattention.py")
+
+	// Fall back to the repo scripts dir when running from source.
+	if _, err := os.Stat(script); os.IsNotExist(err) {
+		script = filepath.Join("scripts", "calibrate-triattention.py")
+	}
+
+	safeModel := strings.NewReplacer("/", "_", ":", "_", " ", "_").Replace(modelName)
+	outputFile := safeModel + ".triattention"
+
+	fmt.Fprintf(os.Stderr, "\nIniciando calibración → %s\n", outputFile)
+
+	// Use python3 if available, fall back to python.
+	py := "python3"
+	if _, err := exec.LookPath(py); err != nil {
+		py = "python"
+	}
+
+	c := exec.Command(py, script,
+		"--model", modelName,
+		"--output", outputFile,
+	)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	c.Stdin = os.Stdin
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("calibrate-triattention.py: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "\n✓ Calibración completa. Usa %s con --triattention-stats %s\n",
+		modelName, outputFile)
+	return nil
 }
 
 type generateContextKey string
