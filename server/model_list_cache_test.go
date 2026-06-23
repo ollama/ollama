@@ -70,6 +70,40 @@ func TestModelListCacheHydratesSummary(t *testing.T) {
 	}
 }
 
+func TestBuildModelListSummaryReadsGemma4MetadataBeforeArchitecture(t *testing.T) {
+	setTestHome(t, t.TempDir())
+
+	_, digest := createBinFile(t, map[string]any{
+		"general.architecture":      "gemma4",
+		"general.file_type":         uint32(15),
+		"gemma4.audio.block_count":  uint32(12),
+		"gemma4.context_length":     uint32(131072),
+		"gemma4.embedding_length":   uint32(2560),
+		"gemma4.vision.block_count": uint32(16),
+	}, nil)
+	layer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := buildModelListSummary(model.ParseName("list-gemma4"), &manifest.Manifest{Layers: []manifest.Layer{layer}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if summary.Details.ContextLength != 131072 {
+		t.Fatalf("context length = %d, want 131072", summary.Details.ContextLength)
+	}
+	if summary.Details.EmbeddingLength != 2560 {
+		t.Fatalf("embedding length = %d, want 2560", summary.Details.EmbeddingLength)
+	}
+
+	for _, capability := range []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio} {
+		if !slices.Contains(summary.Capabilities, capability) {
+			t.Fatalf("capabilities = %v, want %s", summary.Capabilities, capability)
+		}
+	}
+}
+
 func TestModelListCacheRefreshUpdatesEntry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())

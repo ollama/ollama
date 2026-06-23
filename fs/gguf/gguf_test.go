@@ -226,6 +226,68 @@ func TestRead(t *testing.T) {
 	}
 }
 
+func TestScanMetadata(t *testing.T) {
+	info, err := gguf.ScanMetadata(createBinFile(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.Architecture != "llama" {
+		t.Fatalf("architecture = %q, want llama", info.Architecture)
+	}
+	if info.EmbeddingLength != 3 {
+		t.Fatalf("embedding length = %d, want 3", info.EmbeddingLength)
+	}
+	if info.HasFileType {
+		t.Fatalf("has file type = true, want false: %+v", info)
+	}
+	if info.HasEmbedding || info.HasVision || info.HasAudio {
+		t.Fatalf("unexpected capability metadata: %+v", info)
+	}
+}
+
+func TestScanMetadataArchitectureKeysBeforeArchitecture(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	kv := ggml.KV{
+		"general.architecture":      "gemma4",
+		"general.file_type":         uint32(15),
+		"gemma4.audio.block_count":  uint32(12),
+		"gemma4.context_length":     uint32(131072),
+		"gemma4.embedding_length":   uint32(2560),
+		"gemma4.vision.block_count": uint32(16),
+		"tokenizer.ggml.tokens":     []string{"hello", "world"},
+	}
+	if err := ggml.WriteGGUF(f, kv, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := gguf.ScanMetadata(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.Architecture != "gemma4" {
+		t.Fatalf("architecture = %q, want gemma4", info.Architecture)
+	}
+	if !info.HasFileType || info.FileType != 15 {
+		t.Fatalf("file type = %d/%v, want 15/true", info.FileType, info.HasFileType)
+	}
+	if info.ContextLength != 131072 {
+		t.Fatalf("context length = %d, want 131072", info.ContextLength)
+	}
+	if info.EmbeddingLength != 2560 {
+		t.Fatalf("embedding length = %d, want 2560", info.EmbeddingLength)
+	}
+	if !info.HasVision || !info.HasAudio {
+		t.Fatalf("capability metadata = vision:%v audio:%v, want both true", info.HasVision, info.HasAudio)
+	}
+}
+
 func BenchmarkRead(b *testing.B) {
 	b.ReportAllocs()
 
