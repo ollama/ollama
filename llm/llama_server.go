@@ -604,10 +604,8 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 }
 
 const (
-	// mmprojOffloadHeadroom leaves room for backend buffers beyond projector weights.
+	// mmprojOffloadHeadroom leaves 1 GiB for backend buffers beyond projector weights.
 	mmprojOffloadHeadroom = 1 << 30
-	// unknownMMProjOffloadMemory is the fallback projector size when GGUF metadata is unavailable.
-	unknownMMProjOffloadMemory = 2 << 30
 )
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
@@ -639,11 +637,7 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 		return true, "partial-text-offload"
 	}
 
-	requiredMemory := mmprojMemory
-	if requiredMemory == 0 {
-		requiredMemory = unknownMMProjOffloadMemory
-	}
-	requiredMemory += mmprojOffloadHeadroom
+	requiredMemory := mmprojMemory + mmprojOffloadHeadroom
 
 	for _, gpu := range gpus {
 		if gpu.Integrated && gpu.Library != "Metal" {
@@ -662,37 +656,45 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 }
 
 // mmprojMemoryRequirement is a stopgap until fit accounts for mmproj memory directly.
-func mmprojMemoryRequirement(modelPath string, f *ggml.GGML, projectors []string) (size uint64) {
+func mmprojMemoryRequirement(modelPath string, f *ggml.GGML, projectors []string) (uint64, error) {
 	if len(projectors) == 0 {
-		return 0
+		return 0, nil
 	}
 
 	if projectors[0] == modelPath {
 		if f == nil {
-			return 0
+			return 0, errors.New("read inline mmproj metadata: missing model metadata")
 		}
+		var size uint64
 		for _, prefix := range []string{"v.", "mm.", "a."} {
 			for _, tensor := range f.Tensors().Items(prefix) {
 				size += tensor.Size()
 			}
 		}
-		return size
+		if size == 0 {
+			return 0, errors.New("read inline mmproj metadata: no projector tensors found")
+		}
+		return size, nil
 	}
 
 	file, err := os.Open(projectors[0])
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("read mmproj metadata %q: %w", projectors[0], err)
 	}
 	defer file.Close()
 
 	projector, err := ggml.Decode(file, 1024)
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("read mmproj metadata %q: %w", projectors[0], err)
 	}
+	var size uint64
 	for _, tensor := range projector.Tensors().Items() {
 		size += tensor.Size()
 	}
-	return size
+	if size == 0 {
+		return 0, fmt.Errorf("read mmproj metadata %q: no projector tensors found", projectors[0])
+	}
+	return size, nil
 }
 
 func appendJinjaArgs(params []string, config LlamaServerConfig) []string {
@@ -798,7 +800,10 @@ func NewLlamaServerRunner(
 		compatClipArches[arch] {
 		projectors = []string{modelPath}
 	}
-	mmprojMemory := mmprojMemoryRequirement(modelPath, f, projectors)
+	mmprojMemory, err := mmprojMemoryRequirement(modelPath, f, projectors)
+	if err != nil {
+		return nil, err
+	}
 	if config.DraftModelPath == "" && hasMTPDraft(f) {
 		config.EnableMTP = true
 	}

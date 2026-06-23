@@ -1977,12 +1977,13 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want: []string{"base"},
 		},
 		{
-			name:        "large discrete gpu keeps projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        defaultOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf"},
+			name:         "large discrete gpu keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
 			name:         "small discrete gpu keeps projector offload when projector fits",
@@ -2003,53 +2004,59 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 		{
-			name:        "integrated rocm gpu disables projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        defaultOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			name:         "integrated rocm gpu disables projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 		{
-			name:        "integrated metal gpu keeps projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        defaultOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true, FreeMemory: 32 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf"},
+			name:         "integrated metal gpu keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true, FreeMemory: 32 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
-			name:        "cpu only request disables projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        cpuOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			name:         "cpu only request disables projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         cpuOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 		{
-			name:        "partial text offload disables projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        partialOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			name:         "partial text offload disables projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         partialOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 		{
-			name:        "explicit full text offload keeps projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        fullOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf"},
+			name:         "explicit full text offload keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         fullOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
-			name:        "startup oom retry disables projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        defaultOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
-			modelLayers: 81,
-			retry:       true,
-			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			name:         "startup oom retry disables projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			retry:        true,
+			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 	}
 
@@ -2072,6 +2079,10 @@ func TestAppendMMProjArgs(t *testing.T) {
 }
 
 func TestMMProjMemoryRequirement(t *testing.T) {
+	if got, err := mmprojMemoryRequirement("model.gguf", nil, nil); err != nil || got != 0 {
+		t.Fatalf("no projector memory = %d, %v; want 0, nil", got, err)
+	}
+
 	modelPath, model := writeTestGGML(t, ggml.KV{"general.architecture": "gemma3"}, []*ggml.Tensor{
 		testGGMLTensor("blk.0.attn_q.weight", ggml.TensorTypeF32, []uint64{4}),
 		testGGMLTensor("v.patch_embd.weight", ggml.TensorTypeF16, []uint64{16}),
@@ -2080,8 +2091,8 @@ func TestMMProjMemoryRequirement(t *testing.T) {
 	})
 
 	wantInline := uint64(16*2 + 8*4 + 2*4)
-	if got := mmprojMemoryRequirement(modelPath, model, []string{modelPath}); got != wantInline {
-		t.Fatalf("inline mmproj memory = %d, want %d", got, wantInline)
+	if got, err := mmprojMemoryRequirement(modelPath, model, []string{modelPath}); err != nil || got != wantInline {
+		t.Fatalf("inline mmproj memory = %d, %v; want %d, nil", got, err, wantInline)
 	}
 
 	projectorPath, _ := writeTestGGML(t, ggml.KV{"general.architecture": "clip"}, []*ggml.Tensor{
@@ -2089,8 +2100,20 @@ func TestMMProjMemoryRequirement(t *testing.T) {
 		testGGMLTensor("audio.weight", ggml.TensorTypeF32, []uint64{4}),
 	})
 	wantProjector := uint64(32*2 + 4*4)
-	if got := mmprojMemoryRequirement(modelPath, model, []string{projectorPath}); got != wantProjector {
-		t.Fatalf("projector file memory = %d, want %d", got, wantProjector)
+	if got, err := mmprojMemoryRequirement(modelPath, model, []string{projectorPath}); err != nil || got != wantProjector {
+		t.Fatalf("projector file memory = %d, %v; want %d, nil", got, err, wantProjector)
+	}
+
+	if _, err := mmprojMemoryRequirement(modelPath, nil, []string{modelPath}); err == nil {
+		t.Fatal("inline mmproj with nil model error = nil, want error")
+	}
+	if _, err := mmprojMemoryRequirement(modelPath, model, []string{filepath.Join(t.TempDir(), "missing.gguf")}); err == nil {
+		t.Fatal("missing projector error = nil, want error")
+	}
+
+	emptyProjectorPath, _ := writeTestGGML(t, ggml.KV{"general.architecture": "clip"}, nil)
+	if _, err := mmprojMemoryRequirement(modelPath, model, []string{emptyProjectorPath}); err == nil {
+		t.Fatal("empty projector error = nil, want error")
 	}
 }
 
