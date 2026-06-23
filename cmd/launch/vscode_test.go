@@ -298,20 +298,6 @@ func testVSCodePath(t *testing.T, tmpDir, filename string) string {
 	}
 }
 
-func assertChatLanguageModelsCleaned(t *testing.T, data []byte) {
-	t.Helper()
-	var entries []map[string]any
-	if err := json.Unmarshal(data, &entries); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-
-	for _, entry := range entries {
-		if isManagedOllamaProviderEntry(entry) {
-			t.Fatalf("expected managed Ollama provider entries to be removed, got %#v", entries)
-		}
-	}
-}
-
 func assertOllamaProviderConfigured(t *testing.T, data []byte) {
 	t.Helper()
 	var entries []map[string]any
