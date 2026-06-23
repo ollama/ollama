@@ -738,6 +738,11 @@ func TestLlamaServerCompletionContextShiftTruncatesPromptOverContext(t *testing.
 
 func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *testing.T) {
 	var capturedReq llamaServerCompletionRequest
+	var tokenizeReq struct {
+		Content      string `json:"content"`
+		AddSpecial   bool   `json:"add_special"`
+		ParseSpecial *bool  `json:"parse_special"`
+	}
 	tokens := make([]int, 5000)
 	for i := range tokens {
 		tokens[i] = i
@@ -748,6 +753,10 @@ func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *te
 		case "/health":
 			fmt.Fprint(w, `{"status":"ok"}`)
 		case "/tokenize":
+			if err := json.NewDecoder(r.Body).Decode(&tokenizeReq); err != nil {
+				t.Errorf("invalid tokenize request body: %v", err)
+				return
+			}
 			if err := json.NewEncoder(w).Encode(map[string][]int{"tokens": tokens}); err != nil {
 				t.Errorf("failed to encode tokenize response: %v", err)
 			}
@@ -806,7 +815,7 @@ func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *te
 	}
 
 	effectiveKeep := opts.NumKeep + 1
-	for i := 0; i < effectiveKeep; i++ {
+	for i := range effectiveKeep {
 		gotToken, ok := got[i].(float64)
 		if !ok || int(gotToken) != i {
 			t.Fatalf("token prompt[%d] = %#v, want %d", i, got[i], i)
