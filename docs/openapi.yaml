@@ -99,8 +99,8 @@ components:
           oneOf:
             - type: boolean
             - type: string
-              enum: [high, medium, low]
-          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low") for supported models.
+              enum: [high, medium, low, max]
+          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low", "max") for supported models, with "max" requesting the highest thinking level.
         raw:
           type: boolean
           description: When true, returns the raw response from the model without any prompt templating
@@ -291,8 +291,8 @@ components:
           oneOf:
             - type: boolean
             - type: string
-              enum: [high, medium, low]
-          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low") for supported models.
+              enum: [high, medium, low, max]
+          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low", "max") for supported models, with "max" requesting the highest thinking level.
         keep_alive:
           oneOf:
             - type: string
