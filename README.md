@@ -114,7 +114,80 @@ Inspirado en [vLLM's PagedAttention](https://arxiv.org/abs/2309.06180) e integra
 
 ---
 
+## 🎯 TriAttention — Calibración del KV Cache
 
+TriAttention acelera la inferencia en contextos largos comprimiendo el KV cache usando estadísticas de frecuencia pre-RoPE por cabeza de atención. Para activarlo necesitas un **archivo `.triattention`** generado a partir de tu modelo.
+
+### ¿Qué necesitas?
+
+1. **Un corpus de texto** — texto plano (UTF-8) representativo del uso que le darás al modelo. Puede ser documentación, código, conversaciones, artículos, etc. Cuanto más parecido al uso real, mejor la calibración. Recomendado: entre 500 KB y 10 MB.
+
+   Fuentes sugeridas:
+   - [WikiText-103](https://huggingface.co/datasets/Salesforce/wikitext) — texto general en inglés
+   - [mc4/es](https://huggingface.co/datasets/allenai/c4) — texto general en español
+   - Tu propio dataset: exporta conversaciones, documentos, código fuente, etc.
+
+2. **Python 3.9+** con las dependencias instaladas (se instalan automáticamente al compilar):
+   ```sh
+   pip install -r scripts/requirements-triattention.txt
+   ```
+
+### Flujo completo
+
+**Paso 1 — Descarga el modelo:**
+```sh
+ollama pull llama3.2:3b
+# Se te preguntará si quieres calibrar TriAttention.
+# Responde N si aún no tienes corpus; puedes calibrar después.
+```
+
+**Paso 2 — Calibra:**
+```sh
+python3 scripts/calibrate-triattention.py \
+    --model meta-llama/Llama-3.2-3B-Instruct \
+    --corpus /ruta/a/tu/corpus.txt \
+    --output llama3.2-3b.triattention \
+    --n-samples 512 \
+    --max-seq-len 2048 \
+    --vram-gb 3 \
+    --ram-gb 20
+```
+
+| Parámetro | Descripción | Default |
+|---|---|---|
+| `--model` | ID de HuggingFace o ruta local | requerido |
+| `--corpus` | Archivo de texto plano (UTF-8) | requerido |
+| `--output` | Ruta del archivo `.triattention` | requerido |
+| `--n-samples` | Ventanas aleatorias a procesar | 512 |
+| `--max-seq-len` | Tokens por ventana | 2048 |
+| `--sample-heads` | Cabezas a muestrear (0 = todas) | 0 (todas) |
+| `--vram-gb` | Límite de VRAM para cargar el modelo | 2 |
+| `--ram-gb` | Límite de RAM CPU | 20 |
+| `--dtype` | Precisión: `bfloat16` o `float32` | bfloat16 |
+
+**Paso 3 — Inferencia con TriAttention activo:**
+```sh
+./build/bin/llama-bench \
+    -m ~/.ollama/models/blobs/<sha256-del-modelo> \
+    --cache-type-v turbo3 \
+    --cache-type-k q8_0 \
+    --triattention-stats llama3.2-3b.triattention \
+    --triattention-budget 2048 \
+    -r 3
+```
+
+### Estimados de mejora
+
+| Tamaño | VRAM ahorrada (KV cache) | Velocidad esperada |
+|---|---|---|
+| 3B–7B | ~1–2 GB | +15–18% tokens/s |
+| 13B | ~3 GB | +22% tokens/s |
+| 30B | ~6 GB | +28% tokens/s |
+| 70B+ | ~12 GB | +35% tokens/s |
+
+> Los valores son estimados a 4k contexto con KV cache `turbo3`. La ganancia real depende de la longitud de contexto — a mayor contexto, mayor beneficio.
+
+---
 
 ## ⚡ Installation & Download
 
