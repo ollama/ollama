@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -555,6 +556,14 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]agentchat.Mod
 			name = strings.TrimSpace(model.Model)
 		}
 		name = strings.TrimSuffix(name, ":latest")
+		if modelref.HasExplicitCloudSource(name) {
+			// Cloud-sourced models in the local tags list keep their ":cloud"
+			// suffix in the name and show arch details without a "cloud" marker.
+			// If a curated rec already added this model, the dedup above keeps
+			// the rec entry.
+			add(name, agentCloudModelDescription(model), false)
+			continue
+		}
 		add(name, agentLocalModelDescription(model), false)
 	}
 
@@ -574,18 +583,22 @@ func agentRecommendationDescription(rec api.ModelRecommendation) string {
 	return strings.Join(parts, " · ")
 }
 
-func agentLocalModelDescription(model api.ListModelResponse) string {
-	parts := []string{"local"}
+// agentModelArchDescription builds the shared arch-details + context segment
+// used by both local and cloud-sourced tag entries: "<family> <params> <quant>
+// · N ctx>". Parameter sizes that are raw numbers (common for cloud stubs) are
+// humanized, e.g. "27000000000" -> "27B".
+func agentModelArchDescription(model api.ListModelResponse) string {
 	var details []string
 	if model.Details.Family != "" {
 		details = append(details, model.Details.Family)
 	}
-	if model.Details.ParameterSize != "" {
-		details = append(details, model.Details.ParameterSize)
+	if ps := humanizedParameterSize(model.Details.ParameterSize); ps != "" {
+		details = append(details, ps)
 	}
 	if model.Details.QuantizationLevel != "" {
 		details = append(details, model.Details.QuantizationLevel)
 	}
+	var parts []string
 	if len(details) > 0 {
 		parts = append(parts, strings.Join(details, " "))
 	}
@@ -593,6 +606,32 @@ func agentLocalModelDescription(model api.ListModelResponse) string {
 		parts = append(parts, format.HumanNumber(uint64(model.Details.ContextLength))+" ctx")
 	}
 	return strings.Join(parts, " · ")
+}
+
+func agentLocalModelDescription(model api.ListModelResponse) string {
+	desc := agentModelArchDescription(model)
+	if desc == "" {
+		return "local"
+	}
+	return "local · " + desc
+}
+
+// agentCloudModelDescription describes a cloud-sourced model present in the
+// local tags list. It omits a "cloud" marker (the model name keeps its
+// ":cloud"/"-cloud" suffix) and shows the same arch details as local models.
+func agentCloudModelDescription(model api.ListModelResponse) string {
+	return agentModelArchDescription(model)
+}
+
+func humanizedParameterSize(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return format.HumanNumber(uint64(f))
+	}
+	return s
 }
 
 func agentToolsRegistry(ctx context.Context, client *api.Client, modelName string, catalog *skills.Catalog) *coreagent.Registry {

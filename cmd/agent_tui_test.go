@@ -271,6 +271,14 @@ func TestAgentModelOptionsIncludesCloudRecommendationsAndLocalModels(t *testing.
 						ContextLength:     131072,
 					},
 					Size: 2_000_000_000,
+				}, {
+					Name: "gemma3:27b-cloud",
+					Details: api.ModelDetails{
+						Family:            "gemma3",
+						ParameterSize:     "27000000000",
+						QuantizationLevel: "bf16",
+						ContextLength:     131072,
+					},
 				}},
 			})
 		case "/api/status":
@@ -300,11 +308,27 @@ func TestAgentModelOptionsIncludesCloudRecommendationsAndLocalModels(t *testing.
 	if !recommendationsCalled {
 		t.Fatal("expected recommendations endpoint to be called")
 	}
-	if got, want := modelOptionNames(options), []string{"qwen3.5:cloud", "llama3.2"}; !slices.Equal(got, want) {
+	if got, want := modelOptionNames(options), []string{"qwen3.5:cloud", "gemma3:27b-cloud", "llama3.2"}; !slices.Equal(got, want) {
 		t.Fatalf("model options = %#v, want %#v", got, want)
 	}
-	if options[0].Description == "" || options[1].Description == "" {
+	if options[0].Description == "" || options[1].Description == "" || options[2].Description == "" {
 		t.Fatalf("expected descriptions for model options: %#v", options)
+	}
+	// A cloud-sourced model in the local tags list keeps its ":cloud" suffix in
+	// the name, shows humanized arch details + ctx, and carries no "cloud" or
+	// "local" marker (the name conveys the cloud source).
+	cloudOpt := options[1]
+	if cloudOpt.Name != "gemma3:27b-cloud" {
+		t.Fatalf("cloud-tagged model name = %q, want :cloud suffix kept", cloudOpt.Name)
+	}
+	if strings.Contains(cloudOpt.Description, "cloud") || strings.Contains(cloudOpt.Description, "local") {
+		t.Fatalf("cloud-tagged model description = %q, should not include cloud/local marker", cloudOpt.Description)
+	}
+	if !strings.Contains(cloudOpt.Description, "27B") || !strings.Contains(cloudOpt.Description, "bf16") {
+		t.Fatalf("cloud-tagged model description = %q, want humanized params + quant", cloudOpt.Description)
+	}
+	if strings.Contains(cloudOpt.Description, "27000000000") {
+		t.Fatalf("cloud-tagged model description = %q, should not leak raw param size", cloudOpt.Description)
 	}
 	if !options[0].Recommended || options[1].Recommended {
 		t.Fatalf("recommended flags = %#v, want only cloud recommendation marked", options)
