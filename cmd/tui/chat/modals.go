@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -28,7 +28,7 @@ type chatCurrentModelStore interface {
 
 type (
 	chatResumePicker = chatPicker[appstore.ChatSummary]
-	chatModelPicker  = chatPicker[ChatModelOption]
+	chatModelPicker  = chatPicker[ModelOption]
 )
 
 type chatPicker[T any] struct {
@@ -37,6 +37,7 @@ type chatPicker[T any] struct {
 	cursor int
 	scroll int
 	match  func(T, string) bool
+	less   func(T, T, string) int
 }
 
 type chatHistoryPopup struct {
@@ -240,9 +241,9 @@ func (m *chatModel) openModelPicker(filter string) (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
-func normalizeModelOptions(models []ChatModelOption) []ChatModelOption {
+func normalizeModelOptions(models []ModelOption) []ModelOption {
 	seen := make(map[string]struct{}, len(models))
-	out := make([]ChatModelOption, 0, len(models))
+	out := make([]ModelOption, 0, len(models))
 	for _, model := range models {
 		model.Name = strings.TrimSpace(model.Name)
 		model.Description = strings.TrimSpace(model.Description)
@@ -256,7 +257,7 @@ func normalizeModelOptions(models []ChatModelOption) []ChatModelOption {
 		seen[key] = struct{}{}
 		out = append(out, model)
 	}
-	slices.SortStableFunc(out, func(a, b ChatModelOption) int {
+	slices.SortStableFunc(out, func(a, b ModelOption) int {
 		if a.Recommended == b.Recommended {
 			return 0
 		}
@@ -268,15 +269,100 @@ func normalizeModelOptions(models []ChatModelOption) []ChatModelOption {
 	return out
 }
 
-func newChatModelPicker(models []ChatModelOption, current, filter string) *chatModelPicker {
-	return newChatPicker(models, filter, func(model ChatModelOption) bool {
+func newChatModelPicker(models []ModelOption, current, filter string) *chatModelPicker {
+	picker := newChatPicker(models, filter, func(model ModelOption) bool {
 		return model.Name == current
-	}, func(model ChatModelOption, filter string) bool {
-		return strings.Contains(strings.ToLower(strings.Join([]string{
-			model.Name,
-			model.Description,
-		}, " ")), filter)
+	}, func(model ModelOption, filter string) bool {
+		return modelOptionMatchScore(model, filter).ok
 	})
+	picker.less = compareModelOptionsForFilter
+	return picker
+}
+
+type modelOptionScore struct {
+	ok          bool
+	rank        int
+	index       int
+	lengthDelta int
+	recommended int
+	name        string
+}
+
+func compareModelOptionsForFilter(a, b ModelOption, filter string) int {
+	aScore := modelOptionMatchScore(a, filter)
+	bScore := modelOptionMatchScore(b, filter)
+	for _, cmp := range []int{
+		compareInt(aScore.rank, bScore.rank),
+		compareInt(aScore.index, bScore.index),
+		compareInt(aScore.lengthDelta, bScore.lengthDelta),
+		compareInt(aScore.recommended, bScore.recommended),
+		strings.Compare(aScore.name, bScore.name),
+	} {
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func modelOptionMatchScore(model ModelOption, filter string) modelOptionScore {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	name := strings.ToLower(strings.TrimSpace(model.Name))
+	description := strings.ToLower(strings.TrimSpace(model.Description))
+	score := modelOptionScore{
+		rank:        4,
+		index:       1 << 20,
+		lengthDelta: 1 << 20,
+		name:        name,
+	}
+	if model.Recommended {
+		score.recommended = -1
+	}
+	if filter == "" {
+		score.ok = true
+		return score
+	}
+	nameRunes := len([]rune(name))
+	filterRunes := len([]rune(filter))
+	if name == filter {
+		score.ok = true
+		score.rank = 0
+		score.index = 0
+		score.lengthDelta = 0
+		return score
+	}
+	if strings.HasPrefix(name, filter) {
+		score.ok = true
+		score.rank = 1
+		score.index = 0
+		score.lengthDelta = max(0, nameRunes-filterRunes)
+		return score
+	}
+	if index := strings.Index(name, filter); index >= 0 {
+		score.ok = true
+		score.rank = 2
+		score.index = len([]rune(name[:index]))
+		score.lengthDelta = max(0, nameRunes-filterRunes)
+		return score
+	}
+	if index := strings.Index(description, filter); index >= 0 {
+		score.ok = true
+		score.rank = 3
+		score.index = len([]rune(description[:index]))
+		score.lengthDelta = max(0, nameRunes-filterRunes)
+	}
+	return score
+}
+
+func compareInt(a, b int) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func (m chatModel) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -328,17 +414,12 @@ func (m chatModel) selectModel() (tea.Model, tea.Cmd) {
 	}
 
 	m.modelPicker = nil
-	previous := m.opts.Model
 	if err := m.applyModelSelection(selected.Name, true); err != nil {
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not switch model: %v", err), err: err.Error()}))
 		m.status = "error"
 		return m, nil
 	}
-	if selected.Name == previous {
-		m.status = "model unchanged"
-	} else {
-		m.status = "model " + selected.Name
-	}
+	m.status = "ready"
 	return m, m.startModelPreload(selected.Name)
 }
 
@@ -365,6 +446,13 @@ func (m *chatModel) applyModelSelection(modelName string, persist bool) error {
 	}
 	if m.opts.SystemPromptForModel != nil {
 		m.opts.SystemPrompt = m.opts.SystemPromptForModel(m.ctx, modelName, m.opts.Tools)
+	}
+	if m.opts.MultiModalForModel != nil {
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		m.opts.MultiModal = m.opts.MultiModalForModel(ctx, modelName)
 	}
 	m.refreshContextWindowTokens(modelName)
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
@@ -865,6 +953,11 @@ func (p *chatPicker[T]) filtered() []T {
 			out = append(out, item)
 		}
 	}
+	if p.less != nil {
+		slices.SortStableFunc(out, func(a, b T) int {
+			return p.less(a, b, filter)
+		})
+	}
 	return out
 }
 
@@ -909,7 +1002,7 @@ func (p *chatPicker[T]) selected() (T, bool) {
 	return filtered[p.cursor], true
 }
 
-func modelOptionMeta(model ChatModelOption, current string) string {
+func modelOptionMeta(model ModelOption, current string) string {
 	var parts []string
 	if model.Name == current {
 		parts = append(parts, "current")

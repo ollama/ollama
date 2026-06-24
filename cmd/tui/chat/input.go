@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
+	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/agent/skills"
 	agenttools "github.com/ollama/ollama/agent/tools"
 	"github.com/ollama/ollama/api"
@@ -118,7 +119,7 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return *m, m.quitCmd()
 	case command == "/help" && args == "":
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: m.helpSummary()}))
+		m.entries = append(m.entries, newSlashEntry(m.helpSummary()))
 		return *m, nil
 	case command == "/help":
 		return m.handleLegacyHelpCommand(input)
@@ -139,7 +140,7 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	case command == "/history" && args == "":
 		return m.openHistoryPopup()
 	case command == "/skills":
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: m.handleSkillsCommand(input)}))
+		m.entries = append(m.entries, newSlashEntry(m.handleSkillsCommand(input)))
 		return *m, nil
 	case command == "/new" && args == "":
 		return m.resetChat("new chat")
@@ -215,7 +216,7 @@ func (m *chatModel) handleVerboseCommand(input string) (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
-func initialPromptHistory(ctx context.Context, opts ChatOptions) []string {
+func initialPromptHistory(ctx context.Context, opts Options) []string {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -239,7 +240,7 @@ func normalizePromptHistory(prompts []string) []string {
 	history := make([]string, 0, min(len(prompts), maxPromptHistory))
 	for _, prompt := range prompts {
 		prompt = strings.TrimSpace(prompt)
-		if prompt == "" || strings.HasPrefix(prompt, chatCompactionSummaryPrefix) {
+		if prompt == "" || coreagent.IsCompactionSummary(api.Message{Role: "user", Content: prompt}) {
 			continue
 		}
 		history = append(history, prompt)
@@ -356,7 +357,6 @@ func (m *chatModel) insertInputFilePlaceholders(input string) bool {
 		parts = append(parts, placeholder)
 	}
 	m.insertInputRunes([]rune(strings.Join(parts, " ")))
-	m.status = inputAttachmentStatus(files)
 	return true
 }
 
@@ -366,7 +366,6 @@ func (m *chatModel) insertPastedTextPlaceholder(input string) bool {
 		return false
 	}
 	m.insertInputRunes([]rune(placeholder))
-	m.status = "pasted text"
 	return true
 }
 
@@ -625,29 +624,6 @@ func inputAttachmentLabel(kind string) string {
 	}
 }
 
-func inputAttachmentStatus(files []filedata.File) string {
-	if len(files) == 0 {
-		return ""
-	}
-	imageCount, audioCount := 0, 0
-	for _, file := range files {
-		switch filedata.Kind(file.Path) {
-		case "audio":
-			audioCount++
-		default:
-			imageCount++
-		}
-	}
-	switch {
-	case imageCount > 0 && audioCount == 0:
-		return "attached image"
-	case audioCount > 0 && imageCount == 0:
-		return "attached audio"
-	default:
-		return "attached file"
-	}
-}
-
 var (
 	inputAttachmentPlaceholderPattern = regexp.MustCompile(`\[(Image|Audio) #([0-9]+)\]`)
 	inputPastedTextPlaceholderPattern = regexp.MustCompile(`\[Pasted text #([0-9]+) \+[0-9]+ lines?\]`)
@@ -858,9 +834,12 @@ func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, plac
 	var raw []string
 	placeholderMode := input == "" && strings.TrimSpace(placeholder) != ""
 	if input == "" && strings.TrimSpace(placeholder) != "" {
-		raw = renderInputPromptRawLines(placeholder, prefix, continuationPrefix, bodyWidth)
+		raw = renderInputPromptRawLines(inputWithCursor([]rune(" "+placeholder), 0), prefix, continuationPrefix, bodyWidth)
 	} else {
-		raw = renderInputPromptRawLines(inputWithCursor([]rune(input), cursor), prefix, continuationPrefix, bodyWidth)
+		if cursor >= 0 {
+			input = inputWithCursor([]rune(input), cursor)
+		}
+		raw = renderInputPromptRawLines(input, prefix, continuationPrefix, bodyWidth)
 	}
 	if len(raw) > maxBodyLines {
 		raw = slices.Clone(raw[len(raw)-maxBodyLines:])
@@ -871,7 +850,12 @@ func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, plac
 	for i, line := range raw {
 		if placeholderMode {
 			if i == 0 && strings.HasPrefix(line, prefix) {
-				lines = append(lines, chatUserStyle.Render(prefix)+chatMetaStyle.Render(strings.TrimPrefix(line, prefix)))
+				rest := strings.TrimPrefix(line, prefix)
+				if strings.HasPrefix(rest, "█") {
+					lines = append(lines, chatUserStyle.Render(prefix+"█")+chatMetaStyle.Render(strings.TrimPrefix(rest, "█")))
+					continue
+				}
+				lines = append(lines, chatUserStyle.Render(prefix)+chatMetaStyle.Render(rest))
 				continue
 			}
 			if strings.HasPrefix(line, continuationPrefix) {

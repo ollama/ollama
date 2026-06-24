@@ -1414,7 +1414,7 @@ func chatEventFromApiChatResponse(res api.ChatResponse, thinkingTimeStart *time.
 
 func chatInfoFromChat(chat store.Chat) responses.ChatInfo {
 	userExcerpt := ""
-	var updatedAt time.Time
+	updatedAt := chat.CreatedAt
 
 	for _, msg := range chat.Messages {
 		// extract the first user message as the user excerpt

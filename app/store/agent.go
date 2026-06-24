@@ -120,7 +120,7 @@ func (s *Store) UpdateLastAgentMessage(ctx context.Context, chatID string, msg a
 	defer tx.Rollback()
 
 	var messageID int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM messages WHERE chat_id = ?`, chatID).Scan(&messageID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM messages WHERE chat_id = ? AND archived = 0`, chatID).Scan(&messageID); err != nil {
 		return fmt.Errorf("get last message id: %w", err)
 	}
 	if messageID == 0 {
@@ -220,6 +220,7 @@ func (s *Store) AgentChat(ctx context.Context, id string) (*AgentChat, error) {
 	} else {
 		chat.Messages = moveCompactionSummaryBeforeKeptMessages(chat.Messages)
 	}
+	chat.Messages = repairDanglingToolCalls(chat.Messages)
 
 	return &chat, nil
 }
@@ -232,7 +233,7 @@ func (s *Store) LatestChat(ctx context.Context) (*AgentChat, error) {
 	query := fmt.Sprintf(`
 			SELECT c.id
 			FROM chats c
-			JOIN messages m ON m.chat_id = c.id
+			JOIN messages m ON m.chat_id = c.id AND m.archived = 0
 			GROUP BY c.id
 			HAVING %[1]s IS NOT NULL
 			ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
@@ -256,7 +257,7 @@ func (s *Store) LatestChatForModel(ctx context.Context, model string) (*AgentCha
 	query := fmt.Sprintf(`
 			SELECT c.id
 			FROM chats c
-			JOIN messages m ON m.chat_id = c.id
+			JOIN messages m ON m.chat_id = c.id AND m.archived = 0
 			GROUP BY c.id
 			HAVING %[1]s = ?
 			ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
@@ -341,6 +342,7 @@ func (s *Store) ListUserMessages(ctx context.Context, limit int) ([]string, erro
 			SELECT id, content
 			FROM messages
 			WHERE role = 'user'
+				AND archived = 0
 				AND TRIM(content) != ''
 				AND content NOT LIKE ?
 			ORDER BY id DESC
@@ -521,7 +523,7 @@ func latestAgentModelForChat(ctx context.Context, db *sql.DB, chatID string) (st
 	if err := db.QueryRowContext(ctx, `
 		SELECT model_name
 		FROM messages
-		WHERE chat_id = ? AND model_name IS NOT NULL AND model_name != ''
+		WHERE chat_id = ? AND archived = 0 AND model_name IS NOT NULL AND model_name != ''
 		ORDER BY updated_at DESC, id DESC
 		LIMIT 1
 	`, chatID).Scan(&modelName); err != nil {
@@ -539,7 +541,7 @@ func currentAgentModelSelectExpr(chatAlias string) string {
 				(
 					SELECT lm.model_name
 					FROM messages lm
-					WHERE lm.chat_id = %[1]s.id AND lm.model_name IS NOT NULL AND lm.model_name != ''
+					WHERE lm.chat_id = %[1]s.id AND lm.archived = 0 AND lm.model_name IS NOT NULL AND lm.model_name != ''
 					ORDER BY lm.updated_at DESC, lm.id DESC
 					LIMIT 1
 				)
@@ -548,10 +550,7 @@ func currentAgentModelSelectExpr(chatAlias string) string {
 
 func messagesContainCompactionSummary(messages []api.Message) bool {
 	for _, msg := range messages {
-		if msg.Role == "tool" && msg.ToolName == agent.CompactionToolName && strings.HasPrefix(msg.Content, agent.CompactionSummaryMessagePrefix) {
-			return true
-		}
-		if (msg.Role == "user" || msg.Role == "system") && strings.HasPrefix(msg.Content, agent.CompactionSummaryMessagePrefix) {
+		if agent.IsCompactionSummary(msg) {
 			return true
 		}
 	}
@@ -562,16 +561,11 @@ func moveCompactionSummaryBeforeKeptMessages(messages []api.Message) []api.Messa
 	start := -1
 	end := -1
 	for i, msg := range messages {
-		if msg.Role == "assistant" {
-			for _, call := range msg.ToolCalls {
-				if call.Function.Name == agent.CompactionToolName {
-					start = i
-					end = i + 1
-					if end < len(messages) && messages[end].Role == "tool" && messages[end].ToolName == agent.CompactionToolName {
-						end++
-					}
-					break
-				}
+		if agent.IsCompactionToolCall(msg) {
+			start = i
+			end = i + 1
+			if end < len(messages) && agent.IsCompactionToolResult(messages[end]) {
+				end++
 			}
 		}
 		if start >= 0 {
@@ -607,6 +601,76 @@ func leadingSystemMessageCount(messages []api.Message) int {
 		}
 	}
 	return len(messages)
+}
+
+type pendingToolCall struct {
+	key  string
+	call api.ToolCall
+}
+
+func repairDanglingToolCalls(messages []api.Message) []api.Message {
+	var pending []pendingToolCall
+	pendingByKey := map[string]struct{}{}
+	repaired := make([]api.Message, 0, len(messages))
+
+	flushPending := func() {
+		for _, pendingCall := range pending {
+			if _, ok := pendingByKey[pendingCall.key]; !ok {
+				continue
+			}
+			repaired = append(repaired, api.Message{
+				Role:       "tool",
+				Content:    "Tool execution interrupted before a result was recorded.",
+				ToolName:   pendingCall.call.Function.Name,
+				ToolCallID: pendingCall.call.ID,
+			})
+		}
+		pending = nil
+		pendingByKey = map[string]struct{}{}
+	}
+
+	for _, msg := range messages {
+		if len(pendingByKey) > 0 && msg.Role != "tool" {
+			flushPending()
+		}
+
+		repaired = append(repaired, msg)
+
+		switch msg.Role {
+		case "assistant":
+			for _, call := range msg.ToolCalls {
+				key := agentToolCallKey(call, len(pending))
+				pending = append(pending, pendingToolCall{key: key, call: call})
+				pendingByKey[key] = struct{}{}
+			}
+		case "tool":
+			if key := msg.ToolCallID; key != "" {
+				delete(pendingByKey, key)
+			} else if msg.ToolName != "" {
+				for _, pendingCall := range pending {
+					if pendingCall.call.ID == "" && pendingCall.call.Function.Name == msg.ToolName {
+						delete(pendingByKey, pendingCall.key)
+						break
+					}
+				}
+			}
+			if len(pendingByKey) == 0 {
+				pending = nil
+			}
+		}
+	}
+	if len(pendingByKey) > 0 {
+		flushPending()
+	}
+
+	return repaired
+}
+
+func agentToolCallKey(call api.ToolCall, index int) string {
+	if call.ID != "" {
+		return call.ID
+	}
+	return fmt.Sprintf("#%d:%s", index, call.Function.Name)
 }
 
 func insertAgentMessage(ctx context.Context, tx *sql.Tx, chatID string, msg api.Message, model string) (int64, error) {

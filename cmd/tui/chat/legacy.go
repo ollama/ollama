@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -19,7 +19,7 @@ type chatShowClient interface {
 func (m *chatModel) handleLegacySetCommand(input string) (tea.Model, tea.Cmd) {
 	args := strings.Fields(input)
 	if len(args) < 2 {
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: legacySetUsage()}))
+		m.entries = append(m.entries, newSlashEntry(legacySetUsage()))
 		return *m, nil
 	}
 
@@ -47,7 +47,7 @@ func (m *chatModel) handleLegacySetCommand(input string) (tea.Model, tea.Cmd) {
 		return *m, nil
 	case "parameter":
 		if len(args) < 4 {
-			m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: legacyParameterUsage()}))
+			m.entries = append(m.entries, newSlashEntry(legacyParameterUsage()))
 			return *m, nil
 		}
 		params, err := api.FormatParams(map[string][]string{args[2]: args[3:]})
@@ -73,24 +73,19 @@ func (m *chatModel) handleLegacyLoadCommand(input string) (tea.Model, tea.Cmd) {
 	if len(args) != 2 {
 		return m.legacyUsageError("Usage: `/load <model>`")
 	}
-	previous := m.opts.Model
 	if err := m.applyModelSelection(args[1], true); err != nil {
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not switch model: %v", err), err: err.Error()}))
 		m.status = "error"
 		return *m, nil
 	}
-	if args[1] == previous {
-		m.status = "model unchanged"
-	} else {
-		m.status = "model " + args[1]
-	}
+	m.status = "ready"
 	return *m, nil
 }
 
 func (m *chatModel) handleLegacyShowCommand(input string) (tea.Model, tea.Cmd) {
 	args := strings.Fields(input)
 	if len(args) != 2 {
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: legacyShowUsage()}))
+		m.entries = append(m.entries, newSlashEntry(legacyShowUsage()))
 		return *m, nil
 	}
 
@@ -105,7 +100,7 @@ func (m *chatModel) handleLegacyShowCommand(input string) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m.legacyUsageError(fmt.Sprintf("Unknown command `/show %s`.", args[1]))
 	}
-	m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: content}))
+	m.entries = append(m.entries, newSlashEntry(content))
 	m.status = "show " + args[1]
 	return *m, nil
 }
@@ -113,18 +108,18 @@ func (m *chatModel) handleLegacyShowCommand(input string) (tea.Model, tea.Cmd) {
 func (m *chatModel) handleLegacyHelpCommand(input string) (tea.Model, tea.Cmd) {
 	args := strings.Fields(input)
 	if len(args) != 2 {
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: m.helpSummary()}))
+		m.entries = append(m.entries, newSlashEntry(m.helpSummary()))
 		return *m, nil
 	}
 	switch strings.TrimPrefix(args[1], "/") {
 	case "set":
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: legacySetUsage()}))
+		m.entries = append(m.entries, newSlashEntry(legacySetUsage()))
 	case "show":
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: legacyShowUsage()}))
+		m.entries = append(m.entries, newSlashEntry(legacyShowUsage()))
 	case "shortcut", "shortcuts":
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: legacyShortcutUsage()}))
+		m.entries = append(m.entries, newSlashEntry(legacyShortcutUsage()))
 	default:
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: m.helpSummary()}))
+		m.entries = append(m.entries, newSlashEntry(m.helpSummary()))
 	}
 	return *m, nil
 }
@@ -243,59 +238,60 @@ func (m *chatModel) refreshContextEstimate() {
 	m.contextEstimate = true
 }
 
+func bullets(title string, items ...string) string {
+	parts := make([]string, 0, len(items)+2)
+	parts = append(parts, title, "")
+	for _, item := range items {
+		parts = append(parts, "- "+item)
+	}
+	return strings.Join(parts, "\n")
+}
+
 func legacySetUsage() string {
-	return strings.Join([]string{
-		"**Legacy set commands**",
-		"",
-		"- `/set parameter <name> <value...>`",
-		"- `/set format json`",
-		"- `/set noformat`",
-		"- `/set verbose`",
-		"- `/set quiet`",
-		"- `/set think [low|medium|high|max]`",
-		"- `/set nothink`",
-	}, "\n")
+	return bullets("**Legacy set commands**",
+		"`/set parameter <name> <value...>`",
+		"`/set format json`",
+		"`/set noformat`",
+		"`/set verbose`",
+		"`/set quiet`",
+		"`/set think [low|medium|high|max]`",
+		"`/set nothink`",
+	)
 }
 
 func legacyParameterUsage() string {
-	return strings.Join([]string{
-		"**Legacy parameters**",
-		"",
-		"- `/set parameter seed <int>`",
-		"- `/set parameter num_predict <int>`",
-		"- `/set parameter top_k <int>`",
-		"- `/set parameter top_p <float>`",
-		"- `/set parameter min_p <float>`",
-		"- `/set parameter num_ctx <int>`",
-		"- `/set parameter temperature <float>`",
-		"- `/set parameter repeat_penalty <float>`",
-		"- `/set parameter repeat_last_n <int>`",
-		"- `/set parameter num_gpu <int>`",
-		"- `/set parameter stop <string> <string> ...`",
-	}, "\n")
+	return bullets("**Legacy parameters**",
+		"`/set parameter seed <int>`",
+		"`/set parameter num_predict <int>`",
+		"`/set parameter top_k <int>`",
+		"`/set parameter top_p <float>`",
+		"`/set parameter min_p <float>`",
+		"`/set parameter num_ctx <int>`",
+		"`/set parameter temperature <float>`",
+		"`/set parameter repeat_penalty <float>`",
+		"`/set parameter repeat_last_n <int>`",
+		"`/set parameter num_gpu <int>`",
+		"`/set parameter stop <string> <string> ...`",
+	)
 }
 
 func legacyShowUsage() string {
-	return strings.Join([]string{
-		"**Legacy show commands**",
-		"",
-		"- `/show info`",
-		"- `/show license`",
-		"- `/show modelfile`",
-		"- `/show parameters`",
-		"- `/show system`",
-		"- `/show template`",
-	}, "\n")
+	return bullets("**Legacy show commands**",
+		"`/show info`",
+		"`/show license`",
+		"`/show modelfile`",
+		"`/show parameters`",
+		"`/show system`",
+		"`/show template`",
+	)
 }
 
 func legacyShortcutUsage() string {
-	return strings.Join([]string{
-		"**Shortcuts**",
-		"",
-		"- `ctrl+o`: toggle tool output",
-		"- `shift+enter`: insert a newline",
-		"- `shift+tab`: toggle permission mode",
-		"- `cmd+backspace`, `option+backspace`, `ctrl+w`: delete previous word",
-		"- `ctrl+c`: clear input, cancel current response, or confirm quit",
-	}, "\n")
+	return bullets("**Shortcuts**",
+		"`ctrl+o`: toggle tool output",
+		"`shift+enter`: insert a newline",
+		"`shift+tab`: toggle permission mode",
+		"`cmd+backspace`, `option+backspace`, `ctrl+w`: delete previous word",
+		"`ctrl+c`: clear input, cancel current response, or confirm quit",
+	)
 }

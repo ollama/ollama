@@ -22,7 +22,8 @@ import (
 	"github.com/ollama/ollama/api"
 	appstore "github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/cmd/config"
-	"github.com/ollama/ollama/cmd/tui"
+	"github.com/ollama/ollama/cmd/internal/filedata"
+	agentchat "github.com/ollama/ollama/cmd/tui/chat"
 	"github.com/ollama/ollama/format"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
@@ -35,7 +36,6 @@ type AgentTUIOptions struct {
 	LoadedMessages      []api.Message
 	Messages            []api.Message
 	Images              []api.ImageData
-	WordWrap            bool
 	Format              string
 	Options             map[string]any
 	Think               *api.ThinkValue
@@ -57,7 +57,6 @@ func agentOptionsFromRunOptions(opts runOptions) AgentTUIOptions {
 		LoadedMessages:      opts.LoadedMessages,
 		Messages:            opts.Messages,
 		Images:              opts.Images,
-		WordWrap:            opts.WordWrap,
 		Format:              opts.Format,
 		Options:             opts.Options,
 		Think:               opts.Think,
@@ -225,7 +224,7 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 
 	opts = setup.opts
 
-	_, err = tui.RunAgentChat(cmd.Context(), tui.ChatOptions{
+	_, err = agentchat.Run(cmd.Context(), agentchat.Options{
 		Model:    opts.Model,
 		ChatID:   setup.chatID,
 		Messages: setup.messages,
@@ -235,7 +234,10 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		ToolRegistryForModel: func(ctx context.Context, model string) *coreagent.Registry {
 			return agentToolsRegistry(ctx, setup.client, model, setup.skills)
 		},
-		ModelOptions: func(ctx context.Context) ([]tui.ChatModelOption, error) {
+		MultiModalForModel: func(ctx context.Context, model string) bool {
+			return agentModelSupportsMultimodal(ctx, setup.client, model)
+		},
+		ModelOptions: func(ctx context.Context) ([]agentchat.ModelOption, error) {
 			return agentModelOptions(ctx, setup.client)
 		},
 		OnModelSelected: func(_ context.Context, model string) error {
@@ -296,11 +298,23 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 	prompt := opts.Prompt
 	images := slices.Clone(opts.Images)
 	if opts.MultiModal {
-		var err error
-		prompt, images, err = extractFileData(prompt)
+		var files []filedata.File
+		prompt, files, err = filedata.ExtractWithFiles(prompt)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "Couldn't process file: %q\n", err)
 			return err
 		}
+		imgs := make([]api.ImageData, 0, len(files))
+		for _, file := range files {
+			switch filedata.Kind(file.Path) {
+			case "audio":
+				fmt.Fprintf(os.Stderr, "Added audio '%s'\n", file.Path)
+			default:
+				fmt.Fprintf(os.Stderr, "Added image '%s'\n", file.Path)
+			}
+			imgs = append(imgs, file.Data)
+		}
+		images = imgs
 	}
 	systemPrompt := agentSystemPrompt(opts.Model, setup.skills, setup.registry != nil && setup.registry.Has("skill"), "")
 	newMessages := []api.Message{{Role: "user", Content: prompt, Images: images}}
@@ -494,7 +508,7 @@ func agentDefaultSystemPrompt(now time.Time, modelName string) string {
 	}, "\n")
 }
 
-func agentModelOptions(ctx context.Context, client *api.Client) ([]tui.ChatModelOption, error) {
+func agentModelOptions(ctx context.Context, client *api.Client) ([]agentchat.ModelOption, error) {
 	if client == nil {
 		return nil, errors.New("model picker requires an API client")
 	}
@@ -505,7 +519,7 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]tui.ChatModel
 	}
 
 	seen := make(map[string]struct{})
-	var options []tui.ChatModelOption
+	var options []agentchat.ModelOption
 	add := func(name, description string, recommended bool) {
 		name = strings.TrimSpace(name)
 		if name == "" {
@@ -516,7 +530,7 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]tui.ChatModel
 			return
 		}
 		seen[key] = struct{}{}
-		options = append(options, tui.ChatModelOption{Name: name, Description: strings.TrimSpace(description), Recommended: recommended})
+		options = append(options, agentchat.ModelOption{Name: name, Description: strings.TrimSpace(description), Recommended: recommended})
 	}
 
 	if disabled, known := agentCloudStatusDisabled(ctx, client); !known || !disabled {
@@ -636,6 +650,30 @@ func agentModelSupportsTools(ctx context.Context, client *api.Client, modelName 
 	}
 
 	return slices.Contains(resp.Capabilities, model.CapabilityTools), nil
+}
+
+func agentModelSupportsMultimodal(ctx context.Context, client *api.Client, modelName string) bool {
+	if client == nil || strings.TrimSpace(modelName) == "" {
+		return false
+	}
+	resp, err := client.Show(ctx, &api.ShowRequest{Model: modelName})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not check model capabilities: %v\n", err)
+		return false
+	}
+
+	if slices.Contains(resp.Capabilities, model.CapabilityVision) || slices.Contains(resp.Capabilities, model.CapabilityAudio) {
+		return true
+	}
+	if len(resp.ProjectorInfo) != 0 {
+		return true
+	}
+	for key := range resp.ModelInfo {
+		if strings.Contains(key, ".vision.") {
+			return true
+		}
+	}
+	return false
 }
 
 func agentCloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool, known bool) {

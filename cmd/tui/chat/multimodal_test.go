@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -15,7 +15,7 @@ func TestChatStartRunAttachesDroppedImagePath(t *testing.T) {
 	fp := writeTestPNG(t)
 	m := chatModel{
 		ctx: context.Background(),
-		opts: ChatOptions{
+		opts: Options{
 			Model:      "test",
 			Client:     chatTestClient{},
 			MultiModal: true,
@@ -54,7 +54,7 @@ func TestChatStartRunAttachesDroppedFileURL(t *testing.T) {
 	fileURL := (&url.URL{Scheme: "file", Path: fp}).String()
 	m := chatModel{
 		ctx: context.Background(),
-		opts: ChatOptions{
+		opts: Options{
 			Model:      "test",
 			Client:     chatTestClient{},
 			MultiModal: true,
@@ -79,7 +79,7 @@ func TestChatPasteImagePathAttachesOnSubmit(t *testing.T) {
 	fp := writeTestPNG(t)
 	m := chatModel{
 		ctx: context.Background(),
-		opts: ChatOptions{
+		opts: Options{
 			Model:      "test",
 			Client:     chatTestClient{},
 			MultiModal: true,
@@ -91,8 +91,8 @@ func TestChatPasteImagePathAttachesOnSubmit(t *testing.T) {
 	if got := string(m.input); got != "describe [Image #0]" {
 		t.Fatalf("pasted path input = %q, want placeholder", got)
 	}
-	if got := m.notificationLine(); got != "attached image" {
-		t.Fatalf("notification = %q, want attached image", got)
+	if got := m.notificationLine(); got != "" {
+		t.Fatalf("notification = %q, want no attachment notification", got)
 	}
 	if got := string(m.input); strings.Contains(got, fp) {
 		t.Fatalf("pasted path should be hidden behind placeholder, input = %q", got)
@@ -120,12 +120,59 @@ func TestChatPasteImagePathAttachesOnSubmit(t *testing.T) {
 	}
 }
 
+func TestChatPasteImagePathAfterSwitchingToMultimodalModel(t *testing.T) {
+	fp := writeTestPNG(t)
+	m := chatModel{
+		ctx:   context.Background(),
+		input: []rune("/model vision"),
+		opts: Options{
+			Model: "text",
+			ModelOptions: func(context.Context) ([]ModelOption, error) {
+				return []ModelOption{
+					{Name: "text", Description: "local"},
+					{Name: "vision", Description: "local vision"},
+				}, nil
+			},
+			MultiModalForModel: func(_ context.Context, model string) bool {
+				return model == "vision"
+			},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("model picker should not return a command")
+	}
+	m = updated.(chatModel)
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("model switch should not preload without a preload hook")
+	}
+	m = updated.(chatModel)
+	if m.opts.Model != "vision" {
+		t.Fatalf("model = %q, want vision", m.opts.Model)
+	}
+	if !m.opts.MultiModal {
+		t.Fatal("switching to a multimodal model should enable image paste handling")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("describe " + fp), Paste: true})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "describe [Image #0]" {
+		t.Fatalf("pasted path input = %q, want placeholder", got)
+	}
+	if strings.Contains(string(m.input), fp) {
+		t.Fatalf("pasted path should be hidden behind placeholder, input = %q", string(m.input))
+	}
+}
+
 func TestChatImagePlaceholdersUseSessionNumbers(t *testing.T) {
 	first := writeTestPNG(t)
 	second := writeTestPNG(t)
 	m := chatModel{
 		ctx: context.Background(),
-		opts: ChatOptions{
+		opts: Options{
 			Model:      "test",
 			Client:     chatTestClient{},
 			MultiModal: true,
@@ -155,7 +202,7 @@ func TestChatAbsoluteImagePathBypassesSlashCommandParsing(t *testing.T) {
 	fp := writeTestPNG(t)
 	m := chatModel{
 		ctx: context.Background(),
-		opts: ChatOptions{
+		opts: Options{
 			Model:      "test",
 			Client:     chatTestClient{},
 			MultiModal: true,
@@ -183,7 +230,7 @@ func TestChatDeletingImagePlaceholderRemovesAttachment(t *testing.T) {
 	fp := writeTestPNG(t)
 	m := chatModel{
 		ctx: context.Background(),
-		opts: ChatOptions{
+		opts: Options{
 			Model:      "test",
 			Client:     chatTestClient{},
 			MultiModal: true,
@@ -225,7 +272,7 @@ func TestChatWordDeletingImagePlaceholderRemovesAttachment(t *testing.T) {
 	fp := writeTestPNG(t)
 	m := chatModel{
 		ctx: context.Background(),
-		opts: ChatOptions{
+		opts: Options{
 			Model:      "test",
 			Client:     chatTestClient{},
 			MultiModal: true,

@@ -182,7 +182,7 @@ type Store struct {
 	db   *database
 }
 
-var defaultDBPath = func() string {
+func defaultDBPath() string {
 	switch runtime.GOOS {
 	case "windows":
 		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "db.sqlite")
@@ -191,7 +191,7 @@ var defaultDBPath = func() string {
 	default:
 		return filepath.Join(os.Getenv("HOME"), ".ollama", "db.sqlite")
 	}
-}()
+}
 
 // legacyConfigPath is the path to the old config.json file
 var legacyConfigPath = func() string {
@@ -228,7 +228,7 @@ func (s *Store) ensureDB() error {
 
 	dbPath := s.DBPath
 	if dbPath == "" {
-		dbPath = defaultDBPath
+		dbPath = defaultDBPath()
 	}
 
 	// Ensure directory exists

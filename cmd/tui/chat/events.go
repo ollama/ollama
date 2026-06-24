@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -41,6 +41,24 @@ type chatCompactProgressMsg struct {
 	tokens int
 }
 
+// resetStreamingState clears the transient streaming flags that every
+// non-streaming event resets before applying its own state.
+func (m *chatModel) resetStreamingState() {
+	m.awaitingModel = false
+	m.thinking = false
+	m.thinkingTokens = 0
+}
+
+// resetRunState clears all run-progress flags (streaming plus compaction
+// progress) for terminal events that fully reset the run view.
+func (m *chatModel) resetRunState() {
+	m.awaitingModel = false
+	m.compacting = false
+	m.compactingTokens = 0
+	m.thinking = false
+	m.thinkingTokens = 0
+}
+
 type chatModelPreloadDoneMsg struct {
 	model string
 	err   error
@@ -78,9 +96,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			contextChanged = true
 		}
 	case coreagent.EventMessageDelta:
-		m.awaitingModel = false
-		m.thinking = false
-		m.thinkingTokens = 0
+		m.resetStreamingState()
 		m.groupCompletedToolHistory()
 		idx := m.ensureAssistantEntry()
 		m.entries[idx].content += event.Content
@@ -89,16 +105,12 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.liveMessages[msgIdx].Content += event.Content
 		contextChanged = true
 	case coreagent.EventToolCallDetected:
-		m.awaitingModel = false
-		m.thinking = false
-		m.thinkingTokens = 0
+		m.resetStreamingState()
 		idx := m.ensureLiveAssistantMessage()
 		m.liveMessages[idx].ToolCalls = append(m.liveMessages[idx].ToolCalls, event.ToolCalls...)
 		contextChanged = true
 	case coreagent.EventToolStarted:
-		m.awaitingModel = false
-		m.thinking = false
-		m.thinkingTokens = 0
+		m.resetStreamingState()
 		m.refreshContextWindowTokens(m.opts.Model)
 		idx := m.findActiveToolEntry(event.ToolCallID)
 		if idx < 0 {
@@ -115,9 +127,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.applyToolOutputModeTo(idx)
 		m.markEntryDirty(idx)
 	case coreagent.EventToolFinished:
-		m.awaitingModel = false
-		m.thinking = false
-		m.thinkingTokens = 0
+		m.resetStreamingState()
 		m.refreshContextWindowTokens(m.opts.Model)
 		if event.WorkingDir != "" {
 			m.workingDir = event.WorkingDir
@@ -151,16 +161,10 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		})
 		contextChanged = true
 	case coreagent.EventToolsUnavailable:
-		m.awaitingModel = false
-		m.thinking = false
-		m.thinkingTokens = 0
+		m.resetStreamingState()
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: "Tools are unavailable for this model."}))
 	case coreagent.EventCompacted:
-		m.awaitingModel = false
-		m.compacting = false
-		m.compactingTokens = 0
-		m.thinking = false
-		m.thinkingTokens = 0
+		m.resetRunState()
 		skipResponseMetrics = true
 		if len(event.Messages) > 0 {
 			m.liveMessages = slices.Clone(event.Messages)
@@ -184,11 +188,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			m.compactingTokens = event.Tokens
 		}
 	case coreagent.EventCompactionSkipped:
-		m.awaitingModel = false
-		m.compacting = false
-		m.compactingTokens = 0
-		m.thinking = false
-		m.thinkingTokens = 0
+		m.resetRunState()
 		message := event.Content
 		if strings.TrimSpace(message) == "" {
 			message = coreagent.CompactionSkippedMessage(event.Error)
@@ -198,11 +198,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	case coreagent.EventModelStreamDone:
 		m.awaitingModel = false
 	case coreagent.EventError:
-		m.awaitingModel = false
-		m.compacting = false
-		m.compactingTokens = 0
-		m.thinking = false
-		m.thinkingTokens = 0
+		m.resetRunState()
 		m.eventErrorRendered = true
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: event.Error, err: event.Error}))
 	}
@@ -226,12 +222,7 @@ func messagesEndWithCompactionResult(messages []api.Message) bool {
 	if len(messages) == 0 {
 		return false
 	}
-	msg := messages[len(messages)-1]
-	return msg.Role == "tool" && (isChatCompactionToolName(msg.ToolName) || msg.ToolCallID == chatCompactionToolCallID)
-}
-
-func isChatCompactionToolName(name string) bool {
-	return name == chatCompactionToolName
+	return coreagent.IsCompactionToolResult(messages[len(messages)-1])
 }
 
 func (m *chatModel) ensureLiveAssistantMessage() int {

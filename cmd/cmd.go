@@ -712,7 +712,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
 	opts := runOptions{
-		WordWrap:    os.Getenv("TERM") == "xterm-256color",
 		Options:     map[string]any{},
 		ShowConnect: true,
 	}
@@ -746,7 +745,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			prompts = append([]string{stdinContent}, prompts...)
 		}
 		opts.ShowConnect = false
-		opts.WordWrap = false
 		interactive = false
 	}
 	opts.Prompt = strings.Join(prompts, " ")
@@ -986,13 +984,6 @@ func applyRunFlagsToOptions(cmd *cobra.Command, opts *runOptions) (bool, error) 
 			}
 			opts.KeepAlive = &api.Duration{Duration: d}
 		}
-	}
-	if cmd.Flags().Lookup("nowordwrap") != nil {
-		nowrap, err := cmd.Flags().GetBool("nowordwrap")
-		if err != nil {
-			return false, err
-		}
-		opts.WordWrap = !nowrap
 	}
 	return thinkExplicit, nil
 }
@@ -1683,7 +1674,6 @@ type runOptions struct {
 	LoadedMessages      []api.Message
 	Prompt              string
 	Messages            []api.Message
-	WordWrap            bool
 	Format              string
 	System              string
 	Images              []api.ImageData
@@ -1738,7 +1728,6 @@ func (r runOptions) Copy() runOptions {
 		LoadedMessages:      loadedMessages,
 		Prompt:              r.Prompt,
 		Messages:            messages,
-		WordWrap:            r.WordWrap,
 		Format:              r.Format,
 		System:              r.System,
 		Images:              images,
@@ -1924,7 +1913,6 @@ func registerRunFlagsWithOptions(cmd *cobra.Command, opts runFlagOptions) {
 		cmd.Flags().Bool("verbose", false, "Show timings for response")
 	}
 	cmd.Flags().Bool("insecure", false, "Use an insecure registry")
-	cmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	if opts.includeFormat {
 		cmd.Flags().String("format", "", "Response format (e.g. json)")
 	}
@@ -2141,7 +2129,6 @@ func ensureServerRunning(ctx context.Context) error {
 func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 	opts := runOptions{
 		Model:       modelName,
-		WordWrap:    os.Getenv("TERM") == "xterm-256color",
 		Options:     map[string]any{},
 		ShowConnect: true,
 	}

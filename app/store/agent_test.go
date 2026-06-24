@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
@@ -56,13 +57,21 @@ func TestAgentStoreWritesAppCompatibleChat(t *testing.T) {
 	}, "llama3.2"); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.AppendAgentMessage(ctx, "chat-1", api.Message{
+		Role:       "tool",
+		Content:    "cwd",
+		ToolName:   "bash",
+		ToolCallID: "call-1",
+	}, ""); err != nil {
+		t.Fatal(err)
+	}
 
 	agentChat, err := store.AgentChat(ctx, "chat-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(agentChat.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2", len(agentChat.Messages))
+	if len(agentChat.Messages) != 3 {
+		t.Fatalf("messages = %d, want 3", len(agentChat.Messages))
 	}
 	if agentChat.Title != "hello from cli" {
 		t.Fatalf("title = %q, want %q", agentChat.Title, "hello from cli")
@@ -73,13 +82,57 @@ func TestAgentStoreWritesAppCompatibleChat(t *testing.T) {
 	if got := agentChat.Messages[1].ToolCalls[0].ID; got != "call-1" {
 		t.Fatalf("tool call id = %q, want call-1", got)
 	}
+	if agentChat.Messages[2].Role != "tool" || agentChat.Messages[2].ToolCallID != "call-1" {
+		t.Fatalf("tool result = %#v", agentChat.Messages[2])
+	}
 
 	appChat, err := store.Chat("chat-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(appChat.Messages) != 2 || appChat.Messages[0].Content != "hello from cli" {
+	if len(appChat.Messages) != 3 || appChat.Messages[0].Content != "hello from cli" {
 		t.Fatalf("app chat = %#v", appChat)
+	}
+}
+
+func TestAgentStoreRepairsDanglingToolCallsOnResume(t *testing.T) {
+	store := newTestAgentStore(t)
+	ctx := context.Background()
+
+	args := api.NewToolCallFunctionArguments()
+	args.Set("command", "pwd")
+	if err := store.AppendAgentMessage(ctx, "chat-1", api.Message{Role: "user", Content: "start"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendAgentMessage(ctx, "chat-1", api.Message{
+		Role: "assistant",
+		ToolCalls: []api.ToolCall{{
+			ID: "call-1",
+			Function: api.ToolCallFunction{
+				Name:      "bash",
+				Arguments: args,
+			},
+		}},
+	}, "llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendAgentMessage(ctx, "chat-1", api.Message{Role: "user", Content: "after restart"}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	agentChat, err := store.AgentChat(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agentChat.Messages) != 4 {
+		t.Fatalf("messages = %#v, want synthetic tool result inserted", agentChat.Messages)
+	}
+	repair := agentChat.Messages[2]
+	if repair.Role != "tool" || repair.ToolName != "bash" || repair.ToolCallID != "call-1" || !strings.Contains(repair.Content, "interrupted") {
+		t.Fatalf("repair message = %#v", repair)
+	}
+	if agentChat.Messages[3].Role != "user" || agentChat.Messages[3].Content != "after restart" {
+		t.Fatalf("message after repair = %#v", agentChat.Messages[3])
 	}
 }
 
@@ -180,6 +233,81 @@ func TestAgentStoreLatestAndListChats(t *testing.T) {
 	if summaries[1].ID != "chat-old" || summaries[1].Model != "llama3.2" {
 		t.Fatalf("older summary = %#v", summaries[1])
 	}
+
+	future := time.Date(2099, 1, 1, 12, 0, 0, 0, time.UTC)
+	if _, err := store.db.conn.ExecContext(ctx, `
+		INSERT INTO chats (id, title, created_at)
+		VALUES (?, ?, ?)
+	`, "chat-archived", "archived topic", future); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.conn.ExecContext(ctx, `
+		INSERT INTO messages (chat_id, role, content, model_name, created_at, updated_at, archived)
+		VALUES (?, ?, ?, ?, ?, ?, 1)
+	`, "chat-archived", "assistant", "archived answer", "ghost-model", future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err = store.LatestChat(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.ID != "chat-new" {
+		t.Fatalf("latest chat = %q, want chat-new after archived future row", chat.ID)
+	}
+	if _, err := store.LatestChatForModel(ctx, "ghost-model"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("archived model err = %v, want sql.ErrNoRows", err)
+	}
+	summaries, err = store.ListChats(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("summaries = %d, want archived-only chat hidden", len(summaries))
+	}
+}
+
+func TestAgentStoreUpdateLastMessageIgnoresArchivedRows(t *testing.T) {
+	store := newTestAgentStore(t)
+	ctx := context.Background()
+
+	if err := store.AppendAgentMessage(ctx, "chat-1", api.Message{Role: "assistant", Content: "active"}, "llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+
+	future := time.Date(2099, 1, 1, 12, 0, 0, 0, time.UTC)
+	if _, err := store.db.conn.ExecContext(ctx, `
+		INSERT INTO messages (chat_id, role, content, created_at, updated_at, archived)
+		VALUES (?, ?, ?, ?, ?, 1)
+	`, "chat-1", "assistant", "archived", future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.UpdateLastAgentMessage(ctx, "chat-1", api.Message{Role: "assistant", Content: "active updated"}, "llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := store.AgentChat(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 || chat.Messages[0].Content != "active updated" {
+		t.Fatalf("active messages = %#v, want updated active message only", chat.Messages)
+	}
+
+	var archivedContent string
+	if err := store.db.conn.QueryRowContext(ctx, `
+		SELECT content
+		FROM messages
+		WHERE chat_id = ? AND archived = 1
+		ORDER BY id DESC
+		LIMIT 1
+	`, "chat-1").Scan(&archivedContent); err != nil {
+		t.Fatal(err)
+	}
+	if archivedContent != "archived" {
+		t.Fatalf("archived content = %q, want archived", archivedContent)
+	}
 }
 
 func TestAgentStoreListUserMessages(t *testing.T) {
@@ -199,11 +327,15 @@ func TestAgentStoreListUserMessages(t *testing.T) {
 		}
 	}
 
+	if _, err := store.db.conn.ExecContext(ctx, `UPDATE messages SET archived = 1 WHERE content = ?`, "middle prompt"); err != nil {
+		t.Fatal(err)
+	}
+
 	messages, err := store.ListUserMessages(ctx, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"middle prompt", "new prompt"}
+	want := []string{"old prompt", "new prompt"}
 	if !slices.Equal(messages, want) {
 		t.Fatalf("messages = %#v, want %#v", messages, want)
 	}

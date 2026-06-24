@@ -501,13 +501,6 @@ func TestPrepareRootResumeRunCommand(t *testing.T) {
 		t.Fatal("run verbose flag = true, want unchanged false")
 	}
 
-	nowrap, err := runCmd.Flags().GetBool("nowordwrap")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if nowrap {
-		t.Fatal("run nowordwrap flag = true, want unchanged false")
-	}
 	format, err := runCmd.Flags().GetString("format")
 	if err != nil {
 		t.Fatal(err)
@@ -540,7 +533,6 @@ func TestApplyRunFlagsToOptions(t *testing.T) {
 		"keepalive":          "5m",
 		"verbose":            "true",
 		"hidethinking":       "true",
-		"nowordwrap":         "true",
 		"auto-approve-tools": "true",
 	} {
 		if err := cmd.Flags().Set(name, value); err != nil {
@@ -548,7 +540,7 @@ func TestApplyRunFlagsToOptions(t *testing.T) {
 		}
 	}
 
-	opts := runOptions{WordWrap: true}
+	var opts runOptions
 	thinkExplicit, err := applyRunFlagsToOptions(cmd, &opts)
 	if err != nil {
 		t.Fatal(err)
@@ -564,9 +556,6 @@ func TestApplyRunFlagsToOptions(t *testing.T) {
 	}
 	if !opts.AutoApproveTools || !opts.Verbose || !opts.HideThinking {
 		t.Fatalf("flags not applied: %#v", opts)
-	}
-	if opts.WordWrap {
-		t.Fatal("word wrap = true, want false")
 	}
 	if opts.KeepAlive == nil || opts.KeepAlive.Duration != 5*time.Minute {
 		t.Fatalf("keepalive = %#v, want 5m", opts.KeepAlive)
@@ -829,7 +818,6 @@ func TestRunEmbeddingModel(t *testing.T) {
 	cmd.Flags().Int("dimensions", 0, "")
 	cmd.Flags().Bool("verbose", false, "")
 	cmd.Flags().Bool("insecure", false, "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
@@ -935,7 +923,6 @@ func TestRunHandlerResumeUsesLatestChatInHeadlessMode(t *testing.T) {
 	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", true, "")
 	cmd.Flags().String("keepalive", "", "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().Bool("verbose", false, "")
 
 	oldStdin := os.Stdin
@@ -1036,7 +1023,6 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", false, "")
 	cmd.Flags().String("keepalive", "", "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().Bool("verbose", false, "")
 
 	oldStdout := os.Stdout
@@ -1137,7 +1123,6 @@ func TestRunHandlerHeadlessDeniedApprovalReturnsError(t *testing.T) {
 	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", false, "")
 	cmd.Flags().String("keepalive", "", "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().Bool("verbose", false, "")
 
 	oldStdout := os.Stdout
@@ -1208,7 +1193,6 @@ func TestRunHandlerHeadlessBudgetsAgainstLoadedContext(t *testing.T) {
 	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", false, "")
 	cmd.Flags().String("keepalive", "", "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().Bool("verbose", false, "")
 
 	err := RunHandler(cmd, []string{"test-model", strings.Repeat("word ", 4000)})
@@ -1270,7 +1254,6 @@ func TestRunHandlerPromptUsesAgentLoopByDefault(t *testing.T) {
 	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", false, "")
 	cmd.Flags().String("keepalive", "", "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().Bool("verbose", false, "")
 
 	oldStdout := os.Stdout
@@ -1344,7 +1327,6 @@ func TestRunEmbeddingModelWithFlags(t *testing.T) {
 	cmd.Flags().Int("dimensions", 0, "")
 	cmd.Flags().Bool("verbose", false, "")
 	cmd.Flags().Bool("insecure", false, "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
@@ -1445,7 +1427,6 @@ func TestRunEmbeddingModelPipedInput(t *testing.T) {
 	cmd.Flags().Int("dimensions", 0, "")
 	cmd.Flags().Bool("verbose", false, "")
 	cmd.Flags().Bool("insecure", false, "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
@@ -1520,7 +1501,6 @@ func TestRunEmbeddingModelNoInput(t *testing.T) {
 	cmd.Flags().Int("dimensions", 0, "")
 	cmd.Flags().Bool("verbose", false, "")
 	cmd.Flags().Bool("insecure", false, "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
@@ -1571,7 +1551,6 @@ func TestRunHandler_CloudAuthErrorOnShow_PrintsSigninMessage(t *testing.T) {
 	cmd.Flags().Int("dimensions", 0, "")
 	cmd.Flags().Bool("verbose", false, "")
 	cmd.Flags().Bool("insecure", false, "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
@@ -1641,7 +1620,6 @@ func TestRunHandler_CloudAuthErrorOnAgentChat_PrintsSigninMessage(t *testing.T) 
 	cmd.Flags().Int("dimensions", 0, "")
 	cmd.Flags().Bool("verbose", false, "")
 	cmd.Flags().Bool("insecure", false, "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
@@ -1727,7 +1705,6 @@ func TestRunHandler_ExplicitCloudStubMissing_PullsNormalizedNameTEMP(t *testing.
 	cmd.Flags().Int("dimensions", 0, "")
 	cmd.Flags().Bool("verbose", false, "")
 	cmd.Flags().Bool("insecure", false, "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
@@ -1800,7 +1777,6 @@ func TestRunHandler_ExplicitCloudStubPresent_SkipsPullTEMP(t *testing.T) {
 	cmd.Flags().Int("dimensions", 0, "")
 	cmd.Flags().Bool("verbose", false, "")
 	cmd.Flags().Bool("insecure", false, "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
@@ -1869,7 +1845,6 @@ func TestRunHandler_ExplicitCloudStubPullFailure_IsBestEffortTEMP(t *testing.T) 
 	cmd.Flags().Int("dimensions", 0, "")
 	cmd.Flags().Bool("verbose", false, "")
 	cmd.Flags().Bool("insecure", false, "")
-	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
@@ -2508,9 +2483,8 @@ func TestRunOptions_Copy(t *testing.T) {
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "hi there"},
 		},
-		WordWrap: true,
-		Format:   "json",
-		System:   "system prompt",
+		Format: "json",
+		System: "system prompt",
 		Images: []api.ImageData{
 			[]byte("image1"),
 			[]byte("image2"),
@@ -2546,7 +2520,6 @@ func TestRunOptions_Copy(t *testing.T) {
 		{"ParentModel", copied.ParentModel, original.ParentModel},
 		{"LoadedMessages", copied.LoadedMessages, original.LoadedMessages},
 		{"Prompt", copied.Prompt, original.Prompt},
-		{"WordWrap", copied.WordWrap, original.WordWrap},
 		{"Format", copied.Format, original.Format},
 		{"System", copied.System, original.System},
 		{"MultiModal", copied.MultiModal, original.MultiModal},

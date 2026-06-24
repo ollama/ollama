@@ -633,7 +633,7 @@ func TestCompactionSummaryCanTellModelToContinueTask(t *testing.T) {
 	}
 }
 
-func TestResolveContextWindowTokensUsesSmallerKnownWindow(t *testing.T) {
+func TestResolveContextWindowTokensPrefersExplicitNumCtx(t *testing.T) {
 	tests := []struct {
 		name       string
 		options    map[string]any
@@ -647,10 +647,10 @@ func TestResolveContextWindowTokensUsesSmallerKnownWindow(t *testing.T) {
 			want:       4096,
 		},
 		{
-			name:       "server effective smaller than requested num ctx",
+			name:       "explicit num ctx can exceed configured metadata",
 			options:    map[string]any{"num_ctx": 131072},
 			configured: 8192,
-			want:       8192,
+			want:       131072,
 		},
 		{
 			name:       "metadata without explicit num ctx",

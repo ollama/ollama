@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -110,10 +110,12 @@ func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
 	m.permissionMode.SetAutoApprove(autoApprove)
 	m.opts.AutoApproveTools = autoApprove
 	if autoApprove {
+		m.permissionNotice = "full access enabled"
 		m.status = "full access enabled"
 		if m.approvalPrompt != nil {
 			updated, cmd := m.resolveApprovalPrompt(coreagent.ApprovalAllowOnce, "")
 			if model, ok := updated.(chatModel); ok {
+				model.permissionNotice = "full access enabled"
 				model.status = "full access enabled"
 				return model, cmd
 			}
@@ -121,6 +123,7 @@ func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
 		}
 		return *m, nil
 	}
+	m.permissionNotice = "review mode enabled"
 	m.status = "review mode enabled"
 	return *m, nil
 }

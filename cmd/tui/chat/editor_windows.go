@@ -1,5 +1,5 @@
 //go:build windows
 
-package tui
+package chat
 
 const defaultEditor = "edit"

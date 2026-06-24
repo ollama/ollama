@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -103,7 +103,7 @@ func TestChatLargePasteUsesPlaceholderAndExpandsOnSubmit(t *testing.T) {
 	pasted := strings.Repeat("line\n", pastedTextPlaceholderMinLines-1) + "line"
 	m := chatModel{
 		ctx: context.Background(),
-		opts: ChatOptions{
+		opts: Options{
 			Model:  "test",
 			Client: chatTestClient{},
 		},
@@ -390,7 +390,7 @@ func TestChatPromptHistoryEditsRecalledPrompt(t *testing.T) {
 func TestInitialPromptHistoryLoadsFromStore(t *testing.T) {
 	store := &chatResumeTestStore{prompts: []string{"old prompt", "new prompt"}}
 
-	history := initialPromptHistory(context.Background(), ChatOptions{
+	history := initialPromptHistory(context.Background(), Options{
 		Store:    store,
 		Messages: []api.Message{{Role: "user", Content: "fallback prompt"}},
 	})
@@ -558,6 +558,30 @@ func TestChatEnterAcceptsSelectedSlashCommand(t *testing.T) {
 	}
 }
 
+func TestChatSlashCommandOutputRendersWithSeparator(t *testing.T) {
+	m := chatModel{
+		input:  []rune("/skills"),
+		width:  80,
+		height: 16,
+		entries: []chatEntry{
+			{role: "assistant", content: "Hello!"},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("skills command should not return a command")
+	}
+	m = updated.(chatModel)
+	if len(m.entries) != 2 || m.entries[1].role != "slash" {
+		t.Fatalf("entries = %#v, want slash output entry", m.entries)
+	}
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "• No skills are installed.") {
+		t.Fatalf("slash output should render with a separator dot:\n%s", view)
+	}
+}
+
 func TestChatThinkCommandOpensPicker(t *testing.T) {
 	m := chatModel{input: []rune("/think")}
 
@@ -686,9 +710,6 @@ func TestChatVerboseCommandTogglesMetrics(t *testing.T) {
 	}
 	if m.status != "verbose on" {
 		t.Fatalf("status = %q, want verbose on", m.status)
-	}
-	if footer := m.footerLine(); !strings.Contains(footer, "verbose") {
-		t.Fatalf("footer should show verbose mode: %q", footer)
 	}
 
 	m.input = []rune("/verbose")
@@ -819,7 +840,7 @@ func TestChatLegacyLoadCommandSwitchesModel(t *testing.T) {
 	m := chatModel{
 		ctx:   context.Background(),
 		input: []rune("/load qwen3"),
-		opts: ChatOptions{
+		opts: Options{
 			Model: "llama3.2",
 			OnModelSelected: func(_ context.Context, model string) error {
 				savedModel = model
@@ -855,7 +876,7 @@ func TestChatLegacyShowCommandRendersModelInfo(t *testing.T) {
 	m := chatModel{
 		ctx:   context.Background(),
 		input: []rune("/show info"),
-		opts: ChatOptions{
+		opts: Options{
 			Model:   "llama3.2",
 			Client:  client,
 			Options: map[string]any{"top_k": int64(10)},
@@ -926,7 +947,7 @@ func TestChatSkillSlashCompletionAndTrigger(t *testing.T) {
 	m := chatModel{
 		ctx:   context.Background(),
 		input: []rune("/go"),
-		opts: ChatOptions{
+		opts: Options{
 			Model:  "test",
 			Client: &chatCaptureClient{},
 			Skills: catalog,
@@ -995,7 +1016,7 @@ func TestChatSkillsImportCommand(t *testing.T) {
 	catalog := &agentskills.Catalog{}
 	m := chatModel{
 		input: []rune("/skills import claude"),
-		opts: ChatOptions{
+		opts: Options{
 			Tools:  registry,
 			Skills: catalog,
 			SystemPromptForModel: func(context.Context, string, *coreagent.Registry) string {
@@ -1036,7 +1057,7 @@ func TestChatViewRendersFileMentionSuggestions(t *testing.T) {
 		input:  []rune("check @"),
 		width:  80,
 		height: 16,
-		opts:   ChatOptions{WorkingDir: dir},
+		opts:   Options{WorkingDir: dir},
 	}
 
 	view := stripANSI(m.View())
@@ -1059,7 +1080,7 @@ func TestChatFileMentionSuggestionsFilterAndComplete(t *testing.T) {
 
 	m := chatModel{
 		input: []rune("read @REA"),
-		opts:  ChatOptions{WorkingDir: dir},
+		opts:  Options{WorkingDir: dir},
 	}
 
 	lines := stripANSI(strings.Join(m.completionLines(80), "\n"))

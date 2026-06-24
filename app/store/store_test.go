@@ -3,6 +3,7 @@ package store
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStore(t *testing.T) {
@@ -223,6 +224,96 @@ func TestStore(t *testing.T) {
 			t.Fatalf("expected 1 chat after deletion, got %d", len(chats))
 		}
 	})
+}
+
+func TestStoreChatSummariesUseLatestActivity(t *testing.T) {
+	s, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 6, 23, 15, 30, 45, 0, time.UTC)
+
+	oldChat := NewChat("chat-old")
+	oldChat.Title = "Old Chat"
+	oldChat.CreatedAt = base
+	oldChat.Messages = []Message{
+		{
+			Role:      "user",
+			Content:   "older first prompt",
+			CreatedAt: base.Add(100 * time.Millisecond),
+			UpdatedAt: base.Add(100 * time.Millisecond),
+		},
+		{
+			Role:      "user",
+			Content:   "older second prompt",
+			CreatedAt: base.Add(200 * time.Millisecond),
+			UpdatedAt: base.Add(200 * time.Millisecond),
+		},
+	}
+	if err := s.SetChat(*oldChat); err != nil {
+		t.Fatalf("failed to save old chat: %v", err)
+	}
+
+	newChat := NewChat("chat-new")
+	newChat.Title = "New Chat"
+	newChat.CreatedAt = base
+	newChat.Messages = []Message{
+		{
+			Role:      "user",
+			Content:   "newer prompt",
+			CreatedAt: base.Add(900 * time.Millisecond),
+			UpdatedAt: base.Add(900 * time.Millisecond),
+		},
+	}
+	if err := s.SetChat(*newChat); err != nil {
+		t.Fatalf("failed to save new chat: %v", err)
+	}
+
+	activityOnlyChat := NewChat("chat-activity-only")
+	activityOnlyChat.Title = "Activity Only Chat"
+	activityOnlyChat.CreatedAt = base
+	activityOnlyChat.Messages = []Message{
+		{
+			Role:      "assistant",
+			Content:   "recent assistant activity",
+			CreatedAt: base.Add(1500 * time.Millisecond),
+			UpdatedAt: base.Add(1500 * time.Millisecond),
+		},
+	}
+	if err := s.SetChat(*activityOnlyChat); err != nil {
+		t.Fatalf("failed to save activity-only chat: %v", err)
+	}
+
+	chats, err := s.Chats()
+	if err != nil {
+		t.Fatalf("failed to list chats: %v", err)
+	}
+	if len(chats) != 3 {
+		t.Fatalf("expected 3 chats, got %d", len(chats))
+	}
+	if chats[0].ID != "chat-activity-only" {
+		t.Fatalf("expected chat-activity-only first, got %s", chats[0].ID)
+	}
+
+	for _, chat := range chats {
+		if len(chat.Messages) != 1 {
+			t.Fatalf("expected summary message for %s, got %d messages", chat.ID, len(chat.Messages))
+		}
+	}
+	if !chats[0].Messages[0].UpdatedAt.Equal(activityOnlyChat.Messages[0].UpdatedAt) {
+		t.Fatalf("expected latest activity updated_at %s, got %s", activityOnlyChat.Messages[0].UpdatedAt, chats[0].Messages[0].UpdatedAt)
+	}
+	if chats[0].Messages[0].Role != "" || chats[0].Messages[0].Content != "" {
+		t.Fatalf("expected activity-only chat to have no user excerpt, got role=%q content=%q", chats[0].Messages[0].Role, chats[0].Messages[0].Content)
+	}
+	if chats[1].ID != "chat-new" {
+		t.Fatalf("expected chat-new second, got %s", chats[1].ID)
+	}
+	if !chats[1].Messages[0].UpdatedAt.Equal(newChat.Messages[0].UpdatedAt) {
+		t.Fatalf("expected precise updated_at %s, got %s", newChat.Messages[0].UpdatedAt, chats[1].Messages[0].UpdatedAt)
+	}
+	if chats[2].Messages[0].Content != "older first prompt" {
+		t.Fatalf("expected first user prompt excerpt, got %q", chats[2].Messages[0].Content)
+	}
 }
 
 // setupTestStore creates a temporary store for testing

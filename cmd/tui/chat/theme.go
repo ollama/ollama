@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import "github.com/charmbracelet/lipgloss"
 
@@ -32,6 +32,12 @@ var (
 
 	chatToolDoneStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color(chatAnsiGreen))
+
+	// chatToolMixedStyle marks a tool group with both succeeded and failed
+	// calls (partial success). Amber/orange is distinct from green (success),
+	// red (failure), and yellow (running).
+	chatToolMixedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("208"))
 
 	chatDiffMetaStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color(chatAnsiMuted))

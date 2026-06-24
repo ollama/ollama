@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -33,8 +33,11 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 		!strings.Contains(view, "1. Approve once") ||
 		!strings.Contains(view, "2. Approve session") ||
 		!strings.Contains(view, "3. Deny") ||
-		!strings.Contains(view, "› █") {
+		!strings.Contains(view, "›") {
 		t.Fatalf("approval view missing content: %q", view)
+	}
+	if strings.Contains(view, "› █") {
+		t.Fatalf("approval view should hide the input cursor: %q", view)
 	}
 	if strings.Contains(view, "1/2/3 choose • enter select • esc deny") {
 		t.Fatalf("approval view should not render shortcut helper: %q", view)
@@ -52,7 +55,7 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 		t.Fatalf("approval view should not render risk level: %q", view)
 	}
 	approvalIdx := strings.LastIndex(view, "1. Approve once")
-	inputIdx := strings.LastIndex(view, "› █")
+	inputIdx := strings.LastIndex(view, "›")
 	if approvalIdx < 0 || inputIdx < 0 || approvalIdx > inputIdx {
 		t.Fatalf("approval picker should render above the input box:\n%s", view)
 	}
@@ -101,11 +104,8 @@ func TestChatApprovalPromptCtrlOExpandsToolDetailsInline(t *testing.T) {
 		t.Fatalf("tool details should start collapsed: %q", transcript)
 	}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	if cmd != nil {
-		t.Fatal("ctrl+o should not switch screens")
-	}
 	if !m.fullScreen || !m.boundedFrame {
 		t.Fatal("ctrl+o should keep managed fullscreen rendering")
 	}
@@ -198,9 +198,6 @@ func TestChatShiftTabTogglesPermissionMode(t *testing.T) {
 	if m.status != "full access enabled" || m.notificationLine() != "" {
 		t.Fatalf("status = %q notification = %q, want footer-only full access notice", m.status, m.notificationLine())
 	}
-	if footer := m.footerLine(); !strings.Contains(footer, "full access enabled") || !strings.Contains(footer, "shift+tab") || strings.Contains(footer, "perm") {
-		t.Fatalf("footer missing auto-approve permission mode: %q", footer)
-	}
 	if view := stripANSI(m.View()); !strings.Contains(view, "full access enabled") {
 		t.Fatalf("visible footer missing full access notice:\n%s", view)
 	}
@@ -212,9 +209,6 @@ func TestChatShiftTabTogglesPermissionMode(t *testing.T) {
 	}
 	if m.status != "review mode enabled" || m.notificationLine() != "" {
 		t.Fatalf("status = %q notification = %q, want footer-only review notice", m.status, m.notificationLine())
-	}
-	if footer := m.footerLine(); !strings.Contains(footer, "review mode enabled") || strings.Contains(footer, "perm") {
-		t.Fatalf("footer missing review permission mode: %q", footer)
 	}
 	if view := stripANSI(m.View()); !strings.Contains(view, "review mode enabled") {
 		t.Fatalf("visible footer missing review notice:\n%s", view)
@@ -246,11 +240,45 @@ func TestChatShiftTabApprovesPendingPrompt(t *testing.T) {
 	if m.approvalPrompt != nil {
 		t.Fatal("approval prompt should close")
 	}
-	if footer := m.footerLine(); !strings.Contains(footer, "full access enabled") {
-		t.Fatalf("footer missing permission mode notice after shift+tab approval: %q", footer)
-	}
 	if m.entries[0].status != "queued" {
 		t.Fatalf("tool status = %q, want queued", m.entries[0].status)
+	}
+}
+
+func TestChatShiftTabSkillApprovalKeepsFullAccessFooter(t *testing.T) {
+	reply := make(chan coreagent.ApprovalResult, 1)
+	m := chatModel{
+		width:  100,
+		height: 20,
+		events: make(chan tea.Msg),
+	}
+	m.openApprovalPrompt(chatApprovalPromptMsg{
+		request: coreagent.ApprovalRequest{
+			ToolCallID: "call-1",
+			ToolName:   "skill",
+			Args:       map[string]any{"name": "code-review"},
+		},
+		reply: reply,
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(chatModel)
+	if result := <-reply; result.Decision != coreagent.ApprovalAllowOnce {
+		t.Fatalf("decision = %q, want allow_once", result.Decision)
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "full access enabled") {
+		t.Fatalf("visible footer missing full access notice after approval:\n%s", view)
+	}
+
+	updated, _ = m.Update(chatRunDoneMsg{result: &coreagent.RunResult{
+		Messages: []api.Message{{Role: "assistant", Content: "done"}},
+	}})
+	m = updated.(chatModel)
+	if m.status != "ready" {
+		t.Fatalf("status = %q, want ready", m.status)
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "full access enabled") {
+		t.Fatalf("visible footer should keep full access notice after run completes:\n%s", view)
 	}
 }
 

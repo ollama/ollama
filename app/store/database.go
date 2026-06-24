@@ -647,18 +647,20 @@ func (db *database) getAllChats() ([]Chat, error) {
 			c.id, 
 			c.title, 
 			c.created_at,
-			COALESCE(first_msg.content, '') as first_user_content,
-			COALESCE(datetime(MAX(m.updated_at)), datetime(c.created_at)) as last_updated
+			COALESCE((
+				SELECT fm.content
+				FROM messages fm
+				WHERE fm.chat_id = c.id
+					AND fm.role = 'user'
+					AND fm.archived = 0
+				ORDER BY fm.id ASC
+				LIMIT 1
+			), '') as first_user_content,
+			COALESCE(MAX(m.updated_at), c.created_at) as last_updated
 		FROM chats c
-		LEFT JOIN (
-			SELECT chat_id, content, MIN(id) as min_id
-			FROM messages
-			WHERE role = 'user' AND archived = 0
-			GROUP BY chat_id
-		) first_msg ON c.id = first_msg.chat_id
 		LEFT JOIN messages m ON c.id = m.chat_id AND m.archived = 0
-		GROUP BY c.id, c.title, c.created_at, first_msg.content
-		ORDER BY last_updated DESC
+		GROUP BY c.id, c.title, c.created_at
+		ORDER BY last_updated DESC, COALESCE(MAX(m.id), 0) DESC, c.created_at DESC, c.id DESC
 	`
 
 	rows, err := db.conn.Query(query)
@@ -681,25 +683,27 @@ func (db *database) getAllChats() ([]Chat, error) {
 			&firstUserContent,
 			&lastUpdatedStr,
 		)
-
-		// Parse the last updated time
-		lastUpdated, _ := time.Parse("2006-01-02 15:04:05", lastUpdatedStr)
 		if err != nil {
 			return nil, fmt.Errorf("scan chat: %w", err)
 		}
 
+		lastUpdated, err := parseAgentSQLiteTime(lastUpdatedStr)
+		if err != nil {
+			return nil, fmt.Errorf("parse chat updated_at: %w", err)
+		}
+
 		chat.CreatedAt = createdAt
 
-		// Add a dummy first user message for the UI to display
-		// This is just for the excerpt, full messages are loaded when needed
-		chat.Messages = []Message{}
-		if firstUserContent != "" {
-			chat.Messages = append(chat.Messages, Message{
-				Role:      "user",
-				Content:   firstUserContent,
-				UpdatedAt: lastUpdated,
-			})
+		// Add a summary message for the UI to display the excerpt and latest update.
+		// Full messages are loaded when a chat is opened.
+		summary := Message{
+			UpdatedAt: lastUpdated,
 		}
+		if firstUserContent != "" {
+			summary.Role = "user"
+			summary.Content = firstUserContent
+		}
+		chat.Messages = []Message{summary}
 
 		chats = append(chats, chat)
 	}

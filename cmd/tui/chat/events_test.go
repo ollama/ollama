@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -41,9 +41,9 @@ func TestChatEnterQueuesWhileRunning(t *testing.T) {
 
 func compactionToolCallMessage() api.Message {
 	return api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
-		ID: chatCompactionToolCallID,
+		ID: coreagent.CompactionToolCallID,
 		Function: api.ToolCallFunction{
-			Name: chatCompactionToolName,
+			Name: coreagent.CompactionToolName,
 		},
 	}}}
 }
@@ -53,7 +53,7 @@ func TestChatRunDoneStartsQueuedMessage(t *testing.T) {
 		ctx:     context.Background(),
 		running: true,
 		queued:  []string{"next prompt"},
-		opts: ChatOptions{
+		opts: Options{
 			Model:  "test",
 			Client: chatTestClient{},
 		},
@@ -150,11 +150,11 @@ func TestChatActivityLineDelaysWaitingForModelSpinner(t *testing.T) {
 	}
 	m.spinner = waitingSpinnerTicks
 	line := strings.TrimSpace(stripANSI(m.activityLine()))
-	if !strings.Contains(line, "Ollamaing...") {
-		t.Fatalf("activityLine = %q, want Ollamaing label", line)
+	if !strings.Contains(line, "Working...") {
+		t.Fatalf("activityLine = %q, want Working label", line)
 	}
 	if strings.Contains(line, "waiting for model") {
-		t.Fatalf("activityLine = %q, want Ollamaing label without old waiting label", line)
+		t.Fatalf("activityLine = %q, want Working label without old waiting label", line)
 	}
 }
 
@@ -172,8 +172,8 @@ func TestChatActivityLineShowsDelayedWaitingSpinnerOnFollowUp(t *testing.T) {
 	if got := m.activityLabel(); got != "" {
 		t.Fatalf("activityLabel = %q, want empty", got)
 	}
-	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Ollamaing...") || strings.Contains(got, "waiting for model") {
-		t.Fatalf("activityLine = %q, want delayed Ollamaing label without old waiting label", got)
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working...") || strings.Contains(got, "waiting for model") {
+		t.Fatalf("activityLine = %q, want delayed Working label without old waiting label", got)
 	}
 }
 
@@ -188,22 +188,22 @@ func TestChatActivityLineShowsWaitingAfterToolResultBeforeFollowUpStream(t *test
 		},
 	}
 
-	if got := strings.TrimSpace(stripANSI(m.activityLine())); strings.Contains(got, "Ollamaing") {
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); strings.Contains(got, "Working") {
 		t.Fatalf("activityLine = %q, want no waiting label before next request", got)
 	}
 
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventRequestBuilt})
-	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Ollamaing...") {
-		t.Fatalf("activityLine = %q, want Ollamaing label while follow-up request waits", got)
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working...") {
+		t.Fatalf("activityLine = %q, want Working label while follow-up request waits", got)
 	}
 
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageStarted})
-	if got := strings.TrimSpace(stripANSI(m.activityLine())); strings.Contains(got, "Ollamaing") {
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); strings.Contains(got, "Working") {
 		t.Fatalf("activityLine = %q, want waiting label cleared when stream starts", got)
 	}
 }
 
-func TestChatModelPreloadShowsLoadingModelAndRefreshesContext(t *testing.T) {
+func TestChatModelPreloadIsSilentAndRefreshesContext(t *testing.T) {
 	compactor := coreagent.NewSimpleCompactor(nil, nil, coreagent.CompactionOptions{
 		ContextWindowTokens: 262144,
 	})
@@ -211,7 +211,7 @@ func TestChatModelPreloadShowsLoadingModelAndRefreshesContext(t *testing.T) {
 		ctx:             context.Background(),
 		preloadingModel: "llama3.2",
 		spinner:         waitingSpinnerTicks,
-		opts: ChatOptions{
+		opts: Options{
 			Model:               "llama3.2",
 			Compactor:           compactor,
 			ContextWindowTokens: 262144,
@@ -224,8 +224,8 @@ func TestChatModelPreloadShowsLoadingModelAndRefreshesContext(t *testing.T) {
 		},
 	}
 
-	if line := stripANSI(m.activityLine()); !strings.Contains(line, "Loading model...") {
-		t.Fatalf("activityLine = %q, want Loading model", line)
+	if line := stripANSI(m.activityLine()); strings.TrimSpace(line) != "" {
+		t.Fatalf("activityLine = %q, want silent preload", line)
 	}
 
 	updated, cmd := m.Update(chatModelPreloadDoneMsg{model: "llama3.2"})
@@ -250,7 +250,7 @@ func TestChatModelPreloadUnsupportedThinkingDisablesThinkingAndRetries(t *testin
 	m := chatModel{
 		ctx:             context.Background(),
 		preloadingModel: "llama3.2",
-		opts: ChatOptions{
+		opts: Options{
 			Think: think,
 			PreloadModel: func(ctx context.Context, model string, think *api.ThinkValue) error {
 				if think != nil {
@@ -334,7 +334,7 @@ func TestChatModelLineShowsContextOnlyWhenUseful(t *testing.T) {
 		height:          24,
 		contextTokens:   50,
 		contextEstimate: true,
-		opts: ChatOptions{
+		opts: Options{
 			Model:               "llama3.2",
 			Options:             map[string]any{"num_ctx": 100},
 			CompactionThreshold: 0.75,
@@ -397,7 +397,7 @@ func TestChatStartRunEstimatesFullPrompt(t *testing.T) {
 	m := chatModel{
 		ctx:   context.Background(),
 		input: []rune(userMsg.Content),
-		opts: ChatOptions{
+		opts: Options{
 			Model:        "test",
 			Client:       chatTestClient{},
 			Tools:        registry,
@@ -432,7 +432,7 @@ func TestChatStartRunRefreshesEffectiveContextWindow(t *testing.T) {
 	m := chatModel{
 		ctx:   context.Background(),
 		input: []rune("hello"),
-		opts: ChatOptions{
+		opts: Options{
 			Model:               "llama3.2",
 			Client:              chatTestClient{},
 			Compactor:           compactor,
@@ -464,7 +464,7 @@ func TestChatRunDoneKeepsAPIPromptEvalCount(t *testing.T) {
 	registry.Register(chatTestTool{})
 	messages := []api.Message{{Role: "user", Content: "hello"}}
 	m := chatModel{
-		opts: ChatOptions{
+		opts: Options{
 			Tools:        registry,
 			SystemPrompt: strings.Repeat("system prompt ", 20),
 		},
@@ -633,7 +633,7 @@ func TestChatStreamingMetricsDoNotDropLiveContextEstimate(t *testing.T) {
 func TestChatCompactedEventUsesCompactedPromptEstimate(t *testing.T) {
 	messages := []api.Message{
 		compactionToolCallMessage(),
-		{Role: "tool", ToolName: chatCompactionToolName, ToolCallID: chatCompactionToolCallID, Content: chatCompactionSummaryPrefix + "summary"},
+		{Role: "tool", ToolName: coreagent.CompactionToolName, ToolCallID: coreagent.CompactionToolCallID, Content: coreagent.CompactionSummaryMessagePrefix + "summary"},
 	}
 	m := chatModel{
 		running:       true,
@@ -673,7 +673,7 @@ func TestChatCompactedEventUsesCompactedPromptEstimate(t *testing.T) {
 func TestChatRunDoneKeepsCompactedEstimateWhenCompactionEndsTurn(t *testing.T) {
 	messages := []api.Message{
 		compactionToolCallMessage(),
-		{Role: "tool", ToolName: chatCompactionToolName, ToolCallID: chatCompactionToolCallID, Content: chatCompactionSummaryPrefix + "summary"},
+		{Role: "tool", ToolName: coreagent.CompactionToolName, ToolCallID: coreagent.CompactionToolCallID, Content: coreagent.CompactionSummaryMessagePrefix + "summary"},
 	}
 	m := chatModel{}
 	want := m.estimatePromptTokens(messages, "")
@@ -710,7 +710,7 @@ func TestChatAgentEventsRefreshLiveContextEstimateForToolCalls(t *testing.T) {
 	m := chatModel{
 		ctx:   context.Background(),
 		input: []rune("who is parth"),
-		opts: ChatOptions{
+		opts: Options{
 			Model:  "test",
 			Client: chatTestClient{},
 		},
@@ -746,7 +746,7 @@ func TestChatAgentEventsRefreshLiveContextEstimateForToolCalls(t *testing.T) {
 
 func TestChatVerboseRunDoneRendersModelMetrics(t *testing.T) {
 	m := chatModel{
-		opts:    ChatOptions{Verbose: true},
+		opts:    Options{Verbose: true},
 		entries: []chatEntry{newChatEntry(chatEntry{role: "assistant", content: "done"})},
 	}
 
@@ -857,7 +857,7 @@ func TestChatAutoCompactionEventsShowActivity(t *testing.T) {
 		Type: coreagent.EventCompacted,
 		Messages: []api.Message{
 			compactionToolCallMessage(),
-			{Role: "tool", ToolName: chatCompactionToolName, ToolCallID: chatCompactionToolCallID, Content: chatCompactionSummaryPrefix + "summary"},
+			{Role: "tool", ToolName: coreagent.CompactionToolName, ToolCallID: coreagent.CompactionToolCallID, Content: coreagent.CompactionSummaryMessagePrefix + "summary"},
 		},
 	})
 	if m.compacting {
@@ -998,8 +998,8 @@ func TestChatCtrlCClearsDraftInsteadOfQuitting(t *testing.T) {
 	if m.quitArmed || m.quitArmedKey != "" || m.quitting {
 		t.Fatalf("quit state = armed %v key %q quitting %v, want false", m.quitArmed, m.quitArmedKey, m.quitting)
 	}
-	if m.status != "input cleared" {
-		t.Fatalf("status = %q, want input cleared", m.status)
+	if m.status != "ready" {
+		t.Fatalf("status = %q, want ready", m.status)
 	}
 }
 
@@ -1028,8 +1028,8 @@ func TestChatCtrlCClearsDraftWhileRunningBeforeCanceling(t *testing.T) {
 	if !m.running {
 		t.Fatal("run should remain active after clearing draft input")
 	}
-	if m.status != "input cleared" {
-		t.Fatalf("status = %q, want input cleared", m.status)
+	if m.status != "ready" {
+		t.Fatalf("status = %q, want ready", m.status)
 	}
 }
 
@@ -1068,8 +1068,8 @@ func TestChatDoubleEscClearsDraft(t *testing.T) {
 	if m.escArmed {
 		t.Fatal("second esc should disarm clear")
 	}
-	if m.status != "input cleared" {
-		t.Fatalf("status = %q, want input cleared", m.status)
+	if m.status != "ready" {
+		t.Fatalf("status = %q, want ready", m.status)
 	}
 }
 
@@ -1284,7 +1284,7 @@ func TestChatClearCommandResetsConversation(t *testing.T) {
 		entries:  []chatEntry{{role: "user", content: "hello"}},
 		queued:   []string{"later"},
 		input:    []rune("/clear"),
-		opts: ChatOptions{
+		opts: Options{
 			NewChat: func(context.Context) (string, error) {
 				return "new", nil
 			},
@@ -1317,7 +1317,7 @@ func TestChatNewCommandStartsFreshChat(t *testing.T) {
 		contextTokens:   42,
 		contextEstimate: true,
 		input:           []rune("/new"),
-		opts: ChatOptions{
+		opts: Options{
 			NewChat: func(context.Context) (string, error) {
 				return "fresh", nil
 			},
@@ -1351,7 +1351,7 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 			Messages: []api.Message{
 				{Role: "user", Content: "recent request"},
 				compactionToolCallMessage(),
-				{Role: "tool", ToolName: chatCompactionToolName, ToolCallID: chatCompactionToolCallID, Content: "Conversation summary:\nold work summary"},
+				{Role: "tool", ToolName: coreagent.CompactionToolName, ToolCallID: coreagent.CompactionToolCallID, Content: coreagent.CompactionSummaryMessagePrefix + "old work summary"},
 			},
 			Compacted: true,
 			Due:       true,
@@ -1359,11 +1359,12 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 		},
 	}
 	m := chatModel{
-		ctx:      context.Background(),
-		chatID:   "chat-1",
-		messages: []api.Message{{Role: "user", Content: "old request"}},
-		input:    []rune("/compact"),
-		opts: ChatOptions{
+		ctx:          context.Background(),
+		chatID:       "chat-1",
+		messages:     []api.Message{{Role: "user", Content: "old request"}},
+		input:        []rune("/compact"),
+		boundedFrame: true,
+		opts: Options{
 			Model:     "test",
 			Compactor: compactor,
 		},
@@ -1409,8 +1410,11 @@ func TestChatCompactCommandShowsSummary(t *testing.T) {
 		t.Fatalf("compacted messages = %#v", fm.messages)
 	}
 	transcript := stripANSI(fm.renderTranscript(100))
-	if !strings.Contains(transcript, "Compacted summary done") {
+	if !strings.Contains(transcript, "Compacted summary") {
 		t.Fatalf("summary row should be visible after compacting: %q", transcript)
+	}
+	if strings.Contains(transcript, "Compacted summary done") {
+		t.Fatalf("summary row should not include done word: %q", transcript)
 	}
 	if strings.Contains(transcript, "old work summary") || strings.Contains(transcript, "Conversation summary:") {
 		t.Fatalf("summary body should be collapsed after compacting: %q", transcript)
@@ -1436,7 +1440,7 @@ func TestChatCompactCommandShowsSkippedReason(t *testing.T) {
 		ctx:      context.Background(),
 		messages: []api.Message{{Role: "user", Content: "only request"}},
 		input:    []rune("/compact"),
-		opts:     ChatOptions{Compactor: compactor},
+		opts:     Options{Compactor: compactor},
 	}
 
 	updated, cmd := m.handleSubmit()

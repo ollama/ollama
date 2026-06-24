@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -21,7 +21,7 @@ func TestChatHistoryCommandShowsPromptMessages(t *testing.T) {
 	args.Set("command", "pwd")
 	m := chatModel{
 		input: []rune("/history"),
-		opts:  ChatOptions{SystemPrompt: "You are Ollama."},
+		opts:  Options{SystemPrompt: "You are Ollama."},
 		messages: []api.Message{
 			{Role: "user", Content: "where am i?"},
 			{
@@ -181,7 +181,7 @@ func TestChatHistoryMouseDragSelectsAndCopiesText(t *testing.T) {
 	var copied string
 	m := chatModel{
 		ctx: context.Background(),
-		opts: ChatOptions{
+		opts: Options{
 			Clipboard: func(_ context.Context, text string) error {
 				copied = text
 				return nil
@@ -266,7 +266,7 @@ func TestChatResumeCommandOpensPicker(t *testing.T) {
 		input:  []rune("/resume"),
 		width:  100,
 		height: 20,
-		opts:   ChatOptions{Store: store},
+		opts:   Options{Store: store},
 	}
 
 	updated, cmd := m.handleSubmit()
@@ -305,7 +305,7 @@ func TestChatResumePickerFallsBackToFullFrameWhenSmall(t *testing.T) {
 		input:  []rune("/resume"),
 		width:  44,
 		height: 10,
-		opts:   ChatOptions{Store: store},
+		opts:   Options{Store: store},
 	}
 
 	updated, cmd := m.handleSubmit()
@@ -325,11 +325,11 @@ func TestChatModelCommandOpensPicker(t *testing.T) {
 		input:  []rune("/model"),
 		width:  100,
 		height: 20,
-		opts: ChatOptions{
+		opts: Options{
 			Model:               "llama3.2",
 			ContextWindowTokens: 131072,
-			ModelOptions: func(context.Context) ([]ChatModelOption, error) {
-				return []ChatModelOption{
+			ModelOptions: func(context.Context) ([]ModelOption, error) {
+				return []ModelOption{
 					{Name: "kimi-k2.6:cloud", Description: "cloud coding"},
 					{Name: "llama3.2", Description: "local"},
 				}, nil
@@ -366,10 +366,10 @@ func TestChatModelPickerFallsBackToFullFrameWhenSmall(t *testing.T) {
 		input:  []rune("/model"),
 		width:  44,
 		height: 10,
-		opts: ChatOptions{
+		opts: Options{
 			Model: "llama3.2",
-			ModelOptions: func(context.Context) ([]ChatModelOption, error) {
-				return []ChatModelOption{
+			ModelOptions: func(context.Context) ([]ModelOption, error) {
+				return []ModelOption{
 					{Name: "kimi-k2.6:cloud", Description: "cloud coding"},
 					{Name: "llama3.2", Description: "local"},
 				}, nil
@@ -389,7 +389,7 @@ func TestChatModelPickerFallsBackToFullFrameWhenSmall(t *testing.T) {
 }
 
 func TestChatModelPickerShowsRecommendedModelsFirst(t *testing.T) {
-	models := normalizeModelOptions([]ChatModelOption{
+	models := normalizeModelOptions([]ModelOption{
 		{Name: "llama3.2", Description: "local"},
 		{Name: "kimi-k2.6:cloud", Description: "cloud coding", Recommended: true},
 		{Name: "qwen3.5:cloud", Description: "cloud reasoning", Recommended: true},
@@ -405,6 +405,26 @@ func TestChatModelPickerShowsRecommendedModelsFirst(t *testing.T) {
 	}
 }
 
+func TestChatModelPickerRanksClosestFilteredModelFirst(t *testing.T) {
+	models := normalizeModelOptions([]ModelOption{
+		{Name: "gemma3:27b", Description: "recommended but longer", Recommended: true},
+		{Name: "llama3.2", Description: "mentions gemm in description"},
+		{Name: "gemma4:27b", Description: "longer local"},
+		{Name: "gemma4", Description: "short local"},
+	})
+	picker := newChatModelPicker(models, "", "gemm")
+
+	filtered := picker.filtered()
+	got := make([]string, 0, len(filtered))
+	for _, model := range filtered {
+		got = append(got, model.Name)
+	}
+	want := []string{"gemma4", "gemma3:27b", "gemma4:27b", "llama3.2"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("filtered model order = %#v, want %#v", got, want)
+	}
+}
+
 func TestChatModelPickerFiltersAndSwitchesModel(t *testing.T) {
 	var savedModel string
 	store := &chatResumeTestStore{}
@@ -416,11 +436,11 @@ func TestChatModelPickerFiltersAndSwitchesModel(t *testing.T) {
 		width:    100,
 		height:   20,
 		messages: slices.Clone(originalMessages),
-		opts: ChatOptions{
+		opts: Options{
 			Model: "llama3.2",
 			Store: store,
-			ModelOptions: func(context.Context) ([]ChatModelOption, error) {
-				return []ChatModelOption{
+			ModelOptions: func(context.Context) ([]ModelOption, error) {
+				return []ModelOption{
 					{Name: "llama3.2", Description: "local"},
 					{Name: "qwen3.5:cloud", Description: "cloud reasoning"},
 				}, nil
@@ -478,6 +498,9 @@ func TestChatModelPickerFiltersAndSwitchesModel(t *testing.T) {
 	if m.modelPicker != nil {
 		t.Fatal("model picker should close after selection")
 	}
+	if m.status != "ready" || m.notificationLine() != "" {
+		t.Fatalf("model switch should not show action status, status=%q notification=%q", m.status, m.notificationLine())
+	}
 	if m.opts.Model != "qwen3.5:cloud" {
 		t.Fatalf("model = %q, want qwen3.5:cloud", m.opts.Model)
 	}
@@ -513,7 +536,7 @@ func TestChatModelSelectionPersistsBeforeSwitching(t *testing.T) {
 	m := chatModel{
 		ctx:    context.Background(),
 		chatID: "chat-1",
-		opts: ChatOptions{
+		opts: Options{
 			Model:               "llama3.2",
 			Store:               &chatResumeTestStore{setModelErr: errStore},
 			Tools:               originalTools,
@@ -555,7 +578,7 @@ func TestChatModelSelectionPersistsBeforeSwitching(t *testing.T) {
 func TestChatModelSelectionStartsBackgroundPreload(t *testing.T) {
 	m := chatModel{
 		ctx: context.Background(),
-		opts: ChatOptions{
+		opts: Options{
 			Model: "llama3.2",
 			PreloadModel: func(context.Context, string, *api.ThinkValue) error {
 				return nil
@@ -587,7 +610,7 @@ func TestChatModelSwitchNextRunKeepsHistory(t *testing.T) {
 		chatID:   "chat-1",
 		messages: slices.Clone(history),
 		input:    []rune("continue"),
-		opts: ChatOptions{
+		opts: Options{
 			Model:  "llama3.2",
 			Store:  store,
 			Client: client,
@@ -661,7 +684,7 @@ func TestChatResumePickerFiltersAndLoadsSelection(t *testing.T) {
 		queued: []string{"old queued prompt"},
 		width:  100,
 		height: 20,
-		opts: ChatOptions{
+		opts: Options{
 			Model: "llama3.2",
 			Store: store,
 			ToolRegistryForModel: func(ctx context.Context, model string) *coreagent.Registry {

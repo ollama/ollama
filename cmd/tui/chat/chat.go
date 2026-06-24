@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -26,12 +26,6 @@ const (
 	waitingSpinnerTicks       = 4
 )
 
-const (
-	chatCompactionToolName      = "summary"
-	chatCompactionToolCallID    = "ollama_compaction"
-	chatCompactionSummaryPrefix = "Conversation summary:\n"
-)
-
 var chatEmptyPrompts = []string{
 	`read this repo and tell me where to start`,
 	`what changed on this branch?`,
@@ -41,13 +35,13 @@ var chatEmptyPrompts = []string{
 	`summarize this file and suggest edits`,
 }
 
-type ChatModelOption struct {
+type ModelOption struct {
 	Name        string
 	Description string
 	Recommended bool
 }
 
-type ChatOptions struct {
+type Options struct {
 	Model                       string
 	ChatID                      string
 	Messages                    []api.Message
@@ -55,7 +49,8 @@ type ChatOptions struct {
 	Store                       coreagent.ChatStore
 	Tools                       *coreagent.Registry
 	ToolRegistryForModel        func(context.Context, string) *coreagent.Registry
-	ModelOptions                func(context.Context) ([]ChatModelOption, error)
+	MultiModalForModel          func(context.Context, string) bool
+	ModelOptions                func(context.Context) ([]ModelOption, error)
 	OnModelSelected             func(context.Context, string) error
 	SystemPromptForModel        func(context.Context, string, *coreagent.Registry) string
 	Clipboard                   func(context.Context, string) error
@@ -82,7 +77,7 @@ type ChatOptions struct {
 	SystemPrompt                string
 }
 
-type ChatResult struct {
+type Result struct {
 	ChatID   string
 	Messages []api.Message
 }
@@ -90,7 +85,7 @@ type ChatResult struct {
 //nolint:containedctx // chatModel is a Bubble Tea session model; the context is the run-scoped cancellation root.
 type chatModel struct {
 	ctx          context.Context
-	opts         ChatOptions
+	opts         Options
 	chatID       string
 	messages     []api.Message
 	liveMessages []api.Message
@@ -134,6 +129,7 @@ type chatModel struct {
 	approvalPrompt    *chatApprovalPrompt
 	reviewApproval    coreagent.ApprovalHandler
 	permissionMode    *chatPermissionMode
+	permissionNotice  string
 	selection         chatSelection
 
 	width              int
@@ -208,7 +204,7 @@ type chatInputAttachment struct {
 	data        api.ImageData
 }
 
-func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
+func Run(ctx context.Context, opts Options) (*Result, error) {
 	if opts.Approval == nil {
 		opts.Approval = coreagent.NewApprovalManager(coreagent.ApprovalManagerOptions{})
 	}
@@ -254,7 +250,7 @@ func RunAgentChat(ctx context.Context, opts ChatOptions) (*ChatResult, error) {
 	if fm.err != nil {
 		return nil, fm.err
 	}
-	return &ChatResult{ChatID: fm.chatID, Messages: fm.messages}, nil
+	return &Result{ChatID: fm.chatID, Messages: fm.messages}, nil
 }
 
 func (m chatModel) Init() tea.Cmd {
@@ -512,7 +508,9 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleInlineToolOutput()
 		m.disarmQuit()
 		m.disarmEsc()
-		return m, nil
+		// Toggling tool output changes the transcript height; force a full
+		// repaint so the input box and model-status footer aren't left stale.
+		return m, tea.ClearScreen
 	}
 	if msg.Type == tea.KeyShiftTab {
 		return m.togglePermissionMode()
@@ -625,11 +623,6 @@ func (m *chatModel) toggleInlineToolOutput() {
 	m.applyToolOutputMode()
 	m.selection = chatSelection{}
 	m.scroll = clamp(m.scroll, 0, m.maxScroll())
-	if m.toolOutputOpen {
-		m.status = "tool output shown"
-		return
-	}
-	m.status = "tool output hidden"
 }
 
 func (m chatModel) updateCtrlC() (tea.Model, tea.Cmd) {
@@ -637,7 +630,7 @@ func (m chatModel) updateCtrlC() (tea.Model, tea.Cmd) {
 		m.clearInput()
 		m.resetPromptHistoryCursor()
 		m.disarmQuit()
-		m.status = "input cleared"
+		m.status = "ready"
 		return m, nil
 	}
 	if (m.running || m.compacting) && m.cancel != nil {
@@ -712,7 +705,7 @@ func (m chatModel) updateEsc() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if cleared {
-		m.status = "input cleared"
+		m.status = "ready"
 	} else {
 		m.status = "ready"
 	}
@@ -895,14 +888,7 @@ func (m chatModel) emptyChatHint() string {
 }
 
 func (m chatModel) headerLines() []string {
-	var lines []string
-	if status := m.statusLine(); status != "" {
-		lines = append(lines, chatMetaStyle.Render(status))
-	}
-	if len(lines) > 0 {
-		lines = append(lines, "")
-	}
-	return lines
+	return nil
 }
 
 func (m *chatModel) resetChat(status string) (tea.Model, tea.Cmd) {
@@ -944,96 +930,6 @@ func (m *chatModel) resetWorkingDir() {
 		return
 	}
 	m.workingDir = m.opts.WorkingDir
-}
-
-func (m *chatModel) startManualCompaction() (tea.Model, tea.Cmd) {
-	if m.running || m.compacting {
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: "Wait for the current response to finish before compacting."}))
-		return *m, nil
-	}
-	m.refreshContextWindowTokens(m.opts.Model)
-	if m.opts.Compactor == nil {
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: coreagent.CompactionSkippedMessage("compaction is unavailable")}))
-		m.status = "compact skipped"
-		return *m, nil
-	}
-
-	ctx := m.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	runCtx, cancel := context.WithCancel(ctx)
-	compactor := m.opts.Compactor
-	events := make(chan tea.Msg, 128)
-	m.compacting = true
-	m.compactingTokens = 0
-	m.cancel = cancel
-	m.compactEvents = events
-	m.status = "compacting"
-	messages := slices.Clone(m.messages)
-	var tools api.Tools
-	if m.opts.Tools != nil {
-		tools = m.opts.Tools.Tools()
-	}
-	req := coreagent.CompactionRequest{
-		ChatID:       m.chatID,
-		Model:        m.opts.Model,
-		SystemPrompt: m.systemPrompt(""),
-		Messages:     messages,
-		Tools:        tools,
-		Format:       m.opts.Format,
-		Options:      m.opts.Options,
-		KeepAlive:    m.opts.KeepAlive,
-		Force:        true,
-		Progress: func(progress coreagent.CompactionProgress) {
-			select {
-			case events <- chatCompactProgressMsg{tokens: progress.Tokens}:
-			case <-runCtx.Done():
-			}
-		},
-	}
-	go func() {
-		defer close(events)
-		result, err := compactor.MaybeCompact(runCtx, req)
-		select {
-		case events <- chatCompactDoneMsg{result: result, err: err}:
-		case <-runCtx.Done():
-		}
-	}()
-	tickCmd := m.scheduleTick()
-	return *m, tea.Batch(waitForChatMsg(events), tickCmd)
-}
-
-func (m chatModel) finishManualCompaction(msg chatCompactDoneMsg) (tea.Model, tea.Cmd) {
-	wasCanceling := m.status == "canceling"
-	m.compacting = false
-	m.compactEvents = nil
-	m.cancel = nil
-	m.compactingTokens = 0
-	if wasCanceling || isChatContextCanceledError(msg.err) {
-		m.status = "compact canceled"
-		return m.withFlowTranscriptFlush(m.startNextQueued())
-	}
-	if msg.err != nil {
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: coreagent.CompactionSkippedMessage(msg.err.Error())}))
-		m.status = "compact skipped"
-		return m.withFlowTranscriptFlush(m.startNextQueued())
-	}
-	if !msg.result.Compacted {
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: coreagent.CompactionSkippedMessage(msg.result.Reason)}))
-		m.status = "compact skipped"
-		return m.withFlowTranscriptFlush(m.startNextQueued())
-	}
-
-	m.messages = msg.result.Messages
-	m.liveMessages = nil
-	m.entries = entriesFromMessages(m.messages)
-	m.contextTokens = m.estimatePromptTokens(m.messages, "")
-	m.contextEstimate = true
-	m.scroll = 0
-	m.flowPrintedLines = 0
-	m.status = "compacted"
-	return m.withFlowTranscriptFlush(m.startNextQueued())
 }
 
 func (m *chatModel) startRun(input string) (tea.Model, tea.Cmd) {

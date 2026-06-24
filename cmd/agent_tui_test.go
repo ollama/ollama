@@ -16,7 +16,7 @@ import (
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/agent/skills"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/cmd/tui"
+	agentchat "github.com/ollama/ollama/cmd/tui/chat"
 	"github.com/ollama/ollama/envconfig"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
@@ -426,7 +426,7 @@ func TestPreloadAgentModelIfLocalSkipsCloudModel(t *testing.T) {
 	}
 }
 
-func modelOptionNames(options []tui.ChatModelOption) []string {
+func modelOptionNames(options []agentchat.ModelOption) []string {
 	names := make([]string, 0, len(options))
 	for _, option := range options {
 		names = append(names, option.Name)

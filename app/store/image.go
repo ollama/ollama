@@ -39,7 +39,7 @@ func ImgBytes(path string) ([]byte, error) {
 func (s *Store) ImgDir() string {
 	dbPath := s.DBPath
 	if dbPath == "" {
-		dbPath = defaultDBPath
+		dbPath = defaultDBPath()
 	}
 	storeDir := filepath.Dir(dbPath)
 	return filepath.Join(storeDir, "cache", "images")

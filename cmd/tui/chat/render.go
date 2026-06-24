@@ -1,11 +1,9 @@
-package tui
+package chat
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -305,7 +303,11 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 	if maxHeight > 0 {
 		inputBodyLines = min(inputBodyLines, max(1, maxHeight-fixedLines))
 	}
-	lines = append(lines, renderInputBoxLines(string(m.input), m.normalizedInputCursor(), width, inputBodyLines, m.emptyInputPlaceholder())...)
+	inputCursor := m.normalizedInputCursor()
+	if m.approvalPrompt != nil {
+		inputCursor = -1
+	}
+	lines = append(lines, renderInputBoxLines(string(m.input), inputCursor, width, inputBodyLines, m.emptyInputPlaceholder())...)
 	lines = append(lines, modelLines...)
 	return lines
 }
@@ -345,7 +347,7 @@ func (m chatModel) renderActionStatusLines(width int) []string {
 }
 
 func transcriptInputGap(maxHeight, bottomLineCount, _ int) int {
-	const desiredGap = 2
+	const desiredGap = 1
 	if maxHeight <= 0 {
 		return desiredGap
 	}
@@ -459,15 +461,17 @@ func (m chatModel) renderEntry(entry chatEntry) (string, string) {
 	case "user":
 		return "", entry.content
 	case "assistant":
-		return chatAssistantStyle.Render("●") + " ", entry.content
+		return chatAssistantStyle.Render("•") + " ", entry.content
+	case "slash":
+		return chatMetaStyle.Render("•") + " ", entry.content
 	case "compaction_summary":
-		prefix := toolStatusStyle(entry.status).Render("●") + " "
+		prefix := toolStatusStyle(entry.status).Render("•") + " "
 		return prefix, compactionSummaryStatusLine(entry)
 	case "tool":
-		prefix := toolStatusStyle(entry.status).Render("⏺") + " "
+		prefix := toolStatusStyle(entry.status).Render("•") + " "
 		return prefix, toolStatusLine(entry)
 	case "tool_group":
-		prefix := toolGroupPrefixStyle(entry).Render("●") + " "
+		prefix := toolGroupPrefixStyle(entry).Render("•") + " "
 		return prefix, toolGroupStatusLine(entry)
 	case "error":
 		return chatErrorStyle.Render("err ") + " ", entry.content
@@ -487,7 +491,7 @@ func (m chatModel) renderEntryLines(entry chatEntry, body string, width int) []s
 		lines := splitRenderedBody(renderMarkdownForView(body, width))
 		lines = append(lines, renderMetricsLines(entry.metrics, width)...)
 		return lines
-	case "system":
+	case "system", "slash":
 		return splitRenderedBody(renderMarkdownForView(body, width))
 	case "user":
 		return renderUserMessageLines(body, width)
@@ -836,8 +840,11 @@ func renderCompactionSummaryLines(entry chatEntry, width int) []string {
 }
 
 func compactionSummaryStatusLine(entry chatEntry) string {
-	status := toolStatusStyle(entry.status).Render(toolStatusLabel(entry))
-	return fmt.Sprintf("Compacted summary %s", status)
+	segment := toolStatusStyle(entry.status).Render(toolStatusLabel(entry))
+	if segment == "" {
+		return "Compacted summary"
+	}
+	return fmt.Sprintf("Compacted summary %s", segment)
 }
 
 func toolGroupChildStatusLine(entry chatEntry) string {
@@ -846,12 +853,11 @@ func toolGroupChildStatusLine(entry chatEntry) string {
 		label = toolDisplayName(entry.detail)
 	}
 
-	status := toolStatusLabel(entry)
-	if suffix := toolElapsedSuffix(entry.startedAt, entry.finishedAt); suffix != "" && isToolResultStatus(entry.status) {
-		status += suffix
+	segment := renderToolStatusSegment(entry)
+	if segment == "" {
+		return boldToolInvocationName(label)
 	}
-
-	return fmt.Sprintf("%s %s", boldToolInvocationName(label), toolStatusStyle(entry.status).Render(status))
+	return fmt.Sprintf("%s %s", boldToolInvocationName(label), segment)
 }
 
 func boldToolInvocationName(label string) string {
@@ -954,18 +960,28 @@ func isToolResultStatus(status string) bool {
 	return status == "done" || status == "error"
 }
 
+// renderToolStatusSegment returns the styled status text for a tool entry,
+// or "" when the entry has no status word to show (e.g. a completed or failed
+// tool, where the colored dot alone conveys the result).
+func renderToolStatusSegment(entry chatEntry) string {
+	s := toolStatusLabel(entry)
+	if s == "" {
+		return ""
+	}
+	return toolStatusStyle(entry.status).Render(s)
+}
+
 func toolStatusLine(entry chatEntry) string {
 	label := entry.label
 	if label == "" {
 		label = toolDisplayName(entry.detail)
 	}
 
-	status := toolStatusLabel(entry)
-	if suffix := toolElapsedSuffix(entry.startedAt, entry.finishedAt); suffix != "" && isToolResultStatus(entry.status) {
-		status += suffix
+	segment := renderToolStatusSegment(entry)
+	if segment == "" {
+		return label
 	}
-
-	return fmt.Sprintf("%s %s", label, toolStatusStyle(entry.status).Render(status))
+	return fmt.Sprintf("%s %s", label, segment)
 }
 
 func toolGroupStatusLine(entry chatEntry) string {
@@ -974,39 +990,26 @@ func toolGroupStatusLine(entry chatEntry) string {
 		label = fmt.Sprintf("Tool calls (%d)", len(entry.tools))
 	}
 
-	status := toolGroupStatusLabel(entry)
-	if suffix := toolElapsedSuffix(entry.startedAt, entry.finishedAt); suffix != "" {
-		status += suffix
+	// Color the label with the group's outcome color (green/red/amber/yellow);
+	// the small dot prefix already carries the same color, so the label
+	// reinforces which outcome the group had without adding a status word.
+	styledLabel := toolGroupPrefixStyle(entry).Render(label)
+	segment := renderToolStatusSegment(entry)
+	if segment == "" {
+		return styledLabel
 	}
-
-	return fmt.Sprintf("%s %s", label, toolStatusStyle(entry.status).Render(status))
+	return fmt.Sprintf("%s %s", styledLabel, segment)
 }
 
 func toolGroupPrefixStyle(entry chatEntry) lipgloss.Style {
-	succeeded, _ := toolGroupResultCounts(entry.tools)
-	if succeeded > 0 {
-		return chatToolDoneStyle
-	}
-	return toolStatusStyle(entry.status)
-}
-
-func toolGroupStatusLabel(entry chatEntry) string {
-	if len(entry.tools) == 0 {
-		return toolStatusLabel(entry)
-	}
-
 	succeeded, failed := toolGroupResultCounts(entry.tools)
 	switch {
-	case failed > 0 && succeeded > 0:
-		return fmt.Sprintf("%d succeeded, %d failed", succeeded, failed)
-	case failed > 0:
-		return fmt.Sprintf("%d failed", failed)
-	case succeeded > 1:
-		return fmt.Sprintf("%d succeeded", succeeded)
-	case succeeded == 1:
-		return "done"
+	case succeeded > 0 && failed > 0:
+		return chatToolMixedStyle
+	case succeeded > 0:
+		return chatToolDoneStyle
 	default:
-		return toolStatusLabel(entry)
+		return toolStatusStyle(entry.status)
 	}
 }
 
@@ -1024,16 +1027,13 @@ func toolGroupResultCounts(tools []chatEntry) (succeeded int, failed int) {
 }
 
 func toolStatusLabel(entry chatEntry) string {
-	if entry.err != "" || entry.status == "error" {
-		return "failed"
-	}
-	if entry.status == "done" {
-		return "done"
-	}
 	if entry.status == "approval" {
 		return "needs approval"
 	}
-	return "in progress"
+	if entry.status == "running" || entry.status == "queued" {
+		return "in progress"
+	}
+	return ""
 }
 
 func toolStatusStyle(status string) lipgloss.Style {
@@ -1053,17 +1053,6 @@ func toolInvocationLabel(name string, args map[string]any) string {
 
 func toolDisplayName(name string) string {
 	return coreagent.ToolDisplayName(name)
-}
-
-func toolElapsedSuffix(startedAt, finishedAt time.Time) string {
-	if startedAt.IsZero() || finishedAt.IsZero() || finishedAt.Before(startedAt) {
-		return ""
-	}
-	elapsed := finishedAt.Sub(startedAt)
-	if elapsed < time.Second {
-		return " in " + elapsed.Round(time.Millisecond).String()
-	}
-	return " in " + elapsed.Round(time.Second).String()
 }
 
 func toolOutputUsesMarkdown(name string) bool {
@@ -1154,54 +1143,6 @@ func truncateRunes(value string, limit int) string {
 	return string(runes[:limit]) + "..."
 }
 
-func (m chatModel) statusLine() string {
-	var parts []string
-	if scroll := m.scrollStatus(); scroll != "" {
-		parts = append(parts, scroll)
-	}
-	return strings.Join(parts, "  ")
-}
-
-func (m chatModel) footerLine() string {
-	return strings.Join(m.footerParts(), " • ")
-}
-
-func (m chatModel) footerParts() []string {
-	var parts []string
-	if len(m.queued) > 0 {
-		parts = append(parts, fmt.Sprintf("queued %d", len(m.queued)))
-	}
-
-	action := "enter send"
-	if m.approvalPrompt != nil {
-		action = "enter approve"
-	} else if m.running || m.compacting {
-		action = "enter queue"
-	}
-	controls := action
-	if m.approvalPrompt != nil {
-		controls = ""
-	} else {
-		controls += " • shift+tab"
-		controls += " • /model"
-	}
-	if controls != "" {
-		parts = append(parts, controls)
-	}
-	if m.opts.Verbose {
-		parts = append(parts, "verbose")
-	}
-	if notice := m.permissionModeNotice(); notice != "" {
-		parts = append(parts, notice)
-	} else {
-		parts = append(parts, m.permissionModeStatus())
-	}
-	if cwd := m.cwdStatus(); cwd != "" {
-		parts = append(parts, cwd)
-	}
-	return parts
-}
-
 func (m chatModel) notificationLine() string {
 	status := strings.TrimSpace(m.status)
 	if status == "" || status == "ready" {
@@ -1251,14 +1192,10 @@ func renderFooterPlainLine(line string) string {
 	return b.String()
 }
 
-func (m chatModel) permissionModeStatus() string {
-	if m.autoApproveTools() {
-		return "full access"
-	}
-	return "review"
-}
-
 func (m chatModel) permissionModeNotice() string {
+	if notice := strings.TrimSpace(m.permissionNotice); notice != "" {
+		return notice
+	}
 	switch strings.TrimSpace(m.status) {
 	case "full access enabled", "review mode enabled":
 		return strings.TrimSpace(m.status)
@@ -1312,24 +1249,11 @@ func (m chatModel) currentWorkingDir() string {
 	return m.opts.WorkingDir
 }
 
-func (m chatModel) cwdStatus() string {
-	workingDir := strings.TrimSpace(m.currentWorkingDir())
-	rootDir := strings.TrimSpace(m.opts.RootDir)
-	if workingDir == "" || rootDir == "" {
-		return ""
-	}
-	rel, err := filepath.Rel(rootDir, workingDir)
-	if err != nil || rel == "." {
-		return ""
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "cwd " + workingDir
-	}
-	return "cwd ./" + filepath.ToSlash(rel)
-}
-
 func (m chatModel) activityLine() string {
 	if m.approvalPrompt != nil {
+		return ""
+	}
+	if m.preloadingModel != "" && !m.running && !m.compacting {
 		return ""
 	}
 	if !m.running && !m.compacting && m.preloadingModel == "" && m.approvalPrompt == nil {
@@ -1341,9 +1265,9 @@ func (m chatModel) activityLine() string {
 			return ""
 		}
 		if m.preloadingModel != "" {
-			return statusWithSpinner(m.spinnerFrame(), "Loading model")
+			return statusWithSpinner(m.spinnerFrame(), "Working")
 		}
-		return statusWithSpinner(m.spinnerFrame(), "Ollamaing")
+		return statusWithSpinner(m.spinnerFrame(), "Working")
 	}
 	return statusWithSpinner(m.spinnerFrame(), label)
 }
@@ -1578,21 +1502,6 @@ func statusWithSpinner(frame, label string) string {
 	return label + frame
 }
 
-func (m chatModel) scrollStatus() string {
-	maxScroll := m.maxScroll()
-	if maxScroll <= 0 {
-		return ""
-	}
-	scroll := clamp(m.scroll, 0, maxScroll)
-	if scroll == 0 {
-		return "↑ more"
-	}
-	if scroll == maxScroll {
-		return "↓ more"
-	}
-	return "↑/↓ more"
-}
-
 func renderFullFrame(content string, width, height int) string {
 	if width <= 0 {
 		width = 80
@@ -1666,6 +1575,10 @@ func newChatEntry(entry chatEntry) chatEntry {
 		entry.version = 1
 	}
 	return entry
+}
+
+func newSlashEntry(content string) chatEntry {
+	return newChatEntry(chatEntry{role: "slash", content: content})
 }
 
 func (m *chatModel) markEntryDirty(index int) {
@@ -1774,13 +1687,7 @@ func entriesFromMessages(messages []api.Message) []chatEntry {
 }
 
 func compactionSummaryContent(msg api.Message) (string, bool) {
-	if msg.Role != "user" && msg.Role != "system" && !(msg.Role == "tool" && isChatCompactionToolName(msg.ToolName)) {
-		return "", false
-	}
-	if !strings.HasPrefix(msg.Content, chatCompactionSummaryPrefix) {
-		return "", false
-	}
-	return coreagent.CompactionSummaryText(msg.Content), true
+	return coreagent.CompactionSummaryContent(msg)
 }
 
 func groupCompletedToolEntries(entries []chatEntry) []chatEntry {

@@ -96,7 +96,7 @@ func (m confirmModel) View() string {
 func renderConfirmPrompt(prompt string, width int, plain bool) string {
 	lines := []string{prompt}
 	if width > 0 {
-		lines = wrapChatText(prompt, width)
+		lines = wrapText(prompt, width)
 	}
 	if plain {
 		return strings.Join(lines, "\n")
@@ -111,7 +111,7 @@ func renderConfirmHelp(width int) string {
 	help := "←/→ navigate • enter confirm • esc cancel"
 	lines := []string{help}
 	if width > 0 {
-		lines = wrapChatText(help, width)
+		lines = wrapText(help, width)
 	}
 	for i, line := range lines {
 		lines[i] = selectorHelpStyle.Render(line)

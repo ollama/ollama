@@ -187,9 +187,6 @@ func (c *SimpleCompactor) threshold() float64 {
 
 func ResolveContextWindowTokens(options map[string]any, configured int) int {
 	if n := intOption(options, "num_ctx"); n > 0 {
-		if configured > 0 {
-			return min(n, configured)
-		}
 		return n
 	}
 	if configured > 0 {
@@ -488,11 +485,7 @@ func fitCompactionMessagesToBudget(previousSummary string, messages []api.Messag
 		if nextRunes >= currentRunes {
 			nextRunes = currentRunes / 2
 		}
-		nextContent := truncateToolResultContentTo(fitted[idx].Content, nextRunes)
-		if nextContent == fitted[idx].Content && len([]rune(nextContent)) > max(0, nextRunes) {
-			nextContent = forceTruncateToolResultContentTo(fitted[idx].Content, nextRunes)
-		}
-		fitted[idx].Content = nextContent
+		fitted[idx].Content = truncateToolResultContentTo(fitted[idx].Content, nextRunes)
 	}
 	return fitted
 }
@@ -570,6 +563,33 @@ func isCompactionToolName(name string) bool {
 func isCompactionSummary(msg api.Message) bool {
 	return (msg.Role == "user" || msg.Role == "system" || (msg.Role == "tool" && isCompactionToolName(msg.ToolName))) &&
 		strings.HasPrefix(msg.Content, CompactionSummaryMessagePrefix)
+}
+
+// IsCompactionSummary reports whether msg uses the canonical compaction
+// summary message representation.
+func IsCompactionSummary(msg api.Message) bool {
+	return isCompactionSummary(msg)
+}
+
+// CompactionSummaryContent returns the user-visible summary from msg when it
+// is a canonical compaction summary.
+func CompactionSummaryContent(msg api.Message) (string, bool) {
+	if !isCompactionSummary(msg) {
+		return "", false
+	}
+	return CompactionSummaryText(msg.Content), true
+}
+
+// IsCompactionToolResult reports whether msg is the synthetic tool result used
+// to represent compaction in message history.
+func IsCompactionToolResult(msg api.Message) bool {
+	return msg.Role == "tool" && (isCompactionToolName(msg.ToolName) || msg.ToolCallID == CompactionToolCallID)
+}
+
+// IsCompactionToolCall reports whether msg is the synthetic assistant tool
+// call paired with a compaction summary result.
+func IsCompactionToolCall(msg api.Message) bool {
+	return isCompactionToolCall(msg)
 }
 
 func isCompactionToolCall(msg api.Message) bool {

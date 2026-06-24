@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"strings"
@@ -155,7 +155,7 @@ func TestChatMarkdownStacksWideReportTables(t *testing.T) {
 		"| Area | Files | Non-test LOC | Notes |",
 		"| --- | --- | --- | --- |",
 		"| `cmd/launch` integrations | 17 integration files | ~8,200 | CodexApp, OpenClaw, Hermes, Codex are the heaviest integration implementations. |",
-		"| `cmd/tui` agent chat | chat*.go | ~11,500 | Used by `cmd/agent_tui.go` and includes rendering, input, modals, history, and approval UI. |",
+		"| `cmd/tui/chat` agent chat | chat*.go | ~11,500 | Used by `cmd/agent_tui.go` and includes rendering, input, modals, history, and approval UI. |",
 	}, "\n")
 
 	rendered := stripANSI(renderMarkdownForView(markdown, 88))
@@ -169,7 +169,7 @@ func TestChatMarkdownStacksWideReportTables(t *testing.T) {
 		"Files: 17 integration files",
 		"Non-test LOC: ~8,200",
 		"Notes: CodexApp",
-		"cmd/tui agent chat",
+		"cmd/tui/chat agent chat",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("stacked table missing %q: %q", want, rendered)

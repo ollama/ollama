@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const maxToolInvocationCommandRunes = 100
+
 // ToolDisplayName returns the user-facing label for a tool name.
 func ToolDisplayName(name string) string {
 	switch name {
@@ -37,6 +39,9 @@ func ToolInvocationLabel(name string, args map[string]any) string {
 	displayName := ToolDisplayName(name)
 	for _, key := range []string{"query", "url", "command", "path", "name"} {
 		if value, ok := displayStringArg(args, key); ok {
+			if name == "bash" && key == "command" {
+				value = truncateDisplayRunes(value, maxToolInvocationCommandRunes)
+			}
 			return fmt.Sprintf("%s(%s)", displayName, strconv.Quote(value))
 		}
 	}
@@ -54,6 +59,14 @@ func displayStringArg(args map[string]any, key string) (string, bool) {
 	return value, true
 }
 
+func truncateDisplayRunes(value string, limit int) string {
+	runes := []rune(value)
+	if limit <= 0 || len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "..."
+}
+
 func formatDisplayArgs(args map[string]any) string {
 	keys := make([]string, 0, len(args))
 	for key := range args {
@@ -64,9 +77,7 @@ func formatDisplayArgs(args map[string]any) string {
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
 		value := fmt.Sprintf("%v", args[key])
-		if len([]rune(value)) > 100 {
-			value = string([]rune(value)[:100]) + "..."
-		}
+		value = truncateDisplayRunes(value, 100)
 		parts = append(parts, fmt.Sprintf("%s=%s", key, strconv.Quote(value)))
 	}
 	return strings.Join(parts, ", ")
