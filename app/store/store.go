@@ -1,3 +1,5 @@
+//go:build windows || darwin
+
 // Package store provides a simple JSON file store for the desktop application
 // to save and load data such as ollama server configuration, messages,
 // login information and more.
@@ -182,7 +184,7 @@ type Store struct {
 	db   *database
 }
 
-func defaultDBPath() string {
+var defaultDBPath = func() string {
 	switch runtime.GOOS {
 	case "windows":
 		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "db.sqlite")

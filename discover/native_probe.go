@@ -111,7 +111,6 @@ func RunNativeProbeCommand(ctx context.Context, libDirs []string, out io.Writer)
 	}
 
 	devices, err := runNativeProbe(ctx, libDirs)
-	//lint:ignore SA4023 runNativeProbe is platform-specific; stub builds always return an error.
 	if err != nil {
 		return err
 	}

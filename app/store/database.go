@@ -1,3 +1,5 @@
+//go:build windows || darwin
+
 package store
 
 import (
@@ -12,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 18
+const currentSchemaVersion = 17
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -295,17 +297,15 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v16 to v17: %w", err)
 			}
 			version = 17
-		case 17:
-			// add source column to distinguish agent chats from app chats
-			if err := db.migrateV17ToV18(); err != nil {
-				return fmt.Errorf("migrate v17 to v18: %w", err)
-			}
-			version = 18
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
 			version = currentSchemaVersion
 		}
+	}
+
+	if err := db.ensureCurrentSchema(); err != nil {
+		return fmt.Errorf("ensure current schema: %w", err)
 	}
 
 	return nil
@@ -577,6 +577,7 @@ func (db *database) migrateV16ToV17() error {
 		msg string
 	}{
 		{`ALTER TABLE chats ADD COLUMN model_name TEXT NOT NULL DEFAULT ''`, "add chats.model_name"},
+		{`ALTER TABLE chats ADD COLUMN source TEXT NOT NULL DEFAULT 'app'`, "add chats.source"},
 		{`ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'`, "add messages.images"},
 		{`ALTER TABLE messages ADD COLUMN tool_name TEXT NOT NULL DEFAULT ''`, "add messages.tool_name"},
 		{`ALTER TABLE messages ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''`, "add messages.tool_call_id"},
@@ -610,19 +611,85 @@ func (db *database) migrateV16ToV17() error {
 	return nil
 }
 
-// migrateV17ToV18 adds the source column to the chats table so agent-created
-// chats can be distinguished from desktop app chats.
-func (db *database) migrateV17ToV18() error {
-	_, err := db.conn.Exec(`ALTER TABLE chats ADD COLUMN source TEXT NOT NULL DEFAULT 'app'`)
-	if err != nil && !duplicateColumnError(err) {
-		return fmt.Errorf("add chats.source: %w", err)
-	}
-
-	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 18`)
+func (db *database) ensureCurrentSchema() error {
+	complete, err := db.agentPersistenceSchemaComplete()
 	if err != nil {
-		return fmt.Errorf("update schema version: %w", err)
+		return err
+	}
+	if complete {
+		return nil
+	}
+	if err := db.migrateV16ToV17(); err != nil {
+		return err
+	}
+	complete, err = db.agentPersistenceSchemaComplete()
+	if err != nil {
+		return err
+	}
+	if !complete {
+		return fmt.Errorf("agent persistence schema is incomplete")
 	}
 	return nil
+}
+
+func (db *database) agentPersistenceSchemaComplete() (bool, error) {
+	for _, table := range []string{"compactions"} {
+		exists, err := db.tableExists(table)
+		if err != nil || !exists {
+			return false, err
+		}
+	}
+	for _, column := range []struct {
+		table string
+		name  string
+	}{
+		{"chats", "model_name"},
+		{"chats", "source"},
+		{"messages", "images"},
+		{"messages", "tool_name"},
+		{"messages", "tool_call_id"},
+		{"messages", "archived"},
+		{"tool_calls", "tool_call_id"},
+	} {
+		exists, err := db.columnExists(column.table, column.name)
+		if err != nil || !exists {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (db *database) tableExists(table string) (bool, error) {
+	var count int
+	if err := db.conn.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (db *database) columnExists(table, column string) (bool, error) {
+	rows, err := db.conn.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, dataType sql.NullString
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name.String == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // cleanupOrphanedData removes orphaned records that may exist due to the foreign key bug
