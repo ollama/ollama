@@ -434,9 +434,18 @@ func (m chatModel) selectModel() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Cloud models need an auth + plan check before switching.
+	// Cloud models need auth + plan check before switching. If we already
+	// know the badge state from the model list, go directly to the right
+	// prompt — no "checking" spinner.
 	if selected.Cloud && m.opts.CheckCloudModel != nil {
-		return m.startCloudAuthCheck(selected.Name, selected.RequiredPlan)
+		switch selected.AvailabilityBadge {
+		case "Sign in required":
+			return m.startCloudAuthSignIn(selected.Name, selected.RequiredPlan, selected.SignInURL)
+		case "Upgrade required":
+			return m.startCloudAuthUpgrade(selected.Name, selected.RequiredPlan)
+		}
+		// Badge is empty — auth is satisfied (confirmed via Whoami when the
+		// list was built). Apply directly.
 	}
 
 	m.modelPicker = nil

@@ -578,18 +578,21 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]agentchat.Mod
 	}
 
 	// Compute availability badges for cloud models based on account state.
-	badges := cloudAvailabilityBadges(ctx, client, options)
+	badges, signInURLs := cloudAvailabilityBadges(ctx, client, options)
 	for i := range options {
 		options[i].AvailabilityBadge = badges[options[i].Name]
+		options[i].SignInURL = signInURLs[options[i].Name]
 	}
 
 	return options, nil
 }
 
 // cloudAvailabilityBadges returns a map of model name → availability badge
-// for cloud models that require sign-in or a plan upgrade.
-func cloudAvailabilityBadges(ctx context.Context, client *api.Client, options []agentchat.ModelOption) map[string]string {
+// for cloud models that require sign-in or a plan upgrade. It also returns
+// a map of model name → sign-in URL for models that require sign-in.
+func cloudAvailabilityBadges(ctx context.Context, client *api.Client, options []agentchat.ModelOption) (map[string]string, map[string]string) {
 	badges := make(map[string]string)
+	signInURLs := make(map[string]string)
 	hasCloud := false
 	for _, opt := range options {
 		if opt.Cloud {
@@ -598,19 +601,33 @@ func cloudAvailabilityBadges(ctx context.Context, client *api.Client, options []
 		}
 	}
 	if !hasCloud {
-		return badges
+		return badges, signInURLs
 	}
 
 	if disabled, known := agentCloudStatusDisabled(ctx, client); known && disabled {
-		return badges
+		return badges, signInURLs
 	}
 
 	whoamiCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	user, err := client.Whoami(whoamiCtx)
 	if err != nil {
-		// Can't determine auth state — don't show badges.
-		return badges
+		// Whoami failed — likely not signed in. Extract the sign-in URL
+		// from the authorization error so we can show it immediately.
+		var authErr api.AuthorizationError
+		signInURL := ""
+		if errors.As(err, &authErr) && authErr.SigninURL != "" {
+			signInURL = authErr.SigninURL
+		}
+		for _, opt := range options {
+			if opt.Cloud {
+				badges[opt.Name] = "Sign in required"
+				if signInURL != "" {
+					signInURLs[opt.Name] = signInURL
+				}
+			}
+		}
+		return badges, signInURLs
 	}
 
 	signedIn := user != nil && user.Name != ""
@@ -624,7 +641,7 @@ func cloudAvailabilityBadges(ctx context.Context, client *api.Client, options []
 			badges[opt.Name] = "Upgrade required"
 		}
 	}
-	return badges
+	return badges, signInURLs
 }
 
 func agentRecommendationDescription(rec api.ModelRecommendation) string {

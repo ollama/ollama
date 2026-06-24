@@ -42,6 +42,7 @@ type ModelOption struct {
 	RequiredPlan      string
 	Cloud             bool
 	AvailabilityBadge string
+	SignInURL         string
 }
 
 type Options struct {

@@ -101,6 +101,34 @@ func (m *chatModel) startCloudAuthCheck(modelName, requiredPlan string) (tea.Mod
 	return m, checkCloudModelCmd(m.ctx, m.opts.CheckCloudModel, modelName, requiredPlan)
 }
 
+func (m *chatModel) startCloudAuthSignIn(modelName, requiredPlan, signInURL string) (tea.Model, tea.Cmd) {
+	m.cloudAuthPrompt = &cloudAuthPrompt{
+		modelName:    modelName,
+		requiredPlan: requiredPlan,
+		kind:         cloudAuthSignIn,
+		signInURL:    signInURL,
+		polling:      true,
+	}
+	m.status = "cloud-auth"
+	m.modelPicker = nil
+	if signInURL == "" {
+		return m, checkCloudModelCmd(m.ctx, m.opts.CheckCloudModel, modelName, requiredPlan)
+	}
+	return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.apiClient(), requiredPlan))
+}
+
+func (m *chatModel) startCloudAuthUpgrade(modelName, requiredPlan string) (tea.Model, tea.Cmd) {
+	m.cloudAuthPrompt = &cloudAuthPrompt{
+		modelName:    modelName,
+		requiredPlan: requiredPlan,
+		kind:         cloudAuthUpgrade,
+		openNow:      true,
+	}
+	m.status = "cloud-auth"
+	m.modelPicker = nil
+	return m, nil
+}
+
 func (m chatModel) updateCloudAuthPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case cloudAuthCheckMsg:
