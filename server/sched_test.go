@@ -187,7 +187,7 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
 
-		s.getRunner(ctx, visionModel, opts, nil, true, false, nil)
+		s.getRunner(ctx, visionModel, opts, nil, true, false, false, nil)
 
 		req := <-s.pendingReqCh
 		require.Equal(t, 2048, req.opts.NumCtx)
@@ -199,7 +199,7 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
 
-		s.getRunner(ctx, visionModel, opts, nil, false, false, nil)
+		s.getRunner(ctx, visionModel, opts, nil, false, false, false, nil)
 
 		req := <-s.pendingReqCh
 		require.Equal(t, 2048, req.opts.NumCtx)
@@ -1037,6 +1037,56 @@ func TestSchedNeedsReloadIgnoresAutomaticNumBatchDerivation(t *testing.T) {
 
 	req.numBatchAuto = false
 	require.True(t, runner.needsReload(ctx, req))
+}
+
+func TestSchedEmbeddingBatchOptionsForTokenCount(t *testing.T) {
+	opts := api.DefaultOptions()
+	opts.NumCtx = 8192
+	opts.NumBatch = llm.DefaultEmbeddingNumBatch
+
+	nextOpts, err := (&Scheduler{}).embeddingBatchOptionsForTokenCount(opts, true, 3602)
+	require.NoError(t, err)
+	require.Equal(t, 4096, nextOpts.NumBatch)
+
+	opts.NumCtx = 3602
+	nextOpts, err = (&Scheduler{}).embeddingBatchOptionsForTokenCount(opts, true, 3602)
+	require.NoError(t, err)
+	require.Equal(t, 3602, nextOpts.NumBatch)
+
+	_, err = (&Scheduler{}).embeddingBatchOptionsForTokenCount(opts, false, 3602)
+	require.Error(t, err)
+	var statusErr api.StatusError
+	require.ErrorAs(t, err, &statusErr)
+	require.Equal(t, 400, statusErr.StatusCode)
+}
+
+func TestSchedNeedsReloadAutomaticEmbeddingNumBatchCanGrow(t *testing.T) {
+	model := &Model{}
+	opts := api.DefaultOptions()
+	opts.NumBatch = 4096
+	runner := &runnerRef{
+		model:        model,
+		Options:      &opts,
+		llama:        &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+		numParallel:  1,
+		numBatchAuto: true,
+		embBatchAuto: true,
+	}
+	req := &LlmRequest{
+		model:        model,
+		opts:         api.DefaultOptions(),
+		numBatchAuto: true,
+		embBatchAuto: true,
+	}
+
+	req.opts.NumBatch = 2048
+	require.False(t, runner.needsReload(t.Context(), req))
+
+	req.opts.NumBatch = 4096
+	require.False(t, runner.needsReload(t.Context(), req))
+
+	req.opts.NumBatch = 5120
+	require.True(t, runner.needsReload(t.Context(), req))
 }
 
 func TestSchedNeedsReloadIgnoresAutomaticUseMMapDefault(t *testing.T) {
