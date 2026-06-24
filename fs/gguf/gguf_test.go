@@ -2,6 +2,8 @@ package gguf_test
 
 import (
 	"bytes"
+	"encoding/binary"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +14,17 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/fs/gguf"
 )
+
+const (
+	ggufTestTypeUint32 uint32 = 4
+	ggufTestTypeString uint32 = 8
+	ggufTestTypeArray  uint32 = 9
+)
+
+type ggufTestEntry struct {
+	key   string
+	value any
+}
 
 func createBinFile(tb testing.TB) string {
 	tb.Helper()
@@ -82,6 +95,68 @@ func createBinFile(tb testing.TB) string {
 	}
 
 	return f.Name()
+}
+
+func createOrderedGGUF(tb testing.TB, entries ...ggufTestEntry) string {
+	tb.Helper()
+	f, err := os.CreateTemp(tb.TempDir(), "")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write([]byte("GGUF")); err != nil {
+		tb.Fatal(err)
+	}
+	writeGGUFTestValue(tb, f, uint32(3))
+	writeGGUFTestValue(tb, f, uint64(0))
+	writeGGUFTestValue(tb, f, uint64(len(entries)))
+
+	for _, entry := range entries {
+		writeGGUFTestString(tb, f, entry.key)
+		writeGGUFTestTypedValue(tb, f, entry.value)
+	}
+
+	return f.Name()
+}
+
+func writeGGUFTestTypedValue(tb testing.TB, w io.Writer, value any) {
+	tb.Helper()
+
+	switch value := value.(type) {
+	case uint32:
+		writeGGUFTestValue(tb, w, ggufTestTypeUint32)
+		writeGGUFTestValue(tb, w, value)
+	case string:
+		writeGGUFTestValue(tb, w, ggufTestTypeString)
+		writeGGUFTestString(tb, w, value)
+	case []string:
+		writeGGUFTestValue(tb, w, ggufTestTypeArray)
+		writeGGUFTestValue(tb, w, ggufTestTypeString)
+		writeGGUFTestValue(tb, w, uint64(len(value)))
+		for _, item := range value {
+			writeGGUFTestString(tb, w, item)
+		}
+	default:
+		tb.Fatalf("unsupported test GGUF value type %T", value)
+	}
+}
+
+func writeGGUFTestString(tb testing.TB, w io.Writer, value string) {
+	tb.Helper()
+
+	writeGGUFTestValue(tb, w, uint64(len(value)))
+	if _, err := io.WriteString(w, value); err != nil {
+		tb.Fatal(err)
+	}
+}
+
+func writeGGUFTestValue(tb testing.TB, w io.Writer, value any) {
+	tb.Helper()
+
+	if err := binary.Write(w, binary.LittleEndian, value); err != nil {
+		tb.Fatal(err)
+	}
 }
 
 func TestRead(t *testing.T) {
@@ -226,65 +301,26 @@ func TestRead(t *testing.T) {
 	}
 }
 
-func TestScanMetadata(t *testing.T) {
-	info, err := gguf.ScanMetadata(createBinFile(t))
+func TestScanKeyValuesSkipsUnselectedValues(t *testing.T) {
+	keyValues, err := gguf.ScanKeyValues(createOrderedGGUF(t,
+		ggufTestEntry{"general.architecture", "gemma4"},
+		ggufTestEntry{"tokenizer.ggml.tokens", []string{"hello", strings.Repeat("x", 64<<10)}},
+		ggufTestEntry{"gemma4.vision.block_count", uint32(16)},
+	), func(key string) bool {
+		return key == "general.architecture" || key == "gemma4.vision.block_count"
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if info.Architecture != "llama" {
-		t.Fatalf("architecture = %q, want llama", info.Architecture)
+	if len(keyValues) != 2 {
+		t.Fatalf("selected key-values = %d, want 2: %+v", len(keyValues), keyValues)
 	}
-	if info.EmbeddingLength != 3 {
-		t.Fatalf("embedding length = %d, want 3", info.EmbeddingLength)
+	if keyValues[0].Key != "general.architecture" || keyValues[0].String() != "gemma4" {
+		t.Fatalf("first selected key-value = %+v, want general.architecture=gemma4", keyValues[0])
 	}
-	if info.HasFileType {
-		t.Fatalf("has file type = true, want false: %+v", info)
-	}
-	if info.HasEmbedding || info.HasVision || info.HasAudio {
-		t.Fatalf("unexpected capability metadata: %+v", info)
-	}
-}
-
-func TestScanMetadataArchitectureKeysBeforeArchitecture(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-
-	kv := ggml.KV{
-		"general.architecture":      "gemma4",
-		"general.file_type":         uint32(15),
-		"gemma4.audio.block_count":  uint32(12),
-		"gemma4.context_length":     uint32(131072),
-		"gemma4.embedding_length":   uint32(2560),
-		"gemma4.vision.block_count": uint32(16),
-		"tokenizer.ggml.tokens":     []string{"hello", "world"},
-	}
-	if err := ggml.WriteGGUF(f, kv, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	info, err := gguf.ScanMetadata(f.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if info.Architecture != "gemma4" {
-		t.Fatalf("architecture = %q, want gemma4", info.Architecture)
-	}
-	if !info.HasFileType || info.FileType != 15 {
-		t.Fatalf("file type = %d/%v, want 15/true", info.FileType, info.HasFileType)
-	}
-	if info.ContextLength != 131072 {
-		t.Fatalf("context length = %d, want 131072", info.ContextLength)
-	}
-	if info.EmbeddingLength != 2560 {
-		t.Fatalf("embedding length = %d, want 2560", info.EmbeddingLength)
-	}
-	if !info.HasVision || !info.HasAudio {
-		t.Fatalf("capability metadata = vision:%v audio:%v, want both true", info.HasVision, info.HasAudio)
+	if keyValues[1].Key != "gemma4.vision.block_count" || keyValues[1].Uint() != 16 {
+		t.Fatalf("second selected key-value = %+v, want gemma4.vision.block_count=16", keyValues[1])
 	}
 }
 

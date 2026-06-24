@@ -344,6 +344,24 @@ func modelListGGUFTestFile(fn func(*bytes.Buffer)) []byte {
 	return b.Bytes()
 }
 
+const modelListGGUFMagicLE = 0x46554747
+
+const (
+	modelListGGUFTypeUint8 uint32 = iota
+	modelListGGUFTypeInt8
+	modelListGGUFTypeUint16
+	modelListGGUFTypeInt16
+	modelListGGUFTypeUint32
+	modelListGGUFTypeInt32
+	modelListGGUFTypeFloat32
+	modelListGGUFTypeBool
+	modelListGGUFTypeString
+	modelListGGUFTypeArray
+	modelListGGUFTypeUint64
+	modelListGGUFTypeInt64
+	modelListGGUFTypeFloat64
+)
+
 func writeModelListGGUFHeader(t *testing.T, b *bytes.Buffer, numKV uint64) {
 	t.Helper()
 	writeModelListGGUFUint32(t, b, modelListGGUFMagicLE)
