@@ -763,10 +763,10 @@ func (m chatModel) View() string {
 		height = 24
 	}
 
-	if m.resumePicker != nil && m.shouldRenderResumePickerFullFrame(width, height) {
+	if m.resumePicker != nil && m.shouldRenderPickerFullFrame(width, height) {
 		return renderFullFrame(m.renderResumePicker(width), width, height)
 	}
-	if m.modelPicker != nil && m.shouldRenderModelPickerFullFrame(width, height) {
+	if m.modelPicker != nil && m.shouldRenderPickerFullFrame(width, height) {
 		return renderFullFrame(m.renderModelPicker(width), width, height)
 	}
 	if m.thinkPicker != nil {

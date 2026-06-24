@@ -38,6 +38,14 @@ type chatPicker[T any] struct {
 	scroll int
 	match  func(T, string) bool
 	less   func(T, T, string) int
+
+	// Display configuration shared by the full-frame and inline renderers.
+	title       string
+	inlineTitle string
+	emptyLabel  string
+	fullFooter  string
+	itemTitle   func(T) string
+	itemMeta    func(T) string
 }
 
 type chatHistoryPopup struct {
@@ -276,6 +284,12 @@ func newChatModelPicker(models []ModelOption, current, filter string) *chatModel
 		return modelOptionMatchScore(model, filter).ok
 	})
 	picker.less = compareModelOptionsForFilter
+	picker.title = "Switch model"
+	picker.inlineTitle = "Select model"
+	picker.emptyLabel = "No matching models"
+	picker.fullFooter = "↑/↓ move • enter switch • type search • esc cancel"
+	picker.itemTitle = func(model ModelOption) string { return model.Name }
+	picker.itemMeta = func(model ModelOption) string { return modelOptionMeta(model, current) }
 	return picker
 }
 
@@ -366,40 +380,17 @@ func compareInt(a, b int) int {
 }
 
 func (m chatModel) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyEsc:
+	if m.modelPicker == nil {
+		return m, nil
+	}
+	clear, enter := m.modelPicker.handleKey(msg)
+	if clear {
 		m.modelPicker = nil
 		m.status = "ready"
 		return m, nil
-	case tea.KeyEnter:
+	}
+	if enter {
 		return m.selectModel()
-	case tea.KeyUp:
-		m.modelPicker.move(-1)
-	case tea.KeyDown:
-		m.modelPicker.move(1)
-	case tea.KeyPgUp:
-		m.modelPicker.move(-maxResumePickerItems)
-	case tea.KeyPgDown:
-		m.modelPicker.move(maxResumePickerItems)
-	case tea.KeyBackspace:
-		if len(m.modelPicker.filter) > 0 {
-			runes := []rune(m.modelPicker.filter)
-			m.modelPicker.filter = string(runes[:len(runes)-1])
-			m.modelPicker.cursor = 0
-			m.modelPicker.scroll = 0
-		}
-	case tea.KeyCtrlU:
-		m.modelPicker.filter = ""
-		m.modelPicker.cursor = 0
-		m.modelPicker.scroll = 0
-	case tea.KeySpace:
-		m.modelPicker.filter += " "
-		m.modelPicker.cursor = 0
-		m.modelPicker.scroll = 0
-	case tea.KeyRunes:
-		m.modelPicker.filter += string(msg.Runes)
-		m.modelPicker.cursor = 0
-		m.modelPicker.scroll = 0
 	}
 	return m, nil
 }
@@ -503,7 +494,7 @@ func (m *chatModel) openResumePicker() (tea.Model, tea.Cmd) {
 }
 
 func newChatResumePicker(chats []appstore.ChatSummary, currentChatID string) *chatResumePicker {
-	return newChatPicker(chats, "", func(chat appstore.ChatSummary) bool {
+	picker := newChatPicker(chats, "", func(chat appstore.ChatSummary) bool {
 		return chat.ID == currentChatID
 	}, func(chat appstore.ChatSummary, filter string) bool {
 		return strings.Contains(strings.ToLower(strings.Join([]string{
@@ -512,43 +503,27 @@ func newChatResumePicker(chats []appstore.ChatSummary, currentChatID string) *ch
 			chat.ID,
 		}, " ")), filter)
 	})
+	picker.title = "Resume session"
+	picker.inlineTitle = "Resume chat"
+	picker.emptyLabel = "No matching chats"
+	picker.fullFooter = "↑/↓ move • enter resume • type search • esc cancel"
+	picker.itemTitle = resumeChatTitle
+	picker.itemMeta = resumeChatMeta
+	return picker
 }
 
 func (m chatModel) updateResumePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyEsc:
+	if m.resumePicker == nil {
+		return m, nil
+	}
+	clear, enter := m.resumePicker.handleKey(msg)
+	if clear {
 		m.resumePicker = nil
 		m.status = "ready"
 		return m, nil
-	case tea.KeyEnter:
+	}
+	if enter {
 		return m.resumeSelectedChat()
-	case tea.KeyUp:
-		m.resumePicker.move(-1)
-	case tea.KeyDown:
-		m.resumePicker.move(1)
-	case tea.KeyPgUp:
-		m.resumePicker.move(-maxResumePickerItems)
-	case tea.KeyPgDown:
-		m.resumePicker.move(maxResumePickerItems)
-	case tea.KeyBackspace:
-		if len(m.resumePicker.filter) > 0 {
-			runes := []rune(m.resumePicker.filter)
-			m.resumePicker.filter = string(runes[:len(runes)-1])
-			m.resumePicker.cursor = 0
-			m.resumePicker.scroll = 0
-		}
-	case tea.KeyCtrlU:
-		m.resumePicker.filter = ""
-		m.resumePicker.cursor = 0
-		m.resumePicker.scroll = 0
-	case tea.KeySpace:
-		m.resumePicker.filter += " "
-		m.resumePicker.cursor = 0
-		m.resumePicker.scroll = 0
-	case tea.KeyRunes:
-		m.resumePicker.filter += string(msg.Runes)
-		m.resumePicker.cursor = 0
-		m.resumePicker.scroll = 0
 	}
 	return m, nil
 }
@@ -606,197 +581,23 @@ func (m *chatModel) resumeSelectedChat() (tea.Model, tea.Cmd) {
 }
 
 func (m chatModel) renderResumePicker(width int) string {
-	picker := m.resumePicker
-	if picker == nil {
-		return ""
-	}
-	if width <= 0 {
-		width = 80
-	}
-
-	var b strings.Builder
-	b.WriteString(chatResumeTitleStyle.Render("Resume session"))
-	b.WriteString("\n\n")
-	b.WriteString(renderResumeSearchBox(picker.filter, width))
-	b.WriteString("\n\n")
-
-	filtered := picker.filtered()
-	if len(filtered) == 0 {
-		b.WriteString(chatResumeMetaStyle.Render("No matching chats"))
-		b.WriteString("\n")
-	} else {
-		start := clamp(picker.scroll, 0, max(0, len(filtered)-1))
-		end := min(len(filtered), start+maxResumePickerItems)
-		for i := start; i < end; i++ {
-			chat := filtered[i]
-			selected := i == picker.cursor
-			if selected {
-				b.WriteString(chatResumeSelectedStyle.Render("› " + resumeChatTitle(chat)))
-			} else {
-				b.WriteString("  ")
-				b.WriteString(chatResumeTextStyle.Render(resumeChatTitle(chat)))
-			}
-			b.WriteByte('\n')
-			b.WriteString(chatResumeMetaStyle.Render("  " + resumeChatMeta(chat)))
-			b.WriteByte('\n')
-			if i < end-1 {
-				b.WriteByte('\n')
-			}
-		}
-		if end < len(filtered) {
-			b.WriteString(chatResumeMetaStyle.Render(fmt.Sprintf("\n  +%d more", len(filtered)-end)))
-			b.WriteByte('\n')
-		}
-	}
-
-	b.WriteString("\n")
-	b.WriteString(chatResumeMetaStyle.Render("↑/↓ move • enter resume • type search • esc cancel"))
-	return b.String()
+	return m.resumePicker.render(width)
 }
 
 func (m chatModel) renderModelPicker(width int) string {
-	picker := m.modelPicker
-	if picker == nil {
-		return ""
-	}
-	if width <= 0 {
-		width = 80
-	}
-
-	var b strings.Builder
-	b.WriteString(chatResumeTitleStyle.Render("Switch model"))
-	b.WriteString("\n\n")
-	b.WriteString(renderResumeSearchBox(picker.filter, width))
-	b.WriteString("\n\n")
-
-	filtered := picker.filtered()
-	if len(filtered) == 0 {
-		b.WriteString(chatResumeMetaStyle.Render("No matching models"))
-		b.WriteString("\n")
-	} else {
-		start := clamp(picker.scroll, 0, max(0, len(filtered)-1))
-		end := min(len(filtered), start+maxResumePickerItems)
-		for i := start; i < end; i++ {
-			model := filtered[i]
-			selected := i == picker.cursor
-			if selected {
-				b.WriteString(chatResumeSelectedStyle.Render("› " + model.Name))
-			} else {
-				b.WriteString("  ")
-				b.WriteString(chatResumeTextStyle.Render(model.Name))
-			}
-			b.WriteByte('\n')
-			if meta := modelOptionMeta(model, m.opts.Model); meta != "" {
-				b.WriteString(chatResumeMetaStyle.Render("  " + meta))
-				b.WriteByte('\n')
-			}
-			if i < end-1 {
-				b.WriteByte('\n')
-			}
-		}
-		if end < len(filtered) {
-			b.WriteString(chatResumeMetaStyle.Render(fmt.Sprintf("\n  +%d more", len(filtered)-end)))
-			b.WriteByte('\n')
-		}
-	}
-
-	b.WriteString("\n")
-	b.WriteString(chatResumeMetaStyle.Render("↑/↓ move • enter switch • type search • esc cancel"))
-	return b.String()
+	return m.modelPicker.render(width)
 }
 
-func (m chatModel) shouldRenderModelPickerFullFrame(width, height int) bool {
-	return width < 48 || height < 12
-}
-
-func (m chatModel) shouldRenderResumePickerFullFrame(width, height int) bool {
+func (m chatModel) shouldRenderPickerFullFrame(width, height int) bool {
 	return width < 48 || height < 12
 }
 
 func (m chatModel) renderInlineResumePicker(width int) []string {
-	picker := m.resumePicker
-	if picker == nil {
-		return nil
-	}
-	if width <= 0 {
-		width = 80
-	}
-
-	filter := strings.TrimSpace(picker.filter)
-	title := "Resume chat"
-	if filter != "" {
-		title += ": " + filter
-	} else {
-		title += ": type to filter"
-	}
-
-	lines := []string{truncateRenderedLine(chatResumeTitleStyle.Render(title), width)}
-	filtered := picker.filtered()
-	if len(filtered) == 0 {
-		lines = append(lines, chatResumeMetaStyle.Render("  No matching chats"))
-	} else {
-		start, end := completionWindow(len(filtered), picker.cursor, maxInlineModelPickerItems)
-		for i := start; i < end; i++ {
-			chat := filtered[i]
-			marker := "  "
-			if i == picker.cursor {
-				marker = "› "
-			}
-			line := marker + chatResumeTextStyle.Render(resumeChatTitle(chat))
-			if meta := resumeChatMeta(chat); meta != "" {
-				line += "  " + chatResumeMetaStyle.Render(meta)
-			}
-			lines = append(lines, truncateRenderedLine(line, width))
-		}
-		if end < len(filtered) {
-			lines = append(lines, chatResumeMetaStyle.Render(fmt.Sprintf("  +%d more", len(filtered)-end)))
-		}
-	}
-	lines = append(lines, chatResumeMetaStyle.Render("↑/↓ move • enter resume • type filter • esc cancel"))
-	return lines
+	return m.resumePicker.renderInline(width)
 }
 
 func (m chatModel) renderInlineModelPicker(width int) []string {
-	picker := m.modelPicker
-	if picker == nil {
-		return nil
-	}
-	if width <= 0 {
-		width = 80
-	}
-
-	filter := strings.TrimSpace(picker.filter)
-	title := "Select model"
-	if filter != "" {
-		title += ": " + filter
-	} else {
-		title += ": type to filter"
-	}
-
-	lines := []string{truncateRenderedLine(chatResumeTitleStyle.Render(title), width)}
-	filtered := picker.filtered()
-	if len(filtered) == 0 {
-		lines = append(lines, chatResumeMetaStyle.Render("  No matching models"))
-	} else {
-		start, end := completionWindow(len(filtered), picker.cursor, maxInlineModelPickerItems)
-		for i := start; i < end; i++ {
-			model := filtered[i]
-			marker := "  "
-			if i == picker.cursor {
-				marker = "› "
-			}
-			line := marker + chatResumeTextStyle.Render(model.Name)
-			if meta := modelOptionMeta(model, m.opts.Model); meta != "" {
-				line += "  " + chatResumeMetaStyle.Render(meta)
-			}
-			lines = append(lines, truncateRenderedLine(line, width))
-		}
-		if end < len(filtered) {
-			lines = append(lines, chatResumeMetaStyle.Render(fmt.Sprintf("  +%d more", len(filtered)-end)))
-		}
-	}
-	lines = append(lines, chatResumeMetaStyle.Render("↑/↓ move • enter switch • type filter • esc cancel"))
-	return lines
+	return m.modelPicker.renderInline(width)
 }
 
 func (m chatModel) renderHistoryPopup(width, height int) string {
@@ -1000,6 +801,153 @@ func (p *chatPicker[T]) selected() (T, bool) {
 		return zero, false
 	}
 	return filtered[p.cursor], true
+}
+
+// handleKey processes a key event for any chatPicker. It returns clear when the
+// picker should be closed and enter when the selected item should be activated.
+func (p *chatPicker[T]) handleKey(msg tea.KeyMsg) (clear, enter bool) {
+	switch msg.Type {
+	case tea.KeyCtrlC, tea.KeyEsc:
+		return true, false
+	case tea.KeyEnter:
+		return false, true
+	case tea.KeyUp:
+		p.move(-1)
+	case tea.KeyDown:
+		p.move(1)
+	case tea.KeyPgUp:
+		p.move(-maxResumePickerItems)
+	case tea.KeyPgDown:
+		p.move(maxResumePickerItems)
+	case tea.KeyBackspace:
+		if len(p.filter) > 0 {
+			runes := []rune(p.filter)
+			p.filter = string(runes[:len(runes)-1])
+			p.cursor = 0
+			p.scroll = 0
+		}
+	case tea.KeyCtrlU:
+		p.filter = ""
+		p.cursor = 0
+		p.scroll = 0
+	case tea.KeySpace:
+		p.filter += " "
+		p.cursor = 0
+		p.scroll = 0
+	case tea.KeyRunes:
+		p.filter += string(msg.Runes)
+		p.cursor = 0
+		p.scroll = 0
+	}
+	return false, false
+}
+
+// render produces the full-frame picker view with a search box.
+func (p *chatPicker[T]) render(width int) string {
+	if p == nil {
+		return ""
+	}
+	if width <= 0 {
+		width = 80
+	}
+
+	var b strings.Builder
+	b.WriteString(truncateRenderedLine(chatResumeTitleStyle.Render(p.title), width))
+	b.WriteString("\n\n")
+	b.WriteString(renderResumeSearchBox(p.filter, width))
+	b.WriteString("\n\n")
+
+	filtered := p.filtered()
+	if len(filtered) == 0 {
+		b.WriteString(chatResumeMetaStyle.Render(p.emptyLabel))
+		b.WriteString("\n")
+	} else {
+		start := clamp(p.scroll, 0, max(0, len(filtered)-1))
+		end := min(len(filtered), start+maxResumePickerItems)
+		for i := start; i < end; i++ {
+			item := filtered[i]
+			selected := i == p.cursor
+			for j, line := range wrapChatText(p.itemTitle(item), max(10, width-2)) {
+				marker := "  "
+				if selected && j == 0 {
+					marker = "› "
+				}
+				if selected {
+					b.WriteString(chatResumeSelectedStyle.Render(marker + line))
+				} else {
+					b.WriteString("  " + chatResumeTextStyle.Render(line))
+				}
+				b.WriteByte('\n')
+			}
+			if meta := p.itemMeta(item); meta != "" {
+				for _, line := range wrapChatText(meta, max(10, width-2)) {
+					b.WriteString(chatResumeMetaStyle.Render("  " + line))
+					b.WriteByte('\n')
+				}
+			}
+			if i < end-1 {
+				b.WriteByte('\n')
+			}
+		}
+		if end < len(filtered) {
+			b.WriteString(chatResumeMetaStyle.Render(fmt.Sprintf("\n  +%d more", len(filtered)-end)))
+			b.WriteByte('\n')
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(truncateRenderedLine(chatResumeMetaStyle.Render(p.fullFooter), width))
+	return b.String()
+}
+
+// renderInline produces the compact inline picker view shown above the input.
+func (p *chatPicker[T]) renderInline(width int) []string {
+	if p == nil {
+		return nil
+	}
+	if width <= 0 {
+		width = 80
+	}
+
+	filter := strings.TrimSpace(p.filter)
+	title := p.inlineTitle
+	if filter != "" {
+		title += ": " + filter
+	} else {
+		title += ": type to filter"
+	}
+
+	lines := []string{truncateRenderedLine(chatResumeTitleStyle.Render(title), width)}
+	filtered := p.filtered()
+	if len(filtered) == 0 {
+		lines = append(lines, truncateRenderedLine(chatResumeMetaStyle.Render("  "+p.emptyLabel), width))
+	} else {
+		start, end := completionWindow(len(filtered), p.cursor, maxInlineModelPickerItems)
+		for i := start; i < end; i++ {
+			item := filtered[i]
+			selected := i == p.cursor
+			for j, line := range wrapChatText(p.itemTitle(item), max(10, width-2)) {
+				marker := "  "
+				if selected && j == 0 {
+					marker = "› "
+				}
+				if selected {
+					lines = append(lines, truncateRenderedLine(chatResumeSelectedStyle.Render(marker+line), width))
+				} else {
+					lines = append(lines, truncateRenderedLine("  "+chatResumeTextStyle.Render(line), width))
+				}
+			}
+			if meta := p.itemMeta(item); meta != "" {
+				for _, line := range wrapChatText(meta, max(10, width-2)) {
+					lines = append(lines, truncateRenderedLine(chatResumeMetaStyle.Render("  "+line), width))
+				}
+			}
+		}
+		if end < len(filtered) {
+			lines = append(lines, truncateRenderedLine(chatResumeMetaStyle.Render(fmt.Sprintf("  +%d more", len(filtered)-end)), width))
+		}
+	}
+	return lines
 }
 
 func modelOptionMeta(model ModelOption, current string) string {
