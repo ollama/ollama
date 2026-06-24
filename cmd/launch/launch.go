@@ -398,6 +398,7 @@ Examples:
 	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
 	cmd.Flags().BoolVar(&restoreFlag, "restore", false, "Restore an integration to its default profile")
 	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Automatically answer yes to confirmation prompts")
+	cmd.Flags().Bool("verbose", false, "Show timings for response")
 	return cmd
 }
 

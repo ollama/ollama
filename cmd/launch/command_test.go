@@ -79,6 +79,9 @@ func TestLaunchCmd(t *testing.T) {
 		if cmd.Flags().Lookup("yes") == nil {
 			t.Error("--yes flag should exist")
 		}
+		if cmd.Flags().Lookup("verbose") == nil {
+			t.Error("--verbose flag should exist")
+		}
 	})
 
 	t.Run("PreRunE is set", func(t *testing.T) {
@@ -105,6 +108,27 @@ func TestLaunchCmdTUICallback(t *testing.T) {
 
 		if !tuiCalled {
 			t.Error("TUI callback should be called when no args provided")
+		}
+	})
+
+	t.Run("verbose flag is available to TUI", func(t *testing.T) {
+		var gotVerbose bool
+		mockTUI := func(cmd *cobra.Command) {
+			var err error
+			gotVerbose, err = cmd.Flags().GetBool("verbose")
+			if err != nil {
+				t.Fatalf("verbose flag should be readable: %v", err)
+			}
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{"--verbose"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("launch command failed: %v", err)
+		}
+
+		if !gotVerbose {
+			t.Fatal("expected TUI callback to see verbose=true")
 		}
 	})
 
