@@ -567,7 +567,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// support for generate
 		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
 			genTruncate := (req.Truncate == nil || *req.Truncate) && !m.IsMLX()
-			if chatModeForModel(m) == chatExecutionModeNative {
+			if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
 				nativeReq, err := prepareNativeChatRequest(c.Request.Context(), m, r, opts, llm.ChatRequest{
 					Messages:    values.Messages,
 					Format:      req.Format,

@@ -550,6 +550,34 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 		}
 	})
 
+	t.Run("falls back to default raw-like template without chat_template", func(t *testing.T) {
+		mock := mockRunner{
+			TemplateFn: func(context.Context, llm.ChatRequest) (string, error) {
+				t.Fatal("native chat template should not be used without tokenizer.chat_template")
+				return "", nil
+			},
+		}
+		s := newServerWithMockRunner(t, &mock)
+		createMinimalGGUFModel(t, s, "generate-no-chat-template", nil, "", nil)
+
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:           "generate-no-chat-template",
+			Prompt:          "plain prompt",
+			DebugRenderOnly: true,
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var actual api.GenerateResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual.DebugInfo == nil || actual.DebugInfo.RenderedTemplate != "plain prompt" {
+			t.Fatalf("rendered template = %#v, want raw-like default template", actual.DebugInfo)
+		}
+	})
+
 	t.Run("prepends deprecated context to native chat template prompt", func(t *testing.T) {
 		mock := mockRunner{
 			TemplateFn: func(_ context.Context, req llm.ChatRequest) (string, error) {
