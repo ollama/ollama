@@ -339,32 +339,19 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 	}
 
 	if cfg.RemoteHost == "" && cfg.RemoteModel == "" && modelPath != "" {
-		info, err := gguf.ScanMetadata(modelPath)
+		info, err := readModelListGGUF(modelPath)
 		if err != nil {
 			slog.Debug("failed to read gguf model metadata", "model", name.String(), "error", err)
 		} else {
-			if info.HasEmbedding {
-				summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityEmbedding)
-			} else {
-				summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityCompletion)
-			}
-			if info.HasVision {
-				summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityVision)
-			}
-			if info.HasAudio {
-				summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityAudio)
-			}
+			summary.Capabilities = appendModelListCapabilities(summary.Capabilities, info.Capabilities...)
 			if summary.Details.ContextLength == 0 {
 				summary.Details.ContextLength = info.ContextLength
 			}
 			if summary.Details.EmbeddingLength == 0 {
 				summary.Details.EmbeddingLength = info.EmbeddingLength
 			}
-			if info.HasFileType {
-				fileType := ggml.FileType(info.FileType).String()
-				if isUnknownQuantization(summary.Details.QuantizationLevel) && !isUnknownQuantization(fileType) {
-					summary.Details.QuantizationLevel = fileType
-				}
+			if isUnknownQuantization(summary.Details.QuantizationLevel) && !isUnknownQuantization(info.FileType) {
+				summary.Details.QuantizationLevel = info.FileType
 			}
 		}
 	}
@@ -464,11 +451,66 @@ func readModelListLayers(mf *manifest.Manifest, summary *modelListSummary) (stri
 	return modelPath, projectorCount, tmpl, nil
 }
 
-func appendModelListCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
-	if capability == "" || slices.Contains(capabilities, capability) {
-		return capabilities
+type modelListGGUF struct {
+	Capabilities    []model.Capability
+	ContextLength   int
+	EmbeddingLength int
+	FileType        string
+}
+
+func readModelListGGUF(path string) (modelListGGUF, error) {
+	keyValues, err := gguf.ScanKeyValues(path, keepModelListGGUFKey)
+	if err != nil {
+		return modelListGGUF{}, err
 	}
-	return append(capabilities, capability)
+
+	var info modelListGGUF
+	var architecture string
+	var metadata ggufArchitectureMetadata
+	byArchitecture := make(map[string]ggufArchitectureMetadata)
+	for _, kv := range keyValues {
+		switch kv.Key {
+		case ggufKeyGeneralArchitecture:
+			architecture = kv.String()
+			metadata = byArchitecture[architecture]
+		case ggufKeyGeneralFileType:
+			info.FileType = ggml.FileType(ggufMetadataInt(kv.Value)).String()
+		default:
+			arch, suffix, _ := cutGGUFArchitectureKey(kv.Key)
+			value := byArchitecture[arch]
+			updateGGUFArchitectureMetadata(&value, suffix, kv.Value)
+			byArchitecture[arch] = value
+			if arch == architecture {
+				metadata = value
+			}
+		}
+	}
+
+	info.Capabilities = appendGGUFMetadataCapabilities(info.Capabilities, metadata)
+	info.ContextLength = metadata.ContextLength
+	info.EmbeddingLength = metadata.EmbeddingLength
+
+	return info, nil
+}
+
+func keepModelListGGUFKey(key string) bool {
+	switch key {
+	case ggufKeyGeneralArchitecture, ggufKeyGeneralFileType:
+		return true
+	}
+
+	return isGGUFArchitectureMetadataKey(key)
+}
+
+func appendModelListCapabilities(capabilities []model.Capability, values ...model.Capability) []model.Capability {
+	for _, capability := range values {
+		capabilities = appendCapability(capabilities, capability)
+	}
+	return capabilities
+}
+
+func appendModelListCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
+	return appendCapability(capabilities, capability)
 }
 
 func isUnknownQuantization(quantization string) bool {

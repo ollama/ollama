@@ -90,7 +90,7 @@ func (m *Model) isGGUF() bool {
 }
 
 func appendCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
-	if slices.Contains(capabilities, capability) {
+	if capability == "" || slices.Contains(capabilities, capability) {
 		return capabilities
 	}
 	return append(capabilities, capability)
@@ -151,27 +151,16 @@ func (m *Model) ggufCapabilities(capabilities []model.Capability, source templat
 		defer f.Close()
 	}
 
-	modelArch := f.KeyValue("general.architecture").String()
+	modelArch := f.KeyValue(ggufKeyGeneralArchitecture).String()
 	switch source {
 	case templateCapabilitySelected:
 		if !usesOllamaRenderedChat(m) {
-			capabilities = chatTemplateCapabilities(capabilities, f.KeyValue("tokenizer.chat_template").String())
+			capabilities = chatTemplateCapabilities(capabilities, f.KeyValue(ggufKeyTokenizerChatTemplate).String())
 		}
 	case templateCapabilityChat:
-		capabilities = chatTemplateCapabilities(capabilities, f.KeyValue("tokenizer.chat_template").String())
+		capabilities = chatTemplateCapabilities(capabilities, f.KeyValue(ggufKeyTokenizerChatTemplate).String())
 	}
-	if f.KeyValue("pooling_type").Valid() {
-		capabilities = appendCapability(capabilities, model.CapabilityEmbedding)
-	} else {
-		// If no embedding is specified, we assume the model supports completion.
-		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
-	}
-	if f.KeyValue("vision.block_count").Valid() {
-		capabilities = appendCapability(capabilities, model.CapabilityVision)
-	}
-	if f.KeyValue("audio.block_count").Valid() {
-		capabilities = appendCapability(capabilities, model.CapabilityAudio)
-	}
+	capabilities = appendGGUFMetadataCapabilities(capabilities, ggufArchitectureMetadataFromFile(f))
 
 	return capabilities, modelArch
 }
@@ -687,9 +676,9 @@ func GetModel(name string) (*Model, error) {
 					slog.Error("couldn't open model file", "error", err)
 					break
 				}
-				ggufChatTemplate = f.KeyValue("tokenizer.chat_template").String()
+				ggufChatTemplate = f.KeyValue(ggufKeyTokenizerChatTemplate).String()
 				m.HasChatTemplate = ggufChatTemplate != ""
-				modelHasPooling = f.KeyValue("pooling_type").Valid()
+				modelHasPooling = f.KeyValue(ggufKeyPoolingType).Valid()
 				f.Close()
 			}
 		case manifest.MediaTypeImageDraft:
