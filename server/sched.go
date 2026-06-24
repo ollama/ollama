@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"reflect"
 	"runtime"
@@ -47,6 +48,10 @@ type LlmRequest struct {
 	// numBatchAuto is true when NumBatch came from Ollama's default options
 	// rather than an explicit request or model option.
 	numBatchAuto bool
+
+	// embBatchAuto is true when NumBatch is an automatic embedding batch
+	// capacity that may grow to fit larger embedding inputs.
+	embBatchAuto bool
 
 	// useMMapAuto is true when UseMMap was derived by the scheduler rather than
 	// explicitly requested.
@@ -129,7 +134,29 @@ func schedulerModelKey(m *Model) string {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
-	return s.getRunner(c, m, opts, sessionDuration, false, false, nil)
+	return s.getRunner(c, m, opts, sessionDuration, false, false, false, nil)
+}
+
+const embeddingBatchQuantum = 1024
+
+func (s *Scheduler) embeddingBatchOptionsForTokenCount(opts api.Options, embBatchAuto bool, tokenCount int) (api.Options, error) {
+	if tokenCount <= opts.NumBatch {
+		return opts, nil
+	}
+
+	if !embBatchAuto {
+		return opts, api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: fmt.Sprintf("input length (%d tokens) exceeds configured num_batch (%d tokens)", tokenCount, opts.NumBatch),
+		}
+	}
+
+	opts.NumBatch = max(tokenCount, llm.DefaultEmbeddingNumBatch)
+	opts.NumBatch = ((opts.NumBatch + embeddingBatchQuantum - 1) / embeddingBatchQuantum) * embeddingBatchQuantum
+	if opts.NumCtx > 0 {
+		opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
+	}
+	return opts, nil
 }
 
 func resolveContextShift(shift *bool, m *Model) bool {
@@ -172,7 +199,7 @@ func effectiveContext(numCtx, trainCtx int) int {
 	return numCtx
 }
 
-func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool, numBatchAuto bool, shift *bool) (chan *runnerRef, chan error) {
+func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool, numBatchAuto bool, embBatchAuto bool, shift *bool) (chan *runnerRef, chan error) {
 	if opts.NumCtx < 4 {
 		opts.NumCtx = 4
 	}
@@ -196,6 +223,7 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 		errCh:           make(chan error, 1),
 		numCtxAuto:      numCtxAuto,
 		numBatchAuto:    numBatchAuto,
+		embBatchAuto:    embBatchAuto,
 		contextShift:    contextShift,
 		shift:           shift,
 	}
@@ -719,6 +747,7 @@ iGPUScan:
 		pid:             llama.Pid(),
 		numCtxAuto:      req.numCtxAuto,
 		numBatchAuto:    req.numBatchAuto,
+		embBatchAuto:    req.embBatchAuto,
 		useMMapAuto:     req.useMMapAuto,
 		contextShift:    req.contextShift,
 		trainContext:    trainContext,
@@ -1369,6 +1398,7 @@ type runnerRef struct {
 	numParallel  int
 	numCtxAuto   bool
 	numBatchAuto bool
+	embBatchAuto bool
 	useMMapAuto  bool
 	contextShift bool
 	trainContext int
@@ -1418,7 +1448,13 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		optsNew.NumCtx = optsExisting.NumCtx
 	}
 	if runner.numBatchAuto && req.numBatchAuto {
-		optsNew.NumBatch = optsExisting.NumBatch
+		if runner.embBatchAuto && req.embBatchAuto {
+			if optsExisting.NumBatch >= optsNew.NumBatch {
+				optsNew.NumBatch = optsExisting.NumBatch
+			}
+		} else {
+			optsNew.NumBatch = optsExisting.NumBatch
+		}
 	}
 	if runner.useMMapAuto && optsNew.UseMMap == nil {
 		optsNew.UseMMap = optsExisting.UseMMap
