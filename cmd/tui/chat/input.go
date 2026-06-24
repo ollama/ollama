@@ -812,7 +812,7 @@ func isShiftEnterCSI(msg tea.Msg) bool {
 }
 
 func (m chatModel) emptyInputPlaceholder() string {
-	if m.modelPicker != nil || m.resumePicker != nil || m.thinkPicker != nil || m.historyPopup != nil || m.approvalPrompt != nil {
+	if m.modelPicker != nil || m.resumePicker != nil || m.thinkPicker != nil || m.historyPopup != nil || m.approvalPrompt != nil || m.cloudAuthPrompt != nil {
 		return ""
 	}
 	if len(m.entries) > 0 || len(m.messages) > 0 || len(m.input) > 0 || len(m.inputAttachments) > 0 || len(m.inputPastedTexts) > 0 || len(m.queued) > 0 {

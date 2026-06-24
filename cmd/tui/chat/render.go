@@ -297,7 +297,7 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 		inputBodyLines = min(inputBodyLines, max(1, maxHeight-fixedLines))
 	}
 	inputCursor := m.normalizedInputCursor()
-	if m.approvalPrompt != nil {
+	if m.approvalPrompt != nil || m.cloudAuthPrompt != nil {
 		inputCursor = -1
 	}
 	lines = append(lines, renderInputBoxLines(string(m.input), inputCursor, width, inputBodyLines, m.emptyInputPlaceholder())...)

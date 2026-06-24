@@ -36,9 +36,11 @@ var chatEmptyPrompts = []string{
 }
 
 type ModelOption struct {
-	Name        string
-	Description string
-	Recommended bool
+	Name         string
+	Description  string
+	Recommended  bool
+	RequiredPlan string
+	Cloud        bool
 }
 
 type Options struct {
@@ -71,6 +73,7 @@ type Options struct {
 	ContextWindowTokens         int
 	ContextWindowTokensForModel func(context.Context, string, int) int
 	PreloadModel                func(context.Context, string, *api.ThinkValue) error
+	CheckCloudModel             func(context.Context, string, string) error
 	CompactionThreshold         float64
 	NewChat                     func(context.Context) (string, error)
 	Skills                      *skills.Catalog
@@ -127,6 +130,8 @@ type chatModel struct {
 	thinkPicker       *chatThinkPicker
 	historyPopup      *chatHistoryPopup
 	approvalPrompt    *chatApprovalPrompt
+	cloudAuthPrompt   *cloudAuthPrompt
+	pendingModel      string
 	reviewApproval    coreagent.ApprovalHandler
 	permissionMode    *chatPermissionMode
 	permissionNotice  string
@@ -518,6 +523,9 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.approvalPrompt != nil {
 		return m.updateApprovalPrompt(msg)
 	}
+	if m.cloudAuthPrompt != nil {
+		return m.updateCloudAuthPrompt(msg)
+	}
 	if m.modelPicker != nil {
 		return m.updateModelPicker(msg)
 	}
@@ -768,6 +776,9 @@ func (m chatModel) View() string {
 	}
 	if m.modelPicker != nil && m.shouldRenderPickerFullFrame(width, height) {
 		return renderFullFrame(m.renderModelPicker(width), width, height)
+	}
+	if m.cloudAuthPrompt != nil {
+		return renderFullFrame(m.renderCloudAuthPrompt(width), width, height)
 	}
 	if m.thinkPicker != nil {
 		return renderFullFrame(m.renderThinkPicker(width), width, height)
@@ -1144,7 +1155,7 @@ func (m *chatModel) disarmEsc() {
 }
 
 func (m chatModel) canEditInput() bool {
-	return m.approvalPrompt == nil && m.modelPicker == nil && m.thinkPicker == nil && m.resumePicker == nil && m.historyPopup == nil
+	return m.approvalPrompt == nil && m.cloudAuthPrompt == nil && m.modelPicker == nil && m.thinkPicker == nil && m.resumePicker == nil && m.historyPopup == nil
 }
 
 func isChatContextCanceledError(err error) bool {

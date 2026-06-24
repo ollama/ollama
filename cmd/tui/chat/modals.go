@@ -432,6 +432,11 @@ func (m chatModel) selectModel() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Cloud models need an auth + plan check before switching.
+	if selected.Cloud && m.opts.CheckCloudModel != nil {
+		return m.startCloudAuthCheck(selected.Name, selected.RequiredPlan)
+	}
+
 	m.modelPicker = nil
 	if err := m.applyModelSelection(selected.Name, true); err != nil {
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not switch model: %v", err), err: err.Error()}))
@@ -1000,6 +1005,9 @@ func modelOptionMeta(model ModelOption, current string) string {
 	}
 	if model.Description != "" {
 		parts = append(parts, model.Description)
+	}
+	if model.RequiredPlan != "" {
+		parts = append(parts, model.RequiredPlan+" plan")
 	}
 	return strings.Join(parts, " · ")
 }

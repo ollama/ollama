@@ -24,6 +24,7 @@ import (
 	appstore "github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/filedata"
+	"github.com/ollama/ollama/cmd/launch"
 	agentchat "github.com/ollama/ollama/cmd/tui/chat"
 	"github.com/ollama/ollama/format"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
@@ -271,6 +272,9 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 			preloadOpts := opts
 			preloadOpts.Think = think
 			return preloadAgentModelIfLocal(ctx, setup.client, preloadOpts, model)
+		},
+		CheckCloudModel: func(ctx context.Context, model, requiredPlan string) error {
+			return ensureCloudModelAccess(ctx, setup.client, model, requiredPlan)
 		},
 		NewChat: setup.newChatID,
 	})
@@ -521,7 +525,7 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]agentchat.Mod
 
 	seen := make(map[string]struct{})
 	var options []agentchat.ModelOption
-	add := func(name, description string, recommended bool) {
+	add := func(name, description string, recommended bool, requiredPlan string, cloud bool) {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return
@@ -531,7 +535,13 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]agentchat.Mod
 			return
 		}
 		seen[key] = struct{}{}
-		options = append(options, agentchat.ModelOption{Name: name, Description: strings.TrimSpace(description), Recommended: recommended})
+		options = append(options, agentchat.ModelOption{
+			Name:         name,
+			Description:  strings.TrimSpace(description),
+			Recommended:  recommended,
+			RequiredPlan: requiredPlan,
+			Cloud:        cloud,
+		})
 	}
 
 	if disabled, known := agentCloudStatusDisabled(ctx, client); !known || !disabled {
@@ -541,7 +551,7 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]agentchat.Mod
 				if !modelref.HasExplicitCloudSource(name) {
 					continue
 				}
-				add(name, agentRecommendationDescription(rec), true)
+				add(name, agentRecommendationDescription(rec), true, strings.TrimSpace(rec.RequiredPlan), true)
 			}
 		}
 	}
@@ -561,10 +571,10 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]agentchat.Mod
 			// suffix in the name and show arch details without a "cloud" marker.
 			// If a curated rec already added this model, the dedup above keeps
 			// the rec entry.
-			add(name, agentCloudModelDescription(model), false)
+			add(name, agentCloudModelDescription(model), false, "", true)
 			continue
 		}
-		add(name, agentLocalModelDescription(model), false)
+		add(name, agentLocalModelDescription(model), false, "", false)
 	}
 
 	return options, nil
@@ -730,4 +740,32 @@ func agentCloudStatusDisabled(ctx context.Context, client *api.Client) (disabled
 		return false, false
 	}
 	return status.Cloud.Disabled, true
+}
+
+// ensureCloudModelAccess checks whether the user is signed in and has a
+// sufficient plan to use a cloud model. It returns an AuthorizationError
+// (with SigninURL) when sign-in is needed, or a plan error when upgrade is
+// needed.
+func ensureCloudModelAccess(ctx context.Context, client *api.Client, model, requiredPlan string) error {
+	if client == nil {
+		return errors.New("no API client available")
+	}
+
+	if disabled, known := agentCloudStatusDisabled(ctx, client); known && disabled {
+		return errors.New("remote inference is unavailable")
+	}
+
+	user, err := client.Whoami(ctx)
+	if err != nil {
+		return err
+	}
+
+	if user != nil && user.Name != "" {
+		if requiredPlan != "" && !launch.PlanSatisfies(user.Plan, requiredPlan) {
+			return fmt.Errorf("plan upgrade required: %s needs plan %s, you have %s", model, requiredPlan, user.Plan)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("%s requires sign in", model)
 }
