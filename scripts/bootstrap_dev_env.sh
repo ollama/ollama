@@ -197,7 +197,7 @@ ${GREEN}*****************************************************************
 * $ podman exec -it ollama bash                                 *
 *                                                               *
 * Inside the container, you can:                                *
-* - Navigate to: /workspace/ollama-s390x                        *
+* - Navigate to: ollama-s390x                        *
 * - Build ollama: cmake -B build . && cmake --build build       *
 * - Run ollama: ./ollama serve                                  *
 *                                                               *
