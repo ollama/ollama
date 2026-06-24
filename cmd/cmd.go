@@ -38,8 +38,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
+	agentstore "github.com/ollama/ollama/agent/store"
 	"github.com/ollama/ollama/api"
-	appstore "github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/cmd/tui"
@@ -985,7 +985,7 @@ func runAgentHeadless(cmd *cobra.Command, opts runOptions) error {
 }
 
 func resumeModelFromLatestChat(ctx context.Context) (string, error) {
-	store, err := appstore.New("")
+	store, err := agentstore.New("")
 	if err != nil {
 		return "", fmt.Errorf("chat resume unavailable: %w", err)
 	}

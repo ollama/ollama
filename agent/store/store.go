@@ -1,5 +1,3 @@
-//go:build windows || darwin
-
 package store
 
 import (
@@ -8,12 +6,29 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
+
+	_ "github.com/mattn/go-sqlite3"
 )
+
+type Store struct {
+	DBPath string
+
+	dbMu sync.Mutex
+	db   *database
+}
+
+type database struct {
+	conn *sql.DB
+}
 
 type AgentChat struct {
 	ID        string
@@ -39,6 +54,180 @@ func New(path string) (*Store, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func (s *Store) ensureDB() error {
+	if s.db != nil {
+		return nil
+	}
+
+	s.dbMu.Lock()
+	defer s.dbMu.Unlock()
+
+	if s.db != nil {
+		return nil
+	}
+
+	dbPath := s.DBPath
+	if dbPath == "" {
+		dbPath = defaultDBPath()
+	}
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return fmt.Errorf("create database directory: %w", err)
+	}
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		return err
+	}
+	s.db = db
+	return nil
+}
+
+func (s *Store) Close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	err := s.db.Close()
+	s.db = nil
+	return err
+}
+
+func defaultDBPath() string {
+	switch runtime.GOOS {
+	case "windows":
+		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "db.sqlite")
+	case "darwin":
+		return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Ollama", "db.sqlite")
+	default:
+		return filepath.Join(os.Getenv("HOME"), ".ollama", "db.sqlite")
+	}
+}
+
+func newDatabase(dbPath string) (*database, error) {
+	conn, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	if err := conn.Ping(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+	db := &database{conn: conn}
+	if err := db.init(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("initialize database: %w", err)
+	}
+	return db, nil
+}
+
+func (db *database) Close() error {
+	_, _ = db.conn.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
+	return db.conn.Close()
+}
+
+func (db *database) init() error {
+	if _, err := db.conn.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return fmt.Errorf("enable foreign keys: %w", err)
+	}
+	if _, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS chats (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL DEFAULT '',
+			model_name TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT 'app',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			browser_state TEXT
+		);
+
+		CREATE TABLE IF NOT EXISTS messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL DEFAULT '',
+			thinking TEXT NOT NULL DEFAULT '',
+			images TEXT NOT NULL DEFAULT '[]',
+			stream BOOLEAN NOT NULL DEFAULT 0,
+			model_name TEXT,
+			model_cloud BOOLEAN,
+			model_ollama_host BOOLEAN,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			thinking_time_start TIMESTAMP,
+			thinking_time_end TIMESTAMP,
+			tool_result TEXT,
+			tool_name TEXT NOT NULL DEFAULT '',
+			tool_call_id TEXT NOT NULL DEFAULT '',
+			archived BOOLEAN NOT NULL DEFAULT 0,
+			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+		);
+
+		CREATE TABLE IF NOT EXISTS tool_calls (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL,
+			type TEXT NOT NULL,
+			tool_call_id TEXT NOT NULL DEFAULT '',
+			function_name TEXT NOT NULL,
+			function_arguments TEXT NOT NULL,
+			function_result TEXT,
+			FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+		);
+
+		CREATE TABLE IF NOT EXISTS compactions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_id TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			archived_message_ids TEXT NOT NULL DEFAULT '[]',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+		);
+
+	`); err != nil {
+		return err
+	}
+	return db.ensureAgentSchema()
+}
+
+func (db *database) ensureAgentSchema() error {
+	for _, stmt := range []struct {
+		sql string
+		msg string
+	}{
+		{`ALTER TABLE chats ADD COLUMN model_name TEXT NOT NULL DEFAULT ''`, "add chats.model_name"},
+		{`ALTER TABLE chats ADD COLUMN source TEXT NOT NULL DEFAULT 'app'`, "add chats.source"},
+		{`ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'`, "add messages.images"},
+		{`ALTER TABLE messages ADD COLUMN tool_name TEXT NOT NULL DEFAULT ''`, "add messages.tool_name"},
+		{`ALTER TABLE messages ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''`, "add messages.tool_call_id"},
+		{`ALTER TABLE messages ADD COLUMN archived BOOLEAN NOT NULL DEFAULT 0`, "add messages.archived"},
+		{`ALTER TABLE tool_calls ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''`, "add tool_calls.tool_call_id"},
+	} {
+		_, err := db.conn.Exec(stmt.sql)
+		if err != nil && !duplicateColumnError(err) {
+			return fmt.Errorf("%s: %w", stmt.msg, err)
+		}
+	}
+	_, err := db.conn.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);
+		CREATE INDEX IF NOT EXISTS idx_messages_chat_id_id ON messages(chat_id, id);
+		CREATE INDEX IF NOT EXISTS idx_messages_chat_id_archived ON messages(chat_id, archived, id);
+		CREATE INDEX IF NOT EXISTS idx_tool_calls_message_id ON tool_calls(message_id);
+		CREATE TABLE IF NOT EXISTS compactions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_id TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			archived_message_ids TEXT NOT NULL DEFAULT '[]',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_compactions_chat_id ON compactions(chat_id, id);
+	`)
+	if err != nil {
+		return fmt.Errorf("create agent chat persistence tables: %w", err)
+	}
+	return nil
+}
+
+func duplicateColumnError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate column")
 }
 
 func (s *Store) EnsureChat(ctx context.Context, id string, title string) error {

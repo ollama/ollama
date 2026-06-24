@@ -1,5 +1,3 @@
-//go:build windows || darwin
-
 package store
 
 import (
@@ -20,7 +18,8 @@ import (
 
 func newTestAgentStore(t *testing.T) *Store {
 	t.Helper()
-	setTestHome(t, t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	store, err := New(filepath.Join(t.TempDir(), "db.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +32,7 @@ func newTestAgentStore(t *testing.T) *Store {
 	return store
 }
 
-func TestAgentStoreWritesAppCompatibleChat(t *testing.T) {
+func TestAgentStoreWritesSharedChatRows(t *testing.T) {
 	store := newTestAgentStore(t)
 	ctx := context.Background()
 
@@ -88,12 +87,12 @@ func TestAgentStoreWritesAppCompatibleChat(t *testing.T) {
 		t.Fatalf("tool result = %#v", agentChat.Messages[2])
 	}
 
-	appChat, err := store.Chat("chat-1")
-	if err != nil {
+	var source string
+	if err := store.db.conn.QueryRowContext(ctx, `SELECT source FROM chats WHERE id = ?`, "chat-1").Scan(&source); err != nil {
 		t.Fatal(err)
 	}
-	if len(appChat.Messages) != 3 || appChat.Messages[0].Content != "hello from cli" {
-		t.Fatalf("app chat = %#v", appChat)
+	if source != "agent" {
+		t.Fatalf("source = %q, want agent", source)
 	}
 }
 
@@ -343,6 +342,78 @@ func TestAgentStoreListUserMessages(t *testing.T) {
 	}
 }
 
+func TestAgentStoreRepairsPreAgentSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "db.sqlite")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE chats (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			browser_state TEXT
+		);
+		CREATE TABLE messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL DEFAULT '',
+			thinking TEXT NOT NULL DEFAULT '',
+			stream BOOLEAN NOT NULL DEFAULT 0,
+			model_name TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+		);
+		CREATE TABLE tool_calls (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL,
+			type TEXT NOT NULL,
+			function_name TEXT NOT NULL,
+			function_arguments TEXT NOT NULL,
+			function_result TEXT,
+			FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+		);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	ctx := context.Background()
+	if err := store.AppendAgentMessage(ctx, "chat-1", api.Message{Role: "user", Content: "hello"}, "llama3.2"); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := store.AgentChat(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.Model != "llama3.2" || len(chat.Messages) != 1 || chat.Messages[0].Content != "hello" {
+		t.Fatalf("chat = %#v", chat)
+	}
+
+	var source string
+	if err := store.db.conn.QueryRowContext(ctx, `SELECT source FROM chats WHERE id = ?`, "chat-1").Scan(&source); err != nil {
+		t.Fatal(err)
+	}
+	if source != "agent" {
+		t.Fatalf("source = %q, want agent", source)
+	}
+}
+
 func TestAgentStoreArchivesCompactedMessages(t *testing.T) {
 	store := newTestAgentStore(t)
 	ctx := context.Background()
@@ -377,14 +448,6 @@ func TestAgentStoreArchivesCompactedMessages(t *testing.T) {
 	}
 	if agentChat.Messages[2].Content != "recent request" {
 		t.Fatalf("kept message = %#v, want recent request", agentChat.Messages[2])
-	}
-
-	appChat, err := store.Chat("chat-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(appChat.Messages) != 3 {
-		t.Fatalf("app chat should hide archived messages too: %#v", appChat.Messages)
 	}
 
 	var idsJSON string

@@ -19,9 +19,9 @@ import (
 
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/agent/skills"
+	agentstore "github.com/ollama/ollama/agent/store"
 	agenttools "github.com/ollama/ollama/agent/tools"
 	"github.com/ollama/ollama/api"
-	appstore "github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/filedata"
 	"github.com/ollama/ollama/cmd/launch"
@@ -76,7 +76,7 @@ type agentRunSetup struct {
 	opts      AgentTUIOptions
 	client    *api.Client
 	cwd       string
-	store     *appstore.Store
+	store     *agentstore.Store
 	newChatID func(context.Context) (string, error)
 	chatID    string
 	messages  []api.Message
@@ -103,8 +103,8 @@ func newAgentRunSetup(cmd *cobra.Command, opts AgentTUIOptions, resumeLatestWith
 		cwd = ""
 	}
 
-	var store *appstore.Store
-	if openedStore, err := appstore.New(""); err != nil {
+	var store *agentstore.Store
+	if openedStore, err := agentstore.New(""); err != nil {
 		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m chat persistence unavailable: %v\n", err)
 	} else {
 		store = openedStore
@@ -210,7 +210,7 @@ func newAgentRunSetup(cmd *cobra.Command, opts AgentTUIOptions, resumeLatestWith
 	}, nil
 }
 
-func resumeAgentChat(ctx context.Context, store *appstore.Store, modelName string, latestWithoutModel bool) (*appstore.AgentChat, error) {
+func resumeAgentChat(ctx context.Context, store *agentstore.Store, modelName string, latestWithoutModel bool) (*agentstore.AgentChat, error) {
 	if latestWithoutModel && modelName == "" {
 		return store.LatestChat(ctx)
 	}

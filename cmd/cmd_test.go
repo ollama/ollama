@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -19,8 +18,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/cobra"
 
+	agentstore "github.com/ollama/ollama/agent/store"
 	"github.com/ollama/ollama/api"
-	appstore "github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/types/model"
 )
@@ -685,14 +684,10 @@ func TestAutoApproveToolsFromFlags(t *testing.T) {
 }
 
 func TestResumeModelFromLatestChat(t *testing.T) {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
-		t.Skip("app store persistence is only available on desktop app platforms")
-	}
-
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 
-	store, err := appstore.New("")
+	store, err := agentstore.New("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -873,10 +868,6 @@ func TestRunEmbeddingModel(t *testing.T) {
 }
 
 func TestRunHandlerResumeUsesLatestChatInHeadlessMode(t *testing.T) {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
-		t.Skip("app store persistence is only available on desktop app platforms")
-	}
-
 	var chatReq api.ChatRequest
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -914,7 +905,7 @@ func TestRunHandlerResumeUsesLatestChatInHeadlessMode(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 
-	store, err := appstore.New("")
+	store, err := agentstore.New("")
 	if err != nil {
 		t.Fatal(err)
 	}

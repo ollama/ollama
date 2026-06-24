@@ -11,8 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	coreagent "github.com/ollama/ollama/agent"
+	agentstore "github.com/ollama/ollama/agent/store"
 	"github.com/ollama/ollama/api"
-	appstore "github.com/ollama/ollama/app/store"
 )
 
 type chatTestTool struct{}
@@ -30,8 +30,8 @@ type chatShowTestClient struct {
 }
 
 type chatResumeTestStore struct {
-	chats       []appstore.ChatSummary
-	byID        map[string]*appstore.AgentChat
+	chats       []agentstore.ChatSummary
+	byID        map[string]*agentstore.AgentChat
 	prompts     []string
 	setModels   map[string]string
 	setModelErr error
@@ -99,11 +99,11 @@ func (s *chatResumeTestStore) SetChatModel(_ context.Context, chatID string, mod
 	return nil
 }
 
-func (s *chatResumeTestStore) ListChats(context.Context, int) ([]appstore.ChatSummary, error) {
+func (s *chatResumeTestStore) ListChats(context.Context, int) ([]agentstore.ChatSummary, error) {
 	return slices.Clone(s.chats), nil
 }
 
-func (s *chatResumeTestStore) AgentChat(_ context.Context, id string) (*appstore.AgentChat, error) {
+func (s *chatResumeTestStore) AgentChat(_ context.Context, id string) (*agentstore.AgentChat, error) {
 	chat, ok := s.byID[id]
 	if !ok {
 		return nil, sql.ErrNoRows
