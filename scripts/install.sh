@@ -36,7 +36,10 @@ ARCH=$(uname -m)
 case "$ARCH" in
     x86_64) ARCH="amd64" ;;
     aarch64|arm64) ARCH="arm64" ;;
-    s390x) ARCH="s390x" ;;
+    s390x)
+        ARCH="s390x"
+        status "Detected IBM Z (s390x) architecture"
+        ;;
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
