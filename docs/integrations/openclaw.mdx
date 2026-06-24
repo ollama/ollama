@@ -2,94 +2,176 @@
 title: OpenClaw
 ---
 
-OpenClaw is a personal AI assistant that runs on your own devices. It bridges messaging services (WhatsApp, Telegram, Slack, Discord, iMessage, and more) to AI coding agents through a centralized gateway.
+[OpenClaw](https://openclaw.ai) is a personal AI assistant that runs on your own devices. It bridges messaging services (WhatsApp, Telegram, Slack, Discord, iMessage, and more) to AI coding agents through a centralized gateway.
 
-## Quick start
+## Get started
 
-```bash
+Launch OpenClaw with Ollama:
+
+```shell
 ollama launch openclaw
 ```
 
-Ollama handles everything automatically:
+If OpenClaw is not installed, Ollama prompts to install it with npm.
 
-1. **Install** — If OpenClaw isn't installed, Ollama prompts to install it via npm
-2. **Security** — On the first launch, a security notice explains the risks of tool access
-3. **Model** — Pick a model from the selector (local or cloud)
-4. **Onboarding** — Ollama configures the provider, installs the gateway daemon, sets your model as the primary, and enables OpenClaw's bundled Ollama web search
-5. **Gateway** — Starts in the background and opens the OpenClaw TUI
+On first launch, Ollama shows a security notice, configures OpenClaw with your selected model, starts the gateway, and launches OpenClaw.
 
-<Note>OpenClaw requires a larger context window. It is recommended to use a context window of at least 64k tokens if using local models. See [Context length](/context-length) for more information.</Note>
+## Capabilities
 
-<Note>Previously known as Clawdbot. `ollama launch clawdbot` still works as an alias.</Note>
+<div className="capability-list capability-list-full">
+  <div className="capability-list-grid">
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="comment" /></div>
+      <div>
+        <div className="capability-list-heading">Chat</div>
+        <div className="capability-list-copy">Chat with Ollama models from OpenClaw</div>
+      </div>
+    </div>
 
-## Web search and fetch
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="send" /></div>
+      <div>
+        <div className="capability-list-heading">Channels</div>
+        <div className="capability-list-copy">Connect WhatsApp, Telegram, Discord, and more</div>
+      </div>
+    </div>
 
-OpenClaw ships with a bundled Ollama `web_search` provider that lets local or cloud-backed Ollama setups search the web through the configured Ollama host.
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="users" /></div>
+      <div>
+        <div className="capability-list-heading">Subagents</div>
+        <div className="capability-list-copy">Split work across assistant tasks</div>
+      </div>
+    </div>
 
-```bash
-ollama launch openclaw
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="terminal" /></div>
+      <div>
+        <div className="capability-list-heading">Actions</div>
+        <div className="capability-list-copy">Run local tools when enabled</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="search" /></div>
+      <div>
+        <div className="capability-list-heading">Web search</div>
+        <div className="capability-list-copy">Search the web through Ollama</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="file-text" /></div>
+      <div>
+        <div className="capability-list-heading">Web fetch</div>
+        <div className="capability-list-copy">Fetch and summarize web pages</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="image" /></div>
+      <div>
+        <div className="capability-list-heading">Vision</div>
+        <div className="capability-list-copy">Send images and screenshots</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="brain" /></div>
+      <div>
+        <div className="capability-list-heading">Thinking</div>
+        <div className="capability-list-copy">Use thinking with compatible models</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="globe" /></div>
+      <div>
+        <div className="capability-list-heading">Browser workflows</div>
+        <div className="capability-list-copy">Use browser tools through the OpenClaw gateway</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+## Models
+
+Choose a model with enough context for the assistant and its tools.
+
+<CardGroup cols={2}>
+  <Card title="Cloud models" icon="cloud" href="https://ollama.com/search?c=cloud">
+    Use larger models without downloading them.
+  </Card>
+
+  <Card title="Models with long context" icon="hard-drive" href="https://ollama.com/search?c=thinking">
+    Browse models with large context windows.
+  </Card>
+</CardGroup>
+
+Run OpenClaw directly with a model:
+
+```shell
+ollama launch openclaw --model gemma4:cloud
 ```
 
-Ollama web search is enabled automatically when launching OpenClaw through Ollama. To configure it manually:
+<Note>For local models, set the [context length](/context-length) to 64k or higher.</Note>
 
-```bash
-openclaw configure --section web
+## Channels
+
+On first interactive launch, Ollama asks whether you want to connect a messaging channel.
+
+To connect one later:
+
+```shell
+openclaw channels add
 ```
 
-<Note>Ollama web search for local models requires `ollama signin`.</Note>
+OpenClaw supports channels such as WhatsApp, Telegram, Discord, Slack, and iMessage.
 
 ## Configure without launching
 
-To change the model without starting the gateway and TUI:
+Update the OpenClaw model configuration without starting the gateway and launching OpenClaw:
 
-```bash
+```shell
 ollama launch openclaw --config
 ```
 
-To use a specific model directly:
+Run OpenClaw without interaction for scripts or CI:
 
-```bash
-ollama launch openclaw --model kimi-k2.5:cloud
+```shell
+ollama launch openclaw --model gemma4:cloud --yes
 ```
 
-If the gateway is already running, it restarts automatically to pick up the new model.
+## Manual setup
 
-## Recommended models
+<p className="manual-step-title">1. Install OpenClaw</p>
 
-**Cloud models**:
-
-- `kimi-k2.5:cloud` — Multimodal reasoning with subagents
-- `qwen3.5:cloud` — Reasoning, coding, and agentic tool use with vision
-- `glm-5.1:cloud` — Reasoning and code generation
-- `minimax-m2.7:cloud` — Fast, efficient coding and real-world productivity
-
-**Local models:**
-
-- `gemma4` — Reasoning and code generation locally (~16 GB VRAM)
-- `qwen3.5` — Reasoning, coding, and visual understanding locally (~11 GB VRAM)
-
-More models at [ollama.com/search](https://ollama.com/search?c=cloud).
-
-## Non-interactive (headless) mode
-
-Run OpenClaw without interaction for use in Docker, CI/CD, or scripts:
-
-```bash
-ollama launch openclaw --model kimi-k2.5:cloud --yes
+```shell
+npm install -g openclaw@latest
 ```
 
-The `--yes` flag auto-pulls the model, skips selectors, and requires `--model` to be specified.
+<p className="manual-step-title">2. Run onboarding</p>
 
-## Connect messaging apps
+Choose Ollama as the provider, set the base URL to `http://localhost:11434`, and choose an Ollama model.
 
-```bash
-openclaw configure --section channels
+```shell
+openclaw onboard
 ```
 
-Link WhatsApp, Telegram, Slack, Discord, or iMessage to chat with your local models from anywhere.
+<p className="manual-step-title">3. Connect a channel</p>
 
-## Stopping the gateway
+```shell
+openclaw channels add
+```
 
-```bash
+<p className="manual-step-title">4. Start OpenClaw</p>
+
+```shell
+openclaw tui
+```
+
+To stop the gateway:
+
+```shell
 openclaw gateway stop
 ```
