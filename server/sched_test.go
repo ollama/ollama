@@ -1372,6 +1372,10 @@ func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
 }
 
 func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
+	metalReserve := schedulerReserveForTest("Metal")
+	vulkanReserve := schedulerReserveForTest("Vulkan")
+	cudaReserve := schedulerReserveForTest("CUDA")
+
 	tests := []struct {
 		name              string
 		systemFree        uint64
@@ -1388,7 +1392,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 				Integrated: true,
 				FreeMemory: 300 * format.GigaByte,
 			}},
-			wantAvailable:     80 * format.GigaByte,
+			wantAvailable:     80*format.GigaByte - metalReserve,
 			wantGPUFree:       300 * format.GigaByte,
 			wantSystemLimited: true,
 		},
@@ -1400,7 +1404,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 				Integrated: true,
 				FreeMemory: 12 * format.GigaByte,
 			}},
-			wantAvailable:     6 * format.GigaByte,
+			wantAvailable:     6*format.GigaByte - vulkanReserve,
 			wantGPUFree:       12 * format.GigaByte,
 			wantSystemLimited: true,
 		},
@@ -1411,7 +1415,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 				DeviceID:   ml.DeviceID{Library: "Metal"},
 				FreeMemory: 12 * format.GigaByte,
 			}},
-			wantAvailable: 12 * format.GigaByte,
+			wantAvailable: 12*format.GigaByte - metalReserve,
 			wantGPUFree:   12 * format.GigaByte,
 		},
 		{
@@ -1421,7 +1425,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 				DeviceID:   ml.DeviceID{Library: "CUDA"},
 				FreeMemory: 12 * format.GigaByte,
 			}},
-			wantAvailable: 12 * format.GigaByte,
+			wantAvailable: 12*format.GigaByte - cudaReserve,
 			wantGPUFree:   12 * format.GigaByte,
 		},
 		{
@@ -1438,7 +1442,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 					FreeMemory: 10 * format.GigaByte,
 				},
 			},
-			wantAvailable:     18 * format.GigaByte,
+			wantAvailable:     18*format.GigaByte - cudaReserve - vulkanReserve,
 			wantGPUFree:       22 * format.GigaByte,
 			wantSystemLimited: true,
 		},
@@ -1450,7 +1454,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 				Integrated: true,
 				FreeMemory: 12 * format.GigaByte,
 			}},
-			wantAvailable: 12 * format.GigaByte,
+			wantAvailable: 12*format.GigaByte - metalReserve,
 			wantGPUFree:   12 * format.GigaByte,
 		},
 	}
@@ -1463,6 +1467,11 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 			require.Equal(t, tt.wantSystemLimited, systemLimited)
 		})
 	}
+}
+
+func schedulerReserveForTest(library string) uint64 {
+	gpu := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: library}}
+	return gpu.MinimumMemory() + llamaServerDefaultFitTargetMiB*format.MebiByte
 }
 
 func TestSelectLlamaServerPlacement(t *testing.T) {
@@ -1578,6 +1587,25 @@ func TestSelectLlamaServerPlacement(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSelectLlamaServerPlacementReserveEnv(t *testing.T) {
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, FreeMemory: 23336 * format.MebiByte},
+		{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, FreeMemory: 7106 * format.MebiByte},
+	}
+	check := func(name, overhead, fitTarget string, want int) {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_GPU_OVERHEAD", overhead)
+			t.Setenv("LLAMA_ARG_FIT_TARGET", fitTarget)
+			selected, _ := selectLlamaServerPlacement(ml.SystemInfo{}, gpus, 20307*format.MebiByte, api.DefaultOptions())
+			require.Len(t, selected, want)
+		})
+	}
+
+	check("default reserve compacts", "", "", 1)
+	check("gpu overhead prevents compaction", "3221225472", "", 2)
+	check("fit target prevents compaction", "", "4096", 2)
 }
 
 func testIntPtr(v int) *int {

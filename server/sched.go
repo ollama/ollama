@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -552,8 +553,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			// we predict it won't fit, evict before spawning.
 			if requireFull && !explicitPartialGPUOffload(launchOpts, f) && len(s.loaded) > 0 && len(loadGpus) > 0 {
 				freeMemory, gpuFreeMemory, systemLimited := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
-				// Use 80% of free memory as threshold to leave headroom.
-				if predictedForLoad > freeMemory*80/100 {
+				if predictedForLoad > freeMemory {
 					slog.Info("llama-server model predicted to exceed available memory, evicting",
 						"predicted", format.HumanBytes2(predictedForLoad),
 						"predicted_num_ctx", predictedCtx,
@@ -622,11 +622,8 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	systemSwapFreeMemory := systemInfo.FreeSwap
 	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 
-	for _, gpu := range loadGpus {
-		available := gpu.FreeMemory - envconfig.GpuOverhead() - gpu.MinimumMemory()
-		if gpu.FreeMemory < envconfig.GpuOverhead()+gpu.MinimumMemory() {
-			available = 0
-		}
+	for i, gpu := range loadGpus {
+		available := availableMemoryForGPU(systemInfo, gpu, i)
 		slog.Info("gpu memory", "id", gpu.ID, "library", gpu.Library,
 			"available", format.HumanBytes2(available),
 			"free", format.HumanBytes2(gpu.FreeMemory),
@@ -936,11 +933,16 @@ func nextLowerAutoNumCtx(numCtx int) (int, bool) {
 	}
 }
 
+// llamaServerDefaultFitTargetMiB mirrors llama.cpp's default per-device fit margin.
+const llamaServerDefaultFitTargetMiB = 1024
+
 func availableMemoryForLoad(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo) (available, gpuFree uint64, systemLimited bool) {
 	var sharedGPUFree uint64
 	var discreteGPUFree uint64
-	for _, gpu := range gpus {
+	var reserve uint64
+	for i, gpu := range gpus {
 		gpuFree += gpu.FreeMemory
+		reserve += llamaServerDeviceReserve(gpu, i)
 		if gpu.Integrated {
 			sharedGPUFree += gpu.FreeMemory
 		} else {
@@ -948,24 +950,26 @@ func availableMemoryForLoad(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo) (ava
 		}
 	}
 
+	available = gpuFree
 	// On iGPUs, GPU free memory can be a static or slowly refreshed device
 	// baseline. updateFreeSpace has already subtracted known Ollama runner
 	// allocations from that baseline. Current system free memory is a separate
 	// live measurement that already includes those loaded runners, so use the
 	// smaller value for shared-memory GPUs without discounting discrete VRAM.
 	if systemInfo.FreeMemory > 0 && sharedGPUFree > 0 && systemInfo.FreeMemory < sharedGPUFree {
-		return discreteGPUFree + systemInfo.FreeMemory, gpuFree, true
+		available, systemLimited = discreteGPUFree+systemInfo.FreeMemory, true
 	}
 
-	return gpuFree, gpuFree, false
+	return saturatingSubtract(available, reserve), gpuFree, systemLimited
 }
 
 func availableMemoryForPlacement(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, opts api.Options) (available, gpuFree uint64, systemLimited bool) {
 	placementGpus := gpusForPlacement(gpus, opts)
 	if len(placementGpus) == 1 && opts.MainGPU != nil {
-		gpuFree = placementGpus[0].FreeMemory
-		available = availableMemoryForGPU(systemInfo, placementGpus[0])
-		systemLimited = available < gpuFree
+		gpu := placementGpus[0]
+		gpuFree = gpu.FreeMemory
+		available = availableMemoryForGPU(systemInfo, gpu, 0)
+		systemLimited = gpu.Integrated && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < gpu.FreeMemory
 		return available, gpuFree, systemLimited
 	}
 
@@ -1057,7 +1061,7 @@ func bestExplicitMainGPU(systemInfo ml.SystemInfo, groups [][]ml.DeviceInfo, mai
 			continue
 		}
 		candidate := group[mainGPU]
-		candidateAvailable := availableMemoryForGPU(systemInfo, candidate)
+		candidateAvailable := availableMemoryForGPU(systemInfo, candidate, 0)
 		if !ok || betterPlacementGPU(candidate, candidateAvailable, gpu, available) {
 			gpu = candidate
 			available = candidateAvailable
@@ -1071,8 +1075,8 @@ func bestExplicitMainGPU(systemInfo ml.SystemInfo, groups [][]ml.DeviceInfo, mai
 func bestSingleGPUFit(systemInfo ml.SystemInfo, groups [][]ml.DeviceInfo, predictedVRAM uint64) (gpu ml.DeviceInfo, available uint64, ok bool) {
 	for _, group := range groups {
 		for _, candidate := range group {
-			candidateAvailable := availableMemoryForGPU(systemInfo, candidate)
-			if predictedVRAM > candidateAvailable*80/100 {
+			candidateAvailable := availableMemoryForGPU(systemInfo, candidate, 0)
+			if predictedVRAM > candidateAvailable {
 				continue
 			}
 			if !ok || betterPlacementGPU(candidate, candidateAvailable, gpu, available) {
@@ -1127,12 +1131,41 @@ func hasDiscreteGPU(gpus []ml.DeviceInfo) bool {
 	return false
 }
 
-func availableMemoryForGPU(systemInfo ml.SystemInfo, gpu ml.DeviceInfo) uint64 {
+func availableMemoryForGPU(systemInfo ml.SystemInfo, gpu ml.DeviceInfo, index int) uint64 {
+	available := gpu.FreeMemory
 	if gpu.Integrated && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < gpu.FreeMemory {
-		return systemInfo.FreeMemory
+		available = systemInfo.FreeMemory
 	}
 
-	return gpu.FreeMemory
+	return saturatingSubtract(available, llamaServerDeviceReserve(gpu, index))
+}
+
+func llamaServerDeviceReserve(gpu ml.DeviceInfo, index int) uint64 {
+	return gpu.MinimumMemory() + max(envconfig.GpuOverhead(), llamaServerFitTargetBytes(index))
+}
+
+func llamaServerFitTargetBytes(index int) uint64 {
+	value := envconfig.Var("LLAMA_ARG_FIT_TARGET")
+	if value != "" {
+		targets := strings.Split(value, ",")
+		if len(targets) == 1 {
+			index = 0
+		}
+		if index < len(targets) {
+			if target, err := strconv.ParseUint(strings.TrimSpace(targets[index]), 10, 64); err == nil {
+				return target * format.MebiByte
+			}
+		}
+	}
+
+	return llamaServerDefaultFitTargetMiB * format.MebiByte
+}
+
+func saturatingSubtract(value, reserve uint64) uint64 {
+	if value <= reserve {
+		return 0
+	}
+	return value - reserve
 }
 
 func logSelectedGPUGroup(all, selected []ml.DeviceInfo) {

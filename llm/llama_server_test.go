@@ -2036,6 +2036,26 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 	}
 }
 
+func TestApplyGPUOverheadFitTargetEnv(t *testing.T) {
+	check := func(name, overhead, fitTarget, want string, wantSet bool) {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_GPU_OVERHEAD", overhead)
+			t.Setenv("LLAMA_ARG_FIT_TARGET", fitTarget)
+			env := map[string]string{}
+			applyGPUOverheadFitTargetEnv(env)
+			got, ok := env["LLAMA_ARG_FIT_TARGET"]
+			if ok != wantSet || got != want {
+				t.Fatalf("LLAMA_ARG_FIT_TARGET = %q, set %v; want %q, set %v", got, ok, want, wantSet)
+			}
+		})
+	}
+
+	check("below default", "536870912", "", "", false)
+	check("above default", "2147483648", "", "2048", true)
+	check("rounds up", "1073741825", "", "1025", true)
+	check("explicit fit target wins", "2147483648", "512", "", false)
+}
+
 func TestAppendMainGPUArgs(t *testing.T) {
 	tests := []struct {
 		name string
