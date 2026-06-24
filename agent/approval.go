@@ -266,7 +266,7 @@ func (DefaultApprovalPolicy) EvaluateApproval(_ context.Context, req ApprovalReq
 		}
 		return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow, Summary: fmt.Sprintf("%s can run without approval", ToolDisplayName(req.ToolName))}
 	case "web_search", "web_fetch":
-		return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow, Summary: fmt.Sprintf("%s can run without approval", ToolDisplayName(req.ToolName))}
+		return evaluateWebApproval(req)
 	case "edit":
 		return evaluateEditApproval(req)
 	case "bash":
@@ -301,6 +301,42 @@ func evaluateEditApproval(req ApprovalRequest) ApprovalEvaluation {
 		Summary:       fmt.Sprintf("Edit wants to modify %s", sanitizeApprovalDisplay(path)),
 		Reasons:       reasons,
 		SessionKey:    "edit:" + path,
+	}
+}
+
+func evaluateWebApproval(req ApprovalRequest) ApprovalEvaluation {
+	switch req.ToolName {
+	case "web_search":
+		query, ok := stringApprovalArg(req.Args, "query")
+		if !ok {
+			return denyApproval("web_search", ApprovalRiskHigh, "missing query argument")
+		}
+		return ApprovalEvaluation{
+			RequirePrompt: true,
+			Risk:          ApprovalRiskMedium,
+			Summary:       fmt.Sprintf("Web Search wants to search for %q", sanitizeApprovalDisplay(query)),
+			Reasons:       []string{"searches the web"},
+			SessionKey:    "web_search:" + query,
+		}
+	case "web_fetch":
+		targetURL, ok := stringApprovalArg(req.Args, "url")
+		if !ok {
+			return denyApproval("web_fetch", ApprovalRiskHigh, "missing url argument")
+		}
+		return ApprovalEvaluation{
+			RequirePrompt: true,
+			Risk:          ApprovalRiskMedium,
+			Summary:       fmt.Sprintf("Web Fetch wants to fetch %s", sanitizeApprovalDisplay(targetURL)),
+			Reasons:       []string{"fetches web content"},
+			SessionKey:    "web_fetch:" + targetURL,
+		}
+	}
+	return ApprovalEvaluation{
+		RequirePrompt: true,
+		Risk:          ApprovalRiskMedium,
+		Summary:       fmt.Sprintf("%s wants to run", ToolDisplayName(req.ToolName)),
+		Reasons:       []string{"accesses the web"},
+		SessionKey:    approvalSessionKey(req),
 	}
 }
 

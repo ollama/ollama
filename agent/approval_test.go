@@ -308,7 +308,7 @@ func TestBashApprovalClassifiesFindMutations(t *testing.T) {
 	}
 }
 
-func TestWebApprovalAllowsWithoutPrompt(t *testing.T) {
+func TestWebApprovalRequiresPrompt(t *testing.T) {
 	tests := []struct {
 		name    string
 		tool    string
@@ -319,13 +319,13 @@ func TestWebApprovalAllowsWithoutPrompt(t *testing.T) {
 			name:    "search",
 			tool:    "web_search",
 			args:    map[string]any{"query": "Ollama agents"},
-			summary: "Web Search can run without approval",
+			summary: "Web Search wants to search for \"Ollama agents\"",
 		},
 		{
 			name:    "fetch",
 			tool:    "web_fetch",
 			args:    map[string]any{"url": "https://ollama.com"},
-			summary: "Web Fetch can run without approval",
+			summary: "Web Fetch wants to fetch https://ollama.com",
 		},
 	}
 
@@ -335,18 +335,33 @@ func TestWebApprovalAllowsWithoutPrompt(t *testing.T) {
 				ToolName: tt.tool,
 				Args:     tt.args,
 			})
-			if evaluation.RequirePrompt {
-				t.Fatal("web tool should not require prompt")
+			if !evaluation.RequirePrompt {
+				t.Fatal("web tool should require prompt")
 			}
-			if evaluation.Decision != ApprovalAllowOnce {
+			if evaluation.Decision != "" && evaluation.Decision != ApprovalAllowOnce {
 				t.Fatalf("decision = %q, want allow once", evaluation.Decision)
 			}
-			if evaluation.Risk != ApprovalRiskLow {
-				t.Fatalf("risk = %q, want low", evaluation.Risk)
+			if evaluation.Risk != ApprovalRiskMedium {
+				t.Fatalf("risk = %q, want medium", evaluation.Risk)
 			}
 			if evaluation.Summary != tt.summary {
 				t.Fatalf("summary = %q, want %q", evaluation.Summary, tt.summary)
 			}
 		})
+	}
+}
+
+func TestWebApprovalDeniesMissingArgs(t *testing.T) {
+	for _, tool := range []string{"web_search", "web_fetch"} {
+		evaluation := DefaultApprovalPolicy{}.EvaluateApproval(context.Background(), ApprovalRequest{
+			ToolName: tool,
+			Args:     map[string]any{},
+		})
+		if evaluation.Decision != ApprovalDeny {
+			t.Fatalf("%s missing args decision = %q, want deny", tool, evaluation.Decision)
+		}
+		if evaluation.Risk != ApprovalRiskHigh {
+			t.Fatalf("%s missing args risk = %q, want high", tool, evaluation.Risk)
+		}
 	}
 }
