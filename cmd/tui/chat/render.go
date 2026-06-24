@@ -206,13 +206,6 @@ func (m chatModel) viewWidth() int {
 	return 80
 }
 
-func (m chatModel) viewHeight() int {
-	if m.height > 0 {
-		return m.height
-	}
-	return 24
-}
-
 func (m chatModel) transcriptHeight() int {
 	width := m.width
 	if width <= 0 {

@@ -62,9 +62,6 @@ var (
 				Bold(true).
 				Foreground(lipgloss.Color(chatAnsiRed))
 
-	chatInputBorderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiMuted))
-
 	chatCommandNameStyle = lipgloss.NewStyle()
 
 	chatResumeTextStyle = lipgloss.NewStyle()

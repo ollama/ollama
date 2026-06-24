@@ -556,7 +556,7 @@ func tableCellWrapCut(runes []rune, width int) int {
 	}
 	preferred := cut
 	spaceWidth := 0
-	for i := 0; i < cut; i++ {
+	for i := range cut {
 		spaceWidth += lipgloss.Width(string(runes[i]))
 		if unicode.IsSpace(runes[i]) && spaceWidth >= max(1, width/2) {
 			preferred = i + 1
