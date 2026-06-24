@@ -12,7 +12,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 17
+const currentSchemaVersion = 18
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -96,6 +96,7 @@ func (db *database) init() error {
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL DEFAULT '',
 		model_name TEXT NOT NULL DEFAULT '',
+		source TEXT NOT NULL DEFAULT 'app',
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		browser_state TEXT
 	);
@@ -294,6 +295,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v16 to v17: %w", err)
 			}
 			version = 17
+		case 17:
+			// add source column to distinguish agent chats from app chats
+			if err := db.migrateV17ToV18(); err != nil {
+				return fmt.Errorf("migrate v17 to v18: %w", err)
+			}
+			version = 18
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -603,6 +610,21 @@ func (db *database) migrateV16ToV17() error {
 	return nil
 }
 
+// migrateV17ToV18 adds the source column to the chats table so agent-created
+// chats can be distinguished from desktop app chats.
+func (db *database) migrateV17ToV18() error {
+	_, err := db.conn.Exec(`ALTER TABLE chats ADD COLUMN source TEXT NOT NULL DEFAULT 'app'`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add chats.source: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 18`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+	return nil
+}
+
 // cleanupOrphanedData removes orphaned records that may exist due to the foreign key bug
 func (db *database) cleanupOrphanedData() error {
 	_, err := db.conn.Exec(`
@@ -659,6 +681,7 @@ func (db *database) getAllChats() ([]Chat, error) {
 			COALESCE(MAX(m.updated_at), c.created_at) as last_updated
 		FROM chats c
 		LEFT JOIN messages m ON c.id = m.chat_id AND m.archived = 0
+		WHERE c.source = 'app'
 		GROUP BY c.id, c.title, c.created_at
 		ORDER BY last_updated DESC, COALESCE(MAX(m.id), 0) DESC, c.created_at DESC, c.id DESC
 	`

@@ -47,13 +47,14 @@ func (s *Store) EnsureChat(ctx context.Context, id string, title string) error {
 		return err
 	}
 	_, err := s.db.conn.ExecContext(ctx, `
-		INSERT INTO chats (id, title, created_at)
-		VALUES (?, ?, ?)
+		INSERT INTO chats (id, title, created_at, source)
+		VALUES (?, ?, ?, 'agent')
 		ON CONFLICT(id) DO UPDATE SET
 			title = CASE
 				WHEN excluded.title != '' THEN excluded.title
 				ELSE chats.title
-			END
+			END,
+			source = 'agent'
 	`, id, title, time.Now())
 	if err != nil {
 		return fmt.Errorf("ensure chat: %w", err)
@@ -234,6 +235,7 @@ func (s *Store) LatestChat(ctx context.Context) (*AgentChat, error) {
 			SELECT c.id
 			FROM chats c
 			JOIN messages m ON m.chat_id = c.id AND m.archived = 0
+			WHERE c.source = 'agent'
 			GROUP BY c.id
 			HAVING %[1]s IS NOT NULL
 			ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
@@ -258,6 +260,7 @@ func (s *Store) LatestChatForModel(ctx context.Context, model string) (*AgentCha
 			SELECT c.id
 			FROM chats c
 			JOIN messages m ON m.chat_id = c.id AND m.archived = 0
+			WHERE c.source = 'agent'
 			GROUP BY c.id
 			HAVING %[1]s = ?
 			ORDER BY MAX(m.updated_at) DESC, MAX(m.id) DESC
@@ -294,6 +297,7 @@ func (s *Store) ListChats(ctx context.Context, limit int) ([]ChatSummary, error)
 				%[1]s AS current_model
 			FROM chats c
 			JOIN messages m ON m.chat_id = c.id AND m.archived = 0
+			WHERE c.source = 'agent'
 			GROUP BY c.id
 			ORDER BY updated_at DESC, MAX(m.id) DESC
 			LIMIT ?
