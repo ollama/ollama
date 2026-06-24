@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -684,6 +685,10 @@ func TestAutoApproveToolsFromFlags(t *testing.T) {
 }
 
 func TestResumeModelFromLatestChat(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		t.Skip("app store persistence is only available on desktop app platforms")
+	}
+
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 
@@ -868,6 +873,10 @@ func TestRunEmbeddingModel(t *testing.T) {
 }
 
 func TestRunHandlerResumeUsesLatestChatInHeadlessMode(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		t.Skip("app store persistence is only available on desktop app platforms")
+	}
+
 	var chatReq api.ChatRequest
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
