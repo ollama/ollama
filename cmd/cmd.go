@@ -802,21 +802,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
-	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
-
-	// TODO: remove the projector info and vision info checks below,
-	// these are left in for backwards compatibility with older servers
-	// that don't have the capabilities field in the model info
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
-		}
-	}
+	applyMultiModalCompat(&opts, info)
 
 	applyShowResponseToRunOptions(&opts, info)
 
@@ -1750,6 +1736,23 @@ func applyShowResponseToRunOptions(opts *runOptions, info *api.ShowResponse) {
 	opts.ContextWindowTokens = contextWindowTokensFromShowResponse(info)
 }
 
+func applyMultiModalCompat(opts *runOptions, info *api.ShowResponse) {
+	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
+	// TODO: remove the projector info and vision info checks below,
+	// these are left in for backwards compatibility with older servers
+	// that don't have the capabilities field in the model info
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for k := range info.ModelInfo {
+		if strings.Contains(k, ".vision.") {
+			opts.MultiModal = true
+			break
+		}
+	}
+}
+
 func contextWindowTokensFromShowResponse(info *api.ShowResponse) int {
 	if info == nil {
 		return 0
@@ -2174,21 +2177,7 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 		return err
 	}
 
-	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
-	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
-
-	// TODO: remove the projector info and vision info checks below,
-	// these are left in for backwards compatibility with older servers
-	// that don't have the capabilities field in the model info
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
-		}
-	}
+	applyMultiModalCompat(&opts, info)
 
 	applyShowResponseToRunOptions(&opts, info)
 
