@@ -276,6 +276,16 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		CheckCloudModel: func(ctx context.Context, model, requiredPlan string) error {
 			return ensureCloudModelAccess(ctx, setup.client, model, requiredPlan)
 		},
+		OpenBrowser: func(url string) {
+			launch.OpenBrowser(url)
+		},
+		PollCloudAuth: func(ctx context.Context) (string, bool) {
+			user, err := setup.client.Whoami(ctx)
+			if err != nil || user == nil || user.Name == "" {
+				return "", false
+			}
+			return user.Name, true
+		},
 		NewChat: setup.newChatID,
 	})
 	if err != nil {

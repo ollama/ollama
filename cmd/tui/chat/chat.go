@@ -76,6 +76,8 @@ type Options struct {
 	ContextWindowTokensForModel func(context.Context, string, int) int
 	PreloadModel                func(context.Context, string, *api.ThinkValue) error
 	CheckCloudModel             func(context.Context, string, string) error
+	OpenBrowser                 func(string)
+	PollCloudAuth               func(context.Context) (string, bool)
 	CompactionThreshold         float64
 	NewChat                     func(context.Context) (string, error)
 	Skills                      *skills.Catalog
@@ -404,6 +406,24 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatEditorDoneMsg:
 		m.applyEditorResult(msg)
+		return m, nil
+
+	case cloudAuthTickMsg:
+		if m.cloudAuthPrompt != nil {
+			return m.updateCloudAuthPrompt(msg)
+		}
+		return m, nil
+
+	case cloudAuthCheckMsg:
+		if m.cloudAuthPrompt != nil {
+			return m.updateCloudAuthPrompt(msg)
+		}
+		return m, nil
+
+	case cloudAuthPollMsg:
+		if m.cloudAuthPrompt != nil {
+			return m.updateCloudAuthPrompt(msg)
+		}
 		return m, nil
 
 	case tea.MouseMsg:

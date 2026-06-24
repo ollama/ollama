@@ -40,7 +40,6 @@ type cloudAuthTickMsg struct{}
 
 type cloudAuthPollMsg struct {
 	done bool
-	err  error
 }
 
 func checkCloudModelCmd(ctx context.Context, check func(context.Context, string, string) error, model, requiredPlan string) tea.Cmd {
@@ -69,8 +68,8 @@ func cloudAuthTickCmd() tea.Cmd {
 	})
 }
 
-func pollCloudAuthCmd(ctx context.Context, client *api.Client, requiredPlan string) tea.Cmd {
-	if client == nil {
+func pollCloudAuthCmd(ctx context.Context, poll func(context.Context) (string, bool)) tea.Cmd {
+	if poll == nil {
 		return nil
 	}
 	return func() tea.Msg {
@@ -79,15 +78,8 @@ func pollCloudAuthCmd(ctx context.Context, client *api.Client, requiredPlan stri
 		}
 		pollCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
-		user, err := client.Whoami(pollCtx)
-		if err != nil || user == nil || user.Name == "" {
-			return cloudAuthPollMsg{done: false}
-		}
-		if requiredPlan != "" {
-			// Plan satisfaction is checked by the caller's CheckCloudModel
-			// on retry; for polling we just confirm the user is signed in.
-		}
-		return cloudAuthPollMsg{done: true}
+		_, done := poll(pollCtx)
+		return cloudAuthPollMsg{done: done}
 	}
 }
 
@@ -111,10 +103,13 @@ func (m *chatModel) startCloudAuthSignIn(modelName, requiredPlan, signInURL stri
 	}
 	m.status = "cloud-auth"
 	m.modelPicker = nil
+	if m.opts.OpenBrowser != nil && signInURL != "" {
+		m.opts.OpenBrowser(signInURL)
+	}
 	if signInURL == "" {
 		return m, checkCloudModelCmd(m.ctx, m.opts.CheckCloudModel, modelName, requiredPlan)
 	}
-	return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.apiClient(), requiredPlan))
+	return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.opts.PollCloudAuth))
 }
 
 func (m *chatModel) startCloudAuthUpgrade(modelName, requiredPlan string) (tea.Model, tea.Cmd) {
@@ -141,7 +136,10 @@ func (m chatModel) updateCloudAuthPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cloudAuthPrompt.kind = cloudAuthSignIn
 			m.cloudAuthPrompt.signInURL = msg.signInURL
 			m.cloudAuthPrompt.polling = true
-			return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.apiClient(), m.cloudAuthPrompt.requiredPlan))
+			if m.opts.OpenBrowser != nil {
+				m.opts.OpenBrowser(msg.signInURL)
+			}
+			return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.opts.PollCloudAuth))
 		}
 		// Could be a plan upgrade error or unknown error.
 		m.cloudAuthPrompt = nil
@@ -155,7 +153,7 @@ func (m chatModel) updateCloudAuthPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cloudAuthPrompt.spinner++
 		if m.cloudAuthPrompt.polling {
-			return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.apiClient(), m.cloudAuthPrompt.requiredPlan))
+			return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.opts.PollCloudAuth))
 		}
 		return m, cloudAuthTickCmd()
 
@@ -184,7 +182,7 @@ func (m chatModel) updateCloudAuthPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.KeyEnter:
 				if m.cloudAuthPrompt.openNow {
 					m.cloudAuthPrompt.polling = true
-					return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.apiClient(), m.cloudAuthPrompt.requiredPlan))
+					return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.opts.PollCloudAuth))
 				}
 				m.cloudAuthPrompt = nil
 				m.pendingModel = ""
@@ -209,13 +207,6 @@ func (m chatModel) completeCloudAuth() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, m.startModelPreload(pending)
-}
-
-func (m chatModel) apiClient() *api.Client {
-	// The chat TUI doesn't hold a direct *api.Client; polling uses the
-	// CheckCloudModel callback context. Return nil to skip polling if
-	// no client is available — the tick loop will retry.
-	return nil
 }
 
 func (m chatModel) renderCloudAuthPrompt(width int) string {
