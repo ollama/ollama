@@ -39,10 +39,6 @@ func (q *qwen25VLModel) KV(t *Tokenizer) KV {
 		}
 	}
 
-	if q.VisionModel.FullAttentionBlocks == nil {
-		kv["qwen25vl.vision.fullatt_block_indexes"] = []int32{7, 15, 23, 31}
-	}
-
 	kv["qwen25vl.vision.block_count"] = cmp.Or(q.VisionModel.Depth, 32)
 	kv["qwen25vl.vision.embedding_length"] = q.VisionModel.HiddenSize
 	kv["qwen25vl.vision.attention.head_count"] = cmp.Or(q.VisionModel.NumHeads, 16)
@@ -53,10 +49,17 @@ func (q *qwen25VLModel) KV(t *Tokenizer) KV {
 	kv["qwen25vl.vision.window_size"] = cmp.Or(q.VisionModel.WindowSize, 112)
 	kv["qwen25vl.vision.attention.layer_norm_epsilon"] = cmp.Or(q.VisionModel.RMSNormEps, 1e-6)
 	kv["qwen25vl.vision.rope.freq_base"] = cmp.Or(q.VisionModel.RopeTheta, 1e4)
-	kv["qwen25vl.vision.fullatt_block_indexes"] = q.VisionModel.FullAttentionBlocks
+	kv["qwen25vl.vision.fullatt_block_indexes"] = q.fullAttentionBlocks()
 	kv["qwen25vl.vision.temporal_patch_size"] = cmp.Or(q.VisionModel.TemporalPatchSize, 2)
 
 	return kv
+}
+
+func (q *qwen25VLModel) fullAttentionBlocks() []int32 {
+	if len(q.VisionModel.FullAttentionBlocks) > 0 {
+		return q.VisionModel.FullAttentionBlocks
+	}
+	return []int32{7, 15, 23, 31}
 }
 
 func (q *qwen25VLModel) Tensors(ts []Tensor) []*ggml.Tensor {
