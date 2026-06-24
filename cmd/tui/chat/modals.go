@@ -653,9 +653,6 @@ func (m chatModel) renderHistoryPopup(width, height int) string {
 	if width <= 0 {
 		width = 80
 	}
-	if height <= 0 {
-		height = 24
-	}
 
 	bodyLines := m.historyPopupBodyLinesForWidth(width)
 	visibleHeight := m.historyPopupVisibleHeight()

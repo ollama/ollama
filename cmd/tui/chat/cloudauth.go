@@ -83,16 +83,6 @@ func pollCloudAuthCmd(ctx context.Context, poll func(context.Context) (string, b
 	}
 }
 
-func (m *chatModel) startCloudAuthCheck(modelName, requiredPlan string) (tea.Model, tea.Cmd) {
-	m.cloudAuthPrompt = &cloudAuthPrompt{
-		modelName:    modelName,
-		requiredPlan: requiredPlan,
-		kind:         cloudAuthChecking,
-	}
-	m.status = "cloud-auth"
-	return m, checkCloudModelCmd(m.ctx, m.opts.CheckCloudModel, modelName, requiredPlan)
-}
-
 func (m *chatModel) startCloudAuthSignIn(modelName, requiredPlan, signInURL string) (tea.Model, tea.Cmd) {
 	m.cloudAuthPrompt = &cloudAuthPrompt{
 		modelName:    modelName,
@@ -242,8 +232,7 @@ func (m chatModel) renderCloudAuthPrompt(width int) string {
 	case cloudAuthUpgrade:
 		fmt.Fprintf(&b, "To use %s, upgrade your Ollama plan.\n\n", chatResumeSelectedStyle.Render(p.modelName))
 		if !p.polling {
-			yesBtn := chatResumeMetaStyle.Render("  Yes  ")
-			noBtn := chatResumeMetaStyle.Render("  No  ")
+			var yesBtn, noBtn string
 			if p.openNow {
 				yesBtn = chatResumeSelectedStyle.Render("› Yes  ")
 				noBtn = chatResumeMetaStyle.Render("  No  ")
