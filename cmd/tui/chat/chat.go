@@ -36,11 +36,12 @@ var chatEmptyPrompts = []string{
 }
 
 type ModelOption struct {
-	Name         string
-	Description  string
-	Recommended  bool
-	RequiredPlan string
-	Cloud        bool
+	Name              string
+	Description       string
+	Recommended       bool
+	RequiredPlan      string
+	Cloud             bool
+	AvailabilityBadge string
 }
 
 type Options struct {

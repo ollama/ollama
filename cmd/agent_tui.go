@@ -577,7 +577,54 @@ func agentModelOptions(ctx context.Context, client *api.Client) ([]agentchat.Mod
 		add(name, agentLocalModelDescription(model), false, "", false)
 	}
 
+	// Compute availability badges for cloud models based on account state.
+	badges := cloudAvailabilityBadges(ctx, client, options)
+	for i := range options {
+		options[i].AvailabilityBadge = badges[options[i].Name]
+	}
+
 	return options, nil
+}
+
+// cloudAvailabilityBadges returns a map of model name → availability badge
+// for cloud models that require sign-in or a plan upgrade.
+func cloudAvailabilityBadges(ctx context.Context, client *api.Client, options []agentchat.ModelOption) map[string]string {
+	badges := make(map[string]string)
+	hasCloud := false
+	for _, opt := range options {
+		if opt.Cloud {
+			hasCloud = true
+			break
+		}
+	}
+	if !hasCloud {
+		return badges
+	}
+
+	if disabled, known := agentCloudStatusDisabled(ctx, client); known && disabled {
+		return badges
+	}
+
+	whoamiCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	user, err := client.Whoami(whoamiCtx)
+	if err != nil {
+		// Can't determine auth state — don't show badges.
+		return badges
+	}
+
+	signedIn := user != nil && user.Name != ""
+	for _, opt := range options {
+		if !opt.Cloud {
+			continue
+		}
+		if !signedIn {
+			badges[opt.Name] = "Sign in required"
+		} else if opt.RequiredPlan != "" && !launch.PlanSatisfies(user.Plan, opt.RequiredPlan) {
+			badges[opt.Name] = "Upgrade required"
+		}
+	}
+	return badges
 }
 
 func agentRecommendationDescription(rec api.ModelRecommendation) string {

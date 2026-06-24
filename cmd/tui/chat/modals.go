@@ -46,6 +46,7 @@ type chatPicker[T any] struct {
 	fullFooter  string
 	itemTitle   func(T) string
 	itemMeta    func(T) string
+	itemBadge   func(T) string
 }
 
 type chatHistoryPopup struct {
@@ -318,6 +319,7 @@ func newChatModelPicker(models []ModelOption, current, filter string) *chatModel
 	picker.fullFooter = "↑/↓ move • enter switch • type search • esc cancel"
 	picker.itemTitle = func(model ModelOption) string { return model.Name }
 	picker.itemMeta = func(model ModelOption) string { return modelOptionMeta(model, current) }
+	picker.itemBadge = func(model ModelOption) string { return model.AvailabilityBadge }
 	return picker
 }
 
@@ -542,6 +544,7 @@ func newChatResumePicker(chats []appstore.ChatSummary, currentChatID string) *ch
 	picker.fullFooter = "↑/↓ move • enter resume • type search • esc cancel"
 	picker.itemTitle = resumeChatTitle
 	picker.itemMeta = resumeChatMeta
+	picker.itemBadge = func(appstore.ChatSummary) string { return "" }
 	return picker
 }
 
@@ -915,10 +918,14 @@ func (p *chatPicker[T]) render(width int) string {
 		for i := start; i < end; i++ {
 			item := filtered[i]
 			selected := i == p.cursor
+			badge := p.itemBadge(item)
 			for j, line := range wrapChatText(p.itemTitle(item), max(10, width-2)) {
 				marker := "  "
 				if selected && j == 0 {
 					marker = "› "
+				}
+				if j == 0 && badge != "" {
+					line += " " + chatResumeMetaStyle.Render("("+badge+")")
 				}
 				if selected {
 					b.WriteString(chatResumeSelectedStyle.Render(marker + line))
@@ -974,10 +981,14 @@ func (p *chatPicker[T]) renderInline(width int) []string {
 		for i := start; i < end; i++ {
 			item := filtered[i]
 			selected := i == p.cursor
+			badge := p.itemBadge(item)
 			for j, line := range wrapChatText(p.itemTitle(item), max(10, width-2)) {
 				marker := "  "
 				if selected && j == 0 {
 					marker = "› "
+				}
+				if j == 0 && badge != "" {
+					line += " " + chatResumeMetaStyle.Render("("+badge+")")
 				}
 				if selected {
 					lines = append(lines, truncateRenderedLine(chatResumeSelectedStyle.Render(marker+line), width))
@@ -1005,9 +1016,6 @@ func modelOptionMeta(model ModelOption, current string) string {
 	}
 	if model.Description != "" {
 		parts = append(parts, model.Description)
-	}
-	if model.RequiredPlan != "" {
-		parts = append(parts, model.RequiredPlan+" plan")
 	}
 	return strings.Join(parts, " · ")
 }
