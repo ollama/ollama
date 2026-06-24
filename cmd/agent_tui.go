@@ -576,20 +576,21 @@ func agentRecommendationDescription(rec api.ModelRecommendation) string {
 
 func agentLocalModelDescription(model api.ListModelResponse) string {
 	parts := []string{"local"}
+	var details []string
 	if model.Details.Family != "" {
-		parts = append(parts, model.Details.Family)
+		details = append(details, model.Details.Family)
 	}
 	if model.Details.ParameterSize != "" {
-		parts = append(parts, model.Details.ParameterSize)
+		details = append(details, model.Details.ParameterSize)
 	}
 	if model.Details.QuantizationLevel != "" {
-		parts = append(parts, model.Details.QuantizationLevel)
+		details = append(details, model.Details.QuantizationLevel)
+	}
+	if len(details) > 0 {
+		parts = append(parts, strings.Join(details, " "))
 	}
 	if model.Details.ContextLength > 0 {
 		parts = append(parts, format.HumanNumber(uint64(model.Details.ContextLength))+" ctx")
-	}
-	if model.Size > 0 {
-		parts = append(parts, format.HumanBytes(model.Size))
 	}
 	return strings.Join(parts, " · ")
 }
