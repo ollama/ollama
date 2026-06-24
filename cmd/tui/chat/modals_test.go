@@ -67,6 +67,7 @@ func TestChatHistoryCommandShowsPromptMessages(t *testing.T) {
 	rendered := stripANSI(fm.View())
 	for _, want := range []string{
 		"Message history",
+		"estimated prompt:",
 		"system",
 		"content: You are Ollama.",
 		"user",
@@ -114,6 +115,64 @@ func TestChatHistoryCommandHandlesEmptyHistory(t *testing.T) {
 	fm.height = 20
 	if view := stripANSI(fm.View()); !strings.Contains(view, "No messages yet.") {
 		t.Fatalf("history popup view missing empty state: %q", view)
+	}
+}
+
+func TestChatRawCommandShowsRequestJSON(t *testing.T) {
+	registry := coreagent.NewRegistry()
+	registry.Register(chatTestTool{})
+	m := chatModel{
+		input: []rune("/raw"),
+		opts: Options{
+			Model:               "llama3.2",
+			SystemPrompt:        "You are Ollama.",
+			Format:              "json",
+			Tools:               registry,
+			Options:             map[string]any{"temperature": 0.1},
+			Think:               &api.ThinkValue{Value: false},
+			ContextWindowTokens: 4096,
+		},
+		messages: []api.Message{{
+			Role:    "user",
+			Content: "what is in this image?",
+			Images:  []api.ImageData{[]byte("abc")},
+		}},
+		width:  120,
+		height: 40,
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd == nil {
+		t.Fatal("raw command should enter the raw request screen")
+	}
+
+	fm := updated.(chatModel)
+	if fm.historyPopup == nil {
+		t.Fatal("raw popup was not opened")
+	}
+	if fm.historyPopup.title != "Raw request" {
+		t.Fatalf("raw popup title = %q, want Raw request", fm.historyPopup.title)
+	}
+	rendered := stripANSI(fm.View())
+	for _, want := range []string{
+		"Raw request",
+		"estimated prompt:",
+		"\"model\": \"llama3.2\"",
+		"\"role\": \"system\"",
+		"\"content\": \"You are Ollama.\"",
+		"\"format\": \"json\"",
+		"\"tools\":",
+		"\"options\":",
+		"\"temperature\": 0.1",
+		"\"think\": false",
+		"[image data: 3 bytes]",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered raw request missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "YWJj") {
+		t.Fatalf("raw request should redact image base64:\n%s", rendered)
 	}
 }
 

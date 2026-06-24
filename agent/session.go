@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -254,31 +253,8 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 }
 
 func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest *api.ChatResponse) (api.Message, []api.ToolCall, bool, error) {
-	format := opts.Format
-	if format == "json" {
-		format = `"` + format + `"`
-	}
-
-	requestMessages := sanitizeMessagesForRequest(messages)
-	if strings.TrimSpace(opts.SystemPrompt) != "" {
-		requestMessages = make([]api.Message, 0, len(messages)+1)
-		requestMessages = append(requestMessages, api.Message{Role: "system", Content: opts.SystemPrompt})
-		requestMessages = append(requestMessages, sanitizeMessagesForRequest(messages)...)
-	}
-
-	req := &api.ChatRequest{
-		Model:    opts.Model,
-		Messages: requestMessages,
-		Format:   json.RawMessage(format),
-		Options:  opts.Options,
-		Think:    opts.Think,
-	}
-	if opts.KeepAlive != nil {
-		req.KeepAlive = opts.KeepAlive
-	}
-	if tools := s.runTools(opts); len(tools) > 0 {
-		req.Tools = tools
-	}
+	preview := BuildChatRequestPreview(opts, messages, s.runTools(opts))
+	req := &preview.Request
 	if err := emit(s.Events, s.requestBuiltEvent(runID, opts)); err != nil {
 		return api.Message{}, nil, false, err
 	}
@@ -925,13 +901,7 @@ func (s *Session) runTools(opts RunOptions) api.Tools {
 }
 
 func (s *Session) estimateRunPromptTokens(opts RunOptions, messages []api.Message) int {
-	return estimateCompactionRequestTokens(CompactionRequest{
-		SystemPrompt: opts.SystemPrompt,
-		Messages:     sanitizeMessagesForRequest(messages),
-		Tools:        s.runTools(opts),
-		Format:       opts.Format,
-		Options:      opts.Options,
-	})
+	return EstimateChatRequestPromptTokens(opts, messages, s.runTools(opts))
 }
 
 func (s *Session) checkPreflightPromptBudget(opts RunOptions, messages []api.Message) error {

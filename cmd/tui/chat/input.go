@@ -51,6 +51,7 @@ var chatSlashCommands = []chatSlashCommand{
 	{name: "/clear", description: "clear this chat"},
 	{name: "/model", description: "switch models"},
 	{name: "/history", description: "show prompt message history", hidden: true},
+	{name: "/raw", description: "show raw request preview", hidden: true},
 	{name: "/skills", description: "show or import installed skills"},
 	{name: "/new", description: "start a new chat"},
 	{name: "/resume", description: "resume a saved chat"},
@@ -139,6 +140,8 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.handleLegacyShowCommand(input)
 	case command == "/history" && args == "":
 		return m.openHistoryPopup()
+	case command == "/raw":
+		return m.openRawRequestPopup()
 	case command == "/skills":
 		m.entries = append(m.entries, newSlashEntry(m.handleSkillsCommand(input)))
 		return *m, nil

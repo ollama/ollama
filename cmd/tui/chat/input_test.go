@@ -43,7 +43,7 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 		!strings.Contains(fm.entries[0].content, "- `ctrl+a/e`: move to line start or end") {
 		t.Fatalf("help output = %q", fm.entries[0].content)
 	}
-	for _, hidden := range []string{"/history", "/set think", "/set nothink"} {
+	for _, hidden := range []string{"/history", "/raw", "/set think", "/set nothink"} {
 		if strings.Contains(fm.entries[0].content, hidden) {
 			t.Fatalf("hidden command %q should stay hidden from help: %q", hidden, fm.entries[0].content)
 		}

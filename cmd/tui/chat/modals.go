@@ -49,6 +49,10 @@ type chatPicker[T any] struct {
 }
 
 type chatHistoryPopup struct {
+	title         string
+	empty         string
+	header        []string
+	raw           string
 	messages      []api.Message
 	scroll        int
 	stickToBottom bool
@@ -56,7 +60,14 @@ type chatHistoryPopup struct {
 }
 
 func (m *chatModel) openHistoryPopup() (tea.Model, tea.Cmd) {
-	m.historyPopup = &chatHistoryPopup{messages: m.historyMessages(), stickToBottom: true}
+	preview := m.requestPreview(m.messages)
+	m.historyPopup = &chatHistoryPopup{
+		title:         "Message history",
+		empty:         "No messages yet.",
+		header:        m.promptTokenHeader(preview.PromptTokens),
+		messages:      m.historyMessages(),
+		stickToBottom: true,
+	}
 	m.status = "history"
 	return *m, tea.EnterAltScreen
 }
@@ -129,7 +140,7 @@ func (m chatModel) updateHistoryPopupMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd
 }
 
 func (m chatModel) historyPopupLayout() (top, height int) {
-	return 2, m.historyPopupVisibleHeight()
+	return 2 + m.historyPopupHeaderHeight(), m.historyPopupVisibleHeight()
 }
 
 func (m chatModel) mouseInHistoryPopupBody(msg tea.MouseMsg) bool {
@@ -199,7 +210,14 @@ func (m chatModel) historyPopupVisibleHeight() int {
 	if height <= 0 {
 		height = 24
 	}
-	return max(1, height-4)
+	return max(1, height-4-m.historyPopupHeaderHeight())
+}
+
+func (m chatModel) historyPopupHeaderHeight() int {
+	if m.historyPopup == nil || len(m.historyPopup.header) == 0 {
+		return 0
+	}
+	return len(m.historyPopup.header) + 1
 }
 
 func (m chatModel) historyPopupBodyLines() []string {
@@ -217,7 +235,17 @@ func (m chatModel) historyPopupBodyLinesForWidth(width int) []string {
 	if width <= 0 {
 		width = 80
 	}
-	return renderHistoryMessages(m.historyPopup.messages, width)
+	popup := m.historyPopup
+	var body []string
+	if popup.raw != "" {
+		body = renderRawRequestLines(popup.raw, width)
+	} else {
+		body = renderHistoryMessages(popup.messages, width)
+	}
+	if len(body) == 0 && popup.empty != "" {
+		body = []string{chatResumeMetaStyle.Render(popup.empty)}
+	}
+	return body
 }
 
 func (m *chatModel) openModelPicker(filter string) (tea.Model, tea.Cmd) {
@@ -613,7 +641,7 @@ func (m chatModel) renderHistoryPopup(width, height int) string {
 	}
 
 	bodyLines := m.historyPopupBodyLinesForWidth(width)
-	visibleHeight := max(1, height-4)
+	visibleHeight := m.historyPopupVisibleHeight()
 	maxScroll := max(0, len(bodyLines)-visibleHeight)
 	scroll := clamp(popup.scroll, 0, maxScroll)
 	if popup.stickToBottom {
@@ -623,10 +651,25 @@ func (m chatModel) renderHistoryPopup(width, height int) string {
 	visibleLines := m.applyHistoryPopupSelection(bodyLines[scroll:end], scroll)
 
 	var b strings.Builder
-	b.WriteString(chatResumeTitleStyle.Render("Message history"))
+	title := popup.title
+	if title == "" {
+		title = "Message history"
+	}
+	b.WriteString(chatResumeTitleStyle.Render(title))
 	b.WriteString("\n\n")
+	for _, line := range popup.header {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if len(popup.header) > 0 {
+		b.WriteByte('\n')
+	}
 	if len(bodyLines) == 0 {
-		b.WriteString(chatResumeMetaStyle.Render("No messages yet."))
+		empty := popup.empty
+		if empty == "" {
+			empty = "No messages yet."
+		}
+		b.WriteString(chatResumeMetaStyle.Render(empty))
 		b.WriteByte('\n')
 	} else {
 		for _, line := range visibleLines {
