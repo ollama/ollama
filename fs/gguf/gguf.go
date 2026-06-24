@@ -14,6 +14,12 @@ import (
 )
 
 const (
+	// Magic constants for GGUF files
+	fileMagicGGUFLE = 0x46554747 // Little-Endian: "GGUF"
+	fileMagicGGUFBE = 0x47475546 // Big-Endian: "GGUF"
+)
+
+const (
 	typeUint8 uint32 = iota
 	typeInt8
 	typeUint16
@@ -32,8 +38,9 @@ const (
 var ErrUnsupported = errors.New("unsupported")
 
 type File struct {
-	Magic   [4]byte
-	Version uint32
+	Magic     [4]byte
+	Version   uint32
+	byteOrder binary.ByteOrder
 
 	keyValues *lazy[KeyValue]
 	tensors   *lazy[TensorInfo]
@@ -53,15 +60,30 @@ func Open(path string) (f *File, err error) {
 
 	f.reader = newBufferedReader(f.file, 32<<10)
 
-	if err := binary.Read(f.reader, binary.LittleEndian, &f.Magic); err != nil {
+	// Read magic bytes to detect endianness
+	var magic uint32
+	if err := binary.Read(f.reader, binary.LittleEndian, &magic); err != nil {
 		return nil, err
 	}
+
+	// Detect byte order from magic value
+	switch magic {
+	case fileMagicGGUFLE:
+		f.byteOrder = binary.LittleEndian
+	case fileMagicGGUFBE:
+		f.byteOrder = binary.BigEndian
+	default:
+		return nil, fmt.Errorf("%w: invalid magic bytes 0x%08x", ErrUnsupported, magic)
+	}
+
+	// Store magic bytes in correct order
+	f.byteOrder.PutUint32(f.Magic[:], magic)
 
 	if bytes.Equal(f.Magic[:], []byte("gguf")) {
 		return nil, fmt.Errorf("%w file type %v", ErrUnsupported, f.Magic)
 	}
 
-	if err := binary.Read(f.reader, binary.LittleEndian, &f.Version); err != nil {
+	if err := binary.Read(f.reader, f.byteOrder, &f.Version); err != nil {
 		return nil, err
 	}
 
@@ -181,7 +203,7 @@ func (f *File) readKeyValue() (KeyValue, error) {
 }
 
 func read[T any](f *File) (t T, err error) {
-	err = binary.Read(f.reader, binary.LittleEndian, &t)
+	err = binary.Read(f.reader, f.byteOrder, &t)
 	return t, err
 }
 
