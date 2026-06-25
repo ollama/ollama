@@ -112,6 +112,17 @@
       }
     },
     {
+      "name": "llama_cuda_v13_windows_arm64",
+      "inherits": ["llama_cuda_v13_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13_arm64",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "121",
+        "GGML_CPU": "OFF",
+        "CMAKE_CUDA_FLAGS": "-target-dir=arm64 -t 4",
+        "OLLAMA_WINDOWS_RUNTIME_ARCH": "arm64"
+      }
+    },
+    {
       "name": "llama_cuda_v13_user_arch",
       "inherits": ["llama_cuda_v13_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13"
@@ -265,6 +276,11 @@
     {
       "name": "llama_cuda_v13_windows",
       "configurePreset": "llama_cuda_v13_windows",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_v13_windows_arm64",
+      "configurePreset": "llama_cuda_v13_windows_arm64",
       "targets": ["ggml-cuda"]
     },
     {
