@@ -253,6 +253,13 @@ try {
     $env:OLLAMA_TEST_IGNORE_DIST_INSTALLER = "1"
     $env:OLLAMA_TEST_LATEST_INSTALLER_VERSION = "0.1.48"
     $env:OLLAMA_TEST_PINNED_UPGRADE_VERSION = "0.1.47"
+    if ("AppIntegration" -in $summary.tags) {
+        $updaterBinary = Join-Path $RunRoot "updater-integration.test.exe"
+        if (-not (Test-Path -LiteralPath $updaterBinary -PathType Leaf)) {
+            throw "Mapped app updater integration test binary not found: $updaterBinary"
+        }
+        $env:OLLAMA_TEST_UPDATER_BINARY = $updaterBinary
+    }
     $distDir = Join-Path $RepoRoot "dist"
     if (Test-Path -LiteralPath $distDir -PathType Container) {
         $env:OLLAMA_TEST_DIST_DIR = $distDir

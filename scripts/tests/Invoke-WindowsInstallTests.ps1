@@ -22,8 +22,28 @@ $configPath = Join-Path $stateRoot "config.json"
 $destructiveTags = @("Integration", "UpgradeMatrix", "AppIntegration")
 $isDestructive = @($Tag | Where-Object { $_ -in $destructiveTags }).Count -gt 0
 . (Join-Path $PSScriptRoot "WindowsSandbox-TestHelpers.ps1")
+$needsAppIntegration = "AppIntegration" -in $Tag
+
+function Build-AppUpdaterIntegrationTest {
+    param([string]$OutputPath)
+
+    New-Item -ItemType Directory -Path (Split-Path -Parent $OutputPath) -Force | Out-Null
+    Remove-Item -LiteralPath $OutputPath -Force -ErrorAction SilentlyContinue
+    Write-Host "Building fresh Windows app updater integration test..."
+    Push-Location $repoRoot
+    try {
+        & go test -count=1 -c -tags "updater_integration updater_unsigned" -o $OutputPath ./app/updater
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to build the Windows app updater integration test (exit code $LASTEXITCODE)."
+        }
+    } finally {
+        Pop-Location
+    }
+}
 
 function Invoke-HostTests {
+    param([string]$AppIntegrationBinary = "")
+
     $pester = Get-Module -ListAvailable Pester |
         Where-Object { $_.Version -ge [version]"5.0.0" } |
         Sort-Object Version -Descending |
@@ -44,9 +64,21 @@ function Invoke-HostTests {
         PassThru = $true
         CI = $CI
     }
-    $result = Invoke-Pester @pesterArgs
-    if ($result.FailedCount -gt 0 -or $result.Result -ne "Passed") {
-        throw "Pester failed: result=$($result.Result), failed=$($result.FailedCount)"
+    $savedUpdaterBinary = $env:OLLAMA_TEST_UPDATER_BINARY
+    try {
+        if ($AppIntegrationBinary) {
+            $env:OLLAMA_TEST_UPDATER_BINARY = $AppIntegrationBinary
+        }
+        $result = Invoke-Pester @pesterArgs
+        if ($result.FailedCount -gt 0 -or $result.Result -ne "Passed") {
+            throw "Pester failed: result=$($result.Result), failed=$($result.FailedCount)"
+        }
+    } finally {
+        if ($null -eq $savedUpdaterBinary) {
+            Remove-Item Env:OLLAMA_TEST_UPDATER_BINARY -ErrorAction SilentlyContinue
+        } else {
+            $env:OLLAMA_TEST_UPDATER_BINARY = $savedUpdaterBinary
+        }
     }
     Write-Host "Host result: passed=$($result.PassedCount), failed=$($result.FailedCount), skipped=$($result.SkippedCount)"
     return [PSCustomObject]@{
@@ -64,7 +96,12 @@ if ($Isolation -eq "Auto") {
 }
 
 if ($selectedIsolation -eq "Host") {
-    Invoke-HostTests
+    $appIntegrationBinary = ""
+    if ($needsAppIntegration) {
+        $appIntegrationBinary = Join-Path $stateRoot "host\updater-integration.test.exe"
+        Build-AppUpdaterIntegrationTest -OutputPath $appIntegrationBinary
+    }
+    Invoke-HostTests -AppIntegrationBinary $appIntegrationBinary
     return
 }
 
@@ -91,6 +128,9 @@ $runId = (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [guid]::NewGuid().ToString
 $runRoot = Join-Path $stateRoot "runs\$runId"
 $installerCache = Join-Path $repoRoot ".cache\install-tests"
 New-Item -ItemType Directory -Path $runRoot, $installerCache -Force | Out-Null
+if ($needsAppIntegration) {
+    Build-AppUpdaterIntegrationTest -OutputPath (Join-Path $runRoot "updater-integration.test.exe")
+}
 
 $tagCsv = $Tag -join ","
 $guestCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\host\repo\scripts\tests\windows-sandbox\Invoke-WindowsInstallTestsGuest.ps1 -TagCsv $tagCsv"

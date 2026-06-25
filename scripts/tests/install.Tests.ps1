@@ -1360,3 +1360,60 @@ Describe "Windows install.ps1 integration" -Tag Integration {
         }
     }
 }
+
+Describe "Windows app updater integration" -Tag AppIntegration {
+    BeforeEach {
+        Save-TestEnvironment
+        $env:LOCALAPPDATA = $script:OriginalLocalAppData
+        if ($script:SavedEnv["TEMP"]) {
+            $env:TEMP = $script:SavedEnv["TEMP"]
+        }
+        $script:RealInstallTestStarted = $false
+    }
+
+    AfterEach {
+        if ($script:RealInstallTestStarted) {
+            if ($env:OLLAMA_TEST_SANDBOX -eq "1") {
+                Reset-TestOllamaSandboxInstall
+            } else {
+                Invoke-TestOllamaUninstall
+            }
+            Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA "Ollama\install_cache") -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA "Ollama\updates_v2") -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA "Ollama\upgraded") -Force -ErrorAction SilentlyContinue
+        }
+        Restore-TestEnvironment
+    }
+
+    It "stages and installs a signed update through the app updater" {
+        $signedInstaller = Require-RealInstallIntegration
+        if (-not $signedInstaller) { return }
+
+        $updaterBinary = $env:OLLAMA_TEST_UPDATER_BINARY
+        if (-not $updaterBinary -or -not (Test-Path -LiteralPath $updaterBinary -PathType Leaf)) {
+            throw "App updater integration binary is missing. Run this test through Invoke-WindowsInstallTests.ps1."
+        }
+
+        $expectedVersion = (Get-Item -LiteralPath $signedInstaller).VersionInfo.ProductVersion.Trim()
+        $script:RealInstallTestStarted = $true
+        $env:OLLAMA_TEST_UPDATER_INSTALLER = $signedInstaller
+        $env:OLLAMA_TEST_UPDATER_INSTALL_SCRIPT = $script:InstallScript
+        $env:OLLAMA_TEST_UPDATER_VERSION = $expectedVersion
+        $savedErrorActionPreference = $ErrorActionPreference
+        try {
+            # Go's logger writes normal status messages to stderr. Windows
+            # PowerShell turns redirected native stderr into ErrorRecord values,
+            # which must not trip this test file's terminating-error policy.
+            $ErrorActionPreference = "Continue"
+            $output = & $updaterBinary '-test.v=true' '-test.run=^TestWindowsInstallScriptUpdaterEndToEnd$' 2>&1
+            $exitCode = $LASTEXITCODE
+            $output | ForEach-Object { Write-Host $_ }
+            $exitCode | Should -Be 0
+        } finally {
+            $ErrorActionPreference = $savedErrorActionPreference
+            Remove-Item Env:OLLAMA_TEST_UPDATER_INSTALLER -ErrorAction SilentlyContinue
+            Remove-Item Env:OLLAMA_TEST_UPDATER_INSTALL_SCRIPT -ErrorAction SilentlyContinue
+            Remove-Item Env:OLLAMA_TEST_UPDATER_VERSION -ErrorAction SilentlyContinue
+        }
+    }
+}
