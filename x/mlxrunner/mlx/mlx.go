@@ -105,3 +105,10 @@ func MetalIsAvailable() bool {
 	C.mlx_metal_is_available(&available)
 	return bool(available)
 }
+
+// CUDAIsAvailable returns true if a CUDA GPU is available.
+func CUDAIsAvailable() bool {
+	var available C._Bool
+	C.mlx_cuda_is_available(&available)
+	return bool(available)
+}

@@ -91,6 +91,7 @@ func MakeLinearLayer(
 			GroupSize:   groupSize,
 			Bits:        bits,
 			Mode:        mode,
+			FastMatmul:  mlx.SupportsFastQuantizedMatmulMode(mode),
 		}
 	}
 
