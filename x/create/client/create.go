@@ -745,6 +745,9 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "laguna") {
 			return "laguna"
 		}
+		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
+			return "cohere"
+		}
 		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
 			return "glm-4.7"
 		}
@@ -764,6 +767,9 @@ func getParserName(modelDir string) string {
 		typeLower := strings.ToLower(cfg.ModelType)
 		if strings.Contains(typeLower, "laguna") {
 			return "laguna"
+		}
+		if strings.Contains(typeLower, "cohere2_moe") {
+			return "cohere"
 		}
 		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
 			return "glm-4.7"
@@ -805,6 +811,9 @@ func getRendererName(modelDir string) string {
 		if strings.Contains(archLower, "laguna") {
 			return "laguna"
 		}
+		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
+			return "cohere"
+		}
 		if strings.Contains(archLower, "gemma4") {
 			return "gemma4"
 		}
@@ -824,6 +833,9 @@ func getRendererName(modelDir string) string {
 		typeLower := strings.ToLower(cfg.ModelType)
 		if strings.Contains(typeLower, "laguna") {
 			return "laguna"
+		}
+		if strings.Contains(typeLower, "cohere2_moe") {
+			return "cohere"
 		}
 		if strings.Contains(typeLower, "gemma4") {
 			return "gemma4"

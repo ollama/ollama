@@ -399,7 +399,7 @@ Available devices:
 			TotalMemory:         16107 * 1024 * 1024,
 		}}
 
-		devices := parseLlamaServerDevicesWithNative(output, []string{"/lib/ollama", "/lib/ollama/vulkan"}, nativeDevices)
+		devices := parseLlamaServerDevicesWithNative(output, "", []string{"/lib/ollama", "/lib/ollama/vulkan"}, nativeDevices)
 		if len(devices) != 1 {
 			t.Fatalf("got %d devices, want 1", len(devices))
 		}
@@ -408,6 +408,33 @@ Available devices:
 		}
 		if devices[0].Integrated {
 			t.Fatal("Integrated = true, want false")
+		}
+	})
+
+	t.Run("native probe uma lines do not key into llama-server device order", func(t *testing.T) {
+		// llama-server enumerates [Intel iGPU, NVIDIA dGPU]; the native probe
+		// enumerates the same devices in the opposite order. Its ggml_vulkan
+		// uma lines must not overwrite llama-server's index-keyed UMA map,
+		// otherwise the classification inverts (#16667).
+		output := `ggml_vulkan: 0 = Intel(R) RaptorLake-S Mobile Graphics Controller (Intel Corporation) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 32 | shared memory: 65536 | int dot: 1 | matrix cores: none
+ggml_vulkan: 1 = NVIDIA GeForce RTX 4080 Laptop GPU (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 | warp size: 32 | shared memory: 49152 | int dot: 1 | matrix cores: KHR_coopmat
+Available devices:
+  Vulkan0: Intel(R) RaptorLake-S Mobile Graphics Controller (32550 MiB, 31800 MiB free)
+  Vulkan1: NVIDIA GeForce RTX 4080 Laptop GPU (12282 MiB, 11000 MiB free)
+`
+		nativeOutput := `ggml_vulkan: 0 = NVIDIA GeForce RTX 4080 Laptop GPU (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 | warp size: 32 | shared memory: 49152 | int dot: 1 | matrix cores: KHR_coopmat
+ggml_vulkan: 1 = Intel(R) RaptorLake-S Mobile Graphics Controller (Intel Corporation) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 32 | shared memory: 65536 | int dot: 1 | matrix cores: none
+`
+
+		devices := parseLlamaServerDevicesWithNative(output, nativeOutput, []string{"/lib/ollama", "/lib/ollama/vulkan"}, nil)
+		if len(devices) != 2 {
+			t.Fatalf("got %d devices, want 2", len(devices))
+		}
+		if !devices[0].Integrated {
+			t.Fatal("device 0 (Intel iGPU) Integrated = false, want true")
+		}
+		if devices[1].Integrated {
+			t.Fatal("device 1 (NVIDIA dGPU) Integrated = true, want false")
 		}
 	})
 
@@ -471,9 +498,49 @@ Available devices:
 				want: []bool{false, false, false},
 			},
 			{
-				name:   "skips when counts do not line up",
+				name:   "skips when probe finds fewer devices",
 				probed: []vulkanPhysicalDevice{{Name: "AMD Radeon(TM) Graphics", Integrated: true}},
 				want:   []bool{false, false, false},
+			},
+			{
+				name: "matches subset when probe enumerates extra devices",
+				devices: []ml.DeviceInfo{
+					{DeviceID: ml.DeviceID{ID: "0", Library: "Vulkan"}, Description: "Intel(R) RaptorLake-S Mobile Graphics Controller"},
+					{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Description: "NVIDIA GeForce RTX 4080 Laptop GPU"},
+				},
+				probed: []vulkanPhysicalDevice{
+					{Name: "NVIDIA GeForce RTX 4080 Laptop GPU", Integrated: false},
+					{Name: "Intel(R) RaptorLake-S Mobile Graphics Controller", Integrated: true},
+					{Name: "Microsoft Direct3D12 (NVIDIA GeForce RTX 4080 Laptop GPU)", Integrated: false},
+					{Name: "Microsoft Direct3D12 (Intel(R) RaptorLake-S Mobile Graphics Controller)", Integrated: true},
+					{Name: "llvmpipe (LLVM 17.0.6, 256 bits)", Integrated: false},
+				},
+				want:    []bool{true, false},
+				applied: true,
+			},
+			{
+				name: "skips ambiguous duplicate names with conflicting types",
+				devices: []ml.DeviceInfo{
+					{DeviceID: ml.DeviceID{ID: "0", Library: "Vulkan"}, Description: "AMD Radeon Graphics"},
+				},
+				probed: []vulkanPhysicalDevice{
+					{Name: "AMD Radeon Graphics", Integrated: true},
+					{Name: "AMD Radeon Graphics", Integrated: false},
+				},
+				want: []bool{false},
+			},
+			{
+				name: "matches duplicate names with agreeing types",
+				devices: []ml.DeviceInfo{
+					{DeviceID: ml.DeviceID{ID: "0", Library: "Vulkan"}, Description: "AMD Radeon RX 7900 XTX"},
+					{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Description: "AMD Radeon RX 7900 XTX"},
+				},
+				probed: []vulkanPhysicalDevice{
+					{Name: "AMD Radeon RX 7900 XTX", Integrated: false},
+					{Name: "AMD Radeon RX 7900 XTX", Integrated: false},
+				},
+				want:    []bool{false, false},
+				applied: true,
 			},
 			{
 				name: "overwrites stale classification",
