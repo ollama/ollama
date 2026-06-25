@@ -3,6 +3,8 @@ package chat
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -173,6 +175,72 @@ func TestChatRawCommandShowsRequestJSON(t *testing.T) {
 	}
 	if strings.Contains(rendered, "YWJj") {
 		t.Fatalf("raw request should redact image base64:\n%s", rendered)
+	}
+}
+
+func TestChatRawCommandSavesRequestJSON(t *testing.T) {
+	dir := t.TempDir()
+	m := chatModel{
+		input:      []rune("/raw > request"),
+		workingDir: dir,
+		opts: Options{
+			Model:        "llama3.2",
+			SystemPrompt: "You are Ollama.",
+		},
+		messages: []api.Message{{Role: "user", Content: "hello"}},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("raw redirect should write without opening a popup")
+	}
+	fm := updated.(chatModel)
+	if fm.status != "raw saved" {
+		t.Fatalf("status = %q, want raw saved", fm.status)
+	}
+	if fm.historyPopup != nil {
+		t.Fatal("raw redirect should not open the raw popup")
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "request.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(data)
+	for _, want := range []string{
+		"\"model\": \"llama3.2\"",
+		"\"role\": \"system\"",
+		"\"content\": \"You are Ollama.\"",
+		"\"role\": \"user\"",
+		"\"content\": \"hello\"",
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("saved raw request missing %q:\n%s", want, raw)
+		}
+	}
+	if got := fm.entries[len(fm.entries)-1].content; !strings.Contains(got, "request.json") {
+		t.Fatalf("save entry = %q, want saved filename", got)
+	}
+}
+
+func TestChatRawCommandRejectsPathRedirect(t *testing.T) {
+	dir := t.TempDir()
+	m := chatModel{
+		input:      []rune("/raw > ../request"),
+		workingDir: dir,
+		opts:       Options{Model: "llama3.2"},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("invalid raw redirect should not open a popup")
+	}
+	fm := updated.(chatModel)
+	if fm.status != "error" {
+		t.Fatalf("status = %q, want error", fm.status)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "request.json")); !os.IsNotExist(err) {
+		t.Fatalf("raw redirect wrote outside working dir, stat err = %v", err)
 	}
 }
 

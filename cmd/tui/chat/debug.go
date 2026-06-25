@@ -3,6 +3,8 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -48,8 +50,7 @@ func (m chatModel) requestPreview(messages []api.Message) coreagent.ChatRequestP
 }
 
 func (m *chatModel) openRawRequestPopup() (tea.Model, tea.Cmd) {
-	preview := m.requestPreview(m.messages)
-	raw, err := rawRequestJSON(preview.Request)
+	raw, tokens, err := m.rawRequestPreviewJSON()
 	if err != nil {
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
 		m.status = "error"
@@ -58,12 +59,82 @@ func (m *chatModel) openRawRequestPopup() (tea.Model, tea.Cmd) {
 	m.historyPopup = &chatHistoryPopup{
 		title:         "Raw request",
 		empty:         "No request preview.",
-		header:        m.promptTokenHeader(preview.PromptTokens),
+		header:        m.promptTokenHeader(tokens),
 		raw:           raw,
 		stickToBottom: false,
 	}
 	m.status = "raw"
 	return *m, tea.EnterAltScreen
+}
+
+func (m *chatModel) handleRawCommand(args string) (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(args) == "" {
+		return m.openRawRequestPopup()
+	}
+	filename, err := rawRedirectFilename(args)
+	if err != nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
+		m.status = "error"
+		return *m, nil
+	}
+	return m.saveRawRequest(filename)
+}
+
+func (m *chatModel) saveRawRequest(filename string) (tea.Model, tea.Cmd) {
+	raw, _, err := m.rawRequestPreviewJSON()
+	if err != nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
+		m.status = "error"
+		return *m, nil
+	}
+
+	dir := m.currentWorkingDir()
+	if strings.TrimSpace(dir) == "" {
+		dir, err = os.Getwd()
+		if err != nil {
+			m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
+			m.status = "error"
+			return *m, nil
+		}
+	}
+	path := filepath.Join(dir, filename)
+	if err := os.WriteFile(path, []byte(raw+"\n"), 0o644); err != nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: err.Error(), err: err.Error()}))
+		m.status = "error"
+		return *m, nil
+	}
+
+	m.entries = append(m.entries, newSlashEntry(fmt.Sprintf("Saved raw request to %s", filename)))
+	m.status = "raw saved"
+	return *m, nil
+}
+
+func (m chatModel) rawRequestPreviewJSON() (string, int, error) {
+	preview := m.requestPreview(m.messages)
+	raw, err := rawRequestJSON(preview.Request)
+	if err != nil {
+		return "", 0, err
+	}
+	return raw, preview.PromptTokens, nil
+}
+
+func rawRedirectFilename(args string) (string, error) {
+	args = strings.TrimSpace(args)
+	if !strings.HasPrefix(args, ">") {
+		return "", fmt.Errorf("usage: /raw > filename")
+	}
+	fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(args, ">")))
+	if len(fields) != 1 {
+		return "", fmt.Errorf("usage: /raw > filename")
+	}
+	filename := strings.TrimSpace(fields[0])
+	if filename == "" || filename == "." || filename == ".." || strings.ContainsAny(filename, `/\`) {
+		return "", fmt.Errorf("raw filename must be a file name, not a path")
+	}
+	if !strings.HasSuffix(strings.ToLower(filename), ".json") {
+		filename += ".json"
+	}
+	return filename, nil
 }
 
 func (m chatModel) promptTokenHeader(tokens int) []string {

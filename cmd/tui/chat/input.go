@@ -141,7 +141,7 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	case command == "/history" && args == "":
 		return m.openHistoryPopup()
 	case command == "/raw":
-		return m.openRawRequestPopup()
+		return m.handleRawCommand(args)
 	case command == "/skills":
 		m.entries = append(m.entries, newSlashEntry(m.handleSkillsCommand(input)))
 		return *m, nil
