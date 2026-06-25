@@ -668,9 +668,8 @@ func TestHermesDesktopRun(t *testing.T) {
 		{
 			name:        "desktop subcommand",
 			goos:        "darwin",
-			args:        []string{"--foreground"},
 			clearPkgEnv: true,
-			want:        "[desktop --foreground]",
+			want:        "[desktop]",
 		},
 		{
 			name:       "skip build when packaged app exists",

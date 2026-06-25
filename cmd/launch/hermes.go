@@ -136,10 +136,9 @@ func (h *HermesDesktop) packagedAppExists() bool {
 
 // shouldRunForeground reports whether Hermes Desktop should stay attached to
 // the launcher terminal instead of detaching into the background. Help and
-// build-only invocations produce terminal output, and --foreground lets users
-// opt into the attached behavior explicitly.
+// build-only invocations produce terminal output.
 func (h *HermesDesktop) shouldRunForeground(args []string) bool {
-	return hermesDesktopHasFlag(args, "--foreground", "--help", "-h", "--build-only")
+	return hermesDesktopHasFlag(args, "--help", "-h", "--build-only")
 }
 
 // These roots mirror Hermes' own install layout:
