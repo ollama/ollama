@@ -390,10 +390,14 @@ function(ollama_add_llama_server_build name)
     endif()
     # Visual Studio requires -T toolset override to select the correct CUDA toolkit.
     # MSBuild's CUDA integration ignores -DCUDAToolkit_ROOT for nvcc selection.
+    # Prefer user-specified CUDAToolkit_ROOT before falling back to auto-discovery.
     set(_generator_args)
     if(WIN32 AND CMAKE_GENERATOR MATCHES "Visual Studio")
-        ollama_backend_cuda_major("${name}" _cuda_major)
-        ollama_find_windows_cuda_root("${_cuda_major}" _cuda_root)
+        set(_cuda_root "${CUDAToolkit_ROOT}")
+        if("${_cuda_root}" STREQUAL "")
+            ollama_backend_cuda_major("${name}" _cuda_major)
+            ollama_find_windows_cuda_root("${_cuda_major}" _cuda_root)
+        endif()
         if(NOT "${_cuda_root}" STREQUAL "")
             list(APPEND _generator_args -T cuda=${_cuda_root})
         endif()
