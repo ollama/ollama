@@ -48,6 +48,62 @@ The `-dev` flag enables:
 - CORS headers for cross-origin requests
 - Hot-reload support for UI development
 
+### Upgrade Testing
+
+These commands perform a real app upgrade. Use a test machine or a throwaway
+install.
+
+Build or copy `OllamaSetup.exe` into `dist\`, then build a local-test app:
+
+```powershell
+go generate ./...
+go build -tags updater_localtest -trimpath `
+  -ldflags "-H windowsgui -X=github.com/ollama/ollama/app/version.Version=0.0.0-localtest" `
+  -o .\dist\windows-ollama-app-updater-localtest.exe .\app\cmd\app
+```
+
+For unsigned local `install.ps1` testing:
+
+```powershell
+go build -tags "updater_localtest updater_unsigned" -trimpath `
+  -ldflags "-H windowsgui -X=github.com/ollama/ollama/app/version.Version=0.0.0-localtest" `
+  -o .\dist\windows-ollama-app-updater-localtest.exe .\app\cmd\app
+```
+
+Start the local update server from the repository root:
+
+```powershell
+python .\scripts\tests\update-server.py `
+  --port 8765 `
+  --version 0.0.1-localtest
+```
+
+To test without ETags, add `--omit-etags`.
+
+In another PowerShell window:
+
+```powershell
+Remove-Item "$env:LOCALAPPDATA\Ollama\updates_v2" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:LOCALAPPDATA\Ollama\install_cache" -Recurse -Force -ErrorAction SilentlyContinue
+$env:OLLAMA_DEBUG = "1"
+$env:OLLAMA_TEST_UPDATE_URL = "http://127.0.0.1:8765/api/update"
+.\dist\windows-ollama-app-updater-localtest.exe
+Get-Content "$env:LOCALAPPDATA\Ollama\app.log" -Wait
+```
+
+For the startup upgrade path:
+
+```powershell
+$env:OLLAMA_DEBUG = "1"
+$env:OLLAMA_TEST_UPDATE_URL = "http://127.0.0.1:8765/api/update"
+.\dist\windows-ollama-app-updater-localtest.exe
+Get-Content "$env:LOCALAPPDATA\Ollama\app.log" -Wait
+
+Get-Process "Ollama app" -ErrorAction SilentlyContinue | Stop-Process
+.\dist\windows-ollama-app-updater-localtest.exe --hide
+Get-Content "$env:LOCALAPPDATA\Ollama\app.log" -Wait
+```
+
 ## Build
 
 
