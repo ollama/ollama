@@ -321,6 +321,22 @@ jobs:
               - '"nvvm"'
               - '"nvptxcompiler"'
             cuda-version: '13.0'
+          # TODO: Enable when NVIDIA provides a public Windows ARM64 CUDA Toolkit installer.
+          # This uses the x86 Windows builder and cross-compiles the WoA CUDA backend.
+          # - os: windows
+          #   arch: amd64
+          #   preset: 'CUDA 13 ARM64'
+          #   build-steps: cuda13Arm64
+          #   install: TBD
+          #   cuda-components:
+          #     - '"cudart"'
+          #     - '"nvcc"'
+          #     - '"cublas"'
+          #     - '"cublas_dev"'
+          #     - '"crt"'
+          #     - '"nvvm"'
+          #     - '"nvptxcompiler"'
+          #   cuda-version: '13.4'
           - os: windows
             arch: amd64
             preset: 'ROCm 7'
