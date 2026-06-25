@@ -176,8 +176,9 @@ func TestFromCompleteRequest_Basic(t *testing.T) {
 func TestToUsage(t *testing.T) {
 	resp := api.ChatResponse{
 		Metrics: api.Metrics{
-			PromptEvalCount: 10,
-			EvalCount:       20,
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: 4,
+			EvalCount:             20,
 		},
 	}
 
@@ -185,6 +186,10 @@ func TestToUsage(t *testing.T) {
 
 	if usage.PromptTokens != 10 {
 		t.Errorf("expected PromptTokens 10, got %d", usage.PromptTokens)
+	}
+
+	if usage.PromptTokensDetails.CachedTokens != 4 {
+		t.Errorf("expected CachedTokens 4, got %d", usage.PromptTokensDetails.CachedTokens)
 	}
 
 	if usage.CompletionTokens != 20 {

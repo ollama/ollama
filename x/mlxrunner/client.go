@@ -107,10 +107,11 @@ type CompletionResponse struct {
 	Done       bool
 	DoneReason int
 
-	PromptEvalCount    int
-	PromptEvalDuration time.Duration
-	EvalCount          int
-	EvalDuration       time.Duration
+	PromptEvalCount       int
+	PromptEvalCachedCount int
+	PromptEvalDuration    time.Duration
+	EvalCount             int
+	EvalDuration          time.Duration
 
 	Logprobs []llm.Logprob
 
@@ -186,14 +187,15 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		}
 
 		cresp := llm.CompletionResponse{
-			Content:            raw.Content,
-			Done:               raw.Done,
-			DoneReason:         llm.DoneReason(raw.DoneReason),
-			PromptEvalCount:    raw.PromptEvalCount,
-			PromptEvalDuration: raw.PromptEvalDuration,
-			EvalCount:          raw.EvalCount,
-			EvalDuration:       raw.EvalDuration,
-			Logprobs:           raw.Logprobs,
+			Content:               raw.Content,
+			Done:                  raw.Done,
+			DoneReason:            llm.DoneReason(raw.DoneReason),
+			PromptEvalCount:       raw.PromptEvalCount,
+			PromptEvalCachedCount: raw.PromptEvalCachedCount,
+			PromptEvalDuration:    raw.PromptEvalDuration,
+			EvalCount:             raw.EvalCount,
+			EvalDuration:          raw.EvalDuration,
+			Logprobs:              raw.Logprobs,
 		}
 
 		fn(cresp)

@@ -242,14 +242,15 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	Message            api.Message   `json:"message"`
-	DoneReason         DoneReason    `json:"done_reason"`
-	Done               bool          `json:"done"`
-	PromptEvalCount    int           `json:"prompt_eval_count"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
-	EvalCount          int           `json:"eval_count"`
-	EvalDuration       time.Duration `json:"eval_duration"`
-	Logprobs           []Logprob     `json:"logprobs,omitempty"`
+	Message               api.Message   `json:"message"`
+	DoneReason            DoneReason    `json:"done_reason"`
+	Done                  bool          `json:"done"`
+	PromptEvalCount       int           `json:"prompt_eval_count"`
+	PromptEvalCachedCount int           `json:"prompt_eval_cached_count"`
+	PromptEvalDuration    time.Duration `json:"prompt_eval_duration"`
+	EvalCount             int           `json:"eval_count"`
+	EvalDuration          time.Duration `json:"eval_duration"`
+	Logprobs              []Logprob     `json:"logprobs,omitempty"`
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -285,13 +286,14 @@ type Logprob struct {
 }
 
 type CompletionResponse struct {
-	Content            string        `json:"content"`
-	DoneReason         DoneReason    `json:"done_reason"`
-	Done               bool          `json:"done"`
-	PromptEvalCount    int           `json:"prompt_eval_count"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
-	EvalCount          int           `json:"eval_count"`
-	EvalDuration       time.Duration `json:"eval_duration"`
+	Content               string        `json:"content"`
+	DoneReason            DoneReason    `json:"done_reason"`
+	Done                  bool          `json:"done"`
+	PromptEvalCount       int           `json:"prompt_eval_count"`
+	PromptEvalCachedCount int           `json:"prompt_eval_cached_count"`
+	PromptEvalDuration    time.Duration `json:"prompt_eval_duration"`
+	EvalCount             int           `json:"eval_count"`
+	EvalDuration          time.Duration `json:"eval_duration"`
 
 	// Logprobs contains log probability information if requested
 	Logprobs []Logprob `json:"logprobs,omitempty"`
