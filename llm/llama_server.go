@@ -562,9 +562,19 @@ func embeddingBatchSize(opts api.Options, numParallel int) int {
 }
 
 func appendLlamaServerLogArgs(params []string) []string {
-	// Keep startup memory/offload lines visible for scheduler accounting.
+	// Default to warnings-only to avoid flooding logs with per-request
+	// slot diagnostics (launch, update, timing, idle). When OLLAMA_DEBUG
+	// is set, bump verbosity so those lines remain visible for debugging.
+	verbosity := 2 // warnings only
+	if s := envconfig.Var("OLLAMA_DEBUG"); s != "" {
+		if b, _ := strconv.ParseBool(s); b {
+			verbosity = 5 // debug
+		} else if i, _ := strconv.ParseInt(s, 10, 64); i > 0 {
+			verbosity = int(i) + 3
+		}
+	}
 	return append(params,
-		"--log-verbosity", "4",
+		"--log-verbosity", strconv.Itoa(verbosity),
 		"--no-log-prefix",
 		"--no-log-timestamps",
 	)
