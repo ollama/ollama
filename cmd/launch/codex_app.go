@@ -106,7 +106,10 @@ func (c *CodexApp) CurrentModel() string {
 		if parsed.RootString(codexRootModelProviderKey) == profileName {
 			baseURL := parsed.ProviderString(profileName, "base_url")
 			if codexNormalizeURL(baseURL) == codexNormalizeURL(codexBaseURL()) && codexAppCatalogHealthy(parsed, profileName) {
-				return strings.TrimSpace(parsed.RootString(codexRootModelKey))
+				model := strings.TrimSpace(parsed.RootString(codexRootModelKey))
+				if codexAppCatalogContainsModel(model) {
+					return model
+				}
 			}
 		}
 	}
@@ -125,7 +128,11 @@ func (c *CodexApp) CurrentModel() string {
 	if !codexAppCatalogHealthy(parsed, profileName) {
 		return ""
 	}
-	return strings.TrimSpace(parsed.ProfileString(profileName, codexRootModelKey))
+	model := strings.TrimSpace(parsed.ProfileString(profileName, codexRootModelKey))
+	if !codexAppCatalogContainsModel(model) {
+		return ""
+	}
+	return model
 }
 
 func codexAppManagedProfileNames() []string {
@@ -167,6 +174,40 @@ func codexAppCatalogHealthy(config codexParsedConfig, profileName string) bool {
 		return false
 	}
 	return len(catalog.Models) > 0
+}
+
+// codexAppCatalogContainsModel reports whether model appears as a slug in the
+// Ollama-managed model catalog. When the configured model is not in the catalog
+// the user has drifted away from the launch-managed model (e.g. by selecting a
+// built-in OpenAI model in the Codex App UI), and the launch config should be
+// treated as inactive.
+func codexAppCatalogContainsModel(model string) bool {
+	if strings.TrimSpace(model) == "" {
+		return false
+	}
+	catalogPath, err := codexAppModelCatalogPath()
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(catalogPath)
+	if err != nil {
+		return false
+	}
+	var catalog struct {
+		Models []struct {
+			Slug string `json:"slug"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		return false
+	}
+	target := codexAppCatalogModelKey(model)
+	for _, m := range catalog.Models {
+		if codexAppCatalogModelKey(m.Slug) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func writeCodexAppConfig(configPath, model, modelCatalogPath string) error {

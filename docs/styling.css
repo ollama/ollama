@@ -14,3 +14,85 @@ pre, code, .font-mono {
     color: #666;
     font-weight: 400;
 }
+
+.capability-list {
+    border-top: 1px solid #e5e5e5;
+    border-bottom: 1px solid #e5e5e5;
+    display: grid;
+    gap: 2rem;
+    grid-template-columns: 7rem minmax(0, 1fr);
+    margin: 1.5rem 0 2rem;
+    padding: 2rem 0;
+}
+
+.capability-list-title {
+    color: #171717;
+    font-size: 1rem;
+    line-height: 1.5rem;
+}
+
+.capability-list-full {
+    grid-template-columns: 1fr;
+}
+
+.capability-list-grid {
+    display: grid;
+    gap: 1.75rem 2rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
+}
+
+.capability-list-item {
+    align-items: flex-start;
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: 2rem minmax(0, 1fr);
+    min-width: 0;
+}
+
+.capability-list-icon {
+    align-items: center;
+    background: #f1f1f1;
+    border-radius: 0.75rem;
+    color: #171717;
+    display: flex;
+    height: 2rem;
+    justify-content: center;
+    width: 2rem;
+}
+
+.capability-list-icon svg {
+    height: 1rem;
+    width: 1rem;
+}
+
+.capability-list-heading {
+    color: #171717;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.375rem;
+}
+
+.capability-list-copy {
+    color: #737373;
+    font-size: 0.95rem;
+    line-height: 1.375rem;
+}
+
+.manual-step-title {
+    color: #171717;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.375rem;
+    margin: 1.25rem 0 0.75rem;
+}
+
+@media (max-width: 920px) {
+    .capability-list {
+        grid-template-columns: 1fr;
+    }
+
+    .capability-list-grid {
+        grid-template-columns: 1fr;
+    }
+}

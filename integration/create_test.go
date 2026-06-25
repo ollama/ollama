@@ -48,10 +48,8 @@ func skipIfRemote(t *testing.T) {
 
 // findHFCLI returns the path to the HuggingFace CLI, or "" if not found.
 func findHFCLI() string {
-	for _, name := range []string{"huggingface-cli", "hf"} {
-		if p, err := exec.LookPath(name); err == nil {
-			return p
-		}
+	if p, err := exec.LookPath("hf"); err == nil {
+		return p
 	}
 	return ""
 }

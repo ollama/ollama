@@ -45,6 +45,10 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := (&Claude{}).findPath()
 				return err == nil
 			},
+			EnsureInstalled: func() error {
+				_, err := ensureClaudeInstalled()
+				return err
+			},
 			URL: "https://code.claude.com/docs/en/quickstart",
 		},
 	},
@@ -152,6 +156,10 @@ var integrationSpecs = []*IntegrationSpec{
 			CheckInstalled: func() bool {
 				_, ok := findOpenCode()
 				return ok
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureOpenCodeInstalled()
+				return err
 			},
 			URL: "https://opencode.ai",
 		},

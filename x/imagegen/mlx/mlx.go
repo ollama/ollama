@@ -149,7 +149,9 @@ var arrayPool = sync.Pool{
 func newArray(array C.mlx_array) *Array {
 	// In compiled closures, MLX manages memory - skip Go tracking
 	if InClosureCallback() {
-		return &Array{c: array}
+		a := &Array{c: array}
+		trackClosureArray(a)
+		return a
 	}
 
 	// Use pooled Array struct for efficiency
@@ -245,6 +247,18 @@ func FreeStruct(v any) {
 	}
 }
 
+// ReleaseAll releases all arrays tracked by this package.
+// Use this when tearing down a whole MLX context; normal model code should
+// prefer FreeStruct or explicit Array.Free calls for owned state.
+func ReleaseAll() {
+	for _, a := range arrays {
+		if a != nil {
+			a.kept = false
+		}
+	}
+	cleanup()
+}
+
 // Keep marks arrays to persist across Eval() cleanup.
 // Kept arrays will NOT be freed when Eval() runs cleanup.
 func Keep(arrays ...*Array) {
@@ -273,6 +287,27 @@ func cleanup() int {
 	}
 	arrays = arrays[:n]
 	return freed
+}
+
+func keepDuringRead(readArrays ...*Array) func() {
+	type state struct {
+		array *Array
+		kept  bool
+	}
+
+	states := make([]state, 0, len(readArrays))
+	for _, a := range readArrays {
+		if a != nil {
+			states = append(states, state{array: a, kept: a.kept})
+			a.kept = true
+		}
+	}
+
+	return func() {
+		for _, s := range states {
+			s.array.kept = s.kept
+		}
+	}
 }
 
 // DebugArrays prints summary info about all tracked arrays.
@@ -1277,17 +1312,38 @@ func (d Dtype) ItemSize() int64 {
 // Note: Arrays of other dtypes (bf16, f16, etc) are automatically converted to float32.
 // Note: Triggers cleanup of non-kept arrays.
 func (a *Array) Data() []float32 {
-	cleanup()
+	if a == nil || !a.Valid() {
+		return nil
+	}
+	restore := keepDuringRead(a)
+	defer func() {
+		restore()
+		cleanup()
+	}()
+
 	size := a.Size()
 	if size == 0 {
 		return nil
 	}
 
 	arr := a
+	var restoreCast func()
 	if a.Dtype() != DtypeFloat32 {
 		arr = AsType(a, DtypeFloat32)
+		restoreCast = keepDuringRead(arr)
 		arr.Eval()
-		// Cast array will be cleaned up on next Eval
+		defer func() {
+			restoreCast()
+		}()
+	}
+	var restoreContiguous func()
+	if !arr.IsContiguous() {
+		arr = Contiguous(arr)
+		restoreContiguous = keepDuringRead(arr)
+		arr.Eval()
+		defer func() {
+			restoreContiguous()
+		}()
 	}
 
 	ptr := C.mlx_array_data_float32(arr.c)
@@ -1313,7 +1369,15 @@ func (a *Array) Item() float32 {
 // Note: For non-contiguous arrays (e.g., from SliceStride), call Contiguous() first.
 // Note: Triggers cleanup of non-kept arrays.
 func (a *Array) DataInt32() []int32 {
-	cleanup()
+	if a == nil || !a.Valid() {
+		return nil
+	}
+	restore := keepDuringRead(a)
+	defer func() {
+		restore()
+		cleanup()
+	}()
+
 	size := a.Size()
 	if size == 0 {
 		return nil
@@ -1330,7 +1394,15 @@ func (a *Array) DataInt32() []int32 {
 // ItemInt32 gets a single scalar value efficiently (no array copy).
 // Note: Triggers cleanup of non-kept arrays.
 func (a *Array) ItemInt32() int32 {
-	cleanup()
+	if a == nil || !a.Valid() {
+		return 0
+	}
+	restore := keepDuringRead(a)
+	defer func() {
+		restore()
+		cleanup()
+	}()
+
 	var val C.int32_t
 	C.mlx_array_item_int32(&val, a.c)
 	return int32(val)
@@ -1341,7 +1413,15 @@ func (a *Array) ItemInt32() int32 {
 // For non-contiguous arrays, call Contiguous() first.
 // Note: Triggers cleanup of non-kept arrays.
 func (a *Array) Bytes() []byte {
-	cleanup()
+	if a == nil || !a.Valid() {
+		return nil
+	}
+	restore := keepDuringRead(a)
+	defer func() {
+		restore()
+		cleanup()
+	}()
+
 	nbytes := a.Nbytes()
 	if nbytes == 0 {
 		return nil
@@ -1361,7 +1441,9 @@ func (a *Array) Bytes() []byte {
 	default:
 		// For other types (bf16, f16, etc), convert to float32
 		arr := AsType(a, DtypeFloat32)
+		restoreCast := keepDuringRead(arr)
 		arr.Eval()
+		defer restoreCast()
 		ptr = unsafe.Pointer(C.mlx_array_data_float32(arr.c))
 		nbytes = arr.Nbytes()
 	}
