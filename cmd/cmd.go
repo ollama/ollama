@@ -1724,6 +1724,9 @@ func (r runOptions) Copy() runOptions {
 func applyShowResponseToRunOptions(opts *runOptions, info *api.ShowResponse) {
 	opts.ParentModel = info.Details.ParentModel
 	opts.LoadedMessages = slices.Clone(info.Messages)
+	if strings.TrimSpace(opts.System) == "" {
+		opts.System = info.System
+	}
 	opts.ContextWindowTokens = contextWindowTokensFromShowResponse(info)
 }
 

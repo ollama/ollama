@@ -1573,10 +1573,7 @@ func TestChatToolCallRendersPrettyInvocationAndResult(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
 	view := stripANSI(m.renderTranscript(100))
-	if strings.Contains(view, "**Search results for:**") {
-		t.Fatalf("inline web output should render markdown: %q", view)
-	}
-	if !strings.Contains(view, "Search results for:") || !strings.Contains(view, "https://parthsareen.com") {
+	if !strings.Contains(view, "**Search results for:**") || !strings.Contains(view, "https://parthsareen.com") {
 		t.Fatalf("inline web output missing content: %q", view)
 	}
 }

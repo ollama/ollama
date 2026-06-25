@@ -35,8 +35,8 @@ import (
 type AgentTUIOptions struct {
 	Model               string
 	Prompt              string
-	LoadedMessages      []api.Message
 	Messages            []api.Message
+	System              string
 	Images              []api.ImageData
 	Format              string
 	Options             map[string]any
@@ -56,8 +56,8 @@ func agentOptionsFromRunOptions(opts runOptions) AgentTUIOptions {
 	return AgentTUIOptions{
 		Model:               opts.Model,
 		Prompt:              opts.Prompt,
-		LoadedMessages:      opts.LoadedMessages,
 		Messages:            opts.Messages,
+		System:              opts.System,
 		Images:              opts.Images,
 		Format:              opts.Format,
 		Options:             opts.Options,
@@ -206,8 +206,7 @@ func newAgentRunSetup(cmd *cobra.Command, opts AgentTUIOptions, resumeLatestWith
 	opts.ContextWindowTokens = contextWindowTokensForRun(cmd.Context(), client, opts.Model, opts.ContextWindowTokens)
 	approval := opts.Policy.ReviewApprovalHandler(nil)
 
-	messages := slices.Clone(opts.LoadedMessages)
-	messages = append(messages, resumedMessages...)
+	messages := slices.Clone(resumedMessages)
 	messages = append(messages, opts.Messages...)
 
 	return &agentRunSetup{
@@ -260,13 +259,17 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		OnModelSelected: func(_ context.Context, model string) error {
 			return config.SetLastModel(model)
 		},
-		SystemPromptForModel: func(_ context.Context, model string, registry *coreagent.Registry) string {
-			return agentSystemPrompt(model, setup.skills, registry != nil && registry.Has("skill"), "")
+		SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry) string {
+			modelSystem := opts.System
+			if strings.TrimSpace(model) != strings.TrimSpace(opts.Model) {
+				modelSystem = agentSystemFromShow(ctx, setup.client, model)
+			}
+			return agentSystemPrompt(model, setup.skills, registry != nil && registry.Has("skill"), modelSystem, "")
 		},
 		Approval:     setup.approval,
 		Policy:       opts.Policy,
 		Skills:       setup.skills,
-		SystemPrompt: agentSystemPrompt(opts.Model, setup.skills, setup.registry != nil && setup.registry.Has("skill"), ""),
+		SystemPrompt: agentSystemPrompt(opts.Model, setup.skills, setup.registry != nil && setup.registry.Has("skill"), opts.System, ""),
 		WorkingDir:   setup.cwd,
 		Format:       opts.Format,
 		Options:      opts.Options,
@@ -351,7 +354,7 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 	if tools == nil {
 		toolPrompt = "Tools are unavailable in this headless run because --auto-approve-tools was not passed. Answer directly without tool calls."
 	}
-	systemPrompt := agentSystemPrompt(opts.Model, setup.skills, tools != nil && tools.Has("skill"), toolPrompt)
+	systemPrompt := agentSystemPrompt(opts.Model, setup.skills, tools != nil && tools.Has("skill"), opts.System, toolPrompt)
 	newMessages := []api.Message{{Role: "user", Content: prompt, Images: images}}
 	if strings.TrimSpace(opts.Skill) == "" {
 		if skill, request, ok := skillFromPrompt(setup.skills, prompt); ok {
@@ -509,13 +512,16 @@ func loadAgentSkills() *skills.Catalog {
 	return catalog
 }
 
-func agentSystemPrompt(modelName string, catalog *skills.Catalog, skillToolAvailable bool, extra string) string {
-	return agentSystemPromptAt(time.Now(), modelName, catalog, skillToolAvailable, extra)
+func agentSystemPrompt(modelName string, catalog *skills.Catalog, skillToolAvailable bool, modelSystem string, extra string) string {
+	return agentSystemPromptAt(time.Now(), modelName, catalog, skillToolAvailable, modelSystem, extra)
 }
 
-func agentSystemPromptAt(now time.Time, modelName string, catalog *skills.Catalog, skillToolAvailable bool, extra string) string {
+func agentSystemPromptAt(now time.Time, modelName string, catalog *skills.Catalog, skillToolAvailable bool, modelSystem string, extra string) string {
 	var parts []string
 	parts = append(parts, agentDefaultSystemPrompt(now, modelName))
+	if strings.TrimSpace(modelSystem) != "" {
+		parts = append(parts, strings.TrimSpace(modelSystem))
+	}
 	if catalogPrompt := catalog.SystemPrompt(skillToolAvailable); strings.TrimSpace(catalogPrompt) != "" {
 		parts = append(parts, catalogPrompt)
 	}
@@ -523,6 +529,18 @@ func agentSystemPromptAt(now time.Time, modelName string, catalog *skills.Catalo
 		parts = append(parts, strings.TrimSpace(extra))
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func agentSystemFromShow(ctx context.Context, client *api.Client, modelName string) string {
+	if client == nil || strings.TrimSpace(modelName) == "" {
+		return ""
+	}
+	resp, err := client.Show(ctx, &api.ShowRequest{Model: modelName})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not load model system prompt: %v\n", err)
+		return ""
+	}
+	return resp.System
 }
 
 func agentDefaultSystemPrompt(now time.Time, modelName string) string {

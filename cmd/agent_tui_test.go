@@ -31,7 +31,7 @@ func setAgentTUITestCloudEnabled(t *testing.T) {
 }
 
 func TestAgentSystemPromptIncludesModel(t *testing.T) {
-	prompt := agentSystemPromptAt(time.Date(2026, time.June, 12, 9, 30, 0, 0, time.UTC), "llama3.2", nil, false, "")
+	prompt := agentSystemPromptAt(time.Date(2026, time.June, 12, 9, 30, 0, 0, time.UTC), "llama3.2", nil, false, "", "")
 	for _, want := range []string{
 		"You are running in Ollama, in a harness to help the user accomplish tasks, and the model is llama3.2.",
 		"Current date: Friday, June 12, 2026.",
@@ -42,6 +42,13 @@ func TestAgentSystemPromptIncludesModel(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestAgentSystemPromptIncludesModelSystem(t *testing.T) {
+	prompt := agentSystemPromptAt(time.Date(2026, time.June, 12, 9, 30, 0, 0, time.UTC), "llama3.2", nil, false, "You are a pirate.", "")
+	if !strings.Contains(prompt, "You are a pirate.") {
+		t.Fatalf("prompt missing model system:\n%s", prompt)
 	}
 }
 

@@ -1183,10 +1183,3 @@ func (m chatModel) canEditInput() bool {
 func isChatContextCanceledError(err error) bool {
 	return err != nil && (errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled"))
 }
-
-const (
-	markdownBlockProse markdownBlockKind = iota
-	markdownBlockTable
-	markdownBlockCodeFence
-	markdownBlockDiffFence
-)

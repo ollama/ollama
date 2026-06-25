@@ -2431,6 +2431,7 @@ func TestApplyShowResponseToRunOptions(t *testing.T) {
 		Details: api.ModelDetails{
 			ParentModel: "parentmodel",
 		},
+		System: "model system",
 		Messages: []api.Message{
 			{Role: "assistant", Content: "loaded"},
 		},
@@ -2445,10 +2446,24 @@ func TestApplyShowResponseToRunOptions(t *testing.T) {
 	if !cmp.Equal(opts.LoadedMessages, info.Messages) {
 		t.Fatalf("LoadedMessages = %#v, want %#v", opts.LoadedMessages, info.Messages)
 	}
+	if opts.System != "model system" {
+		t.Fatalf("System = %q, want model system", opts.System)
+	}
 
 	info.Messages[0].Content = "modified"
 	if opts.LoadedMessages[0].Content == "modified" {
 		t.Fatal("LoadedMessages should be copied independently from ShowResponse")
+	}
+}
+
+func TestApplyShowResponseToRunOptionsPreservesExplicitSystem(t *testing.T) {
+	opts := runOptions{System: "explicit system"}
+	info := &api.ShowResponse{System: "model system"}
+
+	applyShowResponseToRunOptions(&opts, info)
+
+	if opts.System != "explicit system" {
+		t.Fatalf("System = %q, want explicit system", opts.System)
 	}
 }
 
