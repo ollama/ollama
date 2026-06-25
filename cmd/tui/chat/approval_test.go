@@ -215,6 +215,25 @@ func TestChatShiftTabTogglesPermissionMode(t *testing.T) {
 	}
 }
 
+func TestChatAutoApproveInitialFooterShowsFullAccess(t *testing.T) {
+	m := chatModel{
+		width:  100,
+		height: 12,
+		opts: Options{
+			Model:  "llama3.2",
+			Policy: coreagent.RunPolicy{ToolMode: coreagent.ToolModeFullAccess},
+		},
+		status: "ready",
+	}
+
+	if m.notificationLine() != "" {
+		t.Fatalf("notification = %q, want footer-only full access notice", m.notificationLine())
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "full access enabled") {
+		t.Fatalf("visible footer missing initial full access notice:\n%s", view)
+	}
+}
+
 func TestChatShiftTabApprovesPendingPrompt(t *testing.T) {
 	reply := make(chan coreagent.ApprovalResult, 1)
 	m := chatModel{
@@ -283,9 +302,9 @@ func TestChatShiftTabSkillApprovalKeepsFullAccessFooter(t *testing.T) {
 }
 
 func TestChatPermissionApprovalHandlerReadsModeAtApprovalTime(t *testing.T) {
-	mode := newChatPermissionMode(false)
-	handler := chatPermissionApprovalHandler{
-		mode:   mode,
+	policy := coreagent.NewRunPolicyState(coreagent.RunPolicy{ToolMode: coreagent.ToolModeReview})
+	handler := chatPolicyApprovalHandler{
+		policy: policy,
 		review: coreagent.NewApprovalManager(coreagent.ApprovalManagerOptions{}),
 	}
 	req := coreagent.ApprovalRequest{
@@ -296,7 +315,7 @@ func TestChatPermissionApprovalHandlerReadsModeAtApprovalTime(t *testing.T) {
 	if !handler.RequiresApproval(context.Background(), chatTestTool{}, req) {
 		t.Fatal("review mode should require approval for bash")
 	}
-	mode.SetAutoApprove(true)
+	policy.SetToolMode(coreagent.ToolModeFullAccess)
 	if handler.RequiresApproval(context.Background(), chatTestTool{}, req) {
 		t.Fatal("auto-approve mode should not require approval")
 	}

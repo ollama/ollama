@@ -41,11 +41,11 @@ type AgentTUIOptions struct {
 	Format              string
 	Options             map[string]any
 	Think               *api.ThinkValue
-	HideThinking        bool
 	KeepAlive           *api.Duration
 	ContextWindowTokens int
 	Resume              bool
 	AutoApproveTools    bool
+	Policy              coreagent.RunPolicy
 	Verbose             bool
 	MultiModal          bool
 	Skill               string
@@ -62,7 +62,6 @@ func agentOptionsFromRunOptions(opts runOptions) AgentTUIOptions {
 		Format:              opts.Format,
 		Options:             opts.Options,
 		Think:               opts.Think,
-		HideThinking:        opts.HideThinking,
 		KeepAlive:           opts.KeepAlive,
 		ContextWindowTokens: opts.ContextWindowTokens,
 		Resume:              opts.Resume,
@@ -70,6 +69,24 @@ func agentOptionsFromRunOptions(opts runOptions) AgentTUIOptions {
 		Verbose:             opts.Verbose,
 		MultiModal:          opts.MultiModal,
 	}
+}
+
+type agentSurface int
+
+const (
+	agentSurfaceTUI agentSurface = iota
+	agentSurfaceHeadless
+)
+
+func resolveAgentRunPolicy(opts AgentTUIOptions, surface agentSurface) coreagent.RunPolicy {
+	policy := opts.Policy
+	if surface == agentSurfaceHeadless {
+		policy.ToolMode = coreagent.ToolModeDisabled
+	}
+	if opts.AutoApproveTools {
+		policy.ToolMode = coreagent.ToolModeFullAccess
+	}
+	return policy
 }
 
 type agentRunSetup struct {
@@ -187,10 +204,7 @@ func newAgentRunSetup(cmd *cobra.Command, opts AgentTUIOptions, resumeLatestWith
 
 	registry := agentToolsRegistry(cmd.Context(), client, opts.Model, skillCatalog)
 	opts.ContextWindowTokens = contextWindowTokensForRun(cmd.Context(), client, opts.Model, opts.ContextWindowTokens)
-	approval := coreagent.ApprovalHandler(coreagent.NewApprovalManager(coreagent.ApprovalManagerOptions{}))
-	if opts.AutoApproveTools {
-		approval = coreagent.AutoAllowApproval{}
-	}
+	approval := opts.Policy.ReviewApprovalHandler(nil)
 
 	messages := slices.Clone(opts.LoadedMessages)
 	messages = append(messages, resumedMessages...)
@@ -218,6 +232,7 @@ func resumeAgentChat(ctx context.Context, store *agentstore.Store, modelName str
 }
 
 func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
+	opts.Policy = resolveAgentRunPolicy(opts, agentSurfaceTUI)
 	setup, err := newAgentRunSetup(cmd, opts, false)
 	if err != nil {
 		return err
@@ -248,19 +263,18 @@ func GenerateAgentTUI(cmd *cobra.Command, opts AgentTUIOptions) error {
 		SystemPromptForModel: func(_ context.Context, model string, registry *coreagent.Registry) string {
 			return agentSystemPrompt(model, setup.skills, registry != nil && registry.Has("skill"), "")
 		},
-		Approval:         setup.approval,
-		AutoApproveTools: opts.AutoApproveTools,
-		Skills:           setup.skills,
-		SystemPrompt:     agentSystemPrompt(opts.Model, setup.skills, setup.registry != nil && setup.registry.Has("skill"), ""),
-		WorkingDir:       setup.cwd,
-		Format:           opts.Format,
-		Options:          opts.Options,
-		Think:            opts.Think,
-		KeepAlive:        opts.KeepAlive,
-		Images:           slices.Clone(opts.Images),
-		MultiModal:       opts.MultiModal,
-		HideThinking:     opts.HideThinking,
-		Verbose:          opts.Verbose,
+		Approval:     setup.approval,
+		Policy:       opts.Policy,
+		Skills:       setup.skills,
+		SystemPrompt: agentSystemPrompt(opts.Model, setup.skills, setup.registry != nil && setup.registry.Has("skill"), ""),
+		WorkingDir:   setup.cwd,
+		Format:       opts.Format,
+		Options:      opts.Options,
+		Think:        opts.Think,
+		KeepAlive:    opts.KeepAlive,
+		Images:       slices.Clone(opts.Images),
+		MultiModal:   opts.MultiModal,
+		Verbose:      opts.Verbose,
 		Compactor: coreagent.NewSimpleCompactor(setup.client, setup.store, coreagent.CompactionOptions{
 			ContextWindowTokens: opts.ContextWindowTokens,
 		}),
@@ -299,6 +313,7 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 		return errors.New("agent headless mode requires a prompt or stdin")
 	}
 
+	opts.Policy = resolveAgentRunPolicy(opts, agentSurfaceHeadless)
 	setup, err := newAgentRunSetup(cmd, opts, true)
 	if err != nil {
 		return err
@@ -331,7 +346,12 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 		}
 		images = imgs
 	}
-	systemPrompt := agentSystemPrompt(opts.Model, setup.skills, setup.registry != nil && setup.registry.Has("skill"), "")
+	tools := opts.Policy.Tools(setup.registry)
+	toolPrompt := ""
+	if tools == nil {
+		toolPrompt = "Tools are unavailable in this headless run because --auto-approve-tools was not passed. Answer directly without tool calls."
+	}
+	systemPrompt := agentSystemPrompt(opts.Model, setup.skills, tools != nil && tools.Has("skill"), toolPrompt)
 	newMessages := []api.Message{{Role: "user", Content: prompt, Images: images}}
 	if strings.TrimSpace(opts.Skill) == "" {
 		if skill, request, ok := skillFromPrompt(setup.skills, prompt); ok {
@@ -366,14 +386,14 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 		}
 	}()
 
-	headlessSink := &agentHeadlessEventSink{hideThinking: opts.HideThinking}
+	headlessSink := &agentHeadlessEventSink{}
 	eventSink := coreagent.EventSink(headlessSink)
 	session := &coreagent.Session{
 		Client:     setup.client,
 		Store:      setup.store,
 		Events:     eventSink,
-		Tools:      setup.registry,
-		Approval:   setup.approval,
+		Tools:      tools,
+		Approval:   opts.Policy.ApprovalHandler(nil),
 		WorkingDir: setup.cwd,
 		Compactor: coreagent.NewSimpleCompactor(setup.client, setup.store, coreagent.CompactionOptions{
 			ContextWindowTokens: opts.ContextWindowTokens,
@@ -389,14 +409,12 @@ func GenerateAgentHeadless(cmd *cobra.Command, opts AgentTUIOptions) error {
 		Options:      opts.Options,
 		Think:        opts.Think,
 		KeepAlive:    opts.KeepAlive,
-		UseTools:     setup.registry != nil,
+		Policy:       opts.Policy,
 	})
 	if err != nil {
 		return err
 	}
-	if headlessSink.wroteContent {
-		fmt.Fprintln(os.Stdout)
-	}
+	headlessSink.Finish()
 	if headlessSink.denied {
 		return errors.New("tool execution denied")
 	}
@@ -429,34 +447,22 @@ func skillFromPrompt(catalog *skills.Catalog, prompt string) (skills.Skill, stri
 }
 
 type agentHeadlessEventSink struct {
-	hideThinking             bool
-	wroteContent             bool
-	wroteThinking            bool
-	thinkingEndedWithNewline bool
-	denied                   bool
+	wroteContent            bool
+	contentEndedWithNewline bool
+	denied                  bool
 }
 
 func (s *agentHeadlessEventSink) Emit(event coreagent.Event) error {
 	switch event.Type {
 	case coreagent.EventThinkingDelta:
-		if event.Thinking != "" && !s.hideThinking {
-			fmt.Fprint(os.Stdout, event.Thinking)
-			s.wroteContent = true
-			s.wroteThinking = true
-			s.thinkingEndedWithNewline = strings.HasSuffix(event.Thinking, "\n")
-		}
 	case coreagent.EventMessageDelta:
 		if event.Content != "" {
-			if s.wroteThinking {
-				if !s.thinkingEndedWithNewline {
-					fmt.Fprintln(os.Stdout)
-				}
-				s.wroteThinking = false
-			}
 			fmt.Fprint(os.Stdout, event.Content)
 			s.wroteContent = true
+			s.contentEndedWithNewline = strings.HasSuffix(event.Content, "\n")
 		}
 	case coreagent.EventToolFinished:
+		s.ensureContentNewline()
 		status := "done"
 		if event.Status != "done" || event.Error != "" {
 			status = "failed"
@@ -478,6 +484,17 @@ func (s *agentHeadlessEventSink) Emit(event coreagent.Event) error {
 		}
 	}
 	return nil
+}
+
+func (s *agentHeadlessEventSink) Finish() {
+	s.ensureContentNewline()
+}
+
+func (s *agentHeadlessEventSink) ensureContentNewline() {
+	if s.wroteContent && !s.contentEndedWithNewline {
+		fmt.Fprintln(os.Stdout)
+		s.contentEndedWithNewline = true
+	}
 }
 
 func loadAgentSkills() *skills.Catalog {

@@ -35,8 +35,9 @@ type rawRequestMessage struct {
 
 func (m chatModel) requestPreview(messages []api.Message) coreagent.ChatRequestPreview {
 	var tools api.Tools
-	if m.opts.Tools != nil {
-		tools = m.opts.Tools.Tools()
+	policy := m.currentPolicy()
+	if registry := policy.Tools(m.opts.Tools); registry != nil {
+		tools = registry.Tools()
 	}
 	return coreagent.BuildChatRequestPreview(coreagent.RunOptions{
 		Model:        m.opts.Model,
@@ -45,7 +46,7 @@ func (m chatModel) requestPreview(messages []api.Message) coreagent.ChatRequestP
 		Options:      m.opts.Options,
 		Think:        m.opts.Think,
 		KeepAlive:    m.opts.KeepAlive,
-		UseTools:     m.opts.Tools != nil,
+		Policy:       policy,
 	}, messages, tools)
 }
 

@@ -60,7 +60,7 @@ type Options struct {
 	Clipboard                   func(context.Context, string) error
 	Approval                    coreagent.ApprovalHandler
 	EventSink                   coreagent.EventSink
-	AutoApproveTools            bool
+	Policy                      coreagent.RunPolicy
 	WorkingDir                  string
 	RootDir                     string
 	Format                      string
@@ -69,7 +69,6 @@ type Options struct {
 	KeepAlive                   *api.Duration
 	Images                      []api.ImageData
 	MultiModal                  bool
-	HideThinking                bool
 	Verbose                     bool
 	Compactor                   coreagent.Compactor
 	ContextWindowTokens         int
@@ -137,7 +136,7 @@ type chatModel struct {
 	cloudAuthPrompt   *cloudAuthPrompt
 	pendingModel      string
 	reviewApproval    coreagent.ApprovalHandler
-	permissionMode    *chatPermissionMode
+	policyState       *coreagent.RunPolicyState
 	permissionNotice  string
 	selection         chatSelection
 
@@ -223,9 +222,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if opts.Clipboard == nil {
 		opts.Clipboard = writeClipboard
 	}
-	reviewApproval := chatReviewApprovalHandler(opts.Approval)
-	autoApproveTools := opts.AutoApproveTools || approvalHandlerAutoApproves(opts.Approval)
+	policy := opts.Policy
+	reviewApproval := chatReviewApprovalHandler(opts.Approval, policy)
 	opts.Approval = reviewApproval
+	opts.Policy = policy
 
 	m := chatModel{
 		ctx:            ctx,
@@ -234,7 +234,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		messages:       slices.Clone(opts.Messages),
 		workingDir:     opts.WorkingDir,
 		reviewApproval: reviewApproval,
-		permissionMode: newChatPermissionMode(autoApproveTools),
+		policyState:    coreagent.NewRunPolicyState(policy),
 		promptHistory:  initialPromptHistory(ctx, opts),
 		boundedFrame:   true,
 		fullScreen:     true,
@@ -1032,7 +1032,7 @@ func pluralSuffix(count int) string {
 }
 
 func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newMessages []api.Message, extraSystemPrompt string) (tea.Model, tea.Cmd) {
-	m.ensurePermissionMode()
+	m.ensureRunPolicy()
 	m.refreshContextWindowTokens(m.opts.Model)
 	m.addPromptHistory(historyInput)
 	m.entries = append(m.entries, newChatEntry(chatEntry{role: "user", content: displayInput}))
@@ -1082,7 +1082,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		Options:      m.opts.Options,
 		Think:        m.opts.Think,
 		KeepAlive:    m.opts.KeepAlive,
-		UseTools:     m.opts.Tools != nil,
+		Policy:       m.currentPolicy(),
 	}
 
 	persistedMessages := make([]api.Message, 0, len(m.messages)+len(newMessages))

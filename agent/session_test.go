@@ -432,7 +432,7 @@ func TestSessionRunsToolLoop(t *testing.T) {
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -579,7 +579,7 @@ func TestSessionRequestHistoryKeepsThinkingAndServerToolCallIDs(t *testing.T) {
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -724,7 +724,7 @@ func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T)
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "cancel after tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -771,7 +771,7 @@ func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) 
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "cancel during tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -833,7 +833,7 @@ func TestSessionToolLoopAllowsRoundsUnderDefaultCap(t *testing.T) {
 	if _, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "keep going"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -892,11 +892,10 @@ func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
-		ChatID:        "chat-1",
-		Model:         "model",
-		NewMessages:   []api.Message{{Role: "user", Content: "hit cap"}},
-		UseTools:      true,
-		MaxToolRounds: 1,
+		ChatID:      "chat-1",
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "hit cap"}},
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess, MaxToolRounds: 1},
 	})
 	if err == nil || !strings.Contains(err.Error(), "tool round limit reached after 1 rounds") {
 		t.Fatalf("error = %v, want tool-round limit", err)
@@ -948,7 +947,7 @@ func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	_, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "keep going"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err == nil || !strings.Contains(err.Error(), "tool round limit reached after 100 rounds") {
 		t.Fatalf("error = %v, want default tool round limit", err)
@@ -986,10 +985,9 @@ func TestSessionToolLoopNegativeLimitIsUnlimited(t *testing.T) {
 	}
 
 	if _, err := session.Run(context.Background(), RunOptions{
-		Model:         "model",
-		NewMessages:   []api.Message{{Role: "user", Content: "keep going"}},
-		UseTools:      true,
-		MaxToolRounds: -1,
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "keep going"}},
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess, MaxToolRounds: -1},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1027,7 +1025,7 @@ func TestSessionTruncatesLargeToolResultsBeforeHistory(t *testing.T) {
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1085,7 +1083,7 @@ func TestSessionSmallContextUsesLowerToolResultPreviewCap(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1133,7 +1131,7 @@ func TestSessionSmallContextRecapsPreTruncatedToolOutput(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1220,7 +1218,7 @@ func TestSessionCompactsAfterToolResultsBeforeContinuing(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1281,7 +1279,7 @@ func TestSessionStopsWhenCompactedHistoryStillExceedsContext(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 		Options:     map[string]any{"num_ctx": 512},
 	})
 	if err == nil {
@@ -1340,7 +1338,7 @@ func TestSessionContextCapsToolResultBeforeCompaction(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1390,7 +1388,7 @@ func TestSessionCompactsThenReattachesFullyOmittedToolResult(t *testing.T) {
 		Model:       "model",
 		Messages:    []api.Message{{Role: "user", Content: strings.Repeat("history ", 2000)}},
 		NewMessages: []api.Message{{Role: "user", Content: "use a large tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1466,7 +1464,7 @@ func TestSessionEmitsAutoCompactionActivityEvents(t *testing.T) {
 	if _, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1652,7 +1650,7 @@ func TestSessionPersistsToolWorkingDirWithinRun(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use cwd"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1718,7 +1716,7 @@ func TestSessionAllowsToolWorkingDirOutsideInitialDir(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use cwd"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1783,7 +1781,7 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1849,7 +1847,7 @@ func TestSessionConsultsWrappedApprovalRequirement(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use bash"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1901,7 +1899,7 @@ func TestSessionAutoAllowApprovalExecutesApprovalTool(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		UseTools:    true,
+		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)

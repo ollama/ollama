@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,36 +30,9 @@ type chatApprovalPrompt struct {
 	cursor  int
 }
 
-type chatPermissionMode struct {
-	mu          sync.Mutex
-	autoApprove bool
-}
-
-func newChatPermissionMode(autoApprove bool) *chatPermissionMode {
-	return &chatPermissionMode{autoApprove: autoApprove}
-}
-
-func (m *chatPermissionMode) AutoApprove() bool {
-	if m == nil {
-		return false
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.autoApprove
-}
-
-func (m *chatPermissionMode) SetAutoApprove(autoApprove bool) {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.autoApprove = autoApprove
-}
-
 func (m chatModel) approvalHandlerForRun(events chan<- tea.Msg) coreagent.ApprovalHandler {
-	return chatPermissionApprovalHandler{
-		mode:   m.permissionMode,
+	return chatPolicyApprovalHandler{
+		policy: m.policyState,
 		review: approvalHandlerForRun(m.reviewApproval, events),
 	}
 }
@@ -76,24 +48,11 @@ func approvalHandlerForRun(handler coreagent.ApprovalHandler, events chan<- tea.
 	return coreagent.NewApprovalManager(coreagent.ApprovalManagerOptions{Prompter: prompter})
 }
 
-func chatReviewApprovalHandler(handler coreagent.ApprovalHandler) coreagent.ApprovalHandler {
-	if handler == nil || approvalHandlerAutoApproves(handler) {
-		return coreagent.NewApprovalManager(coreagent.ApprovalManagerOptions{})
+func chatReviewApprovalHandler(handler coreagent.ApprovalHandler, policy coreagent.RunPolicy) coreagent.ApprovalHandler {
+	if handler != nil {
+		return handler
 	}
-	return handler
-}
-
-func approvalHandlerAutoApproves(handler coreagent.ApprovalHandler) bool {
-	switch h := handler.(type) {
-	case coreagent.AutoAllowApproval:
-		return true
-	case *coreagent.AutoAllowApproval:
-		return h != nil
-	case interface{ AutoApproveEnabled() bool }:
-		return h.AutoApproveEnabled()
-	default:
-		return false
-	}
+	return policy.ReviewApprovalHandler(nil)
 }
 
 func (m *chatModel) openApprovalPrompt(msg chatApprovalPromptMsg) {
@@ -105,11 +64,14 @@ func (m *chatModel) openApprovalPrompt(msg chatApprovalPromptMsg) {
 }
 
 func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
-	m.ensurePermissionMode()
-	autoApprove := !m.permissionMode.AutoApprove()
-	m.permissionMode.SetAutoApprove(autoApprove)
-	m.opts.AutoApproveTools = autoApprove
-	if autoApprove {
+	m.ensureRunPolicy()
+	nextMode := coreagent.ToolModeFullAccess
+	if m.currentPolicy().ToolMode == coreagent.ToolModeFullAccess {
+		nextMode = coreagent.ToolModeReview
+	}
+	m.policyState.SetToolMode(nextMode)
+	m.opts.Policy = m.currentPolicy()
+	if nextMode == coreagent.ToolModeFullAccess {
 		m.permissionNotice = "full access enabled"
 		m.status = "full access enabled"
 		if m.approvalPrompt != nil {
@@ -128,20 +90,24 @@ func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
-func (m *chatModel) ensurePermissionMode() {
-	if m.permissionMode == nil {
-		m.permissionMode = newChatPermissionMode(m.opts.AutoApproveTools || approvalHandlerAutoApproves(m.opts.Approval))
+func (m *chatModel) ensureRunPolicy() {
+	if m.policyState == nil {
+		m.policyState = coreagent.NewRunPolicyState(m.opts.Policy)
 	}
 	if m.reviewApproval == nil {
-		m.reviewApproval = chatReviewApprovalHandler(m.opts.Approval)
+		m.reviewApproval = chatReviewApprovalHandler(m.opts.Approval, m.currentPolicy())
 	}
 }
 
-func (m chatModel) autoApproveTools() bool {
-	if m.permissionMode != nil {
-		return m.permissionMode.AutoApprove()
+func (m chatModel) currentPolicy() coreagent.RunPolicy {
+	if m.policyState != nil {
+		return m.policyState.Policy()
 	}
-	return m.opts.AutoApproveTools || approvalHandlerAutoApproves(m.opts.Approval)
+	return m.opts.Policy
+}
+
+func (m chatModel) autoApproveTools() bool {
+	return m.currentPolicy().ToolMode == coreagent.ToolModeFullAccess
 }
 
 func (m *chatModel) upsertApprovalToolEntry(request coreagent.ApprovalRequest) {
@@ -315,13 +281,13 @@ type chatApprovalPrompter struct {
 	ch chan<- tea.Msg
 }
 
-type chatPermissionApprovalHandler struct {
-	mode   *chatPermissionMode
+type chatPolicyApprovalHandler struct {
+	policy *coreagent.RunPolicyState
 	review coreagent.ApprovalHandler
 }
 
-func (h chatPermissionApprovalHandler) RequiresApproval(ctx context.Context, tool coreagent.Tool, req coreagent.ApprovalRequest) bool {
-	if h.mode != nil && h.mode.AutoApprove() {
+func (h chatPolicyApprovalHandler) RequiresApproval(ctx context.Context, tool coreagent.Tool, req coreagent.ApprovalRequest) bool {
+	if h.policy != nil && h.policy.ToolMode() == coreagent.ToolModeFullAccess {
 		return false
 	}
 	if h.review != nil {
@@ -330,8 +296,8 @@ func (h chatPermissionApprovalHandler) RequiresApproval(ctx context.Context, too
 	return req.ToolApprovalRequired || coreagent.ToolRequiresApproval(tool, req.Args)
 }
 
-func (h chatPermissionApprovalHandler) Approve(ctx context.Context, req coreagent.ApprovalRequest) (coreagent.ApprovalResult, error) {
-	if h.mode != nil && h.mode.AutoApprove() {
+func (h chatPolicyApprovalHandler) Approve(ctx context.Context, req coreagent.ApprovalRequest) (coreagent.ApprovalResult, error) {
+	if h.policy != nil && h.policy.ToolMode() == coreagent.ToolModeFullAccess {
 		return coreagent.ApprovalResult{Decision: coreagent.ApprovalAllowOnce}, nil
 	}
 	if h.review != nil {

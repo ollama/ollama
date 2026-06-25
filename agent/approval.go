@@ -78,15 +78,13 @@ func (AutoAllowApproval) Approve(context.Context, ApprovalRequest) (ApprovalResu
 }
 
 type ApprovalManagerOptions struct {
-	Policy      ApprovalPolicy
-	Prompter    ApprovalPrompter
-	AutoApprove bool
+	Policy   ApprovalPolicy
+	Prompter ApprovalPrompter
 }
 
 type ApprovalManager struct {
-	policy      ApprovalPolicy
-	prompter    ApprovalPrompter
-	autoApprove bool
+	policy   ApprovalPolicy
+	prompter ApprovalPrompter
 
 	mu             *sync.Mutex
 	sessionAllowed map[string]struct{}
@@ -100,7 +98,6 @@ func NewApprovalManager(opts ApprovalManagerOptions) *ApprovalManager {
 	return &ApprovalManager{
 		policy:         policy,
 		prompter:       opts.Prompter,
-		autoApprove:    opts.AutoApprove,
 		mu:             &sync.Mutex{},
 		sessionAllowed: make(map[string]struct{}),
 	}
@@ -113,18 +110,13 @@ func (m *ApprovalManager) WithPrompter(prompter ApprovalPrompter) *ApprovalManag
 	return &ApprovalManager{
 		policy:         m.policy,
 		prompter:       prompter,
-		autoApprove:    m.autoApprove,
 		mu:             m.mu,
 		sessionAllowed: m.sessionAllowed,
 	}
 }
 
-func (m *ApprovalManager) AutoApproveEnabled() bool {
-	return m != nil && m.autoApprove
-}
-
 func (m *ApprovalManager) RequiresApproval(ctx context.Context, tool Tool, req ApprovalRequest) bool {
-	if m == nil || m.autoApprove {
+	if m == nil {
 		return false
 	}
 	req.ToolApprovalRequired = req.ToolApprovalRequired || ToolRequiresApproval(tool, req.Args)
@@ -139,7 +131,7 @@ func (m *ApprovalManager) RequiresApproval(ctx context.Context, tool Tool, req A
 }
 
 func (m *ApprovalManager) Approve(ctx context.Context, req ApprovalRequest) (ApprovalResult, error) {
-	if m == nil || m.autoApprove {
+	if m == nil {
 		return ApprovalResult{Decision: ApprovalAllowOnce}, nil
 	}
 

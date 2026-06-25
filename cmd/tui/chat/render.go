@@ -1192,9 +1192,11 @@ func (m chatModel) permissionModeNotice() string {
 	switch strings.TrimSpace(m.status) {
 	case "full access enabled", "review mode enabled":
 		return strings.TrimSpace(m.status)
-	default:
-		return ""
 	}
+	if m.currentPolicy().ToolMode == coreagent.ToolModeFullAccess && m.notificationLine() == "" {
+		return "full access enabled"
+	}
+	return ""
 }
 
 func (m *chatModel) refreshContextWindowTokens(modelName string) {

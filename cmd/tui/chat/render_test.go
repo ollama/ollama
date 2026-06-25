@@ -217,11 +217,11 @@ func TestChatViewCapsTallInputBox(t *testing.T) {
 
 func TestChatViewWrapsNotificationWhenNarrow(t *testing.T) {
 	m := chatModel{
-		input:          []rune("hello"),
-		width:          28,
-		height:         14,
-		status:         "cache will break by turning system prompt off",
-		permissionMode: newChatPermissionMode(true),
+		input:       []rune("hello"),
+		width:       28,
+		height:      14,
+		status:      "cache will break by turning system prompt off",
+		policyState: coreagent.NewRunPolicyState(coreagent.RunPolicy{ToolMode: coreagent.ToolModeFullAccess}),
 		opts: Options{
 			Verbose:             true,
 			ContextWindowTokens: 262144,

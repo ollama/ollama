@@ -48,11 +48,7 @@ type RunOptions struct {
 	Options      map[string]any
 	Think        *api.ThinkValue
 	KeepAlive    *api.Duration
-	UseTools     bool
-	// MaxToolRounds limits consecutive model/tool cycles.
-	// Zero uses the default guard; negative disables the guard for tests or
-	// special callers.
-	MaxToolRounds int
+	Policy       RunPolicy
 }
 
 type RunResult struct {
@@ -97,7 +93,6 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	if opts.Model == "" {
 		return nil, errors.New("agent session requires a model")
 	}
-
 	runID := uuid.NewString()
 
 	if opts.ChatID != "" && s.Store != nil {
@@ -136,7 +131,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 		}
 	}
 
-	if opts.UseTools && len(s.runTools(opts)) == 0 {
+	if opts.Policy.UsesTools() && len(s.runTools(opts)) == 0 {
 		if err := emit(s.Events, Event{Type: EventToolsUnavailable, RunID: runID, ChatID: opts.ChatID, Model: opts.Model}); err != nil {
 			return nil, err
 		}
@@ -145,7 +140,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	var latest api.ChatResponse
 	var consecutiveErrors int
 	toolRounds := 0
-	maxToolRounds := resolvedMaxToolRounds(opts.MaxToolRounds)
+	maxToolRounds := resolvedMaxToolRounds(opts.Policy.MaxToolRounds)
 	compactionSkipNotified := false
 	for {
 		if err := emit(s.Events, s.loopStepEvent(runID, opts)); err != nil {
@@ -200,7 +195,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, nil
 		}
 
-		if len(pendingToolCalls) == 0 || !opts.UseTools || s.Tools == nil {
+		if len(pendingToolCalls) == 0 || !opts.Policy.UsesTools() || s.Tools == nil {
 			if err := emit(s.Events, Event{Type: EventRunFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "done", FinishedAt: time.Now(), Response: &latest}); err != nil {
 				return nil, err
 			}
@@ -361,7 +356,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOptions, messages []api.Message, calls []api.ToolCall) ([]api.Message, toolExecutionStop, []toolOutputOverflow, error) {
 	approval := s.Approval
 	if approval == nil {
-		approval = AutoAllowApproval{}
+		approval = opts.Policy.ApprovalHandler(nil)
 	}
 
 	toolMessages := make([]api.Message, 0, len(calls))
@@ -894,7 +889,7 @@ func smallContextToolResultLimitRunes(contextWindow int) int {
 }
 
 func (s *Session) runTools(opts RunOptions) api.Tools {
-	if !opts.UseTools || s.Tools == nil {
+	if !opts.Policy.UsesTools() || s.Tools == nil {
 		return nil
 	}
 	return s.Tools.Tools()

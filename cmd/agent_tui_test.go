@@ -45,36 +45,19 @@ func TestAgentSystemPromptIncludesModel(t *testing.T) {
 	}
 }
 
-func TestAgentHeadlessEventSinkPrintsThinkingUnlessHidden(t *testing.T) {
-	t.Run("visible", func(t *testing.T) {
-		output := captureStdout(t, func() {
-			sink := &agentHeadlessEventSink{}
-			if err := sink.Emit(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "thinking"}); err != nil {
-				t.Fatal(err)
-			}
-			if err := sink.Emit(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "answer"}); err != nil {
-				t.Fatal(err)
-			}
-		})
-		if output != "thinking\nanswer" {
-			t.Fatalf("output = %q, want thinking followed by answer", output)
+func TestAgentHeadlessEventSinkSuppressesThinking(t *testing.T) {
+	output := captureStdout(t, func() {
+		sink := &agentHeadlessEventSink{}
+		if err := sink.Emit(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "thinking"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := sink.Emit(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "answer"}); err != nil {
+			t.Fatal(err)
 		}
 	})
-
-	t.Run("hidden", func(t *testing.T) {
-		output := captureStdout(t, func() {
-			sink := &agentHeadlessEventSink{hideThinking: true}
-			if err := sink.Emit(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "thinking"}); err != nil {
-				t.Fatal(err)
-			}
-			if err := sink.Emit(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "answer"}); err != nil {
-				t.Fatal(err)
-			}
-		})
-		if output != "answer" {
-			t.Fatalf("output = %q, want answer only", output)
-		}
-	})
+	if output != "answer" {
+		t.Fatalf("output = %q, want answer only", output)
+	}
 }
 
 func TestAgentHeadlessEventSinkPrintsOnlyFinishedToolEvents(t *testing.T) {
@@ -124,6 +107,32 @@ func TestAgentHeadlessEventSinkPrintsOnlyFinishedToolEvents(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("headless output missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestAgentHeadlessEventSinkPrintsToolEventsAfterContentNewline(t *testing.T) {
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			sink := &agentHeadlessEventSink{}
+			if err := sink.Emit(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "checking"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := sink.Emit(coreagent.Event{
+				Type:     coreagent.EventToolFinished,
+				Status:   "done",
+				ToolName: "bash",
+				Args:     map[string]any{"command": "pwd"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	})
+	if stdout != "checking\n" {
+		t.Fatalf("stdout = %q, want content newline before tool event", stdout)
+	}
+	if stderr != "• Bash(\"pwd\") done\n" {
+		t.Fatalf("stderr = %q, want compact tool status", stderr)
 	}
 }
 

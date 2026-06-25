@@ -932,13 +932,6 @@ func applyRunFlagsToOptions(cmd *cobra.Command, opts *runOptions) (bool, error) 
 		opts.Think = nil
 	}
 
-	if cmd.Flags().Lookup("hidethinking") != nil {
-		hidethinking, err := cmd.Flags().GetBool("hidethinking")
-		if err != nil {
-			return false, err
-		}
-		opts.HideThinking = hidethinking
-	}
 	if cmd.Flags().Lookup("resume") != nil {
 		resume, err := cmd.Flags().GetBool("resume")
 		if err != nil {
@@ -1667,7 +1660,6 @@ type runOptions struct {
 	MultiModal          bool
 	KeepAlive           *api.Duration
 	Think               *api.ThinkValue
-	HideThinking        bool
 	ShowConnect         bool
 	ContextWindowTokens int
 	Resume              bool
@@ -1721,7 +1713,6 @@ func (r runOptions) Copy() runOptions {
 		MultiModal:          r.MultiModal,
 		KeepAlive:           r.KeepAlive,
 		Think:               think,
-		HideThinking:        r.HideThinking,
 		ShowConnect:         r.ShowConnect,
 		ContextWindowTokens: r.ContextWindowTokens,
 		Resume:              r.Resume,
@@ -1921,7 +1912,6 @@ func registerRunFlagsWithOptions(cmd *cobra.Command, opts runFlagOptions) {
 	}
 	cmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
 	cmd.Flags().Lookup("think").NoOptDefVal = "true"
-	cmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 	if opts.includeResume {
 		cmd.Flags().Bool("resume", false, "Resume the latest persisted chat")
 	}
@@ -2464,7 +2454,7 @@ func NewCLI() *cobra.Command {
 	var runCmd *cobra.Command
 	rootCmd := &cobra.Command{
 		Use:           "ollama",
-		Short:         "Large language model runner",
+		Short:         "Run large language models and connect them to agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		CompletionOptions: cobra.CompletionOptions{

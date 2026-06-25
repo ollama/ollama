@@ -426,6 +426,9 @@ func TestRunCommandArgsAllowsResumeWithoutModel(t *testing.T) {
 
 func TestRunCommandFlags(t *testing.T) {
 	root := NewCLI()
+	if root.Short != "Run large language models and connect them to agents" {
+		t.Fatalf("root short = %q", root.Short)
+	}
 	runCmd, _, err := root.Find([]string{"run"})
 	if err != nil {
 		t.Fatal(err)
@@ -454,6 +457,12 @@ func TestRunCommandFlags(t *testing.T) {
 	}
 	if root.Flags().Lookup("verbose") != nil {
 		t.Fatal("root command should not expose --verbose")
+	}
+	if root.Flags().Lookup("hidethinking") != nil {
+		t.Fatal("root command should not expose --hidethinking")
+	}
+	if runCmd.Flags().Lookup("hidethinking") != nil {
+		t.Fatal("run command should not expose --hidethinking")
 	}
 	for _, name := range []string{"think", "auto-approve-tools", "yolo", "keepalive"} {
 		if root.Flags().Lookup(name) == nil {
@@ -532,7 +541,6 @@ func TestApplyRunFlagsToOptions(t *testing.T) {
 		"think":              "high",
 		"keepalive":          "5m",
 		"verbose":            "true",
-		"hidethinking":       "true",
 		"auto-approve-tools": "true",
 	} {
 		if err := cmd.Flags().Set(name, value); err != nil {
@@ -554,7 +562,7 @@ func TestApplyRunFlagsToOptions(t *testing.T) {
 	if opts.Think == nil || opts.Think.Value != "high" {
 		t.Fatalf("think = %#v, want high", opts.Think)
 	}
-	if !opts.AutoApproveTools || !opts.Verbose || !opts.HideThinking {
+	if !opts.AutoApproveTools || !opts.Verbose {
 		t.Fatalf("flags not applied: %#v", opts)
 	}
 	if opts.KeepAlive == nil || opts.KeepAlive.Duration != 5*time.Minute {
@@ -820,7 +828,6 @@ func TestRunEmbeddingModel(t *testing.T) {
 	cmd.Flags().Bool("insecure", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
@@ -920,7 +927,6 @@ func TestRunHandlerResumeUsesLatestChatInHeadlessMode(t *testing.T) {
 	cmd.SetContext(t.Context())
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", true, "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("verbose", false, "")
@@ -975,7 +981,9 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 				t.Errorf("show method = %s, want POST", r.Method)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(api.ShowResponse{}); err != nil {
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityTools},
+			}); err != nil {
 				t.Fatal(err)
 			}
 		case "/api/chat":
@@ -1004,6 +1012,10 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
 				t.Fatal(err)
 			}
+		case "/api/status":
+			if err := json.NewEncoder(w).Encode(api.StatusResponse{}); err != nil {
+				t.Fatal(err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -1020,7 +1032,6 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 	cmd.SetContext(t.Context())
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", false, "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("verbose", false, "")
@@ -1046,9 +1057,13 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 	if chatReq.Model != "test-model" {
 		t.Fatalf("chat model = %q, want test-model", chatReq.Model)
 	}
+	if len(chatReq.Tools) != 0 {
+		t.Fatalf("chat tools = %d, want stripped without auto approve", len(chatReq.Tools))
+	}
 	if len(chatReq.Messages) != 2 ||
 		chatReq.Messages[0].Role != "system" ||
 		!strings.Contains(chatReq.Messages[0].Content, "You are running in Ollama, in a harness to help the user accomplish tasks, and the model is test-model.") ||
+		!strings.Contains(chatReq.Messages[0].Content, "Tools are unavailable in this headless run because --auto-approve-tools was not passed.") ||
 		chatReq.Messages[1].Role != "user" ||
 		chatReq.Messages[1].Content != "hello" {
 		t.Fatalf("chat messages = %#v", chatReq.Messages)
@@ -1058,8 +1073,8 @@ func TestRunHandlerPromptRunsAgentHeadless(t *testing.T) {
 	}
 }
 
-func TestRunHandlerHeadlessDeniedApprovalReturnsError(t *testing.T) {
-	var chatCalls int
+func TestRunHandlerHeadlessAutoApproveSendsTools(t *testing.T) {
+	var chatReq api.ChatRequest
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/show":
@@ -1068,39 +1083,21 @@ func TestRunHandlerHeadlessDeniedApprovalReturnsError(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-		case "/api/generate":
-			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
-				t.Fatal(err)
-			}
-		case "/api/ps":
-			if err := json.NewEncoder(w).Encode(api.ProcessResponse{
-				Models: []api.ProcessModelResponse{{
-					Name:          "test-model:latest",
-					Model:         "test-model:latest",
-					ContextLength: 8192,
-				}},
-			}); err != nil {
-				t.Fatal(err)
-			}
 		case "/api/chat":
-			chatCalls++
-			if chatCalls > 1 {
-				t.Fatalf("chat calls = %d, want denied tool run to stop after first call", chatCalls)
+			if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
 			}
-			args := api.NewToolCallFunctionArguments()
-			args.Set("command", "pwd")
 			w.Header().Set("Content-Type", "application/x-ndjson")
 			enc := json.NewEncoder(w)
-			if err := enc.Encode(api.ChatResponse{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
-				ID: "call-1",
-				Function: api.ToolCallFunction{
-					Name:      "bash",
-					Arguments: args,
-				},
-			}}}}); err != nil {
+			if err := enc.Encode(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "hello"}}); err != nil {
 				t.Fatal(err)
 			}
 			if err := enc.Encode(api.ChatResponse{Done: true, DoneReason: "stop"}); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/generate":
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
 				t.Fatal(err)
 			}
 		case "/api/status":
@@ -1120,30 +1117,26 @@ func TestRunHandlerHeadlessDeniedApprovalReturnsError(t *testing.T) {
 	cmd.SetContext(t.Context())
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", false, "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("auto-approve-tools", false, "")
+	if err := cmd.Flags().Set("auto-approve-tools", "true"); err != nil {
+		t.Fatal(err)
+	}
 
 	oldStdout := os.Stdout
-	stdoutR, stdoutW, _ := os.Pipe()
-	os.Stdout = stdoutW
-	oldStderr := os.Stderr
-	stderrR, stderrW, _ := os.Pipe()
-	os.Stderr = stderrW
-
-	err := RunHandler(cmd, []string{"test-model", "run pwd"})
-	stdoutW.Close()
-	stderrW.Close()
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := RunHandler(cmd, []string{"test-model", "hello"})
+	w.Close()
 	os.Stdout = oldStdout
-	os.Stderr = oldStderr
-	_, _ = io.Copy(io.Discard, stdoutR)
-	_, _ = io.Copy(io.Discard, stderrR)
-	if err == nil || !strings.Contains(err.Error(), "tool execution denied") {
-		t.Fatalf("RunHandler error = %v, want tool execution denied", err)
+	_, _ = io.Copy(io.Discard, r)
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
 	}
-	if chatCalls != 1 {
-		t.Fatalf("chat calls = %d, want 1", chatCalls)
+	if len(chatReq.Tools) == 0 {
+		t.Fatal("chat tools were stripped despite auto approve")
 	}
 }
 
@@ -1190,7 +1183,6 @@ func TestRunHandlerHeadlessBudgetsAgainstLoadedContext(t *testing.T) {
 	cmd.SetContext(t.Context())
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", false, "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("verbose", false, "")
@@ -1251,7 +1243,6 @@ func TestRunHandlerPromptUsesAgentLoopByDefault(t *testing.T) {
 	cmd.SetContext(t.Context())
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 	cmd.Flags().Bool("resume", false, "")
 	cmd.Flags().String("keepalive", "", "")
 	cmd.Flags().Bool("verbose", false, "")
@@ -1329,7 +1320,6 @@ func TestRunEmbeddingModelWithFlags(t *testing.T) {
 	cmd.Flags().Bool("insecure", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 
 	if err := cmd.Flags().Set("truncate", "true"); err != nil {
 		t.Fatalf("failed to set truncate flag: %v", err)
@@ -1429,7 +1419,6 @@ func TestRunEmbeddingModelPipedInput(t *testing.T) {
 	cmd.Flags().Bool("insecure", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 
 	// Capture stdin
 	oldStdin := os.Stdin
@@ -1503,7 +1492,6 @@ func TestRunEmbeddingModelNoInput(t *testing.T) {
 	cmd.Flags().Bool("insecure", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
@@ -1553,7 +1541,6 @@ func TestRunHandler_CloudAuthErrorOnShow_PrintsSigninMessage(t *testing.T) {
 	cmd.Flags().Bool("insecure", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 
 	oldStdout := os.Stdout
 	readOut, writeOut, _ := os.Pipe()
@@ -1622,7 +1609,6 @@ func TestRunHandler_CloudAuthErrorOnAgentChat_PrintsSigninMessage(t *testing.T) 
 	cmd.Flags().Bool("insecure", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 
 	oldStdout := os.Stdout
 	readOut, writeOut, _ := os.Pipe()
@@ -1707,7 +1693,6 @@ func TestRunHandler_ExplicitCloudStubMissing_PullsNormalizedNameTEMP(t *testing.
 	cmd.Flags().Bool("insecure", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 
 	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
 	if err != nil {
@@ -1779,7 +1764,6 @@ func TestRunHandler_ExplicitCloudStubPresent_SkipsPullTEMP(t *testing.T) {
 	cmd.Flags().Bool("insecure", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 
 	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
 	if err != nil {
@@ -1847,7 +1831,6 @@ func TestRunHandler_ExplicitCloudStubPullFailure_IsBestEffortTEMP(t *testing.T) 
 	cmd.Flags().Bool("insecure", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
-	cmd.Flags().Bool("hidethinking", false, "")
 
 	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
 	if err != nil {
@@ -2494,12 +2477,11 @@ func TestRunOptions_Copy(t *testing.T) {
 			"max_tokens":  1000,
 			"top_p":       0.9,
 		},
-		MultiModal:   true,
-		KeepAlive:    originalKeepAlive,
-		Think:        originalThink,
-		HideThinking: false,
-		ShowConnect:  true,
-		Verbose:      true,
+		MultiModal:  true,
+		KeepAlive:   originalKeepAlive,
+		Think:       originalThink,
+		ShowConnect: true,
+		Verbose:     true,
 	}
 
 	// Test the copy
@@ -2523,7 +2505,6 @@ func TestRunOptions_Copy(t *testing.T) {
 		{"Format", copied.Format, original.Format},
 		{"System", copied.System, original.System},
 		{"MultiModal", copied.MultiModal, original.MultiModal},
-		{"HideThinking", copied.HideThinking, original.HideThinking},
 		{"ShowConnect", copied.ShowConnect, original.ShowConnect},
 		{"Verbose", copied.Verbose, original.Verbose},
 	}
