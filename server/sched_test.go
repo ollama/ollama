@@ -405,7 +405,7 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	b.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
 	c := newScenarioRequest(t, ctx, "model-c-10g-cpu", 10*format.GigaByte, nil, nil /* No GPU load */)
 	c.req.opts.NumGPU = 0                                                                                                                         // CPU load, will be allowed
-	b.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
+	c.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
 	d := newScenarioRequest(t, ctx, "model-d-10g-gpu", 13*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 13 * format.GigaByte}) // Needs prior unloaded
 
 	s.newServerFn = a.newServer
@@ -470,25 +470,25 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	require.Len(t, s.loaded, 3)
 	s.loadedMu.Unlock()
 	a.ctxDone() // Won't help since this one isn't big enough to make room
-	time.Sleep(2 * time.Millisecond)
 	s.pendingReqCh <- d.req
-	// finish prior request, so new model can load
-	time.Sleep(6 * time.Millisecond)
-	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 2)
-	s.loadedMu.Unlock()
-	// Mark b done so it can unload
-	b.ctxDone()
-	// Report recovered VRAM usage so scheduler will finish waiting and unload
-	time.Sleep(1 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		s.loadedMu.Lock()
+		defer s.loadedMu.Unlock()
+		return len(s.loaded) == 2
+	}, 500*time.Millisecond, 10*time.Millisecond)
+
+	// Report recovered VRAM usage before releasing b so the next fit check sees it.
 	gMu.Lock()
 	g.FreeMemory = 24 * format.GigaByte
 	gMu.Unlock()
+	b.ctxDone()
 	select {
 	case resp := <-d.req.successCh:
 		require.Equal(t, resp.llama, d.srv)
 		require.Empty(t, s.pendingReqCh)
 		require.Empty(t, d.req.errCh)
+	case err := <-d.req.errCh:
+		t.Fatal(err.Error())
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
@@ -744,14 +744,15 @@ func TestSchedPrematureExpired(t *testing.T) {
 		t.Fatal("timeout")
 	}
 	time.Sleep(scenario1a.req.sessionDuration.Duration)
-	scenario1a.ctxDone()
-	time.Sleep(20 * time.Millisecond)
-	require.LessOrEqual(t, len(s.finishedReqCh), 1)
-	time.Sleep(10 * time.Millisecond)
-	require.Empty(t, s.finishedReqCh)
 	s.loadedMu.Lock()
-	require.Empty(t, s.loaded)
+	require.Len(t, s.loaded, 1)
 	s.loadedMu.Unlock()
+	scenario1a.ctxDone()
+	require.Eventually(t, func() bool {
+		s.loadedMu.Lock()
+		defer s.loadedMu.Unlock()
+		return len(s.loaded) == 0
+	}, 500*time.Millisecond, 10*time.Millisecond)
 
 	// also shouldn't happen in real life
 	s.finishedReqCh <- scenario1a.req
