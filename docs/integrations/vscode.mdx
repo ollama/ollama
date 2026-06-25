@@ -2,84 +2,135 @@
 title: VS Code
 ---
 
-VS Code includes built-in AI chat through GitHub Copilot Chat. Ollama models can be used directly in the Copilot Chat model picker.
+VS Code includes built-in AI chat through GitHub Copilot Chat. Use Ollama models directly in the Copilot Chat model picker.
 
+## Get started
 
-![VS Code with Ollama](/images/vscode.png)
-
-
-## Prerequisites
-
-- Ollama v0.18.3+
-- [VS Code 1.113+](https://code.visualstudio.com/download)
-- [GitHub Copilot Chat extension 0.41.0+](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat)
-
-<Note> VS Code requires you to be logged in to use its model selector, even for custom models. This doesn't require a paid GitHub Copilot account; GitHub Copilot Free will enable model selection for custom models.</Note>
-
-## Quick setup
+Launch VS Code with a model:
 
 ```shell
-ollama launch vscode
+ollama launch vscode --model gemma4:cloud
 ```
 
-Recommended models will be shown after running the command. See the latest models at [ollama.com](https://ollama.com/search?c=tools).
+Ollama installs the Ollama VS Code extension if needed, opens VS Code, and preselects the model in the Copilot Chat model picker.
 
-Make sure **Local** is selected at the bottom of the Copilot Chat panel to use your Ollama models.
-<div style={{ display: "flex", justifyContent: "center" }}>
-  <img
-    src="/images/local.png"
-    alt="Ollama Local Models"
-    width="60%"
-    style={{ borderRadius: "4px", marginTop: "10px", marginBottom: "10px" }}
-  />
+## Capabilities
+
+<div className="capability-list capability-list-full">
+  <div className="capability-list-grid">
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="comment" /></div>
+      <div>
+        <div className="capability-list-heading">Chat</div>
+        <div className="capability-list-copy">Ask questions about a repository or task</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="terminal" /></div>
+      <div>
+        <div className="capability-list-heading">Command line</div>
+        <div className="capability-list-copy">Run commands with Copilot Chat's permission flow</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="code" /></div>
+      <div>
+        <div className="capability-list-heading">Tool calling</div>
+        <div className="capability-list-copy">Use tools with compatible models</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="file-pen" /></div>
+      <div>
+        <div className="capability-list-heading">File edits</div>
+        <div className="capability-list-copy">Read and edit files in your project</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="users" /></div>
+      <div>
+        <div className="capability-list-heading">Subagents</div>
+        <div className="capability-list-copy">Split work across tasks</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="globe" /></div>
+      <div>
+        <div className="capability-list-heading">Web search</div>
+        <div className="capability-list-copy">Search the web through Ollama</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="file-text" /></div>
+      <div>
+        <div className="capability-list-heading">Web fetch</div>
+        <div className="capability-list-copy">Fetch and summarize web pages</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="image" /></div>
+      <div>
+        <div className="capability-list-heading">Vision</div>
+        <div className="capability-list-copy">Send images and screenshots</div>
+      </div>
+    </div>
+  </div>
 </div>
 
 
-## Run directly with a model
+## Models
+
+Choose a local or cloud model when launching VS Code.
+
+<CardGroup cols={2}>
+  <Card title="Cloud models" icon="cloud" href="https://ollama.com/search?c=cloud">
+    Use larger models without downloading them.
+  </Card>
+
+  <Card title="Tool-capable models" icon="hard-drive" href="https://ollama.com/search?c=tools">
+    Browse models that support tool calling.
+  </Card>
+</CardGroup>
+
+Launch VS Code with a different model:
 
 ```shell
-ollama launch vscode --model qwen3.5:cloud
+ollama launch vscode --model gemma4
 ```
-Cloud models are also available at [ollama.com](https://ollama.com/search?c=cloud).
 
 ## Manual setup
 
-To configure Ollama manually without `ollama launch`:
+You'll need:
 
-1. Open the **Copilot Chat** side bar from the top right corner
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-sidebar.png"
-       alt="VS Code chat Sidebar"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
-2. Click the **settings gear icon** (<Icon icon="gear" />) to bring up the Language Models window
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-other-models.png"
-       alt="VS Code model picker"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
-3. Click **Add Models** and select **Ollama** to load all your Ollama models into VS Code
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-add-ollama.png"
-       alt="VS Code model options dropdown to add ollama models"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
+- [Visual Studio Code 1.120 or newer](https://code.visualstudio.com/download)
+- Ollama installed and running
+- At least one local or cloud model available in Ollama
 
-4. Click the **Unhide** button in the model picker to show your Ollama models  
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-unhide.png"
-       alt="VS Code unhide models button"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
+<p className="manual-step-title">1. Install the Ollama extension</p>
+
+Install the [Ollama extension](https://marketplace.visualstudio.com/items?itemName=Ollama.ollama) from the VS Code Marketplace.
+
+<p className="manual-step-title">2. Start Ollama</p>
+
+Make sure Ollama is running and at least one local or cloud model is available.
+
+<p className="manual-step-title">3. Open VS Code Chat</p>
+
+Open Chat in VS Code.
+
+<p className="manual-step-title">4. Choose an Ollama model</p>
+
+Open the model picker at the bottom of the chat input, then choose a model from the **Ollama** section.
+
+The extension discovers models from `http://127.0.0.1:11434` by default.
+
+<Note>
+If models do not appear, run **Ollama: Refresh Models** from the Command Palette. Use **Ollama: Diagnose Models** to troubleshoot model detection in the Ollama output channel.
+</Note>
