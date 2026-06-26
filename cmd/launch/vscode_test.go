@@ -165,14 +165,13 @@ func TestVSCodeConfigure(t *testing.T) {
 	}
 }
 
-func TestVSCodeEditCleansUpOldSettings(t *testing.T) {
+func TestVSCodeConfigurePreservesCopilotBYOKSetting(t *testing.T) {
 	v := &VSCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	settingsPath := testVSCodePath(t, tmpDir, "settings.json")
 
-	// Create settings.json with old byok setting
 	os.MkdirAll(filepath.Dir(settingsPath), 0o755)
 	os.WriteFile(settingsPath, []byte(`{"github.copilot.chat.byok.ollamaEndpoint": "http://old:11434", "ollama.launch.configured": true, "editor.fontSize": 14}`), 0o644)
 
@@ -180,7 +179,45 @@ func TestVSCodeEditCleansUpOldSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify old settings were removed
+	// Verify launch-owned settings were updated without removing Copilot BYOK.
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+	if settings["github.copilot.chat.byok.ollamaEndpoint"] != "http://old:11434" {
+		t.Error("github.copilot.chat.byok.ollamaEndpoint should be preserved until launch confirmation")
+	}
+	if _, ok := settings["ollama.launch.configured"]; ok {
+		t.Error("ollama.launch.configured should have been removed")
+	}
+	if settings["ollama.endpoint"] != envconfig.Host().String() {
+		t.Errorf("ollama.endpoint = %v, want %q", settings["ollama.endpoint"], envconfig.Host().String())
+	}
+	if settings["editor.fontSize"] != float64(14) {
+		t.Error("editor.fontSize should have been preserved")
+	}
+}
+
+func TestVSCodeRemoveLegacySettingsCleansUpOldSettings(t *testing.T) {
+	v := &VSCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	settingsPath := testVSCodePath(t, tmpDir, "settings.json")
+
+	os.MkdirAll(filepath.Dir(settingsPath), 0o755)
+	os.WriteFile(settingsPath, []byte(`{"github.copilot.chat.byok.ollamaEndpoint": "http://old:11434", "ollama.launch.configured": true, "editor.fontSize": 14}`), 0o644)
+
+	if !v.hasLegacyCopilotBYOKSetting() {
+		t.Fatal("expected legacy Copilot BYOK setting to be detected")
+	}
+	if err := v.removeLegacyVSCodeSettings(); err != nil {
+		t.Fatal(err)
+	}
+
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatal(err)
@@ -194,11 +231,95 @@ func TestVSCodeEditCleansUpOldSettings(t *testing.T) {
 	if _, ok := settings["ollama.launch.configured"]; ok {
 		t.Error("ollama.launch.configured should have been removed")
 	}
-	if settings["ollama.endpoint"] != envconfig.Host().String() {
-		t.Errorf("ollama.endpoint = %v, want %q", settings["ollama.endpoint"], envconfig.Host().String())
-	}
 	if settings["editor.fontSize"] != float64(14) {
 		t.Error("editor.fontSize should have been preserved")
+	}
+}
+
+func TestVSCodeSetupPrompt(t *testing.T) {
+	tests := []struct {
+		name               string
+		extensionInstalled bool
+		hasLegacyBYOK      bool
+		running            bool
+		want               string
+	}{
+		{
+			name:               "install cleanup and restart",
+			extensionInstalled: false,
+			hasLegacyBYOK:      true,
+			running:            true,
+			want:               "Install Ollama VS Code extension, remove old Copilot BYOK setting, and restart VS Code?",
+		},
+		{
+			name:               "install and cleanup",
+			extensionInstalled: false,
+			hasLegacyBYOK:      true,
+			want:               "Install Ollama VS Code extension and remove old Copilot BYOK setting?",
+		},
+		{
+			name:               "install and restart",
+			extensionInstalled: false,
+			running:            true,
+			want:               "Install Ollama VS Code extension and restart VS Code?",
+		},
+		{
+			name:               "install only",
+			extensionInstalled: false,
+			want:               "Install Ollama VS Code extension?",
+		},
+		{
+			name:               "cleanup and restart",
+			extensionInstalled: true,
+			hasLegacyBYOK:      true,
+			running:            true,
+			want:               "Remove old Copilot BYOK setting and restart VS Code?",
+		},
+		{
+			name:               "cleanup only",
+			extensionInstalled: true,
+			hasLegacyBYOK:      true,
+			want:               "Remove old Copilot BYOK setting?",
+		},
+		{
+			name:               "no setup needed",
+			extensionInstalled: true,
+			want:               "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := vscodeSetupPrompt(tt.extensionInstalled, tt.hasLegacyBYOK, tt.running)
+			if got != tt.want {
+				t.Fatalf("vscodeSetupPrompt() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVSCodeLegacyBYOKDetectionAddsCleanupToSetupPrompt(t *testing.T) {
+	v := &VSCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	settingsPath := testVSCodePath(t, tmpDir, "settings.json")
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{"github.copilot.chat.byok.ollamaEndpoint":"http://127.0.0.1:11434"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if !v.hasLegacyCopilotBYOKSetting() {
+		t.Fatal("expected legacy Copilot BYOK setting to be detected")
+	}
+
+	got := vscodeSetupPrompt(false, v.hasLegacyCopilotBYOKSetting(), true)
+	want := "Install Ollama VS Code extension, remove old Copilot BYOK setting, and restart VS Code?"
+	if got != want {
+		t.Fatalf("vscodeSetupPrompt() = %q, want %q", got, want)
 	}
 }
 
@@ -335,9 +456,6 @@ func assertSettingsConfigured(t *testing.T, data []byte, extras map[string]any) 
 
 	if settings["ollama.endpoint"] != envconfig.Host().String() {
 		t.Fatalf("ollama.endpoint = %v, want %q", settings["ollama.endpoint"], envconfig.Host().String())
-	}
-	if _, ok := settings["github.copilot.chat.byok.ollamaEndpoint"]; ok {
-		t.Fatal("github.copilot.chat.byok.ollamaEndpoint should have been removed")
 	}
 	if _, ok := settings["ollama.launch.configured"]; ok {
 		t.Fatal("ollama.launch.configured should have been removed")

@@ -131,14 +131,42 @@ const (
 	legacyVSCodeOllamaVendor = "ollama-vscode"
 
 	vscodeOllamaExtensionID = "Ollama.ollama"
+
+	legacyCopilotBYOKSetting      = "github.copilot.chat.byok.ollamaEndpoint"
+	legacyLaunchConfiguredSetting = "ollama.launch.configured"
 )
 
 func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 	v.checkVSCodeVersion()
 	v.checkCopilotChatVersion()
-	installedExtension, err := v.ensureOllamaExtensionInstalled()
+	extensionInstalled, err := v.ollamaExtensionInstalled()
 	if err != nil {
 		return err
+	}
+	running := v.IsRunning()
+	hasLegacyBYOK := v.hasLegacyCopilotBYOKSetting()
+
+	setupConfirmed := false
+	if prompt := vscodeSetupPrompt(extensionInstalled, hasLegacyBYOK, running); prompt != "" {
+		ok, err := ConfirmPrompt(prompt)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		setupConfirmed = true
+	}
+
+	if !extensionInstalled {
+		if err := v.installOllamaExtension(); err != nil {
+			return err
+		}
+	}
+	if hasLegacyBYOK {
+		if err := v.removeLegacyVSCodeSettings(); err != nil {
+			return err
+		}
 	}
 
 	// VS Code discovers models from ollama ls. Cloud models that pass Show
@@ -148,14 +176,14 @@ func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 		v.ensureModelsRegistered(context.Background(), client, []string{model})
 	}
 
-	if v.IsRunning() {
-		prompt := "Restart VS Code?"
-		if installedExtension {
-			prompt = "Restart VS Code to finish installing the Ollama extension?"
-		}
-		restart, err := ConfirmPrompt(prompt)
-		if err != nil {
-			restart = false
+	if running {
+		restart := setupConfirmed
+		if !restart {
+			var err error
+			restart, err = ConfirmPrompt("Restart VS Code?")
+			if err != nil {
+				restart = false
+			}
 		}
 		if restart {
 			v.Quit()
@@ -164,11 +192,7 @@ func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 			}
 			v.FocusVSCode()
 		} else {
-			if installedExtension {
-				fmt.Fprintf(os.Stderr, "\nRestart VS Code when you're ready to use the Ollama extension.\n")
-			} else {
-				fmt.Fprintf(os.Stderr, "\nTo get the latest model configuration, restart VS Code when you're ready.\n")
-			}
+			fmt.Fprintf(os.Stderr, "\nTo get the latest model configuration, restart VS Code when you're ready.\n")
 		}
 	} else {
 		if err := v.ShowInModelPicker(model); err != nil {
@@ -292,6 +316,25 @@ func (v *VSCode) writeProviderConfig() error {
 	return v.updateSettings()
 }
 
+func vscodeSetupPrompt(extensionInstalled, hasLegacyBYOK, running bool) string {
+	switch {
+	case !extensionInstalled && hasLegacyBYOK && running:
+		return "Install Ollama VS Code extension, remove old Copilot BYOK setting, and restart VS Code?"
+	case !extensionInstalled && hasLegacyBYOK:
+		return "Install Ollama VS Code extension and remove old Copilot BYOK setting?"
+	case !extensionInstalled && running:
+		return "Install Ollama VS Code extension and restart VS Code?"
+	case !extensionInstalled:
+		return "Install Ollama VS Code extension?"
+	case hasLegacyBYOK && running:
+		return "Remove old Copilot BYOK setting and restart VS Code?"
+	case hasLegacyBYOK:
+		return "Remove old Copilot BYOK setting?"
+	default:
+		return ""
+	}
+}
+
 func (v *VSCode) chatLanguageModelsPath() string {
 	return v.vscodePath("chatLanguageModels.json")
 }
@@ -300,33 +343,81 @@ func (v *VSCode) settingsPath() string {
 	return v.vscodePath("settings.json")
 }
 
-// updateSettings cleans up legacy settings from older Ollama integrations.
+// updateSettings writes settings owned by the Ollama extension. User-facing
+// legacy settings are removed only after an explicit launch prompt.
 func (v *VSCode) updateSettings() error {
 	settingsPath := v.settingsPath()
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
 		return err
 	}
 
-	settings := make(map[string]any)
-	data, err := os.ReadFile(settingsPath)
-	if err == nil {
-		if err := json.Unmarshal(data, &settings); err != nil {
-			settings = make(map[string]any)
-		}
+	settings, err := v.readSettings()
+	if err != nil {
+		return err
 	}
 
 	changed := false
-	for _, key := range []string{"github.copilot.chat.byok.ollamaEndpoint", "ollama.launch.configured"} {
-		if _, ok := settings[key]; ok {
-			delete(settings, key)
-			changed = true
-		}
+	if _, ok := settings[legacyLaunchConfiguredSetting]; ok {
+		delete(settings, legacyLaunchConfiguredSetting)
+		changed = true
 	}
 	if current, _ := settings["ollama.endpoint"].(string); current != envconfig.Host().String() {
 		settings["ollama.endpoint"] = envconfig.Host().String()
 		changed = true
 	}
 
+	if !changed {
+		return nil
+	}
+
+	updated, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return fileutil.WriteWithBackup(settingsPath, updated, "vscode")
+}
+
+func (v *VSCode) readSettings() (map[string]any, error) {
+	settings := make(map[string]any)
+	data, err := os.ReadFile(v.settingsPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return settings, nil
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return make(map[string]any), nil
+	}
+	return settings, nil
+}
+
+func (v *VSCode) hasLegacyCopilotBYOKSetting() bool {
+	settings, err := v.readSettings()
+	if err != nil {
+		return false
+	}
+	_, ok := settings[legacyCopilotBYOKSetting]
+	return ok
+}
+
+func (v *VSCode) removeLegacyVSCodeSettings() error {
+	settingsPath := v.settingsPath()
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return err
+	}
+	settings, err := v.readSettings()
+	if err != nil {
+		return err
+	}
+
+	changed := false
+	for _, key := range []string{legacyCopilotBYOKSetting, legacyLaunchConfiguredSetting} {
+		if _, ok := settings[key]; ok {
+			delete(settings, key)
+			changed = true
+		}
+	}
 	if !changed {
 		return nil
 	}
@@ -580,7 +671,7 @@ func (v *VSCode) checkCopilotChatVersion() {
 	}
 }
 
-func (v *VSCode) ensureOllamaExtensionInstalled() (bool, error) {
+func (v *VSCode) ollamaExtensionInstalled() (bool, error) {
 	codeCLI := v.findCodeCLI()
 	if codeCLI == "" {
 		return false, fmt.Errorf("could not find VS Code CLI to install the Ollama extension")
@@ -590,19 +681,24 @@ func (v *VSCode) ensureOllamaExtensionInstalled() (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("could not list VS Code extensions: %w", err)
 	}
-	if hasVSCodeExtension(string(out), vscodeOllamaExtensionID) {
-		return false, nil
+	return hasVSCodeExtension(string(out), vscodeOllamaExtensionID), nil
+}
+
+func (v *VSCode) installOllamaExtension() error {
+	codeCLI := v.findCodeCLI()
+	if codeCLI == "" {
+		return fmt.Errorf("could not find VS Code CLI to install the Ollama extension")
 	}
 
 	fmt.Fprintf(os.Stderr, "Installing Ollama VS Code extension...\n")
 	if out, err := exec.Command(codeCLI, "--install-extension", vscodeOllamaExtensionID, "--force").CombinedOutput(); err != nil {
 		detail := strings.TrimSpace(string(out))
 		if detail != "" {
-			return false, fmt.Errorf("could not install Ollama VS Code extension: %w\n%s", err, detail)
+			return fmt.Errorf("could not install Ollama VS Code extension: %w\n%s", err, detail)
 		}
-		return false, fmt.Errorf("could not install Ollama VS Code extension: %w", err)
+		return fmt.Errorf("could not install Ollama VS Code extension: %w", err)
 	}
-	return true, nil
+	return nil
 }
 
 // findCodeCLI returns the path to the VS Code CLI for querying extensions.
