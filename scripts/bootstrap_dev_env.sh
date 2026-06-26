@@ -134,7 +134,26 @@ services:
       - ./ollama-src:/workspace/ollama-s390x:Z
       - ./ollama-models:/root/.ollama:Z
     working_dir: /workspace/ollama-s390x
-    command: ["sleep", "infinity"]
+    command:
+      - sh
+      - -c
+      - |
+        apt-get update && apt-get install -y \
+          curl \
+          git \
+          vim \
+          htop \
+          ca-certificates \
+          wget \
+          tar && \
+        wget https://go.dev/dl/go1.22.5.linux-s390x.tar.gz -O /tmp/go.tar.gz && \
+        rm -rf /usr/local/go && \
+        tar -C /usr/local -xzf /tmp/go.tar.gz && \
+        rm /tmp/go.tar.gz && \
+        export PATH=$PATH:/usr/local/go/bin && \
+        echo 'export PATH=$PATH:/usr/local/go/bin' >> /root/.bashrc && \
+        go version && \
+        sleep infinity
     restart: unless-stopped
 
 networks:
@@ -186,6 +205,25 @@ services:
       - ./ollama-models:/root/.ollama:Z
     working_dir: /workspace/ollama-s390x
     command: ["sleep", "infinity"]
+    command:
+      - sh
+      - -c
+      - |
+        apt-get update && apt-get install -y \
+          curl \
+          git \
+          vim \
+          htop \
+          ca-certificates \
+          wget \
+          tar && \
+        wget https://go.dev/dl/go1.22.5.linux-amd64.tar.gz -O /tmp/go.tar.gz && \
+        rm -rf /usr/local/go && \
+        tar -C /usr/local -xzf /tmp/go.tar.gz && \
+        rm /tmp/go.tar.gz && \
+        export PATH=$PATH:/usr/local/go/bin && \
+        echo 'export PATH=$PATH:/usr/local/go/bin' >> /root/.bashrc && \
+        go version && \
     restart: unless-stopped
 
   # Official Ollama runtime (for testing models) - not available on s390x
