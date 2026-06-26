@@ -278,6 +278,24 @@ EOF
 }
 
 ################################################################################
+# Dependency Installation
+################################################################################
+install_podman_compose() {
+    if ! command -v podman-compose >/dev/null 2>&1; then
+        log_info "podman-compose not found. Installing via pip3..."
+        if command -v pip3 >/dev/null 2>&1; then
+            pip3 install podman-compose
+            log_success "podman-compose installed successfully"
+        else
+            log_error "pip3 is not installed. Please install Python 3 and pip3 first."
+            exit 1
+        fi
+    else
+        log_info "podman-compose is already installed"
+    fi
+}
+
+################################################################################
 # Main
 ################################################################################
 main() {
@@ -291,6 +309,7 @@ main() {
     fi
 
     setup_logging
+    install_podman_compose
     setup_workspace
     create_compose_file
     start_stack
