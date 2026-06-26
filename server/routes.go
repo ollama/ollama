@@ -89,6 +89,27 @@ func shouldUseHarmony(model *Model) bool {
 	return false
 }
 
+func defaultParserForModel(m *Model) string {
+	if m == nil {
+		return ""
+	}
+
+	switch {
+	case shouldUseHarmony(m):
+		return "harmony"
+	case m.Config.ModelFamily == "mistral3", slices.Contains(m.Config.ModelFamilies, "mistral3"):
+		return "ministral"
+	default:
+		return ""
+	}
+}
+
+func setDefaultParser(m *Model) {
+	if m != nil && m.Config.Parser == "" {
+		m.Config.Parser = defaultParserForModel(m)
+	}
+}
+
 func experimentEnabled(name string) bool {
 	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
 }
@@ -211,6 +232,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	setDefaultParser(model)
 
 	if slices.Contains(model.Config.ModelFamilies, "mllama") && len(model.ProjectorPaths) > 0 {
 		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
@@ -444,10 +466,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				req.Think.Value = "high"
 			}
 		}
-		if m.Config.Parser == "" {
-			m.Config.Parser = "harmony"
-		}
 	}
+	setDefaultParser(m)
 
 	if !req.Raw && m.Config.Parser != "" {
 		builtinParser = parsers.ParserForName(m.Config.Parser)
@@ -2632,6 +2652,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	caps := []model.Capability{model.CapabilityCompletion}
+	if shouldUseHarmony(m) {
+		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
+		if req.Think != nil {
+			if s, ok := req.Think.Value.(string); ok && s == "max" {
+				req.Think.Value = "high"
+			}
+		}
+	}
+	setDefaultParser(m)
+
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
 	}
@@ -2663,6 +2693,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+	setDefaultParser(m)
 
 	checkpointLoaded := time.Now()
 
@@ -2682,18 +2713,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
 	msgs = filterThinkTags(msgs, m)
-
-	if shouldUseHarmony(m) {
-		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
-		if req.Think != nil {
-			if s, ok := req.Think.Value.(string); ok && s == "max" {
-				req.Think.Value = "high"
-			}
-		}
-		if m.Config.Parser == "" {
-			m.Config.Parser = "harmony"
-		}
-	}
 
 	if chatModeForModel(m) == chatExecutionModeNative {
 		s.handleNativeChat(c, req, m, r, opts, msgs, checkpointStart, checkpointLoaded)

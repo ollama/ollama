@@ -272,6 +272,119 @@ func TestChatModeForModel(t *testing.T) {
 	}
 }
 
+func TestSetDefaultParser(t *testing.T) {
+	tests := []struct {
+		name string
+		m    *Model
+		want string
+	}{
+		{
+			name: "mistral3 family",
+			m:    &Model{Config: model.ConfigV2{ModelFamily: "mistral3"}},
+			want: "ministral",
+		},
+		{
+			name: "mistral3 families",
+			m:    &Model{Config: model.ConfigV2{ModelFamilies: []string{"llama", "mistral3"}}},
+			want: "ministral",
+		},
+		{
+			name: "explicit parser",
+			m:    &Model{Config: model.ConfigV2{ModelFamily: "mistral3", Parser: "custom"}},
+			want: "custom",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setDefaultParser(tt.m)
+			if tt.m.Config.Parser != tt.want {
+				t.Fatalf("Parser = %q, want %q", tt.m.Config.Parser, tt.want)
+			}
+		})
+	}
+}
+
+func TestChatMistral3ParserHandlesNameArgument(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Content:            `[TOOL_CALLS]foo[ARGS]{"name":"bar"}`,
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+
+	createMinimalGGUFModel(t, s, "mistral3-runtime", nil, "{{ range .Messages }}{{ .Role }}: {{ .Content }}{{ end }}", map[string]any{
+		"model_family": "mistral3",
+	})
+
+	stream := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model: "mistral3-runtime",
+		Messages: []api.Message{
+			{Role: "user", Content: "Call foo with name=bar"},
+		},
+		Tools: []api.Tool{
+			{
+				Type: "function",
+				Function: api.ToolFunction{
+					Name: "foo",
+					Parameters: api.ToolFunctionParameters{
+						Type:     "object",
+						Required: []string{"name"},
+						Properties: testPropsMap(map[string]api.ToolProperty{
+							"name": {Type: api.PropertyType{"string"}},
+						}),
+					},
+				},
+			},
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ChatResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(resp.Message.ToolCalls); got != 1 {
+		t.Fatalf("expected 1 tool call, got %d: %#v", got, resp.Message.ToolCalls)
+	}
+
+	gotToolCall := resp.Message.ToolCalls[0]
+	if gotToolCall.ID == "" {
+		t.Fatal("expected tool call ID to be populated")
+	}
+	if !strings.HasPrefix(gotToolCall.ID, "call_") {
+		t.Fatalf("expected tool call ID to have call_ prefix, got %q", gotToolCall.ID)
+	}
+
+	expectedToolCall := api.ToolCall{
+		ID: gotToolCall.ID,
+		Function: api.ToolCallFunction{
+			Name: "foo",
+			Arguments: testArgs(map[string]any{
+				"name": "bar",
+			}),
+		},
+	}
+
+	if diff := cmp.Diff(gotToolCall, expectedToolCall, argsComparer); diff != "" {
+		t.Fatalf("tool call mismatch (-got +want):\n%s", diff)
+	}
+}
+
 func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
