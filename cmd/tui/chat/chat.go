@@ -1091,7 +1091,10 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 	go func() {
 		defer close(events)
 		result, err := session.Run(runCtx, opts)
-		events <- chatRunDoneMsg{result: result, err: err, newMessagesPersisted: newMessagesPersisted, persistedMessages: persistedMessages}
+		select {
+		case events <- chatRunDoneMsg{result: result, err: err, newMessagesPersisted: newMessagesPersisted, persistedMessages: persistedMessages}:
+		case <-runCtx.Done():
+		}
 	}()
 
 	tickCmd := m.scheduleTick()
