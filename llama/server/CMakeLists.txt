@@ -192,6 +192,7 @@ FetchContent_MakeAvailable(llama_cpp)
 if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     file(GLOB _compat_sources CONFIGURE_DEPENDS
         ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/*.cpp)
+    list(FILTER _compat_sources EXCLUDE REGEX "-test\\.cpp$")
     foreach(_compat_target IN ITEMS llama mtmd)
         if(TARGET ${_compat_target})
             target_sources(${_compat_target} PRIVATE ${_compat_sources})
@@ -216,6 +217,33 @@ if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
             ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models
             ${llama_cpp_SOURCE_DIR}/src)
     endif()
+endif()
+
+option(OLLAMA_LLAMA_CPP_BUILD_COMPAT_TESTS
+    "Build Ollama llama.cpp compatibility tests"
+    OFF)
+if(OLLAMA_LLAMA_CPP_BUILD_COMPAT_TESTS AND _ollama_link_compat_sources AND TARGET llama)
+    enable_testing()
+    add_executable(ollama-compat-test
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/llama-ollama-compat-test.cpp
+        ${_compat_sources})
+    target_link_libraries(ollama-compat-test PRIVATE ggml)
+    target_compile_definitions(ollama-compat-test PRIVATE OLLAMA_COMPAT_MTMD_BUILD)
+    target_compile_features(ollama-compat-test PRIVATE cxx_std_17)
+    target_include_directories(ollama-compat-test PRIVATE
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models
+        ${llama_cpp_SOURCE_DIR}/include
+        ${llama_cpp_SOURCE_DIR}/ggml/include
+        ${llama_cpp_SOURCE_DIR}/src)
+    set_target_properties(ollama-compat-test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release")
+    if(MSVC)
+        target_compile_options(ollama-compat-test PRIVATE /utf-8)
+    endif()
+    add_test(NAME ollama-compat-test COMMAND ollama-compat-test)
 endif()
 
 # Find GPU toolkits for runtime dependency bundling.

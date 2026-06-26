@@ -147,6 +147,30 @@ bool token_at_equals(const gguf_context * meta, size_t idx, const char * want) {
     return tok && std::strcmp(tok, want) == 0;
 }
 
+bool find_token_id(const gguf_context * meta, const char * want, uint32_t & out) {
+    const int64_t kid = gguf_find_key(meta, "tokenizer.ggml.tokens");
+    if (kid < 0 || gguf_get_kv_type(meta, kid) != GGUF_TYPE_ARRAY) return false;
+    if (gguf_get_arr_type(meta, kid) != GGUF_TYPE_STRING) return false;
+
+    const size_t n = gguf_get_arr_n(meta, kid);
+    for (size_t i = 0; i < n; ++i) {
+        const char * tok = gguf_get_arr_str(meta, kid, i);
+        if (tok && std::strcmp(tok, want) == 0) {
+            out = (uint32_t) i;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void set_u32_kv(gguf_context * meta, const char * key, uint32_t value) {
+    const int64_t kid = gguf_find_key(meta, key);
+    if (kid < 0 || gguf_get_kv_type(meta, kid) != GGUF_TYPE_UINT32 || gguf_get_val_u32(meta, kid) != value) {
+        gguf_set_val_u32(meta, key, value);
+    }
+}
+
 bool string_kv_equals(const gguf_context * meta, const char * key, const char * want) {
     const int64_t kid = gguf_find_key(meta, key);
     if (kid < 0 || gguf_get_kv_type(meta, kid) != GGUF_TYPE_STRING) return false;
@@ -1427,6 +1451,20 @@ void handle_glmocr(const llama_model_loader * ml, gguf_context * meta,
             if (cur && std::strcmp(cur, "chatglm-bpe") != 0) {
                 gguf_set_val_str(meta, "tokenizer.ggml.pre", "chatglm-bpe");
             }
+        }
+    }
+    // Mirror convert_glmocr.go for already-published Ollama-format GGUFs.
+    // New conversions write these fields, but older published files can lack
+    // them or use the wrong GGUF type/value, causing llama.cpp to miss
+    // GLM-OCR's turn-ending token.
+    {
+        uint32_t token_id = 0;
+        if (find_token_id(meta, "<|endoftext|>", token_id)) {
+            set_u32_kv(meta, "tokenizer.ggml.bos_token_id", token_id);
+            set_u32_kv(meta, "tokenizer.ggml.unknown_token_id", token_id);
+        }
+        if (find_token_id(meta, "<|user|>", token_id)) {
+            set_u32_kv(meta, "tokenizer.ggml.eot_token_id", token_id);
         }
     }
     // Tensor renames (substring): each leaf appears once per block and

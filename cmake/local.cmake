@@ -12,6 +12,7 @@ set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v1
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
     "Build-time staging prefix for nested Ollama native payloads")
+option(OLLAMA_LLAMA_CPP_BUILD_COMPAT_TESTS "Build llama.cpp compatibility tests for the local payload" OFF)
 
 string(REGEX REPLACE "^v" "" OLLAMA_VERSION "${OLLAMA_VERSION}")
 
@@ -607,9 +608,15 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
         endif()
     endif()
 
+    set(_cpu_targets llama-server llama-quantize)
+    if(OLLAMA_LLAMA_CPP_BUILD_COMPAT_TESTS)
+        list(APPEND _cpu_args -DOLLAMA_LLAMA_CPP_BUILD_COMPAT_TESTS=ON)
+        list(APPEND _cpu_targets ollama-compat-test)
+    endif()
+
     ollama_add_llama_server_build(local
         RUNNER_DIR ""
-        TARGETS llama-server llama-quantize
+        TARGETS ${_cpu_targets}
         CMAKE_ARGS ${_cpu_args})
 
     add_custom_target(ollama-local ALL

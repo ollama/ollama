@@ -84,7 +84,7 @@ jobs:
           - preset: CPU
             superbuild_target: ollama-local
             superbuild_dir: build/local-superbuild
-            superbuild_args: ''
+            superbuild_args: '-DOLLAMA_LLAMA_CPP_BUILD_COMPAT_TESTS=ON'
             expected_payload: lib/ollama/llama-server
             install-go: true
           - preset: CUDA
@@ -169,6 +169,10 @@ jobs:
           "$RUNNER_TEMP/ollama-local/bin/ollama" --version
           "$RUNNER_TEMP/ollama-local/lib/ollama/llama-server" --version
           test -x "$RUNNER_TEMP/ollama-local/lib/ollama/llama-quantize"
+      - name: Run llama.cpp compatibility tests
+        if: matrix.superbuild_target == 'ollama-local'
+        run: |
+          ctest --test-dir "${{ matrix.superbuild_dir }}/llama-server-local" --output-on-failure -R ollama-compat-test
   windows:
     needs: [changes]
     if: needs.changes.outputs.changed == 'True'
