@@ -135,7 +135,7 @@ func (m chatModel) updateHistoryPopupMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd
 	case tea.MouseMotion:
 		m.dragHistoryPopupSelection(msg)
 	case tea.MouseRelease:
-		return m.finishHistoryPopupSelection(msg)
+		m.finishHistoryPopupSelection(msg)
 	}
 	return m, nil
 }
@@ -181,11 +181,11 @@ func (m *chatModel) dragHistoryPopupSelection(msg tea.MouseMsg) {
 	})
 }
 
-func (m chatModel) finishHistoryPopupSelection(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+func (m *chatModel) finishHistoryPopupSelection(msg tea.MouseMsg) {
 	if m.historyPopup == nil {
-		return m, nil
+		return
 	}
-	return finishChatSelection(m, &m.historyPopup.selection, msg, m.mouseHistoryPopupPoint, m.selectedHistoryPopupText)
+	finishChatSelection(&m.historyPopup.selection, msg, m.mouseHistoryPopupPoint)
 }
 
 func (m chatModel) historyPopupMaxScroll() int {
@@ -714,10 +714,10 @@ func (m chatModel) applyHistoryPopupSelection(lines []string, offset int) []stri
 		text := stripChatANSI(line)
 		startCol, endCol := 0, len([]rune(text))
 		if lineIndex == start.line {
-			startCol = clamp(start.col, 0, len([]rune(text)))
+			startCol = displayColumnToRuneIndex(text, start.col)
 		}
 		if lineIndex == end.line {
-			endCol = clamp(end.col, 0, len([]rune(text)))
+			endCol = displayColumnToRuneIndex(text, end.col)
 		}
 		if startCol > endCol {
 			startCol, endCol = endCol, startCol
@@ -747,10 +747,10 @@ func (m chatModel) selectedHistoryPopupText() string {
 		runes := []rune(text)
 		startCol, endCol := 0, len(runes)
 		if lineIndex == start.line {
-			startCol = clamp(start.col, 0, len(runes))
+			startCol = displayColumnToRuneIndex(text, start.col)
 		}
 		if lineIndex == end.line {
-			endCol = clamp(end.col, 0, len(runes))
+			endCol = displayColumnToRuneIndex(text, end.col)
 		}
 		if startCol > endCol {
 			startCol, endCol = endCol, startCol

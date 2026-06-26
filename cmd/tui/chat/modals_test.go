@@ -304,16 +304,8 @@ func TestChatHistoryMouseWheelScrollsPopup(t *testing.T) {
 	}
 }
 
-func TestChatHistoryMouseDragSelectsAndCopiesText(t *testing.T) {
-	var copied string
+func TestChatHistoryMouseDragSelectsTextWithoutAutoCopy(t *testing.T) {
 	m := chatModel{
-		ctx: context.Background(),
-		opts: Options{
-			Clipboard: func(_ context.Context, text string) error {
-				copied = text
-				return nil
-			},
-		},
 		historyPopup: &chatHistoryPopup{
 			messages:      []api.Message{{Role: "user", Content: "alpha beta"}},
 			stickToBottom: true,
@@ -335,21 +327,46 @@ func TestChatHistoryMouseDragSelectsAndCopiesText(t *testing.T) {
 	if !m.historyPopup.selection.active {
 		t.Fatal("history selection should stay active during drag")
 	}
+	if !m.historyPopup.selection.dragging {
+		t.Fatal("history selection should track drag before release")
+	}
 
 	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: contentX + len("alpha"), Y: contentY})
 	m = updated.(chatModel)
-	if cmd == nil {
-		t.Fatal("mouse release should return clipboard command")
+	if cmd != nil {
+		t.Fatal("mouse release should not auto-copy selected text")
 	}
-	if msg := cmd(); msg != nil {
-		updated, _ = m.Update(msg)
-		m = updated.(chatModel)
+	if !m.historyPopup.selection.active {
+		t.Fatal("history selection should stay visible on release")
 	}
-	if copied != "alpha" {
-		t.Fatalf("copied = %q, want alpha", copied)
+	if m.historyPopup.selection.dragging {
+		t.Fatal("history selection should stop tracking drag on release")
 	}
-	if m.status == "selection copied" {
-		t.Fatalf("selection should not surface a copied status")
+	if got := m.selectedHistoryPopupText(); got != "alpha" {
+		t.Fatalf("selected history text after release = %q, want alpha", got)
+	}
+}
+
+func TestChatHistoryMouseDragSelectionUsesDisplayColumns(t *testing.T) {
+	m := chatModel{
+		historyPopup: &chatHistoryPopup{
+			messages:      []api.Message{{Role: "user", Content: "a界b"}},
+			stickToBottom: true,
+		},
+		width:  80,
+		height: 10,
+	}
+	top, _ := m.historyPopupLayout()
+	contentY := top + 1
+	contentX := len("  content: ")
+
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: contentX, Y: contentY})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: contentX + 3, Y: contentY})
+	m = updated.(chatModel)
+
+	if got := m.selectedHistoryPopupText(); got != "a界" {
+		t.Fatalf("selected history text = %q, want a界", got)
 	}
 }
 

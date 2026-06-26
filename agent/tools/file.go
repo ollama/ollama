@@ -170,6 +170,10 @@ func (e *Edit) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 
 	replaceAll, _ := args["replace_all"].(bool)
 
+	if err := rejectFinalSymlink(toolCtx.WorkingDir, path); err != nil {
+		return agent.ToolResult{}, err
+	}
+
 	file, info, err := openRegularFile(toolCtx.WorkingDir, path)
 	if err != nil {
 		return agent.ToolResult{}, err
@@ -271,6 +275,9 @@ func writeFileAtomic(workingDir, path string, data []byte, perm os.FileMode) err
 		return err
 	}
 	defer root.Close()
+	if err := rejectRootFinalSymlink(root, rel, path); err != nil {
+		return err
+	}
 
 	parent, name := filepath.Split(rel)
 	tmpBase := fmt.Sprintf(".%s.ollama-tmp-%d", name, os.Getpid())
@@ -302,6 +309,30 @@ func writeFileAtomic(workingDir, path string, data []byte, perm os.FileMode) err
 		}
 		return nil
 	}
+}
+
+func rejectFinalSymlink(workingDir, path string) error {
+	rel, err := cleanRelativePath(path)
+	if err != nil {
+		return err
+	}
+	root, err := openWorkingRoot(workingDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return rejectRootFinalSymlink(root, rel, path)
+}
+
+func rejectRootFinalSymlink(root *os.Root, rel, path string) error {
+	info, err := root.Lstat(rel)
+	if err != nil {
+		return rootPathError(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink; edit the target file directly", path)
+	}
+	return nil
 }
 
 func rootPathError(err error) error {

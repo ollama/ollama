@@ -142,9 +142,6 @@ func (m chatModel) updateCloudAuthPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.cloudAuthPrompt.spinner++
-		if m.cloudAuthPrompt.polling {
-			return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.opts.PollCloudAuth))
-		}
 		return m, cloudAuthTickCmd()
 
 	case cloudAuthPollMsg:
@@ -156,7 +153,7 @@ func (m chatModel) updateCloudAuthPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cloudAuthPrompt.polling = false
 			return m, checkCloudModelCmd(m.ctx, m.opts.CheckCloudModel, m.cloudAuthPrompt.modelName, m.cloudAuthPrompt.requiredPlan)
 		}
-		return m, cloudAuthTickCmd()
+		return m, pollCloudAuthCmd(m.ctx, m.opts.PollCloudAuth)
 
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyEsc || msg.Type == tea.KeyCtrlC {

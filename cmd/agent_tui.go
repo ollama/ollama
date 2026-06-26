@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -545,6 +546,10 @@ func agentSystemFromShow(ctx context.Context, client *api.Client, modelName stri
 
 func agentDefaultSystemPrompt(now time.Time, modelName string) string {
 	date := now.Format("Monday, January 2, 2006")
+	shellName := "bash"
+	if runtime.GOOS == "windows" {
+		shellName = "PowerShell"
+	}
 	return strings.Join([]string{
 		"You are running in Ollama, in a harness to help the user accomplish tasks, and the model is " + modelName + ".",
 		"",
@@ -552,7 +557,7 @@ func agentDefaultSystemPrompt(now time.Time, modelName string) string {
 		"",
 		"Be concise, practical, and action-oriented. Use tools when they materially help. Verify current or fast-changing facts with web tools when available; otherwise state uncertainty.",
 		"",
-		"Use bash carefully. Prefer read-only inspection first. Stay within the current working directory unless explicitly asked. Surface intent before risky actions such as writes, deletes, moves, installs, git state changes, service changes, sudo, secrets access, network scripts, or commands outside the working directory. Request approval when required and do not work around denied approvals.",
+		"Use " + shellName + " carefully. Prefer read-only inspection first. Stay within the current working directory unless explicitly asked. Surface intent before risky actions such as writes, deletes, moves, installs, git state changes, service changes, sudo, secrets access, network scripts, or commands outside the working directory. Request approval when required and do not work around denied approvals.",
 		"",
 		"Tell the user about meaningful changes, verification, failures, blockers, assumptions, and risks. Summarize routine tool output instead of dumping it.",
 	}, "\n")

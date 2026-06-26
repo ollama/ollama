@@ -104,6 +104,44 @@ func TestEditRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestEditRejectsFinalSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.txt")
+	if err := os.WriteFile(target, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.txt")
+	if err := os.Symlink("target.txt", link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, err := NewEdit().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path":     "link.txt",
+		"old_text": "old",
+		"new_text": "new",
+	})
+	if err == nil {
+		t.Fatal("expected final symlink edit to fail")
+	}
+	if !strings.Contains(err.Error(), "is a symlink") {
+		t.Fatalf("err = %v", err)
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "old\n" {
+		t.Fatalf("target content changed to %q", content)
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("link mode = %v, want symlink", info.Mode())
+	}
+}
+
 func TestReadRejectsParentOutsideCurrentWorkingDir(t *testing.T) {
 	root := t.TempDir()
 	subdir := filepath.Join(root, "sub")

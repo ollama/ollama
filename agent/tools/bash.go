@@ -30,14 +30,14 @@ func (b *Bash) Name() string {
 }
 
 func (b *Bash) Description() string {
-	return "Execute a bash command on the system. Use this to run shell commands, inspect files, run tests, and perform development tasks."
+	return "Execute a shell command on the system. Use this to run shell commands, inspect files, run tests, and perform development tasks."
 }
 
 func (b *Bash) Schema() api.ToolFunction {
 	props := api.NewToolPropertiesMap()
 	props.Set("command", api.ToolProperty{
 		Type:        api.PropertyType{"string"},
-		Description: "The bash command to execute.",
+		Description: "The shell command to execute.",
 	})
 	return api.ToolFunction{
 		Name:        b.Name(),
@@ -71,9 +71,7 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 	_ = cwdFile.Close()
 	defer os.Remove(cwdPath)
 
-	script := command + "\n__ollama_status=$?\npwd -P > " + shellQuote(cwdPath) + "\nexit $__ollama_status"
-	cmd := exec.CommandContext(ctx, "bash", "-c", script)
-	configureBashCommand(cmd)
+	cmd := newBashCommand(ctx, command, cwdPath)
 	cmd.Cancel = func() error {
 		return killBashCommand(cmd)
 	}
@@ -126,7 +124,8 @@ func readFinalWorkingDir(path string) string {
 	if err != nil {
 		return ""
 	}
-	workingDir := strings.TrimSpace(string(content))
+	workingDir := strings.TrimPrefix(string(content), "\ufeff")
+	workingDir = strings.TrimSpace(workingDir)
 	if workingDir == "" {
 		return ""
 	}

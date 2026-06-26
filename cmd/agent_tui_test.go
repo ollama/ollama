@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -32,11 +33,15 @@ func setAgentTUITestCloudEnabled(t *testing.T) {
 
 func TestAgentSystemPromptIncludesModel(t *testing.T) {
 	prompt := agentSystemPromptAt(time.Date(2026, time.June, 12, 9, 30, 0, 0, time.UTC), "llama3.2", nil, false, "", "")
+	shellName := "bash"
+	if runtime.GOOS == "windows" {
+		shellName = "PowerShell"
+	}
 	for _, want := range []string{
 		"You are running in Ollama, in a harness to help the user accomplish tasks, and the model is llama3.2.",
 		"Current date: Friday, June 12, 2026.",
 		"Be concise, practical, and action-oriented.",
-		"Use bash carefully.",
+		"Use " + shellName + " carefully.",
 		"Tell the user about meaningful changes",
 	} {
 		if !strings.Contains(prompt, want) {

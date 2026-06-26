@@ -1,8 +1,6 @@
 package chat
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -750,16 +748,8 @@ func TestChatMouseWheelScrollsTranscriptWhileRunning(t *testing.T) {
 	}
 }
 
-func TestChatMouseDragSelectsAndCopiesTranscriptText(t *testing.T) {
-	var copied string
+func TestChatMouseDragSelectsTranscriptWithoutAutoCopy(t *testing.T) {
 	m := chatModel{
-		ctx: context.Background(),
-		opts: Options{
-			Clipboard: func(_ context.Context, text string) error {
-				copied = text
-				return nil
-			},
-		},
 		width:  80,
 		height: 10,
 		entries: []chatEntry{
@@ -778,20 +768,44 @@ func TestChatMouseDragSelectsAndCopiesTranscriptText(t *testing.T) {
 	if !m.selection.active {
 		t.Fatal("selection should stay active during drag")
 	}
+	if !m.selection.dragging {
+		t.Fatal("selection should track drag before release")
+	}
 
 	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 7, Y: top})
 	m = updated.(chatModel)
-	if cmd == nil {
-		t.Fatal("mouse release should return clipboard command")
+	if cmd != nil {
+		t.Fatal("mouse release should not auto-copy selected text")
 	}
-	if msg := cmd(); msg != nil {
-		_, _ = m.Update(msg)
+	if !m.selection.active {
+		t.Fatal("selection should stay visible on release")
 	}
-	if copied != "alpha" {
-		t.Fatalf("copied = %q, want alpha", copied)
+	if m.selection.dragging {
+		t.Fatal("selection should stop tracking drag on release")
 	}
-	if m.status == "selection copied" {
-		t.Fatalf("selection should not surface a copied status")
+	if got := m.selectedTranscriptText(80); got != "alpha" {
+		t.Fatalf("selected text after release = %q, want alpha", got)
+	}
+}
+
+func TestChatMouseDragSelectionUsesDisplayColumns(t *testing.T) {
+	m := chatModel{
+		width:  80,
+		height: 10,
+		entries: []chatEntry{
+			{role: "user", content: "a界b"},
+		},
+	}
+	top, _ := m.transcriptLayout()
+	contentX := 2
+
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: contentX, Y: top})
+	m = updated.(chatModel)
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: contentX + 3, Y: top})
+	m = updated.(chatModel)
+
+	if got := m.selectedTranscriptText(80); got != "a界" {
+		t.Fatalf("selected text = %q, want a界", got)
 	}
 }
 
@@ -818,53 +832,8 @@ func TestChatBoundedViewDoesNotRenderScrollHeader(t *testing.T) {
 	}
 }
 
-func TestChatMouseCopyFailureDoesNotClearRunningState(t *testing.T) {
-	m := chatModel{
-		ctx: context.Background(),
-		opts: Options{
-			Clipboard: func(context.Context, string) error {
-				return errors.New("copy failed")
-			},
-		},
-		width:   80,
-		height:  10,
-		running: true,
-		entries: []chatEntry{
-			{role: "user", content: "alpha beta"},
-		},
-	}
-	top, _ := m.transcriptLayout()
-
-	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 2, Y: top})
-	m = updated.(chatModel)
-	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: 7, Y: top})
-	m = updated.(chatModel)
-	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 7, Y: top})
-	m = updated.(chatModel)
-	if cmd == nil {
-		t.Fatal("mouse release should return clipboard command")
-	}
-	msg := cmd()
-	updated, _ = m.Update(msg)
-	m = updated.(chatModel)
-	if !m.running {
-		t.Fatal("clipboard failure should not clear running state")
-	}
-	if m.status != "clipboard error: copy failed" {
-		t.Fatalf("status = %q, want clipboard error", m.status)
-	}
-}
-
 func TestChatMouseDragSelectionUsesScrolledTranscriptCoordinates(t *testing.T) {
-	var copied string
 	m := chatModel{
-		ctx: context.Background(),
-		opts: Options{
-			Clipboard: func(_ context.Context, text string) error {
-				copied = text
-				return nil
-			},
-		},
 		width:        80,
 		height:       8,
 		boundedFrame: true,
@@ -883,15 +852,15 @@ func TestChatMouseDragSelectionUsesScrolledTranscriptCoordinates(t *testing.T) {
 		t.Fatalf("selected text = %q, want line-00", got)
 	}
 	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 9, Y: top})
-	fm := updated.(chatModel)
-	if cmd == nil {
-		t.Fatal("mouse release should return clipboard command")
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatal("mouse release should not auto-copy selected text")
 	}
-	if msg := cmd(); msg != nil {
-		_, _ = fm.Update(msg)
+	if !m.selection.active {
+		t.Fatal("selection should stay visible on release")
 	}
-	if copied != "line-00" {
-		t.Fatalf("copied = %q, want line-00", copied)
+	if m.selection.dragging {
+		t.Fatal("selection should stop tracking drag on release")
 	}
 }
 

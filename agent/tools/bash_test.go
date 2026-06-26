@@ -19,7 +19,7 @@ func TestBashReportsFinalWorkingDir(t *testing.T) {
 	}
 
 	result, err := NewBash().Execute(context.Background(), agent.ToolContext{WorkingDir: root}, map[string]any{
-		"command": "cd sub && pwd",
+		"command": shellTestCommand("cd sub && pwd", "Set-Location sub; Get-Location"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestBashReportsFinalWorkingDir(t *testing.T) {
 
 func TestBashBoundsOutputWhileRunning(t *testing.T) {
 	result, err := NewBash().Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
-		"command": "yes x | head -c 70000",
+		"command": shellTestCommand("yes x | head -c 70000", "[Console]::Out.Write(('x' * 70000))"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestBashReportsCanceledCommand(t *testing.T) {
 	cancel()
 
 	result, err := NewBash().Execute(ctx, agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
-		"command": "sleep 10",
+		"command": shellTestCommand("sleep 10", "Start-Sleep -Seconds 10"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +70,13 @@ func TestBashReportsCanceledCommand(t *testing.T) {
 	if strings.Contains(result.Content, "Exit code: -1") {
 		t.Fatalf("content = %q, should not mask cancellation as exit code", result.Content)
 	}
+}
+
+func shellTestCommand(unix, windows string) string {
+	if runtime.GOOS == "windows" {
+		return windows
+	}
+	return unix
 }
 
 func TestReadFinalWorkingDirRejectsInvalidPaths(t *testing.T) {

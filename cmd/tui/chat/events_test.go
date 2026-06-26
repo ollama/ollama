@@ -198,8 +198,53 @@ func TestChatActivityLineShowsWaitingAfterToolResultBeforeFollowUpStream(t *test
 	}
 
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageStarted})
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working...") {
+		t.Fatalf("activityLine = %q, want Working label until visible stream output", got)
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "done"})
 	if got := strings.TrimSpace(stripANSI(m.activityLine())); strings.Contains(got, "Working") {
-		t.Fatalf("activityLine = %q, want waiting label cleared when stream starts", got)
+		t.Fatalf("activityLine = %q, want waiting label cleared when visible output arrives", got)
+	}
+}
+
+func TestChatActivityLineShowsWorkingWhileToolCallWaitsForToolStart(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("command", "pwd")
+	m := chatModel{
+		running: true,
+		spinner: waitingSpinnerTicks,
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventRequestBuilt})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageStarted})
+	m.applyAgentEvent(coreagent.Event{
+		Type: coreagent.EventToolCallDetected,
+		ToolCalls: []api.ToolCall{{
+			ID: "call-1",
+			Function: api.ToolCallFunction{
+				Name:      "bash",
+				Arguments: args,
+			},
+		}},
+	})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventModelStreamDone})
+
+	if len(m.entries) != 0 {
+		t.Fatalf("detected tool call should not create history entries: %#v", m.entries)
+	}
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working...") {
+		t.Fatalf("activityLine = %q, want Working label while waiting for tool start", got)
+	}
+
+	m.applyAgentEvent(coreagent.Event{
+		Type:       coreagent.EventToolStarted,
+		ToolCallID: "call-1",
+		ToolName:   "bash",
+		Args:       args.ToMap(),
+	})
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); got != "" {
+		t.Fatalf("activityLine = %q, want active tool row to replace spinner", got)
 	}
 }
 

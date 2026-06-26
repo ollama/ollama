@@ -16,10 +16,6 @@ type chatAgentMsg struct {
 	event coreagent.Event
 }
 
-type chatClipboardErrorMsg struct {
-	err error
-}
-
 type chatApprovalPromptMsg struct {
 	request coreagent.ApprovalRequest
 	reply   chan<- coreagent.ApprovalResult
@@ -76,7 +72,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	case coreagent.EventRequestBuilt:
 		m.awaitingModel = true
 	case coreagent.EventMessageStarted:
-		m.awaitingModel = false
+		m.awaitingModel = m.running
 		m.eventErrorRendered = false
 		m.compacting = false
 		m.compactingTokens = 0
@@ -105,7 +101,9 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.liveMessages[msgIdx].Content += event.Content
 		contextChanged = true
 	case coreagent.EventToolCallDetected:
-		m.resetStreamingState()
+		m.awaitingModel = m.running
+		m.thinking = false
+		m.thinkingTokens = 0
 		idx := m.ensureLiveAssistantMessage()
 		m.liveMessages[idx].ToolCalls = append(m.liveMessages[idx].ToolCalls, event.ToolCalls...)
 		contextChanged = true
@@ -196,7 +194,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "system", content: message}))
 		m.status = "compact skipped"
 	case coreagent.EventModelStreamDone:
-		m.awaitingModel = false
+		m.awaitingModel = m.running && m.awaitingToolStart()
 	case coreagent.EventError:
 		m.resetRunState()
 		m.eventErrorRendered = true
@@ -223,6 +221,22 @@ func messagesEndWithCompactionResult(messages []api.Message) bool {
 		return false
 	}
 	return coreagent.IsCompactionToolResult(messages[len(messages)-1])
+}
+
+func (m chatModel) awaitingToolStart() bool {
+	if len(m.liveMessages) == 0 {
+		return false
+	}
+	msg := m.liveMessages[len(m.liveMessages)-1]
+	if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
+		return false
+	}
+	for _, call := range msg.ToolCalls {
+		if call.ID == "" || m.findToolEntry(call.ID) < 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *chatModel) ensureLiveAssistantMessage() int {

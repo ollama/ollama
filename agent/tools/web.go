@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
@@ -17,7 +18,11 @@ var (
 	ErrWebFetchAuthRequired  = errors.New("web fetch requires authentication")
 )
 
-const maxWebFetchContentRunes = 60_000
+const (
+	maxWebFetchContentRunes = 60_000
+	webSearchTimeout        = 15 * time.Second
+	webFetchTimeout         = 30 * time.Second
+)
 
 type WebSearch struct{}
 
@@ -63,6 +68,9 @@ func (w *WebSearch) Execute(ctx context.Context, _ agent.ToolContext, args map[s
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, webSearchTimeout)
+	defer cancel()
 
 	searchResp, err := client.WebSearchExperimental(ctx, &api.WebSearchRequest{Query: query, MaxResults: 5})
 	if err != nil {
@@ -140,6 +148,9 @@ func (w *WebFetch) Execute(ctx context.Context, _ agent.ToolContext, args map[st
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, webFetchTimeout)
+	defer cancel()
 
 	fetchResp, err := client.WebFetchExperimental(ctx, &api.WebFetchRequest{URL: urlStr})
 	if err != nil {

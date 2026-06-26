@@ -3,7 +3,9 @@
 package tools
 
 import (
+	"context"
 	"os/exec"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -12,7 +14,48 @@ import (
 
 var bashJobHandles sync.Map
 
-func configureBashCommand(*exec.Cmd) {}
+func newBashCommand(ctx context.Context, command, cwdPath string) *exec.Cmd {
+	return exec.CommandContext(
+		ctx,
+		"powershell.exe",
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		powerShellCommandScript(command, cwdPath),
+	)
+}
+
+func powerShellCommandScript(command, cwdPath string) string {
+	cwdPath = powerShellSingleQuote(cwdPath)
+	return strings.Join([]string{
+		"$__ollama_status = 0",
+		"try {",
+		command,
+		"  $__ollama_success = $?",
+		"  $__ollama_last_exit = $global:LASTEXITCODE",
+		"  if ($__ollama_success) {",
+		"    $__ollama_status = 0",
+		"  } elseif ($__ollama_last_exit -is [int] -and $__ollama_last_exit -ne 0) {",
+		"    $__ollama_status = $__ollama_last_exit",
+		"  } else {",
+		"    $__ollama_status = 1",
+		"  }",
+		"} catch {",
+		"  Write-Error $_",
+		"  $__ollama_status = 1",
+		"} finally {",
+		"  try { [System.IO.File]::WriteAllText(" + cwdPath + ", (Get-Location).ProviderPath, [System.Text.Encoding]::UTF8) } catch {}",
+		"}",
+		"exit $__ollama_status",
+	}, "\n")
+}
+
+func powerShellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
 
 func runBashCommand(cmd *exec.Cmd) error {
 	if err := cmd.Start(); err != nil {

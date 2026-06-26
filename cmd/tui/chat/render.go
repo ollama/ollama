@@ -396,10 +396,10 @@ func (m chatModel) applyTranscriptSelection(lines []string, offset int) []string
 		text := stripChatANSI(line)
 		startCol, endCol := 0, len([]rune(text))
 		if lineIndex == start.line {
-			startCol = clamp(start.col, 0, len([]rune(text)))
+			startCol = displayColumnToRuneIndex(text, start.col)
 		}
 		if lineIndex == end.line {
-			endCol = clamp(end.col, 0, len([]rune(text)))
+			endCol = displayColumnToRuneIndex(text, end.col)
 		}
 		if startCol > endCol {
 			startCol, endCol = endCol, startCol
@@ -419,6 +419,21 @@ func renderSelectedTranscriptLine(line string, startCol, endCol int) string {
 	return string(runes[:startCol]) + chatSelectionStyle.Render(string(runes[startCol:endCol])) + string(runes[endCol:])
 }
 
+func displayColumnToRuneIndex(line string, col int) int {
+	if col <= 0 {
+		return 0
+	}
+	width := 0
+	for i, r := range []rune(line) {
+		next := width + runewidth.RuneWidth(r)
+		if col < next {
+			return i
+		}
+		width = next
+	}
+	return len([]rune(line))
+}
+
 func (m chatModel) selectedTranscriptText(width int) string {
 	start, end, ok := m.normalizedSelectionRange()
 	if !ok {
@@ -436,10 +451,10 @@ func (m chatModel) selectedTranscriptText(width int) string {
 		runes := []rune(text)
 		startCol, endCol := 0, len(runes)
 		if lineIndex == start.line {
-			startCol = clamp(start.col, 0, len(runes))
+			startCol = displayColumnToRuneIndex(text, start.col)
 		}
 		if lineIndex == end.line {
-			endCol = clamp(end.col, 0, len(runes))
+			endCol = displayColumnToRuneIndex(text, end.col)
 		}
 		if startCol > endCol {
 			startCol, endCol = endCol, startCol

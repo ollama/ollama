@@ -57,7 +57,6 @@ type Options struct {
 	ModelOptions                func(context.Context) ([]ModelOption, error)
 	OnModelSelected             func(context.Context, string) error
 	SystemPromptForModel        func(context.Context, string, *coreagent.Registry) string
-	Clipboard                   func(context.Context, string) error
 	Approval                    coreagent.ApprovalHandler
 	EventSink                   coreagent.EventSink
 	Policy                      coreagent.RunPolicy
@@ -163,9 +162,10 @@ type chatSelectionPoint struct {
 }
 
 type chatSelection struct {
-	active bool
-	anchor chatSelectionPoint
-	cursor chatSelectionPoint
+	active   bool
+	dragging bool
+	anchor   chatSelectionPoint
+	cursor   chatSelectionPoint
 }
 
 func startChatSelection(selection *chatSelection, msg tea.MouseMsg, contains func(tea.MouseMsg) bool, point func(tea.MouseMsg) chatSelectionPoint) {
@@ -174,35 +174,25 @@ func startChatSelection(selection *chatSelection, msg tea.MouseMsg, contains fun
 		return
 	}
 	p := point(msg)
-	*selection = chatSelection{active: true, anchor: p, cursor: p}
+	*selection = chatSelection{active: true, dragging: true, anchor: p, cursor: p}
 }
 
 func dragChatSelection(selection *chatSelection, msg tea.MouseMsg, point func(tea.MouseMsg) chatSelectionPoint, scrollEdge func(tea.MouseMsg)) {
-	if !selection.active {
+	if !selection.active || !selection.dragging {
 		return
 	}
 	selection.cursor = point(msg)
 	scrollEdge(msg)
 }
 
-func finishChatSelection(m chatModel, selection *chatSelection, msg tea.MouseMsg, point func(tea.MouseMsg) chatSelectionPoint, selectedText func() string) (tea.Model, tea.Cmd) {
-	if !selection.active {
-		return m, nil
+func finishChatSelection(selection *chatSelection, msg tea.MouseMsg, point func(tea.MouseMsg) chatSelectionPoint) {
+	if !selection.active || !selection.dragging {
+		return
 	}
 	selection.cursor = point(msg)
-	selected := selectedText()
-	if strings.TrimSpace(selected) == "" {
+	selection.dragging = false
+	if selection.anchor == selection.cursor {
 		*selection = chatSelection{}
-		return m, nil
-	}
-	return m, func() tea.Msg {
-		if m.opts.Clipboard == nil {
-			return nil
-		}
-		if err := m.opts.Clipboard(m.ctx, selected); err != nil {
-			return chatClipboardErrorMsg{err: err}
-		}
-		return nil
 	}
 }
 
@@ -218,9 +208,6 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	if opts.RootDir == "" {
 		opts.RootDir = opts.WorkingDir
-	}
-	if opts.Clipboard == nil {
-		opts.Clipboard = writeClipboard
 	}
 	policy := opts.Policy
 	reviewApproval := chatReviewApprovalHandler(opts.Approval, policy)
@@ -327,12 +314,6 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatAgentMsg:
 		m.applyAgentEvent(msg.event)
 		return m.withFlowTranscriptFlush(waitForChatMsg(m.events))
-
-	case chatClipboardErrorMsg:
-		if msg.err != nil {
-			m.status = "clipboard error: " + msg.err.Error()
-		}
-		return m, nil
 
 	case chatApprovalPromptMsg:
 		m.resumePicker = nil
@@ -488,7 +469,7 @@ func (m chatModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case tea.MouseMotion:
 		m.dragTranscriptSelection(msg)
 	case tea.MouseRelease:
-		return m.finishTranscriptSelection(msg)
+		m.finishTranscriptSelection(msg)
 	}
 	return m, nil
 }
@@ -524,10 +505,8 @@ func (m *chatModel) dragTranscriptSelection(msg tea.MouseMsg) {
 	})
 }
 
-func (m chatModel) finishTranscriptSelection(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	return finishChatSelection(m, &m.selection, msg, m.mouseTranscriptPoint, func() string {
-		return m.selectedTranscriptText(m.viewWidth())
-	})
+func (m *chatModel) finishTranscriptSelection(msg tea.MouseMsg) {
+	finishChatSelection(&m.selection, msg, m.mouseTranscriptPoint)
 }
 
 func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
