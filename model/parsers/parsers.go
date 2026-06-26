@@ -62,7 +62,7 @@ func ParserForName(name string) Parser {
 		p = &Qwen3VLParser{hasThinkingSupport: false}
 	case "qwen3-vl-thinking":
 		p = &Qwen3VLParser{hasThinkingSupport: true}
-	case "ministral":
+	case "ministral", "mistral3":
 		p = &MinistralParser{hasThinkingSupport: false}
 	case "passthrough":
 		return &PassthroughParser{}
