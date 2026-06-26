@@ -46,8 +46,8 @@ func TestBashBoundsOutputWhileRunning(t *testing.T) {
 	if !strings.Contains(result.Content, "[stdout truncated: omitted ~") || !strings.Contains(result.Content, " tokens]") {
 		t.Fatalf("content = %q, want stdout truncation marker", result.Content)
 	}
-	if count := strings.Count(result.Content, "x"); count != maxBashOutputBytes/2 {
-		t.Fatalf("captured x count = %d, want %d", count, maxBashOutputBytes/2)
+	if count, want := strings.Count(result.Content, "x"), shellTestCapturedXCount(); count != want {
+		t.Fatalf("captured x count = %d, want %d", count, want)
 	}
 	if len(result.Content) > maxBashOutputBytes+200 {
 		t.Fatalf("content length = %d, want bounded output", len(result.Content))
@@ -77,6 +77,13 @@ func shellTestCommand(unix, windows string) string {
 		return windows
 	}
 	return unix
+}
+
+func shellTestCapturedXCount() int {
+	if runtime.GOOS == "windows" {
+		return maxBashOutputBytes
+	}
+	return maxBashOutputBytes / 2
 }
 
 func TestReadFinalWorkingDirRejectsInvalidPaths(t *testing.T) {

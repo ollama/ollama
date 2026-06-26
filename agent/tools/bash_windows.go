@@ -32,6 +32,7 @@ func powerShellCommandScript(command, cwdPath string) string {
 	cwdPath = powerShellSingleQuote(cwdPath)
 	return strings.Join([]string{
 		"$__ollama_status = 0",
+		". {",
 		"try {",
 		command,
 		"  $__ollama_success = $?",
@@ -49,6 +50,7 @@ func powerShellCommandScript(command, cwdPath string) string {
 		"} finally {",
 		"  try { [System.IO.File]::WriteAllText(" + cwdPath + ", (Get-Location).ProviderPath, [System.Text.Encoding]::UTF8) } catch {}",
 		"}",
+		"} | Out-String -Stream",
 		"exit $__ollama_status",
 	}, "\n")
 }
