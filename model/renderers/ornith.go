@@ -1,11 +1,11 @@
 package renderers
 
-type Ornith9BRenderer struct {
+type OrnithRenderer struct {
 	Qwen35Renderer
 }
 
-func newOrnith9BRenderer() Renderer {
-	return &Ornith9BRenderer{
+func newOrnithRenderer() Renderer {
+	return &OrnithRenderer{
 		Qwen35Renderer: Qwen35Renderer{
 			isThinking:                      true,
 			alwaysRenderAssistantThinkBlock: true,
