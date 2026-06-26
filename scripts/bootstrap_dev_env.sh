@@ -204,7 +204,6 @@ services:
       - ./ollama-src:/workspace/ollama-s390x:Z
       - ./ollama-models:/root/.ollama:Z
     working_dir: /workspace/ollama-s390x
-    command: ["sleep", "infinity"]
     command:
       - sh
       - -c
@@ -224,6 +223,7 @@ services:
         export PATH=$PATH:/usr/local/go/bin && \
         echo 'export PATH=$PATH:/usr/local/go/bin' >> /root/.bashrc && \
         go version && \
+        sleep infinity
     restart: unless-stopped
 
   # Official Ollama runtime (for testing models) - not available on s390x
