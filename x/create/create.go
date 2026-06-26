@@ -116,16 +116,6 @@ func loadModelConfig(modelName string) (*ModelConfig, error) {
 	return &config, nil
 }
 
-// IsSafetensorsModel checks if a model was created with the experimental
-// safetensors builder by checking the model format in the config.
-func IsSafetensorsModel(modelName string) bool {
-	config, err := loadModelConfig(modelName)
-	if err != nil {
-		return false
-	}
-	return config.ModelFormat == "safetensors"
-}
-
 // IsSafetensorsLLMModel checks if a model is a safetensors LLM model
 // (has completion capability, not image generation).
 func IsSafetensorsLLMModel(modelName string) bool {
@@ -134,55 +124,6 @@ func IsSafetensorsLLMModel(modelName string) bool {
 		return false
 	}
 	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "completion")
-}
-
-// IsImageGenModel checks if a model is an image generation model
-// (has image capability).
-func IsImageGenModel(modelName string) bool {
-	config, err := loadModelConfig(modelName)
-	if err != nil {
-		return false
-	}
-	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "image")
-}
-
-// GetModelArchitecture returns the architecture from the model's config.json layer.
-func GetModelArchitecture(modelName string) (string, error) {
-	manifest, err := loadManifest(modelName)
-	if err != nil {
-		return "", err
-	}
-
-	// Find the config.json layer
-	for _, layer := range manifest.Layers {
-		if layer.Name == "config.json" && layer.MediaType == "application/vnd.ollama.image.json" {
-			blobName := strings.Replace(layer.Digest, ":", "-", 1)
-			blobPath := filepath.Join(defaultBlobDir(), blobName)
-
-			data, err := os.ReadFile(blobPath)
-			if err != nil {
-				return "", err
-			}
-
-			var cfg struct {
-				Architectures []string `json:"architectures"`
-				ModelType     string   `json:"model_type"`
-			}
-			if err := json.Unmarshal(data, &cfg); err != nil {
-				return "", err
-			}
-
-			// Prefer model_type, fall back to first architecture
-			if cfg.ModelType != "" {
-				return cfg.ModelType, nil
-			}
-			if len(cfg.Architectures) > 0 {
-				return cfg.Architectures[0], nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("architecture not found in model config")
 }
 
 // IsTensorModelDir checks if the directory contains a diffusers-style tensor model
@@ -261,13 +202,6 @@ func ShouldQuantize(name, component string) bool {
 
 	// Only quantize weights
 	return strings.HasSuffix(name, ".weight")
-}
-
-// ShouldQuantizeTensor returns true if a tensor should be quantized based on name, shape, and quantize type.
-// This is a more detailed check that also considers tensor dimensions.
-// The quantize parameter specifies the quantization type (e.g., "int4", "nvfp4", "mxfp4", "int8", "mxfp8").
-func ShouldQuantizeTensor(name string, shape []int32, quantize string) bool {
-	return GetTensorQuantization(name, shape, quantize) != ""
 }
 
 // normalizeQuantType converts various quantization type aliases to canonical forms.
@@ -392,8 +326,7 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 }
 
 var (
-	expertLayerPrefixRegexp        = regexp.MustCompile(`^(?:model\.language_model\.|language_model(?:\.model)?\.|model\.)?layers\.\d+$`)
-	prequantizedExpertSuffixRegexp = regexp.MustCompile(`^\.(\d+)\.(.+)$`)
+	expertLayerPrefixRegexp = regexp.MustCompile(`^(?:model\.language_model\.|language_model(?:\.model)?\.|model\.)?layers\.\d+$`)
 )
 
 // ExpertGroupPrefix returns the group prefix for expert tensors that should be packed together.
@@ -429,7 +362,6 @@ func ExpertGroupPrefix(tensorName string) string {
 
 	return ""
 }
-
 
 type sourceQuantization struct {
 	Bits            int     `json:"bits"`
@@ -490,14 +422,7 @@ func (cfg sourceModelConfig) Architecture() string {
 func (cfg sourceModelConfig) QuantMetadata() map[string]string {
 	// Use the first non-empty quantization config found
 	var q sourceQuantization
-	for _, candidate := range []sourceQuantization{
-		cfg.Quantization,
-		cfg.QuantizationConfig,
-		cfg.CompressionConfig,
-		cfg.TextConfig.Quantization,
-		cfg.TextConfig.QuantizationConfig,
-		cfg.TextConfig.CompressionConfig,
-	} {
+	for _, candidate := range cfg.quantizationConfigs() {
 		if candidate.Bits != 0 {
 			q = candidate
 			break

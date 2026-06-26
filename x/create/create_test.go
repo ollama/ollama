@@ -170,50 +170,6 @@ func TestIsSafetensorsModelDir_NonexistentDir(t *testing.T) {
 	}
 }
 
-// createMinimalSafetensors creates a minimal valid safetensors file with one tensor
-func createMinimalSafetensors(t *testing.T, path string) {
-	t.Helper()
-
-	// Create a minimal safetensors file with a single float32 tensor
-	header := map[string]interface{}{
-		"test_tensor": map[string]interface{}{
-			"dtype":        "F32",
-			"shape":        []int{2, 2},
-			"data_offsets": []int{0, 16}, // 4 float32 values = 16 bytes
-		},
-	}
-	headerJSON, err := json.Marshal(header)
-	if err != nil {
-		t.Fatalf("failed to marshal header: %v", err)
-	}
-
-	// Pad header to 8-byte alignment
-	padding := (8 - len(headerJSON)%8) % 8
-	headerJSON = append(headerJSON, bytes.Repeat([]byte(" "), padding)...)
-
-	// Write file
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("failed to create file: %v", err)
-	}
-	defer f.Close()
-
-	// Write header size (8 bytes, little endian)
-	if err := binary.Write(f, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
-		t.Fatalf("failed to write header size: %v", err)
-	}
-
-	// Write header
-	if _, err := f.Write(headerJSON); err != nil {
-		t.Fatalf("failed to write header: %v", err)
-	}
-
-	// Write tensor data (16 bytes of zeros for 4 float32 values)
-	if _, err := f.Write(make([]byte, 16)); err != nil {
-		t.Fatalf("failed to write tensor data: %v", err)
-	}
-}
-
 func createTestSafetensors(t *testing.T, path string, tensors []*st.TensorData) {
 	t.Helper()
 
@@ -450,65 +406,6 @@ func TestShouldQuantize(t *testing.T) {
 	}
 }
 
-func TestShouldQuantizeTensor(t *testing.T) {
-	tests := []struct {
-		name     string
-		tensor   string
-		shape    []int32
-		quantize string
-		want     bool
-	}{
-		// 2D tensors with sufficient size should be quantized
-		{"large 2D weight fp8", "q_proj.weight", []int32{4096, 4096}, "fp8", true},
-		{"medium 2D weight fp8", "small_proj.weight", []int32{128, 128}, "fp8", true},
-		{"large 2D weight nvfp4", "q_proj.weight", []int32{4096, 4096}, "nvfp4", true},
-		{"large 2D weight mxfp4", "q_proj.weight", []int32{4096, 4096}, "mxfp4", true},
-
-		// Small tensors should not be quantized (< 1024 elements)
-		{"tiny 2D weight", "tiny.weight", []int32{16, 16}, "fp8", false},
-		{"small 2D weight", "small.weight", []int32{31, 31}, "fp8", false},
-
-		// 1D tensors should not be quantized
-		{"1D tensor", "layer_norm.weight", []int32{4096}, "fp8", false},
-
-		// 3D+ tensors should not be quantized
-		{"3D tensor", "conv.weight", []int32{64, 64, 3}, "fp8", false},
-		{"4D tensor", "conv2d.weight", []int32{64, 64, 3, 3}, "fp8", false},
-		{"stacked expert switch_mlp gate_up 3D int8", "model.layers.1.mlp.switch_mlp.gate_up_proj.weight", []int32{64, 22016, 4096}, "int8", true},
-		{"stacked expert experts down_proj 3D int8", "model.layers.1.mlp.experts.down_proj.weight", []int32{64, 4096, 14336}, "int8", true},
-		{"stacked expert combined gate_up 3D int8", "model.language_model.layers.0.mlp.experts.gate_up_proj", []int32{256, 1024, 2048}, "int8", true},
-		{"stacked expert combined down_proj 3D int8", "model.language_model.layers.0.mlp.experts.down_proj", []int32{256, 2048, 512}, "int8", true},
-
-		// Embeddings should not be quantized regardless of shape
-		{"embedding 2D", "embed_tokens.weight", []int32{32000, 4096}, "fp8", false},
-
-		// Norms should not be quantized regardless of shape
-		{"norm 2D", "layer_norm.weight", []int32{4096, 1}, "fp8", false},
-
-		// Biases should not be quantized
-		{"bias 2D", "proj.bias", []int32{4096, 1}, "fp8", false},
-
-		// Group size divisibility tests
-		// FP8/FP4/MXFP4 require divisible by 32
-		{"not divisible by 32 fp8", "proj.weight", []int32{128, 48}, "fp8", false},
-		{"divisible by 32 fp8", "proj.weight", []int32{128, 64}, "fp8", true},
-		{"not divisible by 32 mxfp4", "proj.weight", []int32{128, 48}, "mxfp4", false},
-		{"divisible by 32 mxfp4", "proj.weight", []int32{128, 64}, "mxfp4", true},
-		// NVFP4 requires divisible by 16
-		{"not divisible by 16 nvfp4", "proj.weight", []int32{128, 24}, "nvfp4", false},
-		{"divisible by 16 nvfp4", "proj.weight", []int32{128, 48}, "nvfp4", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ShouldQuantizeTensor(tt.tensor, tt.shape, tt.quantize)
-			if got != tt.want {
-				t.Errorf("ShouldQuantizeTensor(%q, %v, %q) = %v, want %v", tt.tensor, tt.shape, tt.quantize, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestExpertGroupPrefix(t *testing.T) {
 	tests := []struct {
 		name string
@@ -718,4 +615,3 @@ func TestGetTensorQuantization_MixedPrecisionPromotion(t *testing.T) {
 		})
 	}
 }
-
