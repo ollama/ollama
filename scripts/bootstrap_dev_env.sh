@@ -280,6 +280,21 @@ EOF
 ################################################################################
 # Dependency Installation
 ################################################################################
+install_curl() {
+    if ! command -v curl >/dev/null 2>&1; then
+        log_info "curl not found. Installing via dnf..."
+        if command -v dnf >/dev/null 2>&1; then
+            dnf install -y curl
+            log_success "curl installed successfully"
+        else
+            log_error "dnf is not available. Please install curl manually."
+            exit 1
+        fi
+    else
+        log_info "curl is already installed"
+    fi
+}
+
 install_podman_compose() {
     if ! command -v podman-compose >/dev/null 2>&1; then
         log_info "podman-compose not found. Installing via pip3..."
@@ -309,6 +324,7 @@ main() {
     fi
 
     setup_logging
+    install_curl
     install_podman_compose
     setup_workspace
     create_compose_file
