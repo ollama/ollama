@@ -39,8 +39,9 @@ Reminder:
 type Qwen35Renderer struct {
 	isThinking bool
 
-	emitEmptyThinkOnNoThink bool
-	useImgTags              bool
+	alwaysRenderAssistantThinkBlock bool
+	emitEmptyThinkOnNoThink         bool
+	useImgTags                      bool
 }
 
 func (r *Qwen35Renderer) LeadingBOS() string {
@@ -140,9 +141,10 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 		if message.Role == "user" || (message.Role == "system" && i != 0) {
 			sb.WriteString(imStartTag + message.Role + "\n" + content + imEndTag + "\n")
 		} else if message.Role == "assistant" {
-			contentReasoning, content := splitQwen35ReasoningContent(content, message.Thinking, isThinking)
+			renderAssistantThinkBlock := r.alwaysRenderAssistantThinkBlock || (isThinking && i > lastQueryIndex)
+			contentReasoning, content := splitQwen35ReasoningContent(content, message.Thinking, renderAssistantThinkBlock)
 
-			if isThinking && i > lastQueryIndex {
+			if renderAssistantThinkBlock {
 				sb.WriteString(imStartTag + message.Role + "\n<think>\n" + contentReasoning + "\n</think>\n\n" + content)
 			} else {
 				sb.WriteString(imStartTag + message.Role + "\n" + content)
