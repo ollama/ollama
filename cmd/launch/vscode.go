@@ -386,9 +386,7 @@ func (v *VSCode) readSettings() (map[string]any, error) {
 		}
 		return nil, err
 	}
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return make(map[string]any), nil
-	}
+	_ = json.Unmarshal(data, &settings)
 	return settings, nil
 }
 
