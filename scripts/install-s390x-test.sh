@@ -110,9 +110,44 @@ fi
 
 NEEDS=$(require curl awk grep sed tee xargs)
 if [ -n "$NEEDS" ]; then
-    status "ERROR: The following tools are required but missing:"
-    for NEED in $NEEDS; do echo " - $NEED"; done
-    exit 1
+    status "The following tools are required but missing: $NEEDS"
+    
+    # Try to install curl if it's missing
+    if echo "$NEEDS" | grep -q curl; then
+        status "Attempting to install curl..."
+        
+        if available dnf; then
+            dnf install -y curl
+        elif available apt-get; then
+            apt-get update -qq
+            apt-get install -y curl
+        elif available yum; then
+            yum install -y curl
+        elif available zypper; then
+            zypper install -y curl
+        elif available pacman; then
+            pacman -S --noconfirm curl
+        else
+            error "Could not install curl automatically. Please install it manually."
+        fi
+        
+        # Verify curl was installed
+        if ! available curl; then
+            error "Failed to install curl. Please install it manually."
+        fi
+        
+        status "curl installed successfully"
+        
+        # Re-check for remaining missing tools
+        NEEDS=$(require awk grep sed tee xargs)
+    fi
+    
+    # If there are still missing tools, report and exit
+    if [ -n "$NEEDS" ]; then
+        status "ERROR: The following tools are still required but missing:"
+        for NEED in $NEEDS; do echo " - $NEED"; done
+        exit 1
+    fi
 fi
 
 # ============================================
