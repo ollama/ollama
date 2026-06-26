@@ -192,8 +192,16 @@ if(OLLAMA_MLX_BACKENDS)
     add_custom_target(ollama-mlx-sources DEPENDS ${_mlx_source_targets})
 endif()
 
+set(OLLAMA_BUILD_PARALLEL "" CACHE STRING
+    "Number of parallel jobs for nested native builds (empty = use generator default)")
+
+set(_native_parallel_args --parallel)
+if(NOT OLLAMA_BUILD_PARALLEL STREQUAL "")
+    list(APPEND _native_parallel_args ${OLLAMA_BUILD_PARALLEL})
+endif()
+
 set(OLLAMA_NATIVE_BUILD_TOOL_COMMAND
-    ${CMAKE_COMMAND} --build <BINARY_DIR> --parallel)
+    ${CMAKE_COMMAND} --build <BINARY_DIR> ${_native_parallel_args})
 set(OLLAMA_NATIVE_BUILD_TARGET_ARG --target)
 if(CMAKE_GENERATOR MATCHES "Makefiles")
     set(OLLAMA_NATIVE_BUILD_TOOL_COMMAND
