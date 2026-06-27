@@ -94,7 +94,14 @@ func (h *HermesDesktop) Run(_ string, _ []LaunchModel, args []string) error {
 	if err != nil {
 		return err
 	}
-	return hermesAttachedCommand(bin, h.launchArgs(args)...).Run()
+	desktopArgs := h.launchArgs(args)
+	if h.shouldRunForeground(args) {
+		return hermesAttachedCommand(bin, desktopArgs...).Run()
+	}
+	if err := hermesDetachedCommand(bin, desktopArgs...).Start(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (h *HermesDesktop) Onboard() error {
@@ -125,6 +132,13 @@ func (h *HermesDesktop) packagedAppExists() bool {
 		}
 	}
 	return false
+}
+
+// shouldRunForeground reports whether Hermes Desktop should stay attached to
+// the launcher terminal instead of detaching into the background. Help and
+// build-only invocations produce terminal output.
+func (h *HermesDesktop) shouldRunForeground(args []string) bool {
+	return hermesDesktopHasFlag(args, "--help", "-h", "--build-only")
 }
 
 // These roots mirror Hermes' own install layout:
@@ -868,5 +882,14 @@ func hermesAttachedCommand(name string, args ...string) *exec.Cmd {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	return cmd
+}
+
+// hermesDetachedCommand builds a command whose stdio is detached from the
+// launcher terminal and that runs in its own process group, so the desktop app
+// keeps running after the launcher exits without holding the launcher's tty.
+func hermesDetachedCommand(name string, args ...string) *exec.Cmd {
+	cmd := hermesCommand(name, args...)
+	cmd.SysProcAttr = hermesDesktopBackgroundSysProcAttr()
 	return cmd
 }

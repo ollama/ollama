@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -635,13 +636,20 @@ func writeHermesDesktopTestBinary(t *testing.T, dir string) {
 	}
 }
 
-func readHermesDesktopInvocations(t *testing.T, home string) string {
+func waitForHermesDesktopInvocations(t *testing.T, home, want string) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(home, "hermes-invocations.log"))
-	if err != nil {
-		t.Fatal(err)
+	path := filepath.Join(home, "hermes-invocations.log")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil && strings.TrimSpace(string(data)) == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected hermes invocations %q, got %q", want, strings.TrimSpace(string(data)))
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	return strings.TrimSpace(string(data))
 }
 
 func TestHermesDesktopRun(t *testing.T) {
@@ -660,9 +668,8 @@ func TestHermesDesktopRun(t *testing.T) {
 		{
 			name:        "desktop subcommand",
 			goos:        "darwin",
-			args:        []string{"--foreground"},
 			clearPkgEnv: true,
-			want:        "[desktop --foreground]",
+			want:        "[desktop]",
 		},
 		{
 			name:       "skip build when packaged app exists",
@@ -726,11 +733,39 @@ func TestHermesDesktopRun(t *testing.T) {
 			if err := (&HermesDesktop{}).Run("", nil, tt.args); err != nil {
 				t.Fatalf("Run returned error: %v", err)
 			}
-			if got := readHermesDesktopInvocations(t, tmpDir); got != tt.want {
-				t.Fatalf("expected %q, got %q", tt.want, got)
-			}
+			waitForHermesDesktopInvocations(t, tmpDir, tt.want)
 		})
 	}
+}
+
+func TestHermesDesktopRunBackgroundNonBlocking(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, runtime.GOOS)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// The fake hermes binary sleeps before recording its invocation, so a
+	// blocking (foreground) Run would not return until the sleep finishes.
+	// A detached background launch returns immediately and the invocation
+	// appears later.
+	bin := filepath.Join(tmpDir, "hermes")
+	script := "#!/bin/sh\nsleep 1\nprintf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	if err := (&HermesDesktop{}).Run("", nil, nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed >= time.Second {
+		t.Fatalf("Run blocked for %v; expected a detached background launch to return immediately", elapsed)
+	}
+	waitForHermesDesktopInvocations(t, tmpDir, "[desktop]")
 }
 
 func TestHermesDesktopRunUsesWindowsLocalAppDataPackage(t *testing.T) {
