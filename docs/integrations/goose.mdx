@@ -21,8 +21,9 @@ Install [Goose](https://block.github.io/goose/docs/getting-started/installation/
 
 ### Connecting to ollama.com
 
-1. Create an [API key](https://ollama.com/settings/keys) on ollama.com and save it in your `.env` 
-2. In Goose, set **API Host** to `https://ollama.com`
+1. Create an [API key](https://ollama.com/settings/keys) on ollama.com.
+2. Sign in with `ollama signin`, or `export OLLAMA_API_KEY=xxxxxxxxxxxxxxxx` in a `.env` file that is sourced before `ollama serve`
+2. In Goose, set **API Host** to `http://localhost:11434` (the local `ollama` will proxy it)
 
 
 ## Goose CLI
@@ -43,7 +44,7 @@ Install [Goose](https://block.github.io/goose/docs/getting-started/installation/
 
 ### Connecting to ollama.com
 
-1. Create an [API key](https://ollama.com/settings/keys) on ollama.com and save it in your `.env` 
-2. Run `goose configure`
+1. Create an [API key](https://ollama.com/settings/keys) on ollama.com.
+2. Sign in with `ollama signin`, or `export OLLAMA_API_KEY=xxxxxxxxxxxxxxxx` in a `.env` file that is sourced before `ollama serve`2. Run `goose configure`
 3. Select **Configure Providers** and select **Ollama**
-4. Update **OLLAMA_HOST** to `https://ollama.com`
+4. Update **OLLAMA_HOST** to `http://localhost:11434`
