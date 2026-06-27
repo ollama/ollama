@@ -572,17 +572,59 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// support for generate
 		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
 			genTruncate := (req.Truncate == nil || *req.Truncate) && !m.IsMLX()
-			prompt, media, err = chatPrompt(c.Request.Context(), m, r.Tokenize, optionsForPrompt(opts, r), values.Messages, []api.Tool{}, req.Think, genTruncate)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
+			if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
+				nativeReq, err := prepareNativeChatRequest(c.Request.Context(), m, r, opts, llm.ChatRequest{
+					Messages:    values.Messages,
+					Format:      req.Format,
+					Options:     opts,
+					Think:       req.Think,
+					Shift:       req.Shift == nil || *req.Shift,
+					Logprobs:    req.Logprobs,
+					TopLogprobs: req.TopLogprobs,
+				}, genTruncate)
+				if err != nil {
+					slog.Error("chat template prompt error", "error", err)
+					var serr api.StatusError
+					if errors.As(err, &serr) {
+						c.JSON(serr.StatusCode, gin.H{"error": serr.ErrorMessage})
+					} else {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					}
+					return
+				}
+				nativeReq.Messages, media, err = imageTaggedMessages(m, nativeReq.Messages, 0, true)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				prompt, err = r.ApplyChatTemplate(c.Request.Context(), nativeReq)
+				if err != nil {
+					var serr api.StatusError
+					if errors.As(err, &serr) {
+						c.JSON(serr.StatusCode, gin.H{"error": serr.ErrorMessage})
+					} else {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					}
+					return
+				}
+				// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
+				if req.Context != nil {
+					b.WriteString(prompt)
+					prompt = b.String()
+				}
+			} else {
+				prompt, media, err = chatPrompt(c.Request.Context(), m, r.Tokenize, optionsForPrompt(opts, r), values.Messages, []api.Tool{}, req.Think, genTruncate)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
+				if req.Context != nil {
+					b.WriteString(prompt)
+					prompt = b.String()
+				}
+				leadingBOS = leadingBOSForModel(m)
 			}
-			// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
-			if req.Context != nil {
-				b.WriteString(prompt)
-				prompt = b.String()
-			}
-			leadingBOS = leadingBOSForModel(m)
 		} else {
 			// Direct template execution flow.
 			if err := tmpl.Execute(&b, values); err != nil {
@@ -2968,8 +3010,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	writeChatResponse(c, req, ch)
 }
 
+func prepareNativeChatRequest(ctx context.Context, m *Model, r llm.LlamaServer, opts *api.Options, nativeReq llm.ChatRequest, truncate bool) (llm.ChatRequest, error) {
+	var err error
+	nativeReq.Messages, err = truncateNativeChatMessages(ctx, m, r, optionsForPrompt(opts, r), nativeReq, truncate)
+	return nativeReq, err
+}
+
 func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model, r llm.LlamaServer, opts *api.Options, msgs []api.Message, checkpointStart, checkpointLoaded time.Time) {
-	nativeReq := llm.ChatRequest{
+	truncate := req.Truncate == nil || *req.Truncate
+	nativeReq, err := prepareNativeChatRequest(c.Request.Context(), m, r, opts, llm.ChatRequest{
 		Messages:    msgs,
 		Tools:       req.Tools,
 		Format:      req.Format,
@@ -2978,10 +3027,7 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 		Shift:       req.Shift == nil || *req.Shift,
 		Logprobs:    req.Logprobs,
 		TopLogprobs: req.TopLogprobs,
-	}
-	truncate := req.Truncate == nil || *req.Truncate
-	var err error
-	nativeReq.Messages, err = truncateNativeChatMessages(c.Request.Context(), m, r, optionsForPrompt(opts, r), nativeReq, truncate)
+	}, truncate)
 	if err != nil {
 		slog.Error("chat template prompt error", "error", err)
 		var serr api.StatusError

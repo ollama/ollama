@@ -17,6 +17,10 @@ type Batch struct {
 	// Length equals the batch dimension of InputIDs.
 	SeqQueryLens []int32
 
+	// Hidden is the target hidden state a draft model fuses with its input
+	// embedding for this step. It is nil for ordinary forward passes.
+	Hidden *mlx.Array
+
 	// Memo is per-forward memoization used to cache results, such as masks,
 	// which are often the same across layers.
 	Memo Memo

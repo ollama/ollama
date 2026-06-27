@@ -1,512 +1,243 @@
 package mlxrunner
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
-	"os"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
-	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
-	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
-const (
-	mtpDefaultInitialDraftTokens = 4
-	mtpDefaultMaxDraftTokens     = 16
-)
+// mtpPendingFlushTokens caps how many committed look-ahead tokens wait in the
+// pending buffer before a batched flush, bounding the pinned hidden states
+// regardless of what else triggers a flush.
+const mtpPendingFlushTokens = 32
 
-type mtpDraftSchedule string
+// mtpDrafter drafts with a model's multi-token-prediction head, fed through
+// the committed-stream reports. The draft KV pairs each slot S with the
+// look-ahead token at S+1 fused with the target hidden at S, so a pair
+// completes only when the next token arrives.
+type mtpDrafter struct {
+	spec *speculation
 
-const (
-	mtpDraftScheduleHeuristic mtpDraftSchedule = "heuristic"
-	mtpDraftScheduleConstant  mtpDraftSchedule = "constant"
-)
+	// frontier is the slot after the last reported token; frontierHidden is
+	// the pinned target hidden at frontier-1, fused into the next pair.
+	frontier       int
+	frontierHidden *mlx.Array
 
-type mtpStats struct {
-	iterations       int
-	drafted          int
-	accepted         int
-	mismatches       int
-	allAccepted      int
-	batched          int
-	serial           int
-	maxDraft         int
-	targetDuration   time.Duration
-	draftDuration    time.Duration
-	validateDuration time.Duration
+	// committedDraftOffset is the slot after the last pair written to the
+	// draft caches; later pairs wait pinned in the pending lists until
+	// flushed. pendingCount is the look-ahead tokens those lists hold, summed
+	// across the buffered runs.
+	committedDraftOffset int
+	pendingTokens        []*mlx.Array
+	pendingHiddens       []*mlx.Array
+	pendingCount         int
+
+	// heldHidden is the frontier row's pre-unembed hidden and heldProjected
+	// its fusion hidden, carried from the last flush so the first proposal
+	// reuses them without a head call.
+	heldHidden    *mlx.Array
+	heldProjected *mlx.Array
 }
 
-type mtpOptions struct {
-	initialDraftTokens int
-	maxDraftTokens     int
-	draftSchedule      mtpDraftSchedule
-	serialValidate     bool
+// newMTPDrafter returns the MTP drafter cursor for this request, syncing its
+// pairing frontier to the draft caches' restored offset.
+func newMTPDrafter(s *speculation) *mtpDrafter {
+	d := &mtpDrafter{spec: s}
+	if len(s.draftKV) > 0 {
+		// A restored prefix arrives with the draft caches already written;
+		// pairing resumes from their absolute offset.
+		d.committedDraftOffset = s.draftKV[0].Offset()
+		d.frontier = d.committedDraftOffset
+	}
+	return d
 }
 
-func (r *Runner) mtpDefaults(sample bool) base.MTPDefaults {
-	defaults := base.MTPDefaults{
-		InitialDraftTokens: mtpDefaultInitialDraftTokens,
-		MaxDraftTokens:     mtpDefaultMaxDraftTokens,
-		Enabled:            true,
-	}
-	if p, ok := r.Model.(base.MTPDefaultsProvider); ok {
-		defaults = p.MTPDraftDefaults(sample)
-	}
-	if defaults.InitialDraftTokens <= 0 {
-		defaults.InitialDraftTokens = mtpDefaultInitialDraftTokens
-	}
-	if defaults.MaxDraftTokens <= 0 {
-		defaults.MaxDraftTokens = mtpDefaultMaxDraftTokens
-	}
-	return defaults
-}
-
-func (r *Runner) loadMTPOptions(sample bool) mtpOptions {
-	defaults := r.mtpDefaults(sample)
-
-	opts := mtpOptions{
-		initialDraftTokens: defaults.InitialDraftTokens,
-		maxDraftTokens:     defaults.MaxDraftTokens,
-		draftSchedule:      mtpDraftScheduleConstant,
-	}
-	if v := positiveEnvInt("OLLAMA_MLX_MTP_MAX_DRAFT_TOKENS"); v > 0 {
-		opts.maxDraftTokens = v
-	}
-	if v := positiveEnvInt("OLLAMA_MLX_MTP_INITIAL_DRAFT_TOKENS"); v > 0 {
-		opts.initialDraftTokens = v
-	}
-	if opts.initialDraftTokens > opts.maxDraftTokens {
-		opts.initialDraftTokens = opts.maxDraftTokens
-	}
-	if b, err := strconv.ParseBool(os.Getenv("OLLAMA_MLX_MTP_SERIAL_VALIDATE")); err == nil {
-		opts.serialValidate = b
-	}
-	switch schedule := strings.ToLower(strings.TrimSpace(os.Getenv("OLLAMA_MLX_MTP_DRAFT_SCHEDULE"))); schedule {
-	case "", string(mtpDraftScheduleConstant):
-		opts.draftSchedule = mtpDraftScheduleConstant
-	case string(mtpDraftScheduleHeuristic):
-		opts.draftSchedule = mtpDraftScheduleHeuristic
-	default:
-		slog.Warn("invalid MTP env setting", "key", "OLLAMA_MLX_MTP_DRAFT_SCHEDULE", "value", schedule)
-	}
-	return opts
-}
-
-func positiveEnvInt(key string) int {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return 0
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v <= 0 {
-		slog.Warn("invalid MTP env setting", "key", key, "value", raw)
-		return 0
-	}
-	return v
-}
-
-func (r *Runner) useGreedyMTP(opts sampler.Options) bool {
-	if r.Draft == nil {
-		return false
-	}
-	if _, ok := r.Draft.(base.MTPDraftModel); !ok {
-		return false
-	}
-	if _, ok := r.Model.(base.MTPEmbeddingModel); !ok {
-		return false
-	}
-	if !r.mtpDefaults(false).Enabled {
-		return false
-	}
-	if opts.Logprobs || opts.TopLogprobs > 0 {
-		return false
-	}
-	if opts.Temperature != 0 {
-		return false
-	}
-	repeatPenaltyNeutral := opts.RepeatPenalty <= 0 || opts.RepeatPenalty == 1
-	topPNeutral := opts.TopP <= 0 || opts.TopP >= 1
-	topKNeutral := opts.TopK <= 0
-	return repeatPenaltyNeutral && opts.PresencePenalty == 0 && opts.FrequencyPenalty == 0 && topPNeutral && topKNeutral && opts.MinP == 0
-}
-
-func (r *Runner) useSampleMTP(opts sampler.Options) bool {
-	if serial, err := strconv.ParseBool(os.Getenv("OLLAMA_MLX_MTP_SERIAL_VALIDATE")); err == nil && serial {
-		return false
-	}
-	if r.Draft == nil {
-		return false
-	}
-	if _, ok := r.Draft.(base.MTPDraftModel); !ok {
-		return false
-	}
-	if _, ok := r.Model.(base.MTPEmbeddingModel); !ok {
-		return false
-	}
-	if !r.mtpDefaults(true).Enabled {
-		return false
-	}
-	if opts.Logprobs || opts.TopLogprobs > 0 {
-		return false
-	}
-	return opts.Temperature != 0
-}
-
-func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, session *cacheSession, caches []cache.Cache, seed []int32, position *int, started time.Time) error {
-	targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
-	draft := r.Draft.(base.MTPDraftModel)
-	mtpOpts := r.loadMTPOptions(false)
-	stats := mtpStats{maxDraft: mtpOpts.initialDraftTokens}
-	draftLimit := mtpOpts.initialDraftTokens
-	slog.Info("MTP greedy decode enabled", "initial_draft_tokens", mtpOpts.initialDraftTokens, "max_draft_tokens", mtpOpts.maxDraftTokens, "draft_schedule", mtpOpts.draftSchedule, "serial_validate", mtpOpts.serialValidate)
-
-	targetForward := func(token *mlx.Array) *mlx.Array {
-		fwd := r.Model.Forward(&batch.Batch{
-			InputIDs:     token,
-			SeqOffsets:   []int32{int32(*position)},
-			SeqQueryLens: []int32{int32(token.Dim(1))},
-		}, caches)
-		*position += token.Dim(1)
-		return fwd
-	}
-
-	hidden := targetForward(mlx.FromValues(seed, 1, len(seed)))
-	current := sampler.Result{Token: greedyTokenFromLogits(r.lastLogits(hidden))}
-	mlx.Pin(current.Arrays()...)
-	mlx.Sweep()
-	mlx.AsyncEval(current.Arrays()...)
-	defer func() {
-		mlx.Unpin(current.Arrays()...)
-	}()
-
-	dec := decoder{tokenizer: r.Tokenizer}
-	final := CompletionResponse{Done: true, PromptEvalCount: len(request.Tokens), DoneReason: 1}
-	now := started
-
-	generated := 0
-	for generated < request.Options.NumPredict {
-		if err := ctx.Err(); err != nil {
-			return err
+func (d *mtpDrafter) committed(tokens, hiddens *mlx.Array, position int) {
+	n := tokens.Dim(1)
+	if len(d.spec.draftKV) > 0 {
+		// The pair at slot S fuses token[S+1] with hidden[S], so a run pairs its
+		// tokens with its own hiddens shifted one slot back: the first writable
+		// token takes the carried frontier hidden, each later token the row
+		// before it. Leading tokens whose slot is already buffered or written
+		// through (a proposal consumed the run's first token, or a restored
+		// prefix sits at the run start) are skipped; a slot below the frontier
+		// is a gap bug.
+		start := d.committedDraftOffset + d.pendingCount - position + 1
+		if start < 0 {
+			panic(fmt.Sprintf("mtp: committed run at %d leaves a pair gap at %d", position, d.committedDraftOffset+d.pendingCount))
 		}
-
-		t0 := time.Now()
-		hidden = targetForward(current.Token.ExpandDims(-1))
-		baseLogits := r.lastLogits(hidden)
-		stats.targetDuration += time.Since(t0)
-
-		if generated == 0 {
-			mlx.Eval(current.Arrays()...)
-			final.PromptEvalDuration = time.Since(now)
-			now = time.Now()
-		}
-
-		done, err := r.emitTokens(ctx, request, session, &dec, []sampler.Result{current}, &final, &generated)
-		if err != nil {
-			return err
-		}
-		if done {
-			break
-		}
-
-		stats.iterations++
-		maxDraft := min(draftLimit, request.Options.NumPredict-generated)
-		t0 = time.Now()
-		draftTokens := r.generateMTPDrafts(draft, targetEmbeddings, current.Token, hidden, caches, int32(*position-1), maxDraft)
-		draftCount := 0
-		if draftTokens != nil {
-			draftCount = draftTokens.Dim(1)
-			mlx.Pin(baseLogits, draftTokens)
-			mlx.Eval(draftTokens)
-			mlx.Sweep()
-		}
-		stats.draftDuration += time.Since(t0)
-		stats.drafted += draftCount
-		var next sampler.Result
-		if draftCount == 0 {
-			next = sampler.Result{Token: greedyTokenFromLogits(baseLogits)}
-		} else {
-			var accepted int
-			t0 = time.Now()
-			next, accepted, done, err = r.acceptMTPDrafts(ctx, request, session, &dec, caches, position, baseLogits, draftTokens, &final, &generated, &stats, mtpOpts)
-			stats.validateDuration += time.Since(t0)
-			mlx.Unpin(baseLogits, draftTokens)
-			if err != nil {
-				return err
+		if start < n {
+			ids := tokens.Slice(mlx.Slice(), mlx.Slice(start, n))
+			var h *mlx.Array
+			if start == 0 {
+				h = mlx.Concatenate([]*mlx.Array{d.frontierHidden, hiddens.Slice(mlx.Slice(), mlx.Slice(0, n-1), mlx.Slice())}, 1)
+			} else {
+				h = hiddens.Slice(mlx.Slice(), mlx.Slice(start-1, n-1), mlx.Slice())
 			}
-			stats.accepted += accepted
-			switch {
-			case mtpOpts.draftSchedule == mtpDraftScheduleConstant:
-			case accepted == draftCount:
-				stats.allAccepted++
-				draftLimit = min(mtpOpts.maxDraftTokens, draftLimit+2)
-			default:
-				stats.mismatches++
-				draftLimit = max(1, draftLimit-1)
-			}
-			if mtpOpts.draftSchedule == mtpDraftScheduleConstant {
-				if accepted == draftCount {
-					stats.allAccepted++
-				} else {
-					stats.mismatches++
-				}
-			}
-			stats.maxDraft = max(stats.maxDraft, draftLimit)
-			if next.Token == nil {
-				mlx.Sweep()
-			}
-			if done || generated >= request.Options.NumPredict {
-				break
+			d.queueCacheWrites(ids, h)
+		}
+	}
+
+	d.frontier = position + n
+	d.setFrontierHidden(lastHiddenRow(hiddens))
+}
+
+// finish settles the drafter when generation ends: current completes the
+// frontier pair, leveling the draft caches with the target's resting offset.
+//
+// TODO: leveling the draft to the target writes a boundary entry whose
+// look-ahead token is outside the stored prefix (here, the never-committed
+// current). When a later request restores this prefix and diverges at the
+// boundary, that entry is stale and lowers draft acceptance. EAGLE keeps the
+// draft one slot behind the target so the unconfirmed boundary entry is never
+// written (its bigram partner token[S+1] does not exist yet); we should do the
+// same rather than level here. Regenerating hidden[S] to re-pair the boundary
+// on the next request is a separate, re-prefill-bound concern for recurrent
+// targets.
+func (d *mtpDrafter) finish(current *mlx.Array) {
+	if len(d.spec.draftKV) == 0 {
+		return
+	}
+	d.settle(current)
+}
+
+// settle completes any open frontier pair with current, then flushes.
+func (d *mtpDrafter) settle(current *mlx.Array) {
+	if d.frontierHidden != nil && d.frontier-1 == d.committedDraftOffset+d.pendingCount {
+		d.queueCacheWrites(current.ExpandDims(-1), d.frontierHidden)
+	}
+	d.flush()
+}
+
+func (d *mtpDrafter) close() {
+	d.flush()
+	d.setFrontierHidden(nil)
+	d.setHeld(nil, nil)
+}
+
+// queueCacheWrites buffers completed draft-cache writes — look-ahead tokens
+// fused with their target hiddens — flushing once the buffer reaches the token
+// cap so the pinned hiddens stay bounded. flush coalesces the buffered writes
+// into one head forward, so a contiguous run lands in a single draft-cache extend.
+func (d *mtpDrafter) queueCacheWrites(tokens, hiddens *mlx.Array) {
+	mlx.Pin(tokens, hiddens)
+	d.pendingTokens = append(d.pendingTokens, tokens)
+	d.pendingHiddens = append(d.pendingHiddens, hiddens)
+	d.pendingCount += tokens.Dim(1)
+	if d.pendingCount >= mtpPendingFlushTokens {
+		d.flush()
+	}
+}
+
+// flush writes the pending pairs to the draft caches in one head forward,
+// dropping speculative entries past the committed range first and holding
+// the last row's logits and projected hidden for the next proposal chain.
+func (d *mtpDrafter) flush() {
+	if len(d.pendingTokens) == 0 {
+		return
+	}
+	for _, c := range d.spec.draftKV {
+		if c.Offset() > d.committedDraftOffset {
+			if !c.Restore(nil, d.committedDraftOffset) {
+				panic(fmt.Sprintf("mtp: draft cache rewind to %d failed", d.committedDraftOffset))
 			}
 		}
-
-		mlx.Pin(next.Arrays()...)
-		old := current
-		current = next
-		mlx.Unpin(old.Arrays()...)
-		mlx.Sweep()
-		mlx.AsyncEval(current.Arrays()...)
-
-		if generated%256 == 0 {
-			mlx.ClearCache()
-		}
 	}
 
-	final.EvalCount = generated
-	final.EvalDuration = time.Since(now)
-	acceptance := 0.0
-	if stats.drafted > 0 {
-		acceptance = float64(stats.accepted) / float64(stats.drafted)
+	ids := mlx.Concatenate(d.pendingTokens, 1)
+	hiddens := mlx.Concatenate(d.pendingHiddens, 1)
+	hidden, projected := d.spec.draft.Draft(&batch.Batch{
+		InputIDs:     ids,
+		SeqOffsets:   []int32{int32(d.committedDraftOffset)},
+		SeqQueryLens: []int32{int32(ids.Dim(1))},
+		Hidden:       hiddens,
+	}, d.spec.caches)
+	d.setHeld(lastHiddenRow(hidden), lastHiddenRow(projected))
+	d.committedDraftOffset += ids.Dim(1)
+
+	// Force the draft writes: a session that never drafts would otherwise
+	// leave the flush chain unevaluated, pinning every hidden until close.
+	state := make([]*mlx.Array, 0, 2*len(d.spec.draftKV))
+	for _, c := range d.spec.draftKV {
+		state = append(state, c.State()...)
 	}
-	avgDraft := 0.0
-	avgAccepted := 0.0
-	if stats.iterations > 0 {
-		avgDraft = float64(stats.drafted) / float64(stats.iterations)
-		avgAccepted = float64(stats.accepted) / float64(stats.iterations)
-	}
-	slog.Info("MTP decode stats", "generated", generated, "drafted", stats.drafted, "accepted", stats.accepted, "acceptance", acceptance, "iterations", stats.iterations, "avg_draft", avgDraft, "avg_accepted", avgAccepted, "batched", stats.batched, "serial", stats.serial, "mismatches", stats.mismatches, "all_accepted", stats.allAccepted, "max_draft", stats.maxDraft, "draft_schedule", mtpOpts.draftSchedule, "target_duration", stats.targetDuration, "draft_duration", stats.draftDuration, "validate_duration", stats.validateDuration)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case request.Responses <- final:
+	mlx.AsyncEval(state...)
+
+	mlx.Unpin(d.pendingTokens...)
+	mlx.Unpin(d.pendingHiddens...)
+	d.pendingTokens, d.pendingHiddens = nil, nil
+	d.pendingCount = 0
+}
+
+func (d *mtpDrafter) setFrontierHidden(h *mlx.Array) {
+	mlx.Pin(h)
+	mlx.Unpin(d.frontierHidden)
+	d.frontierHidden = h
+}
+
+// setHeld replaces the held flush outputs, pinned until the next flush or close.
+func (d *mtpDrafter) setHeld(hidden, projected *mlx.Array) {
+	mlx.Pin(hidden, projected)
+	mlx.Unpin(d.heldHidden, d.heldProjected)
+	d.heldHidden, d.heldProjected = hidden, projected
+}
+
+// propose drafts a token chain after the not-yet-validated current token.
+// A head with draft caches settles the frontier pair first, so its first step
+// reuses the held frontier row with no head call; a cacheless head re-attends
+// the target caches read-only, anchored at the last committed slot.
+func (d *mtpDrafter) propose(current *mlx.Array, maxTokens int) *draftCandidates {
+	if maxTokens <= 0 || d.frontierHidden == nil {
 		return nil
 	}
-}
+	r := d.spec.r
 
-func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, session *cacheSession, caches []cache.Cache, seed []int32, position *int, started time.Time) error {
-	targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
-	draft := r.Draft.(base.MTPDraftModel)
-	mtpOpts := r.loadMTPOptions(true)
-	stats := mtpStats{maxDraft: mtpOpts.initialDraftTokens}
-	draftLimit := mtpOpts.initialDraftTokens
-	slog.Info("MTP sample decode enabled", "initial_draft_tokens", mtpOpts.initialDraftTokens, "max_draft_tokens", mtpOpts.maxDraftTokens, "draft_schedule", mtpOpts.draftSchedule, "serial_validate", mtpOpts.serialValidate)
-
-	targetForward := func(token *mlx.Array) *mlx.Array {
-		fwd := r.Model.Forward(&batch.Batch{
-			InputIDs:     token,
-			SeqOffsets:   []int32{int32(*position)},
-			SeqQueryLens: []int32{int32(token.Dim(1))},
-		}, caches)
-		*position += token.Dim(1)
-		return fwd
-	}
-
-	hidden := targetForward(mlx.FromValues(seed, 1, len(seed)))
-	current := r.Sampler.Sample([]int{pipelineSlot}, r.lastLogits(hidden))
-	mlx.Pin(current.Arrays()...)
-	mlx.Sweep()
-	mlx.AsyncEval(current.Arrays()...)
-	defer func() {
-		mlx.Unpin(current.Arrays()...)
-	}()
-
-	dec := decoder{tokenizer: r.Tokenizer}
-	final := CompletionResponse{Done: true, PromptEvalCount: len(request.Tokens), DoneReason: 1}
-	now := started
-
-	generated := 0
-	for generated < request.Options.NumPredict {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		t0 := time.Now()
-		hidden = targetForward(mtpTokenInput(current.Token))
-		baseLogits := r.lastLogits(hidden)
-		stats.targetDuration += time.Since(t0)
-
-		if generated == 0 {
-			mlx.Eval(current.Arrays()...)
-			final.PromptEvalDuration = time.Since(now)
-			now = time.Now()
-		}
-
-		done, err := r.emitTokens(ctx, request, session, &dec, []sampler.Result{current}, &final, &generated)
-		if err != nil {
-			return err
-		}
-		if done {
-			break
-		}
-
-		stats.iterations++
-		maxDraft := min(draftLimit, request.Options.NumPredict-generated)
-		t0 = time.Now()
-		candidates := r.generateMTPDraftCandidates(draft, targetEmbeddings, current.Token, hidden, caches, int32(*position-1), maxDraft)
-		draftCount := 0
-		var candidateArrays []*mlx.Array
-		if candidates != nil {
-			draftCount = candidates.tokens.Dim(1)
-			candidateArrays = append([]*mlx.Array{baseLogits}, candidates.Arrays()...)
-			mlx.Pin(candidateArrays...)
-			mlx.Sweep()
-		}
-		stats.draftDuration += time.Since(t0)
-		stats.drafted += draftCount
-
-		var next sampler.Result
-		if draftCount == 0 {
-			next = r.Sampler.Sample([]int{pipelineSlot}, baseLogits)
-		} else {
-			var accepted int
-			t0 = time.Now()
-			next, accepted, done, err = r.acceptSampleMTPDrafts(ctx, request, session, &dec, caches, position, baseLogits, candidates, &final, &generated, &stats)
-			stats.validateDuration += time.Since(t0)
-			mlx.Unpin(candidateArrays...)
-			if err != nil {
-				return err
-			}
-			stats.accepted += accepted
-			switch {
-			case mtpOpts.draftSchedule == mtpDraftScheduleConstant:
-			case accepted == draftCount:
-				stats.allAccepted++
-				draftLimit = min(mtpOpts.maxDraftTokens, draftLimit+2)
-			default:
-				stats.mismatches++
-				draftLimit = max(1, draftLimit-1)
-			}
-			if mtpOpts.draftSchedule == mtpDraftScheduleConstant {
-				if accepted == draftCount {
-					stats.allAccepted++
-				} else {
-					stats.mismatches++
-				}
-			}
-			stats.maxDraft = max(stats.maxDraft, draftLimit)
-			if next.Token == nil {
-				mlx.Sweep()
-			}
-			if done || generated >= request.Options.NumPredict {
-				break
-			}
-		}
-
-		mlx.Pin(next.Arrays()...)
-		old := current
-		current = next
-		mlx.Unpin(old.Arrays()...)
-		mlx.Sweep()
-		mlx.AsyncEval(current.Arrays()...)
-
-		if generated%256 == 0 {
-			mlx.ClearCache()
+	if len(d.spec.draftKV) > 0 {
+		d.settle(current)
+		if d.heldHidden == nil {
+			return nil
 		}
 	}
 
-	final.EvalCount = generated
-	final.EvalDuration = time.Since(now)
-	acceptance := 0.0
-	if stats.drafted > 0 {
-		acceptance = float64(stats.accepted) / float64(stats.drafted)
-	}
-	avgDraft := 0.0
-	avgAccepted := 0.0
-	if stats.iterations > 0 {
-		avgDraft = float64(stats.drafted) / float64(stats.iterations)
-		avgAccepted = float64(stats.accepted) / float64(stats.iterations)
-	}
-	slog.Info("MTP decode stats", "mode", "sample", "generated", generated, "drafted", stats.drafted, "accepted", stats.accepted, "acceptance", acceptance, "iterations", stats.iterations, "avg_draft", avgDraft, "avg_accepted", avgAccepted, "batched", stats.batched, "serial", stats.serial, "mismatches", stats.mismatches, "all_accepted", stats.allAccepted, "max_draft", stats.maxDraft, "draft_schedule", mtpOpts.draftSchedule, "target_duration", stats.targetDuration, "draft_duration", stats.draftDuration, "validate_duration", stats.validateDuration)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case request.Responses <- final:
-		return nil
-	}
-}
-
-type mtpDraftCandidates struct {
-	tokens *mlx.Array
-	// dist is the proposal distribution used to sample each drafted token.
-	dist sampler.Distribution
-}
-
-func (c *mtpDraftCandidates) Arrays() []*mlx.Array {
-	if c == nil {
-		return nil
-	}
-	return append([]*mlx.Array{c.tokens}, c.dist.Arrays()...)
-}
-
-func (r *Runner) generateMTPDrafts(draft base.MTPDraftModel, target base.MTPEmbeddingModel, token *mlx.Array, hidden *mlx.Array, caches []cache.Cache, position int32, maxDraft int) *mlx.Array {
-	if maxDraft <= 0 {
-		return nil
-	}
-
-	lastToken := token.ExpandDims(-1)
-	lastHidden := hidden
-	draftTokens := make([]*mlx.Array, 0, maxDraft)
-
-	// Gemma4 assistant MTP is trained as "single-position" drafting:
-	// keep the RoPE/cache position anchored at the last target-seen token
-	// while the proposed token and projected hidden state advance.
-	for range maxDraft {
-		tokenEmbedding := target.TokenEmbeddings(lastToken)
-		inputs := tokenEmbedding.Concatenate(-1, lastHidden)
-		logits, projected := draft.Draft(inputs, position, caches)
-		stepLogits := r.lastLogitsFromLogits(logits)
-		nextToken := greedyTokenFromLogits(stepLogits)
-
-		lastToken = nextToken.ExpandDims(-1)
-		lastHidden = projected
-		draftTokens = append(draftTokens, lastToken)
-	}
-	if len(draftTokens) == 0 {
-		return nil
-	}
-	return mlx.Concatenate(draftTokens, 1)
-}
-
-func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target base.MTPEmbeddingModel, token *mlx.Array, hidden *mlx.Array, caches []cache.Cache, position int32, maxDraft int) *mtpDraftCandidates {
-	if maxDraft <= 0 {
-		return nil
-	}
-
-	lastToken := mtpTokenInput(token)
-	lastHidden := hidden
-	draftTokens := make([]*mlx.Array, 0, maxDraft)
-	draftDists := make([]sampler.Distribution, 0, maxDraft)
+	lastToken := current.ExpandDims(-1)
+	lastHidden := d.frontierHidden
+	draftDists := make([]sampler.Distribution, 0, maxTokens)
 	var prefix *mlx.Array
 
-	// Gemma4 assistant MTP is trained as "single-position" drafting:
-	// keep the RoPE/cache position anchored at the last target-seen token
-	// while the proposed token and projected hidden state advance.
-	for range maxDraft {
-		tokenEmbedding := target.TokenEmbeddings(lastToken)
-		inputs := tokenEmbedding.Concatenate(-1, lastHidden)
-		logits, projected := draft.Draft(inputs, position, caches)
-		stepLogits := r.lastLogitsFromLogits(logits)
+	for i := range maxTokens {
+		var hidden, projected *mlx.Array
+		if i == 0 && len(d.spec.draftKV) > 0 {
+			// The settle flush already produced the frontier row; reuse it
+			// instead of re-running the head.
+			hidden, projected = d.heldHidden, d.heldProjected
+		} else {
+			// A head with draft caches writes each draft token to the next
+			// draft-cache slot, advancing one per step from the last committed
+			// slot (the held i==0 step stands in for that slot). A cacheless
+			// head stays at the last committed slot every step, re-attending
+			// the committed prefix read-only ("single-position").
+			pos := d.frontier - 1
+			if len(d.spec.draftKV) > 0 {
+				pos = d.frontier - 1 + i
+			}
+			hidden, projected = d.spec.draft.Draft(&batch.Batch{
+				InputIDs:     lastToken,
+				SeqOffsets:   []int32{int32(pos)},
+				SeqQueryLens: []int32{1},
+				Hidden:       lastHidden,
+			}, d.spec.caches)
+		}
+		// Unembed only the row being sampled, never the batch.
+		stepLogits := d.spec.draft.Unembed(hidden).Squeeze(1)
+		lastHidden = projected
+		// The chain's earlier drafts ride along as the row's history, so
+		// penalties shape proposals the same way they shape validation.
 		dist := r.Sampler.Distribution(pipelineSlot, stepLogits, prefix)
 		nextToken := r.Sampler.SampleDistribution(pipelineSlot, dist)
 
-		lastToken = mtpTokenInput(nextToken)
-		lastHidden = projected
-		draftTokens = append(draftTokens, lastToken)
+		lastToken = nextToken.ExpandDims(-1)
 		draftDists = append(draftDists, dist)
 		if prefix == nil {
 			prefix = lastToken
@@ -514,363 +245,12 @@ func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target bas
 			prefix = prefix.Concatenate(1, lastToken)
 		}
 	}
-	if len(draftTokens) == 0 {
-		return nil
-	}
-	return &mtpDraftCandidates{
-		tokens: mlx.Concatenate(draftTokens, 1),
+	return &draftCandidates{
+		tokens: prefix,
 		dist:   sampler.ConcatenateDistributions(draftDists),
 	}
 }
 
-func (r *Runner) acceptMTPDrafts(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits *mlx.Array, draftTokens *mlx.Array, final *CompletionResponse, generated *int, stats *mtpStats, opts mtpOptions) (sampler.Result, int, bool, error) {
-	if opts.serialValidate {
-		stats.serial++
-		return r.acceptMTPDraftsSerial(ctx, request, session, dec, caches, position, baseLogits, draftTokens, final, generated)
-	}
-
-	stats.batched++
-	return r.acceptMTPDraftsBatched(ctx, request, session, dec, caches, position, baseLogits, draftTokens, final, generated)
-}
-
-// scheduleSpeculation schedules per-token snapshots at offsets
-// [before, before+draftCount) on every cache, so the speculative forward
-// captures a rollback point before each draft token's write.
-func scheduleSpeculation(caches []cache.Cache, before, draftCount int) {
-	offsets := make([]int, draftCount)
-	for i := range offsets {
-		offsets[i] = before + i
-	}
-	for _, c := range caches {
-		if c != nil {
-			c.PrepareSnapshots(offsets)
-		}
-	}
-}
-
-// commitSpeculation collects the captured snapshots and rolls every cache
-// back to before+accepted, keeping only the accepted prefix of the
-// speculative forward. The bonus token (at before+draftCount) is never
-// committed. On full acceptance no restore is needed.
-//
-// Rollback tries a live rewind first (Restore(nil)) and falls back to the
-// captured snapshot when the live state can't be rewound in place.
-func commitSpeculation(caches []cache.Cache, accepted, draftCount, before int) {
-	target := before + accepted
-	for _, c := range caches {
-		if c == nil {
-			continue
-		}
-		snaps := c.TakeSnapshots()
-		if accepted < draftCount {
-			// Close the snapshots we won't restore from before restoring: a
-			// snapshot restore on a wrapped RotatingKVCache copies out every
-			// outstanding lazy snapshot before it rebuilds the buffer, so
-			// dropping the unused ones first stops that copy-out from
-			// materializing snapshots we are about to discard anyway.
-			for i, s := range snaps {
-				if s != nil && i != accepted {
-					s.Close()
-					snaps[i] = nil
-				}
-			}
-			if !c.Restore(nil, target) && !c.Restore(snaps[accepted], target) {
-				panic(fmt.Sprintf("mtp: cache restore to %d failed", target))
-			}
-		}
-		for _, s := range snaps {
-			if s != nil {
-				s.Close()
-			}
-		}
-	}
-}
-
-func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits *mlx.Array, draftTokens *mlx.Array, final *CompletionResponse, generated *int) (sampler.Result, int, bool, error) {
-	before := *position
-	draftCount := draftTokens.Dim(1)
-
-	scheduleSpeculation(caches, before, draftCount)
-	hiddenSeq := r.Model.Forward(&batch.Batch{
-		InputIDs:     draftTokens,
-		SeqOffsets:   []int32{int32(before)},
-		SeqQueryLens: []int32{int32(draftCount)},
-	}, caches)
-
-	accepted := 0
-	var next sampler.Result
-	done := false
-
-	selectedTokens := r.mtpValidationTokens(baseLogits, hiddenSeq)
-	mlx.Eval(draftTokens, selectedTokens)
-	draftIDs := draftTokens.Ints()
-	selectedIDs := selectedTokens.Ints()
-	if len(selectedIDs) < draftCount+1 {
-		// Drain the scheduled snapshots and roll the speculative forward back
-		// out of the live caches before bailing, so the abandoned drafts don't
-		// reach the trie via session.close().
-		commitSpeculation(caches, 0, draftCount, before)
-		return sampler.Result{}, accepted, false, fmt.Errorf("mtp validation produced %d tokens for %d draft tokens", len(selectedIDs), draftCount)
-	}
-
-	for i, id := range draftIDs {
-		if selectedIDs[i] != id {
-			next = sampler.Result{Token: mtpTokenAt(selectedTokens, i)}
-			break
-		}
-		accepted++
-		if r.Tokenizer.IsEOS(int32(id)) {
-			done = true
-			break
-		}
-	}
-
-	commitSpeculation(caches, accepted, draftCount, before)
-	*position = before + accepted
-
-	emitted, err := r.emitTokens(ctx, request, session, dec, draftResults(draftIDs[:accepted]), final, generated)
-	if err != nil {
-		return sampler.Result{}, accepted, emitted || done, err
-	}
-	if emitted || done {
-		return sampler.Result{}, accepted, true, nil
-	}
-	if next.Token == nil {
-		next = sampler.Result{Token: mtpTokenAt(selectedTokens, draftCount)}
-	}
-	return next, accepted, false, nil
-}
-
-func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits *mlx.Array, candidates *mtpDraftCandidates, final *CompletionResponse, generated *int, stats *mtpStats) (sampler.Result, int, bool, error) {
-	stats.batched++
-
-	before := *position
-	draftCount := candidates.tokens.Dim(1)
-	scheduleSpeculation(caches, before, draftCount)
-	hiddenSeq := r.Model.Forward(&batch.Batch{
-		InputIDs:     candidates.tokens,
-		SeqOffsets:   []int32{int32(before)},
-		SeqQueryLens: []int32{int32(draftCount)},
-	}, caches)
-
-	targetDist := r.Sampler.Distribution(pipelineSlot, r.mtpValidationLogits(baseLogits, hiddenSeq), candidates.tokens)
-	draftDist := candidates.dist
-	acceptedMask := r.mtpSampleAcceptedMask(targetDist.SliceRows(0, draftCount), draftDist, candidates.tokens)
-	mlx.Eval(candidates.tokens, acceptedMask)
-
-	draftIDs := candidates.tokens.Ints()
-	acceptedFlags := acceptedMask.Ints()
-	accepted := 0
-	for _, ok := range acceptedFlags {
-		if ok == 0 {
-			break
-		}
-		accepted++
-	}
-	if accepted > draftCount {
-		// Drain the scheduled snapshots and roll the speculative forward back
-		// out of the live caches before bailing, so the abandoned drafts don't
-		// reach the trie via session.close().
-		commitSpeculation(caches, 0, draftCount, before)
-		return sampler.Result{}, 0, false, fmt.Errorf("mtp sample validation accepted %d tokens for %d draft tokens", accepted, draftCount)
-	}
-
-	commitIDs := make([]int32, 0, accepted+1)
-	done := false
-	for i, id := range draftIDs[:accepted] {
-		commitIDs = append(commitIDs, int32(id))
-		if r.Tokenizer.IsEOS(int32(id)) {
-			done = true
-			accepted = i + 1
-			commitIDs = commitIDs[:accepted]
-			break
-		}
-	}
-
-	commitSpeculation(caches, accepted, draftCount, before)
-	*position = before + accepted
-
-	emitted, err := r.emitTokens(ctx, request, session, dec, draftResults(draftIDs[:accepted]), final, generated)
-	if err != nil {
-		return sampler.Result{}, accepted, emitted || done, err
-	}
-	if emitted || done {
-		r.Sampler.Commit(pipelineSlot, commitIDs)
-		return sampler.Result{}, accepted, true, nil
-	}
-
-	var nextToken *mlx.Array
-	if accepted == draftCount {
-		nextToken = r.mtpSampleTokenAt(targetDist, draftCount)
-	} else {
-		nextToken = r.mtpSampleResidualToken(targetDist, draftDist, accepted)
-	}
-	mlx.Eval(nextToken)
-	nextID := int32(tokenID(nextToken))
-	commitIDs = append(commitIDs, nextID)
-	r.Sampler.Commit(pipelineSlot, commitIDs)
-
-	return sampler.Result{Token: nextToken}, accepted, false, nil
-}
-
-func (r *Runner) mtpSampleAcceptedMask(targetDist, draftDist sampler.Distribution, draftTokens *mlx.Array) *mlx.Array {
-	p := targetDist.Prob(draftTokens)
-	q := draftDist.Prob(draftTokens)
-	acceptP := mlx.Minimum(p.Divide(q), mlx.FromValue(float32(1)))
-	return r.Sampler.Bernoulli(pipelineSlot, acceptP).AsType(mlx.DTypeInt32)
-}
-
-func (r *Runner) mtpSampleTokenAt(dist sampler.Distribution, index int) *mlx.Array {
-	return mtpTokenVector(r.Sampler.SampleDistribution(pipelineSlot, dist.SliceRows(index, index+1)))
-}
-
-func (r *Runner) mtpSampleResidualToken(targetDist, draftDist sampler.Distribution, index int) *mlx.Array {
-	residual := targetDist.SliceRows(index, index+1).ResidualAgainst(draftDist.SliceRows(index, index+1))
-	return mtpTokenVector(r.Sampler.SampleDistribution(pipelineSlot, residual))
-}
-
-func mtpTokenInput(token *mlx.Array) *mlx.Array {
-	switch token.NumDims() {
-	case 0:
-		return token.Reshape(1, 1)
-	case 1:
-		return token.ExpandDims(-1)
-	case 2:
-		return token
-	default:
-		panic(fmt.Sprintf("mtp token must be rank 0, 1, or 2, got rank %d", token.NumDims()))
-	}
-}
-
-func mtpTokenVector(token *mlx.Array) *mlx.Array {
-	switch token.NumDims() {
-	case 0:
-		return token.Reshape(1)
-	case 1:
-		return token
-	default:
-		panic(fmt.Sprintf("mtp sampled token must be rank 0 or 1, got rank %d", token.NumDims()))
-	}
-}
-
-func (r *Runner) acceptMTPDraftsSerial(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits *mlx.Array, draftTokens *mlx.Array, final *CompletionResponse, generated *int) (sampler.Result, int, bool, error) {
-	logits := baseLogits
-	accepted := 0
-	draftIDs := draftTokens.Ints()
-
-	for _, id := range draftIDs {
-		selected := greedyTokenFromLogits(logits)
-		mlx.Eval(selected)
-		selectedID := tokenID(selected)
-		if selectedID != id {
-			return sampler.Result{Token: mlx.FromValues([]int32{int32(selectedID)}, 1)}, accepted, false, nil
-		}
-
-		hidden := r.Model.Forward(&batch.Batch{
-			InputIDs:     mlx.FromValues([]int32{int32(id)}, 1, 1),
-			SeqOffsets:   []int32{int32(*position)},
-			SeqQueryLens: []int32{1},
-		}, caches)
-		(*position)++
-		accepted++
-
-		res := sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
-		done, err := r.emitTokens(ctx, request, session, dec, []sampler.Result{res}, final, generated)
-		if err != nil {
-			return sampler.Result{}, accepted, done, err
-		}
-		if done {
-			return sampler.Result{}, accepted, true, nil
-		}
-
-		logits = r.lastLogits(hidden)
-	}
-
-	return sampler.Result{Token: greedyTokenFromLogits(logits)}, accepted, false, nil
-}
-
-// emitTokens records a run of generated tokens to session.outputs, then streams
-// them. A trailing EOS stops generation and is recorded but not streamed.
-// Returns whether to stop and any cancellation error.
-func (r *Runner) emitTokens(ctx context.Context, request Request, session *cacheSession, dec *decoder, results []sampler.Result, final *CompletionResponse, generated *int) (done bool, err error) {
-	stream := len(results)
-	for i, res := range results {
-		id := int32(tokenID(res.Token))
-		session.outputs = append(session.outputs, id)
-		if r.Tokenizer.IsEOS(id) {
-			final.DoneReason = 0
-			done = true
-			stream = i
-			break
-		}
-		(*generated)++
-	}
-	if *generated >= request.Options.NumPredict {
-		done = true
-	}
-
-	// Record the whole run before streaming any of it: streaming returns early on
-	// a cancelled context, and a partial stream must not leave the cache ahead of
-	// session.outputs.
-	for _, res := range results[:stream] {
-		resp, ok := dec.decode(res)
-		if !ok {
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return done, ctx.Err()
-		case request.Responses <- resp:
-		}
-	}
-	return done, nil
-}
-
-// draftResults wraps accepted draft token ids as sampler results for emitTokens.
-// Accepted drafts carry no logprobs, so only the token id is set.
-func draftResults(ids []int) []sampler.Result {
-	results := make([]sampler.Result, len(ids))
-	for i, id := range ids {
-		results[i] = sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
-	}
-	return results
-}
-
-func (r *Runner) lastLogits(hidden *mlx.Array) *mlx.Array {
-	logits := r.Model.Unembed(hidden)
-	return r.lastLogitsFromLogits(logits)
-}
-
-func (r *Runner) mtpValidationTokens(baseLogits, hiddenSeq *mlx.Array) *mlx.Array {
-	return greedyTokenFromLogits(r.mtpValidationLogits(baseLogits, hiddenSeq))
-}
-
-func (r *Runner) mtpValidationLogits(baseLogits, hiddenSeq *mlx.Array) *mlx.Array {
-	seqLogits := r.Model.Unembed(hiddenSeq)
-	return baseLogits.ExpandDims(1).Concatenate(1, seqLogits)
-}
-
-func mtpTokenAt(tokens *mlx.Array, index int) *mlx.Array {
-	return tokens.Slice(mlx.Slice(), mlx.Slice(index)).Squeeze(0)
-}
-
-func (r *Runner) lastLogitsFromLogits(logits *mlx.Array) *mlx.Array {
-	return logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
-}
-
-func greedyTokenFromLogits(logits *mlx.Array) *mlx.Array {
-	return logits.Argmax(-1, false).AsType(mlx.DTypeInt32)
-}
-
-func tokenID(token *mlx.Array) int {
-	if token == nil {
-		return -1
-	}
-	if token.DType() == mlx.DTypeInt32 {
-		ids := token.Ints()
-		if len(ids) > 0 {
-			return ids[0]
-		}
-	}
-	return token.Int()
+func lastHiddenRow(hidden *mlx.Array) *mlx.Array {
+	return hidden.Slice(mlx.Slice(), mlx.Slice(hidden.Dim(1)-1), mlx.Slice())
 }

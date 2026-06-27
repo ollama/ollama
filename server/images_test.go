@@ -132,6 +132,37 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		}
 	})
 
+	t.Run("prefers chat template with stronger tool round trip", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture": "llama",
+			"tokenizer.chat_template": `{% if tools %}{{ tools }}{% endif %}
+{% for message in messages %}
+{% if message.tool_calls %}
+{% for tool_call in message.tool_calls %}{{ tool_call.function.name }}{% endfor %}
+{% endif %}
+{% if message.role == 'tool' %}tool_response {{ message.content }}{% endif %}
+{% endfor %}`,
+		}, nil)
+		writeTestModelManifest(t, "chat-template-tool-round-trip", digest, `{{ if .Tools }}tools{{ end }}
+{{ range .Messages }}
+{{ range .ToolCalls }}{{ .Function.Name }}{{ end }}
+{{ end }}`)
+
+		m, err := GetModel("chat-template-tool-round-trip")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !m.PreferChatTemplate {
+			t.Fatal("expected chat template to be preferred")
+		}
+		if got := m.CheckCapabilities(model.CapabilityTools); got != nil {
+			t.Fatalf("expected tools capability, got %v", got)
+		}
+	})
+
 	t.Run("keeps Go TEMPLATE when chat template has weaker tool support", func(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
