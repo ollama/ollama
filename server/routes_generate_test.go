@@ -274,9 +274,11 @@ func TestChatModeForModel(t *testing.T) {
 
 func TestSetDefaultParser(t *testing.T) {
 	tests := []struct {
-		name string
-		m    *Model
-		want string
+		name             string
+		m                *Model
+		goTemplateEnv    string
+		setGoTemplateEnv bool
+		want             string
 	}{
 		{
 			name: "mistral3 family",
@@ -289,6 +291,23 @@ func TestSetDefaultParser(t *testing.T) {
 			want: "ministral",
 		},
 		{
+			name: "mistral3 native chat template",
+			m:    &Model{Config: model.ConfigV2{ModelFamily: "mistral3"}, HasChatTemplate: true},
+			want: "",
+		},
+		{
+			name: "mistral3 mlx chat template",
+			m:    &Model{Config: model.ConfigV2{ModelFamily: "mistral3", ModelFormat: "safetensors"}, HasChatTemplate: true},
+			want: "ministral",
+		},
+		{
+			name:             "mistral3 forced go template",
+			m:                &Model{Config: model.ConfigV2{ModelFamily: "mistral3"}, HasChatTemplate: true, HasGoTemplate: true},
+			goTemplateEnv:    "1",
+			setGoTemplateEnv: true,
+			want:             "ministral",
+		},
+		{
 			name: "explicit parser",
 			m:    &Model{Config: model.ConfigV2{ModelFamily: "mistral3", Parser: "custom"}},
 			want: "custom",
@@ -297,6 +316,9 @@ func TestSetDefaultParser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.setGoTemplateEnv {
+				t.Setenv("OLLAMA_GO_TEMPLATE", tt.goTemplateEnv)
+			}
 			setDefaultParser(tt.m)
 			if tt.m.Config.Parser != tt.want {
 				t.Fatalf("Parser = %q, want %q", tt.m.Config.Parser, tt.want)
@@ -382,6 +404,89 @@ func TestChatMistral3ParserHandlesNameArgument(t *testing.T) {
 
 	if diff := cmp.Diff(gotToolCall, expectedToolCall, argsComparer); diff != "" {
 		t.Fatalf("tool call mismatch (-got +want):\n%s", diff)
+	}
+}
+
+func TestChatMistral3ChatTemplateKeepsNativeRenderPath(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "0")
+	gin.SetMode(gin.TestMode)
+
+	chatCalled := false
+	mock := mockRunner{
+		CompletionFn: func(context.Context, llm.CompletionRequest, func(llm.CompletionResponse)) error {
+			t.Fatal("expected Mistral3 model with GGUF chat_template to use native chat")
+			return nil
+		},
+		ChatFn: func(_ context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
+			chatCalled = true
+			if len(req.Tools) != 1 || req.Tools[0].Function.Name != "foo" {
+				t.Fatalf("native chat tools = %#v", req.Tools)
+			}
+			fn(llm.ChatResponse{
+				Message: api.Message{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							ID: "call_native",
+							Function: api.ToolCallFunction{
+								Name: "foo",
+								Arguments: testArgs(map[string]any{
+									"name": "bar",
+								}),
+							},
+						},
+					},
+				},
+				Done:       true,
+				DoneReason: llm.DoneReasonStop,
+			})
+			return nil
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+
+	createMinimalGGUFModel(t, s, "mistral3-native-chat-template", ggml.KV{
+		"general.architecture":    "mistral3",
+		"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
+	}, "", nil)
+
+	stream := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model: "mistral3-native-chat-template",
+		Messages: []api.Message{
+			{Role: "user", Content: "Call foo with name=bar"},
+		},
+		Tools: []api.Tool{
+			{
+				Type: "function",
+				Function: api.ToolFunction{
+					Name: "foo",
+					Parameters: api.ToolFunctionParameters{
+						Type:     "object",
+						Required: []string{"name"},
+						Properties: testPropsMap(map[string]api.ToolProperty{
+							"name": {Type: api.PropertyType{"string"}},
+						}),
+					},
+				},
+			},
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !chatCalled {
+		t.Fatal("expected native chat path to run")
+	}
+
+	var resp api.ChatResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(resp.Message.ToolCalls); got != 1 {
+		t.Fatalf("expected 1 native tool call, got %d: %#v", got, resp.Message.ToolCalls)
 	}
 }
 

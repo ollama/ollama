@@ -97,11 +97,25 @@ func defaultParserForModel(m *Model) string {
 	switch {
 	case shouldUseHarmony(m):
 		return "harmony"
-	case m.Config.ModelFamily == "mistral3", slices.Contains(m.Config.ModelFamilies, "mistral3"):
+	case isMistral3Model(m) && !usesNativeChatTemplate(m):
 		return "ministral"
 	default:
 		return ""
 	}
+}
+
+func isMistral3Model(m *Model) bool {
+	return m != nil && (m.Config.ModelFamily == "mistral3" || slices.Contains(m.Config.ModelFamilies, "mistral3"))
+}
+
+func usesNativeChatTemplate(m *Model) bool {
+	return m != nil &&
+		!m.IsMLX() &&
+		m.HasChatTemplate &&
+		m.Config.Renderer == "" &&
+		m.Config.Parser == "" &&
+		!shouldUseHarmony(m) &&
+		!shouldUseGoTemplate(m)
 }
 
 func setDefaultParser(m *Model) {
