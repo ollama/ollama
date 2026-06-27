@@ -225,11 +225,12 @@ func approvalRequestWithEvaluation(req ApprovalRequest, evaluation ApprovalEvalu
 }
 
 func approvalSessionKey(req ApprovalRequest) string {
-	switch req.ToolName {
-	case "bash":
+	if IsShellToolName(req.ToolName) {
 		if command, ok := stringApprovalArg(req.Args, "command"); ok {
-			return "bash:" + command
+			return req.ToolName + ":" + command
 		}
+	}
+	switch req.ToolName {
 	case "edit":
 		if path, ok := stringApprovalArg(req.Args, "path"); ok {
 			return "edit:" + path
@@ -261,8 +262,8 @@ func (DefaultApprovalPolicy) EvaluateApproval(_ context.Context, req ApprovalReq
 		return evaluateWebApproval(req)
 	case "edit":
 		return evaluateEditApproval(req)
-	case "bash":
-		return evaluateBashApproval(req)
+	case "bash", "powershell":
+		return evaluateShellApproval(req)
 	default:
 		return ApprovalEvaluation{
 			RequirePrompt: true,
@@ -351,10 +352,10 @@ func sanitizeApprovalDisplay(value string) string {
 	return value
 }
 
-func evaluateBashApproval(req ApprovalRequest) ApprovalEvaluation {
+func evaluateShellApproval(req ApprovalRequest) ApprovalEvaluation {
 	command, ok := stringApprovalArg(req.Args, "command")
 	if !ok || strings.TrimSpace(command) == "" {
-		return denyApproval("bash", ApprovalRiskHigh, "missing command argument")
+		return denyApproval(req.ToolName, ApprovalRiskHigh, "missing command argument")
 	}
 
 	risk, reasons := classifyBashCommand(command)
@@ -364,9 +365,9 @@ func evaluateBashApproval(req ApprovalRequest) ApprovalEvaluation {
 	return ApprovalEvaluation{
 		RequirePrompt: true,
 		Risk:          risk,
-		Summary:       "Bash wants to run a command",
+		Summary:       fmt.Sprintf("%s wants to run a command", ToolDisplayName(req.ToolName)),
 		Reasons:       reasons,
-		SessionKey:    "bash:" + command,
+		SessionKey:    req.ToolName + ":" + command,
 	}
 }
 
@@ -380,7 +381,7 @@ func denyApproval(toolName string, risk ApprovalRisk, reason string) ApprovalEva
 	}
 }
 
-// Bash approval is static analysis of model-generated commands, not a sandbox.
+// Shell approval is static analysis of model-generated commands, not a sandbox.
 // Globs, aliases, environment, and runtime shell state are intentionally out of scope.
 func classifyBashCommand(command string) (ApprovalRisk, []string) {
 	classifier := bashClassifier{risk: ApprovalRiskMedium}

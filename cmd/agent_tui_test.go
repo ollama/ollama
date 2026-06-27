@@ -16,6 +16,7 @@ import (
 
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/agent/skills"
+	agenttools "github.com/ollama/ollama/agent/tools"
 	"github.com/ollama/ollama/api"
 	agentchat "github.com/ollama/ollama/cmd/tui/chat"
 	"github.com/ollama/ollama/envconfig"
@@ -208,7 +209,7 @@ func captureStderr(t *testing.T, fn func()) string {
 
 func TestAgentToolsRegistryNoCloudDisablesWebTools(t *testing.T) {
 	t.Setenv("OLLAMA_NO_CLOUD", "1")
-	t.Setenv("OLLAMA_AGENT_DISABLE_BASH", "")
+	t.Setenv("OLLAMA_AGENT_DISABLE_SHELL", "")
 	t.Setenv("OLLAMA_AGENT_DISABLE_WEBSEARCH", "")
 
 	statusCalls := 0
@@ -235,7 +236,7 @@ func TestAgentToolsRegistryNoCloudDisablesWebTools(t *testing.T) {
 	if registry == nil {
 		t.Fatal("registry = nil, want local tools")
 	}
-	if !registry.Has("bash") || !registry.Has("read") || !registry.Has("edit") {
+	if !registry.Has(agenttools.NewBash().Name()) || !registry.Has("read") || !registry.Has("edit") {
 		t.Fatalf("local tools missing: %v", registry.Names())
 	}
 	if registry.Has("list") {

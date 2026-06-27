@@ -14,6 +14,18 @@ import (
 
 var bashJobHandles sync.Map
 
+func shellToolName() string {
+	return "powershell"
+}
+
+func shellToolDescription() string {
+	return "Execute a PowerShell command on the system. Use this to inspect files, run tests, and perform development tasks."
+}
+
+func shellCommandDescription() string {
+	return "The PowerShell command to execute."
+}
+
 func newBashCommand(ctx context.Context, command, cwdPath string) *exec.Cmd {
 	return exec.CommandContext(
 		ctx,

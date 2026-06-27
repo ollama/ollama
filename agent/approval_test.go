@@ -223,6 +223,23 @@ func TestBashApprovalClassifiesHighRiskShell(t *testing.T) {
 	}
 }
 
+func TestPowerShellApprovalUsesShellPolicy(t *testing.T) {
+	evaluation := DefaultApprovalPolicy{}.EvaluateApproval(context.Background(), ApprovalRequest{
+		ToolName: "powershell",
+		Args:     map[string]any{"command": "Remove-Item -Recurse tmp"},
+	})
+
+	if !evaluation.RequirePrompt {
+		t.Fatal("powershell should require prompt")
+	}
+	if evaluation.Summary != "PowerShell wants to run a command" {
+		t.Fatalf("summary = %q", evaluation.Summary)
+	}
+	if evaluation.SessionKey != "powershell:Remove-Item -Recurse tmp" {
+		t.Fatalf("session key = %q", evaluation.SessionKey)
+	}
+}
+
 func TestBashApprovalClassifiesDynamicShellEvasions(t *testing.T) {
 	tests := []struct {
 		name   string

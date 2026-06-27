@@ -18,6 +18,8 @@ func ToolDisplayName(name string) string {
 		return "Web Fetch"
 	case "bash":
 		return "Bash"
+	case "powershell":
+		return "PowerShell"
 	case "read":
 		return "Read"
 	case "list":
@@ -39,7 +41,7 @@ func ToolInvocationLabel(name string, args map[string]any) string {
 	displayName := ToolDisplayName(name)
 	for _, key := range []string{"query", "url", "command", "path", "name"} {
 		if value, ok := displayStringArg(args, key); ok {
-			if name == "bash" && key == "command" {
+			if IsShellToolName(name) && key == "command" {
 				value = truncateDisplayRunes(value, maxToolInvocationCommandRunes)
 			}
 			return fmt.Sprintf("%s(%s)", displayName, strconv.Quote(value))
@@ -49,6 +51,11 @@ func ToolInvocationLabel(name string, args map[string]any) string {
 		return displayName
 	}
 	return fmt.Sprintf("%s(%s)", displayName, formatDisplayArgs(args))
+}
+
+// IsShellToolName reports whether name identifies a platform shell tool.
+func IsShellToolName(name string) bool {
+	return name == "bash" || name == "powershell"
 }
 
 func displayStringArg(args map[string]any, key string) (string, bool) {

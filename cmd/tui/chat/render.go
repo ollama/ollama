@@ -1076,11 +1076,12 @@ func renderToolCallDetailLines(entry chatEntry, width int) []string {
 	if len(entry.args) == 0 {
 		return nil
 	}
-	switch entry.detail {
-	case "bash":
+	if coreagent.IsShellToolName(entry.detail) {
 		if command, ok := rawStringArg(entry.args, "command"); ok {
-			return renderToolCallArgLine("$ "+command, width)
+			return renderToolCallArgLine(shellPromptPrefix(entry.detail)+command, width)
 		}
+	}
+	switch entry.detail {
 	case "web_search":
 		if query, ok := rawStringArg(entry.args, "query"); ok {
 			return renderToolCallArgLine("query: "+query, width)
@@ -1091,6 +1092,13 @@ func renderToolCallDetailLines(entry chatEntry, width int) []string {
 		}
 	}
 	return renderToolCallArgs(entry.args, width)
+}
+
+func shellPromptPrefix(toolName string) string {
+	if toolName == "powershell" {
+		return "PS> "
+	}
+	return "$ "
 }
 
 func renderToolCallArgs(args map[string]any, width int) []string {

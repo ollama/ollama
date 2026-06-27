@@ -222,13 +222,14 @@ func (m chatModel) renderApprovalPromptLines(width int) []string {
 }
 
 func approvalRequestDetail(request coreagent.ApprovalRequest, width int) string {
-	switch request.ToolName {
-	case "bash":
+	if coreagent.IsShellToolName(request.ToolName) {
 		command, ok := rawStringArg(request.Args, "command")
 		if !ok {
 			return ""
 		}
-		return strings.Join(wrapChatText("$ "+command, width), "\n")
+		return strings.Join(wrapChatText(shellPromptPrefix(request.ToolName)+command, width), "\n")
+	}
+	switch request.ToolName {
 	case "edit":
 		path, ok := rawStringArg(request.Args, "path")
 		if !ok {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -236,7 +237,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		m.preloadingModel = strings.TrimSpace(opts.Model)
 	}
 
-	p := tea.NewProgram(m, tea.WithReportFocus(), tea.WithMouseCellMotion())
+	programOptions := []tea.ProgramOption{tea.WithReportFocus()}
+	if runtime.GOOS != "windows" {
+		programOptions = append(programOptions, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(m, programOptions...)
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, err
@@ -429,6 +434,9 @@ func (m *chatModel) enterFullScreen() {
 }
 
 func (m chatModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if runtime.GOOS == "windows" {
+		return m, nil
+	}
 	if m.modelPicker != nil {
 		switch msg.Type {
 		case tea.MouseWheelUp:

@@ -768,7 +768,7 @@ func agentToolsRegistry(ctx context.Context, client *api.Client, modelName strin
 	}
 
 	registry := coreagent.NewRegistry()
-	if os.Getenv("OLLAMA_AGENT_DISABLE_BASH") == "" {
+	if os.Getenv("OLLAMA_AGENT_DISABLE_SHELL") == "" {
 		registry.Register(agenttools.NewBash())
 	}
 	registry.Register(agenttools.NewRead())

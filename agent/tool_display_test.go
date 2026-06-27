@@ -22,3 +22,12 @@ func TestToolInvocationLabelCountsRunes(t *testing.T) {
 		t.Fatalf("label = %q, want %q", label, want)
 	}
 }
+
+func TestToolInvocationLabelTruncatesLongPowerShellCommand(t *testing.T) {
+	command := strings.Repeat("a", 101)
+	label := ToolInvocationLabel("powershell", map[string]any{"command": command})
+	want := `PowerShell("` + strings.Repeat("a", 100) + `...")`
+	if label != want {
+		t.Fatalf("label = %q, want %q", label, want)
+	}
+}

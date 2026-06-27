@@ -26,18 +26,18 @@ func NewBash() *Bash {
 }
 
 func (b *Bash) Name() string {
-	return "bash"
+	return shellToolName()
 }
 
 func (b *Bash) Description() string {
-	return "Execute a shell command on the system. Use this to run shell commands, inspect files, run tests, and perform development tasks."
+	return shellToolDescription()
 }
 
 func (b *Bash) Schema() api.ToolFunction {
 	props := api.NewToolPropertiesMap()
 	props.Set("command", api.ToolProperty{
 		Type:        api.PropertyType{"string"},
-		Description: "The shell command to execute.",
+		Description: shellCommandDescription(),
 	})
 	return api.ToolFunction{
 		Name:        b.Name(),
