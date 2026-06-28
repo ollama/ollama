@@ -671,11 +671,15 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 	}
 
 	for _, tc := range r.Message.ToolCalls {
+		input := tc.Function.Arguments
+		if input.Len() == 0 {
+			input = api.NewToolCallFunctionArguments()
+		}
 		content = append(content, ContentBlock{
 			Type:  "tool_use",
 			ID:    tc.ID,
 			Name:  tc.Function.Name,
-			Input: tc.Function.Arguments,
+			Input: input,
 		})
 	}
 
