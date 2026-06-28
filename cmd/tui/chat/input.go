@@ -38,8 +38,9 @@ type chatCompletion struct {
 }
 
 const (
-	chatPromptPrefix     = "› "
-	maxInputBoxBodyLines = 6
+	chatPromptPrefix          = ""
+	inputBoxHorizontalPadding = 1
+	maxInputBoxBodyLines      = 12
 )
 
 const (
@@ -822,17 +823,19 @@ func (m chatModel) emptyInputPlaceholder() string {
 }
 
 func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, placeholder string) []string {
-	if width < 8 {
-		width = 8
+	if width < 12 {
+		width = 12
 	}
 	if maxBodyLines < 1 {
 		maxBodyLines = 1
 	}
 
 	prefix := chatPromptPrefix
-	continuationPrefix := "... "
+	continuationPrefix := strings.Repeat(" ", lipgloss.Width(prefix))
 	prefixWidth := lipgloss.Width(prefix)
-	bodyWidth := max(1, width-prefixWidth)
+	innerWidth := max(1, width-2)
+	contentWidth := max(1, innerWidth-inputBoxHorizontalPadding*2)
+	bodyWidth := max(1, contentWidth-prefixWidth)
 
 	var raw []string
 	placeholderMode := input == "" && strings.TrimSpace(placeholder) != ""
@@ -846,30 +849,37 @@ func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, plac
 	}
 	if len(raw) > maxBodyLines {
 		raw = slices.Clone(raw[len(raw)-maxBodyLines:])
-		raw[0] = truncateInputLine(continuationPrefix+trimInputPromptPrefix(raw[0]), width)
+		raw[0] = truncateInputLine(continuationPrefix+trimInputPromptPrefix(raw[0]), contentWidth)
 	}
 
-	lines := make([]string, 0, len(raw))
+	lines := make([]string, 0, len(raw)+2)
+	lines = append(lines, chatMetaStyle.Render(inputBoxTopBorderLine(width)))
 	for i, line := range raw {
+		rendered := line
 		if placeholderMode {
 			if i == 0 && strings.HasPrefix(line, prefix) {
 				rest := strings.TrimPrefix(line, prefix)
 				if strings.HasPrefix(rest, "█") {
-					lines = append(lines, chatUserStyle.Render(prefix+"█")+chatMetaStyle.Render(strings.TrimPrefix(rest, "█")))
+					rendered = chatUserStyle.Render(prefix+"█") + chatMetaStyle.Render(strings.TrimPrefix(rest, "█"))
+					lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 					continue
 				}
-				lines = append(lines, chatUserStyle.Render(prefix)+chatMetaStyle.Render(rest))
+				rendered = chatUserStyle.Render(prefix) + chatMetaStyle.Render(rest)
+				lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 				continue
 			}
 			if strings.HasPrefix(line, continuationPrefix) {
-				lines = append(lines, chatMetaStyle.Render(continuationPrefix+strings.TrimPrefix(line, continuationPrefix)))
+				rendered = chatMetaStyle.Render(continuationPrefix + strings.TrimPrefix(line, continuationPrefix))
+				lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 				continue
 			}
-			lines = append(lines, chatMetaStyle.Render(line))
+			rendered = chatMetaStyle.Render(line)
+			lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 			continue
 		}
-		lines = append(lines, chatUserStyle.Render(line))
+		lines = append(lines, renderInputBoxBodyLine(chatUserStyle.Render(rendered), contentWidth))
 	}
+	lines = append(lines, chatMetaStyle.Render(inputBoxBottomBorderLine(width)))
 	return lines
 }
 
@@ -892,7 +902,10 @@ func renderInputPromptRawLines(text, prefix, continuationPrefix string, width in
 }
 
 func trimInputPromptPrefix(line string) string {
-	for _, prefix := range []string{chatPromptPrefix, "... "} {
+	for _, prefix := range []string{chatPromptPrefix, strings.Repeat(" ", lipgloss.Width(chatPromptPrefix))} {
+		if prefix == "" {
+			continue
+		}
 		if strings.HasPrefix(line, prefix) {
 			return strings.TrimPrefix(line, prefix)
 		}
@@ -913,6 +926,11 @@ func inputBoxBorderLine(width int, left, right string) string {
 		width = 4
 	}
 	return left + strings.Repeat("─", max(0, width-2)) + right
+}
+
+func renderInputBoxBodyLine(line string, width int) string {
+	padding := strings.Repeat(" ", inputBoxHorizontalPadding)
+	return chatMetaStyle.Render("│") + padding + padRenderedLine(line, width) + padding + chatMetaStyle.Render("│")
 }
 
 func padRenderedLine(line string, width int) string {
@@ -1258,7 +1276,6 @@ func (m chatModel) helpSummary() string {
 		"",
 		"**Shortcuts**",
 		"",
-		"- `ctrl+o`: toggle tool output",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
 		"- `↑/↓`: previous or next prompt",

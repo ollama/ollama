@@ -17,7 +17,7 @@ import (
 	"github.com/ollama/ollama/cmd/internal/filedata"
 )
 
-var chatSpinnerFrames = []string{"...", ".", "..", "..."}
+var chatSpinnerFrames = []string{"", "."}
 
 const (
 	maxResumePickerItems      = 8
@@ -152,7 +152,6 @@ type chatModel struct {
 	quitting           bool
 	quitArmed          bool
 	quitArmedKey       string
-	escArmed           bool
 	eventErrorRendered bool
 	err                error
 }
@@ -224,8 +223,6 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		reviewApproval: reviewApproval,
 		policyState:    coreagent.NewRunPolicyState(policy),
 		promptHistory:  initialPromptHistory(ctx, opts),
-		boundedFrame:   true,
-		fullScreen:     true,
 		status:         "ready",
 	}
 	m.nextImageID, m.nextAudioID = nextInputAttachmentIDsFromMessages(m.messages)
@@ -238,9 +235,6 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	programOptions := []tea.ProgramOption{tea.WithReportFocus()}
-	if runtime.GOOS != "windows" {
-		programOptions = append(programOptions, tea.WithMouseCellMotion())
-	}
 	p := tea.NewProgram(m, programOptions...)
 	finalModel, err := p.Run()
 	if err != nil {
@@ -255,7 +249,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 }
 
 func (m chatModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{tea.EnterAltScreen}
+	var cmds []tea.Cmd
 	if m.preloadingModel != "" && m.opts.PreloadModel != nil {
 		cmds = append(cmds, preloadModelCmd(m.ctx, m.opts.PreloadModel, m.preloadingModel, m.opts.Think), chatTickCmd())
 	}
@@ -271,12 +265,11 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		wasSet := m.width > 0 || m.height > 0
-		resized := m.width != msg.Width || m.height != msg.Height
+		resized := wasSet && (m.width != msg.Width || m.height != msg.Height)
 		m.width = msg.Width
 		m.height = msg.Height
-		if wasSet && resized {
-			m.resetRenderAfterResize()
-			return m, tea.Batch(tea.EnterAltScreen, tea.ClearScreen)
+		if resized {
+			return m.withFlowTranscriptRepaint(nil)
 		}
 		return m.withFlowTranscriptFlush(nil)
 
@@ -361,7 +354,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			if !m.eventErrorRendered {
-				m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: msg.err.Error(), err: msg.err.Error()}))
+				m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: displayChatError(msg.err.Error()), err: msg.err.Error()}))
 			}
 			m.status = "error"
 			return m.withFlowTranscriptFlush(nil)
@@ -419,18 +412,6 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateKey(msg)
 	}
 	return m, nil
-}
-
-func (m *chatModel) resetRenderAfterResize() {
-	m.enterFullScreen()
-	m.scroll = m.maxScroll()
-}
-
-func (m *chatModel) enterFullScreen() {
-	m.boundedFrame = true
-	m.fullScreen = true
-	m.flowPrintedLines = 0
-	m.selection = chatSelection{}
 }
 
 func (m chatModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
@@ -521,10 +502,12 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlO {
 		m.toggleInlineToolOutput()
 		m.disarmQuit()
-		m.disarmEsc()
 		// Toggling tool output changes the transcript height; force a full
 		// repaint so the input box and model-status footer aren't left stale.
-		return m, tea.ClearScreen
+		if m.boundedFrame {
+			return m, tea.ClearScreen
+		}
+		return m.withFlowTranscriptRepaint(nil)
 	}
 	if msg.Type == tea.KeyShiftTab {
 		return m.togglePermissionMode()
@@ -549,9 +532,6 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Type != tea.KeyCtrlC && msg.Type != tea.KeyCtrlD {
 		m.disarmQuit()
-	}
-	if msg.Type != tea.KeyEsc {
-		m.disarmEsc()
 	}
 
 	switch msg.Type {
@@ -693,39 +673,18 @@ func (m *chatModel) armQuit(key, status string) {
 }
 
 func (m chatModel) updateEsc() (tea.Model, tea.Cmd) {
-	if !m.escArmed {
-		m.escArmed = true
-		switch {
-		case len(m.input) > 0 && (m.running || m.compacting):
-			m.status = "press esc again to clear input and cancel"
-		case len(m.input) > 0:
-			m.status = "press esc again to clear input"
-		case (m.running || m.compacting) && m.cancel != nil:
-			m.status = "press esc again to cancel"
-		default:
-			m.status = "ready"
-		}
-		return m, nil
-	}
-
-	m.escArmed = false
-	cleared := false
-	if len(m.input) > 0 {
-		m.clearInput()
-		m.resetPromptHistoryCursor()
-		cleared = true
-	}
 	if (m.running || m.compacting) && m.cancel != nil {
 		m.cancel()
 		m.disarmQuit()
 		m.status = "canceling"
 		return m, nil
 	}
-	if cleared {
-		m.status = "ready"
-	} else {
-		m.status = "ready"
+
+	if len(m.input) > 0 {
+		m.clearInput()
+		m.resetPromptHistoryCursor()
 	}
+	m.status = "ready"
 	return m, nil
 }
 
@@ -739,6 +698,9 @@ func (m *chatModel) clearInput() {
 }
 
 func (m chatModel) updateUpKey() (tea.Model, tea.Cmd) {
+	if m.dequeueLatestPrompt() {
+		return m, nil
+	}
 	if m.promptActive && m.movePromptHistory(-1) {
 		return m, nil
 	}
@@ -750,6 +712,33 @@ func (m chatModel) updateUpKey() (tea.Model, tea.Cmd) {
 	}
 	m.movePromptHistory(-1)
 	return m, nil
+}
+
+func (m *chatModel) dequeueLatestPrompt() bool {
+	if len(m.input) > 0 || len(m.queued) == 0 {
+		return false
+	}
+
+	index := len(m.queued) - 1
+	input := m.queued[index]
+	m.queued = m.queued[:index]
+	if len(m.queuedAttachments) > index {
+		m.inputAttachments = cloneInputAttachments(m.queuedAttachments[index])
+		m.queuedAttachments = m.queuedAttachments[:index]
+	} else {
+		m.inputAttachments = nil
+	}
+	if len(m.queuedPastedTexts) > index {
+		m.inputPastedTexts = cloneInputPastedTexts(m.queuedPastedTexts[index])
+		m.queuedPastedTexts = m.queuedPastedTexts[:index]
+	} else {
+		m.inputPastedTexts = nil
+	}
+	m.input = []rune(input)
+	m.inputCursor = len(m.input)
+	m.inputCursorSet = true
+	m.status = "ready"
+	return true
 }
 
 func (m chatModel) updateDownKey() (tea.Model, tea.Cmd) {
@@ -844,6 +833,15 @@ func (m chatModel) withFlowTranscriptFlush(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return next, tea.Batch(printCmd, cmd)
 }
 
+func (m chatModel) withFlowTranscriptRepaint(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.boundedFrame || m.flowPrintedLines == 0 {
+		return m.withFlowTranscriptFlush(cmd)
+	}
+	m.flowPrintedLines = 0
+	next, printCmd := m.flowTranscriptFlushCmd()
+	return next, tea.Sequence(tea.ClearScreen, printCmd, cmd)
+}
+
 func (m chatModel) flowTranscriptFlushCmd() (chatModel, tea.Cmd) {
 	if m.boundedFrame || m.resumePicker != nil || m.modelPicker != nil || m.thinkPicker != nil || m.historyPopup != nil {
 		return m, nil
@@ -899,12 +897,12 @@ func (m chatModel) flowTranscriptHoldEntryIndex() int {
 
 func (m chatModel) emptyChatHint() string {
 	if len(chatEmptyPrompts) == 0 {
-		return "Try asking the agent to inspect files, run tools, or explain a repo."
+		return "Ask the agent to inspect files, run tools, or explain a repo."
 	}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(m.chatID))
 	prompt := chatEmptyPrompts[int(h.Sum32())%len(chatEmptyPrompts)]
-	return `Try: "` + prompt + `"`
+	return prompt
 }
 
 func (m chatModel) headerLines() []string {
@@ -1156,20 +1154,17 @@ func (m *chatModel) disarmQuit() {
 	}
 }
 
-func (m *chatModel) disarmEsc() {
-	if !m.escArmed {
-		return
-	}
-	m.escArmed = false
-	if strings.HasPrefix(m.status, "press esc again") {
-		m.status = "ready"
-	}
-}
-
 func (m chatModel) canEditInput() bool {
 	return m.approvalPrompt == nil && m.cloudAuthPrompt == nil && m.modelPicker == nil && m.thinkPicker == nil && m.resumePicker == nil && m.historyPopup == nil
 }
 
 func isChatContextCanceledError(err error) bool {
 	return err != nil && (errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled"))
+}
+
+func displayChatError(message string) string {
+	if strings.Contains(strings.ToLower(message), "tool round limit reached") {
+		return "Reached the tool limit for this turn. Send another message to continue."
+	}
+	return message
 }

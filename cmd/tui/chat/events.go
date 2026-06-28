@@ -198,7 +198,8 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	case coreagent.EventError:
 		m.resetRunState()
 		m.eventErrorRendered = true
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: event.Error, err: event.Error}))
+		message := displayChatError(event.Error)
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: message, err: event.Error}))
 	}
 
 	if contextChanged {
@@ -297,7 +298,7 @@ func (m *chatModel) scheduleTick() tea.Cmd {
 }
 
 func chatTickCmd() tea.Cmd {
-	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg {
 		return chatTickMsg{}
 	})
 }

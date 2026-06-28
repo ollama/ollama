@@ -34,8 +34,26 @@ func TestChatEnterQueuesWhileRunning(t *testing.T) {
 	if len(m.queued) != 1 || m.queued[0] != "next prompt" {
 		t.Fatalf("queued = %#v, want next prompt", m.queued)
 	}
-	if !strings.Contains(stripANSI(m.View()), "queued 1") {
-		t.Fatalf("view should show queued count: %q", stripANSI(m.View()))
+	view := stripANSI(m.View())
+	if strings.Contains(view, "queued 1") || !strings.Contains(view, "  next prompt") {
+		t.Fatalf("view should show queued prompt as an indented draft: %q", view)
+	}
+}
+
+func TestChatUpDequeuesLatestPrompt(t *testing.T) {
+	m := chatModel{
+		running: true,
+		queued:  []string{"first queued", "latest queued"},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(chatModel)
+
+	if got := string(m.input); got != "latest queued" {
+		t.Fatalf("input = %q, want latest queued prompt", got)
+	}
+	if len(m.queued) != 1 || m.queued[0] != "first queued" {
+		t.Fatalf("queued = %#v, want first queued remaining", m.queued)
 	}
 }
 
@@ -76,7 +94,7 @@ func TestChatRunDoneStartsQueuedMessage(t *testing.T) {
 	}
 }
 
-func TestChatResizeEnablesBoundedFrame(t *testing.T) {
+func TestChatResizeKeepsFlowFrame(t *testing.T) {
 	m := chatModel{}
 
 	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -90,11 +108,11 @@ func TestChatResizeEnablesBoundedFrame(t *testing.T) {
 
 	updated, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = updated.(chatModel)
-	if cmd == nil {
-		t.Fatal("resize should clear stale terminal-flow rendering")
+	if cmd != nil {
+		t.Fatal("resize should stay in terminal-flow rendering without clearing")
 	}
-	if !m.boundedFrame {
-		t.Fatal("resize should enable bounded frame rendering")
+	if m.boundedFrame {
+		t.Fatal("resize should keep terminal-flow rendering")
 	}
 }
 
@@ -150,7 +168,7 @@ func TestChatActivityLineDelaysWaitingForModelSpinner(t *testing.T) {
 	}
 	m.spinner = waitingSpinnerTicks
 	line := strings.TrimSpace(stripANSI(m.activityLine()))
-	if !strings.Contains(line, "Working...") {
+	if !strings.Contains(line, "Working") {
 		t.Fatalf("activityLine = %q, want Working label", line)
 	}
 	if strings.Contains(line, "waiting for model") {
@@ -172,7 +190,7 @@ func TestChatActivityLineShowsDelayedWaitingSpinnerOnFollowUp(t *testing.T) {
 	if got := m.activityLabel(); got != "" {
 		t.Fatalf("activityLabel = %q, want empty", got)
 	}
-	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working...") || strings.Contains(got, "waiting for model") {
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working") || strings.Contains(got, "waiting for model") {
 		t.Fatalf("activityLine = %q, want delayed Working label without old waiting label", got)
 	}
 }
@@ -193,12 +211,12 @@ func TestChatActivityLineShowsWaitingAfterToolResultBeforeFollowUpStream(t *test
 	}
 
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventRequestBuilt})
-	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working...") {
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working") {
 		t.Fatalf("activityLine = %q, want Working label while follow-up request waits", got)
 	}
 
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageStarted})
-	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working...") {
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working") {
 		t.Fatalf("activityLine = %q, want Working label until visible stream output", got)
 	}
 
@@ -233,7 +251,7 @@ func TestChatActivityLineShowsWorkingWhileToolCallWaitsForToolStart(t *testing.T
 	if len(m.entries) != 0 {
 		t.Fatalf("detected tool call should not create history entries: %#v", m.entries)
 	}
-	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working...") {
+	if got := strings.TrimSpace(stripANSI(m.activityLine())); !strings.Contains(got, "Working") {
 		t.Fatalf("activityLine = %q, want Working label while waiting for tool start", got)
 	}
 
@@ -396,7 +414,7 @@ func TestChatModelLineShowsContextOnlyWhenUseful(t *testing.T) {
 
 	m.contextTokens = 61
 	view = stripANSI(m.View())
-	if !strings.Contains(view, "llama3.2  ctx ~61/100 (61%)") || strings.Contains(view, "compaction soon") {
+	if !strings.Contains(view, "llama3.2 · ctx ~61 / 100 (61% used)") || strings.Contains(view, "compaction soon") {
 		t.Fatalf("view should show context count beside model after 60%% without compaction copy: %q", view)
 	}
 	if count := strings.Count(view, "ctx "); count != 1 {
@@ -405,7 +423,7 @@ func TestChatModelLineShowsContextOnlyWhenUseful(t *testing.T) {
 
 	m.contextTokens = 65
 	view = stripANSI(m.View())
-	if !strings.Contains(view, "llama3.2  ctx ~65/100 (65%)") || strings.Contains(view, "compaction soon") {
+	if !strings.Contains(view, "llama3.2 · ctx ~65 / 100 (65% used)") || strings.Contains(view, "compaction soon") {
 		t.Fatalf("view should show context count near threshold without compaction copy: %q", view)
 	}
 	if count := strings.Count(view, "ctx "); count != 1 {
@@ -414,7 +432,7 @@ func TestChatModelLineShowsContextOnlyWhenUseful(t *testing.T) {
 
 	m.contextTokens = 75
 	view = stripANSI(m.View())
-	if !strings.Contains(view, "llama3.2  ctx ~75/100 (75%)") || strings.Contains(view, "compaction soon") {
+	if !strings.Contains(view, "llama3.2 · ctx ~75 / 100 (75% used)") || strings.Contains(view, "compaction soon") {
 		t.Fatalf("view should show context count at threshold without compaction copy: %q", view)
 	}
 
@@ -428,7 +446,7 @@ func TestChatModelLineShowsContextOnlyWhenUseful(t *testing.T) {
 	m.status = ""
 	m.contextTokens = 125
 	view = stripANSI(m.View())
-	if !strings.Contains(view, "ctx ~125/100 (125%)") {
+	if !strings.Contains(view, "ctx ~125 / 100 (125% used)") {
 		t.Fatalf("view should show over-window usage instead of clamping: %q", view)
 	}
 }
@@ -574,6 +592,14 @@ func TestChatRunDoneSuppressesDuplicateEventError(t *testing.T) {
 	}
 	if fm.status != "error" {
 		t.Fatalf("status = %q, want error", fm.status)
+	}
+}
+
+func TestDisplayChatErrorHumanizesToolRoundLimit(t *testing.T) {
+	got := displayChatError("agent stopped: tool round limit reached after 100 rounds; send another message to continue")
+	want := "Reached the tool limit for this turn. Send another message to continue."
+	if got != want {
+		t.Fatalf("displayChatError = %q, want %q", got, want)
 	}
 }
 
@@ -1078,7 +1104,7 @@ func TestChatCtrlCClearsDraftWhileRunningBeforeCanceling(t *testing.T) {
 	}
 }
 
-func TestChatDoubleEscClearsDraft(t *testing.T) {
+func TestChatEscClearsDraft(t *testing.T) {
 	m := chatModel{
 		input:    []rune("draft"),
 		complete: 2,
@@ -1087,22 +1113,7 @@ func TestChatDoubleEscClearsDraft(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(chatModel)
 	if cmd != nil {
-		t.Fatal("first esc should not quit")
-	}
-	if got := string(m.input); got != "draft" {
-		t.Fatalf("first esc input = %q, want unchanged", got)
-	}
-	if !m.escArmed {
-		t.Fatal("first esc should arm clear")
-	}
-	if !strings.Contains(m.status, "press esc again") {
-		t.Fatalf("status = %q, want esc hint", m.status)
-	}
-
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(chatModel)
-	if cmd != nil {
-		t.Fatal("second esc should not quit")
+		t.Fatal("esc should not quit")
 	}
 	if got := string(m.input); got != "" {
 		t.Fatalf("input = %q, want cleared", got)
@@ -1110,15 +1121,12 @@ func TestChatDoubleEscClearsDraft(t *testing.T) {
 	if m.complete != 0 {
 		t.Fatalf("complete = %d, want reset", m.complete)
 	}
-	if m.escArmed {
-		t.Fatal("second esc should disarm clear")
-	}
 	if m.status != "ready" {
 		t.Fatalf("status = %q, want ready", m.status)
 	}
 }
 
-func TestChatDoubleEscClearsDraftAndCancelsRun(t *testing.T) {
+func TestChatEscCancelsRun(t *testing.T) {
 	canceled := false
 	m := chatModel{
 		input:   []rune("queued prompt"),
@@ -1131,56 +1139,16 @@ func TestChatDoubleEscClearsDraftAndCancelsRun(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(chatModel)
 	if cmd != nil {
-		t.Fatal("first esc should not quit")
-	}
-	if canceled {
-		t.Fatal("first esc should not cancel")
-	}
-	if got := string(m.input); got != "queued prompt" {
-		t.Fatalf("first esc input = %q, want unchanged", got)
-	}
-	if !m.escArmed {
-		t.Fatal("first esc should arm clear/cancel")
-	}
-
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(chatModel)
-	if cmd != nil {
-		t.Fatal("second esc should not quit")
+		t.Fatal("esc should not quit")
 	}
 	if !canceled {
-		t.Fatal("second esc should cancel active run")
+		t.Fatal("esc should cancel active run")
 	}
-	if got := string(m.input); got != "" {
-		t.Fatalf("input = %q, want cleared", got)
-	}
-	if m.escArmed {
-		t.Fatal("second esc should disarm")
+	if got := string(m.input); got != "queued prompt" {
+		t.Fatalf("input = %q, want preserved", got)
 	}
 	if m.status != "canceling" {
 		t.Fatalf("status = %q, want canceling", m.status)
-	}
-}
-
-func TestChatEscClearHintDisarmsOnOtherKey(t *testing.T) {
-	m := chatModel{input: []rune("draft")}
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(chatModel)
-	if !m.escArmed {
-		t.Fatal("first esc should arm clear")
-	}
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	m = updated.(chatModel)
-	if m.escArmed {
-		t.Fatal("typing should disarm esc confirmation")
-	}
-	if m.status != "ready" {
-		t.Fatalf("status = %q, want ready", m.status)
-	}
-	if got := string(m.input); got != "draftx" {
-		t.Fatalf("input = %q, want draftx", got)
 	}
 }
 

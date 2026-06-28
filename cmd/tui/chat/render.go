@@ -291,7 +291,10 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 	lines = append(lines, actionStatusLines...)
 	lines = append(lines, approvalLines...)
 	modelLines := m.renderModelStatusLines(width)
-	fixedLines := len(lines) + len(modelLines) + 2
+	fixedLines := len(lines) + 2
+	if len(modelLines) > 0 {
+		fixedLines += len(modelLines)
+	}
 	inputBodyLines := maxInputBoxBodyLines
 	if maxHeight > 0 {
 		inputBodyLines = min(inputBodyLines, max(1, maxHeight-fixedLines))
@@ -301,7 +304,9 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 		inputCursor = -1
 	}
 	lines = append(lines, renderInputBoxLines(string(m.input), inputCursor, width, inputBodyLines, m.emptyInputPlaceholder())...)
-	lines = append(lines, modelLines...)
+	if len(modelLines) > 0 {
+		lines = append(lines, modelLines...)
+	}
 	return lines
 }
 
@@ -322,16 +327,17 @@ func (m chatModel) renderModelStatusLines(width int) []string {
 	if len(parts) == 0 {
 		return nil
 	}
-	lines := wrapChatText(strings.Join(parts, "  "), width)
+	indent := inputBoxTextIndent()
+	lines := wrapChatText(strings.Join(parts, " · "), max(20, width-lipgloss.Width(indent)))
 	for i := range lines {
-		lines[i] = renderFooterPlainLine(lines[i])
+		lines[i] = renderFooterPlainLine(indent + lines[i])
 	}
 	return lines
 }
 
 func (m chatModel) renderActionStatusLines(width int) []string {
 	if activity := m.activityLine(); activity != "" {
-		return []string{chatMetaStyle.Render(activity)}
+		return []string{chatMetaStyle.Render(inputBoxTextIndent() + activity)}
 	}
 	if notificationLines := m.renderNotificationLines(width); len(notificationLines) > 0 {
 		return notificationLines
@@ -521,7 +527,14 @@ func (m chatModel) renderEntryLines(entry chatEntry, body string, width int) []s
 }
 
 func renderUserMessageLines(content string, width int) []string {
-	return renderPromptRow(chatPromptPrefix+content, width)
+	if width < 20 {
+		width = 20
+	}
+	lines := wrapChatText(content, width)
+	for i, line := range lines {
+		lines[i] = chatUserBlockStyle.Render(padRenderedLine(line, width))
+	}
+	return lines
 }
 
 func renderMetricsLines(metrics *api.Metrics, width int) []string {
@@ -788,11 +801,10 @@ func (m chatModel) queuedLines(width int) []string {
 	lines := make([]string, 0, min(len(m.queued), limit)+1)
 	for i, queued := range m.queued {
 		if i >= limit {
-			lines = append(lines, chatMetaStyle.Render(fmt.Sprintf("queued +%d more", len(m.queued)-i)))
+			lines = append(lines, chatMetaStyle.Render(fmt.Sprintf("  +%d more", len(m.queued)-i)))
 			break
 		}
-		label := fmt.Sprintf("queued %d: %s", i+1, queued)
-		lines = append(lines, chatMetaStyle.Render(truncateRunes(label, max(20, width))))
+		lines = append(lines, chatMetaStyle.Render(truncateRunes("  "+queued, max(20, width))))
 	}
 	return lines
 }
@@ -994,8 +1006,8 @@ func toolStatusLine(entry chatEntry) string {
 
 func toolGroupStatusLine(entry chatEntry) string {
 	label := entry.label
-	if label == "" {
-		label = fmt.Sprintf("Tool calls (%d)", len(entry.tools))
+	if label == "" || strings.HasPrefix(label, "Tool calls (") {
+		label = toolGroupSummary(entry.tools)
 	}
 
 	// Color the label with the group's outcome color (green/red/amber/yellow);
@@ -1007,6 +1019,150 @@ func toolGroupStatusLine(entry chatEntry) string {
 		return styledLabel
 	}
 	return fmt.Sprintf("%s %s", styledLabel, segment)
+}
+
+func toolGroupSummary(tools []chatEntry) string {
+	if len(tools) == 0 {
+		return "Used tools"
+	}
+
+	type actionCount struct {
+		action string
+		count  int
+	}
+
+	var counts []actionCount
+	indexes := map[string]int{}
+	for _, tool := range tools {
+		action := toolAction(tool.detail)
+		if action == "" {
+			action = toolAction(tool.label)
+		}
+		if action == "" {
+			action = "tool"
+		}
+		if index, ok := indexes[action]; ok {
+			counts[index].count++
+			continue
+		}
+		indexes[action] = len(counts)
+		counts = append(counts, actionCount{action: action, count: 1})
+	}
+
+	phrases := make([]string, 0, len(counts))
+	for _, count := range counts {
+		phrases = append(phrases, toolActionPhrase(count.action, count.count))
+	}
+	return joinToolActionPhrases(phrases)
+}
+
+func toolAction(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	switch {
+	case coreagent.IsShellToolName(name):
+		return "command"
+	case strings.Contains(name, "bash") || strings.Contains(name, "powershell"):
+		return "command"
+	case strings.HasPrefix(name, "edit("):
+		return "edit"
+	case strings.HasPrefix(name, "read("):
+		return "read"
+	case strings.HasPrefix(name, "list("):
+		return "list"
+	case strings.HasPrefix(name, "web search("):
+		return "search"
+	case strings.HasPrefix(name, "web fetch("):
+		return "fetch"
+	case strings.HasPrefix(name, "skill("):
+		return "skill"
+	}
+	switch name {
+	case "edit":
+		return "edit"
+	case "read":
+		return "read"
+	case "list":
+		return "list"
+	case "web_search":
+		return "search"
+	case "web_fetch":
+		return "fetch"
+	case "skill":
+		return "skill"
+	default:
+		return "tool"
+	}
+}
+
+func toolActionPhrase(action string, count int) string {
+	plural := count != 1
+	switch action {
+	case "command":
+		if plural {
+			return fmt.Sprintf("Ran %d commands", count)
+		}
+		return "Ran a command"
+	case "edit":
+		if plural {
+			return fmt.Sprintf("Edited %d files", count)
+		}
+		return "Edited a file"
+	case "read":
+		if plural {
+			return fmt.Sprintf("Read %d files", count)
+		}
+		return "Read a file"
+	case "list":
+		if plural {
+			return fmt.Sprintf("Listed files %d times", count)
+		}
+		return "Listed files"
+	case "search":
+		if plural {
+			return fmt.Sprintf("Searched the web %d times", count)
+		}
+		return "Searched the web"
+	case "fetch":
+		if plural {
+			return fmt.Sprintf("Fetched %d URLs", count)
+		}
+		return "Fetched a URL"
+	case "skill":
+		if plural {
+			return fmt.Sprintf("Ran %d skills", count)
+		}
+		return "Ran a skill"
+	default:
+		if plural {
+			return fmt.Sprintf("Used %d tools", count)
+		}
+		return "Used a tool"
+	}
+}
+
+func joinToolActionPhrases(phrases []string) string {
+	switch len(phrases) {
+	case 0:
+		return "Used tools"
+	case 1:
+		return phrases[0]
+	case 2:
+		return phrases[0] + " and " + lowerInitial(phrases[1])
+	default:
+		for i := 1; i < len(phrases); i++ {
+			phrases[i] = lowerInitial(phrases[i])
+		}
+		return strings.Join(phrases[:len(phrases)-1], ", ") + ", and " + phrases[len(phrases)-1]
+	}
+}
+
+func lowerInitial(s string) string {
+	if s == "" {
+		return s
+	}
+	runes := []rune(s)
+	runes[0] = []rune(strings.ToLower(string(runes[0])))[0]
+	return string(runes)
 }
 
 func toolGroupPrefixStyle(entry chatEntry) lipgloss.Style {
@@ -1039,7 +1195,7 @@ func toolStatusLabel(entry chatEntry) string {
 		return "needs approval"
 	}
 	if entry.status == "running" || entry.status == "queued" {
-		return "in progress"
+		return ""
 	}
 	return ""
 }
@@ -1051,7 +1207,7 @@ func toolStatusStyle(status string) lipgloss.Style {
 	case "error":
 		return chatErrorStyle
 	default:
-		return chatToolRunningStyle
+		return chatMetaStyle
 	}
 }
 
@@ -1180,11 +1336,16 @@ func (m chatModel) renderNotificationLines(width int) []string {
 	if line == "" {
 		return nil
 	}
-	lines := wrapChatText(line, width)
+	indent := inputBoxTextIndent()
+	lines := wrapChatText(line, max(20, width-lipgloss.Width(indent)))
 	for i, wrapped := range lines {
-		lines[i] = chatNotificationStyle.Render(wrapped)
+		lines[i] = chatNotificationStyle.Render(indent + wrapped)
 	}
 	return lines
+}
+
+func inputBoxTextIndent() string {
+	return strings.Repeat(" ", inputBoxHorizontalPadding+1)
 }
 
 func renderFooterPlainLine(line string) string {
@@ -1448,7 +1609,7 @@ func (m chatModel) contextStatus() string {
 	}
 
 	if used >= compactAt {
-		return fmt.Sprintf("ctx %s%s/%s (%d%%)", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent)
+		return fmt.Sprintf("ctx %s%s / %s (%d%% used)", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent)
 	}
 
 	noticeDistance := int(float64(window)*0.1 + 0.999999)
@@ -1456,11 +1617,11 @@ func (m chatModel) contextStatus() string {
 		noticeDistance = 1
 	}
 	if compactAt-used <= noticeDistance {
-		return fmt.Sprintf("ctx %s%s/%s (%d%%)", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent)
+		return fmt.Sprintf("ctx %s%s / %s (%d%% used)", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent)
 	}
 
 	if percent > 60 {
-		return fmt.Sprintf("ctx %s%s/%s (%d%%)", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent)
+		return fmt.Sprintf("ctx %s%s / %s (%d%% used)", prefix, formatContextTokenCount(used), formatContextTokenCount(window), percent)
 	}
 
 	return ""
@@ -1730,7 +1891,7 @@ func groupCompletedToolEntries(entries []chatEntry) []chatEntry {
 
 		group := chatEntry{
 			role:       "tool_group",
-			label:      fmt.Sprintf("Tool calls (%d)", len(tools)),
+			label:      toolGroupSummary(tools),
 			status:     aggregateToolStatus(tools),
 			expanded:   anyToolExpanded(tools),
 			startedAt:  firstToolStartedAt(tools),

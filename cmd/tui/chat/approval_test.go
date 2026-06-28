@@ -36,7 +36,7 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 		!strings.Contains(view, "›") {
 		t.Fatalf("approval view missing content: %q", view)
 	}
-	if strings.Contains(view, "› █") {
+	if strings.Contains(view, "█") {
 		t.Fatalf("approval view should hide the input cursor: %q", view)
 	}
 	if strings.Contains(view, "1/2/3 choose • enter select • esc deny") {
@@ -55,7 +55,7 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 		t.Fatalf("approval view should not render risk level: %q", view)
 	}
 	approvalIdx := strings.LastIndex(view, "1. Approve once")
-	inputIdx := strings.LastIndex(view, "›")
+	inputIdx := strings.LastIndex(view, "╭")
 	if approvalIdx < 0 || inputIdx < 0 || approvalIdx > inputIdx {
 		t.Fatalf("approval picker should render above the input box:\n%s", view)
 	}

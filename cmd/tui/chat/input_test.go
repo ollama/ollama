@@ -37,13 +37,12 @@ func TestChatHelpCommandShowsCommands(t *testing.T) {
 		!strings.Contains(fm.entries[0].content, "- `/help`: show commands") ||
 		!strings.Contains(fm.entries[0].content, "- `/bye`: exit") ||
 		!strings.Contains(fm.entries[0].content, "**Shortcuts**") ||
-		!strings.Contains(fm.entries[0].content, "- `ctrl+o`: toggle tool output") ||
 		!strings.Contains(fm.entries[0].content, "- `shift+enter`: insert a newline") ||
 		!strings.Contains(fm.entries[0].content, "- `shift+tab`: toggle permission mode") ||
 		!strings.Contains(fm.entries[0].content, "- `ctrl+a/e`: move to line start or end") {
 		t.Fatalf("help output = %q", fm.entries[0].content)
 	}
-	for _, hidden := range []string{"/history", "/raw", "/set think", "/set nothink"} {
+	for _, hidden := range []string{"/history", "/raw", "/set think", "/set nothink", "ctrl+o"} {
 		if strings.Contains(fm.entries[0].content, hidden) {
 			t.Fatalf("hidden command %q should stay hidden from help: %q", hidden, fm.entries[0].content)
 		}
@@ -57,14 +56,14 @@ func TestTruncateInputLineUsesDisplayWidth(t *testing.T) {
 	}
 }
 
-func TestRenderInputBoxTruncationUsesSingleContinuationMarker(t *testing.T) {
+func TestRenderInputBoxTruncationAlignsContinuation(t *testing.T) {
 	lines := renderInputBoxLines("one two three four five six seven", len("one two three four five six seven"), 16, 1, "")
 	rendered := strings.Join(lines, "\n")
-	if strings.Contains(rendered, "... ...") {
-		t.Fatalf("input rendered duplicate continuation marker: %q", rendered)
+	if strings.Contains(rendered, "...") {
+		t.Fatalf("input should not render continuation ellipses: %q", rendered)
 	}
-	if !strings.Contains(rendered, "...") {
-		t.Fatalf("input should include continuation marker: %q", rendered)
+	if !strings.Contains(rendered, "│ five six sev │") {
+		t.Fatalf("input continuation should align with prompt text: %q", rendered)
 	}
 }
 
@@ -437,7 +436,7 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	if got := len(m.slashCommandLines(80)); got != maxSlashCompletions {
 		t.Fatalf("slash suggestions = %d, want %d", got, maxSlashCompletions)
 	}
-	if !strings.Contains(view, "› /█") {
+	if !strings.Contains(view, "/█") {
 		t.Fatalf("view missing slash input row: %q", view)
 	}
 }

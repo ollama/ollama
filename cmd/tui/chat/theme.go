@@ -23,15 +23,28 @@ var (
 
 	chatUserStyle = lipgloss.NewStyle()
 
+	chatUserBlockStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#111111")).
+				Background(lipgloss.Color("#eeeeee"))
+
 	chatAssistantStyle = lipgloss.NewStyle()
 
 	chatToolStyle = lipgloss.NewStyle()
 
+	chatInlineCodeStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color(chatAnsiMuted))
+
+	chatCodeBlockStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("7"))
+
+	chatTableBorderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(chatAnsiMuted))
+
 	chatToolRunningStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiYellow))
+				Foreground(lipgloss.Color(chatAnsiMuted))
 
 	chatToolDoneStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiGreen))
+				Foreground(lipgloss.Color(chatAnsiMuted))
 
 	// chatToolMixedStyle marks a tool group with both succeeded and failed
 	// calls (partial success). Amber/orange is distinct from green (success),
@@ -59,8 +72,7 @@ var (
 			Foreground(lipgloss.Color(chatAnsiRed))
 
 	chatFullAccessStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color(chatAnsiRed))
+				Foreground(lipgloss.Color("#9f5f5f"))
 
 	chatCommandNameStyle = lipgloss.NewStyle()
 

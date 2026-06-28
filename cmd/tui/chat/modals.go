@@ -619,10 +619,11 @@ func (m *chatModel) resumeSelectedChat() (tea.Model, tea.Cmd) {
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
 	m.scroll = 0
-	m.boundedFrame = true
+	m.boundedFrame = false
+	m.fullScreen = false
 	m.flowPrintedLines = 0
 	m.status = "resumed"
-	return *m, tea.ClearScreen
+	return m.withFlowTranscriptFlush(nil)
 }
 
 func (m chatModel) renderResumePicker(width int) string {
