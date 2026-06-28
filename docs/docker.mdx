@@ -56,8 +56,9 @@ docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ol
 ```
 
 <Note>
-  If you're running on an NVIDIA JetPack system, Ollama can't automatically discover the correct JetPack version.
-  Pass the environment variable `JETSON_JETPACK=5` or `JETSON_JETPACK=6` to the container to select version 5 or 6.
+  If you're running on an NVIDIA JetPack 5 or 6 system, Ollama can't automatically discover the correct JetPack version inside the container.
+  Pass the environment variable `JETSON_JETPACK=5` or `JETSON_JETPACK=6` to the container to select the version.
+  JetPack 7 uses the standard CUDA build and requires no additional configuration.
 </Note>
 
 ## AMD GPU

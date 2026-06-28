@@ -13,8 +13,10 @@ import (
 	"github.com/ollama/ollama/ml"
 )
 
-// Jetson devices have JETSON_JETPACK="x.y.z" factory set to the Jetpack version installed.
-// Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
+// CudaTegra optionally overrides JetPack detection with the installed JetPack
+// version ("x.y.z"). It is read from the JETSON_JETPACK environment variable,
+// which is primarily useful inside containers where /etc/nv_tegra_release is
+// not present.
 var CudaTegra string = os.Getenv("JETSON_JETPACK")
 
 // GetSystemInfo returns host memory information used by scheduling.
@@ -37,34 +39,64 @@ func GetSystemInfo() ml.SystemInfo {
 	}
 }
 
+// cudaJetpack returns the bundled CUDA runner directory suffix for the current
+// Jetson host, or "" to use the standard CUDA build.
 func cudaJetpack() string {
-	if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
-		if CudaTegra != "" {
-			ver := strings.Split(CudaTegra, ".")
-			if len(ver) > 0 {
-				return "jetpack" + ver[0]
-			}
-		} else if data, err := os.ReadFile("/etc/nv_tegra_release"); err == nil {
-			r := regexp.MustCompile(` R(\d+) `)
-			m := r.FindSubmatch(data)
-			if len(m) != 2 {
-				slog.Info("Unexpected format for /etc/nv_tegra_release.  Set JETSON_JETPACK to select version")
-			} else {
-				if l4t, err := strconv.Atoi(string(m[1])); err == nil {
-					// Note: mapping from L4t -> JP is inconsistent (can't just subtract 30)
-					// https://developer.nvidia.com/embedded/jetpack-archive
-					switch l4t {
-					case 35:
-						return "jetpack5"
-					case 36:
-						return "jetpack6"
-					default:
-						// Newer Jetson systems use the SBSU runtime
-						slog.Debug("unrecognized L4T version", "nv_tegra_release", string(data))
-					}
-				}
-			}
+	if runtime.GOARCH != "arm64" || runtime.GOOS != "linux" {
+		return ""
+	}
+
+	var tegraRelease []byte
+	if CudaTegra == "" {
+		// On a device this file records the installed L4T release; in
+		// containers it is typically absent, so JETSON_JETPACK is used instead.
+		tegraRelease, _ = os.ReadFile("/etc/nv_tegra_release")
+	}
+	return jetpackRunner(CudaTegra, tegraRelease)
+}
+
+// jetpackRunner selects the bundled CUDA runner directory suffix for a Jetson
+// host. The JETSON_JETPACK override ("x.y.z") takes precedence; otherwise the
+// L4T release major is parsed from the /etc/nv_tegra_release contents. Only
+// JetPack 5 and 6 ship dedicated runners ("jetpack5"/"jetpack6"); JetPack 7+
+// (L4T r38 on Thor, r39 on Orin, and newer) supports SBSA-based CUDA and uses
+// the standard cuda_v13 build, returned here as "".
+func jetpackRunner(override string, tegraRelease []byte) string {
+	if override != "" {
+		// JETSON_JETPACK holds the JetPack version, e.g. "6.1".
+		switch major, _, _ := strings.Cut(override, "."); major {
+		case "5":
+			return "jetpack5"
+		case "6":
+			return "jetpack6"
+		default:
+			return "" // JetPack 7+ uses the standard SBSA cuda_v13 build
 		}
 	}
-	return ""
+
+	if len(tegraRelease) == 0 {
+		return ""
+	}
+	// /etc/nv_tegra_release begins with e.g. "# R36 (release), REVISION: 4.0".
+	// The L4T major version maps to JetPack non-arithmetically:
+	// https://developer.nvidia.com/embedded/jetpack-archive
+	m := regexp.MustCompile(` R(\d+) `).FindSubmatch(tegraRelease)
+	if len(m) != 2 {
+		slog.Info("unexpected format for /etc/nv_tegra_release; set JETSON_JETPACK to select the version")
+		return ""
+	}
+	l4t, _ := strconv.Atoi(string(m[1]))
+	switch {
+	case l4t == 35:
+		return "jetpack5"
+	case l4t == 36:
+		return "jetpack6"
+	case l4t >= 38:
+		// JetPack 7+ (L4T r38/r39 and newer) supports SBSA-based CUDA, so the
+		// standard cuda_v13 build is used instead of a Jetson-specific runner.
+		return ""
+	default:
+		slog.Debug("unrecognized L4T version", "nv_tegra_release", string(tegraRelease))
+		return ""
+	}
 }
