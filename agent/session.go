@@ -87,10 +87,8 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	for _, msg := range opts.Messages {
 		messages = append(messages, sanitizeMessageForRun(msg))
 	}
-	newMessages := make([]api.Message, 0, len(opts.NewMessages))
 	for _, msg := range opts.NewMessages {
 		msg = sanitizeMessageForRun(msg)
-		newMessages = append(newMessages, msg)
 		messages = append(messages, msg)
 	}
 
@@ -211,8 +209,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 }
 
 func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest *api.ChatResponse) (api.Message, []api.ToolCall, bool, error) {
-	preview := BuildChatRequestPreview(opts, messages, s.runTools(opts))
-	req := &preview.Request
+	req := buildChatRequest(opts, messages, s.runTools(opts))
 	if err := emit(s.Events, s.requestBuiltEvent(runID, opts)); err != nil {
 		return api.Message{}, nil, false, err
 	}
@@ -221,7 +218,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 	var started bool
 	var pendingToolCalls []api.ToolCall
 
-	err := s.Client.Chat(ctx, req, func(response api.ChatResponse) error {
+	err := s.Client.Chat(ctx, &req, func(response api.ChatResponse) error {
 		if response.Message.Role != "" {
 			assistant.Role = response.Message.Role
 		}
@@ -287,7 +284,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 	toolMessages := make([]api.Message, 0, len(calls))
 	var overflows []toolOutputOverflow
 	projectedMessages := append([]api.Message(nil), messages...)
-	persistCtx := context.WithoutCancel(ctx)
 	for i, call := range calls {
 		toolName := call.Function.Name
 		args := call.Function.Arguments.ToMap()
@@ -303,9 +299,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		if !ok {
 			content := fmt.Sprintf("Error: unknown tool: %s", toolName)
 			msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
-			if err := s.appendToolMessage(persistCtx, opts.ChatID, msg); err != nil {
-				return nil, toolExecutionContinue, nil, err
-			}
 			toolMessages = append(toolMessages, msg)
 			projectedMessages = append(projectedMessages, msg)
 			content = msg.Content
@@ -345,9 +338,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 					content = "Tool execution denied."
 				}
 				msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
-				if err := s.appendToolMessage(persistCtx, opts.ChatID, msg); err != nil {
-					return nil, toolExecutionContinue, nil, err
-				}
 				toolMessages = append(toolMessages, msg)
 				projectedMessages = append(projectedMessages, msg)
 				content = msg.Content
@@ -359,9 +349,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 					skippedArgs := skipped.Function.Arguments.ToMap()
 					skippedContent := "Tool execution skipped because a previous tool call in this assistant message was denied."
 					skippedMsg := s.toolMessageForContext(skippedToolName, skipped.ID, skippedContent, opts, projectedMessages)
-					if err := s.appendToolMessage(persistCtx, opts.ChatID, skippedMsg); err != nil {
-						return nil, toolExecutionContinue, nil, err
-					}
 					toolMessages = append(toolMessages, skippedMsg)
 					projectedMessages = append(projectedMessages, skippedMsg)
 					skippedContent = skippedMsg.Content
@@ -382,9 +369,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		if err != nil {
 			rawContent := fmt.Sprintf("Error: %v", err)
 			msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, projectedMessages)
-			if appendErr := s.appendToolMessage(persistCtx, opts.ChatID, msg); appendErr != nil {
-				return nil, toolExecutionContinue, nil, appendErr
-			}
 			toolMessages = append(toolMessages, msg)
 			projectedMessages = append(projectedMessages, msg)
 			content := msg.Content
@@ -410,9 +394,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		rawContent := result.Content
 
 		msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, projectedMessages)
-		if err := s.appendToolMessage(persistCtx, opts.ChatID, msg); err != nil {
-			return nil, toolExecutionContinue, nil, err
-		}
 		toolMessages = append(toolMessages, msg)
 		projectedMessages = append(projectedMessages, msg)
 		content := msg.Content
@@ -438,17 +419,10 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 
 func (s *Session) skipToolCalls(ctx context.Context, runID string, opts RunOptions, calls []api.ToolCall, content string) ([]api.Message, error) {
 	toolMessages := make([]api.Message, 0, len(calls))
-	appendCtx := ctx
-	if ctx != nil && ctx.Err() != nil {
-		appendCtx = context.WithoutCancel(ctx)
-	}
 	for _, call := range calls {
 		toolName := call.Function.Name
 		args := call.Function.Arguments.ToMap()
 		msg := toolMessage(toolName, call.ID, content)
-		if err := s.appendToolMessage(appendCtx, opts.ChatID, msg); err != nil {
-			return nil, err
-		}
 		toolMessages = append(toolMessages, msg)
 		if emitErr := emitIgnoringCanceled(ctx, s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "skipped", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content, FinishedAt: time.Now()}); emitErr != nil {
 			return nil, emitErr
@@ -602,9 +576,6 @@ func (s *Session) compactForToolOutputOverflow(ctx context.Context, runID string
 			}
 		}
 		refit := s.toolMessageForPostCompactionContext(toolName, msg.ToolCallID, content, opts, compacted)
-		if err := s.appendToolMessage(context.WithoutCancel(ctx), opts.ChatID, refit); err != nil {
-			return compacted, skipNotified, err
-		}
 		compacted = append(compacted, refit)
 	}
 
@@ -718,10 +689,6 @@ func CompactionSkippedMessage(reason string) string {
 	return reason
 }
 
-func (s *Session) appendToolMessage(ctx context.Context, chatID string, msg api.Message) error {
-	return nil
-}
-
 func resolvedMaxToolRounds(value int) int {
 	if value == 0 {
 		return defaultMaxToolRounds
@@ -759,7 +726,7 @@ func (s *Session) toolMessageForContext(toolName, toolCallID, content string, op
 	// user request instead of asking the user to prompt again.
 	availableRunes := (threshold - baseTokens - overheadTokens - toolTruncationMarkerReserveTokens) * 4
 	maxRunes = min(maxRunes, max(0, availableRunes))
-	msg.Content = forceTruncateToolResultContentTo(content, maxRunes)
+	msg.Content = truncateToolResultContentTo(content, maxRunes)
 	return msg
 }
 
@@ -788,7 +755,7 @@ func (s *Session) toolMessageForPostCompactionContext(toolName, toolCallID, cont
 func toolMessageWithLimit(toolName, toolCallID, content string, maxRunes int) api.Message {
 	return api.Message{
 		Role:       "tool",
-		Content:    forceTruncateToolResultContentTo(content, maxRunes),
+		Content:    truncateToolResultContentTo(content, maxRunes),
 		ToolName:   toolName,
 		ToolCallID: toolCallID,
 	}
@@ -813,7 +780,7 @@ func (s *Session) runTools(opts RunOptions) api.Tools {
 }
 
 func (s *Session) estimateRunPromptTokens(opts RunOptions, messages []api.Message) int {
-	return EstimateChatRequestPromptTokens(opts, messages, s.runTools(opts))
+	return estimateChatRequestTokens(opts, messages, s.runTools(opts))
 }
 
 func (s *Session) checkPreflightPromptBudget(opts RunOptions, messages []api.Message) error {
@@ -902,14 +869,6 @@ func truncateToolResultContent(content string) string {
 }
 
 func truncateToolResultContentTo(content string, maxRunes int) string {
-	return truncateToolResultContentToLimit(content, maxRunes)
-}
-
-func forceTruncateToolResultContentTo(content string, maxRunes int) string {
-	return truncateToolResultContentToLimit(content, maxRunes)
-}
-
-func truncateToolResultContentToLimit(content string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return fmt.Sprintf("%s omitted ~%d tokens. Use a narrower command, line range, or search query if more detail is needed.]", toolOutputFullOmissionPrefix, approximateTokensFromRunes(len([]rune(content))))
 	}

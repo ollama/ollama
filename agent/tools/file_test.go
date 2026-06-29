@@ -181,25 +181,7 @@ func TestReadDefaultsToEntireFile(t *testing.T) {
 	}
 }
 
-func TestReadLineRange(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("one\ntwo\nthree\nfour\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
-		"path":       "note.txt",
-		"line_range": "2-3",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Content != "two\nthree\n" {
-		t.Fatalf("content = %q", result.Content)
-	}
-}
-
-func TestReadLinesAliasAsRange(t *testing.T) {
+func TestReadStartEnd(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("one\ntwo\nthree\nfour\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -207,7 +189,8 @@ func TestReadLinesAliasAsRange(t *testing.T) {
 
 	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path":  "note.txt",
-		"lines": "2-3",
+		"start": 2,
+		"end":   3,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -217,16 +200,15 @@ func TestReadLinesAliasAsRange(t *testing.T) {
 	}
 }
 
-func TestReadLineCountFromStartLine(t *testing.T) {
+func TestReadStartOnly(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("one\ntwo\nthree\nfour\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
-		"path":       "note.txt",
-		"start_line": 3,
-		"line_count": 2,
+		"path":  "note.txt",
+		"start": 3,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -236,20 +218,39 @@ func TestReadLineCountFromStartLine(t *testing.T) {
 	}
 }
 
-func TestReadRejectsInvalidLineRange(t *testing.T) {
+func TestReadEndOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("one\ntwo\nthree\nfour\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path": "note.txt",
+		"end":  2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Content != "one\ntwo\n" {
+		t.Fatalf("content = %q", result.Content)
+	}
+}
+
+func TestReadRejectsInvalidRange(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("one\ntwo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	_, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
-		"path":       "note.txt",
-		"line_range": "4-2",
+		"path":  "note.txt",
+		"start": 4,
+		"end":   2,
 	})
 	if err == nil {
 		t.Fatal("expected invalid range to fail")
 	}
-	if !strings.Contains(err.Error(), "line_range end") {
+	if !strings.Contains(err.Error(), "end must") {
 		t.Fatalf("err = %v", err)
 	}
 }

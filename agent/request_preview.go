@@ -7,22 +7,7 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-// ChatRequestPreview is the request body plus the estimated prompt tokens for it.
-type ChatRequestPreview struct {
-	Request      api.ChatRequest
-	PromptTokens int
-}
-
-// BuildChatRequestPreview builds the chat request shape used for a run and its estimated prompt tokens.
-func BuildChatRequestPreview(opts RunOptions, messages []api.Message, tools api.Tools) ChatRequestPreview {
-	return ChatRequestPreview{
-		Request:      buildChatRequest(opts, messages, tools),
-		PromptTokens: EstimateChatRequestPromptTokens(opts, messages, tools),
-	}
-}
-
-// EstimateChatRequestPromptTokens estimates the prompt tokens for a chat request before sending it.
-func EstimateChatRequestPromptTokens(opts RunOptions, messages []api.Message, tools api.Tools) int {
+func estimateChatRequestTokens(opts RunOptions, messages []api.Message, tools api.Tools) int {
 	return estimateCompactionRequestTokens(CompactionRequest{
 		SystemPrompt: opts.SystemPrompt,
 		Messages:     sanitizeMessagesForRequest(messages),

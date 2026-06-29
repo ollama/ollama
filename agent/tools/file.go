@@ -38,21 +38,13 @@ func (r *Read) Schema() api.ToolFunction {
 		Type:        api.PropertyType{"string"},
 		Description: "Path to the file to read, relative to the working directory.",
 	})
-	props.Set("start_line", api.ToolProperty{
+	props.Set("start", api.ToolProperty{
 		Type:        api.PropertyType{"integer"},
 		Description: "Optional 1-based line to start reading from.",
 	})
-	props.Set("end_line", api.ToolProperty{
+	props.Set("end", api.ToolProperty{
 		Type:        api.PropertyType{"integer"},
 		Description: "Optional 1-based inclusive line to stop reading at.",
-	})
-	props.Set("line_count", api.ToolProperty{
-		Type:        api.PropertyType{"integer"},
-		Description: "Optional maximum number of lines to read, starting at start_line or line 1.",
-	})
-	props.Set("line_range", api.ToolProperty{
-		Type:        api.PropertyType{"string"},
-		Description: `Optional 1-based inclusive range like "10-40", "10:40", "10..40", "10-", or "10".`,
 	})
 	return api.ToolFunction{
 		Name:        r.Name(),
@@ -389,125 +381,30 @@ type readSelection struct {
 
 func readSelectionFromArgs(args map[string]any) (readSelection, error) {
 	selection := readSelection{start: 1}
-	var startSet, endSet bool
 
-	for _, key := range []string{"line_range", "range", "lines"} {
-		if lineRange, ok := stringReadArg(args, key); ok {
-			start, end, err := parseLineRange(lineRange)
-			if err != nil {
-				return readSelection{}, err
-			}
-			selection.enabled = true
-			if start > 0 {
-				selection.start = start
-				startSet = true
-			}
-			if end > 0 {
-				selection.end = end
-				endSet = true
-			}
-			break
-		}
-	}
-
-	if start, ok, err := intReadArg(args, "start_line"); err != nil {
+	if start, ok, err := intReadArg(args, "start"); err != nil {
 		return readSelection{}, err
 	} else if ok {
 		selection.enabled = true
 		selection.start = start
-		startSet = true
 	}
-	if end, ok, err := intReadArg(args, "end_line"); err != nil {
+	if end, ok, err := intReadArg(args, "end"); err != nil {
 		return readSelection{}, err
 	} else if ok {
 		selection.enabled = true
 		selection.end = end
-		endSet = true
-	}
-
-	lineCount, countSet, err := readLineCountArg(args)
-	if err != nil {
-		return readSelection{}, err
-	}
-	if countSet {
-		selection.enabled = true
-		if !startSet {
-			selection.start = 1
-		}
-		if !endSet {
-			selection.end = selection.start + lineCount - 1
-		}
 	}
 
 	if !selection.enabled {
 		return selection, nil
 	}
 	if selection.start < 1 {
-		return readSelection{}, fmt.Errorf("start_line must be greater than 0")
+		return readSelection{}, fmt.Errorf("start must be greater than 0")
 	}
 	if selection.end > 0 && selection.end < selection.start {
-		return readSelection{}, fmt.Errorf("end_line must be greater than or equal to start_line")
+		return readSelection{}, fmt.Errorf("end must be greater than or equal to start")
 	}
 	return selection, nil
-}
-
-func readLineCountArg(args map[string]any) (int, bool, error) {
-	for _, key := range []string{"line_count", "num_lines"} {
-		value, ok, err := intReadArg(args, key)
-		if err != nil || ok {
-			if ok && value < 1 {
-				return 0, false, fmt.Errorf("%s must be greater than 0", key)
-			}
-			return value, ok, err
-		}
-	}
-	return 0, false, nil
-}
-
-func parseLineRange(value string) (int, int, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0, 0, nil
-	}
-	value = strings.TrimPrefix(value, "lines")
-	value = strings.TrimPrefix(value, "line")
-	value = strings.TrimSpace(value)
-
-	for _, sep := range []string{"..", ":", ","} {
-		value = strings.ReplaceAll(value, sep, "-")
-	}
-	parts := strings.Split(value, "-")
-	if len(parts) > 2 {
-		return 0, 0, fmt.Errorf("line_range must look like 10-40, 10:40, 10..40, 10-, or 10")
-	}
-
-	start, end := 0, 0
-	var err error
-	if strings.TrimSpace(parts[0]) != "" {
-		start, err = strconv.Atoi(strings.TrimSpace(parts[0]))
-		if err != nil || start < 1 {
-			return 0, 0, fmt.Errorf("line_range start must be a positive line number")
-		}
-	}
-	if len(parts) == 1 {
-		return start, start, nil
-	}
-	if strings.TrimSpace(parts[1]) != "" {
-		end, err = strconv.Atoi(strings.TrimSpace(parts[1]))
-		if err != nil || end < 1 {
-			return 0, 0, fmt.Errorf("line_range end must be a positive line number")
-		}
-	}
-	if start == 0 && end == 0 {
-		return 0, 0, fmt.Errorf("line_range must include at least one line number")
-	}
-	if start == 0 {
-		start = 1
-	}
-	if end > 0 && end < start {
-		return 0, 0, fmt.Errorf("line_range end must be greater than or equal to start")
-	}
-	return start, end, nil
 }
 
 func readLineSelection(file *os.File, selection readSelection) (string, error) {
@@ -532,11 +429,6 @@ func readLineSelection(file *os.File, selection readSelection) (string, error) {
 		}
 	}
 	return b.String(), nil
-}
-
-func stringReadArg(args map[string]any, key string) (string, bool) {
-	value, ok := args[key].(string)
-	return value, ok && strings.TrimSpace(value) != ""
 }
 
 func intReadArg(args map[string]any, key string) (int, bool, error) {
