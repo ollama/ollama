@@ -35,7 +35,7 @@ func (p RunPolicy) Tools(registry *Registry) *Registry {
 	return registry
 }
 
-func (p RunPolicy) ApprovalHandler(prompter ApprovalPrompter) ApprovalHandler {
+func (p RunPolicy) Authorizer(prompter ApprovalPrompter) ToolAuthorizer {
 	if p.ToolMode == ToolModeFullAccess {
 		return AutoAllowApproval{}
 	}
@@ -49,7 +49,7 @@ func (p RunPolicy) ApprovalHandler(prompter ApprovalPrompter) ApprovalHandler {
 	})
 }
 
-func (p RunPolicy) ReviewApprovalHandler(prompter ApprovalPrompter) ApprovalHandler {
+func (p RunPolicy) ReviewAuthorizer(prompter ApprovalPrompter) ToolAuthorizer {
 	policy := p.ApprovalPolicy
 	if policy == nil {
 		policy = DefaultApprovalPolicy{}

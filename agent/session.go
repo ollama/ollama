@@ -22,7 +22,7 @@ type Session struct {
 	Client     ChatClient
 	Events     EventSink
 	Tools      *Registry
-	Approval   ApprovalHandler
+	Authorizer ToolAuthorizer
 	WorkingDir string
 	Compactor  Compactor
 }
@@ -71,6 +71,43 @@ const (
 	toolExecutionCanceled toolExecutionStop = "canceled"
 )
 
+type runPhase int
+
+const (
+	runPhaseModel runPhase = iota
+	runPhaseTools
+	runPhaseCompact
+	runPhaseDone
+)
+
+type runState struct {
+	runID string
+	opts  RunOptions
+
+	phase runPhase
+
+	messages []api.Message
+	latest   api.ChatResponse
+
+	assistant        api.Message
+	pendingToolCalls []api.ToolCall
+	canceled         bool
+
+	toolMessages  []api.Message
+	toolOverflows []toolOutputOverflow
+	toolStop      toolExecutionStop
+
+	consecutiveModelErrors int
+	toolRounds             int
+	maxToolRounds          int
+	compactionSkipNotified bool
+	compactAfterTools      bool
+
+	finishStatus           string
+	finishIgnoringCanceled bool
+	err                    error
+}
+
 func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
 	if s == nil {
 		return nil, errors.New("nil session")
@@ -82,7 +119,6 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 		return nil, errors.New("agent session requires a model")
 	}
 	runID := uuid.NewString()
-
 	messages := make([]api.Message, 0, len(opts.Messages)+len(opts.NewMessages))
 	for _, msg := range opts.Messages {
 		messages = append(messages, sanitizeMessageForRun(msg))
@@ -103,109 +139,180 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 		}
 	}
 
-	var latest api.ChatResponse
-	var consecutiveErrors int
-	toolRounds := 0
-	maxToolRounds := resolvedMaxToolRounds(opts.Policy.MaxToolRounds)
-	compactionSkipNotified := false
-	for {
-		if err := emit(s.Events, s.loopStepEvent(runID, opts)); err != nil {
-			return nil, err
-		}
-		assistant, pendingToolCalls, canceled, err := s.chatRound(ctx, runID, opts, messages, &latest)
-		if err != nil {
-			var statusErr api.StatusError
-			if errors.As(err, &statusErr) && statusErr.StatusCode >= 500 && consecutiveErrors < 2 {
-				consecutiveErrors++
-				errorMsg := api.Message{
-					Role:    "user",
-					Content: fmt.Sprintf("Your previous response caused an error: %s\n\nPlease try again with a valid response.", statusErr.ErrorMessage),
-				}
-				messages = append(messages, errorMsg)
-				continue
-			}
-			emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
-			return nil, err
-		}
-		consecutiveErrors = 0
-
-		if !messageEmpty(assistant) {
-			messages = append(messages, assistant)
-		}
-		if len(pendingToolCalls) == 0 {
-			var compactErr error
-			messages, compactionSkipNotified, compactErr = s.maybeCompact(ctx, runID, opts, messages, latest, compactionSkipNotified)
-			if compactErr != nil {
-				emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: compactErr.Error()})
-				return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, compactErr
-			}
-		}
-
-		if canceled {
-			if len(pendingToolCalls) > 0 {
-				skipped, skipErr := s.skipToolCalls(ctx, runID, opts, pendingToolCalls, "Tool execution skipped because the run was canceled.")
-				if skipErr != nil {
-					emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: skipErr.Error()})
-					return nil, skipErr
-				}
-				messages = append(messages, skipped...)
-			}
-			if err := emitIgnoringCanceled(ctx, s.Events, Event{Type: EventRunFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "canceled", FinishedAt: time.Now(), Response: &latest}); err != nil {
-				return nil, err
-			}
-			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, nil
-		}
-
-		if len(pendingToolCalls) == 0 || !opts.Policy.UsesTools() || s.Tools == nil {
-			if err := emit(s.Events, Event{Type: EventRunFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "done", FinishedAt: time.Now(), Response: &latest}); err != nil {
-				return nil, err
-			}
-			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, nil
-		}
-
-		if maxToolRounds >= 0 && toolRounds >= maxToolRounds {
-			content := fmt.Sprintf("Tool execution skipped because the max tool-round limit of %d was reached. Send another message to continue.", maxToolRounds)
-			toolMessages, skipErr := s.skipToolCalls(ctx, runID, opts, pendingToolCalls, content)
-			if skipErr != nil {
-				emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: skipErr.Error()})
-				return nil, skipErr
-			}
-			messages = append(messages, toolMessages...)
-			err := fmt.Errorf("tool round limit reached after %d rounds; send another message to continue", maxToolRounds)
-			emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
-			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, err
-		}
-
-		toolMessages, stopReason, overflows, err := s.executeToolCalls(ctx, runID, opts, messages, pendingToolCalls)
-		if err != nil {
-			emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
-			return nil, err
-		}
-		messages = append(messages, toolMessages...)
-		var compactErr error
-		if len(overflows) > 0 {
-			messages, compactionSkipNotified, compactErr = s.compactForToolOutputOverflow(ctx, runID, opts, messages, latest, assistant, toolMessages, overflows, compactionSkipNotified)
-		} else {
-			messages, compactionSkipNotified, compactErr = s.maybeCompact(ctx, runID, opts, messages, latest, compactionSkipNotified)
-		}
-		if compactErr != nil {
-			emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: compactErr.Error()})
-			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, compactErr
-		}
-		switch stopReason {
-		case toolExecutionDenied:
-			if err := emit(s.Events, Event{Type: EventRunFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "denied", FinishedAt: time.Now(), Response: &latest}); err != nil {
-				return nil, err
-			}
-			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, nil
-		case toolExecutionCanceled:
-			if err := emitIgnoringCanceled(ctx, s.Events, Event{Type: EventRunFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "canceled", FinishedAt: time.Now(), Response: &latest}); err != nil {
-				return nil, err
-			}
-			return &RunResult{Messages: messages, Latest: latest, WorkingDir: s.WorkingDir}, nil
-		}
-		toolRounds++
+	st := runState{
+		runID:         runID,
+		opts:          opts,
+		phase:         runPhaseModel,
+		messages:      messages,
+		maxToolRounds: resolvedMaxToolRounds(opts.Policy.MaxToolRounds),
 	}
+	for {
+		switch st.phase {
+		case runPhaseModel:
+			if err := s.runModelStep(ctx, &st); err != nil {
+				return nil, err
+			}
+		case runPhaseTools:
+			if err := s.runToolStep(ctx, &st); err != nil {
+				return nil, err
+			}
+		case runPhaseCompact:
+			if err := s.runCompactionStep(ctx, &st); err != nil {
+				return &RunResult{Messages: st.messages, Latest: st.latest, WorkingDir: s.WorkingDir}, err
+			}
+		case runPhaseDone:
+			return s.finishRun(ctx, &st)
+		}
+	}
+}
+
+func (s *Session) runModelStep(ctx context.Context, st *runState) error {
+	opts := st.opts
+	if err := emit(s.Events, s.loopStepEvent(st.runID, opts)); err != nil {
+		return err
+	}
+
+	assistant, pendingToolCalls, canceled, err := s.chatRound(ctx, st.runID, opts, st.messages, &st.latest)
+	if err != nil {
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode >= 500 && st.consecutiveModelErrors < 2 {
+			st.consecutiveModelErrors++
+			st.messages = append(st.messages, api.Message{
+				Role:    "user",
+				Content: fmt.Sprintf("Your previous response caused an error: %s\n\nPlease try again with a valid response.", statusErr.ErrorMessage),
+			})
+			return nil
+		}
+		emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
+		return err
+	}
+	st.consecutiveModelErrors = 0
+	st.assistant = assistant
+	st.pendingToolCalls = pendingToolCalls
+	st.canceled = canceled
+
+	if !messageEmpty(assistant) {
+		st.messages = append(st.messages, assistant)
+	}
+
+	if len(pendingToolCalls) == 0 {
+		st.compactAfterTools = false
+		st.phase = runPhaseCompact
+		return nil
+	}
+
+	if canceled {
+		skipped, skipErr := s.skipToolCalls(ctx, st.runID, opts, pendingToolCalls, "Tool execution skipped because the run was canceled.")
+		if skipErr != nil {
+			emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: skipErr.Error()})
+			return skipErr
+		}
+		st.messages = append(st.messages, skipped...)
+		st.finishStatus = "canceled"
+		st.finishIgnoringCanceled = true
+		st.phase = runPhaseDone
+		return nil
+	}
+
+	if !opts.Policy.UsesTools() || s.Tools == nil {
+		st.finishStatus = "done"
+		st.phase = runPhaseDone
+		return nil
+	}
+
+	if st.maxToolRounds >= 0 && st.toolRounds >= st.maxToolRounds {
+		content := fmt.Sprintf("Tool execution skipped because the max tool-round limit of %d was reached. Send another message to continue.", st.maxToolRounds)
+		toolMessages, skipErr := s.skipToolCalls(ctx, st.runID, opts, pendingToolCalls, content)
+		if skipErr != nil {
+			emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: skipErr.Error()})
+			return skipErr
+		}
+		st.messages = append(st.messages, toolMessages...)
+		st.err = fmt.Errorf("tool round limit reached after %d rounds; send another message to continue", st.maxToolRounds)
+		emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: st.err.Error()})
+		st.phase = runPhaseDone
+		return nil
+	}
+
+	st.phase = runPhaseTools
+	return nil
+}
+
+func (s *Session) runToolStep(ctx context.Context, st *runState) error {
+	toolMessages, stopReason, overflows, err := s.executeToolCalls(ctx, st.runID, st.opts, st.messages, st.pendingToolCalls)
+	if err != nil {
+		emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: st.opts.ChatID, Model: st.opts.Model, Error: err.Error()})
+		return err
+	}
+
+	st.messages = append(st.messages, toolMessages...)
+	st.toolMessages = toolMessages
+	st.toolOverflows = overflows
+	st.toolStop = stopReason
+	st.compactAfterTools = true
+	st.phase = runPhaseCompact
+	return nil
+}
+
+func (s *Session) runCompactionStep(ctx context.Context, st *runState) error {
+	opts := st.opts
+	var err error
+	if st.compactAfterTools && len(st.toolOverflows) > 0 {
+		st.messages, st.compactionSkipNotified, err = s.compactForToolOutputOverflow(ctx, st.runID, opts, st.messages, st.latest, st.assistant, st.toolMessages, st.toolOverflows, st.compactionSkipNotified)
+	} else {
+		st.messages, st.compactionSkipNotified, err = s.maybeCompact(ctx, st.runID, opts, st.messages, st.latest, st.compactionSkipNotified)
+	}
+	if err != nil {
+		emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
+		return err
+	}
+
+	if !st.compactAfterTools {
+		if st.canceled {
+			st.finishStatus = "canceled"
+			st.finishIgnoringCanceled = true
+		} else {
+			st.finishStatus = "done"
+		}
+		st.phase = runPhaseDone
+		return nil
+	}
+
+	switch st.toolStop {
+	case toolExecutionDenied:
+		st.finishStatus = "denied"
+		st.phase = runPhaseDone
+	case toolExecutionCanceled:
+		st.finishStatus = "canceled"
+		st.finishIgnoringCanceled = true
+		st.phase = runPhaseDone
+	default:
+		st.toolRounds++
+		st.assistant = api.Message{}
+		st.pendingToolCalls = nil
+		st.toolMessages = nil
+		st.toolOverflows = nil
+		st.toolStop = toolExecutionContinue
+		st.compactAfterTools = false
+		st.phase = runPhaseModel
+	}
+	return nil
+}
+
+func (s *Session) finishRun(ctx context.Context, st *runState) (*RunResult, error) {
+	if st.finishStatus != "" {
+		event := Event{Type: EventRunFinished, RunID: st.runID, ChatID: st.opts.ChatID, Model: st.opts.Model, Status: st.finishStatus, FinishedAt: time.Now(), Response: &st.latest}
+		var err error
+		if st.finishIgnoringCanceled {
+			err = emitIgnoringCanceled(ctx, s.Events, event)
+		} else {
+			err = emit(s.Events, event)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &RunResult{Messages: st.messages, Latest: st.latest, WorkingDir: s.WorkingDir}, st.err
 }
 
 func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest *api.ChatResponse) (api.Message, []api.ToolCall, bool, error) {
@@ -276,9 +383,9 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 }
 
 func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOptions, messages []api.Message, calls []api.ToolCall) ([]api.Message, toolExecutionStop, []toolOutputOverflow, error) {
-	approval := s.Approval
-	if approval == nil {
-		approval = opts.Policy.ApprovalHandler(nil)
+	authorizer := s.Authorizer
+	if authorizer == nil {
+		authorizer = opts.Policy.Authorizer(nil)
 	}
 
 	toolMessages := make([]api.Message, 0, len(calls))
@@ -312,52 +419,50 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			continue
 		}
 
-		approvalRequest := ApprovalRequest{
+		authorization := ToolAuthorizationRequest{
 			ToolCallID: call.ID,
+			Tool:       tool,
 			ToolName:   toolName,
 			Args:       args,
 			WorkingDir: s.currentWorkingDir(),
 		}
-		approvalRequest.ToolApprovalRequired = ToolRequiresApproval(tool, args)
-		if toolNeedsApproval(ctx, approval, tool, approvalRequest) {
-			result, err := approval.Approve(ctx, approvalRequest)
-			if err != nil {
-				if ctx.Err() != nil {
-					skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls[i:], "Tool execution skipped because the run was canceled.")
-					if skipErr != nil {
-						return nil, toolExecutionContinue, nil, skipErr
-					}
-					toolMessages = append(toolMessages, skipped...)
-					return toolMessages, toolExecutionCanceled, overflows, nil
+		authorizationResult, err := authorizer.AuthorizeTool(ctx, authorization)
+		if err != nil {
+			if ctx.Err() != nil {
+				skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls[i:], "Tool execution skipped because the run was canceled.")
+				if skipErr != nil {
+					return nil, toolExecutionContinue, nil, skipErr
 				}
-				return nil, toolExecutionContinue, nil, err
+				toolMessages = append(toolMessages, skipped...)
+				return toolMessages, toolExecutionCanceled, overflows, nil
 			}
-			if result.Decision == ApprovalDeny {
-				content := result.Reason
-				if content == "" {
-					content = "Tool execution denied."
-				}
-				msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
-				toolMessages = append(toolMessages, msg)
-				projectedMessages = append(projectedMessages, msg)
-				content = msg.Content
-				if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "denied", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: content, FinishedAt: time.Now()}); emitErr != nil {
+			return nil, toolExecutionContinue, nil, err
+		}
+		if authorizationResult.Decision == ApprovalDeny {
+			content := authorizationResult.Reason
+			if content == "" {
+				content = "Tool execution denied."
+			}
+			msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
+			toolMessages = append(toolMessages, msg)
+			projectedMessages = append(projectedMessages, msg)
+			content = msg.Content
+			if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "denied", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: content, FinishedAt: time.Now()}); emitErr != nil {
+				return nil, toolExecutionContinue, nil, emitErr
+			}
+			for _, skipped := range calls[i+1:] {
+				skippedToolName := skipped.Function.Name
+				skippedArgs := skipped.Function.Arguments.ToMap()
+				skippedContent := "Tool execution skipped because a previous tool call in this assistant message was denied."
+				skippedMsg := s.toolMessageForContext(skippedToolName, skipped.ID, skippedContent, opts, projectedMessages)
+				toolMessages = append(toolMessages, skippedMsg)
+				projectedMessages = append(projectedMessages, skippedMsg)
+				skippedContent = skippedMsg.Content
+				if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "skipped", ToolCallID: skipped.ID, ToolName: skippedToolName, Args: skippedArgs, Content: skippedContent, Error: skippedContent, FinishedAt: time.Now()}); emitErr != nil {
 					return nil, toolExecutionContinue, nil, emitErr
 				}
-				for _, skipped := range calls[i+1:] {
-					skippedToolName := skipped.Function.Name
-					skippedArgs := skipped.Function.Arguments.ToMap()
-					skippedContent := "Tool execution skipped because a previous tool call in this assistant message was denied."
-					skippedMsg := s.toolMessageForContext(skippedToolName, skipped.ID, skippedContent, opts, projectedMessages)
-					toolMessages = append(toolMessages, skippedMsg)
-					projectedMessages = append(projectedMessages, skippedMsg)
-					skippedContent = skippedMsg.Content
-					if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "skipped", ToolCallID: skipped.ID, ToolName: skippedToolName, Args: skippedArgs, Content: skippedContent, Error: skippedContent, FinishedAt: time.Now()}); emitErr != nil {
-						return nil, toolExecutionContinue, nil, emitErr
-					}
-				}
-				return toolMessages, toolExecutionDenied, overflows, nil
 			}
+			return toolMessages, toolExecutionDenied, overflows, nil
 		}
 
 		startedAt := time.Now()
@@ -486,10 +591,6 @@ func isContextCanceledError(ctx context.Context, err error) bool {
 		return true
 	}
 	return ctx != nil && errors.Is(ctx.Err(), context.Canceled) && strings.Contains(err.Error(), "context canceled")
-}
-
-func toolNeedsApproval(ctx context.Context, approval ApprovalHandler, tool Tool, req ApprovalRequest) bool {
-	return approval.RequiresApproval(ctx, tool, req)
 }
 
 func (s *Session) maybeCompact(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest api.ChatResponse, skipNotified bool) ([]api.Message, bool, error) {

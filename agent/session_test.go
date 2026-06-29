@@ -146,10 +146,9 @@ func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionReque
 	}, nil
 }
 
-type wrappingApprovalHandler struct {
-	inner         ApprovalHandler
-	requiresCalls int
-	approveCalls  int
+type wrappingToolAuthorizer struct {
+	inner ToolAuthorizer
+	calls int
 }
 
 func (staticTool) Name() string {
@@ -302,14 +301,9 @@ func (t policyOnlyApprovalTool) Execute(context.Context, ToolContext, map[string
 	return ToolResult{Content: "ran"}, nil
 }
 
-func (h *wrappingApprovalHandler) RequiresApproval(ctx context.Context, tool Tool, req ApprovalRequest) bool {
-	h.requiresCalls++
-	return h.inner.RequiresApproval(ctx, tool, req)
-}
-
-func (h *wrappingApprovalHandler) Approve(ctx context.Context, req ApprovalRequest) (ApprovalResult, error) {
-	h.approveCalls++
-	return h.inner.Approve(ctx, req)
+func (h *wrappingToolAuthorizer) AuthorizeTool(ctx context.Context, req ToolAuthorizationRequest) (ApprovalResult, error) {
+	h.calls++
+	return h.inner.AuthorizeTool(ctx, req)
 }
 
 func (cwdTestTool) Name() string {
@@ -1643,9 +1637,9 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 	registry.Register(approvalTestTool{called: &called})
 	registry.Register(staticTool{})
 	session := &Session{
-		Client:   client,
-		Tools:    registry,
-		Approval: NewApprovalManager(ApprovalManagerOptions{}),
+		Client:     client,
+		Tools:      registry,
+		Authorizer: NewApprovalManager(ApprovalManagerOptions{}),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1680,7 +1674,7 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 	}
 }
 
-func TestSessionConsultsWrappedApprovalRequirement(t *testing.T) {
+func TestSessionUsesSingleToolAuthorization(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("command", "pwd")
 	client := &fakeClient{
@@ -1702,11 +1696,11 @@ func TestSessionConsultsWrappedApprovalRequirement(t *testing.T) {
 	called := false
 	registry := NewRegistry()
 	registry.Register(policyOnlyApprovalTool{name: "bash", called: &called})
-	approval := &wrappingApprovalHandler{inner: NewApprovalManager(ApprovalManagerOptions{})}
+	authorizer := &wrappingToolAuthorizer{inner: NewApprovalManager(ApprovalManagerOptions{})}
 	session := &Session{
-		Client:   client,
-		Tools:    registry,
-		Approval: approval,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: authorizer,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1717,11 +1711,8 @@ func TestSessionConsultsWrappedApprovalRequirement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if approval.requiresCalls != 1 {
-		t.Fatalf("requires calls = %d, want 1", approval.requiresCalls)
-	}
-	if approval.approveCalls != 1 {
-		t.Fatalf("approve calls = %d, want 1", approval.approveCalls)
+	if authorizer.calls != 1 {
+		t.Fatalf("authorization calls = %d, want 1", authorizer.calls)
 	}
 	if called {
 		t.Fatal("tool ran despite wrapped approval manager requiring approval")
@@ -1756,9 +1747,9 @@ func TestSessionAutoAllowApprovalExecutesApprovalTool(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(approvalTestTool{called: &called})
 	session := &Session{
-		Client:   client,
-		Tools:    registry,
-		Approval: AutoAllowApproval{},
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{

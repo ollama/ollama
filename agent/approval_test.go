@@ -55,7 +55,7 @@ func TestApprovalManagerAllowsSafeToolsWithoutPrompt(t *testing.T) {
 	prompter := &recordingApprovalPrompter{}
 	manager := NewApprovalManager(ApprovalManagerOptions{Prompter: prompter})
 
-	result, err := manager.Approve(context.Background(), ApprovalRequest{
+	result, err := manager.AuthorizeTool(context.Background(), ToolAuthorizationRequest{
 		ToolName:   "read",
 		Args:       map[string]any{"path": "README.md"},
 		WorkingDir: t.TempDir(),
@@ -71,20 +71,17 @@ func TestApprovalManagerAllowsSafeToolsWithoutPrompt(t *testing.T) {
 	}
 }
 
-func TestApprovalManagerToolRequiredOverridePromptsInApprove(t *testing.T) {
+func TestApprovalManagerToolRequiredOverridePromptsInAuthorize(t *testing.T) {
 	prompter := &recordingApprovalPrompter{}
 	manager := NewApprovalManager(ApprovalManagerOptions{Policy: allowWithoutPromptPolicy{}, Prompter: prompter})
 	tool := approvalRequiredTestTool{}
-	request := ApprovalRequest{
-		ToolName:             tool.Name(),
-		Args:                 map[string]any{},
-		ToolApprovalRequired: ToolRequiresApproval(tool, nil),
+	request := ToolAuthorizationRequest{
+		Tool:     tool,
+		ToolName: tool.Name(),
+		Args:     map[string]any{},
 	}
 
-	if !manager.RequiresApproval(context.Background(), tool, request) {
-		t.Fatal("tool-required approval should require a prompt")
-	}
-	result, err := manager.Approve(context.Background(), request)
+	result, err := manager.AuthorizeTool(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +96,7 @@ func TestApprovalManagerToolRequiredOverridePromptsInApprove(t *testing.T) {
 func TestApprovalManagerDeniesEscapingPath(t *testing.T) {
 	manager := NewApprovalManager(ApprovalManagerOptions{})
 
-	result, err := manager.Approve(context.Background(), ApprovalRequest{
+	result, err := manager.AuthorizeTool(context.Background(), ToolAuthorizationRequest{
 		ToolName:   "edit",
 		Args:       map[string]any{"path": "../outside.txt"},
 		WorkingDir: t.TempDir(),
@@ -133,7 +130,7 @@ func TestApprovalManagerPromptsForEdit(t *testing.T) {
 	prompter := &recordingApprovalPrompter{}
 	manager := NewApprovalManager(ApprovalManagerOptions{Prompter: prompter})
 
-	result, err := manager.Approve(context.Background(), ApprovalRequest{
+	result, err := manager.AuthorizeTool(context.Background(), ToolAuthorizationRequest{
 		ToolName:   "edit",
 		Args:       map[string]any{"path": "note.txt", "old_text": "old", "new_text": "new"},
 		WorkingDir: t.TempDir(),
@@ -159,7 +156,7 @@ func TestApprovalManagerPromptsForEdit(t *testing.T) {
 func TestApprovalManagerHeadlessDeniesPromptRequiredTools(t *testing.T) {
 	manager := NewApprovalManager(ApprovalManagerOptions{})
 
-	result, err := manager.Approve(context.Background(), ApprovalRequest{
+	result, err := manager.AuthorizeTool(context.Background(), ToolAuthorizationRequest{
 		ToolName: "bash",
 		Args:     map[string]any{"command": "pwd"},
 	})
@@ -179,19 +176,19 @@ func TestApprovalManagerSessionAllowList(t *testing.T) {
 		results: []ApprovalResult{{Decision: ApprovalAllowSession}},
 	}
 	manager := NewApprovalManager(ApprovalManagerOptions{Prompter: prompter})
-	request := ApprovalRequest{
+	request := ToolAuthorizationRequest{
 		ToolName: "bash",
 		Args:     map[string]any{"command": "go test ./agent"},
 	}
 
-	result, err := manager.Approve(context.Background(), request)
+	result, err := manager.AuthorizeTool(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Decision != ApprovalAllowSession {
 		t.Fatalf("decision = %q, want allow_session", result.Decision)
 	}
-	result, err = manager.Approve(context.Background(), request)
+	result, err = manager.AuthorizeTool(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}

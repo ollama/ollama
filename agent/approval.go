@@ -45,9 +45,16 @@ type ApprovalResult struct {
 	Reason   string
 }
 
-type ApprovalHandler interface {
-	RequiresApproval(context.Context, Tool, ApprovalRequest) bool
-	Approve(context.Context, ApprovalRequest) (ApprovalResult, error)
+type ToolAuthorizer interface {
+	AuthorizeTool(context.Context, ToolAuthorizationRequest) (ApprovalResult, error)
+}
+
+type ToolAuthorizationRequest struct {
+	ToolCallID string
+	Tool       Tool
+	ToolName   string
+	Args       map[string]any
+	WorkingDir string
 }
 
 type ApprovalPrompter interface {
@@ -69,11 +76,7 @@ type ApprovalEvaluation struct {
 
 type AutoAllowApproval struct{}
 
-func (AutoAllowApproval) RequiresApproval(context.Context, Tool, ApprovalRequest) bool {
-	return false
-}
-
-func (AutoAllowApproval) Approve(context.Context, ApprovalRequest) (ApprovalResult, error) {
+func (AutoAllowApproval) AuthorizeTool(context.Context, ToolAuthorizationRequest) (ApprovalResult, error) {
 	return ApprovalResult{Decision: ApprovalAllowOnce}, nil
 }
 
@@ -115,28 +118,14 @@ func (m *ApprovalManager) WithPrompter(prompter ApprovalPrompter) *ApprovalManag
 	}
 }
 
-func (m *ApprovalManager) RequiresApproval(ctx context.Context, tool Tool, req ApprovalRequest) bool {
-	if m == nil {
-		return false
-	}
-	req.ToolApprovalRequired = req.ToolApprovalRequired || ToolRequiresApproval(tool, req.Args)
-	evaluation := applyToolApprovalRequirement(req, m.evaluate(ctx, req))
-	if evaluation.Decision == ApprovalDeny {
-		return true
-	}
-	if evaluation.RequirePrompt {
-		return !m.sessionAllowedFor(evaluation.SessionKey)
-	}
-	return false
-}
-
-func (m *ApprovalManager) Approve(ctx context.Context, req ApprovalRequest) (ApprovalResult, error) {
+func (m *ApprovalManager) AuthorizeTool(ctx context.Context, req ToolAuthorizationRequest) (ApprovalResult, error) {
 	if m == nil {
 		return ApprovalResult{Decision: ApprovalAllowOnce}, nil
 	}
 
-	evaluation := applyToolApprovalRequirement(req, m.evaluate(ctx, req))
-	req = approvalRequestWithEvaluation(req, evaluation)
+	approvalReq := approvalRequestFromToolAuthorization(req)
+	evaluation := applyToolApprovalRequirement(approvalReq, m.evaluate(ctx, approvalReq))
+	approvalReq = approvalRequestWithEvaluation(approvalReq, evaluation)
 
 	if evaluation.Decision == ApprovalDeny {
 		reason := strings.Join(evaluation.Reasons, "; ")
@@ -157,7 +146,7 @@ func (m *ApprovalManager) Approve(ctx context.Context, req ApprovalRequest) (App
 		}, nil
 	}
 
-	result, err := m.prompter.PromptApproval(ctx, req)
+	result, err := m.prompter.PromptApproval(ctx, approvalReq)
 	if err != nil {
 		return ApprovalResult{}, err
 	}
@@ -168,6 +157,20 @@ func (m *ApprovalManager) Approve(ctx context.Context, req ApprovalRequest) (App
 		m.allowSession(evaluation.SessionKey)
 	}
 	return result, nil
+}
+
+func approvalRequestFromToolAuthorization(req ToolAuthorizationRequest) ApprovalRequest {
+	toolName := req.ToolName
+	if toolName == "" && req.Tool != nil {
+		toolName = req.Tool.Name()
+	}
+	return ApprovalRequest{
+		ToolCallID:           req.ToolCallID,
+		ToolName:             toolName,
+		Args:                 req.Args,
+		WorkingDir:           req.WorkingDir,
+		ToolApprovalRequired: ToolRequiresApproval(req.Tool, req.Args),
+	}
 }
 
 func (m *ApprovalManager) evaluate(ctx context.Context, req ApprovalRequest) ApprovalEvaluation {
