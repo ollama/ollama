@@ -87,6 +87,25 @@ pre, code, .font-mono {
     margin: 1.25rem 0 0.75rem;
 }
 
+.dark .capability-list {
+    border-color: #262626;
+}
+
+.dark .capability-list-title,
+.dark .capability-list-heading,
+.dark .manual-step-title {
+    color: #fafafa;
+}
+
+.dark .capability-list-icon {
+    background: #262626;
+    color: #fafafa;
+}
+
+.dark .capability-list-copy {
+    color: #a3a3a3;
+}
+
 @media (max-width: 920px) {
     .capability-list {
         grid-template-columns: 1fr;
