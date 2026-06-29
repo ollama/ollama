@@ -2139,6 +2139,15 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
+			name:         "integrated cuda gpu keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
+		},
+		{
 			name:         "cpu only request disables projector offload",
 			projectors:   []string{"model.gguf"},
 			opts:         cpuOpts,

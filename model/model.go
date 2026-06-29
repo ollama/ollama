@@ -136,6 +136,12 @@ func New(modelPath string, params ml.BackendParams) (Model, error) {
 		}
 	}
 
+	if postLoader, ok := m.(PostLoader); ok {
+		if err := postLoader.PostLoad(); err != nil {
+			return nil, err
+		}
+	}
+
 	return m, nil
 }
 
