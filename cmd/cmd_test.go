@@ -389,6 +389,39 @@ func TestDeleteHandler(t *testing.T) {
 	}
 }
 
+func TestDisplayResponseSkipsTerminalSequencesForRedirectedStdout(t *testing.T) {
+	oldStdout := os.Stdout
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = stdoutW
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	content := strings.Repeat("hello ", 20)
+	displayResponse(content, true, &displayResponseState{})
+
+	if err := stdoutW.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(stdoutR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stdoutR.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(out), "\x1b[") {
+		t.Fatalf("redirected stdout contains ANSI escape sequence: %q", out)
+	}
+	if diff := cmp.Diff(content, string(out)); diff != "" {
+		t.Fatalf("unexpected redirected output (-want +got):\n%s", diff)
+	}
+}
+
 func TestRunEmbeddingModel(t *testing.T) {
 	reqCh := make(chan api.EmbedRequest, 1)
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1665,11 +1665,19 @@ type displayResponseState struct {
 }
 
 func displayResponse(content string, wordWrap bool, state *displayResponseState) {
-	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
-	if termWidth == 0 {
-		termWidth = 80
-	}
-	if wordWrap && termWidth >= 10 {
+	if wordWrap && term.IsTerminal(int(os.Stdout.Fd())) {
+		termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+		if termWidth == 0 {
+			termWidth = 80
+		}
+		if termWidth < 10 {
+			fmt.Printf("%s%s", state.wordBuffer, content)
+			if len(state.wordBuffer) > 0 {
+				state.wordBuffer = ""
+			}
+			return
+		}
+
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
 				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
