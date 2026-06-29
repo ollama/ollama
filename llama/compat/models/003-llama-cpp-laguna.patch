@@ -5,7 +5,7 @@ diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
      { LLM_ARCH_MELLUM,           "mellum"           },
 +    { LLM_ARCH_LAGUNA,           "laguna"           },
      { LLM_ARCH_UNKNOWN,          "(unknown)"        },
-@@ -380,2 +381,3 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
+@@ -398,2 +399,3 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
      { LLM_TENSOR_ATTN_GATE,                              "blk.%d.attn_gate" },
 +    { LLM_TENSOR_ATTN_GATE_LAGUNA,                       "blk.%d.attn_g" },
      { LLM_TENSOR_FFN_POST_NORM,                          "blk.%d.post_ffw_norm" },
@@ -17,7 +17,7 @@ diff --git a/src/llama-arch.h b/src/llama-arch.h
 --- a/src/llama-arch.h
 +++ b/src/llama-arch.h
 @@ -145,2 +145,3 @@ enum llm_arch {
-     LLM_ARCH_EAGLE3,
+     LLM_ARCH_DFLASH,
 +    LLM_ARCH_LAGUNA,
      LLM_ARCH_UNKNOWN,
 @@ -382,2 +383,3 @@ enum llm_tensor {
@@ -34,10 +34,10 @@ diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 +            return new llama_model_laguna(params);
          case LLM_ARCH_DECI:
              return new llama_model_deci(params);
-@@ -2409,2 +2411,3 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
-         case LLM_ARCH_TALKIE:
-+        case LLM_ARCH_LAGUNA:
+@@ -2525,2 +2527,3 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
          case LLM_ARCH_MELLUM:
++        case LLM_ARCH_LAGUNA:
+         case LLM_ARCH_DFLASH:
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
@@ -76,7 +76,7 @@ diff --git a/src/llama-vocab.h b/src/llama-vocab.h
 diff --git a/src/models/models.h b/src/models/models.h
 --- a/src/models/models.h
 +++ b/src/models/models.h
-@@ -1481,1 +1481,14 @@ struct llama_model_dots1 : public llama_model_base {
+@@ -1657,1 +1657,14 @@ struct llama_model_arcee : public llama_model_base {
 +struct llama_model_laguna : public llama_model_base {
 +    llama_model_laguna(const struct llama_model_params & params) : llama_model_base(params) {}
 +    void load_arch_hparams(llama_model_loader & ml) override;
