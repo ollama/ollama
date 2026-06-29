@@ -2,7 +2,11 @@
 title: Quickstart
 ---
 
-Ollama is available on macOS, Windows, and Linux.
+Install Ollama and get your first response.
+
+## 1. Download Ollama
+
+Ollama runs on macOS, Windows, and Linux.
 
 <a
   href="https://ollama.com/download"
@@ -12,56 +16,45 @@ Ollama is available on macOS, Windows, and Linux.
   Download Ollama
 </a>
 
-## Get Started
+## 2. Open the menu
 
 Run `ollama` in your terminal to open the interactive menu:
 
-```sh
+```shell
 ollama
 ```
 
-Navigate with `↑/↓`, press `enter` to launch, `→` to change model, and `esc` to quit.
+From the menu you can:
 
-The menu provides quick access to:
 - **Run a model** - Start an interactive chat
-- **Launch tools** - Claude Code, Codex, OpenClaw, and more
-- **Additional integrations** - Available under "More..."
+- **Launch tools** - [Claude Code](/integrations/claude-code), [OpenClaw](/integrations/openclaw), [VS Code](/integrations/vscode), and more
 
-## Assistants
+## 3. Start a chat
 
-Launch [OpenClaw](/integrations/openclaw), a personal AI with 100+ skills:
+Run a model to start your first chat.
 
-```sh
-ollama launch openclaw
+```shell
+ollama run gemma4
 ```
 
-## Coding
+Cloud models work the same way:
 
-Launch [Claude Code](/integrations/claude-code) and other coding tools with Ollama models:
-
-```sh
-ollama launch claude
+```shell
+ollama run gemma4:cloud
 ```
 
-```sh
-ollama launch codex
+Send your first message:
+
+```text
+Explain why the sky is blue in one paragraph.
 ```
 
-```sh
-ollama launch opencode
+To leave the chat, type:
+
+```shell
+/bye
 ```
 
-See [integrations](/integrations) for all supported tools.
+## Next steps
 
-## API
-
-Use the [API](/api) to integrate Ollama into your applications:
-
-```sh
-curl http://localhost:11434/api/chat -d '{
-  "model": "gemma4",
-  "messages": [{ "role": "user", "content": "Hello!" }]
-}'
-```
-
-See the [API documentation](/api) for Python, JavaScript, and other integrations.
+Use a model with an [integration](/integrations), make an [API request](/api/introduction), or browse more [models](https://ollama.com/search).

@@ -626,6 +626,60 @@ func TestCodexAppCurrentModelRequiresHealthyCatalog(t *testing.T) {
 	}
 }
 
+func TestCodexAppCurrentModelDetectsDriftedModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	catalogPath := mustWriteCodexAppTestCatalog(t, "llama3.2")
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "" +
+		`model = "gpt-5.5"` + "\n" +
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n\n" +
+		fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n\n" +
+		codexProviderHeaderFor(codexAppProfileName) + "\n" +
+		`name = "Ollama"` + "\n" +
+		`base_url = "http://127.0.0.1:11434/v1/"` + "\n" +
+		`wire_api = "responses"` + "\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := (&CodexApp{}).CurrentModel(); got != "" {
+		t.Fatalf("CurrentModel = %q, want empty when model has drifted from the Ollama catalog", got)
+	}
+}
+
+func TestCodexAppCurrentModelAcceptsLatestSuffixDrift(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	catalogPath := mustWriteCodexAppTestCatalog(t, "llama3.2")
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "" +
+		`model = "llama3.2:latest"` + "\n" +
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n\n" +
+		fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n\n" +
+		codexProviderHeaderFor(codexAppProfileName) + "\n" +
+		`name = "Ollama"` + "\n" +
+		`base_url = "http://127.0.0.1:11434/v1/"` + "\n" +
+		`wire_api = "responses"` + "\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := (&CodexApp{}).CurrentModel(); got != "llama3.2:latest" {
+		t.Fatalf("CurrentModel = %q, want llama3.2:latest (:latest suffix should not be treated as drift)", got)
+	}
+}
+
 func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
