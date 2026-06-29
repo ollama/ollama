@@ -1,7 +1,5 @@
 package agent
 
-import "sync"
-
 type ToolMode int
 
 const (
@@ -47,46 +45,4 @@ func (p RunPolicy) Authorizer(prompter ApprovalPrompter) ToolAuthorizer {
 		Policy:   policy,
 		Prompter: prompter,
 	})
-}
-
-func (p RunPolicy) ReviewAuthorizer(prompter ApprovalPrompter) ToolAuthorizer {
-	policy := p.ApprovalPolicy
-	if policy == nil {
-		policy = DefaultApprovalPolicy{}
-	}
-	return NewApprovalManager(ApprovalManagerOptions{
-		Policy:   policy,
-		Prompter: prompter,
-	})
-}
-
-type RunPolicyState struct {
-	mu     sync.Mutex
-	policy RunPolicy
-}
-
-func NewRunPolicyState(policy RunPolicy) *RunPolicyState {
-	return &RunPolicyState{policy: policy}
-}
-
-func (s *RunPolicyState) Policy() RunPolicy {
-	if s == nil {
-		return RunPolicy{}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.policy
-}
-
-func (s *RunPolicyState) ToolMode() ToolMode {
-	return s.Policy().ToolMode
-}
-
-func (s *RunPolicyState) SetToolMode(mode ToolMode) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.policy.ToolMode = mode
 }

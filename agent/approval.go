@@ -106,18 +106,6 @@ func NewApprovalManager(opts ApprovalManagerOptions) *ApprovalManager {
 	}
 }
 
-func (m *ApprovalManager) WithPrompter(prompter ApprovalPrompter) *ApprovalManager {
-	if m == nil {
-		return NewApprovalManager(ApprovalManagerOptions{Prompter: prompter})
-	}
-	return &ApprovalManager{
-		policy:         m.policy,
-		prompter:       prompter,
-		mu:             m.mu,
-		sessionAllowed: m.sessionAllowed,
-	}
-}
-
 func (m *ApprovalManager) AuthorizeTool(ctx context.Context, req ToolAuthorizationRequest) (ApprovalResult, error) {
 	if m == nil {
 		return ApprovalResult{Decision: ApprovalAllowOnce}, nil
