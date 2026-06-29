@@ -216,6 +216,7 @@ console.log(response.message.content);
 - [Copilot for Obsidian](https://github.com/logancyang/obsidian-copilot) - AI assistant for Obsidian
 - [twinny](https://github.com/rjmacarthy/twinny) - Copilot and Copilot chat alternative
 - [gptel Emacs client](https://github.com/karthink/gptel) - LLM client for Emacs
+- [nolock](https://github.com/impacte-tech/nolock) - Privacy-first, AI-native desktop IDE with local Ollama support
 - [Ollama Copilot](https://github.com/bernardo-bruning/ollama-copilot) - Use Ollama as GitHub Copilot
 - [Obsidian Local GPT](https://github.com/pfrankov/obsidian-local-gpt) - Local AI for Obsidian
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama) - LLM tool for Emacs
