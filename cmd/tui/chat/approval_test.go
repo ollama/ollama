@@ -36,7 +36,7 @@ func TestChatApprovalPromptRendersAndApprovesOnce(t *testing.T) {
 		!strings.Contains(view, "›") {
 		t.Fatalf("approval view missing content: %q", view)
 	}
-	if strings.Contains(view, "█") {
+	if strings.Contains(view, inputCursorGlyph) {
 		t.Fatalf("approval view should hide the input cursor: %q", view)
 	}
 	if strings.Contains(view, "1/2/3 choose • enter select • esc deny") {

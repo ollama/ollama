@@ -18,14 +18,27 @@ var (
 	chatMetaStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(chatAnsiMuted))
 
+	chatFooterStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#777777", Dark: "#9a9a9a"})
+
+	chatInputBorderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#8a8a8a", Dark: "#555555"})
+
+	chatCursorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")).
+			Background(lipgloss.Color(chatAnsiMuted))
+
+	chatBlankCursorStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(chatAnsiMuted))
+
 	chatNotificationStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("7"))
 
 	chatUserStyle = lipgloss.NewStyle()
 
 	chatUserBlockStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#111111")).
-				Background(lipgloss.Color("#eeeeee"))
+				Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#b8b8b8"}).
+				Background(lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#2a2a2a"})
 
 	chatAssistantStyle = lipgloss.NewStyle()
 
@@ -72,7 +85,7 @@ var (
 			Foreground(lipgloss.Color(chatAnsiRed))
 
 	chatFullAccessStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#9f5f5f"))
+				Foreground(lipgloss.AdaptiveColor{Light: "#9f5f5f", Dark: "#b87373"})
 
 	chatCommandNameStyle = lipgloss.NewStyle()
 

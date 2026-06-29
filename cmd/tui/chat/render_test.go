@@ -15,16 +15,20 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestChatAssistantEntryUsesBullet(t *testing.T) {
-	m := chatModel{}
+func TestChatAssistantEntryHasNoPrefixAndUsesInset(t *testing.T) {
+	m := chatModel{entries: []chatEntry{{role: "assistant", content: "hello"}}}
 
-	prefix, _ := m.renderEntry(chatEntry{role: "assistant", content: "hello"})
+	prefix, _ := m.renderEntry(m.entries[0])
 
-	if strings.Contains(prefix, "Ollama:") {
-		t.Fatalf("prefix should not include Ollama label: %q", prefix)
+	if prefix != "" {
+		t.Fatalf("prefix = %q, want empty", prefix)
 	}
-	if !strings.Contains(prefix, "•") {
-		t.Fatalf("prefix = %q, want bullet", prefix)
+	transcript := stripANSI(m.renderTranscript(80))
+	if strings.Contains(transcript, "•") {
+		t.Fatalf("assistant transcript should not include bullet: %q", transcript)
+	}
+	if !strings.HasPrefix(transcript, "  hello") {
+		t.Fatalf("assistant transcript should use leading inset: %q", transcript)
 	}
 }
 
@@ -37,7 +41,13 @@ func TestChatViewRendersEmptyPromptHint(t *testing.T) {
 
 	view := stripANSI(m.View())
 	lines := strings.Split(view, "\n")
-	hintLine := lineIndexContaining(lines, "█ ")
+	hintLine := -1
+	for _, prompt := range chatEmptyPrompts {
+		if i := lineIndexContaining(lines, prompt); i >= 0 {
+			hintLine = i
+			break
+		}
+	}
 	if hintLine < 0 {
 		t.Fatalf("empty chat view missing prompt hint: %q", view)
 	}
@@ -63,6 +73,9 @@ func TestChatUserEntryHasNoLabel(t *testing.T) {
 	transcript := stripANSI(m.renderTranscript(80))
 	if !strings.Contains(transcript, "hello") {
 		t.Fatalf("user transcript should render as prompt row: %q", transcript)
+	}
+	if !strings.HasPrefix(transcript, "  hello") {
+		t.Fatalf("user transcript should use leading inset: %q", transcript)
 	}
 }
 
@@ -167,7 +180,7 @@ func TestChatViewRendersInputBox(t *testing.T) {
 	if !strings.Contains(view, inputBoxTopBorderLine(40)) || !strings.Contains(view, inputBoxBottomBorderLine(40)) {
 		t.Fatalf("prompt input should render rounded box borders: %q", view)
 	}
-	if !strings.Contains(view, "hello█") {
+	if !strings.Contains(view, "hello"+inputCursorGlyph) {
 		t.Fatalf("view missing prompt input row: %q", view)
 	}
 }
@@ -179,9 +192,14 @@ func TestChatViewRendersCursorWithEmptyPlaceholder(t *testing.T) {
 		height: 12,
 	}
 
-	view := stripANSI(m.View())
-	if !strings.Contains(view, "█ ") {
-		t.Fatalf("empty placeholder should show cursor indicator: %q", view)
+	rawView := m.View()
+	hint := m.emptyChatHint()
+	first := string([]rune(hint)[0])
+	if !strings.Contains(rawView, renderInputCursorCell(first)) {
+		t.Fatalf("empty placeholder should style first character as cursor: %q", rawView)
+	}
+	if view := stripANSI(rawView); !strings.Contains(view, hint) || strings.Contains(view, inputCursorGlyph) {
+		t.Fatalf("empty placeholder should keep first character visible: %q", view)
 	}
 }
 
@@ -196,7 +214,7 @@ func TestChatViewRendersModelUnderInputBox(t *testing.T) {
 	}
 
 	lines := strings.Split(stripANSI(m.View()), "\n")
-	inputLine := lineIndexContaining(lines, "hello█")
+	inputLine := lineIndexContaining(lines, "hello"+inputCursorGlyph)
 	modelLine := lineIndexContaining(lines, "kimi-k2.7-code:cloud")
 	if inputLine < 0 || modelLine < 0 {
 		t.Fatalf("view missing input or model line:\n%s", strings.Join(lines, "\n"))
@@ -220,7 +238,7 @@ func TestChatViewExpandsInputBoxForLongPrompt(t *testing.T) {
 	if got := inputPromptLineCount(t, view); got < 2 {
 		t.Fatalf("input body lines = %d, want wrapped prompt:\n%s", got, view)
 	}
-	if !strings.Contains(view, "█") {
+	if !strings.Contains(view, inputCursorGlyph) {
 		t.Fatalf("view missing cursor: %q", view)
 	}
 }
@@ -294,7 +312,7 @@ func TestChatViewRendersNotificationAboveInput(t *testing.T) {
 	view := stripANSI(m.View())
 	lines := strings.Split(view, "\n")
 	for i, line := range lines {
-		if strings.Contains(line, "hello█") {
+		if strings.Contains(line, "hello"+inputCursorGlyph) {
 			if i < 2 || !strings.Contains(lines[i-2], "copied latest output") {
 				t.Fatalf("notification should sit directly above input:\n%s", view)
 			}
@@ -344,7 +362,7 @@ func TestChatViewKeepsInputBoxWhileRunning(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "next█") {
+	if !strings.Contains(view, "next"+inputCursorGlyph) {
 		t.Fatalf("running view should keep input row: %q", view)
 	}
 	if strings.Contains(view, "↑/↓ scroll") || strings.Contains(view, "/new chat") || strings.Contains(view, "/clear reset") {
@@ -352,7 +370,7 @@ func TestChatViewKeepsInputBoxWhileRunning(t *testing.T) {
 	}
 	lines := strings.Split(view, "\n")
 	for i, line := range lines {
-		if strings.Contains(line, "next█") {
+		if strings.Contains(line, "next"+inputCursorGlyph) {
 			if i < 2 || !strings.Contains(lines[i-2], "Thinking 42 tokens") {
 				t.Fatalf("thinking line should sit directly above input:\n%s", view)
 			}
@@ -404,7 +422,7 @@ func TestChatViewDoesNotPadToTerminalHeight(t *testing.T) {
 	if got := len(strings.Split(view, "\n")); got >= 12 {
 		t.Fatalf("view height = %d, want less than terminal height:\n%s", got, stripANSI(view))
 	}
-	if !strings.Contains(stripANSI(view), "hello█") {
+	if !strings.Contains(stripANSI(view), "hello"+inputCursorGlyph) {
 		t.Fatalf("view missing input row: %q", stripANSI(view))
 	}
 }
@@ -712,6 +730,47 @@ func TestChatStreamingAssistantOutputHoldsLiveMarkdown(t *testing.T) {
 	}
 }
 
+func TestChatFlowShowsAssistantAfterToolGroupingShrinksTranscript(t *testing.T) {
+	m := chatModel{
+		width:   100,
+		height:  16,
+		running: true,
+		entries: []chatEntry{
+			{role: "user", content: "inspect the repo"},
+		},
+	}
+
+	m, _ = m.flowTranscriptFlushCmd()
+	if m.flowPrintedLines == 0 {
+		t.Fatal("user prompt should start as flushed transcript")
+	}
+
+	for i := 1; i <= 4; i++ {
+		toolID := fmt.Sprintf("call-%d", i)
+		args := map[string]any{"command": fmt.Sprintf("echo %d", i)}
+		m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolStarted, ToolCallID: toolID, ToolName: "bash", Args: args})
+		m, _ = m.flowTranscriptFlushCmd()
+		m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolFinished, ToolCallID: toolID, ToolName: "bash", Args: args, Content: fmt.Sprintf("out %d", i)})
+		m, _ = m.flowTranscriptFlushCmd()
+	}
+	if m.flowPrintedLines < 5 {
+		t.Fatalf("completed tools should have flushed individually before grouping, printed=%d", m.flowPrintedLines)
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "First streamed answer line."})
+	m, _ = m.flowTranscriptFlushCmd()
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "First streamed answer line.") {
+		t.Fatalf("live assistant text should remain visible after tool grouping:\n%s", view)
+	}
+	if m.entries[0].role != "user" || m.entries[1].role != "tool_group" || len(m.entries[1].tools) != 4 {
+		t.Fatalf("entries should retain grouped tools before assistant: %#v", m.entries)
+	}
+	if m.flowPrintedLines >= len(m.transcriptLines(m.width)) {
+		t.Fatalf("flowPrintedLines should leave live assistant managed, printed=%d transcript=%d", m.flowPrintedLines, len(m.transcriptLines(m.width)))
+	}
+}
+
 func TestChatMouseWheelScrollsTranscriptWhileRunning(t *testing.T) {
 	m := chatModel{
 		width:         80,
@@ -757,9 +816,9 @@ func TestChatMouseDragSelectsTranscriptWithoutAutoCopy(t *testing.T) {
 	}
 	top, _ := m.transcriptLayout()
 
-	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 0, Y: top})
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 2, Y: top})
 	m = updated.(chatModel)
-	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: 5, Y: top})
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: 7, Y: top})
 	m = updated.(chatModel)
 	if got := m.selectedTranscriptText(80); got != "alpha" {
 		t.Fatalf("selected text = %q, want alpha", got)
@@ -771,7 +830,7 @@ func TestChatMouseDragSelectsTranscriptWithoutAutoCopy(t *testing.T) {
 		t.Fatal("selection should track drag before release")
 	}
 
-	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 5, Y: top})
+	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 7, Y: top})
 	m = updated.(chatModel)
 	if cmd != nil {
 		t.Fatal("mouse release should not auto-copy selected text")
@@ -796,7 +855,7 @@ func TestChatMouseDragSelectionUsesDisplayColumns(t *testing.T) {
 		},
 	}
 	top, _ := m.transcriptLayout()
-	contentX := 0
+	contentX := 2
 
 	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: contentX, Y: top})
 	m = updated.(chatModel)
@@ -843,14 +902,14 @@ func TestChatMouseDragSelectionUsesScrolledTranscriptCoordinates(t *testing.T) {
 	m.scroll = m.maxScroll()
 	top, _ := m.transcriptLayout()
 
-	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 0, Y: top})
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 2, Y: top})
 	m = updated.(chatModel)
-	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseMotion, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: 7, Y: top})
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseMotion, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: 9, Y: top})
 	m = updated.(chatModel)
 	if got := m.selectedTranscriptText(80); got != "line-00" {
 		t.Fatalf("selected text = %q, want line-00", got)
 	}
-	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 7, Y: top})
+	updated, cmd := m.Update(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, X: 9, Y: top})
 	m = updated.(chatModel)
 	if cmd != nil {
 		t.Fatal("mouse release should not auto-copy selected text")
@@ -1179,7 +1238,7 @@ func TestChatCtrlOTogglesInlineToolOutput(t *testing.T) {
 	}
 }
 
-func TestChatCtrlORepaintsFlushedFlowTranscript(t *testing.T) {
+func TestChatCtrlORepaintsDetailsInFlowMode(t *testing.T) {
 	m := chatModel{
 		width:            100,
 		height:           20,
@@ -1194,16 +1253,37 @@ func TestChatCtrlORepaintsFlushedFlowTranscript(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
 	if cmd == nil {
-		t.Fatal("ctrl+o should repaint flushed flow transcript")
+		t.Fatal("ctrl+o should repaint retained flow transcript details")
 	}
 	if m.boundedFrame || m.fullScreen {
-		t.Fatal("ctrl+o repaint should stay in terminal-flow rendering")
+		t.Fatal("ctrl+o should stay in terminal-flow rendering")
 	}
-	if !m.entries[1].expanded {
-		t.Fatalf("tool output should be expanded inline: %#v", m.entries[1])
+	if !m.toolOutputOpen || !m.entries[1].expanded {
+		t.Fatalf("ctrl+o should expand retained tool details in flow mode: %#v", m.entries[1])
 	}
 	if got, want := m.flowPrintedLines, len(m.transcriptLines(m.width)); got != want {
 		t.Fatalf("flowPrintedLines = %d, want reprinted transcript line count %d", got, want)
+	}
+}
+
+func TestChatCtrlOFlowReplaceKeepsInputBarVisible(t *testing.T) {
+	m := chatModel{
+		width:            100,
+		height:           20,
+		flowPrintedLines: 1,
+		status:           "ready",
+		opts:             Options{Model: "test-model"},
+		entries: []chatEntry{
+			{role: "user", content: "inspect this"},
+			{role: "assistant", content: "Done."},
+		},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(chatModel)
+	view := stripANSI(m.View())
+	if !strings.Contains(view, inputCursorGlyph) || !strings.Contains(view, "test-model") {
+		t.Fatalf("ctrl+o flow replacement should keep input surface visible: %q", view)
 	}
 }
 
@@ -1243,6 +1323,34 @@ func TestChatCtrlOTogglesInlineOutputWithoutLeavingFullscreen(t *testing.T) {
 	}
 }
 
+func TestChatCtrlOPinsTranscriptToBottom(t *testing.T) {
+	m := chatModel{
+		width:        80,
+		height:       8,
+		boundedFrame: true,
+		fullScreen:   true,
+		entries: []chatEntry{
+			{role: "user", content: "inspect this"},
+			{role: "assistant", content: strings.Repeat("older line\n", 10)},
+			{role: "tool", detail: "bash", label: "Bash(\"pwd\")", status: "done", content: strings.Repeat("tool output\n", 10)},
+			{role: "assistant", content: "latest answer"},
+		},
+	}
+	m.scroll = m.maxScroll()
+	if m.scroll == 0 {
+		t.Fatal("test setup should start scrolled away from bottom")
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(chatModel)
+	if m.scroll != 0 {
+		t.Fatalf("ctrl+o should pin transcript to bottom, got scroll %d", m.scroll)
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "latest answer") {
+		t.Fatalf("bottom of transcript should stay visible after ctrl+o:\n%s", view)
+	}
+}
+
 func TestChatCtrlOCollapseKeepsInputPromptVisible(t *testing.T) {
 	m := chatModel{
 		width:        80,
@@ -1263,7 +1371,7 @@ func TestChatCtrlOCollapseKeepsInputPromptVisible(t *testing.T) {
 	m = updated.(chatModel)
 
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "█") {
+	if !strings.Contains(view, inputCursorGlyph) {
 		t.Fatalf("input prompt disappeared after collapsing tool output:\n%s", view)
 	}
 }
@@ -1307,7 +1415,7 @@ func TestChatCtrlOShowsRunningToolOutputInline(t *testing.T) {
 	if !strings.Contains(view, "/tmp/project") {
 		t.Fatalf("finished tool output should be visible inline: %q", view)
 	}
-	if !strings.Contains(view, "█") {
+	if !strings.Contains(view, inputCursorGlyph) {
 		t.Fatalf("input prompt disappeared while tool output is expanded:\n%s", view)
 	}
 	if !strings.Contains(view, "test-model") {
@@ -1317,7 +1425,7 @@ func TestChatCtrlOShowsRunningToolOutputInline(t *testing.T) {
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
 	view = stripANSI(m.View())
-	if !strings.Contains(view, "█") {
+	if !strings.Contains(view, inputCursorGlyph) {
 		t.Fatalf("input prompt disappeared after collapsing tool output:\n%s", view)
 	}
 	if !strings.Contains(view, "test-model") {

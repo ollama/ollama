@@ -293,7 +293,6 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			if isUnsupportedThinkingError(msg.err) && thinkRequestsThinking(m.opts.Think) {
 				m.opts.Think = &api.ThinkValue{Value: false}
-				m.status = fmt.Sprintf("Thinking disabled for %s", msg.model)
 				if msg.model != "" && m.opts.PreloadModel != nil {
 					m.preloadingModel = msg.model
 					return m, tea.Batch(preloadModelCmd(m.ctx, m.opts.PreloadModel, msg.model, m.opts.Think), m.scheduleTick())
@@ -322,6 +321,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatRunDoneMsg:
 		wasCanceling := m.status == "canceling"
+		m.finishThinkingEntry()
 		m.running = false
 		m.awaitingModel = false
 		m.compacting = false
@@ -500,14 +500,12 @@ func (m *chatModel) finishTranscriptSelection(msg tea.MouseMsg) {
 
 func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlO {
-		m.toggleInlineToolOutput()
 		m.disarmQuit()
-		// Toggling tool output changes the transcript height; force a full
-		// repaint so the input box and model-status footer aren't left stale.
+		m.toggleInlineToolOutput()
 		if m.boundedFrame {
 			return m, tea.ClearScreen
 		}
-		return m.withFlowTranscriptRepaint(nil)
+		return m.withFlowTranscriptReplace(nil)
 	}
 	if msg.Type == tea.KeyShiftTab {
 		return m.togglePermissionMode()
@@ -552,14 +550,26 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyCtrlG:
 		return m.openInputEditor()
+	case tea.KeyCtrlP:
+		return m.updateUpKey()
+	case tea.KeyCtrlN:
+		return m.updateDownKey()
 	case tea.KeyUp:
 		return m.updateUpKey()
 	case tea.KeyDown:
 		return m.updateDownKey()
 	case tea.KeyLeft:
-		m.moveInputCursorHorizontal(-1)
+		if msg.Alt {
+			m.moveInputCursorWord(-1)
+		} else {
+			m.moveInputCursorHorizontal(-1)
+		}
 	case tea.KeyRight:
-		m.moveInputCursorHorizontal(1)
+		if msg.Alt {
+			m.moveInputCursorWord(1)
+		} else {
+			m.moveInputCursorHorizontal(1)
+		}
 	case tea.KeyCtrlA:
 		m.moveInputCursorToLineStart()
 	case tea.KeyCtrlE:
@@ -584,7 +594,7 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.scroll = m.maxScroll()
 	case tea.KeyCtrlEnd:
 		m.scroll = 0
-	case tea.KeyBackspace:
+	case tea.KeyBackspace, tea.KeyCtrlH:
 		m.resetPromptHistoryCursor()
 		if msg.Alt {
 			m.deleteInputWordBackward()
@@ -600,12 +610,17 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlK:
 		m.resetPromptHistoryCursor()
 		m.deleteInputForward()
+	case tea.KeyDelete:
+		m.resetPromptHistoryCursor()
+		m.deleteInputForward()
 	case tea.KeyTab:
 		m.applyCompletion()
 	case tea.KeySpace:
 		m.insertInputRunes([]rune{' '})
 	case tea.KeyRunes:
-		m.insertInputRunesFromKey(msg.Runes, msg.Paste)
+		if !msg.Alt || !m.handleInputAltRunes(msg.Runes) {
+			m.insertInputRunesFromKey(msg.Runes, msg.Paste)
+		}
 	default:
 		if m.canEditInput() && isShiftEnterCSI(msg) {
 			m.insertInputNewline()
@@ -619,7 +634,7 @@ func (m *chatModel) toggleInlineToolOutput() {
 	m.toolOutputOpen = !m.toolOutputOpen
 	m.applyToolOutputMode()
 	m.selection = chatSelection{}
-	m.scroll = clamp(m.scroll, 0, m.maxScroll())
+	m.scroll = 0
 }
 
 func (m chatModel) updateCtrlC() (tea.Model, tea.Cmd) {
@@ -710,6 +725,9 @@ func (m chatModel) updateUpKey() (tea.Model, tea.Cmd) {
 	if m.moveInputCursorVertical(-1) {
 		return m, nil
 	}
+	if slices.Contains(m.input, '\n') {
+		return m, nil
+	}
 	m.movePromptHistory(-1)
 	return m, nil
 }
@@ -749,6 +767,9 @@ func (m chatModel) updateDownKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.moveInputCursorVertical(1) {
+		return m, nil
+	}
+	if slices.Contains(m.input, '\n') {
 		return m, nil
 	}
 	m.movePromptHistory(1)
@@ -816,11 +837,11 @@ func (m chatModel) View() string {
 
 func (m chatModel) flowView(width int) string {
 	allTranscriptLines := m.transcriptLines(width)
-	bottomLines := m.bottomLines(width, 0)
-	bottomGap := transcriptInputGap(0, len(bottomLines), len(allTranscriptLines))
-
 	printed := clamp(m.flowPrintedLines, 0, len(allTranscriptLines))
 	lines := slices.Clone(allTranscriptLines[printed:])
+
+	bottomLines := m.bottomLines(width, 0)
+	bottomGap := transcriptInputGap(0, len(bottomLines), len(allTranscriptLines))
 	for range bottomGap {
 		lines = append(lines, "")
 	}
@@ -842,6 +863,25 @@ func (m chatModel) withFlowTranscriptRepaint(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return next, tea.Sequence(tea.ClearScreen, printCmd, cmd)
 }
 
+func (m chatModel) withFlowTranscriptReplace(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.boundedFrame {
+		return m.withFlowTranscriptFlush(cmd)
+	}
+	m.flowPrintedLines = 0
+	next, printCmd := m.flowTranscriptFlushCmd()
+	return next, tea.Sequence(clearScreenAndScrollbackCmd(), printCmd, cmd)
+}
+
+func clearScreenAndScrollbackCmd() tea.Cmd {
+	return func() tea.Msg {
+		// CSI 3J clears scrollback; 2J + H clear and home the visible screen.
+		// This is only used when flow-mode transcript history is intentionally
+		// replaced from retained state, such as ctrl+o detail toggling.
+		fmt.Print("\x1b[3J\x1b[2J\x1b[H")
+		return nil
+	}
+}
+
 func (m chatModel) flowTranscriptFlushCmd() (chatModel, tea.Cmd) {
 	if m.boundedFrame || m.resumePicker != nil || m.modelPicker != nil || m.thinkPicker != nil || m.historyPopup != nil {
 		return m, nil
@@ -854,6 +894,9 @@ func (m chatModel) flowTranscriptFlushCmd() (chatModel, tea.Cmd) {
 	}
 	m.flowPrintedLines = clamp(m.flowPrintedLines, 0, len(lines))
 	flushCount := m.flowTranscriptFlushCount(lines, width)
+	if m.flowPrintedLines > flushCount {
+		m.flowPrintedLines = flushCount
+	}
 	if flushCount <= m.flowPrintedLines {
 		return m, nil
 	}
@@ -885,6 +928,10 @@ func (m chatModel) flowTranscriptHoldEntryIndex() int {
 	switch entry.role {
 	case "assistant":
 		if entry.content != "" {
+			return index
+		}
+	case "thinking":
+		if entry.status == "running" {
 			return index
 		}
 	case "tool":

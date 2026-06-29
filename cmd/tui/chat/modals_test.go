@@ -430,7 +430,7 @@ func TestChatResumeCommandOpensPicker(t *testing.T) {
 	if strings.Contains(view, "Search...") {
 		t.Fatalf("resume picker should render inline without full search box: %q", view)
 	}
-	if !strings.Contains(view, "█") {
+	if !strings.Contains(view, inputCursorGlyph) {
 		t.Fatalf("inline resume picker should keep input box visible: %q", view)
 	}
 }
@@ -499,7 +499,7 @@ func TestChatModelCommandOpensPicker(t *testing.T) {
 	if strings.Contains(view, "Search...") {
 		t.Fatalf("model picker should render inline without full search box: %q", view)
 	}
-	if !strings.Contains(view, "█") {
+	if !strings.Contains(view, inputCursorGlyph) {
 		t.Fatalf("inline model picker should keep input box visible: %q", view)
 	}
 }

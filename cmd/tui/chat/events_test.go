@@ -343,6 +343,9 @@ func TestChatModelPreloadUnsupportedThinkingDisablesThinkingAndRetries(t *testin
 	if len(fm.entries) != 0 {
 		t.Fatalf("unsupported thinking should not render a preload error: %#v", fm.entries)
 	}
+	if strings.Contains(strings.ToLower(fm.status), "thinking") {
+		t.Fatalf("unsupported thinking should not render a status notice: %q", fm.status)
+	}
 
 	msg := cmd()
 	batch, ok := msg.(tea.BatchMsg)
@@ -354,6 +357,19 @@ func TestChatModelPreloadUnsupportedThinkingDisablesThinkingAndRetries(t *testin
 	}
 	if retryThink == nil || retryThink.Bool() {
 		t.Fatalf("retry think = %#v, want disabled", retryThink)
+	}
+}
+
+func TestChatToolsUnavailableIsSilent(t *testing.T) {
+	m := chatModel{running: true}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolsUnavailable})
+
+	if len(m.entries) != 0 {
+		t.Fatalf("tools unavailable should not render a transcript entry: %#v", m.entries)
+	}
+	if strings.Contains(stripANSI(m.View()), "Tools are unavailable") {
+		t.Fatalf("tools unavailable notice should be omitted: %q", stripANSI(m.View()))
 	}
 }
 
@@ -391,6 +407,23 @@ func TestChatThinkingShowsTokenCount(t *testing.T) {
 	}
 }
 
+func TestChatCtrlOShowsThinkingDetails(t *testing.T) {
+	m := chatModel{running: true, boundedFrame: true, width: 100, height: 20}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "Need to inspect cwd."})
+
+	if transcript := stripANSI(m.renderTranscript(80)); strings.Contains(transcript, "Need to inspect cwd.") {
+		t.Fatalf("thinking details should be hidden before ctrl+o: %q", transcript)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(chatModel)
+	transcript := stripANSI(m.renderTranscript(80))
+	if !strings.Contains(transcript, "Thinking") || !strings.Contains(transcript, "Need to inspect cwd.") {
+		t.Fatalf("ctrl+o should reveal thinking details: %q", transcript)
+	}
+}
+
 func TestChatModelLineShowsContextOnlyWhenUseful(t *testing.T) {
 	m := chatModel{
 		width:           120,
@@ -414,7 +447,7 @@ func TestChatModelLineShowsContextOnlyWhenUseful(t *testing.T) {
 
 	m.contextTokens = 61
 	view = stripANSI(m.View())
-	if !strings.Contains(view, "llama3.2 · ctx ~61 / 100 (61% used)") || strings.Contains(view, "compaction soon") {
+	if !strings.Contains(view, "llama3.2   ctx ~61 / 100 (61% used)") || strings.Contains(view, "compaction soon") {
 		t.Fatalf("view should show context count beside model after 60%% without compaction copy: %q", view)
 	}
 	if count := strings.Count(view, "ctx "); count != 1 {
@@ -423,7 +456,7 @@ func TestChatModelLineShowsContextOnlyWhenUseful(t *testing.T) {
 
 	m.contextTokens = 65
 	view = stripANSI(m.View())
-	if !strings.Contains(view, "llama3.2 · ctx ~65 / 100 (65% used)") || strings.Contains(view, "compaction soon") {
+	if !strings.Contains(view, "llama3.2   ctx ~65 / 100 (65% used)") || strings.Contains(view, "compaction soon") {
 		t.Fatalf("view should show context count near threshold without compaction copy: %q", view)
 	}
 	if count := strings.Count(view, "ctx "); count != 1 {
@@ -432,7 +465,7 @@ func TestChatModelLineShowsContextOnlyWhenUseful(t *testing.T) {
 
 	m.contextTokens = 75
 	view = stripANSI(m.View())
-	if !strings.Contains(view, "llama3.2 · ctx ~75 / 100 (75% used)") || strings.Contains(view, "compaction soon") {
+	if !strings.Contains(view, "llama3.2   ctx ~75 / 100 (75% used)") || strings.Contains(view, "compaction soon") {
 		t.Fatalf("view should show context count at threshold without compaction copy: %q", view)
 	}
 
@@ -1480,10 +1513,13 @@ func TestChatAgentEventsUpdateAssistantEntry(t *testing.T) {
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "thinking"})
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "done"})
 
-	if len(m.entries) != 1 {
-		t.Fatalf("entries = %d, want 1", len(m.entries))
+	if len(m.entries) != 2 {
+		t.Fatalf("entries = %d, want hidden thinking plus assistant", len(m.entries))
 	}
-	entry := m.entries[0]
+	if m.entries[0].role != "thinking" || m.entries[0].content != "thinking" || m.entries[0].expanded {
+		t.Fatalf("thinking entry = %#v, want retained but hidden thinking", m.entries[0])
+	}
+	entry := m.entries[1]
 	if entry.role != "assistant" {
 		t.Fatalf("role = %q, want assistant", entry.role)
 	}

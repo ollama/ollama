@@ -39,6 +39,8 @@ type chatEntry struct {
 	renderLines []string
 }
 
+const chatMessageIndent = "  "
+
 type chatEntryRenderKey struct {
 	width   int
 	version int
@@ -76,13 +78,15 @@ func (m chatModel) toolStartedAt(toolID string) time.Time {
 func entryHasExpandableOutput(entry chatEntry) bool {
 	return (entry.role == "tool" && (len(entry.args) > 0 || strings.TrimSpace(entry.content) != "")) ||
 		(entry.role == "tool_group" && len(entry.tools) > 0) ||
-		(entry.role == "compaction_summary" && strings.TrimSpace(entry.content) != "")
+		(entry.role == "compaction_summary" && strings.TrimSpace(entry.content) != "") ||
+		(entry.role == "thinking" && strings.TrimSpace(entry.content) != "")
 }
 
 func entryHasToolOutputMode(entry chatEntry) bool {
 	return (entry.role == "tool" && (isToolActiveStatus(entry.status) || isToolResultStatus(entry.status) || entry.content != "")) ||
 		(entry.role == "tool_group" && len(entry.tools) > 0) ||
-		(entry.role == "compaction_summary" && strings.TrimSpace(entry.content) != "")
+		(entry.role == "compaction_summary" && strings.TrimSpace(entry.content) != "") ||
+		(entry.role == "thinking" && strings.TrimSpace(entry.content) != "")
 }
 
 func (m *chatModel) applyToolOutputMode() {
@@ -123,17 +127,23 @@ func (m *chatModel) ensureAssistantEntry() int {
 
 func (m chatModel) renderTranscript(width int) string {
 	var b strings.Builder
+	first := true
 	for index, entry := range m.entries {
-		if b.Len() > 0 {
-			b.WriteByte('\n')
-		}
 		prefix, body := m.renderEntry(entry)
 		prefixWidth := lipgloss.Width(prefix)
 		continuation := ""
 		if prefixWidth > 0 {
 			continuation = strings.Repeat(" ", prefixWidth)
 		}
-		for i, line := range m.renderEntryLinesCached(index, entry, body, width-prefixWidth) {
+		lines := m.renderEntryLinesCached(index, entry, body, width-prefixWidth)
+		if len(lines) == 0 {
+			continue
+		}
+		if !first {
+			b.WriteByte('\n')
+		}
+		first = false
+		for i, line := range lines {
 			if i == 0 {
 				b.WriteString(prefix)
 				b.WriteString(line)
@@ -328,7 +338,7 @@ func (m chatModel) renderModelStatusLines(width int) []string {
 		return nil
 	}
 	indent := inputBoxTextIndent()
-	lines := wrapChatText(strings.Join(parts, " · "), max(20, width-lipgloss.Width(indent)))
+	lines := wrapChatText(strings.Join(parts, "   "), max(20, width-lipgloss.Width(indent)))
 	for i := range lines {
 		lines[i] = renderFooterPlainLine(indent + lines[i])
 	}
@@ -475,7 +485,9 @@ func (m chatModel) renderEntry(entry chatEntry) (string, string) {
 	case "user":
 		return "", entry.content
 	case "assistant":
-		return chatAssistantStyle.Render("•") + " ", entry.content
+		return "", entry.content
+	case "thinking":
+		return chatMetaStyle.Render("•") + " ", thinkingStatusLine(entry)
 	case "slash":
 		return chatMetaStyle.Render("•") + " ", entry.content
 	case "compaction_summary":
@@ -502,9 +514,12 @@ func (m chatModel) renderEntryLines(entry chatEntry, body string, width int) []s
 	}
 	switch entry.role {
 	case "assistant":
-		lines := splitRenderedBody(renderMarkdownForView(body, width))
-		lines = append(lines, renderMetricsLines(entry.metrics, width)...)
+		innerWidth := max(1, width-lipgloss.Width(chatMessageIndent))
+		lines := indentLines(splitRenderedBody(renderMarkdownForView(body, innerWidth)), chatMessageIndent)
+		lines = append(lines, indentLines(renderMetricsLines(entry.metrics, innerWidth), chatMessageIndent)...)
 		return lines
+	case "thinking":
+		return renderThinkingLines(entry, width)
 	case "system", "slash":
 		return splitRenderedBody(renderMarkdownForView(body, width))
 	case "user":
@@ -530,9 +545,10 @@ func renderUserMessageLines(content string, width int) []string {
 	if width < 20 {
 		width = 20
 	}
-	lines := wrapChatText(content, width)
+	innerWidth := max(1, width-lipgloss.Width(chatMessageIndent))
+	lines := wrapChatText(content, innerWidth)
 	for i, line := range lines {
-		lines[i] = chatUserBlockStyle.Render(padRenderedLine(line, width))
+		lines[i] = chatUserBlockStyle.Render(padRenderedLine(chatMessageIndent+line, width))
 	}
 	return lines
 }
@@ -859,12 +875,77 @@ func renderCompactionSummaryLines(entry chatEntry, width int) []string {
 	return lines
 }
 
+func renderThinkingLines(entry chatEntry, width int) []string {
+	if !entry.expanded || strings.TrimSpace(entry.content) == "" {
+		return nil
+	}
+	lines := wrapChatText(thinkingStatusLine(entry), width)
+	lines = append(lines, "")
+	lines = append(lines, indentLines(splitRenderedBody(renderMarkdownForView(entry.content, width-2)), "  ")...)
+	return lines
+}
+
 func compactionSummaryStatusLine(entry chatEntry) string {
 	segment := toolStatusStyle(entry.status).Render(toolStatusLabel(entry))
 	if segment == "" {
 		return "Compacted summary"
 	}
 	return fmt.Sprintf("Compacted summary %s", segment)
+}
+
+func thinkingStatusLine(entry chatEntry) string {
+	if strings.TrimSpace(entry.label) != "" {
+		return entry.label
+	}
+	return "Thinking"
+}
+
+func (m chatModel) thinkingLabel() string {
+	if m.thinkingTokens > 0 {
+		return "Thinking " + formatTokenCount(m.thinkingTokens)
+	}
+	return "Thinking"
+}
+
+func (m *chatModel) syncThinkingEntry() {
+	if strings.TrimSpace(m.latestLiveThinking()) == "" {
+		return
+	}
+	idx := -1
+	if len(m.entries) > 0 && m.entries[len(m.entries)-1].role == "thinking" && m.entries[len(m.entries)-1].status == "running" {
+		idx = len(m.entries) - 1
+	}
+	if idx < 0 {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "thinking", status: "running"}))
+		idx = len(m.entries) - 1
+	}
+	m.entries[idx].content = m.latestLiveThinking()
+	m.entries[idx].label = m.thinkingLabel()
+	m.entries[idx].status = "running"
+	m.entries[idx].expanded = m.toolOutputMode && m.toolOutputOpen
+	m.markEntryDirty(idx)
+}
+
+func (m chatModel) latestLiveThinking() string {
+	for i := len(m.liveMessages) - 1; i >= 0; i-- {
+		if m.liveMessages[i].Role == "assistant" && strings.TrimSpace(m.liveMessages[i].Thinking) != "" {
+			return m.liveMessages[i].Thinking
+		}
+	}
+	return ""
+}
+
+func (m *chatModel) finishThinkingEntry() {
+	if len(m.entries) == 0 {
+		return
+	}
+	idx := len(m.entries) - 1
+	if m.entries[idx].role != "thinking" || m.entries[idx].status != "running" {
+		return
+	}
+	m.entries[idx].status = "done"
+	m.entries[idx].label = m.thinkingLabel()
+	m.markEntryDirty(idx)
 }
 
 func toolGroupChildStatusLine(entry chatEntry) string {
@@ -1351,14 +1432,14 @@ func inputBoxTextIndent() string {
 func renderFooterPlainLine(line string) string {
 	const fullAccess = "full access"
 	if !strings.Contains(line, fullAccess) {
-		return chatMetaStyle.Render(line)
+		return chatFooterStyle.Render(line)
 	}
 
 	var b strings.Builder
 	for {
 		before, after, ok := strings.Cut(line, fullAccess)
 		if before != "" {
-			b.WriteString(chatMetaStyle.Render(before))
+			b.WriteString(chatFooterStyle.Render(before))
 		}
 		if !ok {
 			break
@@ -1826,6 +1907,14 @@ func entriesFromMessages(messages []api.Message) []chatEntry {
 			}
 			entries = append(entries, newChatEntry(chatEntry{role: msg.Role, content: msg.Content}))
 		case "assistant":
+			if strings.TrimSpace(msg.Thinking) != "" {
+				entries = append(entries, newChatEntry(chatEntry{
+					role:    "thinking",
+					content: msg.Thinking,
+					label:   "Thinking",
+					status:  "done",
+				}))
+			}
 			for _, call := range msg.ToolCalls {
 				if call.ID != "" {
 					toolCalls[call.ID] = call

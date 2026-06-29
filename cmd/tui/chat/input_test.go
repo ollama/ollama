@@ -67,6 +67,66 @@ func TestRenderInputBoxTruncationAlignsContinuation(t *testing.T) {
 	}
 }
 
+func TestRenderInputBoxCursorUsesMutedStyle(t *testing.T) {
+	rendered := strings.Join(renderInputBoxLines("hello", len("hello"), 24, 1, ""), "\n")
+	if !strings.Contains(rendered, renderInputCursor()) {
+		t.Fatalf("cursor should use muted style: %q", rendered)
+	}
+}
+
+func TestInputWithCursorCoversCurrentCharacter(t *testing.T) {
+	if got, want := inputWithCursor([]rune("hello"), 0), inputCursorMarker+"hello"; got != want {
+		t.Fatalf("cursor at start = %q, want marker before first character", got)
+	}
+	if got, want := inputWithCursor([]rune("hello"), len("hello")), "hello"+inputCursorMarker; got != want {
+		t.Fatalf("cursor at end = %q, want appended marker", got)
+	}
+	if got := stripANSI(renderInputTextWithCursor(inputWithCursor([]rune("hello"), 0))); got != "hello" {
+		t.Fatalf("rendered cursor at start = %q, want visible first character", got)
+	}
+}
+
+func TestChatInputNormalizesCarriageReturnsFromPaste(t *testing.T) {
+	m := chatModel{}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("one\r\ntwo\rthree"), Paste: true})
+	m = updated.(chatModel)
+
+	if got, want := string(m.input), "one\ntwo\nthree"; got != want {
+		t.Fatalf("input = %q, want normalized newlines %q", got, want)
+	}
+	if got, want := m.normalizedInputCursor(), len([]rune("one\ntwo\nthree")); got != want {
+		t.Fatalf("cursor = %d, want %d", got, want)
+	}
+}
+
+func TestRenderInputBoxLinesNormalizesCarriageReturns(t *testing.T) {
+	rendered := stripANSI(strings.Join(renderInputBoxLines("alpha\rbeta", -1, 24, 4, ""), "\n"))
+	if strings.Contains(rendered, "\r") {
+		t.Fatalf("rendered input box should not contain carriage returns: %q", rendered)
+	}
+
+	lines := strings.Split(rendered, "\n")
+	alphaLine := -1
+	betaLine := -1
+	for i, line := range lines {
+		if strings.Contains(line, "alpha") {
+			alphaLine = i
+		}
+		if strings.Contains(line, "beta") {
+			betaLine = i
+		}
+	}
+	if alphaLine < 0 || betaLine < 0 || alphaLine == betaLine {
+		t.Fatalf("carriage return should render as separate boxed lines: %q", rendered)
+	}
+	for _, i := range []int{alphaLine, betaLine} {
+		if !strings.HasPrefix(lines[i], "│ ") || !strings.HasSuffix(lines[i], " │") {
+			t.Fatalf("input line %d should stay inside box borders: %q\n%s", i, lines[i], rendered)
+		}
+	}
+}
+
 type shiftEnterCSITestMsg string
 
 func (m shiftEnterCSITestMsg) String() string {
@@ -309,6 +369,106 @@ func TestChatInputArrowKeysEditMiddle(t *testing.T) {
 	}
 }
 
+func TestChatInputOptionArrowsMoveByWord(t *testing.T) {
+	input := []rune("alpha beta gamma")
+	m := chatModel{
+		input:          input,
+		inputCursor:    len(input),
+		inputCursorSet: true,
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
+	m = updated.(chatModel)
+	if got, want := m.inputCursor, len([]rune("alpha beta ")); got != want {
+		t.Fatalf("cursor after option+left = %d, want %d", got, want)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
+	m = updated.(chatModel)
+	if got, want := m.inputCursor, len([]rune("alpha ")); got != want {
+		t.Fatalf("cursor after second option+left = %d, want %d", got, want)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight, Alt: true})
+	m = updated.(chatModel)
+	if got, want := m.inputCursor, len([]rune("alpha beta ")); got != want {
+		t.Fatalf("cursor after option+right = %d, want %d", got, want)
+	}
+	if got := string(m.input); got != "alpha beta gamma" {
+		t.Fatalf("input = %q, want unchanged", got)
+	}
+}
+
+func TestChatInputMetaBFMoveByWord(t *testing.T) {
+	input := []rune("alpha beta gamma")
+	m := chatModel{
+		input:          input,
+		inputCursor:    len(input),
+		inputCursorSet: true,
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	m = updated.(chatModel)
+	if got, want := m.inputCursor, len([]rune("alpha beta ")); got != want {
+		t.Fatalf("cursor after meta+b = %d, want %d", got, want)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true})
+	m = updated.(chatModel)
+	if got, want := m.inputCursor, len(input); got != want {
+		t.Fatalf("cursor after meta+f = %d, want %d", got, want)
+	}
+	if got := string(m.input); got != "alpha beta gamma" {
+		t.Fatalf("input = %q, want unchanged", got)
+	}
+}
+
+func TestChatInputCtrlPNNavigateHistory(t *testing.T) {
+	m := chatModel{
+		input:         []rune("draft"),
+		promptHistory: []string{"old prompt"},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "old prompt" {
+		t.Fatalf("input after ctrl+p = %q, want history prompt", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "draft" {
+		t.Fatalf("input after ctrl+n = %q, want draft restored", got)
+	}
+}
+
+func TestChatInputDeleteRemovesCharacterForward(t *testing.T) {
+	m := chatModel{
+		input:          []rune("hello world"),
+		inputCursor:    len([]rune("hello ")),
+		inputCursorSet: true,
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "hello orld" {
+		t.Fatalf("input after delete = %q, want next character removed", got)
+	}
+	if got, want := m.inputCursor, len([]rune("hello ")); got != want {
+		t.Fatalf("cursor after delete = %d, want %d", got, want)
+	}
+}
+
+func TestChatInputCtrlHDeletesBackward(t *testing.T) {
+	m := chatModel{input: []rune("hello")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlH})
+	m = updated.(chatModel)
+	if got := string(m.input); got != "hell" {
+		t.Fatalf("input after ctrl+h = %q, want previous character removed", got)
+	}
+}
+
 func TestChatInputUpDownNavigateMultilineBeforeHistory(t *testing.T) {
 	m := chatModel{
 		input:         []rune("one\ntwo\nthree"),
@@ -333,6 +493,38 @@ func TestChatInputUpDownNavigateMultilineBeforeHistory(t *testing.T) {
 	}
 	if m.promptActive {
 		t.Fatal("multiline cursor navigation should not enter prompt history")
+	}
+}
+
+func TestChatInputBlankMultilineDoesNotRecallHistory(t *testing.T) {
+	m := chatModel{promptHistory: []string{"old prompt"}}
+
+	for range 4 {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+		m = updated.(chatModel)
+	}
+	if got, want := string(m.input), "\n\n\n\n"; got != want {
+		t.Fatalf("input = %q, want blank multiline draft %q", got, want)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(chatModel)
+	if got, want := m.inputCursor, len([]rune("\n\n\n")); got != want {
+		t.Fatalf("cursor after up = %d, want previous blank line %d", got, want)
+	}
+
+	for range 10 {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m = updated.(chatModel)
+	}
+	if got, want := string(m.input), "\n\n\n\n"; got != want {
+		t.Fatalf("up at top should keep multiline draft, got %q want %q", got, want)
+	}
+	if m.promptActive {
+		t.Fatal("up at top of multiline draft should not enter prompt history")
+	}
+	if m.inputCursor != 0 {
+		t.Fatalf("cursor = %d, want top of multiline draft", m.inputCursor)
 	}
 }
 
@@ -436,7 +628,7 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	if got := len(m.slashCommandLines(80)); got != maxSlashCompletions {
 		t.Fatalf("slash suggestions = %d, want %d", got, maxSlashCompletions)
 	}
-	if !strings.Contains(view, "/█") {
+	if !strings.Contains(view, "/"+inputCursorGlyph) {
 		t.Fatalf("view missing slash input row: %q", view)
 	}
 }
