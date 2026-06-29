@@ -1346,6 +1346,88 @@ func TestCreateAndShowRemoteModel(t *testing.T) {
 	fmt.Printf("resp = %#v\n", resp)
 }
 
+func TestCreateRemoteModelInheritsFromBase(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	// Write a mock base remote model manifest
+	cfgData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:   "gguf",
+		ModelFamily:   "gptoss",
+		ModelFamilies: []string{"gptoss"},
+		ContextLen:    131072,
+		EmbedLen:      2880,
+		BaseName:      "bob-base",
+		Capabilities:  []string{"completion", "tools"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal base config: %v", err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(cfgData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName("bob")
+	if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	var s Server
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "test-custom",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		Stream:     &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	w = createRequest(t, s.ShowHandler, api.ShowRequest{Model: "test-custom"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Details.Family != "gptoss" {
+		t.Errorf("expected family to be %q, got %q", "gptoss", resp.Details.Family)
+	}
+
+	v, ok := resp.ModelInfo["gptoss.context_length"]
+	if !ok {
+		t.Fatalf("missing context length in ModelInfo: %#v", resp.ModelInfo)
+	}
+	ctxlen := v.(float64)
+	if int(ctxlen) != 131072 {
+		t.Errorf("context len: expected %d, actual %d", 131072, int(ctxlen))
+	}
+
+	v, ok = resp.ModelInfo["gptoss.embedding_length"]
+	if !ok {
+		t.Fatalf("missing embedding length in ModelInfo")
+	}
+	embedlen := v.(float64)
+	if int(embedlen) != 2880 {
+		t.Errorf("embed len: expected %d, actual %d", 2880, int(embedlen))
+	}
+
+	v, ok = resp.ModelInfo["general.basename"]
+	if !ok {
+		t.Fatalf("missing general.basename in ModelInfo")
+	}
+	basename := v.(string)
+	if basename != "bob-base" {
+		t.Errorf("basename: expected %q, actual %q", "bob-base", basename)
+	}
+}
+
 func TestCreateRemoteModelRejectsDraftFiles(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
