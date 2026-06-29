@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -20,7 +19,7 @@ type ChatClient interface {
 
 type Session struct {
 	Client     ChatClient
-	Events     EventSink
+	EventSinks []EventSink
 	Tools      *Registry
 	Authorizer ToolAuthorizer
 	WorkingDir string
@@ -37,7 +36,10 @@ type RunOptions struct {
 	Options      map[string]any
 	Think        *api.ThinkValue
 	KeepAlive    *api.Duration
-	Policy       RunPolicy
+	// MaxToolRounds limits consecutive model/tool cycles.
+	// Zero uses the default guard; negative disables the guard for tests or
+	// special callers.
+	MaxToolRounds int
 }
 
 type RunResult struct {
@@ -155,14 +157,8 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	}
 
 	if err := s.checkPreflightPromptBudget(opts, messages); err != nil {
-		emit(s.Events, Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
+		s.emit(Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
 		return nil, err
-	}
-
-	if opts.Policy.UsesTools() && len(s.runTools(opts)) == 0 {
-		if err := emit(s.Events, Event{Type: EventToolsUnavailable, RunID: runID, ChatID: opts.ChatID, Model: opts.Model}); err != nil {
-			return nil, err
-		}
 	}
 
 	st := runState{
@@ -170,7 +166,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 		opts:          opts,
 		phase:         runPhaseModel,
 		messages:      messages,
-		maxToolRounds: resolvedMaxToolRounds(opts.Policy.MaxToolRounds),
+		maxToolRounds: resolvedMaxToolRounds(opts.MaxToolRounds),
 	}
 	for {
 		switch st.phase {
@@ -194,9 +190,6 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 
 func (s *Session) runModelStep(ctx context.Context, st *runState) error {
 	opts := st.opts
-	if err := emit(s.Events, s.loopStepEvent(st.runID, opts)); err != nil {
-		return err
-	}
 
 	assistant, pendingToolCalls, canceled, err := s.chatRound(ctx, st.runID, opts, st.messages, &st.latest)
 	if err != nil {
@@ -209,7 +202,7 @@ func (s *Session) runModelStep(ctx context.Context, st *runState) error {
 			})
 			return nil
 		}
-		emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
+		s.emit(Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
 		return err
 	}
 	st.consecutiveModelErrors = 0
@@ -230,7 +223,7 @@ func (s *Session) runModelStep(ctx context.Context, st *runState) error {
 	if canceled {
 		skipped, skipErr := s.skipToolCalls(ctx, st.runID, opts, pendingToolCalls, "Tool execution skipped because the run was canceled.")
 		if skipErr != nil {
-			emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: skipErr.Error()})
+			s.emit(Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: skipErr.Error()})
 			return skipErr
 		}
 		st.messages = append(st.messages, skipped...)
@@ -238,7 +231,7 @@ func (s *Session) runModelStep(ctx context.Context, st *runState) error {
 		return nil
 	}
 
-	if !opts.Policy.UsesTools() || s.Tools == nil {
+	if s.Tools == nil {
 		st.finishDone()
 		return nil
 	}
@@ -247,12 +240,12 @@ func (s *Session) runModelStep(ctx context.Context, st *runState) error {
 		content := fmt.Sprintf("Tool execution skipped because the max tool-round limit of %d was reached. Send another message to continue.", st.maxToolRounds)
 		toolMessages, skipErr := s.skipToolCalls(ctx, st.runID, opts, pendingToolCalls, content)
 		if skipErr != nil {
-			emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: skipErr.Error()})
+			s.emit(Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: skipErr.Error()})
 			return skipErr
 		}
 		st.messages = append(st.messages, toolMessages...)
 		err := fmt.Errorf("tool round limit reached after %d rounds; send another message to continue", st.maxToolRounds)
-		emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
+		s.emit(Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
 		st.finishError(err)
 		return nil
 	}
@@ -264,7 +257,7 @@ func (s *Session) runModelStep(ctx context.Context, st *runState) error {
 func (s *Session) runToolStep(ctx context.Context, st *runState) error {
 	batch, err := s.executeToolCalls(ctx, st.runID, st.opts, st.messages, st.pendingToolCalls)
 	if err != nil {
-		emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: st.opts.ChatID, Model: st.opts.Model, Error: err.Error()})
+		s.emit(Event{Type: EventError, RunID: st.runID, ChatID: st.opts.ChatID, Model: st.opts.Model, Error: err.Error()})
 		return err
 	}
 
@@ -283,7 +276,7 @@ func (s *Session) runCompactionStep(ctx context.Context, st *runState) error {
 		st.messages, st.compactionSkipNotified, err = s.maybeCompact(ctx, st.runID, opts, st.messages, st.latest, st.compactionSkipNotified)
 	}
 	if err != nil {
-		emit(s.Events, Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
+		s.emit(Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
 		return err
 	}
 
@@ -313,12 +306,12 @@ func (s *Session) runCompactionStep(ctx context.Context, st *runState) error {
 
 func (s *Session) finishRun(ctx context.Context, st *runState) (*RunResult, error) {
 	if st.finish.status != "" {
-		event := Event{Type: EventRunFinished, RunID: st.runID, ChatID: st.opts.ChatID, Model: st.opts.Model, Status: st.finish.status, FinishedAt: time.Now(), Response: &st.latest}
+		event := Event{Type: EventRunFinished, RunID: st.runID, ChatID: st.opts.ChatID, Model: st.opts.Model, Status: st.finish.status}
 		var err error
 		if st.finish.ignoreCanceled {
-			err = emitIgnoringCanceled(ctx, s.Events, event)
+			err = s.emitIgnoringCanceled(ctx, event)
 		} else {
-			err = emit(s.Events, event)
+			err = s.emit(event)
 		}
 		if err != nil {
 			return nil, err
@@ -328,13 +321,9 @@ func (s *Session) finishRun(ctx context.Context, st *runState) (*RunResult, erro
 }
 
 func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest *api.ChatResponse) (api.Message, []api.ToolCall, bool, error) {
-	req := buildChatRequest(opts, messages, s.runTools(opts))
-	if err := emit(s.Events, s.requestBuiltEvent(runID, opts)); err != nil {
-		return api.Message{}, nil, false, err
-	}
+	req := buildChatRequest(opts, messages, s.availableTools())
 
 	assistant := api.Message{Role: "assistant"}
-	var started bool
 	var pendingToolCalls []api.ToolCall
 
 	err := s.Client.Chat(ctx, &req, func(response api.ChatResponse) error {
@@ -347,23 +336,16 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 			return nil
 		}
 
-		if !started {
-			if err := emit(s.Events, Event{Type: EventMessageStarted, RunID: runID, ChatID: opts.ChatID, Model: opts.Model}); err != nil {
-				return err
-			}
-			started = true
-		}
-
 		if response.Message.Thinking != "" {
 			assistant.Thinking += response.Message.Thinking
-			if err := emit(s.Events, Event{Type: EventThinkingDelta, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Thinking: response.Message.Thinking, Response: &response}); err != nil {
+			if err := s.emit(Event{Type: EventThinkingDelta, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Thinking: response.Message.Thinking}); err != nil {
 				return err
 			}
 		}
 
 		if response.Message.Content != "" {
 			assistant.Content += response.Message.Content
-			if err := emit(s.Events, Event{Type: EventMessageDelta, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Content: response.Message.Content, Response: &response}); err != nil {
+			if err := s.emit(Event{Type: EventMessageDelta, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Content: response.Message.Content}); err != nil {
 				return err
 			}
 		}
@@ -371,7 +353,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 		if len(response.Message.ToolCalls) > 0 {
 			assistant.ToolCalls = append(assistant.ToolCalls, response.Message.ToolCalls...)
 			pendingToolCalls = append(pendingToolCalls, response.Message.ToolCalls...)
-			if err := emit(s.Events, Event{Type: EventToolCallDetected, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, ToolCalls: response.Message.ToolCalls, Response: &response}); err != nil {
+			if err := s.emit(Event{Type: EventToolCallDetected, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, ToolCalls: response.Message.ToolCalls}); err != nil {
 				return err
 			}
 		}
@@ -381,13 +363,8 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 	})
 	if err != nil {
 		if isContextCanceledError(ctx, err) {
-			_ = emit(s.Events, Event{Type: EventModelStreamDone, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "canceled", Response: latest})
 			return assistant, pendingToolCalls, true, nil
 		}
-		return assistant, pendingToolCalls, false, err
-	}
-
-	if err := emit(s.Events, Event{Type: EventModelStreamDone, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "done", Response: latest}); err != nil {
 		return assistant, pendingToolCalls, false, err
 	}
 
@@ -397,7 +374,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOptions, messages []api.Message, calls []api.ToolCall) (toolBatchResult, error) {
 	authorizer := s.Authorizer
 	if authorizer == nil {
-		authorizer = opts.Policy.Authorizer(nil)
+		authorizer = NewApprovalManager(ApprovalManagerOptions{})
 	}
 
 	batch := toolBatchResult{
@@ -423,11 +400,10 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			batch.messages = append(batch.messages, msg)
 			projectedMessages = append(projectedMessages, msg)
 			content = msg.Content
-			finishedAt := time.Now()
 			if toolOutputFullyOmitted(content) {
 				batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: fmt.Sprintf("Error: unknown tool: %s", toolName)})
 			}
-			if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "failed", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: fmt.Sprintf("unknown tool: %s", toolName), FinishedAt: finishedAt}); emitErr != nil {
+			if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "failed", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: fmt.Sprintf("unknown tool: %s", toolName)}); emitErr != nil {
 				return toolBatchResult{}, emitErr
 			}
 			continue
@@ -462,7 +438,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			batch.messages = append(batch.messages, msg)
 			projectedMessages = append(projectedMessages, msg)
 			content = msg.Content
-			if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "denied", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: content, FinishedAt: time.Now()}); emitErr != nil {
+			if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "denied", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: content}); emitErr != nil {
 				return toolBatchResult{}, emitErr
 			}
 			for _, skipped := range calls[i+1:] {
@@ -473,7 +449,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 				batch.messages = append(batch.messages, skippedMsg)
 				projectedMessages = append(projectedMessages, skippedMsg)
 				skippedContent = skippedMsg.Content
-				if emitErr := emit(s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "skipped", ToolCallID: skipped.ID, ToolName: skippedToolName, Args: skippedArgs, Content: skippedContent, Error: skippedContent, FinishedAt: time.Now()}); emitErr != nil {
+				if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "skipped", ToolCallID: skipped.ID, ToolName: skippedToolName, Args: skippedArgs, Content: skippedContent, Error: skippedContent}); emitErr != nil {
 					return toolBatchResult{}, emitErr
 				}
 			}
@@ -481,8 +457,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			return batch, nil
 		}
 
-		startedAt := time.Now()
-		if err := emit(s.Events, Event{Type: EventToolStarted, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "running", ToolCallID: call.ID, ToolName: toolName, WorkingDir: s.currentWorkingDir(), Args: args, StartedAt: startedAt}); err != nil {
+		if err := s.emit(Event{Type: EventToolStarted, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "running", ToolCallID: call.ID, ToolName: toolName, WorkingDir: s.currentWorkingDir(), Args: args}); err != nil {
 			return toolBatchResult{}, err
 		}
 
@@ -493,11 +468,10 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			batch.messages = append(batch.messages, msg)
 			projectedMessages = append(projectedMessages, msg)
 			content := msg.Content
-			finishedAt := time.Now()
 			if toolOutputFullyOmitted(content) {
 				batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: rawContent})
 			}
-			if emitErr := emitIgnoringCanceled(ctx, s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "failed", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: err.Error(), FinishedAt: finishedAt}); emitErr != nil {
+			if emitErr := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "failed", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: err.Error()}); emitErr != nil {
 				return toolBatchResult{}, emitErr
 			}
 			if ctx.Err() != nil {
@@ -520,11 +494,10 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		projectedMessages = append(projectedMessages, msg)
 		content := msg.Content
 
-		finishedAt := time.Now()
 		if toolOutputFullyOmitted(content) {
 			batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: rawContent})
 		}
-		if err := emitIgnoringCanceled(ctx, s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "done", ToolCallID: call.ID, ToolName: toolName, WorkingDir: s.WorkingDir, Args: args, Content: content, FinishedAt: finishedAt}); err != nil {
+		if err := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "done", ToolCallID: call.ID, ToolName: toolName, WorkingDir: s.WorkingDir, Args: args, Content: content}); err != nil {
 			return toolBatchResult{}, err
 		}
 		if ctx.Err() != nil {
@@ -547,7 +520,7 @@ func (s *Session) skipToolCalls(ctx context.Context, runID string, opts RunOptio
 		args := call.Function.Arguments.ToMap()
 		msg := toolMessage(toolName, call.ID, content)
 		toolMessages = append(toolMessages, msg)
-		if emitErr := emitIgnoringCanceled(ctx, s.Events, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "skipped", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content, FinishedAt: time.Now()}); emitErr != nil {
+		if emitErr := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "skipped", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content}); emitErr != nil {
 			return nil, emitErr
 		}
 	}
@@ -618,7 +591,7 @@ func (s *Session) maybeCompact(ctx context.Context, runID string, opts RunOption
 	req := s.compactionRequest(runID, opts, messages, latest)
 	trigger := s.autoCompactionTrigger(req)
 	if trigger != "" {
-		s.emitCompactionStarted(runID, opts, latest, trigger)
+		s.emitCompactionStarted(runID, opts, trigger)
 	}
 	result, err := s.Compactor.MaybeCompact(ctx, req)
 	if err != nil {
@@ -626,7 +599,7 @@ func (s *Session) maybeCompact(ctx context.Context, runID string, opts RunOption
 			if trigger == "" {
 				trigger = "error"
 			}
-			s.emitCompactionSkipped(runID, opts, latest, trigger, result.Reason)
+			s.emitCompactionSkipped(runID, opts, trigger, result.Reason)
 			skipNotified = true
 		}
 		return messages, skipNotified, nil
@@ -636,12 +609,12 @@ func (s *Session) maybeCompact(ctx context.Context, runID string, opts RunOption
 			if trigger == "" {
 				trigger = "due"
 			}
-			s.emitCompactionSkipped(runID, opts, latest, trigger, result.Reason)
+			s.emitCompactionSkipped(runID, opts, trigger, result.Reason)
 			skipNotified = true
 		}
 		return messages, skipNotified, nil
 	}
-	s.emitCompacted(runID, opts, result.Messages, latest, trigger, result.Summary)
+	s.emitCompacted(runID, opts, result.Messages, trigger, result.Summary)
 	if err := s.checkPostCompactionPromptBudget(opts, result.Messages); err != nil {
 		return result.Messages, skipNotified, err
 	}
@@ -657,19 +630,19 @@ func (s *Session) compactForToolOutputOverflow(ctx context.Context, runID string
 	req := s.compactionRequest(runID, opts, messages, latest)
 	req.Force = true
 	req.KeepUserTurns = &keepUserTurns
-	s.emitCompactionStarted(runID, opts, latest, "tool_output")
+	s.emitCompactionStarted(runID, opts, "tool_output")
 
 	result, err := s.Compactor.MaybeCompact(ctx, req)
 	if err != nil {
 		if result.Due && !skipNotified {
-			s.emitCompactionSkipped(runID, opts, latest, "tool_output", result.Reason)
+			s.emitCompactionSkipped(runID, opts, "tool_output", result.Reason)
 			skipNotified = true
 		}
 		return messages, skipNotified, nil
 	}
 	if !result.Compacted {
 		if result.Due && !skipNotified {
-			s.emitCompactionSkipped(runID, opts, latest, "tool_output", result.Reason)
+			s.emitCompactionSkipped(runID, opts, "tool_output", result.Reason)
 			skipNotified = true
 		}
 		return messages, skipNotified, nil
@@ -698,7 +671,7 @@ func (s *Session) compactForToolOutputOverflow(ctx context.Context, runID string
 		compacted = append(compacted, refit)
 	}
 
-	s.emitCompacted(runID, opts, compacted, latest, "tool_output", result.Summary)
+	s.emitCompacted(runID, opts, compacted, "tool_output", result.Summary)
 	if err := s.checkPostCompactionPromptBudget(opts, compacted); err != nil {
 		return compacted, skipNotified, err
 	}
@@ -711,7 +684,7 @@ func (s *Session) compactionRequest(runID string, opts RunOptions, messages []ap
 		Model:        opts.Model,
 		SystemPrompt: opts.SystemPrompt,
 		Messages:     messages,
-		Tools:        s.runTools(opts),
+		Tools:        s.availableTools(),
 		Format:       opts.Format,
 		Latest:       latest,
 		Options:      opts.Options,
@@ -719,46 +692,41 @@ func (s *Session) compactionRequest(runID string, opts RunOptions, messages []ap
 		Think:        opts.Think,
 		ContinueTask: true,
 		Progress: func(progress CompactionProgress) {
-			_ = emit(s.Events, Event{Type: EventCompactionProgress, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Tokens: progress.Tokens})
+			_ = s.emit(Event{Type: EventCompactionProgress, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Tokens: progress.Tokens})
 		},
 	}
 }
 
-func (s *Session) emitCompactionStarted(runID string, opts RunOptions, latest api.ChatResponse, status string) {
-	_ = emit(s.Events, Event{
-		Type:      EventCompactionStarted,
-		RunID:     runID,
-		ChatID:    opts.ChatID,
-		Model:     opts.Model,
-		Status:    status,
-		StartedAt: time.Now(),
-		Response:  &latest,
+func (s *Session) emitCompactionStarted(runID string, opts RunOptions, status string) {
+	_ = s.emit(Event{
+		Type:   EventCompactionStarted,
+		RunID:  runID,
+		ChatID: opts.ChatID,
+		Model:  opts.Model,
+		Status: status,
 	})
 }
 
-func (s *Session) emitCompactionSkipped(runID string, opts RunOptions, latest api.ChatResponse, status, reason string) {
-	_ = emit(s.Events, Event{
-		Type:     EventCompactionSkipped,
+func (s *Session) emitCompactionSkipped(runID string, opts RunOptions, status, reason string) {
+	_ = s.emit(Event{
+		Type:    EventCompactionSkipped,
+		RunID:   runID,
+		ChatID:  opts.ChatID,
+		Model:   opts.Model,
+		Status:  status,
+		Content: CompactionSkippedMessage(reason),
+	})
+}
+
+func (s *Session) emitCompacted(runID string, opts RunOptions, messages []api.Message, status, summary string) {
+	_ = s.emit(Event{
+		Type:     EventCompacted,
 		RunID:    runID,
 		ChatID:   opts.ChatID,
 		Model:    opts.Model,
 		Status:   status,
-		Content:  CompactionSkippedMessage(reason),
-		Response: &latest,
-	})
-}
-
-func (s *Session) emitCompacted(runID string, opts RunOptions, messages []api.Message, latest api.ChatResponse, status, summary string) {
-	_ = emit(s.Events, Event{
-		Type:         EventCompacted,
-		RunID:        runID,
-		ChatID:       opts.ChatID,
-		Model:        opts.Model,
-		Status:       status,
-		Content:      summary,
-		Messages:     messages,
-		PromptTokens: s.estimateRunPromptTokens(opts, messages),
-		Response:     &latest,
+		Content:  summary,
+		Messages: messages,
 	})
 }
 
@@ -780,24 +748,6 @@ func (s *Session) autoCompactionTrigger(req CompactionRequest) string {
 		}
 	}
 	return ""
-}
-
-func (s *Session) loopStepEvent(runID string, opts RunOptions) Event {
-	return Event{
-		Type:   EventLoopStep,
-		RunID:  runID,
-		ChatID: opts.ChatID,
-		Model:  opts.Model,
-	}
-}
-
-func (s *Session) requestBuiltEvent(runID string, opts RunOptions) Event {
-	return Event{
-		Type:   EventRequestBuilt,
-		RunID:  runID,
-		ChatID: opts.ChatID,
-		Model:  opts.Model,
-	}
 }
 
 func CompactionSkippedMessage(reason string) string {
@@ -891,15 +841,15 @@ func smallContextToolResultLimitRunes(contextWindow int) int {
 	}
 }
 
-func (s *Session) runTools(opts RunOptions) api.Tools {
-	if !opts.Policy.UsesTools() || s.Tools == nil {
+func (s *Session) availableTools() api.Tools {
+	if s == nil || s.Tools == nil {
 		return nil
 	}
 	return s.Tools.Tools()
 }
 
 func (s *Session) estimateRunPromptTokens(opts RunOptions, messages []api.Message) int {
-	return estimateChatRequestTokens(opts, messages, s.runTools(opts))
+	return estimateChatRequestTokens(opts, messages, s.availableTools())
 }
 
 func (s *Session) checkPreflightPromptBudget(opts RunOptions, messages []api.Message) error {

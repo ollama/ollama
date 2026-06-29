@@ -93,15 +93,16 @@ func hasEventWithTokens(events []Event, eventType EventType, tokens int) bool {
 	return false
 }
 
-func TestMultiEventSinkEmitsToAllSinksAfterError(t *testing.T) {
+func TestSessionEmitsToAllSinksAfterError(t *testing.T) {
 	errSink := EventSinkFunc(func(Event) error {
 		return errors.New("sink failed")
 	})
 	events := &recordingEventSink{}
+	session := &Session{EventSinks: []EventSink{errSink, events}}
 
-	err := MultiEventSink{errSink, events}.Emit(Event{Type: EventRunFinished})
+	err := session.emit(Event{Type: EventRunFinished})
 	if err == nil {
-		t.Fatal("MultiEventSink should return the first sink error")
+		t.Fatal("emit should return the first sink error")
 	}
 	if !hasEventType(events.events, EventRunFinished) {
 		t.Fatalf("later sink did not receive event after earlier error: %#v", events.events)
@@ -365,15 +366,15 @@ func TestSessionRunsToolLoop(t *testing.T) {
 	registry.Register(staticTool{})
 
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -485,15 +486,15 @@ func TestSessionRequestHistoryKeepsThinkingAndServerToolCallIDs(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(staticTool{})
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -560,7 +561,7 @@ func TestSessionCancellationKeepsPartialResultWhenUISinkCancels(t *testing.T) {
 			}},
 			err: context.Canceled,
 		},
-		Events: MultiEventSink{
+		EventSinks: []EventSink{
 			EventSinkFunc(func(event Event) error {
 				if event.Type == EventRunFinished {
 					return context.Canceled
@@ -613,15 +614,15 @@ func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T)
 	registry := NewRegistry()
 	registry.Register(staticTool{})
 	session := &Session{
-		Client: cancelAfterToolCallClient{cancel: cancel},
-		Tools:  registry,
+		Client:     cancelAfterToolCallClient{cancel: cancel},
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 	}
 
 	result, err := session.Run(ctx, RunOptions{
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "cancel after tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -654,16 +655,16 @@ func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) 
 		}}}},
 	}}}
 	session := &Session{
-		Client: client,
-		Tools:  registry,
-		Events: events,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
+		EventSinks: []EventSink{events},
 	}
 
 	result, err := session.Run(ctx, RunOptions{
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "cancel during tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -715,14 +716,14 @@ func TestSessionToolLoopAllowsRoundsUnderDefaultCap(t *testing.T) {
 	registry.Register(staticTool{})
 
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 	}
 
 	if _, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "keep going"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -774,15 +775,16 @@ func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(staticTool{})
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
-		ChatID:      "chat-1",
-		Model:       "model",
-		NewMessages: []api.Message{{Role: "user", Content: "hit cap"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess, MaxToolRounds: 1},
+		ChatID:        "chat-1",
+		Model:         "model",
+		NewMessages:   []api.Message{{Role: "user", Content: "hit cap"}},
+		MaxToolRounds: 1,
 	})
 	if err == nil || !strings.Contains(err.Error(), "tool round limit reached after 1 rounds") {
 		t.Fatalf("error = %v, want tool-round limit", err)
@@ -824,14 +826,14 @@ func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(staticTool{})
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 	}
 
 	_, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "keep going"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err == nil || !strings.Contains(err.Error(), "tool round limit reached after 100 rounds") {
 		t.Fatalf("error = %v, want default tool round limit", err)
@@ -864,14 +866,15 @@ func TestSessionToolLoopNegativeLimitIsUnlimited(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(staticTool{})
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 	}
 
 	if _, err := session.Run(context.Background(), RunOptions{
-		Model:       "model",
-		NewMessages: []api.Message{{Role: "user", Content: "keep going"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess, MaxToolRounds: -1},
+		Model:         "model",
+		NewMessages:   []api.Message{{Role: "user", Content: "keep going"}},
+		MaxToolRounds: -1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -899,15 +902,15 @@ func TestSessionTruncatesLargeToolResultsBeforeHistory(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(largeTool{})
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -952,8 +955,9 @@ func TestSessionSmallContextUsesLowerToolResultPreviewCap(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(largeTool{})
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 		Compactor: NewSimpleCompactor(nil, CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
 		}),
@@ -962,7 +966,6 @@ func TestSessionSmallContextUsesLowerToolResultPreviewCap(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1000,8 +1003,9 @@ func TestSessionSmallContextRecapsPreTruncatedToolOutput(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(preTruncatedTool{})
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 		Compactor: NewSimpleCompactor(nil, CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
 		}),
@@ -1010,7 +1014,6 @@ func TestSessionSmallContextRecapsPreTruncatedToolOutput(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1089,15 +1092,15 @@ func TestSessionCompactsAfterToolResultsBeforeContinuing(t *testing.T) {
 	registry.Register(staticTool{})
 	compactor := &recordingCompactor{}
 	session := &Session{
-		Client:    client,
-		Tools:     registry,
-		Compactor: compactor,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
+		Compactor:  compactor,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1149,16 +1152,16 @@ func TestSessionStopsWhenCompactedHistoryStillExceedsContext(t *testing.T) {
 	events := &recordingEventSink{}
 	compactor := &oversizedCompactor{}
 	session := &Session{
-		Client:    client,
-		Events:    events,
-		Tools:     registry,
-		Compactor: compactor,
+		Client:     client,
+		EventSinks: []EventSink{events},
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
+		Compactor:  compactor,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 		Options:     map[string]any{"num_ctx": 512},
 	})
 	if err == nil {
@@ -1206,8 +1209,9 @@ func TestSessionContextCapsToolResultBeforeCompaction(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(largeTool{})
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 		Compactor: NewSimpleCompactor(nil, CompactionOptions{
 			ContextWindowTokens: 100,
 			Threshold:           0.8,
@@ -1217,7 +1221,6 @@ func TestSessionContextCapsToolResultBeforeCompaction(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1255,8 +1258,9 @@ func TestSessionCompactsThenReattachesFullyOmittedToolResult(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(largeTool{})
 	session := &Session{
-		Client: client,
-		Tools:  registry,
+		Client:     client,
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 		Compactor: NewSimpleCompactor(client, CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
 			Threshold:           0.45,
@@ -1267,7 +1271,6 @@ func TestSessionCompactsThenReattachesFullyOmittedToolResult(t *testing.T) {
 		Model:       "model",
 		Messages:    []api.Message{{Role: "user", Content: strings.Repeat("history ", 2000)}},
 		NewMessages: []api.Message{{Role: "user", Content: "use a large tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1331,9 +1334,10 @@ func TestSessionEmitsAutoCompactionActivityEvents(t *testing.T) {
 	registry.Register(largeTool{})
 	events := &recordingEventSink{}
 	session := &Session{
-		Client: client,
-		Events: events,
-		Tools:  registry,
+		Client:     client,
+		EventSinks: []EventSink{events},
+		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 		Compactor: NewSimpleCompactor(client, CompactionOptions{
 			ContextWindowTokens: 300,
 			Threshold:           0.3,
@@ -1343,7 +1347,6 @@ func TestSessionEmitsAutoCompactionActivityEvents(t *testing.T) {
 	if _, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1406,8 +1409,8 @@ func TestSessionPreflightRejectsOversizedFirstRequest(t *testing.T) {
 	}
 	events := &recordingEventSink{}
 	session := &Session{
-		Client: client,
-		Events: events,
+		Client:     client,
+		EventSinks: []EventSink{events},
 		Compactor: NewSimpleCompactor(nil, CompactionOptions{
 			ContextWindowTokens: 128,
 		}),
@@ -1511,13 +1514,13 @@ func TestSessionPersistsToolWorkingDirWithinRun(t *testing.T) {
 	session := &Session{
 		Client:     client,
 		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 		WorkingDir: root,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use cwd"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1577,13 +1580,13 @@ func TestSessionAllowsToolWorkingDirOutsideInitialDir(t *testing.T) {
 	session := &Session{
 		Client:     client,
 		Tools:      registry,
+		Authorizer: AutoAllowApproval{},
 		WorkingDir: root,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use cwd"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1646,7 +1649,6 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 		ChatID:      "chat-1",
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1706,7 +1708,6 @@ func TestSessionUsesSingleToolAuthorization(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use bash"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1755,7 +1756,6 @@ func TestSessionAutoAllowApprovalExecutesApprovalTool(t *testing.T) {
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
 		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
-		Policy:      RunPolicy{ToolMode: ToolModeFullAccess},
 	})
 	if err != nil {
 		t.Fatal(err)
