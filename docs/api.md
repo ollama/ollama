@@ -32,6 +32,18 @@ All durations are returned in nanoseconds.
 
 Certain endpoints stream responses as JSON objects. Streaming can be disabled by providing `{"stream": false}` for these endpoints.
 
+### Error responses
+
+Error responses use HTTP status codes and, when returned as JSON, include an `error` field with a human-readable message:
+
+```json
+{
+  "error": "model 'llama3.2' not found"
+}
+```
+
+Some endpoints may include additional fields, such as `signin_url` for authentication flows. Clients should use the HTTP status code together with the `error` message.
+
 ## Generate a completion
 
 ```
