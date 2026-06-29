@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	hermesInstallScript     = "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup"
-	hermesWindowsInstallURL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1"
+	hermesInstallScript     = "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup"
+	hermesWindowsInstallURL = "https://hermes-agent.nousresearch.com/install.ps1"
 	hermesWindowsInstallCmd = "& ([scriptblock]::Create((irm " + hermesWindowsInstallURL + "))) -SkipSetup"
 	hermesProviderName      = "Ollama"
 	hermesProviderKey       = "ollama-launch"
@@ -128,8 +128,8 @@ func (h *HermesDesktop) packagedAppExists() bool {
 }
 
 // These roots mirror Hermes' own install layout:
-// scripts/install.sh uses ~/.hermes/hermes-agent for user installs and
-// /usr/local/lib/hermes-agent for new Linux root installs; scripts/install.ps1
+// install.sh uses ~/.hermes/hermes-agent for user installs and
+// /usr/local/lib/hermes-agent for new Linux root installs; install.ps1
 // and the bootstrap installer use %LOCALAPPDATA%\hermes\hermes-agent on
 // Windows. HERMES_HOME and HERMES_INSTALL_DIR are installer-supported
 // overrides.

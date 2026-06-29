@@ -13,6 +13,7 @@ extern void goClosureDestructor(void* payload);
 import "C"
 
 import (
+	"log/slog"
 	"runtime/cgo"
 	"sync"
 	"unsafe"
@@ -21,6 +22,7 @@ import (
 // inClosureCallback is set to true during closure callback execution.
 var (
 	inClosureCallback bool
+	closureScratch    []*Array
 	closureCallbackMu sync.Mutex
 )
 
@@ -29,6 +31,14 @@ func InClosureCallback() bool {
 	closureCallbackMu.Lock()
 	defer closureCallbackMu.Unlock()
 	return inClosureCallback
+}
+
+func trackClosureArray(a *Array) {
+	closureCallbackMu.Lock()
+	defer closureCallbackMu.Unlock()
+	if inClosureCallback {
+		closureScratch = append(closureScratch, a)
+	}
 }
 
 // CompiledFunc is a compiled MLX function that can be called efficiently.
@@ -131,15 +141,31 @@ func borrowArray(array C.mlx_array) *Array {
 }
 
 //export goClosureCallback
-func goClosureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload unsafe.Pointer) C.int {
-	// Set flag to disable AddCleanup during callback
+func goClosureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload unsafe.Pointer) (rc C.int) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("mlx closure callback panicked", "panic", r)
+			rc = 1
+		}
+	}()
+
 	closureCallbackMu.Lock()
 	inClosureCallback = true
+	closureScratch = nil
 	closureCallbackMu.Unlock()
 	defer func() {
 		closureCallbackMu.Lock()
+		scratch := closureScratch
+		closureScratch = nil
 		inClosureCallback = false
 		closureCallbackMu.Unlock()
+
+		for _, a := range scratch {
+			if a != nil && a.Valid() {
+				C.mlx_array_free(a.c)
+				a.c.ctx = nil
+			}
+		}
 	}()
 
 	// Recover the Go function from the handle
@@ -158,13 +184,16 @@ func goClosureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payloa
 	// Call the Go function
 	outputs := fn(inputs)
 
-	// Build output vector
-	*res = C.mlx_vector_array_new()
-	for _, arr := range outputs {
-		C.mlx_vector_array_append_value(*res, arr.c)
+	var arrPtr *C.mlx_array
+	if len(outputs) > 0 {
+		handles := make([]C.mlx_array, len(outputs))
+		for i, arr := range outputs {
+			handles[i] = arr.c
+		}
+		arrPtr = &handles[0]
 	}
 
-	return 0
+	return C.mlx_vector_array_set_data(res, arrPtr, C.size_t(len(outputs)))
 }
 
 //export goClosureDestructor

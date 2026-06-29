@@ -69,6 +69,8 @@ func rendererForName(name string) Renderer {
 	case "qwen3.5":
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
 		return renderer
+	case "ornith":
+		return newOrnithRenderer()
 	case "cogito":
 		renderer := &CogitoRenderer{isThinking: true}
 		return renderer
@@ -107,6 +109,8 @@ func rendererForName(name string) Renderer {
 		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
 	case "laguna":
 		return &LagunaRenderer{}
+	case "cohere":
+		return &CohereRenderer{}
 	default:
 		return nil
 	}

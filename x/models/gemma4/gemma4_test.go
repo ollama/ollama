@@ -561,54 +561,6 @@ func TestLayerTypeDetection(t *testing.T) {
 	}
 }
 
-func TestMTPDraftDefaults(t *testing.T) {
-	tests := []struct {
-		name        string
-		cfg         *TextConfig
-		wantInitial int
-		wantMax     int
-	}{
-		{
-			name:        "nil config",
-			wantInitial: 4,
-			wantMax:     16,
-		},
-		{
-			name:        "31b bf16",
-			cfg:         &TextConfig{HiddenSize: 5376, NumHiddenLayers: 60},
-			wantInitial: 14,
-			wantMax:     16,
-		},
-		{
-			name:        "31b quantized",
-			cfg:         &TextConfig{HiddenSize: 5376, NumHiddenLayers: 60, QuantBits: 4},
-			wantInitial: 14,
-			wantMax:     16,
-		},
-		{
-			name:        "26b-a4b moe",
-			cfg:         &TextConfig{HiddenSize: 2816, NumHiddenLayers: 30, EnableMoeBlock: true},
-			wantInitial: 8,
-			wantMax:     16,
-		},
-		{
-			name:        "generic default",
-			cfg:         &TextConfig{HiddenSize: 2560, NumHiddenLayers: 42, HiddenSizePerLayer: 256},
-			wantInitial: 4,
-			wantMax:     16,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := (&Model{TextConfig: tt.cfg}).MTPDraftDefaults(false)
-			if got.InitialDraftTokens != tt.wantInitial || got.MaxDraftTokens != tt.wantMax || !got.Enabled {
-				t.Fatalf("MTPDraftDefaults() = %+v, want initial=%d max=%d enabled=true", got, tt.wantInitial, tt.wantMax)
-			}
-		})
-	}
-}
-
 func TestNewCachesOmitsSharedKVLayers(t *testing.T) {
 	m := &Model{
 		Layers: []*DecoderLayer{
