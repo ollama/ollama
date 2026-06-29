@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"syscall"
 )
 
@@ -25,6 +26,10 @@ func newBashCommand(ctx context.Context, command, cwdPath string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "bash", "-c", script)
 	configureBashCommand(cmd)
 	return cmd
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func configureBashCommand(cmd *exec.Cmd) {
