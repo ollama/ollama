@@ -165,8 +165,8 @@ if [ "$ARCH" = "s390x" ]; then
 
     # Install Go if missing
     if ! available go; then
-        status "Installing Go 1.22.5..."
-        wget -q "https://go.dev/dl/go1.22.5.linux-s390x.tar.gz" -O "$TEMP_DIR/go.tar.gz"
+        status "Installing Go 1.26.4..."
+        wget -q "https://go.dev/dl/go1.26.4.linux-s390x.tar.gz" -O "$TEMP_DIR/go.tar.gz"
         $SUDO rm -rf /usr/local/go
         $SUDO tar -C /usr/local -xzf "$TEMP_DIR/go.tar.gz"
         export PATH="$PATH:/usr/local/go/bin"
@@ -189,7 +189,7 @@ if [ "$ARCH" = "s390x" ]; then
     cmake --build build --parallel "$(nproc)"
 
     status "Installing binary..."
-    $SUDO install -m 755 build/ollama /usr/local/bin/ollama
+    $SUDO install -m 755 ollama /usr/local/bin/ollama
 
     # Create ollama user
     if ! id ollama >/dev/null 2>&1; then
