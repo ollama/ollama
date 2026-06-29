@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/mod/semver"
 	"gopkg.in/yaml.v3"
 
 	"github.com/ollama/ollama/api"
@@ -23,7 +24,11 @@ import (
 )
 
 const (
-	hermesInstallScript     = "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup"
+	// https://github.com/NousResearch/hermes-agent/releases/tag/v2026.6.5
+	hermesDesktopMinVersion = "v0.16.0"
+	hermesInstallScript     = "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup"
+	hermesWindowsInstallURL = "https://hermes-agent.nousresearch.com/install.ps1"
+	hermesWindowsInstallCmd = "& ([scriptblock]::Create((irm " + hermesWindowsInstallURL + "))) -SkipSetup"
 	hermesProviderName      = "Ollama"
 	hermesProviderKey       = "ollama-launch"
 	hermesLegacyKey         = "ollama"
@@ -79,6 +84,177 @@ func (h *Hermes) Run(_ string, _ []LaunchModel, args []string) error {
 		return err
 	}
 	return hermesAttachedCommand(bin, args...).Run()
+}
+
+type HermesDesktop struct {
+	Hermes
+}
+
+func (h *HermesDesktop) String() string { return "Hermes Desktop" }
+
+func (h *HermesDesktop) Run(_ string, _ []LaunchModel, args []string) error {
+	bin, err := h.binary()
+	if err != nil {
+		return err
+	}
+	if err := h.ensureHermesDesktopMinVersion(bin); err != nil {
+		return err
+	}
+	return hermesAttachedCommand(bin, h.launchArgs(args)...).Run()
+}
+
+func (h *HermesDesktop) ensureHermesDesktopMinVersion(bin string) error {
+	if hermesGOOS == "windows" {
+		return nil
+	}
+	version := hermesVersionOf(bin)
+	if version == "" {
+		return nil
+	}
+	if semver.Compare(version, hermesDesktopMinVersion) >= 0 {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "%sHermes %s is older than the minimum version (%s) for `hermes desktop`; updating...%s\n", ansiGray, version, hermesDesktopMinVersion, ansiReset)
+	if err := hermesAttachedCommand(bin, "update").Run(); err != nil {
+		return fmt.Errorf("failed to update hermes to %s or newer: %w", hermesDesktopMinVersion, err)
+	}
+	return nil
+}
+
+func hermesVersionOf(bin string) string {
+	out, err := hermesCommand(bin, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	firstLine := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+	return parseHermesVersion(firstLine)
+}
+
+func parseHermesVersion(firstLine string) string {
+	for _, field := range strings.Fields(firstLine) {
+		if semver.IsValid(field) {
+			return field
+		}
+	}
+	return ""
+}
+
+func (h *HermesDesktop) Onboard() error {
+	return config.MarkIntegrationOnboarded("hermes-desktop")
+}
+
+func (h *HermesDesktop) launchArgs(args []string) []string {
+	launchArgs := []string{"desktop"}
+	if h.shouldSkipDesktopBuild(args) {
+		launchArgs = append(launchArgs, "--skip-build")
+	}
+	return append(launchArgs, args...)
+}
+
+func (h *HermesDesktop) shouldSkipDesktopBuild(args []string) bool {
+	if hermesDesktopHasFlag(args, "--skip-build", "--source", "--build-only", "--help", "-h") {
+		return false
+	}
+	return h.packagedAppExists()
+}
+
+func (h *HermesDesktop) packagedAppExists() bool {
+	for _, root := range hermesDesktopReleaseRoots() {
+		for _, candidate := range hermesDesktopPackagedExecutableCandidates(root) {
+			if _, err := os.Stat(candidate); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// These roots mirror Hermes' own install layout:
+// install.sh uses ~/.hermes/hermes-agent for user installs and
+// /usr/local/lib/hermes-agent for new Linux root installs; install.ps1
+// and the bootstrap installer use %LOCALAPPDATA%\hermes\hermes-agent on
+// Windows. HERMES_HOME and HERMES_INSTALL_DIR are installer-supported
+// overrides.
+func hermesDesktopReleaseRoots() []string {
+	var installRoots []string
+	add := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		installRoots = append(installRoots, filepath.Clean(path))
+	}
+
+	if installDir := strings.TrimSpace(os.Getenv("HERMES_INSTALL_DIR")); installDir != "" {
+		add(installDir)
+	}
+	if hermesHome := strings.TrimSpace(os.Getenv("HERMES_HOME")); hermesHome != "" {
+		add(filepath.Join(hermesHome, "hermes-agent"))
+	}
+
+	home, err := hermesUserHome()
+	if err == nil {
+		switch hermesGOOS {
+		case "windows":
+			if localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localAppData != "" {
+				add(filepath.Join(localAppData, "hermes", "hermes-agent"))
+			}
+			add(filepath.Join(home, ".hermes", "hermes-agent"))
+		default:
+			add(filepath.Join(home, ".hermes", "hermes-agent"))
+			if hermesGOOS == "linux" {
+				add(filepath.Join(string(filepath.Separator), "usr", "local", "lib", "hermes-agent"))
+			}
+		}
+	}
+
+	seen := make(map[string]bool, len(installRoots))
+	releaseRoots := make([]string, 0, len(installRoots))
+	for _, root := range installRoots {
+		releaseRoot := filepath.Join(root, "apps", "desktop", "release")
+		if seen[releaseRoot] {
+			continue
+		}
+		seen[releaseRoot] = true
+		releaseRoots = append(releaseRoots, releaseRoot)
+	}
+	return releaseRoots
+}
+
+func hermesDesktopPackagedExecutableCandidates(releaseRoot string) []string {
+	switch hermesGOOS {
+	case "darwin":
+		matches, err := filepath.Glob(filepath.Join(releaseRoot, "mac*", "Hermes.app", "Contents", "MacOS", "Hermes"))
+		if err != nil {
+			return nil
+		}
+		return matches
+	case "windows":
+		return []string{
+			filepath.Join(releaseRoot, "win-unpacked", "Hermes.exe"),
+			filepath.Join(releaseRoot, "win-ia32-unpacked", "Hermes.exe"),
+			filepath.Join(releaseRoot, "win-arm64-unpacked", "Hermes.exe"),
+		}
+	default:
+		return []string{
+			filepath.Join(releaseRoot, "linux-unpacked", "hermes"),
+			filepath.Join(releaseRoot, "linux-unpacked", "Hermes"),
+		}
+	}
+}
+
+func hermesDesktopHasFlag(args []string, names ...string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		for _, name := range names {
+			if arg == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *Hermes) Paths() []string {
@@ -183,22 +359,24 @@ func (h *Hermes) installed() bool {
 }
 
 func (h *Hermes) ensureInstalled() error {
+	return h.ensureInstalledFor("hermes")
+}
+
+func (h *Hermes) ensureInstalledFor(command string) error {
 	if h.installed() {
 		return nil
 	}
 
-	if hermesGOOS == "windows" {
-		return hermesWindowsHint()
-	}
-
 	var missing []string
-	for _, dep := range []string{"bash", "curl", "git"} {
-		if _, err := hermesLookPath(dep); err != nil {
-			missing = append(missing, dep)
+	if hermesGOOS != "windows" {
+		for _, dep := range []string{"bash", "curl", "git"} {
+			if _, err := hermesLookPath(dep); err != nil {
+				missing = append(missing, dep)
+			}
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("Hermes is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch hermes", strings.Join(missing, "\n  "))
+		return fmt.Errorf("Hermes is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch %s", strings.Join(missing, "\n  "), command)
 	}
 
 	ok, err := ConfirmPrompt("Hermes is not installed. Install now?")
@@ -210,7 +388,7 @@ func (h *Hermes) ensureInstalled() error {
 	}
 
 	fmt.Fprintf(os.Stderr, "\nInstalling Hermes...\n")
-	if err := hermesAttachedCommand("bash", "-lc", hermesInstallScript).Run(); err != nil {
+	if err := h.runInstallScript(); err != nil {
 		return fmt.Errorf("failed to install hermes: %w", err)
 	}
 
@@ -220,6 +398,13 @@ func (h *Hermes) ensureInstalled() error {
 
 	fmt.Fprintf(os.Stderr, "%sHermes installed successfully%s\n\n", ansiGreen, ansiReset)
 	return nil
+}
+
+func (h *Hermes) runInstallScript() error {
+	if hermesGOOS == "windows" {
+		return hermesAttachedCommand("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", hermesWindowsInstallCmd).Run()
+	}
+	return hermesAttachedCommand("bash", "-lc", hermesInstallScript).Run()
 }
 
 func (h *Hermes) listModels(defaultModel string) []string {
@@ -259,7 +444,12 @@ func (h *Hermes) binary() (string, error) {
 	}
 
 	if hermesGOOS == "windows" {
-		return "", hermesWindowsHint()
+		for _, fallback := range hermesWindowsBinaryFallbacks() {
+			if _, err := os.Stat(fallback); err == nil {
+				return fallback, nil
+			}
+		}
+		return "", fmt.Errorf("hermes is not installed")
 	}
 
 	home, err := hermesUserHome()
@@ -274,12 +464,63 @@ func (h *Hermes) binary() (string, error) {
 	return "", fmt.Errorf("hermes is not installed")
 }
 
-func hermesConfigPath() (string, error) {
+func hermesWindowsBinaryFallbacks() []string {
+	var roots []string
+	add := func(root string) {
+		root = strings.TrimSpace(root)
+		if root != "" {
+			roots = append(roots, filepath.Clean(root))
+		}
+	}
+
+	add(os.Getenv("HERMES_HOME"))
+	add(os.Getenv("LOCALAPPDATA"))
+	if home, err := hermesUserHome(); err == nil {
+		add(filepath.Join(home, "AppData", "Local"))
+	}
+
+	seen := make(map[string]bool, len(roots))
+	var fallbacks []string
+	for _, root := range roots {
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		fallbacks = append(fallbacks, filepath.Join(root, "hermes-agent", "venv", "Scripts", "hermes.exe"))
+		if filepath.Base(root) != "hermes" {
+			fallbacks = append(fallbacks, filepath.Join(root, "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe"))
+		}
+	}
+	return fallbacks
+}
+
+func hermesHomePath() (string, error) {
+	if hermesHome := strings.TrimSpace(os.Getenv("HERMES_HOME")); hermesHome != "" {
+		return filepath.Clean(hermesHome), nil
+	}
+	if hermesGOOS == "windows" {
+		if localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localAppData != "" {
+			return filepath.Join(localAppData, "hermes"), nil
+		}
+		home, err := hermesUserHome()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, "AppData", "Local", "hermes"), nil
+	}
 	home, err := hermesUserHome()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".hermes", "config.yaml"), nil
+	return filepath.Join(home, ".hermes"), nil
+}
+
+func hermesConfigPath() (string, error) {
+	home, err := hermesHomePath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "config.yaml"), nil
 }
 
 func hermesBaseURL() string {
@@ -287,11 +528,11 @@ func hermesBaseURL() string {
 }
 
 func hermesEnvPath() (string, error) {
-	home, err := hermesUserHome()
+	home, err := hermesHomePath()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".hermes", ".env"), nil
+	return filepath.Join(home, ".env"), nil
 }
 
 func (h *Hermes) runGatewaySetupPreflight(args []string, runSetup func() error) error {
@@ -670,10 +911,4 @@ func hermesAttachedCommand(name string, args ...string) *exec.Cmd {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd
-}
-
-func hermesWindowsHint() error {
-	return fmt.Errorf("Hermes on Windows requires WSL2. Install WSL with: wsl --install\n" +
-		"Then run 'ollama launch hermes' from inside your WSL shell.\n" +
-		"Docs: https://hermes-agent.nousresearch.com/docs/getting-started/installation/")
 }

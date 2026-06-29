@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "codex", "copilot", "droid", "pi", "pool"}
+var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -44,6 +44,10 @@ var integrationSpecs = []*IntegrationSpec{
 			CheckInstalled: func() bool {
 				_, err := (&Claude{}).findPath()
 				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureClaudeInstalled()
+				return err
 			},
 			URL: "https://code.claude.com/docs/en/quickstart",
 		},
@@ -65,13 +69,16 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "cline",
 		Runner:      &Cline{},
 		Description: "Autonomous coding agent with parallel execution",
-		Hidden:      true,
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := exec.LookPath("cline")
 				return err == nil
 			},
-			Command: []string{"npm", "install", "-g", "cline"},
+			EnsureInstalled: func() error {
+				_, err := ensureClineInstalled()
+				return err
+			},
+			Command: []string{"npm", "install", "-g", "cline@latest"},
 		},
 	},
 	{
@@ -150,7 +157,23 @@ var integrationSpecs = []*IntegrationSpec{
 				_, ok := findOpenCode()
 				return ok
 			},
+			EnsureInstalled: func() error {
+				_, err := ensureOpenCodeInstalled()
+				return err
+			},
 			URL: "https://opencode.ai",
+		},
+	},
+	{
+		Name:        "omp",
+		Runner:      &OMP{},
+		Description: "AI coding agent with IDE integration",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&OMP{}).findPath()
+				return err == nil
+			},
+			URL: "https://omp.sh",
 		},
 	},
 	{
@@ -188,7 +211,7 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := ensurePiInstalled()
 				return err
 			},
-			Command: []string{"npm", "install", "-g", "@mariozechner/pi-coding-agent@latest"},
+			Command: []string{"npm", "install", "-g", "@earendil-works/pi-coding-agent@latest"},
 		},
 	},
 	{
@@ -218,6 +241,20 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
+		Name:        "hermes-desktop",
+		Runner:      &HermesDesktop{},
+		Description: "Desktop app for Hermes Agent by Nous Research",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&Hermes{}).installed()
+			},
+			EnsureInstalled: func() error {
+				return (&Hermes{}).ensureInstalledFor("hermes-desktop")
+			},
+			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
+		},
+	},
+	{
 		Name:        "vscode",
 		Runner:      &VSCode{},
 		Aliases:     []string{"code"},
@@ -228,6 +265,22 @@ var integrationSpecs = []*IntegrationSpec{
 				return (&VSCode{}).findBinary() != ""
 			},
 			URL: "https://code.visualstudio.com",
+		},
+	},
+	{
+		Name:        "qwen",
+		Runner:      &Qwen{},
+		Description: "Qwen's AI coding agent with tool use",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&Qwen{}).findPath()
+				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureQwenInstalled()
+				return err
+			},
+			URL: "https://qwen.ai/qwencode",
 		},
 	},
 }

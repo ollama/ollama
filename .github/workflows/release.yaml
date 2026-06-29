@@ -39,11 +39,27 @@ jobs:
       APPLE_ID: ${{ vars.APPLE_ID }}
       MACOS_SIGNING_KEY: ${{ secrets.MACOS_SIGNING_KEY }}
       MACOS_SIGNING_KEY_PASSWORD: ${{ secrets.MACOS_SIGNING_KEY_PASSWORD }}
+      DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
       CGO_CFLAGS: '-mmacosx-version-min=14.0 -O3'
       CGO_CXXFLAGS: '-mmacosx-version-min=14.0 -O3'
       CGO_LDFLAGS: '-mmacosx-version-min=14.0 -O3'
     steps:
       - uses: actions/checkout@v4
+      - name: Select Xcode 26.4.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d "${DEVELOPER_DIR}" ]; then
+            echo "Missing ${DEVELOPER_DIR}"
+            ls -1 /Applications | grep '^Xcode' || true
+            exit 1
+          fi
+
+          sudo xcode-select -s "${DEVELOPER_DIR}"
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          xcrun --find metal
       - run: |
           echo $MACOS_SIGNING_KEY | base64 --decode > certificate.p12
           security create-keychain -p password build.keychain

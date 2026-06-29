@@ -806,18 +806,25 @@ func (noopImportTransform) quantizationType(name string, shape []int32, quantize
 type tensorImportTransformFactory func(modelDir string, cfg sourceModelConfig) (tensorImportTransform, error)
 
 var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
-	"Qwen3_5ForCausalLM":                   newQwen35ImportTransform,
-	"Qwen3_5ForConditionalGeneration":      newQwen35ImportTransform,
-	"Qwen3NextForCausalLM":                 newQwen35ImportTransform,
-	"Qwen3NextForConditionalGeneration":    newQwen35ImportTransform,
-	"Qwen3_5MoeForCausalLM":                newQwen35ImportTransform,
-	"Qwen3_5MoeForConditionalGeneration":   newQwen35ImportTransform,
-	"Qwen3NextMoeForCausalLM":              newQwen35ImportTransform,
-	"Qwen3NextMoeForConditionalGeneration": newQwen35ImportTransform,
-	"Gemma4ForCausalLM":                    newGemma4ImportTransform,
-	"Gemma4ForConditionalGeneration":       newGemma4ImportTransform,
-	"LagunaForCausalLM":                    newLagunaImportTransform,
-	"Gemma4AssistantForCausalLM":           newGemma4ImportTransform,
+	"Qwen3_5ForCausalLM":                    newQwen35ImportTransform,
+	"Qwen3_5ForConditionalGeneration":       newQwen35ImportTransform,
+	"Qwen3NextForCausalLM":                  newQwen35ImportTransform,
+	"Qwen3NextForConditionalGeneration":     newQwen35ImportTransform,
+	"Qwen3_5MoeForCausalLM":                 newQwen35ImportTransform,
+	"Qwen3_5MoeForConditionalGeneration":    newQwen35ImportTransform,
+	"Qwen3NextMoeForCausalLM":               newQwen35ImportTransform,
+	"Qwen3NextMoeForConditionalGeneration":  newQwen35ImportTransform,
+	"Gemma4ForCausalLM":                     newGemma4ImportTransform,
+	"Gemma4ForConditionalGeneration":        newGemma4ImportTransform,
+	"Gemma4UnifiedForCausalLM":              newGemma4ImportTransform,
+	"Gemma4UnifiedForConditionalGeneration": newGemma4ImportTransform,
+	"gemma4_unified":                        newGemma4ImportTransform,
+	"gemma4_unified_text":                   newGemma4ImportTransform,
+	"LagunaForCausalLM":                     newLagunaImportTransform,
+	"Cohere2MoeForCausalLM":                 newCohere2MoeImportTransform,
+	"Gemma4AssistantForCausalLM":            newGemma4ImportTransform,
+	"Gemma4UnifiedAssistantForCausalLM":     newGemma4ImportTransform,
+	"gemma4_unified_assistant":              newGemma4ImportTransform,
 }
 
 func newTensorImportTransform(modelDir string, cfg sourceModelConfig) (tensorImportTransform, error) {

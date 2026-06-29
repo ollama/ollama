@@ -56,8 +56,8 @@ type cacheSession struct {
 	remaining []int32
 
 	// pendingSnapshots lists offsets where snapshots should be captured
-	// during prefill, sorted by offset. Entries are consumed as the
-	// cache advances past them.
+	// during prefill, sorted by offset. Entries are scheduled on the caches
+	// before prefill and drained or discarded after.
 	pendingSnapshots []pendingSnapshot
 }
 
@@ -251,89 +251,151 @@ pageIn:
 	}
 }
 
-// requestSnapshot schedules a user snapshot at the given absolute token
-// offset. The snapshot will be captured during prefill when the cache
-// reaches this offset.
-func (s *cacheSession) requestSnapshot(offset int) {
-	baseOffset := len(s.inputs) - len(s.remaining)
-	if offset <= baseOffset || offset > len(s.inputs) {
-		return
-	}
-	// Deduplicate: if this offset already exists, upgrade to user.
-	for i := range s.pendingSnapshots {
-		if s.pendingSnapshots[i].offset == offset {
-			s.pendingSnapshots[i].user = true
-			return
+// schedulePrefillSnapshots schedules every cache to capture snapshots as the
+// forward pass crosses the given absolute token offsets, so a single full-size
+// prefill records interior states without the caller breaking the batch. The
+// passed offsets are user-requested restore points; they are merged with any
+// snapshots begin already scheduled (e.g. a branch point), with coinciding
+// offsets upgraded to user so eviction preserves them.
+//
+// Offsets at or before the current cache position, or past the end of the
+// prompt, are dropped: callers only request offsets ahead of the prefill base,
+// so this is a defensive guard.
+func (s *cacheSession) schedulePrefillSnapshots(offsets []int) {
+	c := s.cache
+	base := c.minCacheOffset()
+	for _, offset := range offsets {
+		if offset <= base || offset > len(s.inputs) {
+			continue
+		}
+		// Deduplicate: if this offset already exists, upgrade to user.
+		found := false
+		for i := range s.pendingSnapshots {
+			if s.pendingSnapshots[i].offset == offset {
+				s.pendingSnapshots[i].user = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.pendingSnapshots = append(s.pendingSnapshots, pendingSnapshot{offset: offset, user: true})
 		}
 	}
-	s.pendingSnapshots = append(s.pendingSnapshots, pendingSnapshot{offset: offset, user: true})
 	slices.SortFunc(s.pendingSnapshots, func(a, b pendingSnapshot) int {
 		return a.offset - b.offset
 	})
-}
 
-// nextPendingSnapshot returns the offset of the next pending snapshot,
-// or 0 if there are none.
-func (s *cacheSession) nextPendingSnapshot() int {
 	if len(s.pendingSnapshots) == 0 {
-		return 0
-	}
-	return s.pendingSnapshots[0].offset
-}
-
-// snapshot creates a snapshot at the current cache position. It determines
-// whether this is a user snapshot by consuming pending entries whose offset
-// has been reached.
-func (s *cacheSession) snapshot() {
-	c := s.cache
-	cacheOffset := c.minCacheOffset()
-	if cacheOffset <= 0 {
 		return
 	}
 
-	// Consume pending snapshots up to the current offset and derive
-	// the user flag from them.
-	user := false
-	for len(s.pendingSnapshots) > 0 && cacheOffset >= s.pendingSnapshots[0].offset {
-		if s.pendingSnapshots[0].user {
-			user = true
+	prepared := make([]int, len(s.pendingSnapshots))
+	for i, p := range s.pendingSnapshots {
+		prepared[i] = p.offset
+	}
+	for _, kv := range c.caches {
+		if kv != nil {
+			kv.PrepareSnapshots(prepared)
 		}
-		s.pendingSnapshots = s.pendingSnapshots[1:]
+	}
+}
+
+// discardPrefillSnapshots drains and closes the snapshots scheduled by
+// schedulePrefillSnapshots without attaching them to the trie, releasing their
+// pinned/lazy state. It is a no-op once attachPrefillSnapshots has drained the
+// schedule, so close can call it unconditionally to clean up an abandoned
+// prefill.
+func (s *cacheSession) discardPrefillSnapshots() {
+	if len(s.pendingSnapshots) == 0 {
+		return
+	}
+	s.pendingSnapshots = nil
+
+	for _, kv := range s.cache.caches {
+		if kv == nil {
+			continue
+		}
+		for _, snap := range kv.TakeSnapshots() {
+			if snap != nil {
+				snap.Close()
+			}
+		}
+	}
+}
+
+// attachPrefillSnapshots collects the snapshots captured during prefill and
+// attaches them to the trie, materializing a node at each requested offset.
+// Pending offsets are ascending and were scheduled in the same order, so the
+// snapshots each cache returns line up with them. The trie frontier is
+// advanced to each offset in turn, so its node edges [prev, offset) match the
+// edge-local ranges the caches captured.
+func (s *cacheSession) attachPrefillSnapshots() {
+	if len(s.pendingSnapshots) == 0 {
+		return
 	}
 
-	// The last node in activePath is the frontier where caches are advancing.
-	// cacheOffset is always >= its endOffset: begin() restores caches to this
-	// boundary and prefill advances monotonically forward.
-	frontier := c.activePath[len(c.activePath)-1]
+	c := s.cache
+	pending := s.pendingSnapshots
+	s.pendingSnapshots = nil
 
-	// If the frontier already ends at cacheOffset, just ensure it has snapshots.
-	if frontier.endOffset == cacheOffset {
-		if user {
+	// Drain each cache's captures (one per pending offset, in order) into
+	// per-offset rows.
+	rows := make([][]cache.Snapshot, len(pending))
+	for i := range rows {
+		rows[i] = make([]cache.Snapshot, len(c.caches))
+	}
+	for j, kv := range c.caches {
+		if kv == nil {
+			continue
+		}
+		taken := kv.TakeSnapshots()
+		for i := range pending {
+			if i < len(taken) {
+				rows[i][j] = taken[i]
+			}
+		}
+	}
+
+	// Prefill leaves one token unprocessed for decode seeding, so an offset
+	// at or past the live cache position was never crossed by a write and has
+	// no captured state. Skip it rather than materialize a node whose edge
+	// claims tokens the cache never wrote. Closing its (nil) row is a no-op.
+	reached := c.minCacheOffset()
+	stored := append(s.inputs, s.outputs...)
+	for i, p := range pending {
+		if p.offset > reached {
+			// Never crossed by a write, so the row is nil; close any entry
+			// defensively in case a cache captured one anyway.
+			for _, snap := range rows[i] {
+				if snap != nil {
+					snap.Close()
+				}
+			}
+			continue
+		}
+		frontier := c.activePath[len(c.activePath)-1]
+		if frontier.endOffset < p.offset {
+			edgeTokens := stored[frontier.endOffset:p.offset]
+			frontier = c.advancePath(frontier, edgeTokens, p.offset)
+		}
+		if p.user {
 			frontier.user = true
 		}
-		if !frontier.hasAllSnapshots() {
-			s.attachSnapshots(frontier, cacheOffset)
-		}
-		return
+		s.attachCapturedSnapshots(frontier, rows[i])
 	}
+}
 
-	if frontier.endOffset > cacheOffset {
-		slog.Warn("snapshot skipped: cacheOffset is behind frontier", "cacheOffset", cacheOffset, "frontierEndOffset", frontier.endOffset)
-		return
-	}
-
-	// Advance the trie to cacheOffset — find or create a node there.
-	edgeTokens := append(s.inputs, s.outputs...)[frontier.endOffset:cacheOffset]
-	frontier = c.advancePath(frontier, edgeTokens, cacheOffset)
-
-	// Attach fresh snapshots from the live caches. Always use fresh
-	// snapshots even if the node already has some (e.g. from splitNode's
-	// Cache.Split which may be incomplete for non-splittable caches
-	// like RecurrentCache).
-	if user {
-		frontier.user = true
-	}
-	s.attachSnapshots(frontier, cacheOffset)
+// attachCapturedSnapshots stores pre-captured snapshots on a trie node. Unlike
+// taking a fresh Snapshot from the live cache, this works for an interior node
+// whose offset the live cache has already advanced past: the snapshots come
+// from the capture scheduled earlier, not from the cache's current state. The
+// node takes ownership of the snapshots (TakeSnapshots already transferred it).
+func (s *cacheSession) attachCapturedSnapshots(node *trieNode, snaps []cache.Snapshot) {
+	c := s.cache
+	node.setSnapshots(snaps, &c.pagedOutBytes)
+	node.lastUsed = time.Now()
+	slog.Debug("created snapshot", "offset", node.endOffset)
+	c.enforceEvictionPolicy()
 }
 
 // advancePath advances the active path from the current frontier by matching
@@ -375,33 +437,6 @@ func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int)
 	return dest
 }
 
-// attachSnapshots attaches cache snapshots to a trie node at the given offset.
-// The node must be on the active path (and thus protected from eviction;
-// lastUsed is updated in close()). All non-nil caches must be at the same
-// offset (cacheOffset); a mismatch indicates a bug in the caller.
-func (s *cacheSession) attachSnapshots(node *trieNode, cacheOffset int) {
-	c := s.cache
-
-	if c.activePath[len(c.activePath)-1] != node {
-		slog.Warn("attachSnapshots skipped: node is not the active frontier", "nodeEndOffset", node.endOffset)
-		return
-	}
-
-	snaps := make([]cache.Snapshot, len(c.caches))
-	for i, kv := range c.caches {
-		if kv != nil {
-			if kv.Offset() != cacheOffset {
-				panic(fmt.Sprintf("attachSnapshots: cache offset mismatch layer %d: expected %d, got %d", i, cacheOffset, kv.Offset()))
-			}
-			snaps[i] = kv.Snapshot(node.startOffset())
-		}
-	}
-	node.setSnapshots(snaps, &c.pagedOutBytes)
-	node.lastUsed = time.Now()
-	slog.Debug("created snapshot", "offset", cacheOffset)
-	c.enforceEvictionPolicy()
-}
-
 // freeAll releases all cache layers.
 func (c *kvCache) freeAll() {
 	for _, kv := range c.caches {
@@ -428,6 +463,14 @@ func (c *kvCache) minCacheOffset() int {
 
 // close saves the token state if the forward pass ran.
 func (s *cacheSession) close() {
+	// Release any prefill snapshots the session scheduled but never attached to
+	// the trie. A successful prefill drains them in attachPrefillSnapshots (so
+	// this is a no-op then); an abandoned one (e.g. cancellation between
+	// schedule and attach) leaves them in the caches, where the next request's
+	// PrepareSnapshots would overwrite the schedule without closing them,
+	// leaking the pinned/lazy snapshots and their VRAM.
+	s.discardPrefillSnapshots()
+
 	offset := s.cache.minCacheOffset()
 	if offset <= 0 {
 		return

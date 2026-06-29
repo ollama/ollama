@@ -205,6 +205,19 @@ if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     endif()
 endif()
 
+# Link temporary architecture sources (llama/compat/models/*.cpp) into the
+# llama target only (not the mtmd projector lib).
+if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
+    file(GLOB _ollama_model_sources CONFIGURE_DEPENDS
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models/*.cpp)
+    if(_ollama_model_sources AND TARGET llama)
+        target_sources(llama PRIVATE ${_ollama_model_sources})
+        target_include_directories(llama PRIVATE
+            ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models
+            ${llama_cpp_SOURCE_DIR}/src)
+    endif()
+endif()
+
 # Find GPU toolkits for runtime dependency bundling.
 # The llama.cpp build finds these internally, but we need the
 # variables (CUDAToolkit_LIBRARY_DIR, etc.) in our install scope.
@@ -488,26 +501,6 @@ if(OLLAMA_RUNNER_DIR)
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
-            if(WIN32)
-                # Bundle the system Vulkan loader, not an arbitrary SDK copy.
-                # The loader is supplied by the installed Vulkan runtime or
-                # GPU driver; using that copy avoids PATH-dependent SDK drift.
-                if(DEFINED ENV{SystemRoot})
-                    file(TO_CMAKE_PATH "$ENV{SystemRoot}" _ollama_windows_root)
-                else()
-                    set(_ollama_windows_root "C:/Windows")
-                endif()
-                find_file(_vulkan_loader_dll
-                    NAMES vulkan-1.dll
-                    HINTS "${_ollama_windows_root}/System32"
-                    NO_DEFAULT_PATH)
-                if(NOT _vulkan_loader_dll)
-                    message(FATAL_ERROR "Could not find vulkan-1.dll in the Windows Vulkan runtime. Install the Vulkan runtime from the GPU driver or VULKAN_SDK/Helpers/VulkanRT.exe.")
-                endif()
-                install(FILES "${_vulkan_loader_dll}"
-                    DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
-                    COMPONENT llama-server)
-            endif()
         endif()
     endif()
 else()

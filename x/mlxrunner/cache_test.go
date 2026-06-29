@@ -26,6 +26,63 @@ func (tr *snapshotTracker) track(s *fakeSnapshot) {
 // Fake caches that store actual token sequences so tests can verify the right
 // data was restored, not just the right offset.
 
+// fakePending mirrors the production pendingSnapshots capture machinery for the
+// fakes: it schedules offsets, captures as feed crosses each one (edge-local,
+// via a running base cursor), and returns the captures in scheduled order.
+// capture is the owning fake's snapshot-at-an-offset function.
+type fakePending struct {
+	offsets  []int
+	captured []cache.Snapshot
+	base     int
+}
+
+func (p *fakePending) prepare(currentOffset int, offsets []int) {
+	p.offsets = slices.Clone(offsets)
+	p.captured = make([]cache.Snapshot, len(offsets))
+	p.base = currentOffset
+}
+
+func (p *fakePending) take() []cache.Snapshot {
+	out := p.captured
+	p.offsets, p.captured = nil, nil
+	return out
+}
+
+// feedCapturing advances the cache from start over the fed tokens, capturing at
+// every scheduled offset crossed (including start and end). capture(from,
+// reached) produces the snapshot for the edge ending at reached;
+// advance(tokens) appends a token segment to the live state. Segment boundaries
+// fall at scheduled offsets.
+func (p *fakePending) feedCapturing(start int, tokens []int32, capture func(from, reached int) cache.Snapshot, advance func([]int32)) {
+	end := start + len(tokens)
+	captureAt := func(reached int) {
+		for i, o := range p.offsets {
+			if p.captured[i] == nil && o == reached {
+				p.captured[i] = capture(p.base, reached)
+			}
+		}
+		p.base = reached
+	}
+
+	if len(p.offsets) == 0 {
+		advance(tokens)
+		return
+	}
+
+	captureAt(start)
+	prev := 0
+	for cut := start + 1; cut < end; cut++ {
+		if !slices.Contains(p.offsets, cut) {
+			continue
+		}
+		advance(tokens[prev : cut-start])
+		captureAt(cut)
+		prev = cut - start
+	}
+	advance(tokens[prev:])
+	captureAt(end)
+}
+
 // fakeSnapshot stores a copy of the token sub-sequence it covers.
 type fakeSnapshot struct {
 	tokens   []int32
@@ -34,11 +91,23 @@ type fakeSnapshot struct {
 
 	tracker    *snapshotTracker
 	closeCount int
+
+	onMaterialize func(delta int)
 }
 
-func (s *fakeSnapshot) Size() int { return s.byteSize }
-func (s *fakeSnapshot) Close() {
-	s.closeCount++
+func (s *fakeSnapshot) Size() int                             { return s.byteSize }
+func (s *fakeSnapshot) SetMaterializeHook(fn func(delta int)) { s.onMaterialize = fn }
+func (s *fakeSnapshot) Close()                                { s.closeCount++ }
+
+// materialize simulates a lazy snapshot copying out: grow byteSize by delta
+// and fire the trie's hook if one is attached. Tests use this to verify the
+// trie's counter responds to materialization events.
+func (s *fakeSnapshot) materialize(delta int) {
+	s.byteSize += delta
+	if s.onMaterialize != nil {
+		s.onMaterialize(delta)
+		s.onMaterialize = nil
+	}
 }
 
 // fakeRewindableCache tracks the full token sequence and supports
@@ -46,10 +115,13 @@ func (s *fakeSnapshot) Close() {
 type fakeRewindableCache struct {
 	tokens  []int32
 	tracker *snapshotTracker
+	pending fakePending
 }
 
 func (c *fakeRewindableCache) feed(tokens []int32) {
-	c.tokens = append(c.tokens, tokens...)
+	c.pending.feedCapturing(len(c.tokens), tokens,
+		func(from, reached int) cache.Snapshot { return c.Snapshot(from) },
+		func(seg []int32) { c.tokens = append(c.tokens, seg...) })
 }
 
 func (c *fakeRewindableCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
@@ -159,6 +231,11 @@ func (c *fakeRewindableCache) Split(snapshot cache.Snapshot, at int) (cache.Snap
 	return p, ch
 }
 
+func (c *fakeRewindableCache) PrepareSnapshots(offsets []int) {
+	c.pending.prepare(len(c.tokens), offsets)
+}
+func (c *fakeRewindableCache) TakeSnapshots() []cache.Snapshot { return c.pending.take() }
+
 // fakeSlidingWindowCache models RotatingKVCache semantics: stores the full
 // token sequence but only the trailing maxSize tokens are "live" in the window.
 // Once the window fills, live rewind is impossible without a snapshot.
@@ -166,10 +243,13 @@ type fakeSlidingWindowCache struct {
 	tokens  []int32
 	maxSize int
 	tracker *snapshotTracker
+	pending fakePending
 }
 
 func (c *fakeSlidingWindowCache) feed(tokens []int32) {
-	c.tokens = append(c.tokens, tokens...)
+	c.pending.feedCapturing(len(c.tokens), tokens,
+		func(from, reached int) cache.Snapshot { return c.Snapshot(0) },
+		func(seg []int32) { c.tokens = append(c.tokens, seg...) })
 }
 
 func (c *fakeSlidingWindowCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
@@ -241,15 +321,23 @@ func (c *fakeSlidingWindowCache) Split(snapshot cache.Snapshot, at int) (cache.S
 	return nil, snapshot
 }
 
+func (c *fakeSlidingWindowCache) PrepareSnapshots(offsets []int) {
+	c.pending.prepare(len(c.tokens), offsets)
+}
+func (c *fakeSlidingWindowCache) TakeSnapshots() []cache.Snapshot { return c.pending.take() }
+
 // fakeRecurrentCache models RecurrentCache semantics: stores tokens
 // but cannot rewind without a snapshot.
 type fakeRecurrentCache struct {
 	tokens  []int32
 	tracker *snapshotTracker
+	pending fakePending
 }
 
 func (c *fakeRecurrentCache) feed(tokens []int32) {
-	c.tokens = append(c.tokens, tokens...)
+	c.pending.feedCapturing(len(c.tokens), tokens,
+		func(from, reached int) cache.Snapshot { return c.Snapshot(0) },
+		func(seg []int32) { c.tokens = append(c.tokens, seg...) })
 }
 
 func (c *fakeRecurrentCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
@@ -299,6 +387,11 @@ func (c *fakeRecurrentCache) Merge(parent, child cache.Snapshot) cache.Snapshot 
 func (c *fakeRecurrentCache) Split(snapshot cache.Snapshot, at int) (cache.Snapshot, cache.Snapshot) {
 	return nil, snapshot // can't split cumulative state
 }
+
+func (c *fakeRecurrentCache) PrepareSnapshots(offsets []int) {
+	c.pending.prepare(len(c.tokens), offsets)
+}
+func (c *fakeRecurrentCache) TakeSnapshots() []cache.Snapshot { return c.pending.take() }
 
 type feedableCache interface {
 	cache.Cache
@@ -374,7 +467,7 @@ func (e *testEnv) assertAllTokens(t *testing.T, label string, expected []int32) 
 }
 
 // simulateRequest mirrors the production pipeline lifecycle:
-//   begin -> prefill with snapshot(false) at branch points -> generate -> close
+//   begin -> schedule snapshots -> prefill in one pass -> attach snapshots -> generate -> close
 
 type requestResult struct {
 	remaining        []int32
@@ -387,9 +480,10 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 	t.Helper()
 
 	session := kvc.begin(nil, inputs)
+	var snapshotOffsets []int
 	for _, at := range userSnapshotAt {
 		if at > 0 {
-			session.requestSnapshot(at)
+			snapshotOffsets = append(snapshotOffsets, at)
 		}
 	}
 
@@ -403,26 +497,14 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 	baseOffset := kvc.minCacheOffset()
 	remaining := inputs[baseOffset:]
 
-	// Prefill: feed tokens, pausing at each pending snapshot.
-	for len(session.pendingSnapshots) > 0 {
-		sp := session.pendingSnapshots[0]
-		count := sp.offset - baseOffset
-		if count > len(remaining) {
-			break
-		}
-		if count > 0 {
-			feedAll(kvc.caches, remaining[:count])
-			remaining = remaining[count:]
-			baseOffset = sp.offset
-		}
-		assertCacheOffsetAlignment(t, kvc, "at snapshot point")
-		session.snapshot()
-	}
-
-	// Feed rest of input tokens.
+	// Prefill: schedule the pending snapshots, feed the whole prompt in one pass
+	// (the caches self-segment at the scheduled offsets), then attach the
+	// captures to the trie.
+	session.schedulePrefillSnapshots(snapshotOffsets)
 	if len(remaining) > 0 {
 		feedAll(kvc.caches, remaining)
 	}
+	session.attachPrefillSnapshots()
 
 	assertCacheOffsetAlignment(t, kvc, "after prefill")
 
@@ -832,6 +914,80 @@ func TestUserSnapshotResistsAutoMerge(t *testing.T) {
 	})
 }
 
+// TestSnapshotBeyondPrefillSkipped verifies that a snapshot scheduled at an
+// offset the prefill never reaches (prefill leaves one token for decode
+// seeding, so the last token is never written during prefill) is dropped rather
+// than materialized as a trie node claiming tokens the cache never wrote.
+func TestSnapshotBeyondPrefillSkipped(t *testing.T) {
+	forEachEnv(t, func(t *testing.T, env *testEnv) {
+		kvc := env.kvc
+		inputs := []int32{1, 2, 3, 4, 5}
+
+		session := kvc.begin(nil, inputs)
+		// Request a reachable snapshot at 3 and one at len(inputs), which a
+		// prefill that stops one token short never crosses.
+		session.schedulePrefillSnapshots([]int{3, len(inputs)})
+		// Prefill writes all but the final token (mirrors total-processed > 1).
+		feedAll(kvc.caches, inputs[kvc.minCacheOffset():len(inputs)-1])
+		session.attachPrefillSnapshots()
+
+		// The reachable offset became a node; the unreached one did not.
+		if !nodeExistsAtOffset(kvc.root, 3) {
+			t.Errorf("no trie node at reached offset 3")
+		}
+		if nodeExistsAtOffset(kvc.root, len(inputs)) {
+			t.Errorf("trie node materialized at unreached offset %d", len(inputs))
+		}
+
+		checkTrieInvariants(t, kvc.root)
+	})
+}
+
+// TestPrefillSnapshotsDiscardedOnCancel mirrors a prefill canceled after the
+// caches captured interior snapshots but before attachPrefillSnapshots ran. The
+// abandoned captures must be released when the session closes; otherwise the
+// next request's PrepareSnapshots overwrites the schedule without closing them,
+// leaking the snapshots (caught by checkSnapshotLeaks in the env cleanup).
+func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
+	forEachEnv(t, func(t *testing.T, env *testEnv) {
+		kvc := env.kvc
+		inputs := []int32{1, 2, 3, 4, 5}
+
+		session := kvc.begin(nil, inputs)
+		session.schedulePrefillSnapshots([]int{3})
+		// Cross offset 3 so the caches capture it, then close the session as a
+		// canceled prefill would, before the captures are attached to the trie.
+		feedAll(kvc.caches, inputs[kvc.minCacheOffset():3])
+		session.close()
+
+		// close advances the trie over the committed tokens, but the abandoned
+		// captures must not be attached as snapshots to any node.
+		walkNodes(kvc.root, func(n *trieNode) bool {
+			if n != kvc.root && n.hasSnapshots() {
+				t.Errorf("abandoned capture attached as snapshot at offset %d", n.endOffset)
+			}
+			return true
+		})
+
+		// A second request re-prepares snapshots on the same caches: if the
+		// discarded ones were not closed, prepare() orphans them here.
+		simulateRequest(t, kvc, inputs, nil, 4)
+
+		checkTrieInvariants(t, kvc.root)
+	})
+}
+
+func nodeExistsAtOffset(root *trieNode, offset int) bool {
+	var found bool
+	walkNodes(root, func(n *trieNode) bool {
+		if n.endOffset == offset && n != root {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
 func findUserNode(t *testing.T, kvc *kvCache) *trieNode {
 	t.Helper()
 	var found *trieNode
@@ -935,4 +1091,61 @@ func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 
 		checkTrieInvariants(t, kvc.root)
 	})
+}
+
+// TestPagedOutBytesUpdatesOnMaterialize verifies that when a snapshot owned
+// by a trie node materializes (allocates owned bytes from a previously lazy
+// state), the trie's pagedOutBytes counter picks up the delta via the
+// installed materialize hook.
+func TestPagedOutBytesUpdatesOnMaterialize(t *testing.T) {
+	kvc := &kvCache{}
+	kvc.ensureRoot()
+
+	node := &trieNode{parent: kvc.root, tokens: []int32{1, 2, 3}, endOffset: 3}
+	kvc.root.children = append(kvc.root.children, node)
+
+	snap := &fakeSnapshot{from: 0, to: 3, byteSize: 0}
+	node.setSnapshots([]cache.Snapshot{snap}, &kvc.pagedOutBytes)
+
+	if kvc.pagedOutBytes != 0 {
+		t.Fatalf("pagedOutBytes after install = %d, want 0 (lazy snapshot)", kvc.pagedOutBytes)
+	}
+
+	const materialized = 1 << 20
+	snap.materialize(materialized)
+
+	if kvc.pagedOutBytes != materialized {
+		t.Fatalf("pagedOutBytes after materialize = %d, want %d", kvc.pagedOutBytes, materialized)
+	}
+}
+
+// TestSwapSnapshotsDetachesHook verifies that snapshots removed from a trie
+// node via swapSnapshots no longer feed the trie's counter when they later
+// materialize. Without detach, a Split/Merge that folds an old snapshot
+// elsewhere would double-count its bytes if it copied out afterward.
+func TestSwapSnapshotsDetachesHook(t *testing.T) {
+	kvc := &kvCache{}
+	kvc.ensureRoot()
+
+	node := &trieNode{parent: kvc.root, tokens: []int32{1, 2, 3}, endOffset: 3}
+	kvc.root.children = append(kvc.root.children, node)
+
+	snap := &fakeSnapshot{from: 0, to: 3, byteSize: 0}
+	node.setSnapshots([]cache.Snapshot{snap}, &kvc.pagedOutBytes)
+
+	replacement := &fakeSnapshot{from: 0, to: 3, byteSize: 0}
+	old := node.swapSnapshots([]cache.Snapshot{replacement}, &kvc.pagedOutBytes)
+	if len(old) != 1 || old[0] != snap {
+		t.Fatalf("swapSnapshots returned %v, want the original snap", old)
+	}
+
+	snap.materialize(1 << 20)
+	if kvc.pagedOutBytes != 0 {
+		t.Fatalf("pagedOutBytes after detached materialize = %d, want 0", kvc.pagedOutBytes)
+	}
+
+	replacement.materialize(2 << 20)
+	if kvc.pagedOutBytes != 2<<20 {
+		t.Fatalf("pagedOutBytes after replacement materialize = %d, want %d", kvc.pagedOutBytes, 2<<20)
+	}
 }

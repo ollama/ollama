@@ -96,22 +96,35 @@ func appendCapability(capabilities []model.Capability, capability model.Capabili
 	return append(capabilities, capability)
 }
 
+type templateCapabilitySource int
+
+const (
+	templateCapabilitySelected templateCapabilitySource = iota
+	templateCapabilityGo
+	templateCapabilityChat
+)
+
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
+	capabilities := m.capabilitiesForTemplate(templateCapabilitySelected, nil)
+	if len(capabilities) == 0 {
+		slog.Warn("unknown capabilities for model", "model", m.Name)
+	}
+
+	return capabilities
+}
+
+func (m *Model) capabilitiesForTemplate(source templateCapabilitySource, f *gguf.File) []model.Capability {
 	capabilities := []model.Capability{}
 	var modelArch string
 
 	capabilities = m.configCapabilities(capabilities)
-	capabilities, modelArch = m.ggufCapabilities(capabilities)
+	capabilities, modelArch = m.ggufCapabilities(capabilities, source, f)
 	capabilities = m.projectorCapabilities(capabilities)
-	capabilities = m.templateCapabilities(capabilities)
+	capabilities = m.templateCapabilities(capabilities, source)
 	capabilities = m.parserCapabilities(capabilities)
 	capabilities = m.modelFamilyCapabilities(capabilities)
 	capabilities = m.filterUnsupportedCapabilities(capabilities, modelArch)
-
-	if len(capabilities) == 0 {
-		slog.Warn("unknown capabilities for model", "model", m.Name)
-	}
 
 	return capabilities
 }
@@ -123,20 +136,28 @@ func (m *Model) configCapabilities(capabilities []model.Capability) []model.Capa
 	return capabilities
 }
 
-func (m *Model) ggufCapabilities(capabilities []model.Capability) ([]model.Capability, string) {
+func (m *Model) ggufCapabilities(capabilities []model.Capability, source templateCapabilitySource, f *gguf.File) ([]model.Capability, string) {
 	if m.ModelPath == "" || !m.isGGUF() {
 		return capabilities, ""
 	}
 
-	f, err := gguf.Open(m.ModelPath)
-	if err != nil {
-		slog.Error("couldn't open model file", "error", err)
-		return capabilities, ""
+	if f == nil {
+		var err error
+		f, err = gguf.Open(m.ModelPath)
+		if err != nil {
+			slog.Error("couldn't open model file", "error", err)
+			return capabilities, ""
+		}
+		defer f.Close()
 	}
-	defer f.Close()
 
 	modelArch := f.KeyValue("general.architecture").String()
-	if !usesOllamaRenderedChat(m) {
+	switch source {
+	case templateCapabilitySelected:
+		if !usesOllamaRenderedChat(m) {
+			capabilities = chatTemplateCapabilities(capabilities, f.KeyValue("tokenizer.chat_template").String())
+		}
+	case templateCapabilityChat:
 		capabilities = chatTemplateCapabilities(capabilities, f.KeyValue("tokenizer.chat_template").String())
 	}
 	if f.KeyValue("pooling_type").Valid() {
@@ -251,15 +272,114 @@ func hasMoreCapabilities(candidate, current []model.Capability) bool {
 	return len(candidate) > len(current)
 }
 
-func shouldPreferChatTemplate(chatTemplate string, chatTemplateCaps []model.Capability, goTemplate *template.Template, goTemplateCaps []model.Capability) bool {
-	if !hasMoreCapabilities(chatTemplateCaps, goTemplateCaps) {
+func sameCapabilities(candidate, current []model.Capability) bool {
+	if len(candidate) != len(current) {
 		return false
 	}
-	return !goTemplateHasToolRoundTrip(goTemplate) || chatTemplateHasToolRoundTrip(chatTemplate)
+	for _, c := range candidate {
+		if !slices.Contains(current, c) {
+			return false
+		}
+	}
+	return true
+}
+
+func shouldPreferChatTemplate(chatTemplate string, chatTemplateCaps []model.Capability, goTemplate *template.Template, goTemplateCaps []model.Capability) bool {
+	if hasMoreCapabilities(chatTemplateCaps, goTemplateCaps) {
+		return !goTemplateHasToolRoundTrip(goTemplate) || chatTemplateHasToolRoundTrip(chatTemplate)
+	}
+
+	if !sameCapabilities(chatTemplateCaps, goTemplateCaps) ||
+		!slices.Contains(chatTemplateCaps, model.CapabilityTools) ||
+		!slices.Contains(goTemplateCaps, model.CapabilityTools) {
+		return false
+	}
+
+	return chatTemplateHasToolRoundTrip(chatTemplate) && !goTemplateHasToolRoundTrip(goTemplate)
 }
 
 func goTemplateEnvSet() bool {
 	return envconfig.GoTemplate(true) == envconfig.GoTemplate(false)
+}
+
+func capabilityNames(capabilities []model.Capability) []string {
+	names := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		names = append(names, string(capability))
+	}
+
+	return names
+}
+
+func selectedTemplateSource(m *Model, usesHarmony bool) string {
+	switch {
+	case m.Config.Renderer != "" && m.Config.Parser != "":
+		return "renderer_parser"
+	case m.Config.Renderer != "":
+		return "renderer"
+	case m.Config.Parser != "":
+		return "parser"
+	case usesHarmony:
+		return "harmony"
+	case shouldUseGoTemplate(m):
+		return "go_template"
+	case m.HasChatTemplate:
+		return "gguf_chat_template"
+	default:
+		return "none"
+	}
+}
+
+func capabilityLogValue(present bool, capabilities []model.Capability) any {
+	if !present {
+		return "null"
+	}
+
+	return capabilityNames(capabilities)
+}
+
+func (m *Model) templateSelectionCapabilities(usesHarmony bool) (goTemplate, chatTemplate, harmony, rendererParser []model.Capability) {
+	var f *gguf.File
+	if m.ModelPath != "" && m.isGGUF() {
+		var err error
+		f, err = gguf.Open(m.ModelPath)
+		if err != nil {
+			slog.Error("couldn't open model file", "error", err)
+		} else {
+			defer f.Close()
+		}
+	}
+
+	if m.HasGoTemplate {
+		goTemplate = m.capabilitiesForTemplate(templateCapabilityGo, f)
+	}
+	if m.HasChatTemplate {
+		chatTemplate = m.capabilitiesForTemplate(templateCapabilityChat, f)
+	}
+	if usesHarmony {
+		harmony = m.capabilitiesForTemplate(templateCapabilitySelected, f)
+	}
+	if m.Config.Renderer != "" || m.Config.Parser != "" {
+		rendererParser = m.capabilitiesForTemplate(templateCapabilitySelected, f)
+	}
+
+	return goTemplate, chatTemplate, harmony, rendererParser
+}
+
+func logTemplateSelection(m *Model) {
+	usesHarmony := m.Template != nil && shouldUseHarmony(m)
+	goTemplateCapabilities, chatTemplateCapabilities, harmonyCapabilities, rendererParserCapabilities := m.templateSelectionCapabilities(usesHarmony)
+
+	slog.Info("template selection",
+		"model", m.Name,
+		"selected", selectedTemplateSource(m, usesHarmony),
+		"renderer", m.Config.Renderer,
+		"parser", m.Config.Parser,
+		"go_template", capabilityLogValue(m.HasGoTemplate, goTemplateCapabilities),
+		"chat_template", capabilityLogValue(m.HasChatTemplate, chatTemplateCapabilities),
+		"harmony", capabilityLogValue(usesHarmony, harmonyCapabilities),
+		"renderer_parser", capabilityLogValue(m.Config.Renderer != "" || m.Config.Parser != "", rendererParserCapabilities),
+	)
 }
 
 func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.Capability {
@@ -283,8 +403,17 @@ func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.C
 	return capabilities
 }
 
-func (m *Model) templateCapabilities(capabilities []model.Capability) []model.Capability {
-	if m.HasGoTemplate && !shouldUseGoTemplate(m) {
+func (m *Model) templateCapabilities(capabilities []model.Capability, source templateCapabilitySource) []model.Capability {
+	switch source {
+	case templateCapabilitySelected:
+		if m.HasGoTemplate && !shouldUseGoTemplate(m) {
+			return capabilities
+		}
+	case templateCapabilityGo:
+		if !m.HasGoTemplate {
+			return capabilities
+		}
+	case templateCapabilityChat:
 		return capabilities
 	}
 
@@ -624,12 +753,12 @@ func GetModel(name string) (*Model, error) {
 
 	ggufCaps := chatTemplateCapabilities(nil, ggufChatTemplate)
 	goCaps := goTemplateCapabilities(m.Template)
-	if !goTemplateEnvSet() && m.HasGoTemplate && ggufChatTemplate != "" && m.Config.Renderer == "" && m.Config.Parser == "" && !shouldUseHarmony(m) && shouldPreferChatTemplate(ggufChatTemplate, ggufCaps, m.Template, goCaps) {
+	usesHarmony := m.Template != nil && shouldUseHarmony(m)
+	if !goTemplateEnvSet() && m.HasGoTemplate && ggufChatTemplate != "" && m.Config.Renderer == "" && m.Config.Parser == "" && !usesHarmony && shouldPreferChatTemplate(ggufChatTemplate, ggufCaps, m.Template, goCaps) {
 		m.PreferChatTemplate = true
-		slog.Debug("using GGUF chat_template because it has stronger capabilities than Go TEMPLATE", "model", m.Name, "chat_template_capabilities", ggufCaps, "go_template_capabilities", goCaps)
 	}
 
-	if m.ModelPath != "" && m.isGGUF() && !modelHasPooling && !m.HasChatTemplate && (!m.HasGoTemplate || !envconfig.GoTemplate(true)) && m.Config.Renderer == "" && m.Config.Parser == "" && !shouldUseHarmony(m) {
+	if m.ModelPath != "" && m.isGGUF() && !modelHasPooling && !m.HasChatTemplate && (!m.HasGoTemplate || !envconfig.GoTemplate(true)) && m.Config.Renderer == "" && m.Config.Parser == "" && !usesHarmony {
 		slog.Warn("model is missing tokenizer.chat_template and Go TEMPLATE support is unavailable; chat responses may be poorly formatted", "model", m.Name, "env", "OLLAMA_GO_TEMPLATE=1")
 	}
 

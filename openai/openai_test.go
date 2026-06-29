@@ -356,6 +356,48 @@ func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
 	}
 }
 
+func TestToListCompletionUsesModelIdentity(t *testing.T) {
+	modified := time.Unix(1234567890, 0).UTC()
+
+	result := ToListCompletion(api.ListResponse{
+		Models: []api.ListModelResponse{
+			{
+				Name:       "legacy-name:latest",
+				Model:      "namespace/exposed-model:latest",
+				ModifiedAt: modified,
+			},
+			{
+				Name:       "fallback-name:latest",
+				ModifiedAt: modified.Add(time.Second),
+			},
+		},
+	})
+
+	if result.Object != "list" {
+		t.Fatalf("object = %q, want list", result.Object)
+	}
+	if len(result.Data) != 2 {
+		t.Fatalf("models = %d, want 2", len(result.Data))
+	}
+
+	if result.Data[0].Id != "namespace/exposed-model:latest" {
+		t.Fatalf("id = %q, want model field", result.Data[0].Id)
+	}
+	if result.Data[0].OwnedBy != "namespace" {
+		t.Fatalf("owned_by = %q, want namespace", result.Data[0].OwnedBy)
+	}
+	if result.Data[0].Created != modified.Unix() {
+		t.Fatalf("created = %d, want %d", result.Data[0].Created, modified.Unix())
+	}
+
+	if result.Data[1].Id != "fallback-name:latest" {
+		t.Fatalf("fallback id = %q, want name field", result.Data[1].Id)
+	}
+	if result.Data[1].OwnedBy != "library" {
+		t.Fatalf("fallback owned_by = %q, want library", result.Data[1].OwnedBy)
+	}
+}
+
 func TestToChatCompletion_WithLogprobs(t *testing.T) {
 	createdAt := time.Unix(1234567890, 0)
 	resp := api.ChatResponse{

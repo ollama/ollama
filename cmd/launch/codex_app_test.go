@@ -39,7 +39,7 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 	codexAppIsRunning = isRunning
 	codexAppHasWindow = isRunning
 	codexAppQuitApp = quit
-	codexAppOpenApp = open
+	codexAppOpenApp = func([]string) error { return open() }
 	t.Cleanup(func() {
 		codexAppIsRunning = oldIsRunning
 		codexAppQuitApp = oldQuit
@@ -180,15 +180,15 @@ func TestCodexAppConfigureActivatesOllamaProviderWithoutLegacyProfile(t *testing
 		t.Fatalf("ConfigureWithModels returned error: %v", err)
 	}
 
+	catalogPath, err := codexAppModelCatalogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	content := string(data)
-	catalogPath, err := codexAppModelCatalogPath()
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	for _, want := range []string{
 		`model = "llama3.2"`,
@@ -289,6 +289,98 @@ func TestCodexAppConfigureUsesAppSpecificProfileWithoutTouchingCLIProfile(t *tes
 		t.Fatalf("app provider base URL = %q", got)
 	}
 	assertBackupContains(t, filepath.Join(fileutil.BackupDir(), codexAppIntegrationName, "config.toml.*"), `profile = "default"`)
+}
+
+func TestCodexCLIConfigRefreshLeavesCodexAppConfigActive(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:9999")
+
+	appModels := testLaunchModels("llama3.2", "gemma4")
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", appModels); err != nil {
+		t.Fatalf("ConfigureWithModels returned error: %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	appCatalogPath := mustCodexAppModelCatalogPath(t)
+	if err := ensureCodexConfig("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+		t.Fatalf("ensureCodexConfig returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if got, ok := codexRootStringValueOK(content, "profile"); ok {
+		t.Fatalf("CLI config refresh should not activate a root profile, got %q in:\n%s", got, content)
+	}
+	for key, want := range map[string]string{
+		"model":              "llama3.2",
+		"model_provider":     codexAppProfileName,
+		"model_catalog_json": appCatalogPath,
+	} {
+		if got := codexRootStringValue(content, key); got != want {
+			t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, content)
+		}
+	}
+	if got := codexSectionStringValue(content, codexProviderHeaderFor(codexAppProfileName), "base_url"); got != "http://127.0.0.1:9999/v1/" {
+		t.Fatalf("app provider base URL = %q", got)
+	}
+	cliCatalogPath := filepath.Join(tmpDir, ".codex", "model.json")
+	if strings.Contains(content, codexProfileHeader()) {
+		t.Fatalf("CLI legacy profile section should not be generated, got:\n%s", content)
+	}
+	if strings.Contains(content, codexProviderHeader()) {
+		t.Fatalf("CLI provider should be isolated from app root config, got:\n%s", content)
+	}
+
+	cliProfilePath := filepath.Join(tmpDir, ".codex", "ollama-launch.config.toml")
+	cliProfileData, err := os.ReadFile(cliProfilePath)
+	if err != nil {
+		t.Fatalf("CLI profile config not created: %v", err)
+	}
+	cliProfile := string(cliProfileData)
+	for key, want := range map[string]string{
+		"model":              "qwen3:8b",
+		"model_provider":     codexProfileName,
+		"model_catalog_json": cliCatalogPath,
+	} {
+		if got := codexRootStringValue(cliProfile, key); got != want {
+			t.Fatalf("CLI profile %s = %q, want %q in:\n%s", key, got, want, cliProfile)
+		}
+	}
+	if got := codexSectionStringValue(cliProfile, codexProviderHeader(), "base_url"); got != "http://127.0.0.1:9999/v1/" {
+		t.Fatalf("CLI profile provider base URL = %q", got)
+	}
+
+	appCatalogData, err := os.ReadFile(appCatalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var appCatalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(appCatalogData, &appCatalog); err != nil {
+		t.Fatalf("app catalog should be valid JSON: %v", err)
+	}
+	if got := catalogSlugs(appCatalog.Models); strings.Join(got, ",") != "llama3.2,gemma4" {
+		t.Fatalf("app catalog slugs = %v, want original app models", got)
+	}
+
+	cliCatalogData, err := os.ReadFile(cliCatalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cliCatalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(cliCatalogData, &cliCatalog); err != nil {
+		t.Fatalf("CLI catalog should be valid JSON: %v", err)
+	}
+	if got := catalogSlugs(cliCatalog.Models); strings.Join(got, ",") != "qwen3:8b" {
+		t.Fatalf("CLI catalog slugs = %v, want qwen3:8b", got)
+	}
 }
 
 func TestCodexAppConfigureUsesConnectableHostForUnspecifiedBindAddress(t *testing.T) {
@@ -534,6 +626,60 @@ func TestCodexAppCurrentModelRequiresHealthyCatalog(t *testing.T) {
 	}
 }
 
+func TestCodexAppCurrentModelDetectsDriftedModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	catalogPath := mustWriteCodexAppTestCatalog(t, "llama3.2")
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "" +
+		`model = "gpt-5.5"` + "\n" +
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n\n" +
+		fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n\n" +
+		codexProviderHeaderFor(codexAppProfileName) + "\n" +
+		`name = "Ollama"` + "\n" +
+		`base_url = "http://127.0.0.1:11434/v1/"` + "\n" +
+		`wire_api = "responses"` + "\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := (&CodexApp{}).CurrentModel(); got != "" {
+		t.Fatalf("CurrentModel = %q, want empty when model has drifted from the Ollama catalog", got)
+	}
+}
+
+func TestCodexAppCurrentModelAcceptsLatestSuffixDrift(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	catalogPath := mustWriteCodexAppTestCatalog(t, "llama3.2")
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "" +
+		`model = "llama3.2:latest"` + "\n" +
+		fmt.Sprintf(`model_provider = %q`, codexAppProfileName) + "\n\n" +
+		fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n\n" +
+		codexProviderHeaderFor(codexAppProfileName) + "\n" +
+		`name = "Ollama"` + "\n" +
+		`base_url = "http://127.0.0.1:11434/v1/"` + "\n" +
+		`wire_api = "responses"` + "\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := (&CodexApp{}).CurrentModel(); got != "llama3.2:latest" {
+		t.Fatalf("CurrentModel = %q, want llama3.2:latest (:latest suffix should not be treated as drift)", got)
+	}
+}
+
 func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -592,6 +738,52 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 		if got := catalogInputModalities(model); strings.Join(got, ",") != strings.Join(wantModalities, ",") {
 			t.Fatalf("input_modalities for %q = %v, want %v", slug, got, wantModalities)
 		}
+	}
+}
+
+func TestCodexAppConfigureCatalogIncludesExactSelectedModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	models := []LaunchModel{
+		{Name: "llama3.2:latest", ContextLength: 65_536},
+		{Name: "qwen3:8b"},
+	}
+	if err := (&CodexApp{}).ConfigureWithModels("llama3.2", models); err != nil {
+		t.Fatalf("ConfigureWithModels returned error: %v", err)
+	}
+
+	configPath, err := codexConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := codexRootStringValue(string(configData), codexRootModelKey); got != "llama3.2" {
+		t.Fatalf("root model = %q, want llama3.2", got)
+	}
+
+	catalogPath, err := codexAppModelCatalogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		t.Fatalf("catalog should be valid JSON: %v", err)
+	}
+	if got := catalogSlugs(catalog.Models); strings.Join(got, ",") != "llama3.2,qwen3:8b" {
+		t.Fatalf("catalog slugs = %v, want exact selected model without :latest duplicate", got)
+	}
+	if got := catalog.Models[0]["context_window"]; got != float64(65_536) {
+		t.Fatalf("selected model context_window = %v, want 65536", got)
 	}
 }
 
@@ -1339,7 +1531,7 @@ func TestCodexAppRunRestartsWindowsStartAppID(t *testing.T) {
 	defer restoreConfirm()
 
 	running := true
-	var quitCalls int
+	var quitCalls, openCalls int
 	withCodexAppProcessHooks(t,
 		func() bool { return running },
 		func() error {
@@ -1348,7 +1540,7 @@ func TestCodexAppRunRestartsWindowsStartAppID(t *testing.T) {
 			return nil
 		},
 		func() error {
-			t.Fatal("open app fallback should not be used")
+			openCalls++
 			return nil
 		},
 	)

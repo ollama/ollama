@@ -2,8 +2,11 @@ package launch
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -23,6 +26,55 @@ func TestClineIntegration(t *testing.T) {
 	t.Run("implements Editor", func(t *testing.T) {
 		var _ Editor = c
 	})
+}
+
+func TestEnsureClineInstalled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	clinePath := filepath.Join(tmpDir, "cline")
+	npmScript := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" > "$HOME/npm-calls.log"
+/bin/cat > %q <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+/bin/chmod +x %q
+exit 0
+`, clinePath, clinePath)
+	if err := os.WriteFile(filepath.Join(tmpDir, "npm"), []byte(npmScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "Cline is not installed. Install with npm?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	bin, err := ensureClineInstalled()
+	if err != nil {
+		t.Fatalf("ensureClineInstalled() error = %v", err)
+	}
+	if bin != "cline" {
+		t.Fatalf("ensureClineInstalled() bin = %q, want %q", bin, "cline")
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "npm-calls.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "install -g cline@latest" {
+		t.Fatalf("npm args = %q, want %q", got, "install -g cline@latest")
+	}
 }
 
 func TestClineEdit(t *testing.T) {
