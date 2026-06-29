@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/mod/semver"
 	"gopkg.in/yaml.v3"
 
 	"github.com/ollama/ollama/api"
@@ -23,6 +24,8 @@ import (
 )
 
 const (
+	// https://github.com/NousResearch/hermes-agent/releases/tag/v2026.6.5
+	hermesDesktopMinVersion = "v0.16.0"
 	hermesInstallScript     = "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup"
 	hermesWindowsInstallURL = "https://hermes-agent.nousresearch.com/install.ps1"
 	hermesWindowsInstallCmd = "& ([scriptblock]::Create((irm " + hermesWindowsInstallURL + "))) -SkipSetup"
@@ -94,7 +97,46 @@ func (h *HermesDesktop) Run(_ string, _ []LaunchModel, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := h.ensureHermesDesktopMinVersion(bin); err != nil {
+		return err
+	}
 	return hermesAttachedCommand(bin, h.launchArgs(args)...).Run()
+}
+
+func (h *HermesDesktop) ensureHermesDesktopMinVersion(bin string) error {
+	if hermesGOOS == "windows" {
+		return nil
+	}
+	version := hermesVersionOf(bin)
+	if version == "" {
+		return nil
+	}
+	if semver.Compare(version, hermesDesktopMinVersion) >= 0 {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "%sHermes %s is older than the minimum version (%s) for `hermes desktop`; updating...%s\n", ansiGray, version, hermesDesktopMinVersion, ansiReset)
+	if err := hermesAttachedCommand(bin, "update").Run(); err != nil {
+		return fmt.Errorf("failed to update hermes to %s or newer: %w", hermesDesktopMinVersion, err)
+	}
+	return nil
+}
+
+func hermesVersionOf(bin string) string {
+	out, err := hermesCommand(bin, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	firstLine := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+	return parseHermesVersion(firstLine)
+}
+
+func parseHermesVersion(firstLine string) string {
+	for _, field := range strings.Fields(firstLine) {
+		if semver.IsValid(field) {
+			return field
+		}
+	}
+	return ""
 }
 
 func (h *HermesDesktop) Onboard() error {
