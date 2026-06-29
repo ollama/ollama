@@ -225,6 +225,7 @@ console.log(response.message.content);
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) - AI coding assistant for Qt Creator
 - [AI Toolkit for VS Code](https://aka.ms/ai-tooklit/ollama-docs) - Microsoft-official VS Code extension
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama) - Natural language interface for computers
+- [Bodega One](https://bodegaone.ai) - Local-first AI IDE that runs your Ollama models in chat and agentic code modes, with air-gap support and a quality layer that verifies generated code
 
 ### Libraries & SDKs
 
