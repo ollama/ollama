@@ -310,7 +310,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 					return nil, fmt.Errorf("too many consecutive server errors: %s", statusErr.ErrorMessage)
 				}
 
-				fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m server error (attempt %d/3): %s\n", consecutiveErrors, statusErr.ErrorMessage)
+				fmt.Fprintf(os.Stderr, "\033[31;1mwarning:\033[0m server error (attempt %d/3): %s\n", consecutiveErrors, statusErr.ErrorMessage)
 
 				// Include both the model's response and the error so it can learn
 				assistantContent := fullResponse.String()
@@ -354,6 +354,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 
 		// Execute tool calls and continue the conversation
 		fmt.Fprintf(os.Stderr, "\n")
+		ensureDisplayResponseLineBreak(os.Stdout, state)
 
 		// Add assistant's tool call message to history
 		assistantMsg := api.Message{
@@ -370,28 +371,11 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			toolName := call.Function.Name
 			args := call.Function.Arguments.ToMap()
 
-			// For bash commands, check denylist first
 			skipApproval := false
+			promptOptions := agent.ApprovalPromptOptions{}
 			if toolName == "bash" {
 				if cmd, ok := args["command"].(string); ok {
-					// Check if command is denied (dangerous pattern)
-					if denied, pattern := agent.IsDenied(cmd); denied {
-						fmt.Fprintf(os.Stderr, "\033[1mblocked:\033[0m %s\n", formatToolShort(toolName, args))
-						fmt.Fprintf(os.Stderr, "  matches dangerous pattern: %s\n", pattern)
-						toolResults = append(toolResults, api.Message{
-							Role:       "tool",
-							Content:    agent.FormatDeniedResult(cmd, pattern),
-							ToolCallID: call.ID,
-						})
-						continue
-					}
-
-					// Check if command is auto-allowed (safe command)
-					// TODO(parthsareen): re-enable with tighter scoped allowlist
-					// if agent.IsAutoAllowed(cmd) {
-					// 	fmt.Fprintf(os.Stderr, "\033[1mauto-allowed:\033[0m %s\n", formatToolShort(toolName, args))
-					// 	skipApproval = true
-					// }
+					promptOptions = agent.BuildBashApprovalOptions(cmd)
 				}
 			}
 
@@ -402,7 +386,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 					fmt.Fprintf(os.Stderr, "\033[1mrunning:\033[0m %s\n", formatToolShort(toolName, args))
 				}
 			} else if !skipApproval && !approval.IsAllowed(toolName, args) {
-				result, err := approval.RequestApproval(toolName, args)
+				result, err := approval.RequestApproval(toolName, args, promptOptions)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error requesting approval: %v\n", err)
 					toolResults = append(toolResults, api.Message{
@@ -462,15 +446,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			}
 		toolSuccess:
 
-			// Display tool output (truncated for display)
-			if toolResult != "" {
-				output := toolResult
-				if len(output) > 300 {
-					output = output[:300] + "... (truncated)"
-				}
-				// Show result in grey, indented
-				fmt.Fprintf(os.Stderr, "\033[90m  %s\033[0m\n", strings.ReplaceAll(output, "\n", "\n  "))
-			}
+			renderToolOutput(os.Stdout, toolResult)
 
 			// Truncate output to prevent context overflow
 			toolResultForLLM := truncateToolOutput(toolResult, opts.Model)
@@ -546,6 +522,32 @@ func formatToolShort(toolName string, args map[string]any) string {
 type displayResponseState struct {
 	lineLength int
 	wordBuffer string
+}
+
+func ensureDisplayResponseLineBreak(w io.Writer, state *displayResponseState) {
+	if state == nil {
+		return
+	}
+	if state.lineLength == 0 && state.wordBuffer == "" {
+		return
+	}
+
+	fmt.Fprintln(w)
+	state.lineLength = 0
+	state.wordBuffer = ""
+}
+
+func renderToolOutput(w io.Writer, toolResult string) {
+	if toolResult == "" {
+		return
+	}
+
+	output := toolResult
+	if len(output) > 300 {
+		output = output[:300] + "... (truncated)"
+	}
+
+	fmt.Fprintf(w, "\033[90m  %s\033[0m\n", strings.ReplaceAll(output, "\n", "\n  "))
 }
 
 func displayResponse(content string, wordWrap bool, state *displayResponseState) {
@@ -679,7 +681,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	// Check if model supports tools
 	supportsTools, err := checkModelCapabilities(cmd.Context(), modelName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not check model capabilities: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\033[31;1mwarning:\033[0m could not check model capabilities: %v\n", err)
 		supportsTools = false
 	}
 
@@ -716,7 +718,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 		}
 
 		if yoloMode {
-			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m yolo mode - all tool approvals will be skipped\n")
+			fmt.Fprintf(os.Stderr, "\033[31;1mwarning:\033[0m yolo mode - all tool approvals will be skipped\n")
 		}
 	}
 
@@ -809,7 +811,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 					if client, err := api.ClientFromEnvironment(); err == nil {
 						if resp, err := client.Show(cmd.Context(), &api.ShowRequest{Model: modelName}); err == nil {
 							if !slices.Contains(resp.Capabilities, model.CapabilityThinking) {
-								fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", modelName)
+								fmt.Fprintf(os.Stderr, "\033[31;1mwarning:\033[0m model %q does not support thinking output\n", modelName)
 							}
 						}
 					}
@@ -824,7 +826,7 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 					if client, err := api.ClientFromEnvironment(); err == nil {
 						if resp, err := client.Show(cmd.Context(), &api.ShowRequest{Model: modelName}); err == nil {
 							if !slices.Contains(resp.Capabilities, model.CapabilityThinking) {
-								fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", modelName)
+								fmt.Fprintf(os.Stderr, "\033[31;1mwarning:\033[0m model %q does not support thinking output\n", modelName)
 							}
 						}
 					}
