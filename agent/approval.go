@@ -181,7 +181,7 @@ func applyToolApprovalRequirement(req ApprovalRequest, evaluation ApprovalEvalua
 	}
 	evaluation.RequirePrompt = true
 	if evaluation.Summary == "" {
-		evaluation.Summary = fmt.Sprintf("%s wants to run", ToolDisplayName(req.ToolName))
+		evaluation.Summary = fmt.Sprintf("%s wants to run", toolDisplayName(req.ToolName))
 	}
 	if len(evaluation.Reasons) == 0 {
 		evaluation.Reasons = []string{"tool requires approval"}
@@ -216,7 +216,7 @@ func approvalRequestWithEvaluation(req ApprovalRequest, evaluation ApprovalEvalu
 }
 
 func approvalSessionKey(req ApprovalRequest) string {
-	if IsShellToolName(req.ToolName) {
+	if isShellToolName(req.ToolName) {
 		if command, ok := stringApprovalArg(req.Args, "command"); ok {
 			return req.ToolName + ":" + command
 		}
@@ -248,7 +248,7 @@ func (DefaultApprovalPolicy) EvaluateApproval(_ context.Context, req ApprovalReq
 				return denyApproval(req.ToolName, ApprovalRiskHigh, reason)
 			}
 		}
-		return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow, Summary: fmt.Sprintf("%s can run without approval", ToolDisplayName(req.ToolName))}
+		return ApprovalEvaluation{Decision: ApprovalAllowOnce, Risk: ApprovalRiskLow, Summary: fmt.Sprintf("%s can run without approval", toolDisplayName(req.ToolName))}
 	case "web_search", "web_fetch":
 		return evaluateWebApproval(req)
 	case "edit":
@@ -259,7 +259,7 @@ func (DefaultApprovalPolicy) EvaluateApproval(_ context.Context, req ApprovalReq
 		return ApprovalEvaluation{
 			RequirePrompt: true,
 			Risk:          ApprovalRiskMedium,
-			Summary:       fmt.Sprintf("%s wants to run", ToolDisplayName(req.ToolName)),
+			Summary:       fmt.Sprintf("%s wants to run", toolDisplayName(req.ToolName)),
 			Reasons:       []string{"unknown tool effects"},
 			SessionKey:    approvalSessionKey(req),
 		}
@@ -318,7 +318,7 @@ func evaluateWebApproval(req ApprovalRequest) ApprovalEvaluation {
 	return ApprovalEvaluation{
 		RequirePrompt: true,
 		Risk:          ApprovalRiskMedium,
-		Summary:       fmt.Sprintf("%s wants to run", ToolDisplayName(req.ToolName)),
+		Summary:       fmt.Sprintf("%s wants to run", toolDisplayName(req.ToolName)),
 		Reasons:       []string{"accesses the web"},
 		SessionKey:    approvalSessionKey(req),
 	}
@@ -356,7 +356,7 @@ func evaluateShellApproval(req ApprovalRequest) ApprovalEvaluation {
 	return ApprovalEvaluation{
 		RequirePrompt: true,
 		Risk:          risk,
-		Summary:       fmt.Sprintf("%s wants to run a command", ToolDisplayName(req.ToolName)),
+		Summary:       fmt.Sprintf("%s wants to run a command", toolDisplayName(req.ToolName)),
 		Reasons:       reasons,
 		SessionKey:    req.ToolName + ":" + command,
 	}
@@ -366,10 +366,40 @@ func denyApproval(toolName string, risk ApprovalRisk, reason string) ApprovalEva
 	return ApprovalEvaluation{
 		Decision:   ApprovalDeny,
 		Risk:       risk,
-		Summary:    fmt.Sprintf("%s cannot run", ToolDisplayName(toolName)),
+		Summary:    fmt.Sprintf("%s cannot run", toolDisplayName(toolName)),
 		Reasons:    []string{reason},
 		SessionKey: approvalSessionKey(ApprovalRequest{ToolName: toolName}),
 	}
+}
+
+func toolDisplayName(name string) string {
+	switch name {
+	case "web_search":
+		return "Web Search"
+	case "web_fetch":
+		return "Web Fetch"
+	case "bash":
+		return "Bash"
+	case "powershell":
+		return "PowerShell"
+	case "read":
+		return "Read"
+	case "list":
+		return "List"
+	case "edit":
+		return "Edit"
+	case "skill":
+		return "Skill"
+	default:
+		if name == "" {
+			return "Tool"
+		}
+		return name
+	}
+}
+
+func isShellToolName(name string) bool {
+	return name == "bash" || name == "powershell"
 }
 
 // Shell approval is static analysis of model-generated commands, not a sandbox.
