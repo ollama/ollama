@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -36,8 +37,11 @@ type chatCompletion struct {
 }
 
 const (
-	chatPromptPrefix     = "› "
-	maxInputBoxBodyLines = 6
+	chatPromptPrefix          = ""
+	inputBoxHorizontalPadding = 1
+	inputCursorGlyph          = "█"
+	inputCursorMarker         = "\x00"
+	maxInputBoxBodyLines      = 12
 )
 
 const (
@@ -337,6 +341,7 @@ func pastedTextLineCount(input string) int {
 }
 
 func (m *chatModel) insertInputRunes(runes []rune) {
+	runes = normalizeInputRunes(runes)
 	if len(runes) == 0 {
 		return
 	}
@@ -351,6 +356,30 @@ func (m *chatModel) insertInputRunes(runes []rune) {
 	m.inputCursor = cursor + len(runes)
 	m.inputCursorSet = true
 	m.complete = 0
+}
+
+func normalizeInputRunes(runes []rune) []rune {
+	for _, r := range runes {
+		if r == '\r' {
+			return normalizeInputRunesSlow(runes)
+		}
+	}
+	return runes
+}
+
+func normalizeInputRunesSlow(runes []rune) []rune {
+	out := make([]rune, 0, len(runes))
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != '\r' {
+			out = append(out, runes[i])
+			continue
+		}
+		out = append(out, '\n')
+		if i+1 < len(runes) && runes[i+1] == '\n' {
+			i++
+		}
+	}
+	return out
 }
 
 func (m *chatModel) deleteInputBackward() {
@@ -679,6 +708,22 @@ func (m *chatModel) moveInputCursorWord(delta int) bool {
 	return true
 }
 
+func (m *chatModel) handleInputAltRunes(runes []rune) bool {
+	if len(runes) != 1 {
+		return false
+	}
+	switch runes[0] {
+	case 'b', 'B':
+		m.moveInputCursorWord(-1)
+		return true
+	case 'f', 'F':
+		m.moveInputCursorWord(1)
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *chatModel) moveInputCursorVertical(delta int) bool {
 	if delta == 0 || len(m.input) == 0 {
 		return false
@@ -732,7 +777,7 @@ func inputWithCursor(input []rune, cursor int) string {
 	cursor = clamp(cursor, 0, len(input))
 	next := make([]rune, 0, len(input)+1)
 	next = append(next, input[:cursor]...)
-	next = append(next, '█')
+	next = append(next, []rune(inputCursorMarker)...)
 	next = append(next, input[cursor:]...)
 	return string(next)
 }
@@ -759,22 +804,24 @@ func (m chatModel) emptyInputPlaceholder() string {
 }
 
 func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, placeholder string) []string {
-	if width < 8 {
-		width = 8
+	if width < 12 {
+		width = 12
 	}
 	if maxBodyLines < 1 {
 		maxBodyLines = 1
 	}
 
 	prefix := chatPromptPrefix
-	continuationPrefix := "... "
+	continuationPrefix := strings.Repeat(" ", lipgloss.Width(prefix))
 	prefixWidth := lipgloss.Width(prefix)
-	bodyWidth := max(1, width-prefixWidth)
+	innerWidth := max(1, width-2)
+	contentWidth := max(1, innerWidth-inputBoxHorizontalPadding*2)
+	bodyWidth := max(1, contentWidth-prefixWidth)
 
 	var raw []string
 	placeholderMode := input == "" && strings.TrimSpace(placeholder) != ""
 	if input == "" && strings.TrimSpace(placeholder) != "" {
-		raw = renderInputPromptRawLines(inputWithCursor([]rune(" "+placeholder), 0), prefix, continuationPrefix, bodyWidth)
+		raw = renderInputPromptRawLines(inputWithCursor([]rune(placeholder), 0), prefix, continuationPrefix, bodyWidth)
 	} else {
 		if cursor >= 0 {
 			input = inputWithCursor([]rune(input), cursor)
@@ -783,37 +830,80 @@ func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, plac
 	}
 	if len(raw) > maxBodyLines {
 		raw = slices.Clone(raw[len(raw)-maxBodyLines:])
-		raw[0] = truncateInputLine(continuationPrefix+trimInputPromptPrefix(raw[0]), width)
+		raw[0] = truncateInputLine(continuationPrefix+trimInputPromptPrefix(raw[0]), contentWidth)
 	}
 
-	lines := make([]string, 0, len(raw))
+	lines := make([]string, 0, len(raw)+2)
+	lines = append(lines, chatInputBorderStyle.Render(inputBoxTopBorderLine(width)))
 	for i, line := range raw {
+		rendered := line
 		if placeholderMode {
 			if i == 0 && strings.HasPrefix(line, prefix) {
 				rest := strings.TrimPrefix(line, prefix)
-				if strings.HasPrefix(rest, "█") {
-					lines = append(lines, chatUserStyle.Render(prefix+"█")+chatMetaStyle.Render(strings.TrimPrefix(rest, "█")))
+				if strings.HasPrefix(rest, inputCursorMarker) {
+					rendered = chatUserStyle.Render(prefix) + renderInputTextWithCursorStyle(rest, chatMetaStyle)
+					lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 					continue
 				}
-				lines = append(lines, chatUserStyle.Render(prefix)+chatMetaStyle.Render(rest))
+				rendered = chatUserStyle.Render(prefix) + chatMetaStyle.Render(rest)
+				lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 				continue
 			}
 			if strings.HasPrefix(line, continuationPrefix) {
-				lines = append(lines, chatMetaStyle.Render(continuationPrefix+strings.TrimPrefix(line, continuationPrefix)))
+				rendered = chatMetaStyle.Render(continuationPrefix + strings.TrimPrefix(line, continuationPrefix))
+				lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 				continue
 			}
-			lines = append(lines, chatMetaStyle.Render(line))
+			rendered = chatMetaStyle.Render(line)
+			lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 			continue
 		}
-		lines = append(lines, chatUserStyle.Render(line))
+		lines = append(lines, renderInputBoxBodyLine(renderInputTextWithCursor(rendered), contentWidth))
 	}
+	lines = append(lines, chatInputBorderStyle.Render(inputBoxBottomBorderLine(width)))
 	return lines
+}
+
+func renderInputTextWithCursor(line string) string {
+	return renderInputTextWithCursorStyle(line, chatUserStyle)
+}
+
+func renderInputTextWithCursorStyle(line string, style lipgloss.Style) string {
+	before, after, ok := strings.Cut(line, inputCursorMarker)
+	if !ok {
+		return style.Render(line)
+	}
+	cell, rest := inputCursorCell(after)
+	return style.Render(before) + renderInputCursorCell(cell) + style.Render(rest)
+}
+
+func inputCursorCell(after string) (string, string) {
+	if after == "" {
+		return "", ""
+	}
+	r, size := utf8.DecodeRuneInString(after)
+	if r == '\n' {
+		return "", after
+	}
+	return after[:size], after[size:]
+}
+
+func renderInputCursor() string {
+	return renderInputCursorCell("")
+}
+
+func renderInputCursorCell(cell string) string {
+	if cell == "" {
+		return chatBlankCursorStyle.Render(inputCursorGlyph)
+	}
+	return chatCursorStyle.Render(cell)
 }
 
 func renderInputPromptRawLines(text, prefix, continuationPrefix string, width int) []string {
 	if width <= 0 {
 		width = 1
 	}
+	text = string(normalizeInputRunes([]rune(text)))
 	body := wrapChatText(text, width)
 	for i, line := range body {
 		if i == 0 {
@@ -829,7 +919,10 @@ func renderInputPromptRawLines(text, prefix, continuationPrefix string, width in
 }
 
 func trimInputPromptPrefix(line string) string {
-	for _, prefix := range []string{chatPromptPrefix, "... "} {
+	for _, prefix := range []string{chatPromptPrefix, strings.Repeat(" ", lipgloss.Width(chatPromptPrefix))} {
+		if prefix == "" {
+			continue
+		}
 		if strings.HasPrefix(line, prefix) {
 			return strings.TrimPrefix(line, prefix)
 		}
@@ -850,6 +943,11 @@ func inputBoxBorderLine(width int, left, right string) string {
 		width = 4
 	}
 	return left + strings.Repeat("─", max(0, width-2)) + right
+}
+
+func renderInputBoxBodyLine(line string, width int) string {
+	padding := strings.Repeat(" ", inputBoxHorizontalPadding)
+	return chatInputBorderStyle.Render("│") + padding + padRenderedLine(line, width) + padding + chatInputBorderStyle.Render("│")
 }
 
 func padRenderedLine(line string, width int) string {
@@ -1190,7 +1288,6 @@ func (m chatModel) helpSummary() string {
 		"",
 		"**Shortcuts**",
 		"",
-		"- `ctrl+o`: toggle tool output",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
 		"- `↑/↓`: previous or next prompt",

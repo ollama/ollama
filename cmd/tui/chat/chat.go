@@ -321,6 +321,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatRunDoneMsg:
 		wasCanceling := m.status == "canceling"
+		m.finishThinkingEntry()
 		m.running = false
 		m.awaitingModel = false
 		m.compacting = false
@@ -554,14 +555,26 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyCtrlG:
 		return m, nil
+	case tea.KeyCtrlP:
+		return m.updateUpKey()
+	case tea.KeyCtrlN:
+		return m.updateDownKey()
 	case tea.KeyUp:
 		return m.updateUpKey()
 	case tea.KeyDown:
 		return m.updateDownKey()
 	case tea.KeyLeft:
-		m.moveInputCursorHorizontal(-1)
+		if msg.Alt {
+			m.moveInputCursorWord(-1)
+		} else {
+			m.moveInputCursorHorizontal(-1)
+		}
 	case tea.KeyRight:
-		m.moveInputCursorHorizontal(1)
+		if msg.Alt {
+			m.moveInputCursorWord(1)
+		} else {
+			m.moveInputCursorHorizontal(1)
+		}
 	case tea.KeyCtrlA:
 		m.moveInputCursorToLineStart()
 	case tea.KeyCtrlE:
@@ -586,7 +599,7 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.scroll = m.maxScroll()
 	case tea.KeyCtrlEnd:
 		m.scroll = 0
-	case tea.KeyBackspace:
+	case tea.KeyBackspace, tea.KeyCtrlH:
 		m.resetPromptHistoryCursor()
 		if msg.Alt {
 			m.deleteInputWordBackward()
@@ -602,12 +615,17 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlK:
 		m.resetPromptHistoryCursor()
 		m.deleteInputForward()
+	case tea.KeyDelete:
+		m.resetPromptHistoryCursor()
+		m.deleteInputForward()
 	case tea.KeyTab:
 		m.applyCompletion()
 	case tea.KeySpace:
 		m.insertInputRunes([]rune{' '})
 	case tea.KeyRunes:
-		m.insertInputRunesFromKey(msg.Runes, msg.Paste)
+		if !msg.Alt || !m.handleInputAltRunes(msg.Runes) {
+			m.insertInputRunesFromKey(msg.Runes, msg.Paste)
+		}
 	default:
 		if m.canEditInput() && isShiftEnterCSI(msg) {
 			m.insertInputNewline()
@@ -621,7 +639,7 @@ func (m *chatModel) toggleInlineToolOutput() {
 	m.toolOutputOpen = !m.toolOutputOpen
 	m.applyToolOutputMode()
 	m.selection = chatSelection{}
-	m.scroll = clamp(m.scroll, 0, m.maxScroll())
+	m.scroll = 0
 }
 
 func (m chatModel) updateCtrlC() (tea.Model, tea.Cmd) {
@@ -730,6 +748,9 @@ func (m chatModel) updateUpKey() (tea.Model, tea.Cmd) {
 	if m.moveInputCursorVertical(-1) {
 		return m, nil
 	}
+	if slices.Contains(m.input, '\n') {
+		return m, nil
+	}
 	m.movePromptHistory(-1)
 	return m, nil
 }
@@ -742,6 +763,9 @@ func (m chatModel) updateDownKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.moveInputCursorVertical(1) {
+		return m, nil
+	}
+	if slices.Contains(m.input, '\n') {
 		return m, nil
 	}
 	m.movePromptHistory(1)

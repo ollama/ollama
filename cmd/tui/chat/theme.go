@@ -18,20 +18,46 @@ var (
 	chatMetaStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(chatAnsiMuted))
 
+	chatFooterStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#777777", Dark: "#9a9a9a"})
+
+	chatInputBorderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#8a8a8a", Dark: "#555555"})
+
+	chatCursorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")).
+			Background(lipgloss.Color(chatAnsiMuted))
+
+	chatBlankCursorStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(chatAnsiMuted))
+
 	chatNotificationStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("7"))
 
 	chatUserStyle = lipgloss.NewStyle()
 
+	chatUserBlockStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#b8b8b8"}).
+				Background(lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#2a2a2a"})
+
 	chatAssistantStyle = lipgloss.NewStyle()
 
 	chatToolStyle = lipgloss.NewStyle()
 
+	chatInlineCodeStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color(chatAnsiMuted))
+
+	chatCodeBlockStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("7"))
+
+	chatTableBorderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(chatAnsiMuted))
+
 	chatToolRunningStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiYellow))
+				Foreground(lipgloss.Color(chatAnsiMuted))
 
 	chatToolDoneStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiGreen))
+				Foreground(lipgloss.Color(chatAnsiMuted))
 
 	// chatToolMixedStyle marks a tool group with both succeeded and failed
 	// calls (partial success). Amber/orange is distinct from green (success),
@@ -59,8 +85,7 @@ var (
 			Foreground(lipgloss.Color(chatAnsiRed))
 
 	chatFullAccessStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color(chatAnsiRed))
+				Foreground(lipgloss.AdaptiveColor{Light: "#9f5f5f", Dark: "#b87373"})
 
 	chatCommandNameStyle = lipgloss.NewStyle()
 

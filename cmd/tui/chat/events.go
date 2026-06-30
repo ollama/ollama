@@ -42,6 +42,7 @@ type chatCompactProgressMsg struct {
 // resetStreamingState clears the transient streaming flags that every
 // non-streaming event resets before applying its own state.
 func (m *chatModel) resetStreamingState() {
+	m.finishThinkingEntry()
 	m.awaitingModel = false
 	m.thinking = false
 	m.thinkingTokens = 0
@@ -50,6 +51,7 @@ func (m *chatModel) resetStreamingState() {
 // resetRunState clears all run-progress flags (streaming plus compaction
 // progress) for terminal events that fully reset the run view.
 func (m *chatModel) resetRunState() {
+	m.finishThinkingEntry()
 	m.awaitingModel = false
 	m.compacting = false
 	m.compactingTokens = 0
@@ -81,6 +83,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			}
 			idx := m.ensureLiveAssistantMessage()
 			m.liveMessages[idx].Thinking += event.Thinking
+			m.syncThinkingEntry()
 			contextChanged = true
 		}
 	case coreagent.EventMessageDelta:
@@ -93,6 +96,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.liveMessages[msgIdx].Content += event.Content
 		contextChanged = true
 	case coreagent.EventToolCallDetected:
+		m.finishThinkingEntry()
 		m.awaitingModel = m.running
 		m.thinking = false
 		m.thinkingTokens = 0
@@ -280,7 +284,7 @@ func (m *chatModel) scheduleTick() tea.Cmd {
 }
 
 func chatTickCmd() tea.Cmd {
-	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg {
 		return chatTickMsg{}
 	})
 }

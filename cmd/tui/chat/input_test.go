@@ -33,7 +33,6 @@ func TestChatHelpCommandShowsV1Commands(t *testing.T) {
 		"- `/help`: show commands",
 		"- `/bye`: exit",
 		"**Shortcuts**",
-		"- `ctrl+o`: toggle tool output",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
 	} {
@@ -61,8 +60,8 @@ func TestRenderInputBoxTruncationUsesSingleContinuationMarker(t *testing.T) {
 	if strings.Contains(rendered, "... ...") {
 		t.Fatalf("input rendered duplicate continuation marker: %q", rendered)
 	}
-	if !strings.Contains(rendered, "...") {
-		t.Fatalf("input should include continuation marker: %q", rendered)
+	if strings.Contains(rendered, "one two") {
+		t.Fatalf("input should keep the latest truncated line: %q", rendered)
 	}
 }
 
