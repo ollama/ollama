@@ -933,9 +933,6 @@ func nextLowerAutoNumCtx(numCtx int) (int, bool) {
 	}
 }
 
-// llamaServerDefaultFitTargetMiB mirrors llama.cpp's default per-device fit margin.
-const llamaServerDefaultFitTargetMiB = 1024
-
 func availableMemoryForLoad(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo) (available, gpuFree uint64, systemLimited bool) {
 	var sharedGPUFree uint64
 	var discreteGPUFree uint64
@@ -1046,6 +1043,8 @@ func selectLlamaServerPlacement(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, 
 }
 
 func singleLlamaServerGPUPlacement(gpu ml.DeviceInfo, opts api.Options) ([]ml.DeviceInfo, api.Options) {
+	// llama-server sees only the selected GPU after compaction, so the selected
+	// device is index 0 for both main_gpu and per-device fit-target values.
 	mainGPU := 0
 	opts.MainGPU = &mainGPU
 	return []ml.DeviceInfo{gpu}, opts
@@ -1131,34 +1130,34 @@ func hasDiscreteGPU(gpus []ml.DeviceInfo) bool {
 	return false
 }
 
-func availableMemoryForGPU(systemInfo ml.SystemInfo, gpu ml.DeviceInfo, index int) uint64 {
+func availableMemoryForGPU(systemInfo ml.SystemInfo, gpu ml.DeviceInfo, visibleIndex int) uint64 {
 	available := gpu.FreeMemory
 	if gpu.Integrated && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < gpu.FreeMemory {
 		available = systemInfo.FreeMemory
 	}
 
-	return saturatingSubtract(available, llamaServerDeviceReserve(gpu, index))
+	return saturatingSubtract(available, llamaServerDeviceReserve(gpu, visibleIndex))
 }
 
-func llamaServerDeviceReserve(gpu ml.DeviceInfo, index int) uint64 {
-	return gpu.MinimumMemory() + max(envconfig.GpuOverhead(), llamaServerFitTargetBytes(index))
+func llamaServerDeviceReserve(gpu ml.DeviceInfo, visibleIndex int) uint64 {
+	return gpu.MinimumMemory() + max(envconfig.GpuOverhead(), llamaServerFitTargetBytes(visibleIndex))
 }
 
-func llamaServerFitTargetBytes(index int) uint64 {
+func llamaServerFitTargetBytes(visibleIndex int) uint64 {
 	value := envconfig.Var("LLAMA_ARG_FIT_TARGET")
 	if value != "" {
 		targets := strings.Split(value, ",")
 		if len(targets) == 1 {
-			index = 0
+			visibleIndex = 0
 		}
-		if index < len(targets) {
-			if target, err := strconv.ParseUint(strings.TrimSpace(targets[index]), 10, 64); err == nil {
+		if visibleIndex < len(targets) {
+			if target, err := strconv.ParseUint(strings.TrimSpace(targets[visibleIndex]), 10, 64); err == nil {
 				return target * format.MebiByte
 			}
 		}
 	}
 
-	return llamaServerDefaultFitTargetMiB * format.MebiByte
+	return llm.LlamaServerDefaultFitTargetMiB * format.MebiByte
 }
 
 func saturatingSubtract(value, reserve uint64) uint64 {

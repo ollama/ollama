@@ -774,8 +774,8 @@ func hasLegacyQwenMTPDraft(arch string, tensors []*ggml.Tensor) bool {
 	}
 }
 
-// llamaServerDefaultFitTargetMiB mirrors llama.cpp's default per-device fit margin.
-const llamaServerDefaultFitTargetMiB = 1024
+// LlamaServerDefaultFitTargetMiB mirrors llama.cpp's default per-device fit margin.
+const LlamaServerDefaultFitTargetMiB = 1024
 
 func applyGPUOverheadFitTargetEnv(env map[string]string) {
 	if envconfig.Var("LLAMA_ARG_FIT_TARGET") != "" {
@@ -783,7 +783,7 @@ func applyGPUOverheadFitTargetEnv(env map[string]string) {
 	}
 
 	const bytesPerMiB = uint64(1024 * 1024)
-	if overhead := envconfig.GpuOverhead(); overhead > llamaServerDefaultFitTargetMiB*bytesPerMiB {
+	if overhead := envconfig.GpuOverhead(); overhead > LlamaServerDefaultFitTargetMiB*bytesPerMiB {
 		env["LLAMA_ARG_FIT_TARGET"] = strconv.FormatUint((overhead+bytesPerMiB-1)/bytesPerMiB, 10)
 	}
 }

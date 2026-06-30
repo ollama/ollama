@@ -1472,7 +1472,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 
 func schedulerReserveForTest(library string) uint64 {
 	gpu := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: library}}
-	return gpu.MinimumMemory() + llamaServerDefaultFitTargetMiB*format.MebiByte
+	return gpu.MinimumMemory() + llm.LlamaServerDefaultFitTargetMiB*format.MebiByte
 }
 
 func TestSelectLlamaServerPlacement(t *testing.T) {
@@ -1592,8 +1592,8 @@ func TestSelectLlamaServerPlacement(t *testing.T) {
 
 func TestSelectLlamaServerPlacementReserveEnv(t *testing.T) {
 	gpus := []ml.DeviceInfo{
-		{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, FreeMemory: 23336 * format.MebiByte},
-		{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, FreeMemory: 7106 * format.MebiByte},
+		{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, FreeMemory: 7106 * format.MebiByte},
+		{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, FreeMemory: 23336 * format.MebiByte},
 	}
 	check := func(name, overhead, fitTarget string, want int) {
 		t.Run(name, func(t *testing.T) {
@@ -1607,6 +1607,7 @@ func TestSelectLlamaServerPlacementReserveEnv(t *testing.T) {
 	check("default reserve compacts", "", "", 1)
 	check("gpu overhead prevents compaction", "3221225472", "", 2)
 	check("fit target prevents compaction", "", "4096", 2)
+	check("comma fit target uses compacted visible gpu index", "", "1024,4096", 1)
 }
 
 func testIntPtr(v int) *int {
