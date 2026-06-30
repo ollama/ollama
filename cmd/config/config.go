@@ -1,8 +1,9 @@
-// Package config provides integration configuration for external coding tools
-// (Claude Code, Codex, Droid, OpenCode) to use Ollama models.
+// Package config provides shared Ollama CLI configuration, including launch
+// integration settings and scoped onboarding state.
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,10 +24,16 @@ type integration struct {
 type IntegrationConfig = integration
 
 type config struct {
-	Integrations  map[string]*integration `json:"integrations"`
-	LastModel     string                  `json:"last_model,omitempty"`
-	LastSelection string                  `json:"last_selection,omitempty"` // "run" or integration name
+	Integrations  map[string]*integration    `json:"integrations"`
+	Onboarding    map[string]map[string]bool `json:"onboarding,omitempty"`
+	LastModel     string                     `json:"last_model,omitempty"`
+	LastSelection string                     `json:"last_selection,omitempty"` // "run" or integration name
 }
+
+const (
+	OnboardingSectionApp        = "app"
+	OnboardingKeyTerminalPrompt = "terminal_prompt"
+)
 
 func configPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -101,12 +108,26 @@ func load() (*config, error) {
 		return nil, err
 	}
 
-	var cfg config
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	var raw struct {
+		Integrations  map[string]*integration `json:"integrations"`
+		Onboarding    json.RawMessage         `json:"onboarding,omitempty"`
+		LastModel     string                  `json:"last_model,omitempty"`
+		LastSelection string                  `json:"last_selection,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w, at: %s", err, path)
+	}
+	cfg := config{
+		Integrations:  raw.Integrations,
+		Onboarding:    parseOnboarding(raw.Onboarding),
+		LastModel:     raw.LastModel,
+		LastSelection: raw.LastSelection,
 	}
 	if cfg.Integrations == nil {
 		cfg.Integrations = make(map[string]*integration)
+	}
+	if cfg.Onboarding == nil {
+		cfg.Onboarding = make(map[string]map[string]bool)
 	}
 	return &cfg, nil
 }
@@ -228,6 +249,138 @@ func SetLastSelection(selection string) error {
 	}
 	cfg.LastSelection = selection
 	return save(cfg)
+}
+
+// OnboardingCompleted returns true when the named onboarding item has been completed.
+func OnboardingCompleted(section string, key string) bool {
+	completed, err := GetOnboardingCompleted(section, key)
+	return err == nil && completed
+}
+
+// GetOnboardingCompleted returns whether the named onboarding item has been completed.
+func GetOnboardingCompleted(section string, key string) (bool, error) {
+	completed, _, err := LookupOnboardingCompleted(section, key)
+	return completed, err
+}
+
+// LookupOnboardingCompleted returns whether the named onboarding item exists
+// and, if so, whether it has been completed.
+func LookupOnboardingCompleted(section string, key string) (bool, bool, error) {
+	section, key, err := normalizeOnboardingPath(section, key)
+	if err != nil {
+		return false, false, err
+	}
+
+	cfg, err := load()
+	if err != nil {
+		return false, false, err
+	}
+
+	values, ok := cfg.Onboarding[section]
+	if !ok {
+		return false, false, nil
+	}
+	completed, ok := values[key]
+	return completed, ok, nil
+}
+
+// MarkOnboardingCompleted marks the named onboarding item as completed.
+func MarkOnboardingCompleted(section string, key string) error {
+	return SetOnboardingCompleted(section, key, true)
+}
+
+// SetOnboardingCompleted records whether the named onboarding item has been completed.
+func SetOnboardingCompleted(section string, key string, completed bool) error {
+	section, key, err := normalizeOnboardingPath(section, key)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+	if cfg.Onboarding == nil {
+		cfg.Onboarding = make(map[string]map[string]bool)
+	}
+	if cfg.Onboarding[section] == nil {
+		cfg.Onboarding[section] = make(map[string]bool)
+	}
+
+	cfg.Onboarding[section][key] = completed
+	return save(cfg)
+}
+
+func normalizeOnboardingPath(section string, key string) (string, string, error) {
+	section = strings.ToLower(strings.TrimSpace(section))
+	key = strings.ToLower(strings.TrimSpace(key))
+	if section == "" {
+		return "", "", errors.New("onboarding section cannot be empty")
+	}
+	if key == "" {
+		return "", "", errors.New("onboarding key cannot be empty")
+	}
+	return section, key, nil
+}
+
+func parseOnboarding(raw json.RawMessage) map[string]map[string]bool {
+	onboarding := make(map[string]map[string]bool)
+	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return onboarding
+	}
+
+	var nested map[string]map[string]bool
+	if err := json.Unmarshal(raw, &nested); err == nil {
+		for section, values := range nested {
+			section = strings.ToLower(strings.TrimSpace(section))
+			if section == "" {
+				continue
+			}
+			if onboarding[section] == nil {
+				onboarding[section] = make(map[string]bool)
+			}
+			for key, completed := range values {
+				key = strings.ToLower(strings.TrimSpace(key))
+				if key == "" {
+					continue
+				}
+				onboarding[section][key] = completed
+			}
+		}
+		return onboarding
+	}
+
+	var flat map[string]bool
+	if err := json.Unmarshal(raw, &flat); err == nil {
+		for scope, completed := range flat {
+			section, key := splitLegacyOnboardingScope(scope)
+			if section == "" || key == "" {
+				continue
+			}
+			if onboarding[section] == nil {
+				onboarding[section] = make(map[string]bool)
+			}
+			onboarding[section][key] = completed
+		}
+	}
+
+	return onboarding
+}
+
+func splitLegacyOnboardingScope(scope string) (string, string) {
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	if scope == "" {
+		return "", ""
+	}
+	if scope == "app_terminal_prompt" {
+		return OnboardingSectionApp, OnboardingKeyTerminalPrompt
+	}
+	if section, key, ok := strings.Cut(scope, "."); ok {
+		section = strings.TrimSpace(section)
+		key = strings.TrimSpace(key)
+		return section, key
+	}
+	return "legacy", scope
 }
 
 // LoadIntegration returns the saved config for one integration.

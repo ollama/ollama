@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"os/exec"
 	"runtime"
 	"runtime/debug"
 	"slices"
@@ -31,6 +32,7 @@ import (
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 	ollamaAuth "github.com/ollama/ollama/auth"
+	ollamaConfig "github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
@@ -290,6 +292,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
 	mux.Handle("GET /api/v1/settings", handle(s.getSettings))
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
+	mux.Handle("POST /api/v1/first-run/skip", handle(s.skipFirstRun))
+	mux.Handle("POST /api/v1/first-run/terminal", handle(s.runOllamaInTerminal))
 	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
 
@@ -1454,7 +1458,8 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) error {
 
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(responses.SettingsResponse{
-		Settings: settings,
+		Settings:             settings,
+		HasCompletedFirstRun: s.hasCompletedAppTerminalPrompt(),
 	})
 }
 
@@ -1499,8 +1504,73 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(responses.SettingsResponse{
-		Settings: settings,
+		Settings:             settings,
+		HasCompletedFirstRun: s.hasCompletedAppTerminalPrompt(),
 	})
+}
+
+func (s *Server) skipFirstRun(w http.ResponseWriter, r *http.Request) error {
+	if err := ollamaConfig.MarkOnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt); err != nil {
+		return fmt.Errorf("failed to save first run status: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func (s *Server) runOllamaInTerminal(w http.ResponseWriter, r *http.Request) error {
+	if err := ollamaConfig.MarkOnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt); err != nil {
+		return fmt.Errorf("failed to save first run status: %w", err)
+	}
+
+	if err := openTerminalWithOllama(); err != nil {
+		return fmt.Errorf("open terminal: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+var openTerminalWithOllama = defaultOpenTerminalWithOllama
+
+func defaultOpenTerminalWithOllama() error {
+	switch runtime.GOOS {
+	case "darwin":
+		script := `tell application "Terminal"
+	activate
+	do script "ollama"
+end tell`
+		return exec.Command("osascript", "-e", script).Run()
+	case "windows":
+		return exec.Command("cmd", "/C", "start", "", "cmd", "/K", "ollama").Run()
+	default:
+		return fmt.Errorf("unsupported platform %s", runtime.GOOS)
+	}
+}
+
+func (s *Server) hasCompletedAppTerminalPrompt() bool {
+	completed, ok, err := ollamaConfig.LookupOnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt)
+	if err != nil {
+		s.log().Warn("failed to load onboarding status", "error", err)
+		return false
+	}
+	if ok {
+		return completed
+	}
+
+	hasCompletedLegacyFirstRun, err := s.Store.HasCompletedFirstRun()
+	if err != nil {
+		s.log().Warn("failed to load legacy first run status", "error", err)
+		return false
+	}
+	if !hasCompletedLegacyFirstRun {
+		return false
+	}
+
+	if err := ollamaConfig.MarkOnboardingCompleted(ollamaConfig.OnboardingSectionApp, ollamaConfig.OnboardingKeyTerminalPrompt); err != nil {
+		s.log().Warn("failed to migrate first run status to config", "error", err)
+	}
+	return true
 }
 
 func (s *Server) cloudSetting(w http.ResponseWriter, r *http.Request) error {

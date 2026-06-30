@@ -32,6 +32,10 @@ export interface CloudStatusResponse {
   disabled: boolean;
   source: CloudStatusSource;
 }
+export interface SettingsResponse {
+  settings: Settings;
+  hasCompletedFirstRun: boolean;
+}
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow
@@ -257,9 +261,7 @@ export async function* sendMessage(
   }
 }
 
-export async function getSettings(): Promise<{
-  settings: Settings;
-}> {
+export async function getSettings(): Promise<SettingsResponse> {
   const response = await fetch(`${API_BASE}/api/v1/settings`);
   if (!response.ok) {
     throw new Error("Failed to fetch settings");
@@ -267,12 +269,13 @@ export async function getSettings(): Promise<{
   const data = await response.json();
   return {
     settings: new Settings(data.settings),
+    hasCompletedFirstRun: Boolean(data.hasCompletedFirstRun),
   };
 }
 
-export async function updateSettings(settings: Settings): Promise<{
-  settings: Settings;
-}> {
+export async function updateSettings(
+  settings: Settings,
+): Promise<SettingsResponse> {
   const response = await fetch(`${API_BASE}/api/v1/settings`, {
     method: "POST",
     headers: {
@@ -287,7 +290,28 @@ export async function updateSettings(settings: Settings): Promise<{
   const data = await response.json();
   return {
     settings: new Settings(data.settings),
+    hasCompletedFirstRun: Boolean(data.hasCompletedFirstRun),
   };
+}
+
+export async function skipFirstRun(): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/v1/first-run/skip`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to skip first run");
+  }
+}
+
+export async function runOllamaInTerminal(): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/v1/first-run/terminal`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to open terminal");
+  }
 }
 
 export async function updateCloudSetting(
@@ -418,7 +442,9 @@ export interface ModelRecommendationsResponse {
   recommendations: ModelRecommendation[];
 }
 
-export async function getModelRecommendations(): Promise<ModelRecommendation[]> {
+export async function getModelRecommendations(): Promise<
+  ModelRecommendation[]
+> {
   const response = await fetch(
     `${API_BASE}/api/experimental/model-recommendations`,
   );
