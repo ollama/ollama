@@ -2409,6 +2409,15 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
 	runCmd.Flags().MarkHidden("imagegen")
 
+	agentCmd := &cobra.Command{
+		Use:     "agent",
+		Short:   "Run an agent",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    AgentHandler,
+	}
+	registerAgentFlags(agentCmd)
+
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
 		Short:   "Stop a running model",
@@ -2539,6 +2548,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		agentCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
@@ -2586,6 +2596,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		agentCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
