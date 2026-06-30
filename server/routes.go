@@ -1122,19 +1122,23 @@ func (s *Server) PullHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+
 		fn := func(r api.ProgressResponse) {
-			ch <- r
+			if !sendStreamValue(ctx, ch, r) {
+				cancel()
+			}
 		}
 
 		regOpts := &registryOptions{
 			Insecure: req.Insecure,
 		}
 
-		ctx, cancel := context.WithCancel(c.Request.Context())
-		defer cancel()
-
 		if err := PullModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			if !errors.Is(err, context.Canceled) {
+				sendStreamValue(ctx, ch, gin.H{"error": err.Error()})
+			}
 			return
 		}
 
@@ -2107,6 +2111,15 @@ func waitForStream(c *gin.Context, ch chan any) {
 	}
 
 	c.JSON(http.StatusOK, latest)
+}
+
+func sendStreamValue(ctx context.Context, ch chan<- any, v any) bool {
+	select {
+	case ch <- v:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func streamResponse(c *gin.Context, ch chan any) {
