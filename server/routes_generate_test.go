@@ -56,13 +56,16 @@ type mockRunner struct {
 	// CompletionRequest is only valid until the next call to Completion
 	llm.CompletionRequest
 	llm.CompletionResponse
-	CompletionFn  func(context.Context, llm.CompletionRequest, func(llm.CompletionResponse)) error
-	ChatRequest   llm.ChatRequest
-	ChatResponse  llm.ChatResponse
-	ChatFn        func(context.Context, llm.ChatRequest, func(llm.ChatResponse)) error
-	Template      string
-	TemplateFn    func(context.Context, llm.ChatRequest) (string, error)
-	contextLength int
+	CompletionFn    func(context.Context, llm.CompletionRequest, func(llm.CompletionResponse)) error
+	ChatRequest     llm.ChatRequest
+	ChatResponse    llm.ChatResponse
+	ChatFn          func(context.Context, llm.ChatRequest, func(llm.ChatResponse)) error
+	Template        string
+	TemplateFn      func(context.Context, llm.ChatRequest) (string, error)
+	contextLength   int
+	mu              sync.Mutex
+	EmbeddingFn     func(context.Context, string) ([]float32, int, error)
+	EmbeddingInputs []string
 }
 
 func (m *mockRunner) Completion(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
@@ -97,6 +100,26 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	}
 
 	return
+}
+
+func (mockRunner) Detokenize(_ context.Context, tokens []int) (string, error) {
+	fields := make([]string, len(tokens))
+	for i := range fields {
+		fields[i] = "x"
+	}
+	return strings.Join(fields, " "), nil
+}
+
+func (m *mockRunner) Embedding(ctx context.Context, input string) ([]float32, int, error) {
+	m.mu.Lock()
+	m.EmbeddingInputs = append(m.EmbeddingInputs, input)
+	m.mu.Unlock()
+
+	if m.EmbeddingFn != nil {
+		return m.EmbeddingFn(ctx, input)
+	}
+
+	return []float32{1, 0}, len(strings.Fields(input)), nil
 }
 
 func (mockRunner) Ping(_ context.Context) error { return nil }

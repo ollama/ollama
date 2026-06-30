@@ -28,6 +28,20 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner"
 )
 
+type numBatchPolicy int
+
+const (
+	// numBatchFixed requires the requested NumBatch to match the loaded runner.
+	numBatchFixed numBatchPolicy = iota
+
+	// numBatchAuto can reuse a loaded runner's automatically selected NumBatch.
+	numBatchAuto
+
+	// numBatchAutoGrowable can reuse a loaded runner if its automatically
+	// selected embedding NumBatch is at least as large as the requested one.
+	numBatchAutoGrowable
+)
+
 type LlmRequest struct {
 	ctx             context.Context //nolint:containedctx
 	model           *Model
@@ -45,13 +59,9 @@ type LlmRequest struct {
 	// default rather than explicit request, model, or environment config.
 	numCtxAuto bool
 
-	// numBatchAuto is true when NumBatch came from Ollama's default options
-	// rather than an explicit request or model option.
-	numBatchAuto bool
-
-	// embBatchAuto is true when NumBatch is an automatic embedding batch
-	// capacity that may grow to fit larger embedding inputs.
-	embBatchAuto bool
+	// numBatchPolicy records how NumBatch was derived so an already-loaded
+	// runner can decide whether a different requested batch size requires reload.
+	numBatchPolicy numBatchPolicy
 
 	// useMMapAuto is true when UseMMap was derived by the scheduler rather than
 	// explicitly requested.
@@ -134,21 +144,29 @@ func schedulerModelKey(m *Model) string {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
-	return s.getRunner(c, m, opts, sessionDuration, false, false, false, nil)
+	return s.getRunner(c, m, opts, sessionDuration, false, numBatchFixed, nil)
 }
 
 const embeddingBatchQuantum = 1024
 
-func (s *Scheduler) embeddingBatchOptionsForTokenCount(opts api.Options, embBatchAuto bool, tokenCount int) (api.Options, error) {
+func (s *Scheduler) validateEmbeddingBatchTokenCount(opts api.Options, policy numBatchPolicy, tokenCount int) error {
+	if tokenCount <= opts.NumBatch || policy == numBatchAutoGrowable {
+		return nil
+	}
+
+	return api.StatusError{
+		StatusCode:   http.StatusBadRequest,
+		ErrorMessage: fmt.Sprintf("input length (%d tokens) exceeds configured num_batch (%d tokens)", tokenCount, opts.NumBatch),
+	}
+}
+
+func (s *Scheduler) embeddingBatchOptionsForTokenCount(opts api.Options, policy numBatchPolicy, tokenCount int) (api.Options, error) {
 	if tokenCount <= opts.NumBatch {
 		return opts, nil
 	}
 
-	if !embBatchAuto {
-		return opts, api.StatusError{
-			StatusCode:   http.StatusBadRequest,
-			ErrorMessage: fmt.Sprintf("input length (%d tokens) exceeds configured num_batch (%d tokens)", tokenCount, opts.NumBatch),
-		}
+	if err := s.validateEmbeddingBatchTokenCount(opts, policy, tokenCount); err != nil {
+		return opts, err
 	}
 
 	opts.NumBatch = max(tokenCount, llm.DefaultEmbeddingNumBatch)
@@ -199,7 +217,7 @@ func effectiveContext(numCtx, trainCtx int) int {
 	return numCtx
 }
 
-func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool, numBatchAuto bool, embBatchAuto bool, shift *bool) (chan *runnerRef, chan error) {
+func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool, numBatchPolicy numBatchPolicy, shift *bool) (chan *runnerRef, chan error) {
 	if opts.NumCtx < 4 {
 		opts.NumCtx = 4
 	}
@@ -222,8 +240,7 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
 		numCtxAuto:      numCtxAuto,
-		numBatchAuto:    numBatchAuto,
-		embBatchAuto:    embBatchAuto,
+		numBatchPolicy:  numBatchPolicy,
 		contextShift:    contextShift,
 		shift:           shift,
 	}
@@ -746,8 +763,7 @@ iGPUScan:
 		loading:         true,
 		pid:             llama.Pid(),
 		numCtxAuto:      req.numCtxAuto,
-		numBatchAuto:    req.numBatchAuto,
-		embBatchAuto:    req.embBatchAuto,
+		numBatchPolicy:  req.numBatchPolicy,
 		useMMapAuto:     req.useMMapAuto,
 		contextShift:    req.contextShift,
 		trainContext:    trainContext,
@@ -845,7 +861,7 @@ const (
 )
 
 func (req *LlmRequest) applyAutomaticGenerationBatch(completion bool, effectiveCtx int, predictedVRAM, availableMemory uint64, flashAttention ml.FlashAttentionType, gpus []ml.DeviceInfo) {
-	if !completion || !req.numBatchAuto {
+	if !completion || req.numBatchPolicy != numBatchAuto {
 		return
 	}
 
@@ -1392,16 +1408,15 @@ type runnerRef struct {
 	expireTimer     *time.Timer
 	expiresAt       time.Time
 
-	model        *Model
-	modelPath    string
-	modelKey     string
-	numParallel  int
-	numCtxAuto   bool
-	numBatchAuto bool
-	embBatchAuto bool
-	useMMapAuto  bool
-	contextShift bool
-	trainContext int
+	model          *Model
+	modelPath      string
+	modelKey       string
+	numParallel    int
+	numCtxAuto     bool
+	numBatchPolicy numBatchPolicy
+	useMMapAuto    bool
+	contextShift   bool
+	trainContext   int
 	*api.Options
 }
 
@@ -1447,13 +1462,14 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	if runner.numCtxAuto && req.numCtxAuto {
 		optsNew.NumCtx = optsExisting.NumCtx
 	}
-	if runner.numBatchAuto && req.numBatchAuto {
-		if runner.embBatchAuto && req.embBatchAuto {
+	if runner.numBatchPolicy == req.numBatchPolicy {
+		switch req.numBatchPolicy {
+		case numBatchAuto:
+			optsNew.NumBatch = optsExisting.NumBatch
+		case numBatchAutoGrowable:
 			if optsExisting.NumBatch >= optsNew.NumBatch {
 				optsNew.NumBatch = optsExisting.NumBatch
 			}
-		} else {
-			optsNew.NumBatch = optsExisting.NumBatch
 		}
 	}
 	if runner.useMMapAuto && optsNew.UseMMap == nil {

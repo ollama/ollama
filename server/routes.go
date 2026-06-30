@@ -200,9 +200,40 @@ func usesAutomaticNumBatch(model *Model, requestOpts map[string]any) bool {
 	return true
 }
 
+func numBatchPolicyForRequest(model *Model, requestOpts map[string]any, embeddingBatchGrowable bool) numBatchPolicy {
+	if !usesAutomaticNumBatch(model, requestOpts) {
+		return numBatchFixed
+	}
+
+	if shouldApplyEmbeddingBatchDefault(model, requestOpts) {
+		if embeddingBatchGrowable {
+			return numBatchAutoGrowable
+		}
+		return numBatchFixed
+	}
+
+	return numBatchAuto
+}
+
+func (s *Server) validateEmbeddingBatchTokenCount(model *Model, requestOpts map[string]any, opts api.Options, tokenCount int) error {
+	return s.sched.validateEmbeddingBatchTokenCount(opts, numBatchPolicyForRequest(model, requestOpts, true), tokenCount)
+}
+
+type scheduleRunnerOptions struct {
+	embeddingTokenCount *int
+}
+
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
 // It returns the allocated runner, model instance, and consolidated options if successful and error otherwise.
-func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool, embeddingTokenCount ...int) (llm.LlamaServer, *Model, *api.Options, error) {
+func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
+	return s.scheduleRunnerWithOptions(ctx, name, caps, requestOpts, keepAlive, shift, scheduleRunnerOptions{})
+}
+
+func (s *Server) scheduleEmbeddingRunner(ctx context.Context, name string, requestOpts map[string]any, keepAlive *api.Duration, tokenCount int) (llm.LlamaServer, *Model, *api.Options, error) {
+	return s.scheduleRunnerWithOptions(ctx, name, []model.Capability{}, requestOpts, keepAlive, nil, scheduleRunnerOptions{embeddingTokenCount: &tokenCount})
+}
+
+func (s *Server) scheduleRunnerWithOptions(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool, loadOptions scheduleRunnerOptions) (llm.LlamaServer, *Model, *api.Options, error) {
 	if name == "" {
 		return nil, nil, nil, fmt.Errorf("model %w", errRequired)
 	}
@@ -225,23 +256,19 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 
 	numCtxAuto := usesAutomaticNumCtx(model, requestOpts)
 	embeddingBatchDefault := shouldApplyEmbeddingBatchDefault(model, requestOpts)
-	numBatchAuto := usesAutomaticNumBatch(model, requestOpts)
-	embBatchAuto := embeddingBatchDefault && embeddingTokenCount != nil
-	if embeddingBatchDefault && !embBatchAuto {
-		numBatchAuto = false
-	}
+	numBatchPolicy := numBatchPolicyForRequest(model, requestOpts, loadOptions.embeddingTokenCount != nil)
 	opts, err := s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, embeddingBatchDefault)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if embeddingTokenCount != nil {
-		opts, err = s.sched.embeddingBatchOptionsForTokenCount(opts, embBatchAuto, embeddingTokenCount[0])
+	if loadOptions.embeddingTokenCount != nil {
+		opts, err = s.sched.embeddingBatchOptionsForTokenCount(opts, numBatchPolicy, *loadOptions.embeddingTokenCount)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 	}
 
-	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchAuto, embBatchAuto, shift)
+	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchPolicy, shift)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
@@ -817,7 +844,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	runnerCtx, releaseRunner := context.WithCancel(c.Request.Context())
 	defer releaseRunner()
 
-	r, m, opts, err := s.scheduleRunner(runnerCtx, name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil, 0)
+	r, m, opts, err := s.scheduleEmbeddingRunner(runnerCtx, name.String(), req.Options, req.KeepAlive, 0)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -851,6 +878,20 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	embeddingTokenCount := func(tokens []int) int {
 		return 2*len(tokens) - adjustTokenLimit(tokens, len(tokens))
 	}
+
+	embeddingTokenLimit := func(tokens []int, limit int) int {
+		if limit <= 0 {
+			return 0
+		}
+
+		tokenLimit := min(len(tokens), limit)
+		for tokenLimit > 0 && embeddingTokenCount(tokens[:tokenLimit]) > limit {
+			tokenLimit--
+		}
+		return tokenLimit
+	}
+
+	embeddingBatchPolicy := numBatchPolicyForRequest(m, req.Options, true)
 
 	inputTokensAndContext := func(text string) ([]int, int, error) {
 		tokens, err := r.Tokenize(ctx, text)
@@ -886,11 +927,16 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return text, embeddingTokenCount(tokens), nil
 		}
 
-		if len(tokens) <= ctxLen {
+		tokenLimit := ctxLen
+		if embeddingBatchPolicy != numBatchAutoGrowable {
+			tokenLimit = min(tokenLimit, embeddingTokenLimit(tokens, opts.NumBatch))
+		}
+
+		if len(tokens) <= tokenLimit {
 			return text, embeddingTokenCount(tokens), nil
 		}
 
-		truncatedTokens := tokens[:ctxLen]
+		truncatedTokens := tokens[:tokenLimit]
 		truncated, err := r.Detokenize(ctx, truncatedTokens)
 		if err != nil {
 			return "", 0, err
@@ -920,29 +966,29 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	if maxTokenCount > opts.NumBatch {
-		nextOpts, err := s.sched.embeddingBatchOptionsForTokenCount(*opts, shouldApplyEmbeddingBatchDefault(m, req.Options), maxTokenCount)
-		if err != nil {
+		if err := s.validateEmbeddingBatchTokenCount(m, req.Options, *opts, maxTokenCount); err != nil {
 			handleScheduleError(c, req.Model, err)
 			return
 		}
 
-		slog.Info(
-			"reloading runner for larger embedding batch",
-			"model", req.Model,
-			"current_num_batch", opts.NumBatch,
-			"next_num_batch", nextOpts.NumBatch,
-			"required_tokens", maxTokenCount,
-		)
+		currentNumBatch := opts.NumBatch
 		releaseRunner()
 		runnerCtx, releaseRunner = context.WithCancel(c.Request.Context())
 		defer releaseRunner()
 		ctx = runnerCtx
 
-		r, _, opts, err = s.scheduleRunner(runnerCtx, name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil, maxTokenCount)
+		r, _, opts, err = s.scheduleEmbeddingRunner(runnerCtx, name.String(), req.Options, req.KeepAlive, maxTokenCount)
 		if err != nil {
 			handleScheduleError(c, req.Model, err)
 			return
 		}
+		slog.Info(
+			"reloaded runner for larger embedding batch",
+			"model", req.Model,
+			"current_num_batch", currentNumBatch,
+			"next_num_batch", opts.NumBatch,
+			"required_tokens", maxTokenCount,
+		)
 		checkpointLoaded = time.Now()
 	}
 
@@ -950,7 +996,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	embeddings := make([][]float32, len(input))
 	var totalTokens uint64
 	for i, text := range input {
-		i, text := i, text
 		g.Go(func() error {
 			embedding, tokenCount, err := r.Embedding(ctx, text)
 			if err != nil {
