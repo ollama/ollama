@@ -132,6 +132,31 @@ endif()
 # apply the patch by hand while iterating on the compat layer.
 set(_ollama_compat_patch_cmd "")
 include(${CMAKE_CURRENT_SOURCE_DIR}/../compat/compat.cmake)
+
+# ---------------------------------------------------------------------------
+# s390x big-endian feature flag
+#
+# OLLAMA_S390X_BIGENDIAN controls whether the compat layer byte-swaps the
+# little-endian scalar fields (tensor scales, KV metadata, etc.) that GGUF
+# files carry on disk.  It defaults to ON only when the target processor is
+# s390x; every other architecture leaves it OFF.
+#
+# To force-enable on a non-s390x host (e.g. cross-compilation testing):
+#   cmake -DOLLAMA_S390X_BIGENDIAN=ON ...
+#
+# To force-disable on real s390x hardware (debugging / perf comparison):
+#   cmake -DOLLAMA_S390X_BIGENDIAN=OFF ...
+# ---------------------------------------------------------------------------
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
+    set(_ollama_s390x_bigendian_default ON)
+else()
+    set(_ollama_s390x_bigendian_default OFF)
+endif()
+option(OLLAMA_S390X_BIGENDIAN
+    "Enable big-endian GGUF byte-swap in the Ollama compat layer (auto ON for s390x)"
+    ${_ollama_s390x_bigendian_default})
+message(STATUS "OLLAMA_S390X_BIGENDIAN = ${OLLAMA_S390X_BIGENDIAN} (processor: ${CMAKE_SYSTEM_PROCESSOR})")
+
 option(OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH
     "Skip llama.cpp compat patch application because the source is already prepared"
     OFF)
@@ -203,6 +228,16 @@ if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     if(TARGET mtmd)
         target_compile_definitions(mtmd PRIVATE OLLAMA_COMPAT_MTMD_BUILD)
     endif()
+endif()
+
+# Pass OLLAMA_BIGENDIAN_BSWAP when the s390x big-endian feature flag is ON
+# so the compat layer byte-swaps tensor scale fields from little-endian GGUF.
+# Kept outside the _ollama_link_compat_sources guard so OLLAMA_S390X_BIGENDIAN
+# is always evaluated — preventing a CMake "unused variable" warning when the
+# compat sources block is skipped (e.g. OLLAMA_LLAMA_CPP_COMPAT_DIR not set).
+if(OLLAMA_S390X_BIGENDIAN AND TARGET llama)
+    target_compile_definitions(llama PRIVATE OLLAMA_BIGENDIAN_BSWAP)
+    message(STATUS "OLLAMA_BIGENDIAN_BSWAP enabled on target 'llama'")
 endif()
 
 # Link temporary architecture sources (llama/compat/models/*.cpp) into the

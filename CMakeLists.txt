@@ -63,4 +63,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/llama/server/CMakeLists.txt")
 else()
     set(OLLAMA_HAVE_LLAMA_SERVER FALSE)
 endif()
+
+# Declare s390x big-endian feature flag at the root so passing
+# -DOLLAMA_S390X_BIGENDIAN=ON/OFF here is a known variable.
+# The resolved value is forwarded to the llama/server ExternalProject
+# in cmake/local.cmake; the actual default logic lives in llama/server/CMakeLists.txt.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
+    option(OLLAMA_S390X_BIGENDIAN "Enable big-endian GGUF byte-swap (auto ON for s390x)" ON)
+else()
+    option(OLLAMA_S390X_BIGENDIAN "Enable big-endian GGUF byte-swap (auto ON for s390x)" OFF)
+endif()
+
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/local.cmake)

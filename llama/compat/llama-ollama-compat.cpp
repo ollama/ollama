@@ -3210,6 +3210,16 @@ bool translate_metadata(const llama_model_loader * ml,
         std::lock_guard<std::mutex> lk(g_loader_path_mutex);
         g_loader_paths[ml] = fname ? fname : "";
     }
+    // On big-endian hosts (s390x) every tensor's FP16/FP32 scale fields must
+    // be byteswapped after loading from the little-endian GGUF file. mmap
+    // provides a read-only view of the file — there is no writeable buffer to
+    // swap in-place. Force the read() path so bswap_tensor_data (injected by
+    // 003-tensor-data-big-endian-byteswap.patch) gets a writable buffer.
+    // Controlled by OLLAMA_S390X_BIGENDIAN_BSWAP cmake option (ON by default
+    // on s390x); set OFF if supplying pre-converted big-endian GGUFs.
+#if defined(OLLAMA_BIGENDIAN_BSWAP)
+    disable_mmap_for(ml);
+#endif
     // embeddinggemma must run before gemma3: it switches arch_name to
     // "gemma-embedding", which is what later checks (and the loader's KV
     // prefix) need to see.

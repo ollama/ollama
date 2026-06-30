@@ -130,6 +130,51 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
+# s390x: download pre-built binary from this repo's GitHub Releases
+if [ "$ARCH" = "s390x" ]; then
+    S390X_REPO="https://github.com/Brice12347/ollama-s390x"
+    status "Fetching latest s390x release from ${S390X_REPO}..."
+
+    RELEASE_TAG=$(curl --fail --silent --location \
+        "https://api.github.com/repos/Brice12347/ollama-s390x/releases/latest" \
+        | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+
+    if [ -z "$RELEASE_TAG" ]; then
+        error "Could not determine latest release tag from ${S390X_REPO}/releases"
+    fi
+
+    DOWNLOAD_URL="${S390X_REPO}/releases/download/${RELEASE_TAG}/ollama-linux-s390x.tgz"
+    status "Downloading ollama-linux-s390x.tgz (${RELEASE_TAG})..."
+
+    for BINDIR in /usr/local/bin /usr/bin /bin; do
+        echo $PATH | grep -q $BINDIR && break || continue
+    done
+    OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
+
+    if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ]; then
+        status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
+        $SUDO rm -rf "$OLLAMA_INSTALL_DIR/lib/ollama"
+    fi
+    $SUDO install -o0 -g0 -m755 -d $BINDIR
+    $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
+
+    curl --fail --show-error --location --progress-bar "$DOWNLOAD_URL" | \
+        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+
+    if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ]; then
+        status "Making ollama accessible in the PATH in $BINDIR"
+        $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
+    fi
+
+    status "IBM Z (s390x) architecture detected - running in CPU-only mode"
+    install_success() {
+        status 'The Ollama API is now available at 127.0.0.1:11434.'
+        status 'Install complete. Run "ollama" from the command line.'
+    }
+    install_success
+    exit 0
+fi
+
 # Function to download and extract with fallback from zst to tgz
 download_and_extract() {
     local url_base="$1"

@@ -1,0 +1,136 @@
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1385,6 +1385,108 @@ void llama_model_loader::get_mapping_range(size_t * first, size_t * last, void *
+     }
+ }
+ 
++#if defined(OLLAMA_BIGENDIAN_BSWAP)
++// Byte-swap the endian-sensitive fields of a tensor block array loaded from a
++// little-endian GGUF file on a big-endian (s390x) host.
++//
++// GGUF files are always stored little-endian.  Integer byte arrays (the packed
++// quant bits themselves) and sub-byte values need no swap -- only the FP16/FP32
++// scale fields at well-known byte offsets within each block type require it.
++//
++// Block layout reference (QK_K = 256, K_SCALE_SIZE = 12):
++//   F16/BF16:   every 2 bytes are one FP16 value
++//   F32:        every 4 bytes are one float
++//   Q4_0:       [d:FP16(2), qs:u8[16]]                      - d at offset 0
++//   Q4_1:       [d:FP16(2), m:FP16(2), qs:u8[16]]           - d,m at offsets 0,2
++//   Q5_0:       [d:FP16(2), qh:u32(4), qs:u8[16]]           - d at offset 0
++//   Q5_1:       [d:FP16(2), m:FP16(2), qh:u32(4), qs:u8[16]] - d,m at 0,2
++//   Q8_0:       [d:FP16(2), qs:i8[32]]                      - d at offset 0
++//   Q2_K (84B): [scales:u8[16], qs:u8[64], d:FP16(2), dmin:FP16(2)] - d at 80
++//   Q3_K (110B):[hmask:u8[32], qs:u8[64], scales:u8[12], d:FP16(2)] - d at 108
++//   Q4_K (144B):[d:FP16(2), dmin:FP16(2), scales:u8[12], qs:u8[128]] - d at 0
++//   Q5_K (176B):[d:FP16(2), dmin:FP16(2), scales:u8[12], qh:u8[32], qs:u8[128]] - d at 0
++//   Q6_K (210B):[ql:u8[128], qh:u8[64], scales:i8[16], d:FP16(2)]   - d at 208
++static void bswap_buf(ggml_type type, uint8_t * data, size_t nbytes) {
++    // Scalar float types -- swap every element.
++    if (type == GGML_TYPE_F16 || type == GGML_TYPE_BF16) {
++        for (size_t off = 0; off + 1 < nbytes; off += 2) {
++            uint8_t tmp = data[off]; data[off] = data[off + 1]; data[off + 1] = tmp;
++        }
++        return;
++    }
++    if (type == GGML_TYPE_F32) {
++        for (size_t off = 0; off + 3 < nbytes; off += 4) {
++            uint8_t tmp = data[off]; data[off] = data[off + 3]; data[off + 3] = tmp;
++            tmp = data[off + 1]; data[off + 1] = data[off + 2]; data[off + 2] = tmp;
++        }
++        return;
++    }
++    // Legacy quants: one or two FP16 fields at the start of each block.
++    if (type == GGML_TYPE_Q4_0 || type == GGML_TYPE_Q5_0 || type == GGML_TYPE_Q8_0) {
++        const size_t blk_size = ggml_type_size(type);
++        for (size_t off = 0; off + blk_size <= nbytes; off += blk_size) {
++            uint8_t * b = data + off;
++            uint8_t tmp = b[0]; b[0] = b[1]; b[1] = tmp; // d
++        }
++        return;
++    }
++    if (type == GGML_TYPE_Q4_1 || type == GGML_TYPE_Q5_1) {
++        const size_t blk_size = ggml_type_size(type);
++        for (size_t off = 0; off + blk_size <= nbytes; off += blk_size) {
++            uint8_t * b = data + off;
++            uint8_t tmp = b[0]; b[0] = b[1]; b[1] = tmp; // d
++            tmp = b[2]; b[2] = b[3]; b[3] = tmp;          // m
++        }
++        return;
++    }
++    // K-quant super-blocks: FP16 scale fields at type-specific byte offsets.
++    // Q4_K, Q5_K: d+dmin at bytes 0-3 (start of block).
++    if (type == GGML_TYPE_Q4_K || type == GGML_TYPE_Q5_K) {
++        const size_t blk_size = ggml_type_size(type);
++        for (size_t off = 0; off + blk_size <= nbytes; off += blk_size) {
++            uint8_t * b = data + off;
++            uint8_t tmp = b[0]; b[0] = b[1]; b[1] = tmp; // d
++            tmp = b[2]; b[2] = b[3]; b[3] = tmp;          // dmin
++        }
++        return;
++    }
++    // Q2_K (84B): d+dmin at bytes 80-83 (after scales[16]+qs[64]).
++    if (type == GGML_TYPE_Q2_K) {
++        const size_t blk_size = ggml_type_size(type);
++        for (size_t off = 0; off + blk_size <= nbytes; off += blk_size) {
++            uint8_t * b = data + off + 80;
++            uint8_t tmp = b[0]; b[0] = b[1]; b[1] = tmp; // d
++            tmp = b[2]; b[2] = b[3]; b[3] = tmp;          // dmin
++        }
++        return;
++    }
++    // Q3_K (110B): d at byte 108 (after hmask[32]+qs[64]+scales[12]).
++    if (type == GGML_TYPE_Q3_K) {
++        const size_t blk_size = ggml_type_size(type);
++        for (size_t off = 0; off + blk_size <= nbytes; off += blk_size) {
++            uint8_t * b = data + off + 108;
++            uint8_t tmp = b[0]; b[0] = b[1]; b[1] = tmp; // d
++        }
++        return;
++    }
++    // Q6_K (210B): d at byte 208 (after ql[128]+qh[64]+scales[16]).
++    if (type == GGML_TYPE_Q6_K) {
++        const size_t blk_size = ggml_type_size(type);
++        for (size_t off = 0; off + blk_size <= nbytes; off += blk_size) {
++            uint8_t * b = data + off + 208;
++            uint8_t tmp = b[0]; b[0] = b[1]; b[1] = tmp; // d
++        }
++        return;
++    }
++}
++static void bswap_tensor_data(struct ggml_tensor * t) {
++    bswap_buf(t->type, (uint8_t *)t->data, ggml_nbytes(t));
++}
++#else
++static void bswap_buf(ggml_type, uint8_t *, size_t) {}
++static void bswap_tensor_data(struct ggml_tensor *) {}
++#endif
++
+ void llama_model_loader::load_data_for(struct ggml_tensor * cur) const {
+     const auto & w = require_weight(ggml_get_name(cur));
+     if (llama_ollama_compat::maybe_load_text_tensor(this, cur, w.offs)) return;
+@@ -1404,6 +1506,7 @@ void llama_model_loader::load_data_for(struct ggml_tensor * cur) const {
+         file->read_raw(cur->data, ggml_nbytes(cur));
+     }
+ 
++    bswap_tensor_data(cur);
+     if (check_tensors && !ggml_validate_row_data(cur->type, cur->data, ggml_nbytes(cur))) {
+         throw std::runtime_error(format("tensor '%s' has invalid data", ggml_get_name(cur)));
+     }
+@@ -1573,6 +1676,7 @@ bool llama_model_loader::load_all_data(
+             if (ggml_backend_buffer_is_host(cur->buffer)) {
+                 file->seek(weight->offs, SEEK_SET);
+                 file->read_raw(cur->data, n_size);
++                bswap_tensor_data(cur);
+                 if (check_tensors) {
+                     validation_result.emplace_back(std::async(std::launch::async, [cur, n_size] {
+                         return std::make_pair(cur, ggml_validate_row_data(cur->type, cur->data, n_size));
+@@ -1636,6 +1740,7 @@ bool llama_model_loader::load_all_data(
+                     read_buf.resize(n_size);
+                     file->seek(weight->offs, SEEK_SET);
+                     file->read_raw(read_buf.data(), n_size);
++                    bswap_buf(cur->type, (uint8_t *)read_buf.data(), n_size);
+                     ggml_backend_tensor_set(cur, read_buf.data(), 0, n_size);
+                     if (check_tensors && !ggml_validate_row_data(cur->type, read_buf.data(), n_size)) {
+                         throw std::runtime_error(format("tensor '%s' has invalid data", ggml_get_name(cur)));

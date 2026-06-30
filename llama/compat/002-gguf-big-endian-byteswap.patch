@@ -1,0 +1,61 @@
+diff --git a/ggml/src/gguf.cpp b/ggml/src/gguf.cpp
+index 5e19861..9c6d211 100644
+--- a/ggml/src/gguf.cpp
++++ b/ggml/src/gguf.cpp
+@@ -239,9 +239,30 @@ struct gguf_reader {
+           max_chunk_read(max_chunk_read),
+           data_offset(data_offset),
+           nbytes_remain(nbytes_remain) {
++        need_bswap = false;
++#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__)
++        if (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__) { need_bswap = true; }
++#elif defined(__BIG_ENDIAN__)
++        need_bswap = true;
++#endif
+         GGML_ASSERT(max_chunk_read > 0);
+     }
+ 
++    // Whether the host is big-endian. GGUF files are always little-endian on disk.
++    mutable bool need_bswap;
++
++    template <typename T>
++    static T bswap_if_needed(T v, bool do_bswap) {
++        if (!do_bswap || sizeof(T) == 1) { return v; }
++        uint8_t buf[sizeof(T)];
++        memcpy(buf, &v, sizeof(T));
++        for (size_t lo = 0, hi = sizeof(T) - 1; lo < hi; ++lo, --hi) {
++            uint8_t tmp = buf[lo]; buf[lo] = buf[hi]; buf[hi] = tmp;
++        }
++        memcpy(&v, buf, sizeof(T));
++        return v;
++    }
++
+     // helper for remaining bytes in a file
+     static uint64_t file_remain(FILE * file) {
+         const int64_t cur = gguf_ftell(file);
+@@ -269,7 +290,9 @@ struct gguf_reader {
+         if (size > nbytes_remain) {
+             return false;
+         }
+-        return read_raw(&dst, size) == size;
++        if (read_raw(&dst, size) != size) { return false; }
++        dst = bswap_if_needed(dst, need_bswap);
++        return true;
+     }
+ 
+     template <typename T>
+@@ -495,8 +518,12 @@ static struct gguf_context * gguf_init_from_reader(const struct gguf_reader & gr
+          * endianness as the host system.
+         */
+         if (ok && (ctx->version & 0x0000FFFF) == 0x00000000) {
+-            GGML_LOG_ERROR("%s: failed to load model: this GGUF file version %" PRIu32 " is extremely large, is there a mismatch between the host and model endianness?\n", __func__, ctx->version);
+-            ok = false;
++            // On big-endian hosts gguf_reader already byte-swaps; this check is only
++            // meaningful on little-endian hosts with a genuinely corrupted file.
++            if (!gr.need_bswap) {
++                GGML_LOG_ERROR("%s: failed to load model: this GGUF file version %" PRIu32 " is extremely large, is there a mismatch between the host and model endianness?\n", __func__, ctx->version);
++                ok = false;
++            }
+         }
+ 
+         if (ok && ctx->version == 1) {
