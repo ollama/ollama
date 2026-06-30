@@ -475,6 +475,8 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 			metadata = byArchitecture[architecture]
 		case ggufKeyGeneralFileType:
 			info.FileType = ggml.FileType(ggufMetadataInt(kv.Value)).String()
+		case ggufKeyTokenizerChatTemplate:
+			info.Capabilities = chatTemplateCapabilities(info.Capabilities, kv.String())
 		default:
 			arch, suffix, _ := cutGGUFArchitectureKey(kv.Key)
 			value := byArchitecture[arch]
@@ -495,7 +497,7 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 
 func keepModelListGGUFKey(key string) bool {
 	switch key {
-	case ggufKeyGeneralArchitecture, ggufKeyGeneralFileType:
+	case ggufKeyGeneralArchitecture, ggufKeyGeneralFileType, ggufKeyTokenizerChatTemplate:
 		return true
 	}
 

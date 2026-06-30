@@ -104,6 +104,35 @@ func TestBuildModelListSummaryReadsGemma4MetadataBeforeArchitecture(t *testing.T
 	}
 }
 
+func TestBuildModelListSummaryReadsGGUFChatTemplateCapabilities(t *testing.T) {
+	setTestHome(t, t.TempDir())
+
+	_, digest := createBinFile(t, map[string]any{
+		"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}<think>{{ content }}</think>",
+	}, nil)
+	layer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := buildModelListSummary(model.ParseName("list-chat-template"), &manifest.Manifest{Layers: []manifest.Layer{layer}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, capability := range []model.Capability{model.CapabilityTools, model.CapabilityThinking, model.CapabilityCompletion} {
+		if !slices.Contains(summary.Capabilities, capability) {
+			t.Fatalf("capabilities = %v, want %s", summary.Capabilities, capability)
+		}
+	}
+
+	listModel := summary.ListModelResponse()
+	for _, capability := range []model.Capability{model.CapabilityTools, model.CapabilityThinking, model.CapabilityCompletion} {
+		if !slices.Contains(listModel.Capabilities, capability) {
+			t.Fatalf("list response capabilities = %v, want %s", listModel.Capabilities, capability)
+		}
+	}
+}
+
 func TestModelListCacheRefreshUpdatesEntry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
