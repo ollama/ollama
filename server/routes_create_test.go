@@ -132,6 +132,97 @@ func readCreatedModelConfig(t *testing.T, name string) model.ConfigV2 {
 	return cfg
 }
 
+func TestCreateMistral3DefaultsParser(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	tests := []struct {
+		name       string
+		kv         map[string]any
+		wantParser string
+	}{
+		{
+			name:       "without chat template",
+			wantParser: "ministral",
+		},
+		{
+			name: "with chat template",
+			kv: map[string]any{
+				"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
+			},
+			wantParser: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kv := map[string]any{
+				"general.architecture":          "mistral3",
+				"mistral3.block_count":          uint32(1),
+				"mistral3.context_length":       uint32(8192),
+				"mistral3.embedding_length":     uint32(4096),
+				"mistral3.attention.head_count": uint32(32),
+				"tokenizer.ggml.tokens":         []string{""},
+				"tokenizer.ggml.scores":         []float32{0},
+				"tokenizer.ggml.token_type":     []int32{0},
+			}
+			for k, v := range tt.kv {
+				kv[k] = v
+			}
+
+			_, digest := createBinFile(t, kv, []*ggml.Tensor{
+				{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			})
+
+			modelName := "test-mistral3-parser-" + strings.ReplaceAll(tt.name, " ", "-")
+			w := createRequest(t, (&Server{}).CreateHandler, api.CreateRequest{
+				Model:  modelName,
+				Files:  map[string]string{"model.gguf": digest},
+				Stream: &stream,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			cfg := readCreatedModelConfig(t, modelName+":latest")
+			if cfg.Parser != tt.wantParser {
+				t.Fatalf("Parser = %q, want %q", cfg.Parser, tt.wantParser)
+			}
+		})
+	}
+}
+
+func TestCreateMistral3DefaultsParserExplicitRequest(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, digest := createBinFile(t, map[string]any{
+		"general.architecture":          "mistral3",
+		"mistral3.block_count":          uint32(1),
+		"mistral3.context_length":       uint32(8192),
+		"mistral3.embedding_length":     uint32(4096),
+		"mistral3.attention.head_count": uint32(32),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, (&Server{}).CreateHandler, api.CreateRequest{
+		Model:  "test-mistral3-explicit-parser",
+		Files:  map[string]string{"model.gguf": digest},
+		Parser: "custom-parser",
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	cfg := readCreatedModelConfig(t, "test-mistral3-explicit-parser:latest")
+	if cfg.Parser != "custom-parser" {
+		t.Fatalf("Parser = %q, want custom-parser", cfg.Parser)
+	}
+}
+
 func TestCreateModelPreservesEmbeddedCompatibilityGGUFWithoutQuantization(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	oldRun := runLlamaQuantize

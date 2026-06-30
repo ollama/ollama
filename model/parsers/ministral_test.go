@@ -444,6 +444,38 @@ func TestMinistralParserAssignsSequentialToolCallIndices(t *testing.T) {
 	}
 }
 
+func TestMinistralParserAllowsNameArgument(t *testing.T) {
+	parser := &MinistralParser{}
+	parser.Init([]api.Tool{{Function: api.ToolFunction{Name: "foo"}}}, nil, nil)
+
+	content, thinking, calls, err := parser.Add(`[TOOL_CALLS]foo[ARGS]{"name":"bar"}`, true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+
+	expected := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Index: 0,
+				Name:  "foo",
+				Arguments: testArgs(map[string]any{
+					"name": "bar",
+				}),
+			},
+		},
+	}
+
+	if diff := cmp.Diff(expected, calls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestMinistralParser_Errors(t *testing.T) {
 	t.Run("unknown tool returns error", func(t *testing.T) {
 		p := &MinistralParser{}
