@@ -65,6 +65,39 @@ func TestModelListCacheHydratesSummary(t *testing.T) {
 	}
 }
 
+func TestModelListCacheIncludesParserCapabilitiesWithoutTemplate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	_, digest := createBinFile(t, nil, nil)
+
+	var s Server
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "list-parser-caps",
+		Files:  map[string]string{"model.gguf": digest},
+		Parser: "deepseek3",
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create model status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+
+	cache := newModelListCache()
+	if err := cache.hydrate(context.Background()); err != nil {
+		t.Fatalf("hydrate failed: %v", err)
+	}
+
+	summary, ok := cache.Get(model.ParseName("list-parser-caps"))
+	if !ok {
+		t.Fatal("list summary missing")
+	}
+
+	for _, capability := range []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking} {
+		if !slices.Contains(summary.Capabilities, capability) {
+			t.Fatalf("capabilities = %v, want %s", summary.Capabilities, capability)
+		}
+	}
+}
+
 func TestModelListCacheRefreshUpdatesEntry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
