@@ -20,10 +20,6 @@ const (
 
 type Read struct{}
 
-func NewRead() *Read {
-	return &Read{}
-}
-
 func (r *Read) Name() string {
 	return "read"
 }
@@ -98,10 +94,6 @@ func (r *Read) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 }
 
 type Edit struct{}
-
-func NewEdit() *Edit {
-	return &Edit{}
-}
 
 func (e *Edit) Name() string {
 	return "edit"

@@ -17,7 +17,7 @@ func TestEditReplacesUniqueText(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := NewEdit().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+	result, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path":     "note.txt",
 		"old_text": "hello",
 		"new_text": "hi",
@@ -45,7 +45,7 @@ func TestEditRequiresUniqueMatchByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := NewEdit().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path":     "note.txt",
 		"old_text": "same",
 		"new_text": "other",
@@ -60,7 +60,7 @@ func TestEditRequiresUniqueMatchByDefault(t *testing.T) {
 
 func TestEditRejectsEscapingPath(t *testing.T) {
 	dir := t.TempDir()
-	_, err := NewEdit().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path":     "../outside.txt",
 		"old_text": "old",
 		"new_text": "new",
@@ -83,7 +83,7 @@ func TestEditRejectsSymlinkEscape(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	_, err := NewEdit().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path":     filepath.Join("link", "note.txt"),
 		"old_text": "old",
 		"new_text": "new",
@@ -115,7 +115,7 @@ func TestEditRejectsFinalSymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	_, err := NewEdit().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path":     "link.txt",
 		"old_text": "old",
 		"new_text": "new",
@@ -152,7 +152,7 @@ func TestReadRejectsParentOutsideCurrentWorkingDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: subdir}, map[string]any{
+	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: subdir}, map[string]any{
 		"path": "../note.txt",
 	})
 	if err == nil {
@@ -170,7 +170,7 @@ func TestReadDefaultsToEntireFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+	result, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path": "note.txt",
 	})
 	if err != nil {
@@ -187,7 +187,7 @@ func TestReadStartEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+	result, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path":  "note.txt",
 		"start": 2,
 		"end":   3,
@@ -206,7 +206,7 @@ func TestReadStartOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+	result, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path":  "note.txt",
 		"start": 3,
 	})
@@ -224,7 +224,7 @@ func TestReadEndOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+	result, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path": "note.txt",
 		"end":  2,
 	})
@@ -242,7 +242,7 @@ func TestReadRejectsInvalidRange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := NewRead().Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path":  "note.txt",
 		"start": 4,
 		"end":   2,

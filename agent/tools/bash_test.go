@@ -18,7 +18,7 @@ func TestBashReportsFinalWorkingDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := NewBash().Execute(context.Background(), agent.ToolContext{WorkingDir: root}, map[string]any{
+	result, err := (&Bash{}).Execute(context.Background(), agent.ToolContext{WorkingDir: root}, map[string]any{
 		"command": shellTestCommand("cd sub && pwd", "Set-Location sub; Get-Location"),
 	})
 	if err != nil {
@@ -37,7 +37,7 @@ func TestBashReportsFinalWorkingDir(t *testing.T) {
 }
 
 func TestBashBoundsOutputWhileRunning(t *testing.T) {
-	result, err := NewBash().Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+	result, err := (&Bash{}).Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
 		"command": shellTestCommand("yes x | head -c 70000", "[Console]::Out.Write(('x' * 70000))"),
 	})
 	if err != nil {
@@ -58,7 +58,7 @@ func TestBashReportsCanceledCommand(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	result, err := NewBash().Execute(ctx, agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+	result, err := (&Bash{}).Execute(ctx, agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
 		"command": shellTestCommand("sleep 10", "Start-Sleep -Seconds 10"),
 	})
 	if err != nil {

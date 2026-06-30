@@ -26,10 +26,6 @@ const (
 
 type WebSearch struct{}
 
-func NewWebSearch() *WebSearch {
-	return &WebSearch{}
-}
-
 func (w *WebSearch) Name() string {
 	return "web_search"
 }
@@ -102,10 +98,6 @@ func (w *WebSearch) Execute(ctx context.Context, _ agent.ToolContext, args map[s
 }
 
 type WebFetch struct{}
-
-func NewWebFetch() *WebFetch {
-	return &WebFetch{}
-}
 
 func (w *WebFetch) Name() string {
 	return "web_fetch"

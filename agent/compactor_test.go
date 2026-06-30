@@ -56,11 +56,11 @@ func TestSimpleCompactorSummarizesOldMessages(t *testing.T) {
 			{Message: api.Message{Role: "assistant", Content: "summary"}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 16000,
 		KeepUserTurns:       2,
 		Threshold:           0.5,
-	})
+	}}
 
 	messages := []api.Message{
 		{Role: "system", Content: "stay pinned"},
@@ -111,11 +111,11 @@ func TestSimpleCompactorKeepsOnlySummaryForSmallContext(t *testing.T) {
 			{Message: api.Message{Role: "assistant", Content: "small context summary"}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: compactOnlySummaryContextTokens - 1,
 		KeepUserTurns:       3,
 		Threshold:           0.5,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		ChatID:       "chat-1",
@@ -153,11 +153,11 @@ func TestSimpleCompactorAddsContinueTaskInstructionOnlyToToolResult(t *testing.T
 			{Message: api.Message{Role: "assistant", Content: "summary"}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 100,
 		KeepUserTurns:       1,
 		Threshold:           0.5,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		ChatID:       "chat-1",
@@ -192,11 +192,11 @@ func TestSimpleCompactorTruncatesOversizedSummary(t *testing.T) {
 			{Message: api.Message{Role: "assistant", Content: longSummary}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 100,
 		KeepUserTurns:       1,
 		Threshold:           0.5,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		ChatID: "chat-1",
@@ -232,11 +232,11 @@ func TestSimpleCompactorRetriesEmptySummaryWithThinkFalse(t *testing.T) {
 			{{Message: api.Message{Role: "assistant", Content: "fallback summary"}}},
 		},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 100,
 		KeepUserTurns:       1,
 		Threshold:           0.5,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		Model: "model",
@@ -275,11 +275,11 @@ func TestSimpleCompactorIgnoresUnsupportedThinkFalseFallback(t *testing.T) {
 			api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: "model does not support thinking"},
 		},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 100,
 		KeepUserTurns:       1,
 		Threshold:           0.5,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		Model: "model",
@@ -317,11 +317,11 @@ func TestSimpleCompactorFallsBackToUnsetThinkWhenThinkFalseUnsupported(t *testin
 			nil,
 		},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 100,
 		KeepUserTurns:       1,
 		Threshold:           0.5,
-	})
+	}}
 	thinkHigh := &api.ThinkValue{Value: "high"}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
@@ -360,11 +360,11 @@ func TestSimpleCompactorKeepsFewerTurnsForShortChats(t *testing.T) {
 			{Message: api.Message{Role: "assistant", Content: "short summary"}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 16000,
 		KeepUserTurns:       3,
 		Threshold:           0.5,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		ChatID: "chat-1",
@@ -397,11 +397,11 @@ func TestSimpleCompactorCanArchiveWholeShortChat(t *testing.T) {
 			{Message: api.Message{Role: "assistant", Content: "whole summary"}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 100,
 		KeepUserTurns:       3,
 		Threshold:           0.5,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		ChatID: "chat-1",
@@ -426,10 +426,10 @@ func TestSimpleCompactorCanArchiveWholeShortChat(t *testing.T) {
 
 func TestSimpleCompactorSkipsBelowThreshold(t *testing.T) {
 	client := &fakeClient{}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 100,
 		Threshold:           0.8,
-	})
+	}}
 
 	messages := []api.Message{
 		{Role: "user", Content: "one"},
@@ -466,11 +466,11 @@ func TestSimpleCompactorUsesEstimatedMessagesWhenPromptEvalMissing(t *testing.T)
 			{Message: api.Message{Role: "assistant", Content: "estimated summary"}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 100,
 		KeepUserTurns:       1,
 		Threshold:           0.8,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		Model: "model",
@@ -499,10 +499,10 @@ func TestSimpleCompactorUsesEstimatedMessagesWhenPromptEvalMissing(t *testing.T)
 }
 
 func TestSimpleCompactorEstimateIncludesRequestPreamble(t *testing.T) {
-	compactor := NewSimpleCompactor(nil, CompactionOptions{
+	compactor := &SimpleCompactor{Client: nil, Options: CompactionOptions{
 		ContextWindowTokens: 100,
 		Threshold:           0.8,
-	})
+	}}
 
 	if !compactor.shouldCompact(CompactionRequest{
 		SystemPrompt: strings.Repeat("system ", 360),
@@ -635,11 +635,11 @@ func TestSimpleCompactorForceCompactsWithoutPromptEvalCount(t *testing.T) {
 			{Message: api.Message{Role: "assistant", Content: "forced summary"}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 100,
 		KeepUserTurns:       1,
 		Threshold:           0.8,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		Model: "model",
@@ -667,10 +667,10 @@ func TestSimpleCompactorDefaultsToKeepingThreeUserTurns(t *testing.T) {
 			{Message: api.Message{Role: "assistant", Content: "summary"}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 16000,
 		Threshold:           0.5,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		ChatID: "chat-1",
@@ -704,11 +704,11 @@ func TestSimpleCompactorCarriesPreviousSummary(t *testing.T) {
 			{Message: api.Message{Role: "assistant", Content: "new summary"}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 16000,
 		KeepUserTurns:       1,
 		Threshold:           0.5,
-	})
+	}}
 
 	result, err := compactor.MaybeCompact(context.Background(), CompactionRequest{
 		Model: "model",
@@ -737,11 +737,11 @@ func TestSimpleCompactorCarriesPreviousToolSummaryAndPlacesNewSummaryBeforeKeptS
 			{Message: api.Message{Role: "assistant", Content: "new summary"}},
 		}},
 	}
-	compactor := NewSimpleCompactor(client, CompactionOptions{
+	compactor := &SimpleCompactor{Client: client, Options: CompactionOptions{
 		ContextWindowTokens: 16000,
 		KeepUserTurns:       1,
 		Threshold:           0.5,
-	})
+	}}
 
 	messages := []api.Message{
 		{Role: "user", Content: "kept before old summary"},

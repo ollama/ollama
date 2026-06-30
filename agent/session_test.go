@@ -142,9 +142,9 @@ func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionReque
 	}, nil
 }
 
-type wrappingToolAuthorizer struct {
-	inner ToolAuthorizer
-	calls int
+type recordingApprovalPrompter struct {
+	requests []ApprovalRequest
+	results  []Approval
 }
 
 func (staticTool) Name() string {
@@ -272,9 +272,14 @@ func (t approvalTestTool) Execute(context.Context, ToolContext, map[string]any) 
 	return ToolResult{Content: "approved"}, nil
 }
 
-func (h *wrappingToolAuthorizer) AuthorizeTools(ctx context.Context, req ApprovalRequest) (ApprovalResult, error) {
-	h.calls++
-	return h.inner.AuthorizeTools(ctx, req)
+func (p *recordingApprovalPrompter) PromptApproval(_ context.Context, req ApprovalRequest) (Approval, error) {
+	p.requests = append(p.requests, req)
+	if len(p.results) == 0 {
+		return Approval{Allow: true}, nil
+	}
+	result := p.results[0]
+	p.results = p.results[1:]
+	return result, nil
 }
 
 func (cwdTestTool) Name() string {
@@ -332,13 +337,13 @@ func TestSessionRunsToolLoop(t *testing.T) {
 		},
 	}
 
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(staticTool{})
 
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -453,12 +458,12 @@ func TestSessionRequestHistoryKeepsThinkingAndServerToolCallIDs(t *testing.T) {
 			{{Message: api.Message{Role: "assistant", Content: "done"}}},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(staticTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -581,12 +586,12 @@ func TestSessionTreatsHTTPContextCanceledStringAsCancellation(t *testing.T) {
 
 func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(staticTool{})
 	session := &Session{
-		Client:     cancelAfterToolCallClient{cancel: cancel},
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
+		Client:        cancelAfterToolCallClient{cancel: cancel},
+		Tools:         registry,
+		AllowAllTools: true,
 	}
 
 	result, err := session.Run(ctx, RunOptions{
@@ -614,7 +619,7 @@ func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T)
 func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	events := &recordingEventSink{}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(cancelingTool{cancel: cancel})
 	client := &fakeClient{responses: [][]api.ChatResponse{{
 		{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
@@ -625,10 +630,10 @@ func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) 
 		}}}},
 	}}}
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
-		EventSinks: []EventSink{events},
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
+		EventSinks:    []EventSink{events},
 	}
 
 	result, err := session.Run(ctx, RunOptions{
@@ -682,13 +687,13 @@ func TestSessionToolLoopAllowsRoundsUnderDefaultCap(t *testing.T) {
 	}})
 
 	client := &fakeClient{responses: responses}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(staticTool{})
 
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
 	}
 
 	if _, err := session.Run(context.Background(), RunOptions{
@@ -742,12 +747,12 @@ func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 			}},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(staticTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -793,12 +798,12 @@ func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	}
 
 	client := &fakeClient{responses: responses}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(staticTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
 	}
 
 	_, err := session.Run(context.Background(), RunOptions{
@@ -833,12 +838,12 @@ func TestSessionToolLoopNegativeLimitIsUnlimited(t *testing.T) {
 	}})
 
 	client := &fakeClient{responses: responses}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(staticTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
 	}
 
 	if _, err := session.Run(context.Background(), RunOptions{
@@ -869,12 +874,12 @@ func TestSessionTruncatesLargeToolResultsBeforeHistory(t *testing.T) {
 			{{Message: api.Message{Role: "assistant", Content: "done"}}},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(largeTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -922,15 +927,15 @@ func TestSessionSmallContextUsesLowerToolResultPreviewCap(t *testing.T) {
 			{{Message: api.Message{Role: "assistant", Content: "done"}}},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(largeTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
-		Compactor: NewSimpleCompactor(nil, CompactionOptions{
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
+		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
-		}),
+		}},
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -970,15 +975,15 @@ func TestSessionSmallContextRecapsPreTruncatedToolOutput(t *testing.T) {
 			{{Message: api.Message{Role: "assistant", Content: "done"}}},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(preTruncatedTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
-		Compactor: NewSimpleCompactor(nil, CompactionOptions{
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
+		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
-		}),
+		}},
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1058,14 +1063,14 @@ func TestSessionCompactsAfterToolResultsBeforeContinuing(t *testing.T) {
 			{{Message: api.Message{Role: "assistant", Content: "done after compact"}}},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(staticTool{})
 	compactor := &recordingCompactor{}
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
-		Compactor:  compactor,
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
+		Compactor:     compactor,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1117,16 +1122,16 @@ func TestSessionStopsWhenCompactedHistoryStillExceedsContext(t *testing.T) {
 			{{Message: api.Message{Role: "assistant", Content: "should not run"}}},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(staticTool{})
 	events := &recordingEventSink{}
 	compactor := &oversizedCompactor{}
 	session := &Session{
-		Client:     client,
-		EventSinks: []EventSink{events},
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
-		Compactor:  compactor,
+		Client:        client,
+		EventSinks:    []EventSink{events},
+		Tools:         registry,
+		AllowAllTools: true,
+		Compactor:     compactor,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1176,16 +1181,16 @@ func TestSessionContextCapsToolResultBeforeCompaction(t *testing.T) {
 			{{Message: api.Message{Role: "assistant", Content: "done"}}},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(largeTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
-		Compactor: NewSimpleCompactor(nil, CompactionOptions{
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
+		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: 100,
 			Threshold:           0.8,
-		}),
+		}},
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1225,16 +1230,16 @@ func TestSessionCompactsThenReattachesFullyOmittedToolResult(t *testing.T) {
 			{{Message: api.Message{Role: "assistant", Content: "done with result"}}},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(largeTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
-		Compactor: NewSimpleCompactor(client, CompactionOptions{
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
+		Compactor: &SimpleCompactor{Client: client, Options: CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
 			Threshold:           0.45,
-		}),
+		}},
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1300,18 +1305,18 @@ func TestSessionEmitsAutoCompactionActivityEvents(t *testing.T) {
 			{{Message: api.Message{Role: "assistant", Content: "done"}}},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(largeTool{})
 	events := &recordingEventSink{}
 	session := &Session{
-		Client:     client,
-		EventSinks: []EventSink{events},
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
-		Compactor: NewSimpleCompactor(client, CompactionOptions{
+		Client:        client,
+		EventSinks:    []EventSink{events},
+		Tools:         registry,
+		AllowAllTools: true,
+		Compactor: &SimpleCompactor{Client: client, Options: CompactionOptions{
 			ContextWindowTokens: 300,
 			Threshold:           0.3,
-		}),
+		}},
 	}
 
 	if _, err := session.Run(context.Background(), RunOptions{
@@ -1381,9 +1386,9 @@ func TestSessionPreflightRejectsOversizedFirstRequest(t *testing.T) {
 	session := &Session{
 		Client:     client,
 		EventSinks: []EventSink{events},
-		Compactor: NewSimpleCompactor(nil, CompactionOptions{
+		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: 128,
-		}),
+		}},
 	}
 
 	_, err := session.Run(context.Background(), RunOptions{
@@ -1414,9 +1419,9 @@ func TestSessionPreflightIgnoresRawImageBytes(t *testing.T) {
 	}
 	session := &Session{
 		Client: client,
-		Compactor: NewSimpleCompactor(nil, CompactionOptions{
+		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: 128,
-		}),
+		}},
 	}
 
 	image := make(api.ImageData, 64*1024)
@@ -1479,13 +1484,13 @@ func TestSessionPersistsToolWorkingDirWithinRun(t *testing.T) {
 			},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(cwdTestTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
-		WorkingDir: root,
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
+		WorkingDir:    root,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1545,13 +1550,13 @@ func TestSessionAllowsToolWorkingDirOutsideInitialDir(t *testing.T) {
 			},
 		},
 	}
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(cwdTestTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
-		WorkingDir: root,
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
+		WorkingDir:    root,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1576,7 +1581,7 @@ func TestSessionAllowsToolWorkingDirOutsideInitialDir(t *testing.T) {
 	}
 }
 
-func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
+func TestSessionDeniesWithoutApprovalPrompter(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	echoArgs := api.NewToolCallFunctionArguments()
 	echoArgs.Set("value", "should not run")
@@ -1606,13 +1611,12 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 		},
 	}
 	called := false
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(approvalTestTool{called: &called})
 	registry.Register(staticTool{})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: NewApprovalManager(ApprovalManagerOptions{}),
+		Client: client,
+		Tools:  registry,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1646,7 +1650,7 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 	}
 }
 
-func TestSessionUsesSingleBatchAuthorization(t *testing.T) {
+func TestSessionPromptsOnceForApprovalBatch(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	client := &fakeClient{
 		responses: [][]api.ChatResponse{
@@ -1674,13 +1678,15 @@ func TestSessionUsesSingleBatchAuthorization(t *testing.T) {
 		},
 	}
 	called := false
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(approvalTestTool{called: &called})
-	authorizer := &wrappingToolAuthorizer{inner: NewApprovalManager(ApprovalManagerOptions{})}
+	prompter := &recordingApprovalPrompter{
+		results: []Approval{{Reason: "denied"}},
+	}
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: authorizer,
+		Client:           client,
+		Tools:            registry,
+		ApprovalPrompter: prompter,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1690,11 +1696,14 @@ func TestSessionUsesSingleBatchAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authorizer.calls != 1 {
-		t.Fatalf("authorization calls = %d, want 1", authorizer.calls)
+	if len(prompter.requests) != 1 {
+		t.Fatalf("approval prompts = %d, want 1", len(prompter.requests))
+	}
+	if len(prompter.requests[0].Calls) != 2 {
+		t.Fatalf("approval calls = %#v, want both tool calls", prompter.requests[0].Calls)
 	}
 	if called {
-		t.Fatal("tool ran despite wrapped approval manager requiring approval")
+		t.Fatal("tool ran despite denied approval")
 	}
 	if client.calls != 1 {
 		t.Fatalf("client calls = %d, want 1 after denial", client.calls)
@@ -1704,7 +1713,64 @@ func TestSessionUsesSingleBatchAuthorization(t *testing.T) {
 	}
 }
 
-func TestSessionAutoAllowApprovalExecutesApprovalTool(t *testing.T) {
+func TestSessionAllowAllApprovalSkipsFuturePrompts(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "approval_tool",
+						Arguments: args,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done"}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-2",
+					Function: api.ToolCallFunction{
+						Name:      "approval_tool",
+						Arguments: args,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done again"}},
+			},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(approvalTestTool{})
+	prompter := &recordingApprovalPrompter{
+		results: []Approval{{AllowAll: true}},
+	}
+	session := &Session{
+		Client:           client,
+		Tools:            registry,
+		ApprovalPrompter: prompter,
+	}
+
+	for range 2 {
+		if _, err := session.Run(context.Background(), RunOptions{
+			Model:       "model",
+			NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !session.AllowAllTools {
+		t.Fatal("session did not remember allow all")
+	}
+	if len(prompter.requests) != 1 {
+		t.Fatalf("approval prompts = %d, want 1", len(prompter.requests))
+	}
+}
+
+func TestSessionAllowAllToolsExecutesApprovalTool(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	client := &fakeClient{
 		responses: [][]api.ChatResponse{
@@ -1723,12 +1789,12 @@ func TestSessionAutoAllowApprovalExecutesApprovalTool(t *testing.T) {
 		},
 	}
 	called := false
-	registry := NewRegistry()
+	registry := &Registry{}
 	registry.Register(approvalTestTool{called: &called})
 	session := &Session{
-		Client:     client,
-		Tools:      registry,
-		Authorizer: AutoAllowApproval{},
+		Client:        client,
+		Tools:         registry,
+		AllowAllTools: true,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{

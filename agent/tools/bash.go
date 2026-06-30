@@ -21,10 +21,6 @@ const (
 
 type Bash struct{}
 
-func NewBash() *Bash {
-	return &Bash{}
-}
-
 func (b *Bash) Name() string {
 	return shellToolName()
 }

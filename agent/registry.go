@@ -32,23 +32,14 @@ type Registry struct {
 	tools map[string]Tool
 }
 
-func NewRegistry() *Registry {
-	return &Registry{tools: make(map[string]Tool)}
-}
-
 func (r *Registry) Register(tool Tool) {
 	if r == nil || tool == nil {
 		return
 	}
-	r.tools[tool.Name()] = tool
-}
-
-func (r *Registry) Has(name string) bool {
-	if r == nil {
-		return false
+	if r.tools == nil {
+		r.tools = make(map[string]Tool)
 	}
-	_, ok := r.tools[name]
-	return ok
+	r.tools[tool.Name()] = tool
 }
 
 func (r *Registry) Get(name string) (Tool, bool) {

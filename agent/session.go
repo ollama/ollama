@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,13 +18,35 @@ type ChatClient interface {
 	Chat(context.Context, *api.ChatRequest, api.ChatResponseFunc) error
 }
 
-type Session struct {
-	Client     ChatClient
-	EventSinks []EventSink
-	Tools      *Registry
-	Authorizer ToolAuthorizer
+type ApprovalRequest struct {
 	WorkingDir string
-	Compactor  Compactor
+	Calls      []ApprovalToolCall
+}
+
+type ApprovalToolCall struct {
+	ToolCallID string
+	ToolName   string
+	Args       map[string]any
+}
+
+type Approval struct {
+	Allow    bool
+	AllowAll bool
+	Reason   string
+}
+
+type ApprovalPrompter interface {
+	PromptApproval(context.Context, ApprovalRequest) (Approval, error)
+}
+
+type Session struct {
+	Client           ChatClient
+	EventSinks       []EventSink
+	Tools            *Registry
+	ApprovalPrompter ApprovalPrompter
+	AllowAllTools    bool
+	WorkingDir       string
+	Compactor        Compactor
 }
 
 type RunOptions struct {
@@ -321,7 +344,31 @@ func (s *Session) finishRun(ctx context.Context, st *runState) (*RunResult, erro
 }
 
 func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest *api.ChatResponse) (api.Message, []api.ToolCall, bool, error) {
-	req := buildChatRequest(opts, messages, s.availableTools())
+	requestMessages := sanitizeMessagesForRequest(messages)
+	if strings.TrimSpace(opts.SystemPrompt) != "" {
+		withSystem := make([]api.Message, 0, len(requestMessages)+1)
+		withSystem = append(withSystem, api.Message{Role: "system", Content: opts.SystemPrompt})
+		requestMessages = append(withSystem, requestMessages...)
+	}
+
+	format := opts.Format
+	if format == "json" {
+		format = `"` + format + `"`
+	}
+
+	req := api.ChatRequest{
+		Model:    opts.Model,
+		Messages: requestMessages,
+		Format:   json.RawMessage(format),
+		Options:  opts.Options,
+		Think:    opts.Think,
+	}
+	if opts.KeepAlive != nil {
+		req.KeepAlive = opts.KeepAlive
+	}
+	if tools := s.availableTools(); len(tools) > 0 {
+		req.Tools = tools
+	}
 
 	assistant := api.Message{Role: "assistant"}
 	var pendingToolCalls []api.ToolCall
@@ -405,11 +452,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 	}
 
 	if len(approvalReq.Calls) > 0 {
-		authorizer := s.Authorizer
-		if authorizer == nil {
-			authorizer = NewApprovalManager(ApprovalManagerOptions{})
-		}
-		authorizationResult, err := authorizer.AuthorizeTools(ctx, approvalReq)
+		approvalResult, err := s.authorizeToolCalls(ctx, approvalReq)
 		if err != nil {
 			if ctx.Err() != nil {
 				skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls, "Tool execution skipped because the run was canceled.")
@@ -422,8 +465,8 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			}
 			return toolBatchResult{}, err
 		}
-		if authorizationResult.Decision == ApprovalDeny {
-			content := authorizationResult.Reason
+		if !approvalResult.Allow {
+			content := approvalResult.Reason
 			if content == "" {
 				content = "Tool execution denied."
 			}
@@ -523,6 +566,27 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		}
 	}
 	return batch, nil
+}
+
+func (s *Session) authorizeToolCalls(ctx context.Context, req ApprovalRequest) (Approval, error) {
+	if s == nil || s.AllowAllTools || len(req.Calls) == 0 {
+		return Approval{Allow: true}, nil
+	}
+	if s.ApprovalPrompter == nil {
+		return Approval{
+			Reason: "Tool execution requires approval, but no approval prompter is available.",
+		}, nil
+	}
+
+	result, err := s.ApprovalPrompter.PromptApproval(ctx, req)
+	if err != nil {
+		return Approval{}, err
+	}
+	if result.AllowAll {
+		result.Allow = true
+		s.AllowAllTools = true
+	}
+	return result, nil
 }
 
 func (s *Session) skipToolCalls(ctx context.Context, runID string, opts RunOptions, calls []api.ToolCall, content string) ([]api.Message, error) {
@@ -858,34 +922,6 @@ func (s *Session) availableTools() api.Tools {
 		return nil
 	}
 	return s.Tools.Tools()
-}
-
-func (s *Session) estimateRunPromptTokens(opts RunOptions, messages []api.Message) int {
-	return estimateChatRequestTokens(opts, messages, s.availableTools())
-}
-
-func (s *Session) checkPreflightPromptBudget(opts RunOptions, messages []api.Message) error {
-	contextWindow := s.contextWindowTokens(opts)
-	if contextWindow <= 0 {
-		return nil
-	}
-	estimated := s.estimateRunPromptTokens(opts, messages)
-	if estimated < contextWindow {
-		return nil
-	}
-	return fmt.Errorf("prompt is too large for the current context (~%d/%d tokens). Reduce the system prompt or message history, compact the conversation, or use a model with a larger context", estimated, contextWindow)
-}
-
-func (s *Session) checkPostCompactionPromptBudget(opts RunOptions, messages []api.Message) error {
-	contextWindow := s.contextWindowTokens(opts)
-	if contextWindow <= 0 {
-		return nil
-	}
-	estimated := s.estimateRunPromptTokens(opts, messages)
-	if estimated < contextWindow {
-		return nil
-	}
-	return fmt.Errorf("history is still too large after compaction (~%d/%d tokens). Start a fresh request, reduce the system prompt or history, or use a model with a larger context", estimated, contextWindow)
 }
 
 func (s *Session) compactionThresholdTokens(opts RunOptions) int {

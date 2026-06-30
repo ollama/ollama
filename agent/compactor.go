@@ -76,10 +76,6 @@ type SimpleCompactor struct {
 	Options CompactionOptions
 }
 
-func NewSimpleCompactor(client ChatClient, opts CompactionOptions) *SimpleCompactor {
-	return &SimpleCompactor{Client: client, Options: opts}
-}
-
 func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionRequest) (CompactionResult, error) {
 	result := CompactionResult{Messages: req.Messages}
 	if c == nil {
@@ -373,6 +369,40 @@ func estimateCompactionRequestTokens(req CompactionRequest) int {
 	total += estimateCompactionTokens(req.Tools.String())
 	total += estimateCompactionTokens(req.Format)
 	return total
+}
+
+func (s *Session) estimateRunPromptTokens(opts RunOptions, messages []api.Message) int {
+	return estimateCompactionRequestTokens(CompactionRequest{
+		SystemPrompt: opts.SystemPrompt,
+		Messages:     messages,
+		Tools:        s.availableTools(),
+		Format:       opts.Format,
+		Options:      opts.Options,
+	})
+}
+
+func (s *Session) checkPreflightPromptBudget(opts RunOptions, messages []api.Message) error {
+	contextWindow := s.contextWindowTokens(opts)
+	if contextWindow <= 0 {
+		return nil
+	}
+	estimated := s.estimateRunPromptTokens(opts, messages)
+	if estimated < contextWindow {
+		return nil
+	}
+	return fmt.Errorf("prompt is too large for the current context (~%d/%d tokens). Reduce the system prompt or message history, compact the conversation, or use a model with a larger context", estimated, contextWindow)
+}
+
+func (s *Session) checkPostCompactionPromptBudget(opts RunOptions, messages []api.Message) error {
+	contextWindow := s.contextWindowTokens(opts)
+	if contextWindow <= 0 {
+		return nil
+	}
+	estimated := s.estimateRunPromptTokens(opts, messages)
+	if estimated < contextWindow {
+		return nil
+	}
+	return fmt.Errorf("history is still too large after compaction (~%d/%d tokens). Start a fresh request, reduce the system prompt or history, or use a model with a larger context", estimated, contextWindow)
 }
 
 func sanitizeMessagesForEstimate(messages []api.Message) []api.Message {

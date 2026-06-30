@@ -12,10 +12,10 @@ import (
 )
 
 func TestWebToolsDoNotRequireApproval(t *testing.T) {
-	if coreagent.ToolRequiresApproval(NewWebSearch(), map[string]any{"query": "ollama"}) {
+	if coreagent.ToolRequiresApproval((&WebSearch{}), map[string]any{"query": "ollama"}) {
 		t.Fatal("web search should not require approval")
 	}
-	if coreagent.ToolRequiresApproval(NewWebFetch(), map[string]any{"url": "https://ollama.com"}) {
+	if coreagent.ToolRequiresApproval((&WebFetch{}), map[string]any{"url": "https://ollama.com"}) {
 		t.Fatal("web fetch should not require approval")
 	}
 }
@@ -42,7 +42,7 @@ func TestWebFetchBoundsContentBeforeReturning(t *testing.T) {
 	defer ts.Close()
 	t.Setenv("OLLAMA_HOST", ts.URL)
 
-	result, err := NewWebFetch().Execute(t.Context(), coreagent.ToolContext{}, map[string]any{
+	result, err := (&WebFetch{}).Execute(t.Context(), coreagent.ToolContext{}, map[string]any{
 		"url": "https://ollama.com",
 	})
 	if err != nil {
