@@ -1346,6 +1346,70 @@ func TestCreateAndShowRemoteModel(t *testing.T) {
 	fmt.Printf("resp = %#v\n", resp)
 }
 
+func TestCreateFromRemoteModelInheritsModelInfo(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+
+	var s Server
+
+	// Create the parent remote model with its model_info populated via Info.
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "parent",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		Info: map[string]any{
+			"capabilities":     []string{"completion"},
+			"model_family":     "gptoss",
+			"context_length":   131072,
+			"embedding_length": 2880,
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create parent: expected status 200, got %d", w.Code)
+	}
+
+	// Derive a child from the parent without re-supplying Info, mirroring an
+	// `ollama create child -f Modelfile` with only `FROM parent`.
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "child",
+		From:       "parent",
+		RemoteHost: "https://ollama.com",
+		Stream:     &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create child: expected status 200, got %d", w.Code)
+	}
+
+	w = createRequest(t, s.ShowHandler, api.ShowRequest{Model: "child"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("show child: expected status 200, got %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	v, ok := resp.ModelInfo["gptoss.context_length"]
+	if !ok {
+		t.Fatalf("context_length missing from inherited model_info: %#v", resp.ModelInfo)
+	}
+	if ctxlen := v.(float64); int(ctxlen) != 131072 {
+		t.Errorf("context len: expected %d, actual %d", 131072, int(ctxlen))
+	}
+
+	v, ok = resp.ModelInfo["gptoss.embedding_length"]
+	if !ok {
+		t.Fatalf("embedding_length missing from inherited model_info: %#v", resp.ModelInfo)
+	}
+	if embedlen := v.(float64); int(embedlen) != 2880 {
+		t.Errorf("embed len: expected %d, actual %d", 2880, int(embedlen))
+	}
+}
+
 func TestCreateRemoteModelRejectsDraftFiles(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
