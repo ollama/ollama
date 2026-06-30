@@ -915,15 +915,17 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return truncated, true, nil
 	}
 
-	truncateInput := func(text string) (string, bool, error) {
-		return truncateInputToLimit(text, 0)
-	}
-
 	embedWithRetry := func(text string) ([]float32, int, error) {
+		// A pooled embedding must fit in a single physical batch, so inputs
+		// are bounded by num_batch as well as the context length. Sending a
+		// longer input can crash the runner instead of returning an error.
 		if req.Truncate != nil && !*req.Truncate {
 			tokens, ctxLen, err := inputTokensAndContext(text)
 			if err != nil {
 				return nil, 0, err
+			}
+			if opts.NumBatch > 0 {
+				ctxLen = min(ctxLen, adjustTokenLimit(tokens, opts.NumBatch))
 			}
 			if ctxLen <= 0 {
 				return nil, 0, fmt.Errorf("input after truncation exceeds maximum context length")
@@ -936,7 +938,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			}
 		} else {
 			var err error
-			text, _, err = truncateInput(text)
+			text, _, err = truncateInputToLimit(text, opts.NumBatch)
 			if err != nil {
 				return nil, 0, err
 			}
