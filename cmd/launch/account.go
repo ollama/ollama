@@ -162,6 +162,33 @@ func selectionItemsNeedAccountState(items []ModelItem) bool {
 	return false
 }
 
+func filterFreeCloudRecommendationsForAccountState(items []ModelItem, state *AccountState, preserve map[string]bool) []ModelItem {
+	if !accountStateHasPaidPlan(state) {
+		return items
+	}
+
+	filtered := make([]ModelItem, 0, len(items))
+	for _, item := range items {
+		if isFreeCloudRecommendation(item) && !preserve[item.Name] {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func accountStateHasPaidPlan(state *AccountState) bool {
+	if state == nil || state.Status != accountStateSignedIn {
+		return false
+	}
+	plan := normalizePlan(state.Plan)
+	return plan != "" && plan != "free"
+}
+
+func isFreeCloudRecommendation(item ModelItem) bool {
+	return isCloudModelName(item.Name) && itemHasRecommendationMetadata(item) && normalizePlan(item.RequiredPlan) == "free"
+}
+
 func (c *launcherClient) selectionItemUpdates(ctx context.Context, items []ModelItem, state *AccountState) <-chan []SelectionItem {
 	if !selectionItemsNeedAccountState(items) || state != nil {
 		return nil
