@@ -179,7 +179,18 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 
 	if m.CheckCapabilities(model.CapabilityVision) == nil {
 		// multimodal models require at least 2048 context
-		opts.NumCtx = max(opts.NumCtx, 2048)
+		minCtx := 2048
+		if numCtxAuto {
+			// High-resolution vision models (notably OCR) emit many image
+			// tokens per image. The automatic low-VRAM default (4096) can be
+			// smaller than a single image's token span, which trips a runtime
+			// assert mid-decode (#16696). Raise the automatic floor so the
+			// default context can hold at least one image's worth of tokens.
+			// When the model can't be loaded at this size the scheduler reduces
+			// the automatic context on OOM, so this stays a floor, not a force.
+			minCtx = 8192
+		}
+		opts.NumCtx = max(opts.NumCtx, minCtx)
 	}
 
 	contextShift := false
