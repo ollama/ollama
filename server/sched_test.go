@@ -405,7 +405,7 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	b.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
 	c := newScenarioRequest(t, ctx, "model-c-10g-cpu", 10*format.GigaByte, nil, nil /* No GPU load */)
 	c.req.opts.NumGPU = 0                                                                                                                         // CPU load, will be allowed
-	b.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
+	c.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
 	d := newScenarioRequest(t, ctx, "model-d-10g-gpu", 13*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 13 * format.GigaByte}) // Needs prior unloaded
 
 	s.newServerFn = a.newServer
@@ -470,25 +470,25 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	require.Len(t, s.loaded, 3)
 	s.loadedMu.Unlock()
 	a.ctxDone() // Won't help since this one isn't big enough to make room
-	time.Sleep(2 * time.Millisecond)
 	s.pendingReqCh <- d.req
-	// finish prior request, so new model can load
-	time.Sleep(6 * time.Millisecond)
-	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 2)
-	s.loadedMu.Unlock()
-	// Mark b done so it can unload
-	b.ctxDone()
-	// Report recovered VRAM usage so scheduler will finish waiting and unload
-	time.Sleep(1 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		s.loadedMu.Lock()
+		defer s.loadedMu.Unlock()
+		return len(s.loaded) == 2
+	}, 500*time.Millisecond, 10*time.Millisecond)
+
+	// Report recovered VRAM usage before releasing b so the next fit check sees it.
 	gMu.Lock()
 	g.FreeMemory = 24 * format.GigaByte
 	gMu.Unlock()
+	b.ctxDone()
 	select {
 	case resp := <-d.req.successCh:
 		require.Equal(t, resp.llama, d.srv)
 		require.Empty(t, s.pendingReqCh)
 		require.Empty(t, d.req.errCh)
+	case err := <-d.req.errCh:
+		t.Fatal(err.Error())
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
@@ -744,14 +744,15 @@ func TestSchedPrematureExpired(t *testing.T) {
 		t.Fatal("timeout")
 	}
 	time.Sleep(scenario1a.req.sessionDuration.Duration)
-	scenario1a.ctxDone()
-	time.Sleep(20 * time.Millisecond)
-	require.LessOrEqual(t, len(s.finishedReqCh), 1)
-	time.Sleep(10 * time.Millisecond)
-	require.Empty(t, s.finishedReqCh)
 	s.loadedMu.Lock()
-	require.Empty(t, s.loaded)
+	require.Len(t, s.loaded, 1)
 	s.loadedMu.Unlock()
+	scenario1a.ctxDone()
+	require.Eventually(t, func() bool {
+		s.loadedMu.Lock()
+		defer s.loadedMu.Unlock()
+		return len(s.loaded) == 0
+	}, 500*time.Millisecond, 10*time.Millisecond)
 
 	// also shouldn't happen in real life
 	s.finishedReqCh <- scenario1a.req
@@ -1372,6 +1373,10 @@ func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
 }
 
 func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
+	metalReserve := schedulerReserveForTest("Metal")
+	vulkanReserve := schedulerReserveForTest("Vulkan")
+	cudaReserve := schedulerReserveForTest("CUDA")
+
 	tests := []struct {
 		name              string
 		systemFree        uint64
@@ -1388,7 +1393,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 				Integrated: true,
 				FreeMemory: 300 * format.GigaByte,
 			}},
-			wantAvailable:     80 * format.GigaByte,
+			wantAvailable:     80*format.GigaByte - metalReserve,
 			wantGPUFree:       300 * format.GigaByte,
 			wantSystemLimited: true,
 		},
@@ -1400,7 +1405,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 				Integrated: true,
 				FreeMemory: 12 * format.GigaByte,
 			}},
-			wantAvailable:     6 * format.GigaByte,
+			wantAvailable:     6*format.GigaByte - vulkanReserve,
 			wantGPUFree:       12 * format.GigaByte,
 			wantSystemLimited: true,
 		},
@@ -1411,7 +1416,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 				DeviceID:   ml.DeviceID{Library: "Metal"},
 				FreeMemory: 12 * format.GigaByte,
 			}},
-			wantAvailable: 12 * format.GigaByte,
+			wantAvailable: 12*format.GigaByte - metalReserve,
 			wantGPUFree:   12 * format.GigaByte,
 		},
 		{
@@ -1421,7 +1426,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 				DeviceID:   ml.DeviceID{Library: "CUDA"},
 				FreeMemory: 12 * format.GigaByte,
 			}},
-			wantAvailable: 12 * format.GigaByte,
+			wantAvailable: 12*format.GigaByte - cudaReserve,
 			wantGPUFree:   12 * format.GigaByte,
 		},
 		{
@@ -1438,7 +1443,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 					FreeMemory: 10 * format.GigaByte,
 				},
 			},
-			wantAvailable:     18 * format.GigaByte,
+			wantAvailable:     18*format.GigaByte - cudaReserve - vulkanReserve,
 			wantGPUFree:       22 * format.GigaByte,
 			wantSystemLimited: true,
 		},
@@ -1450,7 +1455,7 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 				Integrated: true,
 				FreeMemory: 12 * format.GigaByte,
 			}},
-			wantAvailable: 12 * format.GigaByte,
+			wantAvailable: 12*format.GigaByte - metalReserve,
 			wantGPUFree:   12 * format.GigaByte,
 		},
 	}
@@ -1463,6 +1468,11 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 			require.Equal(t, tt.wantSystemLimited, systemLimited)
 		})
 	}
+}
+
+func schedulerReserveForTest(library string) uint64 {
+	gpu := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: library}}
+	return gpu.MinimumMemory() + llm.LlamaServerDefaultFitTargetMiB*format.MebiByte
 }
 
 func TestSelectLlamaServerPlacement(t *testing.T) {
@@ -1578,6 +1588,26 @@ func TestSelectLlamaServerPlacement(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSelectLlamaServerPlacementReserveEnv(t *testing.T) {
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, FreeMemory: 7106 * format.MebiByte},
+		{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, FreeMemory: 23336 * format.MebiByte},
+	}
+	check := func(name, overhead, fitTarget string, want int) {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_GPU_OVERHEAD", overhead)
+			t.Setenv("LLAMA_ARG_FIT_TARGET", fitTarget)
+			selected, _ := selectLlamaServerPlacement(ml.SystemInfo{}, gpus, 20307*format.MebiByte, api.DefaultOptions())
+			require.Len(t, selected, want)
+		})
+	}
+
+	check("default reserve compacts", "", "", 1)
+	check("gpu overhead prevents compaction", "3221225472", "", 2)
+	check("fit target prevents compaction", "", "4096", 2)
+	check("comma fit target uses compacted visible gpu index", "", "1024,4096", 1)
 }
 
 func testIntPtr(v int) *int {

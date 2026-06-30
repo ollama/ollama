@@ -774,6 +774,20 @@ func hasLegacyQwenMTPDraft(arch string, tensors []*ggml.Tensor) bool {
 	}
 }
 
+// LlamaServerDefaultFitTargetMiB mirrors llama.cpp's default per-device fit margin.
+const LlamaServerDefaultFitTargetMiB = 1024
+
+func applyGPUOverheadFitTargetEnv(env map[string]string) {
+	if envconfig.Var("LLAMA_ARG_FIT_TARGET") != "" {
+		return
+	}
+
+	const bytesPerMiB = uint64(1024 * 1024)
+	if overhead := envconfig.GpuOverhead(); overhead > LlamaServerDefaultFitTargetMiB*bytesPerMiB {
+		env["LLAMA_ARG_FIT_TARGET"] = strconv.FormatUint((overhead+bytesPerMiB-1)/bytesPerMiB, 10)
+	}
+}
+
 // NewLlamaServerRunner creates a new llama-server runner that wraps the upstream llama-server binary.
 func NewLlamaServerRunner(
 	gpus []ml.DeviceInfo,
@@ -839,6 +853,7 @@ func NewLlamaServerRunner(
 		serverEnvs[k] = v
 	}
 	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
+	applyGPUOverheadFitTargetEnv(serverEnvs)
 
 	launch := llamaServerLaunchConfig{
 		modelPath:    modelPath,
