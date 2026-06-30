@@ -39,11 +39,6 @@ type approvalTestTool struct {
 	called *bool
 }
 
-type policyOnlyApprovalTool struct {
-	name   string
-	called *bool
-}
-
 type cwdTestTool struct{}
 
 type largeTool struct{}
@@ -277,34 +272,9 @@ func (t approvalTestTool) Execute(context.Context, ToolContext, map[string]any) 
 	return ToolResult{Content: "approved"}, nil
 }
 
-func (t policyOnlyApprovalTool) Name() string {
-	return t.name
-}
-
-func (t policyOnlyApprovalTool) Description() string {
-	return "does not self-declare approval"
-}
-
-func (t policyOnlyApprovalTool) Schema() api.ToolFunction {
-	return api.ToolFunction{
-		Name:        t.name,
-		Description: "does not self-declare approval",
-		Parameters: api.ToolFunctionParameters{
-			Type: "object",
-		},
-	}
-}
-
-func (t policyOnlyApprovalTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
-	if t.called != nil {
-		*t.called = true
-	}
-	return ToolResult{Content: "ran"}, nil
-}
-
-func (h *wrappingToolAuthorizer) AuthorizeTool(ctx context.Context, req ToolAuthorizationRequest) (ApprovalResult, error) {
+func (h *wrappingToolAuthorizer) AuthorizeTools(ctx context.Context, req ApprovalRequest) (ApprovalResult, error) {
 	h.calls++
-	return h.inner.AuthorizeTool(ctx, req)
+	return h.inner.AuthorizeTools(ctx, req)
 }
 
 func (cwdTestTool) Name() string {
@@ -1669,26 +1639,34 @@ func TestSessionApprovalManagerDeniesWithoutPrompter(t *testing.T) {
 		t.Fatalf("tool denial content = %q", result.Messages[2].Content)
 	}
 	if result.Messages[3].Role != "tool" || result.Messages[3].ToolCallID != "call-2" {
-		t.Fatalf("skipped tool message = %#v", result.Messages[3])
+		t.Fatalf("second denial tool message = %#v", result.Messages[3])
 	}
-	if !strings.Contains(result.Messages[3].Content, "skipped because a previous tool call") {
-		t.Fatalf("skipped tool content = %q", result.Messages[3].Content)
+	if result.Messages[3].Content == "" || result.Messages[3].Content == "tool says hello" {
+		t.Fatalf("second denial content = %q", result.Messages[3].Content)
 	}
 }
 
-func TestSessionUsesSingleToolAuthorization(t *testing.T) {
+func TestSessionUsesSingleBatchAuthorization(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
-	args.Set("command", "pwd")
 	client := &fakeClient{
 		responses: [][]api.ChatResponse{
 			{
-				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
-					ID: "call-1",
-					Function: api.ToolCallFunction{
-						Name:      "bash",
-						Arguments: args,
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{
+					{
+						ID: "call-1",
+						Function: api.ToolCallFunction{
+							Name:      "approval_tool",
+							Arguments: args,
+						},
 					},
-				}}}},
+					{
+						ID: "call-2",
+						Function: api.ToolCallFunction{
+							Name:      "approval_tool",
+							Arguments: args,
+						},
+					},
+				}}},
 			},
 			{
 				{Message: api.Message{Role: "assistant", Content: "done"}},
@@ -1697,7 +1675,7 @@ func TestSessionUsesSingleToolAuthorization(t *testing.T) {
 	}
 	called := false
 	registry := NewRegistry()
-	registry.Register(policyOnlyApprovalTool{name: "bash", called: &called})
+	registry.Register(approvalTestTool{called: &called})
 	authorizer := &wrappingToolAuthorizer{inner: NewApprovalManager(ApprovalManagerOptions{})}
 	session := &Session{
 		Client:     client,
@@ -1707,7 +1685,7 @@ func TestSessionUsesSingleToolAuthorization(t *testing.T) {
 
 	result, err := session.Run(context.Background(), RunOptions{
 		Model:       "model",
-		NewMessages: []api.Message{{Role: "user", Content: "use bash"}},
+		NewMessages: []api.Message{{Role: "user", Content: "use tools"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1721,7 +1699,7 @@ func TestSessionUsesSingleToolAuthorization(t *testing.T) {
 	if client.calls != 1 {
 		t.Fatalf("client calls = %d, want 1 after denial", client.calls)
 	}
-	if len(result.Messages) != 3 || result.Messages[2].Role != "tool" {
+	if len(result.Messages) != 4 || result.Messages[2].Role != "tool" || result.Messages[3].Role != "tool" {
 		t.Fatalf("messages = %#v", result.Messages)
 	}
 }

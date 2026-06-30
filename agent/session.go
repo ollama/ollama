@@ -372,54 +372,47 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 }
 
 func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOptions, messages []api.Message, calls []api.ToolCall) (toolBatchResult, error) {
-	authorizer := s.Authorizer
-	if authorizer == nil {
-		authorizer = NewApprovalManager(ApprovalManagerOptions{})
-	}
-
 	batch := toolBatchResult{
 		messages: make([]api.Message, 0, len(calls)),
 	}
 	projectedMessages := append([]api.Message(nil), messages...)
-	for i, call := range calls {
+
+	type plannedToolCall struct {
+		call     api.ToolCall
+		tool     Tool
+		toolName string
+		args     map[string]any
+	}
+	plans := make([]plannedToolCall, 0, len(calls))
+	approvalReq := ApprovalRequest{WorkingDir: s.currentWorkingDir()}
+	for _, call := range calls {
 		toolName := call.Function.Name
 		args := call.Function.Arguments.ToMap()
-		if ctx.Err() != nil {
-			skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls[i:], "Tool execution skipped because the run was canceled.")
-			if skipErr != nil {
-				return toolBatchResult{}, skipErr
-			}
-			batch.messages = append(batch.messages, skipped...)
-			batch.stop = toolExecutionCanceled
-			return batch, nil
-		}
 		tool, ok := s.Tools.Get(toolName)
-		if !ok {
-			content := fmt.Sprintf("Error: unknown tool: %s", toolName)
-			msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
-			batch.messages = append(batch.messages, msg)
-			projectedMessages = append(projectedMessages, msg)
-			content = msg.Content
-			if toolOutputFullyOmitted(content) {
-				batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: fmt.Sprintf("Error: unknown tool: %s", toolName)})
-			}
-			if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "failed", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: fmt.Sprintf("unknown tool: %s", toolName)}); emitErr != nil {
-				return toolBatchResult{}, emitErr
-			}
-			continue
+		plans = append(plans, plannedToolCall{
+			call:     call,
+			tool:     tool,
+			toolName: toolName,
+			args:     args,
+		})
+		if ok && ToolRequiresApproval(tool, args) {
+			approvalReq.Calls = append(approvalReq.Calls, ApprovalToolCall{
+				ToolCallID: call.ID,
+				ToolName:   toolName,
+				Args:       args,
+			})
 		}
+	}
 
-		authorization := ToolAuthorizationRequest{
-			ToolCallID: call.ID,
-			Tool:       tool,
-			ToolName:   toolName,
-			Args:       args,
-			WorkingDir: s.currentWorkingDir(),
+	if len(approvalReq.Calls) > 0 {
+		authorizer := s.Authorizer
+		if authorizer == nil {
+			authorizer = NewApprovalManager(ApprovalManagerOptions{})
 		}
-		authorizationResult, err := authorizer.AuthorizeTool(ctx, authorization)
+		authorizationResult, err := authorizer.AuthorizeTools(ctx, approvalReq)
 		if err != nil {
 			if ctx.Err() != nil {
-				skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls[i:], "Tool execution skipped because the run was canceled.")
+				skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls, "Tool execution skipped because the run was canceled.")
 				if skipErr != nil {
 					return toolBatchResult{}, skipErr
 				}
@@ -434,27 +427,46 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			if content == "" {
 				content = "Tool execution denied."
 			}
-			msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
-			batch.messages = append(batch.messages, msg)
-			projectedMessages = append(projectedMessages, msg)
-			content = msg.Content
-			if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "denied", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: content}); emitErr != nil {
-				return toolBatchResult{}, emitErr
-			}
-			for _, skipped := range calls[i+1:] {
-				skippedToolName := skipped.Function.Name
-				skippedArgs := skipped.Function.Arguments.ToMap()
-				skippedContent := "Tool execution skipped because a previous tool call in this assistant message was denied."
-				skippedMsg := s.toolMessageForContext(skippedToolName, skipped.ID, skippedContent, opts, projectedMessages)
-				batch.messages = append(batch.messages, skippedMsg)
-				projectedMessages = append(projectedMessages, skippedMsg)
-				skippedContent = skippedMsg.Content
-				if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "skipped", ToolCallID: skipped.ID, ToolName: skippedToolName, Args: skippedArgs, Content: skippedContent, Error: skippedContent}); emitErr != nil {
+			for _, plan := range plans {
+				msg := s.toolMessageForContext(plan.toolName, plan.call.ID, content, opts, projectedMessages)
+				batch.messages = append(batch.messages, msg)
+				projectedMessages = append(projectedMessages, msg)
+				deniedContent := msg.Content
+				if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "denied", ToolCallID: plan.call.ID, ToolName: plan.toolName, Args: plan.args, Content: deniedContent, Error: deniedContent}); emitErr != nil {
 					return toolBatchResult{}, emitErr
 				}
 			}
 			batch.stop = toolExecutionDenied
 			return batch, nil
+		}
+	}
+
+	for i, plan := range plans {
+		call := plan.call
+		toolName := plan.toolName
+		args := plan.args
+		if ctx.Err() != nil {
+			skipped, skipErr := s.skipToolCalls(ctx, runID, opts, calls[i:], "Tool execution skipped because the run was canceled.")
+			if skipErr != nil {
+				return toolBatchResult{}, skipErr
+			}
+			batch.messages = append(batch.messages, skipped...)
+			batch.stop = toolExecutionCanceled
+			return batch, nil
+		}
+		if plan.tool == nil {
+			content := fmt.Sprintf("Error: unknown tool: %s", toolName)
+			msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
+			batch.messages = append(batch.messages, msg)
+			projectedMessages = append(projectedMessages, msg)
+			content = msg.Content
+			if toolOutputFullyOmitted(content) {
+				batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: fmt.Sprintf("Error: unknown tool: %s", toolName)})
+			}
+			if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "failed", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: fmt.Sprintf("unknown tool: %s", toolName)}); emitErr != nil {
+				return toolBatchResult{}, emitErr
+			}
+			continue
 		}
 
 		if err := s.emit(Event{Type: EventToolStarted, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "running", ToolCallID: call.ID, ToolName: toolName, WorkingDir: s.currentWorkingDir(), Args: args}); err != nil {
