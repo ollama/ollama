@@ -11,9 +11,9 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-// TestThinkingEnabled verifies that when thinking is requested, the model
+// runThinkingEnabled verifies that when thinking is requested, the model
 // produces both thinking and content output without leaking raw channel tags.
-func TestThinkingEnabled(t *testing.T) {
+func runThinkingEnabled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -84,9 +84,9 @@ func TestThinkingEnabled(t *testing.T) {
 	}
 }
 
-// TestThinkingSuppressed verifies that when thinking is NOT requested,
+// runThinkingSuppressed verifies that when thinking is NOT requested,
 // the model does not leak thinking/channel content into the response.
-func TestThinkingSuppressed(t *testing.T) {
+func runThinkingSuppressed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 

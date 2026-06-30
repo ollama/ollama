@@ -14,7 +14,7 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestLongInputContext(t *testing.T) {
+func runLongInputContext(t *testing.T) {
 	// Setting NUM_PARALLEL to 1 ensures the allocated context is exactly what
 	// we asked for and there is nothing extra that we could spill over into.
 	// Context shift happens after a prompt has been admitted to a slot. Initial
@@ -23,7 +23,11 @@ func TestLongInputContext(t *testing.T) {
 	// prompt while llama-server reports it as too large to admit.
 	t.Setenv("OLLAMA_NUM_PARALLEL", "1")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	timeout := 2 * time.Minute
+	if testModel != "" {
+		timeout = 3 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	req := api.ChatRequest{
 		Model: smol,
@@ -79,7 +83,7 @@ func isContextLimitError(err string) bool {
 			strings.Contains(err, "too long"))
 }
 
-func TestContextExhaustion(t *testing.T) {
+func runContextExhaustion(t *testing.T) {
 	// Setting NUM_PARALLEL to 1 ensures the allocated context is exactly what
 	// we asked for and there is nothing extra that we could spill over into
 	t.Setenv("OLLAMA_NUM_PARALLEL", "1")
@@ -128,11 +132,13 @@ func containsEmoji(s string) bool {
 }
 
 // Send multiple generate requests with prior context and ensure the response is coherant and expected
-func TestParallelGenerateWithHistory(t *testing.T) {
+func runParallelGenerateWithHistory(t *testing.T, modelName string) {
 	if testModel != "" {
-		t.Skip("uses hardcoded model, not applicable with model override")
+		// The Generate API's Context field (token array continuation) is not
+		// supported by all runners (e.g. MLX). Chat history works; this is
+		// the only generate-specific continuation path.
+		t.Skip("generate context continuation not supported by all runners")
 	}
-	modelName := "gpt-oss:20b"
 	req, resp := GenerateRequests()
 	numParallel := 2
 	iterLimit := 2
@@ -144,16 +150,10 @@ func TestParallelGenerateWithHistory(t *testing.T) {
 	defer cleanup()
 	initialTimeout := 120 * time.Second
 	streamTimeout := 20 * time.Second
+	prepareParallelHistoryModel(ctx, t, client, modelName)
 
 	// Get the server running (if applicable) warm the model up with a single initial request
-	slog.Info("loading", "model", modelName)
-	err := client.Generate(ctx,
-		&api.GenerateRequest{Model: modelName, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
-		func(response api.GenerateResponse) error { return nil },
-	)
-	if err != nil {
-		t.Fatalf("failed to load model %s: %s", modelName, err)
-	}
+	preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: modelName, KeepAlive: &api.Duration{Duration: 10 * time.Second}})
 	gpuPercent := getGPUPercent(ctx, t, client, modelName)
 	if gpuPercent < 80 && gpuPercent > 50 {
 		slog.Warn("Low GPU percentage - increasing timeouts", "percent", gpuPercent)
@@ -190,7 +190,7 @@ func TestParallelGenerateWithHistory(t *testing.T) {
 }
 
 // Send generate requests with prior context and ensure the response is coherant and expected
-func TestGenerateWithHistory(t *testing.T) {
+func runGenerateWithHistory(t *testing.T) {
 	if testModel != "" {
 		// The Generate API's Context field (token array continuation) is not
 		// supported by all runners (e.g. MLX). Chat history works; this is
@@ -212,16 +212,10 @@ func TestGenerateWithHistory(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	pullOrSkip(ctx, t, client, req.Model)
 
 	// Get the server running (if applicable) warm the model up with a single initial request
-	slog.Info("loading", "model", req.Model)
-	err := client.Generate(ctx,
-		&api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}, Options: req.Options},
-		func(response api.GenerateResponse) error { return nil },
-	)
-	if err != nil {
-		t.Fatalf("failed to load model %s: %s", req.Model, err)
-	}
+	preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}, Options: req.Options})
 
 	req.Context = DoGenerate(ctx, t, client, req, rainbowExpected, 30*time.Second, 20*time.Second)
 
@@ -236,11 +230,7 @@ func TestGenerateWithHistory(t *testing.T) {
 }
 
 // Send multiple chat requests with prior context and ensure the response is coherant and expected
-func TestParallelChatWithHistory(t *testing.T) {
-	if testModel != "" {
-		t.Skip("uses hardcoded model, not applicable with model override")
-	}
-	modelName := "gpt-oss:20b"
+func runParallelChatWithHistory(t *testing.T, modelName string) {
 	req, resp := ChatRequests()
 	numParallel := 2
 	iterLimit := 2
@@ -252,16 +242,10 @@ func TestParallelChatWithHistory(t *testing.T) {
 	defer cleanup()
 	initialTimeout := 120 * time.Second
 	streamTimeout := 20 * time.Second
+	prepareParallelHistoryModel(ctx, t, client, modelName)
 
 	// Get the server running (if applicable) warm the model up with a single initial empty request
-	slog.Info("loading", "model", modelName)
-	err := client.Generate(ctx,
-		&api.GenerateRequest{Model: modelName, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
-		func(response api.GenerateResponse) error { return nil },
-	)
-	if err != nil {
-		t.Fatalf("failed to load model %s: %s", modelName, err)
-	}
+	preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: modelName, KeepAlive: &api.Duration{Duration: 10 * time.Second}})
 	gpuPercent := getGPUPercent(ctx, t, client, modelName)
 	if gpuPercent < 80 && gpuPercent > 50 {
 		slog.Warn("Low GPU percentage - increasing timeouts", "percent", gpuPercent)
@@ -302,8 +286,16 @@ func TestParallelChatWithHistory(t *testing.T) {
 	wg.Wait()
 }
 
+func prepareParallelHistoryModel(ctx context.Context, t *testing.T, client *api.Client, modelName string) {
+	t.Helper()
+	skipRegisteredMinVRAM(t, modelName)
+	requireCapability(ctx, t, client, modelName, "completion")
+	skipIfTargetArchitecture(ctx, t, client, modelName)
+	skipIfModelTooLargeForSweepVRAM(ctx, t, client, modelName)
+}
+
 // Send generate requests with prior context and ensure the response is coherant and expected
-func TestChatWithHistory(t *testing.T) {
+func runChatWithHistory(t *testing.T) {
 	req := api.ChatRequest{
 		Model:     smol,
 		Stream:    &stream,
@@ -324,16 +316,10 @@ func TestChatWithHistory(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	pullOrSkip(ctx, t, client, req.Model)
 
 	// Get the server running (if applicable) warm the model up with a single initial request
-	slog.Info("loading", "model", req.Model)
-	err := client.Generate(ctx,
-		&api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}, Options: req.Options},
-		func(response api.GenerateResponse) error { return nil },
-	)
-	if err != nil {
-		t.Fatalf("failed to load model %s: %s", req.Model, err)
-	}
+	preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: req.Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}, Options: req.Options})
 
 	assistant := DoChat(ctx, t, client, req, rainbowExpected, 30*time.Second, 20*time.Second)
 

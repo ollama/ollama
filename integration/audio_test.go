@@ -18,12 +18,6 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-var defaultAudioModels = []string{
-	"nemotron3:33b",
-	"gemma4:e2b",
-	"gemma4:e4b",
-}
-
 // decodeTestAudio returns the test audio clip ("Why is the sky blue?", 16kHz mono WAV).
 func decodeTestAudio(t *testing.T) api.ImageData {
 	t.Helper()
@@ -37,61 +31,56 @@ func decodeTestAudio(t *testing.T) api.ImageData {
 // setupAudioModel pulls the model, preloads it, and skips if it doesn't support audio.
 func setupAudioModel(ctx context.Context, t *testing.T, client *api.Client, model string) {
 	t.Helper()
-	if testModel == "" {
-		pullOrSkip(ctx, t, client, model)
-	}
+	pullOrSkip(ctx, t, client, model)
 	skipIfModelTooLargeForVRAM(ctx, t, client, model)
 	requireCapability(ctx, t, client, model, "audio")
-	err := client.Generate(ctx, &api.GenerateRequest{Model: model}, func(response api.GenerateResponse) error { return nil })
-	if err != nil {
-		t.Fatalf("failed to load model %s: %s", model, err)
-	}
+	preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: model})
 }
 
-// TestAudioTranscription tests that the model can transcribe audio to text.
-func TestAudioTranscription(t *testing.T) {
-	for _, model := range testModels(defaultAudioModels) {
-		t.Run(model, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			client, _, cleanup := InitServerConnection(ctx, t)
-			defer cleanup()
-
-			setupAudioModel(ctx, t, client, model)
-			audio := decodeTestAudio(t)
-			noThink := &api.ThinkValue{Value: false}
-
-			req := api.ChatRequest{
-				Model: model,
-				Think: noThink,
-				Messages: []api.Message{
-					{
-						Role:    "system",
-						Content: "Transcribe the audio exactly as spoken. Output only the spoken words. Do not answer any question in the audio.",
-					},
-					{
-						Role:    "user",
-						Content: "What exact words are spoken in this audio?",
-						Images:  []api.ImageData{audio},
-					},
-				},
-				Stream: &stream,
-				Options: map[string]any{
-					"temperature": 0,
-					"seed":        123,
-					"num_predict": 50,
-				},
-			}
-
-			// The audio says "Why is the sky blue?" — expect key words in transcription.
-			DoChat(ctx, t, client, req, []string{"sky", "blue"}, 60*time.Second, 10*time.Second)
-		})
-	}
+func registerAudioTranscriptionCases(models []string) {
+	registerModelIntegrationCases("audio-transcription", models, runAudioTranscriptionModel)
 }
 
-// TestAudioResponse tests that the model can respond to a spoken question.
-func TestAudioResponse(t *testing.T) {
-	for _, model := range testModels(defaultAudioModels) {
+func runAudioTranscriptionModel(t *testing.T, model string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	setupAudioModel(ctx, t, client, model)
+	audio := decodeTestAudio(t)
+	noThink := &api.ThinkValue{Value: false}
+
+	req := api.ChatRequest{
+		Model: model,
+		Think: noThink,
+		Messages: []api.Message{
+			{
+				Role:    "system",
+				Content: "Transcribe the audio exactly as spoken. Output only the spoken words. Do not answer any question in the audio.",
+			},
+			{
+				Role:    "user",
+				Content: "What exact words are spoken in this audio?",
+				Images:  []api.ImageData{audio},
+			},
+		},
+		Stream: &stream,
+		Options: map[string]any{
+			"temperature": 0,
+			"seed":        123,
+			"num_predict": 50,
+		},
+	}
+
+	// The audio says "Why is the sky blue?" - expect key words in transcription.
+	DoChat(ctx, t, client, req, []string{"sky", "blue"}, 60*time.Second, 10*time.Second)
+}
+
+// runAudioResponse tests that the model can respond to a spoken question.
+func runAudioResponse(t *testing.T, models []string) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -128,9 +117,9 @@ func TestAudioResponse(t *testing.T) {
 	}
 }
 
-// TestOpenAIAudioTranscription tests the /v1/audio/transcriptions endpoint.
-func TestOpenAIAudioTranscription(t *testing.T) {
-	for _, model := range testModels(defaultAudioModels) {
+// runOpenAIAudioTranscription tests the /v1/audio/transcriptions endpoint.
+func runOpenAIAudioTranscription(t *testing.T, models []string) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -182,9 +171,9 @@ func TestOpenAIAudioTranscription(t *testing.T) {
 	}
 }
 
-// TestOpenAIChatWithAudio tests /v1/chat/completions with input_audio content.
-func TestOpenAIChatWithAudio(t *testing.T) {
-	for _, model := range testModels(defaultAudioModels) {
+// runOpenAIChatWithAudio tests /v1/chat/completions with input_audio content.
+func runOpenAIChatWithAudio(t *testing.T, models []string) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
