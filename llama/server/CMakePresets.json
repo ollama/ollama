@@ -35,7 +35,7 @@
       "binaryDir": "${sourceDir}/../../build/llama-server-cpu_arm64",
       "toolchainFile": "${sourceDir}/../../cmake/windows-arm64-llvm-mingw.cmake",
       "cacheVariables": {
-        "GGML_CPU_ALL_VARIANTS": "OFF",
+        "GGML_CPU_ALL_VARIANTS": "ON",
         "OLLAMA_RUNNER_DIR": "",
         "OLLAMA_WINDOWS_RUNTIME_ARCH": "arm64"
       }
@@ -109,6 +109,17 @@
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13",
       "cacheVariables": {
         "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;89-virtual;100-virtual;120-virtual"
+      }
+    },
+    {
+      "name": "llama_cuda_v13_windows_arm64",
+      "inherits": ["llama_cuda_v13_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13_arm64",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "121",
+        "GGML_CPU": "OFF",
+        "CMAKE_CUDA_FLAGS": "-target-dir=arm64 -t 4",
+        "OLLAMA_WINDOWS_RUNTIME_ARCH": "arm64"
       }
     },
     {
@@ -265,6 +276,11 @@
     {
       "name": "llama_cuda_v13_windows",
       "configurePreset": "llama_cuda_v13_windows",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "llama_cuda_v13_windows_arm64",
+      "configurePreset": "llama_cuda_v13_windows_arm64",
       "targets": ["ggml-cuda"]
     },
     {
