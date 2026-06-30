@@ -38,6 +38,10 @@ import (
 //   - Users can disable thinking per-turn via thinkValue=false
 type GLM47Renderer struct{}
 
+func (r *GLM47Renderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *GLM47Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 

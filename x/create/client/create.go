@@ -16,6 +16,8 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
 	modelparsers "github.com/ollama/ollama/model/parsers"
@@ -38,6 +40,7 @@ type ModelfileConfig struct {
 	Draft      string
 	Parser     string
 	Renderer   string
+	Requires   string
 	Parameters map[string]any
 }
 
@@ -75,7 +78,20 @@ func ConfigFromModelfile(modelfile *parser.Modelfile) (string, *ModelfileConfig,
 			mfConfig.Parser = cmd.Args
 		case "renderer":
 			mfConfig.Renderer = cmd.Args
-		case "adapter", "message", "requires":
+		case "requires":
+			requires := cmd.Args
+			if !strings.HasPrefix(requires, "v") {
+				requires = "v" + requires
+			}
+			if !semver.IsValid(requires) {
+				return "", nil, fmt.Errorf("requires must be a valid semver (e.g. 0.14.0)")
+			}
+			minVersion := "v" + MinOllamaVersion
+			if semver.Compare(requires, minVersion) < 0 {
+				return "", nil, fmt.Errorf("requires %s is below the minimum supported version %s for safetensors models", strings.TrimPrefix(requires, "v"), MinOllamaVersion)
+			}
+			mfConfig.Requires = strings.TrimPrefix(requires, "v")
+		case "adapter", "message":
 			continue
 		default:
 			if slices.Contains(ignoredModelfileParameters, cmd.Name) {
@@ -241,6 +257,40 @@ func appendLayersManifestWriter(next create.ManifestWriter, extra []create.Layer
 		layers = append(layers, extra...)
 		return next(modelName, config, layers)
 	}
+}
+
+func draftMetadata(draftDir string) (*model.Draft, error) {
+	configPath := filepath.Join(draftDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read draft config %s: %w", configPath, err)
+	}
+
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse draft config %s: %w", configPath, err)
+	}
+
+	arch := ""
+	if len(cfg.Architectures) > 0 {
+		arch = cfg.Architectures[0]
+	}
+	if arch == "" {
+		arch = cfg.ModelType
+	}
+	if arch == "" {
+		return nil, fmt.Errorf("draft architecture not found in %s", configPath)
+	}
+
+	return &model.Draft{
+		ModelFormat:  "safetensors",
+		Architecture: arch,
+		TensorPrefix: "draft.",
+		Config:       "draft/config.json",
+	}, nil
 }
 
 func createModelFromBaseWithDraft(opts CreateOptions, draftLayers []create.LayerInfo, progressFn func(string)) error {
@@ -484,15 +534,17 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		}
 		configData.Capabilities = caps
 		configData.Requires = MinOllamaVersion
+		if opts.Modelfile != nil && opts.Modelfile.Requires != "" {
+			configData.Requires = opts.Modelfile.Requires
+		}
 		configData.Parser = resolveParserName(opts.Modelfile, parserName)
 		configData.Renderer = resolveRendererName(opts.Modelfile, rendererName)
 		if opts.Modelfile != nil && opts.Modelfile.Draft != "" {
-			configData.Draft = &model.Draft{
-				ModelFormat:  "safetensors",
-				Architecture: "Gemma4AssistantForCausalLM",
-				TensorPrefix: "draft.",
-				Config:       "draft/config.json",
+			draft, err := draftMetadata(opts.Modelfile.Draft)
+			if err != nil {
+				return err
 			}
+			configData.Draft = draft
 		}
 		configJSON, err := json.Marshal(configData)
 		if err != nil {
@@ -693,6 +745,9 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "laguna") {
 			return "laguna"
 		}
+		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
+			return "cohere"
+		}
 		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
 			return "glm-4.7"
 		}
@@ -712,6 +767,9 @@ func getParserName(modelDir string) string {
 		typeLower := strings.ToLower(cfg.ModelType)
 		if strings.Contains(typeLower, "laguna") {
 			return "laguna"
+		}
+		if strings.Contains(typeLower, "cohere2_moe") {
+			return "cohere"
 		}
 		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
 			return "glm-4.7"
@@ -753,6 +811,9 @@ func getRendererName(modelDir string) string {
 		if strings.Contains(archLower, "laguna") {
 			return "laguna"
 		}
+		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
+			return "cohere"
+		}
 		if strings.Contains(archLower, "gemma4") {
 			return "gemma4"
 		}
@@ -772,6 +833,9 @@ func getRendererName(modelDir string) string {
 		typeLower := strings.ToLower(cfg.ModelType)
 		if strings.Contains(typeLower, "laguna") {
 			return "laguna"
+		}
+		if strings.Contains(typeLower, "cohere2_moe") {
+			return "cohere"
 		}
 		if strings.Contains(typeLower, "gemma4") {
 			return "gemma4"

@@ -401,8 +401,167 @@ func TestChatPromptGLMOcrRendererAddsImageTags(t *testing.T) {
 		t.Fatalf("len(images) = %d, want %d", got, want)
 	}
 
-	if !strings.Contains(prompt, "<|user|>\n[img-0][img-1]extract text") {
+	if !strings.Contains(prompt, "<|user|>\n[img-0][img-1] extract text") {
 		t.Fatalf("prompt missing glm-ocr image tags, got: %q", prompt)
+	}
+}
+
+func TestChatPromptRendererAddsToolImageTags(t *testing.T) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: "look at this file",
+			Images:  []api.ImageData{[]byte("img-1")},
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_read",
+					Function: api.ToolCallFunction{
+						Name: "Read",
+					},
+				},
+			},
+		},
+		{
+			Role:       "tool",
+			Content:    "attached image",
+			Images:     []api.ImageData{[]byte("img-2")},
+			ToolCallID: "call_read",
+		},
+	}
+
+	tests := []struct {
+		name            string
+		renderer        string
+		wantUserTag     string
+		wantToolContent string
+	}{
+		{
+			name:            "gemma4",
+			renderer:        "gemma4",
+			wantUserTag:     "<|turn>user\n[img-0] look at this file<turn|>\n",
+			wantToolContent: "[img-1] attached image",
+		},
+		{
+			name:            "qwen3-vl",
+			renderer:        "qwen3-vl-instruct",
+			wantUserTag:     "<|im_start|>user\n[img-0] look at this file<|im_end|>\n",
+			wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
+		},
+		{
+			name:            "qwen3.5",
+			renderer:        "qwen3.5",
+			wantUserTag:     "<|im_start|>user\n[img-0] look at this file<|im_end|>\n",
+			wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
+		},
+		{
+			name:            "glm-ocr",
+			renderer:        "glm-ocr",
+			wantUserTag:     "<|user|>\n[img-0] look at this file",
+			wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
+		},
+		{
+			name:            "nemotron-3-nano",
+			renderer:        "nemotron-3-nano",
+			wantUserTag:     "<|im_start|>user\n[img-0] look at this file<|im_end|>\n",
+			wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				Config:         model.ConfigV2{Renderer: tt.renderer},
+				ProjectorPaths: []string{"vision"},
+			}
+			opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+			think := false
+
+			prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got, want := len(images), 2; got != want {
+				t.Fatalf("len(images) = %d, want %d", got, want)
+			}
+
+			if !strings.Contains(prompt, tt.wantUserTag) {
+				t.Fatalf("prompt missing user image tag, got: %q", prompt)
+			}
+
+			if !strings.Contains(prompt, tt.wantToolContent) {
+				t.Fatalf("prompt missing tool image tag, got: %q", prompt)
+			}
+		})
+	}
+}
+
+func TestChatPromptRendererPreservesExplicitImagePlaceholders(t *testing.T) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: "compare [img] and [img]",
+			Images:  []api.ImageData{[]byte("img-1"), []byte("img-2")},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		renderer    string
+		wantSnippet string
+	}{
+		{
+			name:        "gemma4",
+			renderer:    "gemma4",
+			wantSnippet: "<|turn>user\ncompare [img-0] and [img-1]<turn|>\n",
+		},
+		{
+			name:        "qwen3-vl",
+			renderer:    "qwen3-vl-instruct",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
+		{
+			name:        "qwen3.5",
+			renderer:    "qwen3.5",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
+		{
+			name:        "glm-ocr",
+			renderer:    "glm-ocr",
+			wantSnippet: "<|user|>\ncompare [img-0] and [img-1]",
+		},
+		{
+			name:        "nemotron-3-nano",
+			renderer:    "nemotron-3-nano",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				Config:         model.ConfigV2{Renderer: tt.renderer},
+				ProjectorPaths: []string{"vision"},
+			}
+			opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+			think := false
+
+			prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got, want := len(images), 2; got != want {
+				t.Fatalf("len(images) = %d, want %d", got, want)
+			}
+
+			if !strings.Contains(prompt, tt.wantSnippet) {
+				t.Fatalf("prompt missing replaced placeholders, got: %q", prompt)
+			}
+		})
 	}
 }
 

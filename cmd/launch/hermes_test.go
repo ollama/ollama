@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,6 +62,20 @@ func clearHermesMessagingEnvVars(t *testing.T) {
 			if err := os.Unsetenv(key); err != nil {
 				t.Fatalf("unset %s: %v", key, err)
 			}
+		}
+	}
+}
+
+func clearHermesDesktopPackageEnvVars(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"HERMES_INSTALL_DIR", "HERMES_HOME", "LOCALAPPDATA"} {
+		if value, ok := os.LookupEnv(key); ok {
+			t.Setenv(key, value)
+		} else {
+			t.Setenv(key, "")
+		}
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
 		}
 	}
 }
@@ -408,16 +423,33 @@ func TestHermesConfigureMigratesLegacyManagedAliases(t *testing.T) {
 func TestHermesPathsUsesLocalConfigPathForNativeWindowsHermes(t *testing.T) {
 	tmpDir := t.TempDir()
 	winHome := filepath.Join(tmpDir, "winhome")
+	localAppData := filepath.Join(tmpDir, "LocalAppData")
 	setTestHome(t, winHome)
 	withHermesPlatform(t, "windows")
 	withHermesUserHome(t, winHome)
 	t.Setenv("PATH", tmpDir)
+	t.Setenv("LOCALAPPDATA", localAppData)
 	writeFakeBinary(t, tmpDir, "hermes")
 
 	got := (&Hermes{}).Paths()
-	want := filepath.Join(winHome, ".hermes", "config.yaml")
+	want := filepath.Join(localAppData, "hermes", "config.yaml")
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("expected local config path %q, got %v", want, got)
+	}
+}
+
+func TestHermesPathsUsesHermesHomeOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	hermesHome := filepath.Join(tmpDir, "custom-hermes-home")
+	setTestHome(t, filepath.Join(tmpDir, "home"))
+	withHermesPlatform(t, "windows")
+	t.Setenv("HERMES_HOME", hermesHome)
+	t.Setenv("LOCALAPPDATA", filepath.Join(tmpDir, "LocalAppData"))
+
+	got := (&Hermes{}).Paths()
+	want := filepath.Join(hermesHome, "config.yaml")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("expected HERMES_HOME config path %q, got %v", want, got)
 	}
 }
 
@@ -552,7 +584,7 @@ func TestHermesRunPassthroughArgs(t *testing.T) {
 	}
 
 	h := &Hermes{}
-	if err := h.Run("", []string{"--continue"}); err != nil {
+	if err := h.Run("", nil, []string{"--continue"}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
@@ -562,6 +594,313 @@ func TestHermesRunPassthroughArgs(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(data)); got != "[--continue]" {
 		t.Fatalf("expected passthrough args to reach hermes, got %q", got)
+	}
+}
+
+func writeHermesDesktopPackage(t *testing.T, home string) {
+	t.Helper()
+	writeHermesDesktopExecutable(t,
+		filepath.Join(home, ".hermes", "hermes-agent", "apps", "desktop", "release"),
+		hermesDesktopTestExecutableRelativePath(hermesGOOS),
+	)
+}
+
+func writeHermesDesktopExecutable(t *testing.T, releaseRoot, relative string) {
+	t.Helper()
+	path := filepath.Join(releaseRoot, relative)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func hermesDesktopTestExecutableRelativePath(goos string) string {
+	switch goos {
+	case "darwin":
+		return filepath.Join("mac-arm64", "Hermes.app", "Contents", "MacOS", "Hermes")
+	case "windows":
+		return filepath.Join("win-unpacked", "Hermes.exe")
+	default:
+		return filepath.Join("linux-unpacked", "hermes")
+	}
+}
+
+func writeHermesDesktopTestBinary(t *testing.T, dir string) {
+	t.Helper()
+	bin := filepath.Join(dir, "hermes")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'Hermes Agent v0.16.0 (2026.6.5)\\n'\n  exit 0\nfi\nprintf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readHermesDesktopInvocations(t *testing.T, home string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, "hermes-invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func TestHermesDesktopRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tests := []struct {
+		name        string
+		goos        string
+		args        []string
+		hasPackage  bool
+		clearPkgEnv bool
+		want        string
+	}{
+		{
+			name:        "desktop subcommand",
+			goos:        "darwin",
+			args:        []string{"--foreground"},
+			clearPkgEnv: true,
+			want:        "[desktop --foreground]",
+		},
+		{
+			name:       "skip build when packaged app exists",
+			goos:       runtime.GOOS,
+			args:       []string{"--cwd", "/tmp/project"},
+			hasPackage: true,
+			want:       "[desktop --skip-build --cwd /tmp/project]",
+		},
+		{
+			name:       "explicit skip build",
+			goos:       runtime.GOOS,
+			args:       []string{"--skip-build"},
+			hasPackage: true,
+			want:       "[desktop --skip-build]",
+		},
+		{
+			name:       "source mode",
+			goos:       runtime.GOOS,
+			args:       []string{"--source"},
+			hasPackage: true,
+			want:       "[desktop --source]",
+		},
+		{
+			name:       "build only",
+			goos:       runtime.GOOS,
+			args:       []string{"--build-only"},
+			hasPackage: true,
+			want:       "[desktop --build-only]",
+		},
+		{
+			name:       "help",
+			goos:       runtime.GOOS,
+			args:       []string{"--help"},
+			hasPackage: true,
+			want:       "[desktop --help]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setTestHome(t, tmpDir)
+			withLauncherHooks(t)
+			withInteractiveSession(t, true)
+			withHermesPlatform(t, tt.goos)
+			clearHermesMessagingEnvVars(t)
+			if tt.clearPkgEnv {
+				clearHermesDesktopPackageEnvVars(t)
+			}
+			t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if tt.hasPackage {
+				writeHermesDesktopPackage(t, tmpDir)
+			}
+			writeHermesDesktopTestBinary(t, tmpDir)
+
+			DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+				t.Fatalf("did not expect messaging prompt during desktop launch: %s", prompt)
+				return false, nil
+			}
+
+			if err := (&HermesDesktop{}).Run("", nil, tt.args); err != nil {
+				t.Fatalf("Run returned error: %v", err)
+			}
+			if got := readHermesDesktopInvocations(t, tmpDir); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+func writeHermesVersionedTestBinary(t *testing.T, dir, version string) {
+	t.Helper()
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"  --version)\n" +
+		"    printf 'Hermes Agent " + version + " (test)\\n'\n" +
+		"    ;;\n" +
+		"  update)\n" +
+		"    printf 'update\\n' >> \"$HOME/hermes-update.log\"\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    printf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n" +
+		"    ;;\n" +
+		"esac\n"
+	bin := filepath.Join(dir, "hermes")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseHermesVersion(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"standard release", "Hermes Agent v0.16.0 (2026.6.5)", "v0.16.0"},
+		{"newer release", "Hermes Agent v0.17.0 (2026.6.19)", "v0.17.0"},
+		{"older release", "Hermes Agent v0.15.1 (2026.5.29)", "v0.15.1"},
+		{"prerelease", "Hermes Agent v0.16.0-rc1 (2026.6.5)", "v0.16.0-rc1"},
+		{"no version token", "Hermes Agent", ""},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseHermesVersion(tt.input); got != tt.want {
+				t.Fatalf("parseHermesVersion(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHermesDesktopRun_UpdatesCliOlderThanMinVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, runtime.GOOS)
+	clearHermesMessagingEnvVars(t)
+	clearHermesDesktopPackageEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeHermesVersionedTestBinary(t, tmpDir, "v0.15.1")
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect messaging prompt during desktop launch: %s", prompt)
+		return false, nil
+	}
+
+	if err := (&HermesDesktop{}).Run("", nil, []string{"--foreground"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	updateLog, err := os.ReadFile(filepath.Join(tmpDir, "hermes-update.log"))
+	if err != nil {
+		t.Fatalf("expected hermes update to run for an older CLI: %v", err)
+	}
+	if strings.TrimSpace(string(updateLog)) != "update" {
+		t.Fatalf("expected update log 'update', got %q", updateLog)
+	}
+	if got := readHermesDesktopInvocations(t, tmpDir); got != "[desktop --foreground]" {
+		t.Fatalf("expected desktop launch after update, got %q", got)
+	}
+}
+
+func TestHermesDesktopRun_SkipsMinVersionCheckOnWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, "windows")
+	clearHermesMessagingEnvVars(t)
+	clearHermesDesktopPackageEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeHermesVersionedTestBinary(t, tmpDir, "v0.15.1")
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect messaging prompt during desktop launch: %s", prompt)
+		return false, nil
+	}
+
+	if err := (&HermesDesktop{}).Run("", nil, []string{"--foreground"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(tmpDir, "hermes-update.log")); err == nil {
+		t.Fatal("expected hermes update NOT to run on Windows, but hermes-update.log exists")
+	}
+	if got := readHermesDesktopInvocations(t, tmpDir); got != "[desktop --foreground]" {
+		t.Fatalf("expected desktop launch without update, got %q", got)
+	}
+}
+
+func TestHermesDesktopRun_DoesNotUpdateCliAtOrAboveMinVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, runtime.GOOS)
+	clearHermesMessagingEnvVars(t)
+	clearHermesDesktopPackageEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeHermesVersionedTestBinary(t, tmpDir, "v0.17.0")
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect messaging prompt during desktop launch: %s", prompt)
+		return false, nil
+	}
+
+	if err := (&HermesDesktop{}).Run("", nil, []string{"--foreground"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(tmpDir, "hermes-update.log")); err == nil {
+		t.Fatal("expected hermes update NOT to run for a current CLI, but hermes-update.log exists")
+	}
+	if got := readHermesDesktopInvocations(t, tmpDir); got != "[desktop --foreground]" {
+		t.Fatalf("expected desktop launch without update, got %q", got)
+	}
+}
+
+func TestHermesDesktopRunUsesWindowsLocalAppDataPackage(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, "windows")
+	t.Setenv("LOCALAPPDATA", filepath.Join(tmpDir, "LocalAppData"))
+
+	writeHermesDesktopExecutable(t,
+		filepath.Join(tmpDir, "LocalAppData", "hermes", "hermes-agent", "apps", "desktop", "release"),
+		hermesDesktopTestExecutableRelativePath("windows"),
+	)
+
+	got := (&HermesDesktop{}).launchArgs([]string{"--cwd", `C:\Users\me\project`})
+	want := []string{"desktop", "--skip-build", "--cwd", `C:\Users\me\project`}
+	if diff := compareStrings(got, want); diff != "" {
+		t.Fatalf("Hermes Desktop launch args mismatch: %s", diff)
+	}
+}
+
+func TestHermesDesktopReleaseRootsIncludeLinuxRootInstall(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, "linux")
+
+	got := hermesDesktopReleaseRoots()
+	want := filepath.Join(string(filepath.Separator), "usr", "local", "lib", "hermes-agent", "apps", "desktop", "release")
+	if !slices.Contains(got, want) {
+		t.Fatalf("expected Linux root install release path %q in %v", want, got)
 	}
 }
 
@@ -603,7 +942,7 @@ fi
 	}
 
 	h := &Hermes{}
-	if err := h.Run("", nil); err != nil {
+	if err := h.Run("", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
@@ -655,10 +994,10 @@ func TestHermesRun_SetUpLaterRepromptsOnLaterLaunches(t *testing.T) {
 	}
 
 	h := &Hermes{}
-	if err := h.Run("", nil); err != nil {
+	if err := h.Run("", nil, nil); err != nil {
 		t.Fatalf("first Run returned error: %v", err)
 	}
-	if err := h.Run("", nil); err != nil {
+	if err := h.Run("", nil, nil); err != nil {
 		t.Fatalf("second Run returned error: %v", err)
 	}
 
@@ -713,7 +1052,7 @@ func TestHermesRun_SkipsMessagingPromptWhenConfigured(t *testing.T) {
 	}
 
 	h := &Hermes{}
-	if err := h.Run("", nil); err != nil {
+	if err := h.Run("", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
@@ -753,7 +1092,7 @@ func TestHermesRun_SkipsMessagingPromptWithYesPolicy(t *testing.T) {
 	}
 
 	h := &Hermes{}
-	if err := h.Run("", nil); err != nil {
+	if err := h.Run("", nil, nil); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
@@ -798,7 +1137,7 @@ fi
 	}
 
 	h := &Hermes{}
-	err := h.Run("", nil)
+	err := h.Run("", nil, nil)
 	if err == nil {
 		t.Fatal("expected messaging setup failure")
 	}
@@ -943,26 +1282,59 @@ func TestHermesMessagingConfiguredRecognizesSupportedGatewayVars(t *testing.T) {
 	}
 }
 
-func TestHermesEnsureInstalledWindowsShowsWSLGuidance(t *testing.T) {
+func TestHermesEnsureInstalledWindowsRunsPowerShellInstaller(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
 	withHermesPlatform(t, "windows")
 	t.Setenv("PATH", tmpDir)
+	t.Setenv("LOCALAPPDATA", filepath.Join(tmpDir, "AppData", "Local"))
+
+	powershell := filepath.Join(tmpDir, "powershell.exe")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+/bin/mkdir -p %q
+/bin/cat > %q <<'EOS'
+#!/bin/sh
+exit 0
+EOS
+/bin/chmod +x %q
+exit 0
+`,
+		filepath.Join(tmpDir, "powershell.log"),
+		filepath.Dir(filepath.Join(tmpDir, "AppData", "Local", "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe")),
+		filepath.Join(tmpDir, "AppData", "Local", "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe"),
+		filepath.Join(tmpDir, "AppData", "Local", "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe"),
+	)
+	if err := os.WriteFile(powershell, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "Hermes is not installed. Install now?" {
+			t.Fatalf("unexpected install prompt %q", prompt)
+		}
+		return true, nil
+	}
 
 	h := &Hermes{}
-	err := h.ensureInstalled()
-	if err == nil {
-		t.Fatal("expected WSL guidance error")
+	if err := h.ensureInstalled(); err != nil {
+		t.Fatalf("ensureInstalled returned error: %v", err)
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "wsl --install") {
-		t.Fatalf("expected install command in guidance, got %v", err)
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "powershell.log"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "hermes-agent.nousresearch.com") {
-		t.Fatalf("expected docs link in guidance, got %v", err)
-	}
-	if strings.Contains(msg, "hermes is not installed") {
-		t.Fatalf("guidance should not lead with 'hermes is not installed', got %v", err)
+	logs := string(data)
+	for _, want := range []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", hermesWindowsInstallURL, "-SkipSetup"} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected PowerShell installer args to contain %q, got logs:\n%s", want, logs)
+		}
 	}
 }
 

@@ -18,15 +18,17 @@ import (
 func init() {
 	base.Register("Gemma4ForCausalLM", newModel)
 	base.Register("Gemma4ForConditionalGeneration", newModel)
+	base.Register("Gemma4UnifiedForCausalLM", newModel)
+	base.Register("Gemma4UnifiedForConditionalGeneration", newModel)
+	base.Register("gemma4_unified", newModel)
 	base.RegisterDraft("Gemma4AssistantForCausalLM", newAssistantModel)
+	base.RegisterDraft("Gemma4UnifiedAssistantForCausalLM", newAssistantModel)
 	base.RegisterDraft("gemma4_assistant", newAssistantModel)
+	base.RegisterDraft("gemma4_unified_assistant", newAssistantModel)
 }
 
 // Compile-time interface checks.
-var (
-	_ base.Model               = (*Model)(nil)
-	_ base.MTPDefaultsProvider = (*Model)(nil)
-)
+var _ base.Model = (*Model)(nil)
 
 // RopeParams holds per-layer-type RoPE settings.
 type RopeParams struct {
@@ -91,6 +93,10 @@ type TextConfig struct {
 	KVShareMap map[int32]int32 `json:"-"`
 	// Set of donor layer indices that need to store their KV.
 	KVDonors map[int32]bool `json:"-"`
+}
+
+type generationConfig struct {
+	SuppressTokens []int32 `json:"suppress_tokens"`
 }
 
 // sharedHistory carries a donor layer's K/V to donees that share
@@ -237,6 +243,46 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 	return out
 }
 
+// loadFusedExperts populates moe with a stacked-3D fused gate_up + down expert
+// pair, choosing the quantized GatherQMM path when scale sidecars are present
+// and the dense GatherMM path otherwise. gateUpW/downW are the stacked tensors
+// and gateUpKey/downKey are their map keys, used to locate the _scale/_qbias
+// sidecars and per-tensor quant metadata. Shared by the .experts./.moe.
+// pre-stacked names and the .moe.switch_mlp. names so all fused layouts load
+// identically.
+func loadFusedExperts(tensors map[string]*mlx.Array, cfg *TextConfig, moe *MoEBlock, gateUpW *mlx.Array, gateUpKey string, downW *mlx.Array, downKey string) {
+	moe.UseFusedGateUp = true
+
+	gateUpScales := firstNonNil(tensors, gateUpKey+"_scale", gateUpKey+".scale")
+	downScales := firstNonNil(tensors, downKey+"_scale", downKey+".scale")
+	if gateUpScales == nil || downScales == nil {
+		// Unquantized: keep fused and transpose for GatherMM ([experts, in, out]).
+		moe.GateUpWeight = transposeForGatherMM(gateUpW)
+		moe.DownWeight = transposeForGatherMM(downW)
+		return
+	}
+
+	// Quantized (affine/nvfp4/mxfp8): keep fused as a single tensor for one
+	// GatherQMM call instead of two. No transpose. nvfp4/mxfp8 carry no qbias,
+	// and this path does not apply nvfp4's optional double-scale global_scale.
+	moe.UseQuantized = true
+	moe.GateUpWeightQ = gateUpW
+	moe.GateUpScales = gateUpScales
+	moe.GateUpBiases = firstNonNil(tensors, gateUpKey+"_qbias", gateUpKey+".bias")
+	moe.DownWeightQ = downW
+	moe.DownScales = downScales
+	moe.DownBiases = firstNonNil(tensors, downKey+"_qbias", downKey+".bias")
+
+	moe.GateUpGroupSize, moe.GateUpBits, moe.QuantMode = model.ResolveLinearQuantParams(
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode,
+		cfg.TensorQuant, gateUpKey, gateUpW, gateUpScales,
+	)
+	moe.DownGroupSize, moe.DownBits, moe.DownQuantMode = model.ResolveLinearQuantParams(
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode,
+		cfg.TensorQuant, downKey, downW, downScales,
+	)
+}
+
 // Router implements Gemma 4's expert routing mechanism.
 type Router struct {
 	Proj  nn.LinearLayer // [hidden_size -> num_experts]
@@ -342,7 +388,8 @@ type Model struct {
 	tok *tokenizer.Tokenizer
 	*TextConfig
 
-	weightPrefix string
+	SuppressLogitBias *mlx.Array
+	weightPrefix      string
 }
 
 func parseTextConfig(configData []byte) (TextConfig, error) {
@@ -467,26 +514,16 @@ func parseTextConfig(configData []byte) (TextConfig, error) {
 	return cfg, nil
 }
 
-func (m *Model) EnableCompile() bool {
-	return true
+func parseSuppressTokens(configData []byte) []int32 {
+	var cfg generationConfig
+	if err := json.Unmarshal(configData, &cfg); err != nil {
+		return nil
+	}
+	return cfg.SuppressTokens
 }
 
-func (m *Model) MTPDraftDefaults(_ bool) base.MTPDefaults {
-	defaults := base.MTPDefaults{
-		InitialDraftTokens: 4,
-		MaxDraftTokens:     16,
-		Enabled:            true,
-	}
-	if m == nil || m.TextConfig == nil {
-		return defaults
-	}
-	switch {
-	case !m.EnableMoeBlock && m.HiddenSize == 5376 && m.NumHiddenLayers == 60:
-		defaults.InitialDraftTokens = 14
-	case m.EnableMoeBlock && m.HiddenSize == 2816 && m.NumHiddenLayers == 30:
-		defaults.InitialDraftTokens = 8
-	}
-	return defaults
+func (m *Model) EnableCompile() bool {
+	return true
 }
 
 func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
@@ -591,8 +628,10 @@ func newModel(root *model.Root) (base.Model, error) {
 	}
 
 	tokConfig := &tokenizer.TokenizerConfig{ConfigJSON: configData}
+	var suppressTokens []int32
 	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
 		tokConfig.GenerationConfigJSON = genConfigData
+		suppressTokens = parseSuppressTokens(genConfigData)
 	}
 	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
 		tokConfig.TokenizerConfigJSON = tokConfigData
@@ -604,9 +643,10 @@ func newModel(root *model.Root) (base.Model, error) {
 	}
 
 	m := &Model{
-		Layers:     make([]*DecoderLayer, cfg.NumHiddenLayers),
-		TextConfig: &cfg,
-		tok:        tok,
+		Layers:            make([]*DecoderLayer, cfg.NumHiddenLayers),
+		TextConfig:        &cfg,
+		tok:               tok,
+		SuppressLogitBias: makeSuppressLogitBias(suppressTokens, cfg.VocabSize),
 	}
 
 	for i := range m.Layers {
@@ -761,32 +801,32 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 			moe := &MoEBlock{PerExpertScale: perExpertScale}
 
-			// Check for pre-stacked tensors (unquantized HF format).
-			// Try .experts. first (new weight drop), fall back to .moe. (old format).
-			gateUpW := tensors[layerPrefix+".experts.gate_up_proj"]
+			// Check for pre-stacked tensors (BF16 or quantized HF format).
+			// Try .experts. first (new weight drop), fall back to .moe. (old
+			// format). Track the matched key so loadFusedExperts can find the
+			// quant sidecars.
+			gateUpKey := layerPrefix + ".experts.gate_up_proj"
+			gateUpW := tensors[gateUpKey]
 			if gateUpW == nil {
-				gateUpW = tensors[layerPrefix+".moe.gate_up_proj"]
+				gateUpKey = layerPrefix + ".moe.gate_up_proj"
+				gateUpW = tensors[gateUpKey]
 			}
 			gateW := tensors[layerPrefix+".experts.gate_proj"]
 			if gateW == nil {
 				gateW = tensors[layerPrefix+".moe.gate_proj"]
 			}
 			if gateUpW != nil {
-				// Fused gate+up: split along dim 1, transpose for GatherMM.
-				dims := gateUpW.Dims()
-				half := int32(dims[1] / 2)
-				gateSlice := sliceAxis1(gateUpW, 0, half)
-				upSlice := sliceAxis1(gateUpW, half, int32(dims[1]))
-				moe.GateWeight = transposeForGatherMM(gateSlice)
-				moe.UpWeight = transposeForGatherMM(upSlice)
-				downW := tensors[layerPrefix+".experts.down_proj"]
+				// Fused gate+up (dense or quantized): split happens at matmul time.
+				downKey := layerPrefix + ".experts.down_proj"
+				downW := tensors[downKey]
 				if downW == nil {
-					downW = tensors[layerPrefix+".moe.down_proj"]
+					downKey = layerPrefix + ".moe.down_proj"
+					downW = tensors[downKey]
 				}
 				if downW == nil {
 					return fmt.Errorf("layer %d: missing MoE down_proj with fused gate_up_proj", i)
 				}
-				moe.DownWeight = transposeForGatherMM(downW)
+				loadFusedExperts(tensors, m.TextConfig, moe, gateUpW, gateUpKey, downW, downKey)
 			} else if gateW != nil {
 				// Separate gate_proj and up_proj (older format). Transpose for GatherMM.
 				moe.GateWeight = transposeForGatherMM(gateW)
@@ -814,8 +854,8 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 					return fmt.Errorf("layer %d: missing switch_mlp down_proj", i)
 				}
 
-				// Check for quantized weights (scales present).
-				// The scale key depends on whether the tensor has .weight suffix.
+				// Resolve base keys: the scale/bias suffix attaches to whichever
+				// of .weight / bare matched the weight tensor.
 				gateUpKey := layerPrefix + ".moe.switch_mlp.gate_up_proj.weight"
 				if tensors[gateUpKey] == nil {
 					gateUpKey = layerPrefix + ".moe.switch_mlp.gate_up_proj"
@@ -824,47 +864,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				if tensors[downKey] == nil {
 					downKey = layerPrefix + ".moe.switch_mlp.down_proj"
 				}
-				gateUpScales := firstNonNil(tensors, gateUpKey+"_scale", gateUpKey+".scale")
-				downScales := firstNonNil(tensors, downKey+"_scale", downKey+".scale")
-
-				if gateUpScales != nil && downScales != nil {
-					// Quantized: keep fused gate_up as single tensor for GatherQMM.
-					// One fused call instead of two separate gate+up calls.
-					gateUpBiases := firstNonNil(tensors, gateUpKey+"_qbias", gateUpKey+".bias")
-					downBiases := firstNonNil(tensors, downKey+"_qbias", downKey+".bias")
-
-					moe.GateUpWeightQ = switchGateUp
-					moe.GateUpScales = gateUpScales
-					moe.GateUpBiases = gateUpBiases
-					moe.DownWeightQ = switchDown
-					moe.DownScales = downScales
-					if downBiases != nil {
-						moe.DownBiases = downBiases
-					}
-
-					groupSize, bits, mode := model.ResolveLinearQuantParams(
-						m.QuantGroupSize, m.QuantBits, m.QuantMode,
-						m.TensorQuant, gateUpKey, switchGateUp, gateUpScales,
-					)
-					moe.UseQuantized = true
-					moe.UseFusedGateUp = true
-					moe.GateUpGroupSize = groupSize
-					moe.GateUpBits = bits
-					moe.QuantMode = mode
-
-					dGroupSize, dBits, dMode := model.ResolveLinearQuantParams(
-						m.QuantGroupSize, m.QuantBits, m.QuantMode,
-						m.TensorQuant, downKey, switchDown, downScales,
-					)
-					moe.DownGroupSize = dGroupSize
-					moe.DownBits = dBits
-					moe.DownQuantMode = dMode
-				} else {
-					// Unquantized switch_mlp: keep fused and transpose for GatherMM.
-					moe.GateUpWeight = transposeForGatherMM(switchGateUp)
-					moe.UseFusedGateUp = true
-					moe.DownWeight = transposeForGatherMM(switchDown)
-				}
+				loadFusedExperts(tensors, m.TextConfig, moe, switchGateUp, gateUpKey, switchDown, downKey)
 			} else {
 				// Per-expert tensors (from create path).
 				// Try separate gate_proj/up_proj first, then fused gate_up_proj.
@@ -1076,7 +1076,40 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 		logits = mlx.LogitSoftcap(logits, cap)
 	}
 
-	return logits
+	return suppressTokenLogits(logits, m.SuppressLogitBias)
+}
+
+func makeSuppressLogitBias(tokenIDs []int32, vocabSize int32) *mlx.Array {
+	if len(tokenIDs) == 0 || vocabSize <= 0 {
+		return nil
+	}
+
+	bias := make([]float32, int(vocabSize))
+	any := false
+	for _, tokenID := range tokenIDs {
+		if tokenID >= 0 && tokenID < vocabSize {
+			bias[tokenID] = float32(math.Inf(-1))
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+
+	return mlx.FromValues(bias, 1, 1, int(vocabSize))
+}
+
+func suppressTokenLogits(logits, bias *mlx.Array) *mlx.Array {
+	if bias == nil {
+		return logits
+	}
+
+	dims := logits.Dims()
+	if len(dims) != 3 {
+		return logits
+	}
+
+	return logits.Add(bias.AsType(logits.DType()))
 }
 
 func (m *Model) NumLayers() int {

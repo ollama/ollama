@@ -13,7 +13,7 @@ func TestWaitUntilRunningUsesStatusMessageWhenDoneErrIsNil(t *testing.T) {
 	status := &StatusWriter{}
 	status.SetLastError("llama_init_from_model: failed to initialize the context: failed to initialize Metal backend")
 
-	s := &llmServer{
+	s := &llamaServerRunner{
 		done:   done,
 		status: status,
 	}

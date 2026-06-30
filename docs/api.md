@@ -46,7 +46,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 - `prompt`: the prompt to generate a response for
 - `suffix`: the text after the model response
 - `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
-- `think`: (for thinking models) should the model think before responding?
+- `think`: (for thinking models) should the model think before responding? Can be a boolean or a thinking level (`"low"`, `"medium"`, `"high"`, or `"max"`).
 
 Advanced parameters (optional):
 
@@ -398,6 +398,7 @@ curl http://localhost:11434/api/generate -d '{
     "num_keep": 5,
     "seed": 42,
     "num_predict": 100,
+    "draft_num_predict": 4,
     "top_k": 20,
     "top_p": 0.9,
     "min_p": 0.0,
@@ -503,7 +504,7 @@ Generate the next message in a chat with a provided model. This is a streaming e
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
 - `tools`: list of tools in JSON for the model to use if supported
-- `think`: (for thinking models) should the model think before responding?
+- `think`: (for thinking models) should the model think before responding? Can be a boolean or a thinking level (`"low"`, `"medium"`, `"high"`, or `"max"`).
 
 The `message` object has the following fields:
 

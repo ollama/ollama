@@ -261,10 +261,10 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		seed = time.Now().UnixNano()
 	}
 
-	// Extract raw image bytes from llm.ImageData slice
+	// Extract raw image bytes from the request media.
 	var images [][]byte
-	for _, img := range req.Images {
-		images = append(images, img.Data)
+	for _, media := range req.Media {
+		images = append(images, media.Data)
 	}
 
 	// Build request for subprocess
@@ -367,9 +367,24 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	// Check if subprocess is still alive
 	if s.HasExited() {
 		slog.Error("mlx subprocess has exited unexpectedly")
+		if errMsg := s.getLastErr(); errMsg != "" {
+			return fmt.Errorf("mlx runner closed response before completion: %s", errMsg)
+		}
 	}
 
-	return scanErr
+	if scanErr != nil {
+		return scanErr
+	}
+
+	return errors.New("mlx runner closed response before completion")
+}
+
+func (s *Server) Chat(ctx context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
+	return errors.New("image generation runner does not support native chat")
+}
+
+func (s *Server) ApplyChatTemplate(ctx context.Context, req llm.ChatRequest) (string, error) {
+	return "", errors.New("image generation runner does not support native chat templates")
 }
 
 // Close terminates the subprocess.

@@ -15,6 +15,7 @@ import (
 
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/util/bufioutil"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -323,7 +324,7 @@ func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ..
 		return val, true
 	}
 
-	slog.Debug("key with type not found", "key", key, "default", defaultValue[0])
+	logutil.Trace("key with type not found", "key", key, "default", defaultValue[0])
 	return defaultValue[0], false
 }
 
@@ -423,8 +424,12 @@ func (t TensorType) BlockSize() uint64 {
 		TensorTypeQ8_0,
 		TensorTypeQ8_1,
 		tensorTypeIQ4_NL,
-		4, TensorTypeMXFP4:
+		TensorTypeMXFP4:
 		return 32
+	case TensorTypeNVFP4:
+		return 64
+	case TensorTypeQ1_0:
+		return 128
 	default:
 		return 256
 	}
@@ -496,8 +501,12 @@ func (t TensorType) TypeSize() uint64 {
 		return blockSize/8 + blockSize/16 + blockSize/32
 	case TensorTypeBF16:
 		return 2
-	case 4, TensorTypeMXFP4:
+	case TensorTypeMXFP4:
 		return 1 + blockSize/2
+	case TensorTypeNVFP4:
+		return 4 + blockSize/2
+	case TensorTypeQ1_0:
+		return 2 + blockSize/8
 	default:
 		return 0
 	}

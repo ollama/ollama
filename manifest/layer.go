@@ -20,6 +20,7 @@ type Layer struct {
 
 const (
 	MediaTypeImageTensor = "application/vnd.ollama.image.tensor"
+	MediaTypeImageDraft  = "application/vnd.ollama.image.draft"
 )
 
 func NewLayer(r io.Reader, mediatype string) (Layer, error) {

@@ -22,57 +22,45 @@ func init() {
 
 var _ base.Model = (*Model)(nil)
 
-type RopeParameters struct {
-	RopeTheta                     float32 `json:"rope_theta"`
-	RopeType                      string  `json:"rope_type"`
-	Type                          string  `json:"type"`
-	PartialRotaryFactor           float32 `json:"partial_rotary_factor"`
-	Factor                        float32 `json:"factor"`
-	OriginalMaxPositionEmbeddings int32   `json:"original_max_position_embeddings"`
-	BetaFast                      float32 `json:"beta_fast"`
-	BetaSlow                      float32 `json:"beta_slow"`
-	AttentionFactor               float32 `json:"attention_factor"`
-}
-
 type gatingMode string
 
 type ropeConfig struct {
-	flat    *RopeParameters
-	full    *RopeParameters
-	sliding *RopeParameters
+	flat    *nn.RopeParameters
+	full    *nn.RopeParameters
+	sliding *nn.RopeParameters
 	nested  bool
 }
 
 type Config struct {
-	ModelType                   string          `json:"model_type"`
-	HiddenSize                  int32           `json:"hidden_size"`
-	IntermediateSize            int32           `json:"intermediate_size"`
-	MoeIntermediateSize         int32           `json:"moe_intermediate_size"`
-	SharedExpertIntermediate    int32           `json:"shared_expert_intermediate_size"`
-	NumHiddenLayers             int32           `json:"num_hidden_layers"`
-	NumAttentionHeads           int32           `json:"num_attention_heads"`
-	NumAttentionHeadsPerLayer   []int32         `json:"num_attention_heads_per_layer"`
-	NumKeyValueHeads            int32           `json:"num_key_value_heads"`
-	HeadDim                     int32           `json:"head_dim"`
-	RMSNormEps                  float32         `json:"rms_norm_eps"`
-	VocabSize                   int32           `json:"vocab_size"`
-	MaxPositionEmbeddings       int32           `json:"max_position_embeddings"`
-	LayerTypes                  []string        `json:"layer_types"`
-	SlidingWindow               int32           `json:"sliding_window"`
-	MLPOnlyLayers               []int32         `json:"mlp_only_layers"`
-	DecoderSparseStep           int32           `json:"decoder_sparse_step"`
-	NumExperts                  int32           `json:"num_experts"`
-	NumExpertsPerTok            int32           `json:"num_experts_per_tok"`
-	NormTopKProb                bool            `json:"norm_topk_prob"`
-	MoeRoutedScalingFactor      float32         `json:"moe_routed_scaling_factor"`
-	MoeApplyRouterWeightOnInput bool            `json:"moe_apply_router_weight_on_input"`
-	Gating                      string          `json:"gating"`
-	TieWordEmbeddings           bool            `json:"tie_word_embeddings"`
-	RopeTheta                   float32         `json:"rope_theta"`
-	PartialRotaryFactor         float32         `json:"partial_rotary_factor"`
-	RopeParameters              *RopeParameters `json:"rope_parameters"`
-	RopeScaling                 *RopeParameters `json:"rope_scaling"`
-	SWARopeParameters           *RopeParameters `json:"swa_rope_parameters"`
+	ModelType                   string             `json:"model_type"`
+	HiddenSize                  int32              `json:"hidden_size"`
+	IntermediateSize            int32              `json:"intermediate_size"`
+	MoeIntermediateSize         int32              `json:"moe_intermediate_size"`
+	SharedExpertIntermediate    int32              `json:"shared_expert_intermediate_size"`
+	NumHiddenLayers             int32              `json:"num_hidden_layers"`
+	NumAttentionHeads           int32              `json:"num_attention_heads"`
+	NumAttentionHeadsPerLayer   []int32            `json:"num_attention_heads_per_layer"`
+	NumKeyValueHeads            int32              `json:"num_key_value_heads"`
+	HeadDim                     int32              `json:"head_dim"`
+	RMSNormEps                  float32            `json:"rms_norm_eps"`
+	VocabSize                   int32              `json:"vocab_size"`
+	MaxPositionEmbeddings       int32              `json:"max_position_embeddings"`
+	LayerTypes                  []string           `json:"layer_types"`
+	SlidingWindow               int32              `json:"sliding_window"`
+	MLPOnlyLayers               []int32            `json:"mlp_only_layers"`
+	DecoderSparseStep           int32              `json:"decoder_sparse_step"`
+	NumExperts                  int32              `json:"num_experts"`
+	NumExpertsPerTok            int32              `json:"num_experts_per_tok"`
+	NormTopKProb                bool               `json:"norm_topk_prob"`
+	MoeRoutedScalingFactor      float32            `json:"moe_routed_scaling_factor"`
+	MoeApplyRouterWeightOnInput bool               `json:"moe_apply_router_weight_on_input"`
+	Gating                      string             `json:"gating"`
+	TieWordEmbeddings           bool               `json:"tie_word_embeddings"`
+	RopeTheta                   float32            `json:"rope_theta"`
+	PartialRotaryFactor         float32            `json:"partial_rotary_factor"`
+	RopeParameters              *nn.RopeParameters `json:"rope_parameters"`
+	RopeScaling                 *nn.RopeParameters `json:"rope_scaling"`
+	SWARopeParameters           *nn.RopeParameters `json:"swa_rope_parameters"`
 
 	QuantGroupSize int                               `json:"-"`
 	QuantBits      int                               `json:"-"`
@@ -170,36 +158,36 @@ type stackedExpertWeights struct {
 
 func parseConfig(configData []byte) (Config, error) {
 	type rawConfig struct {
-		ModelType                   string          `json:"model_type"`
-		HiddenSize                  int32           `json:"hidden_size"`
-		IntermediateSize            int32           `json:"intermediate_size"`
-		MoeIntermediateSize         int32           `json:"moe_intermediate_size"`
-		SharedExpertIntermediate    int32           `json:"shared_expert_intermediate_size"`
-		NumHiddenLayers             int32           `json:"num_hidden_layers"`
-		NumAttentionHeads           int32           `json:"num_attention_heads"`
-		NumAttentionHeadsPerLayer   []int32         `json:"num_attention_heads_per_layer"`
-		NumKeyValueHeads            int32           `json:"num_key_value_heads"`
-		HeadDim                     int32           `json:"head_dim"`
-		RMSNormEps                  float32         `json:"rms_norm_eps"`
-		VocabSize                   int32           `json:"vocab_size"`
-		MaxPositionEmbeddings       int32           `json:"max_position_embeddings"`
-		LayerTypes                  []string        `json:"layer_types"`
-		SlidingWindow               int32           `json:"sliding_window"`
-		MLPOnlyLayers               []int32         `json:"mlp_only_layers"`
-		MLPLayerTypes               []string        `json:"mlp_layer_types"`
-		DecoderSparseStep           int32           `json:"decoder_sparse_step"`
-		NumExperts                  int32           `json:"num_experts"`
-		NumExpertsPerTok            int32           `json:"num_experts_per_tok"`
-		NormTopKProb                *bool           `json:"norm_topk_prob"`
-		MoeRoutedScalingFactor      float32         `json:"moe_routed_scaling_factor"`
-		MoeApplyRouterWeightOnInput bool            `json:"moe_apply_router_weight_on_input"`
-		Gating                      gatingMode      `json:"gating"`
-		TieWordEmbeddings           bool            `json:"tie_word_embeddings"`
-		RopeTheta                   float32         `json:"rope_theta"`
-		PartialRotaryFactor         float32         `json:"partial_rotary_factor"`
-		RopeParameters              ropeConfig      `json:"rope_parameters"`
-		RopeScaling                 *RopeParameters `json:"rope_scaling"`
-		SWARopeParameters           *RopeParameters `json:"swa_rope_parameters"`
+		ModelType                   string             `json:"model_type"`
+		HiddenSize                  int32              `json:"hidden_size"`
+		IntermediateSize            int32              `json:"intermediate_size"`
+		MoeIntermediateSize         int32              `json:"moe_intermediate_size"`
+		SharedExpertIntermediate    int32              `json:"shared_expert_intermediate_size"`
+		NumHiddenLayers             int32              `json:"num_hidden_layers"`
+		NumAttentionHeads           int32              `json:"num_attention_heads"`
+		NumAttentionHeadsPerLayer   []int32            `json:"num_attention_heads_per_layer"`
+		NumKeyValueHeads            int32              `json:"num_key_value_heads"`
+		HeadDim                     int32              `json:"head_dim"`
+		RMSNormEps                  float32            `json:"rms_norm_eps"`
+		VocabSize                   int32              `json:"vocab_size"`
+		MaxPositionEmbeddings       int32              `json:"max_position_embeddings"`
+		LayerTypes                  []string           `json:"layer_types"`
+		SlidingWindow               int32              `json:"sliding_window"`
+		MLPOnlyLayers               []int32            `json:"mlp_only_layers"`
+		MLPLayerTypes               []string           `json:"mlp_layer_types"`
+		DecoderSparseStep           int32              `json:"decoder_sparse_step"`
+		NumExperts                  int32              `json:"num_experts"`
+		NumExpertsPerTok            int32              `json:"num_experts_per_tok"`
+		NormTopKProb                *bool              `json:"norm_topk_prob"`
+		MoeRoutedScalingFactor      float32            `json:"moe_routed_scaling_factor"`
+		MoeApplyRouterWeightOnInput bool               `json:"moe_apply_router_weight_on_input"`
+		Gating                      gatingMode         `json:"gating"`
+		TieWordEmbeddings           bool               `json:"tie_word_embeddings"`
+		RopeTheta                   float32            `json:"rope_theta"`
+		PartialRotaryFactor         float32            `json:"partial_rotary_factor"`
+		RopeParameters              ropeConfig         `json:"rope_parameters"`
+		RopeScaling                 *nn.RopeParameters `json:"rope_scaling"`
+		SWARopeParameters           *nn.RopeParameters `json:"swa_rope_parameters"`
 	}
 
 	var raw rawConfig
@@ -313,8 +301,8 @@ func parseConfig(configData []byte) (Config, error) {
 	}
 	cfg.FullRopeDim = clampRopeDim(int(float32(cfg.HeadDim)*fullPartial), int(cfg.HeadDim))
 	cfg.FullRopeScale = 1
-	if ropeParams != nil && strings.EqualFold(ropeParams.ropeType(), "yarn") {
-		cfg.FullRopeFreqs, cfg.FullRopeScale = buildYarnRopeFreqs(cfg.FullRopeDim, cfg.FullRopeBase, ropeParams)
+	if ropeParams != nil && strings.EqualFold(ropeParams.TypeName(), "yarn") {
+		cfg.FullRopeFreqs, cfg.FullRopeScale = nn.BuildYarnRopeFreqs(cfg.FullRopeDim, cfg.FullRopeBase, ropeParams)
 	}
 
 	cfg.SlidingRopeBase = cfg.FullRopeBase
@@ -378,12 +366,12 @@ func (r *ropeConfig) UnmarshalJSON(b []byte) error {
 
 	if raw, ok := probe["full_attention"]; ok {
 		r.nested = true
-		r.full = &RopeParameters{}
+		r.full = &nn.RopeParameters{}
 		if err := json.Unmarshal(raw, r.full); err != nil {
 			return err
 		}
 		if raw = probe["sliding_attention"]; raw != nil {
-			r.sliding = &RopeParameters{}
+			r.sliding = &nn.RopeParameters{}
 			if err := json.Unmarshal(raw, r.sliding); err != nil {
 				return err
 			}
@@ -393,12 +381,12 @@ func (r *ropeConfig) UnmarshalJSON(b []byte) error {
 
 	if raw, ok := probe["global_attention"]; ok {
 		r.nested = true
-		r.full = &RopeParameters{}
+		r.full = &nn.RopeParameters{}
 		if err := json.Unmarshal(raw, r.full); err != nil {
 			return err
 		}
 		if raw = probe["sliding_attention"]; raw != nil {
-			r.sliding = &RopeParameters{}
+			r.sliding = &nn.RopeParameters{}
 			if err := json.Unmarshal(raw, r.sliding); err != nil {
 				return err
 			}
@@ -406,18 +394,18 @@ func (r *ropeConfig) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 
-	r.flat = &RopeParameters{}
+	r.flat = &nn.RopeParameters{}
 	return json.Unmarshal(b, r.flat)
 }
 
-func (r ropeConfig) fullParams() *RopeParameters {
+func (r ropeConfig) fullParams() *nn.RopeParameters {
 	if r.nested {
 		return r.full
 	}
 	return r.flat
 }
 
-func (r ropeConfig) slidingParams() *RopeParameters {
+func (r ropeConfig) slidingParams() *nn.RopeParameters {
 	if !r.nested {
 		return nil
 	}
@@ -450,88 +438,6 @@ func denseLayers(mlpOnlyLayers []int32, mlpLayerTypes []string) ([]int32, error)
 		}
 	}
 	return dense, nil
-}
-
-func (rp *RopeParameters) ropeType() string {
-	if rp == nil {
-		return ""
-	}
-	if rp.RopeType != "" {
-		return rp.RopeType
-	}
-	return rp.Type
-}
-
-func buildYarnRopeFreqs(dim int, base float32, rp *RopeParameters) (*mlx.Array, float32) {
-	if rp == nil || dim <= 0 {
-		return nil, 1
-	}
-	factor := rp.Factor
-	if factor <= 0 {
-		factor = 1
-	}
-	attentionFactor := rp.AttentionFactor
-	if attentionFactor == 0 && factor > 1 {
-		attentionFactor = float32(0.1*math.Log(float64(factor)) + 1.0)
-	} else if attentionFactor == 0 {
-		attentionFactor = 1
-	}
-	if factor <= 1 {
-		return nil, attentionFactor
-	}
-
-	originalMax := rp.OriginalMaxPositionEmbeddings
-	if originalMax <= 0 {
-		originalMax = 4096
-	}
-	betaFast := rp.BetaFast
-	if betaFast == 0 {
-		betaFast = 32
-	}
-	betaSlow := rp.BetaSlow
-	if betaSlow == 0 {
-		betaSlow = 1
-	}
-	half := dim / 2
-	low, high := yarnCorrectionRange(betaFast, betaSlow, dim, base, originalMax)
-	freqs := make([]float32, half)
-	for i := range half {
-		posFreq := math.Pow(float64(base), float64(2*i)/float64(dim))
-		invExtrapolation := 1.0 / posFreq
-		invInterpolation := 1.0 / (float64(factor) * posFreq)
-		ramp := yarnRamp(float64(i), low, high)
-		mask := 1 - ramp
-		inv := invInterpolation*(1-mask) + invExtrapolation*mask
-		freqs[i] = float32(1.0 / inv)
-	}
-	arr := mlx.FromValues(freqs, half)
-	mlx.Eval(arr)
-	return arr, attentionFactor
-}
-
-func yarnCorrectionRange(betaFast, betaSlow float32, dim int, base float32, maxPosition int32) (float64, float64) {
-	findDim := func(rot float32) float64 {
-		return float64(dim) * math.Log(float64(maxPosition)/(float64(rot)*2*math.Pi)) / (2 * math.Log(float64(base)))
-	}
-	low := math.Floor(findDim(betaFast))
-	high := math.Ceil(findDim(betaSlow))
-	low = math.Max(low, 0)
-	high = math.Min(high, float64(dim-1))
-	if low == high {
-		high += 0.001
-	}
-	return low, high
-}
-
-func yarnRamp(i, low, high float64) float64 {
-	v := (i - low) / (high - low)
-	if v < 0 {
-		return 0
-	}
-	if v > 1 {
-		return 1
-	}
-	return v
 }
 
 func clampRopeDim(v, maxDim int) int {
@@ -1016,8 +922,8 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 	if layer.IsSliding {
 		ropeDim, ropeBase, ropeMSScale, ropeFreqs = cfg.SlidingRopeDim, cfg.SlidingRopeBase, cfg.SlidingRopeScale, nil
 	}
-	q = scaleRotaryPart(mlx.RoPEWithFreqs(q, ropeDim, false, ropeBase, 1.0, positions, ropeFreqs), ropeDim, ropeMSScale)
-	k = scaleRotaryPart(mlx.RoPEWithFreqs(k, ropeDim, false, ropeBase, 1.0, positions, ropeFreqs), ropeDim, ropeMSScale)
+	q = nn.ScaleRotaryPart(mlx.RoPEWithFreqs(q, ropeDim, false, ropeBase, 1.0, positions, ropeFreqs), ropeDim, ropeMSScale)
+	k = nn.ScaleRotaryPart(mlx.RoPEWithFreqs(k, ropeDim, false, ropeBase, 1.0, positions, ropeFreqs), ropeDim, ropeMSScale)
 
 	var kv nn.SDPAOption
 	if c != nil {
@@ -1032,30 +938,6 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 	gate := mlx.ExpandDims(mlx.SoftplusF32(a.GProj.Forward(x)), -1)
 	out = mlx.Reshape(mlx.Mul(out, gate), B, L, numHeads*cfg.HeadDim)
 	return a.OProj.Forward(out)
-}
-
-func scaleRotaryPart(x *mlx.Array, ropeDim int, scale float32) *mlx.Array {
-	if scale == 1 {
-		return x
-	}
-	dims := x.Dims()
-	last := dims[len(dims)-1]
-	if ropeDim >= last {
-		return mlx.MulScalar(x, scale)
-	}
-	start := make([]int32, len(dims))
-	stopRot := make([]int32, len(dims))
-	stopPass := make([]int32, len(dims))
-	startPass := make([]int32, len(dims))
-	for i, dim := range dims {
-		stopRot[i] = int32(dim)
-		stopPass[i] = int32(dim)
-	}
-	stopRot[len(dims)-1] = int32(ropeDim)
-	startPass[len(dims)-1] = int32(ropeDim)
-	rot := mlx.MulScalar(mlx.SliceStartStop(x, start, stopRot), scale)
-	pass := mlx.SliceStartStop(x, startPass, stopPass)
-	return mlx.Concatenate([]*mlx.Array{rot, pass}, -1)
 }
 
 func (m *DenseMLP) Forward(x *mlx.Array, _ *Config) *mlx.Array {

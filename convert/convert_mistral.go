@@ -79,20 +79,17 @@ func (p *mistral3Model) KV(t *Tokenizer) KV {
 	kv["mistral3.rope.freq_base"] = cmp.Or(p.TextModel.RopeTheta, p.TextModel.RopeParameters.RopeTheta)
 	kv["mistral3.rope.scaling.factor"] = p.TextModel.RopeParameters.Factor
 	kv["mistral3.rope.scaling.type"] = p.TextModel.RopeParameters.RopeType
-	kv["mistral3.rope.scaling.beta_fast"] = p.TextModel.RopeParameters.BetaFast
-	kv["mistral3.rope.scaling.beta_slow"] = p.TextModel.RopeParameters.BetaSlow
+	kv["mistral3.rope.scaling.yarn_beta_fast"] = p.TextModel.RopeParameters.BetaFast
+	kv["mistral3.rope.scaling.yarn_beta_slow"] = p.TextModel.RopeParameters.BetaSlow
 
-	if p.TextModel.RopeParameters.Mscale != nil {
-		kv["mistral3.rope.scaling.mscale"] = *p.TextModel.RopeParameters.Mscale
-	}
 	if p.TextModel.RopeParameters.MscaleAllDim != nil {
-		kv["mistral3.rope.scaling.mscale_all_dim"] = *p.TextModel.RopeParameters.MscaleAllDim
+		kv["mistral3.rope.scaling.yarn_log_multiplier"] = *p.TextModel.RopeParameters.MscaleAllDim
 	}
 	if p.TextModel.RopeParameters.OrigMaxPositionEmbeddings > 0 {
 		kv["mistral3.rope.scaling.original_context_length"] = p.TextModel.RopeParameters.OrigMaxPositionEmbeddings
 	}
 	if p.TextModel.RopeParameters.Llama4ScalingBeta != nil {
-		kv["mistral3.rope.scaling_beta"] = *p.TextModel.RopeParameters.Llama4ScalingBeta
+		kv["mistral3.attention.temperature_scale"] = *p.TextModel.RopeParameters.Llama4ScalingBeta
 	}
 
 	// Vision configuration

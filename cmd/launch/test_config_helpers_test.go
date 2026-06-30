@@ -41,6 +41,10 @@ func setTestHome(t *testing.T, dir string) {
 	setLaunchTestHome(t, dir)
 }
 
+func testLaunchModels(names ...string) []LaunchModel {
+	return launchModelsFromNames(names)
+}
+
 func SaveIntegration(appName string, models []string) error {
 	return config.SaveIntegration(appName, models)
 }

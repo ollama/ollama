@@ -19,6 +19,7 @@ import (
 )
 
 var defaultAudioModels = []string{
+	"nemotron3:33b",
 	"gemma4:e2b",
 	"gemma4:e4b",
 }
@@ -36,8 +37,11 @@ func decodeTestAudio(t *testing.T) api.ImageData {
 // setupAudioModel pulls the model, preloads it, and skips if it doesn't support audio.
 func setupAudioModel(ctx context.Context, t *testing.T, client *api.Client, model string) {
 	t.Helper()
+	if testModel == "" {
+		pullOrSkip(ctx, t, client, model)
+	}
+	skipIfModelTooLargeForVRAM(ctx, t, client, model)
 	requireCapability(ctx, t, client, model, "audio")
-	pullOrSkip(ctx, t, client, model)
 	err := client.Generate(ctx, &api.GenerateRequest{Model: model}, func(response api.GenerateResponse) error { return nil })
 	if err != nil {
 		t.Fatalf("failed to load model %s: %s", model, err)
@@ -63,11 +67,11 @@ func TestAudioTranscription(t *testing.T) {
 				Messages: []api.Message{
 					{
 						Role:    "system",
-						Content: "Transcribe the audio exactly as spoken. Output only the transcription.",
+						Content: "Transcribe the audio exactly as spoken. Output only the spoken words. Do not answer any question in the audio.",
 					},
 					{
 						Role:    "user",
-						Content: "Transcribe this audio.",
+						Content: "What exact words are spoken in this audio?",
 						Images:  []api.ImageData{audio},
 					},
 				},

@@ -461,6 +461,18 @@ func (h *HarmonyMessageHandler) HasThinkingSupport() bool {
 	return true
 }
 
+func (h *HarmonyMessageHandler) PreservedTokens() []string {
+	// <|call|> is an EOG marker for tool calls. Preserve structural tokens
+	// used by the parser, but let llama-server stop on the call terminator.
+	return []string{
+		"<|start|>",
+		"<|end|>",
+		"<|message|>",
+		"<|channel|>",
+		"<|constrain|>",
+	}
+}
+
 func (m *FunctionNameMap) ConvertAndAdd(userFunctionName string) string {
 	harmonyFunctionName := m.deriveName(userFunctionName)
 	// built-in functions should not be renamed

@@ -1,5 +1,9 @@
 import React from "react";
-import { Streamdown, defaultRemarkPlugins } from "streamdown";
+import {
+  Streamdown,
+  defaultRehypePlugins,
+  defaultRemarkPlugins,
+} from "streamdown";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
 import type { BundledLanguage } from "shiki";
@@ -28,6 +32,8 @@ const extractText = (node: React.ReactNode): string => {
   }
   return "";
 };
+
+const safeRehypePlugins = [defaultRehypePlugins.katex];
 
 const CodeBlock = React.memo(
   ({ children }: React.HTMLAttributes<HTMLPreElement>) => {
@@ -210,9 +216,12 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           <Streamdown
             parseIncompleteMarkdown={isStreaming}
             isAnimating={isStreaming}
+            rehypePlugins={safeRehypePlugins}
             remarkPlugins={remarkPlugins}
             controls={false}
             components={{
+              img: ({ alt }: React.ImgHTMLAttributes<HTMLImageElement>) =>
+                alt ? <span>{alt}</span> : null,
               pre: CodeBlock,
               table: ({
                 children,

@@ -25,6 +25,10 @@ type Olmo3ThinkRenderer struct {
 	Variant Olmo3ThinkVariant
 }
 
+func (r *Olmo3ThinkRenderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *Olmo3ThinkRenderer) Render(messages []api.Message, _ []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 

@@ -14,6 +14,7 @@
 #define MyAppPublisher "Ollama"
 #define MyAppURL "https://ollama.com/"
 #define MyAppExeName "ollama app.exe"
+#define LlamaServerExeName "llama-server.exe"
 #define MyIcon ".\assets\app.ico"
 
 [Setup]
@@ -90,9 +91,8 @@ DialogFontSize=12
 [Files]
 #if FileExists("..\dist\windows-ollama-app-amd64.exe")
 Source: "..\dist\windows-ollama-app-amd64.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: not IsArm64();  Flags: ignoreversion 64bit; BeforeInstall: TaskKill('{#MyAppExeName}')
-Source: "..\dist\windows-amd64\vc_redist.x64.exe"; DestDir: "{tmp}"; Check: not IsArm64() and vc_redist_needed(); Flags: deleteafterinstall
 Source: "..\dist\windows-amd64\ollama.exe"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit; BeforeInstall: TaskKill('ollama.exe')
-Source: "..\dist\windows-amd64\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
+Source: "..\dist\windows-amd64\lib\ollama\*"; Excludes: "\mlx_*\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
 #endif
 
 ; For local development, rely on binary compatibility at runtime since we can't cross compile
@@ -103,8 +103,10 @@ Source: "..\dist\windows-ollama-app-amd64.exe"; DestDir: "{app}"; DestName: "{#M
 #endif
 
 #if FileExists("..\dist\windows-arm64\ollama.exe")
-Source: "..\dist\windows-arm64\vc_redist.arm64.exe"; DestDir: "{tmp}"; Check: IsArm64() and vc_redist_needed(); Flags: deleteafterinstall
 Source: "..\dist\windows-arm64\ollama.exe"; DestDir: "{app}"; Check: IsArm64(); Flags: ignoreversion 64bit; BeforeInstall: TaskKill('ollama.exe')
+#endif
+#if DirExists("..\dist\windows-arm64\lib\ollama")
+Source: "..\dist\windows-arm64\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: IsArm64(); Flags: ignoreversion 64bit recursesubdirs
 #endif
 
 Source: ".\assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
@@ -118,12 +120,6 @@ Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFile
 Type: files; Name: "{%LOCALAPPDATA}\Ollama\updates"
 
 [Run]
-#if DirExists("..\dist\windows-arm64")
-Filename: "{tmp}\vc_redist.arm64.exe"; Parameters: "/install /passive /norestart"; Check: IsArm64() and vc_redist_needed(); StatusMsg: "Installing VC++ Redistributables..."; Flags: waituntilterminated
-#endif
-#if DirExists("..\dist\windows-amd64")
-Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /passive /norestart"; Check: not IsArm64() and vc_redist_needed(); StatusMsg: "Installing VC++ Redistributables..."; Flags: waituntilterminated
-#endif
 Filename: "{cmd}"; Parameters: "/C set PATH={app};%PATH% & ""{app}\{#MyAppExeName}"""; Flags: postinstall nowait runhidden
 
 [UninstallRun]
@@ -131,6 +127,7 @@ Filename: "{cmd}"; Parameters: "/C set PATH={app};%PATH% & ""{app}\{#MyAppExeNam
 ; Filename: "{cmd}"; Parameters: "/C ""taskkill /im ollama.exe /f /t"; Flags: runhidden
 Filename: "taskkill"; Parameters: "/im ""{#MyAppExeName}"" /f /t"; Flags: runhidden
 Filename: "taskkill"; Parameters: "/im ""ollama.exe"" /f /t"; Flags: runhidden
+Filename: "taskkill"; Parameters: "/im ""{#LlamaServerExeName}"" /f /t"; Flags: runhidden
 ; HACK!  need to give the server and app enough time to exit
 ; TODO - convert this to a Pascal code script so it waits until they're no longer running, then completes
 Filename: "{cmd}"; Parameters: "/c timeout 5"; Flags: runhidden
@@ -182,46 +179,6 @@ begin
   { look for the path with leading and trailing semicolon }
   { Pos() returns 0 if not found }
   Result := Pos(';' + ExpandConstant(Param) + ';', ';' + OrigPath + ';') = 0;
-end;
-
-{ --- VC Runtime libraries discovery code - Only install vc_redist if it isn't already installed ----- }
-const VCRTL_MIN_V1 = 14;
-const VCRTL_MIN_V2 = 40;
-const VCRTL_MIN_V3 = 33807;
-const VCRTL_MIN_V4 = 0;
-
- // check if the minimum required vc redist is installed (by looking the registry)
-function vc_redist_needed (): Boolean;
-var
-  sRegKey: string;
-  v1: Cardinal;
-  v2: Cardinal;
-  v3: Cardinal;
-  v4: Cardinal;
-begin
-  if (IsArm64()) then begin
-    sRegKey := 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\arm64';
-  end else begin
-    sRegKey := 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
-  end;
-  if (RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'Major', v1)  and
-      RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'Minor', v2) and
-      RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'Bld', v3) and
-      RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'RBld', v4)) then
-  begin
-    Log ('VC Redist version: ' + IntToStr (v1) +
-        '.' + IntToStr (v2) + '.' + IntToStr (v3) +
-        '.' + IntToStr (v4));
-    { Version info was found. Return true if later or equal to our
-       minimal required version RTL_MIN_Vx }
-    Result := not (
-        (v1 > VCRTL_MIN_V1) or ((v1 = VCRTL_MIN_V1) and
-         ((v2 > VCRTL_MIN_V2) or ((v2 = VCRTL_MIN_V2) and
-          ((v3 > VCRTL_MIN_V3) or ((v3 = VCRTL_MIN_V3) and
-           (v4 >= VCRTL_MIN_V4)))))));
-  end
-  else
-    Result := TRUE;
 end;
 
 function GetDirSize(Path: String): Int64;
@@ -370,5 +327,8 @@ procedure TaskKill(FileName: String);
 var
   ResultCode: Integer;
 begin
-    Exec('taskkill.exe', '/f /im ' + '"' + FileName + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('taskkill.exe', '/f /t /im ' + '"' + FileName + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if FileName <> '{#LlamaServerExeName}' then begin
+      Exec('taskkill.exe', '/f /t /im "{#LlamaServerExeName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    end;
 end;

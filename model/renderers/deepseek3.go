@@ -18,6 +18,10 @@ type DeepSeek3Renderer struct {
 	Variant    DeepSeek3Variant
 }
 
+func (r *DeepSeek3Renderer) LeadingBOS() string {
+	return "<｜begin▁of▁sentence｜>"
+}
+
 func (r *DeepSeek3Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 

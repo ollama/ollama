@@ -233,6 +233,31 @@ func TestLaunchCmdTUICallback(t *testing.T) {
 	})
 }
 
+func TestLaunchCmdClaudeDesktopLaunchReturnsUnsupported(t *testing.T) {
+	for _, name := range []string{"claude-desktop", "claude-app"} {
+		t.Run(name, func(t *testing.T) {
+			cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error {
+				t.Fatal("heartbeat check should not run before Claude Desktop unsupported error")
+				return nil
+			}, func(cmd *cobra.Command) {
+				t.Fatal("TUI callback should not run for direct integration launch")
+			})
+			cmd.SetArgs([]string{name})
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected Claude Desktop launch command to fail")
+			}
+			if !strings.Contains(err.Error(), "Claude Desktop is no longer supported") {
+				t.Fatalf("expected unsupported guidance, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "ollama launch claude-desktop --restore") {
+				t.Fatalf("expected restore guidance, got %v", err)
+			}
+		})
+	}
+}
+
 func TestLaunchCmdNilHeartbeat(t *testing.T) {
 	cmd := LaunchCmd(nil, nil)
 	if cmd == nil {

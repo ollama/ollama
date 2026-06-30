@@ -13,6 +13,10 @@ import (
 
 type Nemotron3NanoRenderer struct{}
 
+func (r *Nemotron3NanoRenderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 	imageOffset := 0
@@ -79,12 +83,14 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 			// Check if previous message was also a tool message
 			prevWasTool := i > 0 && loopMessages[i-1].Role == "tool"
 			nextIsTool := i+1 < len(loopMessages) && loopMessages[i+1].Role == "tool"
+			content := r.renderMessageContent(message, imageOffset)
+			imageOffset += len(message.Images)
 
 			if !prevWasTool {
 				sb.WriteString("<|im_start|>user\n")
 			}
 			sb.WriteString("<tool_response>\n")
-			sb.WriteString(message.Content)
+			sb.WriteString(content)
 			sb.WriteString("\n</tool_response>\n")
 
 			if !nextIsTool {
@@ -237,23 +243,8 @@ func (r *Nemotron3NanoRenderer) renderMessageContent(message api.Message, imageO
 		return content
 	}
 
-	if strings.Contains(content, "[img-") {
-		return content
-	}
-
-	if strings.Contains(content, "[img]") {
-		for i := range message.Images {
-			content = strings.Replace(content, "[img]", fmt.Sprintf("[img-%d]", imageOffset+i), 1)
-		}
-		return content
-	}
-
-	var sb strings.Builder
-	for i := range message.Images {
-		sb.WriteString(fmt.Sprintf("[img-%d]", imageOffset+i))
-	}
-	sb.WriteString(content)
-	return sb.String()
+	content, _ = renderContentWithImageTags(content, len(message.Images), imageOffset)
+	return content
 }
 
 func nemotron3NanoRenderContent(content any) string {

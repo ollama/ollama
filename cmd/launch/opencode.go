@@ -8,10 +8,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
+
+const openCodeInstallScript = "curl -fsSL https://opencode.ai/install | bash"
+
+var openCodeGOOS = runtime.GOOS
 
 // OpenCode implements Runner and Editor for OpenCode integration.
 // Config is passed via OPENCODE_CONFIG_CONTENT env var at launch time
@@ -33,7 +38,7 @@ func findOpenCode() (string, bool) {
 		return "", false
 	}
 	name := "opencode"
-	if runtime.GOOS == "windows" {
+	if openCodeGOOS == "windows" {
 		name = "opencode.exe"
 	}
 	fallback := filepath.Join(home, ".opencode", "bin", name)
@@ -43,10 +48,10 @@ func findOpenCode() (string, bool) {
 	return "", false
 }
 
-func (o *OpenCode) Run(model string, args []string) error {
-	opencodePath, ok := findOpenCode()
-	if !ok {
-		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
+func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error {
+	opencodePath, err := ensureOpenCodeInstalled()
+	if err != nil {
+		return err
 	}
 
 	cmd := exec.Command(opencodePath, args...)
@@ -54,28 +59,136 @@ func (o *OpenCode) Run(model string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	if content := o.resolveContent(model); content != "" {
+	if content := o.resolveContent(model, models); content != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 	return cmd.Run()
 }
 
+func ensureOpenCodeInstalled() (string, error) {
+	if opencodePath, ok := findOpenCode(); ok {
+		return opencodePath, nil
+	}
+
+	if err := checkOpenCodeInstallerDependencies(); err != nil {
+		return "", err
+	}
+
+	ok, err := ConfirmPrompt("OpenCode is not installed. Install now?")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("opencode installation cancelled")
+	}
+
+	bin, args, err := openCodeInstallerCommand(openCodeGOOS)
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Fprintf(os.Stderr, "\nInstalling OpenCode...\n")
+	cmd := exec.Command(bin, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to install opencode: %w", err)
+	}
+
+	opencodePath, ok := findOpenCode()
+	if !ok {
+		return "", fmt.Errorf("opencode was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+	}
+
+	fmt.Fprintf(os.Stderr, "%sOpenCode installed successfully%s\n\n", ansiGreen, ansiReset)
+	return opencodePath, nil
+}
+
+func checkOpenCodeInstallerDependencies() error {
+	switch openCodeGOOS {
+	case "windows":
+		if _, err := exec.LookPath("npm"); err != nil {
+			return fmt.Errorf("opencode is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch opencode")
+		}
+	default:
+		var missing []string
+		if _, err := exec.LookPath("curl"); err != nil {
+			missing = append(missing, "curl: https://curl.se/")
+		}
+		if _, err := exec.LookPath("bash"); err != nil {
+			missing = append(missing, "bash: https://www.gnu.org/software/bash/")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("opencode is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch opencode", strings.Join(missing, "\n  "))
+		}
+	}
+	return nil
+}
+
+func openCodeInstallerCommand(goos string) (string, []string, error) {
+	switch goos {
+	case "windows":
+		return "npm", []string{"install", "-g", "opencode-ai@latest"}, nil
+	case "darwin", "linux":
+		return "bash", []string{"-c", "set -o pipefail; " + openCodeInstallScript}, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported platform for opencode install: %s", goos)
+	}
+}
+
 // resolveContent returns the inline config to send via OPENCODE_CONFIG_CONTENT.
 // Returns content built by Edit if available, otherwise builds from model.json
 // with the requested model as primary (e.g. re-launch with saved config).
-func (o *OpenCode) resolveContent(model string) string {
+func (o *OpenCode) resolveContent(model string, models []LaunchModel) string {
 	if o.configContent != "" {
 		return o.configContent
 	}
-	models := readModelJSONModels()
-	if !slices.Contains(models, model) {
-		models = append([]string{model}, models...)
+	resolvedModels := resolveOpenCodeRunModels(model, models, readModelJSONModels())
+	if len(resolvedModels) == 0 {
+		return ""
 	}
-	content, err := buildInlineConfig(model, models)
+	content, err := buildInlineConfig(resolvedModels[0], resolvedModels)
 	if err != nil {
 		return ""
 	}
 	return content
+}
+
+func resolveOpenCodeRunModels(primary string, models []LaunchModel, stateModels []string) []LaunchModel {
+	if primary == "" {
+		return nil
+	}
+
+	resolved := make([]LaunchModel, 0, 1+len(models)+len(stateModels))
+	appendModel := func(name string) {
+		if name == "" || hasLaunchModel(resolved, name) {
+			return
+		}
+		if model, ok := findLaunchModel(models, name); ok {
+			resolved = append(resolved, model)
+			return
+		}
+		resolved = append(resolved, fallbackLaunchModel(name))
+	}
+
+	appendModel(primary)
+	for _, model := range models {
+		appendModel(model.Name)
+	}
+	for _, model := range stateModels {
+		appendModel(model)
+	}
+	return resolved
+}
+
+func hasLaunchModel(models []LaunchModel, name string) bool {
+	for _, model := range models {
+		if launchModelMatches(model.Name, name) || launchModelMatches(name, model.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *OpenCode) Paths() []string {
@@ -100,12 +213,13 @@ func openCodeStatePath() (string, error) {
 	return filepath.Join(home, ".local", "state", "opencode", "model.json"), nil
 }
 
-func (o *OpenCode) Edit(modelList []string) error {
+func (o *OpenCode) Edit(models []LaunchModel) error {
+	modelList := launchModelNames(models)
 	if len(modelList) == 0 {
 		return nil
 	}
 
-	content, err := buildInlineConfig(modelList[0], modelList)
+	content, err := buildInlineConfig(models[0], models)
 	if err != nil {
 		return err
 	}
@@ -172,10 +286,11 @@ func (o *OpenCode) Models() []string {
 
 // buildInlineConfig produces the JSON string for OPENCODE_CONFIG_CONTENT.
 // primary is the model to launch with, models is the full list of available models.
-func buildInlineConfig(primary string, models []string) (string, error) {
-	if primary == "" || len(models) == 0 {
+func buildInlineConfig(primary LaunchModel, models []LaunchModel) (string, error) {
+	if primary.Name == "" || len(models) == 0 {
 		return "", fmt.Errorf("buildInlineConfig: primary and models are required")
 	}
+
 	config := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
 		"provider": map[string]any{
@@ -188,7 +303,7 @@ func buildInlineConfig(primary string, models []string) (string, error) {
 				"models": buildModelEntries(models),
 			},
 		},
-		"model": "ollama/" + primary,
+		"model": "ollama/" + primary.Name,
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
@@ -228,21 +343,63 @@ func readModelJSONModels() []string {
 	return models
 }
 
-func buildModelEntries(modelList []string) map[string]any {
+func buildModelEntries(modelList []LaunchModel) map[string]any {
 	models := make(map[string]any)
 	for _, model := range modelList {
 		entry := map[string]any{
-			"name": model,
+			"name": model.Name,
 		}
-		if isCloudModelName(model) {
-			if l, ok := lookupCloudModelLimit(model); ok {
-				entry["limit"] = map[string]any{
-					"context": l.Context,
-					"output":  l.Output,
+		if model.HasCapability("vision") {
+			entry["modalities"] = map[string]any{
+				"input":  []string{"text", "image"},
+				"output": []string{"text"},
+			}
+		}
+		if model.HasCapability("thinking") {
+			entry["reasoning"] = true
+			if openCodeModelSupportsThinkingLevels(model) {
+				entry["options"] = map[string]any{"reasoningEffort": "medium"}
+				entry["variants"] = map[string]any{
+					"low":    map[string]any{"reasoningEffort": "low"},
+					"medium": map[string]any{"reasoningEffort": "medium"},
+					"high":   map[string]any{"reasoningEffort": "high"},
+					"max":    map[string]any{"reasoningEffort": "max"},
+				}
+			} else {
+				entry["variants"] = map[string]any{
+					"none":   map[string]any{"reasoningEffort": "none"},
+					"low":    map[string]any{"disabled": true},
+					"medium": map[string]any{"disabled": true},
+					"high":   map[string]any{"disabled": true},
 				}
 			}
 		}
-		models[model] = entry
+		if model.MaxOutputTokens > 0 {
+			limit := make(map[string]any)
+			if model.ContextLength > 0 {
+				limit["context"] = model.ContextLength
+			}
+			limit["output"] = model.MaxOutputTokens
+			entry["limit"] = limit
+		}
+		models[model.Name] = entry
 	}
 	return models
+}
+
+func openCodeModelSupportsThinkingLevels(model LaunchModel) bool {
+	for _, family := range append([]string{model.Details.Family}, model.Details.Families...) {
+		if normalizeOpenCodeModelFamily(family) == "gptoss" {
+			return true
+		}
+	}
+
+	return strings.Contains(normalizeOpenCodeModelFamily(model.Name), "gptoss")
+}
+
+func normalizeOpenCodeModelFamily(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "-", "")
+	s = strings.ReplaceAll(s, "_", "")
+	return s
 }

@@ -4,6 +4,7 @@ package qwen3_5
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 
@@ -400,7 +401,7 @@ func NewModel(root *model.Root) (base.Model, error) {
 		tok:    tok,
 	}
 
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		m.Layers[i] = &Layer{IsLinear: layerIsLinear(&cfg, i)}
 	}
 
@@ -570,7 +571,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	groupSize := 0
 	mode := cfg.QuantMode
 
-	for e := int32(0); e < numExperts; e++ {
+	for e := range numExperts {
 		base := fmt.Sprintf("%s.mlp.experts.%d.%s", layerPrefix, e, proj)
 		w, key := tensorByBase(tensors, base)
 		if w == nil {
@@ -872,7 +873,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 	moeLoadSummaries := make([]string, 0)
 
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", modelPrefix, i)
 		layer := &Layer{IsLinear: layerIsLinear(cfg, i)}
 
@@ -1069,6 +1070,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 		m.Layers[i] = layer
 	}
+	for _, summary := range moeLoadSummaries {
+		slog.Debug("qwen3.5 moe load", "summary", summary)
+	}
 
 	return nil
 }
@@ -1161,18 +1165,24 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 	}
 	convTail := cfg.LinearConvKernelDim - 1
 	var rc *cache.RecurrentCache
-	var rec nn.RecurrentOption
+	opts := make([]nn.RecurrentOption, 0, 2)
 	if typed, ok := c.(*cache.RecurrentCache); ok {
 		rc = typed
-		rec = nn.WithRecurrentHistory(rc.Get(b, x.DType()))
+		opts = append(opts, nn.WithRecurrentHistory(rc.Get(b, x.DType())))
+		// When the cache has scheduled per-token snapshots, segment the
+		// recurrent kernels at the interior offsets so each boundary state
+		// can be captured.
+		if splits := rc.SnapshotSplits(int(L)); len(splits) > 0 {
+			opts = append(opts, nn.WithSnapshotSplits(splits))
+		}
 	} else {
-		rec = nn.WithRecurrentState(
+		opts = append(opts, nn.WithRecurrentState(
 			mlx.Zeros(x.DType(), int(B), int(convTail), qkv.Dim(2)),
-			mlx.Zeros(x.DType(), int(B), int(cfg.LinearNumValueHeads), int(cfg.LinearValueHeadDim), int(cfg.LinearKeyHeadDim)),
-		)
+			mlx.Zeros(mlx.DTypeFloat32, int(B), int(cfg.LinearNumValueHeads), int(cfg.LinearValueHeadDim), int(cfg.LinearKeyHeadDim)),
+		))
 	}
 
-	convOut, nextConv := nn.CausalConv1D(b, qkv, g.Conv1D, g.ConvWeight, int(convTail), rec)
+	convOut, convStates := nn.CausalConv1D(b, qkv, g.Conv1D, g.ConvWeight, int(convTail), opts...)
 	convOut = mlx.SiLU(convOut)
 
 	keyDim := cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim
@@ -1194,14 +1204,14 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 
 	betaGate := mlx.Sigmoid(beta)
 
-	out, state := nn.GatedDelta(b, q, k, v, gDecay, betaGate, rec)
+	out, deltaStates := nn.GatedDelta(b, q, k, v, gDecay, betaGate, opts...)
 	outDType := out.DType()
 	out = mlx.RMSNormFn(out, g.NormWeight, cfg.RMSNormEps)
 	out = mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.SiLU(z.AsType(mlx.DTypeFloat32))).AsType(outDType)
 	out = mlx.Reshape(out, B, L, valueDim)
 	out = g.OutProj.Forward(out)
 	if rc != nil {
-		rc.Put(b, nextConv, state)
+		rc.Put(b, convStates, deltaStates)
 	}
 	return out
 }

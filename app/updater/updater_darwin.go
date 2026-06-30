@@ -22,6 +22,15 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const updateArchiveRoot = "Ollama.app"
+
+type bundleEntryScope int
+
+const (
+	bundleEntryRelative bundleEntryScope = iota
+	bundleEntryWithArchiveRoot
+)
+
 var (
 	appBackupDir   string
 	SystemWidePath = "/Applications/Ollama.app"
@@ -167,8 +176,12 @@ func DoUpgrade(interactive bool) error {
 		}
 		name := s[1]
 		if strings.HasSuffix(name, "/") {
-			d := filepath.Join(BundlePath, name)
-			err := os.MkdirAll(d, 0o755)
+			d, err := bundleEntryPath(BundlePath, name, bundleEntryRelative)
+			if err != nil {
+				anyFailures = true
+				return err
+			}
+			err = os.MkdirAll(d, 0o755)
 			if err != nil {
 				anyFailures = true
 				return fmt.Errorf("failed to mkdir %s: %w", d, err)
@@ -181,30 +194,14 @@ func DoUpgrade(interactive bool) error {
 			continue
 		}
 
-		src, err := f.Open()
+		destName, err := bundleEntryPath(BundlePath, name, bundleEntryRelative)
 		if err != nil {
 			anyFailures = true
-			return fmt.Errorf("failed to open bundle file %s: %w", name, err)
+			return err
 		}
-		destName := filepath.Join(BundlePath, name)
-		// Verify directory first
-		d := filepath.Dir(destName)
-		if _, err := os.Stat(d); err != nil {
-			err := os.MkdirAll(d, 0o755)
-			if err != nil {
-				anyFailures = true
-				return fmt.Errorf("failed to mkdir %s: %w", d, err)
-			}
-		}
-		destFile, err := os.OpenFile(destName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-		if err != nil {
+		if err := extractBundleFile(f, destName, name); err != nil {
 			anyFailures = true
-			return fmt.Errorf("failed to open output file %s: %w", destName, err)
-		}
-		defer destFile.Close()
-		if _, err := io.Copy(destFile, src); err != nil {
-			anyFailures = true
-			return fmt.Errorf("failed to open extract file %s: %w", destName, err)
+			return err
 		}
 	}
 	for _, f := range links {
@@ -225,16 +222,24 @@ func DoUpgrade(interactive bool) error {
 			return err
 		}
 		link := string(buf)
-		if link[0] == '/' {
+		if link == "" {
+			anyFailures = true
+			return fmt.Errorf("bundle contains empty symlink %s", f.Name)
+		}
+		if filepath.IsAbs(link) {
 			anyFailures = true
 			return fmt.Errorf("bundle contains absolute symlink %s -> %s", f.Name, link)
 		}
-		// Don't allow links outside of Ollama.app
-		if strings.HasPrefix(filepath.Join(filepath.Dir(name), link), "..") {
+		if !validBundleLinkTarget(name, link, bundleEntryRelative) {
 			anyFailures = true
-			return fmt.Errorf("bundle contains link outside of contents %s -> %s", f.Name, link)
+			return fmt.Errorf("bundle contains invalid symlink %s -> %s", f.Name, link)
 		}
-		if err = os.Symlink(link, filepath.Join(BundlePath, name)); err != nil {
+		destName, err := bundleEntryPath(BundlePath, name, bundleEntryRelative)
+		if err != nil {
+			anyFailures = true
+			return err
+		}
+		if err = os.Symlink(link, destName); err != nil {
 			anyFailures = true
 			return err
 		}
@@ -282,8 +287,11 @@ func verifyDownload() error {
 	links := []*zip.File{}
 	for _, f := range r.File {
 		if strings.HasSuffix(f.Name, "/") {
-			d := filepath.Join(dir, f.Name)
-			err := os.MkdirAll(d, 0o755)
+			d, err := bundleEntryPath(dir, f.Name, bundleEntryWithArchiveRoot)
+			if err != nil {
+				return err
+			}
+			err = os.MkdirAll(d, 0o755)
 			if err != nil {
 				return fmt.Errorf("failed to mkdir %s: %w", d, err)
 			}
@@ -294,26 +302,12 @@ func verifyDownload() error {
 			links = append(links, f)
 			continue
 		}
-		src, err := f.Open()
+		destName, err := bundleEntryPath(dir, f.Name, bundleEntryWithArchiveRoot)
 		if err != nil {
-			return fmt.Errorf("failed to open bundle file %s: %w", f.Name, err)
+			return err
 		}
-		destName := filepath.Join(dir, f.Name)
-		// Verify directory first
-		d := filepath.Dir(destName)
-		if _, err := os.Stat(d); err != nil {
-			err := os.MkdirAll(d, 0o755)
-			if err != nil {
-				return fmt.Errorf("failed to mkdir %s: %w", d, err)
-			}
-		}
-		destFile, err := os.OpenFile(destName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-		if err != nil {
-			return fmt.Errorf("failed to open output file %s: %w", destName, err)
-		}
-		defer destFile.Close()
-		if _, err := io.Copy(destFile, src); err != nil {
-			return fmt.Errorf("failed to open extract file %s: %w", destName, err)
+		if err := extractBundleFile(f, destName, f.Name); err != nil {
+			return err
 		}
 	}
 	for _, f := range links {
@@ -326,13 +320,20 @@ func verifyDownload() error {
 			return err
 		}
 		link := string(buf)
-		if link[0] == '/' {
+		if link == "" {
+			return fmt.Errorf("bundle contains empty symlink %s", f.Name)
+		}
+		if filepath.IsAbs(link) {
 			return fmt.Errorf("bundle contains absolute symlink %s -> %s", f.Name, link)
 		}
-		if strings.HasPrefix(filepath.Join(filepath.Dir(f.Name), link), "..") {
-			return fmt.Errorf("bundle contains link outside of contents %s -> %s", f.Name, link)
+		if !validBundleLinkTarget(f.Name, link, bundleEntryWithArchiveRoot) {
+			return fmt.Errorf("bundle contains invalid symlink %s -> %s", f.Name, link)
 		}
-		if err = os.Symlink(link, filepath.Join(dir, f.Name)); err != nil {
+		destName, err := bundleEntryPath(dir, f.Name, bundleEntryWithArchiveRoot)
+		if err != nil {
+			return err
+		}
+		if err = os.Symlink(link, destName); err != nil {
 			return err
 		}
 	}
@@ -341,6 +342,53 @@ func verifyDownload() error {
 		return fmt.Errorf("signature verification failed: %s", err)
 	}
 	return nil
+}
+
+func bundleEntryPath(root, name string, scope bundleEntryScope) (string, error) {
+	cleanName := filepath.Clean(filepath.FromSlash(name))
+	if !filepath.IsLocal(cleanName) {
+		return "", fmt.Errorf("bundle contains invalid path: %s", name)
+	}
+	if scope == bundleEntryWithArchiveRoot && cleanName != updateArchiveRoot &&
+		!strings.HasPrefix(cleanName, updateArchiveRoot+string(os.PathSeparator)) {
+		return "", fmt.Errorf("bundle contains invalid path: %s", name)
+	}
+	return filepath.Join(root, cleanName), nil
+}
+
+func extractBundleFile(f *zip.File, destName, name string) error {
+	src, err := f.Open()
+	if err != nil {
+		return fmt.Errorf("failed to open bundle file %s: %w", name, err)
+	}
+	defer src.Close()
+
+	d := filepath.Dir(destName)
+	if _, err := os.Stat(d); err != nil {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return fmt.Errorf("failed to mkdir %s: %w", d, err)
+		}
+	}
+
+	destFile, err := os.OpenFile(destName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		return fmt.Errorf("failed to open output file %s: %w", destName, err)
+	}
+	defer destFile.Close()
+
+	if _, err := io.Copy(destFile, src); err != nil {
+		return fmt.Errorf("failed to open extract file %s: %w", destName, err)
+	}
+	return nil
+}
+
+func validBundleLinkTarget(name, link string, scope bundleEntryScope) bool {
+	cleanTarget := filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(name)), filepath.FromSlash(link)))
+	if !filepath.IsLocal(cleanTarget) {
+		return false
+	}
+	return scope == bundleEntryRelative || cleanTarget == updateArchiveRoot ||
+		strings.HasPrefix(cleanTarget, updateArchiveRoot+string(os.PathSeparator))
 }
 
 // If we detect an upgrade bundle, attempt to upgrade at startup
