@@ -22,7 +22,6 @@ func evaluateShellApproval(req ApprovalRequest) ApprovalEvaluation {
 		Risk:          risk,
 		Summary:       fmt.Sprintf("%s wants to run a command", toolDisplayName(req.ToolName)),
 		Reasons:       reasons,
-		SessionKey:    req.ToolName + ":" + command,
 	}
 }
 

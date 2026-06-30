@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -9,16 +8,15 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"unicode"
 )
 
 type ApprovalDecision string
 
 const (
-	ApprovalAllowOnce    ApprovalDecision = "allow_once"
-	ApprovalAllowSession ApprovalDecision = "allow_session"
-	ApprovalDeny         ApprovalDecision = "deny"
+	ApprovalAllowOnce ApprovalDecision = "allow_once"
+	ApprovalAllowAll  ApprovalDecision = "allow_all"
+	ApprovalDeny      ApprovalDecision = "deny"
 )
 
 type ApprovalRisk string
@@ -71,7 +69,6 @@ type ApprovalEvaluation struct {
 	Risk          ApprovalRisk
 	Summary       string
 	Reasons       []string
-	SessionKey    string
 }
 
 type AutoAllowApproval struct{}
@@ -88,9 +85,7 @@ type ApprovalManagerOptions struct {
 type ApprovalManager struct {
 	policy   ApprovalPolicy
 	prompter ApprovalPrompter
-
-	mu             *sync.Mutex
-	sessionAllowed map[string]struct{}
+	allowAll bool
 }
 
 func NewApprovalManager(opts ApprovalManagerOptions) *ApprovalManager {
@@ -99,10 +94,8 @@ func NewApprovalManager(opts ApprovalManagerOptions) *ApprovalManager {
 		policy = DefaultApprovalPolicy{}
 	}
 	return &ApprovalManager{
-		policy:         policy,
-		prompter:       opts.Prompter,
-		mu:             &sync.Mutex{},
-		sessionAllowed: make(map[string]struct{}),
+		policy:   policy,
+		prompter: opts.Prompter,
 	}
 }
 
@@ -123,7 +116,7 @@ func (m *ApprovalManager) AuthorizeTool(ctx context.Context, req ToolAuthorizati
 		return ApprovalResult{Decision: ApprovalDeny, Reason: reason}, nil
 	}
 
-	if !evaluation.RequirePrompt || m.sessionAllowedFor(evaluation.SessionKey) {
+	if !evaluation.RequirePrompt || m.allowAll {
 		return ApprovalResult{Decision: ApprovalAllowOnce}, nil
 	}
 
@@ -141,8 +134,8 @@ func (m *ApprovalManager) AuthorizeTool(ctx context.Context, req ToolAuthorizati
 	if result.Decision == "" {
 		result.Decision = ApprovalDeny
 	}
-	if result.Decision == ApprovalAllowSession {
-		m.allowSession(evaluation.SessionKey)
+	if result.Decision == ApprovalAllowAll {
+		m.allowAll = true
 	}
 	return result, nil
 }
@@ -169,9 +162,6 @@ func (m *ApprovalManager) evaluate(ctx context.Context, req ApprovalRequest) App
 	if evaluation.Risk == "" {
 		evaluation.Risk = ApprovalRiskLow
 	}
-	if evaluation.SessionKey == "" {
-		evaluation.SessionKey = approvalSessionKey(req)
-	}
 	return evaluation
 }
 
@@ -189,53 +179,11 @@ func applyToolApprovalRequirement(req ApprovalRequest, evaluation ApprovalEvalua
 	return evaluation
 }
 
-func (m *ApprovalManager) sessionAllowedFor(key string) bool {
-	if m == nil || key == "" {
-		return false
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	_, ok := m.sessionAllowed[key]
-	return ok
-}
-
-func (m *ApprovalManager) allowSession(key string) {
-	if m == nil || key == "" {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.sessionAllowed[key] = struct{}{}
-}
-
 func approvalRequestWithEvaluation(req ApprovalRequest, evaluation ApprovalEvaluation) ApprovalRequest {
 	req.Summary = evaluation.Summary
 	req.Risk = evaluation.Risk
 	req.Reasons = slices.Clone(evaluation.Reasons)
 	return req
-}
-
-func approvalSessionKey(req ApprovalRequest) string {
-	if isShellToolName(req.ToolName) {
-		if command, ok := stringApprovalArg(req.Args, "command"); ok {
-			return req.ToolName + ":" + command
-		}
-	}
-	switch req.ToolName {
-	case "edit":
-		if path, ok := stringApprovalArg(req.Args, "path"); ok {
-			return "edit:" + path
-		}
-	case "web_search":
-		if query, ok := stringApprovalArg(req.Args, "query"); ok {
-			return "web_search:" + query
-		}
-	case "web_fetch":
-		if targetURL, ok := stringApprovalArg(req.Args, "url"); ok {
-			return "web_fetch:" + targetURL
-		}
-	}
-	return req.ToolName + ":" + stableApprovalArgs(req.Args)
 }
 
 type DefaultApprovalPolicy struct{}
@@ -261,7 +209,6 @@ func (DefaultApprovalPolicy) EvaluateApproval(_ context.Context, req ApprovalReq
 			Risk:          ApprovalRiskMedium,
 			Summary:       fmt.Sprintf("%s wants to run", toolDisplayName(req.ToolName)),
 			Reasons:       []string{"unknown tool effects"},
-			SessionKey:    approvalSessionKey(req),
 		}
 	}
 }
@@ -284,7 +231,6 @@ func evaluateEditApproval(req ApprovalRequest) ApprovalEvaluation {
 		Risk:          ApprovalRiskMedium,
 		Summary:       fmt.Sprintf("Edit wants to modify %s", sanitizeApprovalDisplay(path)),
 		Reasons:       reasons,
-		SessionKey:    "edit:" + path,
 	}
 }
 
@@ -300,7 +246,6 @@ func evaluateWebApproval(req ApprovalRequest) ApprovalEvaluation {
 			Risk:          ApprovalRiskMedium,
 			Summary:       fmt.Sprintf("Web Search wants to search for %q", sanitizeApprovalDisplay(query)),
 			Reasons:       []string{"searches the web"},
-			SessionKey:    "web_search:" + query,
 		}
 	case "web_fetch":
 		targetURL, ok := stringApprovalArg(req.Args, "url")
@@ -312,7 +257,6 @@ func evaluateWebApproval(req ApprovalRequest) ApprovalEvaluation {
 			Risk:          ApprovalRiskMedium,
 			Summary:       fmt.Sprintf("Web Fetch wants to fetch %s", sanitizeApprovalDisplay(targetURL)),
 			Reasons:       []string{"fetches web content"},
-			SessionKey:    "web_fetch:" + targetURL,
 		}
 	}
 	return ApprovalEvaluation{
@@ -320,7 +264,6 @@ func evaluateWebApproval(req ApprovalRequest) ApprovalEvaluation {
 		Risk:          ApprovalRiskMedium,
 		Summary:       fmt.Sprintf("%s wants to run", toolDisplayName(req.ToolName)),
 		Reasons:       []string{"accesses the web"},
-		SessionKey:    approvalSessionKey(req),
 	}
 }
 
@@ -345,11 +288,10 @@ func sanitizeApprovalDisplay(value string) string {
 
 func denyApproval(toolName string, risk ApprovalRisk, reason string) ApprovalEvaluation {
 	return ApprovalEvaluation{
-		Decision:   ApprovalDeny,
-		Risk:       risk,
-		Summary:    fmt.Sprintf("%s cannot run", toolDisplayName(toolName)),
-		Reasons:    []string{reason},
-		SessionKey: approvalSessionKey(ApprovalRequest{ToolName: toolName}),
+		Decision: ApprovalDeny,
+		Risk:     risk,
+		Summary:  fmt.Sprintf("%s cannot run", toolDisplayName(toolName)),
+		Reasons:  []string{reason},
 	}
 }
 
@@ -375,10 +317,6 @@ func toolDisplayName(name string) string {
 		}
 		return name
 	}
-}
-
-func isShellToolName(name string) bool {
-	return name == "bash" || name == "powershell"
 }
 
 var approvalANSIEscapePattern = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))`)
@@ -434,23 +372,4 @@ func canonicalApprovalPath(path string) (string, error) {
 func stringApprovalArg(args map[string]any, key string) (string, bool) {
 	value, ok := args[key].(string)
 	return value, ok && strings.TrimSpace(value) != ""
-}
-
-func stableApprovalArgs(args map[string]any) string {
-	if len(args) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(args))
-	for key := range args {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	var b bytes.Buffer
-	for _, key := range keys {
-		if b.Len() > 0 {
-			b.WriteByte(',')
-		}
-		fmt.Fprintf(&b, "%s=%v", key, args[key])
-	}
-	return b.String()
 }

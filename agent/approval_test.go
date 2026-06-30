@@ -171,24 +171,29 @@ func TestApprovalManagerDeniesPromptRequiredToolsWithoutPrompter(t *testing.T) {
 	}
 }
 
-func TestApprovalManagerSessionAllowList(t *testing.T) {
+func TestApprovalManagerAllowAllSkipsFuturePrompts(t *testing.T) {
 	prompter := &recordingApprovalPrompter{
-		results: []ApprovalResult{{Decision: ApprovalAllowSession}},
+		results: []ApprovalResult{{Decision: ApprovalAllowAll}},
 	}
 	manager := NewApprovalManager(ApprovalManagerOptions{Prompter: prompter})
-	request := ToolAuthorizationRequest{
+	first := ToolAuthorizationRequest{
 		ToolName: "bash",
 		Args:     map[string]any{"command": "go test ./agent"},
 	}
+	second := ToolAuthorizationRequest{
+		ToolName:   "edit",
+		Args:       map[string]any{"path": "note.txt", "old_text": "old", "new_text": "new"},
+		WorkingDir: t.TempDir(),
+	}
 
-	result, err := manager.AuthorizeTool(context.Background(), request)
+	result, err := manager.AuthorizeTool(context.Background(), first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Decision != ApprovalAllowSession {
-		t.Fatalf("decision = %q, want allow_session", result.Decision)
+	if result.Decision != ApprovalAllowAll {
+		t.Fatalf("decision = %q, want allow_all", result.Decision)
 	}
-	result, err = manager.AuthorizeTool(context.Background(), request)
+	result, err = manager.AuthorizeTool(context.Background(), second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,8 +237,8 @@ func TestPowerShellApprovalUsesShellPolicy(t *testing.T) {
 	if evaluation.Summary != "PowerShell wants to run a command" {
 		t.Fatalf("summary = %q", evaluation.Summary)
 	}
-	if evaluation.SessionKey != "powershell:Remove-Item -Recurse tmp" {
-		t.Fatalf("session key = %q", evaluation.SessionKey)
+	if evaluation.Risk != ApprovalRiskMedium {
+		t.Fatalf("risk = %q, want medium", evaluation.Risk)
 	}
 }
 
