@@ -1,10 +1,13 @@
 package discover
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/ml"
@@ -22,6 +25,9 @@ func TestApplyLinuxROCmRefinement(t *testing.T) {
 		applied        bool
 		wantIntegrated []bool
 		wantPCIIDs     []string
+		wantTotal      []uint64
+		wantFree       []uint64
+		wantEnv        []map[string]string
 	}{
 		{
 			name: "apu is integrated",
@@ -39,6 +45,54 @@ func TestApplyLinuxROCmRefinement(t *testing.T) {
 			}},
 			applied:        true,
 			wantIntegrated: []bool{true},
+		},
+		{
+			name: "apu corrects impossible backend free memory to gtt free",
+			nodes: []fakeROCmNode{{
+				node:        1,
+				renderMinor: 128,
+				gfxVersion:  "110501",
+				vramTotal:   512 << 20,
+				gttTotal:    64 << 30,
+				gttUsed:     3 << 30,
+			}},
+			devices: []ml.DeviceInfo{{
+				DeviceID:    ml.DeviceID{ID: "0", Library: "ROCm"},
+				Name:        "ROCm0",
+				GFXTarget:   "gfx1151",
+				TotalMemory: 64 << 30,
+				FreeMemory:  120 << 30,
+			}},
+			applied:        true,
+			wantIntegrated: []bool{true},
+			wantTotal:      []uint64{64 << 30},
+			wantFree:       []uint64{61 << 30},
+			wantEnv: []map[string]string{{
+				rocmLinuxFitTargetEnv: "61440",
+			}},
+		},
+		{
+			name: "apu preserves sane backend free memory",
+			nodes: []fakeROCmNode{{
+				node:        1,
+				renderMinor: 128,
+				gfxVersion:  "110501",
+				vramTotal:   512 << 20,
+				gttTotal:    64 << 30,
+				gttUsed:     3 << 30,
+			}},
+			devices: []ml.DeviceInfo{{
+				DeviceID:    ml.DeviceID{ID: "0", Library: "ROCm"},
+				Name:        "ROCm0",
+				GFXTarget:   "gfx1151",
+				TotalMemory: 64 << 30,
+				FreeMemory:  60 << 30,
+			}},
+			applied:        true,
+			wantIntegrated: []bool{true},
+			wantTotal:      []uint64{64 << 30},
+			wantFree:       []uint64{60 << 30},
+			wantEnv:        []map[string]string{{}},
 		},
 		{
 			name: "low vram dgpu is not integrated",
@@ -179,7 +233,68 @@ func TestApplyLinuxROCmRefinement(t *testing.T) {
 					t.Fatalf("device %d PCIID = %q, want %q", i, devices[i].PCIID, want)
 				}
 			}
+			for i, want := range tt.wantTotal {
+				if devices[i].TotalMemory != want {
+					t.Fatalf("device %d TotalMemory = %d, want %d", i, devices[i].TotalMemory, want)
+				}
+			}
+			for i, want := range tt.wantFree {
+				if devices[i].FreeMemory != want {
+					t.Fatalf("device %d FreeMemory = %d, want %d", i, devices[i].FreeMemory, want)
+				}
+			}
+			for i, want := range tt.wantEnv {
+				for key, value := range want {
+					if got := devices[i].RunnerEnvOverrides[key]; got != value {
+						t.Fatalf("device %d RunnerEnvOverrides[%q] = %q, want %q", i, key, got, value)
+					}
+				}
+				if len(want) == 0 && devices[i].RunnerEnvOverrides != nil {
+					t.Fatalf("device %d RunnerEnvOverrides = %#v, want nil", i, devices[i].RunnerEnvOverrides)
+				}
+			}
 		})
+	}
+}
+
+func TestApplyLinuxROCmRefinementPreservesUserFitTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Linux PCI sysfs paths use ':' which is not valid in Windows filenames")
+	}
+
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() {
+		slog.SetDefault(oldLogger)
+	})
+
+	t.Setenv(rocmLinuxFitTargetEnv, "1234")
+	sysfsRoot := t.TempDir()
+	writeFakeROCmNode(t, sysfsRoot, fakeROCmNode{
+		node:        1,
+		renderMinor: 128,
+		gfxVersion:  "110501",
+		vramTotal:   512 << 20,
+		gttTotal:    64 << 30,
+		gttUsed:     3 << 30,
+	})
+
+	devices := []ml.DeviceInfo{{
+		DeviceID:    ml.DeviceID{ID: "0", Library: "ROCm"},
+		Name:        "ROCm0",
+		GFXTarget:   "gfx1151",
+		TotalMemory: 64 << 30,
+		FreeMemory:  120 << 30,
+	}}
+	if !applyLinuxROCmRefinement(devices, sysfsRoot) {
+		t.Fatal("applyLinuxROCmRefinement returned false")
+	}
+	if devices[0].RunnerEnvOverrides != nil {
+		t.Fatalf("RunnerEnvOverrides = %#v, want nil", devices[0].RunnerEnvOverrides)
+	}
+	if !strings.Contains(logs.String(), "skipping ROCm iGPU fit target correction") {
+		t.Fatalf("expected user override warning, got %q", logs.String())
 	}
 }
 
@@ -234,6 +349,7 @@ type fakeROCmNode struct {
 	gfxVersion  string
 	vramTotal   uint64
 	gttTotal    uint64
+	gttUsed     uint64
 	vramVendor  bool
 	boardInfo   bool
 }
@@ -273,6 +389,7 @@ func writeFakeROCmNode(t *testing.T, sysfsRoot string, node fakeROCmNode) {
 	writeFakeSysfsFile(t, deviceDir, "driver", "amdgpu\n")
 	writeFakeSysfsFile(t, deviceDir, "mem_info_vram_total", strconv.FormatUint(node.vramTotal, 10)+"\n")
 	writeFakeSysfsFile(t, deviceDir, "mem_info_gtt_total", strconv.FormatUint(node.gttTotal, 10)+"\n")
+	writeFakeSysfsFile(t, deviceDir, "mem_info_gtt_used", strconv.FormatUint(node.gttUsed, 10)+"\n")
 	if node.vramVendor {
 		writeFakeSysfsFile(t, deviceDir, "mem_info_vram_vendor", "samsung\n")
 	}

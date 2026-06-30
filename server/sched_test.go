@@ -1371,6 +1371,96 @@ func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
 	require.False(t, called, "preflight prediction should reject before spawning llama-server")
 }
 
+func TestAutomaticLargeContextCandidate(t *testing.T) {
+	tests := []struct {
+		name      string
+		numCtx    int
+		auto      bool
+		effective int
+		want      bool
+	}{
+		{
+			name:      "large automatic context",
+			numCtx:    262144,
+			auto:      true,
+			effective: 131072,
+			want:      true,
+		},
+		{
+			name:      "middle bucket is not considered",
+			numCtx:    32768,
+			auto:      true,
+			effective: 32768,
+		},
+		{
+			name:      "explicit context is not considered",
+			numCtx:    262144,
+			effective: 131072,
+		},
+		{
+			name:      "model capped below middle bucket is not considered",
+			numCtx:    262144,
+			auto:      true,
+			effective: 16384,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, automaticLargeContextCandidate(tt.numCtx, tt.auto, tt.effective))
+		})
+	}
+}
+
+func TestAutomaticNumCtxForLargeModelFit(t *testing.T) {
+	tests := []struct {
+		name        string
+		predicted   uint64
+		capacity    uint64
+		wantNumCtx  int
+		wantChanged bool
+	}{
+		{
+			name:        "large context drops to middle bucket when model saturates memory",
+			predicted:   95 * format.GibiByte,
+			capacity:    100 * format.GibiByte,
+			wantNumCtx:  32768,
+			wantChanged: true,
+		},
+		{
+			name:      "large context is kept with enough headroom",
+			predicted: 80 * format.GibiByte,
+			capacity:  100 * format.GibiByte,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := automaticNumCtxForLargeModelFit(tt.predicted, tt.capacity)
+			require.Equal(t, tt.wantNumCtx, got)
+			require.Equal(t, tt.wantChanged, changed)
+		})
+	}
+}
+
+func TestTotalMemoryForPlacementIgnoresFreeMemory(t *testing.T) {
+	t.Setenv("OLLAMA_GPU_OVERHEAD", "0")
+
+	gpus := []ml.DeviceInfo{
+		{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, TotalMemory: 100 * format.GibiByte, FreeMemory: 80 * format.GibiByte},
+		{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, TotalMemory: 50 * format.GibiByte, FreeMemory: 10 * format.GibiByte},
+	}
+	require.Equal(t, uint64(150*format.GibiByte), totalMemoryForPlacement(gpus, api.Options{Runner: api.Runner{NumGPU: -1}}))
+
+	gpus[0].FreeMemory = 1 * format.GibiByte
+	gpus[1].FreeMemory = 1 * format.GibiByte
+	require.Equal(t, uint64(150*format.GibiByte), totalMemoryForPlacement(gpus, api.Options{Runner: api.Runner{NumGPU: -1}}))
+
+	mainGPU := 1
+	require.Equal(t, uint64(50*format.GibiByte), totalMemoryForPlacement(gpus, api.Options{Runner: api.Runner{NumGPU: -1, MainGPU: &mainGPU}}))
+	require.Equal(t, uint64(0), totalMemoryForPlacement(gpus, api.Options{Runner: api.Runner{NumGPU: 0}}))
+}
+
 func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -1669,7 +1759,7 @@ func TestDisableMmapDefaultReason(t *testing.T) {
 	}
 }
 
-func TestDisableMmapForHostPressure(t *testing.T) {
+func TestDisableMmapForLinuxHostPressure(t *testing.T) {
 	gpus := []ml.DeviceInfo{{
 		DeviceID:    ml.DeviceID{Library: "CUDA"},
 		TotalMemory: 100 * format.GigaByte,
@@ -1680,8 +1770,7 @@ func TestDisableMmapForHostPressure(t *testing.T) {
 		FreeMemory:  50 * format.GigaByte,
 	}
 
-	require.True(t, disableMmapForHostPressure(
-		"linux",
+	require.True(t, disableMmapForLinuxHostPressure(
 		api.Options{},
 		systemInfo,
 		gpus,
@@ -1692,8 +1781,7 @@ func TestDisableMmapForHostPressure(t *testing.T) {
 	))
 
 	useMmap := true
-	require.False(t, disableMmapForHostPressure(
-		"linux",
+	require.False(t, disableMmapForLinuxHostPressure(
 		api.Options{Runner: api.Runner{UseMMap: &useMmap}},
 		systemInfo,
 		gpus,
@@ -1703,32 +1791,45 @@ func TestDisableMmapForHostPressure(t *testing.T) {
 		80*format.GigaByte,
 	), "explicit use_mmap=true should win")
 
-	require.False(t, disableMmapForHostPressure(
-		"darwin",
+	require.True(t, disableMmapForLinuxHostPressure(
+		api.Options{},
+		ml.SystemInfo{TotalMemory: 100 * format.GigaByte, FreeMemory: 70 * format.GigaByte},
+		[]ml.DeviceInfo{{
+			DeviceID:    ml.DeviceID{Library: "ROCm"},
+			Integrated:  true,
+			TotalMemory: 60 * format.GigaByte,
+			FreeMemory:  60 * format.GigaByte,
+		}},
+		20*format.GigaByte,
+		25*format.GigaByte,
+		30*format.GigaByte,
+		60*format.GigaByte,
+	), "shared-memory GPU allocations also consume host memory")
+
+	require.False(t, disableMmapForLinuxHostPressure(
+		api.Options{},
+		ml.SystemInfo{TotalMemory: 256 * format.GigaByte, FreeMemory: 200 * format.GigaByte},
+		[]ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true}},
+		20*format.GigaByte,
+		25*format.GigaByte,
+		30*format.GigaByte,
+		60*format.GigaByte,
+	), "shared-memory GPU loads keep mmap when host memory has enough headroom")
+
+	require.False(t, disableMmapForLinuxHostPressure(
 		api.Options{},
 		systemInfo,
-		gpus,
+		[]ml.DeviceInfo{
+			{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true},
+			{DeviceID: ml.DeviceID{Library: "CUDA"}},
+		},
 		20*format.GigaByte,
 		25*format.GigaByte,
 		30*format.GigaByte,
 		80*format.GigaByte,
-	), "only the Linux pressure heuristic is restored")
+	), "mixed shared and discrete placements keep the normal mmap path")
 
-	igpu := append([]ml.DeviceInfo(nil), gpus...)
-	igpu[0].Integrated = true
-	require.False(t, disableMmapForHostPressure(
-		"linux",
-		api.Options{},
-		systemInfo,
-		igpu,
-		20*format.GigaByte,
-		25*format.GigaByte,
-		30*format.GigaByte,
-		80*format.GigaByte,
-	), "shared-memory GPU loads should keep the normal mmap path")
-
-	require.False(t, disableMmapForHostPressure(
-		"linux",
+	require.False(t, disableMmapForLinuxHostPressure(
 		api.Options{},
 		systemInfo,
 		gpus,

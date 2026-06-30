@@ -542,6 +542,22 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			predicted := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
 			loadGpus, launchOpts = selectLlamaServerPlacement(systemInfo, gpus, predicted, req.opts)
 			availableForBatch, _, _ := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
+			if automaticLargeContextCandidate(req.opts.NumCtx, req.numCtxAuto, effectiveModelContext(req.opts.NumCtx, f)) {
+				placementCapacity := totalMemoryForPlacement(loadGpus, launchOpts)
+				newNumCtx, ok := automaticNumCtxForLargeModelFit(predicted, placementCapacity)
+				if ok {
+					slog.Info("reducing automatic context for large model fit",
+						"old_num_ctx", req.opts.NumCtx,
+						"new_num_ctx", newNumCtx,
+						"predicted", format.HumanBytes2(predicted),
+						"capacity", format.HumanBytes2(placementCapacity))
+					req.opts.NumCtx = newNumCtx
+					predictedCtx = effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
+					predicted = llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
+					loadGpus, launchOpts = selectLlamaServerPlacement(systemInfo, gpus, predicted, req.opts)
+					availableForBatch, _, _ = availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
+				}
+			}
 			flashAttention := llm.LlamaServerFlashAttention(loadGpus)
 			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch, flashAttention, loadGpus)
 			launchOpts.NumBatch = req.opts.NumBatch
@@ -805,6 +821,22 @@ func effectiveLlamaServerContext(numCtx int, f *ggml.GGML, numParallel int) int 
 	return effectiveModelContext(numCtx, f) * max(numParallel, 1)
 }
 
+const automaticLargeContextMaxMemoryPercent = 90
+
+func automaticLargeContextCandidate(numCtx int, numCtxAuto bool, effectiveCtx int) bool {
+	return numCtxAuto && numCtx > 32768 && effectiveCtx > 32768
+}
+
+func automaticNumCtxForLargeModelFit(predictedVRAM, placementCapacity uint64) (int, bool) {
+	if predictedVRAM == 0 || placementCapacity == 0 {
+		return 0, false
+	}
+	if predictedVRAM <= placementCapacity*automaticLargeContextMaxMemoryPercent/100 {
+		return 0, false
+	}
+	return 32768, true
+}
+
 const (
 	llamaServerGenerationBatchDefault     = 512
 	llamaServerGenerationBatchConstrained = 256
@@ -970,6 +1002,21 @@ func availableMemoryForPlacement(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo,
 	}
 
 	return availableMemoryForLoad(systemInfo, placementGpus)
+}
+
+func totalMemoryForPlacement(gpus []ml.DeviceInfo, opts api.Options) uint64 {
+	if opts.NumGPU == 0 {
+		return 0
+	}
+
+	var total uint64
+	for _, gpu := range gpusForPlacement(gpus, opts) {
+		if gpu.TotalMemory <= envconfig.GpuOverhead() {
+			continue
+		}
+		total += gpu.TotalMemory - envconfig.GpuOverhead()
+	}
+	return total
 }
 
 func gpusForPlacement(gpus []ml.DeviceInfo, opts api.Options) []ml.DeviceInfo {
@@ -1209,6 +1256,10 @@ func allDevicesLibrary(gpus []ml.DeviceInfo, library string) bool {
 }
 
 func (s *Scheduler) maybeDisableMmapForHostPressure(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *ggml.GGML, numParallel int) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+
 	modelSize := modelFileSize(req.model.ModelPath)
 	loadedMmapSize := s.loadedMmapModelSizeLocked()
 	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
@@ -1216,7 +1267,7 @@ func (s *Scheduler) maybeDisableMmapForHostPressure(req *LlmRequest, launchOpts 
 	availableVRAM, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
 	placementGpus := gpusForPlacement(gpus, launchOpts)
 
-	if !disableMmapForHostPressure(runtime.GOOS, req.opts, systemInfo, placementGpus, modelSize, loadedMmapSize, predictedVRAM, availableVRAM) {
+	if !disableMmapForLinuxHostPressure(req.opts, systemInfo, placementGpus, modelSize, loadedMmapSize, predictedVRAM, availableVRAM) {
 		return
 	}
 
@@ -1235,8 +1286,21 @@ func (s *Scheduler) maybeDisableMmapForHostPressure(req *LlmRequest, launchOpts 
 	)
 }
 
-func disableMmapForHostPressure(goos string, opts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelSize, loadedMmapSize, predictedVRAM, availableVRAM uint64) bool {
-	if opts.UseMMap != nil || goos != "linux" || modelSize == 0 || systemInfo.FreeMemory == 0 || !allDiscreteGPUs(gpus) {
+func disableMmapForLinuxHostPressure(opts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelSize, loadedMmapSize, predictedVRAM, availableVRAM uint64) bool {
+	if opts.UseMMap != nil || modelSize == 0 || systemInfo.FreeMemory == 0 || len(gpus) == 0 {
+		return false
+	}
+
+	pressure := modelSize + loadedMmapSize + mmapHostPressureHeadroom(systemInfo.TotalMemory)
+	if allIntegratedGPUs(gpus) {
+		sharedGPUPressure := predictedVRAM
+		if availableVRAM > 0 {
+			sharedGPUPressure = min(sharedGPUPressure, availableVRAM)
+		}
+		return systemInfo.FreeMemory < pressure+sharedGPUPressure
+	}
+
+	if !allDiscreteGPUs(gpus) {
 		return false
 	}
 
@@ -1247,8 +1311,19 @@ func disableMmapForHostPressure(goos string, opts api.Options, systemInfo ml.Sys
 		return false
 	}
 
-	pressure := modelSize + loadedMmapSize + mmapHostPressureHeadroom(systemInfo.TotalMemory)
 	return systemInfo.FreeMemory < pressure
+}
+
+func allIntegratedGPUs(gpus []ml.DeviceInfo) bool {
+	if len(gpus) == 0 {
+		return false
+	}
+	for _, gpu := range gpus {
+		if !gpu.Integrated {
+			return false
+		}
+	}
+	return true
 }
 
 func allDiscreteGPUs(gpus []ml.DeviceInfo) bool {
