@@ -29,7 +29,7 @@ const (
 	maxCompactionSummaryBytes  = 16 * 1024
 	compactionSummaryTruncated = "\n\n[summary truncated]"
 
-	compactionSystemPrompt = "Summarize the archived part of an Ollama CLI agent conversation. Preserve user goals, decisions, files, commands, tool results, and unresolved tasks needed to continue. Omit private reasoning and return only the summary."
+	compactionSystemPrompt = "Summarize the archived part of an Ollama agent conversation. Preserve user goals, decisions, files, commands, tool results, and unresolved tasks needed to continue. Omit private reasoning and return only the summary."
 )
 
 type Compactor interface {
@@ -120,8 +120,6 @@ func (c *SimpleCompactor) MaybeCompact(ctx context.Context, req CompactionReques
 		summary = truncateCompactionSummary(strings.TrimSpace(summary))
 	}
 	if summary == "" {
-		// TODO(parthsareen): Investigate models that stream compaction output
-		// without final content, such as thinking-only summaries.
 		result.Reason = "summary was empty"
 		return result, nil
 	}
@@ -145,10 +143,6 @@ func (c *SimpleCompactor) shouldCompact(req CompactionRequest) bool {
 	if req.Latest.PromptEvalCount > 0 && req.Latest.PromptEvalCount >= threshold {
 		return true
 	}
-	// TODO(parthsareen): If the newest kept user turn contains the oversized
-	// tool output, compaction can remove older history but still leave the next
-	// prompt above the safety threshold. Pair this estimate trigger with
-	// context-aware tool-output paging/range reads so the kept suffix can shrink.
 	return estimateCompactionRequestTokens(req) >= threshold
 }
 

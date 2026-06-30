@@ -153,7 +153,7 @@ func TestApprovalManagerPromptsForEdit(t *testing.T) {
 	}
 }
 
-func TestApprovalManagerHeadlessDeniesPromptRequiredTools(t *testing.T) {
+func TestApprovalManagerDeniesPromptRequiredToolsWithoutPrompter(t *testing.T) {
 	manager := NewApprovalManager(ApprovalManagerOptions{})
 
 	result, err := manager.AuthorizeTool(context.Background(), ToolAuthorizationRequest{
@@ -166,7 +166,7 @@ func TestApprovalManagerHeadlessDeniesPromptRequiredTools(t *testing.T) {
 	if result.Decision != ApprovalDeny {
 		t.Fatalf("decision = %q, want deny", result.Decision)
 	}
-	if !strings.Contains(result.Reason, "--auto-approve-tools") {
+	if !strings.Contains(result.Reason, "no approval prompter") {
 		t.Fatalf("reason = %q", result.Reason)
 	}
 }

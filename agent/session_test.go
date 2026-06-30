@@ -1378,7 +1378,7 @@ func TestSessionTruncatesSeededToolMessagesBeforeHistory(t *testing.T) {
 		Model:  "model",
 		NewMessages: []api.Message{
 			{Role: "user", Content: "use seeded tool"},
-			{Role: "tool", ToolName: "skill", ToolCallID: "call-1", Content: largeContent},
+			{Role: "tool", ToolName: "example_tool", ToolCallID: "call-1", Content: largeContent},
 		},
 	})
 	if err != nil {
@@ -1419,13 +1419,13 @@ func TestSessionPreflightRejectsOversizedFirstRequest(t *testing.T) {
 	_, err := session.Run(context.Background(), RunOptions{
 		ChatID:       "chat-1",
 		Model:        "model",
-		SystemPrompt: strings.Repeat("system skill description ", 200),
+		SystemPrompt: strings.Repeat("system instructions ", 200),
 		NewMessages:  []api.Message{{Role: "user", Content: "hello"}},
 	})
 	if err == nil {
 		t.Fatal("expected preflight context error")
 	}
-	if !strings.Contains(err.Error(), "/system off") || !strings.Contains(err.Error(), "compact or start a new chat") {
+	if !strings.Contains(err.Error(), "Reduce the system prompt or message history") || !strings.Contains(err.Error(), "compact the conversation") {
 		t.Fatalf("error = %q, want actionable prompt guidance", err.Error())
 	}
 	if len(client.requests) != 0 {

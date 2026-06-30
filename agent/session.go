@@ -861,7 +861,7 @@ func (s *Session) checkPreflightPromptBudget(opts RunOptions, messages []api.Mes
 	if estimated < contextWindow {
 		return nil
 	}
-	return fmt.Errorf("prompt is too large for the current context (~%d/%d tokens). Turn off the system prompt with /system off, compact or start a new chat, or use a model with a larger context", estimated, contextWindow)
+	return fmt.Errorf("prompt is too large for the current context (~%d/%d tokens). Reduce the system prompt or message history, compact the conversation, or use a model with a larger context", estimated, contextWindow)
 }
 
 func (s *Session) checkPostCompactionPromptBudget(opts RunOptions, messages []api.Message) error {
@@ -873,7 +873,7 @@ func (s *Session) checkPostCompactionPromptBudget(opts RunOptions, messages []ap
 	if estimated < contextWindow {
 		return nil
 	}
-	return fmt.Errorf("history is still too large after compaction (~%d/%d tokens). Start a new chat with /new or a fresh request, turn off the system prompt with /system off, or use a model with a larger context", estimated, contextWindow)
+	return fmt.Errorf("history is still too large after compaction (~%d/%d tokens). Start a fresh request, reduce the system prompt or history, or use a model with a larger context", estimated, contextWindow)
 }
 
 func (s *Session) compactionThresholdTokens(opts RunOptions) int {
@@ -951,8 +951,6 @@ func truncateToolResultContentTo(content string, maxRunes int) string {
 	head := maxRunes * 3 / 4
 	tail := maxRunes - head
 	omitted := len(runes) - head - tail
-	// TODO(parthsareen): Allow the model to page through full tool output or
-	// request specific ranges while staying aware of the available context.
 	marker := fmt.Sprintf(
 		"\n\n[tool output truncated: showing first ~%d tokens and last ~%d tokens; omitted ~%d tokens. Use a narrower command, line range, or search query if more detail is needed.]\n\n",
 		approximateTokensFromRunes(head),
