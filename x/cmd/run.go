@@ -376,7 +376,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				if cmd, ok := args["command"].(string); ok {
 					// Check if command is denied (dangerous pattern)
 					if denied, pattern := agent.IsDenied(cmd); denied {
-						fmt.Fprintf(os.Stderr, "\033[1mblocked:\033[0m %s\n", formatToolShort(toolName, args))
+						fmt.Fprintf(os.Stderr, "\033[1mblocked:\033[0m %s\n", formatToolCall(toolName, args))
 						fmt.Fprintf(os.Stderr, "  matches dangerous pattern: %s\n", pattern)
 						toolResults = append(toolResults, api.Message{
 							Role:       "tool",
@@ -389,7 +389,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 					// Check if command is auto-allowed (safe command)
 					// TODO(parthsareen): re-enable with tighter scoped allowlist
 					// if agent.IsAutoAllowed(cmd) {
-					// 	fmt.Fprintf(os.Stderr, "\033[1mauto-allowed:\033[0m %s\n", formatToolShort(toolName, args))
+					// 	fmt.Fprintf(os.Stderr, "\033[1mauto-allowed:\033[0m %s\n", formatToolCall(toolName, args))
 					// 	skipApproval = true
 					// }
 				}
@@ -399,7 +399,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 			// In yolo mode, skip all approval prompts
 			if opts.YoloMode {
 				if !skipApproval {
-					fmt.Fprintf(os.Stderr, "\033[1mrunning:\033[0m %s\n", formatToolShort(toolName, args))
+					fmt.Fprintf(os.Stderr, "\033[1mrunning:\033[0m %s\n", formatToolCall(toolName, args))
 				}
 			} else if !skipApproval && !approval.IsAllowed(toolName, args) {
 				result, err := approval.RequestApproval(toolName, args)
@@ -429,7 +429,7 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 				}
 			} else if !skipApproval {
 				// Already allowed - show running indicator
-				fmt.Fprintf(os.Stderr, "\033[1mrunning:\033[0m %s\n", formatToolShort(toolName, args))
+				fmt.Fprintf(os.Stderr, "\033[1mrunning:\033[0m %s\n", formatToolCall(toolName, args))
 			}
 
 			// Execute the tool
@@ -513,29 +513,20 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 	return &api.Message{Role: role, Thinking: thinkingContent.String(), Content: fullResponse.String()}, nil
 }
 
-// truncateUTF8 safely truncates a string to at most limit runes, adding "..." if truncated.
-func truncateUTF8(s string, limit int) string {
-	runes := []rune(s)
-	if len(runes) <= limit {
-		return s
-	}
-	if limit <= 3 {
-		return string(runes[:limit])
-	}
-	return string(runes[:limit-3]) + "..."
-}
-
-// formatToolShort returns a short description of a tool call.
-func formatToolShort(toolName string, args map[string]any) string {
+// formatToolCall returns a description of a tool call for display. It shows the
+// full command or query, untruncated, so the user can see exactly what is about
+// to run. This matters most in yolo mode, where there is no approval prompt to
+// inspect the call before it executes.
+func formatToolCall(toolName string, args map[string]any) string {
 	displayName := agent.ToolDisplayName(toolName)
 	if toolName == "bash" {
 		if cmd, ok := args["command"].(string); ok {
-			return fmt.Sprintf("%s: %s", displayName, truncateUTF8(cmd, 50))
+			return fmt.Sprintf("%s: %s", displayName, cmd)
 		}
 	}
 	if toolName == "web_search" {
 		if query, ok := args["query"].(string); ok {
-			return fmt.Sprintf("%s: %s", displayName, truncateUTF8(query, 50))
+			return fmt.Sprintf("%s: %s", displayName, query)
 		}
 	}
 	return displayName
