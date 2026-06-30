@@ -273,3 +273,62 @@ func TestUsesAutomaticNumBatch(t *testing.T) {
 		})
 	}
 }
+
+func TestNumBatchPolicyForRequest(t *testing.T) {
+	embeddingModel := func(modelOpts map[string]any) *Model {
+		m := &Model{Options: modelOpts}
+		m.Config.Capabilities = []string{string(model.CapabilityEmbedding)}
+		return m
+	}
+	completionModel := func(modelOpts map[string]any) *Model {
+		m := &Model{Options: modelOpts}
+		m.Config.Capabilities = []string{string(model.CapabilityCompletion)}
+		return m
+	}
+
+	tests := []struct {
+		name                   string
+		model                  *Model
+		requestOpts            map[string]any
+		embeddingBatchGrowable bool
+		want                   numBatchPolicy
+	}{
+		{
+			name:  "completion default is automatic",
+			model: completionModel(nil),
+			want:  numBatchAuto,
+		},
+		{
+			name:  "embedding default without token count is fixed",
+			model: embeddingModel(nil),
+			want:  numBatchFixed,
+		},
+		{
+			name:                   "embedding default can grow",
+			model:                  embeddingModel(nil),
+			embeddingBatchGrowable: true,
+			want:                   numBatchAutoGrowable,
+		},
+		{
+			name:                   "request num_batch is fixed",
+			model:                  embeddingModel(nil),
+			requestOpts:            map[string]any{"num_batch": float64(1024)},
+			embeddingBatchGrowable: true,
+			want:                   numBatchFixed,
+		},
+		{
+			name:                   "model num_batch is fixed",
+			model:                  embeddingModel(map[string]any{"num_batch": float64(1024)}),
+			embeddingBatchGrowable: true,
+			want:                   numBatchFixed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := numBatchPolicyForRequest(tt.model, tt.requestOpts, tt.embeddingBatchGrowable); got != tt.want {
+				t.Fatalf("numBatchPolicyForRequest = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

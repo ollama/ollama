@@ -187,7 +187,7 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
 
-		s.getRunner(ctx, visionModel, opts, nil, true, false, false, nil)
+		s.getRunner(ctx, visionModel, opts, nil, true, numBatchFixed, nil)
 
 		req := <-s.pendingReqCh
 		require.Equal(t, 2048, req.opts.NumCtx)
@@ -199,7 +199,7 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
 
-		s.getRunner(ctx, visionModel, opts, nil, false, false, false, nil)
+		s.getRunner(ctx, visionModel, opts, nil, false, numBatchFixed, nil)
 
 		req := <-s.pendingReqCh
 		require.Equal(t, 2048, req.opts.NumCtx)
@@ -1020,22 +1020,22 @@ func TestSchedNeedsReloadIgnoresAutomaticNumBatchDerivation(t *testing.T) {
 	opts.NumBatch = 1024
 	model := &Model{}
 	runner := &runnerRef{
-		model:        model,
-		Options:      &opts,
-		llama:        llm,
-		numParallel:  1,
-		numBatchAuto: true,
+		model:          model,
+		Options:        &opts,
+		llama:          llm,
+		numParallel:    1,
+		numBatchPolicy: numBatchAuto,
 	}
 	req := &LlmRequest{
-		model:        model,
-		opts:         api.DefaultOptions(),
-		numBatchAuto: true,
+		model:          model,
+		opts:           api.DefaultOptions(),
+		numBatchPolicy: numBatchAuto,
 	}
 	req.opts.NumBatch = 512
 
 	require.False(t, runner.needsReload(ctx, req))
 
-	req.numBatchAuto = false
+	req.numBatchPolicy = numBatchFixed
 	require.True(t, runner.needsReload(ctx, req))
 }
 
@@ -1044,16 +1044,16 @@ func TestSchedEmbeddingBatchOptionsForTokenCount(t *testing.T) {
 	opts.NumCtx = 8192
 	opts.NumBatch = llm.DefaultEmbeddingNumBatch
 
-	nextOpts, err := (&Scheduler{}).embeddingBatchOptionsForTokenCount(opts, true, 3602)
+	nextOpts, err := (&Scheduler{}).embeddingBatchOptionsForTokenCount(opts, numBatchAutoGrowable, 3602)
 	require.NoError(t, err)
 	require.Equal(t, 4096, nextOpts.NumBatch)
 
 	opts.NumCtx = 3602
-	nextOpts, err = (&Scheduler{}).embeddingBatchOptionsForTokenCount(opts, true, 3602)
+	nextOpts, err = (&Scheduler{}).embeddingBatchOptionsForTokenCount(opts, numBatchAutoGrowable, 3602)
 	require.NoError(t, err)
 	require.Equal(t, 3602, nextOpts.NumBatch)
 
-	_, err = (&Scheduler{}).embeddingBatchOptionsForTokenCount(opts, false, 3602)
+	_, err = (&Scheduler{}).embeddingBatchOptionsForTokenCount(opts, numBatchFixed, 3602)
 	require.Error(t, err)
 	var statusErr api.StatusError
 	require.ErrorAs(t, err, &statusErr)
@@ -1065,18 +1065,16 @@ func TestSchedNeedsReloadAutomaticEmbeddingNumBatchCanGrow(t *testing.T) {
 	opts := api.DefaultOptions()
 	opts.NumBatch = 4096
 	runner := &runnerRef{
-		model:        model,
-		Options:      &opts,
-		llama:        &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
-		numParallel:  1,
-		numBatchAuto: true,
-		embBatchAuto: true,
+		model:          model,
+		Options:        &opts,
+		llama:          &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+		numParallel:    1,
+		numBatchPolicy: numBatchAutoGrowable,
 	}
 	req := &LlmRequest{
-		model:        model,
-		opts:         api.DefaultOptions(),
-		numBatchAuto: true,
-		embBatchAuto: true,
+		model:          model,
+		opts:           api.DefaultOptions(),
+		numBatchPolicy: numBatchAutoGrowable,
 	}
 
 	req.opts.NumBatch = 2048
@@ -1879,7 +1877,7 @@ func TestSchedLoadOOMReducesAutomaticContextBeforeRetry(t *testing.T) {
 	scenario := newScenarioRequestWithContext(t, ctx, "crashing-model", 1*format.GigaByte, nil, nil, 131072)
 	scenario.req.opts.NumCtx = 262144
 	scenario.req.numCtxAuto = true
-	scenario.req.numBatchAuto = true
+	scenario.req.numBatchPolicy = numBatchAuto
 	systemInfo := getSystemInfoFn()
 	gpus := s.getGpuFn(ctx, nil)
 
