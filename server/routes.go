@@ -437,6 +437,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	var builtinParser parsers.Parser
+	var preservedTokensParser parsers.Parser
 	if shouldUseHarmony(m) {
 		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
 		if req.Think != nil {
@@ -449,9 +450,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	if !req.Raw && m.Config.Parser != "" {
-		builtinParser = parsers.ParserForName(m.Config.Parser)
-		if builtinParser != nil {
+	if m.Config.Parser != "" {
+		preservedTokensParser = parsers.ParserForName(m.Config.Parser)
+		if !req.Raw && preservedTokensParser != nil {
+			builtinParser = preservedTokensParser
 			// no tools or last message for generate endpoint
 			builtinParser.Init(nil, nil, req.Think)
 		}
@@ -645,7 +647,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	var thinkingState *thinking.Parser
-	if builtinParser == nil {
+	if !req.Raw && builtinParser == nil {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
 		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 			thinkingState = &thinking.Parser{
@@ -672,7 +674,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Truncate:        req.Truncate == nil || *req.Truncate,
 			Logprobs:        req.Logprobs,
 			TopLogprobs:     req.TopLogprobs,
-			PreservedTokens: preservedTokensForCompletion(builtinParser),
+			PreservedTokens: preservedTokensForCompletion(preservedTokensParser),
 			LeadingBOS:      leadingBOS,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
