@@ -18,11 +18,9 @@ type BlobStore interface {
 	WriteBlob(r io.Reader, mediaType, name string) (LayerInfo, error)
 }
 
-// WriteBlobs executes the non-quantized blobs of a plan: for each blob it
-// resolves the tensors' sources, applies their byte transforms, packs the
-// safetensors blob, and stores it. Blobs whose tensors require quantization
-// are handled by the MLX writer path (added in a following step); this
-// function reports an error if it encounters one.
+// WriteBlobs executes a plan's blobs: for each blob it resolves the tensors'
+// sources, then either packs them directly (byte transforms only) or runs them
+// through the MLX quantizer, and stores the result.
 func WriteBlobs(specs []BlobSpec, modelDir string, store BlobStore) ([]LayerInfo, error) {
 	src := newSourceFiles(modelDir)
 	defer src.close()

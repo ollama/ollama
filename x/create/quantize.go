@@ -49,6 +49,12 @@ func quantizeBlobLocked(items []quantizeItem) ([]byte, error) {
 		mlx.Sweep()
 	}()
 
+	tmpDir, err := os.MkdirTemp("", "ollama-quantize-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
 	// Blob metadata: a single quant_type/group_size when every quantized
 	// tensor matches, otherwise per-tensor entries.
 	uniform, mixed, hasQuant := "", false, false
@@ -77,7 +83,7 @@ func quantizeBlobLocked(items []quantizeItem) ([]byte, error) {
 	for _, it := range items {
 		if err := func() error {
 			defer mlx.Sweep()
-			tmpPath, toEval, st, err := loadAndQuantizeArray(it.reader, it.name, it.quantize, it.decodeFP8, allArrays)
+			tmpPath, toEval, st, err := loadAndQuantizeArray(it.reader, it.name, it.quantize, it.decodeFP8, allArrays, tmpDir)
 			if tmpPath != "" {
 				defer os.Remove(tmpPath)
 			}
@@ -107,9 +113,7 @@ func quantizeBlobLocked(items []quantizeItem) ([]byte, error) {
 		}
 	}
 
-	tmpDir := ensureTempDir()
 	outPath := filepath.Join(tmpDir, "blob.safetensors")
-	defer os.Remove(outPath)
 	if err := mlx.SaveSafetensorsWithMetadata(outPath, allArrays, metadata); err != nil {
 		return nil, fmt.Errorf("failed to save blob: %w", err)
 	}
@@ -135,12 +139,15 @@ func arraysForItem(all map[string]*mlx.Array, it quantizeItem) []*mlx.Array {
 // quantizes, and adds the resulting arrays (weight, scale, optional bias) to
 // arrays keyed by name. With quantize == "" the (decoded) tensor is kept as-is.
 // It must be called on the MLX thread.
-func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, arrays map[string]*mlx.Array) (tmpPath string, toEval []*mlx.Array, nativeHandle *mlx.SafetensorsFile, err error) {
+//
+// TODO: MLX's safetensors loader takes a file path, so we spill each tensor to a
+// temp file. Wiring a streaming mlx_load_safetensors_reader into the CGO wrapper
+// would let us load from the reader directly and drop the temp files.
+func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, arrays map[string]*mlx.Array, tmpDir string) (tmpPath string, toEval []*mlx.Array, nativeHandle *mlx.SafetensorsFile, err error) {
 	if quantize != "" && quant.Canonical(quantize) == "" {
 		return "", nil, nil, fmt.Errorf("unsupported quantization type: %s", quantize)
 	}
 
-	tmpDir := ensureTempDir()
 	tmpFile, err := os.CreateTemp(tmpDir, "quant-*.safetensors")
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("failed to create temp file: %w", err)
@@ -218,12 +225,6 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 		toEval = append(toEval, qbiases)
 	}
 	return tmpPath, toEval, st, nil
-}
-
-func ensureTempDir() string {
-	tmpDir := filepath.Join(os.TempDir(), "ollama-quantize")
-	os.MkdirAll(tmpDir, 0o755)
-	return tmpDir
 }
 
 // decodeSourceFP8Tensor dequantizes a 128x128 block-FP8 weight using its block

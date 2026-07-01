@@ -264,10 +264,6 @@ func isRoutingGate(name string) bool {
 
 // GetTensorQuantization returns the appropriate quantization type for a tensor.
 // Returns "" if the tensor should not be quantized.
-// This implements mixed-precision quantization:
-//   - v_proj, k_proj, down_proj: promoted to INT8 when base is INT4
-//   - Norms, embeddings, biases, routing gates: no quantization
-//   - All other eligible weights: use requested quantization type
 func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	stackedExpert := isStackedExpertWeight(name)
 
@@ -309,11 +305,8 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 		return quantNorm
 	}
 
-	// Value projection weights directly determine attention output quality.
-	// Down projection weights feed directly into the residual stream where
-	// errors accumulate across layers. Both benefit from higher precision.
-	// Promote to INT8 when base is INT4 (same affine mode, compatible with
-	// GatherQMM for MoE expert tensors).
+	// affine int4 quants don't have enough precision for certain tensors, so instead don't
+	// quantize them to 4 bits.
 	if quantNorm == "int4" {
 		if strings.Contains(name, ".v_proj") || strings.Contains(name, ".k_proj") || strings.Contains(name, "down_proj") {
 			if isAligned(shape, "int8") {
