@@ -16,6 +16,7 @@ import {
   CogIcon,
   ArrowLeftIcon,
   ArrowDownTrayIcon,
+  TrashIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { useNavigate } from "@tanstack/react-router";
@@ -29,6 +30,7 @@ import {
   updateSettings,
   getInferenceCompute,
 } from "@/api";
+import { useDeleteAllChats } from "@/hooks/useDeleteAllChats";
 
 function AnimatedDots() {
   return (
@@ -48,6 +50,8 @@ export default function Settings() {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
+  const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState<string | null>(null);
   const {
     user,
     isAuthenticated,
@@ -219,6 +223,8 @@ export default function Settings() {
       updateSettingsMutation.mutate(defaultSettings);
     }
   };
+
+  const deleteAllChatsMutation = useDeleteAllChats();
 
   const cloudOverriddenByEnv =
     cloudStatus?.source === "env" || cloudStatus?.source === "both";
@@ -609,6 +615,85 @@ export default function Settings() {
               </div>
             </div>
           )}
+
+          {/* Data */}
+          <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
+            <div className="p-4">
+              <Field>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start space-x-3 flex-1">
+                    <TrashIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                    <div>
+                      <Label>Delete all conversations</Label>
+                      <Description>
+                        Permanently remove all chat history. This cannot be
+                        undone.
+                      </Description>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    {confirmingDeleteAll ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          color="white"
+                          className="px-3 py-2 text-sm"
+                          onClick={() => {
+                            setConfirmingDeleteAll(false);
+                            setDeleteAllError(null);
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          color="red"
+                          className="px-3 py-2 text-sm"
+                          disabled={deleteAllChatsMutation.isPending}
+                          onClick={() => {
+                            deleteAllChatsMutation.mutate(undefined, {
+                              onSuccess: () => setConfirmingDeleteAll(false),
+                              onError: (error) => {
+                                setConfirmingDeleteAll(false);
+                                setDeleteAllError(
+                                  error instanceof Error
+                                    ? error.message
+                                    : "Failed to delete conversations. Please try again.",
+                                );
+                              },
+                            });
+                          }}
+                        >
+                          {deleteAllChatsMutation.isPending
+                            ? "Deleting…"
+                            : "Delete all"}
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        type="button"
+                        color="white"
+                        className="px-3 py-2 text-sm"
+                        onClick={() => {
+                          setDeleteAllError(null);
+                          setConfirmingDeleteAll(true);
+                        }}
+                      >
+                        Delete all
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </Field>
+              {deleteAllError && (
+                <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <Text className="text-sm text-red-600 dark:text-red-400">
+                    {deleteAllError}
+                  </Text>
+                </div>
+              )}
+            </div>
+          </div>
 
           {/* Reset button */}
           <div className="mt-6 flex justify-end px-4">

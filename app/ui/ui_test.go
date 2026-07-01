@@ -840,3 +840,136 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) 
 		t.Fatal("UpdateAvailableFunc should not be called when there is no pending update")
 	}
 }
+
+func TestDeleteAllChatsHandler(t *testing.T) {
+	t.Run("returns 200 and removes all chats", func(t *testing.T) {
+		testStore := &store.Store{
+			DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+		}
+		defer testStore.Close()
+
+		// Populate the store with two chats
+		for _, id := range []string{"chat-1", "chat-2"} {
+			chat := store.NewChat(id)
+			chat.Messages = append(chat.Messages, store.NewMessage("user", "hello", nil))
+			if err := testStore.SetChat(*chat); err != nil {
+				t.Fatalf("SetChat(%s): %v", id, err)
+			}
+		}
+
+		server := &Server{Store: testStore, Restart: func() {}}
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/chats", nil)
+		rr := httptest.NewRecorder()
+
+		if err := server.deleteAllChats(rr, req); err != nil {
+			t.Fatalf("deleteAllChats() returned error: %v", err)
+		}
+		if rr.Code != http.StatusOK {
+			t.Fatalf("deleteAllChats() status = %d, want %d", rr.Code, http.StatusOK)
+		}
+
+		chats, err := testStore.Chats()
+		if err != nil {
+			t.Fatalf("Chats() after delete: %v", err)
+		}
+		if len(chats) != 0 {
+			t.Fatalf("expected 0 chats after deleteAllChats, got %d", len(chats))
+		}
+	})
+
+	t.Run("empty store returns 200", func(t *testing.T) {
+		testStore := &store.Store{
+			DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+		}
+		defer testStore.Close()
+
+		server := &Server{Store: testStore, Restart: func() {}}
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/chats", nil)
+		rr := httptest.NewRecorder()
+
+		if err := server.deleteAllChats(rr, req); err != nil {
+			t.Fatalf("deleteAllChats() on empty store returned error: %v", err)
+		}
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("route is registered under DELETE /api/v1/chats", func(t *testing.T) {
+		testStore := &store.Store{
+			DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+		}
+		defer testStore.Close()
+
+		chat := store.NewChat("route-test-chat")
+		chat.Messages = append(chat.Messages, store.NewMessage("user", "hi", nil))
+		if err := testStore.SetChat(*chat); err != nil {
+			t.Fatalf("SetChat: %v", err)
+		}
+
+		server := &Server{
+			Store:   testStore,
+			Restart: func() {},
+			Dev:     true, // skip token auth in tests
+		}
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/chats", nil)
+		rr := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200 from routed handler, got %d", rr.Code)
+		}
+
+		chats, err := testStore.Chats()
+		if err != nil {
+			t.Fatalf("Chats() after routed delete: %v", err)
+		}
+		if len(chats) != 0 {
+			t.Fatalf("expected 0 chats via route, got %d", len(chats))
+		}
+	})
+
+	t.Run("DELETE /api/v1/chats does not match DELETE /api/v1/chat/{id}", func(t *testing.T) {
+		testStore := &store.Store{
+			DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+		}
+		defer testStore.Close()
+
+		for _, id := range []string{"keep-1", "keep-2"} {
+			chat := store.NewChat(id)
+			chat.Messages = append(chat.Messages, store.NewMessage("user", "hi", nil))
+			if err := testStore.SetChat(*chat); err != nil {
+				t.Fatalf("SetChat: %v", err)
+			}
+		}
+
+		server := &Server{
+			Store:   testStore,
+			Restart: func() {},
+			Dev:     true,
+		}
+
+		// Delete just one chat by ID — should NOT trigger deleteAllChats
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/chat/keep-1", nil)
+		rr := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("single-chat delete: expected 200, got %d", rr.Code)
+		}
+
+		chats, err := testStore.Chats()
+		if err != nil {
+			t.Fatalf("Chats(): %v", err)
+		}
+		if len(chats) != 1 {
+			t.Fatalf("expected 1 remaining chat after single delete, got %d", len(chats))
+		}
+		if chats[0].ID != "keep-2" {
+			t.Errorf("expected remaining chat ID 'keep-2', got %q", chats[0].ID)
+		}
+	})
+}
