@@ -323,7 +323,7 @@ Examples:
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			policy := defaultLaunchPolicy(isInteractiveSession(), yesFlag)
-			// reset when done to make sure state doens't leak between launches
+			// reset when done to make sure state doesn't leak between launches
 			restoreConfirmPolicy := withLaunchConfirmPolicy(policy.confirmPolicy())
 			defer restoreConfirmPolicy()
 
