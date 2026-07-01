@@ -225,6 +225,7 @@ console.log(response.message.content);
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) - AI coding assistant for Qt Creator
 - [AI Toolkit for VS Code](https://aka.ms/ai-tooklit/ollama-docs) - Microsoft-official VS Code extension
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama) - Natural language interface for computers
+- [Bandit Stealth](https://github.com/Burtson-Labs/bandit-agent-framework) - Local-first AI coding agent for VS Code/Cursor and the terminal
 
 ### Libraries & SDKs
 
