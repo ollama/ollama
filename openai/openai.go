@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/types/model"
@@ -291,65 +290,65 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	}
 }
 
-func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
-	toolCalls := ToToolCalls(r.Message.ToolCalls)
+func toChunk(id string, r api.ChatResponse, toolCallSent bool, createdAt int64) ChatCompletionChunk {
+    toolCalls := ToToolCalls(r.Message.ToolCalls)
 
-	var logprobs *ChoiceLogprobs
-	if len(r.Logprobs) > 0 {
-		logprobs = &ChoiceLogprobs{Content: r.Logprobs}
-	}
+    var logprobs *ChoiceLogprobs
+    if len(r.Logprobs) > 0 {
+        logprobs = &ChoiceLogprobs{Content: r.Logprobs}
+    }
 
-	return ChatCompletionChunk{
-		Id:                id,
-		Object:            "chat.completion.chunk",
-		Created:           time.Now().Unix(),
-		Model:             r.Model,
-		SystemFingerprint: "fp_ollama",
-		Choices: []ChunkChoice{{
-			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
-			FinishReason: func(reason string) *string {
-				if len(reason) > 0 {
-					if toolCallSent || len(toolCalls) > 0 {
-						return &finishReasonToolCalls
-					}
-					return &reason
-				}
-				return nil
-			}(r.DoneReason),
-			Logprobs: logprobs,
-		}},
-	}
+    return ChatCompletionChunk{
+        Id:                id,
+        Object:            "chat.completion.chunk",
+        Created:           createdAt,
+        Model:             r.Model,
+        SystemFingerprint: "fp_ollama",
+        Choices: []ChunkChoice{{
+            Index: 0,
+            Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
+            FinishReason: func(reason string) *string {
+                if len(reason) > 0 {
+                    if toolCallSent || len(toolCalls) > 0 {
+                        return &finishReasonToolCalls
+                    }
+                    return &reason
+                }
+                return nil
+            }(r.DoneReason),
+            Logprobs: logprobs,
+        }},
+    }
 }
 
 // ToChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
-func ToChunks(id string, r api.ChatResponse, toolCallSent bool) []ChatCompletionChunk {
-	hasMixedResponse := r.Message.Thinking != "" && (r.Message.Content != "" || len(r.Message.ToolCalls) > 0)
-	if !hasMixedResponse {
-		return []ChatCompletionChunk{toChunk(id, r, toolCallSent)}
-	}
+func ToChunks(id string, r api.ChatResponse, toolCallSent bool, createdAt int64) []ChatCompletionChunk {
+    hasMixedResponse := r.Message.Thinking != "" && (r.Message.Content != "" || len(r.Message.ToolCalls) > 0)
+    if !hasMixedResponse {
+        return []ChatCompletionChunk{toChunk(id, r, toolCallSent, createdAt)}
+    }
 
-	reasoningChunk := toChunk(id, r, toolCallSent)
-	// The logprobs here might include tokens not in this chunk because we now split between thinking and content/tool calls.
-	reasoningChunk.Choices[0].Delta.Content = ""
-	reasoningChunk.Choices[0].Delta.ToolCalls = nil
-	reasoningChunk.Choices[0].FinishReason = nil
+    reasoningChunk := toChunk(id, r, toolCallSent, createdAt)
+    // The logprobs here might include tokens not in this chunk because we now split between thinking and content/tool calls.
+    reasoningChunk.Choices[0].Delta.Content = ""
+    reasoningChunk.Choices[0].Delta.ToolCalls = nil
+    reasoningChunk.Choices[0].FinishReason = nil
 
-	contentOrToolCallsChunk := toChunk(id, r, toolCallSent)
-	// Keep both split chunks on the same timestamp since they represent one logical emission.
-	contentOrToolCallsChunk.Created = reasoningChunk.Created
-	contentOrToolCallsChunk.Choices[0].Delta.Reasoning = ""
-	contentOrToolCallsChunk.Choices[0].Logprobs = nil
+    contentOrToolCallsChunk := toChunk(id, r, toolCallSent, createdAt)
+    // Keep both split chunks on the same timestamp since they represent one logical emission.
+    contentOrToolCallsChunk.Created = reasoningChunk.Created
+    contentOrToolCallsChunk.Choices[0].Delta.Reasoning = ""
+    contentOrToolCallsChunk.Choices[0].Logprobs = nil
 
-	return []ChatCompletionChunk{
-		reasoningChunk,
-		contentOrToolCallsChunk,
-	}
+    return []ChatCompletionChunk{
+        reasoningChunk,
+        contentOrToolCallsChunk,
+    }
 }
 
 // Deprecated: use ToChunks for streaming conversion.
-func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
-	return toChunk(id, r, toolCallSent)
+func ToChunk(id string, r api.ChatResponse, toolCallSent bool, createdAt int64) ChatCompletionChunk {
+    return toChunk(id, r, toolCallSent, createdAt)
 }
 
 // ToUsageGenerate converts an api.GenerateResponse to Usage
@@ -384,24 +383,24 @@ func ToCompletion(id string, r api.GenerateResponse) Completion {
 }
 
 // ToCompleteChunk converts an api.GenerateResponse to CompletionChunk
-func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
-	return CompletionChunk{
-		Id:                id,
-		Object:            "text_completion",
-		Created:           time.Now().Unix(),
-		Model:             r.Model,
-		SystemFingerprint: "fp_ollama",
-		Choices: []CompleteChunkChoice{{
-			Text:  r.Response,
-			Index: 0,
-			FinishReason: func(reason string) *string {
-				if len(reason) > 0 {
-					return &reason
-				}
-				return nil
-			}(r.DoneReason),
-		}},
-	}
+func ToCompleteChunk(id string, r api.GenerateResponse, createdAt int64) CompletionChunk {
+    return CompletionChunk{
+        Id:                id,
+        Object:            "text_completion",
+        Created:           createdAt,
+        Model:             r.Model,
+        SystemFingerprint: "fp_ollama",
+        Choices: []CompleteChunkChoice{{
+            Text:  r.Response,
+            Index: 0,
+            FinishReason: func(reason string) *string {
+                if len(reason) > 0 {
+                    return &reason
+                }
+                return nil
+            }(r.DoneReason),
+        }},
+    }
 }
 
 // ToListCompletion converts an api.ListResponse to ListCompletion
