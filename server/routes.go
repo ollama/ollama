@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -103,6 +104,11 @@ type Server struct {
 	defaultNumCtx int
 	requestLogger *inferenceRequestLogger
 	modelCaches   *modelCaches
+
+	// Power limit management
+	powerLimitMu     sync.RWMutex
+	powerLimit       int                     // Current power limit in watts (0 = no limit)
+	powerLimitMgr    *discover.PowerLimitManager
 }
 
 func init() {
@@ -1875,6 +1881,10 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/status", s.StatusHandler)
 
+	// Server configuration (power limits, etc)
+	r.GET("/api/config", s.GetConfigHandler)
+	r.POST("/api/config", s.SetConfigHandler)
+
 	// Local model cache management (new implementation is at end of function)
 	r.POST("/api/pull", s.PullHandler)
 	r.POST("/api/push", s.PushHandler)
@@ -1997,6 +2007,9 @@ func Serve(ln net.Listener) error {
 	if err := s.initRequestLogging(); err != nil {
 		return err
 	}
+
+	// Initialize power limit manager (NVML)
+	s.initPowerLimit()
 
 	var rc *ollama.Registry
 	if useClient2 {
@@ -2166,6 +2179,99 @@ func (s *Server) StatusHandler(c *gin.Context) {
 			Source:   source,
 		},
 	})
+}
+
+// GetConfigHandler returns the current server configuration including power limits
+func (s *Server) GetConfigHandler(c *gin.Context) {
+	s.powerLimitMu.RLock()
+	powerLimit := s.powerLimit
+	s.powerLimitMu.RUnlock()
+
+	resp := api.ServerConfigResponse{
+		PowerLimit: powerLimit,
+	}
+
+	// Get current GPU power limits if NVML is available
+	if s.powerLimitMgr != nil {
+		limits, err := s.powerLimitMgr.GetPowerLimitsForAll()
+		if err == nil {
+			resp.GPUPowerLimits = limits
+			resp.GPUCount = len(limits)
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// SetConfigHandler updates server configuration including power limits
+func (s *Server) SetConfigHandler(c *gin.Context) {
+	var req api.ServerConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Handle power limit change
+	if req.PowerLimit != nil {
+		newLimit := *req.PowerLimit
+
+		if newLimit < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "power limit cannot be negative"})
+			return
+		}
+
+		s.powerLimitMu.Lock()
+		s.powerLimit = newLimit
+		mgr := s.powerLimitMgr
+		s.powerLimitMu.Unlock()
+
+		// Apply power limit if NVML is available
+		if mgr != nil && newLimit > 0 {
+			if err := mgr.SetPowerLimitForAll(newLimit); err != nil {
+				slog.Error("failed to set GPU power limit", "error", err, "limit", newLimit)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": fmt.Sprintf("failed to set power limit: %v", err),
+				})
+				return
+			}
+			slog.Info("GPU power limit applied", "limit_watts", newLimit)
+		} else if mgr != nil && newLimit == 0 {
+			// Reset to max power limit (no limit)
+			count, _ := mgr.GetDeviceCount()
+			for i := uint32(0); i < count; i++ {
+				_, maxLimit, err := mgr.GetPowerLimitConstraints(i)
+				if err == nil {
+					mgr.SetPowerLimit(i, maxLimit)
+				}
+			}
+			slog.Info("GPU power limit reset to maximum (no limit)")
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// initPowerLimit initializes the power limit manager and applies default limit if set
+func (s *Server) initPowerLimit() {
+	// Try to initialize NVML
+	mgr, err := discover.NewPowerLimitManager()
+	if err != nil {
+		slog.Debug("NVML power limit manager not available", "error", err)
+		return
+	}
+
+	s.powerLimitMgr = mgr
+
+	// Apply default power limit from environment variable if set
+	defaultLimit := envconfig.GpuPowerLimit()
+	if defaultLimit > 0 {
+		s.powerLimit = int(defaultLimit)
+		if err := mgr.SetPowerLimitForAll(int(defaultLimit)); err != nil {
+			slog.Error("failed to apply default GPU power limit", "error", err, "limit", defaultLimit)
+		} else {
+			slog.Info("default GPU power limit applied", "limit_watts", defaultLimit)
+		}
+	}
 }
 
 func (s *Server) WebSearchExperimentalHandler(c *gin.Context) {
