@@ -103,6 +103,41 @@ export function readFileAsBytes(file: File): Promise<Uint8Array> {
   });
 }
 
+// Re-encode image bytes through canvas to guarantee a format llama.cpp can decode.
+// macOS clipboard provides images as TIFF bytes mislabeled with type "image/png";
+// stb_image (used by llama.cpp) does not support TIFF. Re-encoding via
+// createImageBitmap + canvas.toBlob("image/png") strips any problematic container
+// and always produces valid PNG data.
+async function ensureValidImageBytes(
+  data: Uint8Array,
+  mimeType: string,
+): Promise<Uint8Array> {
+  if (!mimeType?.startsWith("image/")) return data;
+
+  try {
+    const blob = new Blob([data], { type: mimeType });
+    const imageBitmap = await createImageBitmap(blob);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = imageBitmap.width;
+    canvas.height = imageBitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return data;
+    ctx.drawImage(imageBitmap, 0, 0);
+    imageBitmap.close();
+
+    const pngBlob = await new Promise<Blob>((resolve) => {
+      canvas.toBlob((b) => resolve(b!), "image/png");
+    });
+
+    const arrayBuffer = await pngBlob.arrayBuffer();
+    return new Uint8Array(arrayBuffer);
+  } catch (e) {
+    console.warn("Failed to re-encode image, sending original bytes:", e);
+    return data;
+  }
+}
+
 // Process multiple files with validation
 export async function processFiles(
   files: File[],
@@ -131,9 +166,10 @@ export async function processFiles(
 
     try {
       const fileBytes = await readFileAsBytes(file);
+      const normalizedBytes = await ensureValidImageBytes(fileBytes, file.type);
       validFiles.push({
         filename: file.name,
-        data: fileBytes,
+        data: normalizedBytes,
         type: file.type || undefined,
       });
     } catch (error) {
