@@ -145,7 +145,13 @@ services:
           htop \
           ca-certificates \
           wget \
-          tar && \
+          tar \
+          cmake \
+          ninja-build \
+          gcc \
+          g++ \
+          make \
+          pkg-config && \
         wget https://go.dev/dl/go1.22.5.linux-s390x.tar.gz -O /tmp/go.tar.gz && \
         rm -rf /usr/local/go && \
         tar -C /usr/local -xzf /tmp/go.tar.gz && \
@@ -215,7 +221,13 @@ services:
           htop \
           ca-certificates \
           wget \
-          tar && \
+          tar \
+          cmake \
+          ninja-build \
+          gcc \
+          g++ \
+          make \
+          pkg-config && \
         wget https://go.dev/dl/go1.22.5.linux-amd64.tar.gz -O /tmp/go.tar.gz && \
         rm -rf /usr/local/go && \
         tar -C /usr/local -xzf /tmp/go.tar.gz && \
