@@ -546,19 +546,6 @@ func tensorAny(tensors map[string]*mlx.Array, keys ...string) (*mlx.Array, strin
 	return nil, ""
 }
 
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
-	}
-}
-
 func freeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
 	for _, k := range keys {
 		if k == "" {
@@ -676,7 +663,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 			groupSize = gs
 			mode = m
 		}
-		if useQuantized && supportsGatherQMM(m, b) {
+		if useQuantized && model.SupportsGatherQMM(m, b) {
 			weights = append(weights, w)
 			scales = append(scales, s)
 			if globalScale != nil {
@@ -728,7 +715,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 		}
 		globalScale, _ := combinedTensorGlobalScale(tensors, key)
 		gs, b, m := model.ResolveLinearQuantParams(cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant, key, w, s)
-		if useQuantized && supportsGatherQMM(m, b) {
+		if useQuantized && model.SupportsGatherQMM(m, b) {
 			return &stackedExpertWeights{Weight: w, Scales: s, Biases: qb, GlobalScales: globalScale, Bits: b, GroupSize: gs, Mode: m}
 		}
 		deq := mlx.Dequantize(w, s, qb, gs, b, m)
@@ -764,14 +751,14 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		return fmt.Errorf("missing lm_head.weight")
 	}
 
-	useQuantizedExperts := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	useQuantizedExperts := model.SupportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
 	if !useQuantizedExperts && cfg.TensorQuant != nil {
 		for _, tq := range cfg.TensorQuant {
 			if tq == nil {
 				continue
 			}
 			_, bits, mode := model.QuantizationParams(tq.QuantType)
-			if supportsGatherQMM(mode, bits) {
+			if model.SupportsGatherQMM(mode, bits) {
 				useQuantizedExperts = true
 				break
 			}
