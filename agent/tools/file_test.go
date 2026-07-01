@@ -242,6 +242,25 @@ func TestReadEndOnly(t *testing.T) {
 	}
 }
 
+func TestReadSelectionRejectsHugeSingleLine(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte(strings.Repeat("x", maxReadBytes+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path":  "note.txt",
+		"start": 1,
+		"end":   1,
+	})
+	if err == nil {
+		t.Fatal("expected huge selected line to fail")
+	}
+	if !strings.Contains(err.Error(), "selected content is too large") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestReadRejectsInvalidRange(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("one\ntwo\n"), 0o644); err != nil {

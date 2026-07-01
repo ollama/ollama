@@ -304,6 +304,10 @@ func (cwdTestTool) Schema() api.ToolFunction {
 	}
 }
 
+func (cwdTestTool) RequiresApproval(map[string]any) bool {
+	return true
+}
+
 func (cwdTestTool) Execute(_ context.Context, toolCtx ToolContext, args map[string]any) (ToolResult, error) {
 	switch args["mode"] {
 	case "set":
@@ -1448,7 +1452,7 @@ func TestSessionPreflightIgnoresRawImageBytes(t *testing.T) {
 	}
 }
 
-func TestSessionPersistsToolWorkingDirWithinRun(t *testing.T) {
+func TestSessionFreezesBatchToolWorkingDirAfterApproval(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1486,11 +1490,12 @@ func TestSessionPersistsToolWorkingDirWithinRun(t *testing.T) {
 	}
 	registry := &Registry{}
 	registry.Register(cwdTestTool{})
+	prompter := &recordingApprovalPrompter{results: []Approval{{Allow: true}}}
 	session := &Session{
-		Client:        client,
-		Tools:         registry,
-		AllowAllTools: true,
-		WorkingDir:    root,
+		Client:           client,
+		Tools:            registry,
+		ApprovalPrompter: prompter,
+		WorkingDir:       root,
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1504,6 +1509,13 @@ func TestSessionPersistsToolWorkingDirWithinRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	approvedRoot := root
+	if len(prompter.requests) != 1 {
+		t.Fatalf("approval requests = %d, want 1", len(prompter.requests))
+	}
+	if prompter.requests[0].WorkingDir != approvedRoot {
+		t.Fatalf("approval cwd = %q, want %q", prompter.requests[0].WorkingDir, approvedRoot)
+	}
 	if session.WorkingDir != want {
 		t.Fatalf("session cwd = %q, want %q", session.WorkingDir, want)
 	}
@@ -1513,8 +1525,8 @@ func TestSessionPersistsToolWorkingDirWithinRun(t *testing.T) {
 	if result.Messages[2].Content != "changed" {
 		t.Fatalf("cwd change tool content = %q, want unchanged output", result.Messages[2].Content)
 	}
-	if result.Messages[3].Content != want {
-		t.Fatalf("second tool saw cwd %q, want %q", result.Messages[3].Content, want)
+	if result.Messages[3].Content != approvedRoot {
+		t.Fatalf("second tool saw cwd %q, want approved cwd %q", result.Messages[3].Content, approvedRoot)
 	}
 }
 
@@ -1570,14 +1582,15 @@ func TestSessionAllowsToolWorkingDirOutsideInitialDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	approvedRoot := root
 	if session.WorkingDir != want {
 		t.Fatalf("session cwd = %q, want %q", session.WorkingDir, want)
 	}
 	if result.Messages[2].Content != "escaped" {
 		t.Fatalf("escape tool content = %q, want unchanged output", result.Messages[2].Content)
 	}
-	if result.Messages[3].Content != want {
-		t.Fatalf("second tool saw cwd %q, want %q", result.Messages[3].Content, want)
+	if result.Messages[3].Content != approvedRoot {
+		t.Fatalf("second tool saw cwd %q, want original cwd %q", result.Messages[3].Content, approvedRoot)
 	}
 }
 

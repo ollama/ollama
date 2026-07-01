@@ -425,22 +425,25 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 	projectedMessages := append([]api.Message(nil), messages...)
 
 	type plannedToolCall struct {
-		call     api.ToolCall
-		tool     Tool
-		toolName string
-		args     map[string]any
+		call       api.ToolCall
+		tool       Tool
+		toolName   string
+		args       map[string]any
+		workingDir string
 	}
 	plans := make([]plannedToolCall, 0, len(calls))
-	approvalReq := ApprovalRequest{WorkingDir: s.currentWorkingDir()}
+	batchWorkingDir := s.currentWorkingDir()
+	approvalReq := ApprovalRequest{WorkingDir: batchWorkingDir}
 	for _, call := range calls {
 		toolName := call.Function.Name
 		args := call.Function.Arguments.ToMap()
 		tool, ok := s.Tools.Get(toolName)
 		plans = append(plans, plannedToolCall{
-			call:     call,
-			tool:     tool,
-			toolName: toolName,
-			args:     args,
+			call:       call,
+			tool:       tool,
+			toolName:   toolName,
+			args:       args,
+			workingDir: batchWorkingDir,
 		})
 		if ok && ToolRequiresApproval(tool, args) {
 			approvalReq.Calls = append(approvalReq.Calls, ApprovalToolCall{
@@ -512,11 +515,11 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			continue
 		}
 
-		if err := s.emit(Event{Type: EventToolStarted, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "running", ToolCallID: call.ID, ToolName: toolName, WorkingDir: s.currentWorkingDir(), Args: args}); err != nil {
+		if err := s.emit(Event{Type: EventToolStarted, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "running", ToolCallID: call.ID, ToolName: toolName, WorkingDir: plan.workingDir, Args: args}); err != nil {
 			return toolBatchResult{}, err
 		}
 
-		result, err := s.Tools.Execute(ctx, s.toolContext(), call)
+		result, err := s.Tools.Execute(ctx, ToolContext{WorkingDir: plan.workingDir}, call)
 		if err != nil {
 			rawContent := fmt.Sprintf("Error: %v", err)
 			msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, projectedMessages)
@@ -541,7 +544,10 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			continue
 		}
 
-		s.applyToolWorkingDir(result.WorkingDir)
+		eventWorkingDir := plan.workingDir
+		if s.applyToolWorkingDir(result.WorkingDir) {
+			eventWorkingDir = s.WorkingDir
+		}
 		rawContent := result.Content
 
 		msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, projectedMessages)
@@ -552,7 +558,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		if toolOutputFullyOmitted(content) {
 			batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: rawContent})
 		}
-		if err := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "done", ToolCallID: call.ID, ToolName: toolName, WorkingDir: s.WorkingDir, Args: args, Content: content}); err != nil {
+		if err := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "done", ToolCallID: call.ID, ToolName: toolName, WorkingDir: eventWorkingDir, Args: args, Content: content}); err != nil {
 			return toolBatchResult{}, err
 		}
 		if ctx.Err() != nil {

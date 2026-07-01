@@ -237,6 +237,9 @@ func openRegularFile(workingDir, path string) (*os.File, os.FileInfo, error) {
 	}
 	defer root.Close()
 
+	if _, err := regularRootFileInfo(root, rel, path); err != nil {
+		return nil, nil, err
+	}
 	file, err := root.Open(rel)
 	if err != nil {
 		return nil, nil, rootPathError(err)
@@ -246,11 +249,38 @@ func openRegularFile(workingDir, path string) (*os.File, os.FileInfo, error) {
 		file.Close()
 		return nil, nil, err
 	}
-	if info.IsDir() {
+	if err := rejectNonRegularFile(path, info); err != nil {
 		file.Close()
-		return nil, nil, fmt.Errorf("%s is a directory", path)
+		return nil, nil, err
 	}
 	return file, info, nil
+}
+
+func regularRootFileInfo(root *os.Root, rel, path string) (os.FileInfo, error) {
+	info, err := root.Lstat(rel)
+	if err != nil {
+		return nil, rootPathError(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		info, err = root.Stat(rel)
+		if err != nil {
+			return nil, rootPathError(err)
+		}
+	}
+	if err := rejectNonRegularFile(path, info); err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+func rejectNonRegularFile(path string, info os.FileInfo) error {
+	if info.IsDir() {
+		return fmt.Errorf("%s is a directory", path)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", path)
+	}
+	return nil
 }
 
 func writeFileAtomic(workingDir, path string, data []byte, perm os.FileMode) error {
@@ -406,15 +436,18 @@ func readSelectionFromArgs(args map[string]any) (readSelection, error) {
 func readLineSelection(file *os.File, selection readSelection) (string, error) {
 	reader := bufio.NewReader(file)
 	var b strings.Builder
-	for lineNo := 1; ; lineNo++ {
-		line, err := reader.ReadString('\n')
+	for lineNo := 1; ; {
+		line, err := reader.ReadSlice('\n')
 		if lineNo >= selection.start && (selection.end == 0 || lineNo <= selection.end) {
 			if b.Len()+len(line) > maxReadBytes {
 				return "", fmt.Errorf("selected content is too large (%d byte limit)", maxReadBytes)
 			}
-			b.WriteString(line)
+			b.Write(line)
 		}
 		if err != nil {
+			if err == bufio.ErrBufferFull {
+				continue
+			}
 			if err == io.EOF {
 				break
 			}
@@ -423,6 +456,7 @@ func readLineSelection(file *os.File, selection readSelection) (string, error) {
 		if selection.end > 0 && lineNo >= selection.end {
 			break
 		}
+		lineNo++
 	}
 	return b.String(), nil
 }
