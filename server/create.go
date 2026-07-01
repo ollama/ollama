@@ -479,6 +479,18 @@ func detectModelTypeFromFiles(files map[string]string) string {
 }
 
 func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, isAdapter bool, mediaType string, detectTemplate bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+	// Validate architecture before copying any blobs to avoid wasting time and
+	// disk space when the model is not supported (issue #15949).
+	if !isAdapter {
+		if configDigest, ok := files["config.json"]; ok {
+			if blobPath, err := manifest.BlobsPath(configDigest); err == nil {
+				if err := convert.CheckArchitecture(blobPath); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
 	tmpDir, err := os.MkdirTemp(envconfig.Models(), "ollama-safetensors")
 	if err != nil {
 		return nil, err
